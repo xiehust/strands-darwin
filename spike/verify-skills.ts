@@ -9,7 +9,9 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { darwinDir } from '../src/paths.js';
 import {
+  SKILLS_DIRNAME,
   formatSkillForModel,
   loadSkill,
   renderAvailableSkills,
@@ -22,11 +24,14 @@ import { assert, header, report } from './shared.js';
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const TMP_ROOT = '/tmp/darwin-skills-test';
 
+/** Where the scanner looks: `<root>/.darwin/skills`. */
+const SKILLS_ROOT = path.join(darwinDir(TMP_ROOT), SKILLS_DIRNAME);
+
 /** Builds a throwaway skills tree covering the good and broken cases. */
 async function buildFixture(): Promise<void> {
   await rm(TMP_ROOT, { recursive: true, force: true });
 
-  const good = path.join(TMP_ROOT, 'skills', 'pdf-forms');
+  const good = path.join(SKILLS_ROOT, 'pdf-forms');
   await mkdir(path.join(good, 'scripts'), { recursive: true });
   await mkdir(path.join(good, 'references'), { recursive: true });
   await writeFile(
@@ -38,7 +43,7 @@ async function buildFixture(): Promise<void> {
   await writeFile(path.join(good, 'references', 'spec.md'), '# spec\n', 'utf8');
 
   // Name omitted: the directory name should be used instead.
-  const implicit = path.join(TMP_ROOT, 'skills', 'implicit-name');
+  const implicit = path.join(SKILLS_ROOT, 'implicit-name');
   await mkdir(implicit, { recursive: true });
   await writeFile(
     path.join(implicit, 'SKILL.md'),
@@ -47,12 +52,12 @@ async function buildFixture(): Promise<void> {
   );
 
   // Description missing: must be reported as a problem, not silently dropped.
-  const noDescription = path.join(TMP_ROOT, 'skills', 'no-description');
+  const noDescription = path.join(SKILLS_ROOT, 'no-description');
   await mkdir(noDescription, { recursive: true });
   await writeFile(path.join(noDescription, 'SKILL.md'), `---\nname: broken\n---\n\nbody\n`, 'utf8');
 
   // Unparseable YAML.
-  const badYaml = path.join(TMP_ROOT, 'skills', 'bad-yaml');
+  const badYaml = path.join(SKILLS_ROOT, 'bad-yaml');
   await mkdir(badYaml, { recursive: true });
   await writeFile(
     path.join(badYaml, 'SKILL.md'),
@@ -61,8 +66,8 @@ async function buildFixture(): Promise<void> {
   );
 
   // A directory with no SKILL.md is not a skill and should be ignored quietly.
-  await mkdir(path.join(TMP_ROOT, 'skills', 'not-a-skill'), { recursive: true });
-  await writeFile(path.join(TMP_ROOT, 'skills', 'not-a-skill', 'README.md'), 'hi\n', 'utf8');
+  await mkdir(path.join(SKILLS_ROOT, 'not-a-skill'), { recursive: true });
+  await writeFile(path.join(SKILLS_ROOT, 'not-a-skill', 'README.md'), 'hi\n', 'utf8');
 }
 
 function requireSkill(skills: readonly Skill[], name: string): Skill {
@@ -96,12 +101,23 @@ async function scanning(): Promise<void> {
 }
 
 async function missingDirectory(): Promise<void> {
-  header('scanSkills — absent skills/ directory');
+  header('scanSkills — absent .darwin/skills/ directory');
 
   const { skills, problems } = await scanSkills('/tmp/darwin-skills-does-not-exist');
 
   assert('no skills found', skills.length === 0);
   assert('no problems reported (absence is normal, not an error)', problems.length === 0);
+
+  // The pre-`.darwin` location is dead: a leftover root skills/ must not still be
+  // advertised to the model, or a user who moved theirs would see duplicates.
+  const legacyRoot = '/tmp/darwin-skills-legacy';
+  const legacy = path.join(legacyRoot, SKILLS_DIRNAME, 'old-skill');
+  await rm(legacyRoot, { recursive: true, force: true });
+  await mkdir(legacy, { recursive: true });
+  await writeFile(path.join(legacy, 'SKILL.md'), `---\ndescription: Legacy location.\n---\n\nbody\n`, 'utf8');
+
+  const legacyScan = await scanSkills(legacyRoot);
+  assert('a root skills/ directory is no longer scanned', legacyScan.skills.length === 0);
 }
 
 async function promptFragment(): Promise<void> {
@@ -193,7 +209,7 @@ async function pluginShape(): Promise<void> {
 }
 
 async function realProjectSkill(): Promise<void> {
-  header("this repo's own skills/ directory");
+  header("this repo's own .darwin/skills/ directory");
 
   const { skills, problems } = await scanSkills(REPO_ROOT);
   console.log(`  skills   : ${JSON.stringify(skills.map((s) => s.name))}`);
@@ -201,6 +217,10 @@ async function realProjectSkill(): Promise<void> {
 
   assert('commit-message skill is discovered', skills.some((s) => s.name === 'commit-message'));
   assert('no problems in the real skills directory', problems.length === 0);
+  assert(
+    'it is found under .darwin/skills/',
+    requireSkill(skills, 'commit-message').directory.includes(path.join('.darwin', SKILLS_DIRNAME)),
+  );
 
   const loaded = await loadSkill(requireSkill(skills, 'commit-message'));
   console.log(`  resources: ${JSON.stringify(loaded.resources)}`);

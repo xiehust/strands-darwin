@@ -1,5 +1,6 @@
 /**
- * Verification harness for implement.md steps 1 and 2.
+ * Verification harness for the agent core: permissions, resume, preloaded
+ * AGENTS.md and the conversation manager.
  *
  * Drives AgentRuntime directly with a scripted permission bridge so the
  * acceptance criteria are checked deterministically rather than by eyeballing a
@@ -231,6 +232,60 @@ async function resumeFlow(): Promise<void> {
   );
 }
 
+/**
+ * AGENTS.md in the run directory actually reaches the model.
+ *
+ * A rule no model would follow by chance is the only way to tell injection from
+ * coincidence, so the file demands a fixed token at the start of every reply and
+ * the question is something otherwise unrelated.
+ */
+async function projectInstructionsFlow(): Promise<void> {
+  header('AGENTS.md — preloaded instructions steer the model');
+
+  const withAgents = '/tmp/darwin-agents-proj';
+  const withoutAgents = '/tmp/darwin-agents-none';
+  await rm(withAgents, { recursive: true, force: true });
+  await rm(withoutAgents, { recursive: true, force: true });
+  await mkdir(withAgents, { recursive: true });
+  await mkdir(withoutAgents, { recursive: true });
+  await writeFile(
+    path.join(withAgents, 'AGENTS.md'),
+    '# Project rules\n\nBegin every single reply with the exact token DARWIN-ACK, before anything else.\n',
+    'utf8',
+  );
+
+  const turn = await withRuntime(
+    { projectRoot: withAgents, resume: false, permissionBridge: recordingBridge(true).bridge },
+    async (runtime) => {
+      const loaded = runtime.info.projectInstructions;
+      console.log(`  agents.md : ${loaded?.path} (${loaded?.bytes} bytes, truncated=${loaded?.truncated})`);
+
+      assert('AGENTS.md was reported as loaded', loaded !== undefined);
+      assert(
+        "the reported path is the run directory's own file",
+        loaded?.path === path.join(withAgents, 'AGENTS.md'),
+      );
+      assert('a small file is not truncated', loaded?.truncated === false);
+
+      return runTurn(runtime, 'In one short sentence, what is 2 + 2?');
+    },
+  );
+
+  console.log(`  reply     : ${turn.text.trim().slice(0, 160)}`);
+  assert('the model obeyed a rule that only AGENTS.md could have given it', turn.text.includes('DARWIN-ACK'));
+
+  await withRuntime(
+    { projectRoot: withoutAgents, resume: false, permissionBridge: recordingBridge(true).bridge },
+    async (runtime) => {
+      assert('a directory without AGENTS.md starts normally', runtime.info.projectInstructions === undefined);
+      assert(
+        'and reports no problem — a missing file is not a failure',
+        runtime.info.projectInstructionsProblem === undefined,
+      );
+    },
+  );
+}
+
 /** The summarizing conversation manager is wired up (behavior not triggered). */
 async function conversationManagerAttached(): Promise<void> {
   header('SummarizingConversationManager attached');
@@ -258,6 +313,7 @@ async function main(): Promise<void> {
   await approvedEditFlow();
   await deniedEditFlow();
   await resumeFlow();
+  await projectInstructionsFlow();
   await conversationManagerAttached();
   report();
 }

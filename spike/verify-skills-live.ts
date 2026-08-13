@@ -1,8 +1,8 @@
 /**
  * Live check of the two skill trigger paths, through the real REPL.
  *
- * Runs in the repo root so this project's own `skills/commit-message` is the
- * skill under test.
+ * Runs in the repo root so this project's own `.darwin/skills/commit-message` is
+ * the skill under test.
  *
  * (a) autonomous: asked for a commit message, the model should notice the skill
  *     advertised in its system prompt and call `load_skill` unprompted.

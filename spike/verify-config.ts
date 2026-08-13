@@ -10,15 +10,21 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { ConfigError, createModelFromConfig, loadConfig, resolveRegion } from '../src/config.js';
+import { ConfigError, configPath, createModelFromConfig, loadConfig, resolveRegion } from '../src/config.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-config-test';
 
+/**
+ * Writes the config where darwin reads it — `<projectRoot>/.darwin/config.json`.
+ * Built from `configPath()` so a future move cannot leave this harness testing a
+ * path nothing reads.
+ */
 async function writeConfig(contents: string): Promise<string> {
   const dir = path.join(ROOT, `case-${Math.random().toString(36).slice(2)}`);
-  await mkdir(dir, { recursive: true });
-  await writeFile(path.join(dir, 'config.json'), contents, 'utf8');
+  const file = configPath(dir);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, contents, 'utf8');
   return dir;
 }
 
@@ -35,7 +41,7 @@ async function expectConfigError(what: string, run: () => Promise<unknown>): Pro
 }
 
 async function defaults(): Promise<void> {
-  header('config — defaults with no config.json');
+  header('config — defaults with no .darwin/config.json');
 
   await rm(ROOT, { recursive: true, force: true });
   await mkdir(ROOT, { recursive: true });
@@ -48,7 +54,13 @@ async function defaults(): Promise<void> {
     'model defaults to a cross-region inference profile',
     config.model === 'us.anthropic.claude-sonnet-4-6',
   );
-  assert('a missing config.json is not an error', true);
+  assert('a missing .darwin/config.json is not an error', true);
+
+  // The old location is deliberately dead: a leftover root config.json must not
+  // quietly keep configuring the agent after the move.
+  await writeFile(path.join(ROOT, 'config.json'), '{ "model": "us.legacy.should-be-ignored" }', 'utf8');
+  const stillDefault = await loadConfig(ROOT);
+  assert('a root config.json is no longer read', stillDefault.model === config.model);
 
   // The model must actually construct from defaults, or "works out of the box" is a lie.
   const model = await createModelFromConfig(config);

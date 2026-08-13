@@ -19,7 +19,11 @@ import { assert, header, report } from './shared.js';
 
 const PROJECT_ROOT = '/tmp/darwin-mcp-proj';
 
-/** `.mcp.json` in Claude Code's format, exactly as a user would write it. */
+/**
+ * Written to the project root as `.mcp.json`, in Claude Code's format and exactly
+ * where that tool puts it — so this also covers the fallback config location
+ * being live-usable, not merely resolvable.
+ */
 const MCP_CONFIG = {
   mcpServers: {
     everything: {

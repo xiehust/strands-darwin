@@ -52,9 +52,12 @@ async function approvePath(): Promise<void> {
   const tui = startTui({ cwd: WORK_DIR });
 
   try {
-    await tui.waitFor('strands-darwin', { timeoutMs: 60_000 });
+    // The quit hint, not the product name: `darwin` also occurs in the temp paths
+    // this scenario works in, so waiting for or asserting on the name alone would
+    // pass without a header ever being drawn.
+    await tui.waitFor('/exit to quit', { timeoutMs: 60_000 });
     await tui.waitFor('you>', { timeoutMs: 60_000 });
-    assert('TUI rendered its header', tui.screen.includes('strands-darwin'));
+    assert('TUI rendered its header', tui.screen.includes('/exit to quit'));
     assert('provider and session are shown', /bedrock\/us\.anthropic/.test(tui.screen));
 
     const turnStart = tui.mark();
@@ -244,7 +247,9 @@ async function cancelThenContinue(): Promise<void> {
 
 /**
  * Completion needs a skills directory, so this runs in the repo root where
- * `skills/commit-message` lives. Nothing is submitted, so the agent never runs.
+ * `.darwin/skills/commit-message` lives. Nothing is submitted, so the agent never
+ * runs. The repo also has its own AGENTS.md, which makes this the one scenario
+ * that sees the header's preload line.
  */
 async function slashCompletion(): Promise<void> {
   header('TUI — slash-command completion');
@@ -254,6 +259,7 @@ async function slashCompletion(): Promise<void> {
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
     assert('skills are advertised in the header', tui.screen.includes('skills: commit-message'));
+    assert('the header reports the preloaded AGENTS.md', /AGENTS\.md: loaded \(/.test(tui.screen));
 
     const beforeSlash = tui.mark();
     tui.send('/');
@@ -289,6 +295,66 @@ async function slashCompletion(): Promise<void> {
 }
 
 /**
+ * An AGENTS.md the model is not getting in full — or not getting at all — has to be
+ * visible in the header: rules that were silently trimmed or skipped still read to
+ * the user as rules in effect. Nothing is submitted in either case, so this is
+ * header rendering only and needs no model call (about a second each).
+ */
+async function agentsMdHeader(): Promise<void> {
+  header('TUI — an oversized AGENTS.md is reported as truncated');
+
+  const dir = '/tmp/darwin-agents-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  await writeFile(
+    path.join(dir, 'AGENTS.md'),
+    `# Rules\n\n${`${'padding '.repeat(8)}\n`.repeat(6000)}`,
+    'utf8',
+  );
+
+  const tui = startTui({ cwd: dir });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const shown = /AGENTS\.md: loaded \(([^)]+)\)/.exec(tui.screen)?.[1];
+    console.log(`  header says: AGENTS.md: loaded (${shown})`);
+
+    assert('the header reports the file', shown !== undefined);
+    assert('it reports the size on disk', /KB/.test(shown ?? ''));
+    assert('it warns that the file was truncated', /truncated to 32 KB/.test(tui.screen));
+
+    tui.send('\u0003'); // ctrl+c while idle exits
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('startup with oversized instructions still exits cleanly', code === 0);
+  } finally {
+    tui.kill();
+  }
+
+  header('TUI — an unreadable AGENTS.md is reported, not passed over in silence');
+
+  // A directory in the file's place: unreadable without a chmod, so the case also
+  // holds when the suite runs as root.
+  const brokenDir = '/tmp/darwin-agents-tui-broken';
+  await rm(brokenDir, { recursive: true, force: true });
+  await mkdir(path.join(brokenDir, 'AGENTS.md'), { recursive: true });
+
+  const broken = startTui({ cwd: brokenDir });
+  try {
+    await broken.waitFor('you>', { timeoutMs: 60_000 });
+    const reason = /AGENTS\.md: skipped — (.+)/.exec(broken.screen)?.[1];
+    console.log(`  header says: AGENTS.md: skipped — ${reason}`);
+
+    assert('the header says the file was skipped', reason !== undefined);
+    assert('it says why', /EISDIR|illegal operation/i.test(reason ?? ''));
+    assert('it is not also reported as loaded', !broken.screen.includes('AGENTS.md: loaded'));
+
+    broken.send('\u0003');
+    assert('the session starts and exits normally regardless', (await broken.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    broken.kill();
+  }
+}
+
+/**
  * Waits until the newest frame shows an idle prompt.
  *
  * `you>` alone is not enough: the input box renders that text while disabled
@@ -318,6 +384,7 @@ const SCENARIOS = {
   bashExit: exitAfterBash,
   cancelThenContinue,
   completion: slashCompletion,
+  agentsMd: agentsMdHeader,
 } as const;
 
 async function main(): Promise<void> {
