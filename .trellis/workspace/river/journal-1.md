@@ -28,3 +28,26 @@ grill-me 拷问收敛 MVP 范围后从零交付：Strands TS SDK + Ink 的 codin
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 改名 darwin：AGENTS.md 预加载 + .darwin/ 配置目录收敛
+
+**Date**: 2026-08-13
+**Task**: 改名 darwin：AGENTS.md 预加载 + .darwin/ 配置目录收敛
+**Branch**: `main`
+
+### Summary
+
+CLI 改名 darwin，所有项目态相对运行目录解析：.darwin/{config.json,skills/,sessions/,mcp.json}（MCP 双路径只读一个不合并，回退根 .mcp.json 保留 Claude Code 复用）；新增 AGENTS.md 预加载（<project-instructions> 注入、StringDecoder 防 UTF-8 截断出 �、不可读与不存在区分并在 header 提示）。全套件 234 断言过（verify-agents-md 新增）。教训沉淀：改名类任务会让旧断言退化为永真（断言字符串须被测状态独占）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `51b534e` | (see git log) |
+| `03fc00b` | (see git log) |
+| `592e955` | (see git log) |
+
+### Status
+
+[OK] **Completed**
