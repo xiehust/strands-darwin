@@ -58,6 +58,18 @@ wait converts that bug into a suite hang.
   last hit: a long details block (a big file body) pushes `permission required (write)`
   out of any fixed-size tail window.
 
+## Contract: assertion strings must be exclusive to the state under test
+
+Renaming the product from `strands-darwin` to `darwin` silently turned
+`screen.includes('darwin')` assertions into tautologies — the test cwd is `/tmp/darwin-*`,
+so the string is on screen from frame one. Assert on text only the asserted state can draw
+(`/exit to quit` for the header, `permission required (write)` for the gate). Rename/path
+tasks are exactly when old assertions degrade this way, so re-inspect them there.
+
+Cheap scenarios first: anything about header lines, completion lists, or the input box
+needs no submit and no model call (~1s, zero tokens). Don't fold pure-rendering assertions
+into a model-driven scenario that takes 30s.
+
 ## Scenario checklist for agent-driven flows
 
 Model-driven turns choose their own tool order, so scripted prompt sequences are fragile.

@@ -128,7 +128,8 @@ tool call is silently denied with no prompt shown.
 ## Sessions
 
 - `SessionManager` + `LocalFileStorage` (`FileStorage` is deprecated), snapshots under
-  `.strands-tui/` in the project root, `last-session.json` as the `--resume` pointer.
+  `.darwin/sessions/` in the project root, `.darwin/last-session.json` as the `--resume`
+  pointer. All project state resolves against `process.cwd()` via `src/paths.ts`.
 - Write the pointer only after a turn completes (`markResumable()`), so an unused session
   never displaces a useful one.
 
