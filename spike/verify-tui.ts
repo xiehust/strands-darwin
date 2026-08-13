@@ -1,0 +1,337 @@
+/**
+ * End-to-end verification of the Ink TUI through a real pty.
+ *
+ * Covers what only an interactive run can show: streaming text reaching the
+ * screen, the permission prompt appearing with usable detail and actually gating
+ * the write, exiting cleanly after a bash command, staying usable after a
+ * cancelled turn, and slash-command completion.
+ *
+ * Waits are anchored with `mark()`. Ink redraws the whole frame constantly, so an
+ * unanchored wait for something like `you>` matches a frame from before the
+ * action and returns immediately — which silently reads the file before the edit
+ * lands, then sends `/exit` while the agent is still streaming (where input is
+ * correctly ignored, so the app never exits).
+ *
+ * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
+ *      scenarios: approve | deny | bashExit | cancelThenContinue | completion
+ */
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import process from 'node:process';
+import path from 'node:path';
+
+import { REPO_ROOT, startTui, type TuiSession } from './tui-driver.js';
+import { assert, header, report } from './shared.js';
+
+/** A TUI that will not exit is a leaked-handle bug, so exits are bounded. */
+const EXIT_TIMEOUT_MS = 30_000;
+
+const WORK_DIR = '/tmp/darwin-tui';
+const TARGET = path.join(WORK_DIR, 'calc.js');
+
+/** `double` adds instead of multiplying — a one-line fix the model can make. */
+const BUGGY = `function double(n) {
+  return n + 2;
+}
+module.exports = { double };
+`;
+
+const FIX_REQUEST =
+  `The function in ${TARGET} is called double but it adds 2 instead of multiplying by 2. ` +
+  `Read the file and fix it with a str_replace edit. Do not run any shell commands.`;
+
+async function resetWorkDir(): Promise<void> {
+  await rm(WORK_DIR, { recursive: true, force: true });
+  await mkdir(WORK_DIR, { recursive: true });
+  await writeFile(TARGET, BUGGY, 'utf8');
+}
+
+async function approvePath(): Promise<void> {
+  header('TUI — streaming, permission prompt, approved edit');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('strands-darwin', { timeoutMs: 60_000 });
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('TUI rendered its header', tui.screen.includes('strands-darwin'));
+    assert('provider and session are shown', /bedrock\/us\.anthropic/.test(tui.screen));
+
+    const turnStart = tui.mark();
+    tui.submit(FIX_REQUEST);
+
+    await tui.waitFor('called double but it adds', { timeoutMs: 60_000, from: turnStart });
+    assert('user message appears in history', tui.screen.includes('called double but it adds'));
+
+    // Reading the file is a read: it must run without asking.
+    await tui.waitFor('fileEditor view', { timeoutMs: 120_000, from: turnStart });
+    assert('read tool call was rendered', tui.screen.includes('fileEditor view'));
+
+    await tui.waitFor('permission required', { timeoutMs: 180_000, from: turnStart });
+    assert('permission prompt appeared', tui.screen.includes('permission required'));
+    assert('prompt is labelled as a write', /permission required\s*\(write\)/.test(tui.screen));
+    assert('prompt shows the file path', tui.screen.includes(TARGET));
+    assert('prompt shows the Path label', tui.screen.includes('Path:'));
+    assert('prompt shows the replacement block', tui.screen.includes('With:'));
+    assert('prompt offers the y/n choice', tui.screen.includes('allow?'));
+    // The permission box replaces the input box, so the newest frame ends with
+    // the prompt's y/n line rather than an editable `you>` line.
+    assert('input box is replaced while awaiting permission', awaitsPermission(tui.screen));
+    assert('assistant text was streamed to the screen', tui.screen.includes('agent'));
+
+    const afterAnswer = tui.mark();
+    tui.send('y');
+
+    // A finished write shows as a tool result with the success mark. The prompt's
+    // own text also contains "str_replace", hence both the mark and the ✓.
+    await tui.waitFor(/✓ fileEditor str_replace/, { timeoutMs: 180_000, from: afterAnswer });
+    await waitForIdle(tui, 240_000);
+
+    const after = await readFile(TARGET, 'utf8');
+    console.log(`  calc.js now: ${after.replace(/\n/g, ' ').trim()}`);
+
+    // The model may write either operand order.
+    assert('approved edit was applied to disk', /(n\s*\*\s*2|2\s*\*\s*n)/.test(after));
+    assert('the bug is gone', !after.includes('n + 2'));
+    assert('completed tool call shows a success mark', tui.screen.includes('✓'));
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly on /exit', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+async function denyPath(): Promise<void> {
+  header('TUI — denied edit leaves the file alone');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const turnStart = tui.mark();
+    tui.submit(FIX_REQUEST);
+    await tui.waitFor('permission required', { timeoutMs: 180_000, from: turnStart });
+
+    const afterAnswer = tui.mark();
+    tui.send('n');
+
+    // Blocked marker on the tool result, then the model's follow-up.
+    await tui.waitFor('⊘', { timeoutMs: 120_000, from: afterAnswer });
+    await waitForIdle(tui, 240_000);
+
+    const after = await readFile(TARGET, 'utf8');
+    console.log(`  calc.js now: ${after.replace(/\n/g, ' ').trim()}`);
+
+    assert('file was NOT modified after denial', after.includes('n + 2'));
+    assert('denied tool call is marked as blocked', tui.screen.includes('⊘'));
+    assert(
+      'agent explained itself after the denial',
+      /den(y|ied)|permission|approv/i.test(tui.screen.slice(afterAnswer)),
+    );
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly after a denial', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/**
+ * Regression for the shutdown hang: a session that has run a bash command must
+ * still exit on `/exit`.
+ *
+ * The other scenarios all tell the model not to run shell commands, which is
+ * exactly why they never caught it — the vended bash tool keeps a persistent
+ * shell whose stdio pipes hold the event loop open unless it is killed.
+ */
+async function exitAfterBash(): Promise<void> {
+  header('TUI — /exit still works after a bash command');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const turnStart = tui.mark();
+    tui.submit('Run the shell command `echo darwin-bash-ok` and tell me its output.');
+    await tui.waitFor('permission required', { timeoutMs: 180_000, from: turnStart });
+    assert('bash run was gated as execute', /permission required\s*\(execute\)/.test(tui.screen));
+
+    const afterAnswer = tui.mark();
+    tui.send('y');
+
+    await tui.waitFor(/✓ bash/, { timeoutMs: 180_000, from: afterAnswer });
+    assert('command output reached the screen', tui.screen.includes('darwin-bash-ok'));
+    await waitForIdle(tui, 240_000);
+
+    // The actual regression: this used to hang forever.
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly after running a bash command', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/**
+ * Regression for two bugs in the Ctrl+C path, both invisible until a cancelled
+ * turn is followed by more work.
+ *
+ * 1. The permission queue must survive the cancellation. Ctrl+C has to reject
+ *    whatever confirmation the agent loop is blocked on, but the session outlives
+ *    the turn — closing the queue instead (as an earlier version did) left every
+ *    later write and command silently denied with no prompt on screen, which reads
+ *    as the model refusing to work.
+ * 2. The process must still exit afterwards. A cancelled turn leaks the model's
+ *    HTTP socket, so `/exit` hung forever until the CLI grew a forced-exit
+ *    backstop — which is why the exit wait here is bounded.
+ */
+async function cancelThenContinue(): Promise<void> {
+  header('TUI — a cancelled turn still leaves permissions working');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    // A long answer with no tool use, so there is a streaming window to interrupt.
+    const firstTurn = tui.mark();
+    tui.submit(
+      'Explain in about 400 words why code review matters. Do not use any tools, just write prose.',
+    );
+    await tui.waitFor('working…', { timeoutMs: 60_000, from: firstTurn });
+
+    const beforeInterrupt = tui.mark();
+    tui.send('\u0003'); // ctrl+c mid-turn: cancel this turn, keep the session
+
+    await tui.waitFor('interrupted', { timeoutMs: 60_000, from: beforeInterrupt });
+    assert('ctrl+c mid-turn reports an interrupt rather than exiting', true);
+    await waitForIdle(tui, 120_000);
+
+    // The actual regression: a gated write in the next turn must still prompt.
+    const secondTurn = tui.mark();
+    tui.submit(FIX_REQUEST);
+    await tui.waitFor('permission required', { timeoutMs: 240_000, from: secondTurn });
+    assert('a later turn still raises a permission prompt', true);
+    assert(
+      'the prompt is still a write confirmation',
+      /permission required\s*\(write\)/.test(tui.screen.slice(secondTurn)),
+    );
+
+    const afterAnswer = tui.mark();
+    tui.send('y');
+    await tui.waitFor(/✓ fileEditor str_replace/, { timeoutMs: 240_000, from: afterAnswer });
+    await waitForIdle(tui, 240_000);
+
+    const after = await readFile(TARGET, 'utf8');
+    console.log(`  calc.js now: ${after.replace(/\n/g, ' ').trim()}`);
+    assert('approval after a cancelled turn still reaches disk', /(n\s*\*\s*2|2\s*\*\s*n)/.test(after));
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly after a cancelled turn', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/**
+ * Completion needs a skills directory, so this runs in the repo root where
+ * `skills/commit-message` lives. Nothing is submitted, so the agent never runs.
+ */
+async function slashCompletion(): Promise<void> {
+  header('TUI — slash-command completion');
+
+  const tui = startTui({ cwd: REPO_ROOT });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('skills are advertised in the header', tui.screen.includes('skills: commit-message'));
+
+    const beforeSlash = tui.mark();
+    tui.send('/');
+    await tui.waitFor('skills (', { timeoutMs: 30_000, from: beforeSlash });
+    // The list header and its rows can land in separate chunks, so the row has to
+    // be waited for rather than asserted straight after the header appears.
+    await tui.waitFor('/commit-message', { timeoutMs: 30_000, from: beforeSlash });
+
+    assert('completion list appeared', tui.screen.slice(beforeSlash).includes('skills ('));
+    assert(
+      'the skill is listed as a command',
+      tui.screen.slice(beforeSlash).includes('/commit-message'),
+    );
+    assert('the list explains the keys', /to select/.test(tui.screen.slice(beforeSlash)));
+
+    // Narrowing to a prefix that matches nothing hides the list again. Ink
+    // redraws the whole frame, so the output after the mark is the new frame.
+    const beforeNarrow = tui.mark();
+    tui.send('zzz');
+    // Settle before asserting an absence: a frame still arriving would satisfy
+    // "the list is gone" for the wrong reason.
+    await tui.waitFor('/zzz', { timeoutMs: 30_000, from: beforeNarrow, settleMs: 400 });
+    const redrawn = tui.screen.slice(beforeNarrow);
+    console.log(`  frame after /zzz: ${JSON.stringify(redrawn.slice(0, 400))}`);
+    assert('completion list disappears when nothing matches', !redrawn.includes('skills ('));
+
+    tui.send('\u0003'); // ctrl+c while idle exits
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('ctrl+c exits when idle', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/**
+ * Waits until the newest frame shows an idle prompt.
+ *
+ * `you>` alone is not enough: the input box renders that text while disabled
+ * during a turn too. The `working…` hint is what distinguishes busy from idle, so
+ * idleness is "the most recent prompt was drawn after the most recent hint".
+ */
+async function waitForIdle(tui: TuiSession, timeoutMs: number): Promise<void> {
+  await tui.waitUntil((screen) => screen.lastIndexOf('you>') > screen.lastIndexOf('working…'), {
+    timeoutMs,
+    label: 'an idle prompt',
+    // A frame arrives in pieces, so a busy frame read between its prompt line and
+    // its `working…` hint reads as idle. Acting on that sends `/exit` mid-turn,
+    // where input is correctly ignored, and the app then never exits.
+    settleMs: 400,
+  });
+}
+
+/** True when the newest frame is the permission box rather than the input box. */
+function awaitsPermission(screen: string): boolean {
+  const tail = screen.trimEnd().slice(-400);
+  return tail.includes('allow?') && !/you>\s*$/.test(tail);
+}
+
+const SCENARIOS = {
+  approve: approvePath,
+  deny: denyPath,
+  bashExit: exitAfterBash,
+  cancelThenContinue,
+  completion: slashCompletion,
+} as const;
+
+async function main(): Promise<void> {
+  const only = process.argv[2];
+  const names = (
+    only !== undefined && only in SCENARIOS ? [only] : Object.keys(SCENARIOS)
+  ) as (keyof typeof SCENARIOS)[];
+
+  for (const name of names) {
+    const started = Date.now();
+    await SCENARIOS[name]();
+    console.log(`  (${name} took ${Math.round((Date.now() - started) / 1000)}s)`);
+  }
+  report();
+}
+
+await main();
