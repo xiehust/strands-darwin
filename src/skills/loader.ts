@@ -18,6 +18,8 @@ import path from 'node:path';
 
 import matter from 'gray-matter';
 
+import { darwinDir } from '../paths.js';
+
 /** Directories checked for supporting files when a skill is loaded. */
 export const RESOURCE_DIRS = ['scripts', 'references', 'assets'] as const;
 
@@ -45,14 +47,14 @@ export interface SkillScan {
 }
 
 /**
- * Scans `<root>/skills/*​/SKILL.md`.
+ * Scans `<root>/.darwin/skills/*​/SKILL.md`.
  *
  * A malformed skill is collected into `problems` and skipped rather than thrown:
  * one bad directory should never stop the agent from starting, and the user still
  * needs to be told why their skill is not showing up.
  */
 export async function scanSkills(root: string): Promise<SkillScan> {
-  const skillsDir = path.join(root, SKILLS_DIRNAME);
+  const skillsDir = path.join(darwinDir(root), SKILLS_DIRNAME);
 
   let entries: Dirent[];
   try {
@@ -77,7 +79,7 @@ export async function scanSkills(root: string): Promise<SkillScan> {
       raw = await readFile(skillFile, 'utf8');
     } catch {
       // A directory without SKILL.md is not a skill; ignore it silently so
-      // unrelated folders under skills/ do not generate noise.
+      // unrelated folders under .darwin/skills/ do not generate noise.
       continue;
     }
 

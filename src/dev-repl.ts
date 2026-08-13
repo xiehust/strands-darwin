@@ -11,9 +11,12 @@
 import { createInterface, type Interface } from 'node:readline/promises';
 import process from 'node:process';
 
+import { AGENTS_FILENAME } from './agent/instructions.js';
 import { AgentRuntime } from './agent/runtime.js';
 import type { PermissionRequest } from './agent/permission.js';
 import { ConfigError } from './config.js';
+import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
+import { DARWIN_DIRNAME } from './paths.js';
 
 const DETAIL_MAX_LINES = 12;
 const DETAIL_MAX_CHARS = 800;
@@ -158,7 +161,7 @@ async function main(): Promise<void> {
     });
 
     const info = runtime.info;
-    console.log('strands-darwin dev REPL (debugging aid — `pnpm start` runs the TUI)');
+    console.log('darwin dev REPL (debugging aid — `pnpm start` runs the TUI)');
     console.log(`  provider : ${info.config.provider} / ${info.config.model}`);
     console.log(`  session  : ${info.sessionId}${info.resumed ? ' (resumed)' : ' (new)'}`);
     if (info.resumed) {
@@ -166,8 +169,21 @@ async function main(): Promise<void> {
     } else if (resume) {
       console.log('  note     : --resume given but no previous session found; started a new one');
     }
+    if (info.projectInstructions !== undefined) {
+      const { path: agentsPath, bytes, truncated } = info.projectInstructions;
+      console.log(`  agents   : ${agentsPath} (${bytes} bytes${truncated ? ', truncated' : ''})`);
+    }
+    if (info.projectInstructionsProblem !== undefined) {
+      console.warn(`  agents   : ${AGENTS_FILENAME} skipped — ${info.projectInstructionsProblem}`);
+    }
     if (info.mcpConfigPath !== undefined) {
       console.log(`  mcp      : ${info.mcpServerCount} server(s) from ${info.mcpConfigPath}`);
+    }
+    if (info.mcpIgnoredConfigPath !== undefined) {
+      console.warn(
+        `  mcp note : ${info.mcpIgnoredConfigPath} ignored ` +
+          `(${DARWIN_DIRNAME}/${MCP_CONFIG_FILENAME} takes precedence)`,
+      );
     }
     if (info.skillNames.length > 0) {
       console.log(`  skills   : ${info.skillNames.join(', ')} (use /<name> to load one)`);

@@ -1,11 +1,11 @@
 /**
  * Session persistence and `--resume` support.
  *
- * Sessions live under `.strands-tui/` inside the project rather than in the home
+ * Sessions live under `.darwin/` inside the project rather than in the home
  * directory. A coding agent's conversation is about one repository, so storing it
  * beside that repository keeps `--resume` naturally scoped per project, avoids
  * mapping a working directory onto a home-directory slug, and makes sessions easy
- * to inspect or delete. The cost is one `.gitignore` entry.
+ * to inspect or delete. The cost is two `.gitignore` entries.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -13,7 +13,8 @@ import path from 'node:path';
 import { SessionManager } from '@strands-agents/sdk';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 
-export const STATE_DIRNAME = '.strands-tui';
+import { darwinDir } from '../paths.js';
+
 const SESSIONS_DIRNAME = 'sessions';
 const POINTER_FILENAME = 'last-session.json';
 
@@ -32,7 +33,7 @@ export interface SessionPaths {
 }
 
 export function sessionPaths(projectRoot: string): SessionPaths {
-  const stateDir = path.join(projectRoot, STATE_DIRNAME);
+  const stateDir = darwinDir(projectRoot);
   return {
     stateDir,
     sessionsDir: path.join(stateDir, SESSIONS_DIRNAME),

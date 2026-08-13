@@ -54,7 +54,7 @@ export type PermissionBridge = (request: PermissionRequest) => Promise<boolean>;
 export const allowAllBridge: PermissionBridge = async () => true;
 
 export class PermissionGate extends InterventionHandler {
-  readonly name = 'strands-darwin:permission-gate';
+  readonly name = 'darwin:permission-gate';
 
   constructor(private readonly ask: PermissionBridge) {
     super();

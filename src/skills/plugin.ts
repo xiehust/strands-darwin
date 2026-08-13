@@ -32,14 +32,14 @@ import {
 } from './loader.js';
 
 export class SkillsPlugin implements Plugin {
-  readonly name = 'strands-darwin:skills';
+  readonly name = 'darwin:skills';
 
   private constructor(
     readonly skills: readonly Skill[],
     readonly problems: readonly SkillProblem[],
   ) {}
 
-  /** Scans `<root>/skills/` and returns a plugin ready to attach to an Agent. */
+  /** Scans `<root>/.darwin/skills/` and returns a plugin ready to attach to an Agent. */
   static async load(root: string): Promise<SkillsPlugin> {
     const { skills, problems } = await scanSkills(root);
     return new SkillsPlugin(skills, problems);

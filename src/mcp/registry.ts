@@ -1,5 +1,5 @@
 /**
- * MCP server discovery from `.mcp.json`.
+ * MCP server discovery from `.darwin/mcp.json`, or a project-root `.mcp.json`.
  *
  * This module is deliberately thin. The design anticipated hand-rolling transport
  * construction, but the SDK already covers all of it via
@@ -21,19 +21,38 @@ import path from 'node:path';
 import { McpClient } from '@strands-agents/sdk';
 
 import { ConfigError } from '../config.js';
+import { darwinDir } from '../paths.js';
 
-export const MCP_CONFIG_FILENAME = '.mcp.json';
+/** Preferred location, alongside the rest of darwin's project state. */
+export const MCP_CONFIG_FILENAME = 'mcp.json';
+
+/**
+ * Fallback in the project root: Claude Code's own file, in the same format, so an
+ * existing one works without being copied or moved.
+ */
+export const ROOT_MCP_CONFIG_FILENAME = '.mcp.json';
 
 export interface McpLoadResult {
   clients: McpClient[];
   /** Absolute path read, or undefined when no config file exists. */
   configPath: string | undefined;
+  /**
+   * A root `.mcp.json` that exists but was not read because `.darwin/mcp.json`
+   * took precedence. Surfaced so the header can say the fallback is inert rather
+   * than leaving the user to wonder which file is in effect.
+   */
+  ignoredConfigPath: string | undefined;
 }
 
 /**
- * Loads every enabled MCP server declared in `<projectRoot>/.mcp.json`.
+ * Loads every enabled MCP server declared in `<projectRoot>/.darwin/mcp.json`,
+ * falling back to `<projectRoot>/.mcp.json` when the first does not exist.
  *
- * Returns an empty list when the file is absent — running without MCP is a
+ * Only one of the two is ever read: merging them would make the effective server
+ * list depend on two files at once, and a user who wrote `.darwin/mcp.json`
+ * expects that to be the answer.
+ *
+ * Returns an empty list when neither file is present — running without MCP is a
  * normal configuration, not an error.
  *
  * `continueOnError` is set for every server so one broken entry cannot stop the
@@ -46,15 +65,21 @@ export interface McpLoadResult {
  * a typo behind missing tools.
  */
 export async function loadMcpClients(projectRoot: string): Promise<McpLoadResult> {
-  const configPath = path.join(projectRoot, MCP_CONFIG_FILENAME);
+  const preferred = path.join(darwinDir(projectRoot), MCP_CONFIG_FILENAME);
+  const fallback = path.join(projectRoot, ROOT_MCP_CONFIG_FILENAME);
 
-  if (!(await exists(configPath))) {
-    return { clients: [], configPath: undefined };
+  const [hasPreferred, hasFallback] = await Promise.all([exists(preferred), exists(fallback)]);
+
+  if (!hasPreferred && !hasFallback) {
+    return { clients: [], configPath: undefined, ignoredConfigPath: undefined };
   }
+
+  const configPath = hasPreferred ? preferred : fallback;
+  const ignoredConfigPath = hasPreferred && hasFallback ? fallback : undefined;
 
   try {
     const clients = await McpClient.loadServers(configPath, { continueOnError: true });
-    return { clients, configPath };
+    return { clients, configPath, ignoredConfigPath };
   } catch (error) {
     throw new ConfigError(
       `${configPath} could not be loaded: ${error instanceof Error ? error.message : String(error)}\n` +

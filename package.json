@@ -1,5 +1,5 @@
 {
-  "name": "strands-darwin",
+  "name": "darwin",
   "version": "0.1.0",
   "description": "TUI coding agent built on the Strands TypeScript SDK",
   "type": "module",
@@ -7,14 +7,14 @@
     "node": ">=20.0.0"
   },
   "bin": {
-    "strands-tui": "./dist/src/cli.js"
+    "darwin": "./dist/src/cli.js"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "start": "tsx src/cli.ts",
     "dev-repl": "tsx src/dev-repl.ts",
-    "test": "tsx spike/verify-config.ts && tsx spike/verify-mcp-config.ts && tsx spike/verify-skills.ts"
+    "test": "tsx spike/verify-config.ts && tsx spike/verify-mcp-config.ts && tsx spike/verify-skills.ts && tsx spike/verify-agents-md.ts"
   },
   "keywords": [],
   "author": "",

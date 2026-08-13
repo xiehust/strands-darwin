@@ -5,4 +5,5 @@
 /.kiro/
 node_modules/
 dist/
-.strands-tui/
+.darwin/sessions/
+.darwin/last-session.json

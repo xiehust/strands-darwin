@@ -13,6 +13,11 @@ import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import { createModelFromConfig, loadConfig, type AppConfig } from '../config.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
+import {
+  composeSystemPrompt,
+  loadProjectInstructions,
+  type ProjectInstructionsSummary,
+} from './instructions.js';
 import { PermissionGate, type PermissionBridge } from './permission.js';
 import { createSessionManager, resolveSession, writePointer } from './session.js';
 
@@ -21,7 +26,7 @@ import { createSessionManager, resolveSession, writePointer } from './session.js
  * `<sessionId>/scopes/agent/<agentId>/`, so a changing agent id would hide
  * previous snapshots from `--resume`.
  */
-const AGENT_ID = 'strands-darwin';
+const AGENT_ID = 'darwin';
 
 const SYSTEM_PROMPT = `You are a coding agent working in a real git repository.
 
@@ -49,12 +54,18 @@ export interface RuntimeInfo {
   config: AppConfig;
   sessionId: string;
   resumed: boolean;
-  /** Names of skills discovered under `skills/`. */
+  /** Names of skills discovered under `.darwin/skills/`. */
   skillNames: string[];
   /** Skill directories that were skipped, with the reason. */
   skillProblems: { directory: string; reason: string }[];
-  /** Path to the `.mcp.json` that was read, or undefined when there is none. */
+  /** AGENTS.md preloaded from the run directory, or undefined when there is none. */
+  projectInstructions: ProjectInstructionsSummary | undefined;
+  /** Why a present AGENTS.md was skipped; undefined when there is no such file. */
+  projectInstructionsProblem: string | undefined;
+  /** Path to the MCP config that was read, or undefined when there is none. */
   mcpConfigPath: string | undefined;
+  /** Root `.mcp.json` left unread because `.darwin/mcp.json` took precedence. */
+  mcpIgnoredConfigPath: string | undefined;
   /** Number of MCP servers configured (some may have failed to connect). */
   mcpServerCount: number;
   /** Agent-facing names of every tool registered, MCP tools included. */
@@ -75,12 +86,17 @@ export class AgentRuntime {
     const model = await createModelFromConfig(config);
     const session = await resolveSession(options.projectRoot, options.resume);
     const skills = await SkillsPlugin.load(options.projectRoot);
+    const loadedInstructions = await loadProjectInstructions(options.projectRoot);
+    const instructions = loadedInstructions.instructions;
     const mcp = await loadMcpClients(options.projectRoot);
 
     const agent = new Agent({
       id: AGENT_ID,
       model,
-      systemPrompt: SYSTEM_PROMPT,
+      // AGENTS.md is folded in here; the skills catalogue is appended afterwards
+      // by SkillsPlugin.initAgent during initialize(), keeping the assembled
+      // prompt in a fixed order.
+      systemPrompt: composeSystemPrompt(SYSTEM_PROMPT, instructions),
       // McpClient instances act as tool sources: the SDK discovers and registers
       // their tools during initialize().
       tools: [bash, fileEditor, ...mcp.clients],
@@ -108,7 +124,13 @@ export class AgentRuntime {
       resumed: session.resumed,
       skillNames: skills.skills.map((skill) => skill.name),
       skillProblems: skills.problems.map((problem) => ({ ...problem })),
+      projectInstructions:
+        instructions === undefined
+          ? undefined
+          : { path: instructions.path, bytes: instructions.bytes, truncated: instructions.truncated },
+      projectInstructionsProblem: loadedInstructions.problem,
       mcpConfigPath: mcp.configPath,
+      mcpIgnoredConfigPath: mcp.ignoredConfigPath,
       mcpServerCount: mcp.clients.length,
       toolNames: agent.tools.map((tool) => tool.name).sort(),
     });

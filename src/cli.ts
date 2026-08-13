@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * `strands-tui` entry point.
+ * `darwin` entry point.
  *
  * Boots the agent runtime, then hands control to the Ink app.
  *
- * Usage: strands-tui [--resume]
+ * Usage: darwin [--resume]
  */
 import { render } from 'ink';
 import React from 'react';

@@ -1,10 +1,11 @@
-# strands-darwin
+# darwin
 
 A terminal coding agent built on the [Strands Agents TypeScript SDK](https://www.npmjs.com/package/@strands-agents/sdk): you talk to it in a TUI, it reads and edits files and runs commands in your repository, and it asks before doing anything that changes your machine.
 
 ```
-strands-darwin
+darwin
 bedrock/us.anthropic.claude-sonnet-4-6 · session session-20260813-112430
+AGENTS.md: loaded (1.2 KB)
 skills: commit-message — type / to use one
 /exit to quit · ctrl+c cancels a turn
 
@@ -49,9 +50,30 @@ pnpm start            # new session
 pnpm start --resume   # continue where you left off
 ```
 
-The agent treats the **current working directory** as the project root: it reads
-`config.json`, `.mcp.json` and `skills/` from there, and stores sessions under
-`.strands-tui/`. Run it from the repository you want it to work on.
+Run it from the repository you want it to work on. The **current working directory** is
+the project root, and everything darwin reads or writes lives there:
+
+```
+<your repo>/
+├── AGENTS.md              # optional: project instructions, preloaded into the system prompt
+├── .mcp.json              # optional: MCP servers, Claude Code's file, used if .darwin/mcp.json is absent
+└── .darwin/
+    ├── config.json        # optional: provider and model
+    ├── mcp.json           # optional: MCP servers (takes precedence over ../.mcp.json)
+    ├── skills/            # optional: one directory per skill
+    │   └── commit-message/
+    │       └── SKILL.md
+    ├── sessions/          # written: conversation snapshots        (gitignore this)
+    └── last-session.json  # written: what --resume reopens         (gitignore this)
+```
+
+Add `.darwin/sessions/` and `.darwin/last-session.json` to your `.gitignore`; the config
+and skills next to them are worth committing so the whole team gets the same setup.
+
+> **Upgrading from before the rename**: the old locations are not read any more. Move
+> `config.json` to `.darwin/config.json` and `skills/` to `.darwin/skills/`. Old
+> `.strands-tui/` sessions cannot be resumed — the snapshot path contains the agent id,
+> which changed with the name — so delete that directory.
 
 Keys:
 
@@ -63,10 +85,26 @@ Keys:
 | `Ctrl+C` | cancel the current turn; press again within 2s to quit |
 | `Ctrl+D`, `/exit`, `/quit` | quit |
 
+## Project instructions (AGENTS.md)
+
+If the directory you start darwin in has an `AGENTS.md`, its contents are preloaded into
+the system prompt inside a `<project-instructions source="AGENTS.md">` block, so standing
+rules about the repository apply to every turn without you repeating them. The header says
+so at startup.
+
+Only the run directory's own file is read — no walking up to parent directories, no merging
+several files — so what the model was told is exactly what you can open and read. An
+absent, empty or whitespace-only file is skipped silently; one that exists but cannot be
+read is skipped with the reason in the header, since otherwise you would go on believing
+rules were in effect. Anything over 32 KB is cut off
+at the last whole line before the limit, flagged as truncated to both you and the model,
+because this text is re-sent with every request and an oversized file would spend the
+context the conversation needs.
+
 ## Configuration
 
-`config.json` in the project root. Every field is optional — with no file at all you get
-a working Bedrock setup.
+`.darwin/config.json` in the project root. Every field is optional — with no file at all
+you get a working Bedrock setup.
 
 ```json
 {
@@ -138,8 +176,8 @@ asks what to do instead.
 
 ## MCP servers
 
-Drop a `.mcp.json` in the project root. This is Claude Code's format, so an existing file
-works unchanged:
+Put servers in `.darwin/mcp.json`, or leave an existing `.mcp.json` in the project root —
+the format is Claude Code's either way, so a file that tool wrote works unchanged:
 
 ```json
 {
@@ -156,10 +194,14 @@ works unchanged:
 }
 ```
 
+`.darwin/mcp.json` wins when both files exist, and the header says the root one is being
+ignored — the two are never merged, so the effective server list is always one readable
+file. Neither file simply means no MCP.
+
 Transport is inferred: `command` means stdio, `url` means streamable HTTP. Set
 `transport` explicitly for `sse`. `${VAR}` and `${env:VAR}` are interpolated in commands,
 arguments, environment, URLs and headers. Per-server `disabled`, `prefix` and
-`toolFilters` are supported. No `.mcp.json` simply means no MCP.
+`toolFilters` are supported.
 
 A server that fails to start — or whose config references an unset `${VAR}` — is skipped
 rather than fatal, so one broken entry never stops the agent from launching. The SDK logs
@@ -177,10 +219,10 @@ always require approval.
 ## Skills
 
 A skill is a folder of instructions the agent pulls in when it is relevant. Put them
-under `skills/`:
+under `.darwin/skills/`:
 
 ```
-skills/
+.darwin/skills/
 └── commit-message/
     ├── SKILL.md
     ├── references/
@@ -218,10 +260,10 @@ A malformed skill is reported at startup and skipped; the rest still load.
 
 ## Sessions and `--resume`
 
-Each session is snapshotted after every turn under `.strands-tui/` in the project, with
-`.strands-tui/last-session.json` pointing at the most recent one. Sessions live beside
-the repository rather than in your home directory because a coding conversation belongs to
-one repository — that scopes `--resume` per project for free. Add `.strands-tui/` to your
+Each session is snapshotted after every turn under `.darwin/sessions/`, with
+`.darwin/last-session.json` pointing at the most recent one. Sessions live beside the
+repository rather than in your home directory because a coding conversation belongs to one
+repository — that scopes `--resume` per project for free. Both paths belong in your
 `.gitignore`.
 
 `pnpm start --resume` reopens the last session and restores its history. If there is
@@ -249,7 +291,7 @@ Note that the snapshot path includes the agent id, so changing `AGENT_ID` in
 
 ```bash
 pnpm typecheck    # tsc --noEmit
-pnpm test         # the checks that need no model calls (config, skills)
+pnpm test         # the checks that need no model calls (config, MCP config, skills, AGENTS.md)
 pnpm build        # emit to dist/
 pnpm dev-repl     # plain readline REPL against the same runtime, for debugging
 ```
@@ -265,9 +307,10 @@ rather than print, and exit non-zero on failure:
 
 ```bash
 pnpm tsx spike/verify-config.ts                            # config parsing and provider switching, no model calls
-pnpm tsx spike/verify-mcp-config.ts                        # .mcp.json error paths, no servers started
+pnpm tsx spike/verify-mcp-config.ts                        # MCP config precedence and error paths, no servers started
 pnpm tsx spike/verify-skills.ts                            # filesystem and parsing, no model calls
-AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts     # agent core, permissions, resume
+pnpm tsx spike/verify-agents-md.ts                         # AGENTS.md loading, truncation, prompt order, no model calls
+AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts     # agent core, permissions, resume, AGENTS.md injection
 AWS_REGION=us-west-2 pnpm tsx spike/verify-mcp.ts          # real stdio MCP server
 AWS_REGION=us-west-2 pnpm tsx spike/verify-skills-live.ts  # both skill trigger paths
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts          # the TUI, driven through a pty
@@ -276,5 +319,5 @@ AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts      # real git repo, read
 
 The TUI suites take a scenario name to run just one, e.g.
 `pnpm tsx spike/verify-tui.ts approve` (scenarios: `approve`, `deny`, `bashExit`,
-`cancelThenContinue`, `completion`). They need a real pty (Ink requires raw mode);
+`cancelThenContinue`, `completion`, `agentsMd`). They need a real pty (Ink requires raw mode);
 `spike/tui-driver.ts` provides it.

@@ -14,7 +14,10 @@
 import { Box, Text, useApp, useInput } from 'ink';
 import React, { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 
+import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
 import type { AgentRuntime } from '../agent/runtime.js';
+import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
+import { DARWIN_DIRNAME } from '../paths.js';
 import { InputBox } from './InputBox.js';
 import { MessageList } from './MessageList.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
@@ -258,15 +261,37 @@ export function App({
 
 function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Element {
   const info = runtime.info;
+  const instructions = info.projectInstructions;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text bold>strands-darwin</Text>
+      <Text bold>darwin</Text>
       <Text dimColor>
         {info.config.provider}/{info.config.model} · session {info.sessionId}
         {info.resumed ? ' (resumed)' : ''}
       </Text>
+      {instructions !== undefined &&
+        (instructions.truncated ? (
+          <Text color="yellow">
+            {AGENTS_FILENAME}: loaded ({formatBytes(instructions.bytes)}, truncated to{' '}
+            {MAX_INSTRUCTIONS_BYTES / 1024} KB)
+          </Text>
+        ) : (
+          <Text dimColor>
+            {AGENTS_FILENAME}: loaded ({formatBytes(instructions.bytes)})
+          </Text>
+        ))}
+      {info.projectInstructionsProblem !== undefined && (
+        <Text color="yellow">
+          {AGENTS_FILENAME}: skipped — {info.projectInstructionsProblem}
+        </Text>
+      )}
       {info.mcpConfigPath !== undefined && <Text dimColor>mcp: {info.mcpServerCount} server(s)</Text>}
+      {info.mcpIgnoredConfigPath !== undefined && (
+        <Text color="yellow">
+          mcp: using {DARWIN_DIRNAME}/{MCP_CONFIG_FILENAME} — {info.mcpIgnoredConfigPath} ignored
+        </Text>
+      )}
       {info.skillNames.length > 0 && (
         <Text dimColor>skills: {info.skillNames.join(', ')} — type / to use one</Text>
       )}
@@ -278,6 +303,11 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       <Text dimColor>/exit to quit · ctrl+c cancels a turn</Text>
     </Box>
   );
+}
+
+/** Sizes are shown so an accidentally huge AGENTS.md is visible at a glance. */
+function formatBytes(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
 /** Skill names matching a `/prefix`, or none when the input is not a bare command. */

@@ -10,6 +10,8 @@ import path from 'node:path';
 import { BedrockModel } from '@strands-agents/sdk';
 import type { Model } from '@strands-agents/sdk';
 
+import { darwinDir } from './paths.js';
+
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -42,6 +44,11 @@ export interface AppConfig {
 
 export const CONFIG_FILENAME = 'config.json';
 
+/** `<projectRoot>/.darwin/config.json`. */
+export function configPath(projectRoot: string): string {
+  return path.join(darwinDir(projectRoot), CONFIG_FILENAME);
+}
+
 const DEFAULTS = {
   provider: 'bedrock',
   model: 'us.anthropic.claude-sonnet-4-6',
@@ -65,29 +72,29 @@ export function resolveRegion(configured?: string): string {
 }
 
 /**
- * Loads `config.json` from `projectRoot`. A missing file is normal — the
+ * Loads `.darwin/config.json` from `projectRoot`. A missing file is normal — the
  * defaults are a working Bedrock setup. A present but malformed file is an
  * error, since silently ignoring it would hide the user's intent.
  */
 export async function loadConfig(projectRoot: string): Promise<AppConfig> {
-  const configPath = path.join(projectRoot, CONFIG_FILENAME);
+  const file = configPath(projectRoot);
 
   let raw: string;
   try {
-    raw = await readFile(configPath, 'utf8');
+    raw = await readFile(file, 'utf8');
   } catch (error) {
     if (isFileNotFound(error)) return { ...DEFAULTS };
-    throw new ConfigError(`Could not read ${configPath}: ${describe(error)}`);
+    throw new ConfigError(`Could not read ${file}: ${describe(error)}`);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new ConfigError(`${configPath} is not valid JSON: ${describe(error)}`);
+    throw new ConfigError(`${file} is not valid JSON: ${describe(error)}`);
   }
 
-  return validate(parsed, configPath);
+  return validate(parsed, file);
 }
 
 function validate(parsed: unknown, configPath: string): AppConfig {
