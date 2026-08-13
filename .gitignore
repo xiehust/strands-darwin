@@ -1,0 +1,8 @@
+/.agents/
+/.claude/
+/.codegraph/
+/.codex/
+/.kiro/
+node_modules/
+dist/
+.strands-tui/
