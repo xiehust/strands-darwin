@@ -18,14 +18,18 @@
 import { BedrockModel, Message, TextBlock } from '@strands-agents/sdk';
 
 import { planThinking, type ThinkingEffort } from '../src/agent/thinking.js';
-import { createModelFromConfig, type AppConfig } from '../src/config.js';
+import {
+  createModelFromConfig,
+  withSoleChoice,
+  type AppConfig,
+} from '../src/config.js';
 import { assert, header, report, REGION } from './shared.js';
 
 /**
  * Sonnet 4.6 rather than the shared Haiku id: adaptive thinking needs Claude 4.6
  * or later, and this account has the `us.` profile for it.
  */
-const CONFIG: AppConfig = {
+const CONFIG: AppConfig = withSoleChoice({
   provider: 'bedrock',
   model: process.env['SPIKE_THINKING_MODEL_ID'] ?? 'us.anthropic.claude-sonnet-4-6',
   region: REGION,
@@ -39,7 +43,7 @@ const CONFIG: AppConfig = {
   // prefix, and this check is about thinking, not caching.
   promptCache: false,
   thinkingEffort: 'high',
-};
+});
 
 /** Multi-step enough that a thinking model has something to think about. */
 const PROMPT =

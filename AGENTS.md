@@ -34,14 +34,19 @@ inference-profile model ids, never bare `anthropic.*`):
 
 ```bash
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven TUI suite
-AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|bashExit|cancelThenContinue|agentsMd|usage|effort)
+AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|bashExit|cancelThenContinue|agentsMd|usage|effort|model)
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
 AWS_REGION=us-west-2 pnpm tsx spike/verify-thinking-live.ts   # effort levels the service really accepts, and that high reasons
 pnpm tsx spike/verify-mantle-live.ts                          # openai.* over Bedrock Mantle: tool calls, multi-turn, live /effort
 pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2    # which models Mantle actually serves, per region
+pnpm tsx spike/verify-model-command.ts --live                  # /model: switch provider mid-session, conversation intact
+pnpm tsx spike/probe-model-switch.ts                          # what survives handing a conversation to another provider
 ```
+
+`spike/verify-model-command.ts` without `--live` and `spike/verify-tui.ts model` make no model
+calls at all — `/model` never sends anything — so both are free to run.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
 calls. `spike/` is the test suite, not scratch space.

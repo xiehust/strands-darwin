@@ -14,7 +14,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | completion | agentsMd | usage | effort
+ *                 cancelThenContinue | completion | agentsMd | usage | effort | model
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -758,6 +758,109 @@ async function effortCommand(): Promise<void> {
   }
 }
 
+/**
+ * `/model` has to prove five things a unit test cannot: the catalogue reaches the
+ * screen with the live entry marked, switching costs no turn, the header follows
+ * the switch, the new switch state is written to `.darwin/config.json`, and an
+ * argument that resolves to nothing changes nothing.
+ *
+ * Deliberately makes no model calls at all — `/model` never sends anything — so
+ * this scenario is free apart from starting the TUI. Both entries are Bedrock for
+ * the same reason; the cross-provider switch is proven against real models in
+ * `spike/verify-model-command.ts --live`.
+ *
+ * Writes a config file, so it must NOT run in REPO_ROOT.
+ */
+async function modelCommand(): Promise<void> {
+  header('TUI — /model switches between configured models');
+
+  await resetWorkDir();
+  const configFile = path.join(WORK_DIR, '.darwin', 'config.json');
+  await mkdir(path.dirname(configFile), { recursive: true });
+  await writeFile(
+    configFile,
+    JSON.stringify(
+      {
+        models: [
+          { enable: true, name: 'fast', provider: 'bedrock', model: 'us.anthropic.claude-sonnet-4-6' },
+          { enable: false, name: 'deep', provider: 'bedrock', model: 'global.anthropic.claude-opus-5' },
+        ],
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  );
+
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('the header names the enabled model', tui.screen.includes('bedrock/us.anthropic.claude-sonnet-4-6'));
+
+    const beforeList = tui.mark();
+    tui.submit('/model');
+    await tui.waitFor('2 models configured', { timeoutMs: 30_000, from: beforeList, settleMs: 400 });
+    const listed = tui.screen.slice(beforeList);
+    assert('a bare /model lists the catalogue', listed.includes('2 models configured'));
+    assert('…marking the live entry', listed.includes('* 1. fast'));
+    assert('…and offering the other', listed.includes('2. deep'));
+    // The point of answering locally: listing must not spend a model call.
+    assert('listing did not start a turn', !listed.includes('working…'));
+
+    const beforeSwitch = tui.mark();
+    tui.submit('/model deep');
+    await tui.waitFor('saved to', { timeoutMs: 30_000, from: beforeSwitch, settleMs: 400 });
+    const switched = tui.screen.slice(beforeSwitch);
+    assert('the switch is confirmed by name', switched.includes('deep'));
+    assert('…and reported as persisted', switched.includes('saved to .darwin/config.json'));
+    // Sliced, not searched whole: the startup frame named the old model, so an
+    // unsliced assertion would pass without the header ever following.
+    assert('the header follows the switch', switched.includes('bedrock/global.anthropic.claude-opus-5'));
+    assert('switching did not start a turn', !switched.includes('working…'));
+
+    const saved = JSON.parse(await readFile(configFile, 'utf8')) as {
+      models: { name: string; enable: boolean }[];
+    };
+    console.log(`  written config: ${JSON.stringify(saved.models.map((m) => `${m.name}=${m.enable}`))}`);
+    assert('the target entry was switched on', saved.models[1]?.enable === true);
+    assert('…and the previous one off', saved.models[0]?.enable === false);
+
+    const beforeSame = tui.mark();
+    tui.submit('/model deep');
+    await tui.waitFor('already on deep', { timeoutMs: 30_000, from: beforeSame, settleMs: 400 });
+    assert('switching to the live model says so', tui.screen.slice(beforeSame).includes('already on deep'));
+
+    // Both model ids contain "claude", so this must refuse rather than pick one.
+    const beforeAmbiguous = tui.mark();
+    tui.submit('/model claude');
+    await tui.waitFor('matches more than one model', { timeoutMs: 30_000, from: beforeAmbiguous, settleMs: 400 });
+    assert(
+      'an ambiguous argument is refused',
+      tui.screen.slice(beforeAmbiguous).includes('matches more than one model'),
+    );
+
+    const beforeMiss = tui.mark();
+    tui.submit('/model gemini');
+    await tui.waitFor('no configured model matches', { timeoutMs: 30_000, from: beforeMiss, settleMs: 400 });
+    const missed = tui.screen.slice(beforeMiss);
+    assert('an unknown model is refused', missed.includes('no configured model matches'));
+    // A refused command must not reach the model as a prompt either.
+    assert('a bad argument did not start a turn', !missed.includes('working…'));
+
+    const afterRefusals = JSON.parse(await readFile(configFile, 'utf8')) as {
+      models: { enable: boolean }[];
+    };
+    assert('the refusals changed nothing on disk', afterRefusals.models[1]?.enable === true);
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly after switching model', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -769,6 +872,7 @@ const SCENARIOS = {
   agentsMd: agentsMdHeader,
   usage: usageReport,
   effort: effortCommand,
+  model: modelCommand,
 } as const;
 
 async function main(): Promise<void> {

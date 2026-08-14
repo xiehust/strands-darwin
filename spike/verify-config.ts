@@ -16,8 +16,9 @@ import {
   configPath,
   createModelFromConfig,
   loadConfig,
-  resolveRegion,
+  saveEnabledModel,
   saveThinkingEffort,
+  resolveRegion,
 } from '../src/config.js';
 import { assert, header, report } from './shared.js';
 
@@ -523,11 +524,100 @@ async function modelArray(): Promise<void> {
   assert('the file still loads afterwards', (await loadConfig(effortRoot)).thinkingEffort === 'low');
 }
 
+/**
+ * The catalogue `/model` switches between, and the file write behind it. The
+ * command's own resolution and rendering are covered by `verify-model-command.ts`;
+ * this is the config side.
+ */
+async function modelCatalogue(): Promise<void> {
+  header('config — model catalogue and switching');
+
+  const file = JSON.stringify({
+    models: [
+      { enable: true, name: 'opus', provider: 'bedrock', model: 'global.anthropic.claude-opus-5' },
+      {
+        enable: false,
+        name: 'sol',
+        provider: 'openai',
+        model: 'openai.gpt-5.6-sol',
+        bedrockMantle: true,
+        openaiApi: 'responses',
+        region: 'us-east-1',
+      },
+    ],
+  });
+
+  const config = await loadConfig(await writeConfig(file));
+  assert('every entry is listed, in file order', config.modelChoices.length === 2);
+  assert('…with its index', config.modelChoices.map((c) => c.index).join() === '0,1');
+  assert('…and its name', config.modelChoices.map((c) => c.name).join() === 'opus,sol');
+  assert('exactly one is marked enabled', config.modelChoices.filter((c) => c.enabled).length === 1);
+  assert('the enabled one is the one in effect', config.modelChoices[0]?.enabled === true);
+  // The disabled entry's fields have to be complete, since /model builds from them
+  // without re-reading the file.
+  assert('a disabled entry carries its own fields', config.modelChoices[1]?.fields.bedrockMantle === true);
+  assert('…including defaults it did not set', config.modelChoices[1]?.fields.maxTokens === 8192);
+
+  // The single-model form must present the same shape, so the runtime never has to
+  // ask which form the file used.
+  const flat = await loadConfig(await writeConfig('{ "model": "us.anthropic.claude-sonnet-4-6" }'));
+  assert('the flat form is a one-entry catalogue', flat.modelChoices.length === 1);
+  assert('…enabled', flat.modelChoices[0]?.enabled === true);
+  assert('…named after its model id', flat.modelChoices[0]?.name === 'us.anthropic.claude-sonnet-4-6');
+
+  // A name is what /model addresses, so a duplicate would hide an entry.
+  const duplicate = await expectConfigError('duplicate names are rejected', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "name": "x", "model": "a" }, { "name": "X", "model": "b" }] }',
+      ),
+    ),
+  );
+  assert('the duplicate error names both positions', /models\[0\] and models\[1\]/.test(duplicate));
+
+  // Every entry is validated at load, not at switch time: a broken disabled entry
+  // would otherwise turn /model into a failure mid-session.
+  const badDisabled = await expectConfigError('a broken disabled entry is rejected at load', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "model": "us.anthropic.claude-sonnet-4-6" }, ' +
+          '{ "model": "b", "thinkingEffort": "turbo" }] }',
+      ),
+    ),
+  );
+  assert('…naming the entry that is broken', badDisabled.includes('models[1]'));
+
+  // Switching rewrites the switch itself: one true, the rest explicitly false.
+  const switchRoot = await writeConfig(file);
+  await saveEnabledModel(switchRoot, 1);
+  const after = JSON.parse(await readFile(configPath(switchRoot), 'utf8')) as {
+    models: { name: string; enable: boolean }[];
+  };
+  assert('the target is switched on', after.models[1]?.enable === true);
+  assert('the previous one is switched off explicitly', after.models[0]?.enable === false);
+  const reloaded = await loadConfig(switchRoot);
+  assert('reloading picks the new model', reloaded.model === 'openai.gpt-5.6-sol');
+  assert('…and its transport', reloaded.bedrockMantle === true && reloaded.region === 'us-east-1');
+
+  await expectConfigError('enabling an out-of-range entry is refused', () =>
+    saveEnabledModel(switchRoot, 7),
+  );
+
+  // Nothing to switch between in the flat form, and saying so beats writing a
+  // "models" array the user never asked for.
+  const flatRoot = await writeConfig('{ "model": "us.anthropic.claude-sonnet-4-6" }');
+  const flatSwitch = await expectConfigError('switching a single-model file is refused', () =>
+    saveEnabledModel(flatRoot, 0),
+  );
+  assert('…and it says how to get a catalogue', flatSwitch.includes('"models"'));
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
   await providerSwitching();
   await modelArray();
+  await modelCatalogue();
   await rejections();
   await permissionModes();
   await permissionRules();
