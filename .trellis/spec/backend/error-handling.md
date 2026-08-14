@@ -59,6 +59,13 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | Tool call denied by user | `InterventionActions.deny(reason)` → error tool result | Model must see and react, loop must continue |
 | `auto`-mode safety classifier fails (throw, timeout, unparseable reply) | Verdict forced to `safe: false` → user is prompted | Fail-closed: classifier degradation may cost an extra prompt, never a silent approval |
 | bash command timeout / session death | SDK throws `BashTimeoutError` / `BashSessionError` → becomes an error tool result | Model retries or reports; not our code path |
+| Background `start` receives blank/malformed input | SDK/Zod error result; spawn nothing | A lifecycle-safe management shape must not smuggle a command |
+| Background task id is malformed or unknown | Error naming the invalid/unknown id; never derive a filesystem path or PID from it | The in-memory task map is the authority boundary |
+| Background log is removed or unreadable | `status` still returns process metadata with `outputBytes: null`; `output` errors with the owned log path | Losing diagnostics must not lose process control or read another path |
+| Background spawn/setup fails | Reject start, close the parent log handle, kill any exposed process group, retain an unconfirmed group for exit fallback | A partially launched command is still darwin-owned |
+| Background stop / natural leader exit | Bounded process-group SIGTERM (500 ms) then SIGKILL (500 ms); terminal status only after group disappearance | Killing only the leader or reporting success early creates or hides orphans |
+| Runtime shutdown races a background start | Latch closed, await tracked launches, then stop the visible running set | A start must reject before spawn or enter the cleanup snapshot |
+| Background cleanup cannot confirm group exit | Continue cleaning other resources and keep the group in the synchronous process-exit registry | One stubborn group must not skip MCP/bash/subagent cleanup or escape forced exit |
 | Turn cancelled (Ctrl+C) | `agent.cancel()`; stream ends with `stopReason: 'cancelled'`, no throw | Session stays usable; pending prompts released via `denyPending()` |
 
 ## Common Mistakes

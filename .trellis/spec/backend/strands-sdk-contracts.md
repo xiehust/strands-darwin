@@ -262,9 +262,119 @@ return result.toString()
 
 ---
 
+## Scenario: session-owned background bash jobs
+
+### 1. Scope / Trigger
+
+Use this contract when a long shell command must outlive one agent turn but never outlive
+darwin itself. Background work extends the existing `bash` tool; it is not a second tool or
+a durable scheduler.
+
+### 2. Signatures
+
+```typescript
+bash({ mode: 'start', command: string }): Promise<{
+  taskId: string; pid: number; outputPath: string
+}>
+bash({ mode: 'status', taskId: string }): Promise<BackgroundTaskStatus>
+bash({ mode: 'output', taskId: string }): Promise<{
+  taskId: string; output: string; startOffset: number; endOffset: number;
+  hasMore: boolean; outputPath: string
+}>
+bash({ mode: 'stop', taskId: string }): Promise<BackgroundTaskStatus>
+new BackgroundBashManager(projectRoot, sessionId)
+```
+
+Foreground `{ mode: 'execute'|'restart', ... }` keeps the SDK-vended signature and return
+values. Background states are `running | succeeded | failed | stopped`.
+
+### 3. Contracts
+
+- Runtime creates one manager and one wrapped `bash` tool. Main and child agents share the
+  manager/task ids, while foreground calls delegate to SDK `bash.invoke(input, context)` so
+  the SDK still keys persistent shells by the calling Agent.
+- `start` spawns `/bin/bash -lc <command>` at project root with inherited environment,
+  `detached: true`, and combined stdout/stderr at
+  `.darwin/sessions/<sessionId>/background/<taskId>.log`. It resolves after the OS `spawn`
+  event, not process completion.
+- Task ids are runtime-unique UUIDs and map lookups are the only authority boundary; never
+  derive a path from user-supplied `taskId`. Logs survive exit, but `--resume` restores
+  neither registry nor cursor.
+- `output` serializes per task, returns at most 64 KiB plus up to three bytes needed to
+  complete the final UTF-8 character, and advances a byte cursor without duplicates. Hold
+  an incomplete suffix while the file is growing; terminal malformed bytes may decode as
+  replacement characters so the cursor cannot stall.
+- `stop` owns the whole POSIX process group: SIGTERM, poll up to 500 ms, SIGKILL, poll up to
+  500 ms. Natural leader exit performs the same descendant cleanup before terminal state.
+  Explicit stop wins state races and settles as `stopped`.
+- `start` is tracked before its first await. Shutdown latches closed, waits in-flight
+  launches, then stops every running task with `Promise.allSettled`; no process may spawn
+  after the cleanup snapshot.
+- Keep every live/unconfirmed process group in one process-global registry. Remove it only
+  after confirmed disappearance. One idempotent synchronous `process.on('exit')` handler
+  sends SIGKILL to remaining groups; the SDK's SIGINT/SIGTERM handlers call `process.exit`,
+  so `exit` is the reliable composition point.
+- `start` is an execute permission and retains `input.command`, so existing
+  `bash:<pattern>` rules and auto/default/yolo behavior apply. `status`, `output`, `stop`,
+  and `restart` are safe lifecycle calls. Existing Pre/Post hooks see each immediate outer
+  `bash` call, not eventual background completion.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Blank `start.command` / malformed mode payload | Zod tool error; spawn nothing |
+| Invalid or unknown `taskId` | Clear error; never read or signal another path/process |
+| Log deleted/unreadable | Status keeps process metadata with `outputBytes: null`; output errors with the owned path |
+| Spawn fails | Reject start, close the parent log handle, kill/register-clean any exposed group |
+| Repeated/concurrent output | Serialized, disjoint cursor ranges |
+| Repeated/concurrent stop | Share one termination operation and stable terminal state |
+| Descendant ignores SIGTERM | Escalate to group SIGKILL within the bounded deadline |
+| Shutdown races launch setup | Launch rejects before spawn or becomes visible and is stopped |
+| Bounded cleanup cannot confirm disappearance | Keep group registered for synchronous exit cleanup |
+| Child finishes after `start` | Child foreground `restart` must not stop manager-owned work |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** a child starts a dev server, returns its task id, and the parent incrementally
+  reads output and later stops the entire process group.
+- **Base:** `execute` and `restart` flow unchanged through the SDK persistent shell.
+- **Bad:** shell `&`, dropping the `ChildProcess`, or killing only the leader creates orphan
+  descendants; a second tool name bypasses existing bash permissions/hooks; persisting task
+  metadata falsely promises resumable process control.
+
+### 6. Tests Required
+
+- `spike/verify-background-bash.ts`: foreground delegation/per-Agent persistence, real
+  subagent sharing, permission modes/rules/hooks, delayed combined output, concurrent and
+  split-UTF-8 reads, status/errors, TERM→KILL stop, natural-exit descendants, launch/shutdown
+  races, and bounded cleanup.
+- `spike/probe-background-bash-exit.ts`: direct exit, normal shutdown, CLI-style forced
+  exit, SIGINT, and SIGTERM with SDK bash signal handlers loaded; leader and descendant must
+  both disappear within deadlines.
+- Run `pnpm typecheck`, `pnpm test`, and the PTY `bashExit` scenario when model access is
+  available.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: bypasses the tool boundary and owns only the shell leader.
+spawn('/bin/bash', ['-lc', `${command} &`])
+child.kill('SIGTERM')
+
+// CORRECT: one wrapped bash tool, shared manager, process-group ownership.
+const backgroundBash = new BackgroundBashManager(projectRoot, sessionId)
+const bash = createBackgroundBashTool(backgroundBash)
+process.kill(-task.pid, 'SIGTERM')
+await backgroundBash.shutdown()
+```
+
+---
+
+
 ## Cancellation and Process Exit
 
-Two independent leaks keep the Node event loop alive; both fixes are load-bearing:
+Three independent process-lifecycle hazards are load-bearing:
 
 1. **Vended bash session**: the persistent shell's stdio pipes are live handles, and the
    SDK's own `process.on('beforeExit', cleanup)` never fires because those very pipes keep
@@ -272,13 +382,18 @@ Two independent leaks keep the Node event loop alive; both fixes are load-bearin
    `agent.tool['bash'].invoke({ mode: 'restart' }, { recordDirectToolCall: false })`
    (restart stops the running shell and only lazily creates a new one; the direct call
    bypasses interventions so no permission prompt appears at exit).
-2. **Cancelled model stream**: `BedrockModel.stream()` sends its HTTP command without an
+2. **Managed background process groups**: a background shell can leave descendants after
+   its leader exits. `BackgroundBashManager` owns detached process groups, performs bounded
+   TERM→KILL cleanup on stop/natural exit/runtime shutdown, and keeps unconfirmed groups in
+   a synchronous `exit` fallback registry. Never replace this with leader-only `child.kill()`.
+3. **Cancelled model stream**: `BedrockModel.stream()` sends its HTTP command without an
    abort signal; after `agent.cancel()` nothing destroys the socket, and the client is
    private — no public cleanup exists. `src/cli.ts` therefore arms an **unref'd** 500ms
    `process.exit` fallback *after* `await runtime.shutdown()` completes. Remove it once
    the SDK accepts an abort signal (re-check with `spike/probe-cancel-exit.ts`).
 
-Regression coverage: `verify-tui.ts` scenarios `bashExit` and `cancelThenContinue`.
+Regression coverage: `verify-background-bash.ts`, `probe-background-bash-exit.ts`, and
+`verify-tui.ts` scenarios `bashExit` / `cancelThenContinue`.
 
 Related: after a cancelled turn, release pending permission prompts with
 `PermissionQueue.denyPending()`, never `close()` — `close()` latches shut and every later

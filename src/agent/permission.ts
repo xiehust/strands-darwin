@@ -298,9 +298,20 @@ export function classify(toolName: string, rawInput: unknown): PermissionRequest
 }
 
 function classifyBash(toolName: string, input: Record<string, unknown>, rawInput: unknown): PermissionRequest {
-  // `restart` only recycles the bash session; it runs no user-supplied command.
-  if (input['mode'] === 'restart') {
+  const mode = str(input['mode']);
+  // Lifecycle operations observe or reduce only manager/session-owned work. They
+  // run no new user-supplied command and are therefore statically safe.
+  if (mode === 'restart') {
     return { toolName, kind: 'read', summary: 'bash: restart session', details: [], input: rawInput };
+  }
+  if (mode === 'status' || mode === 'output' || mode === 'stop') {
+    return {
+      toolName,
+      kind: 'read',
+      summary: `bash ${mode}: ${str(input['taskId']) ?? '(missing task id)'}`,
+      details: [],
+      input: rawInput,
+    };
   }
 
   const command = str(input['command']) ?? '';

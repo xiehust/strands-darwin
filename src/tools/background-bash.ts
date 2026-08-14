@@ -1,0 +1,497 @@
+/** Session-owned background processes exposed through the existing bash tool. */
+import { spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { mkdir, open, type FileHandle } from 'node:fs/promises';
+import path from 'node:path';
+
+import { tool, type InvokableTool, type ToolContext } from '@strands-agents/sdk';
+import { bash as sdkBash } from '@strands-agents/sdk/vended-tools/bash';
+import type { BashInput, BashOutput } from '@strands-agents/sdk/vended-tools/bash';
+import { z } from 'zod';
+
+import { sessionPaths } from '../agent/session.js';
+
+const OUTPUT_LIMIT = 64 * 1024;
+const TERM_GRACE_MS = 500;
+const KILL_GRACE_MS = 500;
+const POLL_MS = 20;
+
+const activeProcessGroups = new Set<number>();
+let exitCleanupInstalled = false;
+
+function installExitCleanup(): void {
+  if (exitCleanupInstalled) return;
+  exitCleanupInstalled = true;
+  // The SDK bash module owns SIGINT/SIGTERM handlers which call process.exit().
+  // The synchronous exit event is consequently the only reliable composition point.
+  process.on('exit', () => {
+    for (const pid of activeProcessGroups) {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        // The group already disappeared or the OS refused the last-resort signal.
+      }
+    }
+  });
+}
+
+export type BackgroundTaskState = 'running' | 'succeeded' | 'failed' | 'stopped';
+
+export interface BackgroundTaskStatus {
+  taskId: string;
+  state: BackgroundTaskState;
+  command: string;
+  pid: number;
+  startedAt: string;
+  finishedAt: string | null;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  outputPath: string;
+  outputBytes: number | null;
+}
+
+export interface BackgroundStartResult {
+  taskId: string;
+  pid: number;
+  outputPath: string;
+}
+
+export interface BackgroundOutputResult {
+  taskId: string;
+  output: string;
+  startOffset: number;
+  endOffset: number;
+  hasMore: boolean;
+  outputPath: string;
+}
+
+interface ManagedTask {
+  readonly id: string;
+  readonly command: string;
+  readonly pid: number;
+  readonly outputPath: string;
+  readonly outputDevice: number;
+  readonly outputInode: number;
+  readonly startedAt: string;
+  readonly child: ChildProcess;
+  state: BackgroundTaskState;
+  finishedAt: string | null;
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  cursor: number;
+  stopRequested: boolean;
+  stopPromise?: Promise<BackgroundTaskStatus>;
+  serial: Promise<void>;
+}
+
+export class BackgroundBashManager {
+  private readonly tasks = new Map<string, ManagedTask>();
+  private readonly launches = new Set<Promise<unknown>>();
+  private readonly outputDirectory: string;
+  private closing = false;
+
+  constructor(
+    private readonly projectRoot: string,
+    sessionId: string,
+    private readonly openFile: typeof open = open,
+  ) {
+    this.outputDirectory = path.join(sessionPaths(projectRoot).sessionsDir, sessionId, 'background');
+    installExitCleanup();
+  }
+
+  start(command: string): Promise<BackgroundStartResult> {
+    if (this.closing) return Promise.reject(new Error('Background bash manager is shutting down'));
+
+    // Register the whole launch before its first asynchronous setup completes. shutdown()
+    // latches `closing`, waits this set, and only then takes its stop snapshot.
+    const launch = this.launch(command);
+    this.launches.add(launch);
+    void launch.then(
+      () => this.launches.delete(launch),
+      () => this.launches.delete(launch),
+    );
+    return launch;
+  }
+
+  async status(taskId: string): Promise<BackgroundTaskStatus> {
+    const task = this.lookup(taskId);
+    return this.serialize(task, () => this.snapshot(task));
+  }
+
+  async output(taskId: string): Promise<BackgroundOutputResult> {
+    const task = this.lookup(taskId);
+    return this.serialize(task, () => this.readOutput(task));
+  }
+
+  stop(taskId: string): Promise<BackgroundTaskStatus> {
+    const task = this.lookup(taskId);
+    if (task.state !== 'running') return this.status(taskId);
+    if (task.stopPromise !== undefined) return task.stopPromise;
+
+    // Set precedence before entering the queue: a close callback already performing
+    // natural cleanup must still settle as stopped when this call races it.
+    task.stopRequested = true;
+    const stopping = this.serialize(task, async () => {
+      if (task.state === 'running') {
+        const cleaned = await cleanupProcessGroup(task.pid);
+        if (cleaned) this.finish(task, 'stopped');
+      }
+      return this.snapshot(task);
+    });
+    task.stopPromise = stopping;
+    return stopping;
+  }
+
+  async shutdown(): Promise<void> {
+    this.closing = true;
+    await Promise.allSettled([...this.launches]);
+    const running = [...this.tasks.values()].filter((task) => task.state === 'running');
+    await Promise.allSettled(running.map((task) => this.stop(task.id)));
+  }
+
+  private async launch(command: string): Promise<BackgroundStartResult> {
+    const id = `bg-${randomUUID()}`;
+    await mkdir(this.outputDirectory, { recursive: true });
+
+    const outputPath = path.join(this.outputDirectory, `${id}.log`);
+    const handle = await this.openFile(outputPath, 'wx', 0o600);
+    let outputIdentity: Awaited<ReturnType<FileHandle['stat']>>;
+    try {
+      outputIdentity = await handle.stat();
+    } catch (error) {
+      await handle.close().catch(() => undefined);
+      throw error;
+    }
+    let child: ChildProcess | undefined;
+    let closed!: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+    try {
+      // The latch is checked immediately before spawn. A shutdown racing directory/file
+      // setup either prevents spawn here or waits for this launch and then sees the task.
+      if (this.closing) throw new Error('Background bash manager is shutting down');
+
+      child = spawn('/bin/bash', ['-lc', command], {
+        cwd: this.projectRoot,
+        env: process.env,
+        detached: true,
+        stdio: ['ignore', handle.fd, handle.fd],
+      });
+      // Register as soon as Node exposes the pid, before yielding to the event
+      // loop for the spawn confirmation. A signal-triggered process.exit() in
+      // that narrow window must still kill the new group.
+      if (child.pid !== undefined) activeProcessGroups.add(child.pid);
+
+      closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+        child?.once('close', (code, signal) => resolve({ code, signal }));
+      });
+      await new Promise<void>((resolve, reject) => {
+        const onSpawn = () => {
+          // Keep the one-shot error listener after spawn as well: ChildProcess may
+          // still emit an asynchronous error, and an unhandled event would crash.
+          resolve();
+        };
+        const onError = (error: Error) => {
+          child?.off('spawn', onSpawn);
+          reject(error);
+        };
+        child?.once('spawn', onSpawn);
+        child?.once('error', onError);
+      });
+    } catch (error) {
+      if (child?.pid !== undefined) await cleanupProcessGroup(child.pid);
+      await handle.close().catch(() => undefined);
+      throw error;
+    }
+
+    // The child inherited the descriptor; close only the parent's copy. A close
+    // failure after spawn is treated as launch failure so no untracked process
+    // escapes into runtime shutdown.
+    try {
+      await handle.close();
+    } catch (error) {
+      if (child.pid !== undefined) await cleanupProcessGroup(child.pid);
+      throw error;
+    }
+
+    const pid = child.pid;
+    if (pid === undefined) throw new Error('Background bash spawned without a process id');
+
+    const task: ManagedTask = {
+      id,
+      command,
+      pid,
+      outputPath,
+      outputDevice: outputIdentity.dev,
+      outputInode: outputIdentity.ino,
+      startedAt: new Date().toISOString(),
+      child,
+      state: 'running',
+      finishedAt: null,
+      exitCode: null,
+      signal: null,
+      cursor: 0,
+      stopRequested: false,
+      serial: Promise.resolve(),
+    };
+    this.tasks.set(id, task);
+
+    void closed.then(({ code, signal }) => {
+      task.exitCode = code;
+      task.signal = signal;
+      return this.serialize(task, async () => {
+        if (task.state !== 'running') return;
+        // A shell leader can exit while descendants retain its process group. Do not
+        // report terminal completion until that entire ownership boundary is gone.
+        const cleaned = await cleanupProcessGroup(task.pid);
+        if (cleaned) {
+          const state = task.stopRequested ? 'stopped' : code === 0 ? 'succeeded' : 'failed';
+          this.finish(task, state);
+        }
+      });
+    });
+
+    return { taskId: id, pid, outputPath };
+  }
+
+  private finish(task: ManagedTask, state: Exclude<BackgroundTaskState, 'running'>): void {
+    if (task.state !== 'running') return;
+    task.state = state;
+    task.finishedAt = new Date().toISOString();
+  }
+
+  private lookup(taskId: string): ManagedTask {
+    if (!/^bg-[0-9a-f-]{36}$/.test(taskId)) {
+      throw new Error(`Invalid background bash task id: ${JSON.stringify(taskId)}`);
+    }
+    const task = this.tasks.get(taskId);
+    if (task === undefined) throw new Error(`Unknown background bash task: ${taskId}`);
+    return task;
+  }
+
+  private serialize<T>(task: ManagedTask, operation: () => Promise<T> | T): Promise<T> {
+    const result = task.serial.then(operation, operation);
+    task.serial = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async snapshot(task: ManagedTask): Promise<BackgroundTaskStatus> {
+    let outputBytes: number | null = null;
+    let handle: FileHandle | undefined;
+    try {
+      handle = await this.openOwnedLog(task);
+      outputBytes = (await handle.stat()).size;
+    } catch {
+      // Process metadata remains useful when a retained log was externally removed.
+    } finally {
+      await handle?.close();
+    }
+    return {
+      taskId: task.id,
+      state: task.state,
+      command: task.command,
+      pid: task.pid,
+      startedAt: task.startedAt,
+      finishedAt: task.finishedAt,
+      exitCode: task.exitCode,
+      signal: task.signal,
+      outputPath: task.outputPath,
+      outputBytes,
+    };
+  }
+
+  private async readOutput(task: ManagedTask): Promise<BackgroundOutputResult> {
+    let handle: FileHandle | undefined;
+    let size: number;
+    try {
+      handle = await this.openOwnedLog(task);
+      size = (await handle.stat()).size;
+    } catch (error) {
+      await handle?.close();
+      throw new Error(`Cannot read background task log ${task.outputPath}: ${errorMessage(error)}`);
+    }
+
+    const startOffset = task.cursor;
+    const available = Math.max(0, size - startOffset);
+    if (available === 0) {
+      await handle.close();
+      return { taskId: task.id, output: '', startOffset, endOffset: startOffset, hasMore: false, outputPath: task.outputPath };
+    }
+
+    const bytesToRead = Math.min(available, OUTPUT_LIMIT + 3);
+    const buffer = Buffer.allocUnsafe(bytesToRead);
+    let bytesRead: number;
+    try {
+      ({ bytesRead } = await handle.read(buffer, 0, bytesToRead, startOffset));
+    } catch (error) {
+      throw new Error(`Cannot read background task log ${task.outputPath}: ${errorMessage(error)}`);
+    } finally {
+      await handle.close();
+    }
+
+    const data = buffer.subarray(0, bytesRead);
+    const terminalEof = task.state !== 'running' && startOffset + bytesRead >= size;
+    const consumed = completeUtf8Boundary(data, Math.min(OUTPUT_LIMIT, bytesRead), terminalEof);
+    const output = data.subarray(0, consumed).toString('utf8');
+    task.cursor += consumed;
+    return {
+      taskId: task.id,
+      output,
+      startOffset,
+      endOffset: task.cursor,
+      hasMore: size > task.cursor,
+      outputPath: task.outputPath,
+    };
+  }
+
+  private async openOwnedLog(task: ManagedTask): Promise<FileHandle> {
+    const handle = await this.openFile(task.outputPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const metadata = await handle.stat();
+      if (!metadata.isFile() || metadata.dev !== task.outputDevice || metadata.ino !== task.outputInode) {
+        throw new Error('the task log was replaced');
+      }
+      return handle;
+    } catch (error) {
+      await handle.close();
+      throw error;
+    }
+  }
+}
+
+
+
+function completeUtf8Boundary(data: Buffer, boundary: number, terminalEof: boolean): number {
+  if (boundary === 0 || (terminalEof && boundary === data.length)) return boundary;
+
+  let lead = boundary - 1;
+  while (lead >= Math.max(0, boundary - 3) && (data[lead]! & 0xc0) === 0x80) lead -= 1;
+  if (lead < 0) return boundary;
+
+  const first = data[lead]!;
+  const expected = first < 0x80 ? 1 : first >= 0xc2 && first <= 0xdf ? 2 : first <= 0xef ? 3 : first <= 0xf4 ? 4 : 1;
+  const present = boundary - lead;
+  if (expected <= present) return boundary;
+
+  const needed = expected - present;
+  if (boundary + needed <= data.length) {
+    for (let index = boundary; index < boundary + needed; index += 1) {
+      if ((data[index]! & 0xc0) !== 0x80) return boundary;
+    }
+    return boundary + needed;
+  }
+  // A growing file may currently end in half a code point. Keep those bytes for
+  // the next poll; at terminal EOF malformed bytes are decoded with replacement.
+  return terminalEof ? boundary : lead;
+}
+
+async function cleanupProcessGroup(pid: number): Promise<boolean> {
+  if (!groupExists(pid)) {
+    activeProcessGroups.delete(pid);
+    return true;
+  }
+  signalGroup(pid, 'SIGTERM');
+  if (await waitForGroupExit(pid, TERM_GRACE_MS)) return true;
+  signalGroup(pid, 'SIGKILL');
+  return waitForGroupExit(pid, KILL_GRACE_MS);
+}
+
+function signalGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if (!isNoSuchProcess(error)) return;
+  }
+}
+
+function groupExists(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return !isNoSuchProcess(error);
+  }
+}
+
+async function waitForGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (groupExists(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+  }
+  const gone = !groupExists(pid);
+  if (gone) activeProcessGroups.delete(pid);
+  return gone;
+}
+
+function isNoSuchProcess(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ESRCH';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// Bedrock requires every tool input schema's top-level JSON `type` to be
+// `object`; a Zod union serializes as a top-level `anyOf` and the request is
+// rejected before the model can call it. Keep one object and enforce the
+// mode-specific shape in refinement instead.
+const inputSchema = z.object({
+  mode: z.enum(['execute', 'restart', 'start', 'status', 'output', 'stop'])
+    .describe('Operation mode'),
+  command: z.string().optional().describe('Command required by execute and start modes'),
+  timeout: z.number().positive().optional().describe('Timeout in seconds for execute mode'),
+  taskId: z.string().optional().describe('Session-local task id required by status, output, and stop'),
+}).superRefine((input, context) => {
+  if (input.mode === 'execute' && input.command === undefined) {
+    context.addIssue({ code: 'custom', path: ['command'], message: 'command is required in execute mode' });
+  }
+  if (input.mode === 'start' && (input.command === undefined || input.command.trim() === '')) {
+    context.addIssue({ code: 'custom', path: ['command'], message: 'command is required in start mode' });
+  }
+  if ((input.mode === 'status' || input.mode === 'output' || input.mode === 'stop') && !input.taskId) {
+    context.addIssue({ code: 'custom', path: ['taskId'], message: `taskId is required in ${input.mode} mode` });
+  }
+  if (input.mode !== 'execute' && input.mode !== 'restart' && input.timeout !== undefined) {
+    context.addIssue({ code: 'custom', path: ['timeout'], message: `timeout is not accepted in ${input.mode} mode` });
+  }
+  if (input.mode !== 'execute' && input.mode !== 'restart' && input.mode !== 'start' && input.command !== undefined) {
+    context.addIssue({ code: 'custom', path: ['command'], message: `command is not accepted in ${input.mode} mode` });
+  }
+  if (input.mode === 'start' && input.taskId !== undefined) {
+    context.addIssue({ code: 'custom', path: ['taskId'], message: 'taskId is not accepted in start mode' });
+  }
+});
+
+type BackgroundBashInput = z.infer<typeof inputSchema>;
+type BackgroundBashOutput = BashOutput | 'Bash session restarted' | BackgroundStartResult | BackgroundTaskStatus | BackgroundOutputResult;
+
+/** Wraps the SDK tool without changing its foreground persistent-shell behavior. */
+export function createBackgroundBashTool(
+  manager: BackgroundBashManager,
+  foreground: InvokableTool<BashInput, BashOutput | 'Bash session restarted'> = sdkBash,
+): InvokableTool<BackgroundBashInput, BackgroundBashOutput> {
+  return tool<typeof inputSchema, BackgroundBashOutput>({
+    name: 'bash',
+    description:
+      'Runs foreground commands in a persistent shell and session-owned background commands. ' +
+      'Modes: execute, restart, start, status, output, and stop.',
+    inputSchema,
+    callback: (input, context?: ToolContext) => {
+      switch (input.mode) {
+        case 'execute':
+        case 'restart':
+          return foreground.invoke(input as BashInput, context);
+        case 'start':
+          return manager.start(input.command!);
+        case 'status':
+          return manager.status(input.taskId!);
+        case 'output':
+          return manager.output(input.taskId!);
+        case 'stop':
+          return manager.stop(input.taskId!);
+      }
+    },
+  });
+}

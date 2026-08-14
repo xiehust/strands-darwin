@@ -125,12 +125,13 @@ allow-rule.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything
 else takes an explicit `projectRoot`.
 
-**Process exit is engineered, not assumed.** Two SDK leaks would otherwise hang the process:
-the vended bash tool's persistent shell (reaped in `runtime.shutdown()` via a direct
-`restart` invoke) and a cancelled model stream's socket (no public cleanup exists — `cli.ts`
-arms an unref'd 500ms `process.exit` fallback *after* shutdown completes). Don't remove
-either without re-running `spike/probe-cancel-exit.ts` and the `bashExit` /
-`cancelThenContinue` TUI scenarios.
+**Process exit is engineered, not assumed.** The vended bash tool's persistent shell is
+reaped in `runtime.shutdown()` via direct `restart`; session-owned background bash jobs are
+reaped as whole process groups with bounded TERM→KILL cleanup plus a synchronous `exit`
+fallback; and a cancelled model stream's socket has no public cleanup, so `cli.ts` arms an
+unref'd 500ms `process.exit` fallback *after* shutdown completes. Don't change these paths
+without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`, and the
+`bashExit` / `cancelThenContinue` TUI scenarios.
 
 **TUI** (`src/tui/`): Ink 7 + React 19. The Agent must be constructed with `printer: false`
 or the SDK writes to stdout and fights Ink. Completed history renders through `<Static>`;

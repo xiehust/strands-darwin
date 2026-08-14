@@ -7,7 +7,6 @@
  */
 import { Agent, SummarizingConversationManager } from '@strands-agents/sdk';
 import type { AgentStreamEvent, InterventionHandler, McpClient, Model } from '@strands-agents/sdk';
-import { bash } from '@strands-agents/sdk/vended-tools/bash';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
 import { compactConversation, type CompactResult } from './compact.js';
@@ -30,6 +29,7 @@ import {
   type AppConfig,
   type ModelChoice,
 } from '../config.js';
+import { BackgroundBashManager, createBackgroundBashTool } from '../tools/background-bash.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
@@ -178,6 +178,7 @@ export class AgentRuntime {
     private readonly skills: SkillsPlugin,
     private readonly commands: CustomCommandRegistry,
     private readonly subagents: SubagentTool,
+    private readonly backgroundBash: BackgroundBashManager,
     private readonly gate: PermissionGate,
     private readonly compactionManager: SummarizingConversationManager,
     private readonly preserveRecentMessages: number,
@@ -222,6 +223,10 @@ export class AgentRuntime {
       : new ToolHookGate(options.projectRoot, config.hooks, gate);
 
     const sessionManager = createSessionManager(options.projectRoot, session.sessionId);
+    // One manager and wrapper are shared by the main Agent and every child tool
+    // catalogue. Foreground calls still delegate with the caller's ToolContext.
+    const backgroundBash = new BackgroundBashManager(options.projectRoot, session.sessionId);
+    const bash = createBackgroundBashTool(backgroundBash);
     const conversationManager = new SummarizingConversationManager({
       summaryRatio: config.summaryRatio,
       preserveRecentMessages: config.preserveRecentMessages,
@@ -292,6 +297,7 @@ export class AgentRuntime {
       skills,
       commands,
       subagents,
+      backgroundBash,
       gate,
       compactionManager,
       config.preserveRecentMessages,
@@ -541,6 +547,7 @@ export class AgentRuntime {
   async shutdown(): Promise<void> {
     await Promise.allSettled([
       this.subagents.shutdown(),
+      this.backgroundBash.shutdown(),
       this.stopBashSession(),
       disconnectAll(this.mcpClients),
     ]);

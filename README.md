@@ -75,7 +75,7 @@ the project root, and everything darwin reads or writes lives there:
     ├── skills/            # optional: one directory per skill
     │   └── commit-message/
     │       └── SKILL.md
-    ├── sessions/          # written: conversation snapshots        (gitignore this)
+    ├── sessions/          # written: snapshots and background logs (gitignore this)
     └── last-session.json  # written: what --resume reopens         (gitignore this)
 ```
 
@@ -260,6 +260,37 @@ adaptive thinking at all, and the header says that too.
 
 On the `openai` provider the level becomes `reasoning_effort`, which has no `xhigh` or `max`
 (both clamp to `high`) and is only accepted by reasoning models.
+
+## Background bash jobs
+
+The existing `bash` tool can run long-lived work without blocking the current turn. Its
+modes are:
+
+| Mode | Input | Behavior |
+|---|---|---|
+| `execute` | `command`, optional `timeout` | Runs in the SDK's persistent foreground shell, unchanged |
+| `restart` | — | Recycles that foreground shell |
+| `start` | `command` | Starts a session-owned process group and immediately returns a task id, PID, and log path |
+| `status` | `taskId` | Returns command, state, timing, exit metadata, log path, and output byte count |
+| `output` | `taskId` | Returns the next complete UTF-8 chunk (at most 64 KiB, plus bytes needed to finish its final character) from that task's remembered cursor |
+| `stop` | `taskId` | Stops the task's whole process group with bounded TERM→KILL cleanup |
+
+A task is `running`, `succeeded`, `failed`, or `stopped`. Standard output and standard
+error are combined in
+`.darwin/sessions/<session-id>/background/<task-id>.log`; the absolute path is included
+in start and status results for full replay. Logs remain after completion and after darwin
+exits, and are not pruned automatically.
+
+Task ids and incremental-read cursors live only in the current process. `--resume` may
+reopen the conversation and retained logs, but it does not restore control of old jobs.
+Main and child agents in one run share the same task registry. Darwin owns every process
+it starts: runtime shutdown stops all registered process groups, and a synchronous process
+exit fallback kills anything still registered after bounded cleanup. As with foreground
+bash, uncatchable termination such as `SIGKILL` or machine failure cannot provide that
+guarantee.
+
+`start` follows the same permission mode and `bash:<pattern>` allow rules as `execute`.
+`status`, `output`, `stop`, and `restart` are safe lifecycle operations and do not prompt.
 
 ## Permissions
 
