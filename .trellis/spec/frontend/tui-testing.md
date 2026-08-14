@@ -24,11 +24,13 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 
 - Ink `usePaste((text: string) => void)` owns bracketed paste events.
 - Ink `useInput((typed, key) => void)` owns keys: CR/plain Enter submits, LF/Ctrl+J inserts a newline.
+- Terminals may send printable text plus CR/LF/CRLF as one `typed` value with `key.return === false`; a multi-character trailing line-ending run is one submit terminator.
 - A draft ending in `\\` turns Enter into continuation and consumes the marker.
 
 ### 3. Contracts
 
 - Draft line endings are canonical LF. Normalize CRLF and CR before appending.
+- Keep an immediate ref mirror beside React draft state. Multiple stdin events may arrive before React renders; handlers that submit/continue must read the mirror, not a stale render closure.
 - Preserve LF and tab; drop other C0 controls and DEL.
 - Paste never submits. It appends the entire payload, including all line breaks.
 - Render the first logical line after `you> ` and later lines after `...> `; the cursor follows the last line.
@@ -43,6 +45,8 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 | Ctrl+J / LF | Append one LF, do not submit |
 | Trailing `\\` + Enter | Replace marker with LF, do not submit |
 | Plain Enter / CR | Submit the complete draft |
+| `text` + CR/LF/CRLF in one non-paste event | Strip the whole terminator run and submit once |
+| `text\\` + batched terminator | Consume `\\`, append one LF, do not submit |
 | Other C0 or DEL inside paste | Drop the control byte, retain surrounding text |
 | Paste during permission prompt | Ignore it; permission keeps keyboard ownership |
 
@@ -50,11 +54,11 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 
 - Good: `alpha\r\nbeta` paste renders `you> alpha` then `...> beta` and remains editable.
 - Base: a one-line draft and Enter behave exactly as before.
-- Bad: splitting at the first newline submits `alpha` and silently loses `beta`; stripping all controls also destroys every intended LF.
+- Bad: splitting at the first newline submits `alpha` and silently loses `beta`; stripping all controls also destroys every intended LF. Treating batched `text\r\n` as draft text leaves an empty continuation row and never starts the turn.
 
 ### 6. Tests required
 
-Run `verify-tui.ts multiline`. Assert on first and continuation rows, absence of `working…` after paste/manual newline, consumed continuation marker, backspace across LF, and bounded clean exit after plain Enter submits `/exit`. Run `verify-tui.ts completion` after changing the Enter branch.
+Run `verify-tui.ts multiline`. Assert on first and continuation rows, absence of `working…` after paste/manual newline, consumed continuation marker, backspace across LF, and bounded clean exit after plain Enter submits `/exit`. Run `verify-tui.ts chunkedEnter` to send text and Enter in one pty write and cover batched continuation plus CRLF submission. Run `verify-tui.ts completion` after changing the Enter branch.
 
 ### 7. Wrong vs correct
 
@@ -64,6 +68,13 @@ void submit(draft + typed.slice(0, typed.search(/[\r\n]/)));
 
 // Correct: use Ink's bracketed-paste channel and retain normalized layout.
 usePaste((text) => setDraft((draft) => draft + normalizeDraftText(text)));
+
+// Wrong: a batched text event ending in CRLF falls through as multiline draft text.
+setDraft((draft) => draft + normalizeDraftText(typed));
+
+// Correct: strip a multi-character line-ending suffix and submit the mirrored draft.
+const suffix = typed.match(/[\r\n]+$/)?.[0];
+if (typed.length > 1 && suffix !== undefined) submit(draftRef.current + typed.slice(0, -suffix.length));
 ```
 
 ## Custom slash-command contract

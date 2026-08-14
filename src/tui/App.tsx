@@ -61,7 +61,16 @@ export function App({
   const { exit } = useApp();
   const [state, dispatch] = useReducer(turnReducer, initialTurnState);
   const [status, setStatus] = useState<Status>('idle');
-  const [draft, setDraft] = useState('');
+  const [draft, setDraftState] = useState('');
+  // React may render after several stdin events have already arrived. Keep an
+  // immediate mirror so a batched text event and its following Enter cannot read
+  // different generations of draft state.
+  const draftRef = useRef('');
+  const setDraft = useCallback((next: string | ((current: string) => string)) => {
+    const value = typeof next === 'function' ? next(draftRef.current) : next;
+    draftRef.current = value;
+    setDraftState(value);
+  }, []);
   const [selectedCompletion, setSelectedCompletion] = useState(0);
   const [frame, setFrame] = useState(0);
   const interruptedAt = useRef<number | undefined>(undefined);
@@ -345,7 +354,7 @@ export function App({
     if (key.return) {
       // A trailing backslash is an explicit continuation marker. Consume it so
       // the prompt sent later contains the intended newline, not editor syntax.
-      if (draft.endsWith('\\')) {
+      if (draftRef.current.endsWith('\\')) {
         setDraft((current) => `${current.slice(0, -1)}\n`);
         setSelectedCompletion(0);
         return;
@@ -357,14 +366,18 @@ export function App({
         acceptCompletion();
         return;
       }
-      void submit(draft);
+      void submit(draftRef.current);
       return;
     }
 
     // A pty or terminal may batch printable text and its final Enter into one
-    // event. Preserve the text, but keep the trailing CR's submit semantics.
-    if (typed.length > 1 && typed.endsWith('\r')) {
-      const text = draft + normalizeDraftText(typed.slice(0, -1));
+    // event. Depending on line discipline, that terminator reaches Ink as CR,
+    // LF, or CRLF (occasionally doubled); preserve the text but keep one Enter's
+    // submit semantics. A single LF remains the Ctrl+J branch below.
+    const enterSuffix = typed.match(/[\r\n]+$/)?.[0];
+    const batchedEnterLength = typed.length > 1 ? (enterSuffix?.length ?? 0) : 0;
+    if (batchedEnterLength > 0) {
+      const text = draftRef.current + normalizeDraftText(typed.slice(0, -batchedEnterLength));
       if (text.endsWith('\\')) {
         setDraft(`${text.slice(0, -1)}\n`);
         setSelectedCompletion(0);

@@ -63,6 +63,10 @@ export interface TuiSession {
   send(keys: string): void;
   /** Types text and presses Enter. */
   submit(text: string): void;
+  /** Sends text plus CRLF in one write, matching terminals with translated Enter. */
+  submitCrLf(text: string): void;
+  /** Sends text plus CR in one write, forcing Ink's batched-input path. */
+  submitChunk(text: string): void;
   /** Resolves with the exit code. */
   exited(): Promise<number>;
   /**
@@ -209,6 +213,14 @@ export function startTui(options: TuiOptions): TuiSession {
     },
 
     submit(text) {
+      child.write(`${text}\r`);
+    },
+
+    submitCrLf(text) {
+      child.write(`${text}\r\n`);
+    },
+
+    submitChunk(text) {
       child.write(`${text}\r`);
     },
 

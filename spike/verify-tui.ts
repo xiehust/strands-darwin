@@ -14,7 +14,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | completion | agentsMd | usage | effort | model
+ *                 cancelThenContinue | multiline | chunkedEnter | completion | agentsMd | usage | effort | model
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -449,7 +449,10 @@ async function multilineInput(): Promise<void> {
     });
     const continued = tui.screen.slice(beforeBackslashEnter);
     assert('backslash plus Enter inserts a newline', continued.includes('...> slash-delta'));
-    assert('the continuation backslash is consumed', !continued.includes('ctrlj-gamma\\'));
+    assert(
+      'the continuation backslash is consumed',
+      /\.\.\.> ctrlj-gamma\r?\n\.\.\.> slash-delta/.test(continued),
+    );
     assert('manual newlines do not submit the draft', !continued.includes('working…'));
 
     // Backspace remains append-only, but it must be able to cross a line boundary.
@@ -465,6 +468,49 @@ async function multilineInput(): Promise<void> {
     assert('plain Enter still submits', code === 0);
   } finally {
     tui.kill();
+  }
+}
+
+/** CRLF may arrive in the same stdin event as text; it must still submit once. */
+async function chunkedEnter(): Promise<void> {
+  header('TUI — batched text plus CRLF submits');
+
+  const dir = '/tmp/darwin-chunked-enter-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  const continuationTui = startTui({ cwd: dir });
+
+  try {
+    await continuationTui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const beforeContinuation = continuationTui.mark();
+    continuationTui.submitChunk('/exit\\');
+    await continuationTui.waitFor('...>  ', {
+      timeoutMs: 30_000,
+      from: beforeContinuation,
+      settleMs: 400,
+    });
+    const continuation = continuationTui.screen.slice(beforeContinuation);
+    assert('batched CRLF keeps backslash continuation semantics', continuation.includes('you> /exit'));
+    assert('batched continuation does not submit', !continuation.includes('working…'));
+
+    // If the backslash was consumed, the complete draft trims to `/exit`. If it
+    // survived, this would send `/exit\\` to the model and the process would stay up.
+    continuationTui.send('\r');
+    const continuationCode = await continuationTui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('batched continuation consumes the backslash', continuationCode === 0);
+  } finally {
+    continuationTui.kill();
+  }
+
+  const submitTui = startTui({ cwd: dir });
+  try {
+    await submitTui.waitFor('you>', { timeoutMs: 60_000 });
+    submitTui.submitCrLf('/exit');
+    const code = await submitTui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('text and CRLF in one write submits exactly once', code === 0);
+  } finally {
+    submitTui.kill();
   }
 }
 
@@ -978,6 +1024,7 @@ const SCENARIOS = {
   bashExit: exitAfterBash,
   cancelThenContinue,
   multiline: multilineInput,
+  chunkedEnter,
   completion: slashCompletion,
   agentsMd: agentsMdHeader,
   usage: usageReport,
