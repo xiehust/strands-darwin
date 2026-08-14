@@ -26,6 +26,7 @@ const CONFIG: AppConfig = {
   // The classifier overrides this to false anyway; set explicitly so this fixture
   // reads as "cache state is irrelevant here" rather than as an omission.
   promptCache: true,
+  thinkingEffort: 'high',
 };
 
 function request(command: string): AssessedPermissionRequest {

@@ -8,7 +8,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { BedrockModel } from '@strands-agents/sdk';
-import type { Model } from '@strands-agents/sdk';
+import type { BaseModelConfig, JSONValue, Model } from '@strands-agents/sdk';
 
 import { isValidRule } from './agent/permission-rules.js';
 import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
@@ -18,6 +18,16 @@ import {
   PROMPT_CACHE_TTLS,
   type PromptCacheTtl,
 } from './agent/prompt-cache.js';
+import {
+  claudeThinkingFields,
+  DEFAULT_THINKING_EFFORT,
+  isThinkingEffort,
+  openaiThinkingParams,
+  planThinking,
+  THINKING_EFFORTS,
+  type ThinkingEffort,
+  type ThinkingPlan,
+} from './agent/thinking.js';
 import { darwinDir } from './paths.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
@@ -71,6 +81,18 @@ export interface AppConfig {
    */
   promptCacheTtl?: PromptCacheTtl;
   /**
+   * How hard the model thinks before answering: `low`, `medium`, `high` (the
+   * default), `xhigh` or `max`. Claude serves this as *adaptive* thinking — the
+   * model decides per request whether to think at all — so a low level is a hint
+   * to skip it on easy work, not a hard budget. See `src/agent/thinking.ts`.
+   *
+   * A level the model cannot serve is clamped rather than sent, so raising this is
+   * always safe. On the `openai` provider it becomes `reasoning_effort`, which
+   * only reasoning models accept — a non-reasoning OpenAI model will reject every
+   * request, so pair that provider with a reasoning model.
+   */
+  thinkingEffort: ThinkingEffort;
+  /**
    * Model id for `auto` mode's safety classifier. Optional — each provider has
    * a cheap default. Bedrock ids must be inference profiles, like `model`.
    */
@@ -99,6 +121,7 @@ const DEFAULTS = {
   preserveRecentMessages: 10,
   permissionMode: 'default',
   promptCache: true,
+  thinkingEffort: DEFAULT_THINKING_EFFORT,
 } as const satisfies Partial<AppConfig>;
 
 const DEFAULT_REGION = 'us-west-2';
@@ -162,9 +185,21 @@ function validate(parsed: unknown, configPath: string): AppConfig {
     );
   }
 
+  // Rejected rather than clamped, unlike an unsupported-but-real level: a typo is
+  // not intent, and silently thinking at some other depth than the file says is
+  // both a cost and a quality surprise.
+  const thinkingEffort = input['thinkingEffort'] ?? DEFAULTS.thinkingEffort;
+  if (!isThinkingEffort(thinkingEffort)) {
+    throw new ConfigError(
+      `${configPath}: unknown thinkingEffort ${JSON.stringify(thinkingEffort)}. ` +
+        `Expected one of ${THINKING_EFFORTS.join(', ')}.`,
+    );
+  }
+
   const config: AppConfig = {
     provider,
     permissionMode,
+    thinkingEffort,
     model: stringField(input, 'model', configPath) ?? DEFAULTS.model,
     maxTokens: numberField(input, 'maxTokens', configPath, { min: 1 }) ?? DEFAULTS.maxTokens,
     summaryRatio:
@@ -272,6 +307,32 @@ export async function appendAllowRule(projectRoot: string, rule: string): Promis
   rules['allow'] = allow;
   record['permissionRules'] = rules;
 
+  await writeConfigRecord(file, record);
+}
+
+/**
+ * Persists `thinkingEffort` in `.darwin/config.json`, so a level chosen with
+ * `/effort` is still in effect next session.
+ *
+ * Merged into the raw JSON for the same reason as {@link appendAllowRule}: writing
+ * back a loaded {@link AppConfig} would freeze today's defaults into the user's
+ * file and drop any key this version does not know about. The caller has already
+ * applied the level to the running model, so a failed write costs the memory of
+ * the choice and nothing else — which is why this throws rather than swallowing.
+ */
+export async function saveThinkingEffort(projectRoot: string, effort: ThinkingEffort): Promise<void> {
+  if (!isThinkingEffort(effort)) {
+    throw new ConfigError(`Refusing to save ${JSON.stringify(effort)}: it is not a thinking effort level.`);
+  }
+
+  const file = configPath(projectRoot);
+  const record = await readConfigRecord(file);
+  record['thinkingEffort'] = effort;
+  await writeConfigRecord(file, record);
+}
+
+/** Writes the config file back, creating `.darwin/` when this is the first write. */
+async function writeConfigRecord(file: string, record: Record<string, unknown>): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
 }
@@ -328,6 +389,7 @@ function createBedrockModel(config: AppConfig): Model {
     );
   }
   const cacheConfig = bedrockCacheConfig(planPromptCache(config));
+  const thinking = claudeThinkingFields(planThinking(config));
   return new BedrockModel({
     region: resolveRegion(config.region),
     modelId: config.model,
@@ -336,6 +398,10 @@ function createBedrockModel(config: AppConfig): Model {
     // every request. Omitted entirely when caching is off, since `strategy: 'auto'`
     // on a model that cannot cache makes the SDK warn straight to the console.
     ...(cacheConfig !== undefined && { cacheConfig }),
+    // Adaptive thinking plus its effort level. The SDK drops the `thinking` key by
+    // itself when a request forces tool use, which Bedrock refuses to combine with
+    // thinking — so this is safe to set once for the whole session.
+    ...(thinking !== undefined && { additionalRequestFields: thinking }),
   });
 }
 
@@ -348,10 +414,14 @@ async function createAnthropicModel(config: AppConfig): Promise<Model> {
     'anthropic',
     '@anthropic-ai/sdk',
   );
+  // `params` is merged into the request body verbatim, which is how the same two
+  // adaptive-thinking fields reach the native API — it has no dedicated option.
+  const thinking = claudeThinkingFields(planThinking(config));
   return new AnthropicModel({
     modelId: config.model,
     maxTokens: config.maxTokens,
     ...(apiKey !== undefined && { apiKey }),
+    ...(thinking !== undefined && { params: thinking as Record<string, unknown> }),
   });
 }
 
@@ -362,12 +432,60 @@ async function createOpenAIModel(config: AppConfig): Promise<Model> {
     'openai',
     'openai',
   );
+  const params = openaiThinkingParams(planThinking(config));
   return new OpenAIModel({
     api: 'chat',
     modelId: config.model,
     maxTokens: config.maxTokens,
     ...(apiKey !== undefined && { apiKey }),
+    ...(params !== undefined && { params }),
   });
+}
+
+/**
+ * Reconfigures a live model to think at `effort`, returning what it will actually
+ * do (the level may be clamped — see `src/agent/thinking.ts`).
+ *
+ * Reconfiguration rather than reconstruction, because the point of `/effort` is to
+ * change depth *without* losing the conversation: `Model.updateConfig()` merges
+ * into the existing config, so the region, cache config and token budget the model
+ * was built with all stay as they were.
+ *
+ * The provider switch lives here because this file is the only one that names a
+ * provider; the fields themselves come from `src/agent/thinking.ts`.
+ */
+export function applyThinkingEffort(model: Model, config: AppConfig, effort: ThinkingEffort): ThinkingPlan {
+  const plan = planThinking(config, effort);
+  // Both keys are provider-specific extensions of BaseModelConfig, which is all
+  // the abstract `Model` exposes; the cast is safe because the provider is known.
+  const updatable = model as Model<ThinkingModelConfig>;
+
+  switch (config.provider) {
+    case 'bedrock':
+      // Assigning undefined clears it: updateConfig spreads over the old config.
+      updatable.updateConfig({ additionalRequestFields: claudeThinkingFields(plan) });
+      break;
+    case 'anthropic':
+      updatable.updateConfig({ params: claudeThinkingFields(plan) as Record<string, unknown> | undefined });
+      break;
+    case 'openai':
+      updatable.updateConfig({ params: openaiThinkingParams(plan) });
+      break;
+  }
+  return plan;
+}
+
+/**
+ * The provider-config fields {@link applyThinkingEffort} writes. Declared here
+ * rather than imported: `AnthropicModelConfig` and `OpenAIModelConfig` live in
+ * modules whose type declarations pull in the optional peer dependencies, so
+ * importing them would break `tsc` on a Bedrock-only install.
+ */
+interface ThinkingModelConfig extends BaseModelConfig {
+  /** Bedrock: merged into the Converse request body. */
+  additionalRequestFields?: JSONValue | undefined;
+  /** Anthropic / OpenAI: merged into the native request body. */
+  params?: Record<string, unknown> | undefined;
 }
 
 /** Turns a missing peer dependency into an actionable install instruction. */

@@ -14,7 +14,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | completion | agentsMd | usage
+ *                 cancelThenContinue | completion | agentsMd | usage | effort
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -436,7 +436,8 @@ async function slashCompletion(): Promise<void> {
     // header hint is one nobody finds. Matched on the row markers ('❯ ' for the
     // selected row, two spaces otherwise) — a bare '/exit' also occurs in the
     // header line, so it would pass with no list on screen at all.
-    assert('the built-in /exit is listed first', tui.screen.slice(beforeSlash).includes('❯ /exit'));
+    assert('the built-ins are listed first', tui.screen.slice(beforeSlash).includes('❯ /effort'));
+    assert('the built-in /exit is listed', tui.screen.slice(beforeSlash).includes('  /exit'));
     assert('the built-in /usage is listed', tui.screen.slice(beforeSlash).includes('  /usage'));
     assert('the list explains the keys', /to select/.test(tui.screen.slice(beforeSlash)));
 
@@ -680,6 +681,83 @@ function awaitsPermission(screen: string): boolean {
   return tail.includes('allow?') && !/you>\s*$/.test(tail);
 }
 
+/**
+ * `/effort` has to prove four things a unit test cannot: the level reaches the
+ * header, changing it costs no turn, the change is written to
+ * `.darwin/config.json` where the next session will read it, and a level the model
+ * cannot serve is clamped visibly instead of failing the next request.
+ *
+ * Runs in a temp directory with no config file, so the default model
+ * (`us.anthropic.claude-sonnet-4-6`) is in play — which is exactly the model that
+ * serves adaptive thinking but not `xhigh`, making the clamp observable. It must
+ * NOT run in REPO_ROOT: this scenario writes a config file.
+ */
+async function effortCommand(): Promise<void> {
+  header('TUI — /effort sets thinking depth');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+  const configFile = path.join(WORK_DIR, '.darwin', 'config.json');
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    // On the model line, not a line of its own: the header shares the frame with
+    // the permission box, and one extra line pushes the box off a 50-row terminal.
+    assert('the default level is shown in the header', tui.screen.includes('· effort high'));
+    assert('the header advertises the command', tui.screen.includes('/effort sets thinking depth'));
+
+    const beforeReport = tui.mark();
+    tui.submit('/effort');
+    await tui.waitFor('thinking effort: high', { timeoutMs: 30_000, from: beforeReport, settleMs: 400 });
+    assert('a bare /effort reports the level', tui.screen.slice(beforeReport).includes('thinking effort: high'));
+    // The point of answering locally: asking must not spend a model call.
+    assert('asking did not start a turn', !tui.screen.slice(beforeReport).includes('working…'));
+
+    const beforeSet = tui.mark();
+    tui.submit('/effort low');
+    await tui.waitFor('saved to', { timeoutMs: 30_000, from: beforeSet, settleMs: 400 });
+    assert('the new level is confirmed', tui.screen.slice(beforeSet).includes('thinking effort: low'));
+    assert('…and reported as persisted', tui.screen.slice(beforeSet).includes('saved to .darwin/config.json'));
+    assert('the header follows the change', tui.screen.slice(beforeSet).includes('· effort low'));
+
+    const saved = JSON.parse(await readFile(configFile, 'utf8')) as Record<string, unknown>;
+    console.log(`  written config: ${JSON.stringify(saved)}`);
+    assert('the level reached the config file', saved['thinkingEffort'] === 'low');
+
+    // Sonnet 4.6 does not serve xhigh. Sending it anyway would fail every
+    // subsequent request, so the clamp has to be both applied and stated.
+    const beforeClamp = tui.mark();
+    tui.submit('/effort xhigh');
+    await tui.waitFor('Opus only', { timeoutMs: 30_000, from: beforeClamp, settleMs: 400 });
+    const clamped = tui.screen.slice(beforeClamp);
+    assert('an Opus-only level is clamped', clamped.includes('Opus only'));
+    // Sliced, not searched whole: the startup frame said 'effort high' too, so the
+    // assertion would pass without the clamp ever reaching the header.
+    assert('the header shows what will actually happen', clamped.includes('· effort high'));
+
+    const beforeBad = tui.mark();
+    tui.submit('/effort turbo');
+    await tui.waitFor('is not a thinking effort level', { timeoutMs: 30_000, from: beforeBad, settleMs: 400 });
+    const refused = tui.screen.slice(beforeBad);
+    assert('an unknown level is refused', refused.includes('is not a thinking effort level'));
+    assert('…listing the valid ones', refused.includes('low, medium, high, xhigh, max'));
+    assert('…and changing nothing', refused.includes('(unchanged)'));
+    // A refused command must not reach the model as a prompt either.
+    assert('a bad level did not start a turn', !refused.includes('working…'));
+
+    // The level was clamped, but xhigh is what the user asked for, so xhigh is what
+    // gets remembered — the same file on an Opus model should give them xhigh.
+    const afterClamp = JSON.parse(await readFile(configFile, 'utf8')) as Record<string, unknown>;
+    assert('the requested level is what was persisted', afterClamp['thinkingEffort'] === 'xhigh');
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly after changing effort', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -690,6 +768,7 @@ const SCENARIOS = {
   completion: slashCompletion,
   agentsMd: agentsMdHeader,
   usage: usageReport,
+  effort: effortCommand,
 } as const;
 
 async function main(): Promise<void> {

@@ -19,6 +19,11 @@ import type { PermissionDecision } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { AgentRuntime, UsageTotals } from '../agent/runtime.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
+import {
+  isThinkingEffort,
+  THINKING_EFFORTS,
+  type ThinkingPlan,
+} from '../agent/thinking.js';
 import { CONFIG_FILENAME } from '../config.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
@@ -27,7 +32,7 @@ import { MessageList } from './MessageList.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 import { ActiveToolCalls } from './ToolCallPanel.js';
 import type { PermissionQueue } from './permission-queue.js';
-import { initialTurnState, turnReducer } from './turn-state.js';
+import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
 
 /** Window in which a second Ctrl+C means "exit", not "cancel again". */
 const DOUBLE_INTERRUPT_MS = 2000;
@@ -49,7 +54,7 @@ function stripControls(value: string): string {
  * `/quit` is deliberately missing — it works, but it is an alias of `/exit`, and
  * a menu row per alias costs a row of a six-row list to say nothing new.
  */
-const BUILTIN_COMMANDS = ['exit', 'usage'] as const;
+const BUILTIN_COMMANDS = ['effort', 'exit', 'usage'] as const;
 
 type Status = 'idle' | 'streaming' | 'awaiting-permission';
 
@@ -131,6 +136,18 @@ export function App({
           type: 'notice',
           text: formatUsageReport(runtime.usage, runtime.info.resumed, status === 'streaming'),
         });
+        return;
+      }
+
+      // Also before the busy check, and for a stronger reason than /usage: a turn
+      // makes many model calls, so "think harder" is worth acting on while one is
+      // running — the level applies from the next call on. It reconfigures the live
+      // model rather than sending anything, so it cannot disturb the turn.
+      if (text === '/effort' || text.startsWith('/effort ')) {
+        setDraft('');
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        applyEffortCommand(runtime, text, dispatch);
         return;
       }
 
@@ -366,6 +383,7 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
         {info.config.provider}/{info.config.model} · session {info.sessionId}
         {info.resumed ? ' (resumed)' : ''}
         {formatPromptCache(info.promptCache)}
+        {formatThinking(runtime.thinking)}
       </Text>
       {info.permissionMode === 'yolo' ? (
         // Yellow: yolo disables a safety layer, same convention as other warnings.
@@ -418,6 +436,13 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       {info.promptCache.problem !== undefined && (
         <Text color="yellow">prompt cache: off — {info.promptCache.problem}</Text>
       )}
+      {/* Same rule as the cache problem above: the level itself rides on the model
+          line, and only a gap between what was asked for and what the model can
+          actually do earns a line — thinking depth is both a cost and a quality
+          decision, so a silent downgrade is not acceptable. */}
+      {runtime.thinking.problem !== undefined && (
+        <Text color="yellow">thinking: {runtime.thinking.problem}</Text>
+      )}
       {info.mcpConfigPath !== undefined && <Text dimColor>mcp: {info.mcpServerCount} server(s)</Text>}
       {info.mcpIgnoredConfigPath !== undefined && (
         <Text color="yellow">
@@ -434,7 +459,9 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       ))}
       {/* Extends the existing line rather than adding one: see the frame-height
           comment above. */}
-      <Text dimColor>/exit to quit · /usage for token counts · ctrl+c cancels a turn</Text>
+      <Text dimColor>
+        /exit to quit · /usage for token counts · /effort sets thinking depth · ctrl+c cancels a turn
+      </Text>
     </Box>
   );
 }
@@ -455,6 +482,18 @@ function formatPromptCache(plan: PromptCachePlan): string {
   // Only the anthropic provider ends up with a single part, and "cache on" there
   // would overstate what is actually being cached.
   return plan.parts.length === 1 ? ` · cache ${ttl} (${plan.parts[0]})` : ` · cache ${ttl}`;
+}
+
+/**
+ * Thinking depth as a suffix on the model line — same reasoning as
+ * {@link formatPromptCache}. Always shown: unlike caching there is no "off" state
+ * to stay quiet about, and the level is worth knowing *before* spending a turn at
+ * it. A clamped level shows what will actually happen, not what was asked for; the
+ * reason is the yellow line in {@link Header}.
+ */
+function formatThinking(plan: ThinkingPlan): string {
+  if (!plan.enabled || plan.effective === undefined) return ' · no thinking';
+  return ` · effort ${plan.effective}`;
 }
 
 /**
@@ -495,6 +534,63 @@ export function formatUsageReport(
 /** Explicit locale: the report should read the same on every machine. */
 function groupDigits(value: number): string {
   return value.toLocaleString('en-US');
+}
+
+/**
+ * Runs `/effort`, dispatching whatever notice it earns.
+ *
+ * Reporting and setting share one entry point because they share one answer: what
+ * the model is doing now. A bad level changes nothing and says what the levels
+ * are, rather than falling through to the model as a prompt.
+ *
+ * The level is in effect the moment {@link AgentRuntime.changeThinkingEffort}
+ * returns, so — exactly as with an accepted allow-rule — the `.darwin/config.json`
+ * write is reported rather than awaited: a failed write means "this session only",
+ * which the user has to be told but must not wait for.
+ */
+function applyEffortCommand(
+  runtime: AgentRuntime,
+  text: string,
+  dispatch: (action: TurnAction) => void,
+): void {
+  const argument = text.slice('/effort'.length).trim().toLowerCase();
+
+  if (argument === '') {
+    dispatch({ type: 'notice', text: `thinking effort: ${describeThinking(runtime.thinking)}` });
+    return;
+  }
+
+  if (!isThinkingEffort(argument)) {
+    dispatch({
+      type: 'notice',
+      text:
+        `${argument} is not a thinking effort level — expected one of ${THINKING_EFFORTS.join(', ')}\n` +
+        `  thinking effort: ${describeThinking(runtime.thinking)} (unchanged)`,
+    });
+    return;
+  }
+
+  const { plan, saved } = runtime.changeThinkingEffort(argument);
+  const applied = `thinking effort: ${describeThinking(plan)}`;
+  saved.then(
+    () => {
+      dispatch({ type: 'notice', text: `${applied} — saved to ${DARWIN_DIRNAME}/${CONFIG_FILENAME}` });
+    },
+    (error: unknown) => {
+      dispatch({
+        type: 'notice',
+        text:
+          `${applied}, this session only — could not write ` +
+          `${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    },
+  );
+}
+
+/** One line covering both what was asked for and what the model will actually do. */
+function describeThinking(plan: ThinkingPlan): string {
+  if (plan.problem !== undefined) return `${plan.requested} — ${plan.problem}`;
+  return plan.requested;
 }
 
 /** Command names matching a `/prefix`, or none when the input is not a bare command. */

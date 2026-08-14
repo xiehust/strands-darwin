@@ -159,7 +159,8 @@ you get a working Bedrock setup.
   "summaryRatio": 0.3,
   "preserveRecentMessages": 10,
   "permissionMode": "default",
-  "promptCache": true
+  "promptCache": true,
+  "thinkingEffort": "high"
 }
 ```
 
@@ -176,6 +177,7 @@ you get a working Bedrock setup.
 | `permissionRules` | — | wildcard rules that pre-approve calls; written by the prompt's "always allow" — see [Remembering an answer](#remembering-an-answer) |
 | `promptCache` | `true` | prompt caching, Claude only — see [Prompt caching](#prompt-caching) |
 | `promptCacheTtl` | provider default (5m) | `5m` or `1h`, applied to every cache point |
+| `thinkingEffort` | `high` | how hard the model thinks — `low`, `medium`, `high`, `xhigh`, `max`; changeable with `/effort` — see [Thinking effort](#thinking-effort) |
 | `classifierModel` | per provider | model id for `auto` mode's safety classifier |
 | `systemPrompt` | built-in prompt | replaces the base system prompt; wins over `.darwin/system-prompt.md` — see [System prompt](#system-prompt) |
 
@@ -228,6 +230,36 @@ for an hour instead of five minutes (a longer TTL costs more to write). Non-Clau
 cannot cache; the header says so rather than pretending otherwise. Two things naturally cost
 a cache miss: the turn on which the conversation is summarized (its history is rewritten), and
 any change to AGENTS.md, the system prompt, or the set of tools.
+
+### Thinking effort
+
+Claude 4.6 and later think *adaptively*: instead of a fixed token budget, the model decides per
+request whether to reason and for how long, guided by a coarse effort level. darwin asks for
+`high` — Anthropic's own default, meaning "always thinks".
+
+| Level | Behaviour |
+|---|---|
+| `low` | minimizes thinking; skips it for simple tasks where speed matters |
+| `medium` | moderate thinking; may skip it for very simple queries |
+| `high` | always thinks (the default) |
+| `xhigh` | always thinks, extended depth — Opus models only |
+| `max` | always thinks, no depth constraint |
+
+Change it mid-session with `/effort`, which takes effect on the next model call and is written
+back to `.darwin/config.json` so it survives a restart:
+
+```
+/effort              # report the current level
+/effort max          # switch, and remember it
+```
+
+A level the model cannot serve is clamped rather than sent — `xhigh` on Sonnet 4.6 becomes
+`high`, and the header says why. The alternative is worse than a downgrade: the service rejects
+an unsupported level on *every* request, not just once. Models older than Claude 4.6 have no
+adaptive thinking at all, and the header says that too.
+
+On the `openai` provider the level becomes `reasoning_effort`, which has no `xhigh` or `max`
+(both clamp to `high`) and is only accepted by reasoning models.
 
 ## Permissions
 

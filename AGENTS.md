@@ -34,10 +34,11 @@ inference-profile model ids, never bare `anthropic.*`):
 
 ```bash
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven TUI suite
-AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|bashExit|cancelThenContinue|agentsMd)
+AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|bashExit|cancelThenContinue|agentsMd|usage|effort)
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
+AWS_REGION=us-west-2 pnpm tsx spike/verify-thinking-live.ts   # effort levels the service really accepts, and that high reasons
 ```
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
@@ -96,6 +97,22 @@ deliberate — `strategy: 'auto'` on a model that cannot cache makes the SDK `co
 the Ink frame. The header states it on the model line, never a line of its own: the header
 shares the live frame with the permission box, and one extra line pushes the box off a 50-row
 terminal (`spike/verify-tui.ts approve` catches it).
+
+**Thinking effort** (`src/agent/thinking.ts`, `thinkingEffort` in config, `/effort` at
+runtime): Claude 4.6+ *adaptive* thinking, steered by Anthropic's own ladder
+(`low`/`medium`/`high`/`xhigh`/`max`, default `high`) and sent as
+`{ thinking: { type: 'adaptive' }, output_config: { effort } }` — `effort` nested inside
+`thinking` is a `ValidationException`, not a warning. Three things are load-bearing. The mode
+is *always* `adaptive`, never `enabled`+`budget_tokens`: the newest models reject the old form,
+and switching modes invalidates the conversation cache breakpoint, which is what makes
+`/effort` free mid-session. A level the model cannot serve is **clamped and reported**, never
+sent — the service rejects it per-request, so one unsupported level breaks every turn; the
+acceptance matrix is measured rather than read, because the AWS page is wrong about it (Sonnet
+4.6 takes `max` and refuses only `xhigh`) and lives in
+`.trellis/spec/backend/strands-sdk-contracts.md`. And `/effort` reconfigures the live model via
+`Model.updateConfig()` rather than rebuilding the agent — the conversation must survive a change
+of thinking depth — with the config write reported, not awaited, exactly like an accepted
+allow-rule.
 
 **Paths** (`src/paths.ts`): every `.darwin/` location is derived here from the CLI's cwd.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything
