@@ -49,7 +49,13 @@ export type Provider = (typeof PROVIDERS)[number];
 export const OPENAI_API_MODES = ['chat', 'responses'] as const;
 export type OpenAIApiMode = (typeof OPENAI_API_MODES)[number];
 
-export interface AppConfig {
+export interface AppConfig extends ModelFields, SessionFields {}
+
+/**
+ * The half of {@link AppConfig} that describes one model. In the array form this
+ * is exactly what one `models` entry may set; see {@link MODEL_KEYS}.
+ */
+export interface ModelFields {
   provider: Provider;
   /**
    * Provider-specific model identifier. For Bedrock this must be a cross-region
@@ -89,19 +95,6 @@ export interface AppConfig {
    */
   openaiApi?: OpenAIApiMode;
   maxTokens: number;
-  /** Fraction of oldest messages summarized on context overflow. */
-  summaryRatio: number;
-  /** Messages always kept verbatim by the summarizer. */
-  preserveRecentMessages: number;
-  /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
-  permissionMode: ApprovalMode;
-  /**
-   * Wildcard rules that pre-approve tool calls, written here when the user answers
-   * a confirmation prompt with "always allow". Absent when nothing has been
-   * remembered. Format is documented in `src/agent/permission-rules.ts`.
-   */
-  permissionRules?: { readonly allow: readonly string[] };
-
   /**
    * Prompt caching, on by default. darwin re-sends a large unchanging prefix every
    * turn (tool schemas, the assembled system prompt, the conversation so far), so
@@ -122,9 +115,12 @@ export interface AppConfig {
    * to skip it on easy work, not a hard budget. See `src/agent/thinking.ts`.
    *
    * A level the model cannot serve is clamped rather than sent, so raising this is
-   * always safe. On the `openai` provider it becomes `reasoning_effort`, which
+   * always safe. On the `openai` provider it becomes a reasoning effort, which
    * only reasoning models accept — a non-reasoning OpenAI model will reject every
    * request, so pair that provider with a reasoning model.
+   *
+   * Model-scoped on purpose: the levels one model accepts are not the levels
+   * another does, so `/effort` persists into the enabled `models` entry.
    */
   thinkingEffort: ThinkingEffort;
   /**
@@ -132,6 +128,25 @@ export interface AppConfig {
    * a cheap default. Bedrock ids must be inference profiles, like `model`.
    */
   classifierModel?: string;
+}
+
+/**
+ * The half of {@link AppConfig} that outlives a model switch. These always live
+ * at the config root, never inside a `models` entry; see {@link SESSION_KEYS}.
+ */
+export interface SessionFields {
+  /** Fraction of oldest messages summarized on context overflow. */
+  summaryRatio: number;
+  /** Messages always kept verbatim by the summarizer. */
+  preserveRecentMessages: number;
+  /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
+  permissionMode: ApprovalMode;
+  /**
+   * Wildcard rules that pre-approve tool calls, written here when the user answers
+   * a confirmation prompt with "always allow". Absent when nothing has been
+   * remembered. Format is documented in `src/agent/permission-rules.ts`.
+   */
+  permissionRules?: { readonly allow: readonly string[] };
   /**
    * Replaces darwin's built-in base system prompt. Optional; for prompts too long
    * to be comfortable in JSON, write `.darwin/system-prompt.md` instead (this
@@ -142,6 +157,34 @@ export interface AppConfig {
 }
 
 export const CONFIG_FILENAME = 'config.json';
+
+/**
+ * Keys that describe *which model to talk to and how*. In the array form these
+ * may only appear inside a `models` entry; at the root they are the single-model
+ * form. Listed rather than inferred because the two forms are validated by the
+ * same function and the error messages name the key that is in the wrong place.
+ */
+const MODEL_KEYS = [
+  'provider',
+  'model',
+  'region',
+  'apiKeyEnv',
+  'bedrockMantle',
+  'openaiApi',
+  'maxTokens',
+  'thinkingEffort',
+  'promptCache',
+  'promptCacheTtl',
+  'classifierModel',
+] as const;
+
+/**
+ * Keys that describe *the session*, not the model: they outlive a model switch
+ * and so always live at the root, never in a `models` entry. A permission mode
+ * that silently applied to one model and not another would be a security
+ * surprise, which is why an entry carrying one is rejected rather than ignored.
+ */
+const SESSION_KEYS = ['permissionMode', 'permissionRules', 'summaryRatio', 'preserveRecentMessages', 'systemPrompt'] as const;
 
 /** `<projectRoot>/.darwin/config.json`. */
 export function configPath(projectRoot: string): string {
@@ -204,19 +247,120 @@ function validate(parsed: unknown, configPath: string): AppConfig {
     throw new ConfigError(`${configPath} must contain a JSON object.`);
   }
   const input = parsed as Record<string, unknown>;
+  const session = validateSessionFields(input, configPath);
 
-  const provider = input['provider'] ?? DEFAULTS.provider;
-  if (!isProvider(provider)) {
+  // The array form is a *file* format, not a second runtime shape: the enabled
+  // entry is resolved here and the result is the same flat AppConfig the
+  // single-model form produces, so nothing downstream knows which form was used.
+  if (input['models'] === undefined) {
+    return { ...validateModelFields(input, configPath), ...session };
+  }
+
+  const entries = modelEntries(input, configPath);
+  const index = selectEnabledIndex(entries, configPath);
+  return {
+    ...validateModelFields(entries[index] as Record<string, unknown>, `${configPath} models[${index}]`),
+    ...session,
+  };
+}
+
+/**
+ * Reads and structurally checks the `models` array: every entry an object, in the
+ * right half of the file, with a boolean `enable`. No field validation here —
+ * that is {@link validateModelFields}, so both file forms share it.
+ */
+function modelEntries(root: Record<string, unknown>, configPath: string): Record<string, unknown>[] {
+  const models = root['models'];
+  if (!Array.isArray(models)) {
     throw new ConfigError(
-      `${configPath}: unknown provider ${JSON.stringify(provider)}. Expected one of ${PROVIDERS.join(', ')}.`,
+      `${configPath}: "models" must be an array of model configurations, ` +
+        `e.g. [{ "enable": true, "provider": "bedrock", "model": "us.anthropic.claude-sonnet-4-6" }].`,
+    );
+  }
+  if (models.length === 0) {
+    throw new ConfigError(`${configPath}: "models" is empty — list at least one model configuration.`);
+  }
+
+  // Rejected rather than merged: with entries present there is no sensible
+  // precedence between a root-level model key and an entry's, and inventing one
+  // would mean the file no longer says which model is in effect.
+  const strays = MODEL_KEYS.filter((key) => root[key] !== undefined);
+  if (strays.length > 0) {
+    throw new ConfigError(
+      `${configPath}: ${strays.map((key) => JSON.stringify(key)).join(', ')} ` +
+        `${strays.length === 1 ? 'belongs' : 'belong'} inside a "models" entry, not next to "models". ` +
+        `Move ${strays.length === 1 ? 'it' : 'them'} into the entry you want ${strays.length === 1 ? 'it' : 'them'} to apply to.`,
     );
   }
 
-  const permissionMode = input['permissionMode'] ?? DEFAULTS.permissionMode;
-  if (!isApprovalMode(permissionMode)) {
+  return models.map((entry, index) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new ConfigError(`${configPath}: models[${index}] must be a JSON object.`);
+    }
+    const record = entry as Record<string, unknown>;
+
+    const misplaced = SESSION_KEYS.filter((key) => record[key] !== undefined);
+    if (misplaced.length > 0) {
+      throw new ConfigError(
+        `${configPath}: models[${index}] carries ${misplaced.map((key) => JSON.stringify(key)).join(', ')}, ` +
+          `which ${misplaced.length === 1 ? 'applies' : 'apply'} to the whole session, not to one model. ` +
+          `Move ${misplaced.length === 1 ? 'it' : 'them'} to the top level.`,
+      );
+    }
+
+    const enable = record['enable'];
+    if (enable !== undefined && typeof enable !== 'boolean') {
+      throw new ConfigError(`${configPath}: models[${index}]: "enable" must be true or false.`);
+    }
+    return record;
+  });
+}
+
+/**
+ * Finds the position of the one enabled entry.
+ *
+ * Exactly one, never "the first one that is enabled": a config with two models
+ * switched on is a mistake with a price attached, and quietly picking one would
+ * bill the user for a model they did not think they were using. Zero enabled is
+ * refused for the same reason — falling back to the built-in default would run a
+ * model the file does not even mention.
+ */
+function selectEnabledIndex(entries: readonly Record<string, unknown>[], configPath: string): number {
+  const enabled = entries.filter((entry) => entry['enable'] === true);
+
+  if (enabled.length === 0) {
     throw new ConfigError(
-      `${configPath}: unknown permissionMode ${JSON.stringify(permissionMode)}. ` +
-        `Expected one of ${APPROVAL_MODES.join(', ')}.`,
+      `${configPath}: no model is enabled — set "enable": true on exactly one of the ` +
+        `${entries.length} entries in "models" (${entries.map(labelOf).join(', ')}).`,
+    );
+  }
+  if (enabled.length > 1) {
+    throw new ConfigError(
+      `${configPath}: ${enabled.length} models are enabled (${enabled.map(labelOf).join(', ')}). ` +
+        `Exactly one entry may have "enable": true.`,
+    );
+  }
+
+  return entries.indexOf(enabled[0] as Record<string, unknown>);
+}
+
+/** How an entry is named in an error message: its model id, else its position. */
+function labelOf(entry: Record<string, unknown>): string {
+  const model = entry['model'];
+  return typeof model === 'string' && model !== '' ? JSON.stringify(model) : '<no "model">';
+}
+
+/**
+ * Validates the model-scoped keys of `input`, which is either the config root
+ * (single-model form) or one `models` entry. Shared deliberately: the two forms
+ * must accept exactly the same fields, or the array form would quietly be a
+ * second, weaker dialect.
+ */
+function validateModelFields(input: Record<string, unknown>, where: string): ModelFields {
+  const provider = input['provider'] ?? DEFAULTS.provider;
+  if (!isProvider(provider)) {
+    throw new ConfigError(
+      `${where}: unknown provider ${JSON.stringify(provider)}. Expected one of ${PROVIDERS.join(', ')}.`,
     );
   }
 
@@ -226,23 +370,17 @@ function validate(parsed: unknown, configPath: string): AppConfig {
   const thinkingEffort = input['thinkingEffort'] ?? DEFAULTS.thinkingEffort;
   if (!isThinkingEffort(thinkingEffort)) {
     throw new ConfigError(
-      `${configPath}: unknown thinkingEffort ${JSON.stringify(thinkingEffort)}. ` +
+      `${where}: unknown thinkingEffort ${JSON.stringify(thinkingEffort)}. ` +
         `Expected one of ${THINKING_EFFORTS.join(', ')}.`,
     );
   }
 
-  const config: AppConfig = {
+  const fields: ModelFields = {
     provider,
-    permissionMode,
     thinkingEffort,
-    model: stringField(input, 'model', configPath) ?? DEFAULTS.model,
-    maxTokens: numberField(input, 'maxTokens', configPath, { min: 1 }) ?? DEFAULTS.maxTokens,
-    summaryRatio:
-      numberField(input, 'summaryRatio', configPath, { min: 0, max: 1 }) ?? DEFAULTS.summaryRatio,
-    preserveRecentMessages:
-      numberField(input, 'preserveRecentMessages', configPath, { min: 0 }) ??
-      DEFAULTS.preserveRecentMessages,
-    promptCache: booleanField(input, 'promptCache', configPath) ?? DEFAULTS.promptCache,
+    model: stringField(input, 'model', where) ?? DEFAULTS.model,
+    maxTokens: numberField(input, 'maxTokens', where, { min: 1 }) ?? DEFAULTS.maxTokens,
+    promptCache: booleanField(input, 'promptCache', where) ?? DEFAULTS.promptCache,
   };
 
   // Checked rather than passed through: an unsupported TTL is only rejected once
@@ -251,61 +389,83 @@ function validate(parsed: unknown, configPath: string): AppConfig {
   if (promptCacheTtl !== undefined) {
     if (!isPromptCacheTtl(promptCacheTtl)) {
       throw new ConfigError(
-        `${configPath}: unknown promptCacheTtl ${JSON.stringify(promptCacheTtl)}. ` +
+        `${where}: unknown promptCacheTtl ${JSON.stringify(promptCacheTtl)}. ` +
           `Expected one of ${PROMPT_CACHE_TTLS.join(', ')}.`,
       );
     }
-    config.promptCacheTtl = promptCacheTtl;
+    fields.promptCacheTtl = promptCacheTtl;
   }
 
-  const permissionRules = input['permissionRules'];
-  if (permissionRules !== undefined) {
-    config.permissionRules = { allow: allowRulesField(permissionRules, configPath) };
-  }
+  const region = stringField(input, 'region', where);
+  if (region !== undefined) fields.region = region;
 
-  const region = stringField(input, 'region', configPath);
-  if (region !== undefined) config.region = region;
-
-  const apiKeyEnv = stringField(input, 'apiKeyEnv', configPath);
-  if (apiKeyEnv !== undefined) config.apiKeyEnv = apiKeyEnv;
+  const apiKeyEnv = stringField(input, 'apiKeyEnv', where);
+  if (apiKeyEnv !== undefined) fields.apiKeyEnv = apiKeyEnv;
 
   // Rejected here rather than left to the SDK, which throws the same conflict as
   // a bare Error naming neither the file nor the two keys the user wrote.
-  const bedrockMantle = booleanField(input, 'bedrockMantle', configPath);
+  const bedrockMantle = booleanField(input, 'bedrockMantle', where);
   if (bedrockMantle !== undefined) {
     if (bedrockMantle && provider !== 'openai') {
       throw new ConfigError(
-        `${configPath}: "bedrockMantle" only applies to provider "openai" (this file sets ${JSON.stringify(provider)}). ` +
+        `${where}: "bedrockMantle" only applies to provider "openai" (this one sets ${JSON.stringify(provider)}). ` +
           `Bedrock's own models are reached with provider "bedrock".`,
       );
     }
     if (bedrockMantle && apiKeyEnv !== undefined) {
       throw new ConfigError(
-        `${configPath}: "bedrockMantle" and "apiKeyEnv" are mutually exclusive — ` +
+        `${where}: "bedrockMantle" and "apiKeyEnv" are mutually exclusive — ` +
           `Mantle mints its own bearer token from AWS credentials. Remove "apiKeyEnv".`,
       );
     }
-    config.bedrockMantle = bedrockMantle;
+    fields.bedrockMantle = bedrockMantle;
   }
 
   const openaiApi = input['openaiApi'];
   if (openaiApi !== undefined) {
     if (!isOpenAIApiMode(openaiApi)) {
       throw new ConfigError(
-        `${configPath}: unknown openaiApi ${JSON.stringify(openaiApi)}. ` +
+        `${where}: unknown openaiApi ${JSON.stringify(openaiApi)}. ` +
           `Expected one of ${OPENAI_API_MODES.join(', ')}.`,
       );
     }
     if (provider !== 'openai') {
       throw new ConfigError(
-        `${configPath}: "openaiApi" only applies to provider "openai" (this file sets ${JSON.stringify(provider)}).`,
+        `${where}: "openaiApi" only applies to provider "openai" (this one sets ${JSON.stringify(provider)}).`,
       );
     }
-    config.openaiApi = openaiApi;
+    fields.openaiApi = openaiApi;
   }
 
-  const classifierModel = stringField(input, 'classifierModel', configPath);
-  if (classifierModel !== undefined) config.classifierModel = classifierModel;
+  const classifierModel = stringField(input, 'classifierModel', where);
+  if (classifierModel !== undefined) fields.classifierModel = classifierModel;
+
+  return fields;
+}
+
+/** Validates the keys that belong to the session rather than to a model. */
+function validateSessionFields(input: Record<string, unknown>, configPath: string): SessionFields {
+  const permissionMode = input['permissionMode'] ?? DEFAULTS.permissionMode;
+  if (!isApprovalMode(permissionMode)) {
+    throw new ConfigError(
+      `${configPath}: unknown permissionMode ${JSON.stringify(permissionMode)}. ` +
+        `Expected one of ${APPROVAL_MODES.join(', ')}.`,
+    );
+  }
+
+  const fields: SessionFields = {
+    permissionMode,
+    summaryRatio:
+      numberField(input, 'summaryRatio', configPath, { min: 0, max: 1 }) ?? DEFAULTS.summaryRatio,
+    preserveRecentMessages:
+      numberField(input, 'preserveRecentMessages', configPath, { min: 0 }) ??
+      DEFAULTS.preserveRecentMessages,
+  };
+
+  const permissionRules = input['permissionRules'];
+  if (permissionRules !== undefined) {
+    fields.permissionRules = { allow: allowRulesField(permissionRules, configPath) };
+  }
 
   // Whitespace-only would pass the non-empty check and silently leave the agent
   // with no instructions at all, which nobody configures on purpose.
@@ -314,10 +474,10 @@ function validate(parsed: unknown, configPath: string): AppConfig {
     if (systemPrompt.trim() === '') {
       throw new ConfigError(`${configPath}: "systemPrompt" must not be blank.`);
     }
-    config.systemPrompt = systemPrompt;
+    fields.systemPrompt = systemPrompt;
   }
 
-  return config;
+  return fields;
 }
 
 /**
@@ -384,6 +544,11 @@ export async function appendAllowRule(projectRoot: string, rule: string): Promis
  * Persists `thinkingEffort` in `.darwin/config.json`, so a level chosen with
  * `/effort` is still in effect next session.
  *
+ * In the array form the level is written into the *enabled* entry, not the root:
+ * `thinkingEffort` is model-scoped, and a root-level copy would be rejected on
+ * the next load as a stray model key — turning a convenience into a config that
+ * refuses to start.
+ *
  * Merged into the raw JSON for the same reason as {@link appendAllowRule}: writing
  * back a loaded {@link AppConfig} would freeze today's defaults into the user's
  * file and drop any key this version does not know about. The caller has already
@@ -397,7 +562,11 @@ export async function saveThinkingEffort(projectRoot: string, effort: ThinkingEf
 
   const file = configPath(projectRoot);
   const record = await readConfigRecord(file);
-  record['thinkingEffort'] = effort;
+  // Reuses the loader's own selection so the level cannot land on a different
+  // entry than the session is running: one rule for "which model is enabled".
+  const entries = record['models'] === undefined ? undefined : modelEntries(record, file);
+  const target = entries === undefined ? record : entries[selectEnabledIndex(entries, file)];
+  (target as Record<string, unknown>)['thinkingEffort'] = effort;
   await writeConfigRecord(file, record);
 }
 
