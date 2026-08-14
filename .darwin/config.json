@@ -1,0 +1,6 @@
+{
+  "provider": "bedrock",
+  "model": "global.anthropic.claude-opus-5",
+  "maxTokens": 64000,
+  "permissionMode": "auto"
+}
