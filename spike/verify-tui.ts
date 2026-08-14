@@ -14,7 +14,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | completion | agentsMd | usage | effort | model
+ *                 cancelThenContinue | multiline | completion | agentsMd | usage | effort | model
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -399,6 +399,66 @@ async function cancelThenContinue(): Promise<void> {
     tui.submit('/exit');
     const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
     assert('TUI exited cleanly after a cancelled turn', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/**
+ * Multiline composition is entirely local: bracketed paste and explicit newline
+ * bindings must redraw the draft without spending a model call, while plain Enter
+ * keeps its submit meaning. `/exit` makes that last contract cheap to prove.
+ */
+async function multilineInput(): Promise<void> {
+  header('TUI — multiline paste and manual newlines');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const beforePaste = tui.mark();
+    tui.send('\u001b[200~paste-alpha\r\npaste-beta\u001b[201~');
+    await tui.waitFor('...> paste-beta', { timeoutMs: 30_000, from: beforePaste, settleMs: 400 });
+    const pasted = tui.screen.slice(beforePaste);
+    assert('bracketed paste keeps the first line', pasted.includes('you> paste-alpha'));
+    assert('bracketed paste keeps and renders the second line', pasted.includes('...> paste-beta'));
+    assert('pasting multiline text does not submit it', !pasted.includes('working…'));
+
+    const beforeCtrlJ = tui.mark();
+    tui.send('\n');
+    await tui.waitFor('...>  ', { timeoutMs: 30_000, from: beforeCtrlJ, settleMs: 400 });
+    tui.send('ctrlj-gamma');
+    await tui.waitFor('...> ctrlj-gamma', { timeoutMs: 30_000, from: beforeCtrlJ, settleMs: 400 });
+    assert('ctrl+j inserts a visible newline', tui.screen.slice(beforeCtrlJ).includes('...> ctrlj-gamma'));
+
+    tui.send('\\');
+    await tui.waitFor('ctrlj-gamma\\', { timeoutMs: 30_000, settleMs: 400 });
+    const beforeBackslashEnter = tui.mark();
+    tui.send('\r');
+    tui.send('slash-delta');
+    await tui.waitFor('...> slash-delta', {
+      timeoutMs: 30_000,
+      from: beforeBackslashEnter,
+      settleMs: 400,
+    });
+    const continued = tui.screen.slice(beforeBackslashEnter);
+    assert('backslash plus Enter inserts a newline', continued.includes('...> slash-delta'));
+    assert('the continuation backslash is consumed', !continued.includes('ctrlj-gamma\\'));
+    assert('manual newlines do not submit the draft', !continued.includes('working…'));
+
+    // Backspace remains append-only, but it must be able to cross a line boundary.
+    const beforeJoin = tui.mark();
+    tui.send('\n\u007f-joined');
+    await tui.waitFor('...> slash-delta-joined', { timeoutMs: 30_000, from: beforeJoin, settleMs: 400 });
+    assert('backspace can remove a draft newline', tui.screen.slice(beforeJoin).includes('slash-delta-joined'));
+
+    // Clear the draft, then prove ordinary Enter still submits a local command.
+    tui.send('\u007f'.repeat(100));
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('plain Enter still submits', code === 0);
   } finally {
     tui.kill();
   }
@@ -869,6 +929,7 @@ const SCENARIOS = {
   safePassthrough,
   bashExit: exitAfterBash,
   cancelThenContinue,
+  multiline: multilineInput,
   completion: slashCompletion,
   agentsMd: agentsMdHeader,
   usage: usageReport,

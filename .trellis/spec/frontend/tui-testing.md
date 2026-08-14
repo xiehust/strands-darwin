@@ -14,6 +14,58 @@ non-interactive mode. Tests therefore spawn the **real CLI in a node-pty pseudo-
 Ink repaints by rewriting lines, the buffer holds *every frame ever drawn* — which is the
 right shape for "did this ever appear on screen".
 
+## Multiline input contract
+
+### 1. Scope / trigger
+
+Any change to `App` input handling or `InputBox` rendering crosses the terminal-event → draft-state → rendered-frame → submitted-prompt boundary. Verify it through the real pty, not by rendering the component alone.
+
+### 2. Signatures
+
+- Ink `usePaste((text: string) => void)` owns bracketed paste events.
+- Ink `useInput((typed, key) => void)` owns keys: CR/plain Enter submits, LF/Ctrl+J inserts a newline.
+- A draft ending in `\\` turns Enter into continuation and consumes the marker.
+
+### 3. Contracts
+
+- Draft line endings are canonical LF. Normalize CRLF and CR before appending.
+- Preserve LF and tab; drop other C0 controls and DEL.
+- Paste never submits. It appends the entire payload, including all line breaks.
+- Render the first logical line after `you> ` and later lines after `...> `; the cursor follows the last line.
+- Editing remains append/backspace-only. Plain Enter still submits, and slash completion still takes precedence when shown.
+- A permission prompt owns paste as well as ordinary keys; pasted text must not leak into the hidden draft while approval is pending.
+
+### 4. Validation and error matrix
+
+| Input | Required behavior |
+|---|---|
+| Bracketed CRLF paste | Append all lines, normalize to LF, do not submit |
+| Ctrl+J / LF | Append one LF, do not submit |
+| Trailing `\\` + Enter | Replace marker with LF, do not submit |
+| Plain Enter / CR | Submit the complete draft |
+| Other C0 or DEL inside paste | Drop the control byte, retain surrounding text |
+| Paste during permission prompt | Ignore it; permission keeps keyboard ownership |
+
+### 5. Good / base / bad cases
+
+- Good: `alpha\r\nbeta` paste renders `you> alpha` then `...> beta` and remains editable.
+- Base: a one-line draft and Enter behave exactly as before.
+- Bad: splitting at the first newline submits `alpha` and silently loses `beta`; stripping all controls also destroys every intended LF.
+
+### 6. Tests required
+
+Run `verify-tui.ts multiline`. Assert on first and continuation rows, absence of `working…` after paste/manual newline, consumed continuation marker, backspace across LF, and bounded clean exit after plain Enter submits `/exit`. Run `verify-tui.ts completion` after changing the Enter branch.
+
+### 7. Wrong vs correct
+
+```typescript
+// Wrong: truncates a paste at its first line.
+void submit(draft + typed.slice(0, typed.search(/[\r\n]/)));
+
+// Correct: use Ink's bracketed-paste channel and retain normalized layout.
+usePaste((text) => setDraft((draft) => draft + normalizeDraftText(text)));
+```
+
 Component-level testing (ink-testing-library) was rejected: the bugs worth catching
 (permission gating, resume, process exit) live in the seams, not in components.
 

@@ -11,7 +11,7 @@
  * unfinished answer; a second press within a short window, or any press while
  * idle, exits. Ctrl+D always exits.
  */
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, usePaste } from 'ink';
 import React, { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
@@ -40,12 +40,12 @@ import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js'
 const DOUBLE_INTERRUPT_MS = 2000;
 const SPINNER_INTERVAL_MS = 90;
 
-/** C0 controls and DEL: never treated as typed text. */
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
+/** C0 controls except LF and tab, plus DEL: never treated as draft text. */
+const NON_TEXT_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
 
-/** Drops control characters so a chunk of pasted text stays usable. */
-function stripControls(value: string): string {
-  return value.replace(CONTROL_CHARS, '');
+/** Canonicalizes terminal line endings and drops controls without losing layout. */
+function normalizeDraftText(value: string): string {
+  return value.replace(/\r+\n/g, '\n').replace(/\r/g, '\n').replace(NON_TEXT_CONTROLS, '');
 }
 
 /**
@@ -345,6 +345,14 @@ export function App({
     // above, because the loop is blocked until it is answered.)
 
     if (key.return) {
+      // A trailing backslash is an explicit continuation marker. Consume it so
+      // the prompt sent later contains the intended newline, not editor syntax.
+      if (draft.endsWith('\\')) {
+        setDraft((current) => `${current.slice(0, -1)}\n`);
+        setSelectedCompletion(0);
+        return;
+      }
+
       // With a completion highlighted, Enter accepts it rather than submitting a
       // half-typed skill name.
       if (completions.length > 0) {
@@ -352,6 +360,27 @@ export function App({
         return;
       }
       void submit(draft);
+      return;
+    }
+
+    // A pty or terminal may batch printable text and its final Enter into one
+    // event. Preserve the text, but keep the trailing CR's submit semantics.
+    if (typed.length > 1 && typed.endsWith('\r')) {
+      const text = draft + normalizeDraftText(typed.slice(0, -1));
+      if (text.endsWith('\\')) {
+        setDraft(`${text.slice(0, -1)}\n`);
+        setSelectedCompletion(0);
+        return;
+      }
+      void submit(text);
+      return;
+    }
+
+    // Terminals encode Ctrl+J as LF, distinct from the CR emitted by Enter.
+    // Ink does not expose an `enter` flag, so the literal input is the contract.
+    if (typed === '\n') {
+      setDraft((current) => `${current}\n`);
+      setSelectedCompletion(0);
       return;
     }
 
@@ -379,24 +408,23 @@ export function App({
     // Ignore chords and non-printable keys; take everything else as text.
     if (key.ctrl || key.meta || key.escape || typed === '') return;
 
-    // Pasted text (and anything a pty sends in one write) arrives as a chunk that
-    // may contain a newline. Submit at the newline instead of discarding the whole
-    // chunk for containing a control character.
-    const newlineAt = typed.search(/[\r\n]/);
-    if (newlineAt !== -1) {
-      const head = stripControls(typed.slice(0, newlineAt));
-      if (head === '' && completions.length > 0) {
-        acceptCompletion();
-        return;
-      }
-      void submit(draft + head);
-      return;
-    }
-
-    const printable = stripControls(typed);
+    // A terminal without bracketed-paste support can still deliver a whole write
+    // here. Preserve every line just like usePaste rather than submitting at the
+    // first one and silently dropping the rest.
+    const printable = normalizeDraftText(typed);
     if (printable === '') return;
 
     setDraft((current) => current + printable);
+    setSelectedCompletion(0);
+  });
+
+  usePaste((pasted) => {
+    // The permission prompt owns all input while visible, including paste.
+    if (pendingPermission !== undefined) return;
+
+    const text = normalizeDraftText(pasted);
+    if (text === '') return;
+    setDraft((current) => current + text);
     setSelectedCompletion(0);
   });
 

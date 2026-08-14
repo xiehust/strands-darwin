@@ -1,10 +1,8 @@
 /**
- * The prompt line, with slash-command completion (built-in commands and skills).
+ * The multiline prompt, with slash-command completion (built-ins and skills).
  *
- * Single-line by design. Ink delivers Enter as a keypress rather than a newline,
- * so multi-line editing would need a separate submit binding plus wrapping and
- * cursor bookkeeping. For an MVP whose input is mostly one or two sentences that
- * is not worth the complexity — recorded as a known limitation.
+ * Editing is deliberately append/backspace-only: each logical line gets its own
+ * prefix, while Ink owns visual wrapping and the cursor stays after the last line.
  */
 import { Box, Text } from 'ink';
 import React from 'react';
@@ -26,16 +24,22 @@ export function InputBox({
   readonly hint: string | undefined;
 }): React.JSX.Element {
   const visible = completions.slice(0, MAX_COMPLETIONS);
+  const lines = value.split('\n');
 
   return (
     <Box flexDirection="column">
-      <Box>
-        <Text color={disabled ? 'gray' : 'cyan'} bold>
-          you{'> '}
-        </Text>
-        <Text dimColor={disabled}>{value}</Text>
-        {!disabled && <Text inverse> </Text>}
-      </Box>
+      {lines.map((line, index) => {
+        const last = index === lines.length - 1;
+        return (
+          <Box key={index}>
+            <Text color={disabled ? 'gray' : index === 0 ? 'cyan' : 'gray'} bold={index === 0}>
+              {index === 0 ? 'you> ' : '...> '}
+            </Text>
+            <Text dimColor={disabled}>{line}</Text>
+            {last && !disabled && <Text inverse> </Text>}
+          </Box>
+        );
+      })}
 
       {visible.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
