@@ -9,6 +9,8 @@
  * Approval is decided by an injected {@link PermissionBridge}, so the same gate
  * drives a readline prompt today and the Ink prompt later.
  */
+import path from 'node:path';
+
 import { InterventionActions, InterventionHandler } from '@strands-agents/sdk';
 import type { BeforeToolCallEvent } from '@strands-agents/sdk';
 
@@ -20,6 +22,31 @@ type InterventionAction = Awaited<ReturnType<InterventionHandler['beforeToolCall
 
 /** How a tool call is classified. `read` calls run without asking. */
 export type PermissionKind = 'read' | 'write' | 'execute';
+
+/**
+ * How much confirmation the gate demands.
+ *
+ * - `default`: statically safe calls run silently; everything else asks.
+ * - `auto`: like `default`, but calls the static rules cannot clear are judged
+ *   by a model classifier first; only classifier-flagged calls ask.
+ * - `yolo`: everything runs without asking.
+ */
+export type ApprovalMode = 'default' | 'auto' | 'yolo';
+
+export const APPROVAL_MODES = ['default', 'auto', 'yolo'] as const satisfies readonly ApprovalMode[];
+
+/**
+ * Whether a call is *provably* safe. `dangerous` means "not on the safe list",
+ * not "known harmful": the rules only whitelist, so a parsing miss can cost an
+ * extra prompt but never a silent approval.
+ */
+export type PermissionRisk = 'safe' | 'dangerous';
+
+export interface RiskAssessment {
+  risk: PermissionRisk;
+  /** Human-readable, shown in the confirmation prompt. */
+  riskReason: string;
+}
 
 /**
  * What the UI needs to render a confirmation. `summary` is a one-line headline;
@@ -42,32 +69,76 @@ export interface PermissionDetail {
   value: string;
 }
 
+/** A {@link PermissionRequest} with its risk assessment attached — what bridges see. */
+export interface AssessedPermissionRequest extends PermissionRequest, RiskAssessment {}
+
 /**
  * Asks the human to approve one tool call. Resolves true to allow.
  *
  * Implementations may block for as long as they need — the SDK awaits
  * intervention callbacks serially, so the agent loop waits.
  */
-export type PermissionBridge = (request: PermissionRequest) => Promise<boolean>;
+export type PermissionBridge = (request: AssessedPermissionRequest) => Promise<boolean>;
 
 /** Approves everything without asking. For non-interactive runs and tests. */
 export const allowAllBridge: PermissionBridge = async () => true;
 
+/** The classifier's judgement of one call, in `auto` mode. */
+export interface SafetyVerdict {
+  safe: boolean;
+  reason: string;
+}
+
+/**
+ * Judges a call the static rules could not clear. May call a model; the gate
+ * bounds it with a timeout and treats any failure as "not safe".
+ */
+export type SafetyClassifier = (request: AssessedPermissionRequest) => Promise<SafetyVerdict>;
+
+export interface PermissionGateOptions {
+  mode: ApprovalMode;
+  /** Root the static path-containment rules resolve against. */
+  projectRoot: string;
+  ask: PermissionBridge;
+  /** Consulted for dangerous calls in `auto` mode; ignored otherwise. */
+  classifier?: SafetyClassifier;
+  /** How long `auto` waits for the classifier before falling back to asking. */
+  classifierTimeoutMs?: number;
+}
+
+const DEFAULT_CLASSIFIER_TIMEOUT_MS = 5000;
+
 export class PermissionGate extends InterventionHandler {
   readonly name = 'darwin:permission-gate';
 
-  constructor(private readonly ask: PermissionBridge) {
+  constructor(private readonly options: PermissionGateOptions) {
     super();
   }
 
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<InterventionAction> {
-    const request = classify(event.toolUse.name, event.toolUse.input);
+    const base = classify(event.toolUse.name, event.toolUse.input);
+    const request: AssessedPermissionRequest = { ...base, ...assessRisk(base, this.options.projectRoot) };
 
-    if (request.kind === 'read') {
-      return InterventionActions.proceed({ reason: `${request.toolName} is read-only` });
+    if (this.options.mode === 'yolo') {
+      return InterventionActions.proceed({ reason: 'yolo mode approves everything' });
     }
 
-    const approved = await this.ask(request);
+    if (request.risk === 'safe') {
+      return InterventionActions.proceed({ reason: request.riskReason });
+    }
+
+    if (this.options.mode === 'auto') {
+      const verdict = await this.classifierVerdict(request);
+      if (verdict.safe) {
+        return InterventionActions.proceed({ reason: `classifier: ${verdict.reason}` });
+      }
+      // Escalating to the human: show them why the classifier balked. The details
+      // array is our own copy (classify builds a fresh one per call), so pushing
+      // here cannot leak into other renders of the same tool call.
+      request.details.push({ label: 'Classifier', value: verdict.reason });
+    }
+
+    const approved = await this.options.ask(request);
     if (approved) {
       return InterventionActions.proceed({ reason: 'approved by user' });
     }
@@ -82,6 +153,40 @@ export class PermissionGate extends InterventionHandler {
         `Tell the user what you wanted to do and ask how to proceed.`,
     );
   }
+
+  /**
+   * Runs the classifier with a hard timeout. Every failure mode — missing
+   * classifier, throw, timeout, or a hung promise — collapses to "not safe", so
+   * degradation always lands on asking the user, never on silent approval.
+   */
+  private async classifierVerdict(request: AssessedPermissionRequest): Promise<SafetyVerdict> {
+    const { classifier, classifierTimeoutMs = DEFAULT_CLASSIFIER_TIMEOUT_MS } = this.options;
+    if (classifier === undefined) {
+      return { safe: false, reason: 'no classifier configured — asking user' };
+    }
+    try {
+      return await withTimeout(classifier(request), classifierTimeoutMs);
+    } catch (error) {
+      const cause = error instanceof Error ? error.message : String(error);
+      return { safe: false, reason: `classifier unavailable (${cause}) — asking user` };
+    }
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 /**
@@ -184,6 +289,112 @@ function classifyFileEditor(
     details,
     input: rawInput,
   };
+}
+
+/**
+ * Commands whose first word makes a bash segment provably read-only. `git` is
+ * handled separately because only some subcommands qualify.
+ */
+const SAFE_BASH_COMMANDS = new Set([
+  'ls',
+  'cat',
+  'head',
+  'tail',
+  'grep',
+  'rg',
+  'find',
+  'pwd',
+  'which',
+  'wc',
+  'echo',
+]);
+
+const SAFE_GIT_SUBCOMMANDS = new Set(['status', 'log', 'diff', 'show', 'branch']);
+
+/**
+ * Redirection and substitution turn an otherwise read-only command into a write
+ * (`echo x > f`) or hide arbitrary execution (`` `...` ``, `$(...)`). `<` is
+ * included because `<(...)` process substitution executes its body.
+ */
+const SHELL_METACHARACTERS = /[><`]|\$\(/;
+
+/** Sensitive file basenames a write must never touch silently. */
+const ENV_FILE = /^\.env(\..+)?$/;
+
+/**
+ * The static safety rules shared by `default` and `auto`. Whitelist only: a
+ * call is `safe` when the rules can *prove* it harmless, `dangerous` otherwise
+ * — including every unknown and MCP tool.
+ */
+export function assessRisk(request: PermissionRequest, projectRoot: string): RiskAssessment {
+  if (request.kind === 'read') {
+    return { risk: 'safe', riskReason: `${request.toolName} is read-only` };
+  }
+
+  const input = asRecord(request.input);
+
+  if (request.toolName === 'bash') {
+    return assessBashRisk(str(input['command']) ?? '');
+  }
+
+  if (request.toolName === 'fileEditor') {
+    return assessWriteRisk(str(input['path']) ?? '', projectRoot);
+  }
+
+  return { risk: 'dangerous', riskReason: 'unrecognized tool — cannot be classified as safe' };
+}
+
+function assessBashRisk(command: string): RiskAssessment {
+  if (SHELL_METACHARACTERS.test(command)) {
+    return { risk: 'dangerous', riskReason: 'command uses redirection or substitution' };
+  }
+
+  // Split on the chaining operators so `a && b` is only safe when both are.
+  // Naive on purpose: a mis-split fails toward `dangerous`, never toward `safe`.
+  const segments = command
+    .split(/&&|\|\||[;|\n]/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment !== '');
+
+  if (segments.length === 0) {
+    return { risk: 'dangerous', riskReason: 'empty command' };
+  }
+
+  for (const segment of segments) {
+    const [word = '', subcommand = ''] = segment.split(/\s+/);
+    if (word === 'git') {
+      if (!SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
+        return { risk: 'dangerous', riskReason: `\`git ${subcommand}\` is not a read-only git command` };
+      }
+    } else if (!SAFE_BASH_COMMANDS.has(word)) {
+      return { risk: 'dangerous', riskReason: `\`${word}\` is not on the safe-command list` };
+    }
+  }
+
+  return { risk: 'safe', riskReason: 'read-only command' };
+}
+
+function assessWriteRisk(filePath: string, projectRoot: string): RiskAssessment {
+  const resolved = path.resolve(projectRoot, filePath);
+  const relative = path.relative(projectRoot, resolved);
+
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return { risk: 'dangerous', riskReason: 'path is outside the project' };
+  }
+
+  const segments = relative.split(path.sep);
+  if (segments.includes('.git')) {
+    return { risk: 'dangerous', riskReason: 'path touches .git internals' };
+  }
+  if (ENV_FILE.test(path.basename(resolved))) {
+    return { risk: 'dangerous', riskReason: 'path is an environment file' };
+  }
+  // The agent must not silently rewrite its own permission mode.
+  if (relative === path.join('.darwin', 'config.json')) {
+    return { risk: 'dangerous', riskReason: "path is darwin's own configuration" };
+  }
+
+  return { risk: 'safe', riskReason: 'write inside the project' };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

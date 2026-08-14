@@ -13,7 +13,7 @@
  * correctly ignored, so the app never exits).
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
- *      scenarios: approve | deny | bashExit | cancelThenContinue | completion
+ *      scenarios: approve | deny | safePassthrough | bashExit | cancelThenContinue | completion
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -26,7 +26,14 @@ import { assert, header, report } from './shared.js';
 const EXIT_TIMEOUT_MS = 30_000;
 
 const WORK_DIR = '/tmp/darwin-tui';
-const TARGET = path.join(WORK_DIR, 'calc.js');
+/**
+ * The gated file lives OUTSIDE the project root on purpose: in the `default`
+ * permission mode an in-project edit is statically safe and never prompts, so
+ * the approve/deny scenarios gate on an outside-the-project write — one of the
+ * calls that still requires confirmation.
+ */
+const TARGET_DIR = '/tmp/darwin-tui-target';
+const TARGET = path.join(TARGET_DIR, 'calc.js');
 
 /** `double` adds instead of multiplying — a one-line fix the model can make. */
 const BUGGY = `function double(n) {
@@ -42,6 +49,8 @@ const FIX_REQUEST =
 async function resetWorkDir(): Promise<void> {
   await rm(WORK_DIR, { recursive: true, force: true });
   await mkdir(WORK_DIR, { recursive: true });
+  await rm(TARGET_DIR, { recursive: true, force: true });
+  await mkdir(TARGET_DIR, { recursive: true });
   await writeFile(TARGET, BUGGY, 'utf8');
 }
 
@@ -59,6 +68,7 @@ async function approvePath(): Promise<void> {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
     assert('TUI rendered its header', tui.screen.includes('/exit to quit'));
     assert('provider and session are shown', /bedrock\/us\.anthropic/.test(tui.screen));
+    assert('the permission mode is shown', tui.screen.includes('mode: default'));
 
     const turnStart = tui.mark();
     tui.submit(FIX_REQUEST);
@@ -72,7 +82,8 @@ async function approvePath(): Promise<void> {
 
     await tui.waitFor('permission required', { timeoutMs: 180_000, from: turnStart });
     assert('permission prompt appeared', tui.screen.includes('permission required'));
-    assert('prompt is labelled as a write', /permission required\s*\(write\)/.test(tui.screen));
+    assert('prompt is labelled as a write', /permission required\s*\(write\b/.test(tui.screen));
+    assert('prompt says why the call was flagged', tui.screen.includes('outside the project'));
     assert('prompt shows the file path', tui.screen.includes(TARGET));
     assert('prompt shows the Path label', tui.screen.includes('Path:'));
     assert('prompt shows the replacement block', tui.screen.includes('With:'));
@@ -145,6 +156,58 @@ async function denyPath(): Promise<void> {
 }
 
 /**
+ * The other half of the `default` mode contract: statically safe calls must run
+ * with NO prompt. An allowlisted command and an in-project edit both complete
+ * while the screen never shows the permission box.
+ */
+async function safePassthrough(): Promise<void> {
+  header('TUI — default mode runs safe calls without prompting');
+
+  await resetWorkDir();
+  const inProject = path.join(WORK_DIR, 'calc.js');
+  await writeFile(inProject, BUGGY, 'utf8');
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    // Safe bash: echo is allowlisted, so the command runs straight through.
+    const bashTurn = tui.mark();
+    tui.submit('Run the shell command `echo darwin-safe-ok` and tell me its output. Run nothing else.');
+    await tui.waitFor(/✓ bash/, { timeoutMs: 180_000, from: bashTurn });
+    await waitForIdle(tui, 240_000);
+    assert('safe bash command completed', tui.screen.slice(bashTurn).includes('darwin-safe-ok'));
+    assert(
+      'no permission prompt for an allowlisted command',
+      !tui.screen.slice(bashTurn).includes('permission required'),
+    );
+
+    // Safe write: the file is inside the project root.
+    const editTurn = tui.mark();
+    tui.submit(
+      `The function in ${inProject} is called double but it adds 2 instead of multiplying by 2. ` +
+        `Read the file and fix it with a str_replace edit. Do not run any shell commands.`,
+    );
+    await tui.waitFor(/✓ fileEditor str_replace/, { timeoutMs: 240_000, from: editTurn });
+    await waitForIdle(tui, 240_000);
+
+    const after = await readFile(inProject, 'utf8');
+    console.log(`  calc.js now: ${after.replace(/\n/g, ' ').trim()}`);
+    assert('in-project edit reached disk', /(n\s*\*\s*2|2\s*\*\s*n)/.test(after));
+    assert(
+      'no permission prompt for an in-project edit',
+      !tui.screen.slice(editTurn).includes('permission required'),
+    );
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/**
  * Regression for the shutdown hang: a session that has run a bash command must
  * still exit on `/exit`.
  *
@@ -161,10 +224,12 @@ async function exitAfterBash(): Promise<void> {
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
 
+    // `printf` rather than `echo`: echo is on the static safe list now, and this
+    // scenario needs a command that still raises the prompt.
     const turnStart = tui.mark();
-    tui.submit('Run the shell command `echo darwin-bash-ok` and tell me its output.');
+    tui.submit("Run the shell command `printf 'darwin-bash-ok\\n'` and tell me its output.");
     await tui.waitFor('permission required', { timeoutMs: 180_000, from: turnStart });
-    assert('bash run was gated as execute', /permission required\s*\(execute\)/.test(tui.screen));
+    assert('bash run was gated as execute', /permission required\s*\(execute\b/.test(tui.screen));
 
     const afterAnswer = tui.mark();
     tui.send('y');
@@ -225,7 +290,7 @@ async function cancelThenContinue(): Promise<void> {
     assert('a later turn still raises a permission prompt', true);
     assert(
       'the prompt is still a write confirmation',
-      /permission required\s*\(write\)/.test(tui.screen.slice(secondTurn)),
+      /permission required\s*\(write\b/.test(tui.screen.slice(secondTurn)),
     );
 
     const afterAnswer = tui.mark();
@@ -381,6 +446,7 @@ function awaitsPermission(screen: string): boolean {
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
+  safePassthrough,
   bashExit: exitAfterBash,
   cancelThenContinue,
   completion: slashCompletion,

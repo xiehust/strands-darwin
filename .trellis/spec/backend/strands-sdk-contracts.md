@@ -66,7 +66,30 @@ class PermissionGate extends InterventionHandler {
 `fileEditor` is one tool name spanning read (`view`) and write (`create`/`str_replace`/
 `insert`); name-only matching cannot separate them (this is also why the SDK's vended
 `HumanInTheLoop` is unusable here). Unknown tools — including everything from MCP servers —
-must default to `execute` (gated). See `classify()` in `src/agent/permission.ts`.
+must default to `execute` (gated) and are never statically safe. See `classify()` /
+`assessRisk()` in `src/agent/permission.ts`.
+
+### Contract: one-shot model calls via `Model.streamAggregated()`
+
+For a single classification-style call (no tools, no session, no agent loop) do NOT build
+a throwaway `Agent` — call the model directly:
+
+```typescript
+const message = new Message({ role: 'user', content: [new TextBlock(question)] });
+const generator = model.streamAggregated([message], { systemPrompt: SYSTEM_PROMPT });
+let next = await generator.next();
+while (!next.done) next = await generator.next();          // drain events
+const text = next.value.message.content                     // aggregated final message
+  .map((b) => (b instanceof TextBlock ? b.text : '')).join('');
+```
+
+`Message`, `TextBlock` are exported from the package root; the generator's *return value*
+(`StreamAggregatedResult`) carries the complete message. Used by
+`src/agent/safety-classifier.ts`; verified live by `spike/verify-classifier.ts`.
+
+Caveat: the suffix-less `us.anthropic.claude-haiku-4-5` profile alias is rejected by
+Bedrock (`ValidationException: The provided model identifier is invalid`); use the full
+versioned id `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
 
 ---
 

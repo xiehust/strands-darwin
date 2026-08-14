@@ -193,11 +193,37 @@ async function rejections(): Promise<void> {
   assert('the error names the empty variable', keyError.includes('DARWIN_DEFINITELY_UNSET'));
 }
 
+async function permissionModes(): Promise<void> {
+  header('config — permission mode');
+
+  const absent = await loadConfig(await writeConfig('{}'));
+  assert('permissionMode defaults to "default"', absent.permissionMode === 'default');
+
+  const auto = await loadConfig(
+    await writeConfig('{ "permissionMode": "auto", "classifierModel": "us.anthropic.claude-haiku-4-5" }'),
+  );
+  assert('a valid permissionMode is accepted', auto.permissionMode === 'auto');
+  assert('classifierModel is carried through', auto.classifierModel === 'us.anthropic.claude-haiku-4-5');
+
+  const yolo = await loadConfig(await writeConfig('{ "permissionMode": "yolo" }'));
+  assert('yolo is accepted', yolo.permissionMode === 'yolo');
+
+  const badMode = await expectConfigError('an unknown permissionMode is rejected', async () =>
+    loadConfig(await writeConfig('{ "permissionMode": "strict" }')),
+  );
+  assert('the error lists the valid modes', /default, auto, yolo/.test(badMode));
+
+  await expectConfigError('an empty classifierModel is rejected', async () =>
+    loadConfig(await writeConfig('{ "classifierModel": "" }')),
+  );
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
   await providerSwitching();
   await rejections();
+  await permissionModes();
   report();
 }
 

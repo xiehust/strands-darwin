@@ -18,7 +18,8 @@ import {
   loadProjectInstructions,
   type ProjectInstructionsSummary,
 } from './instructions.js';
-import { PermissionGate, type PermissionBridge } from './permission.js';
+import { PermissionGate, type ApprovalMode, type PermissionBridge } from './permission.js';
+import { createModelClassifier } from './safety-classifier.js';
 import { createSessionManager, resolveSession, writePointer } from './session.js';
 
 /**
@@ -48,10 +49,14 @@ export interface RuntimeOptions {
   resume: boolean;
   /** Asks the user to approve write and execute tool calls. */
   permissionBridge: PermissionBridge;
+  /** Overrides the config's `permissionMode` (CLI flags win over the file). */
+  permissionModeOverride?: ApprovalMode;
 }
 
 export interface RuntimeInfo {
   config: AppConfig;
+  /** Effective approval mode after CLI overrides. */
+  permissionMode: ApprovalMode;
   sessionId: string;
   resumed: boolean;
   /** Names of skills discovered under `.darwin/skills/`. */
@@ -90,6 +95,17 @@ export class AgentRuntime {
     const instructions = loadedInstructions.instructions;
     const mcp = await loadMcpClients(options.projectRoot);
 
+    const permissionMode = options.permissionModeOverride ?? config.permissionMode;
+    const gate = new PermissionGate({
+      mode: permissionMode,
+      projectRoot: options.projectRoot,
+      ask: options.permissionBridge,
+      // Only auto consults it; constructing it is free (the model is lazy).
+      ...(permissionMode === 'auto' && {
+        classifier: createModelClassifier(config, options.projectRoot),
+      }),
+    });
+
     const agent = new Agent({
       id: AGENT_ID,
       model,
@@ -106,7 +122,7 @@ export class AgentRuntime {
         summaryRatio: config.summaryRatio,
         preserveRecentMessages: config.preserveRecentMessages,
       }),
-      interventions: [new PermissionGate(options.permissionBridge)],
+      interventions: [gate],
       // Required: the SDK's own printer writes to stdout and would interleave
       // with our rendering (and fight Ink for the terminal in step 5).
       printer: false,
@@ -120,6 +136,7 @@ export class AgentRuntime {
 
     return new AgentRuntime(agent, options.projectRoot, mcp.clients, skills, {
       config,
+      permissionMode,
       sessionId: session.sessionId,
       resumed: session.resumed,
       skillNames: skills.skills.map((skill) => skill.name),

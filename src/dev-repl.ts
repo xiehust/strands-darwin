@@ -13,7 +13,7 @@ import process from 'node:process';
 
 import { AGENTS_FILENAME } from './agent/instructions.js';
 import { AgentRuntime } from './agent/runtime.js';
-import type { PermissionRequest } from './agent/permission.js';
+import type { AssessedPermissionRequest } from './agent/permission.js';
 import { ConfigError } from './config.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
 import { DARWIN_DIRNAME } from './paths.js';
@@ -65,9 +65,9 @@ class Prompter {
 function createReadlineBridge(prompter: Prompter) {
   let queue: Promise<unknown> = Promise.resolve();
 
-  return async (request: PermissionRequest): Promise<boolean> => {
+  return async (request: AssessedPermissionRequest): Promise<boolean> => {
     const task = queue.then(async () => {
-      console.log(`\n  ┌─ permission required ─ ${request.kind}`);
+      console.log(`\n  ┌─ permission required ─ ${request.kind} — ${request.riskReason}`);
       console.log(`  │ ${request.summary}`);
       for (const detail of request.details) {
         console.log(`  │`);

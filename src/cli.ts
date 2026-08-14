@@ -4,12 +4,13 @@
  *
  * Boots the agent runtime, then hands control to the Ink app.
  *
- * Usage: darwin [--resume]
+ * Usage: darwin [--resume] [--permission-mode <default|auto|yolo>] [--yolo]
  */
 import { render } from 'ink';
 import React from 'react';
 import process from 'node:process';
 
+import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
 import { AgentRuntime } from './agent/runtime.js';
 import { ConfigError } from './config.js';
 import { App } from './tui/App.js';
@@ -17,6 +18,27 @@ import { PermissionQueue } from './tui/permission-queue.js';
 
 /** Grace period for a clean exit before the process is forced down. */
 const FORCE_EXIT_AFTER_MS = 500;
+
+/**
+ * Reads the mode flags. `--yolo` is shorthand for `--permission-mode yolo` and
+ * wins when both are given. Undefined means "use the config file's value".
+ * An invalid value throws {@link ConfigError} so main's existing plain-stderr
+ * path reports it before Ink mounts.
+ */
+function parsePermissionMode(argv: readonly string[]): ApprovalMode | undefined {
+  if (argv.includes('--yolo')) return 'yolo';
+
+  const flagIndex = argv.indexOf('--permission-mode');
+  if (flagIndex === -1) return undefined;
+
+  const value = argv[flagIndex + 1];
+  if (value === undefined || !(APPROVAL_MODES as readonly string[]).includes(value)) {
+    throw new ConfigError(
+      `--permission-mode expects one of ${APPROVAL_MODES.join(', ')}, got ${JSON.stringify(value ?? '(nothing)')}.`,
+    );
+  }
+  return value as ApprovalMode;
+}
 
 async function main(): Promise<void> {
   const resume = process.argv.includes('--resume');
@@ -27,10 +49,12 @@ async function main(): Promise<void> {
   try {
     // Runs before Ink mounts, so a startup failure prints plainly instead of
     // being wiped by the first frame.
+    const permissionModeOverride = parsePermissionMode(process.argv);
     runtime = await AgentRuntime.create({
       projectRoot,
       resume,
       permissionBridge: permissions.bridge,
+      ...(permissionModeOverride !== undefined && { permissionModeOverride }),
     });
   } catch (error) {
     if (error instanceof ConfigError) {

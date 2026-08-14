@@ -9,10 +9,10 @@
  * Requests are serialized: concurrent tool calls each get their own prompt, one
  * at a time, so two confirmations can never race for the same keystroke.
  */
-import type { PermissionBridge, PermissionRequest } from '../agent/permission.js';
+import type { AssessedPermissionRequest, PermissionBridge } from '../agent/permission.js';
 
 interface QueueEntry {
-  request: PermissionRequest;
+  request: AssessedPermissionRequest;
   resolve: (allowed: boolean) => void;
 }
 
@@ -34,7 +34,7 @@ export class PermissionQueue {
     });
 
   /** The request currently awaiting an answer, if any. */
-  get current(): PermissionRequest | undefined {
+  get current(): AssessedPermissionRequest | undefined {
     return this.entries[0]?.request;
   }
 
@@ -83,7 +83,7 @@ export class PermissionQueue {
   }
 
   /** Identity changes whenever the queue changes, for useSyncExternalStore. */
-  getSnapshot = (): PermissionRequest | undefined => this.current;
+  getSnapshot = (): AssessedPermissionRequest | undefined => this.current;
 
   private emit(): void {
     for (const listener of this.listeners) listener();

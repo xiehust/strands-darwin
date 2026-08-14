@@ -270,6 +270,12 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
         {info.config.provider}/{info.config.model} · session {info.sessionId}
         {info.resumed ? ' (resumed)' : ''}
       </Text>
+      {info.permissionMode === 'yolo' ? (
+        // Yellow: yolo disables a safety layer, same convention as other warnings.
+        <Text color="yellow">mode: yolo — every tool call runs without confirmation</Text>
+      ) : (
+        <Text dimColor>mode: {info.permissionMode}</Text>
+      )}
       {instructions !== undefined &&
         (instructions.truncated ? (
           <Text color="yellow">

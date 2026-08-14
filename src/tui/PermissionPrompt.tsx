@@ -8,7 +8,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 
-import type { PermissionRequest } from '../agent/permission.js';
+import type { AssessedPermissionRequest } from '../agent/permission.js';
 
 /** Lines shown per detail block before truncating. */
 const DETAIL_LINES = 14;
@@ -17,7 +17,7 @@ export function PermissionPrompt({
   request,
   waiting,
 }: {
-  readonly request: PermissionRequest;
+  readonly request: AssessedPermissionRequest;
   readonly waiting: number;
 }): React.JSX.Element {
   return (
@@ -26,7 +26,10 @@ export function PermissionPrompt({
         <Text color="yellow" bold>
           permission required
         </Text>
-        <Text dimColor> ({request.kind})</Text>
+        <Text dimColor>
+          {' '}
+          ({request.kind} — {request.riskReason})
+        </Text>
         {waiting > 0 && <Text dimColor> — {waiting} more queued</Text>}
       </Box>
 

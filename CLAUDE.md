@@ -42,12 +42,24 @@ manager. If a change seems to require intercepting the loop itself, check
 project relies on (and the runnable script that proves it) is recorded there.
 
 **Permissions** (`src/agent/permission.ts`): a `PermissionGate extends InterventionHandler`
-classifies each tool call by `(toolName, input)` — not name alone, because `fileEditor` spans
-read and write in one tool — and unknown tools (all MCP tools) fail closed as `execute`.
-Denial uses `InterventionActions.deny(...)`, never `confirm()`. The UI side is a
-`PermissionBridge` (async request → boolean): the Ink `PermissionQueue` implements it today;
-`allowAllBridge` exists for non-interactive runs. On turn cancel, release prompts with
-`denyPending()` — `close()` latches shut and silently denies everything afterward.
+runs in one of three approval modes (`permissionMode` in `.darwin/config.json`;
+`--permission-mode <m>` / `--yolo` on the CLI override it):
+
+- `default` — statically *provably safe* calls run silently (reads, in-project writes off
+  the sensitive list, bash whose every segment is an allowlisted read-only command);
+  everything else prompts. Whitelist-only, fail-closed: a rule miss costs an extra prompt,
+  never a silent approval.
+- `auto` — same static rules, then a model classifier (`src/agent/safety-classifier.ts`,
+  Haiku by default, `classifierModel` to override) judges what the rules couldn't clear;
+  classifier-unsafe/thrown/timed-out verdicts fall back to prompting, never auto-deny.
+- `yolo` — never prompts.
+
+Classification is `(toolName, input)` — not name alone, because `fileEditor` spans read and
+write in one tool — and unknown tools (all MCP tools) are never statically safe. Denial uses
+`InterventionActions.deny(...)`, never `confirm()`. The UI side is a `PermissionBridge`
+(async request → boolean): the Ink `PermissionQueue` implements it today; `allowAllBridge`
+exists for non-interactive runs. On turn cancel, release prompts with `denyPending()` —
+`close()` latches shut and silently denies everything afterward.
 
 **Skills** (`src/skills/`): the one self-built module — the TS SDK has no Skills support yet.
 It's an SDK `Plugin` mirroring Python's `AgentSkills`: `load_skill` tool + progressive

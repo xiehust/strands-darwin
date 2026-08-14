@@ -10,6 +10,7 @@ import path from 'node:path';
 import { BedrockModel } from '@strands-agents/sdk';
 import type { Model } from '@strands-agents/sdk';
 
+import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
 import { darwinDir } from './paths.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
@@ -40,6 +41,13 @@ export interface AppConfig {
   summaryRatio: number;
   /** Messages always kept verbatim by the summarizer. */
   preserveRecentMessages: number;
+  /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
+  permissionMode: ApprovalMode;
+  /**
+   * Model id for `auto` mode's safety classifier. Optional — each provider has
+   * a cheap default. Bedrock ids must be inference profiles, like `model`.
+   */
+  classifierModel?: string;
 }
 
 export const CONFIG_FILENAME = 'config.json';
@@ -55,6 +63,7 @@ const DEFAULTS = {
   maxTokens: 8192,
   summaryRatio: 0.3,
   preserveRecentMessages: 10,
+  permissionMode: 'default',
 } as const satisfies Partial<AppConfig>;
 
 const DEFAULT_REGION = 'us-west-2';
@@ -110,8 +119,17 @@ function validate(parsed: unknown, configPath: string): AppConfig {
     );
   }
 
+  const permissionMode = input['permissionMode'] ?? DEFAULTS.permissionMode;
+  if (!isApprovalMode(permissionMode)) {
+    throw new ConfigError(
+      `${configPath}: unknown permissionMode ${JSON.stringify(permissionMode)}. ` +
+        `Expected one of ${APPROVAL_MODES.join(', ')}.`,
+    );
+  }
+
   const config: AppConfig = {
     provider,
+    permissionMode,
     model: stringField(input, 'model', configPath) ?? DEFAULTS.model,
     maxTokens: numberField(input, 'maxTokens', configPath, { min: 1 }) ?? DEFAULTS.maxTokens,
     summaryRatio:
@@ -126,6 +144,9 @@ function validate(parsed: unknown, configPath: string): AppConfig {
 
   const apiKeyEnv = stringField(input, 'apiKeyEnv', configPath);
   if (apiKeyEnv !== undefined) config.apiKeyEnv = apiKeyEnv;
+
+  const classifierModel = stringField(input, 'classifierModel', configPath);
+  if (classifierModel !== undefined) config.classifierModel = classifierModel;
 
   return config;
 }
@@ -224,6 +245,10 @@ function readApiKey(config: AppConfig): string | undefined {
 
 function isProvider(value: unknown): value is Provider {
   return typeof value === 'string' && (PROVIDERS as readonly string[]).includes(value);
+}
+
+function isApprovalMode(value: unknown): value is ApprovalMode {
+  return typeof value === 'string' && (APPROVAL_MODES as readonly string[]).includes(value);
 }
 
 function stringField(input: Record<string, unknown>, key: string, configPath: string): string | undefined {
