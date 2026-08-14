@@ -224,6 +224,12 @@ session's earlier spend — session snapshots persist messages, not metrics, so 
 at zero on every process (`AgentRuntime.usage`, surfaced by `/usage`, says "this run" for
 exactly that reason).
 
+Read *during* a turn, the getter returns the totals from before it: the meter accumulates a
+model call when that call finishes, so a report asked for mid-stream shows the same numbers as
+the one asked for just before (measured in `spike/verify-tui.ts usage`, which reads the meter
+while a 60-line answer is still streaming). Anything that shows these numbers while a turn is
+in flight has to say so — an unchanged counter next to a visibly working agent reads as broken.
+
 ### Gotchas
 
 - `AgentResult.metrics.accumulatedUsage` accumulates over the agent's **lifetime**, not per

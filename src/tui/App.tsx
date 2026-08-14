@@ -103,6 +103,33 @@ export function App({
       const text = raw.trim();
       if (text === '') return;
 
+      // Answered from the SDK's meter, never sent to the model: a report on token
+      // spend that costs a turn of its own would be self-defeating. Handled before
+      // the busy check, so it also answers mid-turn — a long turn is exactly when
+      // the question comes up, and reading a counter cannot disturb one.
+      if (text === '/usage') {
+        setDraft('');
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        dispatch({
+          type: 'notice',
+          text: formatUsageReport(runtime.usage, runtime.info.resumed, status === 'streaming'),
+        });
+        return;
+      }
+
+      // Everything below needs the agent, and the SDK runs one turn at a time. The
+      // draft is deliberately left in the box so nothing typed is lost — but it is
+      // not queued either: sending a prompt written minutes earlier, on its own,
+      // is worse than making the user press enter again.
+      if (status === 'streaming') {
+        dispatch({
+          type: 'notice',
+          text: 'still working — press enter again once the turn ends (ctrl+c cancels it)',
+        });
+        return;
+      }
+
       if (text === '/exit' || text === '/quit') {
         exit();
         return;
@@ -111,13 +138,6 @@ export function App({
       setDraft('');
       setSelectedCompletion(0);
       dispatch({ type: 'userInput', text });
-
-      // Answered from the SDK's meter, never sent to the model: a report on token
-      // spend that costs a turn of its own would be self-defeating.
-      if (text === '/usage') {
-        dispatch({ type: 'notice', text: formatUsageReport(runtime.usage, runtime.info.resumed) });
-        return;
-      }
 
       // A `/skill-name` command sends the skill's full text instead of the
       // literal command. Unknown slash commands fall through as ordinary input.
@@ -137,7 +157,7 @@ export function App({
 
       await runTurn(toSend);
     },
-    [exit, runtime, runTurn],
+    [exit, runtime, runTurn, status],
   );
 
   const acceptCompletion = useCallback(() => {
@@ -188,7 +208,11 @@ export function App({
       return;
     }
 
-    if (effectiveStatus === 'streaming') return;
+    // No guard for a streaming turn: typing during one stays allowed, and the
+    // draft is held back in submit() instead. That is what lets a local command
+    // like /usage be answered mid-turn, without ever queueing a prompt into a
+    // busy agent. (A pending confirmation is different — it took the keyboard
+    // above, because the loop is blocked until it is answered.)
 
     if (key.return) {
       // With a completion highlighted, Enter accepts it rather than submitting a
@@ -262,7 +286,11 @@ export function App({
           completions={completions}
           selectedCompletion={selectedCompletion}
           disabled={effectiveStatus === 'streaming'}
-          hint={effectiveStatus === 'streaming' ? 'working… ctrl+c cancels this turn' : undefined}
+          hint={
+            effectiveStatus === 'streaming'
+              ? 'working… /usage reports tokens · ctrl+c cancels this turn'
+              : undefined
+          }
         />
       )}
     </Box>
@@ -373,7 +401,11 @@ function formatPromptCache(plan: PromptCachePlan): string {
  * is to compare them (a large cache read next to a small input is the cache
  * working), and that comparison is what a column makes readable.
  */
-export function formatUsageReport(usage: UsageTotals, resumed: boolean): string {
+export function formatUsageReport(
+  usage: UsageTotals,
+  resumed: boolean,
+  turnInFlight = false,
+): string {
   const rows: readonly (readonly [string, number])[] = [
     ['input', usage.inputTokens],
     ['cache read', usage.cacheReadInputTokens],
@@ -390,7 +422,11 @@ export function formatUsageReport(usage: UsageTotals, resumed: boolean): string 
   const heading = resumed
     ? 'token usage — this run (resumed: earlier runs are not counted)'
     : 'token usage — this run';
-  return [heading, ...lines].join('\n');
+  // Asked mid-turn, the totals are the ones from before it: the meter accumulates
+  // a model call when it finishes. Said out loud, because numbers that do not move
+  // while the agent is visibly working read as a broken counter.
+  const footer = turnInFlight ? ['  (the turn in flight is not counted yet)'] : [];
+  return [heading, ...lines, ...footer].join('\n');
 }
 
 /** Explicit locale: the report should read the same on every machine. */

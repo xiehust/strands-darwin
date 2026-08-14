@@ -424,9 +424,11 @@ async function agentsMdHeader(): Promise<void> {
 }
 
 /**
- * `/usage` is answered locally from the SDK's meter, so it has three things to
- * prove: the counters start at zero, asking costs no turn of its own, and one
- * real turn moves them. A short prose answer with no tools is enough to move them.
+ * `/usage` is answered locally from the SDK's meter, so it has four things to
+ * prove: the counters start at zero, asking costs no turn of its own, one real
+ * turn moves them, and — the reason the report is local at all — it still answers
+ * while a turn is streaming. A short prose answer with no tools is enough to move
+ * them.
  */
 async function usageReport(): Promise<void> {
   header('TUI — /usage reports the run\'s token counts');
@@ -470,12 +472,66 @@ async function usageReport(): Promise<void> {
     // (verify-prompt-cache-live.ts is what proves caching itself).
     assert('cache counters are reported too', after?.cacheRead !== undefined && after?.cacheWrite !== undefined);
 
+    await usageDuringATurn(tui);
+
     tui.submit('/exit');
     const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
     assert('TUI exited cleanly after a usage report', code === 0);
   } finally {
     tui.kill();
   }
+}
+
+/**
+ * The mid-turn half: a long turn is when the cost question actually comes up, and
+ * a keyboard that is dead until the agent finishes is what made the command look
+ * broken.
+ *
+ * Counting to sixty is deliberate — the stream has to still be running when the
+ * report is asked for, and ordering is how that is proven: the report must appear
+ * BEFORE the turn's last word. A prompt typed in the same window must not be sent
+ * (the SDK runs one turn at a time) but must say so rather than vanish.
+ */
+async function usageDuringATurn(tui: TuiSession): Promise<void> {
+  const turn = tui.mark();
+  tui.submit('Count from 1 to 60 in words, one per line. Do not use any tools.');
+  await tui.waitFor('working…', { timeoutMs: 60_000, from: turn });
+  assert('the busy hint says /usage still works', tui.screen.includes('/usage reports tokens'));
+
+  const duringTurn = tui.mark();
+  tui.submit('/usage');
+  await tui.waitFor('token usage', { timeoutMs: 60_000, from: duringTurn, settleMs: 400 });
+  const during = parseUsage(tui.screen.slice(duringTurn));
+  console.log(`  mid-turn: ${JSON.stringify(during)}`);
+  assert('the report is drawn during a streaming turn', during !== undefined);
+  // The meter accumulates a model call when it finishes, so these totals exclude
+  // the turn being watched — which the report has to say, or unchanged numbers
+  // look like a stuck counter.
+  assert(
+    'the report says the in-flight turn is not counted yet',
+    tui.screen.slice(duringTurn).includes('not counted yet'),
+  );
+
+  // Anything needing the model waits — with a reason on screen, not silence.
+  const beforeQueued = tui.mark();
+  tui.submit('this must not be sent mid-turn');
+  await tui.waitFor('still working', { timeoutMs: 30_000, from: beforeQueued });
+  assert(
+    'a prompt typed mid-turn is refused with a reason',
+    tui.screen.slice(beforeQueued).includes('still working'),
+  );
+  // It stays in the draft on purpose, so clear it before /exit is typed into the
+  // same line.
+  tui.send('\u007f'.repeat(40));
+
+  await tui.waitFor(/sixty/i, { timeoutMs: 240_000, from: turn });
+  const region = tui.screen.slice(duringTurn);
+  assert(
+    'the report came before the turn finished',
+    region.indexOf('token usage') < region.search(/sixty/i),
+  );
+  await waitForIdle(tui, 240_000);
+  assert('the turn survived being asked', tui.screen.slice(turn).includes('token usage'));
 }
 
 /**
