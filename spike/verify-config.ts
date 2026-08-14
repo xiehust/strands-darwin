@@ -127,12 +127,90 @@ async function providerSwitching(): Promise<void> {
 
   const openai = await loadConfig(await writeConfig('{ "provider": "openai", "model": "gpt-5" }'));
   assert('openai is selected from config', openai.provider === 'openai');
-  const openaiError = await expectConfigError(
-    'openai reports its missing peer dependency as a ConfigError',
-    () => createModelFromConfig(openai),
+
+  // The openai peer dependency *is* installed (Bedrock Mantle needs it), so this
+  // reaches the real constructor. Without a credential the OpenAI SDK refuses to
+  // build a client; the message names the env var, which is the actionable part.
+  const savedKey = process.env['OPENAI_API_KEY'];
+  delete process.env['OPENAI_API_KEY'];
+  try {
+    let keylessError = '';
+    try {
+      await createModelFromConfig(openai);
+    } catch (error) {
+      keylessError = error instanceof Error ? error.message : String(error);
+    }
+    assert('openai without a credential is refused', keylessError !== '');
+    assert('the refusal names OPENAI_API_KEY', keylessError.includes('OPENAI_API_KEY'));
+
+    process.env['DARWIN_TEST_OPENAI_KEY'] = 'sk-test';
+    const keyed = await loadConfig(
+      await writeConfig('{ "provider": "openai", "model": "gpt-5", "apiKeyEnv": "DARWIN_TEST_OPENAI_KEY" }'),
+    );
+    assert('openai builds once apiKeyEnv resolves', (await createModelFromConfig(keyed)) !== undefined);
+    delete process.env['DARWIN_TEST_OPENAI_KEY'];
+
+    // Mantle replaces the API key with AWS credentials, so this must build with no
+    // key in the environment at all — the whole point of the pathway.
+    const mantle = await loadConfig(
+      await writeConfig(
+        '{ "provider": "openai", "model": "openai.gpt-5.6-sol", "bedrockMantle": true, ' +
+          '"openaiApi": "responses", "region": "us-east-1", "thinkingEffort": "max" }',
+      ),
+    );
+    const mantleModel = await createModelFromConfig(mantle);
+    const mantleParams = (mantleModel.getConfig() as { params?: Record<string, unknown> }).params;
+    console.log(`  mantle params: ${JSON.stringify(mantleParams)}`);
+    // The Responses API rejects the flat `reasoning_effort` outright, and Mantle
+    // serves the whole ladder — so `max` must arrive nested and unclamped.
+    assert(
+      'mantle sends nested reasoning.effort, unclamped',
+      JSON.stringify(mantleParams) === JSON.stringify({ reasoning: { effort: 'max' } }),
+    );
+
+    const chat = await loadConfig(
+      await writeConfig(
+        '{ "provider": "openai", "model": "gpt-5", "apiKeyEnv": "OPENAI_API_KEY", "thinkingEffort": "max" }',
+      ),
+    );
+    process.env['OPENAI_API_KEY'] = 'sk-test';
+    const chatParams = (
+      (await createModelFromConfig(chat)).getConfig() as { params?: Record<string, unknown> }
+    ).params;
+    assert(
+      'native openai still sends flat reasoning_effort, clamped to high',
+      JSON.stringify(chatParams) === JSON.stringify({ reasoning_effort: 'high' }),
+    );
+  } finally {
+    restoreEnv('OPENAI_API_KEY', savedKey);
+  }
+
+  // Both new keys are openai-only and mutually exclusive with a credential; each
+  // mistake is rejected at load time rather than as an opaque SDK error later.
+  const mantleOnBedrock = await expectConfigError('bedrockMantle on provider bedrock is rejected', async () =>
+    loadConfig(
+      await writeConfig('{ "provider": "bedrock", "model": "us.anthropic.claude-sonnet-4-6", "bedrockMantle": true }'),
+    ),
   );
-  console.log(`  openai: ${openaiError.split('\n')[0]}`);
-  assert('openai error names the package to install', openaiError.includes('openai'));
+  assert('the error points at provider "openai"', mantleOnBedrock.includes('"openai"'));
+
+  const mantleWithKey = await expectConfigError('bedrockMantle plus apiKeyEnv is rejected', async () =>
+    loadConfig(
+      await writeConfig('{ "provider": "openai", "model": "openai.gpt-5.6-sol", "bedrockMantle": true, "apiKeyEnv": "X" }'),
+    ),
+  );
+  assert('the error names both keys', mantleWithKey.includes('bedrockMantle') && mantleWithKey.includes('apiKeyEnv'));
+
+  const badApi = await expectConfigError('an unknown openaiApi is rejected', async () =>
+    loadConfig(await writeConfig('{ "provider": "openai", "model": "gpt-5", "openaiApi": "grpc" }')),
+  );
+  assert('the error lists the valid api modes', /chat, responses/.test(badApi));
+
+  await expectConfigError('openaiApi on provider bedrock is rejected', async () =>
+    loadConfig(
+      await writeConfig('{ "provider": "bedrock", "model": "us.anthropic.claude-sonnet-4-6", "openaiApi": "chat" }'),
+    ),
+  );
 }
 
 async function rejections(): Promise<void> {

@@ -307,3 +307,63 @@ the only file that names a provider.
   easy prompts (measured — `low` answered a logic puzzle with no reasoning block, `high`
   reasoned first). Only `high` and above are documented as "always thinks", so that is the only
   level whose reasoning the live spike asserts.
+
+## Bedrock Mantle (`openai.*` models without an API key)
+
+`OpenAIModel` accepts `bedrockMantleConfig: { region }`, which routes the OpenAI client at
+Bedrock's OpenAI-compatible endpoint and mints a bearer token per request from the standard AWS
+credential chain (`@aws/bedrock-token-generator`, an optional peer dep). darwin exposes it as
+`bedrockMantle: true` on `provider: "openai"`, reusing the existing `region` field.
+
+Proven by `spike/verify-mantle-live.ts` (7 assertions: tool calls, multi-turn context, live
+`/effort`) and `spike/probe-mantle-catalog.ts` (lists the real per-region catalog).
+
+### Contract: `bedrockMantle` replaces the credential, never joins it
+
+The SDK throws if `bedrockMantleConfig` arrives alongside `apiKey`, `clientConfig.apiKey` or
+`clientConfig.baseURL`. `config.ts` rejects `bedrockMantle` + `apiKeyEnv` at load time instead,
+so the error names the file and the two keys rather than surfacing as a bare `Error`.
+
+### Contract: the Mantle catalog is per-region and is not Bedrock's catalog
+
+`aws bedrock list-foundation-models` does **not** list Mantle models. Measured 2026-08-14 via
+`GET https://bedrock-mantle.<region>.api.aws/v1/models`:
+
+| region | `openai.gpt-5.6-sol` | `openai.gpt-5.6-terra` / `-luna` | `openai.gpt-5.5` |
+|---|---|---|---|
+| us-east-1 | present | present | present |
+| us-west-2 | **absent** | present | absent |
+
+A wrong region fails as `404 The model '<id>' does not exist` — naming the model, never the
+region, which is why `createOpenAIModel` resolves the region itself rather than leaving it to
+the SDK's env lookup. Note the models list lives on `/v1` even for ids whose *inference* is on
+`/openai/v1` (the SDK's `OPENAI_PATH_MODEL_PREFIXES` routes `openai.gpt-5.` to the latter).
+
+### Contract: api mode is per-model, and `openai.gpt-5.6-*` requires `responses`
+
+`openai.gpt-5.6-sol` answers `400 The model 'openai.gpt-5.6-sol' does not support the
+'/v1/chat/completions' API`. `openai.gpt-oss-*` is the opposite. So the mode cannot be inferred
+from the provider or the transport — hence the `openaiApi` config key, defaulting to `chat` to
+keep the pre-existing native-OpenAI path unchanged. Only the *stateless* Responses form is used:
+`stateful: true` cannot coexist with a `conversationManager`, and darwin always installs one.
+
+### Contract: reasoning effort is spelled differently per api mode
+
+Measured against `openai.gpt-5.6-sol`, us-east-1, Responses API:
+
+| field | low | medium | high | xhigh | max |
+|---|---|---|---|---|---|
+| `reasoning: { effort }` | ok | ok | ok | ok | ok |
+| `reasoning_effort` (flat) | `400 Unknown parameter: 'reasoning_effort'` — every level | | | | |
+
+Two consequences. `openaiThinkingParams` takes the api mode and emits the nested shape for
+`responses`, the flat one for `chat`. And the `high` clamp that exists for native OpenAI is
+lifted when `bedrockMantle` is set, because the whole ladder was measured to work — clamping
+anyway would quietly think less than the user asked for.
+
+### Gotcha: effort is billed but never displayed
+
+No `reasoningContentDelta` ever reaches the stream on this pathway — not at any effort level,
+and not with `reasoning.summary` set to `auto` or `detailed`. The TUI therefore shows no
+thinking for Mantle models even at `max`. Prompt caching is also off (`planPromptCache` returns
+`DISABLED` for `provider: 'openai'`), so a Mantle session re-sends its whole prefix every turn.

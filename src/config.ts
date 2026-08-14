@@ -41,6 +41,14 @@ export class ConfigError extends Error {
 export const PROVIDERS = ['bedrock', 'anthropic', 'openai'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 
+/**
+ * Which OpenAI API the `openai` provider speaks. Declared here rather than
+ * imported from the SDK's `OpenAIApi`: that module's types pull in the optional
+ * `openai` peer dependency, which a Bedrock-only install does not have.
+ */
+export const OPENAI_API_MODES = ['chat', 'responses'] as const;
+export type OpenAIApiMode = (typeof OPENAI_API_MODES)[number];
+
 export interface AppConfig {
   provider: Provider;
   /**
@@ -49,10 +57,37 @@ export interface AppConfig {
    * rejected by the service.
    */
   model: string;
-  /** Bedrock only. Falls back to AWS_REGION, then AWS_DEFAULT_REGION, then us-west-2. */
+  /**
+   * Bedrock, and Bedrock Mantle. Falls back to AWS_REGION, then
+   * AWS_DEFAULT_REGION, then us-west-2.
+   */
   region?: string;
   /** Env var holding the API key, for providers that need one. */
   apiKeyEnv?: string;
+  /**
+   * `openai` provider only: route requests through Amazon Bedrock's
+   * OpenAI-compatible "Mantle" endpoint instead of `api.openai.com`, reaching
+   * `openai.*` / `xai.*` / `google.gemma-*` models with AWS credentials rather
+   * than an API key. The SDK derives the base URL from {@link region} and the
+   * model id, and mints a bearer token per request from the standard AWS
+   * credential chain — so {@link apiKeyEnv} must not be set alongside it.
+   *
+   * The model catalog is per-region and does not match Bedrock's own: list it
+   * with `pnpm tsx spike/probe-mantle-catalog.ts <region>`.
+   */
+  bedrockMantle?: boolean;
+  /**
+   * `openai` provider only: which OpenAI API to speak. `chat` (the default) is
+   * Chat Completions; `responses` is the Responses API, which the newest models
+   * require — `openai.gpt-5.6-*` on Mantle rejects `/v1/chat/completions`
+   * outright. Chosen rather than inferred because the two coexist in one
+   * catalog: `openai.gpt-oss-*` is Chat Completions, `openai.gpt-5.6-*` is not.
+   *
+   * Only the stateless form of `responses` is used: darwin always installs a
+   * conversation manager, which the SDK forbids combining with server-managed
+   * state.
+   */
+  openaiApi?: OpenAIApiMode;
   maxTokens: number;
   /** Fraction of oldest messages summarized on context overflow. */
   summaryRatio: number;
@@ -233,6 +268,41 @@ function validate(parsed: unknown, configPath: string): AppConfig {
 
   const apiKeyEnv = stringField(input, 'apiKeyEnv', configPath);
   if (apiKeyEnv !== undefined) config.apiKeyEnv = apiKeyEnv;
+
+  // Rejected here rather than left to the SDK, which throws the same conflict as
+  // a bare Error naming neither the file nor the two keys the user wrote.
+  const bedrockMantle = booleanField(input, 'bedrockMantle', configPath);
+  if (bedrockMantle !== undefined) {
+    if (bedrockMantle && provider !== 'openai') {
+      throw new ConfigError(
+        `${configPath}: "bedrockMantle" only applies to provider "openai" (this file sets ${JSON.stringify(provider)}). ` +
+          `Bedrock's own models are reached with provider "bedrock".`,
+      );
+    }
+    if (bedrockMantle && apiKeyEnv !== undefined) {
+      throw new ConfigError(
+        `${configPath}: "bedrockMantle" and "apiKeyEnv" are mutually exclusive — ` +
+          `Mantle mints its own bearer token from AWS credentials. Remove "apiKeyEnv".`,
+      );
+    }
+    config.bedrockMantle = bedrockMantle;
+  }
+
+  const openaiApi = input['openaiApi'];
+  if (openaiApi !== undefined) {
+    if (!isOpenAIApiMode(openaiApi)) {
+      throw new ConfigError(
+        `${configPath}: unknown openaiApi ${JSON.stringify(openaiApi)}. ` +
+          `Expected one of ${OPENAI_API_MODES.join(', ')}.`,
+      );
+    }
+    if (provider !== 'openai') {
+      throw new ConfigError(
+        `${configPath}: "openaiApi" only applies to provider "openai" (this file sets ${JSON.stringify(provider)}).`,
+      );
+    }
+    config.openaiApi = openaiApi;
+  }
 
   const classifierModel = stringField(input, 'classifierModel', configPath);
   if (classifierModel !== undefined) config.classifierModel = classifierModel;
@@ -426,20 +496,46 @@ async function createAnthropicModel(config: AppConfig): Promise<Model> {
 }
 
 async function createOpenAIModel(config: AppConfig): Promise<Model> {
-  const apiKey = readApiKey(config);
   const { OpenAIModel } = await importProviderModule<typeof import('@strands-agents/sdk/models/openai')>(
     '@strands-agents/sdk/models/openai',
     'openai',
     'openai',
   );
-  const params = openaiThinkingParams(planThinking(config));
-  return new OpenAIModel({
-    api: 'chat',
+  const api = openaiApiMode(config);
+  const params = openaiThinkingParams(planThinking(config), api);
+
+  // Mantle derives both the base URL and the credential, so it replaces the API
+  // key rather than joining it — the SDK rejects being given both. The region is
+  // resolved here rather than left to the SDK's own env lookup so a run cannot
+  // use a different region than the rest of darwin reports: the Mantle catalog is
+  // per-region (`openai.gpt-5.6-sol` is us-east-1 only) and a wrong region shows
+  // up as a 404 naming the model, never the region.
+  const client =
+    config.bedrockMantle === true
+      ? { bedrockMantleConfig: { region: resolveRegion(config.region) } }
+      : optionalApiKey(readApiKey(config));
+
+  const options = {
     modelId: config.model,
     maxTokens: config.maxTokens,
-    ...(apiKey !== undefined && { apiKey }),
+    ...client,
     ...(params !== undefined && { params }),
-  });
+  };
+
+  // Branched on the literal rather than passing `api` through: `OpenAIModelOptions`
+  // is discriminated on it, and a union-typed `api` would widen the options to the
+  // point where a chat-only field on a responses config no longer fails to compile.
+  return api === 'responses' ? new OpenAIModel({ api: 'responses', ...options }) : new OpenAIModel({ api: 'chat', ...options });
+}
+
+/** Which OpenAI API this config speaks. Chat Completions unless asked otherwise. */
+function openaiApiMode(config: AppConfig): OpenAIApiMode {
+  return config.openaiApi ?? 'chat';
+}
+
+/** The `apiKey` option, or nothing — each provider SDK has its own env fallback. */
+function optionalApiKey(apiKey: string | undefined): { apiKey?: string } {
+  return apiKey === undefined ? {} : { apiKey };
 }
 
 /**
@@ -469,7 +565,7 @@ export function applyThinkingEffort(model: Model, config: AppConfig, effort: Thi
       updatable.updateConfig({ params: claudeThinkingFields(plan) as Record<string, unknown> | undefined });
       break;
     case 'openai':
-      updatable.updateConfig({ params: openaiThinkingParams(plan) });
+      updatable.updateConfig({ params: openaiThinkingParams(plan, openaiApiMode(config)) });
       break;
   }
   return plan;
@@ -521,6 +617,10 @@ function isProvider(value: unknown): value is Provider {
 
 function isApprovalMode(value: unknown): value is ApprovalMode {
   return typeof value === 'string' && (APPROVAL_MODES as readonly string[]).includes(value);
+}
+
+function isOpenAIApiMode(value: unknown): value is OpenAIApiMode {
+  return typeof value === 'string' && (OPENAI_API_MODES as readonly string[]).includes(value);
 }
 
 function isPromptCacheTtl(value: unknown): value is PromptCacheTtl {
