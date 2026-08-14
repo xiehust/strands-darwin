@@ -28,6 +28,7 @@ import {
   createModelFromConfig,
   loadConfig,
   saveThinkingEffort,
+  withSoleChoice,
   type AppConfig,
 } from '../src/config.js';
 import { assert, header, report } from './shared.js';
@@ -35,7 +36,7 @@ import { assert, header, report } from './shared.js';
 const ROOT = '/tmp/darwin-thinking-test';
 
 /** Sonnet 4.6: adaptive thinking, but not the two Opus-only levels. */
-const SONNET: AppConfig = {
+const SONNET: AppConfig = withSoleChoice({
   provider: 'bedrock',
   model: 'us.anthropic.claude-sonnet-4-6',
   maxTokens: 8192,
@@ -44,7 +45,7 @@ const SONNET: AppConfig = {
   permissionMode: 'default',
   promptCache: true,
   thinkingEffort: 'high',
-};
+});
 
 /** Opus 5: the whole ladder, `xhigh` and `max` included. */
 const OPUS: AppConfig = { ...SONNET, model: 'global.anthropic.claude-opus-5' };

@@ -3,6 +3,7 @@
   "models": [
     {
       "enable": true,
+      "name": "sol",
       "provider": "openai",
       "model": "openai.gpt-5.6-sol",
       "bedrockMantle": true,
@@ -12,6 +13,7 @@
     },
     {
       "enable": false,
+      "name": "opus",
       "provider": "bedrock",
       "model": "global.anthropic.claude-opus-5",
       "maxTokens": 64000

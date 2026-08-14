@@ -20,12 +20,18 @@ import {
   planPromptCache,
   type SystemPromptHolder,
 } from '../src/agent/prompt-cache.js';
-import { ConfigError, configPath, loadConfig, type AppConfig } from '../src/config.js';
+import {
+  ConfigError,
+  configPath,
+  loadConfig,
+  withSoleChoice,
+  type AppConfig,
+} from '../src/config.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-prompt-cache-test';
 
-const CLAUDE_CONFIG: AppConfig = {
+const CLAUDE_CONFIG: AppConfig = withSoleChoice({
   provider: 'bedrock',
   model: 'us.anthropic.claude-sonnet-4-6',
   maxTokens: 8192,
@@ -34,7 +40,7 @@ const CLAUDE_CONFIG: AppConfig = {
   permissionMode: 'default',
   promptCache: true,
   thinkingEffort: 'high',
-};
+});
 
 async function writeConfig(contents: string): Promise<string> {
   const dir = path.join(ROOT, `case-${Math.random().toString(36).slice(2)}`);

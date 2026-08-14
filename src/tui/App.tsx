@@ -18,6 +18,7 @@ import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.j
 import type { PermissionDecision } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { AgentRuntime, UsageTotals } from '../agent/runtime.js';
+import { routeSdkLogs } from '../agent/sdk-logging.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
 import {
   isThinkingEffort,
@@ -25,6 +26,7 @@ import {
   type ThinkingPlan,
 } from '../agent/thinking.js';
 import { CONFIG_FILENAME } from '../config.js';
+import type { ModelChoice } from '../config.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import { InputBox } from './InputBox.js';
@@ -54,7 +56,7 @@ function stripControls(value: string): string {
  * `/quit` is deliberately missing — it works, but it is an alias of `/exit`, and
  * a menu row per alias costs a row of a six-row list to say nothing new.
  */
-const BUILTIN_COMMANDS = ['effort', 'exit', 'usage'] as const;
+const BUILTIN_COMMANDS = ['effort', 'exit', 'model', 'usage'] as const;
 
 type Status = 'idle' | 'streaming' | 'awaiting-permission';
 
@@ -82,7 +84,7 @@ export function App({
   // A pending confirmation outranks streaming: the loop is blocked on it.
   const effectiveStatus: Status = pendingPermission !== undefined ? 'awaiting-permission' : status;
 
-  // Built-ins first: there are two of them and eleven skills in this repo alone,
+  // Built-ins first: there are four of them and eleven skills in this repo alone,
   // so alphabetical order would bury the commands that always exist.
   const completions = computeCompletions(draft, [
     ...BUILTIN_COMMANDS,
@@ -95,6 +97,16 @@ export function App({
     const timer = setInterval(() => setFrame((f) => f + 1), SPINNER_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [effectiveStatus]);
+
+  // The SDK's default logger writes to the console, which tears this frame. It has
+  // something to say now that `/model` exists: switching away from Claude with a
+  // reasoning block in the history makes the OpenAI adapter warn, once per
+  // request, that it is dropping it. Surfaced as a notice instead of swallowed —
+  // the model is losing part of its own history and that is worth one line.
+  useEffect(
+    () => routeSdkLogs((entry) => dispatch({ type: 'notice', text: `sdk ${entry.level}: ${entry.message}` })),
+    [dispatch],
+  );
 
   const runTurn = useCallback(
     async (text: string) => {
@@ -165,6 +177,17 @@ export function App({
 
       if (text === '/exit' || text === '/quit') {
         exit();
+        return;
+      }
+
+      // Deliberately *after* the busy check, unlike /effort: that only adjusts the
+      // live model's config, while this replaces the model object outright, which
+      // would change the model under a turn that is already streaming from it.
+      if (text === '/model' || text.startsWith('/model ')) {
+        setDraft('');
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        await applyModelCommand(runtime, text, dispatch);
         return;
       }
 
@@ -380,9 +403,11 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
     <Box flexDirection="column" marginBottom={1}>
       <Text bold>darwin</Text>
       <Text dimColor>
-        {info.config.provider}/{info.config.model} · session {info.sessionId}
+        {/* Live, not info.config: /model changes both mid-session, and a header
+            that still names the previous model is worse than no header. */}
+        {runtime.config.provider}/{runtime.config.model} · session {info.sessionId}
         {info.resumed ? ' (resumed)' : ''}
-        {formatPromptCache(info.promptCache)}
+        {formatPromptCache(runtime.promptCache)}
         {formatThinking(runtime.thinking)}
       </Text>
       {info.permissionMode === 'yolo' ? (
@@ -591,6 +616,143 @@ function applyEffortCommand(
 function describeThinking(plan: ThinkingPlan): string {
   if (plan.problem !== undefined) return `${plan.requested} — ${plan.problem}`;
   return plan.requested;
+}
+
+/**
+ * Runs `/model`, dispatching whatever notice it earns.
+ *
+ * Listing and switching share one entry point for the same reason `/effort` does:
+ * both answer "which model am I talking to". An unresolvable argument changes
+ * nothing and prints the list, rather than falling through to the model as a
+ * prompt — a mistyped model name is not a question worth paying for.
+ *
+ * The switch is awaited (building a model can need a dynamic import) but the
+ * `.darwin/config.json` write is not, exactly as with `/effort` and an accepted
+ * allow-rule: a failed write means "this session only", which must be reported and
+ * must not be waited for.
+ */
+async function applyModelCommand(
+  runtime: AgentRuntime,
+  text: string,
+  dispatch: (action: TurnAction) => void,
+): Promise<void> {
+  const argument = text.slice('/model'.length).trim();
+  const choices = runtime.modelChoices;
+
+  if (argument === '') {
+    dispatch({ type: 'notice', text: formatModelList(choices) });
+    return;
+  }
+
+  const target = resolveModelChoice(choices, argument);
+  if (target === undefined) {
+    dispatch({
+      type: 'notice',
+      text: `no configured model matches ${JSON.stringify(argument)}\n${formatModelList(choices)}`,
+    });
+    return;
+  }
+  if (target === 'ambiguous') {
+    dispatch({
+      type: 'notice',
+      text: `${JSON.stringify(argument)} matches more than one model — be more specific\n${formatModelList(choices)}`,
+    });
+    return;
+  }
+  if (target.enabled) {
+    dispatch({ type: 'notice', text: `already on ${target.name}\n${formatModelList(choices)}` });
+    return;
+  }
+
+  let result;
+  try {
+    result = await runtime.changeModel(target);
+  } catch (error) {
+    // The session is still on the old model — changeModel builds before it swaps —
+    // so this is a report, not a broken state.
+    dispatch({
+      type: 'notice',
+      text:
+        `could not switch to ${target.name}: ${error instanceof Error ? error.message : String(error)}\n` +
+        `  still on ${describeChoice(choices.find((choice) => choice.enabled) as ModelChoice)}`,
+    });
+    return;
+  }
+
+  const applied =
+    `model: ${describeChoice(result.choice)}\n` +
+    `  thinking effort: ${describeThinking(result.thinking)}\n` +
+    `  prompt cache: ${result.promptCache.problem ?? (result.promptCache.enabled ? result.promptCache.parts.join(', ') : 'off')}`;
+
+  result.saved.then(
+    () => {
+      dispatch({ type: 'notice', text: `${applied}\n  saved to ${DARWIN_DIRNAME}/${CONFIG_FILENAME}` });
+    },
+    (error: unknown) => {
+      dispatch({
+        type: 'notice',
+        text:
+          `${applied}\n  this session only — could not write ` +
+          `${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    },
+  );
+}
+
+/** The catalogue, one row each, with the live entry marked. */
+function formatModelList(choices: readonly ModelChoice[]): string {
+  const rows = choices.map(
+    (choice) => `  ${choice.enabled ? '*' : ' '} ${choice.index + 1}. ${describeChoice(choice)}`,
+  );
+  return [
+    choices.length === 1 ? 'one model configured:' : `${choices.length} models configured:`,
+    ...rows,
+    ...(choices.length === 1
+      ? [`  add a "models" array to ${DARWIN_DIRNAME}/${CONFIG_FILENAME} to switch between several`]
+      : ['  switch with /model <number|name>']),
+  ].join('\n');
+}
+
+/** `name (provider/model-id)`, collapsing the name when it is the model id. */
+function describeChoice(choice: ModelChoice): string {
+  const { name, fields } = choice;
+  const target = `${fields.provider}/${fields.model}`;
+  return name === fields.model ? target : `${name} (${target})`;
+}
+
+/**
+ * Resolves a `/model` argument to a choice: a 1-based position, an exact name, or
+ * a unique case-insensitive substring of either the name or the model id.
+ *
+ * Three ways rather than one because the same list is addressed by eye ("2"), by
+ * habit ("sol") and by paste ("openai.gpt-5.6-sol"). A substring that matches
+ * several entries returns `'ambiguous'` instead of the first hit: picking one
+ * would switch to a model the user did not name.
+ *
+ * An all-digits argument is *only* ever a position — never a substring. Falling
+ * through would let `/model 4` land on `claude-sonnet-4-6` because its id happens
+ * to contain a 4, which is the worst kind of match: plausible, silent and wrong.
+ */
+export function resolveModelChoice(
+  choices: readonly ModelChoice[],
+  argument: string,
+): ModelChoice | 'ambiguous' | undefined {
+  const needle = argument.toLowerCase();
+
+  if (/^\d+$/.test(argument)) {
+    const position = Number(argument);
+    return position >= 1 && position <= choices.length ? choices[position - 1] : undefined;
+  }
+
+  const exact = choices.filter((choice) => choice.name.toLowerCase() === needle);
+  if (exact.length === 1) return exact[0];
+
+  const partial = choices.filter(
+    (choice) =>
+      choice.name.toLowerCase().includes(needle) || choice.fields.model.toLowerCase().includes(needle),
+  );
+  if (partial.length === 1) return partial[0];
+  return partial.length > 1 ? 'ambiguous' : undefined;
 }
 
 /** Command names matching a `/prefix`, or none when the input is not a bare command. */

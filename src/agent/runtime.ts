@@ -15,8 +15,11 @@ import {
   applyThinkingEffort,
   createModelFromConfig,
   loadConfig,
+  saveEnabledModel,
   saveThinkingEffort,
+  withModelChoice,
   type AppConfig,
+  type ModelChoice,
 } from '../config.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
@@ -72,6 +75,22 @@ export interface ThinkingChangeResult {
   saved: Promise<void>;
 }
 
+/**
+ * The outcome of a `/model` change: which configuration is now live, what it can
+ * cache, how hard it will think — and a promise for the attempt to remember the
+ * switch in `.darwin/config.json`.
+ *
+ * The cache and thinking plans come back because both are model-dependent: the
+ * new model may not cache at all, and it may not serve the effort level the old
+ * one did. Reporting that is the point; discovering it on the next turn is not.
+ */
+export interface ModelChangeResult {
+  choice: ModelChoice;
+  thinking: ThinkingPlan;
+  promptCache: PromptCachePlan;
+  saved: Promise<void>;
+}
+
 export interface RuntimeInfo {
   config: AppConfig;
   /** Effective approval mode after CLI overrides. */
@@ -117,9 +136,20 @@ export class AgentRuntime {
    */
   private thinkingPlan: ThinkingPlan;
 
+  /**
+   * The config in effect right now. Diverges from `info.config` after `/model`:
+   * `info` is the startup snapshot, this moves with the session.
+   */
+  private liveConfig: AppConfig;
+
+  /** What the live model can cache. Recomputed on `/model`, like the plan above. */
+  private promptCachePlan: PromptCachePlan;
+
   private constructor(
     private readonly agent: Agent,
-    private readonly model: Model,
+    // Not readonly: `/model` replaces it, which is also why `Agent.model` being a
+    // mutable property matters — the conversation survives a provider change.
+    private model: Model,
     private readonly projectRoot: string,
     private readonly mcpClients: readonly McpClient[],
     private readonly skills: SkillsPlugin,
@@ -127,6 +157,8 @@ export class AgentRuntime {
     readonly info: RuntimeInfo,
   ) {
     this.thinkingPlan = info.thinking;
+    this.liveConfig = info.config;
+    this.promptCachePlan = info.promptCache;
   }
 
   static async create(options: RuntimeOptions): Promise<AgentRuntime> {
@@ -267,10 +299,66 @@ export class AgentRuntime {
    * cache breakpoint (switching thinking *modes* would).
    */
   changeThinkingEffort(effort: ThinkingEffort): ThinkingChangeResult {
-    this.thinkingPlan = applyThinkingEffort(this.model, this.info.config, effort);
+    this.thinkingPlan = applyThinkingEffort(this.model, this.liveConfig, effort);
     return {
       plan: this.thinkingPlan,
       saved: saveThinkingEffort(this.projectRoot, effort),
+    };
+  }
+
+  /** The config in effect now — the startup one until `/model` changes it. */
+  get config(): AppConfig {
+    return this.liveConfig;
+  }
+
+  /** What this run can cache right now; moves with `/model`. */
+  get promptCache(): PromptCachePlan {
+    return this.promptCachePlan;
+  }
+
+  /** Every configured model, with the live one marked. */
+  get modelChoices(): readonly ModelChoice[] {
+    return this.liveConfig.modelChoices;
+  }
+
+  /**
+   * Switches the live model to another configured entry, keeping the conversation.
+   *
+   * `Agent.model` is a mutable property, so this replaces the model in place
+   * instead of rebuilding the agent — which is the whole point: the history, the
+   * session file, the tools and the permission gate all survive. Both switch
+   * directions were measured to carry a conversation containing tool calls
+   * (`spike/probe-model-switch.ts`); a Claude reasoning block in the history is
+   * dropped with a warning by the OpenAI adapter rather than rejected, which is
+   * why the TUI routes SDK warnings into notices.
+   *
+   * The thinking and cache plans are recomputed rather than carried over: effort
+   * clamping is per-model and caching is per-provider, so the old plans would
+   * describe a model that is no longer there.
+   */
+  async changeModel(target: ModelChoice): Promise<ModelChangeResult> {
+    const next = withModelChoice(this.liveConfig, target);
+    // Built before anything is mutated: a failure here (a missing peer dependency,
+    // a bad region) must leave the session on the model it was already using.
+    const model = await createModelFromConfig(next);
+
+    this.agent.model = model;
+    this.model = model;
+    this.liveConfig = next;
+    this.thinkingPlan = planThinking(next);
+    this.promptCachePlan = planPromptCache(next);
+    // Adds the system-prompt cache point when the new model can cache and the old
+    // one could not. Already-placed points are left alone — the helper refuses a
+    // non-string prompt — and a stale point costs nothing: a provider that cannot
+    // cache ignores the block (measured in probe-model-switch.ts).
+    applySystemPromptCachePoint(this.agent, this.promptCachePlan);
+
+    const choice = next.modelChoices.find((entry) => entry.index === target.index) as ModelChoice;
+    return {
+      choice,
+      thinking: this.thinkingPlan,
+      promptCache: this.promptCachePlan,
+      saved: saveEnabledModel(this.projectRoot, target.index),
     };
   }
 

@@ -11,12 +11,13 @@
 import { suggestRules } from '../src/agent/permission-rules.js';
 import { assessRisk, classify, type AssessedPermissionRequest } from '../src/agent/permission.js';
 import { createModelClassifier } from '../src/agent/safety-classifier.js';
+import { withSoleChoice } from '../src/config.js';
 import type { AppConfig } from '../src/config.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-classifier-test';
 
-const CONFIG: AppConfig = {
+const CONFIG: AppConfig = withSoleChoice({
   provider: 'bedrock',
   model: 'us.anthropic.claude-sonnet-4-6', // unused: the classifier picks its own default
   maxTokens: 8192,
@@ -27,7 +28,7 @@ const CONFIG: AppConfig = {
   // reads as "cache state is irrelevant here" rather than as an omission.
   promptCache: true,
   thinkingEffort: 'high',
-};
+});
 
 function request(command: string): AssessedPermissionRequest {
   const base = classify('bash', { command });

@@ -415,3 +415,60 @@ so `saveThinkingEffort` writes into the enabled entry, reusing the loader's own
 `selectEnabledModel` so the write cannot land on a different entry than the session is running.
 Writing it to the root instead would make the *next* load fail as a stray model key — a
 convenience that bricks the config.
+
+## `/model`: switching model mid-session
+
+### Contract: `Agent.model` is a mutable property, so the conversation survives
+
+`Agent.model` is declared `model: Model` — not readonly — and reassigning it is the whole
+mechanism behind `/model`. No agent rebuild, so `agent.messages`, the session file, the tools,
+the plugins and the permission gate all stay as they were. `AgentRuntime.changeModel` builds the
+new model *before* it assigns anything, so a failure (missing peer dep, bad region) leaves the
+session on the model it was already using.
+
+### Contract: a conversation crosses providers, and reasoning blocks are dropped not rejected
+
+Measured in both directions between `global.anthropic.claude-opus-5` and `openai.gpt-5.6-sol`
+(`spike/probe-model-switch.ts`, and end-to-end in `spike/verify-model-command.ts --live`): a
+history containing `toolUseBlock`/`toolResultBlock` pairs is translated fine, and the model after
+the switch can quote a fact only the pre-switch turn established.
+
+The one wrinkle is Claude's `reasoningBlock`. The Responses adapter logs
+`block_type=<reasoningBlock> | reasoning content is not yet supported in multi-turn conversations
+with the responses api` and **skips the block** — the request still succeeds. A darwin-placed
+system-prompt `CachePointBlock` is likewise ignored by a provider that cannot cache, so a stale
+cache point costs nothing.
+
+### Contract: SDK warnings must be routed off the console before they can happen
+
+The SDK's default logger writes `warn`/`error` straight to `console`
+(`logging/logger.js`), which tears the Ink frame — the same hazard as the prompt-cache
+`strategy: 'auto'` warning. The reasoning-block warning above is unavoidable *and* correct, and it
+repeats once per request, so `src/agent/sdk-logging.ts` uses the SDK's official
+`configureLogging()` hook to turn SDK logs into transcript notices. `debug`/`info` stay no-ops,
+matching the SDK default.
+
+### Contract: a switch rebuilds the config from the session up, never by spreading
+
+`withModelChoice` copies the session half through `SESSION_KEYS` and then applies the new entry's
+fields. Spreading the new fields over the old config would leave the *previous* model's optional
+keys behind — switching away from a Mantle entry would keep its `region` and `openaiApi` and
+configure the new model with the old one's transport. `verify-model-command.ts --live` asserts the
+region is the new entry's (`us-east-1`), not the one it switched away from.
+
+### Contract: the thinking and cache plans are recomputed, and the header reads them live
+
+Effort clamping is per-model and caching is per-provider, so both plans are recomputed on switch
+and reported in the `/model` notice. The header reads `runtime.config` / `runtime.promptCache`
+rather than the `RuntimeInfo` snapshot, which is fixed at startup.
+
+### Contract: an all-digits `/model` argument is only ever a position
+
+`resolveModelChoice` accepts a 1-based position, an exact name, or a unique substring of the name
+or model id — but a numeric argument never falls through to substring matching. It did in the
+first draft, and the test caught `/model 4` silently selecting `claude-sonnet-4-6` because its id
+contains a `4`. An ambiguous substring returns `'ambiguous'` rather than the first hit.
+
+`/model` is handled *after* the busy check in `App.tsx`, unlike `/effort`: `/effort` reconfigures
+the live model, while this replaces the model object, which would change the model under a turn
+that is already streaming from it.

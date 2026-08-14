@@ -49,7 +49,30 @@ export type Provider = (typeof PROVIDERS)[number];
 export const OPENAI_API_MODES = ['chat', 'responses'] as const;
 export type OpenAIApiMode = (typeof OPENAI_API_MODES)[number];
 
-export interface AppConfig extends ModelFields, SessionFields {}
+export interface AppConfig extends ModelFields, SessionFields {
+  /**
+   * Every model this config offers, in file order, with the enabled one marked —
+   * the catalogue `/model` switches between. Always at least one entry: the
+   * single-model form describes itself as a lone enabled choice, so the runtime
+   * never has to ask which form was used.
+   *
+   * Neither a model field nor a session field, but derived from the file as a
+   * whole, which is why it sits on {@link AppConfig} rather than in either half.
+   */
+  modelChoices: readonly ModelChoice[];
+}
+
+/** One entry of the `models` array, validated and ready to build a model from. */
+export interface ModelChoice {
+  /** Position in the `models` array; 0 for the single-model form. */
+  index: number;
+  /** The entry's `name`, falling back to its model id. Used to address it. */
+  name: string;
+  /** Whether this is the entry in effect. Exactly one choice is enabled. */
+  enabled: boolean;
+  /** The entry's own model configuration, fully validated. */
+  fields: ModelFields;
+}
 
 /**
  * The half of {@link AppConfig} that describes one model. In the array form this
@@ -57,6 +80,12 @@ export interface AppConfig extends ModelFields, SessionFields {}
  */
 export interface ModelFields {
   provider: Provider;
+  /**
+   * Short label for this configuration, for `/model` and the header. Optional;
+   * the model id is used when it is absent. Names are compared case-insensitively
+   * and must be unique within the file.
+   */
+  name?: string;
   /**
    * Provider-specific model identifier. For Bedrock this must be a cross-region
    * inference profile (`us.` or `global.` prefix) — a bare `anthropic.*` id is
@@ -166,6 +195,7 @@ export const CONFIG_FILENAME = 'config.json';
  */
 const MODEL_KEYS = [
   'provider',
+  'name',
   'model',
   'region',
   'apiKeyEnv',
@@ -217,6 +247,47 @@ export function resolveRegion(configured?: string): string {
 }
 
 /**
+ * Completes a flat config with the one-entry catalogue it implies.
+ *
+ * The single-model form and a hand-built config both describe exactly one choice,
+ * and deriving it here rather than writing it out keeps the catalogue from ever
+ * disagreeing with the fields beside it.
+ */
+export function withSoleChoice<T extends ModelFields & SessionFields>(config: T): T & AppConfig {
+  return {
+    ...config,
+    modelChoices: [{ index: 0, name: config.name ?? config.model, enabled: true, fields: config }],
+  };
+}
+
+/**
+ * Rebuilds a config around a different {@link ModelChoice}, keeping the session.
+ *
+ * Built from the session keys up rather than spread over the old config: spreading
+ * would leave the *previous* model's optional fields behind — a switch away from a
+ * Mantle entry would keep its `region` and `openaiApi`, silently configuring the
+ * new model with the old one's transport. That is the same leak the loader is
+ * tested against, so it must not reappear at switch time.
+ *
+ * The session half is copied through {@link SESSION_KEYS} so this function and the
+ * validator cannot disagree about which keys survive a model change.
+ */
+export function withModelChoice(config: AppConfig, target: ModelChoice): AppConfig {
+  const session: Record<string, unknown> = {};
+  for (const key of SESSION_KEYS) {
+    if (config[key] !== undefined) session[key] = config[key];
+  }
+
+  return {
+    // Safe: SESSION_KEYS are exactly the keys of SessionFields, and the required
+    // ones are always present on a validated AppConfig.
+    ...(session as unknown as SessionFields),
+    ...target.fields,
+    modelChoices: config.modelChoices.map((choice) => ({ ...choice, enabled: choice.index === target.index })),
+  };
+}
+
+/**
  * Loads `.darwin/config.json` from `projectRoot`. A missing file is normal — the
  * defaults are a working Bedrock setup. A present but malformed file is an
  * error, since silently ignoring it would hide the user's intent.
@@ -228,7 +299,7 @@ export async function loadConfig(projectRoot: string): Promise<AppConfig> {
   try {
     raw = await readFile(file, 'utf8');
   } catch (error) {
-    if (isFileNotFound(error)) return { ...DEFAULTS };
+    if (isFileNotFound(error)) return withSoleChoice({ ...DEFAULTS });
     throw new ConfigError(`Could not read ${file}: ${describe(error)}`);
   }
 
@@ -253,15 +324,46 @@ function validate(parsed: unknown, configPath: string): AppConfig {
   // entry is resolved here and the result is the same flat AppConfig the
   // single-model form produces, so nothing downstream knows which form was used.
   if (input['models'] === undefined) {
-    return { ...validateModelFields(input, configPath), ...session };
+    return withSoleChoice({ ...validateModelFields(input, configPath), ...session });
   }
 
+  const choices = validateModelChoices(input, configPath);
+  const enabled = choices.find((choice) => choice.enabled) as ModelChoice;
+  return { ...enabled.fields, ...session, modelChoices: choices };
+}
+
+/**
+ * Validates every entry of a `models` array and marks the enabled one.
+ *
+ * *Every* entry, not just the enabled one: `/model` switches to a disabled entry
+ * without re-reading the file, so a typo in one would otherwise surface as a
+ * broken switch mid-session instead of a refusal to start.
+ */
+function validateModelChoices(input: Record<string, unknown>, configPath: string): ModelChoice[] {
   const entries = modelEntries(input, configPath);
-  const index = selectEnabledIndex(entries, configPath);
-  return {
-    ...validateModelFields(entries[index] as Record<string, unknown>, `${configPath} models[${index}]`),
-    ...session,
-  };
+  const enabledIndex = selectEnabledIndex(entries, configPath);
+
+  const choices = entries.map((entry, index) => {
+    const fields = validateModelFields(entry, `${configPath} models[${index}]`);
+    return { index, name: fields.name ?? fields.model, enabled: index === enabledIndex, fields };
+  });
+
+  // Names address entries in `/model`, so a duplicate would make one of them
+  // unreachable — refused rather than silently resolved to the first match.
+  const seen = new Map<string, number>();
+  for (const choice of choices) {
+    const key = choice.name.toLowerCase();
+    const first = seen.get(key);
+    if (first !== undefined) {
+      throw new ConfigError(
+        `${configPath}: models[${first}] and models[${choice.index}] are both called ` +
+          `${JSON.stringify(choice.name)}. Give one of them a distinct "name".`,
+      );
+    }
+    seen.set(key, choice.index);
+  }
+
+  return choices;
 }
 
 /**
@@ -398,6 +500,9 @@ function validateModelFields(input: Record<string, unknown>, where: string): Mod
 
   const region = stringField(input, 'region', where);
   if (region !== undefined) fields.region = region;
+
+  const name = stringField(input, 'name', where);
+  if (name !== undefined) fields.name = name;
 
   const apiKeyEnv = stringField(input, 'apiKeyEnv', where);
   if (apiKeyEnv !== undefined) fields.apiKeyEnv = apiKeyEnv;
@@ -567,6 +672,40 @@ export async function saveThinkingEffort(projectRoot: string, effort: ThinkingEf
   const entries = record['models'] === undefined ? undefined : modelEntries(record, file);
   const target = entries === undefined ? record : entries[selectEnabledIndex(entries, file)];
   (target as Record<string, unknown>)['thinkingEffort'] = effort;
+  await writeConfigRecord(file, record);
+}
+
+/**
+ * Moves `enable: true` to the entry at `index`, switching every other entry off,
+ * so a `/model` change is still in effect next session.
+ *
+ * Writes `false` explicitly rather than deleting the key: an entry that visibly
+ * says `"enable": false` is the switch this format is built around, and a file
+ * where the off entries simply lack the key reads as if they were never
+ * considered.
+ *
+ * Raw-JSON merge and throw-don't-swallow for the same reasons as
+ * {@link saveThinkingEffort}: the caller has already switched the live model, so a
+ * failed write costs only the memory of the choice.
+ */
+export async function saveEnabledModel(projectRoot: string, index: number): Promise<void> {
+  const file = configPath(projectRoot);
+  const record = await readConfigRecord(file);
+
+  if (record['models'] === undefined) {
+    throw new ConfigError(
+      `${file} configures a single model, so there is nothing to switch between. ` +
+        `Move it into a "models" array to keep more than one configuration.`,
+    );
+  }
+
+  const entries = modelEntries(record, file);
+  const target = entries[index];
+  if (target === undefined) {
+    throw new ConfigError(`${file}: there is no models[${index}] to enable (${entries.length} entries).`);
+  }
+
+  for (const entry of entries) entry['enable'] = entry === target;
   await writeConfigRecord(file, record);
 }
 
