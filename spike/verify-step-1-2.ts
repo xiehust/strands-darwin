@@ -13,7 +13,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { AgentRuntime } from '../src/agent/runtime.js';
-import type { PermissionRequest } from '../src/agent/permission.js';
+import type { PermissionDecision, PermissionRequest } from '../src/agent/permission.js';
 import { assert, header, report } from './shared.js';
 
 const PROJECT_ROOT = '/tmp/darwin-proj';
@@ -47,9 +47,9 @@ async function resetFixture(): Promise<void> {
 /** Records every permission request and answers with a fixed decision. */
 function recordingBridge(decision: boolean) {
   const seen: PermissionRequest[] = [];
-  const bridge = async (request: PermissionRequest): Promise<boolean> => {
+  const bridge = async (request: PermissionRequest): Promise<PermissionDecision> => {
     seen.push(request);
-    return decision;
+    return { allowed: decision };
   };
   return { bridge, seen };
 }

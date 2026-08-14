@@ -14,6 +14,14 @@ import path from 'node:path';
 import { InterventionActions, InterventionHandler } from '@strands-agents/sdk';
 import type { BeforeToolCallEvent } from '@strands-agents/sdk';
 
+import {
+  hasShellMetacharacters,
+  matchesAnyRule,
+  splitBashSegments,
+  suggestRules,
+  type RuleSuggestion,
+} from './permission-rules.js';
+
 /**
  * The `InterventionAction` union is not re-exported from the package root and
  * `./interventions` has no subpath export, so derive it from the base class.
@@ -69,19 +77,40 @@ export interface PermissionDetail {
   value: string;
 }
 
-/** A {@link PermissionRequest} with its risk assessment attached — what bridges see. */
-export interface AssessedPermissionRequest extends PermissionRequest, RiskAssessment {}
+/**
+ * A {@link PermissionRequest} with its risk assessment and the "always allow"
+ * offers derived from it — what bridges see.
+ */
+export interface AssessedPermissionRequest extends PermissionRequest, RiskAssessment {
+  /**
+   * Wildcard rules the user may accept alongside this one call, most specific
+   * first. Empty when no rule could ever cover the call.
+   */
+  suggestions: readonly RuleSuggestion[];
+}
+
+/** What the human answered: allow or not, and any rule to remember. */
+export interface PermissionDecision {
+  allowed: boolean;
+  /**
+   * A rule from `request.suggestions` the user chose. The gate applies it to the
+   * rest of the session; persisting it is the caller's business, so a failed
+   * write costs the file, not the session.
+   */
+  rule?: string;
+}
 
 /**
- * Asks the human to approve one tool call. Resolves true to allow.
+ * Asks the human to approve one tool call.
  *
  * Implementations may block for as long as they need — the SDK awaits
  * intervention callbacks serially, so the agent loop waits.
  */
-export type PermissionBridge = (request: AssessedPermissionRequest) => Promise<boolean>;
+export type PermissionBridge = (request: AssessedPermissionRequest) => Promise<PermissionDecision>;
 
 /** Approves everything without asking. For non-interactive runs and tests. */
-export const allowAllBridge: PermissionBridge = async () => true;
+export const allowAllBridge: PermissionBridge = async () => ({ allowed: true });
+
 
 /** The classifier's judgement of one call, in `auto` mode. */
 export interface SafetyVerdict {
@@ -100,6 +129,8 @@ export interface PermissionGateOptions {
   /** Root the static path-containment rules resolve against. */
   projectRoot: string;
   ask: PermissionBridge;
+  /** Wildcard allow-rules from the config; see `./permission-rules.ts`. */
+  allowRules?: readonly string[];
   /** Consulted for dangerous calls in `auto` mode; ignored otherwise. */
   classifier?: SafetyClassifier;
   /** How long `auto` waits for the classifier before falling back to asking. */
@@ -111,13 +142,35 @@ const DEFAULT_CLASSIFIER_TIMEOUT_MS = 5000;
 export class PermissionGate extends InterventionHandler {
   readonly name = 'darwin:permission-gate';
 
+  /** Config rules plus anything the user accepted during this session. */
+  private readonly rules: string[];
+
   constructor(private readonly options: PermissionGateOptions) {
     super();
+    this.rules = [...(options.allowRules ?? [])];
+  }
+
+  /**
+   * Starts honouring a rule immediately. Separate from persistence on purpose: a
+   * rule the user just accepted must hold for the rest of the session even if
+   * writing it to the config fails.
+   */
+  addAllowRule(rule: string): void {
+    if (!this.rules.includes(rule)) this.rules.push(rule);
+  }
+
+  /** Rules currently in effect, config and session alike. */
+  get allowRules(): readonly string[] {
+    return this.rules;
   }
 
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<InterventionAction> {
     const base = classify(event.toolUse.name, event.toolUse.input);
-    const request: AssessedPermissionRequest = { ...base, ...assessRisk(base, this.options.projectRoot) };
+    const request: AssessedPermissionRequest = {
+      ...base,
+      ...assessRisk(base, this.options.projectRoot),
+      suggestions: suggestRules(base, this.options.projectRoot),
+    };
 
     if (this.options.mode === 'yolo') {
       return InterventionActions.proceed({ reason: 'yolo mode approves everything' });
@@ -125,6 +178,13 @@ export class PermissionGate extends InterventionHandler {
 
     if (request.risk === 'safe') {
       return InterventionActions.proceed({ reason: request.riskReason });
+    }
+
+    // Before the classifier, not after: a rule the user wrote down should save the
+    // model call too, not just the prompt.
+    const matched = matchesAnyRule(this.rules, base, this.options.projectRoot);
+    if (matched !== undefined) {
+      return InterventionActions.proceed({ reason: `allowed by rule ${matched}` });
     }
 
     if (this.options.mode === 'auto') {
@@ -138,10 +198,13 @@ export class PermissionGate extends InterventionHandler {
       request.details.push({ label: 'Classifier', value: verdict.reason });
     }
 
-    const approved = await this.options.ask(request);
-    if (approved) {
+    const decision = await this.options.ask(request);
+    if (decision.allowed) {
+      // Only on approval: a rule attached to a refusal would be a contradiction.
+      if (decision.rule !== undefined) this.addAllowRule(decision.rule);
       return InterventionActions.proceed({ reason: 'approved by user' });
     }
+
 
     // deny() rather than confirm(): a rejected confirm reaches the model as
     // `CONFIRMATION_FAILED: <prompt>`, which models misread as a system failure
@@ -311,13 +374,6 @@ const SAFE_BASH_COMMANDS = new Set([
 
 const SAFE_GIT_SUBCOMMANDS = new Set(['status', 'log', 'diff', 'show', 'branch']);
 
-/**
- * Redirection and substitution turn an otherwise read-only command into a write
- * (`echo x > f`) or hide arbitrary execution (`` `...` ``, `$(...)`). `<` is
- * included because `<(...)` process substitution executes its body.
- */
-const SHELL_METACHARACTERS = /[><`]|\$\(/;
-
 /** Sensitive file basenames a write must never touch silently. */
 const ENV_FILE = /^\.env(\..+)?$/;
 
@@ -345,16 +401,12 @@ export function assessRisk(request: PermissionRequest, projectRoot: string): Ris
 }
 
 function assessBashRisk(command: string): RiskAssessment {
-  if (SHELL_METACHARACTERS.test(command)) {
+  if (hasShellMetacharacters(command)) {
     return { risk: 'dangerous', riskReason: 'command uses redirection or substitution' };
   }
 
-  // Split on the chaining operators so `a && b` is only safe when both are.
-  // Naive on purpose: a mis-split fails toward `dangerous`, never toward `safe`.
-  const segments = command
-    .split(/&&|\|\||[;|\n]/)
-    .map((segment) => segment.trim())
-    .filter((segment) => segment !== '');
+  // Only safe when every chained segment is: see splitBashSegments.
+  const segments = splitBashSegments(command);
 
   if (segments.length === 0) {
     return { risk: 'dangerous', riskReason: 'empty command' };

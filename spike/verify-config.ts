@@ -7,10 +7,17 @@
  *
  * Run: pnpm tsx spike/verify-config.ts
  */
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { ConfigError, configPath, createModelFromConfig, loadConfig, resolveRegion } from '../src/config.js';
+import {
+  ConfigError,
+  appendAllowRule,
+  configPath,
+  createModelFromConfig,
+  loadConfig,
+  resolveRegion,
+} from '../src/config.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-config-test';
@@ -218,12 +225,88 @@ async function permissionModes(): Promise<void> {
   );
 }
 
+async function permissionRules(): Promise<void> {
+  header('config — permission allow rules');
+
+  const absent = await loadConfig(await writeConfig('{}'));
+  assert('permissionRules is absent by default', absent.permissionRules === undefined);
+
+  const loaded = await loadConfig(
+    await writeConfig('{ "permissionRules": { "allow": ["bash:pnpm *", "fileEditor:src/**"] } }'),
+  );
+  assert(
+    'rules are carried through in order',
+    JSON.stringify(loaded.permissionRules?.allow) === '["bash:pnpm *","fileEditor:src/**"]',
+  );
+
+  const emptyRules = await loadConfig(await writeConfig('{ "permissionRules": {} }'));
+  assert('permissionRules without "allow" is empty, not an error', emptyRules.permissionRules?.allow.length === 0);
+
+  await expectConfigError('a non-object permissionRules is rejected', async () =>
+    loadConfig(await writeConfig('{ "permissionRules": ["bash"] }')),
+  );
+  await expectConfigError('a non-array allow is rejected', async () =>
+    loadConfig(await writeConfig('{ "permissionRules": { "allow": "bash" } }')),
+  );
+  await expectConfigError('a non-string rule is rejected', async () =>
+    loadConfig(await writeConfig('{ "permissionRules": { "allow": [42] } }')),
+  );
+
+  // An unparseable rule would silently never match, leaving the user believing
+  // they had stopped being asked.
+  const badRule = await expectConfigError('a rule with an empty pattern is rejected', async () =>
+    loadConfig(await writeConfig('{ "permissionRules": { "allow": ["bash:"] } }')),
+  );
+  assert('the error shows the expected rule shape', badRule.includes('<tool>:<pattern>'));
+
+  header('config — appending a rule');
+
+  // Merged into the raw JSON: an unknown key from a newer darwin, and the user's
+  // own settings, both have to survive the write.
+  const root = await writeConfig(
+    '{\n  "model": "us.anthropic.claude-sonnet-4-6",\n  "futureSetting": { "keep": true }\n}\n',
+  );
+  await appendAllowRule(root, 'bash:pnpm *');
+  await appendAllowRule(root, 'fileEditor:src/**');
+  await appendAllowRule(root, 'bash:pnpm *');
+
+  const written = JSON.parse(await readFile(configPath(root), 'utf8')) as Record<string, unknown>;
+  console.log(`  written: ${JSON.stringify(written['permissionRules'])}`);
+
+  const reloaded = await loadConfig(root);
+  assert(
+    'both rules are persisted, duplicates collapsed',
+    JSON.stringify(reloaded.permissionRules?.allow) === '["bash:pnpm *","fileEditor:src/**"]',
+  );
+  assert('unrelated known keys survive', reloaded.model === 'us.anthropic.claude-sonnet-4-6');
+  assert(
+    'unknown keys survive',
+    JSON.stringify(written['futureSetting']) === '{"keep":true}',
+  );
+
+  // The prompt is the only writer today, but a rule that could never match must
+  // not reach the file whatever calls it.
+  await expectConfigError('appending a malformed rule is refused', () =>
+    appendAllowRule(root, 'bash:'),
+  );
+
+  // First rule in a project that has no config file at all: the common case.
+  const fresh = path.join(ROOT, `fresh-${Math.random().toString(36).slice(2)}`);
+  await appendAllowRule(fresh, 'bash');
+  const freshConfig = await loadConfig(fresh);
+  assert(
+    'a missing config file is created with the rule',
+    JSON.stringify(freshConfig.permissionRules?.allow) === '["bash"]',
+  );
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
   await providerSwitching();
   await rejections();
   await permissionModes();
+  await permissionRules();
   report();
 }
 

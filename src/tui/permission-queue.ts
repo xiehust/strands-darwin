@@ -9,11 +9,15 @@
  * Requests are serialized: concurrent tool calls each get their own prompt, one
  * at a time, so two confirmations can never race for the same keystroke.
  */
-import type { AssessedPermissionRequest, PermissionBridge } from '../agent/permission.js';
+import type {
+  AssessedPermissionRequest,
+  PermissionBridge,
+  PermissionDecision,
+} from '../agent/permission.js';
 
 interface QueueEntry {
   request: AssessedPermissionRequest;
-  resolve: (allowed: boolean) => void;
+  resolve: (decision: PermissionDecision) => void;
 }
 
 export class PermissionQueue {
@@ -24,9 +28,9 @@ export class PermissionQueue {
 
   /** The {@link PermissionBridge} to hand to the runtime. */
   readonly bridge: PermissionBridge = (request) =>
-    new Promise<boolean>((resolve) => {
+    new Promise<PermissionDecision>((resolve) => {
       if (this.closed) {
-        resolve(false);
+        resolve({ allowed: false });
         return;
       }
       this.entries.push({ request, resolve });
@@ -44,10 +48,10 @@ export class PermissionQueue {
   }
 
   /** Answers the current request. No-op when nothing is pending. */
-  answer(allowed: boolean): void {
+  answer(decision: PermissionDecision): void {
     const entry = this.entries.shift();
     if (entry === undefined) return;
-    entry.resolve(allowed);
+    entry.resolve(decision);
     this.emit();
   }
 
@@ -60,7 +64,7 @@ export class PermissionQueue {
    */
   denyPending(): void {
     while (this.entries.length > 0) {
-      this.entries.shift()?.resolve(false);
+      this.entries.shift()?.resolve({ allowed: false });
     }
     this.emit();
   }
