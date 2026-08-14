@@ -2,6 +2,17 @@
 
 A terminal coding agent built on the [Strands Agents TypeScript SDK](https://www.npmjs.com/package/@strands-agents/sdk): you talk to it in a TUI, it reads and edits files and runs commands in your repository, and it asks before doing anything that changes your machine.
 
+## The experiment
+
+This is an experimental project in self-hosted AI development.
+
+**v0.0.1 — the [baseline release](../../releases/tag/v0.0.1) — was built entirely with
+[Claude Code](https://claude.com/claude-code).** From this point on, darwin develops
+itself: every subsequent feature, fix, and release is made by running darwin inside its
+own repository (the Trellis task history under `.trellis/` is the paper trail). The name
+is the thesis — evolution by iteration, with the tool as its own selection pressure. The
+baseline exists so there is always a fixed point to measure that evolution against.
+
 ```
 darwin
 bedrock/us.anthropic.claude-sonnet-4-6 · session session-20260813-112430
@@ -113,7 +124,8 @@ you get a working Bedrock setup.
   "region": "us-west-2",
   "maxTokens": 8192,
   "summaryRatio": 0.3,
-  "preserveRecentMessages": 10
+  "preserveRecentMessages": 10,
+  "permissionMode": "default"
 }
 ```
 
@@ -126,6 +138,8 @@ you get a working Bedrock setup.
 | `maxTokens` | `8192` | |
 | `summaryRatio` | `0.3` | fraction of old messages summarized on context overflow |
 | `preserveRecentMessages` | `10` | messages the summarizer always keeps verbatim |
+| `permissionMode` | `default` | `default`, `auto` or `yolo` — see [Permissions](#permissions) |
+| `classifierModel` | per provider | model id for `auto` mode's safety classifier |
 
 Switching providers is a config change only; no code names a provider.
 
@@ -157,22 +171,33 @@ holding your key, or rely on each SDK's own convention (`ANTHROPIC_API_KEY`,
 
 ## Permissions
 
-Every tool call is classified from both its name and its arguments, so a single tool that
-can both read and write is handled correctly:
+darwin runs in one of three approval modes, set by `permissionMode` in
+`.darwin/config.json` or per run with `--permission-mode <mode>` (`--yolo` is shorthand):
 
-| Call | Behaviour |
+| Mode | Behaviour |
 |---|---|
-| `fileEditor` with `command: view` | runs, no prompt |
-| `fileEditor` with `create` / `str_replace` / `insert` | **prompts** |
-| `bash` with `mode: execute` | **prompts** |
-| `bash` with `mode: restart` | runs, no prompt |
-| `load_skill` | runs, no prompt |
-| anything else, including all MCP tools | **prompts** |
+| `default` | statically *provably safe* calls run silently; everything else prompts |
+| `auto` | like `default`, but a model classifier judges the calls static rules could not clear — only classifier-flagged calls prompt |
+| `yolo` | nothing prompts (the header warns you) |
 
-The default is deliberately fail-closed: a tool nobody has classified is gated until
-someone does so on purpose. Denying a call is not an error — the model is told the user
-declined, and is instructed not to retry or work around it, so it explains itself and
-asks what to do instead.
+"Provably safe" is a whitelist, checked against both the tool's name and its arguments
+(one tool can span read and write):
+
+| Call | Statically safe? |
+|---|---|
+| `fileEditor` with `command: view`, `load_skill`, `bash` restart | yes |
+| `fileEditor` writes inside the project — except `.git/` internals, `.env*`, and `.darwin/config.json` | yes |
+| `bash` where every segment starts with an allowlisted read-only command (`git status/log/diff/show/branch`, `ls`, `cat`, `grep`, `rg`, `find`, …) and uses no redirection or substitution | yes |
+| anything else, including **all MCP tools** | no — prompts (or goes to the classifier in `auto`) |
+
+The rules only whitelist, so a parsing miss costs an extra prompt, never a silent
+approval. In `auto` mode the classifier is a cheap one-shot model call (Haiku by default;
+`classifierModel` overrides it) and is fail-closed the same way: a verdict of unsafe, a
+timeout, an error, or an unparseable reply all fall back to asking you — with the
+classifier's reasoning shown in the prompt. It never auto-denies.
+
+Denying a call is not an error — the model is told the user declined, and is instructed
+not to retry or work around it, so it explains itself and asks what to do instead.
 
 ## MCP servers
 
@@ -321,6 +346,8 @@ pnpm tsx spike/verify-config.ts                            # config parsing and 
 pnpm tsx spike/verify-mcp-config.ts                        # MCP config precedence and error paths, no servers started
 pnpm tsx spike/verify-skills.ts                            # filesystem and parsing, no model calls
 pnpm tsx spike/verify-agents-md.ts                         # AGENTS.md loading, truncation, prompt order, no model calls
+pnpm tsx spike/verify-permission-modes.ts                  # risk rules and per-mode gate decisions, no model calls
+AWS_REGION=us-west-2 pnpm tsx spike/verify-classifier.ts   # auto mode's safety classifier, live verdicts
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts     # agent core, permissions, resume, AGENTS.md injection
 AWS_REGION=us-west-2 pnpm tsx spike/verify-mcp.ts          # real stdio MCP server
 AWS_REGION=us-west-2 pnpm tsx spike/verify-skills-live.ts  # both skill trigger paths
@@ -329,6 +356,6 @@ AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts      # real git repo, read
 ```
 
 The TUI suites take a scenario name to run just one, e.g.
-`pnpm tsx spike/verify-tui.ts approve` (scenarios: `approve`, `deny`, `bashExit`,
-`cancelThenContinue`, `completion`, `agentsMd`). They need a real pty (Ink requires raw mode);
+`pnpm tsx spike/verify-tui.ts approve` (scenarios: `approve`, `deny`, `safePassthrough`,
+`bashExit`, `cancelThenContinue`, `completion`, `agentsMd`). They need a real pty (Ink requires raw mode);
 `spike/tui-driver.ts` provides it.
