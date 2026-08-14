@@ -100,7 +100,7 @@ async function discoveryAndCall(): Promise<void> {
 
   const runtime = await AgentRuntime.create({
     projectRoot: PROJECT_ROOT,
-    resume: false,
+    session: { kind: 'new' },
     permissionBridge: bridge,
   });
 
@@ -150,7 +150,7 @@ async function deniedMcpCall(): Promise<void> {
 
   const runtime = await AgentRuntime.create({
     projectRoot: PROJECT_ROOT,
-    resume: false,
+    session: { kind: 'new' },
     permissionBridge: bridge,
   });
 
@@ -175,7 +175,7 @@ async function brokenServerTolerated(): Promise<void> {
 
   const runtime = await AgentRuntime.create({
     projectRoot: PROJECT_ROOT,
-    resume: false,
+    session: { kind: 'new' },
     permissionBridge: bridge,
   });
 

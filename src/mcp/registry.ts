@@ -67,7 +67,10 @@ export interface McpLoadResult {
  * understood at all, and silently continuing without their MCP servers would hide
  * a typo behind missing tools.
  */
-export async function loadMcpClients(projectRoot: string): Promise<McpLoadResult> {
+export async function loadMcpClients(
+  projectRoot: string,
+  options: { quietStdioStderr?: boolean } = {},
+): Promise<McpLoadResult> {
   const preferred = path.join(darwinDir(projectRoot), MCP_CONFIG_FILENAME);
   const fallback = path.join(projectRoot, ROOT_MCP_CONFIG_FILENAME);
 
@@ -83,7 +86,9 @@ export async function loadMcpClients(projectRoot: string): Promise<McpLoadResult
   try {
     const raw: unknown = JSON.parse(await readFile(configPath, 'utf8'));
     const servers = withDefaultPrefixes(unwrapServers(raw));
-    const clients = await McpClient.loadServers(servers, { continueOnError: true });
+    const clients = options.quietStdioStderr === true
+      ? await loadServersQuietly(servers)
+      : await McpClient.loadServers(servers, { continueOnError: true });
     return { clients, configPath, ignoredConfigPath };
   } catch (error) {
     throw new ConfigError(
@@ -91,6 +96,25 @@ export async function loadMcpClients(projectRoot: string): Promise<McpLoadResult
         `Expected Claude Code's format: { "mcpServers": { "<name>": { "command": ..., "args": [...] } } }`,
     );
   }
+}
+
+/**
+ * The MCP stdio transport inherits child stderr by default. In headless mode
+ * that would let arbitrary server banners violate the bounded progress protocol.
+ * The declarative SDK loader has no stderr option, but its transport has not
+ * spawned yet here, so switch only that spawn parameter to `ignore`.
+ */
+export async function loadServersQuietly(
+  servers: Record<string, McpServerConfig>,
+): Promise<McpClient[]> {
+  const clients = await McpClient.loadServers(servers, { continueOnError: true });
+  for (const client of clients) {
+    const transport = (client as unknown as {
+      _transport?: { _serverParams?: { stderr?: string } };
+    })._transport;
+    if (transport?._serverParams !== undefined) transport._serverParams.stderr = 'ignore';
+  }
+  return clients;
 }
 
 /** Mirrors the SDK loader's own unwrapping: both the wrapped and bare forms work. */
@@ -141,8 +165,15 @@ export function withDefaultPrefixes(
  * Called on shutdown, where the useful outcome is "release every child process
  * we can" — one uncooperative server must not leave the others running.
  */
-export async function disconnectAll(clients: readonly McpClient[]): Promise<void> {
-  await Promise.allSettled(clients.map((client) => client.disconnect()));
+export async function disconnectAll(
+  clients: readonly McpClient[],
+  options: { throwOnError?: boolean } = {},
+): Promise<void> {
+  const results = await Promise.allSettled(clients.map((client) => client.disconnect()));
+  const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+  if (options.throwOnError === true && failures.length > 0) {
+    throw new AggregateError(failures, `${failures.length} MCP disconnect operation(s) failed`);
+  }
 }
 
 async function exists(filePath: string): Promise<boolean> {

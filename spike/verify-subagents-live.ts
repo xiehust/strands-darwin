@@ -27,7 +27,7 @@ try {
 
   const runtime = await AgentRuntime.create({
     projectRoot: root,
-    resume: false,
+    session: { kind: 'new' },
     permissionBridge: async (request) => {
       asked.push(request);
       return { allowed: false };

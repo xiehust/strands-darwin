@@ -464,6 +464,85 @@ tool call is silently denied with no prompt shown.
 - Write the pointer only after a turn completes (`markResumable()`), so an unused session
   never displaces a useful one.
 
+## Scenario: headless one-shot CLI
+
+### 1. Scope / Trigger
+
+`darwin -p <message>` is the non-interactive boundary around the same `AgentRuntime.send()` loop
+used by Ink. It exists for scripts: Ink is dynamically imported only on the interactive branch,
+stdout is an atomic result channel, and stderr is bounded progress/diagnostics.
+
+### 2. Signatures
+
+```text
+darwin -p|--print <message>
+  [--continue|--resume|--session <id>]
+  [--permission-mode default|auto|yolo|--yolo]
+
+stderr: ^session: ([a-z0-9_-]+)$
+exit: 0 success; 1 runtime/turn/persistence/cleanup/interruption; 2 CLI usage
+```
+
+`--session` is strict and names an existing project-local snapshot. It takes precedence over
+`--continue`/`--resume`; `--continue` follows `.darwin/last-session.json` and retains the existing
+fresh-session fallback when no usable pointer exists.
+
+### 3. Contracts
+
+- Resolve/validate the session before provider construction; print exactly one `session: <id>`
+  stderr record for every headless run whose arguments parse.
+- Consume assembled `contentBlockEvent` text, not deltas. Buffer the complete reply; write stdout
+  only after the turn, strict runtime shutdown, and resume-pointer write all succeed.
+- Tool start/result and permission denial records go to stderr. Collapse whitespace and bound
+  untrusted fields; MCP child stderr must not bypass that protocol.
+- The headless permission bridge immediately returns `{ allowed: false }`. Gate-safe calls,
+  persisted allow rules, auto classification, and yolo retain their normal semantics.
+- A denied/failed tool does not determine process status: a model that handles its result and
+  completes normally still succeeds.
+- The SDK bash module installs SIGINT/SIGTERM listeners that call `process.exit(0)`. Headless mode
+  must replace those handlers, keep its own handler installed through cleanup/persistence, cancel
+  active work, and exit nonzero. Interactive mode keeps its established Ctrl+C policy.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| Missing/blank prompt, bad/repeated value flag, unknown flag | stderr usage error, exit 2, no runtime/model |
+| Invalid or missing explicit session snapshot | fixed session record, actionable stderr error, exit 1 |
+| Permission required with no human | immediate denial record/result; never wait on stdin |
+| Turn fails/cancels or has no final reply | stdout empty, stderr error, pointer unchanged, exit 1 |
+| Cleanup or pointer persistence fails | stdout empty, stderr error, exit 1 |
+| Turn handles a denied tool and completes | final reply on stdout, exit 0 |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** first call captures `session: <id>`; a later `--session <id>` restores context and emits
+  only its final reply to stdout.
+- **Base:** `--continue` with no pointer starts fresh and publishes the generated id.
+- **Bad:** interruption or cleanup failure after answer generation must not leak the buffered answer
+  to stdout or advance the resume pointer.
+
+### 6. Tests Required
+
+`spike/verify-headless.ts` covers parser aliases/precedence, immediate permission denial, bounded
+single-line tool records, assembled answer extraction, strict snapshot selection, MCP stderr
+isolation, usage exit status, and no ANSI/stdout leakage. Also run a built-CLI SIGINT probe that
+waits for the session record, sends SIGINT, and asserts nonzero exit plus empty stdout. Live smoke
+checks should prove fresh + explicit-id multi-turn restore and default-denial/yolo behavior.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: partial answer can look successful; SDK SIGINT exits 0 first.
+for await (const event of runtime.send(prompt)) process.stdout.write(textDelta(event))
+
+// CORRECT: buffer assembled blocks; publish only after cleanup and pointer persistence.
+const reply = await runHeadlessTurn(runtime, prompt, writeStderr)
+await runtime.shutdown({ throwOnError: true })
+await runtime.markResumable()
+process.stdout.write(`${reply}\n`)
+```
+
 ## Scenario: explicit `/compact` conversation reduction
 
 ### 1. Scope / Trigger

@@ -115,7 +115,7 @@ async function approvedEditFlow(): Promise<void> {
   const { bridge, seen } = recordingBridge(true);
 
   const turn = await withRuntime(
-    { projectRoot: PROJECT_ROOT, resume: false, permissionBridge: bridge },
+    { projectRoot: PROJECT_ROOT, session: { kind: 'new' }, permissionBridge: bridge },
     async (runtime) => {
       console.log(`  model   : ${runtime.info.config.provider} / ${runtime.info.config.model}`);
       console.log(
@@ -176,7 +176,7 @@ async function deniedEditFlow(): Promise<void> {
   const { bridge, seen } = recordingBridge(false);
 
   const turn = await withRuntime(
-    { projectRoot: PROJECT_ROOT, resume: false, permissionBridge: bridge },
+    { projectRoot: PROJECT_ROOT, session: { kind: 'new' }, permissionBridge: bridge },
     (runtime) =>
       runTurn(
         runtime,
@@ -205,7 +205,7 @@ async function resumeFlow(): Promise<void> {
   const token = `PLUM-${Math.floor(Math.random() * 9000) + 1000}`;
 
   const firstSession = await withRuntime(
-    { projectRoot: PROJECT_ROOT, resume: false, permissionBridge: recordingBridge(true).bridge },
+    { projectRoot: PROJECT_ROOT, session: { kind: 'new' }, permissionBridge: recordingBridge(true).bridge },
     async (first) => {
       await runTurn(first, `Remember this build token for later: ${token}. Just acknowledge it.`);
       console.log(`  session 1 : ${first.info.sessionId} (${first.messageCount} messages)`);
@@ -215,7 +215,7 @@ async function resumeFlow(): Promise<void> {
 
   // A separate runtime, as a new process would be.
   await withRuntime(
-    { projectRoot: PROJECT_ROOT, resume: true, permissionBridge: recordingBridge(true).bridge },
+    { projectRoot: PROJECT_ROOT, session: { kind: 'continue' }, permissionBridge: recordingBridge(true).bridge },
     async (second) => {
       console.log(`  session 2 : ${second.info.sessionId} (resumed=${second.info.resumed})`);
       console.log(`  restored  : ${second.messageCount} messages`);
@@ -255,7 +255,7 @@ async function projectInstructionsFlow(): Promise<void> {
   );
 
   const turn = await withRuntime(
-    { projectRoot: withAgents, resume: false, permissionBridge: recordingBridge(true).bridge },
+    { projectRoot: withAgents, session: { kind: 'new' }, permissionBridge: recordingBridge(true).bridge },
     async (runtime) => {
       const loaded = runtime.info.projectInstructions;
       console.log(`  agents.md : ${loaded?.path} (${loaded?.bytes} bytes, truncated=${loaded?.truncated})`);
@@ -275,7 +275,7 @@ async function projectInstructionsFlow(): Promise<void> {
   assert('the model obeyed a rule that only AGENTS.md could have given it', turn.text.includes('DARWIN-ACK'));
 
   await withRuntime(
-    { projectRoot: withoutAgents, resume: false, permissionBridge: recordingBridge(true).bridge },
+    { projectRoot: withoutAgents, session: { kind: 'new' }, permissionBridge: recordingBridge(true).bridge },
     async (runtime) => {
       assert('a directory without AGENTS.md starts normally', runtime.info.projectInstructions === undefined);
       assert(
@@ -293,7 +293,7 @@ async function conversationManagerAttached(): Promise<void> {
   await rm(PROJECT_ROOT, { recursive: true, force: true });
 
   const managerName = await withRuntime(
-    { projectRoot: PROJECT_ROOT, resume: false, permissionBridge: recordingBridge(true).bridge },
+    { projectRoot: PROJECT_ROOT, session: { kind: 'new' }, permissionBridge: recordingBridge(true).bridge },
     async (runtime) => {
       // Not public API; this only confirms the wiring, it is not relied on elsewhere.
       const manager = (runtime as unknown as { agent: { _conversationManager?: { name?: string } } })

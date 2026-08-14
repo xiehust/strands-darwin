@@ -99,7 +99,7 @@ async function main(): Promise<void> {
   await seedProject();
   const runtime = await AgentRuntime.create({
     projectRoot: ROOT,
-    resume: false,
+    session: { kind: 'new' },
     permissionBridge: allowAllBridge,
   });
 

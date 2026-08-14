@@ -46,7 +46,12 @@ import {
 import { PermissionGate, type ApprovalMode, type PermissionBridge } from './permission.js';
 import { applySystemPromptCachePoint, planPromptCache, type PromptCachePlan } from './prompt-cache.js';
 import { createModelClassifier } from './safety-classifier.js';
-import { createSessionManager, resolveSession, writePointer } from './session.js';
+import {
+  createSessionManager,
+  resolveSession,
+  writePointer,
+  type SessionSelector,
+} from './session.js';
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
 
@@ -59,8 +64,12 @@ const AGENT_ID = 'darwin';
 
 export interface RuntimeOptions {
   projectRoot: string;
-  /** Continue the previous session instead of starting a new one. */
-  resume: boolean;
+  /** Conversation to create or restore. */
+  session: SessionSelector;
+  /** Called once the effective id is known, before provider startup. */
+  onSessionResolved?: (sessionId: string) => void;
+  /** Suppress unbounded MCP subprocess banners in the headless stderr protocol. */
+  quietMcpStderr?: boolean;
   /** Asks the user to approve write and execute tool calls. */
   permissionBridge: PermissionBridge;
   /** Overrides the config's `permissionMode` (CLI flags win over the file). */
@@ -195,9 +204,12 @@ export class AgentRuntime {
   }
 
   static async create(options: RuntimeOptions): Promise<AgentRuntime> {
+    // Resolve explicit ids before provider/model construction: a bad automation
+    // selector must fail locally without initializing anything billable.
+    const session = await resolveSession(options.projectRoot, options.session, AGENT_ID);
+    options.onSessionResolved?.(session.sessionId);
     const config = await loadConfig(options.projectRoot);
     const model = await createModelFromConfig(config);
-    const session = await resolveSession(options.projectRoot, options.resume);
     const skills = await SkillsPlugin.load(options.projectRoot);
     const commands = await loadCustomCommands(
       options.projectRoot,
@@ -206,7 +218,9 @@ export class AgentRuntime {
     const loadedInstructions = await loadProjectInstructions(options.projectRoot);
     const instructions = loadedInstructions.instructions;
     const basePrompt = await loadSystemPrompt(options.projectRoot, config.systemPrompt);
-    const mcp = await loadMcpClients(options.projectRoot);
+    const mcp = await loadMcpClients(options.projectRoot, {
+      quietStdioStderr: options.quietMcpStderr === true,
+    });
 
     const permissionMode = options.permissionModeOverride ?? config.permissionMode;
     const gate = new PermissionGate({
@@ -267,7 +281,12 @@ export class AgentRuntime {
     // invocation. Session restore runs on InitializedEvent, MCP tools are
     // discovered here, and plugins inject their system prompt fragments — so
     // without this the resumed history and MCP tools would not exist yet.
-    await agent.initialize();
+    try {
+      await agent.initialize();
+    } catch (error) {
+      await disconnectAll(mcp.clients);
+      throw error;
+    }
 
     // Child tool allowlists can include MCP and plugin tools, whose final names do
     // not exist until initialization. Capture that catalogue before registering
@@ -310,7 +329,7 @@ export class AgentRuntime {
         config,
         permissionMode,
         sessionId: session.sessionId,
-        resumed: session.resumed,
+        resumed: session.restoreRequested && agent.messages.length > 0,
         skillNames: skills.skills.map((skill) => skill.name),
         skillProblems: skills.problems.map((problem) => ({ ...problem })),
         commandNames: commands.commands.map((command) => command.name),
@@ -559,13 +578,17 @@ export class AgentRuntime {
    * keep the event loop alive, so skipping this hangs the process instead of
    * exiting.
    */
-  async shutdown(): Promise<void> {
-    await Promise.allSettled([
+  async shutdown(options: { throwOnError?: boolean } = {}): Promise<void> {
+    const results = await Promise.allSettled([
       this.subagents.shutdown(),
       this.backgroundBash.shutdown(),
-      this.stopBashSession(),
-      disconnectAll(this.mcpClients),
+      this.stopBashSession(options.throwOnError === true),
+      disconnectAll(this.mcpClients, { throwOnError: options.throwOnError === true }),
     ]);
+    const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+    if (options.throwOnError === true && failures.length > 0) {
+      throw new AggregateError(failures, `${failures.length} runtime cleanup operation(s) failed`);
+    }
   }
 
   /**
@@ -582,15 +605,16 @@ export class AgentRuntime {
    * the model loop) with history recording off, so it neither prompts for
    * permission nor appears in the conversation.
    */
-  private async stopBashSession(): Promise<void> {
+  private async stopBashSession(throwOnError = false): Promise<void> {
     const bashTool = this.agent.tool['bash'];
     if (bashTool === undefined) return;
 
     try {
       await bashTool.invoke({ mode: 'restart' }, { recordDirectToolCall: false });
-    } catch {
-      // Shutdown is best-effort: a failure here must not stop MCP cleanup or
-      // prevent the process from exiting.
+    } catch (error) {
+      // Interactive shutdown remains best-effort. Headless mode asks for the
+      // failure after every cleanup operation has still had its chance to run.
+      if (throwOnError) throw error;
     }
   }
 }

@@ -67,6 +67,10 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | Terminal status log snapshot cannot open/stat/close | Publish exactly once with `outputBytes: null`; suppress no event and create no unhandled rejection | Losing diagnostics must not make a finished job invisible |
 | Background spawn/setup fails | Reject start, close the parent log handle, kill any exposed process group, retain an unconfirmed group for exit fallback | A partially launched command is still darwin-owned |
 | Background stop / natural leader exit | Bounded process-group SIGTERM (500 ms) then SIGKILL (500 ms); terminal status only after group disappearance | Killing only the leader or reporting success early creates or hides orphans |
+| Headless CLI usage is invalid | Print one concise `error:` record to stderr, start no runtime/model, exit 2 | Automation mistakes must be locally distinguishable from provider/runtime failure |
+| Headless `--session <id>` is invalid or has no persisted snapshot | Print the fixed `session: <id>` record when syntax permits, then an actionable stderr error; exit 1 | An explicit conversation selector must never silently start empty |
+| Headless permission requires a human | Immediately deny and report a bounded one-line stderr record | A non-interactive process has nobody to answer and must never hang |
+| Headless turn, cleanup, pointer persistence, or interruption fails | Keep stdout empty, leave the last-session pointer unchanged unless its write completed, report stderr, exit 1 | stdout is the atomic success channel for scripts |
 | Runtime shutdown races a background start | Latch closed, await tracked launches, then stop the visible running set | A start must reject before spawn or enter the cleanup snapshot |
 | Background cleanup cannot confirm group exit | Continue cleaning other resources and keep the group in the synchronous process-exit registry | One stubborn group must not skip MCP/bash/subagent cleanup or escape forced exit |
 | Turn cancelled (Ctrl+C) | `agent.cancel()`; stream ends with `stopReason: 'cancelled'`, no throw | Session stays usable; pending prompts released via `denyPending()` |

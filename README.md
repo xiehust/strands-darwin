@@ -61,6 +61,37 @@ pnpm start            # new session
 pnpm start --resume   # continue where you left off
 ```
 
+### One-shot / headless mode
+
+Use `-p` (or `--print`) to run one turn without the TUI or stdin:
+
+```bash
+darwin -p "reply with ok" >reply.txt 2>progress.log
+darwin -p "continue that work" --continue
+darwin -p "continue this exact conversation" --session session-20260814-160833123
+```
+
+On success, **stdout contains only the complete assistant reply and one final newline**. Tool
+starts/results and permission denials go to stderr as bounded one-line records. Every started
+headless run also writes an exact, stable line of this form to stderr:
+
+```text
+session: session-20260814-160833123
+```
+
+Capture that id to select the same persisted conversation later with `--session <id>`.
+`--session` is strict: the id must use lowercase letters, numbers, hyphens, or underscores and
+must already have a persisted snapshot in this project. It takes precedence over `--continue`
+or the compatible `--resume` alias. `--continue` follows `.darwin/last-session.json` (or starts
+a new conversation when no pointer exists).
+
+Headless mode cannot ask for approval, so its default permission bridge immediately denies any
+call that reaches it. Static-safe calls and persisted allow-rules still run; use
+`--permission-mode auto`, `--permission-mode yolo`, or `--yolo` when those existing semantics
+are appropriate for automation. A denied tool is not itself a failed process if the model
+handles the denial and completes. Exit status is zero only after the turn, snapshot, resume
+pointer, and runtime cleanup succeed. SIGINT cancels and exits nonzero.
+
 Run it from the repository you want it to work on. The **current working directory** is
 the project root, and everything darwin reads or writes lives there:
 

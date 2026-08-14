@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   const root = await fixture();
   const runtime = await AgentRuntime.create({
     projectRoot: root,
-    resume: false,
+    session: { kind: 'new' },
     permissionBridge: allowAllBridge,
   });
 

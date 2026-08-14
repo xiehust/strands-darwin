@@ -159,7 +159,7 @@ async function main(): Promise<void> {
   try {
     runtime = await AgentRuntime.create({
       projectRoot,
-      resume,
+      session: resume ? { kind: 'continue' } : { kind: 'new' },
       permissionBridge: createReadlineBridge(prompter),
     });
 

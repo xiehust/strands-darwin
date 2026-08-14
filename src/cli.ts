@@ -2,59 +2,140 @@
 /**
  * `darwin` entry point.
  *
- * Boots the agent runtime, then hands control to the Ink app.
- *
  * Usage: darwin [--resume] [--permission-mode <default|auto|yolo>] [--yolo]
+ *        darwin -p <message> [--continue|--resume|--session <id>] [permission flags]
  */
-import { render } from 'ink';
-import React from 'react';
 import process from 'node:process';
 
-import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
 import { AgentRuntime } from './agent/runtime.js';
+import { routeSdkLogs } from './agent/sdk-logging.js';
+import { CliUsageError, parseCliArgs, type CliOptions } from './cli-args.js';
 import { ConfigError } from './config.js';
-import { App } from './tui/App.js';
-import { PermissionQueue } from './tui/permission-queue.js';
+import { createHeadlessPermissionBridge, headlessField, runHeadlessTurn } from './headless.js';
 
-/** Grace period for a clean exit before the process is forced down. */
 const FORCE_EXIT_AFTER_MS = 500;
 
-/**
- * Reads the mode flags. `--yolo` is shorthand for `--permission-mode yolo` and
- * wins when both are given. Undefined means "use the config file's value".
- * An invalid value throws {@link ConfigError} so main's existing plain-stderr
- * path reports it before Ink mounts.
- */
-function parsePermissionMode(argv: readonly string[]): ApprovalMode | undefined {
-  if (argv.includes('--yolo')) return 'yolo';
-
-  const flagIndex = argv.indexOf('--permission-mode');
-  if (flagIndex === -1) return undefined;
-
-  const value = argv[flagIndex + 1];
-  if (value === undefined || !(APPROVAL_MODES as readonly string[]).includes(value)) {
-    throw new ConfigError(
-      `--permission-mode expects one of ${APPROVAL_MODES.join(', ')}, got ${JSON.stringify(value ?? '(nothing)')}.`,
-    );
+async function main(): Promise<void> {
+  let options: CliOptions;
+  try {
+    options = parseCliArgs(process.argv.slice(2));
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      process.stderr.write(`error: ${error.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
+    throw error;
   }
-  return value as ApprovalMode;
+
+  if (options.prompt !== undefined) {
+    await runHeadless({ ...options, prompt: options.prompt });
+    return;
+  }
+  await runInteractive(options);
 }
 
-async function main(): Promise<void> {
-  const resume = process.argv.includes('--resume');
+async function runHeadless(options: CliOptions & { prompt: string }): Promise<void> {
+  const projectRoot = process.cwd();
+  // The SDK bash module installs process-exiting signal handlers at import time.
+  // Replace them for this one-shot process so darwin can cancel, clean up, and
+  // return a nonzero status instead of being terminated with status 0.
+  process.removeAllListeners('SIGINT');
+  process.removeAllListeners('SIGTERM');
+
+  let runtime: AgentRuntime | undefined;
+  let reply: string | undefined;
+  let interrupted = false;
+  let failed = false;
+  const restoreSdkLogs = routeSdkLogs((entry) => {
+    process.stderr.write(`sdk ${entry.level} — ${headlessField(entry.message)}\n`);
+  });
+
+  const onInterrupt = () => {
+    interrupted = true;
+    process.exitCode = 1;
+    runtime?.cancel();
+  };
+  process.once('SIGINT', onInterrupt);
+  process.once('SIGTERM', onInterrupt);
+
+  // An explicit id is already the effective id even when strict existence
+  // checking rejects it. All other selectors are reported once resolution picks
+  // their generated or pointed-to id.
+  if (options.session.kind === 'id') {
+    process.stderr.write(`session: ${options.session.sessionId}\n`);
+  }
+
+  try {
+    runtime = await AgentRuntime.create({
+      projectRoot,
+      session: options.session,
+      ...(options.session.kind !== 'id' && {
+        onSessionResolved: (sessionId: string) => process.stderr.write(`session: ${sessionId}\n`),
+      }),
+      quietMcpStderr: true,
+      permissionBridge: createHeadlessPermissionBridge((text) => process.stderr.write(text)),
+      ...(options.permissionModeOverride !== undefined && {
+        permissionModeOverride: options.permissionModeOverride,
+      }),
+    });
+    if (interrupted) throw new Error('Interrupted.');
+
+    reply = await runHeadlessTurn(
+      runtime,
+      options.prompt,
+      (text) => process.stderr.write(text),
+    );
+  } catch (error) {
+    failed = true;
+    process.stderr.write(`error: ${errorMessage(error)}\n`);
+  } finally {
+    if (runtime !== undefined) {
+      try {
+        await runtime.shutdown({ throwOnError: true });
+      } catch (error) {
+        failed = true;
+        process.stderr.write(`error: cleanup failed: ${errorMessage(error)}\n`);
+      }
+    }
+    if (interrupted) failed = true;
+    if (!failed && runtime !== undefined && reply !== undefined) {
+      try {
+        await runtime.markResumable();
+        process.stdout.write(`${reply}\n`);
+      } catch (error) {
+        failed = true;
+        process.stderr.write(`error: ${errorMessage(error)}\n`);
+      }
+    }
+    process.off('SIGINT', onInterrupt);
+    process.off('SIGTERM', onInterrupt);
+    restoreSdkLogs();
+
+    if (failed) process.exitCode = 1;
+    forceExitIfHung();
+  }
+}
+
+async function runInteractive(options: CliOptions): Promise<void> {
+  const [{ render }, { default: React }, { App }, { PermissionQueue }] = await Promise.all([
+    import('ink'),
+    import('react'),
+    import('./tui/App.js'),
+    import('./tui/permission-queue.js'),
+  ]);
   const projectRoot = process.cwd();
   const permissions = new PermissionQueue();
 
   let runtime: AgentRuntime;
   try {
-    // Runs before Ink mounts, so a startup failure prints plainly instead of
-    // being wiped by the first frame.
-    const permissionModeOverride = parsePermissionMode(process.argv);
     runtime = await AgentRuntime.create({
       projectRoot,
-      resume,
+      session: options.session,
       permissionBridge: permissions.bridge,
-      ...(permissionModeOverride !== undefined && { permissionModeOverride }),
+      ...(options.permissionModeOverride !== undefined && {
+        permissionModeOverride: options.permissionModeOverride,
+      }),
     });
   } catch (error) {
     if (error instanceof ConfigError) {
@@ -66,35 +147,23 @@ async function main(): Promise<void> {
   }
 
   const instance = render(React.createElement(App, { runtime, permissions }), {
-    // The app implements its own Ctrl+C policy: cancel the turn first, exit on
-    // the second press. Ink's default would exit immediately.
     exitOnCtrlC: false,
   });
 
   try {
     await instance.waitUntilExit();
   } finally {
-    // Release anything still blocked on a confirmation, then reap MCP children.
     permissions.close();
     await runtime.shutdown();
     forceExitIfHung();
   }
 }
 
-/**
- * Last resort: leave the process a moment to end on its own, then force it down.
- *
- * Cancelling a turn leaks the model provider's HTTP socket, which is a live libuv
- * handle, so the process would otherwise hang forever after Ctrl+C. The leak is
- * inside the SDK — `BedrockModel.stream()` sends its command without an abort
- * signal and the agent abandons the response stream on cancellation, so nothing
- * destroys the socket, and the client is private, leaving no public way to close
- * it.
- *
- * Ordering matters: this runs only after `shutdown()` has awaited MCP disconnects
- * and the bash shell, so nothing that needed to be cleaned up is skipped. The
- * timer is unref'd, so a process that can exit cleanly still does, immediately.
- */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Last resort after explicit shutdown for a provider socket leaked on cancel. */
 function forceExitIfHung(): void {
   const timer = setTimeout(() => process.exit(process.exitCode ?? 0), FORCE_EXIT_AFTER_MS);
   timer.unref();

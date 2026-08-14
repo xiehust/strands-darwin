@@ -23,7 +23,7 @@ import { AgentRuntime } from '../src/agent/runtime.js';
 
 const runtime = await AgentRuntime.create({
   projectRoot: '/tmp/darwin-cancel-probe',
-  resume: false,
+  session: { kind: 'new' },
   permissionBridge: allowAllBridge,
 });
 

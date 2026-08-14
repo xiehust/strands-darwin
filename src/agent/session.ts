@@ -7,7 +7,7 @@
  * mapping a working directory onto a home-directory slug, and makes sessions easy
  * to inspect or delete. The cost is two `.gitignore` entries.
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { SessionManager } from '@strands-agents/sdk';
@@ -51,31 +51,78 @@ export function sessionPaths(projectRoot: string): SessionPaths {
 function newSessionId(): string {
   const [date = '', time = ''] = new Date().toISOString().split('T');
   const compactDate = date.replace(/-/g, '');
-  const compactTime = time.slice(0, 8).replace(/:/g, '');
+  const compactTime = time.replace(/[:.Z]/g, '');
   return `session-${compactDate}-${compactTime}`;
 }
 
+/** The three ways a caller can choose the conversation for this run. */
+export type SessionSelector =
+  | { kind: 'new' }
+  | { kind: 'continue' }
+  | { kind: 'id'; sessionId: string };
+
 export interface ResolvedSession {
   sessionId: string;
-  /** True when `--resume` found a previous session and we are continuing it. */
-  resumed: boolean;
+  /** Whether the selector named a snapshot that should be restored. */
+  restoreRequested: boolean;
+}
+
+/** Mirrors the SDK's accepted session-id alphabet. */
+export function isValidSessionId(value: string): boolean {
+  return /^[a-z0-9_-]+$/.test(value);
 }
 
 /**
- * Picks the session id for this run. With `resume`, reuses the last one; if there
- * is nothing to resume, starts fresh rather than failing — the user's intent
- * ("continue where I left off") is still satisfied by a new session.
+ * Picks the session id for this run. `continue` retains the TUI's forgiving
+ * behavior and starts fresh when there is no pointer. An explicit id is strict:
+ * it means "continue this persisted conversation", so a typo must not silently
+ * create a different empty session.
  */
-export async function resolveSession(projectRoot: string, resume: boolean): Promise<ResolvedSession> {
+export async function resolveSession(
+  projectRoot: string,
+  selector: SessionSelector,
+  agentId: string,
+): Promise<ResolvedSession> {
   const paths = sessionPaths(projectRoot);
 
-  if (resume) {
+  if (selector.kind === 'continue') {
     const previous = await readPointer(paths.pointerFile);
     if (previous !== undefined) {
-      return { sessionId: previous, resumed: true };
+      const exists = await snapshotExists(paths, previous, agentId);
+      if (exists) return { sessionId: previous, restoreRequested: true };
     }
   }
-  return { sessionId: newSessionId(), resumed: false };
+
+  if (selector.kind === 'id') {
+    if (!isValidSessionId(selector.sessionId)) {
+      throw new Error(`Invalid session id ${JSON.stringify(selector.sessionId)}.`);
+    }
+    if (!(await snapshotExists(paths, selector.sessionId, agentId))) {
+      throw new Error(`Session ${JSON.stringify(selector.sessionId)} does not exist in this project.`);
+    }
+    return { sessionId: selector.sessionId, restoreRequested: true };
+  }
+
+  return { sessionId: newSessionId(), restoreRequested: false };
+}
+
+async function snapshotExists(paths: SessionPaths, sessionId: string, agentId: string): Promise<boolean> {
+  const snapshot = path.join(
+    paths.sessionsDir,
+    'session',
+    sessionId,
+    'scopes',
+    'agent',
+    agentId,
+    'snapshots',
+    'snapshot_latest.json',
+  );
+  try {
+    await access(snapshot);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function readPointer(pointerFile: string): Promise<string | undefined> {
