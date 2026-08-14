@@ -163,6 +163,86 @@ tool call is silently denied with no prompt shown.
 - Write the pointer only after a turn completes (`markResumable()`), so an unused session
   never displaces a useful one.
 
+## Scenario: explicit `/compact` conversation reduction
+
+### 1. Scope / Trigger
+
+`/compact` is a cross-layer local command: the TUI requests it, `AgentRuntime` owns the live
+SDK objects, `SummarizingConversationManager` mutates messages, `Model.countTokens` measures
+the result, and `SessionManager` persists it. It must never fork or invoke the agent loop.
+
+### 2. Signatures
+
+```typescript
+AgentRuntime.compact(): Promise<CompactResult>
+SummarizingConversationManager.reduce({ agent, model }): Promise<boolean>
+Model.countTokens(messages, { systemPrompt, toolSpecs }): Promise<number>
+SessionManager.saveSnapshot({ target: agent, isLatest: true }): Promise<void>
+```
+
+`CompactResult` contains `messagesBefore`, `messagesAfter`, `estimatedTokensBefore`,
+`estimatedTokensAfter`, `estimatedTokensSaved`, and `compacted`.
+
+### 3. Contracts
+
+- Run only while the agent is idle; direct message mutation during `Agent.stream()` is unsafe.
+- Explicit compaction uses a dedicated SDK summarizer at its maximum `summaryRatio` (0.8),
+  repeatedly, until one rolling summary plus configured `preserveRecentMessages` remain.
+  The configured manager attached to `Agent` remains unchanged for reactive overflow recovery.
+- Delegate split adjustment to the SDK: it moves boundaries to preserve tool-use/result pairs.
+- Count the complete next request before and after: messages, the finished system prompt
+  (including cache blocks), and every registered `toolSpec`. The result is an estimated
+  context-size reduction, not billing savings; the summary call itself has a cost.
+- A direct manager call emits no `AfterInvocationEvent`, so it does **not** auto-save under
+  `saveLatestOn: 'invocation'`. Explicitly call `saveSnapshot(...isLatest: true)`, then write
+  the normal resume pointer.
+- Clone original `Message`s before reduction. Any summarization, counting, snapshot, or pointer
+  failure restores them in place; after a persistence-stage failure, best-effort overwrite the
+  latest snapshot with the restored state too.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| `messages.length <= preserveRecentMessages + 1` | No model/count/storage call; `compacted: false` |
+| SDK `reduce` returns `false` before any pass | No-op result |
+| Summary or token count throws | Restore original live messages; surface failure |
+| Latest snapshot or pointer write throws | Restore live messages, best-effort restore latest snapshot, surface failure |
+| Estimated summary is larger | Clamp `estimatedTokensSaved` to zero; never claim negative savings |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** 500-message session becomes one summary plus the recent window, follow-up succeeds,
+  and `--resume` restores the compacted list.
+- **Base:** conversation already fits the summary-plus-window shape; report no work needed.
+- **Bad:** saving the compacted snapshot fails after message mutation; returning success would
+  make the current process and resumed process disagree, so the operation rolls back.
+
+### 6. Tests Required
+
+`spike/verify-compact.ts` uses a deterministic `Model` with real SDK Agent, summarizer,
+session manager, and local storage. Assert the retained messages are byte-identical, context
+counting receives system prompt and tools, an immediate follow-up sees the summary, a fresh
+agent restores it, and persistence failure restores every original message. The pty completion
+scenario asserts `/compact` is discoverable without spending a model call.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: mutates history but leaves snapshot_latest stale; resume brings old context back.
+await summarizer.reduce({ agent, model })
+
+// CORRECT: reversible mutation followed by explicit persistence outside the agent loop.
+const original = agent.messages.map((message) => message.clone())
+try {
+  await summarizer.reduce({ agent, model })
+  await agent.sessionManager?.saveSnapshot({ target: agent, isLatest: true })
+} catch (error) {
+  agent.messages.splice(0, agent.messages.length, ...original)
+  throw error
+}
+```
+
 ---
 
 ## Skills (the one self-built module)

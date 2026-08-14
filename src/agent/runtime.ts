@@ -10,6 +10,7 @@ import type { AgentStreamEvent, McpClient, Model } from '@strands-agents/sdk';
 import { bash } from '@strands-agents/sdk/vended-tools/bash';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
+import { compactConversation, type CompactResult } from './compact.js';
 import {
   appendAllowRule,
   applyThinkingEffort,
@@ -62,6 +63,8 @@ export interface UsageTotals {
   cacheReadInputTokens: number;
   cacheWriteInputTokens: number;
 }
+
+export type { CompactResult } from './compact.js';
 
 /**
  * The outcome of an `/effort` change: what the model will now do, and a promise
@@ -154,6 +157,8 @@ export class AgentRuntime {
     private readonly mcpClients: readonly McpClient[],
     private readonly skills: SkillsPlugin,
     private readonly gate: PermissionGate,
+    private readonly compactionManager: SummarizingConversationManager,
+    private readonly preserveRecentMessages: number,
     readonly info: RuntimeInfo,
   ) {
     this.thinkingPlan = info.thinking;
@@ -183,6 +188,18 @@ export class AgentRuntime {
       }),
     });
 
+    const sessionManager = createSessionManager(options.projectRoot, session.sessionId);
+    const conversationManager = new SummarizingConversationManager({
+      summaryRatio: config.summaryRatio,
+      preserveRecentMessages: config.preserveRecentMessages,
+    });
+    // `/compact` has a different target from overflow recovery: collapse every
+    // reducible old message in one command, leaving one summary plus the recent
+    // window. A ratio of 0.8 is the SDK's maximum and minimizes model calls.
+    const compactionManager = new SummarizingConversationManager({
+      summaryRatio: 0.8,
+      preserveRecentMessages: config.preserveRecentMessages,
+    });
     const agent = new Agent({
       id: AGENT_ID,
       model,
@@ -195,11 +212,8 @@ export class AgentRuntime {
       // their tools during initialize().
       tools: [bash, fileEditor, ...mcp.clients],
       plugins: [skills],
-      sessionManager: createSessionManager(options.projectRoot, session.sessionId),
-      conversationManager: new SummarizingConversationManager({
-        summaryRatio: config.summaryRatio,
-        preserveRecentMessages: config.preserveRecentMessages,
-      }),
+      sessionManager,
+      conversationManager,
       interventions: [gate],
       // Required: the SDK's own printer writes to stdout and would interleave
       // with our rendering (and fight Ink for the terminal in step 5).
@@ -219,31 +233,41 @@ export class AgentRuntime {
     const promptCache = planPromptCache(config);
     applySystemPromptCachePoint(agent, promptCache);
 
-    return new AgentRuntime(agent, model, options.projectRoot, mcp.clients, skills, gate, {
-      config,
-      permissionMode,
-      sessionId: session.sessionId,
-      resumed: session.resumed,
-      skillNames: skills.skills.map((skill) => skill.name),
-      skillProblems: skills.problems.map((problem) => ({ ...problem })),
-      projectInstructions:
-        instructions === undefined
-          ? undefined
-          : { path: instructions.path, bytes: instructions.bytes, truncated: instructions.truncated },
-      projectInstructionsProblem: loadedInstructions.problem,
-      systemPromptSource: basePrompt.source,
-      systemPromptPath: basePrompt.path,
-      systemPromptProblem: basePrompt.problem,
-      promptCache,
-      // Recomputed rather than returned from createModelFromConfig: the model
-      // factory needs only the fields, while the header needs the reason a level
-      // was clamped. Both come from the same pure planner, so they cannot disagree.
-      thinking: planThinking(config),
-      mcpConfigPath: mcp.configPath,
-      mcpIgnoredConfigPath: mcp.ignoredConfigPath,
-      mcpServerCount: mcp.clients.length,
-      toolNames: agent.tools.map((tool) => tool.name).sort(),
-    });
+    return new AgentRuntime(
+      agent,
+      model,
+      options.projectRoot,
+      mcp.clients,
+      skills,
+      gate,
+      compactionManager,
+      config.preserveRecentMessages,
+      {
+        config,
+        permissionMode,
+        sessionId: session.sessionId,
+        resumed: session.resumed,
+        skillNames: skills.skills.map((skill) => skill.name),
+        skillProblems: skills.problems.map((problem) => ({ ...problem })),
+        projectInstructions:
+          instructions === undefined
+            ? undefined
+            : { path: instructions.path, bytes: instructions.bytes, truncated: instructions.truncated },
+        projectInstructionsProblem: loadedInstructions.problem,
+        systemPromptSource: basePrompt.source,
+        systemPromptPath: basePrompt.path,
+        systemPromptProblem: basePrompt.problem,
+        promptCache,
+        // Recomputed rather than returned from createModelFromConfig: the model
+        // factory needs only the fields, while the header needs the reason a level
+        // was clamped. Both come from the same pure planner, so they cannot disagree.
+        thinking: planThinking(config),
+        mcpConfigPath: mcp.configPath,
+        mcpIgnoredConfigPath: mcp.ignoredConfigPath,
+        mcpServerCount: mcp.clients.length,
+        toolNames: agent.tools.map((tool) => tool.name).sort(),
+      },
+    );
   }
 
   /**
@@ -252,6 +276,40 @@ export class AgentRuntime {
    */
   async *send(input: string): AsyncIterable<AgentStreamEvent> {
     yield* this.agent.stream(input);
+  }
+
+  /**
+   * Replaces old conversation history with rolling summaries, keeping the recent
+   * configured window verbatim, then persists the rewritten session immediately.
+   *
+   * This is deliberately a direct conversation-manager call, not an agent turn:
+   * `/compact` must not become part of the context it is trying to shrink. The
+   * original messages are cloned so any model/count/storage failure can put the
+   * live agent back exactly where it started.
+   */
+  async compact(): Promise<CompactResult> {
+    try {
+      return await compactConversation({
+        agent: this.agent,
+        model: this.model,
+        manager: this.compactionManager,
+        preserveRecentMessages: this.preserveRecentMessages,
+        persist: async () => {
+          await this.agent.sessionManager?.saveSnapshot({ target: this.agent, isLatest: true });
+          await this.markResumable();
+        },
+      });
+    } catch (error) {
+      // compactConversation has already restored the live messages. If saving the
+      // compact snapshot succeeded but the pointer write failed, overwrite latest
+      // with that restored state too, so disk and memory cannot diverge.
+      try {
+        await this.agent.sessionManager?.saveSnapshot({ target: this.agent, isLatest: true });
+      } catch {
+        // Preserve the original failure; this repair is necessarily best-effort.
+      }
+      throw error;
+    }
   }
 
   /** Messages restored from a resumed session, for showing prior context. */

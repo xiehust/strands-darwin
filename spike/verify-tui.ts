@@ -436,7 +436,8 @@ async function slashCompletion(): Promise<void> {
     // header hint is one nobody finds. Matched on the row markers ('❯ ' for the
     // selected row, two spaces otherwise) — a bare '/exit' also occurs in the
     // header line, so it would pass with no list on screen at all.
-    assert('the built-ins are listed first', tui.screen.slice(beforeSlash).includes('❯ /effort'));
+    assert('the built-ins are listed first', tui.screen.slice(beforeSlash).includes('❯ /compact'));
+    assert('the built-in /effort is listed', tui.screen.slice(beforeSlash).includes('  /effort'));
     assert('the built-in /exit is listed', tui.screen.slice(beforeSlash).includes('  /exit'));
     assert('the built-in /usage is listed', tui.screen.slice(beforeSlash).includes('  /usage'));
     assert('the list explains the keys', /to select/.test(tui.screen.slice(beforeSlash)));

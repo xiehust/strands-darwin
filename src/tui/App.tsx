@@ -1,9 +1,9 @@
 /**
  * The TUI root and its state machine.
  *
- * Status transitions: `idle → streaming → idle`, with `awaiting-permission`
- * entered from `streaming` whenever the gate asks a question and left when the
- * user answers.
+ * Status transitions: `idle → streaming|compacting → idle`, with
+ * `awaiting-permission` entered from `streaming` whenever the gate asks a
+ * question and left when the user answers.
  *
  * Ctrl+C is handled here rather than by Ink (`exitOnCtrlC: false` at the render
  * call): during a turn the first press cancels that turn but keeps the session,
@@ -17,7 +17,7 @@ import React, { useCallback, useEffect, useReducer, useRef, useState, useSyncExt
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
 import type { PermissionDecision } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
-import type { AgentRuntime, UsageTotals } from '../agent/runtime.js';
+import type { AgentRuntime, CompactResult, UsageTotals } from '../agent/runtime.js';
 import { routeSdkLogs } from '../agent/sdk-logging.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
 import {
@@ -56,9 +56,9 @@ function stripControls(value: string): string {
  * `/quit` is deliberately missing — it works, but it is an alias of `/exit`, and
  * a menu row per alias costs a row of a six-row list to say nothing new.
  */
-const BUILTIN_COMMANDS = ['effort', 'exit', 'model', 'usage'] as const;
+const BUILTIN_COMMANDS = ['compact', 'effort', 'exit', 'model', 'usage'] as const;
 
-type Status = 'idle' | 'streaming' | 'awaiting-permission';
+type Status = 'idle' | 'streaming' | 'compacting' | 'awaiting-permission';
 
 export function App({
   runtime,
@@ -91,7 +91,8 @@ export function App({
     ...runtime.info.skillNames,
   ]);
 
-  // Spinner tick, only while something is actually running.
+  // Spinner tick, only while a model is actually streaming. `/compact` waits on
+  // its own model calls too, but has no per-call tool panel to animate.
   useEffect(() => {
     if (effectiveStatus !== 'streaming') return;
     const timer = setInterval(() => setFrame((f) => f + 1), SPINNER_INTERVAL_MS);
@@ -167,16 +168,42 @@ export function App({
       // draft is deliberately left in the box so nothing typed is lost — but it is
       // not queued either: sending a prompt written minutes earlier, on its own,
       // is worse than making the user press enter again.
-      if (status === 'streaming') {
+      if (status !== 'idle') {
         dispatch({
           type: 'notice',
-          text: 'still working — press enter again once the turn ends (ctrl+c cancels it)',
+          text:
+            status === 'compacting'
+              ? 'still compacting — press enter again once it finishes'
+              : 'still working — press enter again once the turn ends (ctrl+c cancels it)',
         });
         return;
       }
 
       if (text === '/exit' || text === '/quit') {
         exit();
+        return;
+      }
+
+      if (text === '/compact' || text.startsWith('/compact ')) {
+        setDraft('');
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/compact') {
+          dispatch({ type: 'notice', text: '/compact takes no arguments' });
+          return;
+        }
+        setStatus('compacting');
+        try {
+          const result = await runtime.compact();
+          dispatch({ type: 'notice', text: formatCompactReport(result) });
+        } catch (error) {
+          dispatch({
+            type: 'notice',
+            text: `compaction failed; conversation restored: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        } finally {
+          setStatus('idle');
+        }
         return;
       }
 
@@ -262,7 +289,7 @@ export function App({
     const now = Date.now();
     const previous = interruptedAt.current;
 
-    if (status !== 'streaming' && pendingPermission === undefined) {
+    if (status === 'idle' && pendingPermission === undefined) {
       exit();
       return;
     }
@@ -273,6 +300,11 @@ export function App({
     }
 
     interruptedAt.current = now;
+    if (status === 'compacting') {
+      dispatch({ type: 'notice', text: 'compaction cannot be cancelled safely — press ctrl+c again to exit' });
+      return;
+    }
+
     // Deny anything waiting so the loop is not left blocked on a prompt. Not
     // close(): the session survives a cancelled turn, so later turns must still
     // be able to ask for approval.
@@ -383,11 +415,13 @@ export function App({
           value={draft}
           completions={completions}
           selectedCompletion={selectedCompletion}
-          disabled={effectiveStatus === 'streaming'}
+          disabled={effectiveStatus === 'streaming' || effectiveStatus === 'compacting'}
           hint={
             effectiveStatus === 'streaming'
               ? 'working… /usage reports tokens · ctrl+c cancels this turn'
-              : undefined
+              : effectiveStatus === 'compacting'
+                ? 'compacting conversation…'
+                : undefined
           }
         />
       )}
@@ -554,6 +588,19 @@ export function formatUsageReport(
   // while the agent is visibly working read as a broken counter.
   const footer = turnInFlight ? ['  (the turn in flight is not counted yet)'] : [];
   return [heading, ...lines, ...footer].join('\n');
+}
+
+/** Formats the context reduction from `/compact` without implying billing savings. */
+export function formatCompactReport(result: CompactResult): string {
+  if (!result.compacted) {
+    return `conversation already compact — ${result.messagesBefore} message(s), nothing old enough to summarize`;
+  }
+
+  return [
+    `conversation compacted — ${groupDigits(result.messagesBefore)} → ${groupDigits(result.messagesAfter)} messages`,
+    `  estimated context tokens  ${groupDigits(result.estimatedTokensBefore)} → ${groupDigits(result.estimatedTokensAfter)}`,
+    `  estimated tokens saved    ${groupDigits(result.estimatedTokensSaved)}`,
+  ].join('\n');
 }
 
 /** Explicit locale: the report should read the same on every machine. */
