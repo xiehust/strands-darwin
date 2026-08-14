@@ -118,6 +118,13 @@ tool call is silently denied with no prompt shown.
 - A failed server (bad command, unset `${VAR}`) is skipped, not fatal: `listTools()`
   returns `[]` for it. Deliberate trade-off; the header's server count is the only signal.
 - stdio servers are child processes — `disconnectAll()` must run on every exit path.
+- **Duplicate tool names are fatal**: the SDK's `ToolRegistry.add` throws
+  `ToolValidationError` during `agent.initialize()` when two servers expose the same tool
+  name (`browser_close` ships in several published servers) or a server shadows a built-in
+  (`bash`). The registry therefore defaults every server's `prefix` to its config name
+  (`withDefaultPrefixes`); the SDK renders agent-facing names as `<prefix>_<toolName>`, and
+  an explicit `prefix: ""` opts a server back out. (Regression: `verify-mcp-config.ts`;
+  live: `verify-mcp.ts` asserts `everything_get-sum`.)
 
 > **Warning**: a `devEngines.packageManager` entry in package.json (written by `pnpm init`)
 > makes every `npx`-launched MCP server die with `EBADDEVENGINES`, surfacing only as a

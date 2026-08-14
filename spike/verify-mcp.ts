@@ -112,29 +112,29 @@ async function discoveryAndCall(): Promise<void> {
 
     assert('config file was found', runtime.info.mcpConfigPath !== undefined);
     assert('one server configured', runtime.info.mcpServerCount === 1);
-    assert('MCP tools were discovered and registered', toolNames.includes('get-sum'));
+    assert('MCP tools were discovered and registered', toolNames.includes('everything_get-sum'));
     assert('local vended tools are still present', toolNames.includes('bash') && toolNames.includes('fileEditor'));
     assert('more than just the local tools are registered', toolNames.length > 2);
 
     const turn = await runTurn(
       runtime,
-      'Use the "get-sum" tool to add 17 and 25. Report only the number it returns.',
+      'Use the "everything_get-sum" tool to add 17 and 25. Report only the number it returns.',
     );
 
     console.log(`  tool calls : ${JSON.stringify(turn.toolCalls)}`);
     console.log(`  answer     : ${turn.text.trim().slice(0, 160)}`);
     console.log(`  prompted   : ${JSON.stringify(seen.map((r) => `${r.toolName}:${r.kind}`))}`);
 
-    assert('the MCP tool was actually called', turn.toolCalls.includes('get-sum'));
+    assert('the MCP tool was actually called', turn.toolCalls.includes('everything_get-sum'));
     assert('the MCP tool returned the right answer', turn.text.includes('42'));
-    assert('the MCP call was gated by a permission prompt', seen.some((r) => r.toolName === 'get-sum'));
+    assert('the MCP call was gated by a permission prompt', seen.some((r) => r.toolName === 'everything_get-sum'));
     assert(
       'unknown/MCP tools are classified as execute (fail-closed default)',
-      seen.find((r) => r.toolName === 'get-sum')?.kind === 'execute',
+      seen.find((r) => r.toolName === 'everything_get-sum')?.kind === 'execute',
     );
     assert(
       'the prompt exposes the tool input for rendering',
-      (seen.find((r) => r.toolName === 'get-sum')?.details.length ?? 0) > 0,
+      (seen.find((r) => r.toolName === 'everything_get-sum')?.details.length ?? 0) > 0,
     );
   } finally {
     await runtime.shutdown();
@@ -155,11 +155,11 @@ async function deniedMcpCall(): Promise<void> {
   });
 
   try {
-    const turn = await runTurn(runtime, 'Use the "get-sum" tool to add 17 and 25.');
+    const turn = await runTurn(runtime, 'Use the "everything_get-sum" tool to add 17 and 25.');
     console.log(`  prompted : ${JSON.stringify(seen.map((r) => r.toolName))}`);
     console.log(`  answer   : ${turn.text.trim().slice(0, 200)}`);
 
-    assert('the MCP call was prompted', seen.some((r) => r.toolName === 'get-sum'));
+    assert('the MCP call was prompted', seen.some((r) => r.toolName === 'everything_get-sum'));
     assert('agent produced a closing message after denial', turn.text.trim().length > 0);
   } finally {
     await runtime.shutdown();
@@ -186,7 +186,7 @@ async function brokenServerTolerated(): Promise<void> {
 
     assert('both servers were configured', runtime.info.mcpServerCount === 2);
     assert('startup completed despite the broken server', true);
-    assert('the working server still contributed its tools', toolNames.includes('get-sum'));
+    assert('the working server still contributed its tools', toolNames.includes('everything_get-sum'));
     assert('local tools unaffected', toolNames.includes('bash'));
   } finally {
     await runtime.shutdown();

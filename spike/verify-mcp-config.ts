@@ -9,7 +9,12 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { ConfigError } from '../src/config.js';
-import { MCP_CONFIG_FILENAME, ROOT_MCP_CONFIG_FILENAME, loadMcpClients } from '../src/mcp/registry.js';
+import {
+  MCP_CONFIG_FILENAME,
+  ROOT_MCP_CONFIG_FILENAME,
+  loadMcpClients,
+  withDefaultPrefixes,
+} from '../src/mcp/registry.js';
 import { darwinDir } from '../src/paths.js';
 import { assert, header, report } from './shared.js';
 
@@ -144,6 +149,36 @@ async function main(): Promise<void> {
   );
   assert('a valid config yields a client', ok.clients.length === 1);
   assert('the config path is reported', ok.configPath?.endsWith('.mcp.json') === true);
+
+  header('withDefaultPrefixes — manufactured tool-name uniqueness');
+
+  // Two published servers really do expose identically named tools
+  // (browser_close), and a server may even shadow a built-in (bash). Every
+  // entry without an explicit prefix gets `<name>_`.
+  const prefixed = withDefaultPrefixes({
+    playwright: { command: 'npx', args: ['playwright-mcp'] },
+    agentcore: { url: 'https://example.com' },
+    custom: { command: 'x', prefix: 'p_' },
+    optedOut: { command: 'y', prefix: '' },
+    off: { command: 'z', disabled: true },
+  });
+  assert('a stdio server gets its name as prefix', prefixed['playwright']?.prefix === 'playwright');
+  assert('an http server gets its name as prefix', prefixed['agentcore']?.prefix === 'agentcore');
+  assert('an explicit prefix is respected', prefixed['custom']?.prefix === 'p_');
+  assert('an explicit empty prefix opts out', prefixed['optedOut']?.prefix === '');
+  assert('disabled entries are prefixed too (harmless)', prefixed['off']?.prefix === 'off');
+  assert(
+    'other fields pass through untouched',
+    prefixed['playwright']?.command === 'npx' && prefixed['off']?.disabled === true,
+  );
+
+  // End-to-end through the file path: the client the registry builds must carry
+  // the manufactured prefix (proven by the agent-facing tool name in verify-mcp's
+  // live suite; here we at least prove the config round-trips through loadServers).
+  const viaFile = await loadMcpClients(
+    await withRootMcpJson('{ "mcpServers": { "noop": { "command": "true", "args": [] } } }'),
+  );
+  assert('prefixed config still yields a lazy client', viaFile.clients.length === 1);
 
   report();
 }

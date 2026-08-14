@@ -198,6 +198,17 @@ the format is Claude Code's either way, so a file that tool wrote works unchange
 ignored — the two are never merged, so the effective server list is always one readable
 file. Neither file simply means no MCP.
 
+Every server's tools are exposed to the model as `<serverName>_<toolName>` (e.g.
+`everything_get-sum`). Two servers may legitimately publish the same tool name —
+`browser_close` ships in several — and without the prefix the duplicate is a fatal
+registration error at startup. Set `"prefix": ""` on a server entry to opt back into bare
+names (or any custom prefix to shorten long server names), accepting the collision risk
+yourself.
+
+`.darwin/mcp.json` is gitignored by default because `headers`/`env` entries tend to carry
+real tokens. Prefer `${VAR}` / `${env:VAR}` interpolation for secrets; once the file is
+clean you can delete the `.gitignore` line and commit it.
+
 Transport is inferred: `command` means stdio, `url` means streamable HTTP. Set
 `transport` explicitly for `sse`. `${VAR}` and `${env:VAR}` are interpolated in commands,
 arguments, environment, URLs and headers. Per-server `disabled`, `prefix` and
