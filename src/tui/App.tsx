@@ -16,6 +16,8 @@ import React, { useCallback, useEffect, useReducer, useRef, useState, useSyncExt
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
 import type { AgentRuntime } from '../agent/runtime.js';
+import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
+import { CONFIG_FILENAME } from '../config.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import { InputBox } from './InputBox.js';
@@ -290,6 +292,23 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       {info.projectInstructionsProblem !== undefined && (
         <Text color="yellow">
           {AGENTS_FILENAME}: skipped — {info.projectInstructionsProblem}
+        </Text>
+      )}
+      {/* Silent only for the built-in prompt: a replaced prompt changes how the
+          agent behaves, so it must be visible without reading the config. */}
+      {info.systemPromptSource === 'config' && (
+        <Text dimColor>
+          system prompt: overridden by {DARWIN_DIRNAME}/{CONFIG_FILENAME}
+        </Text>
+      )}
+      {info.systemPromptSource === 'file' && (
+        <Text dimColor>
+          system prompt: {DARWIN_DIRNAME}/{SYSTEM_PROMPT_FILENAME}
+        </Text>
+      )}
+      {info.systemPromptProblem !== undefined && (
+        <Text color="yellow">
+          system prompt: using the default — {info.systemPromptProblem}
         </Text>
       )}
       {info.mcpConfigPath !== undefined && <Text dimColor>mcp: {info.mcpServerCount} server(s)</Text>}

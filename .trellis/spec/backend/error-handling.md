@@ -31,6 +31,8 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | One skill directory broken (bad YAML, missing description, duplicate name) | Skip, record in `RuntimeInfo.skillProblems`, surface in header | Same isolation principle |
 | `AGENTS.md` present but unreadable (EISDIR, EACCES) | Skip, record in `RuntimeInfo.projectInstructionsProblem`, surface in header | Same isolation principle: without the line, missing rules look like rules in effect |
 | `AGENTS.md` absent, empty or whitespace-only | Skip silently, no header line | Nothing was asked for, so there is nothing to report |
+| `.darwin/system-prompt.md` present but unreadable or empty | Use `DEFAULT_SYSTEM_PROMPT`, record in `RuntimeInfo.systemPromptProblem`, surface in header | Same isolation principle; a silent fallback would leave the user believing their prompt is in effect |
+| `systemPrompt` in config blank / not a string | `ConfigError`, refuse to start | Config is explicit intent, and an empty base prompt leaves the agent with no instructions |
 | Tool call denied by user | `InterventionActions.deny(reason)` → error tool result | Model must see and react, loop must continue |
 | `auto`-mode safety classifier fails (throw, timeout, unparseable reply) | Verdict forced to `safe: false` → user is prompted | Fail-closed: classifier degradation may cost an extra prompt, never a silent approval |
 | bash command timeout / session death | SDK throws `BashTimeoutError` / `BashSessionError` → becomes an error tool result | Model retries or reports; not our code path |

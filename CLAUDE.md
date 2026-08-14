@@ -69,7 +69,10 @@ deleted.
 
 **System prompt composition order is fixed**: base prompt → `<project-instructions>`
 (AGENTS.md, `src/agent/instructions.ts`) → `<available-skills>` (skills plugin during
-`agent.initialize()`). All string concatenation; block-array prompts are unsupported.
+`agent.initialize()`). All string concatenation; block-array prompts are unsupported. The
+base is the only user-replaceable part (`src/agent/system-prompt.ts`:
+`config.systemPrompt` > `.darwin/system-prompt.md` > `DEFAULT_SYSTEM_PROMPT`), so the
+project's own instructions stay additive on top of whichever base is in effect.
 
 **Paths** (`src/paths.ts`): every `.darwin/` location is derived here from the CLI's cwd.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything

@@ -14,7 +14,7 @@ import process from 'node:process';
 import { AGENTS_FILENAME } from './agent/instructions.js';
 import { AgentRuntime } from './agent/runtime.js';
 import type { AssessedPermissionRequest } from './agent/permission.js';
-import { ConfigError } from './config.js';
+import { CONFIG_FILENAME, ConfigError } from './config.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
 import { DARWIN_DIRNAME } from './paths.js';
 
@@ -175,6 +175,13 @@ async function main(): Promise<void> {
     }
     if (info.projectInstructionsProblem !== undefined) {
       console.warn(`  agents   : ${AGENTS_FILENAME} skipped — ${info.projectInstructionsProblem}`);
+    }
+    if (info.systemPromptSource !== 'default') {
+      const origin = info.systemPromptPath ?? `${DARWIN_DIRNAME}/${CONFIG_FILENAME}`;
+      console.log(`  prompt   : base system prompt overridden by ${origin}`);
+    }
+    if (info.systemPromptProblem !== undefined) {
+      console.warn(`  prompt   : using the default — ${info.systemPromptProblem}`);
     }
     if (info.mcpConfigPath !== undefined) {
       console.log(`  mcp      : ${info.mcpServerCount} server(s) from ${info.mcpConfigPath}`);

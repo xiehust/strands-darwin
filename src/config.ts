@@ -48,6 +48,13 @@ export interface AppConfig {
    * a cheap default. Bedrock ids must be inference profiles, like `model`.
    */
   classifierModel?: string;
+  /**
+   * Replaces darwin's built-in base system prompt. Optional; for prompts too long
+   * to be comfortable in JSON, write `.darwin/system-prompt.md` instead (this
+   * field wins over that file). AGENTS.md and the skills catalogue are appended
+   * either way — see `src/agent/system-prompt.ts`.
+   */
+  systemPrompt?: string;
 }
 
 export const CONFIG_FILENAME = 'config.json';
@@ -147,6 +154,16 @@ function validate(parsed: unknown, configPath: string): AppConfig {
 
   const classifierModel = stringField(input, 'classifierModel', configPath);
   if (classifierModel !== undefined) config.classifierModel = classifierModel;
+
+  // Whitespace-only would pass the non-empty check and silently leave the agent
+  // with no instructions at all, which nobody configures on purpose.
+  const systemPrompt = stringField(input, 'systemPrompt', configPath);
+  if (systemPrompt !== undefined) {
+    if (systemPrompt.trim() === '') {
+      throw new ConfigError(`${configPath}: "systemPrompt" must not be blank.`);
+    }
+    config.systemPrompt = systemPrompt;
+  }
 
   return config;
 }

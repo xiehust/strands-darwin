@@ -5,8 +5,4 @@
 /.kiro/
 node_modules/
 dist/
-.darwin/sessions/
-.darwin/last-session.json
-# Often carries API tokens in headers/env. Use ${VAR} interpolation and delete
-# this line if your team wants the file in the repo.
-.darwin/mcp.json
+.darwin/

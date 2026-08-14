@@ -21,6 +21,7 @@ import {
 import { PermissionGate, type ApprovalMode, type PermissionBridge } from './permission.js';
 import { createModelClassifier } from './safety-classifier.js';
 import { createSessionManager, resolveSession, writePointer } from './session.js';
+import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 
 /**
  * Stable across runs by necessity: session snapshots are stored under
@@ -28,20 +29,6 @@ import { createSessionManager, resolveSession, writePointer } from './session.js
  * previous snapshots from `--resume`.
  */
 const AGENT_ID = 'darwin';
-
-const SYSTEM_PROMPT = `You are a coding agent working in a real git repository.
-
-Available tools:
-- fileEditor: view, create, str_replace and insert operations on files. Use absolute paths.
-- bash: run shell commands. Use it to search (grep, rg, find), inspect and verify your work.
-
-Working method:
-- Read before you write. Never edit a file you have not viewed in this conversation.
-- After changing code, run a command that proves the change works.
-- Prefer small, targeted edits over rewriting whole files.
-
-Some tool calls need the user's approval. If a call comes back denied, do not retry it
-and do not work around it — explain what you were attempting and ask how to proceed.`;
 
 export interface RuntimeOptions {
   projectRoot: string;
@@ -67,6 +54,12 @@ export interface RuntimeInfo {
   projectInstructions: ProjectInstructionsSummary | undefined;
   /** Why a present AGENTS.md was skipped; undefined when there is no such file. */
   projectInstructionsProblem: string | undefined;
+  /** Where the base system prompt came from: built-in, config, or override file. */
+  systemPromptSource: SystemPromptSource;
+  /** Path of the system prompt override file, when one is in effect. */
+  systemPromptPath: string | undefined;
+  /** Why a present system prompt override was skipped; undefined when there is none. */
+  systemPromptProblem: string | undefined;
   /** Path to the MCP config that was read, or undefined when there is none. */
   mcpConfigPath: string | undefined;
   /** Root `.mcp.json` left unread because `.darwin/mcp.json` took precedence. */
@@ -93,6 +86,7 @@ export class AgentRuntime {
     const skills = await SkillsPlugin.load(options.projectRoot);
     const loadedInstructions = await loadProjectInstructions(options.projectRoot);
     const instructions = loadedInstructions.instructions;
+    const basePrompt = await loadSystemPrompt(options.projectRoot, config.systemPrompt);
     const mcp = await loadMcpClients(options.projectRoot);
 
     const permissionMode = options.permissionModeOverride ?? config.permissionMode;
@@ -111,8 +105,9 @@ export class AgentRuntime {
       model,
       // AGENTS.md is folded in here; the skills catalogue is appended afterwards
       // by SkillsPlugin.initAgent during initialize(), keeping the assembled
-      // prompt in a fixed order.
-      systemPrompt: composeSystemPrompt(SYSTEM_PROMPT, instructions),
+      // prompt in a fixed order. Only the base is user-overridable: the project's
+      // own instructions are appended to whichever base is in effect.
+      systemPrompt: composeSystemPrompt(basePrompt.prompt, instructions),
       // McpClient instances act as tool sources: the SDK discovers and registers
       // their tools during initialize().
       tools: [bash, fileEditor, ...mcp.clients],
@@ -146,6 +141,9 @@ export class AgentRuntime {
           ? undefined
           : { path: instructions.path, bytes: instructions.bytes, truncated: instructions.truncated },
       projectInstructionsProblem: loadedInstructions.problem,
+      systemPromptSource: basePrompt.source,
+      systemPromptPath: basePrompt.path,
+      systemPromptProblem: basePrompt.problem,
       mcpConfigPath: mcp.configPath,
       mcpIgnoredConfigPath: mcp.ignoredConfigPath,
       mcpServerCount: mcp.clients.length,

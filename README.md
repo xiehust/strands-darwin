@@ -70,6 +70,7 @@ the project root, and everything darwin reads or writes lives there:
 ├── .mcp.json              # optional: MCP servers, Claude Code's file, used if .darwin/mcp.json is absent
 └── .darwin/
     ├── config.json        # optional: provider and model
+    ├── system-prompt.md   # optional: replaces darwin's built-in system prompt
     ├── mcp.json           # optional: MCP servers (takes precedence over ../.mcp.json)
     ├── skills/            # optional: one directory per skill
     │   └── commit-message/
@@ -112,6 +113,38 @@ at the last whole line before the limit, flagged as truncated to both you and th
 because this text is re-sent with every request and an oversized file would spend the
 context the conversation needs.
 
+## System prompt
+
+darwin ships with a default system prompt written for coding work: it names the tools that
+are always available (`fileEditor`, `bash`), and states the working rules the rest of the
+program depends on — read a file before editing it, keep edits small, verify changes by
+running something, and never work around a tool call the permission gate denied.
+
+The assembled prompt always has the same three parts, in this order:
+
+```
+<base prompt>                                  ← darwin's default, or your override
+<project-instructions source="AGENTS.md">…     ← your repository's standing rules
+<available-skills>…                            ← the skills catalogue
+```
+
+Only the **base** is overridable, and an override replaces it entirely — nothing of the
+default is kept. AGENTS.md and the skills list are appended either way, so repository rules
+stay additive and you never have to restate them in a custom prompt.
+
+Two ways to override, highest precedence first:
+
+1. `"systemPrompt"` in `.darwin/config.json` — for short prompts.
+2. `.darwin/system-prompt.md` — a plain Markdown file, for prompts too long to be
+   comfortable inside JSON. Commit it and the whole team gets the same agent.
+
+The header tells you which one is in effect, because a replaced prompt changes how the
+agent behaves and that should not be invisible. A `system-prompt.md` that exists but is
+empty or unreadable does not stop the session: darwin falls back to the default and says
+why in the header, so you never go on believing your prompt is steering the agent. A blank
+`systemPrompt` in the config is a startup error instead — leaving the agent with no
+instructions at all is never what someone meant to configure.
+
 ## Configuration
 
 `.darwin/config.json` in the project root. Every field is optional — with no file at all
@@ -140,6 +173,7 @@ you get a working Bedrock setup.
 | `preserveRecentMessages` | `10` | messages the summarizer always keeps verbatim |
 | `permissionMode` | `default` | `default`, `auto` or `yolo` — see [Permissions](#permissions) |
 | `classifierModel` | per provider | model id for `auto` mode's safety classifier |
+| `systemPrompt` | built-in prompt | replaces the base system prompt; wins over `.darwin/system-prompt.md` — see [System prompt](#system-prompt) |
 
 Switching providers is a config change only; no code names a provider.
 
@@ -327,7 +361,7 @@ Note that the snapshot path includes the agent id, so changing `AGENT_ID` in
 
 ```bash
 pnpm typecheck    # tsc --noEmit
-pnpm test         # the checks that need no model calls (config, MCP config, skills, AGENTS.md)
+pnpm test         # the checks that need no model calls (config, MCP config, skills, AGENTS.md, system prompt)
 pnpm build        # emit to dist/
 pnpm dev-repl     # plain readline REPL against the same runtime, for debugging
 ```
@@ -346,6 +380,7 @@ pnpm tsx spike/verify-config.ts                            # config parsing and 
 pnpm tsx spike/verify-mcp-config.ts                        # MCP config precedence and error paths, no servers started
 pnpm tsx spike/verify-skills.ts                            # filesystem and parsing, no model calls
 pnpm tsx spike/verify-agents-md.ts                         # AGENTS.md loading, truncation, prompt order, no model calls
+pnpm tsx spike/verify-system-prompt.ts                     # default prompt, override precedence, fallbacks, no model calls
 pnpm tsx spike/verify-permission-modes.ts                  # risk rules and per-mode gate decisions, no model calls
 AWS_REGION=us-west-2 pnpm tsx spike/verify-classifier.ts   # auto mode's safety classifier, live verdicts
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts     # agent core, permissions, resume, AGENTS.md injection

@@ -10,6 +10,16 @@ directory**: `.darwin/config.json` (model/provider), `.darwin/skills/`, `.darwin
 `.darwin/mcp.json` (falls back to root `.mcp.json`, Claude Code format), plus an `AGENTS.md`
 preloaded into the system prompt.
 
+This is an experimental project in self-hosted AI development.
+
+**v0.0.1 — the [baseline release](../../releases/tag/v0.0.1) — was built entirely with
+[Claude Code](https://claude.com/claude-code).** From this point on, darwin develops
+itself: every subsequent feature, fix, and release is made by running darwin inside its
+own repository (the Trellis task history under `.trellis/` is the paper trail). The name
+is the thesis — evolution by iteration, with the tool as its own selection pressure. The
+baseline exists so there is always a fixed point to measure that evolution against.
+
+
 ## Commands
 
 ```bash
@@ -57,7 +67,10 @@ deleted.
 
 **System prompt composition order is fixed**: base prompt → `<project-instructions>`
 (AGENTS.md, `src/agent/instructions.ts`) → `<available-skills>` (skills plugin during
-`agent.initialize()`). All string concatenation; block-array prompts are unsupported.
+`agent.initialize()`). All string concatenation; block-array prompts are unsupported. The
+base is the only user-replaceable part (`src/agent/system-prompt.ts`:
+`config.systemPrompt` > `.darwin/system-prompt.md` > `DEFAULT_SYSTEM_PROMPT`), so the
+project's own instructions stay additive on top of whichever base is in effect.
 
 **Paths** (`src/paths.ts`): every `.darwin/` location is derived here from the CLI's cwd.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything
