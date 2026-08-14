@@ -13,7 +13,7 @@ import process from 'node:process';
 
 import { AGENTS_FILENAME } from './agent/instructions.js';
 import { AgentRuntime } from './agent/runtime.js';
-import type { AssessedPermissionRequest } from './agent/permission.js';
+import type { AssessedPermissionRequest, PermissionDecision } from './agent/permission.js';
 import { CONFIG_FILENAME, ConfigError } from './config.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
 import { DARWIN_DIRNAME } from './paths.js';
@@ -65,7 +65,7 @@ class Prompter {
 function createReadlineBridge(prompter: Prompter) {
   let queue: Promise<unknown> = Promise.resolve();
 
-  return async (request: AssessedPermissionRequest): Promise<boolean> => {
+  return async (request: AssessedPermissionRequest): Promise<PermissionDecision> => {
     const task = queue.then(async () => {
       console.log(`\n  ┌─ permission required ─ ${request.kind} — ${request.riskReason}`);
       console.log(`  │ ${request.summary}`);
@@ -78,10 +78,12 @@ function createReadlineBridge(prompter: Prompter) {
 
       try {
         const answer = await prompter.ask('  allow? [y/N] ');
-        return /^(y|yes)$/i.test(answer.trim());
+        // No "always allow" here: this driver exists for debugging the agent loop,
+        // and a rule it wrote would outlive the debugging session in the config.
+        return { allowed: /^(y|yes)$/i.test(answer.trim()) };
       } catch (error) {
         // Nobody can answer anymore, so deny rather than silently allowing.
-        if (error instanceof InputClosedError) return false;
+        if (error instanceof InputClosedError) return { allowed: false };
         throw error;
       }
     });

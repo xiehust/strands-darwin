@@ -13,8 +13,8 @@
  * correctly ignored, so the app never exits).
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
- *      scenarios: approve | deny | safePassthrough | bashExit | cancelThenContinue |
- *                 completion | agentsMd | usage
+ *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
+ *                 cancelThenContinue | completion | agentsMd | usage
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -96,6 +96,14 @@ async function approvePath(): Promise<void> {
     assert('prompt shows the Path label', tui.screen.includes('Path:'));
     assert('prompt shows the replacement block', tui.screen.includes('With:'));
     assert('prompt offers the y/n choice', tui.screen.includes('allow?'));
+    // The wildcard offers, on the same row as y/n: a second option row is a row
+    // of the box, and the box already competes with the header for frame height.
+    assert(
+      'prompt offers a wildcard rule derived from this call',
+      tui.screen.includes(`always: a=${TARGET_DIR}/`),
+    );
+    assert('prompt offers the whole tool as well', tui.screen.includes('A=all fileEditor'));
+
     // The permission box replaces the input box, so the newest frame ends with
     // the prompt's y/n line rather than an editable `you>` line.
     assert('input box is replaced while awaiting permission', awaitsPermission(tui.screen));
@@ -122,6 +130,84 @@ async function approvePath(): Promise<void> {
     assert('TUI exited cleanly on /exit', code === 0);
   } finally {
     tui.kill();
+  }
+}
+
+/**
+ * The wildcard path: answering with `a` approves the call AND writes the rule to
+ * `.darwin/config.json`, so the same kind of call is never asked about again.
+ *
+ * Model-driven, because the permission box only exists inside a turn — but the
+ * assertions are on the notice, the file on disk, and (after a restart) the
+ * absence of a second prompt, none of which depend on what the model chose to do
+ * beyond making the one gated write.
+ */
+async function alwaysAllowRule(): Promise<void> {
+  header('TUI — "always allow" writes a rule and stops asking');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+  const expectedRule = `fileEditor:${TARGET_DIR}/**`;
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const turnStart = tui.mark();
+    tui.submit(FIX_REQUEST);
+    await tui.waitFor('allow?', { timeoutMs: 180_000, from: turnStart, settleMs: 400 });
+
+    const afterAnswer = tui.mark();
+    tui.send('a');
+
+    await tui.waitFor('always allowing', { timeoutMs: 120_000, from: afterAnswer });
+    assert(
+      'the accepted rule is reported with the file it went to',
+      tui.screen.slice(afterAnswer).includes(`always allowing ${expectedRule} — saved to`),
+    );
+
+    await tui.waitFor(/✓ fileEditor str_replace/, { timeoutMs: 180_000, from: afterAnswer });
+    await waitForIdle(tui, 240_000);
+
+    const written = await readFile(path.join(WORK_DIR, '.darwin', 'config.json'), 'utf8');
+    console.log(`  config now: ${written.replace(/\s+/g, ' ').trim()}`);
+    assert(
+      'the rule was persisted to .darwin/config.json',
+      (JSON.parse(written) as { permissionRules?: { allow?: string[] } }).permissionRules?.allow?.includes(
+        expectedRule,
+      ) === true,
+    );
+
+    tui.submit('/exit');
+    assert('TUI exited cleanly after saving a rule', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+
+  // Second session, same directory: the rule is loaded from the config, so the
+  // same write must now run unprompted — and the header must say a rule is live.
+  await writeFile(TARGET, BUGGY, 'utf8');
+  const resumed = startTui({ cwd: WORK_DIR });
+
+  try {
+    await resumed.waitFor('you>', { timeoutMs: 60_000 });
+    assert('the header reports the loaded rule', /mode: default · 1 allow rule/.test(resumed.screen));
+
+    const turnStart = resumed.mark();
+    resumed.submit(FIX_REQUEST);
+    await resumed.waitFor(/✓ fileEditor str_replace/, { timeoutMs: 180_000, from: turnStart });
+    await waitForIdle(resumed, 240_000);
+
+    assert(
+      'the covered write was never asked about again',
+      !resumed.screen.slice(turnStart).includes('permission required'),
+    );
+    const after = await readFile(TARGET, 'utf8');
+    assert('the unprompted edit landed on disk', /(n\s*\*\s*2|2\s*\*\s*n)/.test(after));
+
+    resumed.submit('/exit');
+    assert('TUI exited cleanly in the second session', (await resumed.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    resumed.kill();
   }
 }
 
@@ -597,6 +683,7 @@ function awaitsPermission(screen: string): boolean {
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
+  alwaysAllow: alwaysAllowRule,
   safePassthrough,
   bashExit: exitAfterBash,
   cancelThenContinue,

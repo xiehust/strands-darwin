@@ -173,6 +173,7 @@ you get a working Bedrock setup.
 | `summaryRatio` | `0.3` | fraction of old messages summarized on context overflow |
 | `preserveRecentMessages` | `10` | messages the summarizer always keeps verbatim |
 | `permissionMode` | `default` | `default`, `auto` or `yolo` — see [Permissions](#permissions) |
+| `permissionRules` | — | wildcard rules that pre-approve calls; written by the prompt's "always allow" — see [Remembering an answer](#remembering-an-answer) |
 | `promptCache` | `true` | prompt caching, Claude only — see [Prompt caching](#prompt-caching) |
 | `promptCacheTtl` | provider default (5m) | `5m` or `1h`, applied to every cache point |
 | `classifierModel` | per provider | model id for `auto` mode's safety classifier |
@@ -257,6 +258,44 @@ classifier's reasoning shown in the prompt. It never auto-denies.
 
 Denying a call is not an error — the model is told the user declined, and is instructed
 not to retry or work around it, so it explains itself and asks what to do instead.
+
+### Remembering an answer
+
+A prompt offers more than yes and no:
+
+```
+allow?  y  n  always: a=pnpm typecheck *  A=all bash  esc=deny
+```
+
+`a` takes the narrow rule darwin derived from this very call, `A` the whole tool. Either
+one approves the call *and* appends the rule to `permissionRules.allow` in
+`.darwin/config.json`, so matching calls stop asking — in this session and every later one.
+The header then shows how many rules are live (`mode: default · 2 allow rule(s)`).
+
+```json
+{
+  "permissionRules": {
+    "allow": ["bash:pnpm *", "fileEditor:src/**"]
+  }
+}
+```
+
+| Rule | Covers |
+|---|---|
+| `bash:pnpm *` | any `bash` command whose every chained segment starts with `pnpm` |
+| `bash:pnpm typecheck *` | `pnpm typecheck`, with or without extra arguments |
+| `fileEditor:src/**` | writes anywhere under `src/` (`**` crosses `/`, `*` does not) |
+| `bash` | every `bash` call — the tool-wide form, and the only shape available for MCP tools |
+
+Rules widen what runs unprompted, so they are deliberately narrow in three ways. A `bash`
+pattern must match **every** chained segment (`pnpm build && rm -rf /` does not match
+`bash:pnpm *`) and never matches a command using redirection or substitution. Writes to
+`.darwin/config.json` and to `.env*` files are covered by **no** rule at all — otherwise a
+broad rule would let the agent grant itself more of them. And nothing is remembered
+implicitly: a plain `y` stays a one-time answer.
+
+Edit or delete rules by editing the file; an unparseable rule is a startup error rather
+than a rule that silently never matches.
 
 ## MCP servers
 

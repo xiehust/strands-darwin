@@ -8,6 +8,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-classifier.ts
  */
+import { suggestRules } from '../src/agent/permission-rules.js';
 import { assessRisk, classify, type AssessedPermissionRequest } from '../src/agent/permission.js';
 import { createModelClassifier } from '../src/agent/safety-classifier.js';
 import type { AppConfig } from '../src/config.js';
@@ -29,7 +30,7 @@ const CONFIG: AppConfig = {
 
 function request(command: string): AssessedPermissionRequest {
   const base = classify('bash', { command });
-  return { ...base, ...assessRisk(base, ROOT) };
+  return { ...base, ...assessRisk(base, ROOT), suggestions: suggestRules(base, ROOT) };
 }
 
 async function main(): Promise<void> {

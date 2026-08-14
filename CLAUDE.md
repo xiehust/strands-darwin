@@ -24,7 +24,7 @@ inference-profile model ids, never bare `anthropic.*`):
 
 ```bash
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven TUI suite
-AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|completion|bashExit|cancelThenContinue|agentsMd)
+AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|bashExit|cancelThenContinue|agentsMd)
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
@@ -58,9 +58,21 @@ runs in one of three approval modes (`permissionMode` in `.darwin/config.json`;
 Classification is `(toolName, input)` — not name alone, because `fileEditor` spans read and
 write in one tool — and unknown tools (all MCP tools) are never statically safe. Denial uses
 `InterventionActions.deny(...)`, never `confirm()`. The UI side is a `PermissionBridge`
-(async request → boolean): the Ink `PermissionQueue` implements it today; `allowAllBridge`
-exists for non-interactive runs. On turn cancel, release prompts with `denyPending()` —
-`close()` latches shut and silently denies everything afterward.
+(async request → `PermissionDecision`): the Ink `PermissionQueue` implements it today;
+`allowAllBridge` exists for non-interactive runs. On turn cancel, release prompts with
+`denyPending()` — `close()` latches shut and silently denies everything afterward.
+
+**Wildcard allow-rules** (`src/agent/permission-rules.ts`) are the only thing that turns a
+prompt into silence: a decision may carry a rule (`bash:pnpm *`, `fileEditor:src/**`, or a
+bare tool name), the gate honours it from that moment on, and the *UI* persists it to
+`permissionRules.allow` in `.darwin/config.json` — so a failed write costs the file, not the
+session, and can be reported where the renderer is. Rules are consulted after the static
+`safe` check and before the `auto` classifier (a written-down rule should save the model call
+too). Three constraints are load-bearing, not incidental: a bash pattern must match every
+chained segment and never matches redirection/substitution; no rule may ever cover a write to
+`.darwin/config.json` or `.env*` (else the agent can widen its own permissions); and an exempt
+call is offered no rule at all, because an offer that could never apply is a lie told in a
+security prompt.
 
 **Skills** (`src/skills/`): the one self-built module — the TS SDK has no Skills support yet.
 It's an SDK `Plugin` mirroring Python's `AgentSkills`: `load_skill` tool + progressive

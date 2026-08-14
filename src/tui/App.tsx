@@ -15,6 +15,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import React, { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
+import type { PermissionDecision } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { AgentRuntime, UsageTotals } from '../agent/runtime.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
@@ -175,6 +176,41 @@ export function App({
     [exit, runtime, runTurn, status],
   );
 
+  /**
+   * Answers the pending confirmation and, when the user picked an "always allow"
+   * option, remembers the rule.
+   *
+   * The gate honours the rule from the decision alone, so the write to
+   * `.darwin/config.json` is reported rather than awaited: a failed write means
+   * "this session only", which the user has to be told, but it must not delay the
+   * tool call they just approved.
+   */
+  const answerPermission = useCallback(
+    (decision: PermissionDecision) => {
+      permissions.answer(decision);
+      const rule = decision.rule;
+      if (rule === undefined) return;
+
+      runtime.saveAllowRule(rule).then(
+        () => {
+          dispatch({
+            type: 'notice',
+            text: `always allowing ${rule} — saved to ${DARWIN_DIRNAME}/${CONFIG_FILENAME}`,
+          });
+        },
+        (error: unknown) => {
+          dispatch({
+            type: 'notice',
+            text:
+              `always allowing ${rule} for this session only — could not write ` +
+              `${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        },
+      );
+    },
+    [permissions, runtime],
+  );
+
   const acceptCompletion = useCallback(() => {
     const chosen = completions[selectedCompletion] ?? completions[0];
     if (chosen === undefined) return;
@@ -218,8 +254,15 @@ export function App({
 
     // Confirmations take the keyboard while one is pending.
     if (pendingPermission !== undefined) {
-      if (typed === 'y' || typed === 'Y') permissions.answer(true);
-      else if (typed === 'n' || typed === 'N' || key.escape) permissions.answer(false);
+      if (typed === 'y' || typed === 'Y') answerPermission({ allowed: true });
+      else if (typed === 'n' || typed === 'N' || key.escape) answerPermission({ allowed: false });
+      // Lowercase takes the narrow offer, uppercase the whole tool — the more
+      // sweeping choice costs the more deliberate keystroke.
+      else if (typed === 'a' || typed === 'A') {
+        const suggestions = pendingPermission.suggestions;
+        const chosen = typed === 'a' ? suggestions[0] : suggestions[suggestions.length - 1];
+        if (chosen !== undefined) answerPermission({ allowed: true, rule: chosen.rule });
+      }
       return;
     }
 
@@ -328,7 +371,12 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
         // Yellow: yolo disables a safety layer, same convention as other warnings.
         <Text color="yellow">mode: yolo — every tool call runs without confirmation</Text>
       ) : (
-        <Text dimColor>mode: {info.permissionMode}</Text>
+        // Rule count rides along on this line rather than taking one of its own:
+        // see the frame-height comment below.
+        <Text dimColor>
+          mode: {info.permissionMode}
+          {runtime.allowRuleCount > 0 ? ` · ${runtime.allowRuleCount} allow rule(s)` : ''}
+        </Text>
       )}
       {instructions !== undefined &&
         (instructions.truncated ? (
