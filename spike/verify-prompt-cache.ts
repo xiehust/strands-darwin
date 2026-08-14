@@ -33,6 +33,7 @@ const CLAUDE_CONFIG: AppConfig = {
   preserveRecentMessages: 10,
   permissionMode: 'default',
   promptCache: true,
+  thinkingEffort: 'high',
 };
 
 async function writeConfig(contents: string): Promise<string> {

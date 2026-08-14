@@ -6,11 +6,18 @@
  * later) decide how to render.
  */
 import { Agent, SummarizingConversationManager } from '@strands-agents/sdk';
-import type { AgentStreamEvent, McpClient } from '@strands-agents/sdk';
+import type { AgentStreamEvent, McpClient, Model } from '@strands-agents/sdk';
 import { bash } from '@strands-agents/sdk/vended-tools/bash';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
-import { appendAllowRule, createModelFromConfig, loadConfig, type AppConfig } from '../config.js';
+import {
+  appendAllowRule,
+  applyThinkingEffort,
+  createModelFromConfig,
+  loadConfig,
+  saveThinkingEffort,
+  type AppConfig,
+} from '../config.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import {
@@ -23,6 +30,7 @@ import { applySystemPromptCachePoint, planPromptCache, type PromptCachePlan } fr
 import { createModelClassifier } from './safety-classifier.js';
 import { createSessionManager, resolveSession, writePointer } from './session.js';
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
+import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
 
 /**
  * Stable across runs by necessity: session snapshots are stored under
@@ -52,6 +60,18 @@ export interface UsageTotals {
   cacheWriteInputTokens: number;
 }
 
+/**
+ * The outcome of an `/effort` change: what the model will now do, and a promise
+ * for the attempt to remember it in `.darwin/config.json`.
+ *
+ * The write is handed back unawaited on purpose — see
+ * {@link AgentRuntime.changeThinkingEffort}.
+ */
+export interface ThinkingChangeResult {
+  plan: ThinkingPlan;
+  saved: Promise<void>;
+}
+
 export interface RuntimeInfo {
   config: AppConfig;
   /** Effective approval mode after CLI overrides. */
@@ -74,6 +94,12 @@ export interface RuntimeInfo {
   systemPromptProblem: string | undefined;
   /** What this run caches, or why it caches nothing. */
   promptCache: PromptCachePlan;
+  /**
+   * How hard the model thinks at startup, and why that differs from the config
+   * when it does. Only the startup value: the live one moves with `/effort`, so
+   * read {@link AgentRuntime.thinking} for that.
+   */
+  thinking: ThinkingPlan;
   /** Path to the MCP config that was read, or undefined when there is none. */
   mcpConfigPath: string | undefined;
   /** Root `.mcp.json` left unread because `.darwin/mcp.json` took precedence. */
@@ -85,14 +111,23 @@ export interface RuntimeInfo {
 }
 
 export class AgentRuntime {
+  /**
+   * The live thinking plan. Mutable, unlike everything in {@link RuntimeInfo}:
+   * `/effort` changes it mid-session by reconfiguring the model in place.
+   */
+  private thinkingPlan: ThinkingPlan;
+
   private constructor(
     private readonly agent: Agent,
+    private readonly model: Model,
     private readonly projectRoot: string,
     private readonly mcpClients: readonly McpClient[],
     private readonly skills: SkillsPlugin,
     private readonly gate: PermissionGate,
     readonly info: RuntimeInfo,
-  ) {}
+  ) {
+    this.thinkingPlan = info.thinking;
+  }
 
   static async create(options: RuntimeOptions): Promise<AgentRuntime> {
     const config = await loadConfig(options.projectRoot);
@@ -152,7 +187,7 @@ export class AgentRuntime {
     const promptCache = planPromptCache(config);
     applySystemPromptCachePoint(agent, promptCache);
 
-    return new AgentRuntime(agent, options.projectRoot, mcp.clients, skills, gate, {
+    return new AgentRuntime(agent, model, options.projectRoot, mcp.clients, skills, gate, {
       config,
       permissionMode,
       sessionId: session.sessionId,
@@ -168,6 +203,10 @@ export class AgentRuntime {
       systemPromptPath: basePrompt.path,
       systemPromptProblem: basePrompt.problem,
       promptCache,
+      // Recomputed rather than returned from createModelFromConfig: the model
+      // factory needs only the fields, while the header needs the reason a level
+      // was clamped. Both come from the same pure planner, so they cannot disagree.
+      thinking: planThinking(config),
       mcpConfigPath: mcp.configPath,
       mcpIgnoredConfigPath: mcp.ignoredConfigPath,
       mcpServerCount: mcp.clients.length,
@@ -206,6 +245,33 @@ export class AgentRuntime {
   async saveAllowRule(rule: string): Promise<void> {
     this.gate.addAllowRule(rule);
     await appendAllowRule(this.projectRoot, rule);
+  }
+
+  /** How hard the model is thinking right now, and why that is not what was asked. */
+  get thinking(): ThinkingPlan {
+    return this.thinkingPlan;
+  }
+
+  /**
+   * Switches the effort level for the rest of the session and remembers it in
+   * `.darwin/config.json`.
+   *
+   * The model is reconfigured before the file is written, and the new plan is
+   * returned rather than awaited alongside the write: an effort change must take
+   * effect on the very next turn, so a slow or failing disk cannot be allowed to
+   * hold it up. A rejected write therefore means "this session only", which is why
+   * it rethrows through {@link ThinkingChangeResult.saved} instead of being
+   * swallowed — the caller says so.
+   *
+   * Only ever `adaptive` → `adaptive`, so this does not invalidate the conversation
+   * cache breakpoint (switching thinking *modes* would).
+   */
+  changeThinkingEffort(effort: ThinkingEffort): ThinkingChangeResult {
+    this.thinkingPlan = applyThinkingEffort(this.model, this.info.config, effort);
+    return {
+      plan: this.thinkingPlan,
+      saved: saveThinkingEffort(this.projectRoot, effort),
+    };
   }
 
   /**

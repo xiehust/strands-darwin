@@ -240,3 +240,70 @@ in flight has to say so — an unchanged counter next to a visibly working agent
   test — the live spike puts a nonce in its padded AGENTS.md so the first turn really writes.
 - Bedrock requires cache-point TTLs to be **non-increasing** across tools → system → messages;
   `promptCacheTtl` is stamped identically on all three for exactly that reason.
+
+---
+
+## Thinking Effort (adaptive thinking)
+
+`src/agent/thinking.ts` decides which effort level to ask for; the provider does the
+thinking. (Verified offline: `spike/verify-thinking.ts`, 55 assertions. Verified live against
+Bedrock: `spike/verify-thinking-live.ts`, 28 assertions — including the acceptance matrix
+below, re-measured per run.)
+
+### Contract: `effort` goes in its own `output_config`, never inside `thinking`
+
+```typescript
+// Wrong: a ValidationException, not a warning.
+additionalRequestFields: { thinking: { type: 'adaptive', effort: 'high' } }
+// Correct:
+additionalRequestFields: { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } }
+```
+
+Same two keys reach the native Anthropic API through `AnthropicModelConfig.params`, which the
+provider merges into the request body verbatim. OpenAI's equivalent is a flat
+`params: { reasoning_effort }` with no `xhigh`/`max`.
+
+### Contract: always `adaptive`, never `enabled` + `budget_tokens`
+
+`thinking.type: 'enabled'` is deprecated on Claude 4.6 and rejected outright by the
+Mythos/Fable/Opus-4.7 tier. It also matters for caching: switching *between* thinking modes
+invalidates the conversation cache breakpoint, while adaptive → adaptive does not — which is
+what makes a mid-session `/effort` free. System prompt and tool caches survive either way.
+
+### Contract: the acceptance matrix is measured, not documented
+
+The AWS page says `xhigh` **and** `max` are Opus-only. Measured in us-west-2:
+
+| model | low | medium | high | xhigh | max |
+|---|---|---|---|---|---|
+| `claude-sonnet-4-6` | ok | ok | ok | **rejected** | ok |
+| `claude-opus-5` | ok | ok | ok | ok | ok |
+| `claude-sonnet-4-5` and earlier | rejected — the whole `output_config` object is refused | | | | |
+
+Rejection messages: `output_config.effort: Input should be 'low', 'medium', 'high' or 'max'`
+for `xhigh` on Sonnet 4.6; `output_config.effort: Extra inputs are not permitted` for anything
+pre-4.6. Both are per-request, so an unsupported level breaks **every** turn — which is why
+`planThinking` clamps to the highest usable level (downwards: `xhigh` → `high`, never up to
+`max`, since asking for more depth than the user did is a bill they did not agree to) and
+reports the clamp instead of doing it silently.
+
+### Contract: `Model.updateConfig()` merges, so effort is changeable mid-session
+
+`updateConfig` is on the abstract `Model` base and implemented as
+`this._config = { ...this._config, ...modelConfig }` — so writing `additionalRequestFields`
+leaves `modelId`, `maxTokens` and `cacheConfig` intact, and writing `undefined` clears the key
+(`_getAdditionalRequestFields` tests it for falsiness). No agent rebuild, no lost conversation.
+The provider-specific keys are not on `BaseModelConfig`, so the one cast lives in `config.ts`,
+the only file that names a provider.
+
+### Gotchas
+
+- The SDK strips `thinking` from `additionalRequestFields` when `toolChoice` forces tool use
+  (`bedrock.js:_getAdditionalRequestFields`) — Bedrock refuses that combination. Nothing to do,
+  but do not "fix" it.
+- Adaptive thinking implicitly enables interleaved thinking, so reasoning arrives *between*
+  tool calls, not just before the first answer.
+- Whether the model thinks at a given level is its own judgement: at `low` it skips thinking on
+  easy prompts (measured — `low` answered a logic puzzle with no reasoning block, `high`
+  reasoned first). Only `high` and above are documented as "always thinks", so that is the only
+  level whose reasoning the live spike asserts.

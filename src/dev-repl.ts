@@ -14,6 +14,7 @@ import process from 'node:process';
 import { AGENTS_FILENAME } from './agent/instructions.js';
 import { AgentRuntime } from './agent/runtime.js';
 import type { AssessedPermissionRequest, PermissionDecision } from './agent/permission.js';
+import { isThinkingEffort, THINKING_EFFORTS, type ThinkingPlan } from './agent/thinking.js';
 import { CONFIG_FILENAME, ConfigError } from './config.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
 import { DARWIN_DIRNAME } from './paths.js';
@@ -192,6 +193,10 @@ async function main(): Promise<void> {
     if (info.promptCache.problem !== undefined) {
       console.warn(`  cache    : off — ${info.promptCache.problem}`);
     }
+    console.log(`  thinking : effort ${info.thinking.effective ?? 'none'}`);
+    if (info.thinking.problem !== undefined) {
+      console.warn(`  thinking : ${info.thinking.problem}`);
+    }
     if (info.mcpConfigPath !== undefined) {
       console.log(`  mcp      : ${info.mcpServerCount} server(s) from ${info.mcpConfigPath}`);
     }
@@ -208,7 +213,7 @@ async function main(): Promise<void> {
       console.warn(`  skill skipped: ${problem.directory} — ${problem.reason}`);
     }
     console.log(`  tools    : ${info.toolNames.join(', ')}`);
-    console.log('  commands : /exit to quit · /usage for token counts\n');
+    console.log('  commands : /exit to quit · /usage for token counts · /effort [level]\n');
 
     for (;;) {
       let input: string;
@@ -230,6 +235,13 @@ async function main(): Promise<void> {
             `cache write ${usage.cacheWriteInputTokens} · output ${usage.outputTokens}` +
             `${info.resumed ? ' (this run only)' : ''}\n`,
         );
+        continue;
+      }
+
+      // Reconfigures the live model and remembers the level in the config file; no
+      // turn is spent, and the conversation is untouched.
+      if (input === '/effort' || input.startsWith('/effort ')) {
+        await runEffortCommand(runtime, input);
         continue;
       }
 
@@ -261,6 +273,46 @@ async function main(): Promise<void> {
     // Release MCP subprocesses even if the session ended badly.
     await runtime?.shutdown();
   }
+}
+
+/**
+ * Reports or changes the thinking effort level.
+ *
+ * Awaited here, unlike in the TUI: a REPL line is a synchronous unit of work, so
+ * there is no live frame to keep responsive, and reporting the outcome in order is
+ * worth more than answering a millisecond sooner.
+ */
+async function runEffortCommand(runtime: AgentRuntime, input: string): Promise<void> {
+  const argument = input.slice('/effort'.length).trim().toLowerCase();
+
+  if (argument === '') {
+    console.log(`  effort   : ${describeThinking(runtime.thinking)}\n`);
+    return;
+  }
+  if (!isThinkingEffort(argument)) {
+    console.warn(
+      `  effort   : ${argument} is not a level — expected one of ${THINKING_EFFORTS.join(', ')} ` +
+        `(still ${describeThinking(runtime.thinking)})\n`,
+    );
+    return;
+  }
+
+  const { plan, saved } = runtime.changeThinkingEffort(argument);
+  try {
+    await saved;
+    console.log(`  effort   : ${describeThinking(plan)} — saved to ${DARWIN_DIRNAME}/${CONFIG_FILENAME}\n`);
+  } catch (error) {
+    console.warn(
+      `  effort   : ${describeThinking(plan)}, this session only — could not write ` +
+        `${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+}
+
+/** The level in force, plus the reason it is not the one that was asked for. */
+function describeThinking(plan: ThinkingPlan): string {
+  const level = plan.effective ?? 'none';
+  return plan.problem === undefined ? level : `${level} — ${plan.problem}`;
 }
 
 await main();
