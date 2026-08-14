@@ -51,3 +51,24 @@ CLI 改名 darwin，所有项目态相对运行目录解析：.darwin/{config.js
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: Permission approval modes: default / auto / yolo
+
+**Date**: 2026-08-14
+**Task**: Permission approval modes: default / auto / yolo
+**Branch**: `main`
+
+### Summary
+
+Redesigned the permission gate into three approval modes. default: whitelist-based static rules (reads, in-project non-sensitive writes, read-only bash segments) run silently, everything else prompts. auto: adds a Haiku-backed safety classifier (Model.streamAggregated one-shot, 5s timeout, fail-closed to prompting) for calls static rules cannot clear. yolo: never prompts. Config permissionMode/classifierModel, CLI --permission-mode/--yolo, TUI mode header + risk reasons. New spike/verify-permission-modes.ts in pnpm test; adapted pty scenarios (gated file moved outside project root, bashExit uses printf since echo is now safe) plus new safePassthrough; live classifier + step-1-2 suites green. Spec: error-handling degradation row, sdk-contracts streamAggregated one-shot pattern + versioned Haiku profile id caveat.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `67ce8b5` | (see git log) |
+
+### Status
+
+[OK] **Completed**
