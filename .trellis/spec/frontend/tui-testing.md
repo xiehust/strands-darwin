@@ -70,6 +70,16 @@ Cheap scenarios first: anything about header lines, completion lists, or the inp
 needs no submit and no model call (~1s, zero tokens). Don't fold pure-rendering assertions
 into a model-driven scenario that takes 30s.
 
+## Contract: the header competes for frame height
+
+Header, tool panel, permission box and input box render in one live frame (only completed
+history is `<Static>`), and Ink drops the overflow on a terminal shorter than the frame. A
+single new header line — `prompt cache: …` on its own row — was enough to push `allow?` and
+the details block off the 50-row pty, failing three permission assertions while the flow
+itself still worked. Add startup state as a suffix on an existing line (the model line), keep
+whole new lines for rare warnings, and re-run `verify-tui.ts approve` after touching the
+header: it is the only check that sees the header and the box in the same frame.
+
 ## Scenario checklist for agent-driven flows
 
 Model-driven turns choose their own tool order, so scripted prompt sequences are fragile.

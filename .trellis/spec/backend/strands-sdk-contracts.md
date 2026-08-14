@@ -175,5 +175,50 @@ When the SDK ships official support, delete the module and swap in theirs.
 
 - `LocalAgent.systemPrompt` is writable and read per model call, so `initAgent()` mutation
   is reliable — but only string prompts; block-array prompts throw (cachePoint ordering).
+  The prompt-cache wrapper therefore runs *after* `initialize()`, never before.
 - Slash-expanded messages must include "the full text is above, do not call load_skill" or
   the model redundantly loads the skill it was just given.
+
+---
+
+## Prompt Caching
+
+`src/agent/prompt-cache.ts` decides *whether* to cache; the SDK does the placing.
+(Verified offline: `spike/verify-prompt-cache.ts`, 35 assertions. Verified live against
+Bedrock: `spike/verify-prompt-cache-live.ts` — 11,737 tokens written on turn one, the same
+11,737 read on turn two against 3 uncached input tokens.)
+
+### Contract: three cache points, two mechanisms
+
+| Part | How | Notes |
+|---|---|---|
+| tool schemas | `BedrockModel({ cacheConfig: { strategy: 'auto' } })` | cache point appended after `toolConfig.tools` |
+| conversation | same `cacheConfig` | cache point moved to the last user message each request; the SDK strips any earlier ones |
+| system prompt | `agent.systemPrompt = [TextBlock, CachePointBlock]` | placed by us, after `initialize()` |
+
+`AnthropicModelConfig` has **no** `cacheConfig`, so the `anthropic` provider gets the system
+prompt cache point only. OpenAI gets nothing.
+
+### Contract: the system prompt cache point goes on after `initialize()`
+
+`SkillsPlugin.initAgent` appends `<available-skills>` during initialization and throws on a
+block-array prompt. Wrapping earlier therefore either crashes or caches a prefix that ends
+mid-prompt. The SDK never rewrites `systemPrompt` itself (session restore does not touch it),
+so the post-initialize assignment survives for the life of the agent.
+
+### Contract: never hand `strategy: 'auto'` to a model that cannot cache
+
+The SDK resolves `auto` by matching the model id against `anthropic`/`claude` and, on a miss,
+`logger.warn`s — the default logger writes straight to `console.warn`, which garbles the Ink
+frame. Decide support before constructing the model and omit `cacheConfig` entirely.
+
+### Gotchas
+
+- `AgentResult.metrics.accumulatedUsage` accumulates over the agent's **lifetime**, not per
+  turn: read cache tokens as a delta between turns or the second turn appears to double.
+- `Agent.stream()` does not re-emit the provider's `modelMetadataEvent`; usage arrives on
+  `agentResultEvent`.
+- Cache entries live 5 minutes, so a byte-identical prefix is still warm across two runs of a
+  test — the live spike puts a nonce in its padded AGENTS.md so the first turn really writes.
+- Bedrock requires cache-point TTLs to be **non-increasing** across tools → system → messages;
+  `promptCacheTtl` is stamped identically on all three for exactly that reason.

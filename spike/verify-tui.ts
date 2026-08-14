@@ -68,6 +68,9 @@ async function approvePath(): Promise<void> {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
     assert('TUI rendered its header', tui.screen.includes('/exit to quit'));
     assert('provider and session are shown', /bedrock\/us\.anthropic/.test(tui.screen));
+    // On the model line, not a line of its own: the header shares the frame with
+    // the permission box, and one extra line pushes the box off a 50-row terminal.
+    assert('prompt caching is shown as on', tui.screen.includes('· cache on'));
     assert('the permission mode is shown', tui.screen.includes('mode: default'));
 
     const turnStart = tui.mark();

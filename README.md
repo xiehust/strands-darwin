@@ -158,7 +158,8 @@ you get a working Bedrock setup.
   "maxTokens": 8192,
   "summaryRatio": 0.3,
   "preserveRecentMessages": 10,
-  "permissionMode": "default"
+  "permissionMode": "default",
+  "promptCache": true
 }
 ```
 
@@ -172,6 +173,8 @@ you get a working Bedrock setup.
 | `summaryRatio` | `0.3` | fraction of old messages summarized on context overflow |
 | `preserveRecentMessages` | `10` | messages the summarizer always keeps verbatim |
 | `permissionMode` | `default` | `default`, `auto` or `yolo` — see [Permissions](#permissions) |
+| `promptCache` | `true` | prompt caching, Claude only — see [Prompt caching](#prompt-caching) |
+| `promptCacheTtl` | provider default (5m) | `5m` or `1h`, applied to every cache point |
 | `classifierModel` | per provider | model id for `auto` mode's safety classifier |
 | `systemPrompt` | built-in prompt | replaces the base system prompt; wins over `.darwin/system-prompt.md` — see [System prompt](#system-prompt) |
 
@@ -202,6 +205,28 @@ pnpm add openai              # provider: "openai"
 The agent tells you this if the package is missing. Point `apiKeyEnv` at the variable
 holding your key, or rely on each SDK's own convention (`ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`).
+
+### Prompt caching
+
+Every turn re-sends the same prefix: the tool schemas, the assembled system prompt (base +
+AGENTS.md + the skills catalogue) and the whole conversation so far. darwin marks that prefix
+with [cache points](https://strandsagents.com/docs/user-guide/concepts/model-providers/amazon-bedrock/#caching)
+so the provider bills it as a cache read instead of fresh input — on a Bedrock Sonnet run that
+is ~11,700 tokens read from cache against 3 charged as input on the second turn.
+
+It is on by default and covers three parts:
+
+| Part | Bedrock (Claude) | Anthropic API | OpenAI |
+|---|---|---|---|
+| tool schemas | cached | — | — |
+| system prompt | cached | cached | — |
+| conversation | cached | — | — |
+
+Set `"promptCache": false` to turn it off, and `"promptCacheTtl": "1h"` to keep entries alive
+for an hour instead of five minutes (a longer TTL costs more to write). Non-Claude models
+cannot cache; the header says so rather than pretending otherwise. Two things naturally cost
+a cache miss: the turn on which the conversation is summarized (its history is rewritten), and
+any change to AGENTS.md, the system prompt, or the set of tools.
 
 ## Permissions
 
@@ -382,7 +407,9 @@ pnpm tsx spike/verify-skills.ts                            # filesystem and pars
 pnpm tsx spike/verify-agents-md.ts                         # AGENTS.md loading, truncation, prompt order, no model calls
 pnpm tsx spike/verify-system-prompt.ts                     # default prompt, override precedence, fallbacks, no model calls
 pnpm tsx spike/verify-permission-modes.ts                  # risk rules and per-mode gate decisions, no model calls
+pnpm tsx spike/verify-prompt-cache.ts                      # cache decisions, config surface, cache-point placement, no model calls
 AWS_REGION=us-west-2 pnpm tsx spike/verify-classifier.ts   # auto mode's safety classifier, live verdicts
+AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written, then read
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts     # agent core, permissions, resume, AGENTS.md injection
 AWS_REGION=us-west-2 pnpm tsx spike/verify-mcp.ts          # real stdio MCP server
 AWS_REGION=us-west-2 pnpm tsx spike/verify-skills-live.ts  # both skill trigger paths

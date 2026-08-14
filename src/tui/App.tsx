@@ -15,6 +15,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 import React, { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
+import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { AgentRuntime } from '../agent/runtime.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
 import { CONFIG_FILENAME } from '../config.js';
@@ -271,6 +272,7 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       <Text dimColor>
         {info.config.provider}/{info.config.model} · session {info.sessionId}
         {info.resumed ? ' (resumed)' : ''}
+        {formatPromptCache(info.promptCache)}
       </Text>
       {info.permissionMode === 'yolo' ? (
         // Yellow: yolo disables a safety layer, same convention as other warnings.
@@ -311,6 +313,13 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
           system prompt: using the default — {info.systemPromptProblem}
         </Text>
       )}
+      {/* Cost-relevant, so it is stated rather than assumed. Only the "asked for
+          but impossible" case gets a line of its own: the header is part of the
+          live frame, and every line it grows by is one line of permission prompt
+          or tool output that Ink drops off a short terminal. */}
+      {info.promptCache.problem !== undefined && (
+        <Text color="yellow">prompt cache: off — {info.promptCache.problem}</Text>
+      )}
       {info.mcpConfigPath !== undefined && <Text dimColor>mcp: {info.mcpServerCount} server(s)</Text>}
       {info.mcpIgnoredConfigPath !== undefined && (
         <Text color="yellow">
@@ -333,6 +342,19 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
 /** Sizes are shown so an accidentally huge AGENTS.md is visible at a glance. */
 function formatBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+/**
+ * Cache state as a suffix on the model line rather than a line of its own — see the
+ * comment in {@link Header}. Empty when nothing is cached: the off case is either the
+ * user's own choice (silent) or reported there as a warning.
+ */
+function formatPromptCache(plan: PromptCachePlan): string {
+  if (!plan.enabled) return '';
+  const ttl = plan.ttl ?? 'on';
+  // Only the anthropic provider ends up with a single part, and "cache on" there
+  // would overstate what is actually being cached.
+  return plan.parts.length === 1 ? ` · cache ${ttl} (${plan.parts[0]})` : ` · cache ${ttl}`;
 }
 
 /** Skill names matching a `/prefix`, or none when the input is not a bare command. */

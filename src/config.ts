@@ -11,6 +11,12 @@ import { BedrockModel } from '@strands-agents/sdk';
 import type { Model } from '@strands-agents/sdk';
 
 import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
+import {
+  bedrockCacheConfig,
+  planPromptCache,
+  PROMPT_CACHE_TTLS,
+  type PromptCacheTtl,
+} from './agent/prompt-cache.js';
 import { darwinDir } from './paths.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
@@ -44,6 +50,19 @@ export interface AppConfig {
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
   /**
+   * Prompt caching, on by default. darwin re-sends a large unchanging prefix every
+   * turn (tool schemas, the assembled system prompt, the conversation so far), so
+   * the cache-write premium pays for itself almost immediately. Only Claude models
+   * can cache; for anything else this is ignored — see `src/agent/prompt-cache.ts`.
+   */
+  promptCache: boolean;
+  /**
+   * Lifetime of every cache point. Optional; unset means the provider's own
+   * default (5 minutes on Bedrock). `1h` costs more to write and suits long
+   * sessions with gaps between turns.
+   */
+  promptCacheTtl?: PromptCacheTtl;
+  /**
    * Model id for `auto` mode's safety classifier. Optional — each provider has
    * a cheap default. Bedrock ids must be inference profiles, like `model`.
    */
@@ -71,6 +90,7 @@ const DEFAULTS = {
   summaryRatio: 0.3,
   preserveRecentMessages: 10,
   permissionMode: 'default',
+  promptCache: true,
 } as const satisfies Partial<AppConfig>;
 
 const DEFAULT_REGION = 'us-west-2';
@@ -144,7 +164,21 @@ function validate(parsed: unknown, configPath: string): AppConfig {
     preserveRecentMessages:
       numberField(input, 'preserveRecentMessages', configPath, { min: 0 }) ??
       DEFAULTS.preserveRecentMessages,
+    promptCache: booleanField(input, 'promptCache', configPath) ?? DEFAULTS.promptCache,
   };
+
+  // Checked rather than passed through: an unsupported TTL is only rejected once
+  // the first request reaches Bedrock, as an opaque ValidationException.
+  const promptCacheTtl = input['promptCacheTtl'];
+  if (promptCacheTtl !== undefined) {
+    if (!isPromptCacheTtl(promptCacheTtl)) {
+      throw new ConfigError(
+        `${configPath}: unknown promptCacheTtl ${JSON.stringify(promptCacheTtl)}. ` +
+          `Expected one of ${PROMPT_CACHE_TTLS.join(', ')}.`,
+      );
+    }
+    config.promptCacheTtl = promptCacheTtl;
+  }
 
   const region = stringField(input, 'region', configPath);
   if (region !== undefined) config.region = region;
@@ -195,10 +229,15 @@ function createBedrockModel(config: AppConfig): Model {
         `aws bedrock list-inference-profiles --region ${resolveRegion(config.region)}`,
     );
   }
+  const cacheConfig = bedrockCacheConfig(planPromptCache(config));
   return new BedrockModel({
     region: resolveRegion(config.region),
     modelId: config.model,
     maxTokens: config.maxTokens,
+    // Appends a cache point after the tool schemas and to the last user message on
+    // every request. Omitted entirely when caching is off, since `strategy: 'auto'`
+    // on a model that cannot cache makes the SDK warn straight to the console.
+    ...(cacheConfig !== undefined && { cacheConfig }),
   });
 }
 
@@ -266,6 +305,23 @@ function isProvider(value: unknown): value is Provider {
 
 function isApprovalMode(value: unknown): value is ApprovalMode {
   return typeof value === 'string' && (APPROVAL_MODES as readonly string[]).includes(value);
+}
+
+function isPromptCacheTtl(value: unknown): value is PromptCacheTtl {
+  return typeof value === 'string' && (PROMPT_CACHE_TTLS as readonly string[]).includes(value);
+}
+
+function booleanField(
+  input: Record<string, unknown>,
+  key: string,
+  configPath: string,
+): boolean | undefined {
+  const value = input[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') {
+    throw new ConfigError(`${configPath}: "${key}" must be true or false.`);
+  }
+  return value;
 }
 
 function stringField(input: Record<string, unknown>, key: string, configPath: string): string | undefined {

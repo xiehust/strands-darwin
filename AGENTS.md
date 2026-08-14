@@ -37,6 +37,7 @@ AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven T
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|completion|bashExit|cancelThenContinue|agentsMd)
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
+AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
 ```
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
@@ -67,10 +68,20 @@ deleted.
 
 **System prompt composition order is fixed**: base prompt → `<project-instructions>`
 (AGENTS.md, `src/agent/instructions.ts`) → `<available-skills>` (skills plugin during
-`agent.initialize()`). All string concatenation; block-array prompts are unsupported. The
-base is the only user-replaceable part (`src/agent/system-prompt.ts`:
-`config.systemPrompt` > `.darwin/system-prompt.md` > `DEFAULT_SYSTEM_PROMPT`), so the
-project's own instructions stay additive on top of whichever base is in effect.
+`agent.initialize()`). Composition is all string concatenation — the skills plugin refuses a
+block-array prompt — and only after `initialize()` does `src/agent/prompt-cache.ts` wrap the
+finished string as `[TextBlock, CachePointBlock]`. The base is the only user-replaceable part
+(`src/agent/system-prompt.ts`: `config.systemPrompt` > `.darwin/system-prompt.md` >
+`DEFAULT_SYSTEM_PROMPT`), so the project's own instructions stay additive on top of whichever
+base is in effect.
+
+**Prompt caching is on by default** (`src/agent/prompt-cache.ts`, `promptCache` /
+`promptCacheTtl` in config): tools and conversation through `BedrockModel.cacheConfig`, the
+system prompt through a cache point placed after `initialize()`. Claude only, and the gate is
+deliberate — `strategy: 'auto'` on a model that cannot cache makes the SDK `console.warn` into
+the Ink frame. The header states it on the model line, never a line of its own: the header
+shares the live frame with the permission box, and one extra line pushes the box off a 50-row
+terminal (`spike/verify-tui.ts approve` catches it).
 
 **Paths** (`src/paths.ts`): every `.darwin/` location is derived here from the CLI's cwd.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything

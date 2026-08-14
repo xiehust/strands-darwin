@@ -183,6 +183,13 @@ async function main(): Promise<void> {
     if (info.systemPromptProblem !== undefined) {
       console.warn(`  prompt   : using the default — ${info.systemPromptProblem}`);
     }
+    if (info.promptCache.enabled) {
+      const ttl = info.promptCache.ttl === undefined ? '' : ` [${info.promptCache.ttl}]`;
+      console.log(`  cache    : ${info.promptCache.parts.join(', ')}${ttl}`);
+    }
+    if (info.promptCache.problem !== undefined) {
+      console.warn(`  cache    : off — ${info.promptCache.problem}`);
+    }
     if (info.mcpConfigPath !== undefined) {
       console.log(`  mcp      : ${info.mcpServerCount} server(s) from ${info.mcpConfigPath}`);
     }

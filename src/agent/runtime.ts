@@ -19,6 +19,7 @@ import {
   type ProjectInstructionsSummary,
 } from './instructions.js';
 import { PermissionGate, type ApprovalMode, type PermissionBridge } from './permission.js';
+import { applySystemPromptCachePoint, planPromptCache, type PromptCachePlan } from './prompt-cache.js';
 import { createModelClassifier } from './safety-classifier.js';
 import { createSessionManager, resolveSession, writePointer } from './session.js';
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
@@ -60,6 +61,8 @@ export interface RuntimeInfo {
   systemPromptPath: string | undefined;
   /** Why a present system prompt override was skipped; undefined when there is none. */
   systemPromptProblem: string | undefined;
+  /** What this run caches, or why it caches nothing. */
+  promptCache: PromptCachePlan;
   /** Path to the MCP config that was read, or undefined when there is none. */
   mcpConfigPath: string | undefined;
   /** Root `.mcp.json` left unread because `.darwin/mcp.json` took precedence. */
@@ -129,6 +132,13 @@ export class AgentRuntime {
     // without this the resumed history and MCP tools would not exist yet.
     await agent.initialize();
 
+    // Strictly after initialize(): the skills catalogue is appended during it, and
+    // the cache point has to sit at the very end of the finished prompt (the skills
+    // plugin also refuses to append to a block-array prompt). Tools and the
+    // conversation are cached by the model's own cacheConfig, set in config.ts.
+    const promptCache = planPromptCache(config);
+    applySystemPromptCachePoint(agent, promptCache);
+
     return new AgentRuntime(agent, options.projectRoot, mcp.clients, skills, {
       config,
       permissionMode,
@@ -144,6 +154,7 @@ export class AgentRuntime {
       systemPromptSource: basePrompt.source,
       systemPromptPath: basePrompt.path,
       systemPromptProblem: basePrompt.problem,
+      promptCache,
       mcpConfigPath: mcp.configPath,
       mcpIgnoredConfigPath: mcp.ignoredConfigPath,
       mcpServerCount: mcp.clients.length,
