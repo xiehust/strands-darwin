@@ -212,6 +212,9 @@ async function main(): Promise<void> {
     for (const problem of info.skillProblems) {
       console.warn(`  skill skipped: ${problem.directory} — ${problem.reason}`);
     }
+    for (const problem of info.commandProblems) {
+      console.warn(`  command skipped: ${problem.file} — ${problem.reason}`);
+    }
     console.log(`  tools    : ${info.toolNames.join(', ')}`);
     console.log('  commands : /exit to quit · /usage for token counts · /effort [level]\n');
 
@@ -246,11 +249,15 @@ async function main(): Promise<void> {
       }
 
       try {
-        // `/skill-name` sends the skill's full text instead of the raw command.
-        // Unknown slash commands fall through as ordinary input.
+        // Skills and project commands send their expanded prompt instead of the
+        // raw command. Unknown slash commands fall through as ordinary input.
         const expanded = await runtime.expandSlashCommand(input);
         if (expanded !== null) {
-          console.log(`  · loaded skill "${expanded.skill.name}"`);
+          console.log(
+            expanded.kind === 'skill'
+              ? `  · loaded skill "${expanded.skill.name}"`
+              : `  · loaded command "/${expanded.command.name}"`,
+          );
           await renderTurn(runtime, expanded.message);
           continue;
         }

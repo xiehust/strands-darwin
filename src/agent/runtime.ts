@@ -12,6 +12,12 @@ import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
 import { compactConversation, type CompactResult } from './compact.js';
 import {
+  expandCustomCommand,
+  loadCustomCommands,
+  type CustomCommandRegistry,
+  type ExpandedCustomCommand,
+} from '../commands/custom-commands.js';
+import {
   appendAllowRule,
   applyThinkingEffort,
   createModelFromConfig,
@@ -93,6 +99,9 @@ export interface ModelChangeResult {
   promptCache: PromptCachePlan;
   saved: Promise<void>;
 }
+export type ExpandedSlashCommand =
+  | ({ kind: 'skill' } & ExpandedSkillCommand)
+  | ({ kind: 'command' } & ExpandedCustomCommand);
 
 export interface RuntimeInfo {
   config: AppConfig;
@@ -104,6 +113,10 @@ export interface RuntimeInfo {
   skillNames: string[];
   /** Skill directories that were skipped, with the reason. */
   skillProblems: { directory: string; reason: string }[];
+  /** Names of custom prompts discovered under `.darwin/commands/`. */
+  commandNames: string[];
+  /** Custom command files that were skipped, with the reason. */
+  commandProblems: { file: string; reason: string }[];
   /** AGENTS.md preloaded from the run directory, or undefined when there is none. */
   projectInstructions: ProjectInstructionsSummary | undefined;
   /** Why a present AGENTS.md was skipped; undefined when there is no such file. */
@@ -156,6 +169,7 @@ export class AgentRuntime {
     private readonly projectRoot: string,
     private readonly mcpClients: readonly McpClient[],
     private readonly skills: SkillsPlugin,
+    private readonly commands: CustomCommandRegistry,
     private readonly gate: PermissionGate,
     private readonly compactionManager: SummarizingConversationManager,
     private readonly preserveRecentMessages: number,
@@ -171,6 +185,10 @@ export class AgentRuntime {
     const model = await createModelFromConfig(config);
     const session = await resolveSession(options.projectRoot, options.resume);
     const skills = await SkillsPlugin.load(options.projectRoot);
+    const commands = await loadCustomCommands(
+      options.projectRoot,
+      skills.skills.map((skill) => skill.name),
+    );
     const loadedInstructions = await loadProjectInstructions(options.projectRoot);
     const instructions = loadedInstructions.instructions;
     const basePrompt = await loadSystemPrompt(options.projectRoot, config.systemPrompt);
@@ -239,6 +257,7 @@ export class AgentRuntime {
       options.projectRoot,
       mcp.clients,
       skills,
+      commands,
       gate,
       compactionManager,
       config.preserveRecentMessages,
@@ -249,6 +268,8 @@ export class AgentRuntime {
         resumed: session.resumed,
         skillNames: skills.skills.map((skill) => skill.name),
         skillProblems: skills.problems.map((problem) => ({ ...problem })),
+        commandNames: commands.commands.map((command) => command.name),
+        commandProblems: commands.problems.map((problem) => ({ ...problem })),
         projectInstructions:
           instructions === undefined
             ? undefined
@@ -461,12 +482,16 @@ export class AgentRuntime {
   }
 
   /**
-   * Expands a `/skill-name` command into a message carrying the skill's full
-   * text. Returns null when the input names no known skill, so callers can treat
-   * it as ordinary input (or their own command, like `/exit`).
+   * Expands a skill or project command into the prompt sent to the model.
+   * Skills are checked first as a defensive backstop to the loader's collision
+   * filtering. Unknown slash input remains ordinary user input.
    */
-  async expandSlashCommand(input: string): Promise<ExpandedSkillCommand | null> {
-    return expandSkillCommand(this.skills, input);
+  async expandSlashCommand(input: string): Promise<ExpandedSlashCommand | null> {
+    const skill = await expandSkillCommand(this.skills, input);
+    if (skill !== null) return { kind: 'skill', ...skill };
+
+    const command = expandCustomCommand(this.commands, input);
+    return command === null ? null : { kind: 'command', ...command };
   }
 
   /**

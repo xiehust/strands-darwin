@@ -20,7 +20,10 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
 import path from 'node:path';
 
-import { REPO_ROOT, startTui, type TuiSession } from './tui-driver.js';
+import { darwinDir } from '../src/paths.js';
+import { COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
+import { SKILLS_DIRNAME } from '../src/skills/loader.js';
+import { startTui, type TuiSession } from './tui-driver.js';
 import { assert, header, report } from './shared.js';
 
 /** A TUI that will not exit is a leaked-handle bug, so exits are bounded. */
@@ -465,42 +468,73 @@ async function multilineInput(): Promise<void> {
 }
 
 /**
- * Completion needs a skills directory, so this runs in the repo root where
- * `.darwin/skills/commit-message` lives. Nothing is submitted, so the agent never
- * runs. The repo also has its own AGENTS.md, which makes this the one scenario
- * that sees the header's preload line.
+ * Completion uses a temporary project with one skill, one custom command, and a
+ * colliding command. Nothing is submitted, so this makes no model call.
  */
 async function slashCompletion(): Promise<void> {
   header('TUI — slash-command completion');
 
-  const tui = startTui({ cwd: REPO_ROOT });
+  const dir = '/tmp/darwin-completion-tui';
+  const stateDir = darwinDir(dir);
+  const commandsDir = path.join(stateDir, COMMANDS_DIRNAME);
+  const skillDir = path.join(stateDir, SKILLS_DIRNAME, 'commit-message');
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(commandsDir, { recursive: true });
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(path.join(commandsDir, 'review.md'), 'Review $ARGUMENTS.\n', 'utf8');
+  await writeFile(path.join(commandsDir, 'COMMIT-MESSAGE.md'), 'must lose to skill\n', 'utf8');
+  await writeFile(
+    path.join(skillDir, 'SKILL.md'),
+    '---\nname: commit-message\ndescription: Write a commit message.\n---\n\n# Commit message\n',
+    'utf8',
+  );
+
+  const tui = startTui({ cwd: dir });
 
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
+    await tui.waitFor('skill /commit-message', { timeoutMs: 30_000, settleMs: 400 });
     assert('skills are advertised in the header', tui.screen.includes('skills: commit-message'));
-    assert('the header reports the preloaded AGENTS.md', /AGENTS\.md: loaded \(/.test(tui.screen));
+    assert(
+      'a command colliding with a skill is warned and skipped',
+      tui.screen.includes('command skipped:') && tui.screen.includes('skill /commit-message'),
+    );
 
     const beforeSlash = tui.mark();
     tui.send('/');
     await tui.waitFor('commands (', { timeoutMs: 30_000, from: beforeSlash });
-    // The list header and its rows can land in separate chunks, so the row has to
-    // be waited for rather than asserted straight after the header appears.
-    await tui.waitFor('/commit-message', { timeoutMs: 30_000, from: beforeSlash });
+    // The six-row menu truncates the full catalogue, so narrow once for each
+    // project-defined kind rather than mistaking warning/header text for a row.
+    const beforeCustom = tui.mark();
+    tui.send('r');
+    await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeCustom, settleMs: 400 });
+    assert('the custom command is listed', tui.screen.slice(beforeCustom).includes('❯ /review'));
 
-    assert('completion list appeared', tui.screen.slice(beforeSlash).includes('commands ('));
-    assert(
-      'the skill is listed as a command',
-      tui.screen.slice(beforeSlash).includes('/commit-message'),
-    );
+    const beforeSkill = tui.mark();
+    tui.send('\u007fc');
+    await tui.waitFor('  /commit-message', { timeoutMs: 30_000, from: beforeSkill, settleMs: 400 });
+    const skillRows = tui.screen.slice(beforeSkill);
+    assert('the skill is listed as a command', skillRows.includes('  /commit-message'));
+    assert('a colliding custom command is not duplicated', skillRows.match(/  \/commit-message/gi)?.length === 1);
+
+    const beforeAll = tui.mark();
+    tui.send('\u007f');
+    await tui.waitFor('❯ /compact', { timeoutMs: 30_000, from: beforeAll, settleMs: 400 });
+    const completed = tui.screen.slice(beforeSlash);
+    assert('completion list appeared', completed.includes('commands ('));
     // The built-ins are listed too, and first: a command that only appears in the
     // header hint is one nobody finds. Matched on the row markers ('❯ ' for the
     // selected row, two spaces otherwise) — a bare '/exit' also occurs in the
     // header line, so it would pass with no list on screen at all.
-    assert('the built-ins are listed first', tui.screen.slice(beforeSlash).includes('❯ /compact'));
-    assert('the built-in /effort is listed', tui.screen.slice(beforeSlash).includes('  /effort'));
-    assert('the built-in /exit is listed', tui.screen.slice(beforeSlash).includes('  /exit'));
-    assert('the built-in /usage is listed', tui.screen.slice(beforeSlash).includes('  /usage'));
-    assert('the list explains the keys', /to select/.test(tui.screen.slice(beforeSlash)));
+    assert('the built-ins are listed first', completed.includes('❯ /compact'));
+    assert('the built-in /effort is listed', completed.includes('  /effort'));
+    assert('the built-in /exit is listed', completed.includes('  /exit'));
+    assert('the built-in /usage is listed', completed.includes('  /usage'));
+    assert(
+      'runtime completion order is built-ins, custom commands, then skills',
+      completed.indexOf('/review') < completed.lastIndexOf('/commit-message'),
+    );
+    assert('the list explains the keys', /to select/.test(completed));
 
     // Narrowing to a prefix that matches nothing hides the list again. Ink
     // redraws the whole frame, so the output after the mark is the new frame.
@@ -518,6 +552,7 @@ async function slashCompletion(): Promise<void> {
     assert('ctrl+c exits when idle', code === 0);
   } finally {
     tui.kill();
+    await rm(dir, { recursive: true, force: true });
   }
 }
 

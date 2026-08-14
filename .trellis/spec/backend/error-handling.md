@@ -31,6 +31,8 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | MCP config malformed (`.darwin/mcp.json`, or root `.mcp.json` when it is the one in effect) | `ConfigError`, refuse to start | User asked for MCP and got none |
 | One MCP server fails to connect / `${VAR}` unset | Skip it, keep starting (`continueOnError: true`) | One broken server must not kill the session; count shown in header |
 | One skill directory broken (bad YAML, missing description, duplicate name) | Skip, record in `RuntimeInfo.skillProblems`, surface in header | Same isolation principle |
+| One custom command file is invalid, empty, unreadable, duplicates another command, or collides with a built-in / skill | Skip it, record in `RuntimeInfo.commandProblems`, surface in TUI and dev REPL | Completion must advertise only invokable commands; one bad prompt file must not prevent startup |
+| `.darwin/commands/` absent | Load no custom commands and stay silent | Commands are optional project state |
 | `AGENTS.md` present but unreadable (EISDIR, EACCES) | Skip, record in `RuntimeInfo.projectInstructionsProblem`, surface in header | Same isolation principle: without the line, missing rules look like rules in effect |
 | `AGENTS.md` absent, empty or whitespace-only | Skip silently, no header line | Nothing was asked for, so there is nothing to report |
 | `.darwin/system-prompt.md` present but unreadable or empty | Use `DEFAULT_SYSTEM_PROMPT`, record in `RuntimeInfo.systemPromptProblem`, surface in header | Same isolation principle; a silent fallback would leave the user believing their prompt is in effect |

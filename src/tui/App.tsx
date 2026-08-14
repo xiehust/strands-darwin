@@ -27,6 +27,7 @@ import {
 } from '../agent/thinking.js';
 import { CONFIG_FILENAME } from '../config.js';
 import type { ModelChoice } from '../config.js';
+import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import { InputBox } from './InputBox.js';
@@ -47,16 +48,6 @@ const NON_TEXT_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
 function normalizeDraftText(value: string): string {
   return value.replace(/\r+\n/g, '\n').replace(/\r/g, '\n').replace(NON_TEXT_CONTROLS, '');
 }
-
-/**
- * Commands the TUI answers itself, listed in the completion menu alongside the
- * skills: the menu is where a user looks to find out what exists, and a command
- * that only appears in the header hint is one nobody discovers.
- *
- * `/quit` is deliberately missing — it works, but it is an alias of `/exit`, and
- * a menu row per alias costs a row of a six-row list to say nothing new.
- */
-const BUILTIN_COMMANDS = ['compact', 'effort', 'exit', 'model', 'usage'] as const;
 
 type Status = 'idle' | 'streaming' | 'compacting' | 'awaiting-permission';
 
@@ -84,10 +75,11 @@ export function App({
   // A pending confirmation outranks streaming: the loop is blocked on it.
   const effectiveStatus: Status = pendingPermission !== undefined ? 'awaiting-permission' : status;
 
-  // Built-ins first: there are four of them and eleven skills in this repo alone,
-  // so alphabetical order would bury the commands that always exist.
+  // Built-ins stay first, then project commands, then skills. Collision filtering
+  // happens in the command loader so every row here is actually invokable.
   const completions = computeCompletions(draft, [
-    ...BUILTIN_COMMANDS,
+    ...BUILTIN_COMMAND_NAMES,
+    ...runtime.info.commandNames,
     ...runtime.info.skillNames,
   ]);
 
@@ -222,13 +214,19 @@ export function App({
       setSelectedCompletion(0);
       dispatch({ type: 'userInput', text });
 
-      // A `/skill-name` command sends the skill's full text instead of the
-      // literal command. Unknown slash commands fall through as ordinary input.
+      // Skills and project commands send their expanded prompt instead of the
+      // literal command. Unknown slash input falls through as ordinary input.
       let toSend = text;
       try {
         const expanded = await runtime.expandSlashCommand(text);
         if (expanded !== null) {
-          dispatch({ type: 'notice', text: `loaded skill "${expanded.skill.name}"` });
+          dispatch({
+            type: 'notice',
+            text:
+              expanded.kind === 'skill'
+                ? `loaded skill "${expanded.skill.name}"`
+                : `loaded command "/${expanded.command.name}"`,
+          });
           toSend = expanded.message;
         }
       } catch (error) {
@@ -542,6 +540,11 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       {info.skillProblems.map((problem) => (
         <Text key={problem.directory} color="yellow">
           skill skipped: {problem.directory} — {problem.reason}
+        </Text>
+      ))}
+      {info.commandProblems.map((problem) => (
+        <Text key={problem.file} color="yellow">
+          command skipped: {problem.file} — {problem.reason}
         </Text>
       ))}
       {/* Extends the existing line rather than adding one: see the frame-height

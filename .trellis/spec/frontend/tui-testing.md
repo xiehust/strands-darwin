@@ -66,6 +66,59 @@ void submit(draft + typed.slice(0, typed.search(/[\r\n]/)));
 usePaste((text) => setDraft((draft) => draft + normalizeDraftText(text)));
 ```
 
+## Custom slash-command contract
+
+### 1. Scope / trigger
+
+Changes to `.darwin/commands/` discovery, runtime slash expansion, or completion order cross filesystem → runtime → TUI boundaries and require both direct loader tests and a real-pty completion scenario.
+
+### 2. Signatures
+
+- Source: `<projectRoot>/.darwin/commands/<name>.md` (direct regular files only).
+- Invocation: `/<name> [arguments]`.
+- Placeholder: every literal `$ARGUMENTS` becomes the trimmed argument tail; no arguments means the empty string.
+- Completion order: built-ins → accepted custom commands → skills. `/quit` remains a reserved but unadvertised alias.
+
+### 3. Contracts
+
+- Names use letters, numbers, hyphens, and underscores and match case-insensitively.
+- Built-in names and skill names are reserved case-insensitively. Skills win collisions; the custom file is skipped and warned about.
+- Bodies are read at startup; directory hot reload is not part of the contract.
+- Unknown slash input remains ordinary model input. Expansion failures must not replace it with a partial prompt.
+
+### 4. Validation and error matrix
+
+| Entry / input | Required behavior |
+|---|---|
+| Missing commands directory | Empty registry, no warning |
+| Nested or non-`.md` entry | Ignore silently |
+| Invalid filename, empty body, unreadable file | Skip that file, surface `command skipped` |
+| Built-in / skill / duplicate-name collision | Keep existing owner, skip and warn about custom file |
+| Known command without `$ARGUMENTS` | Send body unchanged |
+| Unknown slash command | Pass through unchanged |
+
+### 5. Good / base / bad cases
+
+- Good: `review.md` containing `Review $ARGUMENTS` plus `/review auth` sends `Review auth`.
+- Base: built-ins and `/skill-name` retain their previous behavior.
+- Bad: advertising both `COMMIT-MESSAGE.md` and the `commit-message` skill makes one menu row lie about which prompt will run.
+
+### 6. Tests required
+
+- `pnpm tsx spike/verify-custom-commands.ts`: discovery, all-placeholder replacement, case folding, reserved names, skill/duplicate collisions, unreadable/empty entries, unknown input.
+- `pnpm tsx spike/verify-tui.ts completion`: use a temporary project, assert the collision warning, narrow prefixes to prove custom and skill rows, then restore `/` and assert built-ins lead. The menu shows six rows, so do not assume every command is simultaneously visible.
+- Run `pnpm typecheck` and `pnpm test` after runtime contract changes.
+
+### 7. Wrong vs correct
+
+```typescript
+// Wrong: the UI independently decides collision precedence.
+const completions = [...builtins, ...commands, ...skills];
+
+// Correct: the loader rejects collisions; every advertised runtime name is invokable.
+const completions = [...BUILTIN_COMMAND_NAMES, ...info.commandNames, ...info.skillNames];
+```
+
 Component-level testing (ink-testing-library) was rejected: the bugs worth catching
 (permission gating, resume, process exit) live in the seams, not in components.
 
