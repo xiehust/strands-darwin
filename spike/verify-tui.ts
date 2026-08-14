@@ -332,16 +332,22 @@ async function slashCompletion(): Promise<void> {
 
     const beforeSlash = tui.mark();
     tui.send('/');
-    await tui.waitFor('skills (', { timeoutMs: 30_000, from: beforeSlash });
+    await tui.waitFor('commands (', { timeoutMs: 30_000, from: beforeSlash });
     // The list header and its rows can land in separate chunks, so the row has to
     // be waited for rather than asserted straight after the header appears.
     await tui.waitFor('/commit-message', { timeoutMs: 30_000, from: beforeSlash });
 
-    assert('completion list appeared', tui.screen.slice(beforeSlash).includes('skills ('));
+    assert('completion list appeared', tui.screen.slice(beforeSlash).includes('commands ('));
     assert(
       'the skill is listed as a command',
       tui.screen.slice(beforeSlash).includes('/commit-message'),
     );
+    // The built-ins are listed too, and first: a command that only appears in the
+    // header hint is one nobody finds. Matched on the row markers ('❯ ' for the
+    // selected row, two spaces otherwise) — a bare '/exit' also occurs in the
+    // header line, so it would pass with no list on screen at all.
+    assert('the built-in /exit is listed first', tui.screen.slice(beforeSlash).includes('❯ /exit'));
+    assert('the built-in /usage is listed', tui.screen.slice(beforeSlash).includes('  /usage'));
     assert('the list explains the keys', /to select/.test(tui.screen.slice(beforeSlash)));
 
     // Narrowing to a prefix that matches nothing hides the list again. Ink
@@ -353,7 +359,7 @@ async function slashCompletion(): Promise<void> {
     await tui.waitFor('/zzz', { timeoutMs: 30_000, from: beforeNarrow, settleMs: 400 });
     const redrawn = tui.screen.slice(beforeNarrow);
     console.log(`  frame after /zzz: ${JSON.stringify(redrawn.slice(0, 400))}`);
-    assert('completion list disappears when nothing matches', !redrawn.includes('skills ('));
+    assert('completion list disappears when nothing matches', !redrawn.includes('commands ('));
 
     tui.send('\u0003'); // ctrl+c while idle exits
     const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);

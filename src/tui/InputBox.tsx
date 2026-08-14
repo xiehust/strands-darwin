@@ -1,5 +1,5 @@
 /**
- * The prompt line, with skill slash-command completion.
+ * The prompt line, with slash-command completion (built-in commands and skills).
  *
  * Single-line by design. Ink delivers Enter as a keypress rather than a newline,
  * so multi-line editing would need a separate submit binding plus wrapping and
@@ -39,7 +39,7 @@ export function InputBox({
 
       {visible.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
-          <Text dimColor>skills (↑/↓ to select, tab to complete):</Text>
+          <Text dimColor>commands (↑/↓ to select, tab to complete):</Text>
           {visible.map((name, index) => {
             const selected = index === selectedCompletion;
             return (

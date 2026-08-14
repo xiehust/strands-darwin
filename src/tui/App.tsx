@@ -40,6 +40,16 @@ function stripControls(value: string): string {
   return value.replace(CONTROL_CHARS, '');
 }
 
+/**
+ * Commands the TUI answers itself, listed in the completion menu alongside the
+ * skills: the menu is where a user looks to find out what exists, and a command
+ * that only appears in the header hint is one nobody discovers.
+ *
+ * `/quit` is deliberately missing — it works, but it is an alias of `/exit`, and
+ * a menu row per alias costs a row of a six-row list to say nothing new.
+ */
+const BUILTIN_COMMANDS = ['exit', 'usage'] as const;
+
 type Status = 'idle' | 'streaming' | 'awaiting-permission';
 
 export function App({
@@ -66,7 +76,12 @@ export function App({
   // A pending confirmation outranks streaming: the loop is blocked on it.
   const effectiveStatus: Status = pendingPermission !== undefined ? 'awaiting-permission' : status;
 
-  const completions = computeCompletions(draft, runtime.info.skillNames);
+  // Built-ins first: there are two of them and eleven skills in this repo alone,
+  // so alphabetical order would bury the commands that always exist.
+  const completions = computeCompletions(draft, [
+    ...BUILTIN_COMMANDS,
+    ...runtime.info.skillNames,
+  ]);
 
   // Spinner tick, only while something is actually running.
   useEffect(() => {
@@ -434,12 +449,12 @@ function groupDigits(value: number): string {
   return value.toLocaleString('en-US');
 }
 
-/** Skill names matching a `/prefix`, or none when the input is not a bare command. */
-export function computeCompletions(input: string, skillNames: readonly string[]): string[] {
+/** Command names matching a `/prefix`, or none when the input is not a bare command. */
+export function computeCompletions(input: string, commandNames: readonly string[]): string[] {
   if (!input.startsWith('/')) return [];
   // Once there is a space the command is complete and arguments are being typed.
   if (input.includes(' ')) return [];
 
   const prefix = input.slice(1).toLowerCase();
-  return skillNames.filter((name) => name.toLowerCase().startsWith(prefix));
+  return commandNames.filter((name) => name.toLowerCase().startsWith(prefix));
 }
