@@ -641,6 +641,74 @@ When the SDK ships official support, delete the module and swap in theirs.
 
 ---
 
+## Scenario: built-in developer supervisor
+
+### 1. Scope / Trigger
+
+`/developer <requirement>` loads a product-bundled skill into the Host's main conversation. The Host supervises external headless darwin invocations through the existing background bash manager; it is not an in-process subagent, scheduler, or fork of `AgentRuntime.send()`.
+
+### 2. Signatures
+
+```text
+/developer <delegated requirement>
+bash start: darwin -p <planning prompt>
+bash start: darwin -p <approval/correction> --session <captured-id> [--yolo]
+child stderr: ^session: ([a-z0-9_-]+)$
+user view: /tasks
+```
+
+The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` must copy it to `dist/src/skills/builtin/developer/SKILL.md` because `tsc` does not copy Markdown assets.
+
+### 3. Contracts
+
+- `scanSkills()` loads built-ins before `<target>/.darwin/skills`, then sorts the merged catalogue. A case-insensitive project collision is skipped and reported; a missing/invalid required built-in fails startup because it is a promised product capability, not optional project configuration.
+- Keep the supervisor in the Host conversation: only that conversation can escalate product decisions to the user. The `subagent` tool returns one final report and is the wrong boundary for this dialogue.
+- Every child invocation uses `bash start`; retain its `bg-*` id for `status`/`output`. Capture conversational identity only from the exact `session:` stderr record and use explicit `--session` on every follow-up.
+- Run each child from the exact target root. The child prompt says it is the direct worker and must not load `developer`, start another darwin, or delegate again; without that guard a built-in skill advertised to both Host and child can recurse.
+- Planning is a no-edit first turn, prefixed with `DARWIN_PLANNING_ONLY=1` so target hooks can enforce read-only behavior. Approval/correction is a later turn in the same session and tells the child to proceed without another approval question.
+- Headless permissions remain unchanged. Elevation is allowed only when the user authorized it for the named repository/scope. The Host independently inspects the diff and runs acceptance checks; failed acceptance returns to the same child session rather than being hidden by a Host edit.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Target has no `.darwin/skills/` | Advertise and load `developer`; no project-skill warning |
+| Project defines `DEVELOPER` | Keep built-in, skip project definition, surface collision |
+| Built-in asset absent/invalid after packaging | Fail startup with the built-in path/reason |
+| First child emits no exact session record | Do not guess from `bg-*` or use `--continue`; report/recover explicitly |
+| Child asks an evidence-resolved question | Host answers from requirement/repository evidence |
+| Child asks unresolved product/scope/authorization question | Host asks the user |
+| Child process or acceptance fails | Inspect output and continue the captured session with a focused correction, or report blocker |
+| Child begins another developer workflow | Treat as recursion failure; correct the direct worker prompt |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** one Host turn starts a planning task, exposes it through `/tasks`, captures `session-*`, starts an approved implementation task with that id, then independently verifies the diff and test.
+- **Base:** a built-in-only repository expands `/developer` through the ordinary skill path and keeps progressive disclosure.
+- **Bad:** using `--continue`, a `bg-*` id, foreground `bash execute`, Host source cwd, or a child prompt that permits recursive developer delegation breaks identity, responsiveness, or target isolation.
+
+### 6. Tests Required
+
+- `spike/verify-skills.ts`: built-in-only discovery/load/slash expansion, progressive disclosure, workflow guard text, deterministic merge, and collision isolation.
+- `pnpm build` plus package dry-run: compiled and packed Markdown asset exists.
+- `spike/verify-developer-live.ts`: real Host TUI, managed planning + explicit-session implementation turns, `/tasks` during streaming, status/output monitoring, no recursion/cwd drift, independent file/test/diff acceptance, and deadline-bounded exit.
+- Keep the live scenario opt-in because it makes real model calls.
+
+### 7. Wrong vs Correct
+
+```text
+# WRONG: pointer identity, foreground blocking, and recursive child role
+darwin -p "use developer to fix it" --continue
+
+# CORRECT: managed direct-worker turns with distinct process/conversation ids
+bash start -> DARWIN_PLANNING_ONLY=1 darwin -p "plan only; do not delegate"
+# parse session: session-123 from output
+bash start -> darwin -p "approved; implement now" --session session-123 --yolo
+```
+
+---
+
+
 ## Prompt Caching
 
 `src/agent/prompt-cache.ts` decides *whether* to cache; the SDK does the placing.

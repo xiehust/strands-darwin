@@ -11,6 +11,7 @@ import path from 'node:path';
 
 import { darwinDir } from '../src/paths.js';
 import {
+  BUILTIN_SKILLS_DIR,
   SKILLS_DIRNAME,
   formatSkillForModel,
   loadSkill,
@@ -96,7 +97,8 @@ async function scanning(): Promise<void> {
   assert('reported the missing description as a problem', problemDirs.includes('no-description'));
   assert('reported the unparseable YAML as a problem', problemDirs.includes('bad-yaml'));
   assert('ignored a directory without SKILL.md silently', !problemDirs.includes('not-a-skill'));
-  assert('one bad skill did not prevent loading the good ones', skills.length === 2);
+  assert('one bad skill did not prevent loading the good ones', names.includes('pdf-forms'));
+  assert('the built-in developer is merged into project skills', names.includes('developer'));
   assert('skills are sorted by name', names.join(',') === [...names].sort().join(','));
 }
 
@@ -105,8 +107,25 @@ async function missingDirectory(): Promise<void> {
 
   const { skills, problems } = await scanSkills('/tmp/darwin-skills-does-not-exist');
 
-  assert('no skills found', skills.length === 0);
-  assert('no problems reported (absence is normal, not an error)', problems.length === 0);
+  assert('the built-in developer remains without a project directory', skills.length === 1 && skills[0]?.name === 'developer');
+  assert('no problems reported (project absence is normal, not an error)', problems.length === 0);
+  assert('the built-in resolves beside the loader module', skills[0]?.directory === path.join(BUILTIN_SKILLS_DIR, 'developer'));
+
+  const plugin = await SkillsPlugin.load('/tmp/darwin-skills-does-not-exist');
+  const expanded = await expandSkillCommand(plugin, '/developer fix the defect');
+  assert('/developer expands without any project skills', expanded?.message.includes('# Developer supervisor') === true);
+  const developer = plugin.find('developer');
+  const loaded = developer === undefined ? undefined : await loadSkill(developer);
+  assert('load_skill can load the built-in developer', loaded?.content.includes('# Developer supervisor') === true);
+  const workflow = loaded?.content ?? '';
+  assert('developer frames requirement, acceptance, repository, and authorization', ['exact requirement', 'acceptance checks', 'absolute target repository root', 'authorized mutation'].every((term) => workflow.includes(term)));
+  assert('developer requires managed launch and lifecycle/output monitoring', workflow.includes('`start` mode') && workflow.includes('bash status') && workflow.includes('bash output'));
+  assert('developer forbids recursive delegation and target-root drift', workflow.includes('must not load the `developer` skill') && workflow.includes('Do not substitute the Host\'s source repository'));
+  assert('developer marks planning turns for hook-enforced read-only behavior', workflow.includes('DARWIN_PLANNING_ONLY=1'));
+  assert('developer separates task and conversation ids', workflow.includes('not the `bg-*` task id') && workflow.includes('^session: ([a-z0-9_-]+)$'));
+  assert('developer requires explicit same-session continuation', workflow.includes('`--session <captured-id>`') && workflow.includes('Never use `--continue` or `--resume`'));
+  assert('developer preserves product and permission authority', workflow.includes('ask the user') && workflow.includes('Headless children cannot receive interactive permission prompts'));
+  assert('developer requires independent acceptance and no hidden Host patch', workflow.includes('independently inspect') && workflow.includes('Do not patch the implementation yourself'));
 
   // The pre-`.darwin` location is dead: a leftover root skills/ must not still be
   // advertised to the model, or a user who moved theirs would see duplicates.
@@ -117,7 +136,26 @@ async function missingDirectory(): Promise<void> {
   await writeFile(path.join(legacy, 'SKILL.md'), `---\ndescription: Legacy location.\n---\n\nbody\n`, 'utf8');
 
   const legacyScan = await scanSkills(legacyRoot);
-  assert('a root skills/ directory is no longer scanned', legacyScan.skills.length === 0);
+  assert(
+    'a root skills/ directory is no longer scanned',
+    legacyScan.skills.length === 1 && legacyScan.skills[0]?.name === 'developer',
+  );
+}
+
+async function builtinCollision(): Promise<void> {
+  header('scanSkills — built-in name reservation');
+  const root = '/tmp/darwin-skills-collision';
+  const directory = path.join(darwinDir(root), SKILLS_DIRNAME, 'shadow');
+  await rm(root, { recursive: true, force: true });
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, 'SKILL.md'),
+    '---\nname: DEVELOPER\ndescription: Shadow the built-in.\n---\n\nshadow\n',
+  );
+
+  const { skills, problems } = await scanSkills(root);
+  assert('the built-in wins a case-insensitive collision', skills.filter((skill) => skill.name.toLowerCase() === 'developer').length === 1);
+  assert('the colliding project skill is surfaced', problems.some((problem) => problem.directory === directory && problem.reason.includes('reserved by built-in skill developer')));
 }
 
 async function promptFragment(): Promise<void> {
@@ -200,12 +238,13 @@ async function pluginShape(): Promise<void> {
   assert('base prompt is preserved', typeof injected === 'string' && injected.includes('BASE PROMPT'));
   assert('skills section is appended', typeof injected === 'string' && injected.includes('<available-skills>'));
 
-  const emptyPlugin = await SkillsPlugin.load('/tmp/darwin-skills-does-not-exist');
-  const untouched = { systemPrompt: 'BASE' } as Parameters<SkillsPlugin['initAgent']>[0];
-  emptyPlugin.initAgent(untouched);
+  const builtinOnlyPlugin = await SkillsPlugin.load('/tmp/darwin-skills-does-not-exist');
+  const builtinPrompt = { systemPrompt: 'BASE' } as Parameters<SkillsPlugin['initAgent']>[0];
+  builtinOnlyPlugin.initAgent(builtinPrompt);
 
-  assert('no skills means no tool registered', emptyPlugin.getTools().length === 0);
-  assert('no skills means the prompt is left alone', untouched.systemPrompt === 'BASE');
+  assert('built-in-only discovery still registers load_skill', builtinOnlyPlugin.getTools().length === 1);
+  assert('built-in-only discovery advertises developer', typeof builtinPrompt.systemPrompt === 'string' && builtinPrompt.systemPrompt.includes('<skill name="developer">'));
+  assert('progressive disclosure omits the developer body', typeof builtinPrompt.systemPrompt === 'string' && !builtinPrompt.systemPrompt.includes('# Developer supervisor'));
 }
 
 async function realProjectSkill(): Promise<void> {
@@ -230,6 +269,7 @@ async function realProjectSkill(): Promise<void> {
 async function main(): Promise<void> {
   await scanning();
   await missingDirectory();
+  await builtinCollision();
   await promptFragment();
   await slashCommands();
   await pluginShape();

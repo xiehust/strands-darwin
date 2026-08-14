@@ -1,5 +1,5 @@
 /** Network-free checks for headless parsing, output, permissions and sessions. */
-import assert from 'node:assert/strict';
+import nodeAssert from 'node:assert/strict';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -10,9 +10,40 @@ import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
 import { createHeadlessPermissionBridge, headlessField, runHeadlessTurn } from '../src/headless.js';
 import { resolveSession, sessionPaths } from '../src/agent/session.js';
 import { loadServersQuietly } from '../src/mcp/registry.js';
-import { header, report } from './shared.js';
+import { assert as countedAssert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-headless-test';
+
+/** Count every pre-existing strict assertion without weakening its comparison semantics. */
+const assert: typeof nodeAssert = new Proxy(nodeAssert, {
+  get(target, property, receiver) {
+    const member = Reflect.get(target, property, receiver) as unknown;
+    if (typeof member !== 'function') return member;
+    return (...args: unknown[]) => {
+      const label = `headless contract: ${String(property)}${typeof args.at(-1) === 'string' ? ` — ${String(args.at(-1))}` : ''}`;
+      try {
+        const result = (member as (...values: unknown[]) => unknown)(...args);
+        if (result instanceof Promise) {
+          return result.then(
+            (value) => {
+              countedAssert(label, true);
+              return value;
+            },
+            () => {
+              countedAssert(label, false);
+              return undefined;
+            },
+          );
+        }
+        countedAssert(label, true);
+        return result;
+      } catch {
+        countedAssert(label, false);
+        return undefined;
+      }
+    };
+  },
+}) as typeof nodeAssert;
 
 function event(value: unknown): AgentStreamEvent {
   return value as AgentStreamEvent;

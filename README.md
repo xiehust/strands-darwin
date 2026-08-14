@@ -490,6 +490,41 @@ Two ways a skill gets used:
 
 A malformed skill is reported at startup and skipped; the rest still load.
 
+
+### Built-in developer supervisor
+
+`developer` is bundled with darwin, so it is advertised even when the target repository has
+no `.darwin/skills/`. Invoke it with a delegated requirement after the command:
+
+```text
+/developer Fix the arithmetic defect, run node test.mjs, and show the diff.
+```
+
+The Host remains in the interactive conversation and supervises a separate headless darwin.
+It first asks the child for a plan, reviews questions and escalates unresolved product choices
+to you, then explicitly approves or corrects the plan. Planning processes carry
+`DARWIN_PLANNING_ONLY=1`, which target repositories may enforce in PreToolUse hooks. Every
+child invocation is launched as a managed background `bash start` job, monitored with `status`
+and incremental `output`; type `/tasks` while the Host turn is streaming to inspect those jobs
+without interrupting it.
+
+Two ids participate and are not interchangeable:
+
+- `bg-…` identifies one short-lived managed process and is used by `bash status`/`output`;
+- the exact `session: session-…` stderr record identifies the child's persisted conversation.
+  Every follow-up uses `--session <captured-id>`; it never relies on `--continue`, the resume
+  pointer, or a background id.
+
+Headless children have no person available to answer permission prompts. Safe calls and existing
+allow-rules still work; an elevated mode such as `--yolo` is appropriate only when you explicitly
+authorized it for the named repository and scope. The Host does not silently patch over a child
+failure: it independently inspects the diff and runs the requested checks, then either sends a
+focused correction to the same child session or reports the blocker. Its final report includes
+the child session id, background outcomes, acceptance evidence, and unresolved risks.
+
+A project skill cannot replace this built-in name. A case-insensitive `developer` collision is
+skipped and reported with the other skill problems.
+
 ## Subagents
 
 The main agent has a `subagent` tool for delegating a self-contained task to a fresh child
@@ -563,7 +598,7 @@ Note that the snapshot path includes the agent id, so changing `AGENT_ID` in
   computed diff against the file on disk.
 - **No sandboxing.** `bash` runs commands directly on your machine. The confirmation
   prompt is the only thing between the model and your shell.
-- **Single agent.** No sub-agents or multi-agent orchestration.
+- **No autonomous scheduler or agent swarm.** The optional built-in developer workflow supervises one external headless child through existing sessions and managed bash jobs; it does not add another in-process agent loop.
 
 ## Development
 
@@ -586,7 +621,8 @@ rather than print, and exit non-zero on failure:
 ```bash
 pnpm tsx spike/verify-config.ts                            # config parsing and provider switching, no model calls
 pnpm tsx spike/verify-mcp-config.ts                        # MCP config precedence and error paths, no servers started
-pnpm tsx spike/verify-skills.ts                            # filesystem and parsing, no model calls
+pnpm tsx spike/verify-skills.ts                            # project and built-in skill discovery, no model calls
+pnpm tsx spike/verify-headless.ts                          # parser/output/session contracts with counted assertions
 pnpm tsx spike/verify-agents-md.ts                         # AGENTS.md loading, truncation, prompt order, no model calls
 pnpm tsx spike/verify-system-prompt.ts                     # default prompt, override precedence, fallbacks, no model calls
 pnpm tsx spike/verify-permission-modes.ts                  # risk rules and per-mode gate decisions, no model calls
@@ -596,6 +632,7 @@ AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens 
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts     # agent core, permissions, resume, AGENTS.md injection
 AWS_REGION=us-west-2 pnpm tsx spike/verify-mcp.ts          # real stdio MCP server
 AWS_REGION=us-west-2 pnpm tsx spike/verify-skills-live.ts  # both skill trigger paths
+AWS_REGION=us-west-2 pnpm tsx spike/verify-developer-live.ts # opt-in Host → persistent child workflow
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts          # the TUI, driven through a pty
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts      # real git repo, read → fix → test
 ```

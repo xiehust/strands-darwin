@@ -178,6 +178,11 @@ The report shows short id, presentation-only command summary, state, and elapsed
 - `spike/verify-tui.ts tasks`: anchored proof that one completion arrives after idle was established, `/tasks` renders during streaming, another completion arrives during that same turn, both precede the final word, and exit is deadline-bounded.
 - Manager-level tests own exactly-once stop/success/failure and unsubscribe semantics; do not duplicate private-manager assertions in React tests.
 
+### Developer supervisor live scenario
+
+`spike/verify-developer-live.ts` is the opt-in cross-process acceptance for `/developer`. Drive the real Host TUI in a temporary git repository, wait for the first managed `taskId` result before submitting `/tasks` (the rendered command can precede manager registration), and assert `/tasks` renders while the Host remains busy. Then prove two retained child logs use one exact `session-*`, the second command contains `--session`, no grandchild task was created, no command drifted to the Host source cwd, the intended diff exists, and an independently invoked fixture test passes. Keep every wait and process exit deadline-bounded; remove the temporary repository in `finally`.
+
+
 ### 7. Wrong vs Correct
 
 ```typescript

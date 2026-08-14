@@ -15,6 +15,7 @@
 import type { Dirent } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import matter from 'gray-matter';
 
@@ -25,6 +26,9 @@ export const RESOURCE_DIRS = ['scripts', 'references', 'assets'] as const;
 
 export const SKILL_FILENAME = 'SKILL.md';
 export const SKILLS_DIRNAME = 'skills';
+
+/** Assets live beside this module in both `src/` and copied `dist/src/` output. */
+export const BUILTIN_SKILLS_DIR = fileURLToPath(new URL('./builtin', import.meta.url));
 
 export interface Skill {
   name: string;
@@ -55,19 +59,40 @@ export interface SkillScan {
  */
 export async function scanSkills(root: string): Promise<SkillScan> {
   const skillsDir = path.join(darwinDir(root), SKILLS_DIRNAME);
+  const skills: Skill[] = [];
+  const problems: SkillProblem[] = [];
+  const seen = new Map<string, string>();
+
+  // Built-ins are a product contract: unlike optional project skills, a missing
+  // packaged asset is fatal rather than silently removing a promised capability.
+  const builtinEntries = await readdir(BUILTIN_SKILLS_DIR, { withFileTypes: true });
+  await scanDirectory(BUILTIN_SKILLS_DIR, builtinEntries, 'built-in', skills, problems, seen);
+  if (!skills.some((skill) => skill.name.toLowerCase() === 'developer')) {
+    throw new Error(`Required built-in developer skill is missing from ${BUILTIN_SKILLS_DIR}`);
+  }
 
   let entries: Dirent[];
   try {
     entries = await readdir(skillsDir, { withFileTypes: true });
   } catch {
-    // No skills directory at all is the common case, not a problem to report.
-    return { skills: [], problems: [] };
+    // No project skills directory is the common case. Built-ins still remain.
+    skills.sort((a, b) => a.name.localeCompare(b.name));
+    return { skills, problems };
   }
 
-  const skills: Skill[] = [];
-  const problems: SkillProblem[] = [];
-  const seen = new Map<string, string>();
+  await scanDirectory(skillsDir, entries, 'project', skills, problems, seen);
+  skills.sort((a, b) => a.name.localeCompare(b.name));
+  return { skills, problems };
+}
 
+async function scanDirectory(
+  skillsDir: string,
+  entries: readonly Dirent[],
+  owner: 'built-in' | 'project',
+  skills: Skill[],
+  problems: SkillProblem[],
+  seen: Map<string, string>,
+): Promise<void> {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
 
@@ -77,33 +102,37 @@ export async function scanSkills(root: string): Promise<SkillScan> {
     let raw: string;
     try {
       raw = await readFile(skillFile, 'utf8');
-    } catch {
-      // A directory without SKILL.md is not a skill; ignore it silently so
-      // unrelated folders under .darwin/skills/ do not generate noise.
+    } catch (error) {
+      if (owner === 'built-in') throw error;
+      // A project directory without SKILL.md is not a skill; ignore it silently.
       continue;
     }
 
     const parsed = parseSkill(raw, directory, skillFile, entry.name);
     if ('reason' in parsed) {
+      if (owner === 'built-in') {
+        throw new Error(`Invalid built-in skill at ${directory}: ${parsed.reason}`);
+      }
       problems.push({ directory, reason: parsed.reason });
       continue;
     }
 
-    const duplicateOf = seen.get(parsed.name);
+    const key = parsed.name.toLowerCase();
+    const duplicateOf = seen.get(key);
     if (duplicateOf !== undefined) {
       problems.push({
         directory,
-        reason: `duplicate skill name "${parsed.name}" (already defined by ${duplicateOf})`,
+        reason:
+          owner === 'project' && duplicateOf.startsWith(`${BUILTIN_SKILLS_DIR}${path.sep}`)
+            ? `skill name "${parsed.name}" is reserved by built-in skill ${path.basename(duplicateOf)}`
+            : `duplicate skill name "${parsed.name}" (already defined by ${duplicateOf})`,
       });
       continue;
     }
 
-    seen.set(parsed.name, directory);
+    seen.set(key, directory);
     skills.push(parsed);
   }
-
-  skills.sort((a, b) => a.name.localeCompare(b.name));
-  return { skills, problems };
 }
 
 function parseSkill(
