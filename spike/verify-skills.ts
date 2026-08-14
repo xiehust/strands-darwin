@@ -119,7 +119,7 @@ async function missingDirectory(): Promise<void> {
   assert('load_skill can load the built-in developer', loaded?.content.includes('# Developer supervisor') === true);
   const workflow = loaded?.content ?? '';
   assert('developer frames requirement, acceptance, repository, and authorization', ['exact requirement', 'acceptance checks', 'absolute target repository root', 'authorized mutation'].every((term) => workflow.includes(term)));
-  assert('developer requires managed launch and lifecycle/output monitoring', workflow.includes('`start` mode') && workflow.includes('bash status') && workflow.includes('bash output'));
+  assert('developer requires managed launch and complete output consumption', workflow.includes('`start` mode') && workflow.includes('bash status') && workflow.includes('call `bash output` at least once') && workflow.includes('until `hasMore: false`'));
   assert('developer forbids recursive delegation and target-root drift', workflow.includes('must not load the `developer` skill') && workflow.includes('Do not substitute the Host\'s source repository'));
   assert('developer marks planning turns for hook-enforced read-only behavior', workflow.includes('DARWIN_PLANNING_ONLY=1'));
   assert('developer separates task and conversation ids', workflow.includes('not the `bg-*` task id') && workflow.includes('^session: ([a-z0-9_-]+)$'));
