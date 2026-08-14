@@ -62,6 +62,9 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | Background `start` receives blank/malformed input | SDK/Zod error result; spawn nothing | A lifecycle-safe management shape must not smuggle a command |
 | Background task id is malformed or unknown | Error naming the invalid/unknown id; never derive a filesystem path or PID from it | The in-memory task map is the authority boundary |
 | Background log is removed or unreadable | `status` still returns process metadata with `outputBytes: null`; `output` errors with the owned log path | Losing diagnostics must not lose process control or read another path |
+| Background `list` contains irrelevant fields | SDK/Zod error result; do not reinterpret `command`, `timeout`, or `taskId` | A safe read shape must not smuggle execution input or imply id filtering |
+| Background terminal listener throws/rejects | Ignore that observer failure and continue other listeners/cleanup | UI notification is advisory and cannot become process lifecycle authority |
+| Terminal status log snapshot cannot open/stat/close | Publish exactly once with `outputBytes: null`; suppress no event and create no unhandled rejection | Losing diagnostics must not make a finished job invisible |
 | Background spawn/setup fails | Reject start, close the parent log handle, kill any exposed process group, retain an unconfirmed group for exit fallback | A partially launched command is still darwin-owned |
 | Background stop / natural leader exit | Bounded process-group SIGTERM (500 ms) then SIGKILL (500 ms); terminal status only after group disappearance | Killing only the leader or reporting success early creates or hides orphans |
 | Runtime shutdown races a background start | Latch closed, await tracked launches, then stop the visible running set | A start must reject before spawn or enter the cleanup snapshot |

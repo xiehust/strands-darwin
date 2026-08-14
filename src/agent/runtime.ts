@@ -29,7 +29,12 @@ import {
   type AppConfig,
   type ModelChoice,
 } from '../config.js';
-import { BackgroundBashManager, createBackgroundBashTool } from '../tools/background-bash.js';
+import {
+  BackgroundBashManager,
+  createBackgroundBashTool,
+  type BackgroundTaskListener,
+  type BackgroundTaskStatus,
+} from '../tools/background-bash.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
@@ -506,6 +511,16 @@ export class AgentRuntime {
       cacheReadInputTokens: usage.cacheReadInputTokens ?? 0,
       cacheWriteInputTokens: usage.cacheWriteInputTokens ?? 0,
     };
+  }
+
+  /** Current-process background tasks, without creating an agent tool call. */
+  listBackgroundTasks(): Promise<BackgroundTaskStatus[]> {
+    return this.backgroundBash.list();
+  }
+
+  /** Publishes future terminal task snapshots until the returned closure is called. */
+  subscribeToBackgroundTasks(listener: BackgroundTaskListener): () => void {
+    return this.backgroundBash.subscribe(listener);
   }
 
   /**

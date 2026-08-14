@@ -4,7 +4,7 @@
  * Covers what only an interactive run can show: streaming text reaching the
  * screen, the permission prompt appearing with usable detail and actually gating
  * the write, exiting cleanly after a bash command, staying usable after a
- * cancelled turn, slash-command completion, and the local `/usage` report.
+ * cancelled turn, slash-command completion, and the local `/tasks` and `/usage` reports.
  *
  * Waits are anchored with `mark()`. Ink redraws the whole frame constantly, so an
  * unanchored wait for something like `you>` matches a frame from before the
@@ -14,7 +14,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | chunkedEnter | completion | agentsMd | usage | effort | model
+ *                 cancelThenContinue | multiline | chunkedEnter | completion | agentsMd | usage | tasks | effort | model
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -559,6 +559,24 @@ async function slashCompletion(): Promise<void> {
       tui.screen.includes('agent skipped:') && tui.screen.includes('agent system prompt is empty'),
     );
 
+
+    const beforeTasks = tui.mark();
+    tui.submit('/tasks');
+    await tui.waitFor('background tasks — none in this run', { timeoutMs: 30_000, from: beforeTasks, settleMs: 400 });
+    const emptyTasks = tui.screen.slice(beforeTasks);
+    assert('/tasks reports an explicit empty current-run state without starting a turn', emptyTasks.includes('background tasks — none in this run') && !emptyTasks.includes('working…'));
+
+    const beforeTasksArgument = tui.mark();
+    tui.submit('/tasks extra');
+    await tui.waitFor('/tasks takes no arguments', { timeoutMs: 30_000, from: beforeTasksArgument, settleMs: 400 });
+    assert('/tasks rejects arguments without starting a turn', !tui.screen.slice(beforeTasksArgument).includes('working…'));
+
+    const beforeTasksTabArgument = tui.mark();
+    tui.submit('/tasks\textra');
+    await tui.waitFor('/tasks takes no arguments', { timeoutMs: 30_000, from: beforeTasksTabArgument, settleMs: 400 });
+    assert('/tasks rejects non-space argument separators locally', !tui.screen.slice(beforeTasksTabArgument).includes('working…'));
+
+
     const beforeSlash = tui.mark();
     tui.send('/');
     await tui.waitFor('commands (', { timeoutMs: 30_000, from: beforeSlash });
@@ -588,6 +606,8 @@ async function slashCompletion(): Promise<void> {
     assert('the built-ins are listed first', completed.includes('❯ /compact'));
     assert('the built-in /effort is listed', completed.includes('  /effort'));
     assert('the built-in /exit is listed', completed.includes('  /exit'));
+      assert('the built-in /tasks is listed', completed.includes('  /tasks'));
+
     assert('the built-in /usage is listed', completed.includes('  /usage'));
     assert(
       'runtime completion order is built-ins, custom commands, then skills',
@@ -784,6 +804,60 @@ async function usageDuringATurn(tui: TuiSession): Promise<void> {
   );
   await waitForIdle(tui, 240_000);
   assert('the turn survived being asked', tui.screen.slice(turn).includes('token usage'));
+}
+
+
+/**
+ * Real model/pty coverage for task notices and a local list read during streaming.
+ * The model starts manager-owned jobs through the real bash tool; no test-only
+ * registry access is involved.
+ */
+async function taskMonitoring(): Promise<void> {
+  header('TUI — background task monitoring');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR, args: ['--yolo'] });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const idleMarker = path.join(WORK_DIR, 'release-idle-task');
+    const successTurn = tui.mark();
+    tui.submit(`Use bash start to run exactly \`while [ ! -f ${idleMarker} ]; do sleep .1; done; printf 'task-notice-ok\\n'\`, then immediately finish your answer without waiting or calling bash status/output.`);
+    await tui.waitFor(/✓ bash/, { timeoutMs: 180_000, from: successTurn });
+    await waitForIdle(tui, 240_000);
+    const idleStart = tui.mark();
+    await writeFile(idleMarker, 'release');
+
+    await tui.waitFor(' succeeded in ', { timeoutMs: 30_000, from: idleStart, settleMs: 400 });
+    assert('a successful task completion appears while idle without further input', tui.screen.slice(idleStart).includes('background task bg-'));
+
+    const streamingMarker = path.join(WORK_DIR, 'release-streaming-task');
+    const failureTurn = tui.mark();
+    tui.submit(`Use bash start to run exactly \`while [ ! -f ${streamingMarker} ]; do sleep .1; done; exit 7\`, then immediately finish your answer without waiting or calling bash status/output.`);
+    await tui.waitFor(/✓ bash/, { timeoutMs: 180_000, from: failureTurn });
+    await waitForIdle(tui, 240_000);
+
+    const streamingTurn = tui.mark();
+    tui.submit('Write the numbers 1 through 80 in words, one per line, then end with the exact marker TASK_TURN_COMPLETE. Do not use any tools.');
+    await tui.waitFor('working…', { timeoutMs: 60_000, from: streamingTurn });
+    const duringTurn = tui.mark();
+    tui.submit('/tasks');
+    await tui.waitFor('background tasks — this run (2)', { timeoutMs: 60_000, from: duringTurn, settleMs: 400 });
+    assert('/tasks renders during a streaming turn', tui.screen.slice(duringTurn).includes('succeeded') && tui.screen.slice(duringTurn).includes('running'));
+    await writeFile(streamingMarker, 'release');
+    await tui.waitFor('failed (exit 7)', { timeoutMs: 30_000, from: duringTurn, settleMs: 400 });
+    assert('a completion notice appears during streaming with failure metadata', tui.screen.slice(duringTurn).includes('background task bg-'));
+    await tui.waitFor('TASK_TURN_COMPLETE', { timeoutMs: 240_000, from: duringTurn });
+    const streamingRegion = tui.screen.slice(duringTurn);
+    assert('/tasks and completion both appear before the active turn completes', streamingRegion.indexOf('background tasks —') < streamingRegion.indexOf('TASK_TURN_COMPLETE') && streamingRegion.indexOf('failed (exit 7)') < streamingRegion.indexOf('TASK_TURN_COMPLETE'));
+    await waitForIdle(tui, 240_000);
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exits cleanly after monitored background tasks', code === 0);
+  } finally {
+    tui.kill();
+  }
 }
 
 /**
@@ -1028,6 +1102,7 @@ const SCENARIOS = {
   completion: slashCompletion,
   agentsMd: agentsMdHeader,
   usage: usageReport,
+  tasks: taskMonitoring,
   effort: effortCommand,
   model: modelCommand,
 } as const;

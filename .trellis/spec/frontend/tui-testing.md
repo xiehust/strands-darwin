@@ -130,6 +130,73 @@ const completions = [...builtins, ...commands, ...skills];
 const completions = [...BUILTIN_COMMAND_NAMES, ...info.commandNames, ...info.skillNames];
 ```
 
+## Background task monitoring contract
+
+### 1. Scope / trigger
+
+Changes to background-task listing, terminal subscriptions, `/tasks`, or completion notices cross manager → runtime → React reducer → Ink `<Static>` boundaries. Verify manager semantics directly and user visibility through a real pty.
+
+### 2. Signatures
+
+```typescript
+runtime.listBackgroundTasks(): Promise<BackgroundTaskStatus[]>
+runtime.subscribeToBackgroundTasks(listener): () => void
+/tasks // local command; no arguments; valid while idle or streaming
+```
+
+The report shows short id, presentation-only command summary, state, and elapsed duration. Running duration ends at report time; terminal duration ends at `finishedAt`.
+
+### 3. Contracts
+
+- Handle `/tasks` before the busy-turn guard, like `/usage`. Match any whitespace separator (`/^\/tasks(?:\s|$)/`) so tab/newline arguments are rejected locally rather than reaching the model.
+- `/tasks` reads the runtime manager directly: it must not call `send`, cancel, queue, or emit a tool event. Empty state says `none in this run` because `--resume` does not restore process control.
+- Subscribe in a mounted `useEffect` and return the unsubscribe closure. Dispatch only a `notice`; never `turnEnded` or status changes. The dim `<Static>` history entry is non-modal, visible while idle, and cannot steal permission/input focus.
+- Normalize command whitespace and bound summaries only at presentation time. Truncate by Unicode code points, not UTF-16 code units, so an emoji boundary cannot render `�`; agent-side list output keeps the full command.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| No current-runtime tasks | One dim `background tasks — none in this run` report |
+| `/tasks` plus space/tab/newline argument | `/tasks takes no arguments`; no model turn |
+| List read fails | Dim actionable notice; active turn remains untouched |
+| Task finishes while streaming/permission-blocked | Append notice; active turn and prompt ownership continue |
+| Task finishes while idle | React dispatch redraws immediately without keyboard input |
+| TUI unmounts before runtime shutdown stops jobs | Effect unsubscribes; no write into dead renderer |
+| Long/multiline/Unicode command | Single-line bounded complete-code-point summary |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** `/tasks` appears before the active turn's last word; a later failure notice also appears before that word; the turn still reaches normal idle.
+- **Base:** empty `/tasks` while idle is free and starts no model request.
+- **Bad:** polling from React delays idle notices; calling `turnEnded` for a task event clears live assistant/tool state; matching only `'/tasks '` lets tab arguments leak to the model.
+
+### 6. Tests Required
+
+- `spike/verify-task-format.ts`: whitespace, bounds, Unicode code-point truncation, running/terminal time endpoints, empty report, and failure metadata.
+- `spike/verify-tui.ts completion`: zero-model `/tasks`, space/tab argument rejection, completion row, and no `working…` marker.
+- `spike/verify-tui.ts tasks`: anchored proof that one completion arrives after idle was established, `/tasks` renders during streaming, another completion arrives during that same turn, both precede the final word, and exit is deadline-bounded.
+- Manager-level tests own exactly-once stop/success/failure and unsubscribe semantics; do not duplicate private-manager assertions in React tests.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: status mutation interrupts the model UI, and polling delays idle delivery.
+setInterval(async () => {
+  dispatch({ type: 'turnEnded' })
+  render(await runtime.listBackgroundTasks())
+}, 1000)
+
+// CORRECT: one observer-only subscription for the mounted renderer.
+useEffect(
+  () => runtime.subscribeToBackgroundTasks((task) => {
+    dispatch({ type: 'notice', text: formatTaskCompletion(task) })
+  }),
+  [runtime],
+)
+```
+
+
 Component-level testing (ink-testing-library) was rejected: the bugs worth catching
 (permission gating, resume, process exit) live in the seams, not in components.
 

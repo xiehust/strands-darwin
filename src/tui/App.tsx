@@ -35,6 +35,7 @@ import { MessageList } from './MessageList.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 import { ActiveToolCalls } from './ToolCallPanel.js';
 import type { PermissionQueue } from './permission-queue.js';
+import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
 
 /** Window in which a second Ctrl+C means "exit", not "cancel again". */
@@ -110,6 +111,16 @@ export function App({
     [dispatch],
   );
 
+  // Terminal task events are transcript-only observers: they never alter turn
+  // status, active tools, permissions, or the agent loop. React dispatch also
+  // causes an immediate idle render; cleanup prevents shutdown notices after exit.
+  useEffect(
+    () => runtime.subscribeToBackgroundTasks((task) => {
+      dispatch({ type: 'notice', text: formatTaskCompletion(task) });
+    }),
+    [runtime],
+  );
+
   const runTurn = useCallback(
     async (text: string) => {
       setStatus('streaming');
@@ -162,6 +173,28 @@ export function App({
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
         applyEffortCommand(runtime, text, dispatch);
+        return;
+      }
+
+      // Reads the manager directly rather than entering the model/tool loop. Like
+      // /usage it remains available mid-turn and cannot queue or cancel work.
+      if (/^\/tasks(?:\s|$)/.test(text)) {
+        setDraft('');
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/tasks') {
+          dispatch({ type: 'notice', text: '/tasks takes no arguments' });
+          return;
+        }
+        try {
+          const tasks = await runtime.listBackgroundTasks();
+          dispatch({ type: 'notice', text: formatTasksReport(tasks) });
+        } catch (error) {
+          dispatch({
+            type: 'notice',
+            text: `could not list background tasks: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
         return;
       }
 
@@ -457,7 +490,7 @@ export function App({
           disabled={effectiveStatus === 'streaming' || effectiveStatus === 'compacting'}
           hint={
             effectiveStatus === 'streaming'
-              ? 'working… /usage reports tokens · ctrl+c cancels this turn'
+              ? 'working… /tasks lists jobs · /usage reports tokens · ctrl+c cancels this turn'
               : effectiveStatus === 'compacting'
                 ? 'compacting conversation…'
                 : undefined
@@ -568,7 +601,7 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       {/* Extends the existing line rather than adding one: see the frame-height
           comment above. */}
       <Text dimColor>
-        /exit to quit · /usage for token counts · /effort sets thinking depth · ctrl+c cancels a turn
+        /exit to quit · /tasks lists jobs · /usage for token counts · /effort sets thinking depth · ctrl+c cancels a turn
       </Text>
     </Box>
   );

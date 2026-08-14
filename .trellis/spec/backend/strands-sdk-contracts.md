@@ -276,6 +276,7 @@ a durable scheduler.
 bash({ mode: 'start', command: string }): Promise<{
   taskId: string; pid: number; outputPath: string
 }>
+bash({ mode: 'list' }): Promise<BackgroundTaskStatus[]>
 bash({ mode: 'status', taskId: string }): Promise<BackgroundTaskStatus>
 bash({ mode: 'output', taskId: string }): Promise<{
   taskId: string; output: string; startOffset: number; endOffset: number;
@@ -300,6 +301,13 @@ values. Background states are `running | succeeded | failed | stopped`.
 - Task ids are runtime-unique UUIDs and map lookups are the only authority boundary; never
   derive a path from user-supplied `taskId`. Logs survive exit, but `--resume` restores
   neither registry nor cursor.
+- `list` snapshots the insertion-ordered in-memory registry through each task's serialization
+  queue. It needs no id and returns the full status contract; an empty registry returns `[]`.
+- `subscribe(listener)` publishes one immutable snapshot after each first transition to
+  `succeeded`, `failed`, or `stopped`. Publish from the manager's single terminal transition,
+  isolate sync/async listener failures, and return an unsubscribe closure. Diagnostic log
+  open/stat/close failure degrades to `outputBytes: null`; it must not suppress the event or
+  create an unhandled rejection.
 - `output` serializes per task, returns at most 64 KiB plus up to three bytes needed to
   complete the final UTF-8 character, and advances a byte cursor without duplicates. Hold
   an incomplete suffix while the file is growing; terminal malformed bytes may decode as
@@ -315,8 +323,8 @@ values. Background states are `running | succeeded | failed | stopped`.
   sends SIGKILL to remaining groups; the SDK's SIGINT/SIGTERM handlers call `process.exit`,
   so `exit` is the reliable composition point.
 - `start` is an execute permission and retains `input.command`, so existing
-  `bash:<pattern>` rules and auto/default/yolo behavior apply. `status`, `output`, `stop`,
-  and `restart` are safe lifecycle calls. Existing Pre/Post hooks see each immediate outer
+  `bash:<pattern>` rules and auto/default/yolo behavior apply. `list`, `status`, `output`,
+  `stop`, and `restart` are safe lifecycle calls. Existing Pre/Post hooks see each immediate outer
   `bash` call, not eventual background completion.
 
 ### 4. Validation & Error Matrix
@@ -333,22 +341,28 @@ values. Background states are `running | succeeded | failed | stopped`.
 | Shutdown races launch setup | Launch rejects before spawn or becomes visible and is stopped |
 | Bounded cleanup cannot confirm disappearance | Keep group registered for synchronous exit cleanup |
 | Child finishes after `start` | Child foreground `restart` must not stop manager-owned work |
+| `list` carries `command`, `timeout`, or `taskId` | Zod tool error; do not reinterpret it as another mode |
+| Terminal listener throws/rejects | Continue notifying other listeners; process state/cleanup remains authoritative |
+| Terminal log snapshot cannot open/stat/close | Notify once with `outputBytes: null`; no unhandled rejection |
+
 
 ### 5. Good / Base / Bad Cases
 
-- **Good:** a child starts a dev server, returns its task id, and the parent incrementally
-  reads output and later stops the entire process group.
-- **Base:** `execute` and `restart` flow unchanged through the SDK persistent shell.
-- **Bad:** shell `&`, dropping the `ChildProcess`, or killing only the leader creates orphan
-  descendants; a second tool name bypasses existing bash permissions/hooks; persisting task
-  metadata falsely promises resumable process control.
+- **Good:** a child starts a dev server, the parent lists it without knowing its id, and a
+  mounted observer receives exactly one terminal snapshot before later output inspection.
+- **Base:** an empty manager lists `[]`; `execute` and `restart` flow unchanged through the SDK
+  persistent shell.
+- **Bad:** polling status in each consumer duplicates transition logic; notifying from both
+  `close` and `stop` duplicates events; shell `&`, dropping the `ChildProcess`, or killing only
+  the leader creates orphan descendants; persisting task metadata falsely promises resumable
+  process control.
 
 ### 6. Tests Required
 
 - `spike/verify-background-bash.ts`: foreground delegation/per-Agent persistence, real
-  subagent sharing, permission modes/rules/hooks, delayed combined output, concurrent and
-  split-UTF-8 reads, status/errors, TERM→KILL stop, natural-exit descendants, launch/shutdown
-  races, and bounded cleanup.
+  subagent sharing, permission modes/rules/hooks, empty/ordered list snapshots, exactly-once
+  success/failure/stop events, unsubscribe/listener/log-snapshot failure isolation, delayed
+  combined output, split-UTF-8 reads, TERM→KILL stop, launch/shutdown races, and bounded cleanup.
 - `spike/probe-background-bash-exit.ts`: direct exit, normal shutdown, CLI-style forced
   exit, SIGINT, and SIGTERM with SDK bash signal handlers loaded; leader and descendant must
   both disappear within deadlines.
@@ -362,10 +376,13 @@ values. Background states are `running | succeeded | failed | stopped`.
 spawn('/bin/bash', ['-lc', `${command} &`])
 child.kill('SIGTERM')
 
-// CORRECT: one wrapped bash tool, shared manager, process-group ownership.
+// CORRECT: one wrapped bash tool, shared manager, process-group ownership and events.
 const backgroundBash = new BackgroundBashManager(projectRoot, sessionId)
 const bash = createBackgroundBashTool(backgroundBash)
-process.kill(-task.pid, 'SIGTERM')
+const unsubscribe = backgroundBash.subscribe(renderTerminalTask)
+const tasks = await backgroundBash.list()
+process.kill(-tasks[0].pid, 'SIGTERM')
+unsubscribe()
 await backgroundBash.shutdown()
 ```
 

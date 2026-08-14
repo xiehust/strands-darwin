@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['compact', 'effort', 'exit', 'model', 'usage'] as const;
+export const BUILTIN_COMMAND_NAMES = ['compact', 'effort', 'exit', 'model', 'tasks', 'usage'] as const;
 
 /** `/quit` works as an alias but deliberately does not consume a completion row. */
 const RESERVED_COMMAND_NAMES = [...BUILTIN_COMMAND_NAMES, 'quit'] as const;

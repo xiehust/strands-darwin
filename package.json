@@ -14,7 +14,7 @@
     "build": "tsc",
     "start": "tsx src/cli.ts",
     "dev-repl": "tsx src/dev-repl.ts",
-    "test": "tsx spike/verify-config.ts && tsx spike/verify-background-bash.ts && tsx spike/verify-permission-modes.ts && tsx spike/verify-tool-hooks.ts && tsx spike/verify-mcp-config.ts && tsx spike/verify-skills.ts && tsx spike/verify-custom-commands.ts && tsx spike/verify-subagents.ts && tsx spike/verify-agents-md.ts && tsx spike/verify-system-prompt.ts && tsx spike/verify-prompt-cache.ts && tsx spike/verify-compact.ts && tsx spike/verify-thinking.ts && tsx spike/verify-model-command.ts"
+    "test": "tsx spike/verify-config.ts && tsx spike/verify-background-bash.ts && tsx spike/verify-task-format.ts && tsx spike/verify-permission-modes.ts && tsx spike/verify-tool-hooks.ts && tsx spike/verify-mcp-config.ts && tsx spike/verify-skills.ts && tsx spike/verify-custom-commands.ts && tsx spike/verify-subagents.ts && tsx spike/verify-agents-md.ts && tsx spike/verify-system-prompt.ts && tsx spike/verify-prompt-cache.ts && tsx spike/verify-compact.ts && tsx spike/verify-thinking.ts && tsx spike/verify-model-command.ts"
   },
   "keywords": [],
   "author": "",

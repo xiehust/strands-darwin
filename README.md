@@ -271,12 +271,16 @@ modes are:
 | `execute` | `command`, optional `timeout` | Runs in the SDK's persistent foreground shell, unchanged |
 | `restart` | — | Recycles that foreground shell |
 | `start` | `command` | Starts a session-owned process group and immediately returns a task id, PID, and log path |
+| `list` | — | Returns full status snapshots for every current-runtime task in launch order |
 | `status` | `taskId` | Returns command, state, timing, exit metadata, log path, and output byte count |
 | `output` | `taskId` | Returns the next complete UTF-8 chunk (at most 64 KiB, plus bytes needed to finish its final character) from that task's remembered cursor |
 | `stop` | `taskId` | Stops the task's whole process group with bounded TERM→KILL cleanup |
 
-A task is `running`, `succeeded`, `failed`, or `stopped`. Standard output and standard
-error are combined in
+A task is `running`, `succeeded`, `failed`, or `stopped`. The local `/tasks` command lists
+all jobs in this run with concise command text and elapsed time, without sending a model
+request; it is also available while a turn streams. Darwin adds a dim transcript notice as
+each task succeeds, fails, or is stopped, including failure exit metadata when available.
+Standard output and standard error are combined in
 `.darwin/sessions/<session-id>/background/<task-id>.log`; the absolute path is included
 in start and status results for full replay. Logs remain after completion and after darwin
 exits, and are not pruned automatically.
@@ -290,7 +294,7 @@ bash, uncatchable termination such as `SIGKILL` or machine failure cannot provid
 guarantee.
 
 `start` follows the same permission mode and `bash:<pattern>` allow rules as `execute`.
-`status`, `output`, `stop`, and `restart` are safe lifecycle operations and do not prompt.
+`list`, `status`, `output`, `stop`, and `restart` are safe lifecycle operations and do not prompt.
 
 ## Permissions
 

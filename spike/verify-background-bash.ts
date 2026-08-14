@@ -129,18 +129,30 @@ async function managerContracts(): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), 'darwin-background-'));
   const manager = new BackgroundBashManager(root, 'session-same');
   try {
+    assert('an empty manager lists no tasks', (await manager.list()).length === 0);
+    const terminalEvents: BackgroundTaskStatus[] = [];
+    const unsubscribe = manager.subscribe((task) => { terminalEvents.push(task); });
+
     const before = Date.now();
     const started = await manager.start("printf 'out\\n'; sleep .15; printf 'err\\n' >&2; exit 7");
     assert('start returns before delayed command completes', Date.now() - before < 140);
     assert('start returns opaque id, pid, and absolute log path', started.taskId.startsWith('bg-') && started.pid > 0 && path.isAbsolute(started.outputPath));
 
     const terminal = await eventually(() => manager.status(started.taskId), (status) => status.state !== 'running');
+    await eventually(async () => terminalEvents.length, (count) => count === 1);
+    assert('failure publishes exactly one terminal snapshot with metadata', terminalEvents[0]?.taskId === started.taskId && terminalEvents[0].exitCode === 7);
+    const listedAfterFailure = await manager.list();
+    assert('list retains the full status contract and command', listedAfterFailure.length === 1 && listedAfterFailure[0]?.command === "printf 'out\\n'; sleep .15; printf 'err\\n' >&2; exit 7" && listedAfterFailure[0].outputPath === started.outputPath);
+
     assert('nonzero command reaches failed with exit metadata', terminal.state === 'failed' && terminal.exitCode === 7 && terminal.finishedAt !== null);
     const output = await manager.output(started.taskId);
     assert('stdout and stderr share retained file', output.output === 'out\nerr\n' && (await readFile(started.outputPath, 'utf8')) === output.output);
 
     const large = await manager.start("node -e \"process.stdout.write('a'.repeat(65535) + '€' + 'z')\"");
     await eventually(() => manager.status(large.taskId), (status) => status.state === 'succeeded');
+    const launchOrder = await manager.list();
+    assert('list order is deterministic launch order', launchOrder[0]?.taskId === started.taskId && launchOrder[1]?.taskId === large.taskId);
+
     const [first, second] = await Promise.all([manager.output(large.taskId), manager.output(large.taskId)]);
     assert('concurrent reads consume disjoint ordered cursor ranges', first.startOffset === 0 && second.startOffset === first.endOffset);
     assert('UTF-8 boundary is complete and hasMore leads to remainder', first.output.endsWith('€') && first.hasMore && second.output === 'z' && !second.hasMore);
@@ -164,6 +176,9 @@ async function managerContracts(): Promise<void> {
     const [stop1, stop2] = await Promise.all([manager.stop(running.taskId), manager.stop(running.taskId)]);
     assert('concurrent stop is idempotent and stable', stop1.state === 'stopped' && stop2.state === 'stopped');
     await eventually(async () => exists(descendant), (alive) => !alive);
+    await eventually(async () => terminalEvents.filter((event) => event.taskId === running.taskId).length, (count) => count === 1);
+    assert('concurrent stop publishes exactly one stopped event', terminalEvents.filter((event) => event.taskId === running.taskId && event.state === 'stopped').length === 1);
+
     assert('stop reaps the process-group descendant', !exists(descendant));
 
     const stubbornChildFile = path.join(root, 'stubborn-descendant.pid');
@@ -183,6 +198,47 @@ async function managerContracts(): Promise<void> {
     const escaped = Number((await eventually(() => readFile(escapedFile, 'utf8').catch(() => ''), Boolean)).trim());
     const naturalTerminal = await eventually(() => manager.status(natural.taskId), (status) => status.state !== 'running', 3_000);
     assert('natural leader exit cleans stubborn descendants before success', naturalTerminal.state === 'succeeded' && !exists(escaped));
+    await eventually(async () => terminalEvents.filter((event) => event.taskId === natural.taskId).length, (count) => count === 1);
+    assert('natural success publishes exactly once', terminalEvents.filter((event) => event.taskId === natural.taskId && event.state === 'succeeded').length === 1);
+
+    unsubscribe();
+    const afterUnsubscribe = await manager.start('true');
+    await eventually(() => manager.status(afterUnsubscribe.taskId), (status) => status.state === 'succeeded');
+    assert('unsubscribe suppresses later terminal events', terminalEvents.every((event) => event.taskId !== afterUnsubscribe.taskId));
+
+    let isolatedDelivered = false;
+    manager.subscribe(() => { throw new Error('listener failure'); });
+    manager.subscribe(async () => { throw new Error('async listener failure'); });
+    const unsubscribeIsolated = manager.subscribe(() => { isolatedDelivered = true; });
+    const isolated = await manager.start('true');
+    await eventually(() => manager.status(isolated.taskId), (status) => status.state === 'succeeded');
+    await eventually(async () => isolatedDelivered, Boolean);
+    assert('listener failures do not suppress cleanup or other listeners', isolatedDelivered);
+    unsubscribeIsolated();
+
+    let closeFailureDelivered = false;
+    const snapshotCloseFailure = new BackgroundBashManager(root, 'session-snapshot-close-failure', async (...args: Parameters<typeof open>) => {
+      const handle = await open(...args);
+      if (args[1] !== 'wx') {
+        const originalClose = handle.close.bind(handle);
+        handle.close = async () => {
+          await originalClose();
+          throw new Error('synthetic snapshot close failure');
+        };
+      }
+      return handle;
+    });
+    snapshotCloseFailure.subscribe(() => { closeFailureDelivered = true; });
+    const closeFailureTask = await snapshotCloseFailure.start('true');
+    const closeFailureStatus = await eventually(
+      () => snapshotCloseFailure.status(closeFailureTask.taskId),
+      (status) => status.state === 'succeeded',
+    );
+    await eventually(async () => closeFailureDelivered, Boolean);
+    assert('diagnostic handle close failure degrades metadata without suppressing the event', closeFailureStatus.outputBytes === null && closeFailureDelivered);
+    await snapshotCloseFailure.shutdown();
+
+
 
     const deleted = await manager.start('printf retained');
     await eventually(() => manager.status(deleted.taskId), (status) => status.state === 'succeeded');
@@ -238,6 +294,18 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   assert('safe management modes reject an irrelevant command field', shapeError.includes('command is not accepted'));
 
   const context = { marker: true } as never;
+    const listed = await wrapped.invoke({ mode: 'list' }) as BackgroundTaskStatus[];
+    assert('bash list requires no task id and returns an empty list', listed.length === 0);
+    for (const smuggled of [
+      { mode: 'list', command: 'echo smuggled' },
+      { mode: 'list', timeout: 1 },
+      { mode: 'list', taskId: 'bg-x' },
+    ]) {
+      let listShapeError = '';
+      try { await wrapped.invoke(smuggled as never); } catch (error) { listShapeError = String(error); }
+      assert('bash list rejects irrelevant fields', listShapeError.includes('not accepted'));
+    }
+
   const execute = await wrapped.invoke({ mode: 'execute', command: 'echo hi', timeout: 9 }, context);
   const restart = await wrapped.invoke({ mode: 'restart' }, context);
   const compatibilityRestart = await wrapped.invoke({ mode: 'restart', command: 'ignored', timeout: 3, taskId: 'ignored' } as never, context);
@@ -293,8 +361,8 @@ async function wrapperAndPermissionContracts(): Promise<void> {
 
   const start = classify('bash', { mode: 'start', command: 'pnpm test' });
   assert('start has normal execute permission semantics', start.kind === 'execute' && assessRisk(start, root).risk === 'dangerous');
-  for (const mode of ['restart', 'status', 'output', 'stop'] as const) {
-    const request = classify('bash', mode === 'restart' ? { mode } : { mode, taskId: 'bg-x' });
+  for (const mode of ['restart', 'list', 'status', 'output', 'stop'] as const) {
+    const request = classify('bash', mode === 'restart' || mode === 'list' ? { mode } : { mode, taskId: 'bg-x' });
     assert(`${mode} is statically safe`, request.kind === 'read' && assessRisk(request, root).risk === 'safe');
   }
 

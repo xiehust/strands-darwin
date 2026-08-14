@@ -39,17 +39,20 @@ function installExitCleanup(): void {
 export type BackgroundTaskState = 'running' | 'succeeded' | 'failed' | 'stopped';
 
 export interface BackgroundTaskStatus {
-  taskId: string;
-  state: BackgroundTaskState;
-  command: string;
-  pid: number;
-  startedAt: string;
-  finishedAt: string | null;
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-  outputPath: string;
-  outputBytes: number | null;
+  readonly taskId: string;
+  readonly state: BackgroundTaskState;
+  readonly command: string;
+  readonly pid: number;
+  readonly startedAt: string;
+  readonly finishedAt: string | null;
+  readonly exitCode: number | null;
+  readonly signal: NodeJS.Signals | null;
+  readonly outputPath: string;
+  readonly outputBytes: number | null;
 }
+
+/** Receives one immutable snapshot when a task first reaches a terminal state. */
+export type BackgroundTaskListener = (task: Readonly<BackgroundTaskStatus>) => void | Promise<void>;
 
 export interface BackgroundStartResult {
   taskId: string;
@@ -88,6 +91,7 @@ interface ManagedTask {
 export class BackgroundBashManager {
   private readonly tasks = new Map<string, ManagedTask>();
   private readonly launches = new Set<Promise<unknown>>();
+  private readonly listeners = new Set<BackgroundTaskListener>();
   private readonly outputDirectory: string;
   private closing = false;
 
@@ -119,6 +123,19 @@ export class BackgroundBashManager {
     return this.serialize(task, () => this.snapshot(task));
   }
 
+  /** Snapshots every current-runtime task in deterministic launch order. */
+  async list(): Promise<BackgroundTaskStatus[]> {
+    return Promise.all([...this.tasks.values()].map((task) =>
+      this.serialize(task, () => this.snapshot(task)),
+    ));
+  }
+
+  /** Subscribes to future terminal transitions; completed tasks are not replayed. */
+  subscribe(listener: BackgroundTaskListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   async output(taskId: string): Promise<BackgroundOutputResult> {
     const task = this.lookup(taskId);
     return this.serialize(task, () => this.readOutput(task));
@@ -135,7 +152,7 @@ export class BackgroundBashManager {
     const stopping = this.serialize(task, async () => {
       if (task.state === 'running') {
         const cleaned = await cleanupProcessGroup(task.pid);
-        if (cleaned) this.finish(task, 'stopped');
+        if (cleaned) await this.finish(task, 'stopped');
       }
       return this.snapshot(task);
     });
@@ -245,18 +262,37 @@ export class BackgroundBashManager {
         const cleaned = await cleanupProcessGroup(task.pid);
         if (cleaned) {
           const state = task.stopRequested ? 'stopped' : code === 0 ? 'succeeded' : 'failed';
-          this.finish(task, state);
+          await this.finish(task, state);
         }
       });
-    });
+    }).catch(() => undefined);
 
     return { taskId: id, pid, outputPath };
   }
 
-  private finish(task: ManagedTask, state: Exclude<BackgroundTaskState, 'running'>): void {
+  private async finish(
+    task: ManagedTask,
+    state: Exclude<BackgroundTaskState, 'running'>,
+  ): Promise<void> {
     if (task.state !== 'running') return;
     task.state = state;
     task.finishedAt = new Date().toISOString();
+    // Notification delivery must survive diagnostic-file failures. snapshot()
+    // already degrades open/stat problems to outputBytes:null; keep close errors in
+    // that same domain instead of turning a completed task into a missing event.
+    let snapshot: Readonly<BackgroundTaskStatus>;
+    try {
+      snapshot = Object.freeze(await this.snapshot(task));
+    } catch {
+      snapshot = Object.freeze(this.taskMetadata(task, null));
+    }
+    for (const listener of [...this.listeners]) {
+      try {
+        Promise.resolve(listener(snapshot)).catch(() => undefined);
+      } catch {
+        // Observers cannot fail process cleanup or suppress other listeners.
+      }
+    }
   }
 
   private lookup(taskId: string): ManagedTask {
@@ -286,8 +322,16 @@ export class BackgroundBashManager {
     } catch {
       // Process metadata remains useful when a retained log was externally removed.
     } finally {
-      await handle?.close();
+      try {
+        await handle?.close();
+      } catch {
+        outputBytes = null;
+      }
     }
+    return this.taskMetadata(task, outputBytes);
+  }
+
+  private taskMetadata(task: ManagedTask, outputBytes: number | null): BackgroundTaskStatus {
     return {
       taskId: task.id,
       state: task.state,
@@ -438,7 +482,7 @@ function errorMessage(error: unknown): string {
 // rejected before the model can call it. Keep one object and enforce the
 // mode-specific shape in refinement instead.
 const inputSchema = z.object({
-  mode: z.enum(['execute', 'restart', 'start', 'status', 'output', 'stop'])
+  mode: z.enum(['execute', 'restart', 'start', 'list', 'status', 'output', 'stop'])
     .describe('Operation mode'),
   command: z.string().optional().describe('Command required by execute and start modes'),
   timeout: z.number().positive().optional().describe('Timeout in seconds for execute mode'),
@@ -459,13 +503,13 @@ const inputSchema = z.object({
   if (input.mode !== 'execute' && input.mode !== 'restart' && input.mode !== 'start' && input.command !== undefined) {
     context.addIssue({ code: 'custom', path: ['command'], message: `command is not accepted in ${input.mode} mode` });
   }
-  if (input.mode === 'start' && input.taskId !== undefined) {
-    context.addIssue({ code: 'custom', path: ['taskId'], message: 'taskId is not accepted in start mode' });
+  if ((input.mode === 'start' || input.mode === 'list') && input.taskId !== undefined) {
+    context.addIssue({ code: 'custom', path: ['taskId'], message: `taskId is not accepted in ${input.mode} mode` });
   }
 });
 
 type BackgroundBashInput = z.infer<typeof inputSchema>;
-type BackgroundBashOutput = BashOutput | 'Bash session restarted' | BackgroundStartResult | BackgroundTaskStatus | BackgroundOutputResult;
+type BackgroundBashOutput = BashOutput | 'Bash session restarted' | BackgroundStartResult | BackgroundTaskStatus | BackgroundTaskStatus[] | BackgroundOutputResult;
 
 /** Wraps the SDK tool without changing its foreground persistent-shell behavior. */
 export function createBackgroundBashTool(
@@ -476,7 +520,7 @@ export function createBackgroundBashTool(
     name: 'bash',
     description:
       'Runs foreground commands in a persistent shell and session-owned background commands. ' +
-      'Modes: execute, restart, start, status, output, and stop.',
+      'Modes: execute, restart, start, list, status, output, and stop.',
     inputSchema,
     callback: (input, context?: ToolContext) => {
       switch (input.mode) {
@@ -485,6 +529,8 @@ export function createBackgroundBashTool(
           return foreground.invoke(input as BashInput, context);
         case 'start':
           return manager.start(input.command!);
+        case 'list':
+          return manager.list();
         case 'status':
           return manager.status(input.taskId!);
         case 'output':
