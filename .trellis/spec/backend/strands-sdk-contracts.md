@@ -367,3 +367,51 @@ No `reasoningContentDelta` ever reaches the stream on this pathway — not at an
 and not with `reasoning.summary` set to `auto` or `detailed`. The TUI therefore shows no
 thinking for Mantle models even at `max`. Prompt caching is also off (`planPromptCache` returns
 `DISABLED` for `provider: 'openai'`), so a Mantle session re-sends its whole prefix every turn.
+
+## Config: the `models` array
+
+`.darwin/config.json` accepts two forms. The single-model form (model keys at the root) still
+works unchanged. The array form lists several configurations and switches one on:
+
+```json
+{
+  "permissionMode": "yolo",
+  "models": [
+    { "enable": true,  "provider": "openai",  "model": "openai.gpt-5.6-sol",
+      "bedrockMantle": true, "openaiApi": "responses", "region": "us-east-1", "maxTokens": 64000 },
+    { "enable": false, "provider": "bedrock", "model": "global.anthropic.claude-opus-5",
+      "maxTokens": 64000 }
+  ]
+}
+```
+
+### Contract: the array is a file format, not a second runtime shape
+
+`loadConfig` resolves the enabled entry and returns the same flat `AppConfig` the single-model
+form produces. That is what keeps the five consumers (`createModelFromConfig`, `planThinking`,
+`planPromptCache`, the TUI header, the safety classifier) untouched by the feature — none of them
+can tell which form was used. `AppConfig` is now `ModelFields & SessionFields`, and both forms go
+through the *same* `validateModelFields`, so the array form cannot drift into a weaker dialect
+that accepts different keys.
+
+### Contract: exactly one `enable: true`, and `enable` defaults to false
+
+Zero enabled and two enabled are both `ConfigError`. "First enabled wins" was rejected: this
+codebase refuses silent choices, and here the silent choice has a bill attached. `enable` is
+absent-means-off, so adding an entry never activates it by accident; the zero-enabled message
+lists the candidate model ids so the fix is one edit.
+
+### Contract: model keys and session keys may not cross
+
+With `models` present, a model key at the root (`MODEL_KEYS`) and a session key inside an entry
+(`SESSION_KEYS`) are both refused, by name, with the direction to move it. There is no precedence
+rule to fall back on, and the alternative — ignoring the misplaced key — means a
+`permissionMode` written in an entry silently does nothing, which is a security surprise.
+
+### Contract: `/effort` persists into the enabled entry
+
+`thinkingEffort` is model-scoped (the levels one model accepts are not the levels another does),
+so `saveThinkingEffort` writes into the enabled entry, reusing the loader's own
+`selectEnabledModel` so the write cannot land on a different entry than the session is running.
+Writing it to the root instead would make the *next* load fail as a stray model key — a
+convenience that bricks the config.

@@ -1,9 +1,20 @@
 {
-  "provider": "openai",
-  "model": "openai.gpt-5.6-sol",
-  "bedrockMantle": true,
-  "openaiApi": "responses",
-  "region": "us-east-1",
-  "maxTokens": 64000,
-  "permissionMode": "yolo"
+  "permissionMode": "yolo",
+  "models": [
+    {
+      "enable": true,
+      "provider": "openai",
+      "model": "openai.gpt-5.6-sol",
+      "bedrockMantle": true,
+      "openaiApi": "responses",
+      "region": "us-east-1",
+      "maxTokens": 64000
+    },
+    {
+      "enable": false,
+      "provider": "bedrock",
+      "model": "global.anthropic.claude-opus-5",
+      "maxTokens": 64000
+    }
+  ]
 }

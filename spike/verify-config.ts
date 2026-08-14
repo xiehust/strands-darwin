@@ -17,6 +17,7 @@ import {
   createModelFromConfig,
   loadConfig,
   resolveRegion,
+  saveThinkingEffort,
 } from '../src/config.js';
 import { assert, header, report } from './shared.js';
 
@@ -378,10 +379,155 @@ async function permissionRules(): Promise<void> {
   );
 }
 
+/**
+ * The `models` array: several model configurations in one file, one of them
+ * switched on. The resolved AppConfig is deliberately identical in shape to the
+ * single-model form, so these assertions are about *selection* and about the
+ * mistakes the format makes possible.
+ */
+async function modelArray(): Promise<void> {
+  header('config — models array, enabled by switch');
+
+  const twoModels = (opusEnable: boolean, solEnable: boolean): string =>
+    JSON.stringify({
+      permissionMode: 'yolo',
+      summaryRatio: 0.5,
+      models: [
+        {
+          enable: opusEnable,
+          provider: 'bedrock',
+          model: 'global.anthropic.claude-opus-5',
+          maxTokens: 64000,
+          thinkingEffort: 'xhigh',
+        },
+        {
+          enable: solEnable,
+          provider: 'openai',
+          model: 'openai.gpt-5.6-sol',
+          bedrockMantle: true,
+          openaiApi: 'responses',
+          region: 'us-east-1',
+          maxTokens: 32000,
+        },
+      ],
+    });
+
+  const first = await loadConfig(await writeConfig(twoModels(true, false)));
+  assert('the enabled entry provides the provider', first.provider === 'bedrock');
+  assert('…and the model', first.model === 'global.anthropic.claude-opus-5');
+  assert('…and its own maxTokens', first.maxTokens === 64000);
+  assert('…and its own thinkingEffort', first.thinkingEffort === 'xhigh');
+  // The disabled entry must not contribute anything at all, or a model switch
+  // would silently inherit settings from the model it replaced.
+  assert('the disabled entry leaks no region', first.region === undefined);
+  assert('the disabled entry leaks no bedrockMantle', first.bedrockMantle === undefined);
+  assert('the disabled entry leaks no openaiApi', first.openaiApi === undefined);
+  assert('root session keys still apply', first.permissionMode === 'yolo' && first.summaryRatio === 0.5);
+  assert('the enabled entry builds a model', (await createModelFromConfig(first)) !== undefined);
+
+  // Flipping the switch is the whole point: same file, different model, nothing
+  // else moves.
+  const second = await loadConfig(await writeConfig(twoModels(false, true)));
+  assert('flipping enable selects the other entry', second.model === 'openai.gpt-5.6-sol');
+  assert('…with its own provider', second.provider === 'openai');
+  assert('…and its own transport', second.bedrockMantle === true && second.openaiApi === 'responses');
+  assert('…and its own region', second.region === 'us-east-1');
+  assert('…and its own maxTokens', second.maxTokens === 32000);
+  assert('…while the session keys are unchanged', second.permissionMode === 'yolo');
+  assert('the default effort applies where the entry omits it', second.thinkingEffort === 'high');
+
+  // Neither zero nor two enabled may resolve: both would mean running a model
+  // the file does not unambiguously name.
+  const noneEnabled = await expectConfigError('no enabled model is rejected', async () =>
+    loadConfig(await writeConfig(twoModels(false, false))),
+  );
+  assert('the error lists the candidates', noneEnabled.includes('claude-opus-5') && noneEnabled.includes('gpt-5.6-sol'));
+
+  const bothEnabled = await expectConfigError('two enabled models are rejected', async () =>
+    loadConfig(await writeConfig(twoModels(true, true))),
+  );
+  assert('the error says how many are enabled', bothEnabled.includes('2 models are enabled'));
+
+  // `enable` defaults to false, so an entry without it is not silently active.
+  await expectConfigError('an entry without enable is not active', async () =>
+    loadConfig(
+      await writeConfig('{ "models": [{ "provider": "bedrock", "model": "us.anthropic.claude-sonnet-4-6" }] }'),
+    ),
+  );
+
+  await expectConfigError('a non-boolean enable is rejected', async () =>
+    loadConfig(await writeConfig('{ "models": [{ "enable": "yes", "model": "x" }] }')),
+  );
+
+  await expectConfigError('an empty models array is rejected', async () =>
+    loadConfig(await writeConfig('{ "models": [] }')),
+  );
+
+  await expectConfigError('a non-array models is rejected', async () =>
+    loadConfig(await writeConfig('{ "models": { "enable": true } }')),
+  );
+
+  await expectConfigError('a non-object entry is rejected', async () =>
+    loadConfig(await writeConfig('{ "models": ["us.anthropic.claude-sonnet-4-6"] }')),
+  );
+
+  // The two halves of the file may not overlap: with entries present there is no
+  // precedence rule for a root-level model key, so it is refused by name.
+  const strayModelKey = await expectConfigError('a model key beside "models" is rejected', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "model": "us.anthropic.claude-sonnet-4-6", "models": [{ "enable": true, "model": "x" }] }',
+      ),
+    ),
+  );
+  assert('the error names the stray key', strayModelKey.includes('"model"'));
+  assert('…and says where it belongs', /inside a "models" entry/.test(strayModelKey));
+
+  const straySessionKey = await expectConfigError('a session key inside an entry is rejected', async () =>
+    loadConfig(
+      await writeConfig('{ "models": [{ "enable": true, "model": "x", "permissionMode": "yolo" }] }'),
+    ),
+  );
+  assert('the error names the misplaced key', straySessionKey.includes('"permissionMode"'));
+  assert('…and says to move it to the top level', /top level/.test(straySessionKey));
+
+  // Entry fields go through exactly the same validators as the flat form, so a
+  // bad value is caught with the entry's position in the message.
+  const badEffort = await expectConfigError('an entry is validated like the flat form', async () =>
+    loadConfig(
+      await writeConfig('{ "models": [{ "enable": true, "model": "x", "thinkingEffort": "turbo" }] }'),
+    ),
+  );
+  assert('the error points at the entry', badEffort.includes('models[0]'));
+
+  const badMantle = await expectConfigError('per-entry cross-field rules still apply', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "provider": "bedrock", "model": "us.anthropic.claude-sonnet-4-6", "bedrockMantle": true }] }',
+      ),
+    ),
+  );
+  assert('the cross-field error points at the entry', badMantle.includes('models[0]'));
+
+  // /effort must persist into the enabled entry: written to the root it would be
+  // rejected on the next load as a stray model key.
+  const effortRoot = await writeConfig(twoModels(false, true));
+  await saveThinkingEffort(effortRoot, 'low');
+  const persisted = JSON.parse(await readFile(configPath(effortRoot), 'utf8')) as {
+    thinkingEffort?: string;
+    models: { model: string; thinkingEffort?: string }[];
+  };
+  assert('the level lands on the enabled entry', persisted.models[1]?.thinkingEffort === 'low');
+  assert('…not on the root', persisted.thinkingEffort === undefined);
+  assert('…and not on the disabled entry', persisted.models[0]?.thinkingEffort === 'xhigh');
+  assert('the file still loads afterwards', (await loadConfig(effortRoot)).thinkingEffort === 'low');
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
   await providerSwitching();
+  await modelArray();
   await rejections();
   await permissionModes();
   await permissionRules();

@@ -26,6 +26,8 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | Failure | Behavior | Why |
 |---------|----------|-----|
 | `.darwin/config.json` invalid value / missing key env | `ConfigError`, refuse to start | Agent would misbehave silently |
+| `models` array with zero or more than one `enable: true` | `ConfigError`, refuse to start | Picking one silently would bill the user for a model the file does not unambiguously name |
+| A model-scoped key next to `models`, or a session-scoped key inside an entry | `ConfigError` naming the key and where it belongs | With entries present there is no precedence rule to fall back on, and a key in the wrong half would silently do nothing |
 | MCP config malformed (`.darwin/mcp.json`, or root `.mcp.json` when it is the one in effect) | `ConfigError`, refuse to start | User asked for MCP and got none |
 | One MCP server fails to connect / `${VAR}` unset | Skip it, keep starting (`continueOnError: true`) | One broken server must not kill the session; count shown in header |
 | One skill directory broken (bad YAML, missing description, duplicate name) | Skip, record in `RuntimeInfo.skillProblems`, surface in header | Same isolation principle |
