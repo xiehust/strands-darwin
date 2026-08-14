@@ -19,6 +19,7 @@ import {
   saveEnabledModel,
   saveThinkingEffort,
   resolveRegion,
+  withModelChoice,
 } from '../src/config.js';
 import { assert, header, report } from './shared.js';
 
@@ -380,6 +381,53 @@ async function permissionRules(): Promise<void> {
   );
 }
 
+async function toolHooks(): Promise<void> {
+  header('config — tool lifecycle hooks');
+
+  const absent = await loadConfig(await writeConfig('{}'));
+  assert('hooks are absent by default', absent.hooks === undefined);
+
+  const hooks = {
+    PreToolUse: [{ matcher: 'file*', hooks: [{ type: 'command', command: './check.sh' }] }],
+    PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: './audit.sh' }] }],
+  };
+  const loaded = await loadConfig(await writeConfig(JSON.stringify({ hooks })));
+  assert('single-model config preserves validated hook order', JSON.stringify(loaded.hooks) === JSON.stringify(hooks));
+
+  const array = await loadConfig(await writeConfig(JSON.stringify({
+    hooks,
+    models: [
+      { enable: true, name: 'one', model: 'us.anthropic.claude-sonnet-4-6' },
+      { enable: false, name: 'two', model: 'global.anthropic.claude-opus-5' },
+    ],
+  })));
+  assert('models config loads root session hooks', JSON.stringify(array.hooks) === JSON.stringify(hooks));
+  const switched = withModelChoice(array, array.modelChoices[1] as NonNullable<(typeof array.modelChoices)[number]>);
+  assert('/model preserves hooks as session config', switched.hooks === array.hooks);
+
+  const cases: [string, unknown, string][] = [
+    ['non-object hooks', [], '"hooks"'],
+    ['unsupported event', { BeforeToolUse: [] }, 'BeforeToolUse'],
+    ['non-array event', { PreToolUse: {} }, 'PreToolUse'],
+    ['malformed matcher group', { PreToolUse: [null] }, 'PreToolUse[0]'],
+    ['blank matcher', { PreToolUse: [{ matcher: ' ', hooks: [{ type: 'command', command: 'true' }] }] }, '.matcher'],
+    ['empty command hooks', { PreToolUse: [{ matcher: '*', hooks: [] }] }, '.hooks'],
+    ['unsupported hook type', { PreToolUse: [{ matcher: '*', hooks: [{ type: 'prompt', command: 'x' }] }] }, '.type'],
+    ['blank hook command', { PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: '' }] }] }, '.command'],
+  ];
+  for (const [label, value, field] of cases) {
+    const error = await expectConfigError(`${label} is rejected`, async () =>
+      loadConfig(await writeConfig(JSON.stringify({ hooks: value }))),
+    );
+    assert(`${label} error names its config field`, error.includes(field));
+  }
+
+  const misplaced = await expectConfigError('hooks inside a model entry are rejected', async () =>
+    loadConfig(await writeConfig(JSON.stringify({ models: [{ enable: true, model: 'x', hooks }] }))),
+  );
+  assert('misplaced hooks error says to use top level', misplaced.includes('"hooks"') && misplaced.includes('top level'));
+}
+
 /**
  * The `models` array: several model configurations in one file, one of them
  * switched on. The resolved AppConfig is deliberately identical in shape to the
@@ -621,6 +669,7 @@ async function main(): Promise<void> {
   await rejections();
   await permissionModes();
   await permissionRules();
+  await toolHooks();
   report();
 }
 

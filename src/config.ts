@@ -28,6 +28,7 @@ import {
   type ThinkingEffort,
   type ThinkingPlan,
 } from './agent/thinking.js';
+import type { ToolHookCommand, ToolHookGroup, ToolHooksConfig } from './hooks/tool-hooks.js';
 import { darwinDir } from './paths.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
@@ -176,6 +177,8 @@ export interface SessionFields {
    * remembered. Format is documented in `src/agent/permission-rules.ts`.
    */
   permissionRules?: { readonly allow: readonly string[] };
+  /** Deterministic shell policy and follow-up automation around SDK tool calls. */
+  hooks?: ToolHooksConfig;
   /**
    * Replaces darwin's built-in base system prompt. Optional; for prompts too long
    * to be comfortable in JSON, write `.darwin/system-prompt.md` instead (this
@@ -214,7 +217,14 @@ const MODEL_KEYS = [
  * that silently applied to one model and not another would be a security
  * surprise, which is why an entry carrying one is rejected rather than ignored.
  */
-const SESSION_KEYS = ['permissionMode', 'permissionRules', 'summaryRatio', 'preserveRecentMessages', 'systemPrompt'] as const;
+const SESSION_KEYS = [
+  'permissionMode',
+  'permissionRules',
+  'hooks',
+  'summaryRatio',
+  'preserveRecentMessages',
+  'systemPrompt',
+] as const;
 
 /** `<projectRoot>/.darwin/config.json`. */
 export function configPath(projectRoot: string): string {
@@ -572,6 +582,9 @@ function validateSessionFields(input: Record<string, unknown>, configPath: strin
     fields.permissionRules = { allow: allowRulesField(permissionRules, configPath) };
   }
 
+  const hooks = input['hooks'];
+  if (hooks !== undefined) fields.hooks = hooksField(hooks, configPath);
+
   // Whitespace-only would pass the non-empty check and silently leave the agent
   // with no instructions at all, which nobody configures on purpose.
   const systemPrompt = stringField(input, 'systemPrompt', configPath);
@@ -583,6 +596,65 @@ function validateSessionFields(input: Record<string, unknown>, configPath: strin
   }
 
   return fields;
+}
+
+function hooksField(value: unknown, configPath: string): ToolHooksConfig {
+  const where = `${configPath}: "hooks"`;
+  if (!isRecord(value)) throw new ConfigError(`${where} must be an object.`);
+
+  for (const key of Object.keys(value)) {
+    if (key !== 'PreToolUse' && key !== 'PostToolUse') {
+      throw new ConfigError(`${where}.${key} is not supported. Expected PreToolUse or PostToolUse.`);
+    }
+  }
+
+  const result: { PreToolUse?: ToolHookGroup[]; PostToolUse?: ToolHookGroup[] } = {};
+  for (const event of ['PreToolUse', 'PostToolUse'] as const) {
+    const groups = value[event];
+    if (groups === undefined) continue;
+    if (!Array.isArray(groups)) {
+      throw new ConfigError(`${where}.${event} must be an array of matcher groups.`);
+    }
+    result[event] = groups.map((group, index) =>
+      hookGroupField(group, `${where}.${event}[${index}]`),
+    );
+  }
+  return result;
+}
+
+function hookGroupField(value: unknown, where: string): ToolHookGroup {
+  if (!isRecord(value)) throw new ConfigError(`${where} must be an object.`);
+
+  const matcher = value['matcher'];
+  if (typeof matcher !== 'string' || matcher.trim() === '') {
+    throw new ConfigError(`${where}.matcher must be a nonblank string.`);
+  }
+
+  const hooks = value['hooks'];
+  if (!Array.isArray(hooks) || hooks.length === 0) {
+    throw new ConfigError(`${where}.hooks must be a nonempty array of command hooks.`);
+  }
+
+  return {
+    matcher,
+    hooks: hooks.map((hook, index) => hookCommandField(hook, `${where}.hooks[${index}]`)),
+  };
+}
+
+function hookCommandField(value: unknown, where: string): ToolHookCommand {
+  if (!isRecord(value)) throw new ConfigError(`${where} must be an object.`);
+  if (value['type'] !== 'command') {
+    throw new ConfigError(`${where}.type must be "command".`);
+  }
+  const command = value['command'];
+  if (typeof command !== 'string' || command.trim() === '') {
+    throw new ConfigError(`${where}.command must be a nonblank string.`);
+  }
+  return { type: 'command', command };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

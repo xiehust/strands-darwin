@@ -6,7 +6,7 @@
  * later) decide how to render.
  */
 import { Agent, SummarizingConversationManager } from '@strands-agents/sdk';
-import type { AgentStreamEvent, McpClient, Model } from '@strands-agents/sdk';
+import type { AgentStreamEvent, InterventionHandler, McpClient, Model } from '@strands-agents/sdk';
 import { bash } from '@strands-agents/sdk/vended-tools/bash';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
@@ -30,6 +30,7 @@ import {
   type AppConfig,
   type ModelChoice,
 } from '../config.js';
+import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import {
@@ -213,6 +214,13 @@ export class AgentRuntime {
       }),
     });
 
+    // No configured hooks means the exact pre-existing handler is registered and
+    // no shell process can be spawned. Otherwise one composed handler preserves
+    // Pre → permission → tool → Post ordering for both parent and child agents.
+    const intervention: InterventionHandler = config.hooks === undefined
+      ? gate
+      : new ToolHookGate(options.projectRoot, config.hooks, gate);
+
     const sessionManager = createSessionManager(options.projectRoot, session.sessionId);
     const conversationManager = new SummarizingConversationManager({
       summaryRatio: config.summaryRatio,
@@ -239,7 +247,7 @@ export class AgentRuntime {
       plugins: [skills],
       sessionManager,
       conversationManager,
-      interventions: [gate],
+      interventions: [intervention],
       // Required: the SDK's own printer writes to stdout and would interleave
       // with our rendering (and fight Ink for the terminal in step 5).
       printer: false,
@@ -262,7 +270,7 @@ export class AgentRuntime {
     const subagents = new SubagentTool({
       registry: agentDefinitions,
       tools: childTools,
-      permissionGate: gate,
+      intervention,
       projectInstructions: instructions,
       config,
       createModel: createModelFromConfig,

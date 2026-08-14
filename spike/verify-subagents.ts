@@ -1,5 +1,5 @@
 /** Offline contracts for custom agent loading, isolation, permissions, and lifecycle. */
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -21,6 +21,8 @@ import {
 } from '../src/agents/loader.js';
 import { SubagentTool } from '../src/agents/subagent-tool.js';
 import { PermissionGate, type AssessedPermissionRequest } from '../src/agent/permission.js';
+import { ToolHookGate } from '../src/hooks/tool-hooks.js';
+
 import { darwinDir } from '../src/paths.js';
 import { assert, header, report } from './shared.js';
 
@@ -241,7 +243,7 @@ function runtimeTool(
   return new SubagentTool({
     registry,
     tools: [harmlessEditor, dangerousProbe],
-    permissionGate: gate,
+    intervention: gate,
     projectInstructions: undefined,
     config: fakeConfig('first'),
     createModel: async (config) => {
@@ -306,13 +308,56 @@ async function permissionContracts(registry: AgentDefinitionRegistry): Promise<v
   }
 }
 
+async function hookContracts(registry: AgentDefinitionRegistry): Promise<void> {
+  header('subagents — shared tool hook intervention');
+  const log = path.join(ROOT, 'child-hooks');
+  const probeRan: string[] = [];
+  const asked: AssessedPermissionRequest[] = [];
+  const gate = new PermissionGate({
+    mode: 'default',
+    projectRoot: ROOT,
+    ask: async (request) => {
+      asked.push(request);
+      return { allowed: true };
+    },
+  });
+  const intervention = new ToolHookGate(ROOT, {
+    PreToolUse: [{ matcher: 'dangerousProbe', hooks: [{ type: 'command', command: `printf pre >> ${log}` }] }],
+    PostToolUse: [{ matcher: 'dangerousProbe', hooks: [{ type: 'command', command: `printf post >> ${log}` }] }],
+  }, gate);
+  const dangerousProbe = tool({
+    name: 'dangerousProbe',
+    description: 'Hook-sharing probe.',
+    inputSchema: z.object({ value: z.string() }),
+    callback: ({ value }) => {
+      probeRan.push(value);
+      return 'ok';
+    },
+  });
+  const subagents = new SubagentTool({
+    registry,
+    tools: [dangerousProbe],
+    intervention,
+    projectInstructions: undefined,
+    config: fakeConfig('probe'),
+    createModel: async () => new ScriptedChildModel(true),
+  });
+  const parent = new Agent({ tools: [subagents.tool], model: new ScriptedChildModel(), printer: false });
+  await parent.initialize();
+  await parent.tool.subagent?.invoke({ task: 'run the child hook probe' });
+  assert('child call reaches the same composed permission gate', asked[0]?.toolName === 'dangerousProbe');
+  assert('child tool still executes after approval', probeRan.join() === 'marker');
+  assert('child Pre and Post hooks both run in order', (await readFile(log, 'utf8')) === 'prepost');
+  await subagents.shutdown();
+}
+
 async function modelSnapshot(registry: AgentDefinitionRegistry): Promise<void> {
   header('subagents — later dispatches use updated config');
   const seen: string[] = [];
   const subagents = new SubagentTool({
     registry,
     tools: [],
-    permissionGate: new PermissionGate({ mode: 'yolo', projectRoot: ROOT, ask: async () => ({ allowed: true }) }),
+    intervention: new PermissionGate({ mode: 'yolo', projectRoot: ROOT, ask: async () => ({ allowed: true }) }),
     projectInstructions: undefined,
     config: fakeConfig('first'),
     createModel: async (config) => {
@@ -354,7 +399,7 @@ async function cancellation(registry: AgentDefinitionRegistry): Promise<void> {
   const subagents = new SubagentTool({
     registry,
     tools: [],
-    permissionGate: new PermissionGate({ mode: 'yolo', projectRoot: ROOT, ask: async () => ({ allowed: true }) }),
+    intervention: new PermissionGate({ mode: 'yolo', projectRoot: ROOT, ask: async () => ({ allowed: true }) }),
     projectInstructions: undefined,
     config: fakeConfig('slow'),
     createModel: async () => {
@@ -378,6 +423,7 @@ async function cancellation(registry: AgentDefinitionRegistry): Promise<void> {
 }
 
 await permissionContracts(registry);
+await hookContracts(registry);
 
 async function bashLifecycle(registry: AgentDefinitionRegistry): Promise<void> {
   header('subagents — child bash session is reaped after dispatch');
@@ -391,7 +437,7 @@ async function bashLifecycle(registry: AgentDefinitionRegistry): Promise<void> {
   const subagents = new SubagentTool({
     registry: bashDefinition,
     tools: [bash],
-    permissionGate: new PermissionGate({ mode: 'yolo', projectRoot: ROOT, ask: async () => ({ allowed: true }) }),
+    intervention: new PermissionGate({ mode: 'yolo', projectRoot: ROOT, ask: async () => ({ allowed: true }) }),
     projectInstructions: undefined,
     config: fakeConfig('bash'),
     createModel: async () => childModel,

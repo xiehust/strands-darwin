@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import { Agent, tool } from '@strands-agents/sdk';
-import type { Model, Tool, ToolContext } from '@strands-agents/sdk';
+import type { InterventionHandler, Model, Tool, ToolContext } from '@strands-agents/sdk';
 import { z } from 'zod';
 
 import type { ProjectInstructions } from '../agent/instructions.js';
 import { composeSystemPrompt } from '../agent/instructions.js';
-import type { PermissionGate } from '../agent/permission.js';
 import type { AppConfig } from '../config.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
@@ -16,7 +15,7 @@ export const SUBAGENT_TOOL_NAME = 'subagent';
 export interface SubagentToolOptions {
   registry: AgentDefinitionRegistry;
   tools: readonly Tool[];
-  permissionGate: PermissionGate;
+  intervention: InterventionHandler;
   projectInstructions: ProjectInstructions | undefined;
   config: AppConfig;
   createModel: (config: AppConfig) => Promise<Model>;
@@ -108,7 +107,7 @@ export class SubagentTool {
       model,
       systemPrompt: composeSystemPrompt(definition.systemPrompt, this.options.projectInstructions),
       tools: this.toolsFor(definition),
-      interventions: [this.options.permissionGate],
+      interventions: [this.options.intervention],
       printer: false,
     });
 

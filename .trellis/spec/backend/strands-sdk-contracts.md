@@ -91,7 +91,86 @@ Caveat: the suffix-less `us.anthropic.claude-haiku-4-5` profile alias is rejecte
 Bedrock (`ValidationException: The provided model identifier is invalid`); use the full
 versioned id `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
 
+## Scenario: configured tool lifecycle hooks
+
+### 1. Scope / Trigger
+
+Use this contract when `.darwin/config.json` runs deterministic shell policy before a tool or follow-up automation after one. Keep it on the SDK intervention path; never intercept or fork the agent loop.
+
+### 2. Signatures
+
+```typescript
+interface ToolHooksConfig {
+  PreToolUse?: readonly ToolHookGroup[]
+  PostToolUse?: readonly ToolHookGroup[]
+}
+interface ToolHookGroup {
+  matcher: string                 // case-sensitive `*` / `?` glob
+  hooks: readonly { type: 'command'; command: string }[]
+}
+runToolHookCommand(projectRoot, command, toolName, toolInput, signal?): Promise<ToolHookResult>
+new ToolHookGate(projectRoot, hooks, permissionGate)
+```
+
+The stdin payload is exactly one newline-terminated JSON object:
+`{"tool_name": <string>, "tool_input": <raw tool input>}`.
+
+### 3. Contracts
+
+- `hooks` is session-scoped config and must be in `SESSION_KEYS`, so `/model` preserves it and model entries cannot carry it.
+- Match the complete tool name, case-sensitively: `*` is zero-or-more, `?` is exactly one, and regex characters are literal.
+- Run matching commands sequentially in config order as `/bin/sh -c`, with project-root cwd, inherited environment, and piped stdout/stderr. Hook output must never reach Ink directly.
+- Compose hooks and permissions in **one** `InterventionHandler`: Pre hooks → `PermissionGate` → tool body → Post hooks. Pass that same instance to main and child agents.
+- First failed Pre command denies with stderr; empty stderr or launch failure gets an actionable fallback naming `.darwin/config.json`. Later Pre commands, permission evaluation, tool body, and Post hooks do not run.
+- Post hooks observe only `{tool_name, tool_input}`. Run after success and tool-body errors; ignore their exit/output and continue later Post hooks without transforming the original result.
+- SDK 1.12 emits `AfterToolCallEvent` for a cancelled Before call. Mark tool-use ids only after Pre and permission both proceed, and consume that mark in After; otherwise Post runs after denials.
+- Cancellation must abort the active shell **process group**, escalate from SIGTERM to SIGKILL after a bounded grace period, and re-check `agent.cancelSignal` both before and after awaited permission evaluation. A hook that spawned `sleep`, a formatter, or a test must not orphan it or let the tool run after Ctrl+C.
+- `spawn()` may throw synchronously for invalid arguments as well as emit asynchronous `error`; normalize both into `ToolHookResult`. Pre must deny and Post must preserve the original result in either case.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| `hooks` absent | Register the existing `PermissionGate` directly; spawn nothing |
+| Unknown event / non-array event | `ConfigError` naming the hook field |
+| Non-object group, blank matcher, empty hooks | `ConfigError` at the exact array path |
+| Unsupported type / blank command | `ConfigError`; only command hooks are supported |
+| Pre exits nonzero with stderr | Deny; stderr reaches the model in the error tool result |
+| Pre exits nonzero without stderr / cannot launch | Deny with actionable fallback |
+| Permission denies after successful Pre | Body and Post do not run |
+| Tool body throws | Original error result survives; Post still runs |
+| Post exits nonzero / cannot launch | Preserve original result; continue remaining Post hooks |
+| Turn cancelled during Pre/Post | Kill process group, return promptly, do not execute later stages |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** `file*` Pre policy validates `fileEditor`, permission approves, body runs, then every matching Post audit command runs.
+- **Base:** no `hooks` key; runtime and subagents use the unchanged shared `PermissionGate`.
+- **Bad:** registering hooks and permissions as separate handlers makes reverse After ordering ambiguous; treating every After event as execution runs Post after a denial; aborting only the shell leaves its children alive.
+
+### 6. Tests Required
+
+- `spike/verify-tool-hooks.ts`: exact payload/cwd/env capture, glob literals, sequential Pre short-circuit, denial wording, permission/body ordering, Post success/error isolation, synchronous and asynchronous launch failures, denied-call After behavior, and bounded Pre/Post cancellation.
+- `spike/verify-config.ts`: absent/default, both config forms, `/model` preservation, misplaced session field, and every malformed nested shape.
+- `spike/verify-subagents.ts`: a child tool traverses the same composed hook and permission instance.
+- Always run `pnpm typecheck`, `pnpm test`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: separate handlers + no executed-call marker + no abort propagation.
+interventions: [toolHooks, permissionGate]
+await spawnHook(command)
+
+// CORRECT: one shared lifecycle boundary with cancellable process ownership.
+const intervention = config.hooks
+  ? new ToolHookGate(projectRoot, config.hooks, permissionGate)
+  : permissionGate
+new Agent({ interventions: [intervention] })
+```
+
 ---
+
 ## Scenario: isolated subagents as a tool
 
 ### 1. Scope / Trigger

@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Review hook composition against tested SDK intervention and subagent contracts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review config validation and Pre/Post failure semantics."}
