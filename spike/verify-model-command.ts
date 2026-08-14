@@ -159,8 +159,11 @@ async function liveSwitch(): Promise<void> {
     assert('…and its own region, not the old one', runtime.config.region === 'us-east-1');
     assert('the catalogue marks the new entry live', result.choice.enabled);
     assert('…and only it', runtime.modelChoices.filter((c) => c.enabled).length === 1);
-    assert('caching is off on the new provider', !runtime.promptCache.enabled);
-    assert('…and says why', runtime.promptCache.problem !== undefined);
+    assert('darwin-managed caching is off on the new provider', !runtime.promptCache.enabled);
+    assert(
+      'provider-managed automatic caching is not reported as a problem',
+      runtime.promptCache.problem === undefined,
+    );
 
     const second = await turn(runtime, 'What was the codeword? Reply with just the codeword.');
     console.log(`  turn 2 (sol) : ${second.slice(0, 60)}`);

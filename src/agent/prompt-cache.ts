@@ -17,7 +17,9 @@
  *   why {@link applySystemPromptCachePoint} runs after `agent.initialize()` —
  *   `SkillsPlugin.initAgent` appends its fragment first, and refuses a block array.
  *
- * Caching is Claude-only. Deciding that here rather than leaving it to the SDK's
+ * These explicit cache points are Claude-only. OpenAI performs prompt caching
+ * automatically at the provider, so darwin neither configures nor reports it as
+ * unsupported. Deciding Bedrock support here rather than leaving it to the SDK's
  * `strategy: 'auto'` is deliberate: auto-detection on a model that cannot cache
  * logs a `console.warn` per model construction, which would tear the Ink frame.
  */
@@ -25,7 +27,7 @@ import { CachePointBlock, TextBlock } from '@strands-agents/sdk';
 import type { SystemPrompt } from '@strands-agents/sdk';
 import type { BedrockCacheConfig } from '@strands-agents/sdk/models/bedrock';
 
-import type { AppConfig, Provider } from '../config.js';
+import type { AppConfig } from '../config.js';
 
 /**
  * Cache lifetime. Bedrock accepts `5m` (its default) and `1h`; the Anthropic API
@@ -83,7 +85,9 @@ export function planPromptCache(config: AppConfig): PromptCachePlan {
       // points of its own for this provider; only the one we place by hand works.
       return { enabled: true, parts: ['system prompt'], ttl, problem: undefined };
     case 'openai':
-      return { ...DISABLED, problem: unsupportedProvider('openai') };
+      // OpenAI caching is automatic and provider-managed; darwin has no cache
+      // points to configure, but that is not an unsupported state to warn about.
+      return DISABLED;
   }
 }
 
@@ -143,8 +147,4 @@ function isClaudeModel(modelId: string): boolean {
 
 function unsupportedModel(modelId: string): string {
   return `${modelId} does not support prompt caching — only Claude models do`;
-}
-
-function unsupportedProvider(provider: Provider): string {
-  return `provider "${provider}" does not support prompt caching`;
 }

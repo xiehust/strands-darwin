@@ -197,7 +197,8 @@ Bedrock: `spike/verify-prompt-cache-live.ts` — 11,737 tokens written on turn o
 | system prompt | `agent.systemPrompt = [TextBlock, CachePointBlock]` | placed by us, after `initialize()` |
 
 `AnthropicModelConfig` has **no** `cacheConfig`, so the `anthropic` provider gets the system
-prompt cache point only. OpenAI gets nothing.
+prompt cache point only. Darwin adds no cache points for OpenAI because OpenAI prompt caching
+is provider-managed and automatic; this is not reported as an unsupported-provider warning.
 
 ### Contract: the system prompt cache point goes on after `initialize()`
 
@@ -365,8 +366,8 @@ anyway would quietly think less than the user asked for.
 
 No `reasoningContentDelta` ever reaches the stream on this pathway — not at any effort level,
 and not with `reasoning.summary` set to `auto` or `detailed`. The TUI therefore shows no
-thinking for Mantle models even at `max`. Prompt caching is also off (`planPromptCache` returns
-`DISABLED` for `provider: 'openai'`), so a Mantle session re-sends its whole prefix every turn.
+thinking for Mantle models even at `max`. Darwin adds no explicit cache points for
+`provider: 'openai'`; any prompt caching is automatic and provider-managed.
 
 ## Config: the `models` array
 
