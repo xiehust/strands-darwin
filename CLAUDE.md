@@ -109,6 +109,15 @@ stream events map per the table in the archived MVP task's `research/spike-resul
   `exitedWithin` not `exited`). Read the relevant one before changing that area.
 - This repo is Trellis-managed (see `AGENTS.md`): non-trivial work goes through a task under
   `.trellis/tasks/` with PRD → implement → check → spec update → commit.
+- **Never commit to `main`.** Every change lands through a branch and a pull request:
+  `git switch -c <type>/<slug>` off an up-to-date `main`, commit there (commit-message
+  conventions live in `.darwin/skills/commit-message`), `git push -u origin <branch>`, then
+  `gh pr create --base main` with a body that states *why*, what the safety-relevant
+  decisions were, and the verification that was actually run (typecheck / `pnpm test` /
+  which `spike/verify-*.ts` suites, with their pass counts). If work has already been
+  committed to a local `main` by mistake, move it: `git switch -c <branch>` then
+  `git branch -f main origin/main` — never `reset --hard`, which would also throw away
+  unrelated working-tree changes.
 - Keep `devEngines` out of `package.json` — it makes every `npx`-launched MCP server die
   with an opaque `Connection closed`.
 - pnpm's `minimumReleaseAge` may hold back very fresh `@strands-agents/sdk` releases; don't
