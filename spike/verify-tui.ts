@@ -84,7 +84,11 @@ async function approvePath(): Promise<void> {
     await tui.waitFor('fileEditor view', { timeoutMs: 120_000, from: turnStart });
     assert('read tool call was rendered', tui.screen.includes('fileEditor view'));
 
-    await tui.waitFor('permission required', { timeoutMs: 180_000, from: turnStart });
+    // Anchored on the box's LAST line, not its first: 'permission required' is the
+    // heading, and a frame arriving in chunks satisfies it while the details and the
+    // y/n line are still on their way — which fails the asserts below for a reason
+    // that has nothing to do with permissions.
+    await tui.waitFor('allow?', { timeoutMs: 180_000, from: turnStart, settleMs: 400 });
     assert('permission prompt appeared', tui.screen.includes('permission required'));
     assert('prompt is labelled as a write', /permission required\s*\(write\b/.test(tui.screen));
     assert('prompt says why the call was flagged', tui.screen.includes('outside the project'));
