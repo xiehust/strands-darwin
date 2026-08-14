@@ -73,6 +73,7 @@ function staticRules(): void {
   header('static risk rules — other tools');
 
   assert('load_skill is safe', riskOf('load_skill', { name: 'x' }).risk === 'safe');
+  assert('subagent delegation is safe', riskOf('subagent', { task: 'inspect', agent: 'general' }).risk === 'safe');
   assert(
     'unknown / MCP tools are dangerous',
     riskOf('mcp__server__do_thing', { arg: 1 }).risk === 'dangerous',

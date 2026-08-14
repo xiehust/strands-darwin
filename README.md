@@ -424,6 +424,52 @@ Two ways a skill gets used:
 
 A malformed skill is reported at startup and skipped; the rest still load.
 
+## Subagents
+
+The main agent has a `subagent` tool for delegating a self-contained task to a fresh child
+agent. Child work has its own conversation: reasoning, intermediate messages and tool calls
+stay out of the main transcript, and only the final report comes back as the tool result. The
+built-in `general` agent is always available and is suitable for broad code searches,
+independent implementation tasks and verification.
+
+Add specialists as direct Markdown files under `.darwin/agents/`:
+
+```markdown
+---
+name: explorer
+description: Searches a large code area and returns an evidence-based map.
+tools:
+  - bash
+  - fileEditor
+---
+
+You are a repository exploration specialist. Trace the requested behavior, cite files and
+symbols, and finish with a concise report for the parent agent.
+```
+
+`name`, `description`, and a non-empty Markdown body are required. Names are
+case-insensitive when selected, must use letters, numbers, hyphens or underscores, and may
+not shadow `general`. `tools` is optional:
+
+- omit it to make every child-eligible tool available;
+- use `tools: []` for a tool-free specialist;
+- otherwise list exact, case-sensitive registered names such as `bash`, `fileEditor`,
+  `load_skill`, or a prefixed MCP tool.
+
+An unknown tool name skips that definition rather than silently weakening it. Other malformed,
+empty, duplicate or unreadable files are also skipped and reported at startup; valid agents
+still load. Definitions are read once at startup.
+
+Each dispatch creates a new model and child context. Children do not inherit main-conversation
+messages, do not persist sessions, and cannot invoke `subagent` recursively. A `/model` switch
+applies to children dispatched afterwards.
+
+Tool restrictions are not permission grants. Every child tool call goes through the same
+permission gate and live allow-rules as the main agent. Delegation itself does not prompt,
+because it performs no project I/O; a child write, shell command, or MCP call is approved or
+denied normally. Ctrl+C cancels the active child together with the parent turn, and darwin
+reaps child bash sessions after each dispatch.
+
 ## Sessions and `--resume`
 
 Each session is snapshotted after every turn under `.darwin/sessions/`, with

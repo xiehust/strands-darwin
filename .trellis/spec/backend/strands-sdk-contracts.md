@@ -92,6 +92,96 @@ Bedrock (`ValidationException: The provided model identifier is invalid`); use t
 versioned id `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
 
 ---
+## Scenario: isolated subagents as a tool
+
+### 1. Scope / Trigger
+
+Use this contract whenever the main agent delegates work to a fresh child Agent. The child may
+use repository tools, but its working context must not become main-conversation context.
+
+### 2. Signatures
+
+```typescript
+subagent({ task: string, agent?: string }): Promise<string>
+loadAgentDefinitions(projectRoot, availableToolNames): Promise<AgentDefinitionRegistry>
+new Agent({ model, systemPrompt, tools, interventions: [sharedGate], printer: false })
+```
+
+Project definitions are direct `.darwin/agents/*.md` files. Frontmatter requires `name` and
+`description`, accepts optional `tools: string[]`, and the non-empty Markdown body is the child
+system prompt. `general` is built in and reserved.
+
+### 3. Contracts
+
+- Every dispatch constructs a new model and Agent. No `SessionManager`, parent messages,
+  conversation summary, or `subagent` tool reaches the child.
+- Do **not** use SDK 1.12 `Agent.asTool()` for this boundary: `AgentAsTool.stream()` forwards
+  child agent events as parent `ToolStreamEvent`s. Darwin consumes `child.invoke()` privately
+  and returns only `AgentResult.toString()`.
+- Build child-eligible tools from `mainAgent.tools` only after `await mainAgent.initialize()`;
+  that is when MCP/plugin tools have their final names. Register `subagent` afterwards so it
+  cannot enter the child catalogue.
+- `tools` omitted means all eligible tools, `[]` means none, and a list is an exact,
+  case-sensitive capability filter. It never grants permission.
+- Attach the **same `PermissionGate` instance** to parent and child. This preserves the live
+  permission bridge and in-session allow-rules; a copied config would diverge after the user
+  accepts a rule.
+- `/model` updates the subagent factory's config for future dispatches. Snapshot config before
+  async model construction; an active child keeps its own model.
+- Parent cancellation cancels tracked children. Re-check the parent's abort signal after async
+  model construction so cancellation in that gap cannot launch an orphan child.
+- Reap each child's bash session with direct `restart` in `finally`. Shared MCP clients remain
+  owned and disconnected only by the main runtime.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| `.darwin/agents/` absent | Built-in `general` only; no warning |
+| Invalid YAML/name/description/body/tools | Skip that file and expose an agent problem |
+| Case-insensitive duplicate or `general` | Keep first/built-in owner; skip later file |
+| Unknown tool in allowlist | Skip definition; never silently drop the unknown entry |
+| Unknown requested agent | Return available names as the tool result |
+| Child tool denied | Shared gate produces the normal denial result; tool does not run |
+| Parent cancelled during model construction | Return cancelled result; do not create child |
+| Child invoke throws | Tool reports an error through SDK; child bash cleanup still runs |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** parent delegates a broad search; child uses `fileEditor`/`bash`, then only its
+  evidence-based final report appears in the parent tool result.
+- **Base:** no project definitions; `general` handles the task with a fresh context.
+- **Bad:** wrapping with `asTool()` forwards child stream events, or building a second gate lets
+  a child miss an allow-rule the user just accepted.
+
+### 6. Tests Required
+
+- `spike/verify-subagents.ts`: discovery/errors, exact allowlists, fresh histories, parent
+  transcript isolation, approval/denial, and later-dispatch model config.
+- `spike/verify-subagents-live.ts`: real main → child delegation, safe repository read, and a
+  child bash call reaching the shared permission bridge.
+- `spike/verify-tui.ts completion`: invalid definition warning without a model call.
+- Always run `pnpm typecheck` and `pnpm test`; cancellation/bash lifecycle changes additionally
+  require the existing `cancelThenContinue` and `bashExit` scenarios.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: forwards child stream events and does not prove the child shares darwin's gate.
+tools: [child.asTool()]
+
+// CORRECT: private child invocation, reduced tools, shared intervention boundary.
+const child = new Agent({
+  model: await createModelFromConfig(liveConfig),
+  tools: allowedTools,
+  interventions: [permissionGate],
+  printer: false,
+})
+const result = await child.invoke(task)
+return result.toString()
+```
+
+---
 
 ## Cancellation and Process Exit
 

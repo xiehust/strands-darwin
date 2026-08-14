@@ -11,6 +11,8 @@ import { bash } from '@strands-agents/sdk/vended-tools/bash';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
 import { compactConversation, type CompactResult } from './compact.js';
+import { loadAgentDefinitions } from '../agents/loader.js';
+import { SubagentTool } from '../agents/subagent-tool.js';
 import {
   expandCustomCommand,
   loadCustomCommands,
@@ -117,6 +119,10 @@ export interface RuntimeInfo {
   commandNames: string[];
   /** Custom command files that were skipped, with the reason. */
   commandProblems: { file: string; reason: string }[];
+  /** Built-in and project-defined child agents available to the delegation tool. */
+  agentNames: string[];
+  /** Project agent files that were skipped, with the reason. */
+  agentProblems: { file: string; reason: string }[];
   /** AGENTS.md preloaded from the run directory, or undefined when there is none. */
   projectInstructions: ProjectInstructionsSummary | undefined;
   /** Why a present AGENTS.md was skipped; undefined when there is no such file. */
@@ -170,6 +176,7 @@ export class AgentRuntime {
     private readonly mcpClients: readonly McpClient[],
     private readonly skills: SkillsPlugin,
     private readonly commands: CustomCommandRegistry,
+    private readonly subagents: SubagentTool,
     private readonly gate: PermissionGate,
     private readonly compactionManager: SummarizingConversationManager,
     private readonly preserveRecentMessages: number,
@@ -244,6 +251,24 @@ export class AgentRuntime {
     // without this the resumed history and MCP tools would not exist yet.
     await agent.initialize();
 
+    // Child tool allowlists can include MCP and plugin tools, whose final names do
+    // not exist until initialization. Capture that catalogue before registering
+    // `subagent` so children can never recursively delegate.
+    const childTools = agent.tools;
+    const agentDefinitions = await loadAgentDefinitions(
+      options.projectRoot,
+      childTools.map((tool) => tool.name),
+    );
+    const subagents = new SubagentTool({
+      registry: agentDefinitions,
+      tools: childTools,
+      permissionGate: gate,
+      projectInstructions: instructions,
+      config,
+      createModel: createModelFromConfig,
+    });
+    agent.toolRegistry.add(subagents.tool);
+
     // Strictly after initialize(): the skills catalogue is appended during it, and
     // the cache point has to sit at the very end of the finished prompt (the skills
     // plugin also refuses to append to a block-array prompt). Tools and the
@@ -258,6 +283,7 @@ export class AgentRuntime {
       mcp.clients,
       skills,
       commands,
+      subagents,
       gate,
       compactionManager,
       config.preserveRecentMessages,
@@ -270,6 +296,8 @@ export class AgentRuntime {
         skillProblems: skills.problems.map((problem) => ({ ...problem })),
         commandNames: commands.commands.map((command) => command.name),
         commandProblems: commands.problems.map((problem) => ({ ...problem })),
+        agentNames: agentDefinitions.definitions.map((definition) => definition.name),
+        agentProblems: agentDefinitions.problems.map((problem) => ({ ...problem })),
         projectInstructions:
           instructions === undefined
             ? undefined
@@ -424,6 +452,7 @@ export class AgentRuntime {
     this.agent.model = model;
     this.model = model;
     this.liveConfig = next;
+    this.subagents.updateConfig(next);
     this.thinkingPlan = planThinking(next);
     this.promptCachePlan = planPromptCache(next);
     // Adds the system-prompt cache point when the new model can cache and the old
@@ -470,6 +499,7 @@ export class AgentRuntime {
    * ends with `stopReason: 'cancelled'` rather than throwing.
    */
   cancel(): void {
+    this.subagents.cancelActive();
     this.agent.cancel();
   }
 
@@ -501,7 +531,11 @@ export class AgentRuntime {
    * exiting.
    */
   async shutdown(): Promise<void> {
-    await Promise.allSettled([this.stopBashSession(), disconnectAll(this.mcpClients)]);
+    await Promise.allSettled([
+      this.subagents.shutdown(),
+      this.stopBashSession(),
+      disconnectAll(this.mcpClients),
+    ]);
   }
 
   /**

@@ -278,6 +278,14 @@ export function classify(toolName: string, rawInput: unknown): PermissionRequest
         details: [],
         input: rawInput,
       };
+    case 'subagent':
+      return {
+        toolName,
+        kind: 'read',
+        summary: `subagent: ${str(input['agent']) ?? 'general'}`,
+        details: [{ label: 'Task', value: str(input['task']) ?? '(missing task)' }],
+        input: rawInput,
+      };
     default:
       return {
         toolName,

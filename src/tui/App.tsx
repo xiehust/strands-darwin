@@ -547,6 +547,11 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
           command skipped: {problem.file} — {problem.reason}
         </Text>
       ))}
+      {info.agentProblems.map((problem) => (
+        <Text key={problem.file} color="yellow">
+          agent skipped: {problem.file} — {problem.reason}
+        </Text>
+      ))}
       {/* Extends the existing line rather than adding one: see the frame-height
           comment above. */}
       <Text dimColor>

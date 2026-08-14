@@ -21,6 +21,7 @@ import process from 'node:process';
 import path from 'node:path';
 
 import { darwinDir } from '../src/paths.js';
+import { AGENTS_DIRNAME } from '../src/agents/loader.js';
 import { COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
 import { SKILLS_DIRNAME } from '../src/skills/loader.js';
 import { startTui, type TuiSession } from './tui-driver.js';
@@ -477,12 +478,20 @@ async function slashCompletion(): Promise<void> {
   const dir = '/tmp/darwin-completion-tui';
   const stateDir = darwinDir(dir);
   const commandsDir = path.join(stateDir, COMMANDS_DIRNAME);
+  const agentsDir = path.join(stateDir, AGENTS_DIRNAME);
   const skillDir = path.join(stateDir, SKILLS_DIRNAME, 'commit-message');
   await rm(dir, { recursive: true, force: true });
   await mkdir(commandsDir, { recursive: true });
+  await mkdir(agentsDir, { recursive: true });
   await mkdir(skillDir, { recursive: true });
   await writeFile(path.join(commandsDir, 'review.md'), 'Review $ARGUMENTS.\n', 'utf8');
   await writeFile(path.join(commandsDir, 'COMMIT-MESSAGE.md'), 'must lose to skill\n', 'utf8');
+  await writeFile(
+    path.join(agentsDir, 'broken.md'),
+    '---\nname: broken\ndescription: Missing a prompt.\ntools: [not-a-tool]\n---\n',
+    'utf8',
+  );
+
   await writeFile(
     path.join(skillDir, 'SKILL.md'),
     '---\nname: commit-message\ndescription: Write a commit message.\n---\n\n# Commit message\n',
@@ -498,6 +507,10 @@ async function slashCompletion(): Promise<void> {
     assert(
       'a command colliding with a skill is warned and skipped',
       tui.screen.includes('command skipped:') && tui.screen.includes('skill /commit-message'),
+    );
+    assert(
+      'an invalid custom agent is warned and skipped',
+      tui.screen.includes('agent skipped:') && tui.screen.includes('agent system prompt is empty'),
     );
 
     const beforeSlash = tui.mark();

@@ -215,6 +215,10 @@ async function main(): Promise<void> {
     for (const problem of info.commandProblems) {
       console.warn(`  command skipped: ${problem.file} — ${problem.reason}`);
     }
+    for (const problem of info.agentProblems) {
+      console.warn(`  agent skipped: ${problem.file} — ${problem.reason}`);
+    }
+    console.log(`  subagents: ${info.agentNames.join(', ')}`);
     console.log(`  tools    : ${info.toolNames.join(', ')}`);
     console.log('  commands : /exit to quit · /usage for token counts · /effort [level]\n');
 
