@@ -206,7 +206,7 @@ async function main(): Promise<void> {
       console.warn(`  skill skipped: ${problem.directory} — ${problem.reason}`);
     }
     console.log(`  tools    : ${info.toolNames.join(', ')}`);
-    console.log('  commands : /exit to quit\n');
+    console.log('  commands : /exit to quit · /usage for token counts\n');
 
     for (;;) {
       let input: string;
@@ -218,6 +218,18 @@ async function main(): Promise<void> {
       }
       if (input === '') continue;
       if (input === '/exit' || input === '/quit') break;
+
+      // Read straight off the SDK's meter, so asking what a session cost does not
+      // itself cost a turn.
+      if (input === '/usage') {
+        const usage = runtime.usage;
+        console.log(
+          `  usage    : input ${usage.inputTokens} · cache read ${usage.cacheReadInputTokens} · ` +
+            `cache write ${usage.cacheWriteInputTokens} · output ${usage.outputTokens}` +
+            `${info.resumed ? ' (this run only)' : ''}\n`,
+        );
+        continue;
+      }
 
       try {
         // `/skill-name` sends the skill's full text instead of the raw command.

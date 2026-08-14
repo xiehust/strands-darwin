@@ -212,6 +212,18 @@ The SDK resolves `auto` by matching the model id against `anthropic`/`claude` an
 `logger.warn`s — the default logger writes straight to `console.warn`, which garbles the Ink
 frame. Decide support before constructing the model and omit `cacheConfig` entirely.
 
+### Contract: a running token total comes off `agent.metrics`, not off the event stream
+
+`Agent.metrics` is a public getter over the SDK's meter and holds the same lifetime
+`accumulatedUsage` that `AgentResult.metrics` carries — readable at any time, including while
+idle. `accumulateUsage()` sums all four counters (`inputTokens`, `outputTokens`,
+`cacheReadInputTokens`, `cacheWriteInputTokens`), the two cache ones staying `undefined` until
+a provider reports them, so a total must default them to 0. Prefer the getter over tallying
+`agentResultEvent`: a cancelled turn may never emit one. What it cannot tell you is a resumed
+session's earlier spend — session snapshots persist messages, not metrics, so the meter starts
+at zero on every process (`AgentRuntime.usage`, surfaced by `/usage`, says "this run" for
+exactly that reason).
+
 ### Gotchas
 
 - `AgentResult.metrics.accumulatedUsage` accumulates over the agent's **lifetime**, not per

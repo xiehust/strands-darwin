@@ -16,7 +16,7 @@ import React, { useCallback, useEffect, useReducer, useRef, useState, useSyncExt
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
-import type { AgentRuntime } from '../agent/runtime.js';
+import type { AgentRuntime, UsageTotals } from '../agent/runtime.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
 import { CONFIG_FILENAME } from '../config.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
@@ -111,6 +111,13 @@ export function App({
       setDraft('');
       setSelectedCompletion(0);
       dispatch({ type: 'userInput', text });
+
+      // Answered from the SDK's meter, never sent to the model: a report on token
+      // spend that costs a turn of its own would be self-defeating.
+      if (text === '/usage') {
+        dispatch({ type: 'notice', text: formatUsageReport(runtime.usage, runtime.info.resumed) });
+        return;
+      }
 
       // A `/skill-name` command sends the skill's full text instead of the
       // literal command. Unknown slash commands fall through as ordinary input.
@@ -334,7 +341,9 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
           skill skipped: {problem.directory} — {problem.reason}
         </Text>
       ))}
-      <Text dimColor>/exit to quit · ctrl+c cancels a turn</Text>
+      {/* Extends the existing line rather than adding one: see the frame-height
+          comment above. */}
+      <Text dimColor>/exit to quit · /usage for token counts · ctrl+c cancels a turn</Text>
     </Box>
   );
 }
@@ -355,6 +364,38 @@ function formatPromptCache(plan: PromptCachePlan): string {
   // Only the anthropic provider ends up with a single part, and "cache on" there
   // would overstate what is actually being cached.
   return plan.parts.length === 1 ? ` · cache ${ttl} (${plan.parts[0]})` : ` · cache ${ttl}`;
+}
+
+/**
+ * The four counters Bedrock bills separately, as a labelled block.
+ *
+ * Numbers are aligned rather than run together on one line: the point of asking
+ * is to compare them (a large cache read next to a small input is the cache
+ * working), and that comparison is what a column makes readable.
+ */
+export function formatUsageReport(usage: UsageTotals, resumed: boolean): string {
+  const rows: readonly (readonly [string, number])[] = [
+    ['input', usage.inputTokens],
+    ['cache read', usage.cacheReadInputTokens],
+    ['cache write', usage.cacheWriteInputTokens],
+    ['output', usage.outputTokens],
+  ];
+  const labelWidth = Math.max(...rows.map(([label]) => label.length));
+  const lines = rows.map(
+    ([label, value]) => `  ${label.padEnd(labelWidth)}  ${groupDigits(value).padStart(9)}`,
+  );
+
+  // "This run" is the honest scope: the SDK's meter is per-process, so a resumed
+  // session's earlier spend is simply not knowable here.
+  const heading = resumed
+    ? 'token usage — this run (resumed: earlier runs are not counted)'
+    : 'token usage — this run';
+  return [heading, ...lines].join('\n');
+}
+
+/** Explicit locale: the report should read the same on every machine. */
+function groupDigits(value: number): string {
+  return value.toLocaleString('en-US');
 }
 
 /** Skill names matching a `/prefix`, or none when the input is not a bare command. */

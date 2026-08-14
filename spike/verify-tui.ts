@@ -4,7 +4,7 @@
  * Covers what only an interactive run can show: streaming text reaching the
  * screen, the permission prompt appearing with usable detail and actually gating
  * the write, exiting cleanly after a bash command, staying usable after a
- * cancelled turn, and slash-command completion.
+ * cancelled turn, slash-command completion, and the local `/usage` report.
  *
  * Waits are anchored with `mark()`. Ink redraws the whole frame constantly, so an
  * unanchored wait for something like `you>` matches a frame from before the
@@ -13,7 +13,8 @@
  * correctly ignored, so the app never exits).
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
- *      scenarios: approve | deny | safePassthrough | bashExit | cancelThenContinue | completion
+ *      scenarios: approve | deny | safePassthrough | bashExit | cancelThenContinue |
+ *                 completion | agentsMd | usage
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -423,6 +424,87 @@ async function agentsMdHeader(): Promise<void> {
 }
 
 /**
+ * `/usage` is answered locally from the SDK's meter, so it has three things to
+ * prove: the counters start at zero, asking costs no turn of its own, and one
+ * real turn moves them. A short prose answer with no tools is enough to move them.
+ */
+async function usageReport(): Promise<void> {
+  header('TUI — /usage reports the run\'s token counts');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('the header advertises the command', tui.screen.includes('/usage for token counts'));
+
+    const beforeBaseline = tui.mark();
+    tui.submit('/usage');
+    await tui.waitFor('token usage', { timeoutMs: 30_000, from: beforeBaseline, settleMs: 400 });
+
+    const baseline = parseUsage(tui.screen.slice(beforeBaseline));
+    console.log(`  baseline: ${JSON.stringify(baseline)}`);
+    assert('all four counters are reported', baseline !== undefined);
+    assert(
+      'nothing is counted before the first turn',
+      baseline?.input === 0 && baseline?.output === 0,
+    );
+    // The whole point of reading the meter instead of asking the model.
+    assert('asking did not start a turn', !tui.screen.slice(beforeBaseline).includes('working…'));
+
+    const turn = tui.mark();
+    tui.submit('Reply with the single word: ready. Do not use any tools.');
+    await tui.waitFor('working…', { timeoutMs: 60_000, from: turn });
+    await waitForIdle(tui, 240_000);
+
+    const beforeSecond = tui.mark();
+    tui.submit('/usage');
+    await tui.waitFor('token usage', { timeoutMs: 30_000, from: beforeSecond, settleMs: 400 });
+
+    const after = parseUsage(tui.screen.slice(beforeSecond));
+    console.log(`  after one turn: ${JSON.stringify(after)}`);
+    assert('input tokens were counted', (after?.input ?? 0) > 0);
+    assert('output tokens were counted', (after?.output ?? 0) > 0);
+    // Cache counters are not asserted non-zero: whether a short prompt clears the
+    // model's minimum cacheable prefix is the model's business, not this feature's
+    // (verify-prompt-cache-live.ts is what proves caching itself).
+    assert('cache counters are reported too', after?.cacheRead !== undefined && after?.cacheWrite !== undefined);
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly after a usage report', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/**
+ * Reads the rendered report back into numbers.
+ *
+ * Takes the LAST match of each label: the report is drawn into a scrollback that
+ * already holds every earlier frame, and the header line advertising `/usage`
+ * plus the echoed command are on screen too.
+ */
+function parseUsage(
+  screen: string,
+): { input: number; cacheRead: number; cacheWrite: number; output: number } | undefined {
+  const read = (label: string): number | undefined => {
+    const matches = [...screen.matchAll(new RegExp(`${label}\\s+([\\d,]+)`, 'g'))];
+    const value = matches[matches.length - 1]?.[1];
+    return value === undefined ? undefined : Number(value.replace(/,/g, ''));
+  };
+
+  const input = read('input');
+  const cacheRead = read('cache read');
+  const cacheWrite = read('cache write');
+  const output = read('output');
+  if (input === undefined || cacheRead === undefined || cacheWrite === undefined || output === undefined) {
+    return undefined;
+  }
+  return { input, cacheRead, cacheWrite, output };
+}
+
+/**
  * Waits until the newest frame shows an idle prompt.
  *
  * `you>` alone is not enough: the input box renders that text while disabled
@@ -454,6 +536,7 @@ const SCENARIOS = {
   cancelThenContinue,
   completion: slashCompletion,
   agentsMd: agentsMdHeader,
+  usage: usageReport,
 } as const;
 
 async function main(): Promise<void> {

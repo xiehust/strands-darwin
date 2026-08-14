@@ -41,6 +41,17 @@ export interface RuntimeOptions {
   permissionModeOverride?: ApprovalMode;
 }
 
+/**
+ * Cumulative token counts, in the four buckets Bedrock bills separately: fresh
+ * input, cache reads, cache writes, and output.
+ */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheWriteInputTokens: number;
+}
+
 export interface RuntimeInfo {
   config: AppConfig;
   /** Effective approval mode after CLI overrides. */
@@ -173,6 +184,30 @@ export class AgentRuntime {
   /** Messages restored from a resumed session, for showing prior context. */
   get messageCount(): number {
     return this.agent.messages.length;
+  }
+
+  /**
+   * Token totals for every model call this agent has made so far.
+   *
+   * Read live from the SDK's meter rather than tallied from stream events:
+   * `accumulatedUsage` is a lifetime accumulator (see
+   * `.trellis/spec/backend/strands-sdk-contracts.md`), so it is already the
+   * running total and is readable between turns, including after a cancelled one
+   * that never produced an `agentResultEvent`.
+   *
+   * Counts this process only. Sessions persist messages, not metrics, so a
+   * `--resume`d session starts from zero however much it spent before — callers
+   * that show these numbers should say so.
+   */
+  get usage(): UsageTotals {
+    const usage = this.agent.metrics.accumulatedUsage;
+    return {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      // Optional on the SDK type: a provider that reports no caching omits them.
+      cacheReadInputTokens: usage.cacheReadInputTokens ?? 0,
+      cacheWriteInputTokens: usage.cacheWriteInputTokens ?? 0,
+    };
   }
 
   /**
