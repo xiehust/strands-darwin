@@ -57,7 +57,7 @@ import {
 } from './session.js';
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
-import type { UsageTotals } from './usage.js';
+import { deltaUsage, type UsageTotals } from './usage.js';
 
 /**
  * Stable across runs by necessity: session snapshots are stored under
@@ -194,6 +194,8 @@ export class AgentRuntime {
 
   /** What the live model can cache. Recomputed on `/model`, like the plan above. */
   private promptCachePlan: PromptCachePlan;
+
+  private lastTurnDelta: UsageTotals | undefined = undefined;
 
   private constructor(
     private readonly agent: Agent,
@@ -379,9 +381,18 @@ export class AgentRuntime {
   /**
    * Runs one turn, yielding SDK stream events untouched so callers can render
    * whichever ones they care about.
+   *
+   * Snapshots the accumulated usage before the turn so `lastTurnUsage` can
+   * report the delta — including cancelled turns, where the delta reflects
+   * whatever model calls completed before the cancel.
    */
   async *send(input: string): AsyncIterable<AgentStreamEvent> {
-    yield* this.agent.stream(input);
+    const before = this.usage;
+    try {
+      yield* this.agent.stream(input);
+    } finally {
+      this.lastTurnDelta = deltaUsage(before, this.usage);
+    }
   }
 
   /**
@@ -569,6 +580,15 @@ export class AgentRuntime {
         cacheWriteInputTokens: usage.cacheWriteInputTokens,
       }),
     };
+  }
+
+  /**
+   * Token delta for the most recently completed turn, or `undefined` before any
+   * turn has finished. A cancelled turn still produces a delta covering whatever
+   * model calls completed before the cancel.
+   */
+  get lastTurnUsage(): UsageTotals | undefined {
+    return this.lastTurnDelta;
   }
 
   /** Current-process background tasks, without creating an agent tool call. */

@@ -63,6 +63,28 @@ export function formatUsageValue(value: number | undefined): string {
   return value === undefined ? 'not reported' : value.toLocaleString('en-US');
 }
 
+/**
+ * Subtracts `before` from `after` to produce the delta for one turn.
+ *
+ * Undefined metrics propagate: if the provider did not report a metric
+ * before the turn it will not be present in the delta either, so the
+ * last-turn section never invents a zero for an unreported counter.
+ * The accumulator never goes backwards, so negative deltas are clamped to 0.
+ */
+export function deltaUsage(before: UsageTotals, after: UsageTotals): UsageTotals {
+  const delta: UsageTotals = {
+    inputTokens: Math.max(0, after.inputTokens - before.inputTokens),
+    outputTokens: Math.max(0, after.outputTokens - before.outputTokens),
+  };
+  if (after.cacheReadInputTokens !== undefined) {
+    delta.cacheReadInputTokens = Math.max(0, after.cacheReadInputTokens - (before.cacheReadInputTokens ?? 0));
+  }
+  if (after.cacheWriteInputTokens !== undefined) {
+    delta.cacheWriteInputTokens = Math.max(0, after.cacheWriteInputTokens - (before.cacheWriteInputTokens ?? 0));
+  }
+  return delta;
+}
+
 /** A derived effectiveness metric; undefined means the provider never reported it. */
 export interface CacheEffectivenessRow {
   label: string;

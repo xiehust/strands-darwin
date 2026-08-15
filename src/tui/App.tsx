@@ -196,7 +196,7 @@ export function App({
         dispatch({ type: 'userInput', text });
         dispatch({
           type: 'notice',
-          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming'),
+          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage),
         });
         return;
       }
@@ -790,6 +790,7 @@ export function formatUsageReport(
   config: AppConfig,
   resumed: boolean,
   turnInFlight = false,
+  lastTurn?: UsageTotals,
 ): string {
   const rows = usageRows(usage, config);
   const derived = cacheEffectivenessRows(usage, config);
@@ -808,7 +809,32 @@ export function formatUsageReport(
   // a model call when it finishes. Said out loud, because numbers that do not move
   // while the agent is visibly working read as a broken counter.
   const footer = turnInFlight ? ['  (the turn in flight is not counted yet)'] : [];
-  return [heading, ...lines, ...footer].join('\n');
+
+  // Last-turn section: only when a turn has completed. Mid-turn, lastTurn is the
+  // previous completed turn, labelled clearly so it is not mistaken for the
+  // in-flight one.
+  const lastTurnSection = lastTurn === undefined ? [] : formatLastTurnSection(lastTurn, config, labelWidth);
+
+  return [heading, ...lines, ...footer, ...lastTurnSection].join('\n');
+}
+
+/**
+ * One-section "last turn (previous turn)" block, reusing the same label
+ * width as the parent table for visual alignment.
+ */
+function formatLastTurnSection(lastTurn: UsageTotals, config: AppConfig, labelWidth: number): string[] {
+  const lastRows = usageRows(lastTurn, config);
+  const lastDerived = cacheEffectivenessRows(lastTurn, config);
+  const allLastWidth = Math.max(
+    labelWidth,
+    ...lastRows.map(({ label }) => label.length),
+    ...lastDerived.map(({ label }) => label.length),
+  );
+  const lastLines = [
+    ...lastRows.map(({ label, value }) => ({ label, rendered: formatUsageValue(value) })),
+    ...lastDerived.map(({ label, value }) => ({ label, rendered: value ?? 'not reported' })),
+  ].map(({ label, rendered }) => `  ${label.padEnd(allLastWidth)}  ${rendered.padStart(12)}`);
+  return ['last turn (previous turn)', ...lastLines];
 }
 
 /** Formats the context reduction from `/compact` without implying billing savings. */

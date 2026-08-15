@@ -5,7 +5,7 @@ import type OpenAI from 'openai';
 
 import type { AppConfig } from '../src/config.js';
 import { formatUsageReport } from '../src/tui/App.js';
-import { cacheEffectivenessRows, usageRows, type UsageTotals } from '../src/agent/usage.js';
+import { cacheEffectivenessRows, deltaUsage, usageRows, type UsageTotals } from '../src/agent/usage.js';
 import { assert, header, report } from './shared.js';
 
 function config(provider: 'bedrock' | 'anthropic' | 'openai', openaiApi?: 'chat' | 'responses'): AppConfig {
@@ -180,7 +180,61 @@ function effectivenessContracts(): void {
     /cache hit ratio\s+80%/u.test(warmReport) && /served from cache\s+8,000/u.test(warmReport));
 }
 
+function deltaContracts(): void {
+  header('usage — per-turn delta');
+  const before: UsageTotals = {
+    inputTokens: 1000,
+    outputTokens: 200,
+    cacheReadInputTokens: 500,
+    cacheWriteInputTokens: 100,
+  };
+  const after: UsageTotals = {
+    inputTokens: 1800,
+    outputTokens: 350,
+    cacheReadInputTokens: 1200,
+    cacheWriteInputTokens: 100,
+  };
+  const delta = deltaUsage(before, after);
+  assert('input delta is the difference', delta.inputTokens === 800);
+  assert('output delta is the difference', delta.outputTokens === 150);
+  assert('cache read delta is the difference', delta.cacheReadInputTokens === 700);
+  assert('cache write delta of zero is still reported', delta.cacheWriteInputTokens === 0);
+
+  // Accumulator can never go backwards; a same-value snapshot yields zero, never negative.
+  const same = deltaUsage(after, after);
+  assert('same before and after yields zero deltas, never negative',
+    same.inputTokens === 0 && same.outputTokens === 0 &&
+    same.cacheReadInputTokens === 0 && same.cacheWriteInputTokens === 0);
+
+  // Undefined metrics before the turn propagate into the delta.
+  const noCache: UsageTotals = { inputTokens: 10, outputTokens: 5 };
+  const withCache: UsageTotals = { inputTokens: 20, outputTokens: 8, cacheReadInputTokens: 300 };
+  const deltaNoCache = deltaUsage(noCache, noCache);
+  assert('undefined cache metrics produce no delta keys', deltaNoCache.cacheReadInputTokens === undefined);
+  const deltaMixed = deltaUsage(noCache, withCache);
+  assert('metric appearing in after but not before is attributed in full',
+    deltaMixed.cacheReadInputTokens === 300);
+
+  // Last-turn section appears when lastTurn is provided, is absent otherwise.
+  const report0 = formatUsageReport({ inputTokens: 0, outputTokens: 0 }, config('bedrock'), false);
+  assert('no-turn-yet: last-turn section is absent', !report0.includes('last turn'));
+  const reportWithTurn = formatUsageReport(
+    { inputTokens: 1800, outputTokens: 350, cacheReadInputTokens: 1200, cacheWriteInputTokens: 100 },
+    config('bedrock'),
+    false,
+    false,
+    delta,
+  );
+  assert('last-turn section heading present when a turn has completed',
+    reportWithTurn.includes('last turn (previous turn)'));
+  assert('last-turn input row shows the delta, not the lifetime total',
+    /input\s+800/u.test(reportWithTurn));
+  assert('last-turn cache read row shows the delta',
+    /cache read\s+700/u.test(reportWithTurn));
+}
+
 await adapterContract();
 projectionContracts();
 effectivenessContracts();
+deltaContracts();
 report();
