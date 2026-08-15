@@ -68,9 +68,38 @@ async function defaults(): Promise<void> {
   assert('provider defaults to bedrock', config.provider === 'bedrock');
   assert(
     'model defaults to a cross-region inference profile',
-    config.model === 'us.anthropic.claude-sonnet-4-6',
+    config.model === 'global.anthropic.claude-opus-5',
   );
   assert('a missing .darwin/config.json is not an error', true);
+
+  // The preset is a catalogue, not a lone model: with no file at all `/model` must
+  // still have something to switch between, and the entry in effect must be the
+  // same one the flat fallbacks name.
+  const names = config.modelChoices.map((choice) => choice.name);
+  console.log(`  catalogue: ${names.join(', ')}`);
+  assert('the defaults offer the whole preset catalogue', config.modelChoices.length === 5);
+  assert(
+    'exactly one preset entry is enabled…',
+    config.modelChoices.filter((choice) => choice.enabled).length === 1,
+  );
+  assert(
+    '…and it is the one the flat defaults name',
+    config.modelChoices.find((choice) => choice.enabled)?.fields.model === config.model,
+  );
+  assert(
+    'every preset entry carries its own short name',
+    config.modelChoices.every((choice) => choice.name !== choice.fields.model),
+  );
+  // Region is deliberately unset on the Bedrock entries so AWS_REGION still
+  // decides, but pinned on the Mantle one: that catalog is per-region.
+  const mantle = config.modelChoices.find((choice) => choice.fields.bedrockMantle === true);
+  assert('the Mantle entry pins its region and API', mantle?.fields.region === 'us-east-1' && mantle?.fields.openaiApi === 'responses');
+  assert(
+    'the Bedrock entries leave region to AWS_REGION',
+    config.modelChoices
+      .filter((choice) => choice.fields.provider === 'bedrock')
+      .every((choice) => choice.fields.region === undefined),
+  );
 
   // The old location is deliberately dead: a leftover root config.json must not
   // quietly keep configuring the agent after the move.
@@ -78,9 +107,14 @@ async function defaults(): Promise<void> {
   const stillDefault = await loadConfig(ROOT);
   assert('a root config.json is no longer read', stillDefault.model === config.model);
 
-  // The model must actually construct from defaults, or "works out of the box" is a lie.
+  // Every preset entry must construct, not just the enabled one — an entry `/model`
+  // cannot switch to is a catalogue that lies about what this run can reach.
   const model = await createModelFromConfig(config);
   assert('default config builds a working model', model !== undefined);
+  for (const choice of config.modelChoices) {
+    const built = await createModelFromConfig(withModelChoice(config, choice));
+    assert(`preset entry "${choice.name}" builds a model`, built !== undefined);
+  }
 }
 
 async function regionFallback(): Promise<void> {
@@ -663,7 +697,7 @@ async function modelCatalogue(): Promise<void> {
   // The disabled entry's fields have to be complete, since /model builds from them
   // without re-reading the file.
   assert('a disabled entry carries its own fields', config.modelChoices[1]?.fields.bedrockMantle === true);
-  assert('…including defaults it did not set', config.modelChoices[1]?.fields.maxTokens === 8192);
+  assert('…including defaults it did not set', config.modelChoices[1]?.fields.maxTokens === 64_000);
 
   // The single-model form must present the same shape, so the runtime never has to
   // ask which form the file used.

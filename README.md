@@ -216,15 +216,18 @@ instructions at all is never what someone meant to configure.
 ## Configuration
 
 `~/.darwin/config.json` in the user home directory. Every field is optional — with no file at all
-you get a working Bedrock setup.
+you get a working Bedrock setup: `global.anthropic.claude-opus-5`, plus a preset catalogue
+`/model` can switch between (`claude-sonnet-5`, `claude-haiku-4.5`, `claude-fable-5`,
+`claude-opus-5`, and `gpt-5.6-sol` over [Bedrock Mantle](#anthropic-and-openai)). The preset
+leaves `region` unset on the Bedrock entries, so `AWS_REGION` still decides where a run talks.
 
 ```json
 {
   "provider": "bedrock",
-  "model": "us.anthropic.claude-sonnet-4-6",
+  "model": "global.anthropic.claude-opus-5",
   "region": "us-west-2",
-  "maxTokens": 8192,
-  "summaryRatio": 0.3,
+  "maxTokens": 64000,
+  "summaryRatio": 0.8,
   "preserveRecentMessages": 10,
   "permissionMode": "default",
   "promptCache": true,
@@ -235,11 +238,11 @@ you get a working Bedrock setup.
 | Field | Default | Notes |
 |---|---|---|
 | `provider` | `bedrock` | `bedrock`, `anthropic` or `openai` |
-| `model` | `us.anthropic.claude-sonnet-4-6` | provider-specific model id |
+| `model` | `global.anthropic.claude-opus-5` | provider-specific model id |
 | `region` | `AWS_REGION`, else `AWS_DEFAULT_REGION`, else `us-west-2` | Bedrock only |
 | `apiKeyEnv` | — | name of the env var holding the API key |
-| `maxTokens` | `8192` | |
-| `summaryRatio` | `0.3` | fraction of old messages summarized on context overflow |
+| `maxTokens` | `64000` | |
+| `summaryRatio` | `0.8` | fraction of old messages summarized on context overflow |
 | `preserveRecentMessages` | `10` | messages the summarizer always keeps verbatim |
 | `permissionMode` | `default` | `default`, `auto` or `yolo` — see [Permissions](#permissions) |
 | `permissionRules` | — | wildcard rules that pre-approve calls; written by the prompt's "always allow" — see [Remembering an answer](#remembering-an-answer) |

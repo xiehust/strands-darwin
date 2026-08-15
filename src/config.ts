@@ -266,15 +266,82 @@ export function configPath(_projectRoot?: string): string {
 
 const DEFAULTS = {
   provider: 'bedrock',
-  model: 'us.anthropic.claude-sonnet-4-6',
-  maxTokens: 8192,
-  summaryRatio: 0.3,
+  model: 'global.anthropic.claude-opus-5',
+  maxTokens: 64_000,
+  summaryRatio: 0.8,
   preserveRecentMessages: 10,
   permissionMode: 'default',
   promptCache: true,
   thinkingEffort: DEFAULT_THINKING_EFFORT,
   contextWarnRatio: 0.8,
 } as const satisfies Partial<AppConfig>;
+
+/**
+ * The catalogue a run starts with when there is no config file: the same entries a
+ * hand-written `models` array would describe, in the same order, so `/model` works
+ * out of the box instead of offering the one model the flat defaults imply.
+ *
+ * Two deliberate departures from a file a user would write. Region is left unset
+ * on the Bedrock entries — all of them are `global.` inference profiles, so
+ * `AWS_REGION` should still decide where a run talks, which a pinned region here
+ * would silently override. And the values an entry shares with {@link DEFAULTS}
+ * are referenced rather than restated (`requestTimeoutMs` is omitted outright, as
+ * {@link DEFAULT_REQUEST_TIMEOUT_MS} already supplies it): a preset that spells
+ * out a default is a second copy of it to keep in sync.
+ */
+const DEFAULT_MODELS: readonly ModelFields[] = [
+  {
+    name: 'claude-sonnet-5',
+    provider: 'bedrock',
+    model: 'global.anthropic.claude-sonnet-5',
+    maxTokens: DEFAULTS.maxTokens,
+    promptCache: DEFAULTS.promptCache,
+    thinkingEffort: DEFAULTS.thinkingEffort,
+  },
+  {
+    name: 'claude-haiku-4.5',
+    provider: 'bedrock',
+    model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
+    // The cheap seat, and the one entry that is not a reasoning-first model: a
+    // smaller budget and less thinking is the point of reaching for it.
+    maxTokens: 16_000,
+    promptCache: DEFAULTS.promptCache,
+    thinkingEffort: 'medium',
+  },
+  {
+    name: 'claude-fable-5',
+    provider: 'bedrock',
+    model: 'global.anthropic.claude-fable-5',
+    maxTokens: DEFAULTS.maxTokens,
+    promptCache: DEFAULTS.promptCache,
+    thinkingEffort: DEFAULTS.thinkingEffort,
+  },
+  {
+    name: 'claude-opus-5',
+    // The enabled entry, by construction: {@link defaultConfig} marks whichever
+    // entry carries DEFAULTS.model, so the flat fallbacks and the catalogue can
+    // never name different models.
+    provider: 'bedrock',
+    model: DEFAULTS.model,
+    maxTokens: DEFAULTS.maxTokens,
+    promptCache: DEFAULTS.promptCache,
+    thinkingEffort: DEFAULTS.thinkingEffort,
+  },
+  {
+    name: 'gpt-5.6-sol',
+    provider: 'openai',
+    model: 'openai.gpt-5.6-sol',
+    // Pinned, unlike the Bedrock entries: the Mantle catalog is per-region and
+    // this model is served in us-east-1 only, so AWS_REGION must not decide it.
+    // `responses` is mandatory too — the model refuses Chat Completions outright.
+    region: 'us-east-1',
+    bedrockMantle: true,
+    openaiApi: 'responses',
+    maxTokens: DEFAULTS.maxTokens,
+    promptCache: DEFAULTS.promptCache,
+    thinkingEffort: DEFAULTS.thinkingEffort,
+  },
+];
 
 const DEFAULT_REGION = 'us-west-2';
 
@@ -326,6 +393,34 @@ export function withSoleChoice<T extends ModelFields & SessionFields>(config: T)
 }
 
 /**
+ * The config a run starts with when there is no config file: {@link DEFAULTS} for
+ * the session half, {@link DEFAULT_MODELS} for the catalogue, and the entry naming
+ * `DEFAULTS.model` in effect.
+ *
+ * Built the same way {@link validate} builds the array form, so a run with no file
+ * and a run with a file describing these entries are the same run — the only
+ * difference being which one the *user* can edit.
+ */
+function defaultConfig(): AppConfig {
+  const choices: ModelChoice[] = DEFAULT_MODELS.map((fields, index) => ({
+    index,
+    name: fields.name ?? fields.model,
+    enabled: fields.model === DEFAULTS.model,
+    fields,
+  }));
+
+  const enabled = choices.find((choice) => choice.enabled);
+  // Not a ConfigError: there is no file to fix. Only a bad edit to DEFAULT_MODELS
+  // or DEFAULTS.model can reach here, which is why it throws rather than picking
+  // an entry — starting on a model nobody chose is worse than failing loudly.
+  if (enabled === undefined) {
+    throw new Error(`DEFAULT_MODELS has no entry for the default model ${DEFAULTS.model}`);
+  }
+
+  return { ...DEFAULTS, ...enabled.fields, modelChoices: choices };
+}
+
+/**
  * Rebuilds a config around a different {@link ModelChoice}, keeping the session.
  *
  * Built from the session keys up rather than spread over the old config: spreading
@@ -354,7 +449,8 @@ export function withModelChoice(config: AppConfig, target: ModelChoice): AppConf
 
 /**
  * Loads `~/.darwin/config.json` from `projectRoot`. A missing file is normal — the
- * defaults are a working Bedrock setup. A present but malformed file is an
+ * defaults are a working Bedrock setup, with the whole {@link DEFAULT_MODELS}
+ * catalogue `/model` can switch between. A present but malformed file is an
  * error, since silently ignoring it would hide the user's intent.
  */
 export async function loadConfig(projectRoot: string): Promise<AppConfig> {
@@ -364,7 +460,7 @@ export async function loadConfig(projectRoot: string): Promise<AppConfig> {
   try {
     raw = await readFile(file, 'utf8');
   } catch (error) {
-    if (isFileNotFound(error)) return withSoleChoice({ ...DEFAULTS });
+    if (isFileNotFound(error)) return defaultConfig();
     throw new ConfigError(`Could not read ${file}: ${describe(error)}`);
   }
 
