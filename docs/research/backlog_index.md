@@ -29,11 +29,10 @@ Score informs ranking but does not replace qualitative rationale, dependency ord
 
 ## Directions
 
-| ID | Direction | Status | Priority | Score | Importance | Architecture fit | Evidence confidence | Difficulty | Risk | Origin report | Implementation / acceptance evidence | Notes / blockers / abandonment reason |
-|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
-
 <!-- Append directions below. Use stable IDs such as SER-001; never renumber existing rows. -->
 
+| ID | Direction | Status | Priority | Score | Importance | Architecture fit | Evidence confidence | Difficulty | Risk | Origin report | Implementation / acceptance evidence | Notes / blockers / abandonment reason |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
 | SER-001 | Add an enforced read-only planning permission mode | 完成 | 1 | 16 | 5 | 5 | 5 | 2 | 2 | [`research_2026-08-15.md`](./research_2026-08-15.md) | Accepted in `e2e1463`: Host inspected the commit/diff and re-ran `pnpm typecheck`, `pnpm test`, `spike/verify-tui.ts plan` (4 passed), Trellis validation, `git diff --check`, and clean-tree verification successfully. | `plan` denies write/execute before hooks, rules, classifiers, and prompts; the shared intervention covers child agents. Unknown tools remain fail-closed as execute. |
 | SER-002 | Make subagent work parallel and inspectable with source-labelled status and approvals, initially for read-heavy delegation | 未开始 | 2 | 8 | 4 | 3 | 5 | 4 | 4 | [`research_2026-08-15.md`](./research_2026-08-15.md) | — | Read-heavy-first safety dependency; concurrent writes require conflict isolation. |
 | SER-003 | Add append-only session trajectory export plus search/fork/replay primitives over SDK events | 未开始 | 3 | 8 | 4 | 3 | 5 | 5 | 3 | [`research_2026-08-15.md`](./research_2026-08-15.md) | — | Must remain an observer/adapter around the SDK loop and define replay correctness. |
