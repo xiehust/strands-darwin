@@ -17,6 +17,7 @@ import {
   compactBackgroundResult,
   type BackgroundBashMode,
 } from './background-tool-presentation.js';
+import { subagentCallSummary } from './subagent-format.js';
 
 export type HistoryItem =
   | { kind: 'user'; id: string; text: string }
@@ -169,6 +170,12 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       // prompt uses; reusing it keeps one description of a tool call, not two.
       const request = classify(event.toolUse.name, event.toolUse.input);
       const backgroundMode = backgroundBashMode(event.toolUse.name, event.toolUse.input);
+      // Delegation rows carry the dispatch identity and the task: several children
+      // run at once, so three rows reading `subagent: general` distinguish nothing.
+      // Pure in the tool-use block — the reducer never reads the dispatch registry.
+      const summary =
+        subagentCallSummary(event.toolUse.name, event.toolUse.input, event.toolUse.toolUseId) ??
+        request.summary;
       return {
         ...flushLiveText(state),
         thinking: false,
@@ -177,7 +184,7 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
           {
             id: event.toolUse.toolUseId,
             name: event.toolUse.name,
-            summary: request.summary,
+            summary,
             startedAt: Date.now(),
             ...(backgroundMode === undefined
               ? {}
@@ -194,7 +201,13 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
     case 'afterToolCallEvent': {
       const toolUseId = event.toolUse.toolUseId;
       const active = state.activeTools.find((tool) => tool.id === toolUseId);
-      let summary = active?.summary ?? classify(event.toolUse.name, event.toolUse.input).summary;
+      // The active row's summary first, then the same delegation projection, then
+      // the plain classification: a finished dispatch must not lose the identity
+      // the live row showed just because the panel entry was already dropped.
+      let summary =
+        active?.summary ??
+        subagentCallSummary(event.toolUse.name, event.toolUse.input, toolUseId) ??
+        classify(event.toolUse.name, event.toolUse.input).summary;
       let preview = previewToolResult(event.result.content);
       const status: ToolStatus =
         event.result.status === 'error' ? (preview.startsWith('DENIED:') ? 'denied' : 'error') : 'ok';

@@ -5,6 +5,13 @@
  * summary plus each labelled detail block, so a bash command and a file edit each
  * show what actually matters about them. The last line carries the answer keys,
  * including the "always allow" offers the gate derived from this call.
+ *
+ * The summary line is prefixed with the request's source — `[parent]`, or
+ * `[<agent>#<dispatch>]` for a child. Always, not only for children: children run
+ * concurrently and can queue prompts behind one another, so a label that appears
+ * sometimes leaves the user guessing on exactly the prompts that matter. It rides
+ * the existing summary line because this box shares the live frame with the header,
+ * where one extra row is a row Ink drops off a short terminal.
  */
 import { Box, Text } from 'ink';
 import React from 'react';
@@ -36,7 +43,10 @@ export function PermissionPrompt({
         {waiting > 0 && <Text dimColor> — {waiting} more queued</Text>}
       </Box>
 
-      <Text>{request.summary}</Text>
+      <Box>
+        <Text color="cyan">[{request.source.label}] </Text>
+        <Text>{request.summary}</Text>
+      </Box>
 
       {request.details.map((detail) => (
         <Box key={detail.label} flexDirection="column" marginTop={1}>

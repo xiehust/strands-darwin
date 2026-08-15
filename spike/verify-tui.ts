@@ -149,6 +149,15 @@ async function approvePath(): Promise<void> {
     await tui.waitFor('allow?', { timeoutMs: 180_000, from: turnStart, settleMs: 400 });
     assert('permission prompt appeared', tui.screen.includes('permission required'));
     assert('prompt is labelled as a write', /permission required\s*\(write\b/.test(tui.screen));
+    // Provenance rides the summary line, so the heading line is unchanged and the
+    // box gains no row. `[parent]` is rendered even with no delegation in flight:
+    // a label that only shows up sometimes leaves the user guessing on the prompts
+    // that matter, which are exactly the ones a concurrent child queued.
+    assert('prompt says which agent asked', /\[parent\] fileEditor str_replace/.test(tui.screen));
+    assert(
+      'the source label did not push the box off the frame',
+      tui.screen.includes('allow?') && tui.screen.includes('Path:') && tui.screen.includes('With:'),
+    );
     assert('prompt says why the call was flagged', tui.screen.includes('outside the project'));
     assert('prompt shows the file path', tui.screen.includes(TARGET));
     assert('prompt shows the Path label', tui.screen.includes('Path:'));
@@ -694,14 +703,15 @@ async function slashCompletion(): Promise<void> {
 
     const beforeAll = tui.mark();
     tui.send('\u007f');
-    await tui.waitFor('❯ /compact', { timeoutMs: 30_000, from: beforeAll, settleMs: 400 });
+    await tui.waitFor('❯ /agents', { timeoutMs: 30_000, from: beforeAll, settleMs: 400 });
     const completed = tui.screen.slice(beforeSlash);
     assert('completion list appeared', completed.includes('commands ('));
     // The built-ins are listed too, and first: a command that only appears in the
     // header hint is one nobody finds. Matched on the row markers ('❯ ' for the
     // selected row, two spaces otherwise) — a bare '/exit' also occurs in the
     // header line, so it would pass with no list on screen at all.
-    assert('the built-ins are listed first', completed.includes('❯ /compact'));
+    assert('the built-ins are listed first', completed.includes('❯ /agents'));
+    assert('the built-in /compact is listed', completed.includes('  /compact'));
     assert('the built-in /effort is listed', completed.includes('  /effort'));
     assert('the built-in /exit is listed', completed.includes('  /exit'));
       assert('the built-in /tasks is listed', completed.includes('  /tasks'));
@@ -769,6 +779,71 @@ async function backgroundDetailsToggle(): Promise<void> {
     tui.send('\u007f'.repeat(draft.length));
     tui.submit('/exit');
     assert('TUI exits cleanly after detail toggles', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/**
+ * Zero-model proof that dispatch state is observable from the TUI.
+ *
+ * `/agents` reads the runtime's dispatch registry the way `/tasks` reads the
+ * background manager: locally, mid-turn or idle, without a model call. The empty
+ * wording is asserted verbatim because it is the one thing that keeps this report
+ * from being read as the *catalogue* of definitions the header advertises.
+ */
+async function agentDispatches(): Promise<void> {
+  header('TUI — /agents reports dispatch state without a model call');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const beforeEmpty = tui.mark();
+    tui.submit('/agents');
+    await tui.waitFor('subagent dispatches — none in this run', {
+      timeoutMs: 30_000,
+      from: beforeEmpty,
+      settleMs: 400,
+    });
+    const empty = tui.screen.slice(beforeEmpty);
+    assert(
+      '/agents reports an explicit empty current-run state without starting a turn',
+      empty.includes('subagent dispatches — none in this run') && !empty.includes('working…'),
+    );
+    assert(
+      'the empty report cannot be mistaken for the agent catalogue',
+      !empty.includes('subagent dispatches — this run'),
+    );
+
+    const beforeArgument = tui.mark();
+    tui.submit('/agents extra');
+    await tui.waitFor('/agents takes no arguments', { timeoutMs: 30_000, from: beforeArgument, settleMs: 400 });
+    assert(
+      '/agents rejects arguments without starting a turn',
+      !tui.screen.slice(beforeArgument).includes('working…'),
+    );
+
+    const beforeTabArgument = tui.mark();
+    tui.submit('/agents\textra');
+    await tui.waitFor('/agents takes no arguments', { timeoutMs: 30_000, from: beforeTabArgument, settleMs: 400 });
+    assert(
+      '/agents rejects non-space argument separators locally',
+      !tui.screen.slice(beforeTabArgument).includes('working…'),
+    );
+
+    const beforeCompletion = tui.mark();
+    tui.send('/age');
+    await tui.waitFor('❯ /agents', { timeoutMs: 30_000, from: beforeCompletion, settleMs: 400 });
+    assert(
+      '/agents is discoverable in the completion menu',
+      tui.screen.slice(beforeCompletion).includes('list subagent dispatches'),
+    );
+
+    tui.send('\u007f'.repeat(4));
+    tui.submit('/exit');
+    assert('TUI exits cleanly after reading dispatch state', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
   } finally {
     tui.kill();
   }
@@ -1261,6 +1336,7 @@ const SCENARIOS = {
   cursor: cursorEditing,
   completion: slashCompletion,
   backgroundDetails: backgroundDetailsToggle,
+  agents: agentDispatches,
   agentsMd: agentsMdHeader,
   usage: usageReport,
   tasks: taskMonitoring,

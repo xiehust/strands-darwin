@@ -210,6 +210,93 @@ useEffect(
 Component-level testing (ink-testing-library) was rejected: the bugs worth catching
 (permission gating, resume, process exit) live in the seams, not in components.
 
+## Subagent dispatch monitoring and source-labelled approvals
+
+### 1. Scope / trigger
+
+Changes to `/agents`, dispatch subscriptions, the delegation row in the live panel, or the
+permission prompt's source label cross registry → runtime → React reducer → Ink boundaries.
+Verify registry semantics directly (`spike/verify-subagents.ts`), projections purely
+(`spike/verify-subagent-format.ts`), and user visibility through a real pty.
+
+### 2. Signatures
+
+```typescript
+runtime.listSubagentDispatches(): SubagentDispatchStatus[]   // synchronous: in-memory, no I/O
+runtime.subscribeToSubagentDispatches(listener): () => void
+/agents // local command; no arguments; valid while idle or streaming
+request.source // { kind: 'parent' | 'child'; label; dispatchId?; agentName? } — always present
+```
+
+### 3. Contracts
+
+- Handle `/agents` before the busy-turn guard with `/^\/agents(?:\s|$)/`, exactly like `/tasks`:
+  it reads the registry directly and must not call `send`, cancel, queue, or emit a tool event.
+  Unlike `/tasks` the read is synchronous — the registry is in memory, so there is no failure
+  path to report.
+- The empty report is `subagent dispatches — none in this run`. It says *dispatches*, not agents:
+  `runtime.info.agentNames` (the definitions available to delegate to, shown in the header) and
+  dispatch state (the runs that happened) are different things surfaced by different paths, and
+  one report that could be read as either is worse than two reports.
+- Subscribe in a mounted `useEffect` and return the unsubscribe closure. Dispatch only a
+  `notice`; never `turnEnded` or a status change. Concurrent children finish in an unscripted
+  order, including while a permission prompt owns the keyboard.
+- Bound every rendered field at presentation time (task summary, agent label), truncating by
+  Unicode code points. The registry keeps the full task text; nothing child-produced is stored.
+- The permission prompt renders the source on the **existing summary line**
+  (`[parent] fileEditor str_replace: …`), never on a line of its own, and renders it for parent
+  calls too. The box shares the live frame with the header, so a new row is a row Ink drops.
+- The live delegation row (`subagent explorer#a1b2c3d4: <bounded task>`) is computed in the pure
+  reducer from `event.toolUse` alone via `shortDispatchId`, so it shows the same dispatch id the
+  registry recorded without the reducer ever reading the registry.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| No dispatches this run | One `subagent dispatches — none in this run` report |
+| `/agents` plus space/tab/newline argument | `/agents takes no arguments`; no model turn |
+| Dispatch finishes while streaming or permission-blocked | Append a notice; turn and prompt ownership continue |
+| Several dispatches running | One row each, distinguishable by `<agent>#<dispatch>` |
+| Long/multiline/Unicode task | Single-line bounded complete-code-point summary |
+| Parent-originated prompt | Labelled `[parent]`, not left unlabelled |
+| Child-originated prompt | Labelled `[<agent>#<dispatch>]` matching the `/agents` row |
+
+### 5. Good / base / bad cases
+
+- Good: two dispatches run concurrently, `/agents` lists both mid-turn, one finishes and its
+  notice lands in `<Static>` history while the other keeps running.
+- Base: `/agents` while idle with no delegation is free and starts no model request.
+- Bad: giving the label its own row (pushes `allow?` off a 50-row pty — the exact failure the
+  header contract below records); asserting `'/agents'` alone (it also occurs in the streaming
+  hint, so the assertion would pass with no report on screen); polling the registry from React.
+
+### 6. Tests required
+
+- `spike/verify-subagent-format.ts`: report/notice/live-row projections and id purity.
+- `spike/verify-subagents.ts`: concurrency, provenance and registry observer semantics.
+- `spike/verify-tui.ts agents`: zero-model empty report (asserted verbatim), space and tab
+  argument rejection, the completion row with its description, no `working…`, `exitedWithin`.
+- `spike/verify-tui.ts approve`: the `[parent]` label together with `allow?`, `Path:` and `With:`
+  — one assertion for the label, one that the box is still whole.
+- `spike/verify-tui.ts completion`: the builtin completion order starts at `❯ /agents`. A new
+  builtin command changes which row is selected first; re-run this scenario when adding one, and
+  keep the total at or below `MAX_COMPLETIONS` so every builtin still fits one screen.
+
+### 7. Wrong vs correct
+
+```typescript
+// WRONG: a label of its own is a frame row, and the registry is not the reducer's business.
+<Text>[{lookupDispatch(runtime, request)}]</Text>
+<Text>{request.summary}</Text>
+
+// CORRECT: one row, provenance the gate already resolved, parent included.
+<Box>
+  <Text color="cyan">[{request.source.label}] </Text>
+  <Text>{request.summary}</Text>
+</Box>
+```
+
 ## Contract: anchored waits (`mark()` / `from:`)
 
 Recurring text makes unanchored waits meaningless: `you>` is drawn every frame, so

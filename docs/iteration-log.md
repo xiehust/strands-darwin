@@ -133,3 +133,29 @@ task validation, `git diff --check`, and clean-tree verification successfully.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-15 | `e2e1463` | Enforce read-only `plan` mode across config/CLI, hooks, parent/child interventions, TUI/headless diagnostics, and focused acceptance |
+
+### Batch 6 — parallel, inspectable subagents (2026-08-15)
+
+SER-002 runs in child session `session-20260815-155540093`; planning ran as
+`bg-d6b5e653-bd0a-4d32-8d64-23258f2b2239`. Unlike Batch 5 the implementation was carried out
+directly in that same conversation as the Host's implementation worker, so there is no separate
+implementation task id. Repository work is tracked in the single Trellis task
+`08-15-parallel-subagents`.
+
+Planning began by measuring the SDK instead of assuming it, which changed the shape of the whole
+iteration: `@strands-agents/sdk@1.12.0` defaults `toolExecutor` to `ConcurrentToolExecutor`, so
+two dispatches in one assistant message already overlap (303 ms for two 300 ms children, both
+starting at +2 ms), while hook callbacks — and therefore permission prompts — are serialized by
+the single stream loop. Concurrency therefore needed a regression test and a written contract,
+not new machinery; the real work was making concurrent delegation *legible*: a required
+`AssessedPermissionRequest.source`, a `[parent]` / `[<agent>#<dispatch>]` label riding the
+existing prompt line, a dispatch registry with `/agents` plus terminal notices, and an explicit
+read-heavy-only limitation on concurrent writes.
+
+Local validation for this batch: `pnpm typecheck`; `pnpm test` (exit 0 with the expected MCP
+`continueOnError` diagnostic, including `verify-subagents.ts` 66 passed and the new
+`verify-subagent-format.ts` 40 passed); the new network-free `verify-tui.ts agents` (6 passed);
+`verify-tui.ts completion` (20 passed); and the model-calling `verify-tui.ts approve` (23 passed),
+`cancelThenContinue` (5 passed) and `bashExit` (3 passed). Independent Host acceptance is pending;
+this record intentionally claims no Host rerun and adds no milestone row until the Host supplies
+them.

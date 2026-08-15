@@ -34,7 +34,7 @@ inference-profile model ids, never bare `anthropic.*`):
 
 ```bash
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven TUI suite
-AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|bashExit|cancelThenContinue|agentsMd|usage|effort|model)
+AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|agents|bashExit|cancelThenContinue|agentsMd|usage|effort|model)
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
@@ -122,6 +122,24 @@ acceptance matrix is measured rather than read, because the AWS page is wrong ab
 `Model.updateConfig()` rather than rebuilding the agent — the conversation must survive a change
 of thinking depth — with the config write reported, not awaited, exactly like an accepted
 allow-rule.
+
+**Subagents are parallel, labelled, and read-heavy by design** (`src/agents/subagent-tool.ts`,
+`src/agents/dispatch-registry.ts`): the SDK's default `ConcurrentToolExecutor` already races the
+tool calls of one assistant message, so two dispatches in one turn overlap (measured 303ms for
+two 300ms children in `spike/verify-subagents.ts`) — never set `toolExecutor`. What darwin adds
+is *legibility*, because approvals cannot be parallel: hook callbacks are dispatched one at a
+time by the single SDK stream loop, so prompts queue. Every `AssessedPermissionRequest` therefore
+carries a required `source` resolved from `BeforeToolCallEvent.agent.id` through a narrow
+resolver injected into the gate (the registry is built *before* the gate for exactly this
+reason), and the prompt renders `[parent]` or `[<agent>#<dispatch>]` on the existing summary
+line — a label of its own would cost the frame row the header contract forbids. Per-dispatch
+state follows the accepted background-task shape (runtime-exposed manager, observer-only
+subscription, bounded presentation-time projection): `listSubagentDispatches`,
+`subscribeToSubagentDispatches`, `/agents`. Records hold name, task, state and timestamps only —
+observability must never become a second path for child transcript into parent context. And the
+parallelism is scoped to **reads**: concurrent children share one working tree with no isolation
+or conflict detection, so concurrent write delegation is *not* made safe, deliberately and
+documented rather than guarded.
 
 **Paths** (`src/paths.ts`): every `.darwin/` location is derived here from the CLI's cwd.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything

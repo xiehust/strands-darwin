@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['compact', 'context', 'effort', 'exit', 'model', 'tasks', 'usage'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'compact', 'context', 'effort', 'exit', 'model', 'tasks', 'usage'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -18,6 +18,8 @@ export const BUILTIN_COMMAND_NAMES = ['compact', 'context', 'effort', 'exit', 'm
 export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   Record<(typeof BUILTIN_COMMAND_NAMES)[number], string>
 > = {
+  // Dispatch *runs*, not the catalogue of definitions the header lists.
+  agents: 'list subagent dispatches',
   compact: 'summarize older conversation',
   context: 'estimated context size',
   effort: 'set thinking depth',

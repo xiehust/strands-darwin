@@ -19,6 +19,11 @@ import {
   loadAgentDefinitions,
   type AgentDefinitionRegistry,
 } from '../src/agents/loader.js';
+import {
+  SubagentDispatchRegistry,
+  shortDispatchId,
+  type SubagentDispatchStatus,
+} from '../src/agents/dispatch-registry.js';
 import { SubagentTool } from '../src/agents/subagent-tool.js';
 import { PermissionGate, type AssessedPermissionRequest } from '../src/agent/permission.js';
 import { ToolHookGate } from '../src/hooks/tool-hooks.js';
@@ -153,6 +158,154 @@ class BashChildModel extends Model<BaseModelConfig> {
     yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
   }
 }
+
+/**
+ * Two delegations in one assistant message, optionally preceded by a gated call
+ * the parent makes itself — the shape that distinguishes parent provenance from
+ * child provenance without any model access.
+ */
+class MultiDispatchParentModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.multi-parent', contextWindowLimit: 200_000 };
+
+  constructor(
+    private readonly dispatches: readonly { toolUseId: string; task: string; agent?: string }[],
+    private readonly parentProbeFirst = false,
+  ) {
+    super();
+  }
+
+  override updateConfig(config: BaseModelConfig): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  override getConfig(): BaseModelConfig {
+    return this.config;
+  }
+
+  override async *stream(messages: Message[]): AsyncIterable<ModelStreamEvent> {
+    const results = messages.filter((message) =>
+      message.content.some((block) => block.type === 'toolResultBlock'),
+    ).length;
+    const step = this.parentProbeFirst ? results : results + 1;
+
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+
+    if (step === 0) {
+      yield {
+        type: 'modelContentBlockStartEvent',
+        start: { type: 'toolUseStart', name: 'dangerousProbe', toolUseId: 'parent-probe' },
+      };
+      yield {
+        type: 'modelContentBlockDeltaEvent',
+        delta: { type: 'toolUseInputDelta', input: '{"value":"parent"}' },
+      };
+      yield { type: 'modelContentBlockStopEvent' };
+      yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' };
+      return;
+    }
+
+    if (step === 1) {
+      // Both blocks in one message: this is what the concurrent tool executor races.
+      for (const dispatch of this.dispatches) {
+        yield {
+          type: 'modelContentBlockStartEvent',
+          start: { type: 'toolUseStart', name: 'subagent', toolUseId: dispatch.toolUseId },
+        };
+        yield {
+          type: 'modelContentBlockDeltaEvent',
+          delta: {
+            type: 'toolUseInputDelta',
+            input: JSON.stringify({
+              task: dispatch.task,
+              ...(dispatch.agent === undefined ? {} : { agent: dispatch.agent }),
+            }),
+          },
+        };
+        yield { type: 'modelContentBlockStopEvent' };
+      }
+      yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' };
+      return;
+    }
+
+    yield { type: 'modelContentBlockStartEvent' };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'dispatches back' } };
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+  }
+}
+
+/** Records when its one model call started and ended, so overlap is measurable. */
+class TimedChildModel extends Model<BaseModelConfig> {
+  startedAt: number | undefined;
+  endedAt: number | undefined;
+  private config: BaseModelConfig = { modelId: 'fake.timed-child', contextWindowLimit: 200_000 };
+
+  constructor(
+    readonly tag: string,
+    private readonly delayMs: number,
+    private readonly useProbe = false,
+  ) {
+    super();
+  }
+
+  override updateConfig(config: BaseModelConfig): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  override getConfig(): BaseModelConfig {
+    return this.config;
+  }
+
+  override async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    const hasResult = messages.some((message) =>
+      message.content.some((block) => block.type === 'toolResultBlock'),
+    );
+
+    if (this.useProbe && !hasResult && (options?.toolSpecs ?? []).some((spec) => spec.name === 'dangerousProbe')) {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' };
+      yield {
+        type: 'modelContentBlockStartEvent',
+        start: { type: 'toolUseStart', name: 'dangerousProbe', toolUseId: `probe-${this.tag}` },
+      };
+      yield {
+        type: 'modelContentBlockDeltaEvent',
+        delta: { type: 'toolUseInputDelta', input: `{"value":"${this.tag}"}` },
+      };
+      yield { type: 'modelContentBlockStopEvent' };
+      yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' };
+      return;
+    }
+
+    this.startedAt ??= Date.now();
+    if (this.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+    this.endedAt = Date.now();
+
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    yield { type: 'modelContentBlockStartEvent' };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: `${this.tag} report` } };
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+  }
+}
+
+/** A child whose model fails, so a dispatch can be observed as `failed`. */
+class FailingChildModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.failing-child', contextWindowLimit: 200_000 };
+
+  override updateConfig(config: BaseModelConfig): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  override getConfig(): BaseModelConfig {
+    return this.config;
+  }
+
+  override async *stream(): AsyncIterable<ModelStreamEvent> {
+    await Promise.resolve();
+    throw new Error('child provider exploded');
+  }
+}
+
 
 async function buildFixture(): Promise<string> {
   await rm(ROOT, { recursive: true, force: true });
@@ -411,6 +564,213 @@ async function modelSnapshot(registry: AgentDefinitionRegistry): Promise<void> {
   await subagents.shutdown();
 }
 
+/**
+ * Two dispatches in one assistant message must overlap in time.
+ *
+ * Nothing in darwin makes that happen: SDK 1.12 defaults `toolExecutor` to
+ * `ConcurrentToolExecutor`, which races the per-tool generators. This pins that
+ * default — set it to `'sequential'` and these numbers double.
+ */
+async function concurrentDispatch(registry: AgentDefinitionRegistry): Promise<void> {
+  header('subagents — two dispatches in one message run concurrently');
+
+  const delayMs = 300;
+  const children: TimedChildModel[] = [];
+  const dispatches = new SubagentDispatchRegistry();
+  const finished: SubagentDispatchStatus[] = [];
+  const unsubscribe = dispatches.subscribe((dispatch) => finished.push(dispatch));
+
+  const subagents = new SubagentTool({
+    registry,
+    tools: [],
+    intervention: new PermissionGate({ mode: 'yolo', projectRoot: ROOT, ask: async () => ({ allowed: true }) }),
+    projectInstructions: undefined,
+    config: fakeConfig('concurrent'),
+    createModel: async () => {
+      const model = new TimedChildModel(String.fromCharCode(65 + children.length), delayMs);
+      children.push(model);
+      return model;
+    },
+    dispatches,
+  });
+  const parent = new Agent({
+    tools: [subagents.tool],
+    model: new MultiDispatchParentModel([
+      { toolUseId: 'sub-a', task: 'search for every call site' },
+      { toolUseId: 'sub-b', task: 'read the permission gate', agent: 'explorer' },
+    ]),
+    printer: false,
+  });
+  await parent.initialize();
+
+  const startedAt = Date.now();
+  const result = await parent.invoke('delegate twice');
+  const elapsed = Date.now() - startedAt;
+
+  const starts = children.map((child) => child.startedAt ?? 0);
+  const ends = children.map((child) => child.endedAt ?? 0);
+  console.log(`  two ${delayMs}ms children took ${elapsed}ms; starts ${starts.map((value) => value - startedAt).join(', ')}`);
+
+  assert('both dispatches ran', children.length === 2 && starts.every((value) => value > 0));
+  assert(
+    'the second child started before the first finished',
+    Math.min(...ends) > Math.max(...starts),
+  );
+  assert('the turn took one delay, not two', elapsed < delayMs * 2 - 50);
+  assert('both reports reached the parent', result.stopReason === 'endTurn');
+
+  const listed = dispatches.list();
+  console.log(`  dispatches: ${JSON.stringify(listed.map((entry) => [entry.dispatchId, entry.agentName, entry.state]))}`);
+  assert('every dispatch is observable from the registry', listed.length === 2);
+  assert('dispatch ids come from the parent tool-use ids', listed.map((entry) => entry.dispatchId).join(',') === `${shortDispatchId('sub-a')},${shortDispatchId('sub-b')}`);
+  assert('each dispatch records the agent it ran', listed.map((entry) => entry.agentName).join(',') === 'general,explorer');
+  assert('each dispatch records the delegated task in full', listed[1]?.task === 'read the permission gate');
+  assert('both dispatches settled as succeeded', listed.every((entry) => entry.state === 'succeeded'));
+  assert('every dispatch has a finish time', listed.every((entry) => entry.finishedAt !== null));
+  assert('one terminal event per dispatch', finished.length === 2);
+  assert('terminal events carry terminal states', finished.every((entry) => entry.state === 'succeeded'));
+
+  unsubscribe();
+  await subagents.shutdown();
+}
+
+/**
+ * Which agent asked. Parent and children share one gate instance, so without this
+ * a queued prompt cannot say whose work it belongs to — and under concurrency
+ * several children really do queue behind one another.
+ */
+async function dispatchProvenance(registry: AgentDefinitionRegistry): Promise<void> {
+  header('subagents — permission requests carry their originating agent');
+
+  const asked: AssessedPermissionRequest[] = [];
+  const dispatches = new SubagentDispatchRegistry();
+  const gate = new PermissionGate({
+    mode: 'default',
+    projectRoot: ROOT,
+    ask: async (request) => {
+      asked.push(request);
+      return { allowed: true };
+    },
+    dispatchSource: (agentId) => dispatches.sourceFor(agentId),
+  });
+  const dangerousProbe = tool({
+    name: 'dangerousProbe',
+    description: 'Provenance probe.',
+    inputSchema: z.object({ value: z.string() }),
+    callback: ({ value }) => `ran ${value}`,
+  });
+  // Both dispatched definitions need the probe in their catalogue, or the one with
+  // a narrower allowlist would simply never ask and the label would go untested.
+  const probeRegistry: AgentDefinitionRegistry = {
+    definitions: registry.definitions.map((definition) =>
+      definition.name === 'explorer' ? { ...definition, tools: undefined } : definition,
+    ),
+    problems: registry.problems,
+  };
+  const subagents = new SubagentTool({
+    registry: probeRegistry,
+    tools: [dangerousProbe],
+    intervention: gate,
+    projectInstructions: undefined,
+    config: fakeConfig('provenance'),
+    createModel: async () => new TimedChildModel(`${asked.length}`, 0, true),
+    dispatches,
+  });
+  const parent = new Agent({
+    tools: [subagents.tool, dangerousProbe],
+    model: new MultiDispatchParentModel(
+      [
+        { toolUseId: 'sub-a', task: 'child one' },
+        { toolUseId: 'sub-b', task: 'child two', agent: 'explorer' },
+      ],
+      true,
+    ),
+    interventions: [gate],
+    printer: false,
+  });
+  await parent.initialize();
+  await parent.invoke('probe, then delegate twice');
+
+  console.log(`  sources: ${JSON.stringify(asked.map((request) => request.source))}`);
+  const parentRequests = asked.filter((request) => request.source.kind === 'parent');
+  const childRequests = asked.filter((request) => request.source.kind === 'child');
+
+  assert('the parent call is labelled as the parent', parentRequests.length === 1 && parentRequests[0]?.source.label === 'parent');
+  assert('a parent source carries no dispatch identity', parentRequests[0]?.source.dispatchId === undefined);
+  assert('both child calls are labelled as children', childRequests.length === 2);
+  assert(
+    'a child label names the agent and its dispatch',
+    childRequests.every((request) => request.source.label === `${request.source.agentName}#${request.source.dispatchId}`),
+  );
+  assert(
+    'child labels resolve to the dispatch ids the registry recorded',
+    childRequests.every((request) =>
+      dispatches.list().some((entry) => entry.dispatchId === request.source.dispatchId && entry.agentName === request.source.agentName),
+    ),
+  );
+  assert(
+    'concurrent children are told apart',
+    new Set(childRequests.map((request) => request.source.label)).size === 2,
+  );
+  assert(
+    'both dispatched definitions appear',
+    childRequests.map((request) => request.source.agentName).sort().join(',') === 'explorer,general',
+  );
+  assert('an untracked agent id is the parent', dispatches.sourceFor('darwin') === undefined);
+
+  const transcript = JSON.stringify(parent.messages.map((message) => message.toJSON()));
+  assert('child tool transcripts still never enter parent history', !transcript.includes('probe-'));
+
+  await subagents.shutdown();
+}
+
+/** Terminal states other than success, and what is deliberately not recorded. */
+async function dispatchStates(registry: AgentDefinitionRegistry): Promise<void> {
+  header('subagents — dispatch states and observer isolation');
+
+  const dispatches = new SubagentDispatchRegistry();
+  const subagents = new SubagentTool({
+    registry,
+    tools: [],
+    intervention: new PermissionGate({ mode: 'yolo', projectRoot: ROOT, ask: async () => ({ allowed: true }) }),
+    projectInstructions: undefined,
+    config: fakeConfig('states'),
+    createModel: async () => new FailingChildModel(),
+    dispatches,
+  });
+  const parent = new Agent({ tools: [subagents.tool], model: new ScriptedChildModel(), printer: false });
+  await parent.initialize();
+
+  await parent.tool.subagent?.invoke({ task: 'this one breaks' }).catch(() => undefined);
+  const afterFailure = dispatches.list();
+  assert('a failed child is recorded as failed', afterFailure.length === 1 && afterFailure[0]?.state === 'failed');
+
+  await parent.tool.subagent?.invoke({ task: 'nobody', agent: 'missing' });
+  assert('an unknown agent name records no dispatch', dispatches.list().length === 1);
+  await subagents.shutdown();
+
+  // Observer semantics, asserted against the registry itself: exactly-once
+  // publication and failure isolation belong to the manager, not to the UI.
+  const bare = new SubagentDispatchRegistry();
+  const seen: string[] = [];
+  const stopThrowing = bare.subscribe(() => {
+    throw new Error('observer failure');
+  });
+  const stopRecording = bare.subscribe((dispatch) => seen.push(`${dispatch.dispatchId}:${dispatch.state}`));
+
+  const handle = bare.begin({ agentName: 'general', task: 'observed', toolUseId: 'tooluse_abcdefgh' });
+  handle.finish('succeeded');
+  handle.finish('failed');
+  assert('a throwing observer does not hide the event from the others', seen.length === 1);
+  assert('the first terminal state wins', seen[0] === 'abcdefgh:succeeded' && bare.list()[0]?.state === 'succeeded');
+
+  stopRecording();
+  stopThrowing();
+  bare.begin({ agentName: 'general', task: 'after unsubscribe' }).finish('cancelled');
+  assert('unsubscribing stops delivery', seen.length === 1);
+  assert('a cancelled dispatch is still listed', bare.list().some((entry) => entry.state === 'cancelled'));
+}
+
 function fakeConfig(model: string) {
   return {
     provider: 'bedrock',
@@ -433,6 +793,7 @@ await dispatchContracts(registry);
 async function cancellation(registry: AgentDefinitionRegistry): Promise<void> {
   header('subagents — parent cancellation reaches an active child');
   const childModels: ScriptedChildModel[] = [];
+  const dispatches = new SubagentDispatchRegistry();
   const subagents = new SubagentTool({
     registry,
     tools: [],
@@ -444,6 +805,7 @@ async function cancellation(registry: AgentDefinitionRegistry): Promise<void> {
       childModels.push(model);
       return model;
     },
+    dispatches,
   });
   const parent = new Agent({ tools: [subagents.tool], model: new DelegatingParentModel(), printer: false });
   await parent.initialize();
@@ -457,6 +819,12 @@ async function cancellation(registry: AgentDefinitionRegistry): Promise<void> {
   const followUp = await parent.invoke('continue after cancellation');
   assert('the parent remains usable after child cancellation', followUp.stopReason === 'endTurn');
   await subagents.shutdown();
+  // A cancelled dispatch settles as itself: an interrupted child must not be
+  // reported as a failure, and must not stay `running` forever either.
+  const cancelled = dispatches.list();
+  console.log(`  dispatch after cancel: ${JSON.stringify(cancelled.map((entry) => entry.state))}`);
+  assert('cancellation settles the dispatch as cancelled', cancelled[0]?.state === 'cancelled');
+  assert('a cancelled dispatch stops being reported as running', cancelled.every((entry) => entry.state !== 'running'));
 }
 
 await permissionContracts(registry);
@@ -490,6 +858,10 @@ async function bashLifecycle(registry: AgentDefinitionRegistry): Promise<void> {
 
 await cancellation(registry);
 await bashLifecycle(registry);
+
+await concurrentDispatch(registry);
+await dispatchProvenance(registry);
+await dispatchStates(registry);
 
 await modelSnapshot(registry);
 await rm(ROOT, { recursive: true, force: true });

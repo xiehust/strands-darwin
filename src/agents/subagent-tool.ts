@@ -8,6 +8,7 @@ import type { ProjectInstructions } from '../agent/instructions.js';
 import { composeSystemPrompt } from '../agent/instructions.js';
 import { installMaxTokensRecovery, withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import type { AppConfig } from '../config.js';
+import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
 
@@ -20,6 +21,12 @@ export interface SubagentToolOptions {
   projectInstructions: ProjectInstructions | undefined;
   config: AppConfig;
   createModel: (config: AppConfig) => Promise<Model>;
+  /**
+   * Records per-dispatch state and gives the permission gate its provenance.
+   * Omitted only by narrow tests that exercise isolation alone: without it a
+   * dispatch is unobservable and its child's approvals cannot be labelled.
+   */
+  dispatches?: SubagentDispatchRegistry;
 }
 
 /**
@@ -29,6 +36,13 @@ export interface SubagentToolOptions {
  * child's stream events through the parent tool stream. Consuming `invoke()` here
  * keeps the child's reasoning, messages, and tool transcript private and returns
  * only its final report to the main conversation.
+ *
+ * Dispatch is re-entrant, and the SDK's default `ConcurrentToolExecutor` races the
+ * per-tool generators, so two `subagent` blocks in one assistant message really do
+ * run at the same time (measured in `spike/verify-subagents.ts`). That parallelism
+ * is scoped to **read-heavy** delegation on purpose: concurrent children share one
+ * working tree with no isolation or conflict detection, so nothing here makes
+ * concurrent write delegation safe. Keep mutation on one agent at a time.
  */
 export class SubagentTool {
   readonly tool: Tool;
@@ -92,6 +106,28 @@ export class SubagentTool {
       return `No subagent named ${JSON.stringify(requestedName)}. Available agents: ${available}.`;
     }
 
+    // Recorded only once the request names a real agent: an unknown name never
+    // dispatched anything, so it must not show up as a run that failed.
+    const dispatch = this.options.dispatches?.begin({
+      agentName: definition.name,
+      task,
+      toolUseId: context?.toolUse.toolUseId,
+    });
+
+    try {
+      return await this.run(definition, task, dispatch, context);
+    } catch (error) {
+      dispatch?.finish('failed');
+      throw error;
+    }
+  }
+
+  private async run(
+    definition: AgentDefinition,
+    task: string,
+    dispatch: SubagentDispatchHandle | undefined,
+    context?: ToolContext,
+  ): Promise<string> {
     // Snapshot the live config before the async model construction. A concurrent
     // /model switch affects the next dispatch, never a child already being built.
     const config = this.config;
@@ -99,7 +135,10 @@ export class SubagentTool {
     // Cancellation can land while a provider module/model is being constructed,
     // before there is a child Agent to cancel. Do not start one after its parent
     // invocation has already been abandoned.
-    if (context?.agent.cancelSignal.aborted === true) return 'Subagent task cancelled.';
+    if (context?.agent.cancelSignal.aborted === true) {
+      dispatch?.finish('cancelled');
+      return 'Subagent task cancelled.';
+    }
 
     const child = new Agent({
       id: `darwin-subagent-${definition.name}-${randomUUID()}`,
@@ -112,6 +151,9 @@ export class SubagentTool {
       printer: false,
     });
     installMaxTokensRecovery(child);
+    // Before initialize(), so the very first gated call this child makes already
+    // resolves to its dispatch rather than to the parent.
+    dispatch?.attachAgent(child.id);
 
     this.activeAgents.add(child);
     const cancelChild = () => child.cancel();
@@ -121,6 +163,7 @@ export class SubagentTool {
       await child.initialize();
       const invocationState = {};
       const result = await child.invoke(task, { invocationState });
+      dispatch?.finish(result.stopReason === 'cancelled' ? 'cancelled' : 'succeeded');
       return withRetainedMaxTokensText(result.toString(), invocationState);
     } finally {
       context?.agent.cancelSignal.removeEventListener('abort', cancelChild);

@@ -70,7 +70,7 @@ function createReadlineBridge(prompter: Prompter) {
   return async (request: AssessedPermissionRequest): Promise<PermissionDecision> => {
     const task = queue.then(async () => {
       console.log(`\n  ┌─ permission required ─ ${request.kind} — ${request.riskReason}`);
-      console.log(`  │ ${request.summary}`);
+      console.log(`  │ [${request.source.label}] ${request.summary}`);
       for (const detail of request.details) {
         console.log(`  │`);
         console.log(`  │ ${detail.label}:`);

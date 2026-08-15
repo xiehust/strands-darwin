@@ -81,10 +81,53 @@ export interface PermissionDetail {
 }
 
 /**
- * A {@link PermissionRequest} with its risk assessment and the "always allow"
- * offers derived from it — what bridges see.
+ * Which agent a request came from.
+ *
+ * Parent and every child share one gate instance (that is what keeps allow-rules
+ * and the live bridge coherent), and children run concurrently — so without this
+ * a prompt cannot say whose work it is about. `label` is bounded and ready to
+ * render: a permission box shares the live frame with the header, so provenance
+ * has to ride an existing line rather than earn one.
+ */
+export interface PermissionSource {
+  /** `parent` is the one assembled agent; `child` is a tracked dispatch. */
+  kind: 'parent' | 'child';
+  /** `parent`, or `<agent>#<dispatchId>`. */
+  label: string;
+  /** Child only: which dispatch asked. */
+  dispatchId?: string;
+  /** Child only: the dispatched definition name. */
+  agentName?: string;
+}
+
+/**
+ * The one source every non-delegated call carries. Frozen because it is shared by
+ * every parent request: a consumer that mutated it would relabel all of them.
+ */
+export const PARENT_PERMISSION_SOURCE: PermissionSource = Object.freeze({
+  kind: 'parent',
+  label: 'parent',
+});
+
+/**
+ * Resolves a child `Agent.id` to its dispatch, or `undefined` when the id is not
+ * a tracked dispatch — which in darwin means the parent, because the runtime
+ * builds exactly one `Agent` plus the children the dispatch registry records.
+ *
+ * Deliberately a narrow function rather than the registry type: the permission
+ * layer must not depend on the delegation tool to know who is asking.
+ */
+export type DispatchSourceResolver = (
+  agentId: string,
+) => { dispatchId: string; agentName: string; label: string } | undefined;
+
+/**
+ * A {@link PermissionRequest} with its risk assessment, its origin, and the
+ * "always allow" offers derived from it — what bridges see.
  */
 export interface AssessedPermissionRequest extends PermissionRequest, RiskAssessment {
+  /** Which agent this call belongs to. Always present, parent calls included. */
+  source: PermissionSource;
   /**
    * Wildcard rules the user may accept alongside this one call, most specific
    * first. Empty when no rule could ever cover the call.
@@ -138,6 +181,11 @@ export interface PermissionGateOptions {
   classifier?: SafetyClassifier;
   /** How long `auto` waits for the classifier before falling back to asking. */
   classifierTimeoutMs?: number;
+  /**
+   * Labels a call with the child dispatch it came from. Omitted means every call
+   * reads as the parent's, which is only true for a runtime with no delegation.
+   */
+  dispatchSource?: DispatchSourceResolver;
 }
 
 const DEFAULT_CLASSIFIER_TIMEOUT_MS = 5000;
@@ -190,6 +238,10 @@ export class PermissionGate extends InterventionHandler {
     const request: AssessedPermissionRequest = {
       ...base,
       ...assessRisk(base, this.options.projectRoot),
+      // Resolved for every call, not only the ones that prompt: a classifier or a
+      // bridge that wants to know whose work it is judging should not have to
+      // reconstruct it from the tool input.
+      source: this.sourceOf(event.agent.id),
       suggestions: suggestRules(base, this.options.projectRoot),
     };
 
@@ -236,6 +288,22 @@ export class PermissionGate extends InterventionHandler {
         `Do not retry it or attempt the same action another way. ` +
         `Tell the user what you wanted to do and ask how to proceed.`,
     );
+  }
+
+  /**
+   * Who is asking. A tracked dispatch resolves to its child label; anything else
+   * is the parent, because the runtime assembles exactly one `Agent` and every
+   * other agent in the process is a dispatch this resolver knows about.
+   */
+  private sourceOf(agentId: string): PermissionSource {
+    const dispatch = this.options.dispatchSource?.(agentId);
+    if (dispatch === undefined) return PARENT_PERMISSION_SOURCE;
+    return {
+      kind: 'child',
+      label: dispatch.label,
+      dispatchId: dispatch.dispatchId,
+      agentName: dispatch.agentName,
+    };
   }
 
   /**

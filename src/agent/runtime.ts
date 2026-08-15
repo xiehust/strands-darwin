@@ -15,6 +15,11 @@ import path from 'node:path';
 import { compactConversation, countConversationTokens, type CompactResult } from './compact.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
+import {
+  SubagentDispatchRegistry,
+  type SubagentDispatchListener,
+  type SubagentDispatchStatus,
+} from '../agents/dispatch-registry.js';
 import { SubagentTool } from '../agents/subagent-tool.js';
 import {
   expandCustomCommand,
@@ -211,6 +216,7 @@ export class AgentRuntime {
     private readonly skills: SkillsPlugin,
     private readonly commands: CustomCommandRegistry,
     private readonly subagents: SubagentTool,
+    private readonly subagentDispatches: SubagentDispatchRegistry,
     private readonly backgroundBash: BackgroundBashManager,
     private readonly gate: PermissionGate,
     private readonly compactionManager: SummarizingConversationManager,
@@ -243,11 +249,16 @@ export class AgentRuntime {
     });
 
     const permissionMode = options.permissionModeOverride ?? config.permissionMode;
+    // Built before the gate on purpose: the gate must resolve provenance for
+    // children that do not exist yet, and only the narrow resolver crosses over —
+    // the permission layer never learns about the delegation tool itself.
+    const subagentDispatches = new SubagentDispatchRegistry();
     const gate = new PermissionGate({
       mode: permissionMode,
       projectRoot: options.projectRoot,
       ask: options.permissionBridge,
       allowRules: policy.allowRules,
+      dispatchSource: (agentId) => subagentDispatches.sourceFor(agentId),
       // Only auto consults it; constructing it is free (the model is lazy).
       ...(permissionMode === 'auto' && {
         classifier: createModelClassifier(config, options.projectRoot),
@@ -346,6 +357,7 @@ export class AgentRuntime {
       projectInstructions: instructions,
       config,
       createModel: createModelFromConfig,
+      dispatches: subagentDispatches,
     });
     agent.toolRegistry.add(subagents.tool);
 
@@ -364,6 +376,7 @@ export class AgentRuntime {
       skills,
       commands,
       subagents,
+      subagentDispatches,
       backgroundBash,
       gate,
       compactionManager,
@@ -625,6 +638,26 @@ export class AgentRuntime {
   /** Publishes future terminal task snapshots until the returned closure is called. */
   subscribeToBackgroundTasks(listener: BackgroundTaskListener): () => void {
     return this.backgroundBash.subscribe(listener);
+  }
+
+  /**
+   * Every subagent dispatch of this run, in start order, running and finished
+   * alike. Synchronous — unlike {@link listBackgroundTasks}, which snapshots live
+   * OS processes through per-task queues, this is an in-memory registry with no
+   * I/O at all.
+   *
+   * These are *runs*, not the catalogue: `info.agentNames` lists the definitions
+   * that may be dispatched, which is a different question answered by a different
+   * path. Records carry name, task text, state and timestamps only — never any
+   * part of a child's transcript.
+   */
+  listSubagentDispatches(): SubagentDispatchStatus[] {
+    return this.subagentDispatches.list();
+  }
+
+  /** Publishes future terminal dispatch snapshots until the returned closure is called. */
+  subscribeToSubagentDispatches(listener: SubagentDispatchListener): () => void {
+    return this.subagentDispatches.subscribe(listener);
   }
 
   /**

@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { resolveSession, sessionPaths } from '../src/agent/session.js';
+import { PARENT_PERMISSION_SOURCE } from '../src/agent/permission.js';
 import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
 import type { AppConfig } from '../src/config.js';
 import {
@@ -120,9 +121,11 @@ async function outputContracts(): Promise<void> {
   const bridge = createHeadlessPermissionBridge((text) => stderr.push(text));
   const decision = await bridge({
     toolName: 'bash', kind: 'execute', summary: 'bash execute: one\n two', details: [], input: {},
-    risk: 'dangerous', riskReason: 'test', suggestions: [],
+    risk: 'dangerous', riskReason: 'test', source: PARENT_PERMISSION_SOURCE, suggestions: [],
   });
   assert.deepEqual(decision, { allowed: false });
+  // The headless record is deliberately provenance-free: it is a machine-read
+  // protocol line for a supervisor, not a prompt someone has to attribute.
   assert.equal(stderr.join(''), 'permission denied — bash execute: one two\n');
 
   const runtime = {

@@ -9,7 +9,7 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-classifier.ts
  */
 import { suggestRules } from '../src/agent/permission-rules.js';
-import { assessRisk, classify, type AssessedPermissionRequest } from '../src/agent/permission.js';
+import { assessRisk, classify, PARENT_PERMISSION_SOURCE, type AssessedPermissionRequest } from '../src/agent/permission.js';
 import { createModelClassifier } from '../src/agent/safety-classifier.js';
 import { withSoleChoice } from '../src/config.js';
 import type { AppConfig } from '../src/config.js';
@@ -32,7 +32,14 @@ const CONFIG: AppConfig = withSoleChoice({
 
 function request(command: string): AssessedPermissionRequest {
   const base = classify('bash', { command });
-  return { ...base, ...assessRisk(base, ROOT), suggestions: suggestRules(base, ROOT) };
+  // Provenance is irrelevant to a verdict — the classifier judges the call, not who
+  // asked — but it is part of what a bridge sees, so the fixture states it.
+  return {
+    ...base,
+    ...assessRisk(base, ROOT),
+    source: PARENT_PERMISSION_SOURCE,
+    suggestions: suggestRules(base, ROOT),
+  };
 }
 
 async function main(): Promise<void> {

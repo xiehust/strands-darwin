@@ -619,6 +619,44 @@ because it performs no project I/O; a child write, shell command, or MCP call is
 denied normally. Ctrl+C cancels the active child together with the parent turn, and darwin
 reaps child bash sessions after each dispatch.
 
+### Parallel dispatch, and who is asking
+
+Two `subagent` calls the model requests in one turn run **at the same time**: the SDK executes
+the tool calls of one assistant message concurrently, and each child has its own model, tools
+and context. Two 300 ms children therefore take about 300 ms, not 600 (pinned offline by
+`spike/verify-subagents.ts`).
+
+Approvals stay strictly one at a time — the prompts queue, and the box shows how many are
+waiting. So every permission prompt says which agent it came from, on the same line as the call
+itself:
+
+```
+permission required (execute — `curl` is not on the safe-command list)
+[explorer#a1b2c3d4] bash: curl https://example.com
+```
+
+`[parent]` is the main agent; `[<agent>#<dispatch>]` is one dispatch of a child. The
+`/agents` command lists the dispatches of the current run — agent, dispatch id, state and
+elapsed time, with a bounded one-line task summary — and a dispatch that finishes mid-turn
+appends a notice of its own:
+
+```
+subagent dispatches — this run (2)
+  explorer#a1b2c3d4          running       12s  find every call site of classify
+  general#0f9e8d7c           succeeded      4s  summarize the permission gate
+
+subagent general#0f9e8d7c succeeded in 4s — summarize the permission gate
+```
+
+That report is dispatch *runs*, not the catalogue of definitions the header lists, and it never
+contains any part of a child's transcript: a record holds only the agent name, the delegated
+task, a state and timestamps.
+
+**Parallel delegation is for read-heavy work.** Concurrent children share one working tree with
+no isolation, locking or conflict detection, so two children editing the same area will
+interleave their edits and darwin will not stop them. Delegate searches, reads and analysis in
+parallel; keep mutation on one agent at a time.
+
 ## Sessions and `--resume`
 
 Each session is snapshotted after every turn under `~/.darwin/sessions/<project-key>/`, with
@@ -687,8 +725,8 @@ AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts      # real git repo, read
 
 The TUI suites take a scenario name to run just one, e.g.
 `pnpm tsx spike/verify-tui.ts approve` (scenarios: `approve`, `deny`, `safePassthrough`,
-`bashExit`, `cancelThenContinue`, `completion`, `agentsMd`). They need a real pty (Ink requires raw mode);
-`spike/tui-driver.ts` provides it.
+`bashExit`, `cancelThenContinue`, `completion`, `agents`, `agentsMd`). They need a real pty (Ink requires raw mode);
+`spike/tui-driver.ts` provides it. `agents` and `completion` make no model calls at all.
 
 ### Global and project Darwin state
 

@@ -80,9 +80,12 @@ function staticRules(): void {
   );
 }
 
-/** Minimal stand-in for the SDK event; the gate only reads `toolUse`. */
-function fakeEvent(name: string, input: unknown): BeforeToolCallEvent {
-  return { toolUse: { name, input } } as unknown as BeforeToolCallEvent;
+/**
+ * Minimal stand-in for the SDK event. The gate reads `toolUse` and the calling
+ * agent's id (for provenance), and the real event always carries both.
+ */
+function fakeEvent(name: string, input: unknown, agentId = 'darwin'): BeforeToolCallEvent {
+  return { toolUse: { name, input }, agent: { id: agentId } } as unknown as BeforeToolCallEvent;
 }
 
 interface GateRun {
@@ -99,6 +102,7 @@ async function runGate(
   toolName: string,
   input: unknown,
   answer: boolean | PermissionDecision = true,
+  agentId = 'darwin',
 ): Promise<GateRun> {
   const asked: AssessedPermissionRequest[] = [];
   const gate = new PermissionGate({
@@ -109,7 +113,7 @@ async function runGate(
     },
     ...options,
   });
-  const action = (await gate.beforeToolCall(fakeEvent(toolName, input))) as GateRun['action'];
+  const action = (await gate.beforeToolCall(fakeEvent(toolName, input, agentId))) as GateRun['action'];
   return { action, asked };
 }
 
@@ -433,11 +437,50 @@ async function gateRules(): Promise<void> {
   assert('yolo proceeds with no rules at all', run.action.type === 'proceed' && run.asked.length === 0);
 }
 
+/**
+ * Provenance at the gate boundary: one gate serves the parent and every child, so
+ * what a bridge sees has to say which of them a call belongs to.
+ */
+async function gateProvenance(): Promise<void> {
+  header('gate — every request carries its originating agent');
+
+  const parentRun = await runGate({ mode: 'default' }, 'bash', DANGEROUS_BASH);
+  assert(
+    'a call from the assembled agent is labelled parent',
+    parentRun.asked[0]?.source.kind === 'parent' && parentRun.asked[0]?.source.label === 'parent',
+  );
+
+  const childId = 'darwin-subagent-explorer-0000';
+  const childRun = await runGate(
+    {
+      mode: 'default',
+      dispatchSource: (agentId) =>
+        agentId === childId
+          ? { dispatchId: 'a1b2c3d4', agentName: 'explorer', label: 'explorer#a1b2c3d4' }
+          : undefined,
+    },
+    'bash',
+    DANGEROUS_BASH,
+    true,
+    childId,
+  );
+  const childSource = childRun.asked[0]?.source;
+  assert('a tracked dispatch is labelled with its own identity', childSource?.kind === 'child');
+  assert('the child label is ready to render', childSource?.label === 'explorer#a1b2c3d4');
+  assert('the child source names its dispatch', childSource?.dispatchId === 'a1b2c3d4' && childSource?.agentName === 'explorer');
+
+  // Without a resolver every call reads as the parent's: that is the truth for a
+  // runtime with no delegation, and it must never invent a child label.
+  const unresolved = await runGate({ mode: 'default' }, 'bash', DANGEROUS_BASH, true, childId);
+  assert('an unknown agent id stays parent rather than guessing', unresolved.asked[0]?.source.kind === 'parent');
+}
+
 async function main(): Promise<void> {
   staticRules();
   allowRules();
   await gateModes();
   await gateRules();
+  await gateProvenance();
   report();
 }
 

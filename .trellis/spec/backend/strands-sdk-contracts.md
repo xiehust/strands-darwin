@@ -299,11 +299,19 @@ use repository tools, but its working context must not become main-conversation 
 subagent({ task: string, agent?: string }): Promise<string>
 loadAgentDefinitions(projectRoot, availableToolNames): Promise<AgentDefinitionRegistry>
 new Agent({ model, systemPrompt, tools, interventions: [sharedGate], printer: false })
+new SubagentDispatchRegistry()
+registry.begin({ agentName, task, toolUseId? }): SubagentDispatchHandle  // attachAgent / finish
+registry.list(): SubagentDispatchStatus[]          // start order, running and finished
+registry.subscribe(listener): () => void           // one snapshot per terminal transition
+registry.sourceFor(agentId): SubagentDispatchSource | undefined
+runtime.listSubagentDispatches() / runtime.subscribeToSubagentDispatches(listener)
+shortDispatchId(toolUseId: string | undefined): string   // pure, id shown everywhere
 ```
 
 Project definitions are direct `.darwin/agents/*.md` files. Frontmatter requires `name` and
 `description`, accepts optional `tools: string[]`, and the non-empty Markdown body is the child
-system prompt. `general` is built in and reserved.
+system prompt. `general` is built in and reserved. Dispatch states are
+`running | succeeded | failed | cancelled`.
 
 ### 3. Contracts
 
@@ -327,6 +335,53 @@ system prompt. `general` is built in and reserved.
 - Reap each child's bash session with direct `restart` in `finally`. Shared MCP clients remain
   owned and disconnected only by the main runtime.
 
+#### Concurrency: parallel execution, never parallel prompting
+
+Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:
+
+- `resolveToolExecutor(undefined)` returns `ConcurrentToolExecutor`, which races the per-tool
+  generators of one assistant message. Darwin must therefore **never set `toolExecutor`**, and
+  in particular never `'sequential'`: two dispatches in one message would then serialize. Two
+  300 ms children measured **303 ms total, both starting at +2 ms** (`spike/verify-subagents.ts`,
+  scenario "two dispatches in one message run concurrently"); sequential would be ~600 ms.
+- Hook callbacks — so `InterventionHandler.beforeToolCall`, so `PermissionGate` — are dispatched
+  one event at a time by the single `Agent._streamCore` loop. Two *gated* parent calls in one
+  message ask strictly in sequence (measured 10 ms then 213 ms with a 200 ms handler), so a
+  pending prompt also blocks the later `tool_use` blocks of that same message. Parallel dispatch
+  survives only because `classify('subagent', …)` is `read`/`safe` and never prompts; do not
+  make delegation itself a gated call without re-measuring this.
+- Each child Agent runs its own stream/hook loop, so several children can have requests pending
+  at once (measured 2). One prompt is shown at a time and the rest queue — which is exactly why
+  provenance is mandatory rather than cosmetic.
+- Concurrency is scoped to **read-heavy** delegation. Children share one working tree with no
+  isolation, locking or conflict detection, and nothing in darwin makes concurrent write
+  delegation safe. This is a documented limitation, not a gap to be closed with a new denial
+  path: the permission model does not change.
+
+#### Provenance and per-dispatch observability
+
+- `AssessedPermissionRequest.source` is **required** and carries `kind: 'parent' | 'child'`, a
+  bounded ready-to-render `label`, and (children only) `dispatchId` / `agentName`.
+  `PermissionRequest` and `classify()` stay unchanged, so stream-event consumers do not churn.
+- The gate resolves provenance from `BeforeToolCallEvent.agent.id` through an injected
+  `DispatchSourceResolver` — a narrow function, never the registry type: the permission layer
+  must not depend on the delegation tool. An id the resolver does not know is the parent,
+  because the runtime assembles exactly one `Agent` plus the dispatches the registry records.
+  Absent a resolver every call reads as the parent's; it must never invent a child label.
+- `AgentRuntime.create()` builds the registry **before** the gate (the gate must resolve
+  children that do not exist yet) and passes the registry itself only to `SubagentTool`.
+- Dispatch identity is `shortDispatchId(parent toolUseId)`: pure, so the TUI reducer computes
+  the same id from a stream event without touching the registry, and one dispatch reads the same
+  in the live row, `/agents`, the prompt label and the completion notice. A missing tool-use id
+  (direct `.invoke()`) falls back to a random id, never a shared placeholder.
+- A dispatch is recorded only once the requested agent name resolves: an unknown name never
+  dispatched anything and must not appear as a failed run. Terminal state is published exactly
+  once (`succeeded` / `failed` / `cancelled`, first call wins), listener failures are isolated,
+  and a cancelled child settles as `cancelled` rather than `failed` or a permanent `running`.
+- Records hold agent name, task text, state and timestamps only. Observability must never become
+  a second path for child transcript to reach the parent — bound the task at presentation time,
+  never store anything the child produced.
+
 ### 4. Validation & Error Matrix
 
 | Condition | Required behavior |
@@ -335,26 +390,48 @@ system prompt. `general` is built in and reserved.
 | Invalid YAML/name/description/body/tools | Skip that file and expose an agent problem |
 | Case-insensitive duplicate or `general` | Keep first/built-in owner; skip later file |
 | Unknown tool in allowlist | Skip definition; never silently drop the unknown entry |
-| Unknown requested agent | Return available names as the tool result |
+| Unknown requested agent | Return available names as the tool result; record no dispatch |
 | Child tool denied | Shared gate produces the normal denial result; tool does not run |
-| Parent cancelled during model construction | Return cancelled result; do not create child |
-| Child invoke throws | Tool reports an error through SDK; child bash cleanup still runs |
+| Parent cancelled during model construction | Return cancelled result; do not create child; dispatch settles `cancelled` |
+| Child invoke throws | Tool reports an error through SDK; dispatch settles `failed`; child bash cleanup still runs |
+| Two dispatches in one assistant message | Both run concurrently; both dispatches observable while running |
+| Two children ask for permission at once | Prompts queue one at a time, each labelled with its own dispatch |
+| Terminal dispatch listener throws | Other listeners still receive the snapshot; dispatch result unaffected |
+| `finish()` called twice | First terminal state wins; one event only |
+| Concurrent write delegation | Not made safe; documented limitation, no new denial path |
 
 ### 5. Good / Base / Bad Cases
 
 - **Good:** parent delegates a broad search; child uses `fileEditor`/`bash`, then only its
   evidence-based final report appears in the parent tool result.
+- **Good:** the model requests two read-heavy dispatches in one turn; they overlap, `/agents`
+  shows both while they run, and each child's approval prompt names its own dispatch.
 - **Base:** no project definitions; `general` handles the task with a fresh context.
 - **Bad:** wrapping with `asTool()` forwards child stream events, or building a second gate lets
   a child miss an allow-rule the user just accepted.
+- **Bad:** setting `toolExecutor: 'sequential'` (or serializing dispatch by awaiting one child
+  before starting the next) silently halves throughput; storing child transcript on a dispatch
+  record to make the UI richer breaks the isolation the whole scenario exists for; labelling only
+  child prompts leaves the user guessing on the parent's.
 
 ### 6. Tests Required
 
 - `spike/verify-subagents.ts`: discovery/errors, exact allowlists, fresh histories, parent
-  transcript isolation, approval/denial, and later-dispatch model config.
+  transcript isolation, approval/denial, later-dispatch model config, concurrent overlap timings,
+  parent-vs-child provenance, dispatch states (`succeeded`/`failed`/`cancelled`, unknown name
+  recording nothing), and registry observer semantics (exactly once, listener isolation,
+  unsubscribe).
+- `spike/verify-subagent-format.ts`: dispatch-id purity and fallback, elapsed endpoints, the
+  `/agents` report (empty wording, one row per dispatch, code-point-safe bounds), the completion
+  notice, and the live delegation row.
+- `spike/verify-permission-modes.ts`: gate-level provenance — parent label, resolver-provided
+  child label, and an unresolved id staying parent instead of guessing.
 - `spike/verify-subagents-live.ts`: real main → child delegation, safe repository read, and a
   child bash call reaching the shared permission bridge.
 - `spike/verify-tui.ts completion`: invalid definition warning without a model call.
+- `spike/verify-tui.ts agents`: zero-model `/agents` empty state, argument rejection, completion
+  row, and bounded exit. `spike/verify-tui.ts approve`: the `[parent]` label with `allow?` and
+  the details block still on screen (the label must not cost a frame row).
 - Always run `pnpm typecheck` and `pnpm test`; cancellation/bash lifecycle changes additionally
   require the existing `cancelThenContinue` and `bashExit` scenarios.
 
@@ -363,6 +440,9 @@ system prompt. `general` is built in and reserved.
 ```typescript
 // WRONG: forwards child stream events and does not prove the child shares darwin's gate.
 tools: [child.asTool()]
+
+// WRONG: serializes delegation, and leaves a queued prompt unable to say whose call it is.
+new Agent({ toolExecutor: 'sequential', interventions: [new PermissionGate({ mode, projectRoot, ask })] })
 
 // CORRECT: private child invocation, reduced tools, shared intervention boundary.
 const child = new Agent({
@@ -373,6 +453,11 @@ const child = new Agent({
 })
 const result = await child.invoke(task)
 return result.toString()
+
+// CORRECT: registry before gate; only the narrow resolver crosses into permissions.
+const dispatches = new SubagentDispatchRegistry()
+const gate = new PermissionGate({ mode, projectRoot, ask, dispatchSource: (id) => dispatches.sourceFor(id) })
+const subagents = new SubagentTool({ /* … */ intervention: gate, dispatches })
 ```
 
 ---

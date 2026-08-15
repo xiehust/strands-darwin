@@ -118,7 +118,9 @@ async function permissionAction(
     ...(options.allowRules === undefined ? {} : { allowRules: options.allowRules }),
     ...(classifier === undefined ? {} : { classifier }),
   });
-  const event = { toolUse: { name: 'bash', input } } as never;
+  // `agent` is part of the real event and the gate reads its id for provenance;
+  // a fixture without one would test a shape the SDK never produces.
+  const event = { toolUse: { name: 'bash', input }, agent: { id: 'darwin' } } as never;
   const action = await gate.beforeToolCall(event) as { type: string; reason?: string };
   return { action, asked, classified };
 }

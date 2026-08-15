@@ -50,6 +50,7 @@ import {
 } from './prompt-editor.js';
 
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
+import { formatDispatchCompletion, formatDispatchesReport } from './subagent-format.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
 import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
 
@@ -146,6 +147,17 @@ export function App({
     [runtime],
   );
 
+  // Same observer-only contract for finished delegations: a notice, never a status
+  // change. Concurrent children finish in an order nobody scripted, so a dispatch
+  // that ends mid-turn (or while a prompt is up) has to be able to say so without
+  // touching the live frame's ownership.
+  useEffect(
+    () => runtime.subscribeToSubagentDispatches((dispatched) => {
+      dispatch({ type: 'notice', text: formatDispatchCompletion(dispatched) });
+    }),
+    [runtime],
+  );
+
   const runTurn = useCallback(
     async (text: string) => {
       setStatus('streaming');
@@ -232,6 +244,21 @@ export function App({
             text: `could not list background tasks: ${error instanceof Error ? error.message : String(error)}`,
           });
         }
+        return;
+      }
+
+      // Reads the dispatch registry directly, exactly like /tasks reads the task
+      // manager: no model call, no tool event, and available mid-turn — the moment
+      // several children are working is when "who is running what" gets asked.
+      if (/^\/agents(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/agents') {
+          dispatch({ type: 'notice', text: '/agents takes no arguments' });
+          return;
+        }
+        dispatch({ type: 'notice', text: formatDispatchesReport(runtime.listSubagentDispatches()) });
         return;
       }
 
@@ -630,7 +657,7 @@ export function App({
           disabled={effectiveStatus === 'streaming' || effectiveStatus === 'compacting'}
           hint={
             effectiveStatus === 'streaming'
-              ? 'working… /tasks lists jobs · /usage reports tokens · ctrl+c cancels this turn'
+              ? 'working… /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn'
               : effectiveStatus === 'compacting'
                 ? 'compacting conversation…'
                 : undefined
