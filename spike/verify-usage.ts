@@ -5,7 +5,7 @@ import type OpenAI from 'openai';
 
 import type { AppConfig } from '../src/config.js';
 import { formatUsageReport } from '../src/tui/App.js';
-import { cacheEffectivenessRows, deltaUsage, usageRows, type UsageTotals } from '../src/agent/usage.js';
+import { cacheEffectivenessRows, deltaUsage, usageBuckets, usageRows, type UsageTotals } from '../src/agent/usage.js';
 import { assert, header, report } from './shared.js';
 
 function config(provider: 'bedrock' | 'anthropic' | 'openai', openaiApi?: 'chat' | 'responses'): AppConfig {
@@ -105,6 +105,25 @@ function projectionContracts(): void {
     openai[0]?.label === 'input' && openai[0]?.value === 100 &&
       openai[1]?.label === 'cached read' && openai[1]?.value === 800 &&
       openai[2]?.label === 'cache write' && openai[2]?.value === 300,
+  );
+
+  const openaiBuckets = usageBuckets(reported, config('openai', 'responses'));
+  assert(
+    'OpenAI Responses cost buckets are mutually exclusive',
+    openaiBuckets.input === 100 && openaiBuckets.cacheRead === 800 && openaiBuckets.cacheWrite === 300,
+  );
+  const bedrockBuckets = usageBuckets(reported, config('bedrock'));
+  assert(
+    'Bedrock input is already uncached and is not reduced again',
+    bedrockBuckets.input === 1200 && bedrockBuckets.cacheRead === 800 && bedrockBuckets.cacheWrite === 300,
+  );
+  const incompleteBuckets = usageBuckets(
+    { inputTokens: 1200, outputTokens: 45, cacheReadInputTokens: 800 },
+    config('openai', 'responses'),
+  );
+  assert(
+    'OpenAI Responses does not guess uncached input when a cache subset is absent',
+    incompleteBuckets.input === undefined && incompleteBuckets.cacheWrite === undefined,
   );
 
   const absentReport = formatUsageReport(

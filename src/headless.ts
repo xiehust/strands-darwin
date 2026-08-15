@@ -2,7 +2,8 @@ import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { classify, type PermissionBridge } from './agent/permission.js';
 import type { AgentRuntime } from './agent/runtime.js';
-import type { UsageTotals } from './agent/usage.js';
+import { usageBuckets, type UsageTotals } from './agent/usage.js';
+import type { AppConfig } from './config.js';
 
 const FIELD_LIMIT = 240;
 
@@ -21,16 +22,17 @@ export function headlessField(value: string, limit = FIELD_LIMIT): string {
  * matching `^usage: ...$` and sitting alongside the existing `session: <id>`
  * convention.
  *
- * A metric the provider never reported is written as `-`, never as `0`: a
- * supervisor aggregating child spend must be able to tell "this provider does
- * not report cache activity" from "this run read nothing from cache". Field
- * order is fixed so the line can be parsed positionally or by key.
+ * The four numeric fields are mutually exclusive cost buckets: `input` always
+ * excludes reported cache reads and writes, even when a provider includes those
+ * subsets in its native input total. A metric the provider never reported is
+ * written as `-`, never as `0`, and field order stays fixed for supervisors.
  */
-export function formatHeadlessUsage(usage: UsageTotals): string {
+export function formatHeadlessUsage(usage: UsageTotals, config: AppConfig): string {
+  const buckets = usageBuckets(usage, config);
   const metric = (value: number | undefined): string => (value === undefined ? '-' : String(value));
   return (
-    `usage: input=${metric(usage.inputTokens)} output=${metric(usage.outputTokens)}` +
-    ` cacheRead=${metric(usage.cacheReadInputTokens)} cacheWrite=${metric(usage.cacheWriteInputTokens)}`
+    `usage: input=${metric(buckets.input)} output=${metric(buckets.output)}` +
+    ` cacheRead=${metric(buckets.cacheRead)} cacheWrite=${metric(buckets.cacheWrite)}`
   );
 }
 

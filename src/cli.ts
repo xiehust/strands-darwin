@@ -114,7 +114,7 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
     // the meter must never mask the real exit path established above.
     if (runtime !== undefined) {
       try {
-        process.stderr.write(`${formatHeadlessUsage(runtime.usage)}\n`);
+        process.stderr.write(`${formatHeadlessUsage(runtime.usage, runtime.config)}\n`);
       } catch {
         // A meter that cannot be read is not a reason to change the exit status.
       }

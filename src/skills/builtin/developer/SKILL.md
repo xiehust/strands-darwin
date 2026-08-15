@@ -38,7 +38,7 @@ From **every** child task's drained output — planning, implementation, correct
 ^usage: input=(\d+|-) output=(\d+|-) cacheRead=(\d+|-) cacheWrite=(\d+|-)$
 ```
 
-That is the child process's token spend for that one invocation. A `-` means the provider never reported that metric; it does not mean zero, so carry it through as unknown rather than adding it in as `0`. Each child process reports only its own run, so the totals never overlap and can be summed across tasks. A task that fails before any model call completes may report zeros or no line at all — record its absence rather than inventing a number.
+That is the child process's token spend for that one invocation. The four fields are mutually exclusive cost buckets: `input` excludes every reported cache read and cache write, so aggregate each field independently across tasks and apply its own provider rate. A `-` means the provider never reported that metric; it does not mean zero, so carry it through as unknown rather than adding it in as `0`. Each child process reports only its own run, so the totals never overlap. A task that fails before any model call completes may report zeros or no line at all — record its absence rather than inventing a number.
 
 ## 3. Review the plan and decide
 

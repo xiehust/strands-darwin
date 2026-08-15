@@ -6,13 +6,32 @@ import { spawn } from 'node:child_process';
 
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
-import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
-import { createHeadlessPermissionBridge, formatHeadlessUsage, headlessField, runHeadlessTurn } from '../src/headless.js';
 import { resolveSession, sessionPaths } from '../src/agent/session.js';
+import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
+import type { AppConfig } from '../src/config.js';
+import { createHeadlessPermissionBridge, formatHeadlessUsage, headlessField, runHeadlessTurn } from '../src/headless.js';
 import { loadServersQuietly } from '../src/mcp/registry.js';
 import { assert as countedAssert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-headless-test';
+
+function usageConfig(provider: 'bedrock' | 'openai', openaiApi?: 'chat' | 'responses'): AppConfig {
+  return {
+    provider,
+    model: provider === 'openai' ? 'openai.gpt-5.6-sol' : 'global.anthropic.claude-opus-5',
+    region: 'us-east-1',
+    maxTokens: 1000,
+    permissionMode: 'yolo',
+    promptCache: true,
+    promptCacheTtl: '5m',
+    thinkingEffort: 'high',
+    summaryRatio: 0.8,
+    contextWarnRatio: 0.8,
+    preserveRecentMessages: 4,
+    ...(openaiApi !== undefined && { openaiApi }),
+    modelChoices: [],
+  };
+}
 
 /** Count every pre-existing strict assertion without weakening its comparison semantics. */
 const assert: typeof nodeAssert = new Proxy(nodeAssert, {
@@ -181,29 +200,42 @@ async function usageRecordContracts(): Promise<void> {
     outputTokens: 456,
     cacheReadInputTokens: 789,
     cacheWriteInputTokens: 12,
-  });
+  }, usageConfig('bedrock'));
   assert.equal(full, 'usage: input=123 output=456 cacheRead=789 cacheWrite=12');
   assert.match(full, /^usage: input=\d+ output=\d+ cacheRead=\d+ cacheWrite=\d+$/u);
   countedAssert('a fully reported run renders every metric numerically', true);
 
+  const responses = formatHeadlessUsage({
+    inputTokens: 1200,
+    outputTokens: 45,
+    cacheReadInputTokens: 800,
+    cacheWriteInputTokens: 300,
+  }, usageConfig('openai', 'responses'));
+  assert.equal(responses, 'usage: input=100 output=45 cacheRead=800 cacheWrite=300');
+  countedAssert('OpenAI Responses emits mutually exclusive cost buckets', true);
+
   // Absent means absent: a provider that never reported cache activity must not
   // be summed as if it had read nothing.
-  const partial = formatHeadlessUsage({ inputTokens: 5, outputTokens: 7 });
+  const partial = formatHeadlessUsage({ inputTokens: 5, outputTokens: 7 }, usageConfig('openai', 'chat'));
   assert.equal(partial, 'usage: input=5 output=7 cacheRead=- cacheWrite=-');
   countedAssert('unreported metrics render as - rather than a false zero', true);
 
-  const readOnly = formatHeadlessUsage({ inputTokens: 5, outputTokens: 7, cacheReadInputTokens: 0 });
-  assert.equal(readOnly, 'usage: input=5 output=7 cacheRead=0 cacheWrite=-');
-  countedAssert('a reported zero stays 0 and is distinguishable from -', true);
+  const readOnly = formatHeadlessUsage(
+    { inputTokens: 5, outputTokens: 7, cacheReadInputTokens: 0 },
+    usageConfig('openai', 'responses'),
+  );
+  assert.equal(readOnly, 'usage: input=- output=7 cacheRead=0 cacheWrite=-');
+  countedAssert('an unknown Responses subset keeps uncached input unknown', true);
 
   // The supervisor-facing regex from the developer skill must accept both forms.
   const skillPattern = /^usage: input=(\d+|-) output=(\d+|-) cacheRead=(\d+|-) cacheWrite=(\d+|-)$/u;
   assert.match(full, skillPattern);
+  assert.match(responses, skillPattern);
   assert.match(partial, skillPattern);
   countedAssert('the documented supervisor pattern parses both forms', true);
 
   // Every line is one line: a record that wrapped would break anchored parsing.
-  for (const line of [full, partial, readOnly]) {
+  for (const line of [full, responses, partial, readOnly]) {
     assert.doesNotMatch(line, /\n/u);
   }
   countedAssert('records never contain an embedded newline', true);

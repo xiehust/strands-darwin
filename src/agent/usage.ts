@@ -10,6 +10,37 @@ export interface UsageTotals {
   cacheWriteInputTokens?: number;
 }
 
+/** Mutually exclusive token buckets suitable for provider-specific cost accounting. */
+export interface UsageBuckets {
+  /** Undefined when a provider-native total cannot be split without guessing. */
+  input: number | undefined;
+  output: number;
+  /** Undefined until the provider reports this metric. */
+  cacheRead: number | undefined;
+  /** Undefined until the provider reports this metric. */
+  cacheWrite: number | undefined;
+}
+
+/**
+ * Normalizes provider-native counters into independently billable buckets.
+ *
+ * OpenAI Responses includes cache activity inside `inputTokens`; Bedrock and
+ * Anthropic report those counters beside it. When either Responses cache
+ * subset is unreported, uncached input stays unknown instead of being guessed.
+ */
+export function usageBuckets(usage: UsageTotals, config: AppConfig): UsageBuckets {
+  const cacheRead = usage.cacheReadInputTokens;
+  const cacheWrite = usage.cacheWriteInputTokens;
+  const input =
+    config.provider === 'openai' && config.openaiApi === 'responses'
+      ? cacheRead === undefined || cacheWrite === undefined
+        ? undefined
+        : Math.max(0, usage.inputTokens - cacheRead - cacheWrite)
+      : usage.inputTokens;
+
+  return { input, output: usage.outputTokens, cacheRead, cacheWrite };
+}
+
 export interface UsageRow {
   label: string;
   /** Undefined means the provider/API did not report this metric. */
@@ -21,22 +52,17 @@ export interface UsageRow {
  * contract of the active provider/API.
  */
 export function usageRows(usage: UsageTotals, config: AppConfig): readonly UsageRow[] {
+  const buckets = usageBuckets(usage, config);
   const common = {
-    input: { label: 'input', value: usage.inputTokens },
-    output: { label: 'output', value: usage.outputTokens },
+    input: { label: 'input', value: buckets.input },
+    output: { label: 'output', value: buckets.output },
   } as const;
 
   if (config.provider === 'openai' && config.openaiApi === 'responses') {
-    // Responses reports cache activity as subsets of input_tokens. Show mutually
-    // exclusive counters so the rows can be added without double-counting input.
-    const uncachedInput = Math.max(
-      0,
-      usage.inputTokens - (usage.cacheReadInputTokens ?? 0) - (usage.cacheWriteInputTokens ?? 0),
-    );
     return [
-      { label: 'input', value: uncachedInput },
-      { label: 'cached read', value: usage.cacheReadInputTokens },
-      { label: 'cache write', value: usage.cacheWriteInputTokens },
+      common.input,
+      { label: 'cached read', value: buckets.cacheRead },
+      { label: 'cache write', value: buckets.cacheWrite },
       common.output,
     ];
   }
