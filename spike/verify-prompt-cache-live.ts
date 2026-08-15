@@ -19,9 +19,12 @@ import path from 'node:path';
 import { allowAllBridge } from '../src/agent/permission.js';
 import { AgentRuntime } from '../src/agent/runtime.js';
 import { configPath } from '../src/config.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-prompt-cache-live';
+
+// The Sonnet fixture is written through configPath(), which resolves under HOME.
+const OWNED_HOME = ownPrivateHome('prompt-cache-live');
 
 /** Sonnet's minimum cacheable prefix is 1,024 tokens; this clears it comfortably. */
 const PADDING_LINES = 400;
@@ -96,6 +99,10 @@ function delta(after: TurnUsage, before: TurnUsage): TurnUsage {
 async function main(): Promise<void> {
   header('prompt cache (live) — tokens written, then read');
 
+  assert(
+    'the global config fixture resolves inside this suite\'s own HOME',
+    configPath(ROOT).startsWith(`${OWNED_HOME}${path.sep}`),
+  );
   await seedProject();
   const runtime = await AgentRuntime.create({
     projectRoot: ROOT,

@@ -114,3 +114,28 @@ Application config is `~/.darwin/config.json`; global `permissionRules` is inval
 project-scoped user state. Hooks and named resources layer global then project with project name
 precedence, while malformed active policy files remain fatal and malformed optional entries stay
 isolated. Sessions migrate copy-only from project `.darwin/` into project-keyed global storage.
+
+### Contract: a suite that writes user-global state owns its HOME
+
+`configPath(projectRoot)` **ignores its argument** and always resolves
+`~/.darwin/config.json`; `permissionRulesPath()` and `saveThinkingEffort()` likewise resolve
+under HOME. So a harness that writes a fixture through them writes the *developer's real*
+configuration — and several of those fixtures are deliberately invalid, which then stops
+darwin from starting until the file is restored by hand.
+
+- Any suite that touches user-global state calls `ownPrivateHome(label)` from `spike/shared.ts`
+  at module load, before deriving any global path. The helper fails immediately if the platform
+  did not honour the change, and restores HOME plus deletes the temp home on process exit.
+- The isolation is asserted in the suite, not assumed: each such suite's first assertion checks
+  that `configPath()` resolves inside its owned HOME, so the guarantee fails loudly rather than
+  silently landing on the real file.
+- `spike/run-tests.ts` also hands each suite a private HOME. That is defence in depth, not the
+  mechanism: suites are documented to run standalone (`pnpm tsx spike/verify-thinking.ts`), and
+  standalone is exactly when the real config was clobbered.
+- Suites owning HOME today: `verify-config`, `verify-thinking`, `verify-prompt-cache`,
+  `verify-prompt-cache-live`, `verify-system-prompt`, `verify-model-command`,
+  `verify-state-layers`, `verify-tui`. Adding a global write to any other suite means adding
+  the call too.
+
+**Verification**: snapshot `sha256sum ~/.darwin/config.json` and the `~/.darwin/projects/` entry
+count, run the suites directly with the real HOME, and confirm both are unchanged.

@@ -18,7 +18,11 @@ import { AgentRuntime } from '../src/agent/runtime.js';
 import { allowAllBridge } from '../src/agent/permission.js';
 import { configPath, loadConfig, type ModelChoice } from '../src/config.js';
 import { resolveModelChoice } from '../src/tui/App.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
+
+// The fixture and the persisted-switch assertions both go through configPath(),
+// which resolves under HOME rather than under the temp project root.
+const OWNED_HOME = ownPrivateHome('model-command');
 
 /** A catalogue shaped like a real one, without touching the filesystem. */
 function choice(index: number, name: string, model: string, enabled = false): ModelChoice {
@@ -44,6 +48,11 @@ const CHOICES: readonly ModelChoice[] = [
 
 function resolution(): void {
   header('/model — resolving an argument to a configured model');
+
+  assert(
+    'global config fixtures resolve inside this suite\'s own HOME',
+    configPath().startsWith(`${OWNED_HOME}${path.sep}`),
+  );
 
   const byIndex = resolveModelChoice(CHOICES, '2');
   assert('a 1-based position selects an entry', byIndex !== 'ambiguous' && byIndex?.name === 'sol');

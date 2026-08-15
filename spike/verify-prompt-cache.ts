@@ -27,9 +27,12 @@ import {
   withSoleChoice,
   type AppConfig,
 } from '../src/config.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-prompt-cache-test';
+
+// configPath() resolves under HOME, not under the directory handed to it.
+const OWNED_HOME = ownPrivateHome('prompt-cache');
 
 const CLAUDE_CONFIG: AppConfig = withSoleChoice({
   provider: 'bedrock',
@@ -55,6 +58,11 @@ async function configSurface(): Promise<void> {
 
   await rm(ROOT, { recursive: true, force: true });
   await mkdir(ROOT, { recursive: true });
+
+  assert(
+    'global config fixtures resolve inside this suite\'s own HOME',
+    configPath(ROOT).startsWith(`${OWNED_HOME}${path.sep}`),
+  );
 
   const defaults = await loadConfig(ROOT);
   assert('caching is on with no config file', defaults.promptCache);

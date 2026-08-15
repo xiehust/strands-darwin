@@ -19,9 +19,12 @@ import {
 } from '../src/agent/system-prompt.js';
 import { ConfigError, configPath, loadConfig } from '../src/config.js';
 import { darwinDir } from '../src/paths.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-system-prompt';
+
+// The `systemPrompt` cases write the global config through configPath().
+const OWNED_HOME = ownPrivateHome('system-prompt');
 
 /** A fresh project directory with a `.darwin/` in place, like a real run has. */
 async function project(): Promise<string> {
@@ -42,6 +45,10 @@ async function defaultPrompt(): Promise<void> {
 
   const loaded = await loadSystemPrompt(await project());
 
+  assert(
+    'global config fixtures resolve inside this suite\'s own HOME',
+    configPath(ROOT).startsWith(`${OWNED_HOME}${path.sep}`),
+  );
   assert('the default is in effect', loaded.prompt === DEFAULT_SYSTEM_PROMPT);
   assert('the source is reported as default', loaded.source === 'default');
   assert('no path is reported', loaded.path === undefined);

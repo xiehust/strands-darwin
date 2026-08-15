@@ -31,9 +31,12 @@ import {
   withSoleChoice,
   type AppConfig,
 } from '../src/config.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-thinking-test';
+
+// configPath() and saveThinkingEffort() both resolve under HOME.
+const OWNED_HOME = ownPrivateHome('thinking');
 
 /** Sonnet 4.6: adaptive thinking, but not the two Opus-only levels. */
 const SONNET: AppConfig = withSoleChoice({
@@ -74,6 +77,11 @@ async function configSurface(): Promise<void> {
 
   await rm(ROOT, { recursive: true, force: true });
   await mkdir(ROOT, { recursive: true });
+
+  assert(
+    'global config fixtures resolve inside this suite\'s own HOME',
+    configPath(ROOT).startsWith(`${OWNED_HOME}${path.sep}`),
+  );
 
   const defaults = await loadConfig(ROOT);
   assert('effort defaults to high with no config file', defaults.thinkingEffort === 'high');

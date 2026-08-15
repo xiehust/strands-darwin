@@ -27,14 +27,21 @@ import {
   resolveRegion,
   withModelChoice,
 } from '../src/config.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-config-test';
 
+// Every fixture below is written through configPath(), which resolves under HOME
+// rather than under the directory passed to it — so without an owned HOME this
+// suite overwrites the developer's real ~/.darwin/config.json, and the invalid
+// fixtures leave darwin unable to start.
+const OWNED_HOME = ownPrivateHome('config');
+
 /**
- * Writes the config where darwin reads it — `<projectRoot>/.darwin/config.json`.
+ * Writes the config where darwin reads it — `~/.darwin/config.json`.
  * Built from `configPath()` so a future move cannot leave this harness testing a
- * path nothing reads.
+ * path nothing reads. The per-case directory only names the project root that is
+ * handed to the loader; the file itself is global, hence {@link OWNED_HOME}.
  */
 async function writeConfig(contents: string): Promise<string> {
   const dir = path.join(ROOT, `case-${Math.random().toString(36).slice(2)}`);
@@ -61,6 +68,13 @@ async function defaults(): Promise<void> {
 
   await rm(ROOT, { recursive: true, force: true });
   await mkdir(ROOT, { recursive: true });
+
+  // Asserted before anything is written: if this fails, every later fixture is
+  // landing on the developer's own configuration.
+  assert(
+    'global config fixtures resolve inside this suite\'s own HOME',
+    configPath(ROOT).startsWith(`${OWNED_HOME}${path.sep}`),
+  );
 
   const config = await loadConfig(ROOT);
   console.log(`  ${config.provider} / ${config.model} (maxTokens ${config.maxTokens})`);
