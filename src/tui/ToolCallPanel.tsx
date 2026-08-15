@@ -50,7 +50,7 @@ export function ToolCallResult({
   readonly item: Extract<HistoryItem, { kind: 'tool' }>;
 }): React.JSX.Element {
   const { icon, color } = statusStyle(item.status);
-  const preview = collapse(item.preview);
+  const preview = collapsePreview(item.preview, item.status);
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -80,12 +80,24 @@ function statusStyle(status: ToolStatus): { icon: string; color: string } {
   }
 }
 
-/** Trims tool output to a few lines, noting how much was hidden. */
-function collapse(preview: string): string[] {
+/**
+ * Trims tool output to a few lines by status, noting how much was hidden.
+ *
+ * Success reads from the top, the way pagers do. A failure's diagnostic is
+ * almost always at the *end* of its output, so errors keep the tail instead.
+ * Denied results keep their `DENIED:` first line — the reason itself, and what
+ * the deny flow greps for — plus the tail, within the same row budget.
+ */
+export function collapsePreview(preview: string, status: ToolStatus): string[] {
   if (preview.trim() === '') return [];
 
   const lines = preview.split('\n');
   if (lines.length <= PREVIEW_LINES) return lines;
+  const hidden = lines.length - PREVIEW_LINES;
 
-  return [...lines.slice(0, PREVIEW_LINES), `… ${lines.length - PREVIEW_LINES} more line(s)`];
+  if (status === 'ok') return [...lines.slice(0, PREVIEW_LINES), `… ${hidden} more line(s)`];
+  if (status === 'denied') {
+    return [lines[0] as string, `… ${hidden} earlier line(s)`, ...lines.slice(-(PREVIEW_LINES - 1))];
+  }
+  return [`… ${hidden} earlier line(s)`, ...lines.slice(-PREVIEW_LINES)];
 }

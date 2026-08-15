@@ -7,6 +7,7 @@ import {
   compactBackgroundCallSummary,
   compactBackgroundResult,
 } from '../src/tui/background-tool-presentation.js';
+import { collapsePreview } from '../src/tui/ToolCallPanel.js';
 import { initialTurnState, turnReducer, type TurnState } from '../src/tui/turn-state.js';
 import { assert, header, report } from './shared.js';
 
@@ -250,5 +251,23 @@ assert('warn and error severities are preserved on the history item',
 const toggleSeverity = turnReducer(initialTurnState, { type: 'toggleBackgroundDetails' }).history.at(-1);
 assert('the background-details toggle notice stays informational',
   toggleSeverity?.kind === 'notice' && toggleSeverity.severity === 'info');
+
+const sixLines = ['one', 'two', 'three', 'four', 'five', 'six'].join('\n');
+assert('successful previews keep the head with the exact more-lines marker',
+  JSON.stringify(collapsePreview(sixLines, 'ok')) ===
+  JSON.stringify(['one', 'two', 'three', 'four', '… 2 more line(s)']));
+assert('error previews keep the tail with the exact earlier-lines marker',
+  JSON.stringify(collapsePreview(sixLines, 'error')) ===
+  JSON.stringify(['… 2 earlier line(s)', 'three', 'four', 'five', 'six']));
+const deniedLines = ['DENIED: policy says no', 'ctx-a', 'ctx-b', 'ctx-c', 'ctx-d', 'ctx-e'].join('\n');
+assert('denied previews keep the DENIED: head line plus the tail',
+  JSON.stringify(collapsePreview(deniedLines, 'denied')) ===
+  JSON.stringify(['DENIED: policy says no', '… 2 earlier line(s)', 'ctx-c', 'ctx-d', 'ctx-e']));
+const shortLines = 'alpha\nbeta';
+assert('short previews are unchanged for every status',
+  (['ok', 'error', 'denied'] as const).every((status) =>
+    JSON.stringify(collapsePreview(shortLines, status)) === JSON.stringify(['alpha', 'beta'])));
+assert('blank previews collapse to nothing for every status',
+  (['ok', 'error', 'denied'] as const).every((status) => collapsePreview('  \n ', status).length === 0));
 
 report();
