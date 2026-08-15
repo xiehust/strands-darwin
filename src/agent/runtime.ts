@@ -8,6 +8,9 @@
 import { Agent, SummarizingConversationManager } from '@strands-agents/sdk';
 import type { AgentStreamEvent, InterventionHandler, McpClient, Model } from '@strands-agents/sdk';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
+import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
+import { LocalFileStorage } from '@strands-agents/sdk/storage';
+import path from 'node:path';
 
 import { compactConversation, countConversationTokens, type CompactResult } from './compact.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
@@ -52,6 +55,7 @@ import { createModelClassifier } from './safety-classifier.js';
 import {
   createSessionManager,
   resolveSession,
+  sessionPaths,
   writePointer,
   type SessionSelector,
 } from './session.js';
@@ -266,6 +270,7 @@ export class AgentRuntime {
       summaryRatio: config.summaryRatio,
       preserveRecentMessages: config.preserveRecentMessages,
     });
+
     // `/compact` has a different target from overflow recovery: collapse every
     // reducible old message in one command, leaving one summary plus the recent
     // window. A ratio of 0.8 is the SDK's maximum and minimizes model calls.
@@ -273,6 +278,21 @@ export class AgentRuntime {
       summaryRatio: 0.8,
       preserveRecentMessages: config.preserveRecentMessages,
     });
+    // Off by default. Storage is session-scoped and on disk, next to the
+    // background-task logs, so a reference the model holds still resolves after
+    // `--resume`; `evictAfterCycles: null` disables eviction for the same reason
+    // — a resumed conversation can cite a reference from many cycles ago.
+    const offloader =
+      config.contextOffload === true
+        ? new ContextOffloader({
+            storage: new LocalFileStorage(
+              path.join(sessionPaths(options.projectRoot).sessionsDir, session.sessionId, 'offload'),
+            ),
+            evictAfterCycles: null,
+            ...(config.maxResultTokens !== undefined && { maxResultTokens: config.maxResultTokens }),
+          })
+        : undefined;
+
     const agent = new Agent({
       id: AGENT_ID,
       model,
@@ -284,7 +304,7 @@ export class AgentRuntime {
       // McpClient instances act as tool sources: the SDK discovers and registers
       // their tools during initialize().
       tools: [bash, fileEditor, ...mcp.clients],
-      plugins: [skills],
+      plugins: offloader === undefined ? [skills] : [skills, offloader],
       sessionManager,
       conversationManager,
       interventions: [intervention],

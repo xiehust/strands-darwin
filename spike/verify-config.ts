@@ -734,6 +734,31 @@ async function contextWarnRatioField(): Promise<void> {
   );
 }
 
+async function contextOffloadFields(): Promise<void> {
+  header('config — context offload fields');
+  const def = await loadConfig(await writeConfig('{}'));
+  assert('contextOffload is absent (off) by default', def.contextOffload === undefined);
+  assert('maxResultTokens is absent by default', def.maxResultTokens === undefined);
+
+  const on = await loadConfig(await writeConfig('{ "contextOffload": true }'));
+  assert('the flag is accepted', on.contextOffload === true);
+
+  const sized = await loadConfig(
+    await writeConfig('{ "contextOffload": true, "maxResultTokens": 4000 }'),
+  );
+  assert('a threshold alongside the flag is accepted', sized.maxResultTokens === 4000);
+
+  // Rejected rather than ignored: a threshold the user believes is in effect but
+  // is not looks exactly like the bloat it was written to bound.
+  const orphan = await expectConfigError('a threshold without the flag is refused', async () =>
+    loadConfig(await writeConfig('{ "maxResultTokens": 4000 }')),
+  );
+  assert('…and the error names the flag it needs', orphan.includes('contextOffload'));
+  await expectConfigError('a zero threshold is refused', async () =>
+    loadConfig(await writeConfig('{ "contextOffload": true, "maxResultTokens": 0 }')),
+  );
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
@@ -743,6 +768,7 @@ async function main(): Promise<void> {
   await rejections();
   await requestTimeout();
   await contextWarnRatioField();
+  await contextOffloadFields();
   await permissionModes();
   await permissionRules();
   await toolHooks();

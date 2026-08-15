@@ -183,6 +183,13 @@ export interface SessionFields {
    * Set to 0 to disable. Default: 0.8.
    */
   contextWarnRatio: number;
+  /**
+   * Offload oversized tool results to session-scoped storage, keeping a preview
+   * plus a reference in context. Off by default. See `maxResultTokens`.
+   */
+  contextOffload?: boolean;
+  /** Token threshold above which a tool result is offloaded. SDK default: 2500. */
+  maxResultTokens?: number;
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
   /** Deprecated policy fields retained on the type for migration fixtures only. */
@@ -234,6 +241,8 @@ const SESSION_KEYS = [
   'summaryRatio',
   'preserveRecentMessages',
   'contextWarnRatio',
+  'contextOffload',
+  'maxResultTokens',
   'systemPrompt',
 ] as const;
 
@@ -627,6 +636,24 @@ function validateSessionFields(input: Record<string, unknown>, configPath: strin
       numberField(input, 'contextWarnRatio', configPath, { min: 0, max: 1 }) ??
       DEFAULTS.contextWarnRatio,
   };
+
+  // Off unless asked for: offloading rewrites what the model sees, so it is an
+  // opt-in until it has been exercised against a live provider.
+  const contextOffload = booleanField(input, 'contextOffload', configPath);
+  if (contextOffload !== undefined) fields.contextOffload = contextOffload;
+
+  // Only meaningful with offloading on, and rejected otherwise rather than
+  // ignored: a threshold the user believes is in effect but is not would look
+  // exactly like the context bloat it was written to bound.
+  const maxResultTokens = numberField(input, 'maxResultTokens', configPath, { min: 1 });
+  if (maxResultTokens !== undefined) {
+    if (contextOffload !== true) {
+      throw new ConfigError(
+        `${configPath}: "maxResultTokens" only applies when "contextOffload" is true.`,
+      );
+    }
+    fields.maxResultTokens = maxResultTokens;
+  }
 
   // Retained as a deprecated global fallback for ~/.darwin/hooks.json. Runtime
   // policy loading owns execution; carrying it here preserves /model semantics.
