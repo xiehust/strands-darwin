@@ -89,3 +89,28 @@ per-child usage table its own first round made possible.
 | 2026-08-15 | `f574b81` | Headless runs report token spend as a `usage:` stderr record; `/developer` aggregates it |
 | 2026-08-15 | `359465a` | Reject a `maxResultTokens` the offloader cannot accept (measured floor: 1001) |
 | 2026-08-15 | `7372216` | State that offload storage accumulates by design; pin reference durability with a test |
+
+### Batch 4 — self-evolution research workflow (2026-08-15)
+
+One planning and one implementation round in child session
+`session-20260815-145125890`. The first managed task,
+`bg-ec73fd80-194a-4c4d-abd0-0f7d785ec0c8`, failed deterministically before any
+model, session, or usage record because the Host accidentally passed an extra `--`.
+Planning then succeeded in `bg-674aa247-1395-4bd6-a1ac-807fd94c12e5`, and implementation
+succeeded in `bg-efcaecdf-1652-4217-a418-d200b9e84072`.
+
+The implementation delegation prohibited commits, so Host acceptance was completed before the
+user's later explicit commit-and-push request. The Host inspected the complete diff, including the
+new `SKILL.md`, backlog index, research report template, and Trellis artifacts. Host acceptance
+re-ran `verify-skills.ts` (84 passed, 0 failed), `pnpm typecheck`, and `pnpm test` successfully;
+the test run emitted the expected MCP `continueOnError` diagnostic for
+`DARWIN_DEFINITELY_UNSET` on stderr and still exited 0. `pnpm build` plus the compiled-skill grep
+passed, and `npm pack --dry-run --json` contained both the `developer` and
+`self-evolution-research` packaged `SKILL.md` assets. Trellis task validation passed with only
+the existing max-file-byte truncation warnings for the large SDK contract spec, and
+`git diff --check` passed.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-15 | `f905229` | Add the built-in self-evolution research workflow, persistent ranked backlog/report contracts, required-built-in verification, and concise product/spec documentation |
+| 2026-08-15 | `731003e` | Normalize developer usage into independently costed input, cache-read, cache-write, and output buckets |
