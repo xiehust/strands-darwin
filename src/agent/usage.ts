@@ -27,9 +27,15 @@ export function usageRows(usage: UsageTotals, config: AppConfig): readonly Usage
   } as const;
 
   if (config.provider === 'openai' && config.openaiApi === 'responses') {
+    // Responses reports cache activity as subsets of input_tokens. Show mutually
+    // exclusive counters so the rows can be added without double-counting input.
+    const uncachedInput = Math.max(
+      0,
+      usage.inputTokens - (usage.cacheReadInputTokens ?? 0) - (usage.cacheWriteInputTokens ?? 0),
+    );
     return [
-      common.input,
-      { label: 'cached input', value: usage.cacheReadInputTokens },
+      { label: 'input', value: uncachedInput },
+      { label: 'cached read', value: usage.cacheReadInputTokens },
       { label: 'cache write', value: usage.cacheWriteInputTokens },
       common.output,
     ];

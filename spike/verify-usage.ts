@@ -101,8 +101,10 @@ function projectionContracts(): void {
   };
   const openai = usageRows(reported, config('openai', 'responses'));
   assert(
-    'OpenAI Responses uses cached-input terminology and reported values',
-    openai[1]?.label === 'cached input' && openai[1]?.value === 800 && openai[2]?.value === 300,
+    'OpenAI Responses separates uncached input, cache reads, and cache writes',
+    openai[0]?.label === 'input' && openai[0]?.value === 100 &&
+      openai[1]?.label === 'cached read' && openai[1]?.value === 800 &&
+      openai[2]?.label === 'cache write' && openai[2]?.value === 300,
   );
 
   const absentReport = formatUsageReport(
@@ -110,7 +112,7 @@ function projectionContracts(): void {
     config('openai', 'responses'),
     false,
   );
-  assert('a reported OpenAI zero is numeric', /cached input\s+0/u.test(absentReport));
+  assert('a reported OpenAI zero is numeric', /cached read\s+0/u.test(absentReport));
   assert('an absent OpenAI cache write is not a false zero', /cache write\s+not reported/u.test(absentReport));
 
   for (const provider of ['bedrock', 'anthropic'] as const) {
