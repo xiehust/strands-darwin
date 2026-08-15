@@ -22,6 +22,7 @@ import process from 'node:process';
 import path from 'node:path';
 
 import { darwinDir } from '../src/paths.js';
+import { permissionRulesPath } from '../src/config.js';
 import { AGENTS_DIRNAME } from '../src/agents/loader.js';
 import { COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
 import { SKILLS_DIRNAME } from '../src/skills/loader.js';
@@ -140,7 +141,8 @@ async function approvePath(): Promise<void> {
 
 /**
  * The wildcard path: answering with `a` approves the call AND writes the rule to
- * `.darwin/config.json`, so the same kind of call is never asked about again.
+ * the project-keyed `permission-rules.json` under `~/.darwin`, so the same kind
+ * of call is never asked about again.
  *
  * Model-driven, because the permission box only exists inside a turn — but the
  * assertions are on the notice, the file on disk, and (after a restart) the
@@ -151,6 +153,14 @@ async function alwaysAllowRule(): Promise<void> {
   header('TUI — "always allow" writes a rule and stops asking');
 
   await resetWorkDir();
+  // Resolved after resetWorkDir(): the project key canonicalizes through
+  // realpath, which needs WORK_DIR to exist. The scenario child inherits this
+  // process's HOME, so computing the path in-process is faithful to where the
+  // TUI under test actually writes.
+  const rulesFile = permissionRulesPath(WORK_DIR);
+  // Only this project key's rules file: the second session asserts exactly one
+  // rule is live, so a rule left by an earlier run would fail a rerun.
+  await rm(rulesFile, { force: true });
   const tui = startTui({ cwd: WORK_DIR });
   const expectedRule = `fileEditor:${TARGET_DIR}/**`;
 
@@ -173,13 +183,11 @@ async function alwaysAllowRule(): Promise<void> {
     await tui.waitFor(/✓ fileEditor str_replace/, { timeoutMs: 180_000, from: afterAnswer });
     await waitForIdle(tui, 240_000);
 
-    const written = await readFile(path.join(WORK_DIR, '.darwin', 'config.json'), 'utf8');
-    console.log(`  config now: ${written.replace(/\s+/g, ' ').trim()}`);
+    const written = await readFile(rulesFile, 'utf8');
+    console.log(`  rules file now: ${written.replace(/\s+/g, ' ').trim()}`);
     assert(
-      'the rule was persisted to .darwin/config.json',
-      (JSON.parse(written) as { permissionRules?: { allow?: string[] } }).permissionRules?.allow?.includes(
-        expectedRule,
-      ) === true,
+      'the rule was persisted to the project-keyed permission-rules.json',
+      (JSON.parse(written) as { allow?: string[] }).allow?.includes(expectedRule) === true,
     );
 
     tui.submit('/exit');
@@ -188,8 +196,9 @@ async function alwaysAllowRule(): Promise<void> {
     tui.kill();
   }
 
-  // Second session, same directory: the rule is loaded from the config, so the
-  // same write must now run unprompted — and the header must say a rule is live.
+  // Second session, same directory: the rule is loaded from the rules file, so
+  // the same write must now run unprompted — and the header must say a rule is
+  // live.
   await writeFile(TARGET, BUGGY, 'utf8');
   const resumed = startTui({ cwd: WORK_DIR });
 
