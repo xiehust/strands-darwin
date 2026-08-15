@@ -2,6 +2,7 @@
 import { Box, Text, useBoxMetrics, useCursor, type DOMElement } from 'ink';
 import React, { useRef } from 'react';
 
+import { builtinCommandDescription } from '../commands/custom-commands.js';
 import type { EditorLayout } from './prompt-editor.js';
 
 /** Completion rows shown at once. */
@@ -49,10 +50,19 @@ export function InputBox({
           <Text dimColor>commands (↑/↓ to select, tab to complete):</Text>
           {visible.map((name, index) => {
             const selected = index === selectedCompletion;
+            const description = builtinCommandDescription(name);
             return (
               <Box key={name}>
                 <Text color={selected ? 'cyan' : 'gray'}>{selected ? '❯ ' : '  '}</Text>
                 <Text color={selected ? 'cyan' : 'gray'}>/{name}</Text>
+                {/* Appended after the name so pty substring assertions on
+                    "  /name" rows keep matching; truncated so a narrow terminal
+                    cannot wrap the row and grow the live frame taller. */}
+                {description !== undefined && (
+                  <Text dimColor wrap="truncate-end">
+                    {' '}— {description}
+                  </Text>
+                )}
               </Box>
             );
           })}

@@ -8,7 +8,10 @@ import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  BUILTIN_COMMAND_DESCRIPTIONS,
+  BUILTIN_COMMAND_NAMES,
   COMMANDS_DIRNAME,
+  builtinCommandDescription,
   expandCustomCommand,
   loadCustomCommands,
   type CustomCommandRegistry,
@@ -95,8 +98,26 @@ async function missingDirectory(): Promise<void> {
   assert('absence is silent', registry.commands.length === 0 && registry.problems.length === 0);
 }
 
+function completionDescriptions(): void {
+  header('custom commands — built-in completion descriptions');
+  assert('every built-in has a non-empty one-line description',
+    BUILTIN_COMMAND_NAMES.every((name) => {
+      const description = builtinCommandDescription(name);
+      return typeof description === 'string' && description.trim() !== '' && !description.includes('\n');
+    }));
+  assert('the map carries no entries beyond the built-ins',
+    Object.keys(BUILTIN_COMMAND_DESCRIPTIONS).length === BUILTIN_COMMAND_NAMES.length);
+  assert('custom command and skill names get no description',
+    builtinCommandDescription('review') === undefined &&
+    builtinCommandDescription('commit-message') === undefined);
+  assert('prototype properties are not descriptions',
+    builtinCommandDescription('constructor') === undefined &&
+    builtinCommandDescription('toString') === undefined);
+}
+
 const registry = await discovery();
 expansion(registry);
 await missingDirectory();
+completionDescriptions();
 await rm(TMP_ROOT, { recursive: true, force: true });
 report();

@@ -10,6 +10,33 @@ export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 /** Commands shown in completion, in their stable display order. */
 export const BUILTIN_COMMAND_NAMES = ['compact', 'effort', 'exit', 'model', 'tasks', 'usage'] as const;
 
+/**
+ * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
+ * by construction: the `Record` over the name union makes a missing or extra
+ * entry a compile error.
+ */
+export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
+  Record<(typeof BUILTIN_COMMAND_NAMES)[number], string>
+> = {
+  compact: 'summarize older conversation',
+  effort: 'set thinking depth',
+  exit: 'quit darwin',
+  model: 'list or switch models',
+  tasks: 'list background jobs',
+  usage: 'token counts this run',
+};
+
+/**
+ * The description for a completion row, or nothing for custom commands and
+ * skills. `Object.hasOwn` rather than indexing: a custom command may be named
+ * `constructor`, and prototype pollution is not a description.
+ */
+export function builtinCommandDescription(name: string): string | undefined {
+  return Object.hasOwn(BUILTIN_COMMAND_DESCRIPTIONS, name)
+    ? BUILTIN_COMMAND_DESCRIPTIONS[name as (typeof BUILTIN_COMMAND_NAMES)[number]]
+    : undefined;
+}
+
 /** `/quit` works as an alias but deliberately does not consume a completion row. */
 const RESERVED_COMMAND_NAMES = [...BUILTIN_COMMAND_NAMES, 'quit'] as const;
 
