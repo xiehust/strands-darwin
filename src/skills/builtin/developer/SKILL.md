@@ -32,6 +32,14 @@ From the first task's combined output, capture only the exact stderr record matc
 
 That captured value is the **child conversation session id**. It is not the `bg-*` task id. Never use a background id as a session id, and never recover identity from `--continue` or `.darwin/last-session.json`.
 
+From **every** child task's drained output — planning, implementation, correction, and retry alike — also capture the exact stderr record matching:
+
+```text
+^usage: input=(\d+|-) output=(\d+|-) cacheRead=(\d+|-) cacheWrite=(\d+|-)$
+```
+
+That is the child process's token spend for that one invocation. A `-` means the provider never reported that metric; it does not mean zero, so carry it through as unknown rather than adding it in as `0`. Each child process reports only its own run, so the totals never overlap and can be summed across tasks. A task that fails before any model call completes may report zeros or no line at all — record its absence rather than inventing a number.
+
 ## 3. Review the plan and decide
 
 Read the complete planning reply and compare it with the requirement and repository evidence.
@@ -64,7 +72,8 @@ Report:
 
 - the child conversation session id;
 - every background task id and terminal outcome;
-- changed files and independently run acceptance checks/results; and
+- changed files and independently run acceptance checks/results;
+- **token spend**: the captured `usage:` figures per child task, plus an aggregate total across every task in this delegation (state `-` metrics as unknown rather than folding them into a sum, and say when a task reported no line at all); and
 - unresolved risks, denied operations, or decisions still needed.
 
 The background registry owns short-lived process lifecycle; the persisted child session owns conversation continuity. Keep those identities separate throughout.

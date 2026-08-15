@@ -11,7 +11,7 @@ import { AgentRuntime } from './agent/runtime.js';
 import { routeSdkLogs } from './agent/sdk-logging.js';
 import { CliUsageError, parseCliArgs, type CliOptions } from './cli-args.js';
 import { ConfigError } from './config.js';
-import { createHeadlessPermissionBridge, headlessField, runHeadlessTurn } from './headless.js';
+import { createHeadlessPermissionBridge, formatHeadlessUsage, headlessField, runHeadlessTurn } from './headless.js';
 
 const FORCE_EXIT_AFTER_MS = 500;
 
@@ -108,6 +108,18 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
         process.stderr.write(`error: ${errorMessage(error)}\n`);
       }
     }
+    // One machine-parseable token record per run, written on success, on turn
+    // failure, and on interrupt — a supervisor aggregating child spend needs the
+    // number even when the child did not finish. Best-effort and last: reading
+    // the meter must never mask the real exit path established above.
+    if (runtime !== undefined) {
+      try {
+        process.stderr.write(`${formatHeadlessUsage(runtime.usage)}\n`);
+      } catch {
+        // A meter that cannot be read is not a reason to change the exit status.
+      }
+    }
+
     process.off('SIGINT', onInterrupt);
     process.off('SIGTERM', onInterrupt);
     restoreSdkLogs();

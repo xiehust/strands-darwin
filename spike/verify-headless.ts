@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
-import { createHeadlessPermissionBridge, headlessField, runHeadlessTurn } from '../src/headless.js';
+import { createHeadlessPermissionBridge, formatHeadlessUsage, headlessField, runHeadlessTurn } from '../src/headless.js';
 import { resolveSession, sessionPaths } from '../src/agent/session.js';
 import { loadServersQuietly } from '../src/mcp/registry.js';
 import { assert as countedAssert, header, report } from './shared.js';
@@ -172,6 +172,43 @@ async function mcpStderrContract(): Promise<void> {
 }
 
 
+async function usageRecordContracts(): Promise<void> {
+  header('headless usage record');
+
+  // The exact shape a supervisor parses. Anchored, single line, fixed field order.
+  const full = formatHeadlessUsage({
+    inputTokens: 123,
+    outputTokens: 456,
+    cacheReadInputTokens: 789,
+    cacheWriteInputTokens: 12,
+  });
+  assert.equal(full, 'usage: input=123 output=456 cacheRead=789 cacheWrite=12');
+  assert.match(full, /^usage: input=\d+ output=\d+ cacheRead=\d+ cacheWrite=\d+$/u);
+  countedAssert('a fully reported run renders every metric numerically', true);
+
+  // Absent means absent: a provider that never reported cache activity must not
+  // be summed as if it had read nothing.
+  const partial = formatHeadlessUsage({ inputTokens: 5, outputTokens: 7 });
+  assert.equal(partial, 'usage: input=5 output=7 cacheRead=- cacheWrite=-');
+  countedAssert('unreported metrics render as - rather than a false zero', true);
+
+  const readOnly = formatHeadlessUsage({ inputTokens: 5, outputTokens: 7, cacheReadInputTokens: 0 });
+  assert.equal(readOnly, 'usage: input=5 output=7 cacheRead=0 cacheWrite=-');
+  countedAssert('a reported zero stays 0 and is distinguishable from -', true);
+
+  // The supervisor-facing regex from the developer skill must accept both forms.
+  const skillPattern = /^usage: input=(\d+|-) output=(\d+|-) cacheRead=(\d+|-) cacheWrite=(\d+|-)$/u;
+  assert.match(full, skillPattern);
+  assert.match(partial, skillPattern);
+  countedAssert('the documented supervisor pattern parses both forms', true);
+
+  // Every line is one line: a record that wrapped would break anchored parsing.
+  for (const line of [full, partial, readOnly]) {
+    assert.doesNotMatch(line, /\n/u);
+  }
+  countedAssert('records never contain an embedded newline', true);
+}
+
 async function usageProcessContract(): Promise<void> {
   header('headless usage failure process');
   const child = spawn(process.execPath, ['--import', 'tsx', 'src/cli.ts', '-p'], {
@@ -201,5 +238,6 @@ await parserContracts();
 await outputContracts();
 await sessionContracts();
 await mcpStderrContract();
+await usageRecordContracts();
 await usageProcessContract();
 report();

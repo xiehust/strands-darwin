@@ -2,6 +2,7 @@ import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { classify, type PermissionBridge } from './agent/permission.js';
 import type { AgentRuntime } from './agent/runtime.js';
+import type { UsageTotals } from './agent/usage.js';
 
 const FIELD_LIMIT = 240;
 
@@ -13,6 +14,24 @@ export function headlessField(value: string, limit = FIELD_LIMIT): string {
   const points = [...normalized];
   if (points.length <= limit) return normalized;
   return `${points.slice(0, Math.max(0, limit - 1)).join('')}…`;
+}
+
+/**
+ * The single machine-parseable token record a headless run writes before exit,
+ * matching `^usage: ...$` and sitting alongside the existing `session: <id>`
+ * convention.
+ *
+ * A metric the provider never reported is written as `-`, never as `0`: a
+ * supervisor aggregating child spend must be able to tell "this provider does
+ * not report cache activity" from "this run read nothing from cache". Field
+ * order is fixed so the line can be parsed positionally or by key.
+ */
+export function formatHeadlessUsage(usage: UsageTotals): string {
+  const metric = (value: number | undefined): string => (value === undefined ? '-' : String(value));
+  return (
+    `usage: input=${metric(usage.inputTokens)} output=${metric(usage.outputTokens)}` +
+    ` cacheRead=${metric(usage.cacheReadInputTokens)} cacheWrite=${metric(usage.cacheWriteInputTokens)}`
+  );
 }
 
 /** A bridge for runs where nobody is present to answer a permission prompt. */
