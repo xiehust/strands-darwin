@@ -16,6 +16,8 @@ import {
   configPath,
   createModelFromConfig,
   loadConfig,
+  loadProjectPolicy,
+  permissionRulesPath,
   saveEnabledModel,
   saveThinkingEffort,
   resolveRegion,
@@ -309,19 +311,23 @@ async function permissionModes(): Promise<void> {
 async function permissionRules(): Promise<void> {
   header('config — permission allow rules');
 
-  const absent = await loadConfig(await writeConfig('{}'));
-  assert('permissionRules is absent by default', absent.permissionRules === undefined);
+  const absentRoot = path.join(ROOT, `rules-${Math.random().toString(36).slice(2)}`);
+  const absent = await loadProjectPolicy(absentRoot);
+  assert('permissionRules is absent by default', absent.allowRules.length === 0);
 
-  const loaded = await loadConfig(
-    await writeConfig('{ "permissionRules": { "allow": ["bash:pnpm *", "fileEditor:src/**"] } }'),
-  );
+  await mkdir(path.join(absentRoot, '.darwin'), { recursive: true });
+  await writeFile(path.join(absentRoot, '.darwin', 'config.json'),
+    '{ "permissionRules": { "allow": ["bash:pnpm *", "fileEditor:src/**"] } }');
+  const loaded = await loadProjectPolicy(absentRoot);
   assert(
-    'rules are carried through in order',
-    JSON.stringify(loaded.permissionRules?.allow) === '["bash:pnpm *","fileEditor:src/**"]',
+    'legacy project rules are carried through in order',
+    JSON.stringify(loaded.allowRules) === '["bash:pnpm *","fileEditor:src/**"]',
   );
+  assert('legacy rules are identified for promotion', loaded.legacyRules);
 
-  const emptyRules = await loadConfig(await writeConfig('{ "permissionRules": {} }'));
-  assert('permissionRules without "allow" is empty, not an error', emptyRules.permissionRules?.allow.length === 0);
+  await writeFile(path.join(absentRoot, '.darwin', 'config.json'), '{ "permissionRules": {} }');
+  const emptyRules = await loadProjectPolicy(absentRoot);
+  assert('permissionRules without "allow" is empty, not an error', emptyRules.allowRules.length === 0);
 
   await expectConfigError('a non-object permissionRules is rejected', async () =>
     loadConfig(await writeConfig('{ "permissionRules": ["bash"] }')),
@@ -338,7 +344,7 @@ async function permissionRules(): Promise<void> {
   const badRule = await expectConfigError('a rule with an empty pattern is rejected', async () =>
     loadConfig(await writeConfig('{ "permissionRules": { "allow": ["bash:"] } }')),
   );
-  assert('the error shows the expected rule shape', badRule.includes('<tool>:<pattern>'));
+  assert('global config explains that rules are project-scoped', badRule.includes('project-scoped'));
 
   header('config — appending a rule');
 
@@ -351,19 +357,16 @@ async function permissionRules(): Promise<void> {
   await appendAllowRule(root, 'fileEditor:src/**');
   await appendAllowRule(root, 'bash:pnpm *');
 
-  const written = JSON.parse(await readFile(configPath(root), 'utf8')) as Record<string, unknown>;
-  console.log(`  written: ${JSON.stringify(written['permissionRules'])}`);
+  const written = JSON.parse(await readFile(permissionRulesPath(root), 'utf8')) as { allow?: string[] };
+  console.log(`  written: ${JSON.stringify(written)}`);
 
-  const reloaded = await loadConfig(root);
+  const reloaded = await loadProjectPolicy(root);
   assert(
     'both rules are persisted, duplicates collapsed',
-    JSON.stringify(reloaded.permissionRules?.allow) === '["bash:pnpm *","fileEditor:src/**"]',
+    JSON.stringify(reloaded.allowRules) === '["bash:pnpm *","fileEditor:src/**"]',
   );
-  assert('unrelated known keys survive', reloaded.model === 'us.anthropic.claude-sonnet-4-6');
-  assert(
-    'unknown keys survive',
-    JSON.stringify(written['futureSetting']) === '{"keep":true}',
-  );
+  assert('application config is unchanged by rule persistence',
+    (await loadConfig(root)).model === 'us.anthropic.claude-sonnet-4-6');
 
   // The prompt is the only writer today, but a rule that could never match must
   // not reach the file whatever calls it.
@@ -374,10 +377,10 @@ async function permissionRules(): Promise<void> {
   // First rule in a project that has no config file at all: the common case.
   const fresh = path.join(ROOT, `fresh-${Math.random().toString(36).slice(2)}`);
   await appendAllowRule(fresh, 'bash');
-  const freshConfig = await loadConfig(fresh);
+  const freshConfig = await loadProjectPolicy(fresh);
   assert(
-    'a missing config file is created with the rule',
-    JSON.stringify(freshConfig.permissionRules?.allow) === '["bash"]',
+    'a missing scoped rules file is created with the rule',
+    JSON.stringify(freshConfig.allowRules) === '["bash"]',
   );
 }
 

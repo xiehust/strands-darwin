@@ -5,6 +5,8 @@
  * names a provider.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
+
 import path from 'node:path';
 
 import { BedrockModel } from '@strands-agents/sdk';
@@ -29,7 +31,7 @@ import {
   type ThinkingPlan,
 } from './agent/thinking.js';
 import type { ToolHookCommand, ToolHookGroup, ToolHooksConfig } from './hooks/tool-hooks.js';
-import { darwinDir } from './paths.js';
+import { darwinDir, userDarwinDir, userProjectDir } from './paths.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
 export class ConfigError extends Error {
@@ -171,14 +173,10 @@ export interface SessionFields {
   preserveRecentMessages: number;
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
-  /**
-   * Wildcard rules that pre-approve tool calls, written here when the user answers
-   * a confirmation prompt with "always allow". Absent when nothing has been
-   * remembered. Format is documented in `src/agent/permission-rules.ts`.
-   */
+  /** Deprecated policy fields retained on the type for migration fixtures only. */
   permissionRules?: { readonly allow: readonly string[] };
-  /** Deterministic shell policy and follow-up automation around SDK tool calls. */
   hooks?: ToolHooksConfig;
+
   /**
    * Replaces darwin's built-in base system prompt. Optional; for prompts too long
    * to be comfortable in JSON, write `.darwin/system-prompt.md` instead (this
@@ -219,16 +217,19 @@ const MODEL_KEYS = [
  */
 const SESSION_KEYS = [
   'permissionMode',
-  'permissionRules',
   'hooks',
   'summaryRatio',
   'preserveRecentMessages',
   'systemPrompt',
 ] as const;
 
-/** `<projectRoot>/.darwin/config.json`. */
-export function configPath(projectRoot: string): string {
-  return path.join(darwinDir(projectRoot), CONFIG_FILENAME);
+/** `~/.darwin/config.json`. The optional argument remains for source compatibility. */
+export function configPath(_projectRoot?: string): string {
+  const file = path.join(userDarwinDir(), CONFIG_FILENAME);
+  // Callers historically wrote fixtures directly to this returned path.
+  // Ensuring the parent synchronously keeps that API usable after the move home.
+  mkdirSync(path.dirname(file), { recursive: true });
+  return file;
 }
 
 const DEFAULTS = {
@@ -298,7 +299,7 @@ export function withModelChoice(config: AppConfig, target: ModelChoice): AppConf
 }
 
 /**
- * Loads `.darwin/config.json` from `projectRoot`. A missing file is normal — the
+ * Loads `~/.darwin/config.json` from `projectRoot`. A missing file is normal — the
  * defaults are a working Bedrock setup. A present but malformed file is an
  * error, since silently ignoring it would hide the user's intent.
  */
@@ -318,6 +319,16 @@ export async function loadConfig(projectRoot: string): Promise<AppConfig> {
     parsed = JSON.parse(raw);
   } catch (error) {
     throw new ConfigError(`${file} is not valid JSON: ${describe(error)}`);
+  }
+
+  // Checked here rather than in validate(): rules live in a project-keyed file
+  // under ~/.darwin/projects/, so only the caller's projectRoot can name the
+  // destination — and "move them somewhere" is not an instruction a user can act on.
+  if (isRecord(parsed) && parsed['permissionRules'] !== undefined) {
+    throw new ConfigError(
+      `${file}: "permissionRules" are project-scoped and are never read from the global config. ` +
+        `Move them to ${permissionRulesPath(projectRoot)}.`,
+    );
   }
 
   return validate(parsed, file);
@@ -577,11 +588,8 @@ function validateSessionFields(input: Record<string, unknown>, configPath: strin
       DEFAULTS.preserveRecentMessages,
   };
 
-  const permissionRules = input['permissionRules'];
-  if (permissionRules !== undefined) {
-    fields.permissionRules = { allow: allowRulesField(permissionRules, configPath) };
-  }
-
+  // Retained as a deprecated global fallback for ~/.darwin/hooks.json. Runtime
+  // policy loading owns execution; carrying it here preserves /model semantics.
   const hooks = input['hooks'];
   if (hooks !== undefined) fields.hooks = hooksField(hooks, configPath);
 
@@ -687,38 +695,104 @@ function allowRulesField(value: unknown, configPath: string): string[] {
   return [...(allow as string[])];
 }
 
-/**
- * Adds one rule to `permissionRules.allow` in `.darwin/config.json`, creating the
- * file when there is none.
- *
- * Merges into the raw JSON instead of serializing an {@link AppConfig}: writing
- * back a loaded config would freeze today's defaults into the user's file and
- * drop any key this version does not know about.
- */
+export const PERMISSION_RULES_FILENAME = 'permission-rules.json';
+export const HOOKS_FILENAME = 'hooks.json';
+
+export function permissionRulesPath(projectRoot: string): string {
+  return path.join(userProjectDir(projectRoot), PERMISSION_RULES_FILENAME);
+}
+
+export function globalHooksPath(): string {
+  return path.join(userDarwinDir(), HOOKS_FILENAME);
+}
+
+export function projectHooksPath(projectRoot: string): string {
+  return path.join(darwinDir(projectRoot), HOOKS_FILENAME);
+}
+
+export interface ProjectPolicy {
+  allowRules: string[];
+  hooks: ToolHooksConfig | undefined;
+  hookSources: string[];
+  legacyRules: boolean;
+}
+
+/** Loads project-scoped rules and layered global/project hooks. */
+export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPolicy> {
+  const primaryRules = permissionRulesPath(projectRoot);
+  const legacyProject = path.join(darwinDir(projectRoot), CONFIG_FILENAME);
+  const globalConfig = configPath();
+  const globalHooks = globalHooksPath();
+  const projectHooks = projectHooksPath(projectRoot);
+
+  const primaryRecord = await readOptionalRecord(primaryRules);
+  const legacyRecord = primaryRecord === undefined ? await readOptionalRecord(legacyProject) : undefined;
+  const allowRules = primaryRecord === undefined
+    ? legacyRecord?.['permissionRules'] === undefined
+      ? []
+      : allowRulesField(legacyRecord['permissionRules'], legacyProject)
+    : allowRulesField(primaryRecord, primaryRules);
+
+  const globalPrimary = await readOptionalRecord(globalHooks);
+  const globalLegacy = globalPrimary === undefined ? await readOptionalRecord(globalConfig) : undefined;
+  const projectPrimary = await readOptionalRecord(projectHooks);
+  const projectLegacy = projectPrimary === undefined
+    ? (legacyRecord ?? await readOptionalRecord(legacyProject))
+    : undefined;
+  const globalLayer = globalPrimary === undefined
+    ? hooksFromRecord(globalLegacy, globalConfig)
+    : hooksField(globalPrimary, globalHooks);
+  const projectLayer = projectPrimary === undefined
+    ? hooksFromRecord(projectLegacy, legacyProject)
+    : hooksField(projectPrimary, projectHooks);
+  const hooks = mergeHooks(globalLayer, projectLayer);
+  return {
+    allowRules,
+    hooks,
+    hookSources: [
+      globalPrimary !== undefined ? globalHooks : globalLayer === undefined ? undefined : globalConfig,
+      projectPrimary !== undefined ? projectHooks : projectLayer === undefined ? undefined : legacyProject,
+    ].filter((source): source is string => source !== undefined),
+    legacyRules: primaryRecord === undefined && legacyRecord?.['permissionRules'] !== undefined,
+  };
+}
+
+/** Adds one project-scoped allow rule, promoting legacy rules on first write. */
 export async function appendAllowRule(projectRoot: string, rule: string): Promise<void> {
   if (!isValidRule(rule)) {
     throw new ConfigError(`Refusing to save ${JSON.stringify(rule)}: it is not a permission rule.`);
   }
-
-  const file = configPath(projectRoot);
-  const record = await readConfigRecord(file);
-
-  const existing = record['permissionRules'];
-  const rules: Record<string, unknown> =
-    typeof existing === 'object' && existing !== null && !Array.isArray(existing)
-      ? { ...(existing as Record<string, unknown>) }
-      : {};
-  const allow = Array.isArray(rules['allow']) ? [...(rules['allow'] as unknown[])] : [];
+  const policy = await loadProjectPolicy(projectRoot);
+  const allow = [...policy.allowRules];
   if (!allow.includes(rule)) allow.push(rule);
+  await writeConfigRecord(permissionRulesPath(projectRoot), { allow });
+}
 
-  rules['allow'] = allow;
-  record['permissionRules'] = rules;
+function hooksFromRecord(record: Record<string, unknown> | undefined, file: string): ToolHooksConfig | undefined {
+  return record?.['hooks'] === undefined ? undefined : hooksField(record['hooks'], file);
+}
 
-  await writeConfigRecord(file, record);
+function mergeHooks(globalHooks: ToolHooksConfig | undefined, projectHooks: ToolHooksConfig | undefined): ToolHooksConfig | undefined {
+  if (globalHooks === undefined && projectHooks === undefined) return undefined;
+  return {
+    PreToolUse: [...(globalHooks?.PreToolUse ?? []), ...(projectHooks?.PreToolUse ?? [])],
+    PostToolUse: [...(projectHooks?.PostToolUse ?? []), ...(globalHooks?.PostToolUse ?? [])],
+  };
+}
+
+async function readOptionalRecord(file: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(file, 'utf8'));
+    if (!isRecord(parsed)) throw new Error('top-level value must be an object');
+    return parsed;
+  } catch (error) {
+    if (isFileNotFound(error)) return undefined;
+    throw new ConfigError(`${file} could not be loaded: ${describe(error)}`);
+  }
 }
 
 /**
- * Persists `thinkingEffort` in `.darwin/config.json`, so a level chosen with
+ * Persists `thinkingEffort` in `~/.darwin/config.json`, so a level chosen with
  * `/effort` is still in effect next session.
  *
  * In the array form the level is written into the *enabled* entry, not the root:

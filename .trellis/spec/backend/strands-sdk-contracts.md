@@ -32,6 +32,44 @@ hides all previous snapshots from resume. The id is the constant `AGENT_ID` in r
 
 ---
 
+## Scenario: one-shot max-output-token recovery
+
+`Model.streamAggregated()` throws `MaxTokensError` after it has already yielded the partial
+content blocks, and the SDK does not append `error.partialMessage` to history. Darwin installs an
+`AfterModelCallEvent` hook on the main Agent and every `SubagentTool` child to recover once without
+forking `Agent.stream()`.
+
+### Contracts
+
+- Handle the exported `MaxTokensError` by class identity only. Do not retry transport errors,
+  cancellation, context overflow, refusals, or other stop conditions.
+- On the first max-token failure, append the exact `partialMessage` to `event.agent.messages`, add
+  an internal user control message that says to continue from the exact cutoff without repeating,
+  and set `event.retry = true`. Do not re-emit the partial: its stream events already reached TUI
+  and headless consumers.
+- Store the consumed allowance in `event.invocationState`, not `attemptCount`. Tool execution starts
+  a later model-call sequence whose `attemptCount` returns to one, while invocation state remains
+  shared for the whole fresh user turn.
+- If a later call in the invocation also reaches max tokens, append that second partial but do not
+  retry. Let `MaxTokensError` propagate; `AfterInvocationEvent` still lets the session manager
+  snapshot all retained context for resume.
+- Recovery must not mutate model configuration, `maxTokens`, or thinking effort. A successful
+  streamed reply is the already-emitted partial followed by continuation content exactly once.
+- `SubagentTool` uses `invoke()`, whose result contains only the last assistant message, so prepend
+  the privately tracked retained partial text when forming the child tool result. This projection
+  is consumer-only; conversation history remains separate messages for provider role validity.
+
+### Tests Required
+
+`spike/verify-max-tokens-recovery.ts` uses real SDK Agents with a scripted Model and covers ordinary
+success, first-truncation recovery, second-truncation failure and persisted resume, cancellation,
+non-max errors, invocation-wide allowance across a tool cycle, unchanged high-effort config,
+stream de-duplication, invoke-only projection, and `SubagentTool` child coverage. Run it together
+with `pnpm typecheck`, `pnpm test`, and `git diff --check`.
+
+---
+
+
 ## Permission Gating (interventions)
 
 ### Wrong vs Correct
@@ -1001,3 +1039,11 @@ contains a `4`. An ambiguous substring returns `'ambiguous'` rather than the fir
 `/model` is handled *after* the busy check in `App.tsx`, unlike `/effort`: `/effort` reconfigures
 the live model, while this replaces the model object, which would change the model under a turn
 that is already streaming from it.
+
+## Global and project Darwin state
+
+`src/paths.ts` owns user-global and project-local paths. Config is global, permission rules are
+project-keyed user state, sessions and background logs are globally stored per canonical project,
+and hooks/resources/MCP merge global plus project layers. Project keys combine a bounded readable
+canonical-path slug with SHA-256. Legacy rules/hooks/sessions are fallback migration inputs and
+are never rewritten.

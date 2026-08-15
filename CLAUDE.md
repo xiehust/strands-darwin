@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **darwin** — a TUI coding agent built on `@strands-agents/sdk` (Strands TypeScript SDK) and Ink.
 It runs inside a target repository and resolves all project state against its **working
-directory**: `.darwin/config.json` (model/provider), `.darwin/skills/`, `.darwin/sessions/`,
+directory**: `~/.darwin/config.json` (model/provider), `~/.darwin/skills/` plus project `.darwin/skills/`, globally stored project-keyed sessions,
 `.darwin/mcp.json` (falls back to root `.mcp.json`, Claude Code format), plus an `AGENTS.md`
 preloaded into the system prompt.
 
@@ -44,7 +44,7 @@ manager. If a change seems to require intercepting the loop itself, check
 project relies on (and the runnable script that proves it) is recorded there.
 
 **Permissions** (`src/agent/permission.ts`): a `PermissionGate extends InterventionHandler`
-runs in one of three approval modes (`permissionMode` in `.darwin/config.json`;
+runs in one of three approval modes (`permissionMode` in `~/.darwin/config.json`;
 `--permission-mode <m>` / `--yolo` on the CLI override it):
 
 - `default` — statically *provably safe* calls run silently (reads, in-project writes off
@@ -66,12 +66,12 @@ write in one tool — and unknown tools (all MCP tools) are never statically saf
 **Wildcard allow-rules** (`src/agent/permission-rules.ts`) are the only thing that turns a
 prompt into silence: a decision may carry a rule (`bash:pnpm *`, `fileEditor:src/**`, or a
 bare tool name), the gate honours it from that moment on, and the *UI* persists it to
-`permissionRules.allow` in `.darwin/config.json` — so a failed write costs the file, not the
+project-scoped `permissionRules.allow` in `~/.darwin/projects/<project-key>/permission-rules.json` — so a failed write costs the file, not the
 session, and can be reported where the renderer is. Rules are consulted after the static
 `safe` check and before the `auto` classifier (a written-down rule should save the model call
 too). Three constraints are load-bearing, not incidental: a bash pattern must match every
 chained segment and never matches redirection/substitution; no rule may ever cover a write to
-`.darwin/config.json` or `.env*` (else the agent can widen its own permissions); and an exempt
+`~/.darwin/config.json` or `.env*` (else the agent can widen its own permissions); and an exempt
 call is offered no rule at all, because an offer that could never apply is a lie told in a
 security prompt.
 

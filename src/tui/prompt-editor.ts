@@ -156,13 +156,6 @@ export function moveVertical(
   };
 }
 
-/** Maps a zero-based visual row and terminal column to the nearest source boundary. */
-export function cursorFromClick(layout: EditorLayout, rowIndex: number, terminalColumn: number): EditorCursor | undefined {
-  const row = layout.rows[rowIndex];
-  if (row === undefined) return undefined;
-  return cursorAtColumn(row, terminalColumn - PROMPT_WIDTH);
-}
-
 export function snapCursor(text: string, cursor: EditorCursor): EditorCursor {
   const offset = Math.max(0, Math.min(text.length, cursor.offset));
   const boundaries = sourceBoundaries(text);

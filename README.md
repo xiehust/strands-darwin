@@ -150,7 +150,7 @@ Add `.darwin/sessions/` and `.darwin/last-session.json` to your `.gitignore`; th
 and skills next to them are worth committing so the whole team gets the same setup.
 
 > **Upgrading from before the rename**: the old locations are not read any more. Move
-> `config.json` to `.darwin/config.json` and `skills/` to `.darwin/skills/`. Old
+> `config.json` to `~/.darwin/config.json` and `skills/` to `.darwin/skills/`. Old
 > `.strands-tui/` sessions cannot be resumed — the snapshot path contains the agent id,
 > which changed with the name — so delete that directory.
 
@@ -201,7 +201,7 @@ stay additive and you never have to restate them in a custom prompt.
 
 Two ways to override, highest precedence first:
 
-1. `"systemPrompt"` in `.darwin/config.json` — for short prompts.
+1. `"systemPrompt"` in `~/.darwin/config.json` — for short prompts.
 2. `.darwin/system-prompt.md` — a plain Markdown file, for prompts too long to be
    comfortable inside JSON. Commit it and the whole team gets the same agent.
 
@@ -214,7 +214,7 @@ instructions at all is never what someone meant to configure.
 
 ## Configuration
 
-`.darwin/config.json` in the project root. Every field is optional — with no file at all
+`~/.darwin/config.json` in the user home directory. Every field is optional — with no file at all
 you get a working Bedrock setup.
 
 ```json
@@ -313,7 +313,7 @@ request whether to reason and for how long, guided by a coarse effort level. dar
 | `max` | always thinks, no depth constraint |
 
 Change it mid-session with `/effort`, which takes effect on the next model call and is written
-back to `.darwin/config.json` so it survives a restart:
+back to `~/.darwin/config.json` so it survives a restart:
 
 ```
 /effort              # report the current level
@@ -348,7 +348,7 @@ all jobs in this run with concise command text and elapsed time, without sending
 request; it is also available while a turn streams. Darwin adds a dim transcript notice as
 each task succeeds, fails, or is stopped, including failure exit metadata when available.
 Standard output and standard error are combined in
-`.darwin/sessions/<session-id>/background/<task-id>.log`; the absolute path is included
+`~/.darwin/sessions/<project-key>/<session-id>/background/<task-id>.log`; the absolute path is included
 in start and status results for full replay. Logs remain after completion and after darwin
 exits, and are not pruned automatically.
 
@@ -366,7 +366,7 @@ guarantee.
 ## Permissions
 
 darwin runs in one of three approval modes, set by `permissionMode` in
-`.darwin/config.json` or per run with `--permission-mode <mode>` (`--yolo` is shorthand):
+`~/.darwin/config.json` or per run with `--permission-mode <mode>` (`--yolo` is shorthand):
 
 | Mode | Behaviour |
 |---|---|
@@ -380,7 +380,7 @@ darwin runs in one of three approval modes, set by `permissionMode` in
 | Call | Statically safe? |
 |---|---|
 | `fileEditor` with `command: view`, `load_skill`, `bash` restart | yes |
-| `fileEditor` writes inside the project — except `.git/` internals, `.env*`, and `.darwin/config.json` | yes |
+| `fileEditor` writes inside the project — except `.git/` internals, `.env*`, and `~/.darwin/config.json` | yes |
 | `bash` where every segment starts with an allowlisted read-only command (`git status/log/diff/show/branch`, `ls`, `cat`, `grep`, `rg`, `find`, …) and uses no redirection or substitution | yes |
 | anything else, including **all MCP tools** | no — prompts (or goes to the classifier in `auto`) |
 
@@ -403,7 +403,7 @@ allow?  y  n  always: a=pnpm typecheck *  A=all bash  esc=deny
 
 `a` takes the narrow rule darwin derived from this very call, `A` the whole tool. Either
 one approves the call *and* appends the rule to `permissionRules.allow` in
-`.darwin/config.json`, so matching calls stop asking — in this session and every later one.
+`~/.darwin/config.json`, so matching calls stop asking — in this session and every later one.
 The header then shows how many rules are live (`mode: default · 2 allow rule(s)`).
 
 ```json
@@ -424,7 +424,7 @@ The header then shows how many rules are live (`mode: default · 2 allow rule(s)
 Rules widen what runs unprompted, so they are deliberately narrow in three ways. A `bash`
 pattern must match **every** chained segment (`pnpm build && rm -rf /` does not match
 `bash:pnpm *`) and never matches a command using redirection or substitution. Writes to
-`.darwin/config.json` and to `.env*` files are covered by **no** rule at all — otherwise a
+`~/.darwin/config.json` and to `.env*` files are covered by **no** rule at all — otherwise a
 broad rule would let the agent grant itself more of them. And nothing is remembered
 implicitly: a plain `y` stays a one-time answer.
 
@@ -551,12 +551,13 @@ Two ids participate and are not interchangeable:
   Every follow-up uses `--session <captured-id>`; it never relies on `--continue`, the resume
   pointer, or a background id.
 
-Headless children have no person available to answer permission prompts. Safe calls and existing
-allow-rules still work; an elevated mode such as `--yolo` is appropriate only when you explicitly
-authorized it for the named repository and scope. The Host does not silently patch over a child
-failure: it independently inspects the diff and runs the requested checks, then either sends a
-focused correction to the same child session or reports the blocker. Its final report includes
-the child session id, background outcomes, acceptance evidence, and unresolved risks.
+Headless children have no person available to answer permission prompts, so the built-in developer
+workflow runs every child invocation with `--yolo`. The Host still constrains each child to the named
+repository and authorized task scope; yolo changes confirmation behavior, not that scope. The Host
+does not silently patch over a child failure: it independently inspects the diff and runs the
+requested checks, then either sends a focused correction to the same child session or reports the
+blocker. Its final report includes the child session id, background outcomes, acceptance evidence,
+and unresolved risks.
 
 A project skill cannot replace this built-in name. A case-insensitive `developer` collision is
 skipped and reported with the other skill problems.
@@ -609,8 +610,8 @@ reaps child bash sessions after each dispatch.
 
 ## Sessions and `--resume`
 
-Each session is snapshotted after every turn under `.darwin/sessions/`, with
-`.darwin/last-session.json` pointing at the most recent one. Sessions live beside the
+Each session is snapshotted after every turn under `~/.darwin/sessions/<project-key>/`, with
+`last-session.json` in that directory pointing at the most recent one. Sessions are scoped to the
 repository rather than in your home directory because a coding conversation belongs to one
 repository — that scopes `--resume` per project for free. Both paths belong in your
 `.gitignore`.
@@ -677,3 +678,17 @@ The TUI suites take a scenario name to run just one, e.g.
 `pnpm tsx spike/verify-tui.ts approve` (scenarios: `approve`, `deny`, `safePassthrough`,
 `bashExit`, `cancelThenContinue`, `completion`, `agentsMd`). They need a real pty (Ink requires raw mode);
 `spike/tui-driver.ts` provides it.
+
+### Global and project Darwin state
+
+Personal application state lives under `~/.darwin`: `config.json` is the only active
+model/provider config, while sessions are stored under
+`~/.darwin/sessions/<readable-project-key--sha256>/`. Permission allow-rules are not global:
+they live under `~/.darwin/projects/<project-key>/permission-rules.json` and apply only to that
+canonical working directory. Existing project rules and sessions are read as migration sources
+and copied to user state on first write/resume; repository files are left untouched.
+
+Agents, commands, skills, hooks, and MCP support both global and project layers. Valid project
+names override global names; built-ins remain reserved. Hook order is global Pre, project Pre,
+permission/tool, project Post, global Post. MCP merges `~/.darwin/mcp.json` with
+`.darwin/mcp.json` (or root `.mcp.json` when absent), with project server names winning.

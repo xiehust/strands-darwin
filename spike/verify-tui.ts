@@ -514,9 +514,9 @@ async function chunkedEnter(): Promise<void> {
   }
 }
 
-/** Keyboard editing and SGR mouse positioning are local and make no model call. */
+/** Keyboard cursor editing is local and makes no model call. */
 async function cursorEditing(): Promise<void> {
-  header('TUI — keyboard and mouse cursor editing');
+  header('TUI — keyboard cursor editing');
 
   const dir = '/tmp/darwin-cursor-tui';
   await rm(dir, { recursive: true, force: true });
@@ -529,7 +529,7 @@ async function cursorEditing(): Promise<void> {
     tui.send('ac\u001b[Db');
     await tui.waitFor('you> abc', { timeoutMs: 30_000, from: mark, settleMs: 400 });
     assert('left arrow moves insertion before the final character', tui.screen.slice(mark).includes('you> abc'));
-    assert('mouse click tracking is enabled', tui.raw.includes('[?1000h') && tui.raw.includes('[?1006h'));
+    assert('mouse tracking stays disabled for native selection and scrollback', !tui.raw.includes('[?1000h') && !tui.raw.includes('[?1006h'));
 
     mark = tui.mark();
     tui.send('\u001b[H>\u001b[F<');
@@ -541,51 +541,10 @@ async function cursorEditing(): Promise<void> {
     await tui.waitFor('you> >ab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
     assert('delete removes the grapheme after the cursor', tui.screen.slice(mark).includes('you> >ab<'));
 
-    // The app queries the real terminal cursor position with CSI 6n. node-pty does
-    // not emulate a terminal response, so answer with the input row's viewport
-    // coordinate, then click after the first prompt character and insert there.
-    tui.send('\u001b[5;11R');
-    mark = tui.mark();
-    tui.send('\u001b[<0;7;5MX');
-    await tui.waitFor('you> >Xab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
-    assert('primary click repositions the insertion cursor', tui.screen.slice(mark).includes('you> >Xab<'));
-
-    mark = tui.mark();
-    tui.send('\u001b[<64;7;5MY');
-    await tui.waitFor('you> >XYab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
-    assert('wheel reports are consumed instead of entering the draft', !tui.screen.slice(mark).includes('[<64'));
-
-    mark = tui.mark();
-    tui.send('\u001b[<1;2MZ');
-    await tui.waitFor('you> >XYZab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
-    assert('malformed SGR reports are consumed instead of entering the draft', !tui.screen.slice(mark).includes('[<1;2M'));
-    mark = tui.mark();
-    tui.send('\u001b[<0;7');
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    tui.send(';5MZ');
-    tui.send('Q');
-    await tui.waitFor('you> >XYZQab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
-    assert('split SGR fragments are consumed instead of entering the draft', !tui.screen.slice(mark).includes('[<0;7'));
-    mark = tui.mark();
-    tui.send('\u001b[<1;2XW');
-    await tui.waitFor('you> >XYZQWab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
-    assert('complete malformed SGR does not latch later typing', !tui.screen.slice(mark).includes('[<1;2X'));
-
-
-
-
-
     tui.send('\u0004');
-
-    const signalTui = startTui({ cwd: dir, cols: 40, rows: 20 });
-    await signalTui.waitFor('you>', { timeoutMs: 60_000 });
-    signalTui.kill('SIGTERM');
-    await signalTui.exitedWithin(EXIT_TIMEOUT_MS);
-    assert('mouse tracking is disabled before signal exit', signalTui.raw.includes('\u001b[?1006l\u001b[?1000l'));
 
     const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
     assert('cursor scenario exits cleanly', code === 0);
-    assert('mouse tracking is disabled during unmount', tui.raw.includes('\u001b[?1006l\u001b[?1000l'));
   } finally {
     tui.kill();
     await rm(dir, { recursive: true, force: true });

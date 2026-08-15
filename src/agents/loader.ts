@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import matter from 'gray-matter';
 
-import { darwinDir } from '../paths.js';
+import { darwinDir, userDarwinDir } from '../paths.js';
 
 export const AGENTS_DIRNAME = 'agents';
 export const DEFAULT_AGENT_NAME = 'general';
@@ -53,25 +53,27 @@ export async function loadAgentDefinitions(
   root: string,
   availableToolNames: readonly string[],
 ): Promise<AgentDefinitionRegistry> {
-  const agentsDir = path.join(darwinDir(root), AGENTS_DIRNAME);
-
-  let entries: Dirent[];
-  try {
-    entries = await readdir(agentsDir, { withFileTypes: true });
-  } catch {
-    return { definitions: [DEFAULT_AGENT], problems: [] };
-  }
-
-  entries.sort((a, b) => a.name.localeCompare(b.name));
+  const agentDirs = [
+    path.join(darwinDir(root), AGENTS_DIRNAME),
+    path.join(userDarwinDir(), AGENTS_DIRNAME),
+  ];
   const definitions: AgentDefinition[] = [DEFAULT_AGENT];
   const problems: AgentDefinitionProblem[] = [];
   const claimed = new Map<string, string>([[DEFAULT_AGENT_NAME, 'the built-in general agent']]);
   const knownTools = new Set(availableToolNames);
 
-  for (const entry of entries) {
-    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') continue;
+  for (const agentsDir of [...new Set(agentDirs)]) {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(agentsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') continue;
 
-    const file = path.join(agentsDir, entry.name);
+      const file = path.join(agentsDir, entry.name);
     let raw: string;
     try {
       raw = await readFile(file, 'utf8');
@@ -95,6 +97,8 @@ export async function loadAgentDefinitions(
 
     claimed.set(normalized, file);
     definitions.push(parsed);
+  }
+
   }
 
   const custom = definitions.slice(1).sort((a, b) => a.name.localeCompare(b.name));

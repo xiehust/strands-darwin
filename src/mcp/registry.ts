@@ -24,7 +24,7 @@ import { McpClient } from '@strands-agents/sdk';
 import type { McpServerConfig } from '@strands-agents/sdk';
 
 import { ConfigError } from '../config.js';
-import { darwinDir } from '../paths.js';
+import { darwinDir, userDarwinDir } from '../paths.js';
 
 /** Preferred location, alongside the rest of darwin's project state. */
 export const MCP_CONFIG_FILENAME = 'mcp.json';
@@ -37,7 +37,11 @@ export const ROOT_MCP_CONFIG_FILENAME = '.mcp.json';
 
 export interface McpLoadResult {
   clients: McpClient[];
-  /** Absolute path read, or undefined when no config file exists. */
+  /** Every contributing config path, global first and project second. */
+  configPaths: string[];
+  /** Server names whose global entry was replaced by the project layer. */
+  overriddenServerNames: string[];
+  /** Preferred display path, retained for compatibility. */
   configPath: string | undefined;
   /**
    * A root `.mcp.json` that exists but was not read because `.darwin/mcp.json`
@@ -71,31 +75,50 @@ export async function loadMcpClients(
   projectRoot: string,
   options: { quietStdioStderr?: boolean } = {},
 ): Promise<McpLoadResult> {
+  const global = path.join(userDarwinDir(), MCP_CONFIG_FILENAME);
   const preferred = path.join(darwinDir(projectRoot), MCP_CONFIG_FILENAME);
   const fallback = path.join(projectRoot, ROOT_MCP_CONFIG_FILENAME);
 
-  const [hasPreferred, hasFallback] = await Promise.all([exists(preferred), exists(fallback)]);
-
-  if (!hasPreferred && !hasFallback) {
-    return { clients: [], configPath: undefined, ignoredConfigPath: undefined };
-  }
-
-  const configPath = hasPreferred ? preferred : fallback;
+  const [hasGlobal, hasPreferred, hasFallback] = await Promise.all([
+    exists(global), exists(preferred), exists(fallback),
+  ]);
+  const projectConfig = hasPreferred ? preferred : hasFallback ? fallback : undefined;
   const ignoredConfigPath = hasPreferred && hasFallback ? fallback : undefined;
-
-  try {
-    const raw: unknown = JSON.parse(await readFile(configPath, 'utf8'));
-    const servers = withDefaultPrefixes(unwrapServers(raw));
-    const clients = options.quietStdioStderr === true
-      ? await loadServersQuietly(servers)
-      : await McpClient.loadServers(servers, { continueOnError: true });
-    return { clients, configPath, ignoredConfigPath };
-  } catch (error) {
-    throw new ConfigError(
-      `${configPath} could not be loaded: ${error instanceof Error ? error.message : String(error)}\n` +
-        `Expected Claude Code's format: { "mcpServers": { "<name>": { "command": ..., "args": [...] } } }`,
-    );
+  if (!hasGlobal && projectConfig === undefined) {
+    return { clients: [], configPaths: [], overriddenServerNames: [], configPath: undefined, ignoredConfigPath };
   }
+
+  const sources = [...new Set([hasGlobal ? global : undefined, projectConfig].filter(
+    (source): source is string => source !== undefined,
+  ))];
+  let servers: Record<string, McpServerConfig> = {};
+  const overriddenServerNames: string[] = [];
+  for (const source of sources) {
+    try {
+      const raw: unknown = JSON.parse(await readFile(source, 'utf8'));
+      const layer = unwrapServers(raw);
+      if (source === projectConfig) {
+        overriddenServerNames.push(...Object.keys(layer).filter((name) => name in servers));
+      }
+      servers = { ...servers, ...layer };
+    } catch (error) {
+      throw new ConfigError(
+        `${source} could not be loaded: ${error instanceof Error ? error.message : String(error)}\n` +
+          `Expected Claude Code's format: { "mcpServers": { "<name>": { "command": ..., "args": [...] } } }`,
+      );
+    }
+  }
+  const prefixed = withDefaultPrefixes(servers);
+  const clients = options.quietStdioStderr === true
+    ? await loadServersQuietly(prefixed)
+    : await McpClient.loadServers(prefixed, { continueOnError: true });
+  return {
+    clients,
+    configPaths: sources,
+    overriddenServerNames,
+    configPath: projectConfig ?? (hasGlobal ? global : undefined),
+    ignoredConfigPath,
+  };
 }
 
 /**

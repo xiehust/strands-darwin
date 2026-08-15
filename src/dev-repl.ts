@@ -180,7 +180,7 @@ async function main(): Promise<void> {
       console.warn(`  agents   : ${AGENTS_FILENAME} skipped — ${info.projectInstructionsProblem}`);
     }
     if (info.systemPromptSource !== 'default') {
-      const origin = info.systemPromptPath ?? `${DARWIN_DIRNAME}/${CONFIG_FILENAME}`;
+      const origin = info.systemPromptPath ?? `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}`;
       console.log(`  prompt   : base system prompt overridden by ${origin}`);
     }
     if (info.systemPromptProblem !== undefined) {
@@ -311,11 +311,11 @@ async function runEffortCommand(runtime: AgentRuntime, input: string): Promise<v
   const { plan, saved } = runtime.changeThinkingEffort(argument);
   try {
     await saved;
-    console.log(`  effort   : ${describeThinking(plan)} — saved to ${DARWIN_DIRNAME}/${CONFIG_FILENAME}\n`);
+    console.log(`  effort   : ${describeThinking(plan)} — saved to ~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}\n`);
   } catch (error) {
     console.warn(
       `  effort   : ${describeThinking(plan)}, this session only — could not write ` +
-        `${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}\n`,
+        `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}\n`,
     );
   }
 }

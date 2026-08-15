@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import type { ProjectInstructions } from '../agent/instructions.js';
 import { composeSystemPrompt } from '../agent/instructions.js';
+import { installMaxTokensRecovery, withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import type { AppConfig } from '../config.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
@@ -110,6 +111,7 @@ export class SubagentTool {
       interventions: [this.options.intervention],
       printer: false,
     });
+    installMaxTokensRecovery(child);
 
     this.activeAgents.add(child);
     const cancelChild = () => child.cancel();
@@ -117,8 +119,9 @@ export class SubagentTool {
 
     try {
       await child.initialize();
-      const result = await child.invoke(task);
-      return result.toString();
+      const invocationState = {};
+      const result = await child.invoke(task, { invocationState });
+      return withRetainedMaxTokensText(result.toString(), invocationState);
     } finally {
       context?.agent.cancelSignal.removeEventListener('abort', cancelChild);
       this.activeAgents.delete(child);

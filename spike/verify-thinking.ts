@@ -275,7 +275,7 @@ async function persistence(): Promise<void> {
   await expectConfigError('saving a level that does not exist is refused', () =>
     saveThinkingEffort(root, 'turbo' as ThinkingEffort),
   );
-  assert('…and the file is untouched', (await loadConfig(root)).thinkingEffort === 'low');
+  assert('…and the global file is untouched', (await loadConfig(root)).thinkingEffort === 'medium');
 }
 
 async function main(): Promise<void> {

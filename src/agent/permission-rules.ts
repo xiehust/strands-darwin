@@ -15,6 +15,8 @@
  */
 import path from 'node:path';
 
+import { sensitiveDarwinPaths } from '../paths.js';
+
 /** What the matcher needs from a tool call. `PermissionRequest` satisfies it. */
 export interface RuleTarget {
   toolName: string;
@@ -146,7 +148,7 @@ export function isRuleExempt(target: RuleTarget, projectRoot: string): boolean {
 
   const resolved = path.resolve(projectRoot, filePath);
   if (ENV_FILE.test(path.basename(resolved))) return true;
-  return path.relative(projectRoot, resolved) === path.join('.darwin', 'config.json');
+  return sensitiveDarwinPaths(projectRoot).includes(resolved);
 }
 
 /**

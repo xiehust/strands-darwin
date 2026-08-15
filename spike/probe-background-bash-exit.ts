@@ -1,10 +1,12 @@
 /** Child-process fixture for last-resort process-group cleanup. */
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 
 import { BackgroundBashManager } from '../src/tools/background-bash.js';
 
 const [mode = 'exit', root = '/tmp/darwin-background-exit-probe'] = process.argv.slice(2);
 await rm(root, { recursive: true, force: true });
+await mkdir(root, { recursive: true });
+
 const manager = new BackgroundBashManager(root, 'probe-session');
 const leaderFile = `${root}/leader.pid`;
 const childFile = `${root}/child.pid`;

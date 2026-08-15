@@ -7,13 +7,13 @@
  * mapping a working directory onto a home-directory slug, and makes sessions easy
  * to inspect or delete. The cost is two `.gitignore` entries.
  */
-import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { SessionManager } from '@strands-agents/sdk';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 
-import { darwinDir } from '../paths.js';
+import { darwinDir, userProjectSessionsDir } from '../paths.js';
 
 const SESSIONS_DIRNAME = 'sessions';
 const POINTER_FILENAME = 'last-session.json';
@@ -33,6 +33,15 @@ export interface SessionPaths {
 }
 
 export function sessionPaths(projectRoot: string): SessionPaths {
+  const stateDir = userProjectSessionsDir(projectRoot);
+  return {
+    stateDir,
+    sessionsDir: stateDir,
+    pointerFile: path.join(stateDir, POINTER_FILENAME),
+  };
+}
+
+function legacySessionPaths(projectRoot: string): SessionPaths {
   const stateDir = darwinDir(projectRoot);
   return {
     stateDir,
@@ -84,6 +93,7 @@ export async function resolveSession(
   agentId: string,
 ): Promise<ResolvedSession> {
   const paths = sessionPaths(projectRoot);
+  await migrateLegacySelection(projectRoot, paths, selector, agentId);
 
   if (selector.kind === 'continue') {
     const previous = await readPointer(paths.pointerFile);
@@ -125,6 +135,40 @@ async function snapshotExists(paths: SessionPaths, sessionId: string, agentId: s
   }
 }
 
+async function migrateLegacySelection(
+  projectRoot: string,
+  target: SessionPaths,
+  selector: SessionSelector,
+  agentId: string,
+): Promise<void> {
+  const legacy = legacySessionPaths(projectRoot);
+  const sessionId = selector.kind === 'id'
+    ? selector.sessionId
+    : selector.kind === 'continue'
+      ? await readPointer(legacy.pointerFile)
+      : undefined;
+  if (sessionId === undefined || await snapshotExists(target, sessionId, agentId)) return;
+  if (!(await snapshotExists(legacy, sessionId, agentId))) return;
+
+  const source = path.join(legacy.sessionsDir, 'session', sessionId);
+  const destination = path.join(target.sessionsDir, 'session', sessionId);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await cp(source, destination, { recursive: true, errorOnExist: true, force: false });
+  const legacyBackground = path.join(legacy.sessionsDir, sessionId, 'background');
+  try {
+    await access(legacyBackground);
+    const targetBackground = path.join(target.sessionsDir, sessionId, 'background');
+    await mkdir(path.dirname(targetBackground), { recursive: true });
+    await cp(legacyBackground, targetBackground, { recursive: true, errorOnExist: true, force: false });
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+  }
+  if (selector.kind === 'continue') {
+    await mkdir(target.stateDir, { recursive: true });
+    await writeFile(target.pointerFile, `${JSON.stringify({ sessionId, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+  }
+}
+
 async function readPointer(pointerFile: string): Promise<string | undefined> {
   let raw: string;
   try {
@@ -139,6 +183,11 @@ async function readPointer(pointerFile: string): Promise<string | undefined> {
   } catch {
     return undefined;
   }
+}
+
+
+function isMissing(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'ENOENT';
 }
 
 /** Records `sessionId` as the session a later `--resume` should pick up. */

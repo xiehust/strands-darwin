@@ -2,7 +2,7 @@ import type { Dirent } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-import { darwinDir } from '../paths.js';
+import { darwinDir, userDarwinDir } from '../paths.js';
 
 export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
@@ -45,28 +45,28 @@ export async function loadCustomCommands(
   root: string,
   skillNames: readonly string[],
 ): Promise<CustomCommandRegistry> {
-  const commandsDir = path.join(darwinDir(root), COMMANDS_DIRNAME);
-
-  let entries: Dirent[];
-  try {
-    entries = await readdir(commandsDir, { withFileTypes: true });
-  } catch {
-    // No commands directory is the common case, not a problem to report.
-    return { commands: [], problems: [] };
-  }
-
-  entries.sort((a, b) => a.name.localeCompare(b.name));
-
+  const commandDirs = [
+    path.join(darwinDir(root), COMMANDS_DIRNAME),
+    path.join(userDarwinDir(), COMMANDS_DIRNAME),
+  ];
   const commands: CustomCommand[] = [];
   const problems: CustomCommandProblem[] = [];
   const claimed = new Map<string, string>();
   for (const name of RESERVED_COMMAND_NAMES) claimed.set(name.toLowerCase(), `built-in command /${name}`);
   for (const name of skillNames) claimed.set(name.toLowerCase(), `skill /${name}`);
 
-  for (const entry of entries) {
-    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') continue;
+  for (const commandsDir of [...new Set(commandDirs)]) {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(commandsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') continue;
 
-    const file = path.join(commandsDir, entry.name);
+      const file = path.join(commandsDir, entry.name);
     const name = entry.name.slice(0, -path.extname(entry.name).length);
     if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
       problems.push({
@@ -100,6 +100,8 @@ export async function loadCustomCommands(
 
     claimed.set(normalized, file);
     commands.push({ name, file, content });
+  }
+
   }
 
   commands.sort((a, b) => a.name.localeCompare(b.name));

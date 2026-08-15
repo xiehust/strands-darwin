@@ -75,6 +75,9 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | Runtime shutdown races a background start | Latch closed, await tracked launches, then stop the visible running set | A start must reject before spawn or enter the cleanup snapshot |
 | Background cleanup cannot confirm group exit | Continue cleaning other resources and keep the group in the synchronous process-exit registry | One stubborn group must not skip MCP/bash/subagent cleanup or escape forced exit |
 | Turn cancelled (Ctrl+C) | `agent.cancel()`; stream ends with `stopReason: 'cancelled'`, no throw | Session stays usable; pending prompts released via `denyPending()` |
+| First `MaxTokensError` in an invocation | Retain its exact `partialMessage`, add an internal no-repeat continuation instruction, and retry the SDK model call once | The provider produced useful output; the supported `AfterModelCallEvent.retry` path preserves the SDK loop and configured thinking effort |
+| Any later `MaxTokensError` in the same invocation | Retain that partial too, do not retry, propagate `MaxTokensError`; invocation snapshot persists all partials | Tool-loop model cycles reset `attemptCount`, so only invocation-scoped state can enforce one bounded continuation without false success |
+
 
 ## Common Mistakes
 
@@ -103,3 +106,10 @@ necessary is exactly what prevents `beforeExit` from firing.
 resource-by-resource (`Promise.allSettled`, so one failure doesn't skip the rest), and
 covered by a test that asserts the process actually exits within a deadline
 (`exitedWithin()`, never an unbounded `exited()`).
+
+## Global/project state layering
+
+Application config is `~/.darwin/config.json`; global `permissionRules` is invalid. Rules are
+project-scoped user state. Hooks and named resources layer global then project with project name
+precedence, while malformed active policy files remain fatal and malformed optional entries stay
+isolated. Sessions migrate copy-only from project `.darwin/` into project-keyed global storage.

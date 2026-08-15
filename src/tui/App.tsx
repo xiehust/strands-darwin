@@ -37,7 +37,6 @@ import { ActiveToolCalls } from './ToolCallPanel.js';
 import type { PermissionQueue } from './permission-queue.js';
 import {
   backspaceAtCursor,
-  cursorFromClick,
   deleteAtCursor,
   insertAtCursor,
   layoutEditor,
@@ -49,52 +48,6 @@ import {
 
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
-
-interface MouseReport {
-  button: number;
-  column: number;
-  row: number;
-  press: boolean;
-}
-
-/** Ink strips the leading ESC before passing an unknown CSI sequence here. */
-function parseMouseReport(input: string): MouseReport | undefined {
-  const match = /^\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input);
-  if (match === null) return undefined;
-  const button = Number(match[1]);
-  const column = Number(match[2]);
-  const row = Number(match[3]);
-  if (column < 1 || row < 1) return undefined;
-  return { button, column, row, press: match[4] === 'M' };
-}
-
-function mouseFragmentState(input: string): 'none' | 'partial' | 'complete' {
-  // Ink removes ESC from complete unknown CSI sequences. Consume malformed SGR
-  // reports too; otherwise terminal protocol bytes can become editable text.
-  if (!input.startsWith('[<')) return 'none';
-  return /[@-~]/.test(input.slice(2)) ? 'complete' : 'partial';
-}
-
-/** Mouse reports may share one stdin chunk with following printable input. */
-function splitLeadingMouseReport(input: string): { report: MouseReport; rest: string } | undefined {
-  const match = /^(\[<\d+;\d+;\d+[Mm])(.*)$/s.exec(input);
-  if (match === null) return undefined;
-  const report = parseMouseReport(match[1] as string);
-  return report === undefined ? undefined : { report, rest: match[2] as string };
-}
-interface CursorPositionReport {
-  column: number;
-  row: number;
-}
-
-/** Response to a device-status `CSI 6n` query, also without its leading ESC. */
-function parseCursorPositionReport(input: string): CursorPositionReport | undefined {
-  const match = /^\[(\d+);(\d+)R$/.exec(input);
-  if (match === null) return undefined;
-  const row = Number(match[1]);
-  const column = Number(match[2]);
-  return row > 0 && column > 0 ? { row, column } : undefined;
-}
 
 /** Window in which a second Ctrl+C means "exit", not "cancel again". */
 const DOUBLE_INTERRUPT_MS = 2000;
@@ -136,14 +89,7 @@ export function App({
   }, []);
   const draft = editor.text;
   const layout = layoutEditor(draft, columns, editor.cursor);
-  const historyVersion = state.history.at(-1)?.id;
   const preferredColumn = useRef<number | undefined>(undefined);
-  // Terminal row (zero-based) occupied by visual input row zero. Refreshed by a
-  // cursor-position query after every editor layout change.
-  const inputViewportRow = useRef<number | undefined>(undefined);
-  // CPR responses arrive in query order, but may lag behind later key events.
-  const queriedCursorRows = useRef<number[]>([]);
-  const discardingMouseFragment = useRef(false);
 
   const [selectedCompletion, setSelectedCompletion] = useState(0);
   const [frame, setFrame] = useState(0);
@@ -174,30 +120,11 @@ export function App({
     return () => clearInterval(timer);
   }, [effectiveStatus]);
 
-  // Standard click tracking plus SGR coordinates. Most terminals keep native
-  // text selection available through Shift-drag while these modes are active.
-  useEffect(() => {
-    if (!process.stdout.isTTY) return;
-    process.stdout.write('\u001b[?1000h\u001b[?1006h');
-    return () => {
-      process.stdout.write('\u001b[?1006l\u001b[?1000l');
-    };
-  }, []);
-
   // The SDK's default logger writes to the console, which tears this frame. It has
   // something to say now that `/model` exists: switching away from Claude with a
   // reasoning block in the history makes the OpenAI adapter warn, once per
   // request, that it is dropping it. Surfaced as a notice instead of swallowed —
   // the model is losing part of its own history and that is worth one line.
-
-  // Ask the terminal where Ink placed the real cursor. Unlike layout metrics,
-  // this is an absolute viewport row and remains correct when <Static> output
-  // scrolls the primary screen.
-  useEffect(() => {
-    if (!process.stdout.isTTY || pendingPermission !== undefined || effectiveStatus !== 'idle') return;
-    queriedCursorRows.current.push(layout.cursor.row);
-    process.stdout.write('\u001b[6n');
-  }, [draft, columns, historyVersion, layout.cursor.row, layout.rows.length, pendingPermission, effectiveStatus]);
 
   useEffect(
     () => routeSdkLogs((entry) => dispatch({ type: 'notice', text: `sdk ${entry.level}: ${entry.message}` })),
@@ -381,7 +308,7 @@ export function App({
    * option, remembers the rule.
    *
    * The gate honours the rule from the decision alone, so the write to
-   * `.darwin/config.json` is reported rather than awaited: a failed write means
+   * `~/.darwin/config.json` is reported rather than awaited: a failed write means
    * "this session only", which the user has to be told, but it must not delay the
    * tool call they just approved.
    */
@@ -395,7 +322,7 @@ export function App({
         () => {
           dispatch({
             type: 'notice',
-            text: `always allowing ${rule} — saved to ${DARWIN_DIRNAME}/${CONFIG_FILENAME}`,
+            text: `always allowing ${rule} — saved to ${runtime.info.permissionRulesPath}`,
           });
         },
         (error: unknown) => {
@@ -403,7 +330,7 @@ export function App({
             type: 'notice',
             text:
               `always allowing ${rule} for this session only — could not write ` +
-              `${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+              `${runtime.info.permissionRulesPath}: ${error instanceof Error ? error.message : String(error)}`,
           });
         },
       );
@@ -498,48 +425,6 @@ export function App({
       void submit(editorRef.current.text);
       return;
     }
-    if (discardingMouseFragment.current) {
-      if (/[@-~]/.test(typed)) discardingMouseFragment.current = false;
-      return;
-    }
-
-
-    // Ink delivers complete SGR reports without the leading ESC. Consume them
-    // before printable handling so a click can never become prompt text.
-    const position = parseCursorPositionReport(typed);
-    if (position !== undefined) {
-      const cursorRow = queriedCursorRows.current.shift();
-      if (cursorRow !== undefined) inputViewportRow.current = position.row - 1 - cursorRow;
-      return;
-    }
-
-    const mouseInput = splitLeadingMouseReport(typed);
-    if (mouseInput !== undefined) {
-      const mouse = mouseInput.report;
-      let clicked = false;
-      if (mouse.button === 0 && mouse.press && effectiveStatus === 'idle' && inputViewportRow.current !== undefined) {
-        const cursor = cursorFromClick(layout, mouse.row - 1 - inputViewportRow.current, mouse.column - 1);
-        if (cursor !== undefined) {
-          setEditor((current) => ({
-            ...insertAtCursor({ ...current, cursor }, normalizeDraftText(mouseInput.rest)),
-          }));
-          preferredColumn.current = undefined;
-          clicked = true;
-        }
-      }
-      if (!clicked && mouseInput.rest !== '') {
-        const printable = normalizeDraftText(mouseInput.rest);
-        if (printable !== '') setEditor((current) => insertAtCursor(current, printable));
-      }
-      return;
-    }
-
-    const mouseFragment = mouseFragmentState(typed);
-    if (mouseFragment !== 'none') {
-      discardingMouseFragment.current = mouseFragment === 'partial';
-      return;
-    }
-
     // A pty or terminal may batch printable text and its final Enter into one
     // event. Depending on line discipline, that terminator reaches Ink as CR,
     // LF, or CRLF (occasionally doubled); preserve the text but keep one Enter's
@@ -872,7 +757,7 @@ function groupDigits(value: number): string {
  * are, rather than falling through to the model as a prompt.
  *
  * The level is in effect the moment {@link AgentRuntime.changeThinkingEffort}
- * returns, so — exactly as with an accepted allow-rule — the `.darwin/config.json`
+ * returns, so — exactly as with an accepted allow-rule — the `~/.darwin/config.json`
  * write is reported rather than awaited: a failed write means "this session only",
  * which the user has to be told but must not wait for.
  */
@@ -902,14 +787,14 @@ function applyEffortCommand(
   const applied = `thinking effort: ${describeThinking(plan)}`;
   saved.then(
     () => {
-      dispatch({ type: 'notice', text: `${applied} — saved to ${DARWIN_DIRNAME}/${CONFIG_FILENAME}` });
+      dispatch({ type: 'notice', text: `${applied} — saved to ~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}` });
     },
     (error: unknown) => {
       dispatch({
         type: 'notice',
         text:
           `${applied}, this session only — could not write ` +
-          `${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+          `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
       });
     },
   );
@@ -930,7 +815,7 @@ function describeThinking(plan: ThinkingPlan): string {
  * prompt — a mistyped model name is not a question worth paying for.
  *
  * The switch is awaited (building a model can need a dynamic import) but the
- * `.darwin/config.json` write is not, exactly as with `/effort` and an accepted
+ * `~/.darwin/config.json` write is not, exactly as with `/effort` and an accepted
  * allow-rule: a failed write means "this session only", which must be reported and
  * must not be waited for.
  */
@@ -989,14 +874,14 @@ async function applyModelCommand(
 
   result.saved.then(
     () => {
-      dispatch({ type: 'notice', text: `${applied}\n  saved to ${DARWIN_DIRNAME}/${CONFIG_FILENAME}` });
+      dispatch({ type: 'notice', text: `${applied}\n  saved to ~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}` });
     },
     (error: unknown) => {
       dispatch({
         type: 'notice',
         text:
           `${applied}\n  this session only — could not write ` +
-          `${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+          `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
       });
     },
   );
@@ -1011,7 +896,7 @@ function formatModelList(choices: readonly ModelChoice[]): string {
     choices.length === 1 ? 'one model configured:' : `${choices.length} models configured:`,
     ...rows,
     ...(choices.length === 1
-      ? [`  add a "models" array to ${DARWIN_DIRNAME}/${CONFIG_FILENAME} to switch between several`]
+      ? [`  add a "models" array to ~/${DARWIN_DIRNAME}/${CONFIG_FILENAME} to switch between several`]
       : ['  switch with /model <number|name>']),
   ].join('\n');
 }

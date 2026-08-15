@@ -33,10 +33,10 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 - Keep an immediate ref mirror beside React draft state. Multiple stdin events may arrive before React renders; handlers that submit/continue must read the mirror, not a stale render closure.
 - Preserve LF and tab; drop other C0 controls and DEL.
 - Paste never submits. It inserts the entire payload at the cursor, including all line breaks.
-- Render the first logical line after `you> ` and later explicit lines after `...> `; soft-wrapped rows align under the content. Cursor, arrows, Home/End, deletion, and click hit-testing use grapheme boundaries and terminal-cell widths.
+- Render the first logical line after `you> ` and later explicit lines after `...> `; soft-wrapped rows align under the content. Cursor, arrows, Home/End, and deletion use grapheme boundaries and terminal-cell widths.
 - Plain Enter still submits, and slash completion still takes Up/Down/Enter precedence when shown.
-- SGR mouse tracking is TTY-gated and paired: enable `?1000`/`?1006` on mount and disable both on cleanup, including signal-triggered unmount. Consume complete, malformed, and split mouse reports before printable input; test raw output because ANSI-stripped `screen` cannot prove lifecycle escapes.
-- A permission prompt owns paste and keyboard input; mouse reports are consumed but cannot mutate the hidden draft while approval is pending.
+- Do not enable terminal mouse tracking: native scrollback and drag-to-select take priority over click-to-position editing.
+- A permission prompt owns paste and keyboard input while visible.
 
 ### 4. Validation and error matrix
 
@@ -59,7 +59,7 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 
 ### 6. Tests required
 
-Run `verify-tui.ts cursor` for keyboard insertion/deletion, SGR hit-testing, complete/malformed/split-report consumption, and raw normal/signal enable-disable escape assertions. Run `verify-tui.ts multiline`; assert on first and continuation rows, absence of `working…` after paste/manual newline, consumed continuation marker, backspace across LF, and bounded clean exit after plain Enter submits `/exit`. Run `verify-tui.ts chunkedEnter` to send text and Enter in one pty write and cover batched continuation plus CRLF submission. Run `verify-tui.ts completion` after changing the Enter or Up/Down branches. Keep Unicode/wrapping/resize geometry in the focused pure prompt-editor suite.
+Run `verify-tui.ts cursor` for keyboard insertion/deletion and to prove that mouse tracking remains disabled, preserving native selection and scrollback. Run `verify-tui.ts multiline`; assert on first and continuation rows, absence of `working…` after paste/manual newline, consumed continuation marker, backspace across LF, and bounded clean exit after plain Enter submits `/exit`. Run `verify-tui.ts chunkedEnter` to send text and Enter in one pty write and cover batched continuation plus CRLF submission. Run `verify-tui.ts completion` after changing the Enter or Up/Down branches. Keep Unicode/wrapping/resize geometry in the focused pure prompt-editor suite.
 
 ### 7. Wrong vs correct
 

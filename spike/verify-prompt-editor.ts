@@ -3,7 +3,6 @@ import { strict as nodeAssert } from 'node:assert';
 import {
   backspaceAtCursor,
   cellWidth,
-  cursorFromClick,
   deleteAtCursor,
   insertAtCursor,
   layoutEditor,
@@ -108,18 +107,6 @@ check('vertical movement clamps to the nearest adjacent-row column', () => {
   nodeAssert.equal(up.cursor.offset, 1);
   const down = moveVertical(layoutEditor('abcd\nx', 20, { offset: 3, affinity: 'downstream' }), 1);
   nodeAssert.equal(down.cursor.offset, 6);
-});
-
-header('prompt editor — click hit testing');
-const clickLayout = layoutEditor('a界b', 20, atEnd('a界b').cursor);
-check('clicks map to nearest valid wide-character boundary', () => {
-  nodeAssert.deepEqual(cursorFromClick(clickLayout, 0, 5), { offset: 0, affinity: 'downstream' });
-  nodeAssert.deepEqual(cursorFromClick(clickLayout, 0, 6), { offset: 1, affinity: 'downstream' });
-  nodeAssert.deepEqual(cursorFromClick(clickLayout, 0, 7), { offset: 1, affinity: 'downstream' });
-  nodeAssert.deepEqual(cursorFromClick(clickLayout, 0, 9), { offset: 3, affinity: 'upstream' });
-});
-check('clicks outside visual input rows are ignored', () => {
-  nodeAssert.equal(cursorFromClick(clickLayout, 2, 5), undefined);
 });
 
 const tabs = layoutEditor('a\tb', 20, atEnd('a\tb').cursor);

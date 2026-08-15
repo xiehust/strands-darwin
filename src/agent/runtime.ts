@@ -10,6 +10,7 @@ import type { AgentStreamEvent, InterventionHandler, McpClient, Model } from '@s
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
 import { compactConversation, type CompactResult } from './compact.js';
+import { installMaxTokensRecovery } from './max-tokens-recovery.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
 import { SubagentTool } from '../agents/subagent-tool.js';
 import {
@@ -23,6 +24,8 @@ import {
   applyThinkingEffort,
   createModelFromConfig,
   loadConfig,
+  loadProjectPolicy,
+  permissionRulesPath,
   saveEnabledModel,
   saveThinkingEffort,
   withModelChoice,
@@ -91,7 +94,7 @@ export type { CompactResult } from './compact.js';
 
 /**
  * The outcome of an `/effort` change: what the model will now do, and a promise
- * for the attempt to remember it in `.darwin/config.json`.
+ * for the attempt to remember it in `~/.darwin/config.json`.
  *
  * The write is handed back unawaited on purpose — see
  * {@link AgentRuntime.changeThinkingEffort}.
@@ -104,7 +107,7 @@ export interface ThinkingChangeResult {
 /**
  * The outcome of a `/model` change: which configuration is now live, what it can
  * cache, how hard it will think — and a promise for the attempt to remember the
- * switch in `.darwin/config.json`.
+ * switch in `~/.darwin/config.json`.
  *
  * The cache and thinking plans come back because both are model-dependent: the
  * new model may not cache at all, and it may not serve the effort level the old
@@ -158,7 +161,17 @@ export interface RuntimeInfo {
   thinking: ThinkingPlan;
   /** Path to the MCP config that was read, or undefined when there is none. */
   mcpConfigPath: string | undefined;
+  /** Every MCP config layer that contributed servers. */
+  mcpConfigPaths: string[];
+  /** Project server names that replaced global definitions. */
+  mcpOverriddenServerNames: string[];
+
   /** Root `.mcp.json` left unread because `.darwin/mcp.json` took precedence. */
+  /** Project-scoped user-state file where accepted allow rules persist. */
+  permissionRulesPath: string;
+  /** Active global/project hook source files, in policy order. */
+  hookSources: string[];
+
   mcpIgnoredConfigPath: string | undefined;
   /** Number of MCP servers configured (some may have failed to connect). */
   mcpServerCount: number;
@@ -209,6 +222,7 @@ export class AgentRuntime {
     const session = await resolveSession(options.projectRoot, options.session, AGENT_ID);
     options.onSessionResolved?.(session.sessionId);
     const config = await loadConfig(options.projectRoot);
+    const policy = await loadProjectPolicy(options.projectRoot);
     const model = await createModelFromConfig(config);
     const skills = await SkillsPlugin.load(options.projectRoot);
     const commands = await loadCustomCommands(
@@ -227,7 +241,7 @@ export class AgentRuntime {
       mode: permissionMode,
       projectRoot: options.projectRoot,
       ask: options.permissionBridge,
-      allowRules: config.permissionRules?.allow ?? [],
+      allowRules: policy.allowRules,
       // Only auto consults it; constructing it is free (the model is lazy).
       ...(permissionMode === 'auto' && {
         classifier: createModelClassifier(config, options.projectRoot),
@@ -237,9 +251,9 @@ export class AgentRuntime {
     // No configured hooks means the exact pre-existing handler is registered and
     // no shell process can be spawned. Otherwise one composed handler preserves
     // Pre → permission → tool → Post ordering for both parent and child agents.
-    const intervention: InterventionHandler = config.hooks === undefined
+    const intervention: InterventionHandler = policy.hooks === undefined
       ? gate
-      : new ToolHookGate(options.projectRoot, config.hooks, gate);
+      : new ToolHookGate(options.projectRoot, policy.hooks, gate);
 
     const sessionManager = createSessionManager(options.projectRoot, session.sessionId);
     // One manager and wrapper are shared by the main Agent and every child tool
@@ -276,6 +290,7 @@ export class AgentRuntime {
       // with our rendering (and fight Ink for the terminal in step 5).
       printer: false,
     });
+    installMaxTokensRecovery(agent);
 
     // The constructor does not initialize; the SDK defers it to the first
     // invocation. Session restore runs on InitializedEvent, MCP tools are
@@ -350,6 +365,10 @@ export class AgentRuntime {
         // was clamped. Both come from the same pure planner, so they cannot disagree.
         thinking: planThinking(config),
         mcpConfigPath: mcp.configPath,
+        mcpConfigPaths: mcp.configPaths,
+        mcpOverriddenServerNames: mcp.overriddenServerNames,
+        permissionRulesPath: permissionRulesPath(options.projectRoot),
+        hookSources: policy.hookSources,
         mcpIgnoredConfigPath: mcp.ignoredConfigPath,
         mcpServerCount: mcp.clients.length,
         toolNames: agent.tools.map((tool) => tool.name).sort(),
@@ -431,7 +450,7 @@ export class AgentRuntime {
 
   /**
    * Switches the effort level for the rest of the session and remembers it in
-   * `.darwin/config.json`.
+   * `~/.darwin/config.json`.
    *
    * The model is reconfigured before the file is written, and the new plan is
    * returned rather than awaited alongside the write: an effort change must take

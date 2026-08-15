@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import matter from 'gray-matter';
 
-import { darwinDir } from '../paths.js';
+import { darwinDir, userDarwinDir } from '../paths.js';
 
 /** Directories checked for supporting files when a skill is loaded. */
 export const RESOURCE_DIRS = ['scripts', 'references', 'assets'] as const;
@@ -58,7 +58,8 @@ export interface SkillScan {
  * needs to be told why their skill is not showing up.
  */
 export async function scanSkills(root: string): Promise<SkillScan> {
-  const skillsDir = path.join(darwinDir(root), SKILLS_DIRNAME);
+  const globalSkillsDir = path.join(userDarwinDir(), SKILLS_DIRNAME);
+  const projectSkillsDir = path.join(darwinDir(root), SKILLS_DIRNAME);
   const skills: Skill[] = [];
   const problems: SkillProblem[] = [];
   const seen = new Map<string, string>();
@@ -71,16 +72,17 @@ export async function scanSkills(root: string): Promise<SkillScan> {
     throw new Error(`Required built-in developer skill is missing from ${BUILTIN_SKILLS_DIR}`);
   }
 
-  let entries: Dirent[];
-  try {
-    entries = await readdir(skillsDir, { withFileTypes: true });
-  } catch {
-    // No project skills directory is the common case. Built-ins still remain.
-    skills.sort((a, b) => a.name.localeCompare(b.name));
-    return { skills, problems };
+  // Validate project entries before global entries so a valid project definition
+  // overrides its global counterpart, while an invalid one claims no name.
+  for (const [directory, owner] of [[projectSkillsDir, 'project'], [globalSkillsDir, 'global']] as const) {
+    if (directory === BUILTIN_SKILLS_DIR) continue;
+    try {
+      const entries = await readdir(directory, { withFileTypes: true });
+      await scanDirectory(directory, entries, owner, skills, problems, seen);
+    } catch {
+      // Missing optional layers are normal.
+    }
   }
-
-  await scanDirectory(skillsDir, entries, 'project', skills, problems, seen);
   skills.sort((a, b) => a.name.localeCompare(b.name));
   return { skills, problems };
 }
@@ -88,7 +90,7 @@ export async function scanSkills(root: string): Promise<SkillScan> {
 async function scanDirectory(
   skillsDir: string,
   entries: readonly Dirent[],
-  owner: 'built-in' | 'project',
+  owner: 'built-in' | 'project' | 'global',
   skills: Skill[],
   problems: SkillProblem[],
   seen: Map<string, string>,
