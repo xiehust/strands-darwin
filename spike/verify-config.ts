@@ -10,8 +10,11 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import type { Model } from '@strands-agents/sdk';
+
 import {
   ConfigError,
+  DEFAULT_REQUEST_TIMEOUT_MS,
   appendAllowRule,
   configPath,
   createModelFromConfig,
@@ -281,6 +284,58 @@ async function rejections(): Promise<void> {
     () => createModelFromConfig({ ...emptyKeyEnv, provider: 'anthropic' }),
   );
   assert('the error names the empty variable', keyError.includes('DARWIN_DEFINITELY_UNSET'));
+}
+
+async function requestTimeout(): Promise<void> {
+  header('config — Bedrock stream idle timeout');
+
+  // Unset means darwin's default, not the SDK's 120s — the whole point of the
+  // field is that the number in effect is one this codebase owns.
+  const unset = await loadConfig(await writeConfig('{}'));
+  assert('requestTimeoutMs is absent when unconfigured', unset.requestTimeoutMs === undefined);
+  assert(
+    `…and the built client idles out at the ${DEFAULT_REQUEST_TIMEOUT_MS}ms default`,
+    (await resolvedRequestTimeout(await createModelFromConfig(unset))) === DEFAULT_REQUEST_TIMEOUT_MS,
+  );
+
+  const tuned = await loadConfig(await writeConfig('{ "requestTimeoutMs": 300000 }'));
+  assert('a configured requestTimeoutMs is loaded', tuned.requestTimeoutMs === 300_000);
+  assert(
+    '…and reaches the smithy request handler',
+    (await resolvedRequestTimeout(await createModelFromConfig(tuned))) === 300_000,
+  );
+
+  await expectConfigError('requestTimeoutMs below 1 is rejected', async () =>
+    loadConfig(await writeConfig('{ "requestTimeoutMs": 0 }')),
+  );
+  await expectConfigError('a non-numeric requestTimeoutMs is rejected', async () =>
+    loadConfig(await writeConfig('{ "requestTimeoutMs": "3m" }')),
+  );
+
+  // Bedrock-only: on the other providers the value never reaches a client, and a
+  // timeout the user believes is in effect but is not would surface exactly like
+  // the hang it exists to bound.
+  const mismatch = await expectConfigError(
+    'requestTimeoutMs on a non-bedrock provider is rejected',
+    async () =>
+      loadConfig(await writeConfig('{ "provider": "openai", "model": "gpt-5", "requestTimeoutMs": 60000 }')),
+  );
+  assert('…naming the offending provider', mismatch.includes('"openai"'));
+}
+
+/**
+ * Digs the resolved idle timeout out of a constructed Bedrock model. Reaches
+ * through two private layers (`BedrockModel._client`, the handler's deferred
+ * config) on purpose: the value only matters if it arrives where the smithy
+ * handler arms `stream.setTimeout()`, and nothing public reports that.
+ */
+async function resolvedRequestTimeout(model: Model): Promise<number | undefined> {
+  const client = (model as unknown as { _client: { config: { requestHandler: unknown } } })._client;
+  const handler = client.config.requestHandler as {
+    config?: { requestTimeout?: number };
+    configProvider?: Promise<{ requestTimeout?: number }>;
+  };
+  return (handler.config ?? (await handler.configProvider))?.requestTimeout;
 }
 
 async function permissionModes(): Promise<void> {
@@ -670,6 +725,7 @@ async function main(): Promise<void> {
   await modelArray();
   await modelCatalogue();
   await rejections();
+  await requestTimeout();
   await permissionModes();
   await permissionRules();
   await toolHooks();

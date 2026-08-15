@@ -160,6 +160,13 @@ export interface ModelFields {
    * a cheap default. Bedrock ids must be inference profiles, like `model`.
    */
   classifierModel?: string;
+  /**
+   * Bedrock only: how long one request may go with *no bytes arriving* before it
+   * fails with "Stream timed out because of no activity", in milliseconds. An
+   * idle timeout, not a total-duration cap — every streamed delta resets it.
+   * Unset means {@link DEFAULT_REQUEST_TIMEOUT_MS} (180s).
+   */
+  requestTimeoutMs?: number;
 }
 
 /**
@@ -171,6 +178,11 @@ export interface SessionFields {
   summaryRatio: number;
   /** Messages always kept verbatim by the summarizer. */
   preserveRecentMessages: number;
+  /**
+   * Fraction of the model's context window at which a warning notice fires once.
+   * Set to 0 to disable. Default: 0.8.
+   */
+  contextWarnRatio: number;
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
   /** Deprecated policy fields retained on the type for migration fixtures only. */
@@ -207,6 +219,7 @@ const MODEL_KEYS = [
   'promptCache',
   'promptCacheTtl',
   'classifierModel',
+  'requestTimeoutMs',
 ] as const;
 
 /**
@@ -220,6 +233,7 @@ const SESSION_KEYS = [
   'hooks',
   'summaryRatio',
   'preserveRecentMessages',
+  'contextWarnRatio',
   'systemPrompt',
 ] as const;
 
@@ -241,9 +255,18 @@ const DEFAULTS = {
   permissionMode: 'default',
   promptCache: true,
   thinkingEffort: DEFAULT_THINKING_EFFORT,
+  contextWarnRatio: 0.8,
 } as const satisfies Partial<AppConfig>;
 
 const DEFAULT_REGION = 'us-west-2';
+
+/**
+ * Default idle timeout for one Bedrock streaming request, in milliseconds. The
+ * Strands SDK's own default is 120s, which long quiet stretches (deep adaptive
+ * thinking, a loaded endpoint) have been seen to exceed — darwin widens it to
+ * 180s. Per-model override: `requestTimeoutMs`.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
 
 /** Bedrock rejects bare model ids; only cross-region inference profiles work. */
 const BEDROCK_PROFILE_PREFIXES = ['us.', 'eu.', 'apac.', 'global.'];
@@ -566,6 +589,20 @@ function validateModelFields(input: Record<string, unknown>, where: string): Mod
   const classifierModel = stringField(input, 'classifierModel', where);
   if (classifierModel !== undefined) fields.classifierModel = classifierModel;
 
+  // Bedrock-only, rejected elsewhere rather than ignored: the other providers'
+  // clients have their own timeout mechanisms this value never reaches, and a
+  // timeout the user believes is in effect but is not would surface exactly like
+  // the hang it was written to bound.
+  const requestTimeoutMs = numberField(input, 'requestTimeoutMs', where, { min: 1 });
+  if (requestTimeoutMs !== undefined) {
+    if (provider !== 'bedrock') {
+      throw new ConfigError(
+        `${where}: "requestTimeoutMs" only applies to provider "bedrock" (this one sets ${JSON.stringify(provider)}).`,
+      );
+    }
+    fields.requestTimeoutMs = requestTimeoutMs;
+  }
+
   return fields;
 }
 
@@ -586,6 +623,9 @@ function validateSessionFields(input: Record<string, unknown>, configPath: strin
     preserveRecentMessages:
       numberField(input, 'preserveRecentMessages', configPath, { min: 0 }) ??
       DEFAULTS.preserveRecentMessages,
+    contextWarnRatio:
+      numberField(input, 'contextWarnRatio', configPath, { min: 0, max: 1 }) ??
+      DEFAULTS.contextWarnRatio,
   };
 
   // Retained as a deprecated global fallback for ~/.darwin/hooks.json. Runtime
@@ -918,6 +958,12 @@ function createBedrockModel(config: AppConfig): Model {
     region: resolveRegion(config.region),
     modelId: config.model,
     maxTokens: config.maxTokens,
+    // Idle timeout for the response stream: no bytes for this long fails the
+    // request as a TimeoutError. Always passed explicitly — the SDK's own 120s
+    // default has been outlived by real turns, so darwin owns the number.
+    clientConfig: {
+      requestHandler: { requestTimeout: config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS },
+    },
     // Appends a cache point after the tool schemas and to the last user message on
     // every request. Omitted entirely when caching is off, since `strategy: 'auto'`
     // on a model that cannot cache makes the SDK warn straight to the console.

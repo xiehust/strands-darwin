@@ -247,6 +247,7 @@ you get a working Bedrock setup.
 | `promptCacheTtl` | provider default (5m) | `5m` or `1h`, applied to every cache point |
 | `thinkingEffort` | `high` | how hard the model thinks — `low`, `medium`, `high`, `xhigh`, `max`; changeable with `/effort` — see [Thinking effort](#thinking-effort) |
 | `classifierModel` | per provider | model id for `auto` mode's safety classifier |
+| `requestTimeoutMs` | `180000` | Bedrock only — idle timeout for one streaming request; fails with "Stream timed out because of no activity" when nothing arrives for this long |
 | `systemPrompt` | built-in prompt | replaces the base system prompt; wins over `.darwin/system-prompt.md` — see [System prompt](#system-prompt) |
 
 Switching providers is a config change only; no code names a provider.
