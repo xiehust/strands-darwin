@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Owns tested skill-plugin and required built-in contracts."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Requires searching and centralizing repeated required-name assumptions."}
