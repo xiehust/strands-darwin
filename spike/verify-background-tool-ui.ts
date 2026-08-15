@@ -238,4 +238,17 @@ assert('every active tool call is stamped with a start time for the elapsed suff
   stamped.activeTools.length === 2 && stamped.activeTools.every((tool) =>
     Number.isSafeInteger(tool.startedAt) && tool.startedAt >= clockBefore && tool.startedAt <= clockAfter));
 
+let notices = turnReducer(initialTurnState, { type: 'notice', text: 'plain' });
+notices = turnReducer(notices, { type: 'notice', text: 'degraded', severity: 'warn' });
+notices = turnReducer(notices, { type: 'notice', text: 'broken', severity: 'error' });
+const [plain, degraded, broken] = notices.history;
+assert('a notice without a severity defaults to info',
+  plain?.kind === 'notice' && plain.severity === 'info' && plain.text === 'plain');
+assert('warn and error severities are preserved on the history item',
+  degraded?.kind === 'notice' && degraded.severity === 'warn' &&
+  broken?.kind === 'notice' && broken.severity === 'error');
+const toggleSeverity = turnReducer(initialTurnState, { type: 'toggleBackgroundDetails' }).history.at(-1);
+assert('the background-details toggle notice stays informational',
+  toggleSeverity?.kind === 'notice' && toggleSeverity.severity === 'info');
+
 report();

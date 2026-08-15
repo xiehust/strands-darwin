@@ -130,7 +130,7 @@ export function App({
   // the model is losing part of its own history and that is worth one line.
 
   useEffect(
-    () => routeSdkLogs((entry) => dispatch({ type: 'notice', text: `sdk ${entry.level}: ${entry.message}` })),
+    () => routeSdkLogs((entry) => dispatch({ type: 'notice', text: `sdk ${entry.level}: ${entry.message}`, severity: entry.level })),
     [dispatch],
   );
 
@@ -157,6 +157,7 @@ export function App({
         dispatch({
           type: 'notice',
           text: `turn failed: ${error instanceof Error ? error.message : String(error)}`,
+          severity: 'error',
         });
       } finally {
         dispatch({ type: 'turnEnded' });
@@ -257,6 +258,7 @@ export function App({
           dispatch({
             type: 'notice',
             text: `compaction failed; conversation restored: ${error instanceof Error ? error.message : String(error)}`,
+            severity: 'error',
           });
         } finally {
           setStatus('idle');
@@ -298,6 +300,7 @@ export function App({
         dispatch({
           type: 'notice',
           text: `could not expand ${text}: ${error instanceof Error ? error.message : String(error)}`,
+          severity: 'error',
         });
       }
 
@@ -334,6 +337,8 @@ export function App({
             text:
               `always allowing ${rule} for this session only — could not write ` +
               `${runtime.info.permissionRulesPath}: ${error instanceof Error ? error.message : String(error)}`,
+            // The rule still applies this session, so a degradation, not a failure.
+            severity: 'warn',
           });
         },
       );
@@ -834,6 +839,8 @@ function applyEffortCommand(
         text:
           `${applied}, this session only — could not write ` +
           `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+        // The level is live already; only its persistence degraded.
+        severity: 'warn',
       });
     },
   );
@@ -902,6 +909,7 @@ async function applyModelCommand(
       text:
         `could not switch to ${target.name}: ${error instanceof Error ? error.message : String(error)}\n` +
         `  still on ${describeChoice(choices.find((choice) => choice.enabled) as ModelChoice)}`,
+      severity: 'error',
     });
     return;
   }
@@ -921,6 +929,8 @@ async function applyModelCommand(
         text:
           `${applied}\n  this session only — could not write ` +
           `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+        // The switch already happened; only its persistence degraded.
+        severity: 'warn',
       });
     },
   );

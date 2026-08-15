@@ -22,9 +22,15 @@ export type HistoryItem =
   | { kind: 'user'; id: string; text: string }
   | { kind: 'assistant'; id: string; text: string }
   | { kind: 'tool'; id: string; name: string; summary: string; status: ToolStatus; preview: string }
-  | { kind: 'notice'; id: string; text: string };
+  | { kind: 'notice'; id: string; text: string; severity: NoticeSeverity };
 
 export type ToolStatus = 'ok' | 'error' | 'denied';
+
+/**
+ * How a notice renders, not what it says: `error` for something that failed
+ * outright, `warn` for a degradation the session survives, `info` for the rest.
+ */
+export type NoticeSeverity = 'info' | 'warn' | 'error';
 
 /** A tool call that has started but not finished. */
 export interface ActiveTool {
@@ -66,7 +72,7 @@ function nextId(prefix: string): string {
 
 export type TurnAction =
   | { type: 'userInput'; text: string }
-  | { type: 'notice'; text: string }
+  | { type: 'notice'; text: string; severity?: NoticeSeverity }
   | { type: 'toggleBackgroundDetails' }
   | { type: 'streamEvent'; event: AgentStreamEvent }
   | { type: 'turnEnded' };
@@ -82,7 +88,10 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
     case 'notice':
       return {
         ...state,
-        history: [...state.history, { kind: 'notice', id: nextId('notice'), text: action.text }],
+        history: [
+          ...state.history,
+          { kind: 'notice', id: nextId('notice'), text: action.text, severity: action.severity ?? 'info' },
+        ],
       };
 
     case 'toggleBackgroundDetails': {
@@ -96,6 +105,7 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
             kind: 'notice',
             id: nextId('notice'),
             text: `background details: ${backgroundDetailsExpanded ? 'expanded' : 'compact'}`,
+            severity: 'info',
           },
         ],
       };
