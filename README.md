@@ -161,6 +161,7 @@ Keys:
 | `Enter` | send |
 | `y` / `n` / `Esc` | answer a permission prompt (`Esc` denies) |
 | `/` | list skills; `↑`/`↓` to pick, `Tab` or `Enter` to complete |
+| `Ctrl+B` | toggle compact/expanded background bash details |
 | `Ctrl+C` | cancel the current turn; press again within 2s to quit |
 | `Ctrl+D`, `/exit`, `/quit` | quit |
 
@@ -345,8 +346,12 @@ modes are:
 
 A task is `running`, `succeeded`, `failed`, or `stopped`. The local `/tasks` command lists
 all jobs in this run with concise command text and elapsed time, without sending a model
-request; it is also available while a turn streams. Darwin adds a dim transcript notice as
-each task succeeds, fails, or is stopped, including failure exit metadata when available.
+request; it is also available while a turn streams. Background lifecycle tool calls render
+compactly by default: repeated successful status and empty output polls do not fill scrollback,
+while child output and failures remain visible. Press `Ctrl+B` to toggle expanded lifecycle
+results for active and subsequent calls; the current prompt draft is left untouched. Darwin
+also adds a dim transcript notice as each task succeeds, fails, or is stopped, including
+failure exit metadata when available.
 Standard output and standard error are combined in
 `~/.darwin/sessions/<project-key>/<session-id>/background/<task-id>.log`; the absolute path is included
 in start and status results for full replay. Logs remain after completion and after darwin

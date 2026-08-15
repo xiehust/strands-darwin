@@ -153,6 +153,8 @@ The report shows short id, presentation-only command summary, state, and elapsed
 - `/tasks` reads the runtime manager directly: it must not call `send`, cancel, queue, or emit a tool event. Empty state says `none in this run` because `--resume` does not restore process control.
 - Subscribe in a mounted `useEffect` and return the unsubscribe closure. Dispatch only a `notice`; never `turnEnded` or status changes. The dim `<Static>` history entry is non-modal, visible while idle, and cannot steal permission/input focus.
 - Normalize command whitespace and bound summaries only at presentation time. Truncate by Unicode code points, not UTF-16 code units, so an emoji boundary cannot render `�`; agent-side list output keeps the full command.
+- Background lifecycle `bash` calls (`start`, `list`, `status`, `output`, `stop`) are a presentation-only projection. Compact mode suppresses successful status and empty output polls, retains child text without cursor/path metadata, and keeps failures fully diagnostic. Unknown successful payloads fall back to ordinary rendering.
+- `Ctrl+B` toggles compact/expanded lifecycle details after permission ownership but before editor handling. It works idle or streaming, appends an immediate notice, and must not alter the draft/cursor. Existing `<Static>` scrollback is immutable; only active and subsequent calls change.
 
 ### 4. Validation & Error Matrix
 
@@ -175,6 +177,8 @@ The report shows short id, presentation-only command summary, state, and elapsed
 ### 6. Tests Required
 
 - `spike/verify-task-format.ts`: whitespace, bounds, Unicode code-point truncation, running/terminal time endpoints, empty report, and failure metadata.
+- `spike/verify-background-tool-ui.ts`: lifecycle recognition, compact active/result summaries, status/empty-output suppression, child output, malformed fallback, failure preservation, expanded mode, and foreground compatibility.
+- `spike/verify-tui.ts backgroundDetails`: zero-model `Ctrl+B` toggles both ways, reports each mode, preserves a draft, and starts no turn.
 - `spike/verify-tui.ts completion`: zero-model `/tasks`, space/tab argument rejection, completion row, and no `working…` marker.
 - `spike/verify-tui.ts tasks`: anchored proof that one completion arrives after idle was established, `/tasks` renders during streaming, another completion arrives during that same turn, both precede the final word, and exit is deadline-bounded.
 - Manager-level tests own exactly-once stop/success/failure and unsubscribe semantics; do not duplicate private-manager assertions in React tests.

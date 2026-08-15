@@ -400,6 +400,13 @@ export function App({
       return;
     }
 
+    // Display-only and session-local. It is deliberately after permission
+    // ownership, but before editor commands, so the draft and cursor are untouched.
+    if (key.ctrl && typed === 'b') {
+      dispatch({ type: 'toggleBackgroundDetails' });
+      return;
+    }
+
     // No guard for a streaming turn: typing during one stays allowed, and the
     // draft is held back in submit() instead. That is what lets a local command
     // like /usage be answered mid-turn, without ever queueing a prompt into a
@@ -538,7 +545,11 @@ export function App({
       <MessageList history={state.history} liveText={state.liveText} />
 
       {state.thinking && effectiveStatus === 'streaming' && <Text dimColor>thinking…</Text>}
-      <ActiveToolCalls tools={state.activeTools} frame={frame} />
+      <ActiveToolCalls
+        tools={state.activeTools}
+        frame={frame}
+        backgroundDetailsExpanded={state.backgroundDetailsExpanded}
+      />
 
       {pendingPermission !== undefined ? (
         <PermissionPrompt request={pendingPermission} waiting={permissions.waiting} />

@@ -8,6 +8,7 @@
 import { Box, Text } from 'ink';
 import React from 'react';
 
+import { activeToolCallSummary } from './background-tool-presentation.js';
 import type { ActiveTool, HistoryItem, ToolStatus } from './turn-state.js';
 
 /** Lines of tool output kept in the collapsed preview. */
@@ -19,9 +20,11 @@ const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '
 export function ActiveToolCalls({
   tools,
   frame,
+  backgroundDetailsExpanded,
 }: {
   readonly tools: readonly ActiveTool[];
   readonly frame: number;
+  readonly backgroundDetailsExpanded: boolean;
 }): React.JSX.Element | null {
   if (tools.length === 0) return null;
 
@@ -30,7 +33,7 @@ export function ActiveToolCalls({
       {tools.map((tool) => (
         <Box key={tool.id}>
           <Text color="yellow">{FRAMES[frame % FRAMES.length]} </Text>
-          <Text dimColor>{tool.summary}</Text>
+          <Text dimColor>{activeToolCallSummary(tool.summary, tool.compactSummary, backgroundDetailsExpanded)}</Text>
         </Box>
       ))}
     </Box>

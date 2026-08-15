@@ -14,7 +14,8 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | chunkedEnter | cursor | completion | agentsMd | usage | tasks | effort | model
+ *                 cancelThenContinue | multiline | chunkedEnter | cursor | completion | backgroundDetails |
+ *                 agentsMd | usage | tasks | effort | model
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -672,6 +673,47 @@ async function slashCompletion(): Promise<void> {
   }
 }
 
+/** Zero-model proof that Ctrl+B is display-only and preserves the prompt draft. */
+async function backgroundDetailsToggle(): Promise<void> {
+  header('TUI — Ctrl+B toggles background details without editing the draft');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const draft = 'draft stays here';
+    tui.send(draft);
+    await tui.waitFor(`you> ${draft}`, { timeoutMs: 30_000, settleMs: 400 });
+
+    const beforeExpanded = tui.mark();
+    tui.send('\u0002'); // ctrl+b
+    await tui.waitFor('background details: expanded', {
+      timeoutMs: 30_000,
+      from: beforeExpanded,
+      settleMs: 400,
+    });
+    assert('Ctrl+B reports expanded mode', tui.screen.slice(beforeExpanded).includes('background details: expanded'));
+    assert('expanding preserves the existing draft', tui.screen.slice(beforeExpanded).includes(`you> ${draft}`));
+
+    const beforeCompact = tui.mark();
+    tui.send('\u0002');
+    await tui.waitFor('background details: compact', {
+      timeoutMs: 30_000,
+      from: beforeCompact,
+      settleMs: 400,
+    });
+    assert('Ctrl+B reports compact mode', tui.screen.slice(beforeCompact).includes('background details: compact'));
+    assert('compacting still preserves the existing draft', tui.screen.slice(beforeCompact).includes(`you> ${draft}`));
+    assert('the toggle never starts a model turn', !tui.screen.slice(beforeExpanded).includes('working…'));
+
+    tui.send('\u007f'.repeat(draft.length));
+    tui.submit('/exit');
+    assert('TUI exits cleanly after detail toggles', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 /**
  * An AGENTS.md the model is not getting in full — or not getting at all — has to be
  * visible in the header: rules that were silently trimmed or skipped still read to
@@ -1138,6 +1180,7 @@ const SCENARIOS = {
   chunkedEnter,
   cursor: cursorEditing,
   completion: slashCompletion,
+  backgroundDetails: backgroundDetailsToggle,
   agentsMd: agentsMdHeader,
   usage: usageReport,
   tasks: taskMonitoring,

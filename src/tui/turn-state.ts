@@ -11,6 +11,12 @@
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { classify } from '../agent/permission.js';
+import {
+  backgroundBashMode,
+  compactBackgroundCallSummary,
+  compactBackgroundResult,
+  type BackgroundBashMode,
+} from './background-tool-presentation.js';
 
 export type HistoryItem =
   | { kind: 'user'; id: string; text: string }
@@ -25,6 +31,9 @@ export interface ActiveTool {
   id: string;
   name: string;
   summary: string;
+  compactSummary?: string;
+  backgroundMode?: BackgroundBashMode;
+  backgroundInput?: unknown;
 }
 
 export interface TurnState {
@@ -35,6 +44,8 @@ export interface TurnState {
   /** True while the model is emitting reasoning rather than answer text. */
   thinking: boolean;
   activeTools: ActiveTool[];
+  /** Session-local display preference; immutable Static history is never rewritten. */
+  backgroundDetailsExpanded: boolean;
 }
 
 export const initialTurnState: TurnState = {
@@ -42,6 +53,7 @@ export const initialTurnState: TurnState = {
   liveText: '',
   thinking: false,
   activeTools: [],
+  backgroundDetailsExpanded: false,
 };
 
 let idCounter = 0;
@@ -53,6 +65,7 @@ function nextId(prefix: string): string {
 export type TurnAction =
   | { type: 'userInput'; text: string }
   | { type: 'notice'; text: string }
+  | { type: 'toggleBackgroundDetails' }
   | { type: 'streamEvent'; event: AgentStreamEvent }
   | { type: 'turnEnded' };
 
@@ -69,6 +82,22 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         ...state,
         history: [...state.history, { kind: 'notice', id: nextId('notice'), text: action.text }],
       };
+
+    case 'toggleBackgroundDetails': {
+      const backgroundDetailsExpanded = !state.backgroundDetailsExpanded;
+      return {
+        ...state,
+        backgroundDetailsExpanded,
+        history: [
+          ...state.history,
+          {
+            kind: 'notice',
+            id: nextId('notice'),
+            text: `background details: ${backgroundDetailsExpanded ? 'expanded' : 'compact'}`,
+          },
+        ],
+      };
+    }
 
     case 'turnEnded':
       // Flush anything the model left unterminated (e.g. a cancelled turn) so it
@@ -127,12 +156,24 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       // classify() already produces the human-readable summary the permission
       // prompt uses; reusing it keeps one description of a tool call, not two.
       const request = classify(event.toolUse.name, event.toolUse.input);
+      const backgroundMode = backgroundBashMode(event.toolUse.name, event.toolUse.input);
       return {
         ...flushLiveText(state),
         thinking: false,
         activeTools: [
           ...state.activeTools,
-          { id: event.toolUse.toolUseId, name: event.toolUse.name, summary: request.summary },
+          {
+            id: event.toolUse.toolUseId,
+            name: event.toolUse.name,
+            summary: request.summary,
+            ...(backgroundMode === undefined
+              ? {}
+              : {
+                  backgroundMode,
+                  backgroundInput: event.toolUse.input,
+                  compactSummary: compactBackgroundCallSummary(backgroundMode, event.toolUse.input),
+                }),
+          },
         ],
       };
     }
@@ -140,14 +181,42 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
     case 'afterToolCallEvent': {
       const toolUseId = event.toolUse.toolUseId;
       const active = state.activeTools.find((tool) => tool.id === toolUseId);
-      const summary = active?.summary ?? classify(event.toolUse.name, event.toolUse.input).summary;
-      const preview = previewToolResult(event.result.content);
+      let summary = active?.summary ?? classify(event.toolUse.name, event.toolUse.input).summary;
+      let preview = previewToolResult(event.result.content);
       const status: ToolStatus =
         event.result.status === 'error' ? (preview.startsWith('DENIED:') ? 'denied' : 'error') : 'ok';
+      const activeTools = state.activeTools.filter((tool) => tool.id !== toolUseId);
+
+      // Failures always retain the ordinary diagnostic. Compact presentation is
+      // applied only after a successful manager result has been safely decoded.
+      // Some SDK after-events omit the original input, so prefer the mode captured
+      // when the call entered the live panel.
+      const backgroundMode =
+        active?.backgroundMode ?? backgroundBashMode(event.toolUse.name, event.toolUse.input);
+      if (backgroundMode !== undefined && !state.backgroundDetailsExpanded) {
+        // Compact labels stay bounded even when a call fails or its successful
+        // payload drifts. Failures and fallbacks still retain the full preview.
+        summary = active?.compactSummary ?? compactBackgroundCallSummary(
+          backgroundMode,
+          active?.backgroundInput ?? event.toolUse.input,
+        );
+        if (status === 'ok') {
+          const compact = compactBackgroundResult(
+            backgroundMode,
+            active?.backgroundInput ?? event.toolUse.input,
+            event.result.content,
+          );
+          if (compact.kind === 'suppress') return { ...state, activeTools };
+          if (compact.kind === 'compact') {
+            summary = compact.summary;
+            preview = compact.preview;
+          }
+        }
+      }
 
       return {
         ...state,
-        activeTools: state.activeTools.filter((tool) => tool.id !== toolUseId),
+        activeTools,
         history: [
           ...state.history,
           { kind: 'tool', id: nextId('tool'), name: event.toolUse.name, summary, status, preview },
