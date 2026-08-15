@@ -143,6 +143,60 @@ export function moveToRowEdge(layout: EditorLayout, edge: 'start' | 'end'): Edit
     : { offset: row.end, affinity: 'upstream' };
 }
 
+/**
+ * Kills from the cursor to a visual row edge (readline Ctrl+K / Ctrl+U).
+ *
+ * Row-scoped, like Home/End, so the chords agree with the movement keys the
+ * editor already has. At the edge itself this is a no-op: the newline (or the
+ * soft wrap) is a boundary, never part of the kill.
+ */
+export function killToRowEdge(value: EditorValue, layout: EditorLayout, edge: 'start' | 'end'): EditorValue {
+  const cursor = snapCursor(value.text, value.cursor);
+  const row = layout.rows[layout.cursor.row] as VisualRow;
+
+  if (edge === 'start') {
+    if (cursor.offset <= row.start) return { ...value, cursor };
+    return {
+      text: value.text.slice(0, row.start) + value.text.slice(cursor.offset),
+      cursor: { offset: row.start, affinity: 'downstream' },
+    };
+  }
+
+  if (cursor.offset >= row.end) return { ...value, cursor };
+  return {
+    text: value.text.slice(0, cursor.offset) + value.text.slice(row.end),
+    cursor: { offset: cursor.offset, affinity: 'upstream' },
+  };
+}
+
+/**
+ * Deletes the whitespace-delimited word before the cursor (readline Ctrl+W):
+ * trailing whitespace first, then every non-whitespace grapheme. Grapheme
+ * boundaries keep a joined emoji or combining sequence intact, exactly as
+ * backspace does.
+ */
+export function deleteWordBefore(value: EditorValue): EditorValue {
+  const cursor = snapCursor(value.text, value.cursor);
+  if (cursor.offset === 0) return { ...value, cursor };
+
+  let start = cursor.offset;
+  while (start > 0) {
+    const previous = previousBoundary(value.text, start);
+    if (!/^\s+$/.test(value.text.slice(previous, start))) break;
+    start = previous;
+  }
+  while (start > 0) {
+    const previous = previousBoundary(value.text, start);
+    if (/^\s+$/.test(value.text.slice(previous, start))) break;
+    start = previous;
+  }
+
+  return {
+    text: value.text.slice(0, start) + value.text.slice(cursor.offset),
+    cursor: { offset: start, affinity: 'downstream' },
+  };
+}
+
 export function moveVertical(
   layout: EditorLayout,
   direction: -1 | 1,

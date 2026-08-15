@@ -4,7 +4,9 @@ import {
   backspaceAtCursor,
   cellWidth,
   deleteAtCursor,
+  deleteWordBefore,
   insertAtCursor,
+  killToRowEdge,
   layoutEditor,
   moveHorizontal,
   moveToRowEdge,
@@ -113,6 +115,73 @@ const tabs = layoutEditor('a\tb', 20, atEnd('a\tb').cursor);
 check('tabs render with stable hit-test width', () => {
   nodeAssert.equal(tabs.rows[0]?.text, 'a    b');
   nodeAssert.equal(tabs.rows[0]?.width, 6);
+});
+
+header('prompt editor — readline chords (kill and word delete)');
+const kill = (text: string, offset: number, edge: 'start' | 'end', columns = 40): EditorValue => {
+  const cursor = { offset, affinity: 'downstream' } as const;
+  return killToRowEdge({ text, cursor }, layoutEditor(text, columns, cursor), edge);
+};
+check('ctrl+k kills from the cursor to the end of the line', () => {
+  nodeAssert.deepEqual(kill('alpha beta', 5, 'end'), {
+    text: 'alpha',
+    cursor: { offset: 5, affinity: 'upstream' },
+  });
+});
+check('ctrl+u kills from the start of the line to the cursor', () => {
+  nodeAssert.deepEqual(kill('alpha beta', 6, 'start'), {
+    text: 'beta',
+    cursor: { offset: 0, affinity: 'downstream' },
+  });
+});
+check('kills stop at an explicit newline, never crossing it', () => {
+  nodeAssert.equal(kill('abcd\nx', 2, 'end').text, 'ab\nx');
+  nodeAssert.equal(kill('abcd\nx', 6, 'start').text, 'abcd\n');
+});
+check('kills are scoped to the visual row at a soft wrap', () => {
+  // 'abcdef' at 10 columns wraps as 'abcd' / 'ef'; offset 5 sits on the second row.
+  nodeAssert.equal(kill('abcdef', 5, 'end', 10).text, 'abcde');
+  nodeAssert.equal(kill('abcdef', 5, 'start', 10).text, 'abcdf');
+});
+check('a kill at its own edge is a no-op', () => {
+  nodeAssert.equal(kill('alpha', 5, 'end').text, 'alpha');
+  nodeAssert.equal(kill('alpha', 0, 'start').text, 'alpha');
+  nodeAssert.equal(kill('', 0, 'end').text, '');
+});
+check('a killed joined emoji goes whole, never split', () => {
+  const text = `ab ${family}${family}`;
+  nodeAssert.equal(kill(text, 3, 'end').text, 'ab ');
+});
+
+const wordDelete = (text: string, offset?: number): EditorValue =>
+  deleteWordBefore({ text, cursor: { offset: offset ?? text.length, affinity: 'upstream' } });
+check('ctrl+w deletes the whitespace-delimited word before the cursor', () => {
+  nodeAssert.deepEqual(wordDelete('alpha beta'), {
+    text: 'alpha ',
+    cursor: { offset: 6, affinity: 'downstream' },
+  });
+});
+check('ctrl+w consumes trailing whitespace before the word', () => {
+  nodeAssert.equal(wordDelete('alpha beta   ').text, 'alpha ');
+});
+check('ctrl+w mid-word deletes only up to the cursor', () => {
+  nodeAssert.deepEqual(wordDelete('alpha beta', 8), {
+    text: 'alpha ta',
+    cursor: { offset: 6, affinity: 'downstream' },
+  });
+});
+check('ctrl+w crosses a newline like any other whitespace', () => {
+  nodeAssert.equal(wordDelete('alpha\nbeta\n').text, 'alpha\n');
+});
+check('ctrl+w treats joined emoji and combining sequences as word graphemes', () => {
+  nodeAssert.equal(wordDelete(`ok ${family}e\u0301`).text, 'ok ');
+});
+check('ctrl+w on an empty draft or at offset 0 is a no-op', () => {
+  nodeAssert.equal(wordDelete('').text, '');
+  nodeAssert.equal(wordDelete('alpha', 0).text, 'alpha');
+});
+check('ctrl+w on pure whitespace deletes all of it', () => {
+  nodeAssert.equal(wordDelete('   ').text, '');
 });
 
 report();

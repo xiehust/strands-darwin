@@ -39,7 +39,9 @@ import type { PermissionQueue } from './permission-queue.js';
 import {
   backspaceAtCursor,
   deleteAtCursor,
+  deleteWordBefore,
   insertAtCursor,
+  killToRowEdge,
   layoutEditor,
   moveHorizontal,
   moveToRowEdge,
@@ -404,6 +406,33 @@ export function App({
     // ownership, but before editor commands, so the draft and cursor are untouched.
     if (key.ctrl && typed === 'b') {
       dispatch({ type: 'toggleBackgroundDetails' });
+      return;
+    }
+
+    // Readline-style editing chords. After permission ownership (a pending
+    // prompt still owns 'a'/'e'), before the generic ctrl/meta ignore below.
+    if (key.ctrl && (typed === 'a' || typed === 'e')) {
+      setEditor((current) => ({
+        ...current,
+        cursor: moveToRowEdge(layoutEditor(current.text, columns, current.cursor), typed === 'a' ? 'start' : 'end'),
+      }));
+      preferredColumn.current = undefined;
+      return;
+    }
+
+    if (key.ctrl && (typed === 'k' || typed === 'u')) {
+      setEditor((current) =>
+        killToRowEdge(current, layoutEditor(current.text, columns, current.cursor), typed === 'k' ? 'end' : 'start'),
+      );
+      preferredColumn.current = undefined;
+      setSelectedCompletion(0);
+      return;
+    }
+
+    if (key.ctrl && typed === 'w') {
+      setEditor((current) => deleteWordBefore(current));
+      preferredColumn.current = undefined;
+      setSelectedCompletion(0);
       return;
     }
 
