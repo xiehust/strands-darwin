@@ -21,7 +21,7 @@ const CONFIG: AppConfig = withSoleChoice({
   provider: 'bedrock',
   model: 'us.anthropic.claude-sonnet-4-6', // unused: the classifier picks its own default
   maxTokens: 8192,
-  summaryRatio: 0.3,
+  summaryRatio: 0.3, contextWarnRatio: 0.8,
   preserveRecentMessages: 10,
   permissionMode: 'auto',
   // The classifier overrides this to false anyway; set explicitly so this fixture

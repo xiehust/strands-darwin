@@ -36,7 +36,7 @@ const CONFIG: AppConfig = withSoleChoice({
   // Room for a real reasoning block plus the answer. Thinking tokens are billed as
   // output, so a tight budget would truncate the turn rather than the thought.
   maxTokens: 4096,
-  summaryRatio: 0.3,
+  summaryRatio: 0.3, contextWarnRatio: 0.8,
   preserveRecentMessages: 10,
   permissionMode: 'default',
   // Off: a single sub-1k-token request can never clear the minimum cacheable

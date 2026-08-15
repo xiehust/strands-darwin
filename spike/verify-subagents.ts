@@ -383,7 +383,7 @@ function fakeConfig(model: string) {
     permissionMode: 'default',
     promptCache: false,
     thinkingEffort: 'high',
-    summaryRatio: 0.8,
+    summaryRatio: 0.8, contextWarnRatio: 0.8,
     preserveRecentMessages: 4,
     modelChoices: [],
   } as const;

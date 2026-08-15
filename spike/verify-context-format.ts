@@ -1,5 +1,5 @@
 /** Pure formatting contracts for the /context report. No model, no network. */
-import { formatContextReport, formatWindowShare } from '../src/tui/context-format.js';
+import { createContextWarnLatch, formatContextReport, formatWindowShare } from '../src/tui/context-format.js';
 import { assert, header, report } from './shared.js';
 
 header('/context — window share');
@@ -24,5 +24,31 @@ assert('an unknown window is said out loud instead of guessed',
 assert('an empty conversation still reports honestly',
   formatContextReport({ estimatedTokens: 0, messageCount: 0, windowTokens: 200_000 }) ===
   'estimated context — ~0 tokens · 0% of 200,000 window · 0 message(s)');
+
+header('/context — warn latch');
+const KNOWN_WINDOW = 1_000_000;
+
+let latch = createContextWarnLatch();
+assert('fires once on first crossing of the threshold',
+  latch.check({ estimatedTokens: 850_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8) !== null);
+assert('does not fire again while still above the threshold',
+  latch.check({ estimatedTokens: 900_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8) === null);
+assert('re-arms after dropping below the threshold',
+  latch.check({ estimatedTokens: 700_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8) === null);
+assert('fires again after re-arming',
+  latch.check({ estimatedTokens: 850_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8) !== null);
+
+latch = createContextWarnLatch();
+assert('disabled at warnRatio 0, no matter how large the context',
+  latch.check({ estimatedTokens: 999_999, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0) === null);
+
+latch = createContextWarnLatch();
+assert('never fires when the window is unknown',
+  latch.check({ estimatedTokens: 999_999, messageCount: 1, windowTokens: undefined }, 0.8) === null);
+
+latch = createContextWarnLatch();
+const msg = latch.check({ estimatedTokens: 820_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8);
+assert('notice text includes the percent and the /compact hint',
+  msg !== null && msg.includes('82%') && msg.includes('/compact'));
 
 report();

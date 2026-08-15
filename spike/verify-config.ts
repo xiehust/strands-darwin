@@ -718,6 +718,22 @@ async function modelCatalogue(): Promise<void> {
   assert('…and it says how to get a catalogue', flatSwitch.includes('"models"'));
 }
 
+async function contextWarnRatioField(): Promise<void> {
+  header('config — contextWarnRatio field');
+  const def = await loadConfig(await writeConfig('{}'));
+  assert('default is 0.8', def.contextWarnRatio === 0.8);
+  const off = await loadConfig(await writeConfig('{ "contextWarnRatio": 0 }'));
+  assert('0 is accepted (disables the warning)', off.contextWarnRatio === 0);
+  const custom = await loadConfig(await writeConfig('{ "contextWarnRatio": 0.9 }'));
+  assert('a value between 0 and 1 is accepted', custom.contextWarnRatio === 0.9);
+  await expectConfigError('a value above 1 is rejected', async () =>
+    loadConfig(await writeConfig('{ "contextWarnRatio": 1.1 }')),
+  );
+  await expectConfigError('a negative value is rejected', async () =>
+    loadConfig(await writeConfig('{ "contextWarnRatio": -0.1 }')),
+  );
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
@@ -726,6 +742,7 @@ async function main(): Promise<void> {
   await modelCatalogue();
   await rejections();
   await requestTimeout();
+  await contextWarnRatioField();
   await permissionModes();
   await permissionRules();
   await toolHooks();

@@ -50,7 +50,7 @@ import {
 } from './prompt-editor.js';
 
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
-import { formatContextReport } from './context-format.js';
+import { createContextWarnLatch, formatContextReport } from './context-format.js';
 import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
 
 /** Window in which a second Ctrl+C means "exit", not "cancel again". */
@@ -98,6 +98,7 @@ export function App({
   const [selectedCompletion, setSelectedCompletion] = useState(0);
   const [frame, setFrame] = useState(0);
   const interruptedAt = useRef<number | undefined>(undefined);
+  const contextWarnLatch = useRef(createContextWarnLatch());
 
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(onChange),
@@ -164,6 +165,17 @@ export function App({
         dispatch({ type: 'turnEnded' });
         setStatus('idle');
         interruptedAt.current = undefined;
+      }
+
+      // Post-turn context-pressure check: free heuristic, idle-only, never
+      // blocks the session — a failed estimate is silently dropped so a warning
+      // failure cannot mask the turn result that just rendered above it.
+      try {
+        const estimate = await runtime.contextEstimate();
+        const notice = contextWarnLatch.current.check(estimate, runtime.config.contextWarnRatio);
+        if (notice !== null) dispatch({ type: 'notice', text: notice, severity: 'warn' });
+      } catch {
+        // best-effort
       }
     },
     [runtime],

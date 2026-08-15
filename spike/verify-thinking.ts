@@ -40,7 +40,7 @@ const SONNET: AppConfig = withSoleChoice({
   provider: 'bedrock',
   model: 'us.anthropic.claude-sonnet-4-6',
   maxTokens: 8192,
-  summaryRatio: 0.3,
+  summaryRatio: 0.3, contextWarnRatio: 0.8,
   preserveRecentMessages: 10,
   permissionMode: 'default',
   promptCache: true,
