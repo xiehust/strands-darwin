@@ -123,10 +123,13 @@ session record, or usage record. The planning task
 `bg-6bc36836-0776-42d9-9e55-bbfbe6b940d6` then succeeded. Repository work is tracked in the
 single Trellis task `08-15-ser-001-plan-mode`.
 
-The child implemented the Host-approved `plan` permission mode and ran its local focused/full
-validation. Independent Host acceptance is pending; this record intentionally does not claim a
-Host rerun until the Host supplies it.
+The child implemented the Host-approved `plan` permission mode and committed it in
+`e2e1463`. The implementation task was
+`bg-51a73455-5dc3-48a0-ad8f-3dd25e93b536`. Host acceptance inspected the complete commit/diff
+and independently re-ran `pnpm typecheck`, `pnpm test` (exit 0 with the expected MCP
+`continueOnError` diagnostic), the network-free `verify-tui.ts plan` scenario (4 passed), Trellis
+task validation, `git diff --check`, and clean-tree verification successfully.
 
 | Date | Commit | Milestone |
 |---|---|---|
-| 2026-08-15 | pending | Enforce read-only `plan` mode across config/CLI, hooks, parent/child interventions, TUI/headless diagnostics, and focused acceptance |
+| 2026-08-15 | `e2e1463` | Enforce read-only `plan` mode across config/CLI, hooks, parent/child interventions, TUI/headless diagnostics, and focused acceptance |
