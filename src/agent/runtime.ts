@@ -281,7 +281,13 @@ export class AgentRuntime {
     // Off by default. Storage is session-scoped and on disk, next to the
     // background-task logs, so a reference the model holds still resolves after
     // `--resume`; `evictAfterCycles: null` disables eviction for the same reason
-    // — a resumed conversation can cite a reference from many cycles ago.
+    // — a resumed conversation can cite a reference from many cycles ago. The
+    // corollary is that offload files accumulate unbounded: nothing in darwin
+    // deletes session state today (there is no session GC to align with), so the
+    // bound is manual — delete a finished session's directories, as documented
+    // on `contextOffload` in config.ts. Do not add per-session cleanup here: a
+    // fresh session id is timestamp-unique, so its offload dir never pre-exists,
+    // and any other session's dir may still be resumed.
     const offloader =
       config.contextOffload === true
         ? new ContextOffloader({

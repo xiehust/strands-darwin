@@ -186,6 +186,15 @@ export interface SessionFields {
   /**
    * Offload oversized tool results to session-scoped storage, keeping a preview
    * plus a reference in context. Off by default. See `maxResultTokens`.
+   *
+   * Storage accumulates by design: offloaded files live under the session's own
+   * directory (`~/.darwin/sessions/<project-key>/<session-id>/offload/`) and are
+   * never evicted, because a reference held by the conversation must keep
+   * resolving across `--resume` and `--session` continuations — a dangling
+   * reference is worse than the disk it saves. There is no session GC today;
+   * reclaim space by deleting a finished session's two directories under
+   * `~/.darwin/sessions/<project-key>/`: `<session-id>/` (background logs and
+   * offload files) and `session/<session-id>/` (conversation snapshots).
    */
   contextOffload?: boolean;
   /** Token threshold above which a tool result is offloaded. SDK default: 2500. */

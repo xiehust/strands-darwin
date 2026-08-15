@@ -125,6 +125,27 @@ await off.invoke('go');
 assert('the oversized result stays verbatim without the plugin',
   toolResultText(off).includes(HUGE));
 
+header('context offload — references survive a process boundary');
+// The premise behind both `evictAfterCycles: null` and the absence of offload
+// cleanup (see runtime.ts): a *fresh* agent and plugin over the same directory
+// — a stand-in for the next `--resume`d process — must still resolve a
+// reference the previous one stored. Deleting or evicting would break exactly
+// this, which is why the accumulation is documented rather than bounded.
+const { readdir } = await import('node:fs/promises');
+const storedKeys = await readdir(path.join(ROOT, 'on', 'offloader'));
+const firstKey = storedKeys[0] as string;
+assert('the first process left at least one stored block behind', storedKeys.length > 0);
+const resumed = makeAgent(true, path.join(ROOT, 'on'));
+await resumed.initialize();
+const resumedRetrieval = resumed.tool['retrieve_offloaded_content'];
+assert('a fresh agent over the same storage registers the retrieval tool', resumedRetrieval !== undefined);
+const retrieved = await resumedRetrieval!.invoke({ reference: firstKey }, { recordDirectToolCall: false });
+const retrievedText = (retrieved.content as readonly { text?: string }[])
+  .map((block) => block.text ?? '')
+  .join('');
+assert('the stored reference resolves to the full offloaded content',
+  retrieved.status !== 'error' && retrievedText.includes(HUGE));
+
 header('context offload — permission classification');
 const retrieval = classify('retrieve_offloaded_content', { reference: 'offloader/abc' });
 assert('the retrieval tool is classified read, so it is statically safe',
