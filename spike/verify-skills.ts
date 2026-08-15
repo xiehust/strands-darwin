@@ -6,12 +6,13 @@
  *
  * Run: pnpm tsx spike/verify-skills.ts
  */
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { darwinDir } from '../src/paths.js';
 import {
   BUILTIN_SKILLS_DIR,
+  REQUIRED_BUILTIN_SKILLS,
   SKILLS_DIRNAME,
   formatSkillForModel,
   loadSkill,
@@ -98,7 +99,7 @@ async function scanning(): Promise<void> {
   assert('reported the unparseable YAML as a problem', problemDirs.includes('bad-yaml'));
   assert('ignored a directory without SKILL.md silently', !problemDirs.includes('not-a-skill'));
   assert('one bad skill did not prevent loading the good ones', names.includes('pdf-forms'));
-  assert('the built-in developer is merged into project skills', names.includes('developer'));
+  assert('every required built-in is merged into project skills', REQUIRED_BUILTIN_SKILLS.every((name) => names.includes(name)));
   assert('skills are sorted by name', names.join(',') === [...names].sort().join(','));
 }
 
@@ -107,9 +108,9 @@ async function missingDirectory(): Promise<void> {
 
   const { skills, problems } = await scanSkills('/tmp/darwin-skills-does-not-exist');
 
-  assert('the built-in developer remains without a project directory', skills.length === 1 && skills[0]?.name === 'developer');
+  assert('all required built-ins remain without a project directory', skills.length === REQUIRED_BUILTIN_SKILLS.length && REQUIRED_BUILTIN_SKILLS.every((name) => skills.some((skill) => skill.name === name)));
   assert('no problems reported (project absence is normal, not an error)', problems.length === 0);
-  assert('the built-in resolves beside the loader module', skills[0]?.directory === path.join(BUILTIN_SKILLS_DIR, 'developer'));
+  assert('the built-ins resolve beside the loader module', REQUIRED_BUILTIN_SKILLS.every((name) => requireSkill(skills, name).directory === path.join(BUILTIN_SKILLS_DIR, name)));
 
   const plugin = await SkillsPlugin.load('/tmp/darwin-skills-does-not-exist');
   const expanded = await expandSkillCommand(plugin, '/developer fix the defect');
@@ -134,6 +135,24 @@ async function missingDirectory(): Promise<void> {
       workflow.includes('same explicit `--session <captured-id>`'),
   );
 
+  const researchExpanded = await expandSkillCommand(plugin, '/self-evolution-research choose the next iteration');
+  assert('/self-evolution-research expands without project skills', researchExpanded?.message.includes('# Self-evolution research') === true);
+  const research = plugin.find('self-evolution-research');
+  const researchLoaded = research === undefined ? undefined : await loadSkill(research);
+  assert('load_skill can load self-evolution-research', researchLoaded?.content.includes('# Self-evolution research') === true);
+  const researchWorkflow = researchLoaded?.content ?? '';
+  assert('research inspects the backlog before any product source', researchWorkflow.includes('Before using any product-research source, read `docs/research/backlog_index.md`'));
+  assert('research prioritizes in-progress then not-started work and suppresses fresh research', researchWorkflow.indexOf('`进行中` direction') < researchWorkflow.indexOf('`未开始` direction') && researchWorkflow.includes('do **not** perform fresh product research'));
+  assert('research has the exact four-state vocabulary', ['`未开始`', '`进行中`', '`完成`', '`放弃`'].every((status) => researchWorkflow.includes(status)));
+  assert('fresh research covers named and additional products', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', 'at least one additional relevant'].every((term) => researchWorkflow.includes(term)));
+  assert('research refuses fabricated claims without source access', researchWorkflow.includes('source access is unavailable') && researchWorkflow.includes('never fabricate'));
+  assert('peer evidence is compared with current Darwin architecture', researchWorkflow.includes('source, tests, README, `.trellis/spec/`') && researchWorkflow.includes('SDK-extension architecture'));
+  assert('same-day runs append safely', researchWorkflow.includes('append a new `## Run — <UTC timestamp>` section') && researchWorkflow.includes('Never replace or rewrite an earlier same-day run'));
+  assert('research proposes at most five directions', researchWorkflow.includes('zero to five new, non-duplicate iteration directions'));
+  assert('ranking includes importance, difficulty, and supporting dimensions', ['**Importance**', '**Implementation difficulty**', '**Architecture fit**', '**Evidence confidence**', '**Implementation risk**'].every((term) => researchWorkflow.includes(term)));
+  assert('research delegates exactly one direction through developer', researchWorkflow.includes('call `load_skill` with the exact name `developer`') && researchWorkflow.includes('Implement exactly one selected backlog direction per invocation'));
+  assert('completion requires independent acceptance and blockers remain in progress', researchWorkflow.includes('Never mark `完成` from the child\'s report alone') && researchWorkflow.includes('keep it `进行中`') && researchWorkflow.includes('explicit product decision'));
+
   // The pre-`.darwin` location is dead: a leftover root skills/ must not still be
   // advertised to the model, or a user who moved theirs would see duplicates.
   const legacyRoot = '/tmp/darwin-skills-legacy';
@@ -145,24 +164,30 @@ async function missingDirectory(): Promise<void> {
   const legacyScan = await scanSkills(legacyRoot);
   assert(
     'a root skills/ directory is no longer scanned',
-    legacyScan.skills.length === 1 && legacyScan.skills[0]?.name === 'developer',
+    legacyScan.skills.length === REQUIRED_BUILTIN_SKILLS.length && REQUIRED_BUILTIN_SKILLS.every((name) => legacyScan.skills.some((skill) => skill.name === name)),
   );
 }
 
 async function builtinCollision(): Promise<void> {
   header('scanSkills — built-in name reservation');
   const root = '/tmp/darwin-skills-collision';
-  const directory = path.join(darwinDir(root), SKILLS_DIRNAME, 'shadow');
   await rm(root, { recursive: true, force: true });
-  await mkdir(directory, { recursive: true });
-  await writeFile(
-    path.join(directory, 'SKILL.md'),
-    '---\nname: DEVELOPER\ndescription: Shadow the built-in.\n---\n\nshadow\n',
-  );
+
+  for (const name of REQUIRED_BUILTIN_SKILLS) {
+    const directory = path.join(darwinDir(root), SKILLS_DIRNAME, `shadow-${name}`);
+    await mkdir(directory, { recursive: true });
+    await writeFile(
+      path.join(directory, 'SKILL.md'),
+      `---\nname: ${name.toUpperCase()}\ndescription: Shadow the built-in.\n---\n\nshadow\n`,
+    );
+  }
 
   const { skills, problems } = await scanSkills(root);
-  assert('the built-in wins a case-insensitive collision', skills.filter((skill) => skill.name.toLowerCase() === 'developer').length === 1);
-  assert('the colliding project skill is surfaced', problems.some((problem) => problem.directory === directory && problem.reason.includes('reserved by built-in skill developer')));
+  for (const name of REQUIRED_BUILTIN_SKILLS) {
+    const directory = path.join(darwinDir(root), SKILLS_DIRNAME, `shadow-${name}`);
+    assert(`the built-in ${name} wins a case-insensitive collision`, skills.filter((skill) => skill.name.toLowerCase() === name).length === 1);
+    assert(`the colliding ${name} project skill is surfaced`, problems.some((problem) => problem.directory === directory && problem.reason.includes(`reserved by built-in skill ${name}`)));
+  }
 }
 
 async function promptFragment(): Promise<void> {
@@ -249,9 +274,27 @@ async function pluginShape(): Promise<void> {
   const builtinPrompt = { systemPrompt: 'BASE' } as Parameters<SkillsPlugin['initAgent']>[0];
   builtinOnlyPlugin.initAgent(builtinPrompt);
 
+  const builtinText = typeof builtinPrompt.systemPrompt === 'string' ? builtinPrompt.systemPrompt : '';
   assert('built-in-only discovery still registers load_skill', builtinOnlyPlugin.getTools().length === 1);
-  assert('built-in-only discovery advertises developer', typeof builtinPrompt.systemPrompt === 'string' && builtinPrompt.systemPrompt.includes('<skill name="developer">'));
-  assert('progressive disclosure omits the developer body', typeof builtinPrompt.systemPrompt === 'string' && !builtinPrompt.systemPrompt.includes('# Developer supervisor'));
+  assert('built-in-only discovery advertises every required skill', REQUIRED_BUILTIN_SKILLS.every((name) => builtinText.includes(`<skill name="${name}">`)));
+  assert('progressive disclosure omits built-in bodies', !builtinText.includes('# Developer supervisor') && !builtinText.includes('# Self-evolution research'));
+}
+
+async function researchDocs(): Promise<void> {
+  header('self-evolution research — persistent document contracts');
+
+  const backlog = await readFile(path.join(REPO_ROOT, 'docs', 'research', 'backlog_index.md'), 'utf8');
+  const template = await readFile(path.join(REPO_ROOT, 'docs', 'research', 'research_template.md'), 'utf8');
+
+  assert('backlog declares the exact status vocabulary', ['`未开始`', '`进行中`', '`完成`', '`放弃`'].every((status) => backlog.includes(status)));
+  assert('backlog prioritizes unfinished work before research', backlog.includes('Selection order is `进行中` first, then `未开始`') && backlog.includes('do not perform fresh product research'));
+  assert('backlog records ranking and acceptance fields', ['Importance', 'Architecture fit', 'Evidence confidence', 'Difficulty', 'Risk', 'Implementation / acceptance evidence'].every((heading) => backlog.includes(heading)));
+  assert('backlog documents the score formula', backlog.includes('Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk'));
+  assert('research template targets dated append-only reports', template.includes('research_<YYYY-MM-DD>.md') && template.includes('append another timestamped `## Run` section') && template.includes('Never overwrite an earlier run'));
+  assert('research template covers all mandatory products and an additional product', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', '`<additional product>`'].every((product) => template.includes(product)));
+  assert('research template joins peer sources to Darwin evidence', template.includes('### Peer highlights and innovations') && template.includes('### Current Darwin baseline') && template.includes('### Comparison and gaps'));
+  assert('research template caps and scores directions', template.includes('at most five new directions') && template.includes('Implementation difficulty') && template.includes('Implementation risk'));
+  assert('research template records developer and Host acceptance outcomes', template.includes('### Developer outcome') && template.includes('Child session and managed tasks') && template.includes('Host acceptance'));
 }
 
 async function realProjectSkill(): Promise<void> {
@@ -280,6 +323,7 @@ async function main(): Promise<void> {
   await promptFragment();
   await slashCommands();
   await pluginShape();
+  await researchDocs();
   await realProjectSkill();
   report();
 }

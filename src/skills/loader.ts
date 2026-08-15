@@ -29,6 +29,7 @@ export const SKILLS_DIRNAME = 'skills';
 
 /** Assets live beside this module in both `src/` and copied `dist/src/` output. */
 export const BUILTIN_SKILLS_DIR = fileURLToPath(new URL('./builtin', import.meta.url));
+export const REQUIRED_BUILTIN_SKILLS = ['developer', 'self-evolution-research'] as const;
 
 export interface Skill {
   name: string;
@@ -68,8 +69,10 @@ export async function scanSkills(root: string): Promise<SkillScan> {
   // packaged asset is fatal rather than silently removing a promised capability.
   const builtinEntries = await readdir(BUILTIN_SKILLS_DIR, { withFileTypes: true });
   await scanDirectory(BUILTIN_SKILLS_DIR, builtinEntries, 'built-in', skills, problems, seen);
-  if (!skills.some((skill) => skill.name.toLowerCase() === 'developer')) {
-    throw new Error(`Required built-in developer skill is missing from ${BUILTIN_SKILLS_DIR}`);
+  for (const required of REQUIRED_BUILTIN_SKILLS) {
+    if (!skills.some((skill) => skill.name.toLowerCase() === required)) {
+      throw new Error(`Required built-in ${required} skill is missing from ${BUILTIN_SKILLS_DIR}`);
+    }
   }
 
   // Validate project entries before global entries so a valid project definition

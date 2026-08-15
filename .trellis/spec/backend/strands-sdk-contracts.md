@@ -748,6 +748,64 @@ bash start -> darwin -p "approved; implement now" --session session-123 --yolo
 
 ---
 
+## Scenario: built-in self-evolution research
+
+### 1. Scope / Trigger
+
+`/self-evolution-research` loads a product-bundled Markdown workflow. It persists peer-product research and ranked iteration state under `docs/research/`, then composes the existing built-in `developer` workflow for exactly one selected implementation. It adds no scheduler, network client, or alternate agent loop.
+
+### 2. Signatures
+
+```text
+/self-evolution-research [request]
+backlog: docs/research/backlog_index.md
+report:  docs/research/research_<YYYY-MM-DD>.md
+handoff: load_skill({ name: "developer" })
+```
+
+### 3. Contracts
+
+- Read `docs/research/backlog_index.md` before consulting any product-research source.
+- Valid states are exactly `未开始`, `进行中`, `完成`, and `放弃`. Select the highest-priority `进行中` row first, otherwise `未开始`; while either exists, perform no fresh product research.
+- Fresh runs inspect current Darwin source/architecture and sourced evidence for Claude Code, Codex, DeepSeek harness, PenguinHarness, and at least one additional relevant product. Missing source access is recorded as a limitation, never filled from model memory.
+- Append each run to `docs/research/research_<YYYY-MM-DD>.md` under a unique UTC timestamp. Read an existing same-day file first and never overwrite prior runs.
+- Propose at most five non-duplicate directions. Rank 1–5 importance, architecture fit, evidence confidence, implementation difficulty, and implementation risk using `2 × importance + fit + confidence − difficulty − risk`, plus qualitative rationale.
+- Change one selected row to `进行中`, load `developer`, and implement exactly that direction. Set `完成` only after the Host's independent acceptance; otherwise retain `进行中` with blockers. `放弃` requires an explicit recorded reason.
+- `REQUIRED_BUILTIN_SKILLS` in `src/skills/loader.ts` is the single required-name list. Both built-ins use ordinary progressive disclosure, slash expansion, collision reservation, and the existing recursive `src/skills/builtin` build copy.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Required built-in asset missing/invalid | Fail startup with its name/path; do not silently remove product capability |
+| Optional project/global skill missing/invalid | Preserve existing skip-and-surface behavior |
+| Any `进行中` backlog row | Select by priority; no fresh peer research |
+| No `进行中`, but a `未开始` row | Select by priority; no fresh peer research |
+| Named product source unavailable | Record limitation and make no unsupported claim |
+| Same-day report already exists | Read and append a unique UTC run section; never overwrite |
+| Developer child reports success without Host acceptance | Keep `进行中` |
+| Explicit abandonment decision | Set `放弃` and record decision plus reason |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** an empty backlog permits sourced research, adds no more than five ranked rows, selects one, loads `developer`, and records `完成` only after independent checks.
+- **Base:** an existing `未开始` row suppresses all fresh peer research and is handed to `developer` alone.
+- **Bad:** researching before reading the backlog, inventing unavailable product claims, overwriting a same-day report, implementing several rows, or trusting the child report as acceptance violates the persistence contract.
+
+### 6. Tests Required
+
+- `spike/verify-skills.ts`: both required built-ins in a project-free scan, load/slash expansion, progressive disclosure, case-insensitive collision isolation, load-bearing workflow language, and the backlog/report template contracts.
+- `pnpm typecheck`, `pnpm test`, and `pnpm build`; inspect `dist/src/skills/builtin/self-evolution-research/SKILL.md` after build.
+
+### 7. Wrong vs Correct
+
+```text
+# WRONG: fresh research while unfinished work exists, then mark child prose complete
+read peer docs -> choose several ideas -> child says success -> 完成
+
+# CORRECT: backlog is the first gate and Host evidence owns completion
+read backlog -> select 进行中/未开始 (no research) -> load developer -> Host acceptance -> 完成
+```
 
 ## Prompt Caching
 
@@ -808,6 +866,19 @@ to `cacheReadInputTokens` / `cacheWriteInputTokens` using presence-aware non-neg
 proves both values reach `Agent.metrics` without a model or network call. Keep the patch until
 an installed upstream release maps both fields; removing it earlier makes `/usage` silently
 under-report GPT cache writes.
+
+### Contract: headless usage fields are mutually exclusive cost buckets
+
+The machine-readable `usage:` record normalizes provider-native counters before a `/developer`
+Host aggregates them. `input` means uncached input; `cacheRead`, `cacheWrite`, and `output` are
+separate buckets that may have different provider rates. Bedrock and Anthropic already report
+cache activity beside `inputTokens`. OpenAI Responses reports both cache counters as subsets of
+`input_tokens`, so its normalized input is
+`max(0, inputTokens - cacheReadInputTokens - cacheWriteInputTokens)` when both subsets are
+reported. The TUI and headless paths must use the same provider-aware projection. An unreported
+cache field remains `-` in the stderr record; when that absence prevents an exact Responses split,
+`input` is `-` too. Do not turn absence into a measured zero. Keep the field order and anchored
+regex stable for the built-in developer workflow.
 
 Read *during* a turn, the getter returns the totals from before it: the meter accumulates a
 model call when that call finishes, so a report asked for mid-stream shows the same numbers as
