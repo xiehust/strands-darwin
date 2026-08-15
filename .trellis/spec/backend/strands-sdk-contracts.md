@@ -705,6 +705,7 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 - Run each child from the exact target root. The child prompt says it is the direct worker and must not load `developer`, start another darwin, or delegate again; without that guard a built-in skill advertised to both Host and child can recurse.
 - Planning is a no-edit first turn, prefixed with `DARWIN_PLANNING_ONLY=1` so target hooks can enforce read-only behavior. Approval/correction is a later turn in the same session and tells the child to proceed without another approval question.
 - Every child invocation uses `--yolo` by default because a headless process cannot answer permission prompts. Yolo changes confirmation behavior only: the Host still establishes and enforces the named repository and authorized task scope. The Host independently inspects the diff and runs acceptance checks; failed acceptance returns to the same child session rather than being hidden by a Host edit.
+- A drained child reply containing the provider's transient `turn failed: The server had an error while processing your request. Sorry about that!` message is retried automatically, at most twice after the original attempt. Reuse the same prompt, target root, yolo mode, and captured session id; if planning failed before emitting one, start a fresh planning attempt rather than guessing identity. Deterministic failures are corrected or reported, not blindly retried.
 
 ### 4. Validation & Error Matrix
 
@@ -716,6 +717,7 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 | First child emits no exact session record | Do not guess from `bg-*` or use `--continue`; report/recover explicitly |
 | Child asks an evidence-resolved question | Host answers from requirement/repository evidence |
 | Child asks unresolved product/scope/authorization question | Host asks the user |
+| Child reply contains the transient provider server-error message | Retry the same turn automatically, at most twice; preserve the captured session when available |
 | Child process or acceptance fails | Inspect output and continue the captured session with a focused correction, or report blocker |
 | Child begins another developer workflow | Treat as recursion failure; correct the direct worker prompt |
 

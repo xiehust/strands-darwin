@@ -127,6 +127,12 @@ async function missingDirectory(): Promise<void> {
   assert('developer requires explicit same-session continuation', workflow.includes('`--session <captured-id> --yolo`') && workflow.includes('Never use `--continue` or `--resume`'));
   assert('developer preserves product and task-scope authority', workflow.includes('ask the user') && workflow.includes('yolo changes confirmation behavior, not task scope'));
   assert('developer requires independent acceptance and no hidden Host patch', workflow.includes('independently inspect') && workflow.includes('Do not patch the implementation yourself'));
+  assert(
+    'developer retries transient child server failures without looping',
+    workflow.includes('turn failed: The server had an error while processing your request. Sorry about that!') &&
+      workflow.includes('Retry at most two times') &&
+      workflow.includes('same explicit `--session <captured-id>`'),
+  );
 
   // The pre-`.darwin` location is dead: a leftover root skills/ must not still be
   // advertised to the model, or a user who moved theirs would see duplicates.

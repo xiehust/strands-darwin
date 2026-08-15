@@ -48,6 +48,12 @@ Headless children cannot receive interactive permission prompts, so this workflo
 
 For each task, retain its new `bg-*` id, monitor with `status`, consume output incrementally with `output`, and inspect failures. A process failure or bad result may be corrected by another explicit `--session <captured-id>` turn when useful.
 
+### Retry transient child server failures
+
+If the drained child output contains a transient provider failure such as `turn failed: The server had an error while processing your request. Sorry about that!`, retry the same requested turn automatically. Use another managed `bash start` invocation with the same target root, prompt, and `--yolo`; when a child session id has been captured, include the same explicit `--session <captured-id>`. If the first planning attempt failed before emitting an exact session record, start a fresh planning attempt and capture its new record instead of guessing an id.
+
+Retry at most two times after the original attempt. Drain and record every retry task normally. Do not retry deterministic failures such as invalid configuration, denied scope, failed tests, or rejected tool input under this rule. If the transient server failure persists after two retries, report it as a blocker rather than looping or implementing in the Host.
+
 ## 5. Accept independently
 
 After the child reports completion, independently inspect the repository diff and run the named acceptance checks from the Host. Do not accept the child's prose or its claimed test result as evidence. If acceptance fails, send the exact failure and a focused correction to the same child session through another managed background invocation. Do not patch the implementation yourself merely to conceal the failure.
