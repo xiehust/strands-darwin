@@ -15,6 +15,7 @@ import type { Model } from '@strands-agents/sdk';
 import {
   ConfigError,
   DEFAULT_REQUEST_TIMEOUT_MS,
+  OFFLOAD_PREVIEW_TOKENS,
   appendAllowRule,
   configPath,
   createModelFromConfig,
@@ -757,6 +758,31 @@ async function contextOffloadFields(): Promise<void> {
   await expectConfigError('a zero threshold is refused', async () =>
     loadConfig(await writeConfig('{ "contextOffload": true, "maxResultTokens": 0 }')),
   );
+
+  // The offloader keeps an inline preview per offloaded result and rejects a
+  // threshold that does not clear it. Caught as a ConfigError here rather than a
+  // raw constructor throw at startup.
+  const atPreview = await expectConfigError(
+    'a threshold equal to the preview size is refused',
+    async () =>
+      loadConfig(
+        await writeConfig(`{ "contextOffload": true, "maxResultTokens": ${OFFLOAD_PREVIEW_TOKENS} }`),
+      ),
+  );
+  assert('…and the error states the limit', atPreview.includes(String(OFFLOAD_PREVIEW_TOKENS)));
+  assert('…and names the smallest usable value',
+    atPreview.includes(String(OFFLOAD_PREVIEW_TOKENS + 1)));
+  assert('…and says why the floor exists', /preview/i.test(atPreview));
+
+  await expectConfigError('a threshold below the preview size is refused', async () =>
+    loadConfig(await writeConfig('{ "contextOffload": true, "maxResultTokens": 1 }')),
+  );
+
+  const justAbove = await loadConfig(
+    await writeConfig(`{ "contextOffload": true, "maxResultTokens": ${OFFLOAD_PREVIEW_TOKENS + 1} }`),
+  );
+  assert('the smallest usable threshold is accepted',
+    justAbove.maxResultTokens === OFFLOAD_PREVIEW_TOKENS + 1);
 }
 
 async function main(): Promise<void> {

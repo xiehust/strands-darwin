@@ -277,6 +277,19 @@ const DEFAULT_REGION = 'us-west-2';
  */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
 
+/**
+ * The inline preview the context offloader keeps for each offloaded result, in
+ * tokens — the SDK's `DEFAULT_PREVIEW_TOKENS`, mirrored here because darwin never
+ * overrides it and `maxResultTokens` has to clear it.
+ *
+ * Measured, not assumed: the plugin throws `previewTokens must be less than
+ * maxResultTokens` on `previewTokens >= maxResultTokens`, so a threshold equal to
+ * this value is rejected and this + 1 is the smallest usable one. Threading a
+ * `previewTokens` config field is deliberately out of scope: one validated
+ * threshold covers the need until someone asks for two.
+ */
+export const OFFLOAD_PREVIEW_TOKENS = 1_000;
+
 /** Bedrock rejects bare model ids; only cross-region inference profiles work. */
 const BEDROCK_PROFILE_PREFIXES = ['us.', 'eu.', 'apac.', 'global.'];
 
@@ -650,6 +663,19 @@ function validateSessionFields(input: Record<string, unknown>, configPath: strin
     if (contextOffload !== true) {
       throw new ConfigError(
         `${configPath}: "maxResultTokens" only applies when "contextOffload" is true.`,
+      );
+    }
+    // The offloader keeps an inline preview out of every offloaded result and
+    // refuses a threshold that does not leave room for it (measured: the SDK
+    // throws when previewTokens >= maxResultTokens, with previewTokens
+    // defaulting to OFFLOAD_PREVIEW_TOKENS). Darwin never overrides the preview
+    // size, so the floor is fixed — caught here as a ConfigError rather than
+    // surfacing later as a raw constructor throw during startup.
+    if (maxResultTokens <= OFFLOAD_PREVIEW_TOKENS) {
+      throw new ConfigError(
+        `${configPath}: "maxResultTokens" must be greater than ${OFFLOAD_PREVIEW_TOKENS} ` +
+          `(the inline preview kept for each offloaded result), so the smallest usable value is ` +
+          `${OFFLOAD_PREVIEW_TOKENS + 1}.`,
       );
     }
     fields.maxResultTokens = maxResultTokens;
