@@ -5,8 +5,8 @@ import React, { useRef } from 'react';
 import { builtinCommandDescription } from '../commands/custom-commands.js';
 import type { EditorLayout } from './prompt-editor.js';
 
-/** Completion rows shown at once. */
-const MAX_COMPLETIONS = 6;
+/** Completion rows shown at once; sized so all built-ins fit on one screen. */
+const MAX_COMPLETIONS = 8;
 
 export function InputBox({
   layout,

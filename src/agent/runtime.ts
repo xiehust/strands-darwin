@@ -9,7 +9,7 @@ import { Agent, SummarizingConversationManager } from '@strands-agents/sdk';
 import type { AgentStreamEvent, InterventionHandler, McpClient, Model } from '@strands-agents/sdk';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
-import { compactConversation, type CompactResult } from './compact.js';
+import { compactConversation, countConversationTokens, type CompactResult } from './compact.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
 import { SubagentTool } from '../agents/subagent-tool.js';
@@ -113,6 +113,15 @@ export interface ModelChangeResult {
 export type ExpandedSlashCommand =
   | ({ kind: 'skill' } & ExpandedSkillCommand)
   | ({ kind: 'command' } & ExpandedCustomCommand);
+
+/** Estimated size of the next request's context, plus the model's window. */
+export interface ContextEstimate {
+  /** Heuristic token count over messages, system prompt, and tool schemas. */
+  estimatedTokens: number;
+  messageCount: number;
+  /** The model's context window, when the SDK knows it for this model id. */
+  windowTokens: number | undefined;
+}
 
 export interface RuntimeInfo {
   config: AppConfig;
@@ -412,6 +421,21 @@ export class AgentRuntime {
   /** Messages restored from a resumed session, for showing prior context. */
   get messageCount(): number {
     return this.agent.messages.length;
+  }
+
+  /**
+   * Estimates the context the next model request would carry, without sending
+   * anything: the SDK's default `countTokens` is a character heuristic (darwin
+   * never enables the native counting API), so this is free, offline, and safe
+   * to call mid-turn — it reads messages and never mutates them. The window
+   * comes from the SDK's own per-model table, `undefined` when unknown.
+   */
+  async contextEstimate(): Promise<ContextEstimate> {
+    return {
+      estimatedTokens: await countConversationTokens(this.model, this.agent),
+      messageCount: this.agent.messages.length,
+      windowTokens: this.model.getConfig().contextWindowLimit,
+    };
   }
 
   /**

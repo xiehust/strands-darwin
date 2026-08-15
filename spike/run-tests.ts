@@ -11,6 +11,7 @@ const suites = [
   'verify-headless.ts',
   'verify-background-bash.ts',
   'verify-task-format.ts',
+  'verify-context-format.ts',
   'verify-background-tool-ui.ts',
   'verify-permission-modes.ts',
   'verify-tool-hooks.ts',

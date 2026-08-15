@@ -50,6 +50,7 @@ import {
 } from './prompt-editor.js';
 
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
+import { formatContextReport } from './context-format.js';
 import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
 
 /** Window in which a second Ctrl+C means "exit", not "cancel again". */
@@ -217,6 +218,28 @@ export function App({
           dispatch({
             type: 'notice',
             text: `could not list background tasks: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+        return;
+      }
+
+      // Free like /usage: the count is the SDK's character heuristic, so asking
+      // costs nothing, sends nothing, and can be answered mid-turn — the moment
+      // a long turn makes "how big has this grown" worth asking.
+      if (/^\/context(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/context') {
+          dispatch({ type: 'notice', text: '/context takes no arguments' });
+          return;
+        }
+        try {
+          dispatch({ type: 'notice', text: formatContextReport(await runtime.contextEstimate()) });
+        } catch (error) {
+          dispatch({
+            type: 'notice',
+            text: `could not estimate context: ${error instanceof Error ? error.message : String(error)}`,
           });
         }
         return;
