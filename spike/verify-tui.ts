@@ -776,10 +776,10 @@ async function usageReport(): Promise<void> {
     console.log(`  after one turn: ${JSON.stringify(after)}`);
     assert('input tokens were counted', (after?.input ?? 0) > 0);
     assert('output tokens were counted', (after?.output ?? 0) > 0);
-    // Cache counters are not asserted non-zero: whether a short prompt clears the
-    // model's minimum cacheable prefix is the model's business, not this feature's
-    // (verify-prompt-cache-live.ts is what proves caching itself).
-    assert('cache counters are reported too', after?.cacheRead !== undefined && after?.cacheWrite !== undefined);
+    // This scenario uses the default Bedrock model, whose four numeric buckets
+    // remain the compatibility contract. Whether either cache count is non-zero
+    // is the model's business (verify-prompt-cache-live.ts proves caching itself).
+    assert('Bedrock cache counters are reported too', after?.cacheRead !== undefined && after?.cacheWrite !== undefined);
 
     await usageDuringATurn(tui);
 

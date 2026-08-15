@@ -1,0 +1,137 @@
+/** Offline contracts for provider usage mapping and `/usage` projection. */
+import { Agent } from '@strands-agents/sdk';
+import { OpenAIModel } from '@strands-agents/sdk/models/openai';
+import type OpenAI from 'openai';
+
+import type { AppConfig } from '../src/config.js';
+import { formatUsageReport } from '../src/tui/App.js';
+import { usageRows, type UsageTotals } from '../src/agent/usage.js';
+import { assert, header, report } from './shared.js';
+
+function config(provider: 'bedrock' | 'anthropic' | 'openai', openaiApi?: 'chat' | 'responses'): AppConfig {
+  return {
+    provider,
+    model: provider === 'openai' ? 'openai.gpt-5.6-sol' : 'global.anthropic.claude-opus-5',
+    region: 'us-east-1',
+    maxTokens: 1000,
+    permissionMode: 'yolo',
+    promptCache: true,
+    promptCacheTtl: '5m',
+    thinkingEffort: 'high',
+    summaryRatio: 0.8,
+    preserveRecentMessages: 4,
+    ...(openaiApi !== undefined && { openaiApi }),
+    modelChoices: [],
+  };
+}
+
+function fakeClient(usages: readonly { cached?: number; cacheWrite?: number }[]): OpenAI {
+  let call = 0;
+  const client = {
+    responses: {
+      create: async () => {
+        const current = usages[call++];
+        if (current === undefined) throw new Error('fake response stream exhausted');
+        const inputTokensDetails: Record<string, number> = {};
+        if (current.cached !== undefined) inputTokensDetails['cached_tokens'] = current.cached;
+        if (current.cacheWrite !== undefined) inputTokensDetails['cache_write_tokens'] = current.cacheWrite;
+        return (async function* () {
+          yield { type: 'response.created', response: { id: `response-${call}` } };
+          yield {
+            type: 'response.completed',
+            response: {
+              usage: {
+                input_tokens: 100,
+                output_tokens: 5,
+                total_tokens: 105,
+                input_tokens_details: inputTokensDetails,
+                output_tokens_details: { reasoning_tokens: 0 },
+              },
+            },
+          };
+        })();
+      },
+    },
+  };
+  // The adapter only calls responses.create in this fixture; the cast keeps the
+  // fake at the external-client boundary rather than weakening production types.
+  return client as unknown as OpenAI;
+}
+
+async function adapterContract(): Promise<void> {
+  header('usage — OpenAI Responses adapter');
+  const model = new OpenAIModel({
+    api: 'responses',
+    modelId: 'openai.gpt-5.6-sol',
+    client: fakeClient([{ cached: 37, cacheWrite: 61 }]),
+  });
+  const agent = new Agent({ model, printer: false });
+
+  await agent.invoke('one');
+  assert(
+    'reported cached reads and writes reach accumulated usage',
+    agent.metrics.accumulatedUsage.cacheReadInputTokens === 37 &&
+      agent.metrics.accumulatedUsage.cacheWriteInputTokens === 61,
+  );
+
+  const zeroAgent = new Agent({
+    model: new OpenAIModel({
+      api: 'responses',
+      modelId: 'openai.gpt-5.6-sol',
+      client: fakeClient([{ cached: 0, cacheWrite: 0 }]),
+    }),
+    printer: false,
+  });
+  await zeroAgent.invoke('zero');
+  const zeroUsage = zeroAgent.metrics.accumulatedUsage;
+  assert(
+    'explicit zero cache values remain present on accumulated usage',
+    Object.hasOwn(zeroUsage, 'cacheReadInputTokens') && zeroUsage.cacheReadInputTokens === 0 &&
+      Object.hasOwn(zeroUsage, 'cacheWriteInputTokens') && zeroUsage.cacheWriteInputTokens === 0,
+  );
+}
+
+function projectionContracts(): void {
+  header('usage — provider projection');
+  const reported: UsageTotals = {
+    inputTokens: 1200,
+    outputTokens: 45,
+    cacheReadInputTokens: 800,
+    cacheWriteInputTokens: 300,
+  };
+  const openai = usageRows(reported, config('openai', 'responses'));
+  assert(
+    'OpenAI Responses uses cached-input terminology and reported values',
+    openai[1]?.label === 'cached input' && openai[1]?.value === 800 && openai[2]?.value === 300,
+  );
+
+  const absentReport = formatUsageReport(
+    { inputTokens: 12, outputTokens: 3, cacheReadInputTokens: 0 },
+    config('openai', 'responses'),
+    false,
+  );
+  assert('a reported OpenAI zero is numeric', /cached input\s+0/u.test(absentReport));
+  assert('an absent OpenAI cache write is not a false zero', /cache write\s+not reported/u.test(absentReport));
+
+  for (const provider of ['bedrock', 'anthropic'] as const) {
+    const rows = usageRows({ inputTokens: 12, outputTokens: 3 }, config(provider));
+    assert(
+      `${provider} preserves numeric cache read and write rows`,
+      rows[1]?.label === 'cache read' && rows[1]?.value === 0 &&
+        rows[2]?.label === 'cache write' && rows[2]?.value === 0,
+    );
+  }
+
+  const bedrockReport = formatUsageReport(
+    { inputTokens: 12, outputTokens: 3, cacheReadInputTokens: 7, cacheWriteInputTokens: 9 },
+    config('bedrock'),
+    true,
+    true,
+  );
+  assert('Bedrock report retains four numeric labels', /cache read\s+7/u.test(bedrockReport) && /cache write\s+9/u.test(bedrockReport));
+  assert('existing resumed and in-flight notices remain', bedrockReport.includes('earlier runs are not counted') && bedrockReport.includes('not counted yet'));
+}
+
+await adapterContract();
+projectionContracts();
+report();

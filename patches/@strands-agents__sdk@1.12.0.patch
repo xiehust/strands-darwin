@@ -1,0 +1,31 @@
+diff --git a/dist/src/models/openai/responses-adapter.d.ts b/dist/src/models/openai/responses-adapter.d.ts
+index e17f00ac284c1e3357d55205c57b431061141b55..a7b4edd12a5ac33277a5ad2c4bcea4c4d8c1ea7d 100644
+--- a/dist/src/models/openai/responses-adapter.d.ts
++++ b/dist/src/models/openai/responses-adapter.d.ts
+@@ -52,6 +52,7 @@ export interface ResponsesStreamState {
+         outputTokens: number;
+         totalTokens: number;
+         cacheReadInputTokens?: number;
++        cacheWriteInputTokens?: number;
+     } | null;
+     stopReason: StopReason;
+ }
+diff --git a/dist/src/models/openai/responses-adapter.js b/dist/src/models/openai/responses-adapter.js
+index 23b1dad5bf6ca0dc60ec22d70bf195c1556ba29a..455fc41794c2b6bbe0cc5c86d428cf8c7134810f 100644
+--- a/dist/src/models/openai/responses-adapter.js
++++ b/dist/src/models/openai/responses-adapter.js
+@@ -326,9 +326,13 @@ function mapResponsesUsage(usage) {
+         totalTokens: usage.total_tokens,
+     };
+     const cached = usage.input_tokens_details?.cached_tokens;
+-    if (typeof cached === 'number' && cached > 0) {
++    if (typeof cached === 'number' && cached >= 0) {
+         mapped.cacheReadInputTokens = cached;
+     }
++    const cacheWrite = usage.input_tokens_details?.cache_write_tokens;
++    if (typeof cacheWrite === 'number' && cacheWrite >= 0) {
++        mapped.cacheWriteInputTokens = cacheWrite;
++    }
+     return mapped;
+ }
+ function createResponsesStreamError(message, code) {

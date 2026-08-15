@@ -18,6 +18,7 @@ import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.j
 import type { PermissionDecision } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { AgentRuntime, CompactResult, UsageTotals } from '../agent/runtime.js';
+import { formatUsageValue, usageRows } from '../agent/usage.js';
 import { routeSdkLogs } from '../agent/sdk-logging.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
 import {
@@ -26,7 +27,7 @@ import {
   type ThinkingPlan,
 } from '../agent/thinking.js';
 import { CONFIG_FILENAME } from '../config.js';
-import type { ModelChoice } from '../config.js';
+import type { AppConfig, ModelChoice } from '../config.js';
 import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
@@ -179,7 +180,7 @@ export function App({
         dispatch({ type: 'userInput', text });
         dispatch({
           type: 'notice',
-          text: formatUsageReport(runtime.usage, runtime.info.resumed, status === 'streaming'),
+          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming'),
         });
         return;
       }
@@ -697,27 +698,25 @@ function formatThinking(plan: ThinkingPlan): string {
 }
 
 /**
- * The four counters Bedrock bills separately, as a labelled block.
+ * Provider-aware token counters as a labelled block.
  *
  * Numbers are aligned rather than run together on one line: the point of asking
  * is to compare them (a large cache read next to a small input is the cache
- * working), and that comparison is what a column makes readable.
+ * working), and that comparison is what a column makes readable. An unavailable
+ * provider metric remains text rather than masquerading as numeric zero.
  */
 export function formatUsageReport(
   usage: UsageTotals,
+  config: AppConfig,
   resumed: boolean,
   turnInFlight = false,
 ): string {
-  const rows: readonly (readonly [string, number])[] = [
-    ['input', usage.inputTokens],
-    ['cache read', usage.cacheReadInputTokens],
-    ['cache write', usage.cacheWriteInputTokens],
-    ['output', usage.outputTokens],
-  ];
-  const labelWidth = Math.max(...rows.map(([label]) => label.length));
-  const lines = rows.map(
-    ([label, value]) => `  ${label.padEnd(labelWidth)}  ${groupDigits(value).padStart(9)}`,
-  );
+  const rows = usageRows(usage, config);
+  const labelWidth = Math.max(...rows.map(({ label }) => label.length));
+  const lines = rows.map(({ label, value }) => {
+    const rendered = formatUsageValue(value);
+    return `  ${label.padEnd(labelWidth)}  ${rendered.padStart(12)}`;
+  });
 
   // "This run" is the honest scope: the SDK's meter is per-process, so a resumed
   // session's earlier spend is simply not knowable here.

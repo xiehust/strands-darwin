@@ -57,6 +57,7 @@ import {
 } from './session.js';
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
+import type { UsageTotals } from './usage.js';
 
 /**
  * Stable across runs by necessity: session snapshots are stored under
@@ -79,18 +80,8 @@ export interface RuntimeOptions {
   permissionModeOverride?: ApprovalMode;
 }
 
-/**
- * Cumulative token counts, in the four buckets Bedrock bills separately: fresh
- * input, cache reads, cache writes, and output.
- */
-export interface UsageTotals {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadInputTokens: number;
-  cacheWriteInputTokens: number;
-}
-
 export type { CompactResult } from './compact.js';
+export type { UsageTotals } from './usage.js';
 
 /**
  * The outcome of an `/effort` change: what the model will now do, and a promise
@@ -545,9 +536,14 @@ export class AgentRuntime {
     return {
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
-      // Optional on the SDK type: a provider that reports no caching omits them.
-      cacheReadInputTokens: usage.cacheReadInputTokens ?? 0,
-      cacheWriteInputTokens: usage.cacheWriteInputTokens ?? 0,
+      // Absence and a measured zero are different provider statements. Preserve
+      // that distinction for the provider-aware usage projection.
+      ...(usage.cacheReadInputTokens !== undefined && {
+        cacheReadInputTokens: usage.cacheReadInputTokens,
+      }),
+      ...(usage.cacheWriteInputTokens !== undefined && {
+        cacheWriteInputTokens: usage.cacheWriteInputTokens,
+      }),
     };
   }
 

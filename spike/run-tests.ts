@@ -20,6 +20,7 @@ const suites = [
   'verify-agents-md.ts',
   'verify-system-prompt.ts',
   'verify-prompt-cache.ts',
+  'verify-usage.ts',
   'verify-compact.ts',
   'verify-max-tokens-recovery.ts',
   'verify-thinking.ts',

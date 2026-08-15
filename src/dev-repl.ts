@@ -13,6 +13,7 @@ import process from 'node:process';
 
 import { AGENTS_FILENAME } from './agent/instructions.js';
 import { AgentRuntime } from './agent/runtime.js';
+import { formatUsageValue, usageRows } from './agent/usage.js';
 import type { AssessedPermissionRequest, PermissionDecision } from './agent/permission.js';
 import { isThinkingEffort, THINKING_EFFORTS, type ThinkingPlan } from './agent/thinking.js';
 import { CONFIG_FILENAME, ConfigError } from './config.js';
@@ -236,10 +237,9 @@ async function main(): Promise<void> {
       // Read straight off the SDK's meter, so asking what a session cost does not
       // itself cost a turn.
       if (input === '/usage') {
-        const usage = runtime.usage;
+        const rows = usageRows(runtime.usage, runtime.config);
         console.log(
-          `  usage    : input ${usage.inputTokens} · cache read ${usage.cacheReadInputTokens} · ` +
-            `cache write ${usage.cacheWriteInputTokens} · output ${usage.outputTokens}` +
+          `  usage    : ${rows.map(({ label, value }) => `${label} ${formatUsageValue(value)}`).join(' · ')}` +
             `${info.resumed ? ' (this run only)' : ''}\n`,
         );
         continue;

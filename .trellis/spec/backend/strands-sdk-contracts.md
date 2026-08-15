@@ -784,12 +784,28 @@ frame. Decide support before constructing the model and omit `cacheConfig` entir
 `Agent.metrics` is a public getter over the SDK's meter and holds the same lifetime
 `accumulatedUsage` that `AgentResult.metrics` carries — readable at any time, including while
 idle. `accumulateUsage()` sums all four counters (`inputTokens`, `outputTokens`,
-`cacheReadInputTokens`, `cacheWriteInputTokens`), the two cache ones staying `undefined` until
-a provider reports them, so a total must default them to 0. Prefer the getter over tallying
-`agentResultEvent`: a cancelled turn may never emit one. What it cannot tell you is a resumed
-session's earlier spend — session snapshots persist messages, not metrics, so the meter starts
-at zero on every process (`AgentRuntime.usage`, surfaced by `/usage`, says "this run" for
-exactly that reason).
+`cacheReadInputTokens`, `cacheWriteInputTokens`), with the two cache counters staying
+`undefined` until a provider reports them. Preserve that distinction: `undefined` means “not
+reported,” while `0` is a provider-reported measurement. Bedrock and Anthropic retain Darwin's
+historic numeric-zero display; provider/API paths without a verified metric show `not
+reported` rather than inventing zero. Prefer the getter over tallying `agentResultEvent`: a
+cancelled turn may never emit one. What it cannot tell you is a resumed session's earlier spend
+— session snapshots persist messages, not metrics, so the meter starts at zero on every
+process (`AgentRuntime.usage`, surfaced by `/usage`, says "this run" for exactly that reason).
+
+### Contract: OpenAI Responses reports both cache reads and writes
+
+The OpenAI Responses usage schema, including Bedrock Mantle's implementation, puts cache
+activity under `usage.input_tokens_details`: `cached_tokens` is the input read from cache and
+`cache_write_tokens` is the input written to cache. Both fields may legitimately be zero.
+
+`@strands-agents/sdk@1.12.0` maps only `cached_tokens`, and published `1.13.0` has the same
+omission. The tracked pnpm patch in `patches/@strands-agents__sdk@1.12.0.patch` maps both fields
+to `cacheReadInputTokens` / `cacheWriteInputTokens` using presence-aware non-negative checks.
+`spike/verify-usage.ts` drives the real `OpenAIModel` Responses adapter with a fake stream and
+proves both values reach `Agent.metrics` without a model or network call. Keep the patch until
+an installed upstream release maps both fields; removing it earlier makes `/usage` silently
+under-report GPT cache writes.
 
 Read *during* a turn, the getter returns the totals from before it: the meter accumulates a
 model call when that call finishes, so a report asked for mid-stream shows the same numbers as
