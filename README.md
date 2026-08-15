@@ -13,6 +13,42 @@ own repository (the Trellis task history under `.trellis/` is the paper trail). 
 is the thesis — evolution by iteration, with the tool as its own selection pressure. The
 baseline exists so there is always a fixed point to measure that evolution against.
 
+### How darwin develops darwin
+
+A human remains the developer of record: they state the requirement, approve the plan, resolve
+product or permission decisions, and independently accept the result. The implementation itself
+is written by the current darwin running in this repository; once accepted and committed, that
+revision becomes the darwin used to write the next one. `AGENTS.md`, the Trellis task records,
+and the verification scripts carry constraints and evidence from one generation to the next.
+
+The control loop has evolved along with the product. The first self-development runs piped
+scripted input into the plain `dev-repl`. Headless `-p` turns and explicit session continuation
+then made that exchange machine-readable; managed background bash jobs and `/tasks` made long
+child runs observable without blocking the interactive session. Today the built-in `/developer`
+workflow lets an interactive darwin act as the Host for another headless darwin: the Host requests
+and reviews a plan, continues the same child session for implementation, monitors it in the
+background, and independently inspects the diff and runs acceptance checks. Unresolved product
+choices and authorization still go back to the human. In other words, darwin can now operate the
+supervision machinery that was once driven by hand, without removing the human decision boundary.
+
+The milestones below are taken from `git log` after the v0.0.1 baseline. They are shipped commits,
+not a roadmap, and every implementation in the table was written and submitted by darwin itself:
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-14 | `848fac1` | Remember permission approvals as constrained wildcard rules |
+| 2026-08-14 | `6226ecb` | Add adaptive thinking effort and live `/effort` changes |
+| 2026-08-14 | `d3032a3`, `1851492`, `dd1503c` | Add Bedrock Mantle/OpenAI, multiple model configs, and live `/model` switching |
+| 2026-08-14 | `780ec93` | Add explicit `/compact` conversation compaction |
+| 2026-08-14 | `72320b0` | Support multiline prompt input |
+| 2026-08-14 | `476a74f` | Add project-defined slash commands |
+| 2026-08-14 | `41ad79a` | Add isolated subagent delegation |
+| 2026-08-14 | `ae1689d` | Add project tool-lifecycle hooks |
+| 2026-08-14 | `65c22d5` | Add session-owned background bash jobs |
+| 2026-08-14 | `18bec63` | Add `/tasks` background-job monitoring |
+| 2026-08-14 | `12aa7d8` | Add one-shot headless mode with persistent session continuation |
+| 2026-08-14 | `3a189fd` | Add the built-in `/developer` Host-supervisor workflow |
+
 ```
 darwin
 bedrock/us.anthropic.claude-sonnet-4-6 · session session-20260813-112430
