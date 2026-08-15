@@ -5,7 +5,7 @@ import type OpenAI from 'openai';
 
 import type { AppConfig } from '../src/config.js';
 import { formatUsageReport } from '../src/tui/App.js';
-import { usageRows, type UsageTotals } from '../src/agent/usage.js';
+import { cacheEffectivenessRows, usageRows, type UsageTotals } from '../src/agent/usage.js';
 import { assert, header, report } from './shared.js';
 
 function config(provider: 'bedrock' | 'anthropic' | 'openai', openaiApi?: 'chat' | 'responses'): AppConfig {
@@ -134,6 +134,53 @@ function projectionContracts(): void {
   assert('existing resumed and in-flight notices remain', bedrockReport.includes('earlier runs are not counted') && bedrockReport.includes('not counted yet'));
 }
 
+function effectivenessContracts(): void {
+  header('usage — cache effectiveness derivation');
+  const warm: UsageTotals = {
+    inputTokens: 1000,
+    outputTokens: 50,
+    cacheReadInputTokens: 8000,
+    cacheWriteInputTokens: 1000,
+  };
+  const bedrock = cacheEffectivenessRows(warm, config('bedrock'));
+  assert('Bedrock hit ratio sums input, reads, and writes as the request total',
+    bedrock[0]?.label === 'cache hit ratio' && bedrock[0]?.value === '80%');
+  assert('served-from-cache restates the read counter with locale grouping',
+    bedrock[1]?.label === 'served from cache' && bedrock[1]?.value === '8,000');
+
+  // Responses reports cache activity as subsets of input_tokens: the total is
+  // already inputTokens, so summing again would understate the ratio.
+  const responses = cacheEffectivenessRows(
+    { inputTokens: 10_000, outputTokens: 50, cacheReadInputTokens: 8000, cacheWriteInputTokens: 1000 },
+    config('openai', 'responses'),
+  );
+  assert('OpenAI Responses hit ratio divides by input alone', responses[0]?.value === '80%');
+
+  const absent = cacheEffectivenessRows({ inputTokens: 12, outputTokens: 3 }, config('bedrock'));
+  assert('unreported cache metrics yield no invented effectiveness',
+    absent[0]?.value === undefined && absent[1]?.value === undefined);
+  const absentRendered = formatUsageReport({ inputTokens: 12, outputTokens: 3 }, config('openai', 'chat'), false);
+  assert('the rendered report says not reported for both derived rows',
+    /cache hit ratio\s+not reported/u.test(absentRendered) && /served from cache\s+not reported/u.test(absentRendered));
+
+  const idle = cacheEffectivenessRows(
+    { inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+    config('bedrock'),
+  );
+  assert('a zero request total is 0%, never a division error', idle[0]?.value === '0%');
+
+  const barelyWarm = cacheEffectivenessRows(
+    { inputTokens: 10_000, outputTokens: 1, cacheReadInputTokens: 50, cacheWriteInputTokens: 0 },
+    config('bedrock'),
+  );
+  assert('a nonzero ratio below one percent floors at <1%', barelyWarm[0]?.value === '<1%');
+
+  const warmReport = formatUsageReport(warm, config('bedrock'), false);
+  assert('the report renders the derived rows in the aligned block',
+    /cache hit ratio\s+80%/u.test(warmReport) && /served from cache\s+8,000/u.test(warmReport));
+}
+
 await adapterContract();
 projectionContracts();
+effectivenessContracts();
 report();

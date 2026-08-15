@@ -62,3 +62,50 @@ export function usageRows(usage: UsageTotals, config: AppConfig): readonly Usage
 export function formatUsageValue(value: number | undefined): string {
   return value === undefined ? 'not reported' : value.toLocaleString('en-US');
 }
+
+/** A derived effectiveness metric; undefined means the provider never reported it. */
+export interface CacheEffectivenessRow {
+  label: string;
+  /** Pre-rendered, since a ratio is a percentage rather than a token count. */
+  value: string | undefined;
+}
+
+/**
+ * How well the prompt cache is working, derived from the same counters
+ * {@link usageRows} projects.
+ *
+ * Provider-aware for the same reason: Bedrock/Anthropic report cache reads and
+ * writes *beside* `inputTokens`, so the request total is their sum, while OpenAI
+ * Responses reports them as *subsets* of `input_tokens`, which is already the
+ * total. An unreported metric keeps every derived row at "not reported" —
+ * arithmetic over an invented zero would claim the cache is broken rather than
+ * unmeasured.
+ */
+export function cacheEffectivenessRows(usage: UsageTotals, config: AppConfig): readonly CacheEffectivenessRow[] {
+  const read = usage.cacheReadInputTokens;
+  if (read === undefined) {
+    return [
+      { label: 'cache hit ratio', value: undefined },
+      { label: 'served from cache', value: undefined },
+    ];
+  }
+
+  const submitted =
+    config.provider === 'openai' && config.openaiApi === 'responses'
+      ? usage.inputTokens
+      : usage.inputTokens + read + (usage.cacheWriteInputTokens ?? 0);
+
+  return [
+    // A zero denominator means no request has completed yet; that is a measured
+    // nothing, not an unreported metric.
+    { label: 'cache hit ratio', value: submitted <= 0 ? '0%' : formatRatioPercent(read / submitted) },
+    { label: 'served from cache', value: formatUsageValue(read) },
+  ];
+}
+
+/** Integer percent with a `<1%` floor, so a barely-warm cache never reads as cold. */
+function formatRatioPercent(ratio: number): string {
+  const percent = ratio * 100;
+  if (percent > 0 && percent < 1) return '<1%';
+  return `${Math.round(percent)}%`;
+}

@@ -18,7 +18,7 @@ import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.j
 import type { PermissionDecision } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { AgentRuntime, CompactResult, UsageTotals } from '../agent/runtime.js';
-import { formatUsageValue, usageRows } from '../agent/usage.js';
+import { formatUsageValue, usageRows, cacheEffectivenessRows } from '../agent/usage.js';
 import { routeSdkLogs } from '../agent/sdk-logging.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
 import {
@@ -780,11 +780,12 @@ export function formatUsageReport(
   turnInFlight = false,
 ): string {
   const rows = usageRows(usage, config);
-  const labelWidth = Math.max(...rows.map(({ label }) => label.length));
-  const lines = rows.map(({ label, value }) => {
-    const rendered = formatUsageValue(value);
-    return `  ${label.padEnd(labelWidth)}  ${rendered.padStart(12)}`;
-  });
+  const derived = cacheEffectivenessRows(usage, config);
+  const labelWidth = Math.max(...rows.map(({ label }) => label.length), ...derived.map(({ label }) => label.length));
+  const lines = [
+    ...rows.map(({ label, value }) => ({ label, rendered: formatUsageValue(value) })),
+    ...derived.map(({ label, value }) => ({ label, rendered: value ?? 'not reported' })),
+  ].map(({ label, rendered }) => `  ${label.padEnd(labelWidth)}  ${rendered.padStart(12)}`);
 
   // "This run" is the honest scope: the SDK's meter is per-process, so a resumed
   // session's earlier spend is simply not knowable here.
