@@ -149,10 +149,17 @@ async function runInteractive(options: CliOptions): Promise<void> {
   const instance = render(React.createElement(App, { runtime, permissions }), {
     exitOnCtrlC: false,
   });
+  // The SDK bash module installs process-exiting signal handlers. Unmount first so
+  // terminal modes (including SGR mouse tracking) are restored before they run.
+  const unmountOnSignal = () => instance.unmount();
+  process.prependOnceListener('SIGINT', unmountOnSignal);
+  process.prependOnceListener('SIGTERM', unmountOnSignal);
 
   try {
     await instance.waitUntilExit();
   } finally {
+    process.off('SIGINT', unmountOnSignal);
+    process.off('SIGTERM', unmountOnSignal);
     permissions.close();
     await runtime.shutdown();
     forceExitIfHung();

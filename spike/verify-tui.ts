@@ -14,7 +14,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | chunkedEnter | completion | agentsMd | usage | tasks | effort | model
+ *                 cancelThenContinue | multiline | chunkedEnter | cursor | completion | agentsMd | usage | tasks | effort | model
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import process from 'node:process';
@@ -432,7 +432,7 @@ async function multilineInput(): Promise<void> {
 
     const beforeCtrlJ = tui.mark();
     tui.send('\n');
-    await tui.waitFor('...>  ', { timeoutMs: 30_000, from: beforeCtrlJ, settleMs: 400 });
+    await tui.waitFor('...> ', { timeoutMs: 30_000, from: beforeCtrlJ, settleMs: 400 });
     tui.send('ctrlj-gamma');
     await tui.waitFor('...> ctrlj-gamma', { timeoutMs: 30_000, from: beforeCtrlJ, settleMs: 400 });
     assert('ctrl+j inserts a visible newline', tui.screen.slice(beforeCtrlJ).includes('...> ctrlj-gamma'));
@@ -485,7 +485,7 @@ async function chunkedEnter(): Promise<void> {
 
     const beforeContinuation = continuationTui.mark();
     continuationTui.submitChunk('/exit\\');
-    await continuationTui.waitFor('...>  ', {
+    await continuationTui.waitFor('...> ', {
       timeoutMs: 30_000,
       from: beforeContinuation,
       settleMs: 400,
@@ -511,6 +511,84 @@ async function chunkedEnter(): Promise<void> {
     assert('text and CRLF in one write submits exactly once', code === 0);
   } finally {
     submitTui.kill();
+  }
+}
+
+/** Keyboard editing and SGR mouse positioning are local and make no model call. */
+async function cursorEditing(): Promise<void> {
+  header('TUI — keyboard and mouse cursor editing');
+
+  const dir = '/tmp/darwin-cursor-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  const tui = startTui({ cwd: dir, cols: 40, rows: 20 });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    let mark = tui.mark();
+    tui.send('ac\u001b[Db');
+    await tui.waitFor('you> abc', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('left arrow moves insertion before the final character', tui.screen.slice(mark).includes('you> abc'));
+    assert('mouse click tracking is enabled', tui.raw.includes('[?1000h') && tui.raw.includes('[?1006h'));
+
+    mark = tui.mark();
+    tui.send('\u001b[H>\u001b[F<');
+    await tui.waitFor('you> >abc<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('home and end address the visible row edges', tui.screen.slice(mark).includes('you> >abc<'));
+
+    mark = tui.mark();
+    tui.send('\u001b[D\u001b[D\u001b[3~');
+    await tui.waitFor('you> >ab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('delete removes the grapheme after the cursor', tui.screen.slice(mark).includes('you> >ab<'));
+
+    // The app queries the real terminal cursor position with CSI 6n. node-pty does
+    // not emulate a terminal response, so answer with the input row's viewport
+    // coordinate, then click after the first prompt character and insert there.
+    tui.send('\u001b[5;11R');
+    mark = tui.mark();
+    tui.send('\u001b[<0;7;5MX');
+    await tui.waitFor('you> >Xab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('primary click repositions the insertion cursor', tui.screen.slice(mark).includes('you> >Xab<'));
+
+    mark = tui.mark();
+    tui.send('\u001b[<64;7;5MY');
+    await tui.waitFor('you> >XYab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('wheel reports are consumed instead of entering the draft', !tui.screen.slice(mark).includes('[<64'));
+
+    mark = tui.mark();
+    tui.send('\u001b[<1;2MZ');
+    await tui.waitFor('you> >XYZab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('malformed SGR reports are consumed instead of entering the draft', !tui.screen.slice(mark).includes('[<1;2M'));
+    mark = tui.mark();
+    tui.send('\u001b[<0;7');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    tui.send(';5MZ');
+    tui.send('Q');
+    await tui.waitFor('you> >XYZQab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('split SGR fragments are consumed instead of entering the draft', !tui.screen.slice(mark).includes('[<0;7'));
+    mark = tui.mark();
+    tui.send('\u001b[<1;2XW');
+    await tui.waitFor('you> >XYZQWab<', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('complete malformed SGR does not latch later typing', !tui.screen.slice(mark).includes('[<1;2X'));
+
+
+
+
+
+    tui.send('\u0004');
+
+    const signalTui = startTui({ cwd: dir, cols: 40, rows: 20 });
+    await signalTui.waitFor('you>', { timeoutMs: 60_000 });
+    signalTui.kill('SIGTERM');
+    await signalTui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('mouse tracking is disabled before signal exit', signalTui.raw.includes('\u001b[?1006l\u001b[?1000l'));
+
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('cursor scenario exits cleanly', code === 0);
+    assert('mouse tracking is disabled during unmount', tui.raw.includes('\u001b[?1006l\u001b[?1000l'));
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -1099,6 +1177,7 @@ const SCENARIOS = {
   cancelThenContinue,
   multiline: multilineInput,
   chunkedEnter,
+  cursor: cursorEditing,
   completion: slashCompletion,
   agentsMd: agentsMdHeader,
   usage: usageReport,

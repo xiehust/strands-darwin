@@ -11,7 +11,7 @@
  * unfinished answer; a second press within a short window, or any press while
  * idle, exits. Ctrl+D always exits.
  */
-import { Box, Text, useApp, useInput, usePaste } from 'ink';
+import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink';
 import React, { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
@@ -35,8 +35,66 @@ import { MessageList } from './MessageList.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 import { ActiveToolCalls } from './ToolCallPanel.js';
 import type { PermissionQueue } from './permission-queue.js';
+import {
+  backspaceAtCursor,
+  cursorFromClick,
+  deleteAtCursor,
+  insertAtCursor,
+  layoutEditor,
+  moveHorizontal,
+  moveToRowEdge,
+  moveVertical,
+  type EditorValue,
+} from './prompt-editor.js';
+
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
+
+interface MouseReport {
+  button: number;
+  column: number;
+  row: number;
+  press: boolean;
+}
+
+/** Ink strips the leading ESC before passing an unknown CSI sequence here. */
+function parseMouseReport(input: string): MouseReport | undefined {
+  const match = /^\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input);
+  if (match === null) return undefined;
+  const button = Number(match[1]);
+  const column = Number(match[2]);
+  const row = Number(match[3]);
+  if (column < 1 || row < 1) return undefined;
+  return { button, column, row, press: match[4] === 'M' };
+}
+
+function mouseFragmentState(input: string): 'none' | 'partial' | 'complete' {
+  // Ink removes ESC from complete unknown CSI sequences. Consume malformed SGR
+  // reports too; otherwise terminal protocol bytes can become editable text.
+  if (!input.startsWith('[<')) return 'none';
+  return /[@-~]/.test(input.slice(2)) ? 'complete' : 'partial';
+}
+
+/** Mouse reports may share one stdin chunk with following printable input. */
+function splitLeadingMouseReport(input: string): { report: MouseReport; rest: string } | undefined {
+  const match = /^(\[<\d+;\d+;\d+[Mm])(.*)$/s.exec(input);
+  if (match === null) return undefined;
+  const report = parseMouseReport(match[1] as string);
+  return report === undefined ? undefined : { report, rest: match[2] as string };
+}
+interface CursorPositionReport {
+  column: number;
+  row: number;
+}
+
+/** Response to a device-status `CSI 6n` query, also without its leading ESC. */
+function parseCursorPositionReport(input: string): CursorPositionReport | undefined {
+  const match = /^\[(\d+);(\d+)R$/.exec(input);
+  if (match === null) return undefined;
+  const row = Number(match[1]);
+  const column = Number(match[2]);
+  return row > 0 && column > 0 ? { row, column } : undefined;
+}
 
 /** Window in which a second Ctrl+C means "exit", not "cancel again". */
 const DOUBLE_INTERRUPT_MS = 2000;
@@ -60,18 +118,33 @@ export function App({
   readonly permissions: PermissionQueue;
 }): React.JSX.Element {
   const { exit } = useApp();
+  const { columns } = useWindowSize();
   const [state, dispatch] = useReducer(turnReducer, initialTurnState);
   const [status, setStatus] = useState<Status>('idle');
-  const [draft, setDraftState] = useState('');
-  // React may render after several stdin events have already arrived. Keep an
-  // immediate mirror so a batched text event and its following Enter cannot read
-  // different generations of draft state.
-  const draftRef = useRef('');
-  const setDraft = useCallback((next: string | ((current: string) => string)) => {
-    const value = typeof next === 'function' ? next(draftRef.current) : next;
-    draftRef.current = value;
-    setDraftState(value);
+  const [editor, setEditorState] = useState<EditorValue>({
+    text: '',
+    cursor: { offset: 0, affinity: 'downstream' },
+  });
+  // React may render after several stdin events have already arrived. Keep one
+  // immediate editor mirror so batched events cannot read different generations
+  // of the draft and cursor.
+  const editorRef = useRef(editor);
+  const setEditor = useCallback((next: EditorValue | ((current: EditorValue) => EditorValue)) => {
+    const value = typeof next === 'function' ? next(editorRef.current) : next;
+    editorRef.current = value;
+    setEditorState(value);
   }, []);
+  const draft = editor.text;
+  const layout = layoutEditor(draft, columns, editor.cursor);
+  const historyVersion = state.history.at(-1)?.id;
+  const preferredColumn = useRef<number | undefined>(undefined);
+  // Terminal row (zero-based) occupied by visual input row zero. Refreshed by a
+  // cursor-position query after every editor layout change.
+  const inputViewportRow = useRef<number | undefined>(undefined);
+  // CPR responses arrive in query order, but may lag behind later key events.
+  const queriedCursorRows = useRef<number[]>([]);
+  const discardingMouseFragment = useRef(false);
+
   const [selectedCompletion, setSelectedCompletion] = useState(0);
   const [frame, setFrame] = useState(0);
   const interruptedAt = useRef<number | undefined>(undefined);
@@ -101,11 +174,31 @@ export function App({
     return () => clearInterval(timer);
   }, [effectiveStatus]);
 
+  // Standard click tracking plus SGR coordinates. Most terminals keep native
+  // text selection available through Shift-drag while these modes are active.
+  useEffect(() => {
+    if (!process.stdout.isTTY) return;
+    process.stdout.write('\u001b[?1000h\u001b[?1006h');
+    return () => {
+      process.stdout.write('\u001b[?1006l\u001b[?1000l');
+    };
+  }, []);
+
   // The SDK's default logger writes to the console, which tears this frame. It has
   // something to say now that `/model` exists: switching away from Claude with a
   // reasoning block in the history makes the OpenAI adapter warn, once per
   // request, that it is dropping it. Surfaced as a notice instead of swallowed —
   // the model is losing part of its own history and that is worth one line.
+
+  // Ask the terminal where Ink placed the real cursor. Unlike layout metrics,
+  // this is an absolute viewport row and remains correct when <Static> output
+  // scrolls the primary screen.
+  useEffect(() => {
+    if (!process.stdout.isTTY || pendingPermission !== undefined || effectiveStatus !== 'idle') return;
+    queriedCursorRows.current.push(layout.cursor.row);
+    process.stdout.write('\u001b[6n');
+  }, [draft, columns, historyVersion, layout.cursor.row, layout.rows.length, pendingPermission, effectiveStatus]);
+
   useEffect(
     () => routeSdkLogs((entry) => dispatch({ type: 'notice', text: `sdk ${entry.level}: ${entry.message}` })),
     [dispatch],
@@ -154,7 +247,7 @@ export function App({
       // the busy check, so it also answers mid-turn — a long turn is exactly when
       // the question comes up, and reading a counter cannot disturb one.
       if (text === '/usage') {
-        setDraft('');
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
         dispatch({
@@ -169,7 +262,7 @@ export function App({
       // running — the level applies from the next call on. It reconfigures the live
       // model rather than sending anything, so it cannot disturb the turn.
       if (text === '/effort' || text.startsWith('/effort ')) {
-        setDraft('');
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
         applyEffortCommand(runtime, text, dispatch);
@@ -179,7 +272,7 @@ export function App({
       // Reads the manager directly rather than entering the model/tool loop. Like
       // /usage it remains available mid-turn and cannot queue or cancel work.
       if (/^\/tasks(?:\s|$)/.test(text)) {
-        setDraft('');
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
         if (text !== '/tasks') {
@@ -219,7 +312,7 @@ export function App({
       }
 
       if (text === '/compact' || text.startsWith('/compact ')) {
-        setDraft('');
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
         if (text !== '/compact') {
@@ -245,14 +338,14 @@ export function App({
       // live model's config, while this replaces the model object outright, which
       // would change the model under a turn that is already streaming from it.
       if (text === '/model' || text.startsWith('/model ')) {
-        setDraft('');
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
         await applyModelCommand(runtime, text, dispatch);
         return;
       }
 
-      setDraft('');
+      setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
       setSelectedCompletion(0);
       dispatch({ type: 'userInput', text });
 
@@ -321,9 +414,10 @@ export function App({
   const acceptCompletion = useCallback(() => {
     const chosen = completions[selectedCompletion] ?? completions[0];
     if (chosen === undefined) return;
-    setDraft(`/${chosen} `);
+    setEditor({ text: `/${chosen} `, cursor: { offset: chosen.length + 2, affinity: 'upstream' } });
+    preferredColumn.current = undefined;
     setSelectedCompletion(0);
-  }, [completions, selectedCompletion]);
+  }, [completions, selectedCompletion, setEditor]);
 
   const handleInterrupt = useCallback(() => {
     const now = Date.now();
@@ -387,8 +481,10 @@ export function App({
     if (key.return) {
       // A trailing backslash is an explicit continuation marker. Consume it so
       // the prompt sent later contains the intended newline, not editor syntax.
-      if (draftRef.current.endsWith('\\')) {
-        setDraft((current) => `${current.slice(0, -1)}\n`);
+      if (editorRef.current.text.endsWith('\\')) {
+        const text = `${editorRef.current.text.slice(0, -1)}\n`;
+        setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
+        preferredColumn.current = undefined;
         setSelectedCompletion(0);
         return;
       }
@@ -399,7 +495,48 @@ export function App({
         acceptCompletion();
         return;
       }
-      void submit(draftRef.current);
+      void submit(editorRef.current.text);
+      return;
+    }
+    if (discardingMouseFragment.current) {
+      if (/[@-~]/.test(typed)) discardingMouseFragment.current = false;
+      return;
+    }
+
+
+    // Ink delivers complete SGR reports without the leading ESC. Consume them
+    // before printable handling so a click can never become prompt text.
+    const position = parseCursorPositionReport(typed);
+    if (position !== undefined) {
+      const cursorRow = queriedCursorRows.current.shift();
+      if (cursorRow !== undefined) inputViewportRow.current = position.row - 1 - cursorRow;
+      return;
+    }
+
+    const mouseInput = splitLeadingMouseReport(typed);
+    if (mouseInput !== undefined) {
+      const mouse = mouseInput.report;
+      let clicked = false;
+      if (mouse.button === 0 && mouse.press && effectiveStatus === 'idle' && inputViewportRow.current !== undefined) {
+        const cursor = cursorFromClick(layout, mouse.row - 1 - inputViewportRow.current, mouse.column - 1);
+        if (cursor !== undefined) {
+          setEditor((current) => ({
+            ...insertAtCursor({ ...current, cursor }, normalizeDraftText(mouseInput.rest)),
+          }));
+          preferredColumn.current = undefined;
+          clicked = true;
+        }
+      }
+      if (!clicked && mouseInput.rest !== '') {
+        const printable = normalizeDraftText(mouseInput.rest);
+        if (printable !== '') setEditor((current) => insertAtCursor(current, printable));
+      }
+      return;
+    }
+
+    const mouseFragment = mouseFragmentState(typed);
+    if (mouseFragment !== 'none') {
+      discardingMouseFragment.current = mouseFragment === 'partial';
       return;
     }
 
@@ -410,20 +547,24 @@ export function App({
     const enterSuffix = typed.match(/[\r\n]+$/)?.[0];
     const batchedEnterLength = typed.length > 1 ? (enterSuffix?.length ?? 0) : 0;
     if (batchedEnterLength > 0) {
-      const text = draftRef.current + normalizeDraftText(typed.slice(0, -batchedEnterLength));
-      if (text.endsWith('\\')) {
-        setDraft(`${text.slice(0, -1)}\n`);
+      const inserted = normalizeDraftText(typed.slice(0, -batchedEnterLength));
+      const next = insertAtCursor(editorRef.current, inserted);
+      if (next.text.endsWith('\\')) {
+        const text = `${next.text.slice(0, -1)}\n`;
+        setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
+        preferredColumn.current = undefined;
         setSelectedCompletion(0);
         return;
       }
-      void submit(text);
+      void submit(next.text);
       return;
     }
 
     // Terminals encode Ctrl+J as LF, distinct from the CR emitted by Enter.
     // Ink does not expose an `enter` flag, so the literal input is the contract.
     if (typed === '\n') {
-      setDraft((current) => `${current}\n`);
+      setEditor((current) => insertAtCursor(current, '\n'));
+      preferredColumn.current = undefined;
       setSelectedCompletion(0);
       return;
     }
@@ -443,8 +584,39 @@ export function App({
       return;
     }
 
+    if (key.leftArrow || key.rightArrow) {
+      setEditor((current) => ({
+        ...current,
+        cursor: moveHorizontal(
+          current.text,
+          current.cursor,
+          key.leftArrow ? -1 : 1,
+          layoutEditor(current.text, columns, current.cursor),
+        ),
+      }));
+      preferredColumn.current = undefined;
+      return;
+    }
+
+    if (key.home || key.end) {
+      setEditor((current) => ({
+        ...current,
+        cursor: moveToRowEdge(layoutEditor(current.text, columns, current.cursor), key.home ? 'start' : 'end'),
+      }));
+      preferredColumn.current = undefined;
+      return;
+    }
+
+    if (key.upArrow || key.downArrow) {
+      const moved = moveVertical(layout, key.upArrow ? -1 : 1, preferredColumn.current);
+      setEditor((current) => ({ ...current, cursor: moved.cursor }));
+      preferredColumn.current = moved.preferredColumn;
+      return;
+    }
+
     if (key.backspace || key.delete) {
-      setDraft((current) => current.slice(0, -1));
+      setEditor((current) => key.backspace ? backspaceAtCursor(current) : deleteAtCursor(current));
+      preferredColumn.current = undefined;
       setSelectedCompletion(0);
       return;
     }
@@ -458,7 +630,8 @@ export function App({
     const printable = normalizeDraftText(typed);
     if (printable === '') return;
 
-    setDraft((current) => current + printable);
+    setEditor((current) => insertAtCursor(current, printable));
+    preferredColumn.current = undefined;
     setSelectedCompletion(0);
   });
 
@@ -468,7 +641,8 @@ export function App({
 
     const text = normalizeDraftText(pasted);
     if (text === '') return;
-    setDraft((current) => current + text);
+    setEditor((current) => insertAtCursor(current, text));
+    preferredColumn.current = undefined;
     setSelectedCompletion(0);
   });
 
@@ -484,7 +658,7 @@ export function App({
         <PermissionPrompt request={pendingPermission} waiting={permissions.waiting} />
       ) : (
         <InputBox
-          value={draft}
+          layout={layout}
           completions={completions}
           selectedCompletion={selectedCompletion}
           disabled={effectiveStatus === 'streaming' || effectiveStatus === 'compacting'}

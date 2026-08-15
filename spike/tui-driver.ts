@@ -47,6 +47,8 @@ export interface WaitOptions {
 }
 
 export interface TuiSession {
+  /** Everything written by the process, including terminal control sequences. */
+  readonly raw: string;
   /** Everything drawn so far, ANSI stripped. */
   readonly screen: string;
   /** Current end of the output, to pass as {@link WaitOptions.from}. */
@@ -77,7 +79,7 @@ export interface TuiSession {
    * suite that hangs instead of a test that fails.
    */
   exitedWithin(timeoutMs: number): Promise<number>;
-  kill(): void;
+  kill(signal?: string): void;
 }
 
 export interface TuiOptions {
@@ -121,6 +123,10 @@ export function startTui(options: TuiOptions): TuiSession {
   });
 
   const session: TuiSession = {
+    get raw() {
+      return raw;
+    },
+
     get screen() {
       return stripAnsi(raw);
     },
@@ -250,8 +256,8 @@ export function startTui(options: TuiOptions): TuiSession {
       });
     },
 
-    kill() {
-      if (exitCode === undefined) child.kill();
+    kill(signal = 'SIGHUP') {
+      if (exitCode === undefined) child.kill(signal);
     },
   };
 

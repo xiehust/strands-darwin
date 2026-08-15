@@ -29,13 +29,14 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 
 ### 3. Contracts
 
-- Draft line endings are canonical LF. Normalize CRLF and CR before appending.
+- Draft line endings are canonical LF. Normalize CRLF and CR before inserting.
 - Keep an immediate ref mirror beside React draft state. Multiple stdin events may arrive before React renders; handlers that submit/continue must read the mirror, not a stale render closure.
 - Preserve LF and tab; drop other C0 controls and DEL.
-- Paste never submits. It appends the entire payload, including all line breaks.
-- Render the first logical line after `you> ` and later lines after `...> `; the cursor follows the last line.
-- Editing remains append/backspace-only. Plain Enter still submits, and slash completion still takes precedence when shown.
-- A permission prompt owns paste as well as ordinary keys; pasted text must not leak into the hidden draft while approval is pending.
+- Paste never submits. It inserts the entire payload at the cursor, including all line breaks.
+- Render the first logical line after `you> ` and later explicit lines after `...> `; soft-wrapped rows align under the content. Cursor, arrows, Home/End, deletion, and click hit-testing use grapheme boundaries and terminal-cell widths.
+- Plain Enter still submits, and slash completion still takes Up/Down/Enter precedence when shown.
+- SGR mouse tracking is TTY-gated and paired: enable `?1000`/`?1006` on mount and disable both on cleanup, including signal-triggered unmount. Consume complete, malformed, and split mouse reports before printable input; test raw output because ANSI-stripped `screen` cannot prove lifecycle escapes.
+- A permission prompt owns paste and keyboard input; mouse reports are consumed but cannot mutate the hidden draft while approval is pending.
 
 ### 4. Validation and error matrix
 
@@ -58,7 +59,7 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 
 ### 6. Tests required
 
-Run `verify-tui.ts multiline`. Assert on first and continuation rows, absence of `working…` after paste/manual newline, consumed continuation marker, backspace across LF, and bounded clean exit after plain Enter submits `/exit`. Run `verify-tui.ts chunkedEnter` to send text and Enter in one pty write and cover batched continuation plus CRLF submission. Run `verify-tui.ts completion` after changing the Enter branch.
+Run `verify-tui.ts cursor` for keyboard insertion/deletion, SGR hit-testing, complete/malformed/split-report consumption, and raw normal/signal enable-disable escape assertions. Run `verify-tui.ts multiline`; assert on first and continuation rows, absence of `working…` after paste/manual newline, consumed continuation marker, backspace across LF, and bounded clean exit after plain Enter submits `/exit`. Run `verify-tui.ts chunkedEnter` to send text and Enter in one pty write and cover batched continuation plus CRLF submission. Run `verify-tui.ts completion` after changing the Enter or Up/Down branches. Keep Unicode/wrapping/resize geometry in the focused pure prompt-editor suite.
 
 ### 7. Wrong vs correct
 
@@ -67,7 +68,7 @@ Run `verify-tui.ts multiline`. Assert on first and continuation rows, absence of
 void submit(draft + typed.slice(0, typed.search(/[\r\n]/)));
 
 // Correct: use Ink's bracketed-paste channel and retain normalized layout.
-usePaste((text) => setDraft((draft) => draft + normalizeDraftText(text)));
+usePaste((text) => setEditor((editor) => insertAtCursor(editor, normalizeDraftText(text))));
 
 // Wrong: a batched text event ending in CRLF falls through as multiline draft text.
 setDraft((draft) => draft + normalizeDraftText(typed));

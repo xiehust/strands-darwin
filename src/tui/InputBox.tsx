@@ -1,45 +1,48 @@
-/**
- * The multiline prompt, with slash-command completion (built-ins and skills).
- *
- * Editing is deliberately append/backspace-only: each logical line gets its own
- * prefix, while Ink owns visual wrapping and the cursor stays after the last line.
- */
-import { Box, Text } from 'ink';
-import React from 'react';
+/** The editable multiline prompt, with slash-command completion. */
+import { Box, Text, useBoxMetrics, useCursor, type DOMElement } from 'ink';
+import React, { useRef } from 'react';
+
+import type { EditorLayout } from './prompt-editor.js';
 
 /** Completion rows shown at once. */
 const MAX_COMPLETIONS = 6;
 
 export function InputBox({
-  value,
+  layout,
   completions,
   selectedCompletion,
   disabled,
   hint,
 }: {
-  readonly value: string;
+  readonly layout: EditorLayout;
   readonly completions: readonly string[];
   readonly selectedCompletion: number;
   readonly disabled: boolean;
   readonly hint: string | undefined;
 }): React.JSX.Element {
   const visible = completions.slice(0, MAX_COMPLETIONS);
-  const lines = value.split('\n');
+  const inputRef = useRef<DOMElement>(null);
+  const metrics = useBoxMetrics(inputRef);
+  const { setCursorPosition } = useCursor();
+
+  // Ink's cursor coordinates are relative to the whole live frame, while the
+  // editor layout is local to this box. Hide it until layout has been measured.
+  setCursorPosition(
+    !disabled && metrics.hasMeasured
+      ? { x: metrics.left + layout.cursor.column, y: metrics.top + layout.cursor.row }
+      : undefined,
+  );
 
   return (
-    <Box flexDirection="column">
-      {lines.map((line, index) => {
-        const last = index === lines.length - 1;
-        return (
-          <Box key={index}>
-            <Text color={disabled ? 'gray' : index === 0 ? 'cyan' : 'gray'} bold={index === 0}>
-              {index === 0 ? 'you> ' : '...> '}
-            </Text>
-            <Text dimColor={disabled}>{line}</Text>
-            {last && !disabled && <Text inverse> </Text>}
-          </Box>
-        );
-      })}
+    <Box ref={inputRef} flexDirection="column" aria-role="textbox" aria-state={{ multiline: true, disabled }}>
+      {layout.rows.map((row, index) => (
+        <Box key={`${row.start}:${index}`}>
+          <Text color={disabled ? 'gray' : row.prefix === 'you> ' ? 'cyan' : 'gray'} bold={row.prefix === 'you> '}>
+            {row.prefix}
+          </Text>
+          <Text dimColor={disabled} wrap="truncate-end">{row.text}</Text>
+        </Box>
+      ))}
 
       {visible.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
