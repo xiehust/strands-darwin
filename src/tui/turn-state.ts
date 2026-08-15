@@ -31,6 +31,8 @@ export interface ActiveTool {
   id: string;
   name: string;
   summary: string;
+  /** Epoch ms when the call entered the live panel; drives the elapsed suffix. */
+  startedAt: number;
   compactSummary?: string;
   backgroundMode?: BackgroundBashMode;
   backgroundInput?: unknown;
@@ -166,6 +168,7 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
             id: event.toolUse.toolUseId,
             name: event.toolUse.name,
             summary: request.summary,
+            startedAt: Date.now(),
             ...(backgroundMode === undefined
               ? {}
               : {

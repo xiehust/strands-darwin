@@ -9,6 +9,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 
 import { activeToolCallSummary } from './background-tool-presentation.js';
+import { formatTaskDuration } from './task-format.js';
 import type { ActiveTool, HistoryItem, ToolStatus } from './turn-state.js';
 
 /** Lines of tool output kept in the collapsed preview. */
@@ -34,6 +35,9 @@ export function ActiveToolCalls({
         <Box key={tool.id}>
           <Text color="yellow">{FRAMES[frame % FRAMES.length]} </Text>
           <Text dimColor>{activeToolCallSummary(tool.summary, tool.compactSummary, backgroundDetailsExpanded)}</Text>
+          {/* Elapsed suffix, never prefix: pty assertions match the summary as a
+              substring, and the existing spinner tick already redraws each frame. */}
+          <Text dimColor> ({formatTaskDuration(Date.now() - tool.startedAt)})</Text>
         </Box>
       ))}
     </Box>

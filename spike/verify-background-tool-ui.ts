@@ -230,4 +230,12 @@ const foregroundResult = foreground.history.at(-1);
 assert('foreground bash keeps ordinary rendering',
   foregroundResult?.kind === 'tool' && foregroundResult.preview === '{"output":"ok"}');
 
+const clockBefore = Date.now();
+let stamped = reduce(initialTurnState, before('stamped-bg', { mode: 'status', taskId: TASK_ID }));
+stamped = reduce(stamped, before('stamped-fg', { mode: 'execute', command: 'printf ok' }));
+const clockAfter = Date.now();
+assert('every active tool call is stamped with a start time for the elapsed suffix',
+  stamped.activeTools.length === 2 && stamped.activeTools.every((tool) =>
+    Number.isSafeInteger(tool.startedAt) && tool.startedAt >= clockBefore && tool.startedAt <= clockAfter));
+
 report();
