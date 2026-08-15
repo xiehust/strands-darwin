@@ -55,8 +55,8 @@ async function fixture(): Promise<string> {
     `- The absolute target repository root is ${root}. Stay inside it; do not cd elsewhere.`,
     '- The child executable is `./node_modules/.bin/darwin`; use it directly without inspecting darwin source or implementation.',
     '- The child is the direct implementation worker. Its prompts must forbid loading the developer skill, starting another darwin, or delegating again.',
-    '- For the first child turn, run `DARWIN_PLANNING_ONLY=1 ./node_modules/.bin/darwin -p <planning-prompt>`.',
-    '- For every later turn, run `./node_modules/.bin/darwin -p <follow-up> --session <captured-id> --yolo`. Never omit `--session`.',
+    '- For the first child turn, run `DARWIN_PLANNING_ONLY=1 ./node_modules/.bin/darwin -p <planning-prompt> --yolo`.',
+    '- For every later turn, run `./node_modules/.bin/darwin -p <follow-up> --session <captured-id> --yolo`. Never omit `--session` or `--yolo`.',
     '- The only requested product change is the `sum.js` fix described by the user.',
     '',
   ].join('\n'));
@@ -160,7 +160,9 @@ async function main(): Promise<void> {
     assert('the Host consumed incremental output', transcript.includes('bash output:'));
     assert('the first child emitted an exact session record', selectedSession !== undefined && directLogs.length >= 2);
     assert('the planning command is hook-enforced read-only', planningCommand.includes('DARWIN_PLANNING_ONLY=1') && /plan/iu.test(planningCommand));
+    assert('the planning command uses yolo mode', /(?:^|\s)--yolo(?:\s|$)/u.test(planningCommand));
     assert('the implementation command explicitly selected the first session', selectedSession !== undefined);
+    assert('the implementation command uses yolo mode', /(?:^|\s)--yolo(?:\s|$)/u.test(implementationCommand));
     assert('the implementation command did not use pointer-based continuation', !/--continue|--resume/u.test(implementationCommand));
     assert('the same child session appeared in both direct child logs', directLogs.length >= 2);
     assert('the planning log contains no successful mutating tool call', planningLog !== '');

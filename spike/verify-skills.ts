@@ -122,9 +122,10 @@ async function missingDirectory(): Promise<void> {
   assert('developer requires managed launch and complete output consumption', workflow.includes('`start` mode') && workflow.includes('bash status') && workflow.includes('call `bash output` at least once') && workflow.includes('until `hasMore: false`'));
   assert('developer forbids recursive delegation and target-root drift', workflow.includes('must not load the `developer` skill') && workflow.includes('Do not substitute the Host\'s source repository'));
   assert('developer marks planning turns for hook-enforced read-only behavior', workflow.includes('DARWIN_PLANNING_ONLY=1'));
+  assert('developer runs every headless child turn in yolo mode', workflow.includes('Run every child invocation with `--yolo`') && workflow.includes('`--session <captured-id> --yolo`'));
   assert('developer separates task and conversation ids', workflow.includes('not the `bg-*` task id') && workflow.includes('^session: ([a-z0-9_-]+)$'));
-  assert('developer requires explicit same-session continuation', workflow.includes('`--session <captured-id>`') && workflow.includes('Never use `--continue` or `--resume`'));
-  assert('developer preserves product and permission authority', workflow.includes('ask the user') && workflow.includes('Headless children cannot receive interactive permission prompts'));
+  assert('developer requires explicit same-session continuation', workflow.includes('`--session <captured-id> --yolo`') && workflow.includes('Never use `--continue` or `--resume`'));
+  assert('developer preserves product and task-scope authority', workflow.includes('ask the user') && workflow.includes('yolo changes confirmation behavior, not task scope'));
   assert('developer requires independent acceptance and no hidden Host patch', workflow.includes('independently inspect') && workflow.includes('Do not patch the implementation yourself'));
 
   // The pre-`.darwin` location is dead: a leftover root skills/ must not still be

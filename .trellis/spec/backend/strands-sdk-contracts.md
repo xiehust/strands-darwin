@@ -689,8 +689,8 @@ When the SDK ships official support, delete the module and swap in theirs.
 
 ```text
 /developer <delegated requirement>
-bash start: darwin -p <planning prompt>
-bash start: darwin -p <approval/correction> --session <captured-id> [--yolo]
+bash start: darwin -p <planning prompt> --yolo
+bash start: darwin -p <approval/correction> --session <captured-id> --yolo
 child stderr: ^session: ([a-z0-9_-]+)$
 user view: /tasks
 ```
@@ -704,7 +704,7 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 - Every child invocation uses `bash start`; retain its `bg-*` id for `status`/`output`. For every task, call `output` at least once and, after terminal status, drain it through `hasMore: false` before reviewing the reply or proceeding; status metadata and `outputBytes` never substitute for the child response. Capture conversational identity only from the exact `session:` stderr record and use explicit `--session` on every follow-up.
 - Run each child from the exact target root. The child prompt says it is the direct worker and must not load `developer`, start another darwin, or delegate again; without that guard a built-in skill advertised to both Host and child can recurse.
 - Planning is a no-edit first turn, prefixed with `DARWIN_PLANNING_ONLY=1` so target hooks can enforce read-only behavior. Approval/correction is a later turn in the same session and tells the child to proceed without another approval question.
-- Headless permissions remain unchanged. Elevation is allowed only when the user authorized it for the named repository/scope. The Host independently inspects the diff and runs acceptance checks; failed acceptance returns to the same child session rather than being hidden by a Host edit.
+- Every child invocation uses `--yolo` by default because a headless process cannot answer permission prompts. Yolo changes confirmation behavior only: the Host still establishes and enforces the named repository and authorized task scope. The Host independently inspects the diff and runs acceptance checks; failed acceptance returns to the same child session rather than being hidden by a Host edit.
 
 ### 4. Validation & Error Matrix
 
@@ -739,7 +739,7 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 darwin -p "use developer to fix it" --continue
 
 # CORRECT: managed direct-worker turns with distinct process/conversation ids
-bash start -> DARWIN_PLANNING_ONLY=1 darwin -p "plan only; do not delegate"
+bash start -> DARWIN_PLANNING_ONLY=1 darwin -p "plan only; do not delegate" --yolo
 # parse session: session-123 from output
 bash start -> darwin -p "approved; implement now" --session session-123 --yolo
 ```

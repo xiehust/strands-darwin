@@ -14,13 +14,13 @@ Before launching anything, establish from the request and repository evidence:
 - the absolute target repository root;
 - the exact requirement and independently observable acceptance checks;
 - decisions the user has already made versus product decisions only the user can make; and
-- the authorized mutation and command scope, including whether elevated child permissions are authorized.
+- the authorized mutation and command scope.
 
 Ask the user when any of these boundaries is unresolved. Never infer authorization merely because a command is convenient.
 
 ## 2. Launch a planning-only child turn
 
-Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Prefix the planning process with `DARWIN_PLANNING_ONLY=1` so repository hooks can enforce read-only behavior when provided. The first prompt must give the child the requirement, evidence, repository scope, and acceptance criteria, and explicitly request a plan and questions only with no edits or implementation. Tell the child it is the direct implementation worker: it must not load the `developer` skill, start another darwin, or delegate the task again.
+Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Run every child invocation with `--yolo`; the built-in developer workflow uses yolo mode by default so headless children never block on interactive permission prompts. Prefix the planning process with `DARWIN_PLANNING_ONLY=1` so repository hooks can enforce read-only behavior when provided. The first prompt must give the child the requirement, evidence, repository scope, and acceptance criteria, and explicitly request a plan and questions only with no edits or implementation. Tell the child it is the direct implementation worker: it must not load the `developer` skill, start another darwin, or delegate the task again.
 
 Run the child from the exact target root. Do not substitute the Host's source repository or prepend a `cd` to some other directory. Keep the returned `bg-*` background task id. Tell the user that `/tasks` remains available while this Host turn runs. Monitor completion with `bash status` and incremental `bash output`; do not synchronize with fixed sleeps. For every child task, call `bash output` at least once. After it reaches a terminal state, keep calling `bash output` until `hasMore: false` before reviewing the reply or taking the next step. Status metadata and `outputBytes` are not the child's response.
 
@@ -42,9 +42,9 @@ Read the complete planning reply and compare it with the requirement and reposit
 
 ## 4. Continue the exact child session
 
-Launch every follow-up as another `bash start` task, in the same target root, with an explicit `--session <captured-id>` argument. Never use `--continue` or `--resume`, and never omit `--session` on an implementation/correction turn. The follow-up prompt must state the approval/correction, tell the child to proceed without asking for another approval, and name the requested next work.
+Launch every follow-up as another `bash start` task, in the same target root, with explicit `--session <captured-id> --yolo` arguments. Never use `--continue` or `--resume`, and never omit `--session` or `--yolo` on an implementation/correction turn. The follow-up prompt must state the approval/correction, tell the child to proceed without asking for another approval, and name the requested next work.
 
-Headless children cannot receive interactive permission prompts. Without elevation, only statically safe calls and existing allow-rules run; denied work must be inspected and reported. Use `--yolo` (or another elevated mode) only when the user explicitly authorized that mode for this repository and scope. Put it on implementation turns, not as a silent default.
+Headless children cannot receive interactive permission prompts, so this workflow always runs them in yolo mode. Keep every child command inside the authorized target repository and mutation scope established above; yolo changes confirmation behavior, not task scope.
 
 For each task, retain its new `bg-*` id, monitor with `status`, consume output incrementally with `output`, and inspect failures. A process failure or bad result may be corrected by another explicit `--session <captured-id>` turn when useful.
 
