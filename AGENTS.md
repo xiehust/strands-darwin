@@ -146,6 +146,10 @@ stream events map per the table in the archived MVP task's `research/spike-resul
   `exitedWithin` not `exited`). Read the relevant one before changing that area.
 - This repo is Trellis-managed (see `AGENTS.md`): non-trivial work goes through a task under
   `.trellis/tasks/` with PRD → implement → check → spec update → commit.
+- Every `/developer` (developer-skill) supervision run must append its batch record to
+  `docs/iteration-log.md` before reporting completion — child session id, one milestone table
+  row per accepted commit, and what the Host re-ran for acceptance. The log is part of the
+  paper trail; README's "How darwin develops darwin" only points there.
 - Keep `devEngines` out of `package.json` — it makes every `npx`-launched MCP server die
   with an opaque `Connection closed`.
 - pnpm's `minimumReleaseAge` may hold back very fresh `@strands-agents/sdk` releases; don't
