@@ -156,6 +156,19 @@ Local validation for this batch: `pnpm typecheck`; `pnpm test` (exit 0 with the 
 `continueOnError` diagnostic, including `verify-subagents.ts` 66 passed and the new
 `verify-subagent-format.ts` 40 passed); the new network-free `verify-tui.ts agents` (6 passed);
 `verify-tui.ts completion` (20 passed); and the model-calling `verify-tui.ts approve` (23 passed),
-`cancelThenContinue` (5 passed) and `bashExit` (3 passed). Independent Host acceptance is pending;
-this record intentionally claims no Host rerun and adds no milestone row until the Host supplies
-them.
+`cancelThenContinue` (5 passed) and `bashExit` (3 passed).
+
+Host acceptance inspected the complete commit `404aa1c` — all 27 files, and the production diff in
+full — then re-ran independently: `pnpm typecheck`; `pnpm test` (24 suites, 0 FAIL, exit 0);
+`verify-subagents.ts` under a private HOME (66 passed, printing the measured two-dispatch overlap
+and the resolved `parent` / `general#suba` / `explorer#subb` sources); `verify-tui.ts agents`
+(6 passed) and `completion` (20 passed) with no model calls; and the model-calling
+`verify-tui.ts approve` (23 passed, including *prompt says which agent asked* and *the source label
+did not push the box off the frame*), `cancelThenContinue` (5 passed) and `bashExit` (3 passed).
+Trellis task validation passed with only the known >32 KB truncation warning for the large SDK
+spec, `git diff --check` was clean, and the child left the tree free of its `/tmp` probes and of
+any edit to the Host-owned research files.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-15 | `404aa1c` | Attribute every permission request to its originating agent, add `/agents` dispatch observability, and pin measured subagent concurrency |
