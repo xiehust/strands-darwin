@@ -19,7 +19,7 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | cursor | completion | backgroundDetails |
- *                 agentsMd | usage | tasks | effort | model
+ *                 agentsMd | usage | tasks | effort | model | plan
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -1225,6 +1225,30 @@ async function modelCommand(): Promise<void> {
   }
 }
 
+async function planHeader(): Promise<void> {
+  header('TUI — CLI plan override is visible without a model call');
+  await resetWorkDir();
+  await writeHomeConfig({ permissionMode: 'yolo' });
+  const rulesFile = permissionRulesPath(WORK_DIR);
+  await mkdir(path.dirname(rulesFile), { recursive: true });
+  await writeFile(rulesFile, '{"allow":["bash"]}\n', 'utf8');
+  const tui = startTui({ cwd: WORK_DIR, args: ['--permission-mode', 'plan'] });
+  try {
+    await tui.waitFor('mode: plan — read-only; write and execute calls are denied', {
+      timeoutMs: 60_000,
+      settleMs: 300,
+    });
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('the header shows the effective CLI-selected plan mode', tui.screen.includes('mode: plan — read-only'));
+    assert('the configured yolo mode is not presented as effective', !tui.screen.includes('mode: yolo'));
+    assert('loaded allow rules are visibly ignored in plan mode', tui.screen.includes('1 allow rule(s) ignored'));
+    tui.submit('/exit');
+    assert('TUI exited cleanly from plan mode', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -1242,6 +1266,7 @@ const SCENARIOS = {
   tasks: taskMonitoring,
   effort: effortCommand,
   model: modelCommand,
+  plan: planHeader,
 } as const;
 
 async function main(): Promise<void> {

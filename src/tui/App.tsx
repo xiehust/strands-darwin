@@ -659,6 +659,13 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       {info.permissionMode === 'yolo' ? (
         // Yellow: yolo disables a safety layer, same convention as other warnings.
         <Text color="yellow">mode: yolo — every tool call runs without confirmation</Text>
+      ) : info.permissionMode === 'plan' ? (
+        // One existing row, not a new one: the header competes with permission and
+        // tool detail for frame height. Rules remain stored but cannot bypass plan.
+        <Text color="yellow">
+          mode: plan — read-only; write and execute calls are denied
+          {runtime.allowRuleCount > 0 ? ` · ${runtime.allowRuleCount} allow rule(s) ignored` : ''}
+        </Text>
       ) : (
         // Rule count rides along on this line rather than taking one of its own:
         // see the frame-height comment below.

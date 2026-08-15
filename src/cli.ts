@@ -2,7 +2,7 @@
 /**
  * `darwin` entry point.
  *
- * Usage: darwin [--resume] [--permission-mode <default|auto|yolo>] [--yolo]
+ * Usage: darwin [--resume] [--permission-mode <default|auto|plan|yolo>] [--yolo]
  *        darwin -p <message> [--continue|--resume|--session <id>] [permission flags]
  */
 import process from 'node:process';
@@ -11,7 +11,13 @@ import { AgentRuntime } from './agent/runtime.js';
 import { routeSdkLogs } from './agent/sdk-logging.js';
 import { CliUsageError, parseCliArgs, type CliOptions } from './cli-args.js';
 import { ConfigError } from './config.js';
-import { createHeadlessPermissionBridge, formatHeadlessUsage, headlessField, runHeadlessTurn } from './headless.js';
+import {
+  createHeadlessPermissionBridge,
+  formatHeadlessPermissionMode,
+  formatHeadlessUsage,
+  headlessField,
+  runHeadlessTurn,
+} from './headless.js';
 
 const FORCE_EXIT_AFTER_MS = 500;
 
@@ -80,6 +86,7 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
       }),
     });
     if (interrupted) throw new Error('Interrupted.');
+    process.stderr.write(`${formatHeadlessPermissionMode(runtime.info.permissionMode)}\n`);
 
     reply = await runHeadlessTurn(
       runtime,

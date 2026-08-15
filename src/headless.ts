@@ -1,6 +1,6 @@
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
-import { classify, type PermissionBridge } from './agent/permission.js';
+import { classify, type ApprovalMode, type PermissionBridge } from './agent/permission.js';
 import type { AgentRuntime } from './agent/runtime.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import type { AppConfig } from './config.js';
@@ -8,6 +8,11 @@ import type { AppConfig } from './config.js';
 const FIELD_LIMIT = 240;
 
 export type HeadlessRuntime = Pick<AgentRuntime, 'send' | 'expandSlashCommand'>;
+
+/** Stable startup diagnostic for the effective post-override permission mode. */
+export function formatHeadlessPermissionMode(mode: ApprovalMode): string {
+  return `permission-mode: ${mode}`;
+}
 
 /** One-line, Unicode-safe and bounded text for script-facing progress records. */
 export function headlessField(value: string, limit = FIELD_LIMIT): string {

@@ -273,6 +273,18 @@ itself still worked. Add startup state as a suffix on an existing line (the mode
 whole new lines for rare warnings, and re-run `verify-tui.ts approve` after touching the
 header: it is the only check that sees the header and the box in the same frame.
 
+## Contract: effective plan mode stays on the existing mode row
+
+`plan` is a permission mode, not a new panel. Render `mode: plan — read-only; write and execute
+calls are denied` on the header's existing mode row; if allow rules are loaded, mark them ignored
+on that same row. The value must come from `runtime.info.permissionMode`, after CLI override
+resolution.
+
+`spike/verify-tui.ts plan` is intentionally network-free: write a conflicting configured mode,
+launch the real pty with `--permission-mode plan`, wait for the state-exclusive full plan text,
+assert the configured mode is absent as effective, submit `/exit`, and use `exitedWithin`. Do not
+turn this header check into a model-driven scenario.
+
 ## Contract: the pty suite owns HOME, and resets what a project key carries
 
 Darwin's config, sessions and allow rules are **user-global** (`~/.darwin/…`, project-keyed

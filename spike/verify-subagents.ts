@@ -351,6 +351,43 @@ async function hookContracts(registry: AgentDefinitionRegistry): Promise<void> {
   await subagents.shutdown();
 }
 
+async function planPermissionContract(registry: AgentDefinitionRegistry): Promise<void> {
+  header('subagents — shared plan guard');
+  const asked: AssessedPermissionRequest[] = [];
+  const probeRan: string[] = [];
+  const dangerousProbe = tool({
+    name: 'dangerousProbe',
+    description: 'Plan enforcement probe.',
+    inputSchema: z.object({ value: z.string() }),
+    callback: ({ value }) => {
+      probeRan.push(value);
+      return `ran ${value}`;
+    },
+  });
+  const subagents = new SubagentTool({
+    registry,
+    tools: [dangerousProbe],
+    intervention: new PermissionGate({
+      mode: 'plan',
+      projectRoot: ROOT,
+      allowRules: ['dangerousProbe'],
+      ask: async (request) => {
+        asked.push(request);
+        return { allowed: true };
+      },
+    }),
+    projectInstructions: undefined,
+    config: fakeConfig('probe'),
+    createModel: async () => new ScriptedChildModel(true),
+  });
+  const parent = new Agent({ tools: [subagents.tool], model: new ScriptedChildModel(), printer: false });
+  await parent.initialize();
+  await parent.tool.subagent?.invoke({ task: 'run the probe' });
+  assert('child execute is denied without reaching the bridge', asked.length === 0);
+  assert('child execute cannot use a broad allow rule', probeRan.length === 0);
+  await subagents.shutdown();
+}
+
 async function modelSnapshot(registry: AgentDefinitionRegistry): Promise<void> {
   header('subagents — later dispatches use updated config');
   const seen: string[] = [];
@@ -424,6 +461,7 @@ async function cancellation(registry: AgentDefinitionRegistry): Promise<void> {
 
 await permissionContracts(registry);
 await hookContracts(registry);
+await planPermissionContract(registry);
 
 async function bashLifecycle(registry: AgentDefinitionRegistry): Promise<void> {
   header('subagents — child bash session is reaped after dispatch');

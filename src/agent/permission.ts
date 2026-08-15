@@ -39,11 +39,12 @@ export type PermissionKind = 'read' | 'write' | 'execute';
  * - `default`: statically safe calls run silently; everything else asks.
  * - `auto`: like `default`, but calls the static rules cannot clear are judged
  *   by a model classifier first; only classifier-flagged calls ask.
+ * - `plan`: reads run; writes and executes are denied without escalation.
  * - `yolo`: everything runs without asking.
  */
-export type ApprovalMode = 'default' | 'auto' | 'yolo';
+export type ApprovalMode = 'default' | 'auto' | 'plan' | 'yolo';
 
-export const APPROVAL_MODES = ['default', 'auto', 'yolo'] as const satisfies readonly ApprovalMode[];
+export const APPROVAL_MODES = ['default', 'auto', 'plan', 'yolo'] as const satisfies readonly ApprovalMode[];
 
 /**
  * Whether a call is *provably* safe. `dangerous` means "not on the safe list",
@@ -166,7 +167,25 @@ export class PermissionGate extends InterventionHandler {
     return this.rules;
   }
 
+  /**
+   * Denies plan-mode mutation before hooks, rules, classifiers, or prompts can
+   * have side effects. Undefined means the ordinary permission flow still owns
+   * the call; callers must not treat it as approval.
+   */
+  planGuard(toolName: string, input: unknown): InterventionAction | undefined {
+    if (this.options.mode !== 'plan') return undefined;
+    const request = classify(toolName, input);
+    if (request.kind === 'read') return undefined;
+    return InterventionActions.deny(
+      `Plan mode blocked this ${request.kind} call to ${request.toolName}. ` +
+        `Continue with read-only inspection, or ask the user to run outside plan mode before changing or executing anything.`,
+    );
+  }
+
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<InterventionAction> {
+    const guarded = this.planGuard(event.toolUse.name, event.toolUse.input);
+    if (guarded !== undefined) return guarded;
+
     const base = classify(event.toolUse.name, event.toolUse.input);
     const request: AssessedPermissionRequest = {
       ...base,

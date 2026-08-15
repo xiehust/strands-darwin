@@ -33,3 +33,9 @@ Score informs ranking but does not replace qualitative rationale, dependency ord
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
 
 <!-- Append directions below. Use stable IDs such as SER-001; never renumber existing rows. -->
+
+| SER-001 | Add an enforced read-only planning permission mode | 进行中 | 1 | 16 | 5 | 5 | 5 | 2 | 2 | [`research_2026-08-15.md`](./research_2026-08-15.md) | Pending developer workflow and independent Host acceptance. | Selected because Claude Code and Codex both expose plan/read-only workflows and Darwin's `(toolName, input)` classifier provides a narrow enforcement seam. |
+| SER-002 | Make subagent work parallel and inspectable with source-labelled status and approvals, initially for read-heavy delegation | 未开始 | 2 | 8 | 4 | 3 | 5 | 4 | 4 | [`research_2026-08-15.md`](./research_2026-08-15.md) | — | Read-heavy-first safety dependency; concurrent writes require conflict isolation. |
+| SER-003 | Add append-only session trajectory export plus search/fork/replay primitives over SDK events | 未开始 | 3 | 8 | 4 | 3 | 5 | 5 | 3 | [`research_2026-08-15.md`](./research_2026-08-15.md) | — | Must remain an observer/adapter around the SDK loop and define replay correctness. |
+| SER-004 | Add an optional isolated execution backend for shell/file mutation | 未开始 | 4 | 7 | 5 | 2 | 5 | 5 | 5 | [`research_2026-08-15.md`](./research_2026-08-15.md) | — | High security value but requires a design spike for portability, mounts, credentials, and persistent-shell behavior. |
+| SER-005 | Establish a stable local coding-agent evaluation corpus and regression scorecard for self-evolution | 未开始 | 5 | 6 | 4 | 3 | 4 | 5 | 4 | [`research_2026-08-15.md`](./research_2026-08-15.md) | — | Measurement must precede automated optimization; PenguinHarness benchmark results are publisher claims and its public suite is roadmap work. |

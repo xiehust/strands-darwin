@@ -90,6 +90,7 @@ function makeAgent(options: {
   toolName?: string;
   input?: Record<string, unknown>;
   body?: () => string;
+  mode?: 'default' | 'plan';
   answer?: boolean;
   askDelayMs?: number;
   asked?: AssessedPermissionRequest[];
@@ -103,7 +104,7 @@ function makeAgent(options: {
   const asked = options.asked ?? [];
   const ran = options.ran ?? [];
   const gate = new PermissionGate({
-    mode: 'default',
+    mode: options.mode ?? 'default',
     projectRoot,
     ask: async (request) => {
       asked.push(request);
@@ -223,6 +224,29 @@ async function launchFailureContract(): Promise<void> {
   const transcript = JSON.stringify(agent.messages.map((message) => message.toJSON()));
   assert('launch failure denies before permission or tool execution', asked.length === 0 && ran.length === 0);
   assert('launch fallback names the command and config fix', transcript.includes('could not launch') && transcript.includes('.darwin/config.json'));
+}
+
+async function planGuardContract(): Promise<void> {
+  header('tool hooks — plan guard precedes Pre hooks');
+  const log = path.join(ROOT, 'plan-hooks');
+  const asked: AssessedPermissionRequest[] = [];
+  const ran: string[] = [];
+  const agent = makeAgent({
+    mode: 'plan',
+    asked,
+    ran,
+    hooks: {
+      PreToolUse: [group('*', `printf pre >> ${log}`)],
+      PostToolUse: [group('*', `printf post >> ${log}`)],
+    },
+  });
+  await agent.invoke('run');
+  const transcript = JSON.stringify(agent.messages.map((message) => message.toJSON()));
+  const hookOutput = await readFile(log, 'utf8').catch(() => '');
+  assert('plan denial runs no Pre or Post hook shell', hookOutput === '');
+  assert('plan denial never asks permission', asked.length === 0);
+  assert('plan denial never runs the tool body', ran.length === 0);
+  assert('plan denial wording reaches the model', transcript.includes('Plan mode blocked this execute call'));
 }
 
 async function successAndPostContracts(): Promise<void> {
@@ -359,6 +383,7 @@ await shellContract();
 await preDenyContract();
 await emptyStderrContract();
 await launchFailureContract();
+await planGuardContract();
 await successAndPostContracts();
 await toolErrorContract();
 await cancellationContract();

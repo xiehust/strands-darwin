@@ -9,7 +9,13 @@ import type { AgentStreamEvent } from '@strands-agents/sdk';
 import { resolveSession, sessionPaths } from '../src/agent/session.js';
 import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
 import type { AppConfig } from '../src/config.js';
-import { createHeadlessPermissionBridge, formatHeadlessUsage, headlessField, runHeadlessTurn } from '../src/headless.js';
+import {
+  createHeadlessPermissionBridge,
+  formatHeadlessPermissionMode,
+  formatHeadlessUsage,
+  headlessField,
+  runHeadlessTurn,
+} from '../src/headless.js';
 import { loadServersQuietly } from '../src/mcp/registry.js';
 import { assert as countedAssert, header, report } from './shared.js';
 
@@ -85,6 +91,9 @@ async function parserContracts(): Promise<void> {
     session: { kind: 'id', sessionId: 'chosen_1' },
     permissionModeOverride: undefined,
   });
+  assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', 'plan']).permissionModeOverride, 'plan');
+  assert.equal(parseCliArgs(['--permission-mode', 'plan']).permissionModeOverride, 'plan');
+  assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', 'plan', '--yolo']).permissionModeOverride, 'yolo');
   assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', 'auto', '--yolo']).permissionModeOverride, 'yolo');
   assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', 'bogus', '--yolo']).permissionModeOverride, 'yolo');
   assert.equal(parseCliArgs(['-p', 'x', '--yolo', '--permission-mode', 'bogus']).permissionModeOverride, 'yolo');
@@ -106,6 +115,7 @@ async function parserContracts(): Promise<void> {
 
 async function outputContracts(): Promise<void> {
   header('headless output and immediate denial');
+  assert.equal(formatHeadlessPermissionMode('plan'), 'permission-mode: plan');
   const stderr: string[] = [];
   const bridge = createHeadlessPermissionBridge((text) => stderr.push(text));
   const decision = await bridge({

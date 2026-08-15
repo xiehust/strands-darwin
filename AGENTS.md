@@ -63,8 +63,10 @@ project relies on (and the runnable script that proves it) is recorded there.
 **Permissions** (`src/agent/permission.ts`): a `PermissionGate extends InterventionHandler`
 classifies each tool call by `(toolName, input)` — not name alone, because `fileEditor` spans
 read and write in one tool — and unknown tools (all MCP tools) fail closed as `execute`.
-Denial uses `InterventionActions.deny(...)`, never `confirm()`. The UI side is a
-`PermissionBridge` (async request → `PermissionDecision`): the Ink `PermissionQueue`
+`plan` mode is enforced before risk, allow rules, classifier, bridge, and configured Pre hooks:
+reads proceed, while writes/executes deterministically deny. The same composed intervention
+protects child agents. Denial uses `InterventionActions.deny(...)`, never `confirm()`. The UI
+side is a `PermissionBridge` (async request → `PermissionDecision`): the Ink `PermissionQueue`
 implements it today; `allowAllBridge` exists for non-interactive runs. On turn cancel,
 release prompts with `denyPending()` — `close()` latches shut and silently denies everything
 afterward.

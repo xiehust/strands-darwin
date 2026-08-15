@@ -90,6 +90,10 @@ interface GateRun {
   asked: AssessedPermissionRequest[];
 }
 
+function actionReason(action: GateRun['action']): string {
+  return action.reason ?? '';
+}
+
 async function runGate(
   options: Partial<PermissionGateOptions> & { mode: PermissionGateOptions['mode'] },
   toolName: string,
@@ -135,6 +139,46 @@ async function gateModes(): Promise<void> {
 
   run = await runGate({ mode: 'yolo' }, 'mcp__anything__at_all', {});
   assert('unknown tool proceeds without asking', run.action.type === 'proceed' && run.asked.length === 0);
+
+  header('gate — plan mode');
+
+  run = await runGate({ mode: 'plan' }, 'fileEditor', { command: 'view', path: `${ROOT}/src/index.ts` });
+  assert('read-classified calls proceed without asking', run.action.type === 'proceed' && run.asked.length === 0);
+
+  run = await runGate(
+    { mode: 'plan', allowRules: ['fileEditor'] },
+    'fileEditor',
+    { command: 'str_replace', path: `${ROOT}/src/index.ts`, old_str: 'a', new_str: 'b' },
+  );
+  assert('a statically safe write is denied before an allow rule', run.action.type === 'deny' && run.asked.length === 0);
+  assert(
+    'write denial is actionable and names plan mode',
+    actionReason(run.action).includes('Plan mode blocked this write call') &&
+      actionReason(run.action).includes('run outside plan mode'),
+  );
+
+  let planClassifierCalls = 0;
+  const planClassifier: SafetyClassifier = async () => {
+    planClassifierCalls += 1;
+    return { safe: true, reason: 'approve everything' };
+  };
+  run = await runGate(
+    { mode: 'plan', classifier: planClassifier, allowRules: ['bash'] },
+    'bash',
+    SAFE_BASH,
+  );
+  assert(
+    'execute is denied before prompt, classifier, and broad allow rule',
+    run.action.type === 'deny' && run.asked.length === 0 && planClassifierCalls === 0,
+  );
+  assert('execute denial identifies its kind and tool', actionReason(run.action).includes('execute call to bash'));
+
+  run = await runGate(
+    { mode: 'plan', allowRules: ['mcp__anything__at_all'] },
+    'mcp__anything__at_all',
+    {},
+  );
+  assert('unknown/MCP tools remain fail-closed as execute', run.action.type === 'deny' && run.asked.length === 0);
 
   header('gate — auto mode');
 

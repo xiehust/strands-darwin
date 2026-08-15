@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Check intervention ordering, no bypass, and shared-child enforcement."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Check fail-closed behavior and user-actionable wording."}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Check pty assertions, effective header, and frame-height discipline."}
+{"file":"docs/research/research_2026-08-15.md","reason":"Check implementation against SER-001 acceptance without modifying Host outcome fields."}

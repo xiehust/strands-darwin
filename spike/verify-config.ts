@@ -385,13 +385,16 @@ async function permissionModes(): Promise<void> {
   assert('a valid permissionMode is accepted', auto.permissionMode === 'auto');
   assert('classifierModel is carried through', auto.classifierModel === 'us.anthropic.claude-haiku-4-5');
 
+  const plan = await loadConfig(await writeConfig('{ "permissionMode": "plan" }'));
+  assert('plan is accepted', plan.permissionMode === 'plan');
+
   const yolo = await loadConfig(await writeConfig('{ "permissionMode": "yolo" }'));
   assert('yolo is accepted', yolo.permissionMode === 'yolo');
 
   const badMode = await expectConfigError('an unknown permissionMode is rejected', async () =>
     loadConfig(await writeConfig('{ "permissionMode": "strict" }')),
   );
-  assert('the error lists the valid modes', /default, auto, yolo/.test(badMode));
+  assert('the error lists the valid modes', /default, auto, plan, yolo/.test(badMode));
 
   await expectConfigError('an empty classifierModel is rejected', async () =>
     loadConfig(await writeConfig('{ "classifierModel": "" }')),

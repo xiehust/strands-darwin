@@ -221,7 +221,7 @@ leaves `region` unset on the Bedrock entries, so `AWS_REGION` still decides wher
 | `maxTokens` | `64000` | |
 | `summaryRatio` | `0.8` | fraction of old messages summarized on context overflow |
 | `preserveRecentMessages` | `10` | messages the summarizer always keeps verbatim |
-| `permissionMode` | `default` | `default`, `auto` or `yolo` — see [Permissions](#permissions) |
+| `permissionMode` | `default` | `default`, `auto`, `plan` or `yolo` — see [Permissions](#permissions) |
 | `permissionRules` | — | wildcard rules that pre-approve calls; written by the prompt's "always allow" — see [Remembering an answer](#remembering-an-answer) |
 | `promptCache` | `true` | prompt caching, Claude only — see [Prompt caching](#prompt-caching) |
 | `promptCacheTtl` | provider default (5m) | `5m` or `1h`, applied to every cache point |
@@ -351,17 +351,26 @@ guarantee.
 
 ## Permissions
 
-darwin runs in one of three approval modes, set by `permissionMode` in
+darwin runs in one of four approval modes, set by `permissionMode` in
 `~/.darwin/config.json` or per run with `--permission-mode <mode>` (`--yolo` is shorthand):
 
 | Mode | Behaviour |
 |---|---|
 | `default` | statically *provably safe* calls run silently; everything else prompts |
 | `auto` | like `default`, but a model classifier judges the calls static rules could not clear — only classifier-flagged calls prompt |
+| `plan` | only read-classified calls run; writes and executes are denied without prompts, classifier calls, allow-rule bypass, or configured hook execution |
 | `yolo` | nothing prompts (the header warns you) |
 
 "Provably safe" is a whitelist, checked against both the tool's name and its arguments
 (one tool can span read and write):
+
+`plan` is enforced from the same `(toolName, input)` classification used by every other mode,
+not from prompt wording. `fileEditor view`, skill loading, background-task inspection, and
+subagent delegation can proceed; `fileEditor` mutation, any command-bearing `bash` call, and
+unknown/MCP tools are denied. The parent and every child share the intervention. If project
+`PreToolUse` hooks are configured, a blocked plan call is rejected before their shell commands
+run. Stored allow rules remain on disk for later modes, but the plan header marks them ignored.
+Headless runs report the effective post-override value as `permission-mode: plan` on stderr.
 
 | Call | Statically safe? |
 |---|---|

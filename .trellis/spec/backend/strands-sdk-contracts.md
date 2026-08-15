@@ -107,6 +107,83 @@ class PermissionGate extends InterventionHandler {
 must default to `execute` (gated) and are never statically safe. See `classify()` /
 `assessRisk()` in `src/agent/permission.ts`.
 
+## Scenario: enforced read-only planning permission mode
+
+### 1. Scope / Trigger
+
+Use this contract for `permissionMode: "plan"` or `--permission-mode plan`. It is a permission
+policy on the existing SDK intervention, not a planning prompt, sandbox, or separate agent loop.
+
+### 2. Signatures
+
+```text
+ApprovalMode = default | auto | plan | yolo
+PermissionGate.planGuard(toolName: string, input: unknown): InterventionAction | undefined
+stderr: ^permission-mode: (default|auto|plan|yolo)$
+TUI: mode: plan — read-only; write and execute calls are denied
+```
+
+### 3. Contracts
+
+- Classify by `(toolName, input)`: `read` continues to the ordinary flow;
+  `write`/`execute` deterministically deny.
+- Run the plan guard before risk approval, wildcard rules, the `auto` classifier, and the
+  permission bridge. Unknown/MCP tools remain `execute`; no rule can widen plan.
+- The denial tells the model to continue with read-only inspection or ask the user to leave plan.
+- `ToolHookGate` invokes only this narrow guard before `PreToolUse`. A blocked call causes no hook
+  shell execution. Calls it does not deny, and every non-plan mode, retain
+  Pre -> full permission -> body -> Post ordering.
+- Parent and child agents receive the same composed intervention. `subagent` delegation itself is
+  read-classified, but the child's writes/executes encounter the shared guard.
+- TUI uses its existing mode row and marks loaded allow rules ignored. Headless startup writes the
+  effective post-override mode once runtime construction succeeds.
+
+### 4. Validation & Error Matrix
+
+| Input/state | Result |
+|---|---|
+| `plan` + `fileEditor view`/other read | Proceed through the ordinary gate; no plan denial |
+| `plan` + in-project write, even statically safe | Deny before risk/rules/bridge |
+| `plan` + bash command, even read-like command/rule | Deny as `execute` before rules/classifier/bridge |
+| `plan` + unknown/MCP tool | Deny as fail-closed `execute` |
+| `plan` + configured Pre/Post hooks on blocked call | Run neither hook nor body |
+| Child write/execute | Same denial as parent; no child-specific escape |
+| CLI mode conflicts with configured mode | CLI value is effective; explicit `--yolo` keeps legacy precedence |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** plan delegates repository research; parent/child views run, mutation denies without a
+  prompt, classifier cost, rule bypass, or hook side effect.
+- **Base:** `default`, `auto`, and `yolo` retain their existing order and behavior.
+- **Bad:** checking plan after static risk lets in-project writes through; checking after Pre hooks
+  mutates external state before denying; removing child tools instead of sharing the intervention
+  diverges parent/child enforcement and bypasses the SDK extension seam.
+
+### 6. Tests Required
+
+- `spike/verify-permission-modes.ts`: read proceeds; safe write, bash execute, and unknown tool
+  deny; zero prompt/classifier calls; broad rules do not bypass; denial is actionable.
+- `spike/verify-tool-hooks.ts`: blocked call runs no Pre/Post/body while existing ordering tests
+  stay green.
+- `spike/verify-subagents.ts`: a child execute is denied without bridge or body execution.
+- `spike/verify-config.ts` / `spike/verify-headless.ts`: configured/CLI selection, yolo precedence,
+  and stable diagnostic formatting.
+- `spike/verify-tui.ts plan`: network-free real-pty effective-header scenario with bounded exit.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: rules, classifier, prompt, or Pre hook can run before enforced planning.
+await runPreHooks(event);
+return permissionGate.beforeToolCall(event);
+
+// CORRECT: only the narrow plan denial precedes Pre; every allowed call keeps old ordering.
+const guarded = permissionGate.planGuard(event.toolUse.name, event.toolUse.input);
+if (guarded !== undefined) return guarded;
+await runPreHooks(event);
+return permissionGate.beforeToolCall(event);
+```
+
 ### Contract: one-shot model calls via `Model.streamAggregated()`
 
 For a single classification-style call (no tools, no session, no agent loop) do NOT build
@@ -515,9 +592,10 @@ stdout is an atomic result channel, and stderr is bounded progress/diagnostics.
 ```text
 darwin -p|--print <message>
   [--continue|--resume|--session <id>]
-  [--permission-mode default|auto|yolo|--yolo]
+  [--permission-mode default|auto|plan|yolo|--yolo]
 
 stderr: ^session: ([a-z0-9_-]+)$
+stderr: ^permission-mode: (default|auto|plan|yolo)$
 exit: 0 success; 1 runtime/turn/persistence/cleanup/interruption; 2 CLI usage
 ```
 

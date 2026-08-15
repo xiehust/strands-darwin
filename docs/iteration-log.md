@@ -114,3 +114,19 @@ the existing max-file-byte truncation warnings for the large SDK contract spec, 
 |---|---|---|
 | 2026-08-15 | `f905229` | Add the built-in self-evolution research workflow, persistent ranked backlog/report contracts, required-built-in verification, and concise product/spec documentation |
 | 2026-08-15 | `731003e` | Normalize developer usage into independently costed input, cache-read, cache-write, and output buckets |
+
+### Batch 5 — enforced read-only planning mode (2026-08-15)
+
+SER-001 runs in child session `session-20260815-152031521`. The first managed launch,
+`bg-14a78197-3457-4dec-ab4d-3655ea301b79`, was denied by permissions before any model call,
+session record, or usage record. The planning task
+`bg-6bc36836-0776-42d9-9e55-bbfbe6b940d6` then succeeded. Repository work is tracked in the
+single Trellis task `08-15-ser-001-plan-mode`.
+
+The child implemented the Host-approved `plan` permission mode and ran its local focused/full
+validation. Independent Host acceptance is pending; this record intentionally does not claim a
+Host rerun until the Host supplies it.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-15 | pending | Enforce read-only `plan` mode across config/CLI, hooks, parent/child interventions, TUI/headless diagnostics, and focused acceptance |
