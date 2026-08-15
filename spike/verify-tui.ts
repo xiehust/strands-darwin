@@ -12,17 +12,22 @@
  * lands, then sends `/exit` while the agent is still streaming (where input is
  * correctly ignored, so the app never exits).
  *
+ * Every scenario runs against an owned HOME ({@link OWNED_HOME}), so the config,
+ * sessions and allow rules under test are this suite's own and never the
+ * developer's — see the note there before adding a scenario that reads one.
+ *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | cursor | completion | backgroundDetails |
  *                 agentsMd | usage | tasks | effort | model
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import process from 'node:process';
 import path from 'node:path';
 
-import { darwinDir } from '../src/paths.js';
-import { permissionRulesPath } from '../src/config.js';
+import { darwinDir, DARWIN_DIRNAME } from '../src/paths.js';
+import { CONFIG_FILENAME, permissionRulesPath } from '../src/config.js';
 import { AGENTS_DIRNAME } from '../src/agents/loader.js';
 import { COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
 import { SKILLS_DIRNAME } from '../src/skills/loader.js';
@@ -33,6 +38,32 @@ import { assert, header, report } from './shared.js';
 const EXIT_TIMEOUT_MS = 30_000;
 
 const WORK_DIR = '/tmp/darwin-tui';
+
+/**
+ * A HOME this suite owns, repointed before anything resolves one.
+ *
+ * Load-bearing since the config moved to `~/.darwin/config.json`: pty children
+ * inherit this process's environment, so without an owned HOME the `effort` and
+ * `model` scenarios would rewrite the developer's real config — and read back a
+ * project-local file nothing writes any more. Repointing HOME here rather than
+ * passing a per-child env override is deliberate: the in-process path helpers
+ * (`permissionRulesPath()`, {@link HOME_CONFIG}) then name exactly where the TUI
+ * under test writes, which is what makes those assertions faithful.
+ */
+const OWNED_HOME = '/tmp/darwin-tui-home';
+/** The config file the TUI under test reads, inside {@link OWNED_HOME}. */
+const HOME_CONFIG = path.join(OWNED_HOME, DARWIN_DIRNAME, CONFIG_FILENAME);
+/** How the TUI names that file in a notice — `~` is literal on screen. */
+const HOME_CONFIG_LABEL = `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}`;
+
+const REAL_HOME = os.homedir();
+process.env['HOME'] = OWNED_HOME;
+// This suite makes real model calls, and an owned HOME hides `~/.aws` from the
+// credential chain. Pointed back at the developer's own files (harmless when they
+// do not exist, as on an instance role) so isolation cannot cost authentication.
+process.env['AWS_CONFIG_FILE'] ??= path.join(REAL_HOME, '.aws', 'config');
+process.env['AWS_SHARED_CREDENTIALS_FILE'] ??= path.join(REAL_HOME, '.aws', 'credentials');
+
 /**
  * The gated file lives OUTSIDE the project root on purpose: in the `default`
  * permission mode an in-project edit is statically safe and never prompts, so
@@ -59,6 +90,24 @@ async function resetWorkDir(): Promise<void> {
   await rm(TARGET_DIR, { recursive: true, force: true });
   await mkdir(TARGET_DIR, { recursive: true });
   await writeFile(TARGET, BUGGY, 'utf8');
+  // Only the config, not the whole owned HOME: sessions live there too, and the
+  // `alwaysAllow` scenario deliberately reads back what its first session wrote.
+  // Removed rather than left in place so a scenario that says nothing about models
+  // really does run on the built-in defaults, whatever an earlier one persisted.
+  await mkdir(path.dirname(HOME_CONFIG), { recursive: true });
+  await rm(HOME_CONFIG, { force: true });
+  // Every scenario shares WORK_DIR, so they share its project key — and an allow
+  // rule outlives the directory it was granted in. Left behind, the rule
+  // `alwaysAllow` writes silences the permission prompt every later scenario is
+  // waiting for. Resolved after the mkdir above: the key canonicalizes through
+  // realpath, which needs WORK_DIR to exist.
+  await rm(permissionRulesPath(WORK_DIR), { force: true });
+}
+
+/** Writes {@link HOME_CONFIG} — the only config the TUI under test will read. */
+async function writeHomeConfig(config: unknown): Promise<void> {
+  await mkdir(path.dirname(HOME_CONFIG), { recursive: true });
+  await writeFile(HOME_CONFIG, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 }
 
 async function approvePath(): Promise<void> {
@@ -74,7 +123,10 @@ async function approvePath(): Promise<void> {
     await tui.waitFor('/exit to quit', { timeoutMs: 60_000 });
     await tui.waitFor('you>', { timeoutMs: 60_000 });
     assert('TUI rendered its header', tui.screen.includes('/exit to quit'));
-    assert('provider and session are shown', /bedrock\/us\.anthropic/.test(tui.screen));
+    // The inference-profile prefix is deliberately not pinned: this asserts that the
+    // header names the provider and a Bedrock Claude model, not which one the
+    // built-in defaults happen to select.
+    assert('provider and session are shown', /bedrock\/(us|eu|apac|global)\.anthropic\./.test(tui.screen));
     // On the model line, not a line of its own: the header shares the frame with
     // the permission box, and one extra line pushes the box off a 50-row terminal.
     assert('prompt caching is shown as on', tui.screen.includes('· cache on'));
@@ -156,11 +208,10 @@ async function alwaysAllowRule(): Promise<void> {
   // Resolved after resetWorkDir(): the project key canonicalizes through
   // realpath, which needs WORK_DIR to exist. The scenario child inherits this
   // process's HOME, so computing the path in-process is faithful to where the
-  // TUI under test actually writes.
+  // TUI under test actually writes. resetWorkDir() has already removed it — the
+  // second session below asserts exactly one rule is live, so a rule left by an
+  // earlier scenario or an earlier run would fail that.
   const rulesFile = permissionRulesPath(WORK_DIR);
-  // Only this project key's rules file: the second session asserts exactly one
-  // rule is live, so a rule left by an earlier run would fail a rerun.
-  await rm(rulesFile, { force: true });
   const tui = startTui({ cwd: WORK_DIR });
   const expectedRule = `fileEditor:${TARGET_DIR}/**`;
 
@@ -1001,20 +1052,24 @@ function awaitsPermission(screen: string): boolean {
 /**
  * `/effort` has to prove four things a unit test cannot: the level reaches the
  * header, changing it costs no turn, the change is written to
- * `.darwin/config.json` where the next session will read it, and a level the model
- * cannot serve is clamped visibly instead of failing the next request.
+ * `~/.darwin/config.json` where the next session will read it, and a level the
+ * model cannot serve is clamped visibly instead of failing the next request.
  *
- * Runs in a temp directory with no config file, so the default model
- * (`us.anthropic.claude-sonnet-4-6`) is in play — which is exactly the model that
- * serves adaptive thinking but not `xhigh`, making the clamp observable. It must
- * NOT run in REPO_ROOT: this scenario writes a config file.
+ * Pins `us.anthropic.claude-sonnet-4-6` in {@link HOME_CONFIG} rather than leaning
+ * on the built-in defaults: the clamp is only observable on a model that serves
+ * adaptive thinking but not `xhigh`, and the default model is an Opus-tier one that
+ * accepts the whole ladder. Writing the config also proves `/effort` edits a file
+ * the user already has, not just one it creates.
  */
 async function effortCommand(): Promise<void> {
   header('TUI — /effort sets thinking depth');
 
   await resetWorkDir();
+  // Flat form on purpose: `/effort` then has to write the root key, which is the
+  // shape a first-time user's file has.
+  await writeHomeConfig({ provider: 'bedrock', model: 'us.anthropic.claude-sonnet-4-6' });
   const tui = startTui({ cwd: WORK_DIR });
-  const configFile = path.join(WORK_DIR, '.darwin', 'config.json');
+  const configFile = HOME_CONFIG;
 
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
@@ -1034,7 +1089,7 @@ async function effortCommand(): Promise<void> {
     tui.submit('/effort low');
     await tui.waitFor('saved to', { timeoutMs: 30_000, from: beforeSet, settleMs: 400 });
     assert('the new level is confirmed', tui.screen.slice(beforeSet).includes('thinking effort: low'));
-    assert('…and reported as persisted', tui.screen.slice(beforeSet).includes('saved to .darwin/config.json'));
+    assert('…and reported as persisted', tui.screen.slice(beforeSet).includes(`saved to ${HOME_CONFIG_LABEL}`));
     assert('the header follows the change', tui.screen.slice(beforeSet).includes('· effort low'));
 
     const saved = JSON.parse(await readFile(configFile, 'utf8')) as Record<string, unknown>;
@@ -1078,7 +1133,7 @@ async function effortCommand(): Promise<void> {
 /**
  * `/model` has to prove five things a unit test cannot: the catalogue reaches the
  * screen with the live entry marked, switching costs no turn, the header follows
- * the switch, the new switch state is written to `.darwin/config.json`, and an
+ * the switch, the new switch state is written to `~/.darwin/config.json`, and an
  * argument that resolves to nothing changes nothing.
  *
  * Deliberately makes no model calls at all — `/model` never sends anything — so
@@ -1086,28 +1141,20 @@ async function effortCommand(): Promise<void> {
  * the same reason; the cross-provider switch is proven against real models in
  * `spike/verify-model-command.ts --live`.
  *
- * Writes a config file, so it must NOT run in REPO_ROOT.
+ * Writes its own two-entry catalogue rather than using the preset one, so the
+ * assertions describe a file a reader can see here.
  */
 async function modelCommand(): Promise<void> {
   header('TUI — /model switches between configured models');
 
   await resetWorkDir();
-  const configFile = path.join(WORK_DIR, '.darwin', 'config.json');
-  await mkdir(path.dirname(configFile), { recursive: true });
-  await writeFile(
-    configFile,
-    JSON.stringify(
-      {
-        models: [
-          { enable: true, name: 'fast', provider: 'bedrock', model: 'us.anthropic.claude-sonnet-4-6' },
-          { enable: false, name: 'deep', provider: 'bedrock', model: 'global.anthropic.claude-opus-5' },
-        ],
-      },
-      null,
-      2,
-    ),
-    'utf8',
-  );
+  const configFile = HOME_CONFIG;
+  await writeHomeConfig({
+    models: [
+      { enable: true, name: 'fast', provider: 'bedrock', model: 'us.anthropic.claude-sonnet-4-6' },
+      { enable: false, name: 'deep', provider: 'bedrock', model: 'global.anthropic.claude-opus-5' },
+    ],
+  });
 
   const tui = startTui({ cwd: WORK_DIR });
 
@@ -1130,7 +1177,7 @@ async function modelCommand(): Promise<void> {
     await tui.waitFor('saved to', { timeoutMs: 30_000, from: beforeSwitch, settleMs: 400 });
     const switched = tui.screen.slice(beforeSwitch);
     assert('the switch is confirmed by name', switched.includes('deep'));
-    assert('…and reported as persisted', switched.includes('saved to .darwin/config.json'));
+    assert('…and reported as persisted', switched.includes(`saved to ${HOME_CONFIG_LABEL}`));
     // Sliced, not searched whole: the startup frame named the old model, so an
     // unsliced assertion would pass without the header ever following.
     assert('the header follows the switch', switched.includes('bedrock/global.anthropic.claude-opus-5'));
@@ -1202,6 +1249,12 @@ async function main(): Promise<void> {
   const names = (
     only !== undefined && only in SCENARIOS ? [only] : Object.keys(SCENARIOS)
   ) as (keyof typeof SCENARIOS)[];
+
+  // One clean owned HOME per run: a config, session or allow rule left by an
+  // earlier run must not be what a scenario ends up asserting against.
+  await rm(OWNED_HOME, { recursive: true, force: true });
+  await mkdir(OWNED_HOME, { recursive: true });
+  console.log(`  (HOME for this run: ${OWNED_HOME})`);
 
   for (const name of names) {
     const started = Date.now();

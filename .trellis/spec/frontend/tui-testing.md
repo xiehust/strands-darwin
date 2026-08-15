@@ -273,6 +273,34 @@ itself still worked. Add startup state as a suffix on an existing line (the mode
 whole new lines for rare warnings, and re-run `verify-tui.ts approve` after touching the
 header: it is the only check that sees the header and the box in the same frame.
 
+## Contract: the pty suite owns HOME, and resets what a project key carries
+
+Darwin's config, sessions and allow rules are **user-global** (`~/.darwin/…`, project-keyed
+under `~/.darwin/projects/<key>/`), and a pty child inherits the harness's environment. So
+`verify-tui.ts` repoints `process.env.HOME` at an owned temp dir *at module load*, before
+anything resolves a home:
+
+- Repoint HOME in the harness, not per child. In-process helpers (`permissionRulesPath()`,
+  the config path) then name exactly the file the TUI under test writes — which is what
+  makes reading it back an assertion rather than a guess.
+- An owned HOME hides `~/.aws`, and this suite makes real model calls. Point
+  `AWS_CONFIG_FILE` / `AWS_SHARED_CREDENTIALS_FILE` back at the real home (harmless when
+  absent, as on an instance role) so isolation cannot cost authentication.
+- Scenarios that need a config **write it** into the owned HOME instead of relying on the
+  built-in defaults, which move: the `/effort` clamp assertions only hold on a model that
+  serves adaptive thinking but not `xhigh`, and they silently stopped holding the day the
+  default model became an Opus-tier one. For the same reason, header assertions should not
+  pin the inference-profile prefix (`/bedrock\/(us|eu|apac|global)\.anthropic\./`, not
+  `bedrock/us.anthropic`).
+- `resetWorkDir()` must clear **everything the shared project key carries**, not just the
+  work tree: the allow rule `alwaysAllow` writes outlives the directory it was granted in,
+  and left behind it silences the very prompt `cancelThenContinue` waits for (a 240s timeout,
+  three scenarios later, with nothing on screen to suggest why).
+
+Two symptoms that mean this contract is broken: a scenario reading a config from
+`<workdir>/.darwin/config.json` (nothing writes there any more), and a notice assertion
+missing the `~/` the TUI actually prints (`saved to ~/.darwin/config.json`).
+
 ## Scenario checklist for agent-driven flows
 
 Model-driven turns choose their own tool order, so scripted prompt sequences are fragile.
