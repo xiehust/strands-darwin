@@ -199,6 +199,18 @@ export interface SessionFields {
   contextOffload?: boolean;
   /** Token threshold above which a tool result is offloaded. SDK default: 2500. */
   maxResultTokens?: number;
+  /**
+   * Record an append-only trajectory of every turn to
+   * `~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl`, powering
+   * `darwin trajectory search|replay|fork` and `/trajectory`. On by default.
+   *
+   * On by default where `contextOffload` is off by default for a reason worth
+   * stating: offloading changes what the model sees, while recording changes
+   * nothing at all about a turn — it is an observer whose failures degrade to a
+   * notice. Snapshots and background logs are likewise written unconditionally.
+   * Set `false` to write nothing; the caps are in `src/trajectory/record.ts`.
+   */
+  trajectory?: boolean;
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
   /** Deprecated policy fields retained on the type for migration fixtures only. */
@@ -252,6 +264,7 @@ const SESSION_KEYS = [
   'contextWarnRatio',
   'contextOffload',
   'maxResultTokens',
+  'trajectory',
   'systemPrompt',
 ] as const;
 
@@ -759,6 +772,12 @@ function validateSessionFields(input: Record<string, unknown>, configPath: strin
   // opt-in until it has been exercised against a live provider.
   const contextOffload = booleanField(input, 'contextOffload', configPath);
   if (contextOffload !== undefined) fields.contextOffload = contextOffload;
+
+  // On unless switched off, unlike offloading above: recording changes nothing the
+  // model sees. Stored rather than defaulted away so `false` stays distinguishable
+  // from absent for anything that reports what a run is doing.
+  const trajectory = booleanField(input, 'trajectory', configPath);
+  if (trajectory !== undefined) fields.trajectory = trajectory;
 
   // Only meaningful with offloading on, and rejected otherwise rather than
   // ignored: a threshold the user believes is in effect but is not would look

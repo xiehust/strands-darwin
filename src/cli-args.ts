@@ -12,6 +12,13 @@ export class CliUsageError extends Error {
 export interface CliOptions {
   /** Present only for one-shot/headless mode. */
   prompt: string | undefined;
+  /**
+   * Which conversation to open. `--session <id>` is accepted in both modes: an id
+   * is alphabet-validated here and `resolveSession` refuses one with no persisted
+   * snapshot, so the old "headless only" restriction guarded nothing — and a forked
+   * session, whose id exists only on stdout, would otherwise be impossible to open
+   * in the TUI. `--continue` remains headless-only; `--resume` is its TUI spelling.
+   */
   session: SessionSelector;
   permissionModeOverride: ApprovalMode | undefined;
 }
@@ -98,9 +105,6 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
     }
   }
 
-  if (prompt === undefined && sessionId !== undefined) {
-    throw new CliUsageError('--session is available only with -p/--print.');
-  }
   if (prompt === undefined && continueRequested) {
     throw new CliUsageError('--continue is available only with -p/--print; use --resume for the TUI.');
   }

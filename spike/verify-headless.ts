@@ -104,11 +104,28 @@ async function parserContracts(): Promise<void> {
     CliUsageError,
   );
   assert.deepEqual(parseCliArgs(['--resume']).session, { kind: 'continue' });
+  // Interactive `--session <id>` is accepted since trajectories became forkable: a
+  // fork's id exists only on stdout, so a TUI that could not be pointed at one would
+  // make the primitive unusable. The guard it replaced was a usage convention, not a
+  // safety property — the alphabet is validated here and `resolveSession` still
+  // refuses an id with no persisted snapshot.
+  assert.deepEqual(parseCliArgs(['--session', 'forked_1']), {
+    prompt: undefined,
+    session: { kind: 'id', sessionId: 'forked_1' },
+    permissionModeOverride: undefined,
+  });
+  assert.deepEqual(parseCliArgs(['--session', 'forked_1', '--yolo']).session, {
+    kind: 'id',
+    sessionId: 'forked_1',
+  });
 
   for (const argv of [
     ['-p'], ['-p', ' '], ['-p', 'x', '--print', 'y'], ['--session'],
     ['-p', 'x', '--session', 'UPPER'], ['-p', 'x', '--session', 'one', '--session', 'two'],
-    ['--continue'], ['--session', 'one'], ['--unknown'], ['bare'],
+    // `--continue` stays headless-only (`--resume` is its TUI spelling), and an
+    // invalid id is still refused in either mode.
+    ['--continue'], ['--session', 'UPPER'], ['--session', 'one', '--session', 'two'],
+    ['--unknown'], ['bare'],
   ]) {
     assert.throws(() => parseCliArgs(argv), CliUsageError, argv.join(' '));
   }

@@ -836,6 +836,41 @@ async function contextOffloadFields(): Promise<void> {
     justAbove.maxResultTokens === OFFLOAD_PREVIEW_TOKENS + 1);
 }
 
+async function trajectoryField(): Promise<void> {
+  header('config — session trajectory recording');
+  const def = await loadConfig(await writeConfig('{}'));
+  // Absent means on: the loader stores only what the file said, so the recorder
+  // treats `undefined` and `true` alike and `false` stays distinguishable.
+  assert('trajectory is absent by default (recording is on)', def.trajectory === undefined);
+
+  const off = await loadConfig(await writeConfig('{ "trajectory": false }'));
+  assert('recording can be switched off', off.trajectory === false);
+  const on = await loadConfig(await writeConfig('{ "trajectory": true }'));
+  assert('recording can be asked for explicitly', on.trajectory === true);
+
+  await expectConfigError('a non-boolean trajectory value is refused', async () =>
+    loadConfig(await writeConfig('{ "trajectory": "yes" }')),
+  );
+
+  // Session-scoped, so it must survive /model and must be refused inside an entry:
+  // recording that silently applied to one model and not another would be a lie the
+  // record itself could not reveal.
+  const withModels = await loadConfig(
+    await writeConfig(
+      '{ "trajectory": false, "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5" }] }',
+    ),
+  );
+  assert('trajectory survives the models array form', withModels.trajectory === false);
+  const misplaced = await expectConfigError('trajectory inside a models entry is refused', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "trajectory": true }] }',
+      ),
+    ),
+  );
+  assert('…and the error names the key', misplaced.includes('trajectory'));
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
@@ -846,6 +881,7 @@ async function main(): Promise<void> {
   await requestTimeout();
   await contextWarnRatioField();
   await contextOffloadFields();
+  await trajectoryField();
   await permissionModes();
   await permissionRules();
   await toolHooks();

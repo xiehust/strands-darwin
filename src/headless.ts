@@ -50,6 +50,21 @@ export function createHeadlessPermissionBridge(writeStderr: (text: string) => vo
 }
 
 /**
+ * One bounded stderr record when the trajectory could not be recorded, or
+ * `undefined` when there is nothing to say.
+ *
+ * Reported because a supervisor that later runs `darwin trajectory replay` on this
+ * session needs to know the record is short — and stays a diagnostic, never an exit
+ * status: recording is an observer, so its failure cannot fail a turn that worked.
+ */
+export function formatHeadlessTrajectoryProblem(
+  status: { problem: string | undefined } | undefined,
+): string | undefined {
+  if (status?.problem === undefined) return undefined;
+  return `trajectory: ${headlessField(status.problem)}`;
+}
+
+/**
  * Consumes exactly one SDK turn and returns its assembled reply. The process
  * orchestrator withholds stdout until runtime cleanup and pointer persistence
  * also succeed, so no failed invocation leaves a plausible partial answer.

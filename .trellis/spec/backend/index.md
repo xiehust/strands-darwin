@@ -15,6 +15,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | Guide | Description | Status |
 |-------|-------------|--------|
 | [Strands SDK Contracts](./strands-sdk-contracts.md) | Tested contracts for `@strands-agents/sdk`: interventions, sessions, MCP, cancellation/exit, Bedrock config, skills plugin, built-in developer and self-evolution workflows | **Filled** |
+| [Session Trajectory](./session-trajectory.md) | The append-only per-session event record, its caps and degradation, and the search / fork / replay primitives — including what replay guarantees and what it does not | **Filled** |
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
 | [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
 | [Error Handling](./error-handling.md) | `ConfigError` boundary, per-domain degradation rules, cleanup mistakes | **Filled** |

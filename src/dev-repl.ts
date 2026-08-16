@@ -147,6 +147,10 @@ async function renderTurn(runtime: AgentRuntime, input: string): Promise<void> {
   }
 
   if (streamingText) process.stdout.write('\n');
+  // Same rule as the TUI's post-turn notice: an observer's failure is reported once,
+  // after the turn, and never changes what the turn did.
+  const trajectoryProblem = runtime.trajectoryStatus?.problem;
+  if (trajectoryProblem !== undefined) console.warn(`  · trajectory: ${trajectoryProblem}`);
   await runtime.markResumable();
 }
 

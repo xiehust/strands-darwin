@@ -49,6 +49,9 @@ import {
 import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
+import { recordStream } from '../trajectory/stream.js';
+import { TrajectoryRecorder, type TrajectoryStatus } from '../trajectory/writer.js';
+import { DARWIN_VERSION } from '../version.js';
 import {
   composeSystemPrompt,
   loadProjectInstructions,
@@ -61,6 +64,7 @@ import {
   createSessionManager,
   resolveSession,
   sessionPaths,
+  trajectoryPath,
   writePointer,
   type SessionSelector,
 } from './session.js';
@@ -192,6 +196,12 @@ export interface RuntimeInfo {
   mcpServerCount: number;
   /** Agent-facing names of every tool registered, MCP tools included. */
   toolNames: string[];
+  /**
+   * Where this session's append-only trajectory is recorded, or undefined when
+   * `trajectory: false` switched recording off. Reported rather than assumed: the
+   * whole point of the record is that something else can read it later.
+   */
+  trajectoryFile: string | undefined;
 }
 
 export class AgentRuntime {
@@ -227,6 +237,8 @@ export class AgentRuntime {
     private readonly gate: PermissionGate,
     private readonly compactionManager: SummarizingConversationManager,
     private readonly preserveRecentMessages: number,
+    /** Undefined when `trajectory: false` switched recording off for this run. */
+    private readonly trajectory: TrajectoryRecorder | undefined,
     readonly info: RuntimeInfo,
   ) {
     this.thinkingPlan = info.thinking;
@@ -382,6 +394,29 @@ export class AgentRuntime {
     const promptCache = planPromptCache(config);
     applySystemPromptCachePoint(agent, promptCache);
 
+    // Built last and given nothing but facts: the recorder is an observer, so it
+    // must not be able to influence assembly. It opens no file here — the first
+    // recorded turn creates it, so a session that never runs one leaves nothing
+    // behind, the same rule `markResumable()` follows for the resume pointer.
+    const thinkingPlan = planThinking(config);
+    const trajectory =
+      config.trajectory === false
+        ? undefined
+        : new TrajectoryRecorder({
+            file: trajectoryPath(options.projectRoot, session.sessionId),
+            run: {
+              session: session.sessionId,
+              agentId: AGENT_ID,
+              darwinVersion: DARWIN_VERSION,
+              provider: config.provider,
+              model: config.model,
+              permissionMode,
+              thinkingEffort: thinkingPlan.effective,
+              resumed: session.restoreRequested && agent.messages.length > 0,
+              restoredMessages: agent.messages.length,
+            },
+          });
+
     return new AgentRuntime(
       agent,
       model,
@@ -395,6 +430,7 @@ export class AgentRuntime {
       gate,
       compactionManager,
       config.preserveRecentMessages,
+      trajectory,
       {
         config,
         permissionMode,
@@ -419,7 +455,7 @@ export class AgentRuntime {
         // Recomputed rather than returned from createModelFromConfig: the model
         // factory needs only the fields, while the header needs the reason a level
         // was clamped. Both come from the same pure planner, so they cannot disagree.
-        thinking: planThinking(config),
+        thinking: thinkingPlan,
         mcpConfigPath: mcp.configPath,
         mcpConfigPaths: mcp.configPaths,
         mcpOverriddenServerNames: mcp.overriddenServerNames,
@@ -428,6 +464,7 @@ export class AgentRuntime {
         mcpIgnoredConfigPath: mcp.ignoredConfigPath,
         mcpServerCount: mcp.clients.length,
         toolNames: agent.tools.map((tool) => tool.name).sort(),
+        trajectoryFile: trajectory?.status.file,
       },
     );
   }
@@ -439,14 +476,35 @@ export class AgentRuntime {
    * Snapshots the accumulated usage before the turn so `lastTurnUsage` can
    * report the delta — including cancelled turns, where the delta reflects
    * whatever model calls completed before the cancel.
+   *
+   * The trajectory recorder observes from between `stream()` and the `yield`, in
+   * {@link recordStream} — a pass-through generator that records synchronously and
+   * cannot throw, so it can neither reorder, delay nor swallow an event, and a
+   * recording failure cannot become a second way for a turn to die. It lives in its
+   * own module so the property can be measured over a real `Agent.stream()`
+   * (`spike/verify-trajectory.ts`) rather than asserted about code only a live model
+   * reaches.
    */
   async *send(input: string): AsyncIterable<AgentStreamEvent> {
     const before = this.usage;
     try {
-      yield* this.agent.stream(input);
+      // The append the recorder schedules at turn end is deliberately not awaited
+      // here; `shutdown()` is where the chain is waited for.
+      yield* recordStream(this.agent.stream(input), this.trajectory?.beginTurn(input));
     } finally {
       this.lastTurnDelta = deltaUsage(before, this.usage);
     }
+  }
+
+  /**
+   * What this run has recorded, or `undefined` when recording is switched off.
+   *
+   * Read rather than pushed: a trajectory problem is worth one notice after the
+   * turn that hit it (where the context-pressure check already lives), not an
+   * observer that could interrupt the frame mid-stream.
+   */
+  get trajectoryStatus(): TrajectoryStatus | undefined {
+    return this.trajectory?.status;
   }
 
   /**
@@ -717,6 +775,10 @@ export class AgentRuntime {
       this.backgroundBash.shutdown(),
       this.stopBashSession(options.throwOnError === true),
       disconnectAll(this.mcpClients, { throwOnError: options.throwOnError === true }),
+      // The one place the append chain is awaited, so the last turn's records are
+      // durable before the process exits. Settled alongside the rest: a record that
+      // cannot be written must not skip process cleanup.
+      this.trajectory?.close() ?? Promise.resolve(),
     ]);
     const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
     if (options.throwOnError === true && failures.length > 0) {

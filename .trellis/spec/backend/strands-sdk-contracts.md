@@ -32,6 +32,64 @@ hides all previous snapshots from resume. The id is the constant `AGENT_ID` in r
 
 ---
 
+## Observing the stream (what darwin measured to record it)
+
+Darwin records an append-only trajectory of every turn. The *policy* — format, caps,
+replay guarantees — is `.trellis/spec/backend/session-trajectory.md`; what follows is only
+what was measured about the SDK to make that possible. All of it is asserted by
+`spike/verify-trajectory.ts`, which makes no model call.
+
+### Contract: `toJSON()` is the safe serialization seam — it excludes `agent` and `invocationState`
+
+Every stream event class declares `toJSON(): Pick<Event, 'type' | …>`
+(`hooks/events.d.ts`, verified on 1.12.0): `MessageAddedEvent` yields `type`/`message`,
+`AfterToolCallEvent` yields `type`/`toolUse`/`result`, and **no** event yields `agent` or
+`invocationState`. So `JSON.stringify(event)` cannot drag the live `Agent`, its whole message
+list, or arbitrary per-invocation objects onto disk. Serialize events that way; a hand-rolled
+field-by-field projection has to be re-audited on every SDK upgrade, and gets this wrong the
+first time an event gains a field.
+
+### Contract: `toJSON()` gives the *wire* shape, which is not the shape a reducer reads
+
+Measured on 1.12.0, and the trap in this area:
+
+| In memory | Serialized by `toJSON()` |
+|---|---|
+| `TextBlock` with `type: 'textBlock'` | `{"text":"…"}` — **no `type` discriminator** |
+| `ToolResultBlock` with `.status`, `.content` | `{"toolResult":{"toolUseId":…,"status":"success","content":[{"text":…}]}}` |
+| `ReasoningBlock` with `type: 'reasoningBlock'` | `{"reasoning":{"text":…,"signature":…}}` |
+
+Two consequences. Anything that filters serialized events by `type === 'reasoningBlock'`
+silently never matches — which is how reasoning text (and `redactedContent`, which *is* the
+reasoning) leaks into a file that believes it strips it; match `'reasoning' in block` instead.
+And feeding a serialized payload back to `src/tui/turn-state.ts` renders nothing and throws on
+the tool result (`content` is one level deeper than it looks). Rehydrate with the SDK's own
+`contentBlockFromData(...)` — the exported mirror of the `toJSON()` used to write it, and the
+only version-proof way back. Measured: it accepts `{ reasoning: { text: '' } }`, so a
+presence-only reasoning record still replays.
+
+### Contract: `for await` + `yield` preserves what `yield*` gives darwin's consumers
+
+`AgentRuntime.send` no longer delegates straight to `agent.stream()`, because a delegation
+cannot be observed from inside. `recordStream` (`src/trajectory/stream.ts`) does
+`for await (… of events) { observe; yield }` and `send` delegates to *that*. Measured with a
+tee over a real `Agent.stream()`: the consumer receives the **identical event objects**, in the
+same order, with nothing added or swallowed; a consumer that `break`s early still closes the
+underlying stream and still reaches the wrapper's `finally`. Keep the observation synchronous —
+an `await` between receiving an event and yielding it would change turn timing, and a throw
+there would become a second way for a turn to fail.
+
+### Gotcha: a child's reasoning already reaches parent context through `AgentResult.toString()`
+
+`SubagentTool` returns `result.toString()`, and that rendering **includes the child's reasoning**
+as `💭 Reasoning:` text (measured). So a child's thinking enters the parent conversation as
+ordinary tool-result text today, independently of any recording — while darwin's *own* model
+reasoning is deliberately never recorded. Nothing in the trajectory layer changes this, and the
+record contains exactly what parent context contains; if that pathway is ever considered wrong,
+it has to be fixed in `SubagentTool`, not by filtering the record.
+
+---
+
 ## Scenario: one-shot max-output-token recovery
 
 `Model.streamAggregated()` throws `MaxTokensError` after it has already yielded the partial
@@ -663,6 +721,16 @@ tool call is silently denied with no prompt shown.
   pointer. All project state resolves against `process.cwd()` via `src/paths.ts`.
 - Write the pointer only after a turn completes (`markResumable()`), so an unused session
   never displaces a useful one.
+- Per-session state is a sibling set under `<sessionsDir>/<sessionId>/`: `background/` logs,
+  `offload/` files, and `trajectory.jsonl` (the append-only record). `src/agent/session.ts`
+  owns every one of those paths; nothing else derives them.
+- `darwin trajectory fork <id>` is the only other writer of `session/<id>/…`, and it writes by
+  **copying bytes** — snapshot verbatim plus `offload/`, never through `SessionManager`, never
+  touching the source or the resume pointer. See `session-trajectory.md` §7.
+- `--session <id>` is valid interactively as well as headlessly. The id alphabet is checked in
+  `cli-args.ts` and `resolveSession` still refuses an id with no persisted snapshot, so the old
+  headless-only restriction protected nothing — and a fork, whose id exists only on stdout,
+  would otherwise be impossible to open in the TUI. `--continue` remains headless-only.
 
 ### Contract: restoring a session replays the system prompt, cache point included
 
@@ -699,14 +767,23 @@ darwin -p|--print <message>
   [--continue|--resume|--session <id>]
   [--permission-mode default|auto|plan|yolo|--yolo]
 
+darwin trajectory <list|search|replay|fork> …    (no model call, no network)
+
 stderr: ^session: ([a-z0-9_-]+)$
 stderr: ^permission-mode: (default|auto|plan|yolo)$
+stderr: ^trajectory: .+$          (only when recording degraded)
 exit: 0 success; 1 runtime/turn/persistence/cleanup/interruption; 2 CLI usage
 ```
 
 `--session` is strict and names an existing project-local snapshot. It takes precedence over
 `--continue`/`--resume`; `--continue` follows `.darwin/last-session.json` and retains the existing
 fresh-session fallback when no usable pointer exists.
+
+The `trajectory` subcommand is routed on `argv[0]` before `parseCliArgs` runs and has its own
+parser (`src/cli-trajectory.ts`), so `CliOptions` keeps exactly the shape every existing
+assertion in `spike/verify-headless.ts` deep-equals. Its exit codes follow the same convention:
+0 for a completed operation — including a search that legitimately found nothing — 1 for a
+missing or unreadable record, 2 for usage.
 
 ### 3. Contracts
 

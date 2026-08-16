@@ -27,6 +27,7 @@ const suites = [
   'verify-prompt-cache.ts',
   'verify-usage.ts',
   'verify-compact.ts',
+  'verify-trajectory.ts',
   'verify-max-tokens-recovery.ts',
   'verify-thinking.ts',
   'verify-model-command.ts',

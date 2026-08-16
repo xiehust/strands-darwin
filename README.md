@@ -70,8 +70,9 @@ if you add native dependencies of your own you will need to extend that list.
 ## Run
 
 ```bash
-pnpm start            # new session
-pnpm start --resume   # continue where you left off
+pnpm start                          # new session
+pnpm start --resume                 # continue where you left off
+pnpm start --session <id>           # open one conversation by id (e.g. a fork)
 ```
 
 ### One-shot / headless mode
@@ -92,11 +93,12 @@ headless run also writes an exact, stable line of this form to stderr:
 session: session-20260814-160833123
 ```
 
-Capture that id to select the same persisted conversation later with `--session <id>`.
-`--session` is strict: the id must use lowercase letters, numbers, hyphens, or underscores and
-must already have a persisted snapshot in this project. It takes precedence over `--continue`
-or the compatible `--resume` alias. `--continue` follows `.darwin/last-session.json` (or starts
-a new conversation when no pointer exists).
+Capture that id to select the same persisted conversation later with `--session <id>`, in
+headless runs or in the TUI. `--session` is strict: the id must use lowercase letters, numbers,
+hyphens, or underscores and must already have a persisted snapshot in this project. It takes
+precedence over `--continue` or the compatible `--resume` alias. `--continue` follows
+`.darwin/last-session.json` (or starts a new conversation when no pointer exists) and is
+headless-only; `--resume` is its TUI spelling.
 
 Headless mode cannot ask for approval, so its default permission bridge immediately denies any
 call that reaches it. Static-safe calls and persisted allow-rules still run; use
@@ -255,6 +257,7 @@ leaves `region` unset on the Bedrock entries, so `AWS_REGION` still decides wher
 | `classifierModel` | per provider | model id for `auto` mode's safety classifier |
 | `requestTimeoutMs` | `180000` | Bedrock only — idle timeout for one streaming request; fails with "Stream timed out because of no activity" when nothing arrives for this long |
 | `systemPrompt` | built-in prompt | replaces the base system prompt; wins over `.darwin/system-prompt.md` — see [System prompt](#system-prompt) |
+| `trajectory` | `true` | record an append-only trajectory of every turn; set `false` to write nothing — see [Session trajectory](#session-trajectory) |
 
 Switching providers is a config change only; no code names a provider.
 
@@ -335,6 +338,58 @@ adaptive thinking at all, and the header says that too.
 
 On the `openai` provider the level becomes `reasoning_effort`, which has no `xhigh` or `max`
 (both clamp to `high`) and is only accepted by reasoning models.
+
+## Session trajectory
+
+Every turn is appended to an **append-only record** beside the session's other state:
+
+```
+~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl
+```
+
+One JSON object per line: the run's model and permission mode, each prompt as it was sent, the
+assembled assistant blocks, every tool call with its input and result, and a per-turn summary
+carrying the stop reason and the counts of the events that were *not* stored. It is on by
+default; set `"trajectory": false` in `~/.darwin/config.json` to record nothing.
+
+The record is bounded, so one huge tool result cannot make it dominate your disk: strings are
+capped at 8,000 characters, a record at 64 KiB, and a session's file at 64 MiB — and every
+truncation is written into the record itself, so a reader can always tell "this is all there
+was" from "this was cut". Reasoning is recorded as presence only, never as text. Bytes already
+written are never rewritten, so an interrupted session leaves a valid prefix rather than a
+corrupt file, and readers report a partial last line instead of hiding it. Recording is an
+observer: if it cannot write, the session keeps working and says so once.
+
+Read it with the `trajectory` subcommand, which makes **no model calls and needs no network**:
+
+```bash
+darwin trajectory list                                  # recorded sessions, newest first
+darwin trajectory search "npm install"                  # substring search across this project
+darwin trajectory search "flaky test" --session <id>     # …or within one session
+darwin trajectory replay <id>                            # the session's history as text
+darwin trajectory replay <id> --turn 3 --json            # one turn, machine-readable
+darwin trajectory fork <id>                              # branch it into a new session
+```
+
+`replay` reconstructs what the session *showed*: your prompts, the assistant's replies, and each
+tool call with its status and result preview. It re-runs nothing — no model call, no tool
+execution, no file or shell action — and it does not reproduce token-level timing, reasoning
+content, bytes a cap removed, or terminal colours. `search` prints `no matches` when a record it
+read contains nothing (exit 0) and tells you plainly when a session has no record at all
+(exit 1), rather than reporting an empty result for a file that was never written.
+
+`fork` copies a session's snapshot — and its offloaded files, and its record as the fork's
+prefix — into a fresh id, then prints that id. The source is left byte-identical and `--resume`
+still points wherever it did, so a fork is a branch, not a move:
+
+```bash
+NEW=$(darwin trajectory fork session-20260816-101112)
+darwin --session "$NEW"            # continue the branch in the TUI
+darwin -p "carry on" --session "$NEW"
+```
+
+Inside a session, `/trajectory` reports what this run has recorded — the file, the record and
+byte counts, any truncation, and any problem — without sending anything to the model.
 
 ## Background bash jobs
 

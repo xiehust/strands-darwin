@@ -76,6 +76,15 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | Runtime shutdown races a background start | Latch closed, await tracked launches, then stop the visible running set | A start must reject before spawn or enter the cleanup snapshot |
 | Background cleanup cannot confirm group exit | Continue cleaning other resources and keep the group in the synchronous process-exit registry | One stubborn group must not skip MCP/bash/subagent cleanup or escape forced exit |
 | Turn cancelled (Ctrl+C) | `agent.cancel()`; stream ends with `stopReason: 'cancelled'`, no throw | Session stays usable; pending prompts released via `denyPending()` |
+| `trajectory` not a boolean | `ConfigError`, refuse to start | Recording the user believes is off (or on) but is not is a disk *and* a privacy surprise, and the record cannot reveal its own absence |
+| Trajectory append fails (EACCES, full disk) | Latch the failure, stop recording for that session, keep the turn and its events untouched; surface once as a TUI `warn` notice after the turn, one bounded `trajectory:` stderr record in headless | Recording is an observer; it may not become a second reason a turn dies. Silence is not an option either — a later `replay` would show a short record with no explanation |
+| Trajectory record formatting throws | Same latch, inside the synchronous observer; the event is still yielded | The caller of `AgentRuntime.send` must not be able to tell that recording exists |
+| Trajectory file reaches its per-session byte budget | Append one `recordingStopped` record, stop recording that session, surface the problem | No session GC exists, so an unbounded record is a real disk risk; stopping with a marker keeps the prefix valid and honest |
+| Payload exceeds a field or record cap | Truncate and record the truncation (path, original size, kept size) | "All there was" and "this was cut" must never be indistinguishable to a reader |
+| Trajectory has a partial trailing line, or an interior malformed line | Skip and count it, report it on every read path, never rewrite the file | An interrupted write is expected in an append-only record; repairing it in place would destroy the only evidence |
+| `trajectory search/replay` names a session with no record | Exit 1 naming the missing record; distinguish "session does not exist" from "session exists but was never recorded" | Zero results for a file that was never written is a lie |
+| `trajectory search` finds nothing in records it did read | Print `no matches`, exit 0 | The search succeeded; only unreadable state is a failure |
+| `trajectory fork` source has no snapshot, or the offload copy fails | Refuse the fork, create nothing, exit 1 | A fork that starts empty, or whose history cites offload references it cannot resolve, is worse than no fork |
 | First `MaxTokensError` in an invocation | Retain its exact `partialMessage`, add an internal no-repeat continuation instruction, and retry the SDK model call once | The provider produced useful output; the supported `AfterModelCallEvent.retry` path preserves the SDK loop and configured thinking effort |
 | Any later `MaxTokensError` in the same invocation | Retain that partial too, do not retry, propagate `MaxTokensError`; invocation snapshot persists all partials | Tool-loop model cycles reset `attemptCount`, so only invocation-scoped state can enforce one bounded continuation without false success |
 
@@ -134,8 +143,8 @@ darwin from starting until the file is restored by hand.
   standalone is exactly when the real config was clobbered.
 - Suites owning HOME today: `verify-config`, `verify-thinking`, `verify-prompt-cache`,
   `verify-prompt-cache-live`, `verify-system-prompt`, `verify-model-command`,
-  `verify-state-layers`, `verify-tui`. Adding a global write to any other suite means adding
-  the call too.
+  `verify-state-layers`, `verify-tui`, `verify-trajectory`. Adding a global write to any other
+  suite means adding the call too.
 
 **Verification**: snapshot `sha256sum ~/.darwin/config.json` and the `~/.darwin/projects/` entry
 count, run the suites directly with the real HOME, and confirm both are unchanged.

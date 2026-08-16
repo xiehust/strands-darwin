@@ -5,8 +5,15 @@ import React, { useRef } from 'react';
 import { builtinCommandDescription } from '../commands/custom-commands.js';
 import type { EditorLayout } from './prompt-editor.js';
 
-/** Completion rows shown at once; sized so all built-ins fit on one screen. */
-const MAX_COMPLETIONS = 8;
+/**
+ * Completion rows shown at once; sized so all nine built-ins fit on one screen.
+ *
+ * Adding a built-in means growing this number, or the last one silently falls off
+ * behind the "… n more" line — a command nobody can see is a command nobody uses.
+ * The list only ever renders in place of the permission box (`App.tsx` shows one or
+ * the other), so this number does not compete with it for frame height.
+ */
+const MAX_COMPLETIONS = 9;
 
 export function InputBox({
   layout,

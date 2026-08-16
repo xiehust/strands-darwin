@@ -25,8 +25,9 @@ baseline exists so there is always a fixed point to measure that evolution again
 ```bash
 pnpm typecheck        # tsc --noEmit — the quality gate (no lint is configured)
 pnpm test             # fast suites only, no model calls, no network
-pnpm start            # run the TUI here; --resume reopens the last session
+pnpm start            # run the TUI here; --resume reopens the last session, --session <id> names one
 pnpm dev-repl         # readline fallback driver for debugging without Ink
+pnpm tsx src/cli.ts trajectory list      # recorded sessions; search|replay|fork read them, no model call
 ```
 
 Model-calling suites are run individually (they hit Bedrock via the EC2 instance role; use
@@ -45,8 +46,10 @@ pnpm tsx spike/verify-model-command.ts --live                  # /model: switch 
 pnpm tsx spike/probe-model-switch.ts                          # what survives handing a conversation to another provider
 ```
 
-`spike/verify-model-command.ts` without `--live` and `spike/verify-tui.ts model` make no model
-calls at all — `/model` never sends anything — so both are free to run.
+`spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model` and
+`spike/verify-tui.ts completion` make no model calls at all, so all three are free to run;
+`completion` is the scenario to re-run after touching the built-in slash commands, since the
+menu row count (`MAX_COMPLETIONS`) has to keep every built-in visible.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
 calls. `spike/` is the test suite, not scratch space.
@@ -146,6 +149,25 @@ observability must never become a second path for child transcript into parent c
 parallelism is scoped to **reads**: concurrent children share one working tree with no isolation
 or conflict detection, so concurrent write delegation is *not* made safe, deliberately and
 documented rather than guarded.
+
+**Session trajectory is an observer, never a participant** (`src/trajectory/`, spec:
+`.trellis/spec/backend/session-trajectory.md`): every turn is appended to
+`~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl` — a sibling of `background/`
+and `offload/`, on by default, `trajectory: false` to switch off. The whole layer hangs off one
+seam: `recordStream` sits between `agent.stream()` and the `yield` in `AgentRuntime.send`, and
+records **synchronously, without I/O, and without being able to throw**, so a recording failure
+cannot reorder an event or fail a turn (measured over a real stream with an identity tee, not
+assumed). Events are serialized through the SDK's own `toJSON()` — the one projection that
+cannot capture the live `Agent` — and read back through `contentBlockFromData`, because
+`toJSON()` emits the *wire* shape, not the shape `turn-state.ts` reads. Three caps bound it
+(8k code points per string, 64 KiB per record, 64 MiB per file) and every truncation is written
+down; a failure latches, stops recording, and surfaces one notice after the turn. Bytes already
+written are never rewritten: a partial trailing line is tolerated, counted and reported, never
+repaired. `darwin trajectory list|search|replay|fork` reads it with **no model call and no
+network** — `src/trajectory/**` constructs no `Agent` and no `Model` at all — and replay reuses
+`turnReducer` so live rendering and replay cannot drift into two projections. `fork` copies bytes
+(snapshot + `offload/` + the record as the fork's prefix) and never touches its source or the
+resume pointer. No subagent event is recorded anywhere; child streams never pass through `send`.
 
 **Paths** (`src/paths.ts`): every `.darwin/` location is derived here from the CLI's cwd.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything

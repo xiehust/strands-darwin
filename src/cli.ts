@@ -2,18 +2,25 @@
 /**
  * `darwin` entry point.
  *
- * Usage: darwin [--resume] [--permission-mode <default|auto|plan|yolo>] [--yolo]
+ * Usage: darwin [--resume|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]
  *        darwin -p <message> [--continue|--resume|--session <id>] [permission flags]
+ *        darwin trajectory <list|search|replay|fork> …
  */
 import process from 'node:process';
 
 import { AgentRuntime } from './agent/runtime.js';
 import { routeSdkLogs } from './agent/sdk-logging.js';
 import { CliUsageError, parseCliArgs, type CliOptions } from './cli-args.js';
+import {
+  isTrajectoryInvocation,
+  parseTrajectoryArgs,
+  runTrajectoryCommand,
+} from './cli-trajectory.js';
 import { ConfigError } from './config.js';
 import {
   createHeadlessPermissionBridge,
   formatHeadlessPermissionMode,
+  formatHeadlessTrajectoryProblem,
   formatHeadlessUsage,
   headlessField,
   runHeadlessTurn,
@@ -22,9 +29,20 @@ import {
 const FORCE_EXIT_AFTER_MS = 500;
 
 async function main(): Promise<void> {
+  // Routed before argument parsing, and before any runtime, model or Ink import
+  // happens: reading a record is a local operation on files, and `replay` must not
+  // be able to reach a provider even by accident. (The structural half of that
+  // guarantee lives in `src/trajectory/**`, which imports no `Agent` and no `Model`
+  // at all; `spike/verify-trajectory.ts` asserts it over the module's import graph.)
+  const argv = process.argv.slice(2);
+  if (isTrajectoryInvocation(argv)) {
+    await runTrajectory(argv.slice(1));
+    return;
+  }
+
   let options: CliOptions;
   try {
-    options = parseCliArgs(process.argv.slice(2));
+    options = parseCliArgs(argv);
   } catch (error) {
     if (error instanceof CliUsageError) {
       process.stderr.write(`error: ${error.message}\n`);
@@ -39,6 +57,25 @@ async function main(): Promise<void> {
     return;
   }
   await runInteractive(options);
+}
+
+async function runTrajectory(argv: readonly string[]): Promise<void> {
+  try {
+    const command = parseTrajectoryArgs(argv);
+    process.exitCode = await runTrajectoryCommand(command, {
+      projectRoot: process.cwd(),
+      out: (text) => process.stdout.write(text),
+      err: (text) => process.stderr.write(text),
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      process.stderr.write(`error: ${error.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
+    process.stderr.write(`error: ${errorMessage(error)}\n`);
+    process.exitCode = 1;
+  }
 }
 
 async function runHeadless(options: CliOptions & { prompt: string }): Promise<void> {
@@ -124,6 +161,13 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
         process.stderr.write(`${formatHeadlessUsage(runtime.usage, runtime.config)}\n`);
       } catch {
         // A meter that cannot be read is not a reason to change the exit status.
+      }
+      // Same rule for the record: an observer's failure is reported, never fatal.
+      try {
+        const problem = formatHeadlessTrajectoryProblem(runtime.trajectoryStatus);
+        if (problem !== undefined) process.stderr.write(`${problem}\n`);
+      } catch {
+        // Reading the recorder's own status must not change the exit path either.
       }
     }
 

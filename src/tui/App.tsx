@@ -31,6 +31,7 @@ import type { AppConfig, ModelChoice } from '../config.js';
 import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
+import type { TrajectoryStatus } from '../trajectory/writer.js';
 import { InputBox } from './InputBox.js';
 import { MessageList } from './MessageList.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
@@ -100,6 +101,8 @@ export function App({
   const [frame, setFrame] = useState(0);
   const interruptedAt = useRef<number | undefined>(undefined);
   const contextWarnLatch = useRef(createContextWarnLatch());
+  /** One trajectory-problem notice per session; the recorder latches the failure itself. */
+  const trajectoryWarned = useRef(false);
 
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(onChange),
@@ -188,6 +191,21 @@ export function App({
         if (notice !== null) dispatch({ type: 'notice', text: notice, severity: 'warn' });
       } catch {
         // best-effort
+      }
+
+      // Same shape for the trajectory: read after the turn, never during it, and at
+      // most once per session. The recorder latches its first failure, so this says
+      // "the record stopped here" exactly when that is news — a session that keeps
+      // working with a short record must not do so silently.
+      const trajectoryProblem = runtime.trajectoryStatus?.problem;
+      if (trajectoryProblem !== undefined && !trajectoryWarned.current) {
+        trajectoryWarned.current = true;
+        dispatch({
+          type: 'notice',
+          text: `trajectory: ${trajectoryProblem}`,
+          // The session is unaffected, so this is a degradation, not a failure.
+          severity: 'warn',
+        });
       }
     },
     [runtime],
@@ -281,6 +299,27 @@ export function App({
             text: `could not estimate context: ${error instanceof Error ? error.message : String(error)}`,
           });
         }
+        return;
+      }
+
+      // Reads the recorder's own counters — no file access, no model call — so it
+      // belongs with the other local reports above the busy check. Read-only by
+      // design: search, fork and replay work over *past* sessions and live on the
+      // `darwin trajectory` subcommand, where their output is not competing with a
+      // live frame for height.
+      if (/^\/trajectory(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/trajectory') {
+          dispatch({ type: 'notice', text: '/trajectory takes no arguments' });
+          return;
+        }
+        dispatch({
+          type: 'notice',
+          text: formatTrajectoryReport(runtime.trajectoryStatus, runtime.info.sessionId),
+          severity: runtime.trajectoryStatus?.problem === undefined ? 'info' : 'warn',
+        });
         return;
       }
 
@@ -780,7 +819,8 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
         </Text>
       ))}
       {/* Extends the existing line rather than adding one: see the frame-height
-          comment above. */}
+          comment above. `/trajectory` is deliberately not listed — the line is full,
+          and the completion menu already advertises it with a description. */}
       <Text dimColor>
         /exit to quit · /tasks lists jobs · /usage for token counts · /effort sets thinking depth · ctrl+c cancels a turn
       </Text>
@@ -876,6 +916,41 @@ function formatLastTurnSection(lastTurn: UsageTotals, config: AppConfig, labelWi
     ...lastDerived.map(({ label, value }) => ({ label, rendered: value ?? 'not reported' })),
   ].map(({ label, rendered }) => `  ${label.padEnd(allLastWidth)}  ${rendered.padStart(12)}`);
   return ['last turn (previous turn)', ...lastLines];
+}
+
+/**
+ * What this session has recorded, or why it has not.
+ *
+ * "This run" is the honest scope for the counters, exactly as in the usage report:
+ * the file may hold earlier runs of the same session (recording continues across
+ * `--resume`), but this process only knows what it appended itself. The reader is
+ * pointed at the file rather than told a total it cannot trust.
+ */
+export function formatTrajectoryReport(
+  status: TrajectoryStatus | undefined,
+  sessionId: string,
+): string {
+  if (status === undefined) {
+    return [
+      'trajectory: not recording (trajectory: false)',
+      `  set "trajectory": true in ~/${DARWIN_DIRNAME}/${CONFIG_FILENAME} to record this session`,
+    ].join('\n');
+  }
+
+  const lines = [
+    status.active ? 'trajectory: recording' : 'trajectory: stopped',
+    `  file              ${status.file}`,
+    `  records this run  ${groupDigits(status.recordsThisRun)}`,
+    `  bytes this run    ${groupDigits(status.bytesThisRun)}`,
+  ];
+  if (status.truncationsThisRun > 0) {
+    // Said out loud: a capped record is still a faithful record of *what happened*,
+    // but not of every byte, and a reader deserves to know before quoting it.
+    lines.push(`  truncated fields  ${groupDigits(status.truncationsThisRun)} (size caps)`);
+  }
+  if (status.problem !== undefined) lines.push(`  problem           ${status.problem}`);
+  lines.push(`  replay it with:   darwin trajectory replay ${sessionId}`);
+  return lines.join('\n');
 }
 
 /** Formats the context reduction from `/compact` without implying billing savings. */

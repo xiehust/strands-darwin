@@ -683,6 +683,26 @@ async function slashCompletion(): Promise<void> {
     await tui.waitFor('/tasks takes no arguments', { timeoutMs: 30_000, from: beforeTasksTabArgument, settleMs: 400 });
     assert('/tasks rejects non-space argument separators locally', !tui.screen.slice(beforeTasksTabArgument).includes('working…'));
 
+    // The trajectory report: a local read of the recorder's own counters, so it must
+    // answer without a model call, and must name the file something else can read.
+    const beforeTrajectory = tui.mark();
+    tui.submit('/trajectory');
+    await tui.waitFor('trajectory: recording', { timeoutMs: 30_000, from: beforeTrajectory, settleMs: 400 });
+    const trajectoryReport = tui.screen.slice(beforeTrajectory);
+    assert(
+      '/trajectory reports the record without starting a turn',
+      trajectoryReport.includes('trajectory: recording') && !trajectoryReport.includes('working…'),
+    );
+    assert('/trajectory names the file it is appending to', trajectoryReport.includes('trajectory.jsonl'));
+    assert('/trajectory says how to replay the session', trajectoryReport.includes('darwin trajectory replay'));
+
+    const beforeTrajectoryArgument = tui.mark();
+    tui.submit('/trajectory extra');
+    await tui.waitFor('/trajectory takes no arguments', { timeoutMs: 30_000, from: beforeTrajectoryArgument, settleMs: 400 });
+    assert(
+      '/trajectory rejects arguments without starting a turn',
+      !tui.screen.slice(beforeTrajectoryArgument).includes('working…'),
+    );
 
     const beforeSlash = tui.mark();
     tui.send('/');
@@ -714,8 +734,8 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /compact is listed', completed.includes('  /compact'));
     assert('the built-in /effort is listed', completed.includes('  /effort'));
     assert('the built-in /exit is listed', completed.includes('  /exit'));
-      assert('the built-in /tasks is listed', completed.includes('  /tasks'));
-
+    assert('the built-in /tasks is listed', completed.includes('  /tasks'));
+    assert('the built-in /trajectory is listed', completed.includes('  /trajectory'));
     assert('the built-in /usage is listed', completed.includes('  /usage'));
     assert(
       'runtime completion order is built-ins, custom commands, then skills',

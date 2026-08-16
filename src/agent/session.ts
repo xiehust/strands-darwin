@@ -7,7 +7,8 @@
  * mapping a working directory onto a home-directory slug, and makes sessions easy
  * to inspect or delete. The cost is two `.gitignore` entries.
  */
-import { access, cp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
+import { access, cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { SessionManager } from '@strands-agents/sdk';
@@ -17,6 +18,8 @@ import { darwinDir, userProjectSessionsDir } from '../paths.js';
 
 const SESSIONS_DIRNAME = 'sessions';
 const POINTER_FILENAME = 'last-session.json';
+/** Per-session append-only event record; a sibling of `background/` and `offload/`. */
+export const TRAJECTORY_FILENAME = 'trajectory.jsonl';
 
 interface SessionPointer {
   sessionId: string;
@@ -50,6 +53,61 @@ function legacySessionPaths(projectRoot: string): SessionPaths {
   };
 }
 
+/** `<sessionsDir>/<sessionId>/trajectory.jsonl`, the append-only event record. */
+export function trajectoryPath(projectRoot: string, sessionId: string): string {
+  return path.join(sessionPaths(projectRoot).sessionsDir, sessionId, TRAJECTORY_FILENAME);
+}
+
+/** The SDK snapshot `--resume` and `--session` restore, for one session and agent. */
+export function snapshotPath(projectRoot: string, sessionId: string, agentId: string): string {
+  return snapshotPathIn(sessionPaths(projectRoot), sessionId, agentId);
+}
+
+/** Directory the SDK owns for one session; the copy source for a fork. */
+export function sessionDir(projectRoot: string, sessionId: string): string {
+  return path.join(sessionPaths(projectRoot).sessionsDir, 'session', sessionId);
+}
+
+/** `<sessionsDir>/<sessionId>`, holding the trajectory, background logs and offload files. */
+export function sessionStateDir(projectRoot: string, sessionId: string): string {
+  return path.join(sessionPaths(projectRoot).sessionsDir, sessionId);
+}
+
+/** Whether this project has a restorable snapshot for `sessionId`. */
+export function hasSnapshot(projectRoot: string, sessionId: string, agentId: string): Promise<boolean> {
+  return snapshotExists(sessionPaths(projectRoot), sessionId, agentId);
+}
+
+/**
+ * Every session id this project has a directory for, newest first.
+ *
+ * Ids are timestamp-prefixed and so sort chronologically, which is why a reverse
+ * lexical sort is the right recency order and no `stat` call is needed. Both
+ * layouts are listed: `session/<id>` is the SDK's snapshot directory, while
+ * `<id>/` holds the trajectory — a session may have either without the other
+ * (recording disabled, or a trajectory from a session whose snapshot was deleted).
+ */
+export async function listSessionIds(projectRoot: string): Promise<string[]> {
+  const paths = sessionPaths(projectRoot);
+  const found = new Set<string>();
+
+  for (const directory of [path.join(paths.sessionsDir, 'session'), paths.sessionsDir]) {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch {
+      // No sessions yet, or an unreadable directory: nothing to list either way.
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === 'session') continue;
+      if (isValidSessionId(entry.name)) found.add(entry.name);
+    }
+  }
+
+  return [...found].sort().reverse();
+}
+
 /**
  * Readable and sortable, e.g. `session-20260813-091422`.
  *
@@ -57,7 +115,7 @@ function legacySessionPaths(projectRoot: string): SessionPaths {
  * underscores, so an ISO timestamp cannot be used verbatim — its `T` and `:`
  * are both rejected.
  */
-function newSessionId(): string {
+export function newSessionId(): string {
   const [date = '', time = ''] = new Date().toISOString().split('T');
   const compactDate = date.replace(/-/g, '');
   const compactTime = time.replace(/[:.Z]/g, '');
@@ -117,7 +175,17 @@ export async function resolveSession(
 }
 
 async function snapshotExists(paths: SessionPaths, sessionId: string, agentId: string): Promise<boolean> {
-  const snapshot = path.join(
+  try {
+    await access(snapshotPathIn(paths, sessionId, agentId));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The one place the snapshot layout is spelled out; both callers derive it here. */
+function snapshotPathIn(paths: SessionPaths, sessionId: string, agentId: string): string {
+  return path.join(
     paths.sessionsDir,
     'session',
     sessionId,
@@ -127,12 +195,6 @@ async function snapshotExists(paths: SessionPaths, sessionId: string, agentId: s
     'snapshots',
     'snapshot_latest.json',
   );
-  try {
-    await access(snapshot);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function migrateLegacySelection(
