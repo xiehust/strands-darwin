@@ -395,3 +395,17 @@ acceptance moved to a worktree.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-16 | `aa2b7b7` | Opt-in per-session `diagnostics.log`: the SDK's `debug`/`info` and every darwin notice, bounded, off by default |
+
+### Batch 11 — permission decisions stay reachable (2026-08-16)
+
+First direction of the TUI self-review batch. Permission details were clipped by source newlines only, so a minified command or replacement could wrap through the live 50-row frame and push the decision controls off screen. The implementation adds presentation-only, marker-inclusive bounds: one line / 160 Unicode code points for summaries and 14 lines / 500 code points for each detail. Short values, including empty and whitespace-only values, remain textually unchanged; raw tool input and permission decisions are untouched.
+
+The pty driver now exposes the latest standard Ink repaint separately from accumulated output, so a safety assertion cannot pass because `allow?` appeared in one old frame while the content appeared in another. The real approval scenario uses an oversized path and replacement, proves the settled 120×50 frame contains provenance, bounded summary/detail, explicit omission markers, y/n and both allow-rule options, then approves and verifies the exact untruncated replacement reached disk.
+
+Child session: `session-20260816-144438648`. Managed tasks: planning `bg-b6de3748-3d35-4ab0-a462-8ec4ab3d8d02` (succeeded), implementation `bg-84997c6a-1edc-4d2b-a589-9aa67167eef6` (succeeded). Token spend: planning `input=22 output=18,419 cacheRead=1,074,849 cacheWrite=172,482`; implementation `input=166 output=22,555 cacheRead=17,238,045 cacheWrite=252,129`; total `input=188 output=40,974 cacheRead=18,312,894 cacheWrite=424,611`.
+
+Host acceptance read the full 13-file commit, confirmed no `docs/research/**` or iteration-log edits came from the child, and re-ran: `pnpm typecheck`; `pnpm test` (29 suites / 1,544 assertions); `spike/verify-permission-presentation.ts` (23 passed); the real Bedrock `spike/verify-tui.ts approve` scenario (21 passed); `git show --check`; Trellis validation; and clean-tree verification. All passed. The only validation warnings state that the append-only research report exceeds Trellis's context-injection cap and will be truncated when injected.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-16 | `0b3822a` | Bound permission summaries/details and prove the complete approval row stays reachable in the settled 120×50 frame |
