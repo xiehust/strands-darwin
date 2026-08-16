@@ -282,6 +282,78 @@ await runPreHooks(event);
 return permissionGate.beforeToolCall(event);
 ```
 
+
+## Scenario: read-only local image inspection
+
+### 1. Scope / Trigger
+
+When ordinary user text names a local PNG, JPEG, GIF, or WebP that the model needs to
+inspect, the model may call the built-in `imageViewer({ path })` tool. TUI and headless remain
+text-only drivers; there is no attachment parser or fork of the SDK loop.
+
+### 2. SDK and Runtime Contracts
+
+- SDK `FunctionTool` passes an `ImageBlock` callback result through as image content inside a
+  successful `ToolResultBlock`. A callback throw becomes an error tool result and does not throw
+  out of the agent loop. `spike/verify-image-viewer.ts` measures both behaviors through
+  `Tool.stream()`, not only through the direct callback.
+- Construct `ImageBlock` with raw `Uint8Array` bytes and one of `png | jpeg | gif | webp`.
+  Normalize `.jpg` to `jpeg`; do not base64-wrap the bytes in prompt text.
+- Sharp is an install-script dependency. Keep it in `pnpm-workspace.yaml`'s `allowBuilds`, and use
+  a release compatible with the repository's Node runtime. Sharp 0.34.x requires Node 20.3+ on
+  the Node 20 line, so the package engine floor must not claim support for earlier Node 20 builds.
+- Register the tool before `agent.initialize()`. It then enters the parent catalogue and the
+  `childTools` snapshot; an explicit project agent tool allowlist must still name `imageViewer`.
+- Classify `imageViewer` as `read`. It proceeds without approval in default/auto/plan/headless,
+  while the ordinary intervention composition still exposes it to configured Pre/Post hooks.
+- Relative paths resolve from the explicit runtime `projectRoot`; absolute paths are used as
+  given. No implementation below the entry points reads `process.cwd()`.
+
+### 3. Image and Resource Contracts
+
+- Bedrock Converse accepts at most 3.75 MiB (`3_932_160` bytes) and 8000 pixels on either edge
+  per image. A compliant static input passes through byte-identically; do not spend CPU or lose
+  detail by re-encoding it.
+- Darwin additionally refuses source files over 50 MiB, reads through one open handle into an
+  allocation capped at that budget plus one sentinel byte, and rejects files that change during
+  the read. Sharp's decode paths carry a 100-megapixel input limit. These are local resource
+  bounds, not provider limits.
+- Parent and child agents share one tool instance, and it serializes Sharp decode/encode work. The
+  SDK may run sibling tool calls concurrently, but a per-image pixel cap is not an aggregate native
+  memory cap; image processing is deliberately the exception to read-heavy child parallelism.
+- Sharp metadata is the content validator: decoded format must agree with the case-insensitive
+  file extension. A renamed payload is an error, not a MIME claim based only on its suffix.
+- Animated GIF input is intentionally flattened to page zero. Any animated input, byte-over-limit
+  input, or dimension-over-limit input is auto-oriented, resized inside 8000×8000 without
+  enlargement, and encoded as WebP.
+- Tool paths are bounded to 4096 characters before filesystem work.
+- Compression is bounded: quality `85, 75, 65, 55, 45, 35` over at most 17 resize rounds, using
+  0.8 dimension steps. Stop with an actionable error rather than loop forever if no result fits
+  before the largest edge would fall below 256 pixels.
+- SDK session snapshots retain media through the SDK's serialization. Trajectory recording may
+  observe base64 image data, but its existing field/record caps truncate and annotate it; never
+  invent a second image persistence format.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Supported, compliant static image | Exact source bytes in a canonical-format `ImageBlock` |
+| Image exceeds byte or dimension limit | Auto-orient, bounded resize/quality ladder, return compliant WebP |
+| Animated GIF | Decode page zero and return one static WebP |
+| Missing/unreadable/directory/empty | Error result naming the resolved path and reason |
+| Unsupported extension or decoded-format mismatch | Error result listing supported formats or naming mismatch |
+| Source > 50 MiB or decoded input > 100 MP | Reject before unbounded decode/work |
+| Configured model has no vision support | Existing model-call/turn failure path; do not guess from arbitrary model ids |
+
+### 5. Tests Required
+
+Run `pnpm tsx spike/verify-image-viewer.ts`. It covers relative/absolute paths, all four
+formats, exact pass-through, byte/dimension normalization, EXIF orientation, animated GIF page
+zero, SDK tool-result wrapping, source/pixel limits, validation errors, and source immutability.
+Also run `verify-permission-modes.ts`, typecheck, the fast suite, and build.
+
+
 ### Contract: one-shot model calls via `Model.streamAggregated()`
 
 For a single classification-style call (no tools, no session, no agent loop) do NOT build

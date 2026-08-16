@@ -4,7 +4,7 @@
   "description": "TUI coding agent built on the Strands TypeScript SDK",
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.3.0"
   },
   "bin": {
     "darwin": "./dist/src/cli.js"
@@ -27,6 +27,7 @@
     "ink": "^7.1.1",
     "openai": "^6.49.0",
     "react": "^19.2.8",
+    "sharp": "^0.34.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -73,6 +73,12 @@ function staticRules(): void {
   header('static risk rules — other tools');
 
   assert('load_skill is safe', riskOf('load_skill', { name: 'x' }).risk === 'safe');
+  assert('imageViewer is safe', riskOf('imageViewer', { path: 'screenshots/error.png' }).risk === 'safe');
+  const imageRequest = classify('imageViewer', { path: 'screenshots/error.png\nspoofed summary' });
+  assert(
+    'imageViewer permission summary remains one line',
+    imageRequest.kind === 'read' && !imageRequest.summary.includes('\n'),
+  );
   assert('subagent delegation is safe', riskOf('subagent', { task: 'inspect', agent: 'general' }).risk === 'safe');
   assert(
     'unknown / MCP tools are dangerous',
@@ -148,6 +154,9 @@ async function gateModes(): Promise<void> {
 
   run = await runGate({ mode: 'plan' }, 'fileEditor', { command: 'view', path: `${ROOT}/src/index.ts` });
   assert('read-classified calls proceed without asking', run.action.type === 'proceed' && run.asked.length === 0);
+
+  run = await runGate({ mode: 'plan' }, 'imageViewer', { path: 'screenshots/error.png' });
+  assert('image reads proceed in plan/headless-safe flow', run.action.type === 'proceed' && run.asked.length === 0);
 
   run = await runGate(
     { mode: 'plan', allowRules: ['fileEditor'] },

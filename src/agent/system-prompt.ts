@@ -24,10 +24,10 @@ export const SYSTEM_PROMPT_FILENAME = 'system-prompt.md';
 /**
  * darwin's default instructions.
  *
- * Written against what the runtime actually registers: `fileEditor` and `bash`
- * are always present, `load_skill` only when the project defines skills, and MCP
- * servers may add more — so the tool section names the certain two and points at
- * the rest generically rather than inventing capabilities the model may not have.
+ * Written against what the runtime actually registers: `fileEditor`, `bash`, and
+ * `imageViewer` are always present, `load_skill` only when the project defines
+ * skills, and MCP servers may add more. The prompt highlights the general editor
+ * and shell; specialized tools describe themselves in their registered specs.
  *
  * The behavioural rules here exist because their absence has a cost: an agent
  * that edits unread files corrupts them, one that claims success without running

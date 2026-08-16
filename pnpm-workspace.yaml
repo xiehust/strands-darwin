@@ -1,5 +1,6 @@
 allowBuilds:
   esbuild: true
   node-pty: true
+  sharp: true
 patchedDependencies:
   '@strands-agents/sdk@1.12.0': patches/@strands-agents__sdk@1.12.0.patch

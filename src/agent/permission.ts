@@ -367,6 +367,14 @@ export function classify(toolName: string, rawInput: unknown): PermissionRequest
         details: [],
         input: rawInput,
       };
+    case 'imageViewer':
+      return {
+        toolName,
+        kind: 'read',
+        summary: `imageViewer: ${firstLine(str(input['path']) ?? '(missing path)')}`,
+        details: [],
+        input: rawInput,
+      };
     // The context offloader's own retrieval tool: it reads back a tool result
     // this session already produced and stored. Unknown tools fail closed as
     // `execute`, which would make every retrieval prompt the user for something

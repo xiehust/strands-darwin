@@ -47,6 +47,7 @@ import {
   type BackgroundTaskListener,
   type BackgroundTaskStatus,
 } from '../tools/background-bash.js';
+import { createImageViewerTool } from '../tools/image-viewer.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
@@ -327,6 +328,7 @@ export class AgentRuntime {
     // catalogue. Foreground calls still delegate with the caller's ToolContext.
     const backgroundBash = new BackgroundBashManager(options.projectRoot, session.sessionId);
     const bash = createBackgroundBashTool(backgroundBash);
+    const imageViewer = createImageViewerTool(options.projectRoot);
     const conversationManager = new SummarizingConversationManager({
       summaryRatio: config.summaryRatio,
       preserveRecentMessages: config.preserveRecentMessages,
@@ -370,7 +372,7 @@ export class AgentRuntime {
       systemPrompt: composeSystemPrompt(basePrompt.prompt, instructions),
       // McpClient instances act as tool sources: the SDK discovers and registers
       // their tools during initialize().
-      tools: [bash, fileEditor, ...mcp.clients],
+      tools: [bash, fileEditor, imageViewer, ...mcp.clients],
       plugins: offloader === undefined ? [skills] : [skills, offloader],
       sessionManager,
       conversationManager,
