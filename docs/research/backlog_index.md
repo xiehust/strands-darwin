@@ -11,7 +11,7 @@ Only these status values are valid:
 - `完成` — independently accepted, with evidence recorded below;
 - `放弃` — closed by an explicit product decision, with its reason recorded below.
 
-Selection order is `进行中` first, then `未开始`, sorted by ascending **Priority** and then stable **ID**. While either unfinished status exists, do not perform fresh product research. Change only one selected row to `进行中` per invocation. A child report is not completion evidence: use `完成` only after independent acceptance. Keep blocked work `进行中`; use `放弃` only with an explicit reason.
+Selection order is `进行中` first, then `未开始`, sorted by ascending **Priority** and then stable **ID**. While either unfinished status exists, do not perform fresh product research. Exactly one row is `进行中` at a time, but a single invocation works the whole **batch** — the unfinished rows sharing one origin report — advancing to the next direction after each one is accepted and closed, until the batch is exhausted or a recorded halt condition fires. A child report is not completion evidence: use `完成` only after independent acceptance. Keep blocked work `进行中`; use `放弃` only with an explicit reason, which may be the score gate below.
 
 ## Ranking contract
 
@@ -26,6 +26,12 @@ Rate every dimension from 1 (low) to 5 (high):
 `Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk`
 
 Score informs ranking but does not replace qualitative rationale, dependency ordering, or safety constraints. **Priority** is the persisted selection order: `1` is highest.
+
+## Score gate
+
+`MINIMUM_IMPLEMENTATION_SCORE = 6`. Every dimension is rated 1–5, so an all-average direction scores exactly 6; below that a direction is not worth an iteration.
+
+A direction scoring below the gate is never added as `未开始` — the research report records it as rejected with its score — and any existing row found below the gate at selection time becomes `放弃` with the reason `below score gate (Score = <n> < 6)` and is skipped without halting the batch. One exception and one prohibition: a below-gate direction is kept only when an explicit safety, correctness, or dependency reason is recorded in its Notes; and dimension ratings are never restated to move a direction across the gate — a corrected rating must be introduced by a research run that says the correction is what changed.
 
 ## Directions
 

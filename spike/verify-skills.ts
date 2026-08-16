@@ -150,7 +150,34 @@ async function missingDirectory(): Promise<void> {
   assert('same-day runs append safely', researchWorkflow.includes('append a new `## Run — <UTC timestamp>` section') && researchWorkflow.includes('Never replace or rewrite an earlier same-day run'));
   assert('research proposes at most five directions', researchWorkflow.includes('zero to five new, non-duplicate iteration directions'));
   assert('ranking includes importance, difficulty, and supporting dimensions', ['**Importance**', '**Implementation difficulty**', '**Architecture fit**', '**Evidence confidence**', '**Implementation risk**'].every((term) => researchWorkflow.includes(term)));
-  assert('research delegates exactly one direction through developer', researchWorkflow.includes('call `load_skill` with the exact name `developer`') && researchWorkflow.includes('Implement exactly one selected backlog direction per invocation'));
+  assert(
+    'research delegates each batch direction through developer, one at a time',
+    researchWorkflow.includes('`load_skill` with the exact name `developer`') &&
+      researchWorkflow.includes('Exactly one direction is `进行中` at a time') &&
+      researchWorkflow.includes('continue immediately with the next direction'),
+  );
+  assert(
+    'research keeps iterating the batch instead of stopping after one direction',
+    researchWorkflow.includes('Finishing one direction successfully is not a reason to stop') &&
+      researchWorkflow.includes('Do not wait for another instruction to keep going'),
+  );
+  assert(
+    'each iteration is delegated to the newest accepted Darwin from a verified HEAD',
+    researchWorkflow.includes('Never hand iteration N+1 to a stale artifact') &&
+      researchWorkflow.includes('`pnpm typecheck` plus `pnpm test` must pass at HEAD'),
+  );
+  assert(
+    'a low score is gated out rather than implemented',
+    researchWorkflow.includes('MINIMUM_IMPLEMENTATION_SCORE = 6') &&
+      researchWorkflow.includes('below score gate (Score = <n> < 6)') &&
+      researchWorkflow.includes('a gated row never halts the batch'),
+  );
+  assert(
+    'the batch halts only for an enumerated reason',
+    researchWorkflow.includes('## 7. Halt the batch only for a recorded reason') &&
+      researchWorkflow.includes('a premise was falsified') &&
+      researchWorkflow.includes('Difficulty alone is not a halt condition'),
+  );
   assert('completion requires independent acceptance and blockers remain in progress', researchWorkflow.includes('Never mark `完成` from the child\'s report alone') && researchWorkflow.includes('keep it `进行中`') && researchWorkflow.includes('explicit product decision'));
 
   // The pre-`.darwin` location is dead: a leftover root skills/ must not still be
@@ -290,11 +317,15 @@ async function researchDocs(): Promise<void> {
   assert('backlog prioritizes unfinished work before research', backlog.includes('Selection order is `进行中` first, then `未开始`') && backlog.includes('do not perform fresh product research'));
   assert('backlog records ranking and acceptance fields', ['Importance', 'Architecture fit', 'Evidence confidence', 'Difficulty', 'Risk', 'Implementation / acceptance evidence'].every((heading) => backlog.includes(heading)));
   assert('backlog documents the score formula', backlog.includes('Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk'));
+  assert('backlog works a whole batch one direction at a time', backlog.includes('Exactly one row is `进行中` at a time') && backlog.includes('advancing to the next direction after each one is accepted and closed'));
+  assert('backlog gates low-scoring directions out', backlog.includes('MINIMUM_IMPLEMENTATION_SCORE = 6') && backlog.includes('below score gate (Score = <n> < 6)'));
+  assert('backlog forbids re-rating a direction across the gate', backlog.includes('never restated to move a direction across the gate'));
   assert('research template targets dated append-only reports', template.includes('research_<YYYY-MM-DD>.md') && template.includes('append another timestamped `## Run` section') && template.includes('Never overwrite an earlier run'));
   assert('research template covers all mandatory products and an additional product', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', '`<additional product>`'].every((product) => template.includes(product)));
   assert('research template joins peer sources to Darwin evidence', template.includes('### Peer highlights and innovations') && template.includes('### Current Darwin baseline') && template.includes('### Comparison and gaps'));
   assert('research template caps and scores directions', template.includes('at most five new directions') && template.includes('Implementation difficulty') && template.includes('Implementation risk'));
-  assert('research template records developer and Host acceptance outcomes', template.includes('### Developer outcome') && template.includes('Child session and managed tasks') && template.includes('Host acceptance'));
+  assert('research template records the gate decision for rejected directions', template.includes('### Gated-out directions') && template.includes('MINIMUM_IMPLEMENTATION_SCORE = 6'));
+  assert('research template records per-direction acceptance and the halt reason', template.includes('### Batch iteration outcome') && template.includes('Child session and managed tasks') && template.includes('Host acceptance') && template.includes('Halt condition that ended the loop'));
 }
 
 async function realProjectSkill(): Promise<void> {

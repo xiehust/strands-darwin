@@ -50,23 +50,36 @@ Propose at most five new directions, excluding duplicates already in the backlog
 
 `Score = 2 × Importance + Architecture fit + Evidence confidence − Implementation difficulty − Implementation risk`
 
+Only directions scoring at or above `MINIMUM_IMPLEMENTATION_SCORE = 6` enter the backlog as `未开始`; they form this run's batch, ordered so dependencies come first.
+
 | Rank | Proposed ID | Direction | Importance | Architecture fit | Evidence confidence | Implementation difficulty | Implementation risk | Score | Evidence and rationale |
 |---:|---|---|---:|---:|---:|---:|---:|---:|---|
 | 1 | SER-NNN | `<direction>` | 1–5 | 1–5 | 1–5 | 1–5 | 1–5 | `<score>` | `<source refs, Darwin refs, dependencies and qualitative rationale>` |
 
+### Gated-out directions
+
+Directions considered but not queued because they fell below the score gate. Record them rather than dropping them silently; a later run may re-rate one with new evidence.
+
+| Direction | Score | Gate | Why it fell below | Kept anyway? |
+|---|---:|---:|---|---|
+| `<direction>` | `<score>` | 6 | `<which dimensions sank it>` | `no` \| `yes — <explicit safety/correctness/dependency reason>` |
+
 ### Recommendation
 
-- Selected direction: `<one ID, or none>`
-- Why now: `<qualitative recommendation; note any safety/dependency override>`
-- Independently observable acceptance: `<checks for the developer workflow>`
-- Backlog updates: `<IDs added as 未开始; selected ID changed to 进行中 only immediately before developer handoff>`
+- Batch to implement: `<ordered IDs>`
+- Start with: `<one ID, or none>`
+- Why this order: `<dependencies, safety, qualitative rationale; note any score override>`
+- Independently observable acceptance: `<checks for the developer workflow, per direction>`
+- Backlog updates: `<IDs added as 未开始; IDs set 放弃 by the gate; the first ID changed to 进行中 only immediately before developer handoff>`
 
-### Developer outcome
+### Batch iteration outcome
 
-Complete this only when one direction is handed to the loaded `developer` skill.
+One row per direction handed to the loaded `developer` skill. The batch is worked one direction at a time, each on the Darwin revision the previous one produced; append a row as each direction closes rather than waiting for the whole batch.
 
-- Direction: `<ID>`
-- Child session and managed tasks: `<evidence>`
-- Host acceptance: `<exact independent checks and outcomes>`
-- Final status: `完成` only after acceptance; otherwise `进行中` with blockers; `放弃` only with explicit reason
-- Iteration-log entry: `<docs/iteration-log.md heading/link>`
+| Direction | Child session and managed tasks | Host acceptance (exact independent checks and outcomes) | Commit | Final status | Iteration-log entry |
+|---|---|---|---|---|---|
+| `<ID>` | `<evidence>` | `<checks and results>` | `<sha>` | `完成` only after acceptance; otherwise `进行中` with blockers; `放弃` only with explicit reason | `<docs/iteration-log.md heading/link>` |
+
+- Halt condition that ended the loop: `<batch exhausted | acceptance failed twice | premise falsified | user decision needed | starting point unrecoverable | not worth continuing>`
+- Aggregate token spend across every child delegation: `<per-field totals; carry `-` through as unknown>`
+- Remaining backlog after this run: `<IDs and statuses; recommend fresh research only when nothing is unfinished>`
