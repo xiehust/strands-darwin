@@ -187,6 +187,9 @@ async function main(): Promise<void> {
     if (info.systemPromptProblem !== undefined) {
       console.warn(`  prompt   : using the default — ${info.systemPromptProblem}`);
     }
+    if (info.workingContextProblem !== undefined) {
+      console.warn(`  context  : no directory listing — ${info.workingContextProblem}`);
+    }
     if (info.promptCache.enabled) {
       const ttl = info.promptCache.ttl === undefined ? '' : ` [${info.promptCache.ttl}]`;
       console.log(`  cache    : ${info.promptCache.parts.join(', ')}${ttl}`);

@@ -93,9 +93,10 @@ export async function loadProjectInstructions(
  *
  * The order of the assembled prompt is fixed: base prompt → project instructions
  * → the skills catalogue, which `SkillsPlugin.initAgent` appends later during
- * `agent.initialize()`. Instructions belong with the base prompt because they
+ * `agent.initialize()` → the working context, appended after it by
+ * `./working-context.js`. Instructions belong with the base prompt because they
  * describe how to work in this repository; the skills list is a menu and reads
- * better last.
+ * better last, and the working context is not rules at all.
  */
 export function composeSystemPrompt(
   basePrompt: string,

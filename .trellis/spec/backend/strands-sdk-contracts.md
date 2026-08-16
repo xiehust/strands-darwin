@@ -664,6 +664,26 @@ tool call is silently denied with no prompt shown.
 - Write the pointer only after a turn completes (`markResumable()`), so an unused session
   never displaces a useful one.
 
+### Contract: restoring a session replays the system prompt, cache point included
+
+`takeSnapshot({ preset: 'session' })` includes `systemPrompt`, and the restore runs on
+`InitializedEvent` — *after* the constructor's prompt was set and after
+`SkillsPlugin.initAgent` ran. So a resumed session does not use the freshly composed
+prompt at all: it uses the snapshot's, and because darwin snapshots after the cache point
+is placed, what comes back is exactly `[TextBlock, CachePointBlock]`. Measured, not
+inferred: a second `Agent` constructed with `systemPrompt: 'FRESH'` reports the previous
+run's text after `initialize()`.
+
+Two consequences. Anything composed before `initialize()` — the base prompt, AGENTS.md,
+the skills catalogue — is frozen for the life of a session; editing AGENTS.md does not
+affect a resumed one. And a fragment that must be current has to be applied *after*
+`initialize()` and must replace, not append: that is what `applyWorkingContext`
+(`src/agent/working-context.ts`) does, unwrapping that exact two-block shape back to a
+string so `applySystemPromptCachePoint` can re-place the cache point with this run's TTL.
+Any other block shape is refused rather than guessed at. (Verified:
+`spike/verify-working-context.ts`, 45 assertions; and live, by resuming a session in a
+directory that had gained a file and seeing the new listing.)
+
 ## Scenario: headless one-shot CLI
 
 ### 1. Scope / Trigger

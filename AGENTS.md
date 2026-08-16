@@ -92,9 +92,15 @@ deleted.
 
 **System prompt composition order is fixed**: base prompt → `<project-instructions>`
 (AGENTS.md, `src/agent/instructions.ts`) → `<available-skills>` (skills plugin during
-`agent.initialize()`). Composition is all string concatenation — the skills plugin refuses a
-block-array prompt — and only after `initialize()` does `src/agent/prompt-cache.ts` wrap the
-finished string as `[TextBlock, CachePointBlock]`. The base is the only user-replaceable part
+`agent.initialize()`) → `<working-context>` (`src/agent/working-context.ts`, applied after
+`initialize()`). Composition is all string concatenation — the skills plugin refuses a
+block-array prompt — and only after that does `src/agent/prompt-cache.ts` wrap the
+finished string as `[TextBlock, CachePointBlock]`. The working context is the one fragment
+that describes *now* rather than rules (cwd, OS, date, one-level directory listing), so it is
+re-derived every run and *replaces* any block already in the prompt: restoring a session
+replays the prompt darwin last sent — as `[TextBlock, CachePointBlock]`, which is why
+`applyWorkingContext` unwraps that exact shape — and a resumed run must not state the
+creating run's date as today's. The base is the only user-replaceable part
 (`src/agent/system-prompt.ts`: `config.systemPrompt` > `.darwin/system-prompt.md` >
 `DEFAULT_SYSTEM_PROMPT`), so the project's own instructions stay additive on top of whichever
 base is in effect.

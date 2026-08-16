@@ -165,17 +165,43 @@ are always available (`fileEditor`, `bash`), and states the working rules the re
 program depends on — read a file before editing it, keep edits small, verify changes by
 running something, and never work around a tool call the permission gate denied.
 
-The assembled prompt always has the same three parts, in this order:
+The assembled prompt always has the same four parts, in this order:
 
 ```
 <base prompt>                                  ← darwin's default, or your override
 <project-instructions source="AGENTS.md">…     ← your repository's standing rules
 <available-skills>…                            ← the skills catalogue
+<working-context>…                             ← where this session is standing
 ```
 
 Only the **base** is overridable, and an override replaces it entirely — nothing of the
-default is kept. AGENTS.md and the skills list are appended either way, so repository rules
-stay additive and you never have to restate them in a custom prompt.
+default is kept. AGENTS.md, the skills list and the working context are appended either way,
+so repository rules stay additive and you never have to restate them in a custom prompt.
+
+### Working context
+
+The first three parts are rules; the last one is facts. `<working-context>` states the
+working directory, the OS and kernel, the shell, the Node version, today's UTC date and time
+zone, and the immediate contents of the working directory (directories first, symlinks marked
+`@`). It costs a few hundred bytes and saves the agent from opening a turn with `pwd` and
+`ls` — or from guessing the year, which a model with a training cutoff does confidently and
+wrongly.
+
+It is honest about being a snapshot: the block says so, and tells the model to re-check
+anything that may have moved, including its own edits. The listing is capped at 200 entries
+with the remainder counted, because everything in the system prompt is re-sent on every
+request and one large directory would otherwise cost more context than the conversation. The
+date is stated to the day and not the second, so a run does not throw away the provider-side
+cache for a precision no coding task needs.
+
+The block is re-derived on every run, including a resumed one. That matters more than it
+sounds: restoring a session replays the system prompt darwin last sent, so without the
+refresh a session resumed a week later would state that week-old date and directory listing
+as current. Only the working context is refreshed this way — a resumed session still carries
+the base prompt, AGENTS.md and skills catalogue captured when it was created. If the
+directory and the date have not changed, the refreshed prompt is byte-identical and still
+reads from cache. A directory that cannot be listed is not fatal: the rest of the block is
+sent and the header says why the listing is missing.
 
 Two ways to override, highest precedence first:
 

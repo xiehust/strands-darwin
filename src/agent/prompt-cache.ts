@@ -2,8 +2,9 @@
  * Prompt caching: where the cache points go, and when there are none.
  *
  * Everything darwin sends is re-sent: the tool schemas never change within a
- * session, the system prompt (base + AGENTS.md + `<available-skills>`) is fixed
- * once assembled, and the conversation only grows at the end. Cache points mark
+ * session, the system prompt (base + AGENTS.md + `<available-skills>` +
+ * `<working-context>`) is fixed once assembled, and the conversation only grows at
+ * the end. Cache points mark
  * that unchanged prefix so the provider bills it as a cache read instead of fresh
  * input — see
  * https://strandsagents.com/docs/user-guide/concepts/model-providers/amazon-bedrock/#caching
@@ -16,6 +17,8 @@
  * - system prompt: a `CachePointBlock` appended to `Agent.systemPrompt`, which is
  *   why {@link applySystemPromptCachePoint} runs after `agent.initialize()` —
  *   `SkillsPlugin.initAgent` appends its fragment first, and refuses a block array.
+ *   The working context is applied in between, so it lands inside the cached prefix
+ *   rather than after it.
  *
  * These explicit cache points are Claude-only. OpenAI performs prompt caching
  * automatically at the provider, so darwin neither configures nor reports it as

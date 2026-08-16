@@ -65,6 +65,7 @@ import {
   type SessionSelector,
 } from './session.js';
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
+import { applyWorkingContext, buildWorkingContext } from './working-context.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
 import { deltaUsage, type UsageTotals } from './usage.js';
 
@@ -160,6 +161,11 @@ export interface RuntimeInfo {
   systemPromptPath: string | undefined;
   /** Why a present system prompt override was skipped; undefined when there is none. */
   systemPromptProblem: string | undefined;
+  /**
+   * Why the working context carries no directory listing. Undefined in the normal
+   * case: the rest of the block (directory, platform, date) is always sent.
+   */
+  workingContextProblem: string | undefined;
   /** What this run caches, or why it caches nothing. */
   promptCache: PromptCachePlan;
   /**
@@ -365,6 +371,14 @@ export class AgentRuntime {
     // the cache point has to sit at the very end of the finished prompt (the skills
     // plugin also refuses to append to a block-array prompt). Tools and the
     // conversation are cached by the model's own cacheConfig, set in config.ts.
+    //
+    // The working context is refreshed here for a second reason: restoring a
+    // session overwrites `systemPrompt` with the snapshot's copy, so composing it
+    // earlier would leave a resumed run advertising the previous run's date and
+    // directory listing. Applied last, it is also the only fragment a resumed
+    // prompt can still be corrected by.
+    const workingContext = await buildWorkingContext(options.projectRoot);
+    applyWorkingContext(agent, workingContext.fragment);
     const promptCache = planPromptCache(config);
     applySystemPromptCachePoint(agent, promptCache);
 
@@ -400,6 +414,7 @@ export class AgentRuntime {
         systemPromptSource: basePrompt.source,
         systemPromptPath: basePrompt.path,
         systemPromptProblem: basePrompt.problem,
+        workingContextProblem: workingContext.problem,
         promptCache,
         // Recomputed rather than returned from createModelFromConfig: the model
         // factory needs only the fields, while the header needs the reason a level

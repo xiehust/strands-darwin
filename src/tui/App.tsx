@@ -734,6 +734,13 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
           system prompt: using the default — {info.systemPromptProblem}
         </Text>
       )}
+      {/* Only the failure: the working context itself is unremarkable, and the
+          header cannot afford a line for something that worked. */}
+      {info.workingContextProblem !== undefined && (
+        <Text color="yellow">
+          working context: no directory listing — {info.workingContextProblem}
+        </Text>
+      )}
       {/* Cost-relevant, so it is stated rather than assumed. Only the "asked for
           but impossible" case gets a line of its own: the header is part of the
           live frame, and every line it grows by is one line of permission prompt
