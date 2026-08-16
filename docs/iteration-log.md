@@ -220,3 +220,56 @@ from its own inherited memory; and `trajectory: false` wrote no file at all, wit
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-16 | `af791f9` | Record an append-only trajectory of every turn and add `darwin trajectory list/search/replay/fork` plus `/trajectory` |
+
+### Batch 8 — a failed turn says so in the record (2026-08-16)
+
+The direction came from this repository, not from a peer product: the research run rolled the
+12.5% observability self-review path and found that the artifact Batch 7 had just built could not
+answer the question it exists for. A turn whose model stream threw still closed with a `turnEnded`
+line — `recordStream`'s `finally` guaranteed that much — but `stopReason` is assigned only from
+`agentResultEvent`, which a thrown turn never emits, so the record showed `stopReason: undefined`
+and carried no error at all. On disk a failed turn was indistinguishable from a cancelled one and
+from a clean turn with a missing stop reason, and the provider's message existed only as an
+ephemeral TUI notice or a stderr line.
+
+The fix stayed inside the observer contract that made Batch 7 safe. `recordStream` gained a
+`catch` that reads two strings off the error and **rethrows the identical object**, so the caller
+of `AgentRuntime.send` cannot tell recording exists; `catch` runs before the existing `finally`,
+so the closing line carries the failure. `turnEnded` gained one optional `failure` field, with no
+`SCHEMA_VERSION` bump because `parseRecordLine` is documented to tolerate extra fields, and no
+invented `'failed'` stop reason, because no provider produced one. One shared helper
+(`turnOutcome`) is the single reading of failed / cancelled / clean / abandoned, so `list`,
+`replay` and the tests cannot drift into three answers, and `replay` reconstructs the exact live
+`turn failed:` notice rather than growing a second projection. Nothing under `src/tui/` changed,
+so the frame-height contract is untouched.
+
+Measurement changed the design once, as it did in Batch 7: the child probed the SDK and found
+`Model.streamAggregated` rethrows a `ModelError` untouched but wraps anything else in
+`new ModelError(message, { cause })`, so *every* real provider rejection would have recorded as an
+indistinguishable `ModelError`. An additive, capped `failure.cause` keeps the provider's class —
+confirmed live as `ModelError` + `cause: AccessDeniedException`.
+
+Host acceptance read the whole diff (16 files) and independently re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (26 suites, all `passed, 0 failed`, exit 0, no `FAIL`); `spike/verify-trajectory.ts`
+standalone (**203 passed**, up from 148); `spike/verify-tui.ts completion` (25 passed, network-free);
+`git diff --check` clean; Trellis validation `✓`. Then a live end-to-end of its own in a throwaway
+HOME: one clean Bedrock turn, then a second turn in the same session against a well-formed but
+invalid `AWS_BEARER_TOKEN_BEDROCK`, which failed for real (`exit 1`,
+`error: Authentication failed: Please make sure your API Key is valid.`). The recorded lines show
+`stopReason: "endTurn"` with no failure for turn one and, for the failed turn, no `stopReason` plus
+`failure: {name: "ModelError", message: "Authentication failed…", cause: "AccessDeniedException"}`;
+the file's first 1,375 bytes hashed identically before and after the failing append
+(`e381f6f9…`); `trajectory list`, `replay`, `search AccessDeniedException` (1 match) and a search
+miss all exited 0 and named the failure. The Host also checked the bound it had demanded directly:
+a 9,000-code-point class name plus a 9,000-code-point message renders to exactly 120 code points
+with no newline, so a hostile provider string cannot widen a summary row.
+
+One pre-existing oddity surfaced and was deliberately left alone: turn ordinals restart at 1 in
+each process, so a two-run session reports `1 turn(s)` and both turns say `turn 1`. It predates
+this change (`TrajectoryRecorder.turns` starts at 0 per run), contradicts the spec's "within this
+file" wording, and fixing it would rewrite existing record semantics — recorded here for a later
+direction rather than smuggled into this one.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-16 | `1f2c147` | Record why a turn ended abnormally: a failed turn's error, class and cause in `turnEnded`, reported by `trajectory list`/`replay`/`search` |
