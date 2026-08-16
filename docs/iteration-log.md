@@ -172,3 +172,51 @@ any edit to the Host-owned research files.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-15 | `404aa1c` | Attribute every permission request to its originating agent, add `/agents` dispatch observability, and pin measured subagent concurrency |
+
+### Batch 7 — append-only session trajectories (2026-08-16)
+
+SER-003 runs in child session `session-20260816-024553753`: planning as
+`bg-a832b48a-b6ac-4882-a2ca-3212d5a60dc0`, implementation and commit as
+`bg-7a24a529-fc26-4211-8740-dd7da07a4398`, both turns in that one persisted conversation.
+Repository work is tracked in the single Trellis task `08-16-session-trajectory`.
+
+The direction came from DeepSeek Harness's append-only event stream: one record is what makes
+trajectory inspection, search, fork and replay possible at all. Darwin already persisted
+snapshots, but a snapshot is rewritten every turn and says what a conversation *is*, never what
+it *did* — a tool call later compacted away left no trace anywhere. The record is therefore an
+observer and nothing more: `recordStream` sits between `agent.stream()` and the `yield`, records
+synchronously without I/O, and cannot throw, so it can neither reorder an event nor become a
+second reason a turn dies; a write failure latches, stops recording, and surfaces one notice.
+Bytes already on disk are never rewritten, three caps bound the file, and every truncation is
+written down so "this is all there was" can never be mistaken for "this was cut". Replay feeds
+the same `turnReducer` the live frame uses and constructs no `Agent` and no `Model` at all —
+offline is a property of the module graph, asserted structurally rather than promised.
+
+Planning measured the SDK rather than assuming it, and three findings changed the
+implementation: stream events' `toJSON()` emits the **wire** shape, so a first draft's reasoning
+strip matching `type === 'reasoningBlock'` never fired and reasoning text would have reached
+disk (replay now rehydrates through the SDK's own `contentBlockFromData`); a turn appends in one
+write, so batch-time timestamps made every record of a turn share one instant, and records are
+now stamped when observed; and `AgentResult.toString()` already carries a child's reasoning into
+parent context, which predates this change, is not fixable by filtering the record, and is now
+documented as an SDK gotcha instead of being papered over. Four planned assertions were
+strengthened rather than kept, including two that were tautologies as written.
+
+Host acceptance inspected the commit `af791f9` in full (36 files) and independently re-ran:
+`pnpm typecheck`; `pnpm test` (26 suites, 0 `FAIL`, exit 0, including the new
+`verify-trajectory.ts` at 148 passed); `verify-trajectory.ts` standalone (148 passed);
+`verify-tui.ts completion` (25 passed, network-free); and the model-calling `verify-tui.ts
+approve` (23 passed) because `MAX_COMPLETIONS` and `App.tsx` changed. Trellis validation passed
+with only the known >32 KB truncation warning for the large SDK spec, and `git diff --check` was
+clean. Beyond the named checks the Host ran a live end-to-end in a scratch git repository with
+real Bedrock turns: turn 1 recorded 8 records / 2,501 bytes; turn 2 grew the file to 3,892 with
+the first 2,501 bytes byte-identical and `seq` 0–12 strictly increasing; `trajectory replay`
+reproduced both turns with `AWS_REGION` unset and bogus credentials; `search` printed 4 hits and
+`no matches`, both exit 0; `fork` produced a new session while the source trajectory, source
+snapshot and `last-session.json` stayed byte-identical, and the fork then answered a follow-up
+from its own inherited memory; and `trajectory: false` wrote no file at all, with
+`trajectory list` reporting `no trajectory recorded (snapshot only)`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-16 | `af791f9` | Record an append-only trajectory of every turn and add `darwin trajectory list/search/replay/fork` plus `/trajectory` |
