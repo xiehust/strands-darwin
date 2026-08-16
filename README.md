@@ -258,6 +258,7 @@ leaves `region` unset on the Bedrock entries, so `AWS_REGION` still decides wher
 | `requestTimeoutMs` | `180000` | Bedrock only — idle timeout for one streaming request; fails with "Stream timed out because of no activity" when nothing arrives for this long |
 | `systemPrompt` | built-in prompt | replaces the base system prompt; wins over `.darwin/system-prompt.md` — see [System prompt](#system-prompt) |
 | `trajectory` | `true` | record an append-only trajectory of every turn; set `false` to write nothing — see [Session trajectory](#session-trajectory) |
+| `diagnostics` | `false` | write this session's SDK `debug`/`info` output and darwin's notices to a per-session log — see [Session diagnostics](#session-diagnostics) |
 
 Switching providers is a config change only; no code names a provider.
 
@@ -396,6 +397,48 @@ darwin -p "carry on" --session "$NEW"
 
 Inside a session, `/trajectory` reports what this run has recorded — the file, the record and
 byte counts, any truncation, and any problem — without sending anything to the model.
+
+## Session diagnostics
+
+Some of the most useful things the SDK has to say, it says only at `debug`: that a request was
+**throttled**, where it placed its **cache points**, that native token counting fell back to
+estimation, that an MCP tool was renamed. Darwin discards that level by default, so a session that
+was slow because the provider throttled it leaves no evidence anywhere. Turn it on when you need it:
+
+```json
+{ "diagnostics": true }
+```
+
+Then this session's SDK `debug`, `info`, `warn` and `error` output — plus every notice darwin showed
+you, with its severity — is appended to a log beside the session's other state, one timestamped line
+each, made for `tail -f`:
+
+```
+~/.darwin/sessions/<project-key>/<session-id>/diagnostics.log
+```
+
+```
+2026-08-16T12:00:00.123Z darwin info  — diagnostics started · session session-20260816-120000 · darwin 0.4.0 · bedrock/global.anthropic.claude-opus-5 · pid 12345 · budget 8388608 bytes
+2026-08-16T12:00:03.881Z sdk    debug — msg_idx=<3> | added cache point to last user message
+2026-08-16T12:01:44.517Z sdk    debug — throttled | error_message=<Too many requests, please wait before trying again.>
+2026-08-16T12:02:02.004Z darwin warn  — context is ~82% of the model window — /compact can shrink it
+```
+
+**Off by default on purpose.** Those lines quote provider payloads, so they can contain parts of your
+conversation — the same reason `contextOffload` is opt-in. With the field absent nothing is written,
+nothing is even formatted, and no file exists. Turning it on is a decision about your own data, so it
+is yours to make.
+
+It is bounded and it says when a bound is reached: 8,000 characters per line, 8 MiB per session
+(after which one final line says it stopped, rather than the file just ending), and a firehose that
+outruns the disk drops diagnostic lines and writes down how many — never blocking or delaying the
+agent. If the log cannot be written at all, the session carries on and tells you once. Nothing
+deletes it; remove the session directory when you are done.
+
+Two things worth knowing before you read one: an SDK warning appears twice — once as the SDK saying
+it (`sdk`) and once as darwin showing you a notice about it (`darwin`) — and, because the SDK's
+logger is process-wide, a **subagent's** diagnostics are in here too, unlike the trajectory, which
+records no child events.
 
 ## Background bash jobs
 

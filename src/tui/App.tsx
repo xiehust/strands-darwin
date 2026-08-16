@@ -12,9 +12,10 @@
  * idle, exits. Ctrl+D always exits.
  */
 import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink';
-import React, { useCallback, useEffect, useReducer, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
+import type { DiagnosticsLog } from '../agent/diagnostics.js';
 import type { PermissionDecision } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { AgentRuntime, CompactResult, UsageTotals } from '../agent/runtime.js';
@@ -78,7 +79,14 @@ export function App({
 }): React.JSX.Element {
   const { exit } = useApp();
   const { columns } = useWindowSize();
-  const [state, dispatch] = useReducer(turnReducer, initialTurnState);
+  const [state, recordAction] = useReducer(turnReducer, initialTurnState);
+  // Swapped whole rather than branched per call: with `diagnostics` off — the default —
+  // `dispatch` *is* the reducer's own dispatch, so not one of the ~50 notice sites
+  // below pays anything, and the mirror cannot be forgotten at a new one either.
+  const dispatch = useMemo(
+    () => withNoticeDiagnostics(recordAction, runtime.diagnostics),
+    [recordAction, runtime],
+  );
   const [status, setStatus] = useState<Status>('idle');
   const [editor, setEditorState] = useState<EditorValue>({
     text: '',
@@ -103,6 +111,8 @@ export function App({
   const contextWarnLatch = useRef(createContextWarnLatch());
   /** One trajectory-problem notice per session; the recorder latches the failure itself. */
   const trajectoryWarned = useRef(false);
+  /** Same, once, for the diagnostics log: it latches its own failure too. */
+  const diagnosticsWarned = useRef(false);
 
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(onChange),
@@ -139,6 +149,16 @@ export function App({
     () => routeSdkLogs((entry) => dispatch({ type: 'notice', text: `sdk ${entry.level}: ${entry.message}`, severity: entry.level })),
     [dispatch],
   );
+
+  // Where the diagnostics went, said once, in the transcript. A frame row is not an
+  // option — the header shares its height with the permission box and the tool panel,
+  // which is the contract `spike/verify-tui.ts approve` enforces on a 50-row terminal —
+  // and a file nobody can find is a file nobody reads. Only when the run asked for it.
+  useEffect(() => {
+    const file = runtime.info.diagnosticsFile;
+    if (file === undefined) return;
+    dispatch({ type: 'notice', text: `diagnostics: recording SDK debug/info to ${file}` });
+  }, [dispatch, runtime]);
 
   // Terminal task events are transcript-only observers: they never alter turn
   // status, active tools, permissions, or the agent loop. React dispatch also
@@ -206,6 +226,15 @@ export function App({
           // The session is unaffected, so this is a degradation, not a failure.
           severity: 'warn',
         });
+      }
+
+      // And the same for the diagnostics log, on the same terms: it latched, the turn
+      // did not notice, and the user has to be told once that the file they are tailing
+      // stopped growing — including when it stopped because it filled its budget.
+      const diagnosticsProblem = runtime.diagnosticsStatus?.problem;
+      if (diagnosticsProblem !== undefined && !diagnosticsWarned.current) {
+        diagnosticsWarned.current = true;
+        dispatch({ type: 'notice', text: `diagnostics: ${diagnosticsProblem}`, severity: 'warn' });
       }
     },
     [runtime],
@@ -916,6 +945,33 @@ function formatLastTurnSection(lastTurn: UsageTotals, config: AppConfig, labelWi
     ...lastDerived.map(({ label, value }) => ({ label, rendered: value ?? 'not reported' })),
   ].map(({ label, rendered }) => `  ${label.padEnd(allLastWidth)}  ${rendered.padStart(12)}`);
   return ['last turn (previous turn)', ...lastLines];
+}
+
+/**
+ * Wraps a reducer dispatch so every notice is also written to the diagnostics log,
+ * with the severity it was shown at — or hands the dispatch straight back when there
+ * is no log, which is the default.
+ *
+ * Outside the reducer, never inside it: `turnReducer` is pure and shared with
+ * `trajectory replay`, so a side effect in it would both fire twice under React's
+ * strict double-invocation and make replaying a record write to a log. Wrapping the
+ * dispatch instead means no notice site had to change, and a notice added later is
+ * mirrored without anyone remembering to do it.
+ *
+ * The action reaches the reducer unchanged and unconditionally: the log is a copy of
+ * what the transcript said, and a broken log may not cost the user the line itself.
+ */
+export function withNoticeDiagnostics(
+  dispatch: (action: TurnAction) => void,
+  log: DiagnosticsLog | undefined,
+): (action: TurnAction) => void {
+  if (log === undefined) return dispatch;
+  return (action: TurnAction) => {
+    // `write` is synchronous and swallows its own failures, so this cannot delay or
+    // deny the render below; the severity defaults exactly as the reducer defaults it.
+    if (action.type === 'notice') log.notice(action.text, action.severity ?? 'info');
+    dispatch(action);
+  };
 }
 
 /**

@@ -13,6 +13,7 @@ import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import path from 'node:path';
 
 import { compactConversation, countConversationTokens, type CompactResult } from './compact.js';
+import { DiagnosticsLog, type DiagnosticsStatus } from './diagnostics.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
 import {
@@ -62,12 +63,14 @@ import { applySystemPromptCachePoint, planPromptCache, type PromptCachePlan } fr
 import { createModelClassifier } from './safety-classifier.js';
 import {
   createSessionManager,
+  diagnosticsPath,
   resolveSession,
   sessionPaths,
   trajectoryPath,
   writePointer,
   type SessionSelector,
 } from './session.js';
+import { setSdkVerboseSink } from './sdk-logging.js';
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { applyWorkingContext, buildWorkingContext } from './working-context.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
@@ -202,6 +205,13 @@ export interface RuntimeInfo {
    * whole point of the record is that something else can read it later.
    */
   trajectoryFile: string | undefined;
+  /**
+   * Where this session's diagnostics are written, or undefined when `diagnostics` is
+   * off — which is the default. Reported so the TUI can say where the file is in one
+   * transcript notice: a log nobody can find is a log nobody reads, and the header
+   * contract forbids spending a frame row on it.
+   */
+  diagnosticsFile: string | undefined;
 }
 
 export class AgentRuntime {
@@ -239,6 +249,8 @@ export class AgentRuntime {
     private readonly preserveRecentMessages: number,
     /** Undefined when `trajectory: false` switched recording off for this run. */
     private readonly trajectory: TrajectoryRecorder | undefined,
+    /** Undefined unless `diagnostics: true` asked for the log. Off is the default. */
+    private readonly diagnosticsLog: DiagnosticsLog | undefined,
     readonly info: RuntimeInfo,
   ) {
     this.thinkingPlan = info.thinking;
@@ -253,6 +265,26 @@ export class AgentRuntime {
     options.onSessionResolved?.(session.sessionId);
     const config = await loadConfig(options.projectRoot);
     const policy = await loadProjectPolicy(options.projectRoot);
+    // Built here, before the model, the MCP clients and the skills plugin, because all
+    // three log at `debug` while they start up (MCP tool renames, skill discovery) and
+    // a diagnostics log that begins after startup cannot answer a question about
+    // startup. It opens no file yet: the first line is buffered, so a session that
+    // never logs again still leaves nothing behind. Installing the tap is what makes
+    // the SDK's `debug`/`info` reach anything at all — with `diagnostics` off they stay
+    // the literal no-ops `sdk-logging.ts` installs, and no line is ever formatted.
+    const diagnosticsLog =
+      config.diagnostics === true
+        ? new DiagnosticsLog({
+            file: diagnosticsPath(options.projectRoot, session.sessionId),
+            run: {
+              session: session.sessionId,
+              darwinVersion: DARWIN_VERSION,
+              provider: config.provider,
+              model: config.model,
+            },
+          })
+        : undefined;
+    if (diagnosticsLog !== undefined) setSdkVerboseSink(diagnosticsLog.sdkSink);
     const model = await createModelFromConfig(config);
     const skills = await SkillsPlugin.load(options.projectRoot);
     const commands = await loadCustomCommands(
@@ -431,6 +463,7 @@ export class AgentRuntime {
       compactionManager,
       config.preserveRecentMessages,
       trajectory,
+      diagnosticsLog,
       {
         config,
         permissionMode,
@@ -465,6 +498,7 @@ export class AgentRuntime {
         mcpServerCount: mcp.clients.length,
         toolNames: agent.tools.map((tool) => tool.name).sort(),
         trajectoryFile: trajectory?.status.file,
+        diagnosticsFile: diagnosticsLog?.path,
       },
     );
   }
@@ -519,6 +553,28 @@ export class AgentRuntime {
    */
   get trajectoryStatus(): TrajectoryStatus | undefined {
     return this.trajectory?.status;
+  }
+
+  /**
+   * The diagnostics log, or `undefined` when nobody asked for one.
+   *
+   * Handed out rather than wrapped in per-entry methods so a caller can decide *once*
+   * whether it is logging at all: the TUI swaps its whole dispatch function on this
+   * being defined, which is what keeps a default run's notice path byte-for-byte what
+   * it was. Everything on it is synchronous and non-throwing by contract.
+   */
+  get diagnostics(): DiagnosticsLog | undefined {
+    return this.diagnosticsLog;
+  }
+
+  /**
+   * What this run has logged, or `undefined` when the log is off. Read after a turn,
+   * exactly like {@link trajectoryStatus} and for the same reason: a problem is worth
+   * one notice where the context-pressure check already lives, never an observer that
+   * interrupts the frame mid-stream.
+   */
+  get diagnosticsStatus(): DiagnosticsStatus | undefined {
+    return this.diagnosticsLog?.status;
   }
 
   /**
@@ -784,6 +840,10 @@ export class AgentRuntime {
    * exiting.
    */
   async shutdown(options: { throwOnError?: boolean } = {}): Promise<void> {
+    // Cleared before the awaits below: the log is about to be closed, and an SDK
+    // warning logged during cleanup must not be handed to a sink that has stopped
+    // accepting lines. `warn`/`error` keep reaching the renderer either way.
+    if (this.diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
     const results = await Promise.allSettled([
       this.subagents.shutdown(),
       this.backgroundBash.shutdown(),
@@ -793,6 +853,9 @@ export class AgentRuntime {
       // durable before the process exits. Settled alongside the rest: a record that
       // cannot be written must not skip process cleanup.
       this.trajectory?.close() ?? Promise.resolve(),
+      // Same rule for the diagnostics log, and it cannot reject: its failures are
+      // latched internally and reported as a problem, never thrown.
+      this.diagnosticsLog?.close() ?? Promise.resolve(),
     ]);
     const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
     if (options.throwOnError === true && failures.length > 0) {

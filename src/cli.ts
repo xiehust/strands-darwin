@@ -9,6 +9,7 @@
 import process from 'node:process';
 
 import { AgentRuntime } from './agent/runtime.js';
+import type { DiagnosticLevel } from './agent/diagnostics.js';
 import { routeSdkLogs } from './agent/sdk-logging.js';
 import { CliUsageError, parseCliArgs, type CliOptions } from './cli-args.js';
 import {
@@ -19,6 +20,7 @@ import {
 import { ConfigError } from './config.js';
 import {
   createHeadlessPermissionBridge,
+  formatHeadlessDiagnosticsProblem,
   formatHeadlessPermissionMode,
   formatHeadlessTrajectoryProblem,
   formatHeadlessUsage,
@@ -94,6 +96,22 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
     process.stderr.write(`sdk ${entry.level} — ${headlessField(entry.message)}\n`);
   });
 
+  /**
+   * One stderr record, with a copy in the diagnostics log when this run asked for one.
+   *
+   * The stderr half is unchanged and unconditional — same text, same order, byte for
+   * byte — because it is the protocol a supervisor parses; the log only ever *gains* a
+   * copy. SDK warnings deliberately do not come through here: the tap inside the
+   * runtime already writes them with `source: sdk`, and routing the stderr rendering
+   * of them here as well would put the same event in the file twice under two labels.
+   * Records written after `runtime.shutdown()` reach stderr only, because closing the
+   * log is what makes its last line mean "the session ended here".
+   */
+  const note = (text: string, level: DiagnosticLevel = 'info'): void => {
+    process.stderr.write(text);
+    runtime?.diagnostics?.write({ source: 'darwin', level, message: text });
+  };
+
   const onInterrupt = () => {
     interrupted = true;
     process.exitCode = 1;
@@ -117,22 +135,28 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
         onSessionResolved: (sessionId: string) => process.stderr.write(`session: ${sessionId}\n`),
       }),
       quietMcpStderr: true,
-      permissionBridge: createHeadlessPermissionBridge((text) => process.stderr.write(text)),
+      permissionBridge: createHeadlessPermissionBridge((text) => note(text, 'warn')),
       ...(options.permissionModeOverride !== undefined && {
         permissionModeOverride: options.permissionModeOverride,
       }),
     });
     if (interrupted) throw new Error('Interrupted.');
-    process.stderr.write(`${formatHeadlessPermissionMode(runtime.info.permissionMode)}\n`);
+    note(`${formatHeadlessPermissionMode(runtime.info.permissionMode)}\n`);
+    // Where the debug output went, stated once beside the other startup facts. Only
+    // when the run asked for it: a line about a file that does not exist would be
+    // noise in every default run's stderr.
+    if (runtime.info.diagnosticsFile !== undefined) {
+      note(`diagnostics: ${runtime.info.diagnosticsFile}\n`);
+    }
 
     reply = await runHeadlessTurn(
       runtime,
       options.prompt,
-      (text) => process.stderr.write(text),
+      (text) => note(text),
     );
   } catch (error) {
     failed = true;
-    process.stderr.write(`error: ${errorMessage(error)}\n`);
+    note(`error: ${errorMessage(error)}\n`, 'error');
   } finally {
     if (runtime !== undefined) {
       try {
@@ -168,6 +192,14 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
         if (problem !== undefined) process.stderr.write(`${problem}\n`);
       } catch {
         // Reading the recorder's own status must not change the exit path either.
+      }
+      // And for the diagnostics log, which reports here rather than into itself: the
+      // one failure worth naming is the one that stopped it writing.
+      try {
+        const problem = formatHeadlessDiagnosticsProblem(runtime.diagnosticsStatus);
+        if (problem !== undefined) process.stderr.write(`${problem}\n`);
+      } catch {
+        // Reading the log's own status must not change the exit path either.
       }
     }
 

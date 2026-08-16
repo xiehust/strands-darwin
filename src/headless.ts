@@ -65,6 +65,21 @@ export function formatHeadlessTrajectoryProblem(
 }
 
 /**
+ * The same, one record, for the opt-in diagnostics log — or `undefined`, which is
+ * what a run that never asked for one always gets.
+ *
+ * A separate function rather than a shared "observer problem" helper: the two labels
+ * are the two artifacts, and a supervisor grepping for `^diagnostics:` should not have
+ * to know that recording and logging happen to degrade the same way.
+ */
+export function formatHeadlessDiagnosticsProblem(
+  status: { problem: string | undefined } | undefined,
+): string | undefined {
+  if (status?.problem === undefined) return undefined;
+  return `diagnostics: ${headlessField(status.problem)}`;
+}
+
+/**
  * Consumes exactly one SDK turn and returns its assembled reply. The process
  * orchestrator withholds stdout until runtime cleanup and pointer persistence
  * also succeed, so no failed invocation leaves a plausible partial answer.

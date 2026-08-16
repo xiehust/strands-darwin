@@ -174,6 +174,26 @@ network** — `src/trajectory/**` constructs no `Agent` and no `Model` at all �
 (snapshot + `offload/` + the record as the fork's prefix) and never touches its source or the
 resume pointer. No subagent event is recorded anywhere; child streams never pass through `send`.
 
+**Session diagnostics are opt-in, and off means untouched** (`src/agent/diagnostics.ts`, spec:
+`.trellis/spec/backend/session-diagnostics.md`): the SDK says several things *only* at `debug` —
+that a request was throttled, where it placed its cache points, that native token counting fell
+back to estimation — and `routeSdkLogs` discards that level. With `diagnostics: true` those lines,
+plus `warn`/`error` (which still reach the renderer) and every darwin notice with its severity, are
+appended to `~/.darwin/sessions/<project-key>/<session-id>/diagnostics.log`, one timestamped
+`tail -f`-able line each. **Off is the default and must stay indistinguishable from before the
+feature existed**: `sdk-logging.ts` installs the SDK's own literal `() => {}` for `debug`/`info`
+when no tap is set (never a flag tested at 60 call sites), no log is built, no file is created, and
+`withNoticeDiagnostics` returns the reducer's dispatch unwrapped. It is an observer under the
+trajectory's rules plus one more: bounds are 8k code points per line, 8 MiB per session and 1 MiB of
+*pending* bytes, because `logger.debug` is called synchronously from inside the SDK's stream loop —
+so a firehose drops **diagnostic lines** (counted, and written into the file) and never blocks,
+delays or drops a stream **event**. Reaching a bound, dropping lines and failing to write are all
+stated in the file or surfaced once, never silent. Two things a later reader will otherwise get
+wrong: an SDK warning appears twice on purpose (`sdk` said it, `darwin` showed it — the `source`
+column is the distinction, and both dedupe mechanisms would be worse), and because the SDK's
+`logger` is one process-global binding, a **subagent's** SDK output *is* in this file even though
+the trajectory records no child event.
+
 **Paths** (`src/paths.ts`): every `.darwin/` location is derived here from the CLI's cwd.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything
 else takes an explicit `projectRoot`.

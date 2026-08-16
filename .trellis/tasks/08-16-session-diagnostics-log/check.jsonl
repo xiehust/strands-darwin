@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Degradation rows for config validation, write failure, the byte bound and backpressure"}
+{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Measured SDK logger facts: the global binding, the no-op defaults, where debug output comes from"}
+{"file": ".trellis/spec/backend/session-trajectory.md", "reason": "The observer discipline this log reuses, and the artifact it must not duplicate"}
+{"file": ".trellis/spec/backend/session-diagnostics.md", "reason": "What the review checks the implementation against"}

@@ -92,6 +92,13 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | `trajectory search/replay` names a session with no record | Exit 1 naming the missing record; distinguish "session does not exist" from "session exists but was never recorded" | Zero results for a file that was never written is a lie |
 | `trajectory search` finds nothing in records it did read | Print `no matches`, exit 0 | The search succeeded; only unreadable state is a failure |
 | `trajectory fork` source has no snapshot, or the offload copy fails | Refuse the fork, create nothing, exit 1 | A fork that starts empty, or whose history cites offload references it cannot resolve, is worse than no fork |
+| `diagnostics` not a boolean | `ConfigError` naming `diagnostics`, refuse to start | Same rule as `trajectory`, and the same two surprises in both directions: the log defaults **off** because SDK debug output can carry conversation-derived material, so a typo that silently switched it on would put that on disk unasked — and one that silently switched it off would leave a debugging session with nothing to read |
+| `diagnostics` absent or `false` (the default) | Install the SDK's own literal `debug`/`info` no-ops, build no log, create no file, format no line, and hand the TUI back the reducer's own dispatch | "Off" has to mean indistinguishable from before the feature existed, not merely quiet. A flag tested at 60 SDK call sites, or a file created empty, would both be changes to a run that asked for nothing |
+| Diagnostics append fails (EACCES, unwritable path, full disk) | Latch the problem, stop logging for that session, keep the turn and its events untouched; surface once as a TUI `warn` notice after the turn, one bounded `diagnostics:` stderr record in headless | Same observer rule as the trajectory: a second, opt-in sink may not become a reason a turn dies — and a file that stopped growing must not do so silently while someone is tailing it |
+| A diagnostic line cannot even be formatted (a throwing `message`) | Caught inside the synchronous `write` and latched as above; the caller never sees it | The SDK logs from inside its own stream loop, so a throw out of the sink would surface as a provider failure |
+| Diagnostics reaches its per-session byte budget (8 MiB) | Write the lines that fit, then one `diagnostics stopped: reached the <n>-byte per-session budget` line, latch logging off, surface the problem once | Nothing garbage-collects the file, so a hard bound is the only real disk bound; the marker is what keeps a stopped log honest rather than mysteriously short |
+| Diagnostic lines arrive faster than the disk accepts them | Drop the arriving lines, count them, and write `<n> line(s) dropped: the writer could not keep up` ahead of the next batch; never block, and never grow the queue past its 1 MiB bound | `logger.debug` is called synchronously from inside the SDK's stream loop: blocking would delay a stream event, and queueing without a bound would grow memory instead of bounding it. Dropping a *diagnostic line* is acceptable and is written down; dropping or delaying an *event* is not |
+| A diagnostic line is offered after `runtime.shutdown()` closed the log | Silently ignored; the stderr record is still written | The append chain is no longer awaited, so such a line might or might not reach the disk. Refusing it makes the file's last line mean "the session ended here" instead of a race |
 | First `MaxTokensError` in an invocation | Retain its exact `partialMessage`, add an internal no-repeat continuation instruction, and retry the SDK model call once | The provider produced useful output; the supported `AfterModelCallEvent.retry` path preserves the SDK loop and configured thinking effort |
 | Any later `MaxTokensError` in the same invocation | Retain that partial too, do not retry, propagate `MaxTokensError`; invocation snapshot persists all partials | Tool-loop model cycles reset `attemptCount`, so only invocation-scoped state can enforce one bounded continuation without false success |
 
@@ -150,8 +157,8 @@ darwin from starting until the file is restored by hand.
   standalone is exactly when the real config was clobbered.
 - Suites owning HOME today: `verify-config`, `verify-thinking`, `verify-prompt-cache`,
   `verify-prompt-cache-live`, `verify-system-prompt`, `verify-model-command`,
-  `verify-state-layers`, `verify-tui`, `verify-trajectory`. Adding a global write to any other
-  suite means adding the call too.
+  `verify-state-layers`, `verify-tui`, `verify-trajectory`, `verify-diagnostics`. Adding a global
+  write to any other suite means adding the call too.
 
 **Verification**: snapshot `sha256sum ~/.darwin/config.json` and the `~/.darwin/projects/` entry
 count, run the suites directly with the real HOME, and confirm both are unchanged.

@@ -1070,7 +1070,7 @@ handoff: load_skill({ name: "developer" })
 
 - Read `docs/research/backlog_index.md` before consulting any product-research source.
 - Valid states are exactly `not-started`, `in-progress`, `done`, and `abandoned`. Select the highest-priority `in-progress` row first, otherwise `not-started`; while either exists, perform no fresh product research.
-- Fresh runs roll the path exactly once, before reading any source, on integer weights `tui=1 observability=1 sdk=1 open=1 peer=4` (12.5% each self-review path, 50% peer). The script's verbatim output is recorded in the report; a re-roll is forbidden and `--path` is user-directed only, printing `path-source: override (user-directed)` so a directed run can never read as chance. Weights are integers over their sum so the documented share is the implemented share, and an out-of-range draw throws rather than clamping onto the first or last path.
+- Fresh runs roll the path exactly once, before reading any source, on weights `tui=2 observability=0.5 sdk=1 open=1.5 peer=5` (20% tui, 15% open, 10% sdk, 5% observability, 50% peer). The script's verbatim output is recorded in the report; a re-roll is forbidden and `--path` is user-directed only, printing `path-source: override (user-directed)` so a directed run can never read as chance. The draw runs over half-units (`DRAW_UNITS_PER_WEIGHT = 2`, `TOTAL_DRAW_UNITS = 20`) rather than over the weights, so a half weight becomes a proportional integer range instead of a rounded one — the documented share is the implemented share, a weight that is not a whole half throws at load, and an out-of-range draw throws rather than clamping onto the first or last path.
 - Every path inspects current Darwin source/architecture first. The `peer` path additionally needs sourced evidence for Claude Code, Codex, DeepSeek harness, PenguinHarness, and at least one further relevant product; a self-review path cites repository paths and symbols instead and states that no peer product was consulted. Missing source access is recorded as a limitation, never filled from model memory, and a peer table is never padded with a product the run did not open.
 - A path whose scope turns out to be in good shape is a valid outcome: record it and propose nothing. The roll changes where evidence comes from, never the 1–5 ratings, the score gate, the report file, or the `developer` handoff.
 - Append each run to `docs/research/research_<YYYY-MM-DD>.md` under a unique UTC timestamp. Read an existing same-day file first and never overwrite prior runs.
@@ -1103,7 +1103,7 @@ handoff: load_skill({ name: "developer" })
 
 ### 6. Tests Required
 
-- `spike/verify-skills.ts`: both required built-ins in a project-free scan, load/slash expansion, progressive disclosure, case-insensitive collision isolation, load-bearing workflow language, the backlog/report template contracts, and the path roll — weights imported from the script itself, all eight draws mapped exhaustively, out-of-range draws refused, and the CLI's roll/override/exit-2 behaviour.
+- `spike/verify-skills.ts`: both required built-ins in a project-free scan, load/slash expansion, progressive disclosure, case-insensitive collision isolation, load-bearing workflow language, the backlog/report template contracts, and the path roll — weights imported from the script itself, all twenty half-unit draws mapped exhaustively, out-of-range draws refused, and the CLI's roll/override/exit-2 behaviour.
 - `pnpm typecheck`, `pnpm test`, and `pnpm build`; inspect `dist/src/skills/builtin/self-evolution-research/SKILL.md` after build.
 
 ### 7. Wrong vs Correct
@@ -1440,7 +1440,8 @@ The SDK's default logger writes `warn`/`error` straight to `console`
 `strategy: 'auto'` warning. The reasoning-block warning above is unavoidable *and* correct, and it
 repeats once per request, so `src/agent/sdk-logging.ts` uses the SDK's official
 `configureLogging()` hook to turn SDK logs into transcript notices. `debug`/`info` stay no-ops,
-matching the SDK default.
+matching the SDK default — unless the opt-in diagnostics tap is installed, which is the section
+below.
 
 ### Contract: a switch rebuilds the config from the session up, never by spreading
 
@@ -1466,6 +1467,57 @@ contains a `4`. An ambiguous substring returns `'ambiguous'` rather than the fir
 `/model` is handled *after* the busy check in `App.tsx`, unlike `/effort`: `/effort` reconfigures
 the live model, while this replaces the model object, which would change the model under a turn
 that is already streaming from it.
+
+## The SDK logger (what darwin measured to tap it)
+
+Darwin's opt-in diagnostics log is `.trellis/spec/backend/session-diagnostics.md`; what follows is
+only what was measured about the SDK to make it possible. All of it is asserted by
+`spike/verify-diagnostics.ts`, which makes no model call and no network request.
+
+### Contract: `logger` is one mutable module binding, read at call time
+
+`logging/logger.js` is `export let logger = defaultLogger`, and `configureLogging(custom)` assigns
+that binding; every call site does `logger.debug(...)` against the live binding rather than a
+captured copy. So one `configureLogging` call re-routes the parent agent, **every subagent**, every
+model adapter and every MCP client at once, and a later call replaces the routing wholesale — there
+is no per-agent logger and no way to scope one. That is why `src/agent/sdk-logging.ts` is the only
+caller in this codebase and composes the renderer sink and the diagnostics tap itself.
+
+### Contract: the SDK's own `debug`/`info` defaults are no-ops, and `warn`/`error` are `console`
+
+`defaultLogger` is `{ debug: () => {}, info: () => {}, warn: console.warn, error: console.error }`.
+Darwin's no-tap installation is therefore the SDK's own behaviour for `debug`/`info`, not an extra
+suppression — the information was never emitted anywhere, which is exactly why an opt-in channel
+had to be built rather than found.
+
+### Contract: the interesting diagnostics are at `debug`, and there are 60 of them
+
+`grep -c 'logger.debug\|logger.info' dist/src` counts 60 call sites on 1.12.0. The ones that answer
+questions darwin's users actually ask: `models/bedrock.js:1181` `throttled | error_message=<…>`
+(and the same line in `anthropic.js:222`, `openai/model.js:210`, `vercel.js:156`),
+`bedrock.js:576`/`:573` cache-point placement, `:279`/`:290`/`:294` native token counting and its
+fallbacks, `mcp/client.js:200` tool renames, and
+`retry/default-model-retry-strategy.js:77-84` retry scheduling. None of them is available at any
+other level: a throttled session that leaves no `debug` output leaves no evidence at all.
+
+### Contract: the intervention registry logs a dispatch only when a handler implements it
+
+`interventions/registry.js:_dispatch` logs `event=<…> | dispatching to N handler(s)` and
+`handler=<…>, event=<…> | evaluating` — but it is only *reached* for an event some registered
+handler overrides (`handler[method] === InterventionHandler.prototype[method]` is skipped). Darwin's
+`PermissionGate` implements `onBeforeToolCall` only, so an offline turn produces these lines when it
+calls a tool and none when it does not. That is what makes a scripted **tool-calling** turn the
+smallest real source of SDK `debug` output for a test, and it is measured, not assumed:
+`verify-diagnostics.ts` asserts the captured line `handler=<darwin:permission-gate>,
+event=<beforeToolCall> | evaluating`. Note the event label is `beforeToolCall`, not the method name.
+
+### Contract: `warnOnce` dedupes per message for the whole process
+
+`logging/warn-once.js` keeps a module-level `Set` of messages already warned about, so
+`new BedrockModel({})`'s default-model nudge and `Model.estimateUtilization`'s missing-window nudge
+each fire exactly **once per process**, whatever logger is installed at the time. Two consequences:
+a test may use each one only once (both are used, once each, as the offline source of a *real* SDK
+`warn`), and a warning that matters can be missed by a sink installed later in the same process.
 
 ## Global and project Darwin state
 

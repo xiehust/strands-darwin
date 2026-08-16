@@ -211,6 +211,28 @@ export interface SessionFields {
    * Set `false` to write nothing; the caps are in `src/trajectory/record.ts`.
    */
   trajectory?: boolean;
+  /**
+   * Write this session's SDK `debug`/`info` output and darwin's own notices to
+   * `~/.darwin/sessions/<project-key>/<session-id>/diagnostics.log`. **Off by
+   * default**, and the only field here whose default is a privacy decision rather
+   * than a cost one.
+   *
+   * The SDK says several things only at `debug` — that a request was throttled, where
+   * it placed its cache points, that native token counting fell back to estimation —
+   * so without this a session that was slow because the provider throttled it leaves
+   * no evidence at all. Those same lines interpolate provider payloads, which is why
+   * it defaults off exactly like `contextOffload`: whoever turns it on is debugging
+   * and has decided that is acceptable.
+   *
+   * A boolean rather than a level: every fact worth turning this on for is at `debug`,
+   * so an `info` setting would produce a file that exists and is silent about the
+   * evidence. Volume is bounded in `src/agent/diagnostics.ts` (8,000 code points per
+   * line, 8 MiB per session, 1 MiB of pending writes) rather than by asking the user
+   * to guess a level, and reaching any bound is written into the file itself.
+   *
+   * Nothing evicts it, the same as `offload/` above: delete the session directory.
+   */
+  diagnostics?: boolean;
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
   /** Deprecated policy fields retained on the type for migration fixtures only. */
@@ -265,6 +287,7 @@ const SESSION_KEYS = [
   'contextOffload',
   'maxResultTokens',
   'trajectory',
+  'diagnostics',
   'systemPrompt',
 ] as const;
 
@@ -778,6 +801,13 @@ function validateSessionFields(input: Record<string, unknown>, configPath: strin
   // from absent for anything that reports what a run is doing.
   const trajectory = booleanField(input, 'trajectory', configPath);
   if (trajectory !== undefined) fields.trajectory = trajectory;
+
+  // Off unless asked for, like `contextOffload` and for the same kind of reason: the
+  // SDK's debug output interpolates provider payloads, so a log the user did not ask
+  // for could hold conversation-derived material they did not expect on disk. Stored
+  // rather than defaulted away so `false` stays distinguishable from absent.
+  const diagnostics = booleanField(input, 'diagnostics', configPath);
+  if (diagnostics !== undefined) fields.diagnostics = diagnostics;
 
   // Only meaningful with offloading on, and rejected otherwise rather than
   // ignored: a threshold the user believes is in effect but is not would look

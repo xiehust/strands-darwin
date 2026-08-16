@@ -3,7 +3,7 @@
   "name": "session-diagnostics-log",
   "title": "Opt-in per-session diagnostics log for SDK debug/info plus darwin notices",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

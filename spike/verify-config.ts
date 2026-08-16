@@ -871,6 +871,47 @@ async function trajectoryField(): Promise<void> {
   assert('…and the error names the key', misplaced.includes('trajectory'));
 }
 
+async function diagnosticsField(): Promise<void> {
+  header('config — opt-in session diagnostics log');
+  const def = await loadConfig(await writeConfig('{}'));
+  // Absent means off, the opposite default from `trajectory` and for the reason stated
+  // on the field: the SDK's debug output interpolates provider payloads, so a log
+  // nobody asked for could put conversation-derived material on disk.
+  assert('diagnostics is absent by default (the log is off)', def.diagnostics === undefined);
+
+  const on = await loadConfig(await writeConfig('{ "diagnostics": true }'));
+  assert('the log can be asked for', on.diagnostics === true);
+  const off = await loadConfig(await writeConfig('{ "diagnostics": false }'));
+  assert('…and switched off explicitly, which stays distinguishable from absent', off.diagnostics === false);
+
+  const bad = await expectConfigError('a non-boolean diagnostics value is refused', async () =>
+    loadConfig(await writeConfig('{ "diagnostics": "verbose" }')),
+  );
+  assert('…and the error names the field', bad.includes('diagnostics'));
+
+  // Session-scoped like `trajectory`: it must survive `/model`, and an entry carrying
+  // it is refused rather than ignored — a log that silently applied to one model and
+  // not another is exactly the kind of surprise a debugging tool must not spring.
+  const withModels = await loadConfig(
+    await writeConfig(
+      '{ "diagnostics": true, "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5" }] }',
+    ),
+  );
+  assert('diagnostics survives the models array form', withModels.diagnostics === true);
+  const misplaced = await expectConfigError('diagnostics inside a models entry is refused', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "diagnostics": true }] }',
+      ),
+    ),
+  );
+  assert('…and that error names the key too', misplaced.includes('diagnostics'));
+
+  // A model switch keeps it, which is what "session-scoped" has to mean in practice.
+  const switched = withModelChoice(withModels, withModels.modelChoices[0]!);
+  assert('a /model switch preserves it', switched.diagnostics === true);
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
@@ -882,6 +923,7 @@ async function main(): Promise<void> {
   await contextWarnRatioField();
   await contextOffloadFields();
   await trajectoryField();
+  await diagnosticsField();
   await permissionModes();
   await permissionRules();
   await toolHooks();

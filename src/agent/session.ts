@@ -20,6 +20,8 @@ const SESSIONS_DIRNAME = 'sessions';
 const POINTER_FILENAME = 'last-session.json';
 /** Per-session append-only event record; a sibling of `background/` and `offload/`. */
 export const TRAJECTORY_FILENAME = 'trajectory.jsonl';
+/** Per-session opt-in diagnostics log; the same sibling convention. */
+export const DIAGNOSTICS_FILENAME = 'diagnostics.log';
 
 interface SessionPointer {
   sessionId: string;
@@ -56,6 +58,17 @@ function legacySessionPaths(projectRoot: string): SessionPaths {
 /** `<sessionsDir>/<sessionId>/trajectory.jsonl`, the append-only event record. */
 export function trajectoryPath(projectRoot: string, sessionId: string): string {
   return path.join(sessionPaths(projectRoot).sessionsDir, sessionId, TRAJECTORY_FILENAME);
+}
+
+/**
+ * `<sessionsDir>/<sessionId>/diagnostics.log`, written only when `diagnostics: true`.
+ *
+ * Derived here, beside the record, because it is the same per-session sibling
+ * convention and there must be exactly one place that knows the layout — a second
+ * path scheme for the second artifact in the same directory is how they drift apart.
+ */
+export function diagnosticsPath(projectRoot: string, sessionId: string): string {
+  return path.join(sessionPaths(projectRoot).sessionsDir, sessionId, DIAGNOSTICS_FILENAME);
 }
 
 /** The SDK snapshot `--resume` and `--session` restore, for one session and agent. */
