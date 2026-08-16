@@ -13,9 +13,3 @@ dist/
 # Regenerated per platform by `trellis update`, same as /.claude/ and /.codex/
 # above. Only .darwin/config.json and the commit-message sample skill are this
 # repo's own.
-.darwin/agents/
-.darwin/commands/
-.darwin/hooks/
-.darwin/skills/trellis-*/
-# Personal copy of Anthropic's bundled skill, not project-authored.
-.darwin/skills/skill-creator/
