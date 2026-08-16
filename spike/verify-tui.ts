@@ -521,8 +521,10 @@ async function multilineInput(): Promise<void> {
     tui.send('\\');
     await tui.waitFor('ctrlj-gamma\\', { timeoutMs: 30_000, settleMs: 400 });
     const beforeBackslashEnter = tui.mark();
-    tui.send('\r');
-    tui.send('slash-delta');
+    // Keep Enter and following text in one pty write. Real terminals may batch
+    // them into one Ink event as `\rslash-delta`; that path must consume the
+    // continuation marker before inserting the following text.
+    tui.send('\rslash-delta');
     await tui.waitFor('...> slash-delta', {
       timeoutMs: 30_000,
       from: beforeBackslashEnter,

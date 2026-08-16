@@ -24,7 +24,7 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 
 - Ink `usePaste((text: string) => void)` owns bracketed paste events.
 - Ink `useInput((typed, key) => void)` owns keys: CR/plain Enter submits, LF/Ctrl+J inserts a newline.
-- Terminals may send printable text plus CR/LF/CRLF as one `typed` value with `key.return === false`; a multi-character trailing line-ending run is one submit terminator.
+- Terminals may send printable text plus CR/LF/CRLF as one `typed` value with `key.return === false`; the line-ending run may lead or trail the printable text and is one submit terminator.
 - A draft ending in `\\` turns Enter into continuation and consumes the marker.
 
 ### 3. Contracts
@@ -49,8 +49,8 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 | Ctrl+J / LF | Append one LF, do not submit |
 | Trailing `\\` + Enter | Replace marker with LF, do not submit |
 | Plain Enter / CR | Submit the complete draft |
-| `text` + CR/LF/CRLF in one non-paste event | Strip the whole terminator run and submit once |
-| `text\\` + batched terminator | Consume `\\`, append one LF, do not submit |
+| `text` + leading/trailing CR/LF/CRLF in one non-paste event | Strip the whole terminator run and submit once |
+| `text\\` + trailing terminator, or `\\` draft + leading terminator and text | Consume `\\`, append one LF, retain following text, do not submit |
 | Other C0 or DEL inside paste | Drop the control byte, retain surrounding text |
 | Paste during permission prompt | Ignore it; permission keeps keyboard ownership |
 | Keyboard or paste during compaction | Ignore it; the disabled draft remains unchanged |
@@ -75,12 +75,13 @@ void submit(draft + typed.slice(0, typed.search(/[\r\n]/)));
 // Correct: use Ink's bracketed-paste channel and retain normalized layout.
 usePaste((text) => setEditor((editor) => insertAtCursor(editor, normalizeDraftText(text))));
 
-// Wrong: a batched text event ending in CRLF falls through as multiline draft text.
+// Wrong: a batched event such as `\rnext` falls through as multiline draft text.
 setDraft((draft) => draft + normalizeDraftText(typed));
 
-// Correct: strip a multi-character line-ending suffix and submit the mirrored draft.
-const suffix = typed.match(/[\r\n]+$/)?.[0];
-if (typed.length > 1 && suffix !== undefined) submit(draftRef.current + typed.slice(0, -suffix.length));
+// Correct: recognize one leading or trailing line-ending run as Enter, then
+// apply continuation/submission at that position before retaining payload text.
+const enter = typed.match(/^[\r\n]+/)?.[0] ?? typed.match(/[\r\n]+$/)?.[0];
+if (typed.length > 1 && enter !== undefined) handleBatchedEnter(typed, enter);
 ```
 
 ## Custom slash-command contract

@@ -602,22 +602,31 @@ export function App({
       void submit(editorRef.current.text);
       return;
     }
-    // A pty or terminal may batch printable text and its final Enter into one
-    // event. Depending on line discipline, that terminator reaches Ink as CR,
-    // LF, or CRLF (occasionally doubled); preserve the text but keep one Enter's
-    // submit semantics. A single LF remains the Ctrl+J branch below.
-    const enterSuffix = typed.match(/[\r\n]+$/)?.[0];
-    const batchedEnterLength = typed.length > 1 ? (enterSuffix?.length ?? 0) : 0;
-    if (batchedEnterLength > 0) {
-      const inserted = normalizeDraftText(typed.slice(0, -batchedEnterLength));
-      const next = insertAtCursor(editorRef.current, inserted);
-      if (next.text.endsWith('\\')) {
-        const text = `${next.text.slice(0, -1)}\n`;
-        setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
+    // A pty or terminal may batch printable text with Enter on either side of
+    // the same event. Depending on line discipline, that terminator reaches Ink
+    // as CR, LF, or CRLF (occasionally doubled); keep one Enter's semantics and
+    // preserve the printable text. A single LF remains Ctrl+J below.
+    const leadingEnter = typed.length > 1 ? typed.match(/^[\r\n]+/)?.[0] : undefined;
+    const trailingEnter = typed.length > 1 ? typed.match(/[\r\n]+$/)?.[0] : undefined;
+    const batchedEnter = leadingEnter ?? trailingEnter;
+    if (batchedEnter !== undefined) {
+      const payload = leadingEnter === undefined
+        ? typed.slice(0, -batchedEnter.length)
+        : typed.slice(batchedEnter.length);
+      const beforeEnter = leadingEnter === undefined
+        ? insertAtCursor(editorRef.current, normalizeDraftText(payload))
+        : editorRef.current;
+      if (beforeEnter.text.endsWith('\\')) {
+        const text = `${beforeEnter.text.slice(0, -1)}\n`;
+        const continued = { text, cursor: { offset: text.length, affinity: 'upstream' } } as const;
+        setEditor(leadingEnter === undefined ? continued : insertAtCursor(continued, normalizeDraftText(payload)));
         preferredColumn.current = undefined;
         setSelectedCompletion(0);
         return;
       }
+      const next = leadingEnter === undefined
+        ? beforeEnter
+        : insertAtCursor(beforeEnter, normalizeDraftText(payload));
       void submit(next.text);
       return;
     }
