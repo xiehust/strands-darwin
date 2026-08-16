@@ -1213,6 +1213,29 @@ async function turnSpend(): Promise<void> {
     silentRendered.includes('input=11 output=3 cacheRead=- cacheWrite=-'),
   );
 
+  // The case `usageBuckets` exists for: OpenAI Responses reports cache activity as
+  // *subsets* of its input total, so with one subset missing the uncached remainder cannot
+  // be computed without guessing. It stays absent all the way to the report rather than
+  // being guessed at or zeroed.
+  const splitFile = path.join(dir, 'unsplittable.jsonl');
+  const splitRec = recorder(splitFile);
+  const splitAgent = newAgent(new MeteredModel([{ usage: usage(900, 12, { read: 300 }), text: 'responses answer' }]));
+  await splitAgent.initialize();
+  await recordedTurn(splitAgent, splitRec, 'an unsplittable input total', {
+    spend: meterFor(splitAgent, spendConfig('openai', 'responses')),
+  });
+  await splitRec.close();
+  const splitRecords = (await readTrajectory(splitFile)).records;
+  const splitSpend = turnSpendOf(splitRecords.find((r): r is TurnEndedRecord => r.type === 'turnEnded') as TurnEndedRecord);
+  assert(
+    'uncached input stays absent when a Responses cache subset is missing',
+    splitSpend?.input === undefined && splitSpend?.cacheRead === 300 && splitSpend?.output === 12,
+  );
+  assert(
+    'and the report says `-` for it rather than guessing a remainder',
+    formatSpendSummary(summarizeSpend(splitRecords)).includes('input=- output=12 cacheRead=300 cacheWrite=-'),
+  );
+
   // And the other statement: a provider that reports zero. Same rendering path, different
   // answer, which is the whole reason the distinction is kept on disk.
   const zeroFile = path.join(dir, 'zero.jsonl');

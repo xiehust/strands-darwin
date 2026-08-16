@@ -462,7 +462,8 @@ way a provider does (a `modelMetadataEvent`, so the numbers are accumulated by t
 one turn of **two** model calls recording their sum and the next turn recording only its own;
 **reconciliation** — the recorded turns summing, metric by metric, to
 `agent.metrics.accumulatedUsage`; a provider reporting no cache counters leaving the keys absent and
-the report showing `-`, next to a provider reporting `0` leaving them present and showing `0`; a
+the report showing `-`, next to a provider reporting `0` leaving them present and showing `0`, and an
+OpenAI Responses total that cannot be split leaving `input` absent rather than guessed; a
 failed turn recording spend *and* `failure` while the thrown error still reaches the caller as the
 identical object; a turn whose first call was rejected recording zeros rather than nothing; a
 cancelled turn recording what completed before the cancel; a meter that **throws** costing the spend
