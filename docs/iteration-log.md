@@ -273,3 +273,58 @@ direction rather than smuggled into this one.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-16 | `1f2c147` | Record why a turn ended abnormally: a failed turn's error, class and cause in `turnEnded`, reported by `trajectory list`/`replay`/`search` |
+
+### Batch 9 — every turn records what it cost (2026-08-16)
+
+Same observability research run as Batch 8, next direction. A session's spend existed only in
+memory: `AgentRuntime.usage` reads the SDK meter and its own comment says "Counts this process
+only. Sessions persist messages, not metrics", so `/usage` and the headless `usage:` line
+evaporated on exit and a resumed session's meter restarted at zero — which is why the spend figures
+in this very log had to be scraped from child stderr.
+
+Planning corrected the research report rather than inheriting it, and the correction shaped the
+design. Token counts *were* already reaching disk, but not the ones anybody wanted:
+`Message.toJSON()` keeps `metadata`, so a recorded `agentResultEvent` carries
+`result.lastMessage.metadata.usage` — the provider's counters for the **final model call** of the
+turn — while `AgentResult.toJSON()` deliberately drops `metrics`. A multi-cycle turn's earlier
+calls, and every failed or cancelled turn, had nothing. The new field is therefore called `spend`,
+not `usage`: two different numbers under one name in one file would have been worse than none.
+
+The ordering was the real problem. `recordStream`'s `finally` closes and buffers `turnEnded`
+*before* `send`'s `finally` computes its usage delta, so the number that exists at the end of a
+turn is always one step too late for the record. The chosen mechanism is a non-throwing meter
+injected into `beginTurn` and read while the closing record is composed — the `dispatchSource`
+precedent from Batch 6, and it keeps the write off `send`'s error path, where a throw would replace
+the provider's exception with the recorder's and break Batch 8's identical-object guarantee. One
+`before` snapshot feeds both the meter and `lastTurnDelta`, so the record and `/usage` cannot
+become two readings of one turn.
+
+The honesty rules are the point of the feature. An unreported metric is an **absent key**, never
+`0`, end to end from record to rendered report — because OpenAI Responses genuinely cannot split
+uncached input when a cache subset is missing, and "nobody measured" must not read as "free". A
+present `0` stays a distinct, real measurement. Provider and model are stamped on the same line as
+the numbers, so a total can never silently mix two price lists, and `/model` cannot land mid-turn
+anyway (it sits behind the busy check). Two limitations are written into the spec instead of hidden:
+`spend` is what the SDK meter attributed to a turn, not what the provider billed — summarization
+calls `model.streamAggregated` directly and is invisible to the meter — and turn ordinals still
+restart per process, so the aggregate counts `turnEnded` records rather than ordinals.
+
+Host acceptance read the diff (16 files, `runtime.ts`, `usage.ts`, `writer.ts`, `record.ts`,
+`replay.ts`, `cli-trajectory.ts` in full) and re-ran: `pnpm typecheck` (exit 0); `pnpm test` (26
+suites, all `passed, 0 failed`, exit 0, no `FAIL`); `spike/verify-trajectory.ts` (**257 passed**, up
+from 203); `spike/verify-tui.ts completion` (25 passed); `git diff --check` clean; Trellis validation
+`✓`. Then its own live reconciliation in a throwaway HOME: three turns in one session, each its own
+process, each turn's recorded `spend` equal **field for field** to that process's `usage:` stderr
+line — `input=2 output=3 cacheRead=0 cacheWrite=10379`, then `input=2 output=3 cacheRead=1460
+cacheWrite=3592`, then a real provider rejection recording `input=0 output=0` with **no cache keys
+at all** beside its `failure`, exactly where stderr printed `cacheRead=- cacheWrite=-`. The file's
+first 1,497 bytes hashed identically (`d3637ad3…`) after both later appends. With credentials
+removed, EC2 metadata disabled and the endpoint pointed at a dead socket, `list` and `replay` both
+exited 0 and totalled `input=4 output=6 cacheRead=1460(+1 unreported) cacheWrite=13971(+1
+unreported)`. And two real pre-spend sessions written earlier the same day report `spend: unknown`
+and `turn 1 spend: unknown (not recorded)` — not a fabricated zero.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-16 | `e4033ef` | Record each turn's token spend and its provider/model in the trajectory, and report session totals from `trajectory list`/`replay` |
+| 2026-08-16 | `ffba24e` | Pin the unsplittable-input case: an unreported cache subset leaves input unknown, never zero |
