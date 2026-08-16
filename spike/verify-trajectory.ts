@@ -19,6 +19,7 @@ import path from 'node:path';
 import {
   Agent,
   Model,
+  ModelError,
   SessionManager,
   tool,
   type BaseModelConfig,
@@ -52,10 +53,16 @@ import { initialTurnState, turnReducer } from '../src/tui/turn-state.js';
 import { forkSession } from '../src/trajectory/fork.js';
 import { describeDamage, readTrajectory, TrajectoryMissingError } from '../src/trajectory/reader.js';
 import {
+  MAX_FAILURE_SUMMARY_CHARS,
   MAX_FIELD_CHARS,
   MAX_RECORD_BYTES,
+  failureFromError,
+  formatTurnFailure,
   parseRecordLine,
+  turnFailureOf,
+  turnOutcome,
   type TrajectoryRecord,
+  type TurnEndedRecord,
 } from '../src/trajectory/record.js';
 import { formatReplay, historyWithoutIds, replayRecords } from '../src/trajectory/replay.js';
 import { searchTrajectories, UnknownSessionError } from '../src/trajectory/search.js';
@@ -144,6 +151,51 @@ const echo = tool({
   callback: ({ note }) => `echoed ${note}`,
 });
 
+/** A distinct class, so what the record names can be told apart from `Error`. */
+class ProviderExplosion extends ModelError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ProviderExplosion';
+  }
+}
+
+/**
+ * A model that streams real text and then throws — the shape of a provider failing
+ * mid-turn.
+ *
+ * It extends `ModelError` deliberately: measured on `@strands-agents/sdk@1.12.0`,
+ * `Model.streamAggregated` rethrows a `ModelError` untouched but wraps anything else
+ * in `new ModelError(message, { cause })`. Both paths are exercised below, because a
+ * real Bedrock rejection takes the second one.
+ */
+class ThrowingModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.throwing', contextWindowLimit: 200_000 };
+
+  constructor(
+    private readonly thrown: unknown,
+    private readonly before = 'text before the failure',
+  ) {
+    super();
+  }
+
+  override updateConfig(config: BaseModelConfig): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  override getConfig(): BaseModelConfig {
+    return this.config;
+  }
+
+  override async *stream(): AsyncIterable<ModelStreamEvent> {
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    yield { type: 'modelContentBlockStartEvent' };
+    for (const chunk of chunks(this.before)) {
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: chunk } };
+    }
+    throw this.thrown;
+  }
+}
+
 function recorder(
   file: string,
   overrides: { openFile?: never; maxBytes?: number; openFileImpl?: unknown } = {},
@@ -185,6 +237,20 @@ async function recordedTurn(
 
 function sha256(buffer: Buffer | string): string {
   return createHash('sha256').update(buffer).digest('hex');
+}
+
+/** One `darwin trajectory <verb>` run against this suite's project, exit code included. */
+async function runTrajectory(
+  command: Parameters<typeof runTrajectoryCommand>[0],
+): Promise<{ code: number; out: string; err: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const code = await runTrajectoryCommand(command, {
+    projectRoot: ROOT,
+    out: (text) => out.push(text),
+    err: (text) => err.push(text),
+  });
+  return { code, out: out.join(''), err: err.join('') };
 }
 
 function newAgent(model: Model, tools: unknown[] = [echo]): Agent {
@@ -526,6 +592,367 @@ async function passThrough(): Promise<void> {
   assert(
     'recorded event types are counted too',
     (ended?.recorded['beforeToolCallEvent'] ?? 0) === 1 && (ended?.recorded['afterToolCallEvent'] ?? 0) === 1,
+  );
+}
+
+async function failedTurn(): Promise<void> {
+  header('trajectory — a turn whose stream throws says so, and still throws');
+
+  const dir = path.join(ROOT, 'failed');
+  await rm(dir, { recursive: true, force: true });
+  const file = path.join(dir, 'trajectory.jsonl');
+  const rec = recorder(file);
+
+  // One file, three turns, one per outcome — because the claim is that a reader can
+  // tell them apart from the file alone, which is only testable side by side.
+  const clean = newAgent(new ScriptedModel('a clean answer'));
+  await clean.initialize();
+  await recordedTurn(clean, rec, 'turn one is clean');
+  await rec.close();
+  const afterClean = await readFile(file);
+
+  // A real cancel, not a synthesised record: `agent.cancel()` while deltas are still
+  // arriving, then the loop keeps consuming, which is what the TUI does on Ctrl+C.
+  const cancelling = newAgent(new ScriptedModel('an answer long enough to be interrupted midway'));
+  await cancelling.initialize();
+  const cancelSeen: AgentStreamEvent[] = [];
+  for await (const event of recordStream(
+    cancelling.stream('turn two gets cancelled'),
+    rec.beginTurn('turn two gets cancelled'),
+  )) {
+    cancelSeen.push(event);
+    if (event.type === 'modelStreamUpdateEvent') cancelling.cancel();
+  }
+  await rec.close();
+  assert(
+    'the cancelled turn really ended as cancelled, without throwing',
+    cancelSeen.some((event) => event.type === 'agentResultEvent' && event.result.stopReason === 'cancelled'),
+  );
+
+  // The failing turn. `ProviderExplosion extends ModelError`, so the SDK rethrows it
+  // untouched and the identity claim is about darwin's seam, not about SDK wrapping.
+  const thrown = new ProviderExplosion('the provider refused the request: simulated 400');
+  const exploding = newAgent(new ThrowingModel(thrown));
+  await exploding.initialize();
+  const seen: AgentStreamEvent[] = [];
+  let caught: unknown;
+  try {
+    for await (const event of recordStream(
+      exploding.stream('turn three fails'),
+      rec.beginTurn('turn three fails'),
+    )) {
+      seen.push(event);
+    }
+  } catch (error) {
+    caught = error;
+  }
+  await rec.close();
+
+  assert('the thrown error reaches the caller as the identical object', caught === thrown);
+  assert(
+    'with its class and message unchanged',
+    caught instanceof ProviderExplosion &&
+      caught.name === 'ProviderExplosion' &&
+      caught.message === 'the provider refused the request: simulated 400',
+  );
+  assert('the events before the throw were still delivered', seen.length > 0);
+
+  const read = await readTrajectory(file);
+  const ends = read.records.filter((r): r is TurnEndedRecord => r.type === 'turnEnded');
+  assert('all three turns are closed off in the record', ends.length === 3);
+  assert(
+    'the three outcomes are distinguishable from the file alone',
+    ends.map((record) => turnOutcome(record)).join(',') === 'clean,cancelled,failed',
+  );
+  assert('the clean turn carries the SDK stop reason and no failure', ends[0]?.stopReason === 'endTurn' && turnFailureOf(ends[0] as TurnEndedRecord) === undefined);
+  assert(
+    'the cancelled turn is cancelled, not failed',
+    ends[1]?.stopReason === 'cancelled' && turnFailureOf(ends[1] as TurnEndedRecord) === undefined,
+  );
+  const failure = turnFailureOf(ends[2] as TurnEndedRecord);
+  assert('the failed turn names the error class', failure?.name === 'ProviderExplosion');
+  assert(
+    'the failed turn records the message',
+    failure?.message === 'the provider refused the request: simulated 400',
+  );
+  // No invented stop reason: `'failed'` is not a value any provider produced, and the
+  // field's contract is the SDK's own stop reason.
+  assert('the failed turn invents no stop reason', ends[2]?.stopReason === undefined);
+  assert(
+    'the failing turn is still counted like any other',
+    (ends[2]?.dropped['modelStreamUpdateEvent'] ?? 0) > 0 && typeof ends[2]?.ms === 'number',
+  );
+  assert(
+    'the earlier turns\u2019 bytes are byte-identical after the failure is appended',
+    sha256((await readFile(file)).subarray(0, afterClean.byteLength)) === sha256(afterClean),
+  );
+
+  // The wrapping path, which is the one a real provider takes: measured on
+  // @strands-agents/sdk@1.12.0, `Model.streamAggregated` rethrows a ModelError as-is
+  // but wraps anything else in `new ModelError(message, { cause })`. Without recording
+  // the cause's class, every real provider failure would read as plain `ModelError`.
+  class UnrecognizedClientException extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'UnrecognizedClientException';
+    }
+  }
+  const wrappedFile = path.join(dir, 'wrapped.jsonl');
+  const wrappedRec = recorder(wrappedFile);
+  const provider = new UnrecognizedClientException('The security token included in the request is invalid');
+  const wrapping = newAgent(new ThrowingModel(provider));
+  await wrapping.initialize();
+  let wrappedCaught: unknown;
+  try {
+    await recordedTurn(wrapping, wrappedRec, 'a turn the provider rejects');
+  } catch (error) {
+    wrappedCaught = error;
+  }
+  await wrappedRec.close();
+
+  assert(
+    'the SDK wraps a non-ModelError throw, and the caller sees that wrapper',
+    wrappedCaught instanceof ModelError && (wrappedCaught as Error).cause === provider,
+  );
+  const wrappedEnd = (await readTrajectory(wrappedFile)).records.find(
+    (r): r is TurnEndedRecord => r.type === 'turnEnded',
+  );
+  const wrappedFailure = turnFailureOf(wrappedEnd as TurnEndedRecord);
+  assert('the record names the class the caller actually received', wrappedFailure?.name === 'ModelError');
+  assert(
+    'and keeps the wrapped provider class, which is the fact wrapping loses',
+    wrappedFailure?.cause === 'UnrecognizedClientException',
+  );
+  assert(
+    'the provider message survives wrapping',
+    (wrappedFailure?.message ?? '').includes('security token'),
+  );
+  assert(
+    'the rendered summary shows both classes',
+    formatTurnFailure(wrappedFailure as never).startsWith('ModelError (cause UnrecognizedClientException): '),
+  );
+
+  // A recorder that fails *while* recording a failure still cannot fail the turn: the
+  // caller gets the provider error, not the recorder's.
+  const brokenRec = recorder(path.join(dir, 'unwritable.jsonl'), {
+    openFileImpl: () => Promise.reject(new Error('EACCES: simulated read-only filesystem')),
+  });
+  const secondThrow = new ProviderExplosion('the provider failed while the recorder was broken');
+  const doublyDoomed = newAgent(new ThrowingModel(secondThrow));
+  await doublyDoomed.initialize();
+  let doubleCaught: unknown;
+  try {
+    await recordedTurn(doublyDoomed, brokenRec, 'a failing turn with a broken recorder');
+  } catch (error) {
+    doubleCaught = error;
+  }
+  await brokenRec.close();
+  assert('the caller still receives the provider error, not the recorder\u2019s', doubleCaught === secondThrow);
+  assert('the recorder latched its own problem instead', brokenRec.status.problem?.includes('EACCES') === true);
+  assert('and switched itself off', !brokenRec.status.active);
+
+  // The caps apply to the failure like any other field, and the truncation is written
+  // down on the same record.
+  const cappedFile = path.join(dir, 'capped.jsonl');
+  const cappedRec = recorder(cappedFile);
+  const hugeMessage = 'e'.repeat(MAX_FIELD_CHARS * 3);
+  const shouty = newAgent(new ThrowingModel(new ProviderExplosion(hugeMessage)));
+  await shouty.initialize();
+  try {
+    await recordedTurn(shouty, cappedRec, 'a turn that fails very verbosely');
+  } catch {
+    // The propagation claim is asserted above; here only the record matters.
+  }
+  await cappedRec.close();
+  const cappedEnd = (await readTrajectory(cappedFile)).records.find(
+    (r): r is TurnEndedRecord => r.type === 'turnEnded',
+  );
+  assert(
+    'an oversized failure message is capped to the field limit',
+    [...(turnFailureOf(cappedEnd as TurnEndedRecord)?.message ?? '')].length === MAX_FIELD_CHARS,
+  );
+  assert(
+    'the truncation is recorded, naming the field inside the failure',
+    (cappedEnd?.trunc ?? []).some(
+      (entry) => entry.path === 'failure.message' && entry.kept === MAX_FIELD_CHARS && entry.chars > MAX_FIELD_CHARS,
+    ),
+  );
+
+  // Replay of a failed turn must equal the live history the TUI produced, which is why
+  // the reconstructed notice repeats `runTurn`'s text and severity exactly rather than
+  // inventing a replay-only line.
+  const liveFile = path.join(dir, 'live.jsonl');
+  const liveRec = recorder(liveFile);
+  const liveInput = 'compare live and replay for a failed turn';
+  const liveThrow = new ProviderExplosion('the provider hung up mid-answer');
+  const liveAgent = newAgent(new ThrowingModel(liveThrow));
+  await liveAgent.initialize();
+  let live = turnReducer(initialTurnState, { type: 'userInput', text: liveInput });
+  try {
+    for await (const event of recordStream(liveAgent.stream(liveInput), liveRec.beginTurn(liveInput))) {
+      live = turnReducer(live, { type: 'streamEvent', event });
+    }
+  } catch (error) {
+    // Exactly what `runTurn` in src/tui/App.tsx does with a failed turn.
+    live = turnReducer(live, {
+      type: 'notice',
+      text: `turn failed: ${error instanceof Error ? error.message : String(error)}`,
+      severity: 'error',
+    });
+  } finally {
+    live = turnReducer(live, { type: 'turnEnded' });
+  }
+  await liveRec.close();
+
+  const liveRead = await readTrajectory(liveFile);
+  const replayed = replayRecords(liveRead.records);
+  assert(
+    'a failed turn replays as the live history it produced, item for item',
+    JSON.stringify(historyWithoutIds(replayed.history)) === JSON.stringify(historyWithoutIds(live.history)),
+  );
+  assert(
+    'the reconstructed notice is the failure, as an error notice',
+    replayed.history.some(
+      (item) => item.kind === 'notice' && item.severity === 'error' && item.text === 'turn failed: the provider hung up mid-answer',
+    ),
+  );
+  assert(
+    'replay reports the failure separately, with the class the notice cannot carry',
+    replayed.failures.length === 1 &&
+      replayed.failures[0]?.turn === 1 &&
+      replayed.failures[0]?.name === 'ProviderExplosion',
+  );
+  const transcript = formatReplay({ ...replayed, damage: undefined });
+  assert('the transcript shows the failure notice', transcript.includes('note turn failed: the provider hung up mid-answer'));
+  assert('and names the failed turn and its class', transcript.includes('turn 1 failed: ProviderExplosion:'));
+
+  // Older records: a `v: 1` turnEnded written before this field existed must stay
+  // readable, replay without a notice, and read as the clean turn it was.
+  const legacyLine =
+    '{"v":1,"seq":9,"t":"2026-08-16T00:00:00.000Z","turn":1,"type":"turnEnded",' +
+    '"stopReason":"endTurn","ms":12,"recorded":{},"dropped":{}}';
+  const legacy = parseRecordLine(legacyLine) as TurnEndedRecord | undefined;
+  assert('a v:1 record without the field still parses', legacy?.type === 'turnEnded');
+  assert('and reads as a clean turn', legacy !== undefined && turnOutcome(legacy) === 'clean');
+  assert('with no failure to report', legacy !== undefined && turnFailureOf(legacy) === undefined);
+  assert(
+    'and replays with no failure notice',
+    replayRecords([legacy as TrajectoryRecord]).failures.length === 0 &&
+      !replayRecords([legacy as TrajectoryRecord]).history.some((item) => item.kind === 'notice'),
+  );
+  // Damaged or partial payloads: a failure with only a name is still a failure, and a
+  // failure that is not an object at all is not silently treated as one.
+  const halfLine = legacyLine.replace('"stopReason":"endTurn"', '"stopReason":null,"failure":{"name":"Boom"}');
+  const half = parseRecordLine(halfLine) as TurnEndedRecord;
+  assert('a half-present failure still reads as a failure', turnOutcome(half) === 'failed');
+  const bogusLine = legacyLine.replace('"ms":12', '"failure":5,"ms":12');
+  assert('a failure field that is not an object is not read as one', turnOutcome(parseRecordLine(bogusLine) as TurnEndedRecord) === 'clean');
+
+  // The extraction rules, directly: the class wins over a declared name, a disagreement
+  // is kept rather than resolved silently, and a non-Error throw is described honestly.
+  class Renamed extends Error {}
+  const renamed = new Renamed('a subclass that never set name');
+  assert(
+    'the class is preferred and a disagreeing name is kept',
+    failureFromError(renamed).name === 'Renamed (name: Error)',
+  );
+  assert('a thrown string is described as one', failureFromError('bare string').name === 'non-error string');
+  assert('a thrown string keeps its text', failureFromError('bare string').message === 'bare string');
+  assert('a thrown null is described as null', failureFromError(null).name === 'non-error null');
+  assert(
+    'a value whose toString throws does not take the recorder with it',
+    failureFromError({
+      toString() {
+        throw new Error('hostile');
+      },
+    }).message.includes('could not be converted'),
+  );
+}
+
+async function failedTurnReadPaths(): Promise<void> {
+  header('trajectory — list, replay and search report a failed turn');
+
+  const paths = sessionPaths(ROOT);
+  await rm(paths.sessionsDir, { recursive: true, force: true });
+
+  const sessionId = 'session-20260816-300000';
+  const rec = recorder(trajectoryPath(ROOT, sessionId));
+  const clean = newAgent(new ScriptedModel('a clean answer first'));
+  await clean.initialize();
+  await recordedTurn(clean, rec, 'a clean turn');
+  await rec.close();
+
+  // Four failures, so the `+N more` bound is exercised, and two of them pathological:
+  // a message at the field cap and a name at the field cap. A bound that only holds
+  // for short messages is not a bound.
+  const hostileName = new Error('a failure whose class name is pathological');
+  Object.defineProperty(hostileName, 'name', { value: 'N'.repeat(MAX_FIELD_CHARS * 2) });
+  const thrown: unknown[] = [
+    new ProviderExplosion('ThrottlingException-lookalike: too many requests'),
+    new ProviderExplosion(`a very long provider complaint: ${'m'.repeat(MAX_FIELD_CHARS * 2)}`),
+    hostileName,
+    new ProviderExplosion('the fourth failure, which the list only counts'),
+  ];
+  for (const [index, error] of thrown.entries()) {
+    const agent = newAgent(new ThrowingModel(error));
+    await agent.initialize();
+    try {
+      await recordedTurn(agent, rec, `failing turn ${index + 1}`);
+    } catch {
+      // The propagation claim is asserted in failedTurn(); this section is about reading.
+    }
+    await rec.close();
+  }
+
+  const listed = await runTrajectory({ verb: 'list' });
+  const row = listed.out.split('\n').find((line) => line.startsWith(sessionId)) ?? '';
+  assert('list exits 0 with a failed turn in the record', listed.code === 0 && row !== '');
+  assert('list says how many turns failed', row.includes('4 failed turn(s)'));
+  assert('list names a failed turn and its class', row.includes('turn 2 ProviderExplosion: ThrottlingException-lookalike'));
+  assert('list counts the failures it did not name', row.includes('+1 more'));
+  const clause = row.slice(row.indexOf('failed turn(s): ') + 'failed turn(s): '.length);
+  const rendered = clause.split('; ');
+  assert(
+    'every named failure stays inside the summary bound, message or name however long',
+    rendered.every((entry) => [...entry].length <= MAX_FAILURE_SUMMARY_CHARS + 'turn 99 '.length + ' +1 more'.length),
+  );
+  assert(
+    'the row is one line and carries no unbounded payload',
+    !row.includes('\n') && !row.includes('m'.repeat(200)) && !row.includes('N'.repeat(200)),
+  );
+
+  const replayed = await runTrajectory({ verb: 'replay', sessionId, json: false });
+  assert('replay exits 0 over a record containing failures', replayed.code === 0);
+  assert(
+    'replay shows the failure as the notice the TUI showed',
+    replayed.out.includes('note turn failed: ThrottlingException-lookalike: too many requests'),
+  );
+  assert('replay names the failed turn and its class', replayed.out.includes('turn 2 failed: ProviderExplosion:'));
+  assert('replay reports every failed turn', ['turn 2', 'turn 3', 'turn 4', 'turn 5'].every((label) => replayed.out.includes(`${label} failed:`)));
+  const asJson = await runTrajectory({ verb: 'replay', sessionId, json: true });
+  assert(
+    'replay --json carries the failure in the history it prints',
+    asJson.code === 0 &&
+      (JSON.parse(asJson.out) as { kind: string; text?: string }[]).some(
+        (item) => item.kind === 'notice' && (item.text ?? '').startsWith('turn failed: ThrottlingException-lookalike'),
+      ),
+  );
+  const oneTurn = await runTrajectory({ verb: 'replay', sessionId, turn: 2, json: false });
+  assert('replaying just the failed turn reports just that failure', oneTurn.code === 0 && oneTurn.out.includes('turn 2 failed:') && !oneTurn.out.includes('turn 3 failed:'));
+
+  // Search: the failure text is content the record holds, so it is searchable — the
+  // "which session hit this provider error" question.
+  const byClass = await searchTrajectories(ROOT, 'ProviderExplosion', AGENT_ID);
+  assert('a failure class is searchable', byClass.hitCount >= 1);
+  assert(
+    'the hit is the turnEnded record that closed the failed turn',
+    byClass.sessions[0]?.hits.every((hit) => hit.type === 'turnEnded') === true,
+  );
+  const byMessage = await searchTrajectories(ROOT, 'too many requests', AGENT_ID, { type: 'turnEnded' });
+  assert('the failure message is searchable too', byMessage.hitCount >= 1);
+  assert(
+    'the excerpt shows the failure',
+    (byMessage.sessions[0]?.hits[0]?.excerpt ?? '').includes('ProviderExplosion'),
   );
 }
 
@@ -1040,16 +1467,7 @@ async function cliContracts(): Promise<void> {
   await recordedTurn(agent, rec, 'ask the cli question');
   await rec.close();
 
-  const run = async (command: Parameters<typeof runTrajectoryCommand>[0]) => {
-    const out: string[] = [];
-    const err: string[] = [];
-    const code = await runTrajectoryCommand(command, {
-      projectRoot: ROOT,
-      out: (text) => out.push(text),
-      err: (text) => err.push(text),
-    });
-    return { code, out: out.join(''), err: err.join('') };
-  };
+  const run = async (command: Parameters<typeof runTrajectoryCommand>[0]) => runTrajectory(command);
 
   const listed = await run({ verb: 'list' });
   assert('list exits 0 and names the session', listed.code === 0 && listed.out.includes(sessionId));
@@ -1123,6 +1541,8 @@ async function main(): Promise<void> {
     await caps();
     await degradation();
     await passThrough();
+    await failedTurn();
+    await failedTurnReadPaths();
     await replayFidelity();
     await searchContracts();
     await forkContracts();

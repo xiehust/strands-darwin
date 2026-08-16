@@ -17,6 +17,12 @@ import { CliUsageError } from './cli-args.js';
 import { isValidSessionId } from './agent/session.js';
 import { forkSession } from './trajectory/fork.js';
 import { readTrajectory, TrajectoryMissingError, describeDamage } from './trajectory/reader.js';
+import {
+  formatTurnFailure,
+  turnFailureOf,
+  type TrajectoryRecord,
+  type TurnEndedRecord,
+} from './trajectory/record.js';
 import { formatReplay, replayRead } from './trajectory/replay.js';
 import { searchTrajectories, UnknownSessionError } from './trajectory/search.js';
 
@@ -182,7 +188,8 @@ async function listSessions(io: TrajectoryIo): Promise<number> {
       const turns = new Set(read.records.filter((r) => r.turn > 0).map((r) => r.turn)).size;
       summary =
         `${read.records.length} record(s), ${turns} turn(s), ${read.bytes} bytes` +
-        (damage === undefined ? '' : ` — ${damage}`);
+        (damage === undefined ? '' : ` — ${damage}`) +
+        (describeFailedTurns(read.records) ?? '');
     } catch {
       // A snapshot without a record is the ordinary case for sessions that predate
       // recording or ran with it off; say which, rather than implying an empty run.
@@ -193,6 +200,35 @@ async function listSessions(io: TrajectoryIo): Promise<number> {
     io.out(`${id}  ${summary}\n`);
   }
   return 0;
+}
+
+/** Failed turns named on a `list` row before the rest are only counted. */
+const LISTED_FAILURES = 3;
+
+/**
+ * The failed turns of one session, or `undefined` when it has none.
+ *
+ * Every part of this is bounded, because `list` is one line per session and the
+ * material is provider-controlled: each failure is rendered through
+ * `formatTurnFailure` (class + message, whitespace collapsed, capped), and only the
+ * first {@link LISTED_FAILURES} are named, the rest counted. A message sitting at the
+ * 8,000 code-point field cap therefore cannot widen the row.
+ */
+function describeFailedTurns(records: readonly TrajectoryRecord[]): string | undefined {
+  const failed = records
+    .filter((record): record is TurnEndedRecord => record.type === 'turnEnded')
+    .flatMap((record) => {
+      const failure = turnFailureOf(record);
+      return failure === undefined ? [] : [{ turn: record.turn, failure }];
+    });
+  if (failed.length === 0) return undefined;
+
+  const named = failed
+    .slice(0, LISTED_FAILURES)
+    .map(({ turn, failure }) => `turn ${turn} ${formatTurnFailure(failure)}`)
+    .join('; ');
+  const rest = failed.length - Math.min(failed.length, LISTED_FAILURES);
+  return ` — ${failed.length} failed turn(s): ${named}${rest > 0 ? ` +${rest} more` : ''}`;
 }
 
 async function search(

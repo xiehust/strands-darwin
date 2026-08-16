@@ -157,7 +157,12 @@ and `offload/`, on by default, `trajectory: false` to switch off. The whole laye
 seam: `recordStream` sits between `agent.stream()` and the `yield` in `AgentRuntime.send`, and
 records **synchronously, without I/O, and without being able to throw**, so a recording failure
 cannot reorder an event or fail a turn (measured over a real stream with an identity tee, not
-assumed). Events are serialized through the SDK's own `toJSON()` — the one projection that
+assumed). A turn whose stream *throws* is observed there too and its error rethrown **as the
+identical object**: the record gains `turnEnded.failure` (`{ name, message, cause? }`, capped) while
+the caller sees exactly what it would have with recording off, and `turnOutcome()` is the single
+reading that keeps failed, cancelled, clean and abandoned turns distinguishable from the file alone —
+`stopReason` is never invented for a turn the SDK gave none. Events are serialized through the SDK's
+own `toJSON()` — the one projection that
 cannot capture the live `Agent` — and read back through `contentBlockFromData`, because
 `toJSON()` emits the *wire* shape, not the shape `turn-state.ts` reads. Three caps bound it
 (8k code points per string, 64 KiB per record, 64 MiB per file) and every truncation is written

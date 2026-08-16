@@ -50,7 +50,7 @@ envelope `{"v":1,"seq":<n>,"t":"<ISO>","turn":<n>,"type":"<t>"}`.
 | `beforeToolCallEvent` | `toolUse` (id, name, input), capped |
 | `afterToolCallEvent` | `toolUse` plus `result` (status, content), capped |
 | `agentResultEvent` | `stopReason` and the result's usage summary |
-| `turnEnded` | `stopReason`, `ms`, `recorded` per type, `dropped` per type, and `partialText` when the turn ended with unflushed assistant text |
+| `turnEnded` | `stopReason`, `ms`, `recorded` per type, `dropped` per type, `partialText` when the turn ended with unflushed assistant text, and `failure` when the turn's stream **threw** |
 | `forkedFrom` | `session`, `seq`, `bytes` — the first line appended to a **fork**, never to the source |
 | `recordingStopped` | `reason`: `budget` or `error` |
 
@@ -79,6 +79,53 @@ turn.
 
 Reasoning content is **never** recorded, at any effort level: only the fact that a reasoning block
 occurred. The reply is the record; the model's private deliberation is not.
+
+### Contract: how a turn ended is readable from its closing line alone
+
+`recordStream` closes every turn from a `finally`, so a turn that threw is closed too. What that
+line says has to be enough on its own — a reader with only the file must not have to guess:
+
+| Outcome | Signature on `turnEnded` |
+|---|---|
+| `clean` | `stopReason` is a string other than `'cancelled'` (`'endTurn'`, `'toolUse'`, …) |
+| `cancelled` | `stopReason: 'cancelled'`, no `failure` |
+| `failed` | `failure` present |
+| `abandoned` | neither — the consumer stopped reading before a result arrived |
+
+`turnOutcome()` in `src/trajectory/record.ts` is the **one** implementation of that reading;
+`list`, `replay` and the tests all use it, so they cannot drift into three answers.
+
+`failure` is `{ name, message, cause? }`, every string capped like any other field with the
+truncation recorded on the same record:
+
+```json
+"failure":{"name":"ModelError","message":"Authentication failed: …","cause":"AccessDeniedException"}
+```
+
+Three decisions inside that shape are load-bearing:
+
+- **`stopReason` stays `undefined` on a failed turn** rather than being set to `'failed'`. A thrown
+  turn never emits `agentResultEvent`, and `stopReason`'s contract is the SDK's own stop reason;
+  inventing a value no provider produced would put a fiction in the field a reader trusts most.
+  The presence of `failure` is what makes a failed turn a failed turn.
+- **`cause` exists because the SDK wraps.** `Model.streamAggregated` rethrows a `ModelError`
+  untouched but wraps anything else in `new ModelError(message, { cause })`, and `BedrockModel`
+  passes AWS service exceptions through — so a real provider rejection arrives as `ModelError`
+  with the provider's class only on `.cause`. Without `cause`, every live provider failure in the
+  file would read as an indistinguishable `ModelError`. The cause's *message* is not stored: the
+  wrapper copied it, so the class is the only fact wrapping loses.
+- **A consumer-side error is recorded as `abandoned`, not `failed`.** If the `for await` body
+  throws (a renderer bug, say), JavaScript delivers that to the generator as a `return` completion:
+  the `finally` runs, the `catch` does not, and the turn is recorded as abandoned. That is what it
+  is — the turn did not fail, the reader left — and pretending otherwise would blame the provider
+  for darwin's own bug.
+
+No stack traces, ever: a trace names local paths and build layout, and the class plus the message
+is what identifies a failure.
+
+The failure is **not** a second notice in the TUI. `runTurn` already shows `turn failed: <message>`
+live; the record exists so the same fact survives the process, and `replay` reconstructs that
+notice rather than inventing a second rendering of it.
 
 ## 4. Caps
 
@@ -132,6 +179,10 @@ Recording is an observer. It may not become a second reason a turn dies.
   the turn where the context-pressure check already lives; one bounded `trajectory:` stderr record in
   headless mode.
 - A trajectory failure never changes a turn's outcome, its events, or the process exit status.
+- This holds while recording a **turn failure** too: `TurnRecording.failed()` is synchronous and
+  swallows its own problems, and `recordStream` rethrows the original error, so a caller of a failing
+  turn receives the provider's error and never the recorder's. A broken recorder plus a failing
+  provider must not turn into a mystery about which one broke.
 
 ## 7. The three primitives
 
@@ -139,8 +190,12 @@ Recording is an observer. It may not become a second reason a turn dies.
 
 Case-insensitive **plain substring** matching — not regex: a user-supplied pattern must not be able
 to backtrack catastrophically or need quoting. Matched against user input, assistant text, tool name,
-tool input and tool result text. Scans this project's sessions newest-first (session ids sort
-chronologically). Reports one bounded line per hit.
+tool input, tool result text, and a failed turn's `Name (cause Cause): message`. Scans this
+project's sessions newest-first (session ids sort chronologically). Reports one bounded line per hit.
+
+A failure is searchable for the same reason tool output is: it is content the record already holds,
+and "which session hit this provider error" is the first question a failed overnight run produces.
+`--type turnEnded` narrows a search to turn outcomes alone.
 
 Honest misses are load-bearing: a session with no trajectory file says so and exits 1; an unknown
 session id says that instead; zero matches prints `no matches` and exits 0, because the search
@@ -172,6 +227,24 @@ Zero model calls by construction — `src/trajectory/**` and the subcommand path
 `Agent`, and not `runtime.js`. This is asserted structurally (the import graph) as well as
 functionally (replay is correct with a sabotaged AWS environment).
 
+### Reporting a failed turn
+
+A record that knows a turn failed is useless if no read path says so, so both say it, at the
+verbosity their format affords:
+
+- **`list`** appends `— <n> failed turn(s): turn <k> <Name> (cause <Cause>): <message>` to the
+  session's row, naming at most the first three and counting the rest as `+N more`. Every part is
+  bounded: each rendered failure passes through `formatTurnFailure`, which collapses whitespace and
+  caps the whole `Name: message` line at `MAX_FAILURE_SUMMARY_CHARS` (120) code points. The bound
+  covers the class name too, not just the message — both are provider-controlled, and a message
+  sitting at the 8,000 code-point field cap must not widen a one-line-per-session listing.
+- **`replay`** shows the failure twice on purpose, and each has a different job: the reconstructed
+  history notice (`note turn failed: <message>` — the full recorded message, being what the TUI
+  showed live) and one bounded `turn <k> failed: <Name> (cause <Cause>): <message>` line at the end,
+  which is the only place the class appears, because the live notice never carried one.
+- Neither is an error: a record that faithfully describes a failed turn was read **successfully**,
+  so both exit 0. Only a record that cannot be read exits 1.
+
 ## 8. Replay correctness
 
 ### What replay guarantees
@@ -185,6 +258,10 @@ For the records a file retains:
 3. The same truncation markers, in the same places.
 4. Determinism: the same bytes produce the same output, every time, offline.
 5. Tolerance of a partial trailing line and of interior malformed lines, both reported.
+6. For a **failed** turn: the same `error` notice `runTurn` appended live, with the same text and in
+   the same position (before the live-text flush), reconstructed from `turnEnded.failure`. That is
+   why replay equals live history for failed turns as well, and why the failure is not rendered as
+   some replay-only line.
 
 ### What replay explicitly does not reproduce
 
@@ -202,6 +279,8 @@ For the records a file retains:
 8. **Usage and metrics** beyond what `agentResultEvent` itself carried.
 9. **Sessions or turns that predate recording.** Reported as "no record", never inferred from a
    snapshot.
+10. **A failed turn's stack trace, or anything else about the error beyond class, message and wrapped
+    class.** The record keeps what identifies the failure, not where in darwin it surfaced.
 
 ## 9. Child isolation
 
@@ -235,6 +314,17 @@ await writeFile(file, lines.join('\n'))
 const { records, partialTrailingLine, unreadableLines } = await readTrajectory(file)
 ```
 
+```typescript
+// WRONG: swallows the failure, or hands the caller a different error than the one thrown,
+// or invents a stop reason so the line "looks complete".
+catch (error) { turn?.failed(error); throw new Error(`turn failed: ${error}`) }   // new object
+catch (error) { turn?.failed(error) /* no rethrow */ }                            // silent success
+this.stopReason = 'failed'                                                       // fiction
+
+// CORRECT: observe, then rethrow the identical object; describe the failure in its own field.
+catch (error) { turn?.failed(error); throw error }
+```
+
 ## 11. Tests required
 
 `spike/verify-trajectory.ts` (network-free, owns its HOME, real SDK `Agent` + scripted `Model`, and a
@@ -244,6 +334,15 @@ truncation; an injected write failure degrading without throwing; pass-through e
 recording on and off, including a mid-stream `break`; a search hit and an honest miss; fork
 byte-identity, usability and untouched pointer; replay equality against the live projection,
 determinism, and no model call; and child isolation.
+
+For a thrown turn specifically: one file holding a clean, a **really cancelled** (`agent.cancel()`
+mid-stream, not a hand-written line) and a failed turn, whose three outcomes are read back from the
+file alone; the thrown error reaching the caller as the identical object; the SDK's wrapping path with
+its `cause` recorded; a recorder that fails while recording a failure still handing the caller the
+provider's error; the failure message at the field cap, capped with its truncation recorded; the
+earlier bytes byte-identical afterwards; live-versus-replay equality for a failed turn; a `v: 1`
+record with no `failure` still parsing, replaying and reading as clean; and `list`/`replay`/`search`
+reporting the failure — including that a failure message at the field cap cannot widen the `list` row.
 
 Run `pnpm typecheck`, `pnpm test`, and — because `/trajectory` adds a completion row —
 `pnpm tsx spike/verify-tui.ts completion`.

@@ -28,11 +28,13 @@ import {
   SCHEMA_VERSION,
   capField,
   encodeRecord,
+  failureFromError,
   isRecordedEventType,
   parseRecordLine,
   projectEvent,
   type TrajectoryRecord,
   type Truncation,
+  type TurnFailure,
 } from './record.js';
 
 /** How much of the tail is read to recover the last sequence number. */
@@ -108,6 +110,7 @@ export class TurnRecording {
   private readonly startedAt = Date.now();
   private partialText = '';
   private stopReason: string | undefined;
+  private failure: TurnFailure | undefined;
   private ended = false;
 
   constructor(
@@ -136,12 +139,32 @@ export class TurnRecording {
     }
   }
 
+  /**
+   * Notes that the turn's stream threw, before {@link end} closes the turn.
+   *
+   * Same rules as {@link record}: synchronous, no I/O, and it swallows its own
+   * failures. The error itself is not touched — the caller of `AgentRuntime.send`
+   * receives the identical object, and this only reads its class and message.
+   */
+  failed(error: unknown): void {
+    if (this.ended || this.failure !== undefined) return;
+    try {
+      this.failure = failureFromError(error);
+    } catch (problem) {
+      this.recorder.fail(problem);
+    }
+  }
+
   /** Closes the turn and schedules the append. Never awaited by the stream. */
   end(): void {
     if (this.ended) return;
     this.ended = true;
     try {
       const { value, trunc } = capField(this.partialText.trim(), 'partialText');
+      // A provider message can be enormous (a rejected request is sometimes echoed
+      // back whole), so the failure goes through the same cap as everything else and
+      // its truncation is written down on the same record.
+      const failure = this.failure === undefined ? undefined : capFailure(this.failure);
       this.recorder.buffer(
         {
           turn: this.turn,
@@ -151,8 +174,9 @@ export class TurnRecording {
           recorded: Object.fromEntries(this.recorded),
           dropped: Object.fromEntries(this.dropped),
           ...(value === '' ? {} : { partialText: value }),
+          ...(failure === undefined ? {} : { failure: failure.value }),
         },
-        trunc,
+        [...trunc, ...(failure?.trunc ?? [])],
       );
     } catch (error) {
       this.recorder.fail(error);
@@ -169,6 +193,10 @@ export class TurnRecording {
    * still lands in `turnEnded.partialText` — the same text `flushLiveText` puts
    * into live history. An assembled `contentBlockEvent` clears it, because that
    * block is recorded in full and is authoritative.
+   *
+   * `agentResultEvent` is the only source of `stopReason`, and a thrown turn never
+   * emits one — that turn is described by `failure` instead (see {@link failed}), not
+   * by a stop reason this code invented.
    */
   private tally(event: AgentStreamEvent): void {
     const bucket = isRecordedEventType(event.type) ? this.recorded : this.dropped;
@@ -191,6 +219,26 @@ export class TurnRecording {
       this.stopReason = event.result.stopReason;
     }
   }
+}
+
+/**
+ * Caps each part of a failure, naming its path so a reader sees which was cut.
+ *
+ * Lives beside the record it goes into rather than in `record.ts`: `capField` is the
+ * general primitive, and this is the writer's use of it.
+ */
+function capFailure(failure: TurnFailure): { value: TurnFailure; trunc: Truncation[] } {
+  const name = capField(failure.name, 'failure.name');
+  const message = capField(failure.message, 'failure.message');
+  const cause = failure.cause === undefined ? undefined : capField(failure.cause, 'failure.cause');
+  return {
+    value: {
+      name: name.value,
+      message: message.value,
+      ...(cause === undefined ? {} : { cause: cause.value }),
+    },
+    trunc: [...name.trunc, ...message.trunc, ...(cause?.trunc ?? [])],
+  };
 }
 
 export class TrajectoryRecorder {

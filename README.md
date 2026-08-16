@@ -349,7 +349,10 @@ Every turn is appended to an **append-only record** beside the session's other s
 
 One JSON object per line: the run's model and permission mode, each prompt as it was sent, the
 assembled assistant blocks, every tool call with its input and result, and a per-turn summary
-carrying the stop reason and the counts of the events that were *not* stored. It is on by
+carrying the stop reason and the counts of the events that were *not* stored. If a turn *failed*,
+that summary also names what threw — the error's class, its message, and the provider class it
+wrapped — so a failed run is readable afterwards instead of only in the terminal it scrolled past,
+and a failed turn, a turn you cancelled and a clean turn all read as themselves. It is on by
 default; set `"trajectory": false` in `~/.darwin/config.json` to record nothing.
 
 The record is bounded, so one huge tool result cannot make it dominate your disk: strings are
@@ -371,8 +374,11 @@ darwin trajectory replay <id> --turn 3 --json            # one turn, machine-rea
 darwin trajectory fork <id>                              # branch it into a new session
 ```
 
-`replay` reconstructs what the session *showed*: your prompts, the assistant's replies, and each
-tool call with its status and result preview. It re-runs nothing — no model call, no tool
+`replay` reconstructs what the session *showed*: your prompts, the assistant's replies, each
+tool call with its status and result preview, and — for a turn that failed — the same `turn failed:`
+notice the TUI showed, plus a line naming the error's class. `list` says how many turns failed and
+what threw, bounded to one line per session. Both exit 0: a record that faithfully describes a
+failure was read successfully. `replay` re-runs nothing — no model call, no tool
 execution, no file or shell action — and it does not reproduce token-level timing, reasoning
 content, bytes a cap removed, or terminal colours. `search` prints `no matches` when a record it
 read contains nothing (exit 0) and tells you plainly when a session has no record at all

@@ -11,8 +11,11 @@
  *
  * - every event is yielded, in order, unmodified;
  * - nothing is awaited between receiving an event and yielding it;
- * - `record()` cannot throw (it catches internally), so no recording failure can
- *   surface as a turn failure;
+ * - `record()` and `failed()` cannot throw (they catch internally), so no recording
+ *   failure can surface as a turn failure;
+ * - a thrown stream is observed and **rethrown as the identical object**: the caller
+ *   sees the same class, the same message and the same stack it would have seen with
+ *   recording switched off;
  * - a consumer that stops early still closes the underlying stream, and the turn is
  *   still closed off, which is what makes a cancelled turn leave a valid record.
  *
@@ -35,6 +38,20 @@ export async function* recordStream(
       turn?.record(event);
       yield event;
     }
+  } catch (error) {
+    // The one place the record learns that a turn *failed* rather than merely ended:
+    // a thrown turn emits no `agentResultEvent`, so without this the line closing it
+    // would be indistinguishable from a cancelled or an abandoned turn. `catch` runs
+    // before `finally`, so the `end()` below writes the failure out.
+    //
+    // Rethrowing the same object — not a copy, not a wrapper — is the observer
+    // contract: what the caller of `AgentRuntime.send` sees must not depend on whether
+    // recording is on. A consumer-side error is deliberately *not* seen here, because
+    // JavaScript delivers a for-await body's throw to this generator as a `return`
+    // completion: that runs the `finally` alone and the turn is recorded as abandoned,
+    // which is what it is — the turn did not fail, the reader left.
+    turn?.failed(error);
+    throw error;
   } finally {
     // Reached on normal completion, on a throw, and when the consumer stops early
     // (`break`, or a cancelled turn): the record must describe what happened either

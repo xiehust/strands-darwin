@@ -115,6 +115,31 @@ export interface EventRecord extends RecordEnvelope {
   data: Record<string, unknown>;
 }
 
+/**
+ * What the turn's stream threw, as far as an observer can honestly say.
+ *
+ * `name` is the error's class, `message` its text — the two things that identify a
+ * provider failure without carrying a stack trace (which names local paths and is
+ * not what the record is for). All fields are capped like any other string field.
+ */
+export interface TurnFailure {
+  name: string;
+  message: string;
+  /**
+   * The wrapped error's class, when the thrown error wraps another.
+   *
+   * Not decoration: measured on `@strands-agents/sdk@1.12.0`, `Model.streamAggregated`
+   * catches anything that is not already a `ModelError` and rethrows
+   * `new ModelError(normalized.message, { cause: original })`. So a real Bedrock
+   * rejection reaches the caller as `ModelError` with the provider's *message* intact
+   * and its *class* only on `cause` — without this field every provider failure in the
+   * file would read `ModelError` and nothing would distinguish a throttle from an
+   * expired token. The cause's message is deliberately not stored: the wrapper copied
+   * it, so the class is the only fact wrapping loses.
+   */
+  cause?: string;
+}
+
 export interface TurnEndedRecord extends RecordEnvelope {
   type: 'turnEnded';
   stopReason: string | undefined;
@@ -125,6 +150,17 @@ export interface TurnEndedRecord extends RecordEnvelope {
   dropped: Record<string, number>;
   /** Assistant text that never reached an assembled block (a cancelled turn). */
   partialText?: string;
+  /**
+   * Present only when the turn's stream threw: what reached the caller of
+   * `AgentRuntime.send`.
+   *
+   * Optional and additive on purpose. A thrown turn never emits `agentResultEvent`,
+   * so `stopReason` is `undefined` for it and always will be — inventing a
+   * `'failed'` stop reason would put a value no provider produced into a field whose
+   * contract is the SDK's own. The presence of this field is what makes a failed turn
+   * a failed turn; see {@link turnOutcome}.
+   */
+  failure?: TurnFailure;
 }
 
 export interface ForkedFromRecord extends RecordEnvelope {
@@ -149,6 +185,53 @@ export type TrajectoryRecord =
   | TurnEndedRecord
   | ForkedFromRecord
   | RecordingStoppedRecord;
+
+/**
+ * A thrown value as the fields the record keeps.
+ *
+ * The class is read from the prototype rather than from `error.name`, because the
+ * two disagree exactly where it matters: every SDK error class sets `name` to its
+ * own class name (measured on `@strands-agents/sdk@1.12.0`, `dist/src/errors.js`),
+ * but nothing forces a provider or a future subclass to, and then `name` degrades to
+ * the useless `'Error'` while the constructor still knows what was thrown. When both
+ * are present and differ, the class wins and `name` is appended, because they are
+ * two different facts and a record that silently picked one would hide the other.
+ *
+ * A non-`Error` throw is described by its type rather than pretended to be an error:
+ * `String(value)` is the only honest message available.
+ */
+export function failureFromError(error: unknown): TurnFailure {
+  if (!(error instanceof Error)) {
+    return { name: `non-error ${error === null ? 'null' : typeof error}`, message: safeString(error) };
+  }
+
+  const name = className(error);
+  const cause = error.cause instanceof Error ? className(error.cause) : '';
+  return {
+    name,
+    message: typeof error.message === 'string' ? error.message : safeString(error),
+    // Only when it adds something: a wrapper of the same class tells a reader nothing.
+    ...(cause === '' || cause === name ? {} : { cause }),
+  };
+}
+
+/** An error's class, with its declared `name` kept when the two disagree. */
+function className(error: Error): string {
+  const constructed = error.constructor?.name;
+  const declared = typeof error.name === 'string' ? error.name : '';
+  if (typeof constructed !== 'string' || constructed === '') return declared === '' ? 'Error' : declared;
+  if (constructed === declared || declared === '') return constructed;
+  return `${constructed} (name: ${declared})`;
+}
+
+/** `String()` cannot be trusted on an arbitrary throw: a hostile `toString` may throw itself. */
+function safeString(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return '(a thrown value that could not be converted to text)';
+  }
+}
 
 /** Collects truncations while a payload is being capped. */
 class Capper {
@@ -297,8 +380,16 @@ export function searchableText(record: TrajectoryRecord): string[] {
   switch (record.type) {
     case 'userInput':
       return [record.text];
-    case 'turnEnded':
-      return record.partialText === undefined ? [] : [record.partialText];
+    case 'turnEnded': {
+      // The failure joins search for the same reason tool result text is in it: it is
+      // content the record already holds, and "which session hit ThrottlingException"
+      // is the question a failed overnight run makes people ask first.
+      const failure = turnFailureOf(record);
+      return [
+        ...(record.partialText === undefined ? [] : [record.partialText]),
+        ...(failure === undefined ? [] : [failureLine(failure)]),
+      ];
+    }
     case 'contentBlockEvent':
     case 'beforeToolCallEvent':
     case 'afterToolCallEvent':
@@ -307,6 +398,77 @@ export function searchableText(record: TrajectoryRecord): string[] {
     default:
       return [];
   }
+}
+
+/** How a `turnEnded` record reads on its own, with no other line of the file. */
+export type TurnOutcome = 'clean' | 'cancelled' | 'failed' | 'abandoned';
+
+/**
+ * The one shared reading of how a turn ended, so `list`, `replay` and the tests
+ * cannot drift into three different answers.
+ *
+ * `abandoned` is the honest name for the pre-existing fourth case: the consumer
+ * stopped reading before a result arrived (an early `break`, or a for-await body that
+ * threw, which JavaScript delivers to the generator as a `return` completion rather
+ * than as the turn failing). It is no longer conflated with a failure.
+ */
+export function turnOutcome(record: TurnEndedRecord): TurnOutcome {
+  if (turnFailureOf(record) !== undefined) return 'failed';
+  if (record.stopReason === 'cancelled') return 'cancelled';
+  return typeof record.stopReason === 'string' && record.stopReason !== '' ? 'clean' : 'abandoned';
+}
+
+/**
+ * A record's failure as a reader can trust it.
+ *
+ * Defensive about the payload rather than about the envelope, matching
+ * {@link parseRecordLine}: the line may come from an older darwin that never wrote
+ * the field, a newer one that writes more, or an interrupted write. A half-present
+ * failure is still reported as a failure — dropping it would hide the very thing the
+ * field exists to say.
+ */
+export function turnFailureOf(record: TurnEndedRecord): TurnFailure | undefined {
+  const failure = record.failure as unknown;
+  if (failure === null || typeof failure !== 'object') return undefined;
+  const { name, message, cause } = failure as { name?: unknown; message?: unknown; cause?: unknown };
+  const named = typeof name === 'string' ? name : '';
+  const said = typeof message === 'string' ? message : '';
+  const from = typeof cause === 'string' ? cause : '';
+  if (named === '' && said === '' && from === '') return undefined;
+  return {
+    name: named === '' ? '(unnamed error)' : named,
+    message: said,
+    ...(from === '' ? {} : { cause: from }),
+  };
+}
+
+/**
+ * Cap on one rendered failure summary, in code points.
+ *
+ * Small on purpose: this is the bound for a *summary* line, where a whole session is
+ * one line. The full message — itself capped at {@link MAX_FIELD_CHARS} — stays in
+ * the record and is what `replay` prints.
+ */
+export const MAX_FAILURE_SUMMARY_CHARS = 120;
+
+/** The failure as one unbounded line: what search matches against. */
+export function failureLine(failure: TurnFailure): string {
+  const named = failure.cause === undefined ? failure.name : `${failure.name} (cause ${failure.cause})`;
+  return `${named}: ${failure.message}`;
+}
+
+/**
+ * {@link failureLine} on one line, bounded — for summary rows.
+ *
+ * The bound covers the whole rendered line, not the message alone, because the class
+ * name is provider-controlled too: an 8,000 code-point name would otherwise blow the
+ * row just as easily as a long message. Newlines are collapsed because a provider
+ * message with embedded newlines would turn one summary row into several.
+ */
+export function formatTurnFailure(failure: TurnFailure, limit = MAX_FAILURE_SUMMARY_CHARS): string {
+  const line = failureLine(failure).replace(/\s+/gu, ' ').trim();
+  const points = [...line];
+  return points.length <= limit ? line : `${points.slice(0, Math.max(0, limit - 1)).join('')}…`;
 }
 
 function collectStrings(value: unknown, into: string[]): string[] {

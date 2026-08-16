@@ -15,7 +15,7 @@ import { contentBlockFromData, type AgentStreamEvent } from '@strands-agents/sdk
 
 import { initialTurnState, turnReducer, type HistoryItem } from '../tui/turn-state.js';
 import { describeDamage, type TrajectoryReadResult } from './reader.js';
-import type { TrajectoryRecord } from './record.js';
+import { formatTurnFailure, turnFailureOf, type TrajectoryRecord, type TurnFailure } from './record.js';
 
 export interface ReplayResult {
   /** The reconstructed history, in order. */
@@ -28,6 +28,8 @@ export interface ReplayResult {
   damage: string | undefined;
   /** Records the replay skipped because a cap had removed their payload. */
   droppedRecords: number;
+  /** Turns whose stream threw, in turn order, with what it threw. */
+  failures: (TurnFailure & { turn: number })[];
 }
 
 export interface ReplayOptions {
@@ -50,6 +52,7 @@ export function replayRecords(
   let state = initialTurnState;
   const turns = new Set<number>();
   const runs: ReplayResult['runs'] = [];
+  const failures: ReplayResult['failures'] = [];
   let droppedRecords = 0;
 
   for (const record of records) {
@@ -93,6 +96,25 @@ export function replayRecords(
         if (record.partialText !== undefined) {
           state = { ...state, liveText: record.partialText };
         }
+        {
+          // A failed turn reproduces the notice the TUI already appends in
+          // `runTurn` — the same text, the same severity, and before `turnEnded`,
+          // because `notice` does not flush live text and the live order is
+          // notice-then-flush. Replaying it as history rather than inventing a
+          // replay-only line is what keeps one reducer and one projection: a failed
+          // turn replays as the history it actually produced. The error's *class*
+          // is not in that notice (the live one never had it), so it is reported
+          // separately, in {@link formatReplay} and in `failures`.
+          const failure = turnFailureOf(record);
+          if (failure !== undefined) {
+            failures.push({ turn: record.turn, ...failure });
+            state = turnReducer(state, {
+              type: 'notice',
+              text: `turn failed: ${failure.message}`,
+              severity: 'error',
+            });
+          }
+        }
         state = turnReducer(state, { type: 'turnEnded' });
         continue;
 
@@ -102,7 +124,13 @@ export function replayRecords(
     }
   }
 
-  return { history: state.history, turns: [...turns].sort((a, b) => a - b), runs, droppedRecords };
+  return {
+    history: state.history,
+    turns: [...turns].sort((a, b) => a - b),
+    runs,
+    droppedRecords,
+    failures,
+  };
 }
 
 /** Replays a file the reader has already opened, carrying its damage report along. */
@@ -202,6 +230,12 @@ export function formatReplay(result: ReplayResult): string {
   if (result.history.length === 0) lines.push('(the record contains no replayable history)');
   if (result.droppedRecords > 0) {
     lines.push(`  ${result.droppedRecords} record(s) had their payload removed by a size cap`);
+  }
+  // The class name, which the reconstructed notice above cannot carry because the
+  // live notice it mirrors never carried one. Bounded like the `list` summary, since
+  // the message itself is already in the notice line, in full.
+  for (const failure of result.failures) {
+    lines.push(`  turn ${failure.turn} failed: ${formatTurnFailure(failure)}`);
   }
   return lines.join('\n');
 }

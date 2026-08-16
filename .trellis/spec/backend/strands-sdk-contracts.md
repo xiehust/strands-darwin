@@ -79,6 +79,46 @@ underlying stream and still reaches the wrapper's `finally`. Keep the observatio
 an `await` between receiving an event and yielding it would change turn timing, and a throw
 there would become a second way for a turn to fail.
 
+### Contract: a thrown turn reaches the consumer as the identical error object, after `AfterInvocationEvent`
+
+Measured over a real `Agent.stream()` with a model that throws mid-stream: the agent stores the
+error, fires and **yields** its `AfterInvocationEvent`, and then rethrows *the same object* — same
+class, same message, same `cause`. So an observer between `stream()` and the `yield` can read the
+error and rethrow it without the caller being able to tell recording exists, which is exactly what
+`recordStream`'s `catch` does. Two corollaries worth knowing: a failed turn still emits events
+after the last content (so a record's event counts are not proof of success), and it emits **no**
+`agentResultEvent`, which is why a failed turn has no `stopReason` and must be described some
+other way.
+
+### Contract: cancel does not throw to the consumer
+
+`agent.cancel()` raises the SDK's internal `CancelledError`, which `stream()` converts into an
+`AgentResult` with `stopReason: 'cancelled'` and delivers as an ordinary `agentResultEvent`.
+Cancellation is checked once per model stream event, so cancelling from inside a `for await` body
+ends that turn cleanly rather than throwing. Never treat cancel as an error path, and never infer
+cancellation from a throw.
+
+### Contract: `Model.streamAggregated` wraps any non-`ModelError` throw, keeping only the message
+
+Measured on 1.12.0 (`models/model.js`): a `ModelError` (and its subclasses) is rethrown untouched;
+anything else becomes `new ModelError(normalizeError(error).message, { cause: original })`. Since
+`BedrockModel.stream` re-throws AWS service exceptions as-is, a real Bedrock rejection reaches
+darwin as `ModelError` — the provider's *message* intact, its *class* only on `.cause`. Anything
+that identifies a provider failure by class must therefore read the cause too; darwin's record
+stores it as `turnEnded.failure.cause` for that reason. Proven live: an invalid Bedrock API key
+recorded `{"name":"ModelError","message":"Authentication failed: Please make sure your API Key is
+valid.","cause":"AccessDeniedException"}`.
+
+### Contract: every SDK error class sets `name`, but nothing makes a subclass do it
+
+`ModelError`, `ContextWindowOverflowError`, `MaxTokensError`, `ModelThrottledError`,
+`SessionError`, `ToolNotFoundError` and the rest each assign `this.name` to their own class name
+(`errors.js`, 1.12.0), and AWS SDK service exceptions do the same — so `error.name` is usually the
+class. It is not guaranteed: a subclass that forgets it reports `'Error'` while the prototype
+still knows the truth. Read the class from `error.constructor.name` and keep a disagreeing
+`error.name` alongside it rather than choosing one silently
+(`failureFromError` in `src/trajectory/record.ts`).
+
 ### Gotcha: a child's reasoning already reaches parent context through `AgentResult.toString()`
 
 `SubagentTool` returns `result.toString()`, and that rendering **includes the child's reasoning**
