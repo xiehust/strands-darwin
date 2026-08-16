@@ -18,11 +18,22 @@ import {
   type BackgroundBashMode,
 } from './background-tool-presentation.js';
 import { subagentCallSummary } from './subagent-format.js';
+import { expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 
 export type HistoryItem =
   | { kind: 'user'; id: string; text: string }
   | { kind: 'assistant'; id: string; text: string }
-  | { kind: 'tool'; id: string; name: string; summary: string; status: ToolStatus; preview: string }
+  | {
+      kind: 'tool';
+      id: string;
+      name: string;
+      summary: string;
+      status: ToolStatus;
+      preview: string;
+      /** Already bounded before entering immutable transcript history. */
+      inputPreview: string;
+      expanded: boolean;
+    }
   | { kind: 'notice'; id: string; text: string; severity: NoticeSeverity };
 
 export type ToolStatus = 'ok' | 'error' | 'denied';
@@ -41,8 +52,9 @@ export interface ActiveTool {
   /** Epoch ms when the call entered the live panel; drives the elapsed suffix. */
   startedAt: number;
   compactSummary?: string;
+  /** Raw only while active; the renderer bounds it before drawing. */
+  input: unknown;
   backgroundMode?: BackgroundBashMode;
-  backgroundInput?: unknown;
 }
 
 export interface TurnState {
@@ -54,7 +66,7 @@ export interface TurnState {
   thinking: boolean;
   activeTools: ActiveTool[];
   /** Session-local display preference; immutable Static history is never rewritten. */
-  backgroundDetailsExpanded: boolean;
+  toolDetailsExpanded: boolean;
 }
 
 export const initialTurnState: TurnState = {
@@ -62,7 +74,7 @@ export const initialTurnState: TurnState = {
   liveText: '',
   thinking: false,
   activeTools: [],
-  backgroundDetailsExpanded: false,
+  toolDetailsExpanded: false,
 };
 
 let idCounter = 0;
@@ -74,7 +86,7 @@ function nextId(prefix: string): string {
 export type TurnAction =
   | { type: 'userInput'; text: string }
   | { type: 'notice'; text: string; severity?: NoticeSeverity }
-  | { type: 'toggleBackgroundDetails' }
+  | { type: 'toggleToolDetails' }
   | { type: 'streamEvent'; event: AgentStreamEvent }
   | { type: 'turnEnded' };
 
@@ -95,17 +107,17 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         ],
       };
 
-    case 'toggleBackgroundDetails': {
-      const backgroundDetailsExpanded = !state.backgroundDetailsExpanded;
+    case 'toggleToolDetails': {
+      const toolDetailsExpanded = !state.toolDetailsExpanded;
       return {
         ...state,
-        backgroundDetailsExpanded,
+        toolDetailsExpanded,
         history: [
           ...state.history,
           {
             kind: 'notice',
             id: nextId('notice'),
-            text: `background details: ${backgroundDetailsExpanded ? 'expanded' : 'compact'}`,
+            text: `tool details: ${toolDetailsExpanded ? 'expanded' : 'compact'}`,
             severity: 'info',
           },
         ],
@@ -186,11 +198,11 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
             name: event.toolUse.name,
             summary,
             startedAt: Date.now(),
+            input: event.toolUse.input,
             ...(backgroundMode === undefined
               ? {}
               : {
                   backgroundMode,
-                  backgroundInput: event.toolUse.input,
                   compactSummary: compactBackgroundCallSummary(backgroundMode, event.toolUse.input),
                 }),
           },
@@ -219,17 +231,17 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       // when the call entered the live panel.
       const backgroundMode =
         active?.backgroundMode ?? backgroundBashMode(event.toolUse.name, event.toolUse.input);
-      if (backgroundMode !== undefined && !state.backgroundDetailsExpanded) {
+      if (backgroundMode !== undefined && !state.toolDetailsExpanded) {
         // Compact labels stay bounded even when a call fails or its successful
         // payload drifts. Failures and fallbacks still retain the full preview.
         summary = active?.compactSummary ?? compactBackgroundCallSummary(
           backgroundMode,
-          active?.backgroundInput ?? event.toolUse.input,
+          active?.input ?? event.toolUse.input,
         );
         if (status === 'ok') {
           const compact = compactBackgroundResult(
             backgroundMode,
-            active?.backgroundInput ?? event.toolUse.input,
+            active?.input ?? event.toolUse.input,
             event.result.content,
           );
           if (compact.kind === 'suppress') return { ...state, activeTools };
@@ -245,7 +257,19 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
         activeTools,
         history: [
           ...state.history,
-          { kind: 'tool', id: nextId('tool'), name: event.toolUse.name, summary, status, preview },
+          {
+            kind: 'tool',
+            id: nextId('tool'),
+            name: event.toolUse.name,
+            summary,
+            status,
+            // Bound before immutable history/replay state owns the string.
+            preview: toolResultPreview(preview, status, state.toolDetailsExpanded).join('\n'),
+            inputPreview: state.toolDetailsExpanded
+              ? expandedToolInput(active?.input ?? event.toolUse.input).join('\n')
+              : '',
+            expanded: state.toolDetailsExpanded,
+          },
         ],
       };
     }

@@ -18,7 +18,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | chunkedEnter | cursor | completion | backgroundDetails |
+ *                 cancelThenContinue | multiline | chunkedEnter | cursor | completion | toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -764,8 +764,8 @@ async function slashCompletion(): Promise<void> {
 }
 
 /** Zero-model proof that Ctrl+B is display-only and preserves the prompt draft. */
-async function backgroundDetailsToggle(): Promise<void> {
-  header('TUI — Ctrl+B toggles background details without editing the draft');
+async function toolDetailsToggle(): Promise<void> {
+  header('TUI — Ctrl+B toggles tool details without editing the draft');
 
   await resetWorkDir();
   const tui = startTui({ cwd: WORK_DIR });
@@ -777,22 +777,22 @@ async function backgroundDetailsToggle(): Promise<void> {
 
     const beforeExpanded = tui.mark();
     tui.send('\u0002'); // ctrl+b
-    await tui.waitFor('background details: expanded', {
+    await tui.waitFor('tool details: expanded', {
       timeoutMs: 30_000,
       from: beforeExpanded,
       settleMs: 400,
     });
-    assert('Ctrl+B reports expanded mode', tui.screen.slice(beforeExpanded).includes('background details: expanded'));
+    assert('Ctrl+B reports expanded mode', tui.screen.slice(beforeExpanded).includes('tool details: expanded'));
     assert('expanding preserves the existing draft', tui.screen.slice(beforeExpanded).includes(`you> ${draft}`));
 
     const beforeCompact = tui.mark();
     tui.send('\u0002');
-    await tui.waitFor('background details: compact', {
+    await tui.waitFor('tool details: compact', {
       timeoutMs: 30_000,
       from: beforeCompact,
       settleMs: 400,
     });
-    assert('Ctrl+B reports compact mode', tui.screen.slice(beforeCompact).includes('background details: compact'));
+    assert('Ctrl+B reports compact mode', tui.screen.slice(beforeCompact).includes('tool details: compact'));
     assert('compacting still preserves the existing draft', tui.screen.slice(beforeCompact).includes(`you> ${draft}`));
     assert('the toggle never starts a model turn', !tui.screen.slice(beforeExpanded).includes('working…'));
 
@@ -1355,7 +1355,7 @@ const SCENARIOS = {
   chunkedEnter,
   cursor: cursorEditing,
   completion: slashCompletion,
-  backgroundDetails: backgroundDetailsToggle,
+  toolDetails: toolDetailsToggle,
   agents: agentDispatches,
   agentsMd: agentsMdHeader,
   usage: usageReport,

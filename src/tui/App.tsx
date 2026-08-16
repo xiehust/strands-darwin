@@ -540,7 +540,7 @@ export function App({
     // Display-only and session-local. It is deliberately after permission
     // ownership, but before editor commands, so the draft and cursor are untouched.
     if (key.ctrl && typed === 'b') {
-      dispatch({ type: 'toggleBackgroundDetails' });
+      dispatch({ type: 'toggleToolDetails' });
       return;
     }
 
@@ -712,7 +712,7 @@ export function App({
       <ActiveToolCalls
         tools={state.activeTools}
         frame={frame}
-        backgroundDetailsExpanded={state.backgroundDetailsExpanded}
+        toolDetailsExpanded={state.toolDetailsExpanded}
       />
 
       {pendingPermission !== undefined ? (

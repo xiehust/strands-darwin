@@ -10,10 +10,8 @@ import React from 'react';
 
 import { activeToolCallSummary } from './background-tool-presentation.js';
 import { formatTaskDuration } from './task-format.js';
+import { expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 import type { ActiveTool, HistoryItem, ToolStatus } from './turn-state.js';
-
-/** Lines of tool output kept in the collapsed preview. */
-const PREVIEW_LINES = 4;
 
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
 
@@ -21,25 +19,35 @@ const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '
 export function ActiveToolCalls({
   tools,
   frame,
-  backgroundDetailsExpanded,
+  toolDetailsExpanded,
 }: {
   readonly tools: readonly ActiveTool[];
   readonly frame: number;
-  readonly backgroundDetailsExpanded: boolean;
+  readonly toolDetailsExpanded: boolean;
 }): React.JSX.Element | null {
   if (tools.length === 0) return null;
 
   return (
     <Box flexDirection="column">
-      {tools.map((tool) => (
-        <Box key={tool.id}>
-          <Text color="yellow">{FRAMES[frame % FRAMES.length]} </Text>
-          <Text dimColor>{activeToolCallSummary(tool.summary, tool.compactSummary, backgroundDetailsExpanded)}</Text>
-          {/* Elapsed suffix, never prefix: pty assertions match the summary as a
-              substring, and the existing spinner tick already redraws each frame. */}
-          <Text dimColor> ({formatTaskDuration(Date.now() - tool.startedAt)})</Text>
-        </Box>
-      ))}
+      {tools.map((tool) => {
+        const input = toolDetailsExpanded ? expandedToolInput(tool.input) : [];
+        return (
+          <Box key={tool.id} flexDirection="column">
+            <Box>
+              <Text color="yellow">{FRAMES[frame % FRAMES.length]} </Text>
+              <Text dimColor>{activeToolCallSummary(tool.summary, tool.compactSummary, toolDetailsExpanded)}</Text>
+              {/* Elapsed suffix, never prefix: pty assertions match the summary as a
+                  substring, and the existing spinner tick already redraws each frame. */}
+              <Text dimColor> ({formatTaskDuration(Date.now() - tool.startedAt)})</Text>
+            </Box>
+            {input.map((line, index) => (
+              <Text key={index} dimColor>
+                {index === 0 ? `    Input: ${line}` : `           ${line}`}
+              </Text>
+            ))}
+          </Box>
+        );
+      })}
     </Box>
   );
 }
@@ -50,7 +58,8 @@ export function ToolCallResult({
   readonly item: Extract<HistoryItem, { kind: 'tool' }>;
 }): React.JSX.Element {
   const { icon, color } = statusStyle(item.status);
-  const preview = collapsePreview(item.preview, item.status);
+  const input = item.expanded && item.inputPreview !== '' ? item.inputPreview.split('\n') : [];
+  const preview = item.preview === '' ? [] : item.preview.split('\n');
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -58,11 +67,18 @@ export function ToolCallResult({
         <Text color={color}>{icon} </Text>
         <Text dimColor>{item.summary}</Text>
       </Box>
+      {input.map((line, index) => (
+        <Text key={`input-${index}`} dimColor>
+          {index === 0 ? `    Input: ${line}` : `           ${line}`}
+        </Text>
+      ))}
+
       {preview.map((line, index) => (
         // Preview lines are static text with no identity of their own.
         <Text key={index} dimColor>
-          {'    '}
-          {line}
+          {item.expanded
+            ? index === 0 ? `    Result: ${line}` : `            ${line}`
+            : `    ${line}`}
         </Text>
       ))}
     </Box>
@@ -88,16 +104,6 @@ function statusStyle(status: ToolStatus): { icon: string; color: string } {
  * Denied results keep their `DENIED:` first line — the reason itself, and what
  * the deny flow greps for — plus the tail, within the same row budget.
  */
-export function collapsePreview(preview: string, status: ToolStatus): string[] {
-  if (preview.trim() === '') return [];
-
-  const lines = preview.split('\n');
-  if (lines.length <= PREVIEW_LINES) return lines;
-  const hidden = lines.length - PREVIEW_LINES;
-
-  if (status === 'ok') return [...lines.slice(0, PREVIEW_LINES), `… ${hidden} more line(s)`];
-  if (status === 'denied') {
-    return [lines[0] as string, `… ${hidden} earlier line(s)`, ...lines.slice(-(PREVIEW_LINES - 1))];
-  }
-  return [`… ${hidden} earlier line(s)`, ...lines.slice(-PREVIEW_LINES)];
+export function collapsePreview(preview: string, status: ToolStatus, expanded = false): string[] {
+  return toolResultPreview(preview, status, expanded);
 }

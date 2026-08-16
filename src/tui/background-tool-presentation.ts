@@ -42,9 +42,9 @@ export function compactBackgroundCallSummary(mode: BackgroundBashMode, input: un
 export function activeToolCallSummary(
   summary: string,
   compactSummary: string | undefined,
-  backgroundDetailsExpanded: boolean,
+  toolDetailsExpanded: boolean,
 ): string {
-  return backgroundDetailsExpanded ? summary : (compactSummary ?? summary);
+  return toolDetailsExpanded ? summary : (compactSummary ?? summary);
 }
 
 /**

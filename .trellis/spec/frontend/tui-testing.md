@@ -154,7 +154,9 @@ The report shows short id, presentation-only command summary, state, and elapsed
 - Subscribe in a mounted `useEffect` and return the unsubscribe closure. Dispatch only a `notice`; never `turnEnded` or status changes. The dim `<Static>` history entry is non-modal, visible while idle, and cannot steal permission/input focus.
 - Normalize command whitespace and bound summaries only at presentation time. Truncate by Unicode code points, not UTF-16 code units, so an emoji boundary cannot render `�`; agent-side list output keeps the full command.
 - Background lifecycle `bash` calls (`start`, `list`, `status`, `output`, `stop`) are a presentation-only projection. Compact mode suppresses successful status and empty output polls, retains child text without cursor/path metadata, and keeps failures fully diagnostic. Unknown successful payloads fall back to ordinary rendering.
-- `Ctrl+B` toggles compact/expanded lifecycle details after permission ownership but before editor handling. It works idle or streaming, appends an immediate notice, and must not alter the draft/cursor. Existing `<Static>` scrollback is immutable; only active and subsequent calls change.
+- `Ctrl+B` toggles compact/expanded details for every tool after permission ownership but before editor handling. It works idle or streaming, appends an immediate `tool details:` notice, and must not alter the draft/cursor. Existing `<Static>` scrollback is immutable; only active and subsequent calls change.
+- Compact results are bounded by both four logical lines and 2,000 Unicode code points, so minified JSON cannot bypass the terminal bound. Success keeps the head, errors the tail, and denied output its first reason plus the tail; truncation is explicit.
+- Expanded mode shows bounded input (8,000 code points / 100 lines) and result (32,000 code points / 200 lines) for ordinary, MCP, plugin, subagent and background tools. These are presentation bounds only; model-visible content stays unchanged.
 
 ### 4. Validation & Error Matrix
 
@@ -178,7 +180,7 @@ The report shows short id, presentation-only command summary, state, and elapsed
 
 - `spike/verify-task-format.ts`: whitespace, bounds, Unicode code-point truncation, running/terminal time endpoints, empty report, and failure metadata.
 - `spike/verify-background-tool-ui.ts`: lifecycle recognition, compact active/result summaries, status/empty-output suppression, child output, malformed fallback, failure preservation, expanded mode, and foreground compatibility.
-- `spike/verify-tui.ts backgroundDetails`: zero-model `Ctrl+B` toggles both ways, reports each mode, preserves a draft, and starts no turn.
+- `spike/verify-tui.ts toolDetails`: zero-model `Ctrl+B` toggles both ways, reports each mode, preserves a draft, and starts no turn.
 - `spike/verify-tui.ts completion`: zero-model `/tasks`, space/tab argument rejection, completion row, and no `working…` marker.
 - `spike/verify-tui.ts tasks`: anchored proof that one completion arrives after idle was established, `/tasks` renders during streaming, another completion arrives during that same turn, both precede the final word, and exit is deadline-bounded.
 - Manager-level tests own exactly-once stop/success/failure and unsubscribe semantics; do not duplicate private-manager assertions in React tests.

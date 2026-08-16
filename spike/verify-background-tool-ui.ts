@@ -1,5 +1,7 @@
-/** Focused, network-free contracts for compact background bash presentation. */
+/** Focused, network-free contracts for all-tool detail presentation. */
 import type { AgentStreamEvent } from '@strands-agents/sdk';
+import { renderToString } from 'ink';
+import React from 'react';
 
 import {
   activeToolCallSummary,
@@ -7,8 +9,19 @@ import {
   compactBackgroundCallSummary,
   compactBackgroundResult,
 } from '../src/tui/background-tool-presentation.js';
-import { collapsePreview } from '../src/tui/ToolCallPanel.js';
-import { initialTurnState, turnReducer, type TurnState } from '../src/tui/turn-state.js';
+import { ActiveToolCalls, collapsePreview, ToolCallResult } from '../src/tui/ToolCallPanel.js';
+import {
+  COMPACT_RESULT_CODE_POINTS,
+  COMPACT_RESULT_LINES,
+  EXPANDED_INPUT_CODE_POINTS,
+  EXPANDED_INPUT_LINES,
+  EXPANDED_RESULT_CODE_POINTS,
+  EXPANDED_RESULT_LINES,
+  boundText,
+  expandedToolInput,
+  serializeToolInput,
+} from '../src/tui/tool-detail-presentation.js';
+import { initialTurnState, previewToolResult, turnReducer, type TurnState } from '../src/tui/turn-state.js';
 import { assert, header, report } from './shared.js';
 
 const TASK_ID = 'bg-12345678-1234-1234-1234-123456789abc';
@@ -196,17 +209,17 @@ assert('compact denied lifecycle calls retain realistic text diagnostics',
 
 let toggled = reduce(initialTurnState, before('active-toggle', { mode: 'status', taskId: TASK_ID }));
 const active = toggled.activeTools[0]!;
-const compactLabel = activeToolCallSummary(active.summary, active.compactSummary, toggled.backgroundDetailsExpanded);
-toggled = turnReducer(toggled, { type: 'toggleBackgroundDetails' });
-const expandedLabel = activeToolCallSummary(active.summary, active.compactSummary, toggled.backgroundDetailsExpanded);
+const compactLabel = activeToolCallSummary(active.summary, active.compactSummary, toggled.toolDetailsExpanded);
+toggled = turnReducer(toggled, { type: 'toggleToolDetails' });
+const expandedLabel = activeToolCallSummary(active.summary, active.compactSummary, toggled.toolDetailsExpanded);
 assert('toggling changes the selected active summary immediately',
   compactLabel === active.compactSummary && expandedLabel === active.summary && compactLabel !== expandedLabel);
 
-let expanded = turnReducer(initialTurnState, { type: 'toggleBackgroundDetails' });
+let expanded = turnReducer(initialTurnState, { type: 'toggleToolDetails' });
 let toggleNotice = expanded.history.at(-1);
 assert('toggle enables details and appends an immediate notice',
-  expanded.backgroundDetailsExpanded && toggleNotice?.kind === 'notice' &&
-  toggleNotice.text === 'background details: expanded');
+  expanded.toolDetailsExpanded && toggleNotice?.kind === 'notice' &&
+  toggleNotice.text === 'tool details: expanded');
 expanded = reduce(expanded, before('expanded-status', { mode: 'status', taskId: TASK_ID }));
 expanded = reduce(expanded, after('expanded-status', statusPayload()));
 const expandedStatus = expanded.history.at(-1);
@@ -218,11 +231,11 @@ const expandedDenied = expanded.history.at(-1);
 assert('expanded denied lifecycle calls retain full text diagnostics',
   expandedDenied?.kind === 'tool' && expandedDenied.status === 'denied' &&
   expandedDenied.preview.includes('owner: policy'));
-expanded = turnReducer(expanded, { type: 'toggleBackgroundDetails' });
+expanded = turnReducer(expanded, { type: 'toggleToolDetails' });
 toggleNotice = expanded.history.at(-1);
 assert('second toggle returns to compact with a notice',
-  !expanded.backgroundDetailsExpanded && toggleNotice?.kind === 'notice' &&
-  toggleNotice.text === 'background details: compact');
+  !expanded.toolDetailsExpanded && toggleNotice?.kind === 'notice' &&
+  toggleNotice.text === 'tool details: compact');
 
 let foreground = initialTurnState;
 foreground = reduce(foreground, before('foreground', { mode: 'execute', command: 'printf ok' }));
@@ -239,6 +252,83 @@ assert('every active tool call is stamped with a start time for the elapsed suff
   stamped.activeTools.length === 2 && stamped.activeTools.every((tool) =>
     Number.isSafeInteger(tool.startedAt) && tool.startedAt >= clockBefore && tool.startedAt <= clockAfter));
 
+assert('every active tool retains input for immediate expanded rendering',
+  stamped.activeTools[1]?.input !== undefined &&
+  JSON.stringify(stamped.activeTools[1]?.input).includes('printf ok'));
+
+header('all-tool active and immutable rendering');
+let ordinaryActive = reduce(initialTurnState, event({
+  type: 'beforeToolCallEvent',
+  toolUse: {
+    name: 'mcp__catalog__lookup',
+    toolUseId: 'ordinary-active',
+    input: { query: 'needle', nested: { enabled: true } },
+  },
+}));
+const compactActiveRender = renderToString(React.createElement(ActiveToolCalls, {
+  tools: ordinaryActive.activeTools,
+  frame: 0,
+  toolDetailsExpanded: ordinaryActive.toolDetailsExpanded,
+}));
+ordinaryActive = turnReducer(ordinaryActive, { type: 'toggleToolDetails' });
+const expandedActiveRender = renderToString(React.createElement(ActiveToolCalls, {
+  tools: ordinaryActive.activeTools,
+  frame: 0,
+  toolDetailsExpanded: ordinaryActive.toolDetailsExpanded,
+}));
+assert('an active ordinary tool immediately gains bounded input when expanded',
+  !compactActiveRender.includes('Input:') &&
+  expandedActiveRender.includes('Input:') && expandedActiveRender.includes('needle'));
+ordinaryActive = reduce(ordinaryActive, event({
+  type: 'afterToolCallEvent',
+  toolUse: { name: 'mcp__catalog__lookup', toolUseId: 'ordinary-active', input: {} },
+  result: {
+    status: 'success',
+    content: [{ type: 'textBlock', text: 'x'.repeat(EXPANDED_RESULT_CODE_POINTS + 50) }],
+  },
+}));
+const completedAfterToggle = ordinaryActive.history.at(-1);
+assert('the mode selected while active stamps and bounds the result at completion',
+  completedAfterToggle?.kind === 'tool' && completedAfterToggle.expanded &&
+  completedAfterToggle.inputPreview.includes('needle') &&
+  [...completedAfterToggle.preview.split('\n')[0]!].length === EXPANDED_RESULT_CODE_POINTS &&
+  completedAfterToggle.preview.includes('truncated 50 code points'));
+
+let completedCompact = reduce(initialTurnState, event({
+  type: 'beforeToolCallEvent',
+  toolUse: { name: 'mcp__catalog__lookup', toolUseId: 'immutable', input: { query: 'fixed' } },
+}));
+completedCompact = reduce(completedCompact, event({
+  type: 'afterToolCallEvent',
+  toolUse: { name: 'mcp__catalog__lookup', toolUseId: 'immutable', input: {} },
+  result: { status: 'success', content: [{ type: 'textBlock', text: 'fixed result' }] },
+}));
+const immutableItem = completedCompact.history.at(-1);
+const immutableRender = immutableItem?.kind === 'tool'
+  ? renderToString(React.createElement(ToolCallResult, { item: immutableItem }))
+  : '';
+const afterImmutableToggle = turnReducer(completedCompact, { type: 'toggleToolDetails' });
+const retainedItem = afterImmutableToggle.history.at(-2);
+const retainedRender = retainedItem?.kind === 'tool'
+  ? renderToString(React.createElement(ToolCallResult, { item: retainedItem }))
+  : '';
+assert('a completed compact item remains the same immutable projection after a later toggle',
+  retainedItem === immutableItem && immutableRender === retainedRender &&
+  !retainedRender.includes('Input:') && !retainedRender.includes('Result:'));
+
+const expandedRender = expandedStatus?.kind === 'tool'
+  ? renderToString(React.createElement(ToolCallResult, { item: expandedStatus }))
+  : '';
+assert('completed expanded rows render distinct bounded Input and Result sections',
+  expandedRender.includes('Input:') && expandedRender.includes('Result:') &&
+  expandedRender.includes('bg-12345678') && expandedRender.includes('/private/task.log'));
+
+assert('compact completed tools stamp compact mode with no retained input preview',
+  foregroundResult?.kind === 'tool' && !foregroundResult.expanded && foregroundResult.inputPreview === '');
+assert('expanded completed tools stamp expanded mode and bounded input',
+  expandedStatus?.kind === 'tool' && expandedStatus.expanded &&
+  expandedStatus.inputPreview.includes('bg-12345678'));
+
 let notices = turnReducer(initialTurnState, { type: 'notice', text: 'plain' });
 notices = turnReducer(notices, { type: 'notice', text: 'degraded', severity: 'warn' });
 notices = turnReducer(notices, { type: 'notice', text: 'broken', severity: 'error' });
@@ -248,26 +338,99 @@ assert('a notice without a severity defaults to info',
 assert('warn and error severities are preserved on the history item',
   degraded?.kind === 'notice' && degraded.severity === 'warn' &&
   broken?.kind === 'notice' && broken.severity === 'error');
-const toggleSeverity = turnReducer(initialTurnState, { type: 'toggleBackgroundDetails' }).history.at(-1);
-assert('the background-details toggle notice stays informational',
+const toggleSeverity = turnReducer(initialTurnState, { type: 'toggleToolDetails' }).history.at(-1);
+assert('the tool-details toggle notice stays informational',
   toggleSeverity?.kind === 'notice' && toggleSeverity.severity === 'info');
 
 const sixLines = ['one', 'two', 'three', 'four', 'five', 'six'].join('\n');
-assert('successful previews keep the head with the exact more-lines marker',
+assert('successful previews keep the head with an explicit line/code-point marker',
   JSON.stringify(collapsePreview(sixLines, 'ok')) ===
-  JSON.stringify(['one', 'two', 'three', 'four', '… 2 more line(s)']));
-assert('error previews keep the tail with the exact earlier-lines marker',
+  JSON.stringify(['one', 'two', 'three', 'four', '… truncated 9 code points and 2 lines']));
+assert('error previews keep the tail with an explicit line/code-point marker',
   JSON.stringify(collapsePreview(sixLines, 'error')) ===
-  JSON.stringify(['… 2 earlier line(s)', 'three', 'four', 'five', 'six']));
+  JSON.stringify(['… truncated 8 code points and 2 lines', 'three', 'four', 'five', 'six']));
 const deniedLines = ['DENIED: policy says no', 'ctx-a', 'ctx-b', 'ctx-c', 'ctx-d', 'ctx-e'].join('\n');
 assert('denied previews keep the DENIED: head line plus the tail',
   JSON.stringify(collapsePreview(deniedLines, 'denied')) ===
-  JSON.stringify(['DENIED: policy says no', '… 2 earlier line(s)', 'ctx-c', 'ctx-d', 'ctx-e']));
+  JSON.stringify(['DENIED: policy says no', '… truncated 12 code points and 2 lines', 'ctx-c', 'ctx-d', 'ctx-e']));
 const shortLines = 'alpha\nbeta';
 assert('short previews are unchanged for every status',
   (['ok', 'error', 'denied'] as const).every((status) =>
     JSON.stringify(collapsePreview(shortLines, status)) === JSON.stringify(['alpha', 'beta'])));
 assert('blank previews collapse to nothing for every status',
   (['ok', 'error', 'denied'] as const).every((status) => collapsePreview('  \n ', status).length === 0));
+
+const minifiedJson = JSON.stringify({ data: 'x'.repeat(COMPACT_RESULT_CODE_POINTS + 500) });
+const compactJson = collapsePreview(minifiedJson, 'ok');
+assert('a minified single-line JSON result is bounded by code points',
+  compactJson.length === 2 && [...compactJson[0]!].length === COMPACT_RESULT_CODE_POINTS &&
+  compactJson[1]?.includes('truncated 511 code points') === true);
+const unicodeJson = `${'x'.repeat(COMPACT_RESULT_CODE_POINTS - 1)}😀tail`;
+const unicodePreview = collapsePreview(unicodeJson, 'ok');
+assert('code-point truncation preserves a complete emoji',
+  unicodePreview[0]?.endsWith('😀') === true && !unicodePreview.join('').includes('\uFFFD'));
+
+const expandedJson = collapsePreview('x'.repeat(COMPACT_RESULT_CODE_POINTS + 500), 'ok', true);
+assert('expanded result uses the larger bound',
+  expandedJson.length === 1 && (expandedJson[0]?.length ?? 0) > COMPACT_RESULT_CODE_POINTS);
+const hugeExpanded = collapsePreview('x'.repeat(EXPANDED_RESULT_CODE_POINTS + 100), 'ok', true);
+assert('expanded result is still bounded and marked',
+  [...hugeExpanded[0]!].length === EXPANDED_RESULT_CODE_POINTS &&
+  hugeExpanded[1]?.includes('truncated 100 code points') === true);
+const expandedInput = expandedToolInput({ value: 'x'.repeat(EXPANDED_INPUT_CODE_POINTS + 100) });
+assert('expanded input is bounded and marked',
+  [...expandedInput.slice(0, -1).join('\n')].length === EXPANDED_INPUT_CODE_POINTS &&
+  expandedInput.at(-1)?.includes('truncated') === true);
+
+const composed = `${'a'.repeat(COMPACT_RESULT_CODE_POINTS)}\nline-two\nline-three\nline-four\nline-five`;
+const composedPreview = collapsePreview(composed, 'ok');
+assert('line and code-point caps compose and report omissions from both limits',
+  composedPreview.slice(0, -1).length === 1 &&
+  [...composedPreview[0]!].length === COMPACT_RESULT_CODE_POINTS &&
+  composedPreview.at(-1)?.includes('code points and 4 lines') === true);
+
+const longError = `${'head'.repeat(600)}\n${['trace-a', 'trace-b', 'trace-c', 'trace-d', 'FINAL DIAGNOSTIC'].join('\n')}`;
+const boundedError = collapsePreview(longError, 'error');
+assert('code-point-bounded errors retain the diagnostic tail',
+  boundedError.at(-1) === 'FINAL DIAGNOSTIC' &&
+  [...boundedError.filter((line) => !line.startsWith('… truncated')).join('\n')].length <=
+    COMPACT_RESULT_CODE_POINTS);
+const deniedAtBudgetEdge = boundText(
+  `${'D'.repeat(COMPACT_RESULT_CODE_POINTS - 1)}\ntail must not bypass the cap`,
+  'denied',
+  { codePoints: COMPACT_RESULT_CODE_POINTS, lines: COMPACT_RESULT_LINES },
+);
+assert('a denied reason that exhausts the point budget cannot leak an unbounded tail',
+  deniedAtBudgetEdge[0] === 'D'.repeat(COMPACT_RESULT_CODE_POINTS - 1) &&
+  !deniedAtBudgetEdge.join('\n').includes('tail must not bypass') &&
+  deniedAtBudgetEdge.at(-1)?.includes('truncated') === true);
+
+const expandedLineResult = collapsePreview(
+  Array.from({ length: EXPANDED_RESULT_LINES + 5 }, (_, index) => `result-${index}`).join('\n'),
+  'ok',
+  true,
+);
+assert('expanded result enforces its logical-line cap independently',
+  expandedLineResult.slice(0, -1).length === EXPANDED_RESULT_LINES &&
+  expandedLineResult.at(-1)?.includes('5 lines') === true);
+const expandedLineInput = expandedToolInput({
+  rows: Array.from({ length: EXPANDED_INPUT_LINES + 20 }, (_, index) => `input-${index}`),
+});
+assert('expanded input enforces its logical-line cap independently',
+  expandedLineInput.slice(0, -1).length === EXPANDED_INPUT_LINES &&
+  expandedLineInput.at(-1)?.includes('line') === true);
+
+const circular: { self?: unknown } = {};
+circular.self = circular;
+assert('input serialization survives circular and hostile values',
+  serializeToolInput(circular) === '[object Object]' &&
+  serializeToolInput({ toString: () => { throw new Error('nope'); }, self: circular }) ===
+    '[unprintable input]');
+
+assert('media and binary result blocks stay as labels instead of dumping payload data',
+  previewToolResult([
+    { type: 'imageBlock', image: { format: 'png', source: { bytes: 'base64-data' } } },
+    { type: 'documentBlock', document: { bytes: 'document-data' } },
+  ]) === '[imageBlock]\n[documentBlock]');
 
 report();
