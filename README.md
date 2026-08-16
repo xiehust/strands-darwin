@@ -350,9 +350,10 @@ Every turn is appended to an **append-only record** beside the session's other s
 
 One JSON object per line: the run's model and permission mode, each prompt as it was sent, the
 assembled assistant blocks, every tool call with its input and result, and a per-turn summary
-carrying the stop reason and the counts of the events that were *not* stored. If a turn *failed*,
-that summary also names what threw — the error's class, its message, and the provider class it
-wrapped — so a failed run is readable afterwards instead of only in the terminal it scrolled past,
+carrying the stop reason, the turn's duration, [what it cost](#what-a-turn-cost), and the counts of
+the events that were *not* stored. If a turn *failed*, that summary also names what threw — the
+error's class, its message, and the provider class it wrapped — so a failed run is readable
+afterwards instead of only in the terminal it scrolled past,
 and a failed turn, a turn you cancelled and a clean turn all read as themselves. It is on by
 default; set `"trajectory": false` in `~/.darwin/config.json` to record nothing.
 
@@ -397,6 +398,42 @@ darwin -p "carry on" --session "$NEW"
 
 Inside a session, `/trajectory` reports what this run has recorded — the file, the record and
 byte counts, any truncation, and any problem — without sending anything to the model.
+
+### What a turn cost
+
+Each turn's closing line also carries the tokens that turn spent, in the same four buckets the
+headless `usage:` line prints, together with the provider and model that incurred them (the record
+below is abridged — the same line still carries the counts and truncations described above):
+
+```json
+{"type":"turnEnded","stopReason":"endTurn","ms":8421,
+ "spend":{"provider":"bedrock","model":"global.anthropic.claude-opus-5",
+          "input":412,"output":1350,"cacheRead":130961,"cacheWrite":398}}
+```
+
+So a session stays costable after the process is gone — which it was not before, because the live
+meter counts one process and `--resume` starts it again at zero. `replay` prints one line per turn
+and one for the session, and `trajectory list` puts the same totals on the session's row; both still
+make no model call and need no network:
+
+```
+  turn 3 spend: input=412 output=1350 cacheRead=130961 cacheWrite=398 · bedrock/global.anthropic.claude-opus-5
+  turn 4 spend: input=0 output=0 cacheRead=- cacheWrite=- · bedrock/global.anthropic.claude-opus-5
+  session spend: input=412 output=1350 cacheRead=130961(+1 unreported) cacheWrite=398(+1 unreported) over 2 turn(s)
+```
+
+Two properties are worth trusting deliberately. **Unknown is never zero:** a metric the provider did
+not report is *absent* from the record and prints as `-`, or as `(+N unreported)` in a total — because
+"nobody measured this" and "this was free" are different facts, and OpenAI Responses genuinely cannot
+split uncached input when a cache subset is missing. A recorded `0` is a real measurement, which is
+what a turn that failed before its first model call completed actually spent. And **a total never
+silently mixes two price lists:** the model is stamped on every turn, so a session in which you used
+`/model` reports the models that contributed and `replay` splits the total between them. A session
+recorded before this existed says `spend: unknown` rather than pretending it was free.
+
+The number is what the SDK's meter attributed to a turn, not an invoice: summarization (`/compact`
+and overflow reduction) calls the model outside the metered path, so its tokens appear neither here
+nor in `/usage`.
 
 ## Session diagnostics
 
@@ -833,6 +870,10 @@ Note that the snapshot path includes the agent id, so changing `AGENT_ID` in
 - **No sandboxing.** `bash` runs commands directly on your machine. The confirmation
   prompt is the only thing between the model and your shell.
 - **No autonomous scheduler or agent swarm.** The optional built-in developer workflow supervises one external headless child through existing sessions and managed bash jobs; it does not add another in-process agent loop.
+- **Recorded turn numbers restart with each process.** A session's turns are numbered from 1 per
+  run, so a resumed session's record can hold several `turn 1` lines and `trajectory list` counts
+  distinct numbers rather than turns. Spend totals are unaffected — they add up the turns actually
+  recorded — but a per-turn line in `replay` identifies its turn only within its own run.
 
 ## Development
 
