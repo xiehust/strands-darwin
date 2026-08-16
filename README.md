@@ -645,9 +645,19 @@ skipped and reported with the other skill problems.
 existing directions before considering new peer-product research. Unfinished `in-progress`
 work comes first, then ranked `not-started` work; either suppresses fresh research.
 
-When the backlog has no unfinished work, the skill compares sourced evidence from Claude Code,
-Codex, DeepSeek harness, PenguinHarness, and other relevant products with Darwin's current code
-and architecture. It appends an UTC-timestamped run to
+When the backlog has no unfinished work, the skill first rolls its research path with a
+bundled script — 50% the comparable-product analysis it has always done, and 12.5% each for
+self-review of TUI polish, logging and observability, Strands SDK capability darwin has not
+adopted, or anything else worth improving. The roll exists because a model choosing its own
+research direction keeps choosing the familiar one, so darwin's own rough edges were never
+anybody's assignment. It is rolled once, before any source is read, and its verbatim output goes
+into the report; a run that was *told* which path to take records `path-source: override` and
+cannot present that as chance.
+
+On the peer path it compares sourced evidence from Claude Code, Codex, DeepSeek harness,
+PenguinHarness, and other relevant products with Darwin's current code and architecture; on a
+self-review path the evidence is this repository, cited by path and symbol, with no peer table to
+pad. Either way it appends an UTC-timestamped run to
 `docs/research/research_<YYYY-MM-DD>.md`, proposes at most five scored directions, and updates
 the backlog. Those directions form one **batch**, and a score gate
 (`MINIMUM_IMPLEMENTATION_SCORE = 6`, the score of an all-average direction) keeps anything

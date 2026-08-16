@@ -1012,7 +1012,7 @@ bash start -> darwin -p "approved; implement now" --session session-123 --yolo
 
 ### 1. Scope / Trigger
 
-`/self-evolution-research` loads a product-bundled Markdown workflow. It persists peer-product research and ranked iteration state under `docs/research/`, then composes the existing built-in `developer` workflow for exactly one selected implementation. It adds no scheduler, network client, or alternate agent loop.
+`/self-evolution-research` loads a product-bundled Markdown workflow. A fresh run first rolls its research path with the skill's own bundled script, then persists that roll, its findings, and ranked iteration state under `docs/research/`, and composes the existing built-in `developer` workflow one direction at a time. It adds no scheduler, network client, or alternate agent loop.
 
 ### 2. Signatures
 
@@ -1020,6 +1020,8 @@ bash start -> darwin -p "approved; implement now" --session session-123 --yolo
 /self-evolution-research [request]
 backlog: docs/research/backlog_index.md
 report:  docs/research/research_<YYYY-MM-DD>.md
+roll:    node <skill-dir>/scripts/roll-research-path.mjs [--path <id>]
+         -> research-path/focus/share/draw/path-source/rolled-at/weights
 handoff: load_skill({ name: "developer" })
 ```
 
@@ -1027,7 +1029,9 @@ handoff: load_skill({ name: "developer" })
 
 - Read `docs/research/backlog_index.md` before consulting any product-research source.
 - Valid states are exactly `not-started`, `in-progress`, `done`, and `abandoned`. Select the highest-priority `in-progress` row first, otherwise `not-started`; while either exists, perform no fresh product research.
-- Fresh runs inspect current Darwin source/architecture and sourced evidence for Claude Code, Codex, DeepSeek harness, PenguinHarness, and at least one additional relevant product. Missing source access is recorded as a limitation, never filled from model memory.
+- Fresh runs roll the path exactly once, before reading any source, on integer weights `tui=1 observability=1 sdk=1 open=1 peer=4` (12.5% each self-review path, 50% peer). The script's verbatim output is recorded in the report; a re-roll is forbidden and `--path` is user-directed only, printing `path-source: override (user-directed)` so a directed run can never read as chance. Weights are integers over their sum so the documented share is the implemented share, and an out-of-range draw throws rather than clamping onto the first or last path.
+- Every path inspects current Darwin source/architecture first. The `peer` path additionally needs sourced evidence for Claude Code, Codex, DeepSeek harness, PenguinHarness, and at least one further relevant product; a self-review path cites repository paths and symbols instead and states that no peer product was consulted. Missing source access is recorded as a limitation, never filled from model memory, and a peer table is never padded with a product the run did not open.
+- A path whose scope turns out to be in good shape is a valid outcome: record it and propose nothing. The roll changes where evidence comes from, never the 1–5 ratings, the score gate, the report file, or the `developer` handoff.
 - Append each run to `docs/research/research_<YYYY-MM-DD>.md` under a unique UTC timestamp. Read an existing same-day file first and never overwrite prior runs.
 - Propose at most five non-duplicate directions. Rank 1–5 importance, architecture fit, evidence confidence, implementation difficulty, and implementation risk using `2 × importance + fit + confidence − difficulty − risk`, plus qualitative rationale.
 - Change one selected row to `in-progress`, load `developer`, and implement exactly that direction. Set `done` only after the Host's independent acceptance; otherwise retain `in-progress` with blockers. `abandoned` requires an explicit recorded reason.
@@ -1042,19 +1046,23 @@ handoff: load_skill({ name: "developer" })
 | Any `in-progress` backlog row | Select by priority; no fresh peer research |
 | No `in-progress`, but a `not-started` row | Select by priority; no fresh peer research |
 | Named product source unavailable | Record limitation and make no unsupported claim |
+| Fresh research with no recorded roll | Unauditable: the report must carry the script's verbatim output before any finding |
+| Roll produces an unappealing path | Binding; record every output and use the first, never re-roll |
+| Run wants a specific path without being told to | Refused: `--path` is user-directed only |
+| Unknown `--path` id or unexpected flag | Script exits 2 and rolls nothing |
 | Same-day report already exists | Read and append a unique UTC run section; never overwrite |
 | Developer child reports success without Host acceptance | Keep `in-progress` |
 | Explicit abandonment decision | Set `abandoned` and record decision plus reason |
 
 ### 5. Good / Base / Bad Cases
 
-- **Good:** an empty backlog permits sourced research, adds no more than five ranked rows, selects one, loads `developer`, and records `done` only after independent checks.
+- **Good:** an empty backlog permits fresh research, which rolls its path first, records the roll verbatim, adds no more than five ranked rows, selects one, loads `developer`, and records `done` only after independent checks.
 - **Base:** an existing `not-started` row suppresses all fresh peer research and is handed to `developer` alone.
-- **Bad:** researching before reading the backlog, inventing unavailable product claims, overwriting a same-day report, implementing several rows, or trusting the child report as acceptance violates the persistence contract.
+- **Bad:** researching before reading the backlog, choosing a research path instead of rolling it (or re-rolling one that was inconvenient), inventing unavailable product claims, overwriting a same-day report, implementing several rows, or trusting the child report as acceptance violates the persistence contract.
 
 ### 6. Tests Required
 
-- `spike/verify-skills.ts`: both required built-ins in a project-free scan, load/slash expansion, progressive disclosure, case-insensitive collision isolation, load-bearing workflow language, and the backlog/report template contracts.
+- `spike/verify-skills.ts`: both required built-ins in a project-free scan, load/slash expansion, progressive disclosure, case-insensitive collision isolation, load-bearing workflow language, the backlog/report template contracts, and the path roll — weights imported from the script itself, all eight draws mapped exhaustively, out-of-range draws refused, and the CLI's roll/override/exit-2 behaviour.
 - `pnpm typecheck`, `pnpm test`, and `pnpm build`; inspect `dist/src/skills/builtin/self-evolution-research/SKILL.md` after build.
 
 ### 7. Wrong vs Correct

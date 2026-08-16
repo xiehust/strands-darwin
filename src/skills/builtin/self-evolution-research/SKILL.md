@@ -1,6 +1,6 @@
 ---
 name: self-evolution-research
-description: Research comparable coding-agent products, compare sourced innovations with Darwin's current code and architecture, maintain a ranked iteration backlog, and drive the developer skill iteratively through every qualifying direction in the batch. Use for Darwin self-evolution, competitive research, or continuous product iteration.
+description: Roll a weighted research path — self-review of TUI polish, logging and observability, unused Strands SDK capability, anything else, or comparable coding-agent product research — then compare the findings with Darwin's current code and architecture, maintain a ranked iteration backlog, and drive the developer skill iteratively through every qualifying direction in the batch. Use for Darwin self-evolution, competitive research, or continuous product iteration.
 ---
 
 # Self-evolution research
@@ -36,9 +36,43 @@ Two constraints keep the gate honest. Never restate a dimension rating to move a
 
 ## 3. Research only when the backlog has no unfinished work
 
-First inspect current Darwin behavior and architecture in source, tests, README, `.trellis/spec/`, and recent relevant history. Cite repository paths and symbols for every comparison; do not compare peers with assumptions or model memory.
+### 3.1 Roll the research path first
 
-Then research all of these scopes:
+Before reading a single source — repository or product — run the bundled script once from the skill directory shown in the `load_skill` result:
+
+```bash
+node <skill-directory>/scripts/roll-research-path.mjs
+```
+
+It draws one of five paths on integer weights (`tui=1 observability=1 sdk=1 open=1 peer=4`, so 12.5% each for the four self-review paths and 50% for peer research) and prints a `research-path`/`focus`/`share`/`draw`/`path-source`/`rolled-at`/`weights` block.
+
+| Path | Share | What the run looks for |
+|---|---:|---|
+| `tui` | 12.5% | TUI interaction and visual polish: the live frame, streaming and history rendering, prompts and completion, colour and severity, small-terminal layout, keyboard editing. |
+| `observability` | 12.5% | Logging and observability: notices and diagnostics, the trajectory record, usage and cost reporting, background-job and subagent visibility, what a failure leaves behind. |
+| `sdk` | 12.5% | Strands SDK capability darwin has not adopted — hooks, plugins, interventions, conversation managers, model and tool features — measured against what darwin hand-rolls or lives without. |
+| `open` | 12.5% | Anything else worth improving; deliberately unscoped. |
+| `peer` | 50% | The sourced comparable-product analysis in 3.3. |
+
+The roll is binding, and these rules are what make it worth running at all:
+
+- **Once per research run, before any source.** Rolling after reading is choosing.
+- **Copy the script's output verbatim** into the report's research-path section (see section 4). Never paraphrase it, and never write a path the script did not print.
+- **Never re-roll an unappealing outcome.** If the script was somehow run more than once, record every output and use the first. A run that finds its path unproductive says so in the report and proposes nothing rather than quietly switching paths.
+- **`--path <id>` is for a user who directs the path**, and only then. It prints `path-source: override (user-directed)`, which must survive into the report — a directed run may never be presented as chance. A run does not override on its own initiative.
+- **The path decides where evidence comes from, not the standard it meets.** Sections 1, 2 and 4–8 apply unchanged: the same backlog contract, the same 1–5 ratings, the same score gate, the same report file, the same `developer` handoff.
+
+### 3.2 Every path starts in the repository
+
+Inspect current Darwin behavior and architecture in source, tests, README, `.trellis/spec/`, and recent relevant history. Cite repository paths and symbols for every claim; never characterize darwin from model memory when the file is right there.
+
+On the four self-review paths, that repository evidence *is* the evidence — there is no peer requirement, and the report says so explicitly instead of padding its source table with products the run never opened. A self-review finding still has to be shown, not asserted: name the file, symbol, spec line or test that demonstrates the gap, and state what a user or operator experiences because of it. Where a path's own scope has a spec (`.trellis/spec/frontend/tui-testing.md` for `tui`, `backend/error-handling.md` for `observability`, `backend/strands-sdk-contracts.md` for `sdk`), read it first: a "missing" capability is often a recorded, deliberate decision, and re-proposing it as an improvement is the characteristic failure of these paths. If the scope turns out to be in good shape, that is a legitimate outcome — record it and propose nothing.
+
+Consulting a peer product opportunistically on a self-review path is allowed, but it never replaces the repository evidence, and anything cited still obeys the sourcing rules in 3.3.
+
+### 3.3 Peer-product research — the `peer` path
+
+Research all of these scopes:
 
 - Claude Code;
 - Codex;
@@ -57,6 +91,8 @@ Use the current UTC date and target `docs/research/research_<YYYY-MM-DD>.md`. Fo
 - If the daily file does not exist, create it from the template structure.
 - If it exists, read it first and append a new `## Run — <UTC timestamp>` section at the end.
 - Never replace or rewrite an earlier same-day run.
+- Record the section 3.1 roll before any finding, in its own `### Research path` block, as the script's verbatim output. A run whose report shows no roll is unauditable: nothing afterwards can prove the path was drawn rather than picked.
+- On a self-review path, say in the source section that no peer product was consulted, and cite repository paths and symbols in place of URLs. Do not leave the peer table empty without saying why, and never list a product the run did not open.
 - Give every claim and direction a source or repository-evidence link.
 
 Propose zero to five new, non-duplicate iteration directions. Check the backlog before adding one. Rank each direction on 1–5 scales:
@@ -109,4 +145,4 @@ Difficulty alone is not a halt condition, and neither is a successful iteration.
 
 ## 8. Report the batch
 
-Report each direction attempted with its final status and commit, the directions abandoned by the gate or by decision with their reasons, aggregate token spend across every child delegation, the halt condition that ended the loop, and the remaining backlog. Recommend fresh research only once the batch holds no unfinished row.
+Report each direction attempted with its final status and commit, the directions abandoned by the gate or by decision with their reasons, aggregate token spend across every child delegation, the halt condition that ended the loop, and the remaining backlog. When this invocation performed fresh research, also report the rolled path and whether it came from the roll or from a user override. Recommend fresh research only once the batch holds no unfinished row.

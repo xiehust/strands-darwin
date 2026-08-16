@@ -6,8 +6,10 @@
  *
  * Run: pnpm tsx spike/verify-skills.ts
  */
+import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { darwinDir } from '../src/paths.js';
 import {
@@ -142,6 +144,36 @@ async function missingDirectory(): Promise<void> {
   assert('load_skill can load self-evolution-research', researchLoaded?.content.includes('# Self-evolution research') === true);
   const researchWorkflow = researchLoaded?.content ?? '';
   assert('research inspects the backlog before any product source', researchWorkflow.includes('Before using any product-research source, read `docs/research/backlog_index.md`'));
+  assert(
+    'the research path is rolled once, before any source is read',
+    researchWorkflow.includes('scripts/roll-research-path.mjs') &&
+      researchWorkflow.includes('Before reading a single source') &&
+      researchWorkflow.includes('Once per research run, before any source'),
+  );
+  assert(
+    'the five paths and their weights are stated',
+    researchWorkflow.includes('`tui=1 observability=1 sdk=1 open=1 peer=4`') &&
+      ['`tui`', '`observability`', '`sdk`', '`open`', '`peer`'].every((id) => researchWorkflow.includes(id)) &&
+      researchWorkflow.includes('12.5% each for the four self-review paths and 50% for peer research'),
+  );
+  assert(
+    'an unappealing roll cannot be re-rolled or self-overridden',
+    researchWorkflow.includes('Never re-roll an unappealing outcome') &&
+      researchWorkflow.includes('use the first') &&
+      researchWorkflow.includes('A run does not override on its own initiative'),
+  );
+  assert(
+    'the roll changes the evidence source, not the standard',
+    researchWorkflow.includes('The path decides where evidence comes from, not the standard it meets') &&
+      researchWorkflow.includes('the same score gate'),
+  );
+  assert(
+    'a self-review path cites the repository and fabricates no peer coverage',
+    researchWorkflow.includes('that repository evidence *is* the evidence') &&
+      researchWorkflow.includes('never list a product the run did not open') &&
+      researchWorkflow.includes('propose nothing'),
+  );
+  assert('the roll is bundled with the skill and advertised to the model', researchLoaded?.resources.includes(path.join('scripts', 'roll-research-path.mjs')) === true);
   assert('research prioritizes in-progress then not-started work and suppresses fresh research', researchWorkflow.indexOf('`in-progress` direction') < researchWorkflow.indexOf('`not-started` direction') && researchWorkflow.includes('do **not** perform fresh product research'));
   assert('research has the exact four-state vocabulary', ['`not-started`', '`in-progress`', '`done`', '`abandoned`'].every((status) => researchWorkflow.includes(status)));
   assert('fresh research covers named and additional products', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', 'at least one additional relevant'].every((term) => researchWorkflow.includes(term)));
@@ -307,6 +339,71 @@ async function pluginShape(): Promise<void> {
   assert('progressive disclosure omits built-in bodies', !builtinText.includes('# Developer supervisor') && !builtinText.includes('# Self-evolution research'));
 }
 
+async function researchPathRoll(): Promise<void> {
+  header('self-evolution research — the weighted path roll');
+
+  const scriptPath = path.join(BUILTIN_SKILLS_DIR, 'self-evolution-research', 'scripts', 'roll-research-path.mjs');
+  // Imported, not re-implemented: the weights the skill documents and the weights
+  // the script draws on have to be the same object, or the odds are prose.
+  const rolled = (await import(pathToFileURL(scriptPath).href)) as {
+    RESEARCH_PATHS: readonly { id: string; weight: number; focus: string }[];
+    TOTAL_WEIGHT: number;
+    pathForDraw: (draw: number) => { id: string };
+    findResearchPath: (id: string) => { id: string } | undefined;
+  };
+
+  assert('the five paths are weighted 1:1:1:1:4', JSON.stringify(rolled.RESEARCH_PATHS.map((entry) => [entry.id, entry.weight])) === JSON.stringify([['tui', 1], ['observability', 1], ['sdk', 1], ['open', 1], ['peer', 4]]));
+  assert('the weights total 8, so 1/8 and 4/8 are exact', rolled.TOTAL_WEIGHT === 8);
+
+  // Exhaustive rather than statistical: eight draws are the whole sample space, so
+  // the mapping is checked outright instead of being sampled and hoped about.
+  const mapped = Array.from({ length: rolled.TOTAL_WEIGHT }, (_, draw) => rolled.pathForDraw(draw).id);
+  assert('every draw maps to the documented path', JSON.stringify(mapped) === JSON.stringify(['tui', 'observability', 'sdk', 'open', 'peer', 'peer', 'peer', 'peer']));
+  assert('peer research takes exactly half the range', mapped.filter((id) => id === 'peer').length === 4);
+
+  for (const draw of [-1, 8, 1.5, Number.NaN]) {
+    let threw = false;
+    try {
+      rolled.pathForDraw(draw);
+    } catch {
+      threw = true;
+    }
+    // A clamp here would silently bias the first or last path — the one bug the
+    // script exists to prevent.
+    assert(`draw ${String(draw)} is refused rather than clamped`, threw);
+  }
+  assert('an unknown path id resolves to nothing', rolled.findResearchPath('nope') === undefined);
+
+  const roll = spawnSync(process.execPath, [scriptPath], { encoding: 'utf8' });
+  assert(
+    'a bare run records the drawn path with its draw',
+    roll.status === 0 &&
+      /^research-path: (?:tui|observability|sdk|open|peer)$/m.test(roll.stdout) &&
+      /^draw: [0-7] of 8$/m.test(roll.stdout) &&
+      /^path-source: roll$/m.test(roll.stdout) &&
+      roll.stdout.includes('weights: tui=1 observability=1 sdk=1 open=1 peer=4'),
+  );
+
+  const override = spawnSync(process.execPath, [scriptPath, '--path', 'tui'], { encoding: 'utf8' });
+  assert(
+    'a directed path can never be recorded as chance',
+    override.status === 0 &&
+      override.stdout.includes('research-path: tui') &&
+      override.stdout.includes('path-source: override (user-directed)') &&
+      !/^path-source: roll$/m.test(override.stdout) &&
+      override.stdout.includes('draw: none'),
+  );
+
+  const unknown = spawnSync(process.execPath, [scriptPath, '--path', 'nope'], { encoding: 'utf8' });
+  assert('an unknown path id exits 2 and rolls nothing', unknown.status === 2 && unknown.stdout === '' && unknown.stderr.includes('unknown path'));
+
+  const badFlag = spawnSync(process.execPath, [scriptPath, '--seed', '5'], { encoding: 'utf8' });
+  assert('an unexpected flag exits 2 rather than quietly rolling', badFlag.status === 2 && badFlag.stdout === '');
+
+  const help = spawnSync(process.execPath, [scriptPath, '--help'], { encoding: 'utf8' });
+  assert('--help lists every path with its share', help.status === 0 && ['tui', 'observability', 'sdk', 'open', 'peer', '12.5%', '50%'].every((term) => help.stdout.includes(term)));
+}
+
 async function researchDocs(): Promise<void> {
   header('self-evolution research — persistent document contracts');
 
@@ -321,6 +418,17 @@ async function researchDocs(): Promise<void> {
   assert('backlog gates low-scoring directions out', backlog.includes('MINIMUM_IMPLEMENTATION_SCORE = 6') && backlog.includes('below score gate (Score = <n> < 6)'));
   assert('backlog forbids re-rating a direction across the gate', backlog.includes('never restated to move a direction across the gate'));
   assert('research template targets dated append-only reports', template.includes('research_<YYYY-MM-DD>.md') && template.includes('append another timestamped `## Run` section') && template.includes('Never overwrite an earlier run'));
+  assert(
+    'research template records the rolled path verbatim, roll or override',
+    template.includes('### Research path') &&
+      template.includes('roll-research-path.mjs') &&
+      template.includes('rolled once before any source was read') &&
+      template.includes('path-source: <roll | override (user-directed)>'),
+  );
+  assert(
+    'research template tells a self-review run to cite the repository instead of padding the peer table',
+    template.includes('the evidence is this repository') && template.includes('no peer product was consulted'),
+  );
   assert('research template covers all mandatory products and an additional product', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', '`<additional product>`'].every((product) => template.includes(product)));
   assert('research template joins peer sources to Darwin evidence', template.includes('### Peer highlights and innovations') && template.includes('### Current Darwin baseline') && template.includes('### Comparison and gaps'));
   assert('research template caps and scores directions', template.includes('at most five new directions') && template.includes('Implementation difficulty') && template.includes('Implementation risk'));
@@ -354,6 +462,7 @@ async function main(): Promise<void> {
   await promptFragment();
   await slashCommands();
   await pluginShape();
+  await researchPathRoll();
   await researchDocs();
   await realProjectSkill();
   report();

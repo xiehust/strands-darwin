@@ -12,6 +12,22 @@ Copy this structure to `research_<YYYY-MM-DD>.md`, using the UTC date. A daily f
 
 > If any `in-progress` or `not-started` row exists, stop product research and use the existing backlog path. A research section below is valid only when no unfinished row existed at invocation start.
 
+### Research path
+
+Paste the verbatim output of `scripts/roll-research-path.mjs` (bundled with the skill), rolled once before any source was read. Keep `path-source` exactly as printed: `roll` or `override (user-directed)`.
+
+```text
+research-path: <tui|observability|sdk|open|peer>
+focus: <as printed>
+share: <as printed>
+draw: <as printed>
+path-source: <roll | override (user-directed)>
+rolled-at: <as printed>
+weights: <as printed>
+```
+
+The path decides where evidence comes from. On `peer`, fill the reference-source table below from primary product sources. On `tui`, `observability`, `sdk` or `open`, the evidence is this repository: cite paths and symbols, and state plainly that no peer product was consulted rather than leaving the table blank or padding it.
+
 ### Source availability and method
 
 State which source tools were available, the UTC access date, and any products that could not be verified. Do not fill an unavailable scope from memory or inference.
