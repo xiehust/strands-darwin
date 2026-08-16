@@ -409,3 +409,18 @@ Host acceptance read the full 13-file commit, confirmed no `docs/research/**` or
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-16 | `0b3822a` | Bound permission summaries/details and prove the complete approval row stays reachable in the settled 120×50 frame |
+
+### Batch 12 — the busy editor no longer looks disabled (2026-08-16)
+
+Second and final direction of the TUI self-review batch. `App` already accepted typing while a model streamed, answered local reports before its busy guard, and retained rather than queued an agent-bound draft. `InputBox` nevertheless hid the terminal cursor, dimmed the text, and advertised disabled semantics. The change separates editability from agent availability: streaming keeps the editor visually and semantically active, while Enter still reaches the existing `still working` refusal and never creates a queue. Permission prompts still own keyboard/paste, and compaction now owns a genuinely non-editable editor rather than merely looking disabled.
+
+The pty driver reads Ink's latest DEC cursor show/hide state, so the streaming test proves an actual visible terminal cursor. The live usage scenario edits at a moved cursor, runs `/usage`, verifies exact draft retention after a refused Enter, waits through a quiet idle interval to disprove auto-send, then explicitly starts and completes the retained second turn. The approval scenario proves permission-time keyboard/paste cannot alter a hidden draft, and a new compacting scenario proves both input channels are ignored until compaction finishes.
+
+Child session: `session-20260816-150446850`. Managed tasks: planning `bg-cf3ae450-2e20-41dc-9e12-673c2598f8f6` (succeeded); implementation `bg-0bd145f5-e6ba-4664-9956-f412d4962d71` (succeeded); correction `bg-7b39a8dc-0d4f-485f-a81e-9ba30048e144` (transient provider failure after writing the correction, automatically retried); retry `bg-ffadbee3-5679-423d-90de-f4ca6611e021` (succeeded). Token spend: planning `input=56 output=20,913 cacheRead=2,053,171 cacheWrite=130,902`; implementation `input=168 output=22,188 cacheRead=13,402,169 cacheWrite=202,714`; failed correction `input=44 output=2,964 cacheRead=4,543,647 cacheWrite=7,644`; retry `input=80 output=6,813 cacheRead=8,768,123 cacheWrite=14,013`; total `input=348 output=52,878 cacheRead=28,767,110 cacheWrite=355,273`.
+
+Host acceptance first exposed a real pty race: terminals may deliver `\rslash-delta` as one event, but the handler recognized only trailing terminators, so a continuation backslash survived. The focused correction recognizes leading or trailing batched Enter and deterministically tests that shape. Final Host checks: `pnpm typecheck`; `pnpm test` (29 suites / 1,544 assertions); prompt-editor (28); compact (13); cursor (5); multiline three consecutive times (9 each); chunkedEnter (4); completion (25); real Bedrock usage (20); real Bedrock approve (23 on a clean rerun after one unrelated model-output deviation); real Bedrock compacting (5); Trellis validation; `git show --check` for both commits; `git diff --check`; and clean-tree verification. All accepted.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-16 | `b11c281` | Keep the streaming prompt visibly editable while retaining the no-queue busy guard and permission/compaction ownership |
+| 2026-08-16 | `81e5897` | Handle leading batched Enter so continuation syntax remains correct under real pty event coalescing |
