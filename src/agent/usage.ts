@@ -1,4 +1,5 @@
 import type { AppConfig } from '../config.js';
+import type { TurnSpend, TurnSpendMeter } from '../trajectory/record.js';
 
 /** Cumulative token counts reported by the active model during this process. */
 export interface UsageTotals {
@@ -109,6 +110,50 @@ export function deltaUsage(before: UsageTotals, after: UsageTotals): UsageTotals
     delta.cacheWriteInputTokens = Math.max(0, after.cacheWriteInputTokens - (before.cacheWriteInputTokens ?? 0));
   }
   return delta;
+}
+
+/**
+ * A meter for one turn: the spend from `before` up to whenever it is read.
+ *
+ * Lives here, beside {@link deltaUsage} and {@link usageBuckets}, because those two
+ * define what the numbers mean; the trajectory only stores them. `AgentRuntime.send`
+ * creates one per turn and hands it to the recorder, which reads it while the turn's
+ * closing record is composed — the only moment at which the turn's spend is both final
+ * and still in front of the write.
+ *
+ * Two properties are the reason this is a function and not four lines inlined at the
+ * call site. It **cannot throw**: an observer that reads a number must never become a
+ * second reason a turn dies, so any failure degrades to `undefined`, which the record
+ * stores as nothing and every report reads as unknown. And it is the *same* projection
+ * the headless `usage:` line prints ({@link usageBuckets}), so a recorded turn and a
+ * process total are comparable field for field — including the part where an unreported
+ * metric is absent on both sides rather than zero on either.
+ *
+ * The provider/model labels are stamped from the config in effect for this turn, so a
+ * `/model` switch mid-session cannot leave one total silently mixing two price lists.
+ */
+export function startTurnSpend(
+  before: UsageTotals,
+  readUsage: () => UsageTotals,
+  config: AppConfig,
+): TurnSpendMeter {
+  return {
+    read: (): TurnSpend | undefined => {
+      try {
+        const buckets = usageBuckets(deltaUsage(before, readUsage()), config);
+        return {
+          provider: config.provider,
+          model: config.model,
+          ...(buckets.input !== undefined && { input: buckets.input }),
+          output: buckets.output,
+          ...(buckets.cacheRead !== undefined && { cacheRead: buckets.cacheRead }),
+          ...(buckets.cacheWrite !== undefined && { cacheWrite: buckets.cacheWrite }),
+        };
+      } catch {
+        return undefined;
+      }
+    },
+  };
 }
 
 /** A derived effectiveness metric; undefined means the provider never reported it. */

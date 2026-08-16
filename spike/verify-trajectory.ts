@@ -27,11 +27,14 @@ import {
   type Message,
   type ModelStreamEvent,
   type StreamOptions,
+  type Usage,
 } from '@strands-agents/sdk';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import { z } from 'zod';
 
 import { PermissionGate } from '../src/agent/permission.js';
+import { startTurnSpend, type UsageTotals } from '../src/agent/usage.js';
+import { withSoleChoice, type AppConfig } from '../src/config.js';
 import { CliUsageError, parseCliArgs } from '../src/cli-args.js';
 import {
   isTrajectoryInvocation,
@@ -61,10 +64,17 @@ import {
   parseRecordLine,
   turnFailureOf,
   turnOutcome,
+  turnSpendOf,
   type TrajectoryRecord,
   type TurnEndedRecord,
+  type TurnSpendMeter,
 } from '../src/trajectory/record.js';
 import { formatReplay, historyWithoutIds, replayRecords } from '../src/trajectory/replay.js';
+import {
+  MAX_MODEL_LABEL_CHARS,
+  formatSpendSummary,
+  summarizeSpend,
+} from '../src/trajectory/spend.js';
 import { searchTrajectories, UnknownSessionError } from '../src/trajectory/search.js';
 import { recordStream } from '../src/trajectory/stream.js';
 import { TrajectoryRecorder } from '../src/trajectory/writer.js';
@@ -196,6 +206,137 @@ class ThrowingModel extends Model<BaseModelConfig> {
   }
 }
 
+/**
+ * A model that reports token usage the way a provider does — through a
+ * `modelMetadataEvent` — and can call a tool first, or throw on a chosen call.
+ *
+ * Deliberately not a fake meter: the events go through the real `Model` →
+ * `Agent._invokeModel` path, so the numbers the record ends up holding were accumulated
+ * by the SDK's own `Meter`, and a claim about the delta of `agent.metrics.accumulatedUsage`
+ * is a claim about production code. `usage: undefined` on a step models a provider that
+ * reported nothing for that call.
+ */
+interface MeteredStep {
+  usage?: Usage;
+  /** Emitted as a tool call, so one turn can contain two metered model calls. */
+  toolCall?: { name: string; input: unknown };
+  /** Thrown instead of finishing this call, after some text has already streamed. */
+  throws?: unknown;
+  text?: string;
+}
+
+class MeteredModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.metered', contextWindowLimit: 200_000 };
+  private call = 0;
+
+  constructor(private readonly script: readonly MeteredStep[]) {
+    super();
+  }
+
+  override updateConfig(config: BaseModelConfig): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  override getConfig(): BaseModelConfig {
+    return this.config;
+  }
+
+  /** Model calls made so far, so a test can prove a turn really had two cycles. */
+  get calls(): number {
+    return this.call;
+  }
+
+  override async *stream(): AsyncIterable<ModelStreamEvent> {
+    const step = this.script[Math.min(this.call, this.script.length - 1)] as MeteredStep;
+    this.call += 1;
+
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+
+    if (step.toolCall !== undefined) {
+      yield {
+        type: 'modelContentBlockStartEvent',
+        start: { type: 'toolUseStart', name: step.toolCall.name, toolUseId: `call-${this.call}` },
+      };
+      yield {
+        type: 'modelContentBlockDeltaEvent',
+        delta: { type: 'toolUseInputDelta', input: JSON.stringify(step.toolCall.input) },
+      };
+      yield { type: 'modelContentBlockStopEvent' };
+      yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' };
+      // After the stop event, exactly where Bedrock puts it.
+      if (step.usage !== undefined) yield { type: 'modelMetadataEvent', usage: step.usage };
+      return;
+    }
+
+    yield { type: 'modelContentBlockStartEvent' };
+    for (const chunk of chunks(step.text ?? 'a metered answer')) {
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: chunk } };
+    }
+    if (step.throws !== undefined) {
+      // A call that throws reports no metadata, which is exactly what a rejected request
+      // does: the SDK never accumulates usage for it, so the turn is billed nothing for it.
+      throw step.throws;
+    }
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+    if (step.usage !== undefined) yield { type: 'modelMetadataEvent', usage: step.usage };
+  }
+}
+
+/** A `Usage` as a provider reports it, with the cache counters only when named. */
+function usage(
+  inputTokens: number,
+  outputTokens: number,
+  cache?: { read?: number; write?: number },
+): Usage {
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    ...(cache?.read === undefined ? {} : { cacheReadInputTokens: cache.read }),
+    ...(cache?.write === undefined ? {} : { cacheWriteInputTokens: cache.write }),
+  };
+}
+
+/** The config the spend projection is computed against; only provider/API matter to it. */
+function spendConfig(provider: 'bedrock' | 'openai', openaiApi?: 'chat' | 'responses'): AppConfig {
+  return withSoleChoice({
+    provider,
+    model: provider === 'openai' ? 'openai.gpt-5.6-sol' : 'global.anthropic.claude-opus-5',
+    region: 'us-east-1',
+    maxTokens: 1000,
+    permissionMode: 'default',
+    promptCache: false,
+    promptCacheTtl: '5m',
+    thinkingEffort: 'high',
+    summaryRatio: 0.8,
+    contextWarnRatio: 0.8,
+    preserveRecentMessages: 4,
+    ...(openaiApi === undefined ? {} : { openaiApi }),
+  });
+}
+
+/**
+ * The production meter over a real agent's meter: exactly what `AgentRuntime.send`
+ * builds, so what is asserted below is the shipped projection and not a copy of it.
+ */
+function meterFor(agent: Agent, config: AppConfig = spendConfig('bedrock')): TurnSpendMeter {
+  const read = (): UsageTotals => {
+    const totals = agent.metrics.accumulatedUsage;
+    return {
+      inputTokens: totals.inputTokens,
+      outputTokens: totals.outputTokens,
+      ...(totals.cacheReadInputTokens !== undefined && {
+        cacheReadInputTokens: totals.cacheReadInputTokens,
+      }),
+      ...(totals.cacheWriteInputTokens !== undefined && {
+        cacheWriteInputTokens: totals.cacheWriteInputTokens,
+      }),
+    };
+  };
+  return startTurnSpend(read(), read, config);
+}
+
 function recorder(
   file: string,
   overrides: { openFile?: never; maxBytes?: number; openFileImpl?: unknown } = {},
@@ -225,10 +366,10 @@ async function recordedTurn(
   agent: Agent,
   rec: TrajectoryRecorder | undefined,
   input: string,
-  options: { stopAfter?: number } = {},
+  options: { stopAfter?: number; spend?: TurnSpendMeter } = {},
 ): Promise<AgentStreamEvent[]> {
   const seen: AgentStreamEvent[] = [];
-  for await (const event of recordStream(agent.stream(input), rec?.beginTurn(input))) {
+  for await (const event of recordStream(agent.stream(input), rec?.beginTurn(input, options.spend))) {
     seen.push(event);
     if (options.stopAfter !== undefined && seen.length >= options.stopAfter) break;
   }
@@ -956,6 +1097,379 @@ async function failedTurnReadPaths(): Promise<void> {
   );
 }
 
+async function turnSpend(): Promise<void> {
+  header('trajectory — every turn records what it cost, and unknown never becomes zero');
+
+  const dir = path.join(ROOT, 'spend');
+  await rm(dir, { recursive: true, force: true });
+
+  // One agent, one meter, two turns — the first of them two model calls — because the
+  // claim is about a *turn's* delta of a *process's* lifetime accumulator, and neither
+  // half of that is observable with one agent per turn.
+  const first = usage(100, 20, { read: 50, write: 10 });
+  const second = usage(200, 30, { read: 5, write: 1 });
+  const third = usage(300, 40, { read: 7, write: 2 });
+  const model = new MeteredModel([
+    { usage: first, toolCall: { name: 'echoTool', input: { note: 'metered' } } },
+    { usage: second, text: 'the answer after the tool call' },
+    { usage: third, text: 'the second turn answer' },
+  ]);
+  const agent = newAgent(model);
+  await agent.initialize();
+
+  const file = path.join(dir, 'trajectory.jsonl');
+  const rec = recorder(file);
+  await recordedTurn(agent, rec, 'turn one, two model calls', { spend: meterFor(agent) });
+  await rec.close();
+  const afterFirst = await readFile(file);
+  await recordedTurn(agent, rec, 'turn two, one model call', { spend: meterFor(agent) });
+  await rec.close();
+
+  assert('the first turn really made two model calls', model.calls === 3);
+  const read = await readTrajectory(file);
+  const ends = read.records.filter((r): r is TurnEndedRecord => r.type === 'turnEnded');
+  const spends = ends.map((record) => turnSpendOf(record));
+  assert('both turns recorded a spend', spends.length === 2 && spends.every((spend) => spend !== undefined));
+
+  const turnOne = spends[0];
+  assert(
+    'a turn\u2019s spend is the sum of its own model calls, not the process total',
+    turnOne?.input === first.inputTokens + second.inputTokens &&
+      turnOne?.output === first.outputTokens + second.outputTokens &&
+      turnOne?.cacheRead === 50 + 5 &&
+      turnOne?.cacheWrite === 10 + 1,
+  );
+  const turnTwo = spends[1];
+  assert(
+    'the second turn records only its own call, with no carry-over from the first',
+    turnTwo?.input === 300 && turnTwo?.output === 40 && turnTwo?.cacheRead === 7 && turnTwo?.cacheWrite === 2,
+  );
+  assert(
+    'the spend is attributed to the model that incurred it, on the same line',
+    turnOne?.provider === 'bedrock' && turnOne?.model === 'global.anthropic.claude-opus-5',
+  );
+
+  // The reconciliation rule: per metric, the recorded turns sum to the process meter.
+  const meter = agent.metrics.accumulatedUsage;
+  const summary = summarizeSpend(read.records);
+  assert(
+    'the recorded turns reconcile with the process meter, metric by metric',
+    summary.input.total === meter.inputTokens &&
+      summary.output.total === meter.outputTokens &&
+      summary.cacheRead.total === meter.cacheReadInputTokens &&
+      summary.cacheWrite.total === meter.cacheWriteInputTokens,
+  );
+  assert('the summary counts both turns and nothing unknown', summary.turnsWithSpend === 2 && summary.turnsUnknown === 0);
+  assert('one model means one attribution group', summary.models.length === 1 && summary.models[0]?.turns === 2);
+  assert(
+    'the earlier turn\u2019s bytes are byte-identical after the second turn appends',
+    sha256((await readFile(file)).subarray(0, afterFirst.byteLength)) === sha256(afterFirst),
+  );
+
+  // Why the field had to exist: the recorded `agentResultEvent` drops `metrics` (the SDK's
+  // `toJSON()` excludes it by design) while `Message.toJSON()` keeps `metadata`, so what a
+  // file already held was the **final model call's** usage — not the turn's. Pinned here so
+  // the reason survives an SDK upgrade rather than living in a commit message.
+  const resultRecord = read.records.find((record) => record.type === 'agentResultEvent') as unknown as {
+    data: { result: { metrics?: unknown; lastMessage?: { metadata?: { usage?: Usage } } } };
+  };
+  const lastCall = resultRecord.data.result.lastMessage?.metadata?.usage;
+  assert('a recorded agentResultEvent carries no metrics at all', resultRecord.data.result.metrics === undefined);
+  assert(
+    'what it does carry is the final model call, not the turn',
+    lastCall?.inputTokens === second.inputTokens && lastCall?.outputTokens === second.outputTokens,
+  );
+  assert(
+    'so the turn-scoped number can only come from the meter, and differs from it',
+    (turnOne?.input ?? 0) > (lastCall?.inputTokens ?? 0),
+  );
+
+  // A provider that reports no cache counters at all: the keys must be *absent*, because
+  // “not reported” and “zero” are different provider statements.
+  const silentFile = path.join(dir, 'silent.jsonl');
+  const silentRec = recorder(silentFile);
+  const silentModel = new MeteredModel([{ usage: usage(11, 3), text: 'no cache counters here' }]);
+  const silentAgent = newAgent(silentModel);
+  await silentAgent.initialize();
+  await recordedTurn(silentAgent, silentRec, 'unreported cache metrics', { spend: meterFor(silentAgent) });
+  await silentRec.close();
+  const silentLine = (await readFile(silentFile, 'utf8'))
+    .split('\n')
+    .find((line) => line.includes('"turnEnded"')) as string;
+  assert(
+    'an unreported metric is an absent key, not a zero',
+    silentLine.includes('"spend"') && !silentLine.includes('cacheRead') && !silentLine.includes('cacheWrite'),
+  );
+  const silentSpend = turnSpendOf(
+    (await readTrajectory(silentFile)).records.find((r): r is TurnEndedRecord => r.type === 'turnEnded') as TurnEndedRecord,
+  );
+  assert(
+    'the reader keeps it unknown rather than inventing zero',
+    silentSpend?.input === 11 && silentSpend.output === 3 && silentSpend.cacheRead === undefined,
+  );
+  const silentRendered = formatSpendSummary(summarizeSpend((await readTrajectory(silentFile)).records));
+  assert(
+    'the report renders an unreported metric as `-`',
+    silentRendered.includes('input=11 output=3 cacheRead=- cacheWrite=-'),
+  );
+
+  // And the other statement: a provider that reports zero. Same rendering path, different
+  // answer, which is the whole reason the distinction is kept on disk.
+  const zeroFile = path.join(dir, 'zero.jsonl');
+  const zeroRec = recorder(zeroFile);
+  const zeroAgent = newAgent(new MeteredModel([{ usage: usage(11, 3, { read: 0, write: 0 }), text: 'cold cache' }]));
+  await zeroAgent.initialize();
+  await recordedTurn(zeroAgent, zeroRec, 'a measured zero', { spend: meterFor(zeroAgent) });
+  await zeroRec.close();
+  const zeroRecords = (await readTrajectory(zeroFile)).records;
+  const zeroSpend = turnSpendOf(zeroRecords.find((r): r is TurnEndedRecord => r.type === 'turnEnded') as TurnEndedRecord);
+  assert('a provider-reported zero stays a zero', zeroSpend?.cacheRead === 0 && zeroSpend.cacheWrite === 0);
+  assert(
+    'and renders as 0, distinguishably from `-`',
+    formatSpendSummary(summarizeSpend(zeroRecords)).includes('cacheRead=0 cacheWrite=0'),
+  );
+
+  // A failed turn: the tokens of the calls that completed were billed, so they are
+  // recorded — beside the failure, on the same line.
+  const failFile = path.join(dir, 'failed.jsonl');
+  const failRec = recorder(failFile);
+  const thrown = new ProviderExplosion('the provider refused the second call');
+  const failAgent = newAgent(
+    new MeteredModel([
+      { usage: usage(70, 8, { read: 3, write: 1 }), toolCall: { name: 'echoTool', input: { note: 'before the failure' } } },
+      { throws: thrown },
+    ]),
+  );
+  await failAgent.initialize();
+  let caught: unknown;
+  try {
+    await recordedTurn(failAgent, failRec, 'a turn that fails after paying', { spend: meterFor(failAgent) });
+  } catch (error) {
+    caught = error;
+  }
+  await failRec.close();
+  assert('the thrown error still reaches the caller as the identical object', caught === thrown);
+  const failEnd = (await readTrajectory(failFile)).records.find(
+    (r): r is TurnEndedRecord => r.type === 'turnEnded',
+  ) as TurnEndedRecord;
+  const failSpend = turnSpendOf(failEnd);
+  assert('a failed turn records its failure', turnFailureOf(failEnd)?.name === 'ProviderExplosion');
+  assert(
+    'and records the spend it incurred before failing, on the same line',
+    failSpend?.input === 70 && failSpend.output === 8 && failSpend.cacheRead === 3 && failSpend.cacheWrite === 1,
+  );
+  assert('the outcome is still read as failed', turnOutcome(failEnd) === 'failed');
+
+  // A turn whose *first* call is rejected: nothing was billed. That is a measured zero,
+  // not an unknown, and the difference is what a supervisor needs to see.
+  const brokeFile = path.join(dir, 'broke.jsonl');
+  const brokeRec = recorder(brokeFile);
+  const brokeAgent = newAgent(new MeteredModel([{ throws: new ProviderExplosion('rejected outright') }]));
+  await brokeAgent.initialize();
+  try {
+    await recordedTurn(brokeAgent, brokeRec, 'a turn that never billed', { spend: meterFor(brokeAgent) });
+  } catch {
+    // Propagation is asserted above.
+  }
+  await brokeRec.close();
+  const brokeEnd = (await readTrajectory(brokeFile)).records.find(
+    (r): r is TurnEndedRecord => r.type === 'turnEnded',
+  ) as TurnEndedRecord;
+  const brokeSpend = turnSpendOf(brokeEnd);
+  assert(
+    'a turn nothing billed records zeros rather than nothing',
+    brokeSpend !== undefined && brokeSpend.input === 0 && brokeSpend.output === 0,
+  );
+  assert('with the two cache counters still unreported', brokeSpend?.cacheRead === undefined);
+
+  // A cancelled turn: whatever completed before the cancel was billed too.
+  const cancelFile = path.join(dir, 'cancelled.jsonl');
+  const cancelRec = recorder(cancelFile);
+  const cancelAgent = newAgent(
+    new MeteredModel([
+      {
+        usage: usage(60, 9, { read: 2, write: 0 }),
+        toolCall: { name: 'echoTool', input: { note: 'before the cancel' } },
+      },
+      { usage: usage(1, 1), text: 'an answer long enough to be interrupted midway' },
+    ]),
+  );
+  await cancelAgent.initialize();
+  for await (const event of recordStream(
+    cancelAgent.stream('a cancelled turn'),
+    cancelRec.beginTurn('a cancelled turn', meterFor(cancelAgent)),
+  )) {
+    if (event.type === 'afterToolCallEvent') cancelAgent.cancel();
+  }
+  await cancelRec.close();
+  const cancelEnd = (await readTrajectory(cancelFile)).records.find(
+    (r): r is TurnEndedRecord => r.type === 'turnEnded',
+  ) as TurnEndedRecord;
+  assert('a cancelled turn is still cancelled', turnOutcome(cancelEnd) === 'cancelled');
+  assert(
+    'and still records what it spent before the cancel',
+    turnSpendOf(cancelEnd)?.input === 60 && turnSpendOf(cancelEnd)?.output === 9,
+  );
+
+  // The invariant that makes reading a live meter safe: a meter that throws costs the
+  // spend field and nothing else — not the turn, not the record, not the session.
+  const brokenFile = path.join(dir, 'broken-meter.jsonl');
+  const brokenRec = recorder(brokenFile);
+  const brokenAgent = newAgent(new MeteredModel([{ usage: usage(5, 5), text: 'the turn still works' }]));
+  await brokenAgent.initialize();
+  const brokenMeter: TurnSpendMeter = {
+    read: () => {
+      throw new Error('the meter exploded');
+    },
+  };
+  const seen = await recordedTurn(brokenAgent, brokenRec, 'a turn with a broken meter', { spend: brokenMeter });
+  await brokenRec.close();
+  assert('a throwing meter does not fail the turn', seen.some((event) => event.type === 'agentResultEvent'));
+  const brokenEnd = (await readTrajectory(brokenFile)).records.find(
+    (r): r is TurnEndedRecord => r.type === 'turnEnded',
+  ) as TurnEndedRecord;
+  assert('the turn is still closed off with its own fields', brokenEnd.stopReason === 'endTurn' && typeof brokenEnd.ms === 'number');
+  assert('the spend reads as unknown, not as zero', turnSpendOf(brokenEnd) === undefined);
+  assert(
+    'and recording is neither stopped nor blamed',
+    brokenRec.status.problem === undefined && brokenRec.status.active,
+  );
+
+  // A model id is configuration, so it is as unbounded as any other user string: capped
+  // on the record, with the cut written down, and bounded again when rendered.
+  const longFile = path.join(dir, 'long-model.jsonl');
+  const longRec = recorder(longFile);
+  const longAgent = newAgent(new MeteredModel([{ usage: usage(2, 2), text: 'long model id' }]));
+  await longAgent.initialize();
+  const longConfig: AppConfig = { ...spendConfig('bedrock'), model: 'm'.repeat(MAX_FIELD_CHARS * 2) };
+  await recordedTurn(longAgent, longRec, 'a pathological model id', {
+    spend: meterFor(longAgent, longConfig),
+  });
+  await longRec.close();
+  const longEnd = (await readTrajectory(longFile)).records.find(
+    (r): r is TurnEndedRecord => r.type === 'turnEnded',
+  ) as TurnEndedRecord;
+  assert(
+    'the model label is capped on the record with its truncation recorded',
+    [...(turnSpendOf(longEnd)?.model ?? '')].length === MAX_FIELD_CHARS &&
+      (longEnd.trunc ?? []).some((entry) => entry.path === 'spend.model'),
+  );
+  const longReplay = formatReplay({
+    ...replayRecords((await readTrajectory(longFile)).records),
+    damage: undefined,
+  });
+  const longLine = longReplay.split('\n').find((line) => line.includes('turn 1 spend:')) as string;
+  assert(
+    'and the rendered line stays bounded',
+    [...longLine].length <= MAX_MODEL_LABEL_CHARS + 120,
+  );
+}
+
+async function turnSpendReadPaths(): Promise<void> {
+  header('trajectory — list and replay report spend, and say unknown when it is unknown');
+
+  const paths = sessionPaths(ROOT);
+  await rm(paths.sessionsDir, { recursive: true, force: true });
+
+  // Two processes appending to one session, each with its own model: turn ordinals
+  // restart per process (a pre-existing property), so this also pins that the aggregate
+  // counts turn *records* rather than distinct ordinals.
+  const sessionId = 'session-20260816-400000';
+  const file = trajectoryPath(ROOT, sessionId);
+  const firstRun = recorder(file);
+  const opusAgent = newAgent(new MeteredModel([{ usage: usage(120, 15, { read: 40, write: 5 }), text: 'opus answer' }]));
+  await opusAgent.initialize();
+  await recordedTurn(opusAgent, firstRun, 'ask opus', { spend: meterFor(opusAgent) });
+  await firstRun.close();
+
+  const secondRun = recorder(file);
+  const gptAgent = newAgent(new MeteredModel([{ usage: usage(80, 25), text: 'gpt answer' }]));
+  await gptAgent.initialize();
+  // Chat Completions reports no cache counters, so this turn's two cache metrics are
+  // unreported while the first turn's are known — the partial-total case.
+  await recordedTurn(gptAgent, secondRun, 'ask gpt', { spend: meterFor(gptAgent, spendConfig('openai', 'chat')) });
+  await secondRun.close();
+
+  const records = (await readTrajectory(file)).records;
+  const summary = summarizeSpend(records);
+  assert('both turn records are counted, though both are ordinal 1', summary.turnsWithSpend === 2);
+  assert('the file is reported as holding two models', summary.models.length === 2);
+  assert('a metric only one turn reported is summed and the gap counted', summary.cacheRead.total === 40 && summary.cacheRead.unreportedTurns === 1);
+  assert('a metric every turn reported is a plain sum', summary.output.total === 40 && summary.output.unreportedTurns === 0);
+
+  const listed = await runTrajectory({ verb: 'list' });
+  const row = listed.out.split('\n').find((line) => line.startsWith(sessionId)) ?? '';
+  assert('list exits 0 and reports the session spend', listed.code === 0 && row.includes('spend: input=200'));
+  assert('list marks a partly reported metric rather than hiding the gap', row.includes('cacheRead=40(+1 unreported)'));
+  assert('list says a total covers more than one model', row.includes('2 models:'));
+  assert('the spend clause keeps the row one bounded line', !row.includes('\n') && [...row].length < 400);
+
+  const replayed = await runTrajectory({ verb: 'replay', sessionId, json: false });
+  assert('replay exits 0 and reports per-turn spend', replayed.code === 0 && replayed.out.includes('turn 1 spend: input=120 output=15 cacheRead=40 cacheWrite=5'));
+  assert(
+    'replay reports the aggregate over the turns it replayed',
+    replayed.out.includes('session spend: input=200 output=40 cacheRead=40(+1 unreported)'),
+  );
+  assert(
+    'replay breaks a mixed total down per model',
+    replayed.out.includes('bedrock/global.anthropic.claude-opus-5: input=120') &&
+      replayed.out.includes('openai/openai.gpt-5.6-sol: input=80'),
+  );
+  const oneTurn = await runTrajectory({ verb: 'replay', sessionId, turn: 1, json: false });
+  assert('a filtered replay reports the spend of what it replayed', oneTurn.code === 0 && oneTurn.out.includes('session spend:'));
+  const asJson = await runTrajectory({ verb: 'replay', sessionId, json: true });
+  assert(
+    'replay --json keeps printing history and nothing else',
+    asJson.code === 0 && Array.isArray(JSON.parse(asJson.out)),
+  );
+  const again = await runTrajectory({ verb: 'replay', sessionId, json: false });
+  assert('the report is deterministic over the same bytes', again.out === replayed.out);
+
+  // A record written before this field existed. Not synthesised loosely: these are `v: 1`
+  // lines of exactly the shape darwin wrote before spend, and they must read as unknown —
+  // a session that cost real money must never be reported as a free one.
+  const legacyId = 'session-20260816-410000';
+  const legacyFile = trajectoryPath(ROOT, legacyId);
+  await mkdir(path.dirname(legacyFile), { recursive: true });
+  await writeFile(
+    legacyFile,
+    [
+      '{"v":1,"seq":0,"t":"2026-08-16T10:00:00.000Z","turn":0,"type":"runStarted","session":"session-20260816-410000","agentId":"darwin","darwinVersion":"0.0.1","provider":"bedrock","model":"global.anthropic.claude-opus-5","permissionMode":"default","thinkingEffort":"high","resumed":false,"restoredMessages":0,"pid":1}',
+      '{"v":1,"seq":1,"t":"2026-08-16T10:00:01.000Z","turn":1,"type":"userInput","text":"an old question"}',
+      '{"v":1,"seq":2,"t":"2026-08-16T10:00:02.000Z","turn":1,"type":"turnEnded","stopReason":"endTurn","ms":1200,"recorded":{"agentResultEvent":1},"dropped":{}}',
+      '{"v":1,"seq":3,"t":"2026-08-16T10:00:03.000Z","turn":2,"type":"userInput","text":"a second old question"}',
+      '{"v":1,"seq":4,"t":"2026-08-16T10:00:04.000Z","turn":2,"type":"turnEnded","stopReason":"endTurn","ms":900,"recorded":{"agentResultEvent":1},"dropped":{}}',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  const legacyRecords = (await readTrajectory(legacyFile)).records;
+  assert('a pre-spend v:1 file still parses in full', legacyRecords.length === 5);
+  const legacySummary = summarizeSpend(legacyRecords);
+  assert(
+    'its turns are counted as unknown, not as zero-cost',
+    legacySummary.turnsWithSpend === 0 && legacySummary.turnsUnknown === 2 && legacySummary.input.total === undefined,
+  );
+  const legacyRow =
+    (await runTrajectory({ verb: 'list' })).out.split('\n').find((line) => line.startsWith(legacyId)) ?? '';
+  assert('list says the spend is unknown', legacyRow.includes('spend: unknown') && !legacyRow.includes('input=0'));
+  const legacyReplay = await runTrajectory({ verb: 'replay', sessionId: legacyId, json: false });
+  assert('replay of a pre-spend record exits 0', legacyReplay.code === 0);
+  assert(
+    'and says per-turn and in total that nothing measured it',
+    legacyReplay.out.includes('turn 1 spend: unknown (not recorded)') &&
+      legacyReplay.out.includes('session spend: unknown over 2 turn(s)'),
+  );
+  assert('with no fabricated zero anywhere in the report', !legacyReplay.out.includes('input=0'));
+
+  // A damaged or foreign spend payload: still unknown rather than a confident zero.
+  const brokenRecord = parseRecordLine(
+    '{"v":1,"seq":9,"t":"2026-08-16T10:00:05.000Z","turn":3,"type":"turnEnded","stopReason":"endTurn","ms":5,' +
+      '"recorded":{},"dropped":{},"spend":{"provider":"bedrock","model":"m","input":"lots","output":null}}',
+  ) as TurnEndedRecord;
+  assert('a spend whose numbers are not numbers reads as unknown', turnSpendOf(brokenRecord) === undefined);
+}
+
 async function replayFidelity(): Promise<void> {
   header('trajectory — replay reconstructs the live history with no model call');
 
@@ -1025,7 +1539,7 @@ async function replayFidelity(): Promise<void> {
   // correct with the AWS environment sabotaged, so nothing it does can be reaching
   // a provider.
   const sources = await Promise.all(
-    ['record.ts', 'reader.ts', 'replay.ts', 'search.ts', 'fork.ts', 'writer.ts', 'stream.ts'].map(
+    ['record.ts', 'reader.ts', 'replay.ts', 'search.ts', 'spend.ts', 'fork.ts', 'writer.ts', 'stream.ts'].map(
       async (name) => ({ name, text: stripComments(await readFile(path.join('src', 'trajectory', name), 'utf8')) }),
     ),
   );
@@ -1543,6 +2057,8 @@ async function main(): Promise<void> {
     await passThrough();
     await failedTurn();
     await failedTurnReadPaths();
+    await turnSpend();
+    await turnSpendReadPaths();
     await replayFidelity();
     await searchContracts();
     await forkContracts();

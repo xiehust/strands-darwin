@@ -71,7 +71,7 @@ import {
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { applyWorkingContext, buildWorkingContext } from './working-context.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
-import { deltaUsage, type UsageTotals } from './usage.js';
+import { deltaUsage, startTurnSpend, type UsageTotals } from './usage.js';
 
 /**
  * Stable across runs by necessity: session snapshots are stored under
@@ -484,13 +484,27 @@ export class AgentRuntime {
    * own module so the property can be measured over a real `Agent.stream()`
    * (`spike/verify-trajectory.ts`) rather than asserted about code only a live model
    * reaches.
+   *
+   * The turn's spend reaches the record through a meter handed to `beginTurn`, and not
+   * from this `finally`, because of when the two run: `recordStream`'s `finally` closes
+   * and buffers the `turnEnded` record *before* this one executes, so a number produced
+   * here would always be one step too late for it. The meter is read while that record is
+   * composed. Keeping the write there also keeps it off this error path, where a throw
+   * would replace the provider's error object with the recorder's — the one thing the
+   * observer contract forbids.
+   *
+   * One `before` snapshot feeds both the meter and `lastTurnDelta`, so what the record
+   * says a turn cost and what `/usage` says it cost cannot be two different readings.
    */
   async *send(input: string): AsyncIterable<AgentStreamEvent> {
     const before = this.usage;
     try {
       // The append the recorder schedules at turn end is deliberately not awaited
       // here; `shutdown()` is where the chain is waited for.
-      yield* recordStream(this.agent.stream(input), this.trajectory?.beginTurn(input));
+      yield* recordStream(
+        this.agent.stream(input),
+        this.trajectory?.beginTurn(input, startTurnSpend(before, () => this.usage, this.liveConfig)),
+      );
     } finally {
       this.lastTurnDelta = deltaUsage(before, this.usage);
     }

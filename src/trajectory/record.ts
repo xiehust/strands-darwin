@@ -140,6 +140,64 @@ export interface TurnFailure {
   cause?: string;
 }
 
+/**
+ * What one turn cost, in the mutually exclusive buckets `src/agent/usage.ts` defines.
+ *
+ * Named `spend` rather than `usage` on purpose: a recorded `agentResultEvent` already
+ * carries `result.lastMessage.metadata.usage` — the provider's counters for the
+ * **final model call** of the turn, because `Message.toJSON()` keeps `metadata` while
+ * `AgentResult.toJSON()` drops `metrics`. That number is not this one: it covers one
+ * call, not the turn, and a failed or cancelled turn (which emits no
+ * `agentResultEvent`) has none at all. Two different things called `usage` in one file
+ * would be worse than no name.
+ *
+ * Every field is the *delta over one turn* of the SDK meter's lifetime accumulator,
+ * projected through `usageBuckets`, so the numbers mean exactly what the headless
+ * `usage:` line means and the two can be compared field for field.
+ *
+ * An unreported metric is an **absent key**, never `0`: "the provider did not report
+ * this" and "this was zero" are different facts, and OpenAI Responses genuinely cannot
+ * split uncached input when either cache subset is missing. `input`/`output` are always
+ * reported by every provider the SDK supports, so a `0` there is a measurement — the
+ * turn's model calls billed nothing, which is what a turn that failed before its first
+ * call completed really did.
+ */
+export interface TurnSpend {
+  /** Provider that incurred it — the same string `runStarted.provider` carries. */
+  provider: string;
+  /** Model id that incurred it. Attribution lives on the same line as the numbers. */
+  model: string;
+  /** Uncached input. Absent when a provider-native total cannot be split without guessing. */
+  input?: number;
+  /**
+   * Output tokens. Always written by darwin — every provider the SDK supports reports
+   * them — and optional only so that a damaged or foreign record missing the key reads
+   * as unknown rather than as a free turn.
+   */
+  output?: number;
+  /** Absent until the provider reports it. */
+  cacheRead?: number;
+  /** Absent until the provider reports it. */
+  cacheWrite?: number;
+}
+
+/**
+ * Reads the live token meter for the turn being recorded.
+ *
+ * Injected into `TrajectoryRecorder.beginTurn` by `AgentRuntime.send` — the one layer
+ * that knows both the SDK meter and the live model config — for the same reason the
+ * permission gate takes a `dispatchSource` resolver: an observer must not learn about
+ * the agent. It keeps `src/trajectory/**` free of any `Agent`/`Model` import, which is
+ * what makes "the read paths call no model" structural rather than a promise.
+ *
+ * `read()` is called synchronously while the closing record is composed, must not
+ * throw, and returns `undefined` when the meter could not be read — which is recorded
+ * as *nothing*, and reads back as unknown.
+ */
+export interface TurnSpendMeter {
+  read(): TurnSpend | undefined;
+}
+
 export interface TurnEndedRecord extends RecordEnvelope {
   type: 'turnEnded';
   stopReason: string | undefined;
@@ -161,6 +219,15 @@ export interface TurnEndedRecord extends RecordEnvelope {
    * a failed turn; see {@link turnOutcome}.
    */
   failure?: TurnFailure;
+  /**
+   * Present when the meter could be read for this turn: what the turn cost.
+   *
+   * Optional and additive, like {@link failure}: a record written before this field
+   * existed, a session recorded with the meter unreadable, and a turn nothing metered
+   * are all *unknown*, and no reader may turn that into a zero-cost turn. A failed turn
+   * carries this **and** `failure`, because the tokens were billed either way.
+   */
+  spend?: TurnSpend;
 }
 
 export interface ForkedFromRecord extends RecordEnvelope {
@@ -439,6 +506,41 @@ export function turnFailureOf(record: TurnEndedRecord): TurnFailure | undefined 
     name: named === '' ? '(unnamed error)' : named,
     message: said,
     ...(from === '' ? {} : { cause: from }),
+  };
+}
+
+/**
+ * A turn's spend as a reader can trust it.
+ *
+ * Defensive about the payload for the same reasons {@link turnFailureOf} is: the line
+ * may come from an older darwin that never wrote the field, a newer one that writes
+ * more, or an interrupted write. The rule that matters is that a value which is not a
+ * finite number is **unknown**, never `0` — a report that turned a missing counter into
+ * a zero would claim a session was cheap when nobody measured it. A `spend` with no
+ * usable numbers at all is `undefined`, so "unknown" has exactly one representation.
+ */
+export function turnSpendOf(record: TurnEndedRecord): TurnSpend | undefined {
+  const spend = record.spend as unknown;
+  if (spend === null || typeof spend !== 'object') return undefined;
+  const { provider, model, input, output, cacheRead, cacheWrite } = spend as Record<string, unknown>;
+
+  const metric = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  const counted = metric(output);
+  const uncached = metric(input);
+  const read = metric(cacheRead);
+  const written = metric(cacheWrite);
+  if (counted === undefined && uncached === undefined && read === undefined && written === undefined) {
+    return undefined;
+  }
+
+  return {
+    provider: typeof provider === 'string' && provider !== '' ? provider : '(unknown provider)',
+    model: typeof model === 'string' && model !== '' ? model : '(unknown model)',
+    ...(uncached === undefined ? {} : { input: uncached }),
+    ...(counted === undefined ? {} : { output: counted }),
+    ...(read === undefined ? {} : { cacheRead: read }),
+    ...(written === undefined ? {} : { cacheWrite: written }),
   };
 }
 

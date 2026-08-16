@@ -49,8 +49,8 @@ envelope `{"v":1,"seq":<n>,"t":"<ISO>","turn":<n>,"type":"<t>"}`.
 | `contentBlockEvent` | the SDK event's own `toJSON()`, capped. `reasoningBlock` is recorded as presence only |
 | `beforeToolCallEvent` | `toolUse` (id, name, input), capped |
 | `afterToolCallEvent` | `toolUse` plus `result` (status, content), capped |
-| `agentResultEvent` | `stopReason` and the result's usage summary |
-| `turnEnded` | `stopReason`, `ms`, `recorded` per type, `dropped` per type, `partialText` when the turn ended with unflushed assistant text, and `failure` when the turn's stream **threw** |
+| `agentResultEvent` | the SDK event's own `toJSON()`: `stopReason` plus `lastMessage`. Carries **no** `metrics` — see the contract below |
+| `turnEnded` | `stopReason`, `ms`, `recorded` per type, `dropped` per type, `partialText` when the turn ended with unflushed assistant text, `failure` when the turn's stream **threw**, and `spend` when the token meter could be read |
 | `forkedFrom` | `session`, `seq`, `bytes` — the first line appended to a **fork**, never to the source |
 | `recordingStopped` | `reason`: `budget` or `error` |
 
@@ -126,6 +126,73 @@ is what identifies a failure.
 The failure is **not** a second notice in the TUI. `runTurn` already shows `turn failed: <message>`
 live; the record exists so the same fact survives the process, and `replay` reconstructs that
 notice rather than inventing a second rendering of it.
+
+### Contract: what a turn cost is on the line that closes it, and unknown is never zero
+
+`turnEnded.spend` is the turn's token spend, in the four mutually exclusive buckets
+`src/agent/usage.ts` defines, plus the provider and model that incurred them:
+
+```json
+"spend":{"provider":"bedrock","model":"global.anthropic.claude-opus-5","input":412,"output":1350,"cacheRead":130961,"cacheWrite":398}
+```
+
+**Why the record needed this at all**, stated precisely because the imprecise version is easy to
+repeat: some token counts already reached disk before this field existed. `AgentResult.toJSON()`
+drops `metrics` by design, but `Message.toJSON()` keeps `metadata`, so a recorded `agentResultEvent`
+contains `result.lastMessage.metadata.usage` — the provider's counters for the **final model call**
+of the turn. What no file could answer was anything *turn-scoped*: a multi-cycle turn's earlier
+calls (the events carrying them are dropped by the allowlist), and any spend at all for a **failed
+or cancelled** turn, neither of which emits `agentResultEvent`. Hence a turn-scoped field, and hence
+its name: `spend`, not `usage`, so that two different numbers in one file are not both called usage.
+
+Five rules hold, and each of them is a way of not lying:
+
+- **An unreported metric is an absent key.** Never `0`. The SDK leaves `cacheReadInputTokens` /
+  `cacheWriteInputTokens` `undefined` until a provider reports them, and OpenAI Responses cannot
+  split uncached `input` when either subset is missing. A **reported** zero stays present as `0`:
+  "the provider did not report this" and "this was zero" are different facts, and both reach the
+  report intact (`-` versus `0`). `input`/`output` are always reported by every provider the SDK
+  supports, so a `0` there is a measurement — what a turn whose first call was rejected really was
+  billed.
+- **A whole absent `spend` is unknown**, and there are exactly three ways to get one: a record
+  written before the field existed, a session recorded with `trajectory: false` (no record at all),
+  and a meter that could not be read. No reader may turn any of them into a zero-cost turn.
+- **A failed turn carries `spend` *and* `failure`.** The tokens of the calls that completed were
+  billed whether or not the turn finished. So does a cancelled turn.
+- **Attribution is per turn, on the same line.** `provider`/`model` come from the config in effect
+  for that turn, so a `/model` switch mid-session cannot leave one total silently averaging two
+  price lists. It is exact rather than approximate: `/model` is gated behind the TUI's busy check,
+  so a switch cannot land inside a turn. `model` is capped like any other configuration-controlled
+  string, with the cut recorded in the same record's `trunc[]`.
+- **`spend` means "what the SDK's meter attributed to this turn", not "what the provider billed".**
+  Summarization — overflow reduction and `/compact` — calls `model.streamAggregated` directly,
+  bypassing `Agent._invokeModel`, so its tokens never enter `agent.metrics` and therefore appear in
+  neither the record nor `/usage`. A pre-existing property of the meter, written down here rather
+  than papered over; a second metering path is its own decision, not a detail of this one.
+
+**Duration is already there.** `turnEnded.ms` is how long the turn took, so nothing new is needed
+for it. Model latency (`AgentMetrics.accumulatedMetrics.latencyMs`) is deliberately **not** recorded:
+it is an accumulator that starts at zero and only grows when a provider reports latency, so a
+recorded `latencyMs: 0` would mean both "no model call completed" and "the provider said nothing" —
+exactly the ambiguity every other rule in this section exists to remove.
+
+**Where the number comes from, and when.** `startTurnSpend` (`src/agent/usage.ts`) captures the
+meter before the turn and projects `deltaUsage` through `usageBuckets`; `AgentRuntime.send` hands
+that one meter to `beginTurn`, and `TurnRecording.end()` reads it while composing the closing
+record. The ordering is the reason: `recordStream`'s `finally` closes and buffers `turnEnded`
+**before** `send`'s `finally` runs, so a number produced in `send` after the stream would always be
+one step too late for the record — and a *write* there would sit on the error path, where a throw
+would replace the provider's error object with the recorder's. The same `before` snapshot feeds
+`lastTurnDelta`, so the record and `/usage` cannot become two readings of one turn.
+
+Reading the meter is subject to the observer contract like everything else: `read()` cannot throw
+(and `end()` guards it anyway), a meter that fails costs the spend field only — not the turn, not
+the rest of the record, and not the session's recording — and the failure is not surfaced as a
+notice, because the record already says what it knows by saying nothing.
+
+`/usage` stays **process-scoped** and must not start reading the record. The live meter may not
+depend on an observational artifact, and one report mixing "this process" with "this file" would
+mislead about both.
 
 ## 4. Caps
 
@@ -245,6 +312,33 @@ verbosity their format affords:
 - Neither is an error: a record that faithfully describes a failed turn was read **successfully**,
   so both exit 0. Only a record that cannot be read exits 1.
 
+### Reporting spend
+
+`src/trajectory/spend.ts` is the **one** aggregation and rendering both read paths use, for the same
+reason `turnOutcome` is the one reading of an outcome. It imports nothing from `src/agent/**`:
+reporting what a session cost stays as offline as replaying what it did.
+
+- **`list`** appends one bounded clause to the session's row:
+  `spend: input=… output=… cacheRead=… cacheWrite=… (<models>[, N turn(s) unknown])`. Field names
+  and order are the headless `usage:` record's, so one convention covers both surfaces, `-` means
+  unreported, and a metric only some turns reported renders `1234(+2 unreported)` rather than
+  pretending the sum is complete. At most three model labels are named (each capped at
+  `MAX_MODEL_LABEL_CHARS`), the rest counted; a file whose turns all predate the field reads
+  `spend: unknown`.
+- **`replay`** prints one bounded line per closed turn — including `turn <k> spend: unknown (not
+  recorded)`, because quietly omitting an unmeasured turn would read as a cheaper session — then one
+  `session spend: …` line, then a per-model breakdown **only** when more than one model contributed,
+  since that is when a single total would otherwise mix two price lists. A `--turn <n>` replay
+  reports the spend of the turn it replayed, matching the history it printed. `--json` still prints
+  the reconstructed history and nothing else.
+- Totals cover **what the file records**. A fork's trajectory begins with the bytes copied from its
+  source, so those turns are genuinely in this file and genuinely in its total — and the `forkedFrom`
+  record on the same file says where they came from. Excluding them would put a total on the same row
+  as a record count and a byte count that describe a larger file.
+- Turns are counted per **`turnEnded` record**, not per distinct `turn` ordinal: ordinals restart at
+  1 in each process that appends to a session, so grouping by ordinal would merge two runs' turns and
+  under-report the file.
+
 ## 8. Replay correctness
 
 ### What replay guarantees
@@ -276,7 +370,10 @@ For the records a file retains:
    model-visible activity, so none of it is recorded or replayed.
 7. **`agent.messages`.** The snapshot is the sole authority for resume and fork; replay does not
    produce a resumable agent and does not attempt to reconstruct conversation state.
-8. **Usage and metrics** beyond what `agentResultEvent` itself carried.
+8. **Usage and metrics beyond the two things the record keeps**: the turn-scoped `turnEnded.spend`,
+   and whatever the recorded `agentResultEvent` itself carried (its `lastMessage.metadata.usage`, i.e.
+   the turn's final model call). Per-cycle usage, tool-level metrics, traces and model latency are not
+   recorded and are not reconstructed.
 9. **Sessions or turns that predate recording.** Reported as "no record", never inferred from a
    snapshot.
 10. **A failed turn's stack trace, or anything else about the error beyond class, message and wrapped
@@ -325,6 +422,22 @@ this.stopReason = 'failed'                                                      
 catch (error) { turn?.failed(error); throw error }
 ```
 
+```typescript
+// WRONG: too late for the record (recordStream's finally already closed the turn), a write on
+// the error path that can replace the caller's error, and a zero standing in for "unknown".
+async *send(input) {
+  try { yield* recordStream(this.agent.stream(input), this.trajectory?.beginTurn(input)) }
+  finally { this.trajectory?.buffer({ type: 'turnSpend', input: delta.inputTokens ?? 0 }) }
+}
+
+// CORRECT: a meter injected into the turn, read synchronously while the closing record is
+// composed, with unreported metrics simply absent.
+yield* recordStream(
+  this.agent.stream(input),
+  this.trajectory?.beginTurn(input, startTurnSpend(before, () => this.usage, this.liveConfig)),
+)
+```
+
 ## 11. Tests required
 
 `spike/verify-trajectory.ts` (network-free, owns its HOME, real SDK `Agent` + scripted `Model`, and a
@@ -343,6 +456,21 @@ provider's error; the failure message at the field cap, capped with its truncati
 earlier bytes byte-identical afterwards; live-versus-replay equality for a failed turn; a `v: 1`
 record with no `failure` still parsing, replaying and reading as clean; and `list`/`replay`/`search`
 reporting the failure — including that a failure message at the field cap cannot widen the `list` row.
+
+For per-turn spend specifically, driven through a real `Agent` whose scripted model reports usage the
+way a provider does (a `modelMetadataEvent`, so the numbers are accumulated by the SDK's own meter):
+one turn of **two** model calls recording their sum and the next turn recording only its own;
+**reconciliation** — the recorded turns summing, metric by metric, to
+`agent.metrics.accumulatedUsage`; a provider reporting no cache counters leaving the keys absent and
+the report showing `-`, next to a provider reporting `0` leaving them present and showing `0`; a
+failed turn recording spend *and* `failure` while the thrown error still reaches the caller as the
+identical object; a turn whose first call was rejected recording zeros rather than nothing; a
+cancelled turn recording what completed before the cancel; a meter that **throws** costing the spend
+field only, with the turn, the rest of the record and `status.active` intact; a model id at the field
+cap capped with `spend.model` in `trunc[]` and a still-bounded rendered line; `list` and `replay`
+reporting totals, the partial-metric marker, the per-model breakdown and a filtered replay; a
+pre-spend `v: 1` file reading as `unknown` with no fabricated zero anywhere; a damaged `spend`
+payload reading as unknown; and determinism over the same bytes.
 
 Run `pnpm typecheck`, `pnpm test`, and — because `/trajectory` adds a completion row —
 `pnpm tsx spike/verify-tui.ts completion`.

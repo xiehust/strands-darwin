@@ -15,7 +15,22 @@ import { contentBlockFromData, type AgentStreamEvent } from '@strands-agents/sdk
 
 import { initialTurnState, turnReducer, type HistoryItem } from '../tui/turn-state.js';
 import { describeDamage, type TrajectoryReadResult } from './reader.js';
-import { formatTurnFailure, turnFailureOf, type TrajectoryRecord, type TurnFailure } from './record.js';
+import {
+  formatTurnFailure,
+  turnFailureOf,
+  type TrajectoryRecord,
+  type TurnEndedRecord,
+  type TurnFailure,
+} from './record.js';
+import {
+  formatModelSpend,
+  formatSpendFields,
+  formatTurnSpend,
+  summarizeSpend,
+  turnSpendEntries,
+  type SpendSummary,
+  type TurnSpendEntry,
+} from './spend.js';
 
 export interface ReplayResult {
   /** The reconstructed history, in order. */
@@ -30,6 +45,13 @@ export interface ReplayResult {
   droppedRecords: number;
   /** Turns whose stream threw, in turn order, with what it threw. */
   failures: (TurnFailure & { turn: number })[];
+  /**
+   * What each closed turn cost, in file order, including the turns nothing measured —
+   * an unmeasured turn is reported as unknown rather than dropped from the report.
+   */
+  turnSpend: TurnSpendEntry[];
+  /** The same numbers aggregated for the whole file, with the models that incurred them. */
+  spend: SpendSummary;
 }
 
 export interface ReplayOptions {
@@ -53,6 +75,10 @@ export function replayRecords(
   const turns = new Set<number>();
   const runs: ReplayResult['runs'] = [];
   const failures: ReplayResult['failures'] = [];
+  // Collected as the loop passes them, so a `--turn` replay reports that turn's spend
+  // rather than the file's: the history it prints is filtered the same way, and a total
+  // covering turns it did not show would describe a different report.
+  const closed: TurnEndedRecord[] = [];
   let droppedRecords = 0;
 
   for (const record of records) {
@@ -90,6 +116,7 @@ export function replayRecords(
       }
 
       case 'turnEnded':
+        closed.push(record);
         // The recorded partial text is what live history received from
         // `flushLiveText` when a turn ended with unassembled deltas — normally a
         // cancelled turn. Replayed as live text so the same flush produces it.
@@ -130,6 +157,8 @@ export function replayRecords(
     runs,
     droppedRecords,
     failures,
+    turnSpend: turnSpendEntries(closed),
+    spend: summarizeSpend(closed),
   };
 }
 
@@ -236,6 +265,24 @@ export function formatReplay(result: ReplayResult): string {
   // the message itself is already in the notice line, in full.
   for (const failure of result.failures) {
     lines.push(`  turn ${failure.turn} failed: ${formatTurnFailure(failure)}`);
+  }
+
+  // What it cost, at the one verbosity a transcript can afford it: one bounded line per
+  // turn — including the turns nothing measured, because a report that quietly omitted
+  // them would read as a cheaper session — then the file's total. The per-model
+  // breakdown appears only when a total would otherwise mix two price lists.
+  for (const entry of result.turnSpend) lines.push(`  ${formatTurnSpend(entry)}`);
+  if (result.turnSpend.length > 0) {
+    const spend = result.spend;
+    const unknown = spend.turnsUnknown === 0 ? '' : `, ${spend.turnsUnknown} unknown`;
+    lines.push(
+      spend.turnsWithSpend === 0
+        ? `  session spend: unknown over ${spend.turnsUnknown} turn(s)`
+        : `  session spend: ${formatSpendFields(spend)} over ${spend.turnsWithSpend} turn(s)${unknown}`,
+    );
+    if (spend.models.length > 1) {
+      for (const model of spend.models) lines.push(`    ${formatModelSpend(model)}`);
+    }
   }
   return lines.join('\n');
 }

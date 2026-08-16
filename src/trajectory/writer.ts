@@ -35,6 +35,8 @@ import {
   type TrajectoryRecord,
   type Truncation,
   type TurnFailure,
+  type TurnSpend,
+  type TurnSpendMeter,
 } from './record.js';
 
 /** How much of the tail is read to recover the last sequence number. */
@@ -117,6 +119,11 @@ export class TurnRecording {
     private readonly recorder: TrajectoryRecorder,
     readonly turn: number,
     input: string,
+    /**
+     * Reads the turn's spend when the turn closes. Undefined when nothing is metering —
+     * which the record says by omitting the field, never by writing zeros.
+     */
+    private readonly spend?: TurnSpendMeter,
   ) {
     const { value, trunc } = capField(input, 'text');
     this.recorder.buffer({ turn, type: 'userInput', text: value }, trunc);
@@ -159,12 +166,21 @@ export class TurnRecording {
   end(): void {
     if (this.ended) return;
     this.ended = true;
+    // Read before the record is composed, and outside the composition's own try: a
+    // meter that throws must cost the *spend field only*, not the whole closing record,
+    // and must never latch recording off — the turn's outcome and counters are worth
+    // more than its price tag. An unread meter is recorded as nothing, which reads back
+    // as unknown.
+    const spend = this.readSpend();
     try {
       const { value, trunc } = capField(this.partialText.trim(), 'partialText');
       // A provider message can be enormous (a rejected request is sometimes echoed
       // back whole), so the failure goes through the same cap as everything else and
       // its truncation is written down on the same record.
       const failure = this.failure === undefined ? undefined : capFailure(this.failure);
+      // The model id comes from configuration, so it is capped like any other string a
+      // user or provider controls, with its truncation on the same record.
+      const capped = spend === undefined ? undefined : capSpend(spend);
       this.recorder.buffer(
         {
           turn: this.turn,
@@ -175,13 +191,30 @@ export class TurnRecording {
           dropped: Object.fromEntries(this.dropped),
           ...(value === '' ? {} : { partialText: value }),
           ...(failure === undefined ? {} : { failure: failure.value }),
+          ...(capped === undefined ? {} : { spend: capped.value }),
         },
-        [...trunc, ...(failure?.trunc ?? [])],
+        [...trunc, ...(failure?.trunc ?? []), ...(capped?.trunc ?? [])],
       );
     } catch (error) {
       this.recorder.fail(error);
     }
     this.recorder.flush();
+  }
+
+  /**
+   * The turn's spend, or `undefined` when it could not be read.
+   *
+   * The injected meter is documented as non-throwing, and this catch is the belt to that
+   * braces: an observer reading a number must not be able to end a turn or stop a
+   * session's recording, so a broken meter degrades to a record that says nothing about
+   * price rather than to a record that is not written.
+   */
+  private readSpend(): TurnSpend | undefined {
+    try {
+      return this.spend?.read();
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -241,6 +274,22 @@ function capFailure(failure: TurnFailure): { value: TurnFailure; trunc: Truncati
   };
 }
 
+/**
+ * Caps the two provider-controlled strings in a spend, naming their paths.
+ *
+ * The numbers need no capping; the labels do. `model` is whatever the config names,
+ * so it is user-controlled text on a record that reports are rendered from — capped
+ * for the same reason a failure's class name is.
+ */
+function capSpend(spend: TurnSpend): { value: TurnSpend; trunc: Truncation[] } {
+  const provider = capField(spend.provider, 'spend.provider');
+  const model = capField(spend.model, 'spend.model');
+  return {
+    value: { ...spend, provider: provider.value, model: model.value },
+    trunc: [...provider.trunc, ...model.trunc],
+  };
+}
+
 export class TrajectoryRecorder {
   private readonly file: string;
   private readonly openFile: typeof open;
@@ -279,11 +328,18 @@ export class TrajectoryRecorder {
     this.maxBytes = options.maxBytes ?? MAX_FILE_BYTES;
   }
 
-  /** Opens a turn. Returns `undefined` once recording has stopped. */
-  beginTurn(input: string): TurnRecording | undefined {
+  /**
+   * Opens a turn. Returns `undefined` once recording has stopped.
+   *
+   * The spend meter is passed in per turn rather than held by the recorder, because it
+   * measures one turn: `AgentRuntime.send` creates it before the stream and the same
+   * object answers the record here, so the record and the live last-turn report cannot
+   * be two different readings of one turn.
+   */
+  beginTurn(input: string, spend?: TurnSpendMeter): TurnRecording | undefined {
     if (!this.active) return undefined;
     this.turns += 1;
-    return new TurnRecording(this, this.turns, input);
+    return new TurnRecording(this, this.turns, input, spend);
   }
 
   get status(): TrajectoryStatus {

@@ -24,6 +24,7 @@ import {
   type TurnEndedRecord,
 } from './trajectory/record.js';
 import { formatReplay, replayRead } from './trajectory/replay.js';
+import { formatSpendSummary, summarizeSpend } from './trajectory/spend.js';
 import { searchTrajectories, UnknownSessionError } from './trajectory/search.js';
 
 /** Must match `AGENT_ID` in `src/agent/runtime.ts`: snapshots are keyed by it. */
@@ -188,6 +189,10 @@ async function listSessions(io: TrajectoryIo): Promise<number> {
       const turns = new Set(read.records.filter((r) => r.turn > 0).map((r) => r.turn)).size;
       summary =
         `${read.records.length} record(s), ${turns} turn(s), ${read.bytes} bytes` +
+        // One bounded clause, so a whole session still fits one row: the four fixed
+        // buckets, the models that incurred them, and how many turns nothing measured.
+        // A session recorded before spend existed reads `unknown`, never zero.
+        `, ${formatSpendSummary(summarizeSpend(read.records))}` +
         (damage === undefined ? '' : ` — ${damage}`) +
         (describeFailedTurns(read.records) ?? '');
     } catch {

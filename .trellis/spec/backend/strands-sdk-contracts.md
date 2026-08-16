@@ -727,7 +727,8 @@ tool call is silently denied with no prompt shown.
   import would crash installs that only use Bedrock. Read the API key env var *before*
   the dynamic import so a missing key fails with `ConfigError`, not a module error.
 - Token usage lives at `result.lastMessage.toJSON().metadata.usage`, not
-  `result.metrics`.
+  `result.metrics` (which serialization drops — see "a serialized `AgentResult` carries
+  no metrics" under Prompt Caching / usage below).
 
 ---
 
@@ -1194,12 +1195,41 @@ the one asked for just before (measured in `spike/verify-tui.ts usage`, which re
 while a 60-line answer is still streaming). Anything that shows these numbers while a turn is
 in flight has to say so — an unchanged counter next to a visibly working agent reads as broken.
 
+### Contract: a serialized `AgentResult` carries no metrics, but its last message does
+
+Measured on `@strands-agents/sdk@1.12.0`, on a real recorded `trajectory.jsonl` and re-asserted
+offline in `spike/verify-trajectory.ts`:
+
+- `AgentResult.toJSON()` returns `type`, `stopReason`, `lastMessage` (plus `structuredOutput` /
+  `checkpoint` when present) and **deliberately excludes `metrics` and `traces`** — the SDK's own
+  comment gives the reason: not sending large payloads over the wire. So anything that persists a
+  serialized `agentResultEvent` gets **no** token counts from `result.metrics`, and never will.
+- `Message.toJSON()` **keeps** `metadata`, and the agent attaches the model call's usage there. So a
+  serialized result does carry `lastMessage.metadata.usage` — the counters of the **final model call**
+  of that invocation, with `metrics.latencyMs` beside them. It is *not* the turn's total: a turn with
+  a tool cycle has earlier calls whose usage is only in the meter.
+- Therefore a **turn-scoped** number can only come from `Agent.metrics` (see the contract above), read
+  as a delta — which is what `startTurnSpend` does and what `turnEnded.spend` stores. A turn that
+  throws or is cancelled emits no `agentResultEvent` at all, so for those the meter is the *only*
+  source.
+- The meter is updated in `Agent._invokeModel` immediately after each model call returns
+  (`_meter.updateCycle(result.metadata)`), and not at all for a call that threw. Two consequences to
+  rely on: the meter is final by the time a turn's stream ends (so reading it while the turn's closing
+  record is composed is exact), and a rejected request contributes nothing (so a turn that failed
+  before any call completed is honestly `0`, not unknown).
+- **Summarization bypasses the meter.** `SummarizingConversationManager` (and the agentic context
+  mode) call `generateSummary` → `model.streamAggregated` **directly**, not through
+  `Agent._invokeModel`, so a `/compact` or an overflow reduction spends tokens that appear in neither
+  `Agent.metrics` nor `turnEnded.spend`. Anything that presents these numbers must mean "what the
+  meter attributed", not "what the provider billed".
+
 ### Gotchas
 
 - `AgentResult.metrics.accumulatedUsage` accumulates over the agent's **lifetime**, not per
   turn: read cache tokens as a delta between turns or the second turn appears to double.
-- `Agent.stream()` does not re-emit the provider's `modelMetadataEvent`; usage arrives on
-  `agentResultEvent`.
+- `Agent.stream()` does not re-emit the provider's `modelMetadataEvent`; usage reaches a consumer of
+  the agent stream on `agentResultEvent`, and only as the final call's `lastMessage.metadata.usage`
+  (see the contract above) — `result.metrics` is dropped by serialization.
 - Cache entries live 5 minutes, so a byte-identical prefix is still warm across two runs of a
   test — the live spike puts a nonce in its padded AGENTS.md so the first turn really writes.
 - Bedrock requires cache-point TTLs to be **non-increasing** across tools → system → messages;
