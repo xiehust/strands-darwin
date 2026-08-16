@@ -642,8 +642,8 @@ skipped and reported with the other skill problems.
 
 `self-evolution-research` is also bundled with darwin. Invoke
 `/self-evolution-research` to inspect `docs/research/backlog_index.md` and advance the
-existing directions before considering new peer-product research. Unfinished `进行中` work
-comes first, then ranked `未开始` work; either suppresses fresh research.
+existing directions before considering new peer-product research. Unfinished `in-progress`
+work comes first, then ranked `not-started` work; either suppresses fresh research.
 
 When the backlog has no unfinished work, the skill compares sourced evidence from Claude Code,
 Codex, DeepSeek harness, PenguinHarness, and other relevant products with Darwin's current code
@@ -657,9 +657,10 @@ It then loads the existing `developer` skill and works the batch iteratively: on
 time, each delegated to the Darwin revision the previous one produced, continuing without
 stopping until the batch is exhausted or a recorded halt condition fires — repeated acceptance
 failure, a falsified premise, a decision only the user can make, an unverifiable starting point,
-or nothing left worth building. A direction becomes `完成` only after independent acceptance;
-blocked work stays `进行中`, and `放弃` requires an explicit recorded reason or the gate. The
-committed `docs/research/research_template.md` defines the report and source-citation shape.
+or nothing left worth building. A direction becomes `done` only after independent acceptance;
+blocked work stays `in-progress`, and `abandoned` requires an explicit recorded reason or the
+gate. The committed `docs/research/research_template.md` defines the report and source-citation
+shape.
 
 ## Subagents
 

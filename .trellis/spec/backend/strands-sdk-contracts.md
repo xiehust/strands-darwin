@@ -1026,11 +1026,11 @@ handoff: load_skill({ name: "developer" })
 ### 3. Contracts
 
 - Read `docs/research/backlog_index.md` before consulting any product-research source.
-- Valid states are exactly `未开始`, `进行中`, `完成`, and `放弃`. Select the highest-priority `进行中` row first, otherwise `未开始`; while either exists, perform no fresh product research.
+- Valid states are exactly `not-started`, `in-progress`, `done`, and `abandoned`. Select the highest-priority `in-progress` row first, otherwise `not-started`; while either exists, perform no fresh product research.
 - Fresh runs inspect current Darwin source/architecture and sourced evidence for Claude Code, Codex, DeepSeek harness, PenguinHarness, and at least one additional relevant product. Missing source access is recorded as a limitation, never filled from model memory.
 - Append each run to `docs/research/research_<YYYY-MM-DD>.md` under a unique UTC timestamp. Read an existing same-day file first and never overwrite prior runs.
 - Propose at most five non-duplicate directions. Rank 1–5 importance, architecture fit, evidence confidence, implementation difficulty, and implementation risk using `2 × importance + fit + confidence − difficulty − risk`, plus qualitative rationale.
-- Change one selected row to `进行中`, load `developer`, and implement exactly that direction. Set `完成` only after the Host's independent acceptance; otherwise retain `进行中` with blockers. `放弃` requires an explicit recorded reason.
+- Change one selected row to `in-progress`, load `developer`, and implement exactly that direction. Set `done` only after the Host's independent acceptance; otherwise retain `in-progress` with blockers. `abandoned` requires an explicit recorded reason.
 - `REQUIRED_BUILTIN_SKILLS` in `src/skills/loader.ts` is the single required-name list. Both built-ins use ordinary progressive disclosure, slash expansion, collision reservation, and the existing recursive `src/skills/builtin` build copy.
 
 ### 4. Validation & Error Matrix
@@ -1039,17 +1039,17 @@ handoff: load_skill({ name: "developer" })
 |---|---|
 | Required built-in asset missing/invalid | Fail startup with its name/path; do not silently remove product capability |
 | Optional project/global skill missing/invalid | Preserve existing skip-and-surface behavior |
-| Any `进行中` backlog row | Select by priority; no fresh peer research |
-| No `进行中`, but a `未开始` row | Select by priority; no fresh peer research |
+| Any `in-progress` backlog row | Select by priority; no fresh peer research |
+| No `in-progress`, but a `not-started` row | Select by priority; no fresh peer research |
 | Named product source unavailable | Record limitation and make no unsupported claim |
 | Same-day report already exists | Read and append a unique UTC run section; never overwrite |
-| Developer child reports success without Host acceptance | Keep `进行中` |
-| Explicit abandonment decision | Set `放弃` and record decision plus reason |
+| Developer child reports success without Host acceptance | Keep `in-progress` |
+| Explicit abandonment decision | Set `abandoned` and record decision plus reason |
 
 ### 5. Good / Base / Bad Cases
 
-- **Good:** an empty backlog permits sourced research, adds no more than five ranked rows, selects one, loads `developer`, and records `完成` only after independent checks.
-- **Base:** an existing `未开始` row suppresses all fresh peer research and is handed to `developer` alone.
+- **Good:** an empty backlog permits sourced research, adds no more than five ranked rows, selects one, loads `developer`, and records `done` only after independent checks.
+- **Base:** an existing `not-started` row suppresses all fresh peer research and is handed to `developer` alone.
 - **Bad:** researching before reading the backlog, inventing unavailable product claims, overwriting a same-day report, implementing several rows, or trusting the child report as acceptance violates the persistence contract.
 
 ### 6. Tests Required
@@ -1061,10 +1061,10 @@ handoff: load_skill({ name: "developer" })
 
 ```text
 # WRONG: fresh research while unfinished work exists, then mark child prose complete
-read peer docs -> choose several ideas -> child says success -> 完成
+read peer docs -> choose several ideas -> child says success -> done
 
 # CORRECT: backlog is the first gate and Host evidence owns completion
-read backlog -> select 进行中/未开始 (no research) -> load developer -> Host acceptance -> 完成
+read backlog -> select in-progress/not-started (no research) -> load developer -> Host acceptance -> done
 ```
 
 ## Prompt Caching

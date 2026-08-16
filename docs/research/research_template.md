@@ -10,7 +10,7 @@ Copy this structure to `research_<YYYY-MM-DD>.md`, using the UTC date. A daily f
 - Unfinished directions found: none | IDs
 - Decision: fresh research | resume/start `<ID>` without fresh research
 
-> If any `进行中` or `未开始` row exists, stop product research and use the existing backlog path. A research section below is valid only when no unfinished row existed at invocation start.
+> If any `in-progress` or `not-started` row exists, stop product research and use the existing backlog path. A research section below is valid only when no unfinished row existed at invocation start.
 
 ### Source availability and method
 
@@ -50,7 +50,7 @@ Propose at most five new directions, excluding duplicates already in the backlog
 
 `Score = 2 × Importance + Architecture fit + Evidence confidence − Implementation difficulty − Implementation risk`
 
-Only directions scoring at or above `MINIMUM_IMPLEMENTATION_SCORE = 6` enter the backlog as `未开始`; they form this run's batch, ordered so dependencies come first.
+Only directions scoring at or above `MINIMUM_IMPLEMENTATION_SCORE = 6` enter the backlog as `not-started`; they form this run's batch, ordered so dependencies come first.
 
 | Rank | Proposed ID | Direction | Importance | Architecture fit | Evidence confidence | Implementation difficulty | Implementation risk | Score | Evidence and rationale |
 |---:|---|---|---:|---:|---:|---:|---:|---:|---|
@@ -70,7 +70,7 @@ Directions considered but not queued because they fell below the score gate. Rec
 - Start with: `<one ID, or none>`
 - Why this order: `<dependencies, safety, qualitative rationale; note any score override>`
 - Independently observable acceptance: `<checks for the developer workflow, per direction>`
-- Backlog updates: `<IDs added as 未开始; IDs set 放弃 by the gate; the first ID changed to 进行中 only immediately before developer handoff>`
+- Backlog updates: `<IDs added as not-started; IDs set abandoned by the gate; the first ID changed to in-progress only immediately before developer handoff>`
 
 ### Batch iteration outcome
 
@@ -78,7 +78,7 @@ One row per direction handed to the loaded `developer` skill. The batch is worke
 
 | Direction | Child session and managed tasks | Host acceptance (exact independent checks and outcomes) | Commit | Final status | Iteration-log entry |
 |---|---|---|---|---|---|
-| `<ID>` | `<evidence>` | `<checks and results>` | `<sha>` | `完成` only after acceptance; otherwise `进行中` with blockers; `放弃` only with explicit reason | `<docs/iteration-log.md heading/link>` |
+| `<ID>` | `<evidence>` | `<checks and results>` | `<sha>` | `done` only after acceptance; otherwise `in-progress` with blockers; `abandoned` only with explicit reason | `<docs/iteration-log.md heading/link>` |
 
 - Halt condition that ended the loop: `<batch exhausted | acceptance failed twice | premise falsified | user decision needed | starting point unrecoverable | not worth continuing>`
 - Aggregate token spend across every child delegation: `<per-field totals; carry `-` through as unknown>`

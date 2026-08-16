@@ -142,8 +142,8 @@ async function missingDirectory(): Promise<void> {
   assert('load_skill can load self-evolution-research', researchLoaded?.content.includes('# Self-evolution research') === true);
   const researchWorkflow = researchLoaded?.content ?? '';
   assert('research inspects the backlog before any product source', researchWorkflow.includes('Before using any product-research source, read `docs/research/backlog_index.md`'));
-  assert('research prioritizes in-progress then not-started work and suppresses fresh research', researchWorkflow.indexOf('`进行中` direction') < researchWorkflow.indexOf('`未开始` direction') && researchWorkflow.includes('do **not** perform fresh product research'));
-  assert('research has the exact four-state vocabulary', ['`未开始`', '`进行中`', '`完成`', '`放弃`'].every((status) => researchWorkflow.includes(status)));
+  assert('research prioritizes in-progress then not-started work and suppresses fresh research', researchWorkflow.indexOf('`in-progress` direction') < researchWorkflow.indexOf('`not-started` direction') && researchWorkflow.includes('do **not** perform fresh product research'));
+  assert('research has the exact four-state vocabulary', ['`not-started`', '`in-progress`', '`done`', '`abandoned`'].every((status) => researchWorkflow.includes(status)));
   assert('fresh research covers named and additional products', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', 'at least one additional relevant'].every((term) => researchWorkflow.includes(term)));
   assert('research refuses fabricated claims without source access', researchWorkflow.includes('source access is unavailable') && researchWorkflow.includes('never fabricate'));
   assert('peer evidence is compared with current Darwin architecture', researchWorkflow.includes('source, tests, README, `.trellis/spec/`') && researchWorkflow.includes('SDK-extension architecture'));
@@ -153,7 +153,7 @@ async function missingDirectory(): Promise<void> {
   assert(
     'research delegates each batch direction through developer, one at a time',
     researchWorkflow.includes('`load_skill` with the exact name `developer`') &&
-      researchWorkflow.includes('Exactly one direction is `进行中` at a time') &&
+      researchWorkflow.includes('Exactly one direction is `in-progress` at a time') &&
       researchWorkflow.includes('continue immediately with the next direction'),
   );
   assert(
@@ -178,7 +178,7 @@ async function missingDirectory(): Promise<void> {
       researchWorkflow.includes('a premise was falsified') &&
       researchWorkflow.includes('Difficulty alone is not a halt condition'),
   );
-  assert('completion requires independent acceptance and blockers remain in progress', researchWorkflow.includes('Never mark `完成` from the child\'s report alone') && researchWorkflow.includes('keep it `进行中`') && researchWorkflow.includes('explicit product decision'));
+  assert('completion requires independent acceptance and blockers remain in progress', researchWorkflow.includes('Never mark `done` from the child\'s report alone') && researchWorkflow.includes('keep it `in-progress`') && researchWorkflow.includes('explicit product decision'));
 
   // The pre-`.darwin` location is dead: a leftover root skills/ must not still be
   // advertised to the model, or a user who moved theirs would see duplicates.
@@ -313,11 +313,11 @@ async function researchDocs(): Promise<void> {
   const backlog = await readFile(path.join(REPO_ROOT, 'docs', 'research', 'backlog_index.md'), 'utf8');
   const template = await readFile(path.join(REPO_ROOT, 'docs', 'research', 'research_template.md'), 'utf8');
 
-  assert('backlog declares the exact status vocabulary', ['`未开始`', '`进行中`', '`完成`', '`放弃`'].every((status) => backlog.includes(status)));
-  assert('backlog prioritizes unfinished work before research', backlog.includes('Selection order is `进行中` first, then `未开始`') && backlog.includes('do not perform fresh product research'));
+  assert('backlog declares the exact status vocabulary', ['`not-started`', '`in-progress`', '`done`', '`abandoned`'].every((status) => backlog.includes(status)));
+  assert('backlog prioritizes unfinished work before research', backlog.includes('Selection order is `in-progress` first, then `not-started`') && backlog.includes('do not perform fresh product research'));
   assert('backlog records ranking and acceptance fields', ['Importance', 'Architecture fit', 'Evidence confidence', 'Difficulty', 'Risk', 'Implementation / acceptance evidence'].every((heading) => backlog.includes(heading)));
   assert('backlog documents the score formula', backlog.includes('Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk'));
-  assert('backlog works a whole batch one direction at a time', backlog.includes('Exactly one row is `进行中` at a time') && backlog.includes('advancing to the next direction after each one is accepted and closed'));
+  assert('backlog works a whole batch one direction at a time', backlog.includes('Exactly one row is `in-progress` at a time') && backlog.includes('advancing to the next direction after each one is accepted and closed'));
   assert('backlog gates low-scoring directions out', backlog.includes('MINIMUM_IMPLEMENTATION_SCORE = 6') && backlog.includes('below score gate (Score = <n> < 6)'));
   assert('backlog forbids re-rating a direction across the gate', backlog.includes('never restated to move a direction across the gate'));
   assert('research template targets dated append-only reports', template.includes('research_<YYYY-MM-DD>.md') && template.includes('append another timestamped `## Run` section') && template.includes('Never overwrite an earlier run'));
