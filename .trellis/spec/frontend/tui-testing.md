@@ -157,6 +157,8 @@ The report shows short id, presentation-only command summary, state, and elapsed
 - `Ctrl+B` toggles compact/expanded details for every tool after permission ownership but before editor handling. It works idle or streaming, appends an immediate `tool details:` notice, and must not alter the draft/cursor. Existing `<Static>` scrollback is immutable; only active and subsequent calls change.
 - Compact results are bounded by both four logical lines and 2,000 Unicode code points, so minified JSON cannot bypass the terminal bound. Success keeps the head, errors the tail, and denied output its first reason plus the tail; truncation is explicit.
 - Expanded mode shows bounded input (8,000 code points / 100 lines) and result (32,000 code points / 200 lines) for ordinary, MCP, plugin, subagent and background tools. These are presentation bounds only; model-visible content stays unchanged.
+- Permission prompts bound untrusted summaries to one logical line / 160 Unicode code points and each detail to 14 logical lines / 500 Unicode code points. The explicit omission marker consumes those budgets, short values (including blank whitespace) remain textually unchanged, and truncation never splits a code point.
+- Permission pty checks assert against the settled latest Ink repaint, not text retained in accumulated terminal output. At 120×50 that frame must retain source plus bounded summary, labelled detail prefix plus omission marker, and the complete `allow? y n always: a=… A=… esc=deny` decision row.
 
 ### 4. Validation & Error Matrix
 

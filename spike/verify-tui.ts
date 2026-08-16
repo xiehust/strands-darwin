@@ -80,6 +80,16 @@ const BUGGY = `function double(n) {
 module.exports = { double };
 `;
 
+/** Long path and replacement force both permission headline and detail projection bounds. */
+const APPROVE_TARGET_DIR = path.join(TARGET_DIR, 'ser009-' + 'p'.repeat(90), 'nested-' + 'q'.repeat(70));
+const APPROVE_TARGET = path.join(APPROVE_TARGET_DIR, 'calc.js');
+const APPROVE_PREFIX = 'SER009-DETAIL-PREFIX-';
+const APPROVE_REPLACEMENT = `  return n * 2; // ${APPROVE_PREFIX}${'x'.repeat(620)}`;
+const APPROVE_EXPECTED = BUGGY.replace('  return n + 2;', APPROVE_REPLACEMENT);
+const APPROVE_REQUEST =
+  `Read ${APPROVE_TARGET}. Then use fileEditor str_replace to replace exactly \`  return n + 2;\` ` +
+  `with exactly \`${APPROVE_REPLACEMENT}\`. Do not run shell commands or make any other edit.`;
+
 const FIX_REQUEST =
   `The function in ${TARGET} is called double but it adds 2 instead of multiplying by 2. ` +
   `Read the file and fix it with a str_replace edit. Do not run any shell commands.`;
@@ -88,8 +98,9 @@ async function resetWorkDir(): Promise<void> {
   await rm(WORK_DIR, { recursive: true, force: true });
   await mkdir(WORK_DIR, { recursive: true });
   await rm(TARGET_DIR, { recursive: true, force: true });
-  await mkdir(TARGET_DIR, { recursive: true });
+  await mkdir(APPROVE_TARGET_DIR, { recursive: true });
   await writeFile(TARGET, BUGGY, 'utf8');
+  await writeFile(APPROVE_TARGET, BUGGY, 'utf8');
   // Only the config, not the whole owned HOME: sessions live there too, and the
   // `alwaysAllow` scenario deliberately reads back what its first session wrote.
   // Removed rather than left in place so a scenario that says nothing about models
@@ -133,10 +144,10 @@ async function approvePath(): Promise<void> {
     assert('the permission mode is shown', tui.screen.includes('mode: default'));
 
     const turnStart = tui.mark();
-    tui.submit(FIX_REQUEST);
+    tui.submit(APPROVE_REQUEST);
 
-    await tui.waitFor('called double but it adds', { timeoutMs: 60_000, from: turnStart });
-    assert('user message appears in history', tui.screen.includes('called double but it adds'));
+    await tui.waitFor(APPROVE_TARGET, { timeoutMs: 60_000, from: turnStart });
+    assert('user message appears in history', tui.screen.includes(APPROVE_TARGET));
 
     // Reading the file is a read: it must run without asking.
     await tui.waitFor('fileEditor view', { timeoutMs: 120_000, from: turnStart });
@@ -147,50 +158,39 @@ async function approvePath(): Promise<void> {
     // y/n line are still on their way — which fails the asserts below for a reason
     // that has nothing to do with permissions.
     await tui.waitFor('allow?', { timeoutMs: 180_000, from: turnStart, settleMs: 400 });
-    assert('permission prompt appeared', tui.screen.includes('permission required'));
-    assert('prompt is labelled as a write', /permission required\s*\(write\b/.test(tui.screen));
-    // Provenance rides the summary line, so the heading line is unchanged and the
-    // box gains no row. `[parent]` is rendered even with no delegation in flight:
-    // a label that only shows up sometimes leaves the user guessing on the prompts
-    // that matter, which are exactly the ones a concurrent child queued.
-    assert('prompt says which agent asked', /\[parent\] fileEditor str_replace/.test(tui.screen));
-    assert(
-      'the source label did not push the box off the frame',
-      tui.screen.includes('allow?') && tui.screen.includes('Path:') && tui.screen.includes('With:'),
-    );
-    assert('prompt says why the call was flagged', tui.screen.includes('outside the project'));
-    assert('prompt shows the file path', tui.screen.includes(TARGET));
-    assert('prompt shows the Path label', tui.screen.includes('Path:'));
-    assert('prompt shows the replacement block', tui.screen.includes('With:'));
-    assert('prompt offers the y/n choice', tui.screen.includes('allow?'));
-    // The wildcard offers, on the same row as y/n: a second option row is a row
-    // of the box, and the box already competes with the header for frame height.
-    assert(
-      'prompt offers a wildcard rule derived from this call',
-      tui.screen.includes(`always: a=${TARGET_DIR}/`),
-    );
-    assert('prompt offers the whole tool as well', tui.screen.includes('A=all fileEditor'));
+    // `frame` is the terminal driver's latest complete Ink repaint, not a match
+    // against text retained from an older frame in accumulated pty output.
+    const permissionFrame = tui.frame;
+    assert('permission prompt appeared in the newest frame', permissionFrame.includes('permission required'));
+    assert('prompt is labelled as a write', /permission required\s*\(write\b/.test(permissionFrame));
+    assert('source and bounded summary coexist',
+      /\[parent\]\s*fileEditor str_replace:[\s\S]*… truncated \d+ code points/.test(permissionFrame));
+    assert('prompt says why the call was flagged', permissionFrame.includes('outside the project'));
+    assert('detail prefix and explicit marker coexist',
+      permissionFrame.includes(APPROVE_PREFIX) && /… truncated \d+ code points/.test(permissionFrame));
+    assert('the omitted replacement tail is absent', !permissionFrame.includes('x'.repeat(200)));
+    assert('prompt keeps detail labels', permissionFrame.includes('Path:') && permissionFrame.includes('With:'));
+    assert('prompt offers y and n on the reachable decision row', /allow\?\s+y\s+n/.test(permissionFrame));
+    // The wildcard offers stay on the same row as y/n so all decision keys remain
+    // reachable without adding another row to the 50-row frame.
+    assert('prompt offers the narrow wildcard rule', permissionFrame.includes('always: a=/tmp/darwin-tui-target/…'));
+    assert('prompt offers the whole tool as well', permissionFrame.includes('A=all fileEditor'));
 
-    // The permission box replaces the input box, so the newest frame ends with
-    // the prompt's y/n line rather than an editable `you>` line.
-    assert('input box is replaced while awaiting permission', awaitsPermission(tui.screen));
+    assert('input box is replaced while awaiting permission', awaitsPermission(permissionFrame));
     assert('assistant text was streamed to the screen', tui.screen.includes('agent'));
 
     const afterAnswer = tui.mark();
     tui.send('y');
 
-    // A finished write shows as a tool result with the success mark. The prompt's
-    // own text also contains "str_replace", hence both the mark and the ✓.
-    await tui.waitFor(/✓ fileEditor str_replace/, { timeoutMs: 180_000, from: afterAnswer });
+    // The exact disk content below is the approval proof. Wait for the turn to
+    // finish rather than for an immutable tool row that may have scrolled off 50 rows.
     await waitForIdle(tui, 240_000);
 
-    const after = await readFile(TARGET, 'utf8');
-    console.log(`  calc.js now: ${after.replace(/\n/g, ' ').trim()}`);
+    const after = await readFile(APPROVE_TARGET, 'utf8');
+    console.log(`  calc.js now: ${after.replace(/\n/g, ' ').slice(0, 160)}…`);
 
-    // The model may write either operand order.
-    assert('approved edit was applied to disk', /(n\s*\*\s*2|2\s*\*\s*n)/.test(after));
+    assert('approved edit was applied exactly to disk', after === APPROVE_EXPECTED);
     assert('the bug is gone', !after.includes('n + 2'));
-    assert('completed tool call shows a success mark', tui.screen.includes('✓'));
 
     tui.submit('/exit');
     const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);

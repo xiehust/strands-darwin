@@ -5,9 +5,9 @@
  * a plain pipe makes it fall back to non-interactive mode and never accept
  * keystrokes. node-pty gives it a real pty.
  *
- * Assertions match against the accumulated output with ANSI escapes stripped.
- * Ink repaints by rewriting lines, so the buffer holds every frame ever drawn —
- * which is what "did this ever appear on screen" wants.
+ * Most assertions match accumulated ANSI-stripped output, which answers "did this
+ * ever appear?". `frame` separately exposes only Ink's latest standard repaint for
+ * safety-critical assertions that must not pass from an older retained frame.
  */
 import path from 'node:path';
 import process from 'node:process';
@@ -23,6 +23,15 @@ const ANSI =
 
 export function stripAnsi(value: string): string {
   return value.replace(ANSI, '');
+}
+
+/** Ink's standard renderer clears the previous frame before writing the next. */
+const ERASE_FRAME = /(?:\u001b\[2K(?:\u001b\[1A\u001b\[2K)*\u001b\[G)/g;
+
+function latestFrame(value: string): string {
+  let start = 0;
+  for (const match of value.matchAll(ERASE_FRAME)) start = (match.index ?? 0) + match[0].length;
+  return stripAnsi(value.slice(start));
 }
 
 export interface WaitOptions {
@@ -51,6 +60,8 @@ export interface TuiSession {
   readonly raw: string;
   /** Everything drawn so far, ANSI stripped. */
   readonly screen: string;
+  /** Latest complete Ink repaint only; excludes text retained from older frames. */
+  readonly frame: string;
   /** Current end of the output, to pass as {@link WaitOptions.from}. */
   mark(): number;
   /** Resolves once `pattern` shows up, or rejects on timeout. */
@@ -125,6 +136,10 @@ export function startTui(options: TuiOptions): TuiSession {
   const session: TuiSession = {
     get raw() {
       return raw;
+    },
+
+    get frame() {
+      return latestFrame(raw);
     },
 
     get screen() {

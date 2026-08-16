@@ -15,6 +15,7 @@ const suites = [
   'verify-context-format.ts',
   'verify-background-tool-ui.ts',
   'verify-context-offload.ts',
+  'verify-permission-presentation.ts',
   'verify-permission-modes.ts',
   'verify-tool-hooks.ts',
   'verify-mcp-config.ts',

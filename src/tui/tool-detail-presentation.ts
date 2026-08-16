@@ -8,10 +8,74 @@ export const EXPANDED_INPUT_CODE_POINTS = 8_000;
 export const EXPANDED_INPUT_LINES = 100;
 export const EXPANDED_RESULT_CODE_POINTS = 32_000;
 export const EXPANDED_RESULT_LINES = 200;
+export const PERMISSION_DETAIL_CODE_POINTS = 500;
+export const PERMISSION_DETAIL_LINES = 14;
+export const PERMISSION_SUMMARY_CODE_POINTS = 160;
 
 export interface TextBounds {
   codePoints: number;
   lines: number;
+}
+
+/** Permission summary, bounded as one rendered headline. */
+export function permissionSummary(summary: string): string {
+  return boundPermissionText(summary, {
+    codePoints: PERMISSION_SUMMARY_CODE_POINTS,
+    lines: 1,
+  }).join('\n');
+}
+
+/** Permission detail, bounded without changing any short source value. */
+export function permissionDetail(value: string): string[] {
+  return boundPermissionText(value, {
+    codePoints: PERMISSION_DETAIL_CODE_POINTS,
+    lines: PERMISSION_DETAIL_LINES,
+  });
+}
+
+/**
+ * Head projection for security-sensitive permission text. Unlike tool previews,
+ * short blank values are significant and the explicit marker consumes the same
+ * line/code-point budgets as retained source content.
+ */
+function boundPermissionText(text: string, bounds: TextBounds): string[] {
+  const sourceLines = text.split('\n');
+  const sourcePoints = [...text];
+  if (sourceLines.length <= bounds.lines && sourcePoints.length <= bounds.codePoints) {
+    return sourceLines;
+  }
+
+  const markerOwnsLine = bounds.lines > 1;
+  const contentLines = markerOwnsLine ? bounds.lines - 1 : 1;
+  let marker = permissionTruncationMarker(sourcePoints.length, sourceLines.length - 1);
+  let kept = '';
+
+  // Omission counts affect marker width, which affects retained content. Iterate
+  // to the tiny fixed point rather than allowing a digit boundary to exceed the cap.
+  for (;;) {
+    // A newline (detail) or space (summary) separates retained content from marker.
+    const separatorPoints = kept === '' ? 0 : 1;
+    const contentBudget = Math.max(0, bounds.codePoints - [...marker].length - separatorPoints);
+    kept = takeHead(sourceLines, contentLines, contentBudget).join('\n');
+    const keptLines = kept === '' ? 0 : kept.split('\n').length;
+    const next = permissionTruncationMarker(
+      sourcePoints.length - [...kept].length,
+      Math.max(0, sourceLines.length - keptLines),
+    );
+    if (next === marker) break;
+    marker = next;
+  }
+
+  if (!markerOwnsLine) return [`${kept}${kept === '' ? '' : ' '}${marker}`];
+  return kept === '' ? [marker] : [...kept.split('\n'), marker];
+}
+
+function permissionTruncationMarker(omittedPoints: number, omittedLines: number): string {
+  const points = `${omittedPoints} code point${omittedPoints === 1 ? '' : 's'}`;
+  const lines = omittedLines === 0
+    ? ''
+    : ` and ${omittedLines} line${omittedLines === 1 ? '' : 's'}`;
+  return `… truncated ${points}${lines}`;
 }
 
 /** JSON when possible, a defensive string fallback otherwise. */

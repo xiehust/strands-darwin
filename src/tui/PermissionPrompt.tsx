@@ -17,9 +17,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 
 import type { AssessedPermissionRequest } from '../agent/permission.js';
-
-/** Lines shown per detail block before truncating. */
-const DETAIL_LINES = 14;
+import { permissionDetail, permissionSummary } from './tool-detail-presentation.js';
 
 export function PermissionPrompt({
   request,
@@ -45,13 +43,13 @@ export function PermissionPrompt({
 
       <Box>
         <Text color="cyan">[{request.source.label}] </Text>
-        <Text>{request.summary}</Text>
+        <Text>{permissionSummary(request.summary)}</Text>
       </Box>
 
       {request.details.map((detail) => (
         <Box key={detail.label} flexDirection="column" marginTop={1}>
           <Text color="yellow">{detail.label}:</Text>
-          {clip(detail.value).map((line, index) => (
+          {permissionDetail(detail.value).map((line, index) => (
             // Detail lines are static text with no identity of their own.
             <Text key={index}>
               {'  '}
@@ -97,10 +95,4 @@ function ruleOptions(request: AssessedPermissionRequest): { key: string; label: 
     { key: 'a', label: specific.label },
     { key: 'A', label: wholeTool.label },
   ];
-}
-
-function clip(value: string): string[] {
-  const lines = value.split('\n');
-  if (lines.length <= DETAIL_LINES) return lines;
-  return [...lines.slice(0, DETAIL_LINES), `… ${lines.length - DETAIL_LINES} more line(s)`];
 }
