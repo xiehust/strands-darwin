@@ -328,3 +328,70 @@ and `turn 1 spend: unknown (not recorded)` — not a fabricated zero.
 |---|---|---|
 | 2026-08-16 | `e4033ef` | Record each turn's token spend and its provider/model in the trajectory, and report session totals from `trajectory list`/`replay` |
 | 2026-08-16 | `ffba24e` | Pin the unsplittable-input case: an unreported cache subset leaves input unknown, never zero |
+
+### Batch 10 — the diagnostics darwin was throwing away (2026-08-16)
+
+Third and last direction of the observability research run. `routeSdkLogs` routed the SDK's
+`warn`/`error` to the renderer — deliberately, since the SDK's default `console.warn` tears the Ink
+frame — but wired `debug` and `info` to `() => {}` with no way to route them anywhere. The SDK says
+some things *only* at `debug`: that a request was throttled, where it placed its cache points, that
+native token counting fell back to estimation. So a session that was slow because the provider
+throttled it left no evidence at all, and darwin's own notices lived in Ink's scrollback and died
+with the frame.
+
+`diagnostics: true` now appends all four SDK levels plus every darwin notice, with its severity, to
+a per-session `diagnostics.log` beside the record — one timestamped, whitespace-collapsed line each,
+built for `tail -f`. `warn`/`error` reach the renderer *and* the file, so one file holds the whole
+story instead of the half nobody was shown.
+
+Three decisions carry the safety case. **Off is indistinguishable from before the feature existed**:
+with no tap installed the SDK's `debug`/`info` are the *literal* no-ops it ships, not closures that
+test a flag at 60 call sites; no log is built, no line is formatted, and the TUI gets the reducer's
+dispatch back unwrapped rather than a wrapper — which is also why not one of the ~50 notice sites
+changed. It is **off by default** because these lines interpolate provider payloads and can carry
+conversation-derived material, the same reason `contextOffload` defaults off. And it is an
+**observer** under the trajectory's rules, with one bound the trajectory never needed: `logger.debug`
+is called synchronously from inside the SDK's stream loop, so lines stay queued while an append is in
+flight and are dropped past a pending-bytes bound — dropping a *diagnostic* is acceptable and is
+counted and written down in the file, while delaying or dropping an *event* is not. Discoverability
+is a transcript notice and a headless stderr record, never a header row, because the frame-height
+contract has no spare line.
+
+Two measurements changed the implementation, both reported rather than smoothed over. A first
+`flush()` copied from the trajectory writer drained on every arrival and dropped **0 of 200** lines
+at a 400-byte bound — the growth had simply moved into a queue of pending batches — so the bound is
+now gated on an in-flight flag (**197 of 200** dropped). And checking the file bound *after* writing
+let a 600-byte budget write 42 lines, because one append carries a whole burst; the batch is now
+trimmed to what fits, so only the stop marker overshoots.
+
+Host acceptance was run in a **separate git worktree** at the child's commit, because an unrelated
+external commit and three uncommitted edits appeared in the main tree during the run (see below) and
+a check must not be contaminated by work under review. In that clean worktree: `pnpm typecheck`
+(exit 0); `pnpm test` (**27** suites, all `passed, 0 failed`, exit 0, no `FAIL`);
+`spike/verify-diagnostics.ts` (70 passed); `spike/verify-config.ts` (199 passed, up from 190);
+`spike/verify-tui.ts approve` against real model calls (23 passed — no frame row added on its 50-row
+terminal); `completion` (25 passed); `git show --check` on the commit clean. Then four live cases of
+its own against real Bedrock in a throwaway HOME: with the field absent, a real turn left **only**
+`trajectory.jsonl` and `snapshot_latest.json` in the session directory and printed no `diagnostics:`
+record; with it on, a turn that ran a bash tool call produced an 11-line file holding the SDK's own
+`added cache point to last user message`, `event=<beforeToolCall> | dispatching to 1 handler(s)`,
+`handler=<darwin:permission-gate> … returned proceed` and `auto-detected includeToolResultStatus`
+beside timestamped `darwin info` notices; `"diagnostics": "yes"` refused to start with
+`"diagnostics" must be true or false.`; a directory placed where the file belongs left the turn
+succeeding and produced one bounded `EISDIR` degradation record without overwriting the directory;
+and a file pre-filled to 8,388,300 bytes stopped at the real 8 MiB constant with
+`diagnostics stopped: reached the 8388608-byte per-session budget (nothing after this line was
+written)` as its literal last line.
+
+Two anomalies are recorded because they are part of this batch's history, not the child's work:
+commit `0e6f08c` ("add project skills and tasks records", 65 files) appeared mid-run, un-ignoring and
+committing `.darwin/**` project skills, agents, commands and hooks — not written by the child, whose
+commits follow the project convention and which correctly excluded those files from its own commit;
+and three files (`spike/verify-skills.ts` and the `self-evolution-research` skill's `SKILL.md` and
+`roll-research-path.mjs`, which rebalances the research-path weights) were left modified in the
+working tree by that same external activity. Neither touches the diagnostics change; both are why
+acceptance moved to a worktree.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-16 | `aa2b7b7` | Opt-in per-session `diagnostics.log`: the SDK's `debug`/`info` and every darwin notice, bounded, off by default |
