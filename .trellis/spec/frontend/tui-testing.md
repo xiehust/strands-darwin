@@ -37,6 +37,9 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 - Plain Enter still submits, and slash completion still takes Up/Down/Enter precedence when shown.
 - Do not enable terminal mouse tracking: native scrollback and drag-to-select take priority over click-to-position editing.
 - A permission prompt owns paste and keyboard input while visible.
+- Editor editability and agent availability are separate contracts. While streaming, keep normal draft styling, enabled textbox semantics, and Ink's terminal cursor at the editor position; agent-bound Enter still reaches the busy guard, keeps the exact draft, reports `still working`, and never queues it. Local report commands remain ahead of that guard.
+- Compaction owns a genuinely non-editable editor: after global interrupt/exit, permission, and display-only controls, ignore editor keyboard and paste until compaction ends.
+- For cursor visibility, inspect the latest DEC private `ESC[?25h` / `ESC[?25l` state in raw pty output after a settled frame. Finding any historical show sequence is not enough because Ink hides the cursor before repainting.
 
 ### 4. Validation and error matrix
 
@@ -50,6 +53,8 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 | `text\\` + batched terminator | Consume `\\`, append one LF, do not submit |
 | Other C0 or DEL inside paste | Drop the control byte, retain surrounding text |
 | Paste during permission prompt | Ignore it; permission keeps keyboard ownership |
+| Keyboard or paste during compaction | Ignore it; the disabled draft remains unchanged |
+| Agent-bound Enter during streaming | Keep the exact draft, show `still working`, never queue or auto-send |
 
 ### 5. Good / base / bad cases
 
@@ -59,7 +64,7 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 
 ### 6. Tests required
 
-Run `verify-tui.ts cursor` for keyboard insertion/deletion and to prove that mouse tracking remains disabled, preserving native selection and scrollback. Run `verify-tui.ts multiline`; assert on first and continuation rows, absence of `working…` after paste/manual newline, consumed continuation marker, backspace across LF, and bounded clean exit after plain Enter submits `/exit`. Run `verify-tui.ts chunkedEnter` to send text and Enter in one pty write and cover batched continuation plus CRLF submission. Run `verify-tui.ts completion` after changing the Enter or Up/Down branches. Keep Unicode/wrapping/resize geometry in the focused pure prompt-editor suite.
+Run `verify-tui.ts cursor` for keyboard insertion/deletion and to prove that mouse tracking remains disabled, preserving native selection and scrollback. Run `verify-tui.ts multiline`; assert on first and continuation rows, absence of `working…` after paste/manual newline, consumed continuation marker, backspace across LF, and bounded clean exit after plain Enter submits `/exit`. Run `verify-tui.ts chunkedEnter` to send text and Enter in one pty write and cover batched continuation plus CRLF submission. Run `verify-tui.ts usage` for streaming editability, raw cursor visibility, local reporting, exact busy refusal/no queue, and explicit second submission. Run `verify-tui.ts compacting` for disabled keyboard/paste ownership, and `verify-tui.ts approve` for permission ownership of a hidden draft. Run `verify-tui.ts completion` after changing the Enter or Up/Down branches. Keep Unicode/wrapping/resize geometry in the focused pure prompt-editor suite.
 
 ### 7. Wrong vs correct
 
@@ -318,7 +323,7 @@ await tui.waitFor(/✓ fileEditor str_replace/, { from: m });
 
 ## Contract: idle detection needs a busy marker, plus settle time
 
-- The input box renders `you>` even while disabled, so idleness is
+- The input box renders `you>` while streaming as well as idle, so idleness is
   `lastIndexOf('you>') > lastIndexOf('working…')` — the newest prompt drawn after the
   newest busy hint. A bare `you>` check deadlocks or false-passes.
 - **Gotcha**: right after submitting, no `working…` frame exists yet, so the predicate

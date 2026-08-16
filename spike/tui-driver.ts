@@ -34,6 +34,13 @@ function latestFrame(value: string): string {
   return stripAnsi(value.slice(start));
 }
 
+/** Latest DEC private cursor visibility state emitted by Ink. */
+function cursorIsVisible(value: string): boolean | undefined {
+  let visible: boolean | undefined;
+  for (const match of value.matchAll(/\u001b\[\?25([hl])/g)) visible = match[1] === 'h';
+  return visible;
+}
+
 export interface WaitOptions {
   timeoutMs?: number;
   /** Shown in timeout messages. Set automatically by {@link TuiSession.waitFor}. */
@@ -62,6 +69,8 @@ export interface TuiSession {
   readonly screen: string;
   /** Latest complete Ink repaint only; excludes text retained from older frames. */
   readonly frame: string;
+  /** Terminal cursor state after the latest emitted DEC show/hide control. */
+  readonly cursorVisible: boolean | undefined;
   /** Current end of the output, to pass as {@link WaitOptions.from}. */
   mark(): number;
   /** Resolves once `pattern` shows up, or rejects on timeout. */
@@ -140,6 +149,10 @@ export function startTui(options: TuiOptions): TuiSession {
 
     get frame() {
       return latestFrame(raw);
+    },
+
+    get cursorVisible() {
+      return cursorIsVisible(raw);
     },
 
     get screen() {

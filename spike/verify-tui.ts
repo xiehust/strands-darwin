@@ -18,7 +18,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | chunkedEnter | cursor | completion | toolDetails |
+ *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion | toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -145,6 +145,10 @@ async function approvePath(): Promise<void> {
 
     const turnStart = tui.mark();
     tui.submit(APPROVE_REQUEST);
+    await tui.waitFor('working…', { timeoutMs: 60_000, from: turnStart });
+    const hiddenDraft = 'draft survives permission';
+    tui.send(hiddenDraft);
+    await tui.waitFor(`you> ${hiddenDraft}`, { timeoutMs: 30_000, from: turnStart, settleMs: 400 });
 
     await tui.waitFor(APPROVE_TARGET, { timeoutMs: 60_000, from: turnStart });
     assert('user message appears in history', tui.screen.includes(APPROVE_TARGET));
@@ -179,8 +183,14 @@ async function approvePath(): Promise<void> {
     assert('input box is replaced while awaiting permission', awaitsPermission(permissionFrame));
     assert('assistant text was streamed to the screen', tui.screen.includes('agent'));
 
+    // The permission box owns every keyboard and paste event. Use ignored keys
+    // only: decision keys would correctly answer the prompt instead.
+    tui.send('blocked\u001b[D\u007f\u001b[200~PASTED\u001b[201~');
     const afterAnswer = tui.mark();
     tui.send('y');
+    await tui.waitFor(`you> ${hiddenDraft}`, { timeoutMs: 60_000, from: afterAnswer, settleMs: 400 });
+    assert('permission-time keyboard and paste leave the hidden draft exact', tui.frame.includes(`you> ${hiddenDraft}`));
+    assert('permission-time text never enters the restored draft', !tui.frame.includes('blocked') && !tui.frame.includes('PASTED'));
 
     // The exact disk content below is the approval proof. Wait for the turn to
     // finish rather than for an immutable tool row that may have scrolled off 50 rows.
@@ -192,6 +202,7 @@ async function approvePath(): Promise<void> {
     assert('approved edit was applied exactly to disk', after === APPROVE_EXPECTED);
     assert('the bug is gone', !after.includes('n + 2'));
 
+    tui.send('\u0015'); // ctrl+u clears the retained permission-ownership draft
     tui.submit('/exit');
     const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
     assert('TUI exited cleanly on /exit', code === 0);
@@ -581,6 +592,45 @@ async function chunkedEnter(): Promise<void> {
     assert('text and CRLF in one write submits exactly once', code === 0);
   } finally {
     submitTui.kill();
+  }
+}
+
+/** Compaction owns a disabled editor: keyboard and paste cannot create a draft. */
+async function compactingInputOwnership(): Promise<void> {
+  header('TUI — compaction owns keyboard and paste input');
+
+  await resetWorkDir();
+  await writeHomeConfig({ preserveRecentMessages: 0 });
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const seedTurn = tui.mark();
+    tui.submit('Reply with exactly COMPACT_SEED. Do not use tools.');
+    await tui.waitFor('COMPACT_SEED', { timeoutMs: 240_000, from: seedTurn });
+    await waitForIdle(tui, 240_000);
+
+    const compact = tui.mark();
+    tui.submit('/compact');
+    await tui.waitFor('compacting conversation…', { timeoutMs: 60_000, from: compact, settleMs: 400 });
+    assert('the compacting editor hides the terminal cursor', tui.cursorVisible === false);
+
+    tui.send('blocked-keys\u001b[D\u007f');
+    tui.send('\u001b[200~blocked-paste\u001b[201~');
+    await tui.waitFor(/conversation (?:compacted|already compact)/, {
+      timeoutMs: 240_000,
+      from: compact,
+      settleMs: 400,
+    });
+    await tui.waitFor('you>', { timeoutMs: 30_000, from: compact, settleMs: 400 });
+    assert('keyboard input is ignored throughout compaction', !tui.frame.includes('blocked-keys'));
+    assert('paste input is ignored throughout compaction', !tui.frame.includes('blocked-paste'));
+    assert('the editor returns empty and editable after compaction', /you>\s*(?:\r?\n|$)/.test(tui.frame) && tui.cursorVisible === true);
+
+    tui.submit('/exit');
+    assert('TUI exits cleanly after compaction input ownership', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
   }
 }
 
@@ -995,8 +1045,8 @@ async function usageReport(): Promise<void> {
  *
  * Counting to sixty is deliberate — the stream has to still be running when the
  * report is asked for, and ordering is how that is proven: the report must appear
- * BEFORE the turn's last word. A prompt typed in the same window must not be sent
- * (the SDK runs one turn at a time) but must say so rather than vanish.
+ * BEFORE the turn's last word. An edited prompt in the same window must be retained,
+ * not queued; after idle it starts only when Enter is pressed a second time.
  */
 async function usageDuringATurn(tui: TuiSession): Promise<void> {
   const turn = tui.mark();
@@ -1018,17 +1068,27 @@ async function usageDuringATurn(tui: TuiSession): Promise<void> {
     tui.screen.slice(duringTurn).includes('not counted yet'),
   );
 
+  const retainedDraft = 'Reply with exactly SECOND_TURN_DONE. Do not use tools.';
+  const beforeEdit = tui.mark();
+  tui.send('Reply with exactly SECOND_TURN_DNE. Do not use tools.');
+  // Move before "DNE" and insert the missing O: terminal-observable proof that
+  // the streaming editor is active at its cursor, not merely appendable.
+  tui.send('\u001b[D'.repeat(21));
+  tui.send('O');
+  await tui.waitFor(`you> ${retainedDraft}`, {
+    timeoutMs: 30_000,
+    from: beforeEdit,
+    settleMs: 400,
+  });
+  assert('cursor-position editing works while streaming', tui.frame.includes(`you> ${retainedDraft}`));
+  assert('Ink leaves the terminal cursor visible while streaming', tui.cursorVisible === true);
+
   // Anything needing the model waits — with a reason on screen, not silence.
-  const beforeQueued = tui.mark();
-  tui.submit('this must not be sent mid-turn');
-  await tui.waitFor('still working', { timeoutMs: 30_000, from: beforeQueued });
-  assert(
-    'a prompt typed mid-turn is refused with a reason',
-    tui.screen.slice(beforeQueued).includes('still working'),
-  );
-  // It stays in the draft on purpose, so clear it before /exit is typed into the
-  // same line.
-  tui.send('\u007f'.repeat(40));
+  const beforeRefused = tui.mark();
+  tui.send('\r');
+  await tui.waitFor('still working', { timeoutMs: 30_000, from: beforeRefused, settleMs: 400 });
+  assert('a prompt typed mid-turn is refused with a reason', tui.screen.slice(beforeRefused).includes('still working'));
+  assert('the refused prompt remains exact in the editor', tui.frame.includes(`you> ${retainedDraft}`));
 
   await tui.waitFor(/sixty/i, { timeoutMs: 240_000, from: turn });
   const region = tui.screen.slice(duringTurn);
@@ -1038,6 +1098,20 @@ async function usageDuringATurn(tui: TuiSession): Promise<void> {
   );
   await waitForIdle(tui, 240_000);
   assert('the turn survived being asked', tui.screen.slice(turn).includes('token usage'));
+  assert('the retained prompt is still exact after the original turn', tui.frame.includes(`you> ${retainedDraft}`));
+
+  // A queue would start by itself as soon as status returns to idle. Hold a quiet
+  // interval and inspect output after the mark before explicitly submitting.
+  const idleMark = tui.mark();
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  assert('the retained prompt is not automatically sent after idle', !tui.screen.slice(idleMark).includes('working…'));
+
+  const secondTurn = tui.mark();
+  tui.send('\r');
+  await tui.waitFor('working…', { timeoutMs: 60_000, from: secondTurn });
+  await tui.waitFor('SECOND_TURN_DONE', { timeoutMs: 240_000, from: secondTurn });
+  await waitForIdle(tui, 240_000);
+  assert('explicit Enter starts and completes the retained second turn', tui.screen.slice(secondTurn).includes('SECOND_TURN_DONE'));
 }
 
 
@@ -1353,6 +1427,7 @@ const SCENARIOS = {
   cancelThenContinue,
   multiline: multilineInput,
   chunkedEnter,
+  compacting: compactingInputOwnership,
   cursor: cursorEditing,
   completion: slashCompletion,
   toolDetails: toolDetailsToggle,

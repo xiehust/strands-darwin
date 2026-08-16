@@ -544,6 +544,11 @@ export function App({
       return;
     }
 
+    // Compaction rewrites the conversation outside the agent loop and owns the
+    // editor until that atomic operation finishes. Global, permission, and
+    // display-only controls above still work; no draft operation below does.
+    if (status === 'compacting') return;
+
     // Readline-style editing chords. After permission ownership (a pending
     // prompt still owns 'a'/'e'), before the generic ctrl/meta ignore below.
     if (key.ctrl && (typed === 'a' || typed === 'e')) {
@@ -693,8 +698,8 @@ export function App({
   });
 
   usePaste((pasted) => {
-    // The permission prompt owns all input while visible, including paste.
-    if (pendingPermission !== undefined) return;
+    // Permission and compaction own all input while visible/busy, including paste.
+    if (pendingPermission !== undefined || status === 'compacting') return;
 
     const text = normalizeDraftText(pasted);
     if (text === '') return;
@@ -722,7 +727,7 @@ export function App({
           layout={layout}
           completions={completions}
           selectedCompletion={selectedCompletion}
-          disabled={effectiveStatus === 'streaming' || effectiveStatus === 'compacting'}
+          editable={effectiveStatus !== 'compacting'}
           hint={
             effectiveStatus === 'streaming'
               ? 'working… /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn'

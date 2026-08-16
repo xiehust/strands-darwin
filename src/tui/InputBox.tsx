@@ -19,13 +19,13 @@ export function InputBox({
   layout,
   completions,
   selectedCompletion,
-  disabled,
+  editable,
   hint,
 }: {
   readonly layout: EditorLayout;
   readonly completions: readonly string[];
   readonly selectedCompletion: number;
-  readonly disabled: boolean;
+  readonly editable: boolean;
   readonly hint: string | undefined;
 }): React.JSX.Element {
   const visible = completions.slice(0, MAX_COMPLETIONS);
@@ -36,19 +36,19 @@ export function InputBox({
   // Ink's cursor coordinates are relative to the whole live frame, while the
   // editor layout is local to this box. Hide it until layout has been measured.
   setCursorPosition(
-    !disabled && metrics.hasMeasured
+    editable && metrics.hasMeasured
       ? { x: metrics.left + layout.cursor.column, y: metrics.top + layout.cursor.row }
       : undefined,
   );
 
   return (
-    <Box ref={inputRef} flexDirection="column" aria-role="textbox" aria-state={{ multiline: true, disabled }}>
+    <Box ref={inputRef} flexDirection="column" aria-role="textbox" aria-state={{ multiline: true, disabled: !editable }}>
       {layout.rows.map((row, index) => (
         <Box key={`${row.start}:${index}`}>
-          <Text color={disabled ? 'gray' : row.prefix === 'you> ' ? 'cyan' : 'gray'} bold={row.prefix === 'you> '}>
+          <Text color={!editable ? 'gray' : row.prefix === 'you> ' ? 'cyan' : 'gray'} bold={row.prefix === 'you> '}>
             {row.prefix}
           </Text>
-          <Text dimColor={disabled} wrap="truncate-end">{row.text}</Text>
+          <Text dimColor={!editable} wrap="truncate-end">{row.text}</Text>
         </Box>
       ))}
 
