@@ -11,7 +11,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { darwinDir } from '../src/paths.js';
+import { darwinDir, userDarwinDir } from '../src/paths.js';
 import {
   BUILTIN_SKILLS_DIR,
   REQUIRED_BUILTIN_SKILLS,
@@ -30,6 +30,28 @@ const TMP_ROOT = '/tmp/darwin-skills-test';
 
 /** Where the scanner looks: `<root>/.darwin/skills`. */
 const SKILLS_ROOT = path.join(darwinDir(TMP_ROOT), SKILLS_DIRNAME);
+
+/**
+ * The developer's own globally installed skills — a legitimate third layer of every
+ * scan, and never this suite's subject.
+ *
+ * `scanSkills` merges built-in, project, and global skills into one array, so a
+ * count over that whole array quietly asserts "this machine has no global skill" —
+ * a fact about somebody's `~/.darwin/skills/`, not about the loader. `pnpm test`
+ * hides the difference by handing every fast suite a private HOME
+ * (`spike/run-tests.ts`); running this file directly does not. The two helpers below
+ * keep each assertion about the layer it actually names, so both ways of running
+ * agree.
+ */
+const GLOBAL_SKILLS_ROOT = path.join(userDarwinDir(), SKILLS_DIRNAME);
+
+function isUnder(directory: string, root: string): boolean {
+  return directory.startsWith(`${root}${path.sep}`);
+}
+
+function builtinsOf(skills: readonly Skill[]): Skill[] {
+  return skills.filter((skill) => isUnder(skill.directory, BUILTIN_SKILLS_DIR));
+}
 
 /** Builds a throwaway skills tree covering the good and broken cases. */
 async function buildFixture(): Promise<void> {
@@ -110,8 +132,8 @@ async function missingDirectory(): Promise<void> {
 
   const { skills, problems } = await scanSkills('/tmp/darwin-skills-does-not-exist');
 
-  assert('all required built-ins remain without a project directory', skills.length === REQUIRED_BUILTIN_SKILLS.length && REQUIRED_BUILTIN_SKILLS.every((name) => skills.some((skill) => skill.name === name)));
-  assert('no problems reported (project absence is normal, not an error)', problems.length === 0);
+  assert('all required built-ins remain without a project directory', builtinsOf(skills).length === REQUIRED_BUILTIN_SKILLS.length && REQUIRED_BUILTIN_SKILLS.every((name) => builtinsOf(skills).some((skill) => skill.name === name)));
+  assert('no problems reported (project absence is normal, not an error)', problems.filter((problem) => !isUnder(problem.directory, GLOBAL_SKILLS_ROOT)).length === 0);
   assert('the built-ins resolve beside the loader module', REQUIRED_BUILTIN_SKILLS.every((name) => requireSkill(skills, name).directory === path.join(BUILTIN_SKILLS_DIR, name)));
 
   const plugin = await SkillsPlugin.load('/tmp/darwin-skills-does-not-exist');
@@ -152,9 +174,9 @@ async function missingDirectory(): Promise<void> {
   );
   assert(
     'the five paths and their weights are stated',
-    researchWorkflow.includes('`tui=1 observability=1 sdk=1 open=1 peer=4`') &&
+    researchWorkflow.includes('`tui=2 observability=0.5 sdk=1 open=1.5 peer=5`') &&
       ['`tui`', '`observability`', '`sdk`', '`open`', '`peer`'].every((id) => researchWorkflow.includes(id)) &&
-      researchWorkflow.includes('12.5% each for the four self-review paths and 50% for peer research'),
+      researchWorkflow.includes('20% TUI, 15% open, 10% SDK, 5% observability, and 50% peer research'),
   );
   assert(
     'an unappealing roll cannot be re-rolled or self-overridden',
@@ -223,7 +245,9 @@ async function missingDirectory(): Promise<void> {
   const legacyScan = await scanSkills(legacyRoot);
   assert(
     'a root skills/ directory is no longer scanned',
-    legacyScan.skills.length === REQUIRED_BUILTIN_SKILLS.length && REQUIRED_BUILTIN_SKILLS.every((name) => legacyScan.skills.some((skill) => skill.name === name)),
+    !legacyScan.skills.some((skill) => isUnder(skill.directory, legacyRoot)) &&
+      builtinsOf(legacyScan.skills).length === REQUIRED_BUILTIN_SKILLS.length &&
+      REQUIRED_BUILTIN_SKILLS.every((name) => legacyScan.skills.some((skill) => skill.name === name)),
   );
 }
 
@@ -348,20 +372,24 @@ async function researchPathRoll(): Promise<void> {
   const rolled = (await import(pathToFileURL(scriptPath).href)) as {
     RESEARCH_PATHS: readonly { id: string; weight: number; focus: string }[];
     TOTAL_WEIGHT: number;
+    TOTAL_DRAW_UNITS: number;
     pathForDraw: (draw: number) => { id: string };
     findResearchPath: (id: string) => { id: string } | undefined;
   };
 
-  assert('the five paths are weighted 1:1:1:1:4', JSON.stringify(rolled.RESEARCH_PATHS.map((entry) => [entry.id, entry.weight])) === JSON.stringify([['tui', 1], ['observability', 1], ['sdk', 1], ['open', 1], ['peer', 4]]));
-  assert('the weights total 8, so 1/8 and 4/8 are exact', rolled.TOTAL_WEIGHT === 8);
+  assert('the five paths are weighted 2:0.5:1:1.5:5', JSON.stringify(rolled.RESEARCH_PATHS.map((entry) => [entry.id, entry.weight])) === JSON.stringify([['tui', 2], ['observability', 0.5], ['sdk', 1], ['open', 1.5], ['peer', 5]]));
+  assert('the weights total 10 and the draw runs over half-units, so every share is exact', rolled.TOTAL_WEIGHT === 10 && rolled.TOTAL_DRAW_UNITS === 20);
 
-  // Exhaustive rather than statistical: eight draws are the whole sample space, so
-  // the mapping is checked outright instead of being sampled and hoped about.
-  const mapped = Array.from({ length: rolled.TOTAL_WEIGHT }, (_, draw) => rolled.pathForDraw(draw).id);
-  assert('every draw maps to the documented path', JSON.stringify(mapped) === JSON.stringify(['tui', 'observability', 'sdk', 'open', 'peer', 'peer', 'peer', 'peer']));
-  assert('peer research takes exactly half the range', mapped.filter((id) => id === 'peer').length === 4);
+  // Exhaustive rather than statistical: twenty half-unit draws are the whole sample
+  // space, so the mapping is checked outright instead of being sampled and hoped
+  // about — including that a fractional weight became a proportional range and not a
+  // rounded one.
+  const mapped = Array.from({ length: rolled.TOTAL_DRAW_UNITS }, (_, draw) => rolled.pathForDraw(draw).id);
+  const drawsPerPath = Object.fromEntries(rolled.RESEARCH_PATHS.map((entry) => [entry.id, mapped.filter((id) => id === entry.id).length]));
+  assert('every draw maps to the documented path in weight order', JSON.stringify(mapped) === JSON.stringify([...Array<string>(4).fill('tui'), 'observability', ...Array<string>(2).fill('sdk'), ...Array<string>(3).fill('open'), ...Array<string>(10).fill('peer')]));
+  assert('each path takes exactly its weighted share of the range', JSON.stringify(drawsPerPath) === JSON.stringify({ tui: 4, observability: 1, sdk: 2, open: 3, peer: 10 }));
 
-  for (const draw of [-1, 8, 1.5, Number.NaN]) {
+  for (const draw of [-1, 20, 1.5, Number.NaN]) {
     let threw = false;
     try {
       rolled.pathForDraw(draw);
@@ -379,9 +407,9 @@ async function researchPathRoll(): Promise<void> {
     'a bare run records the drawn path with its draw',
     roll.status === 0 &&
       /^research-path: (?:tui|observability|sdk|open|peer)$/m.test(roll.stdout) &&
-      /^draw: [0-7] of 8$/m.test(roll.stdout) &&
+      /^draw: (?:[0-9]|1[0-9]) of 20 half-units$/m.test(roll.stdout) &&
       /^path-source: roll$/m.test(roll.stdout) &&
-      roll.stdout.includes('weights: tui=1 observability=1 sdk=1 open=1 peer=4'),
+      roll.stdout.includes('weights: tui=2 observability=0.5 sdk=1 open=1.5 peer=5'),
   );
 
   const override = spawnSync(process.execPath, [scriptPath, '--path', 'tui'], { encoding: 'utf8' });
@@ -401,7 +429,7 @@ async function researchPathRoll(): Promise<void> {
   assert('an unexpected flag exits 2 rather than quietly rolling', badFlag.status === 2 && badFlag.stdout === '');
 
   const help = spawnSync(process.execPath, [scriptPath, '--help'], { encoding: 'utf8' });
-  assert('--help lists every path with its share', help.status === 0 && ['tui', 'observability', 'sdk', 'open', 'peer', '12.5%', '50%'].every((term) => help.stdout.includes(term)));
+  assert('--help lists every path with its share', help.status === 0 && ['tui', 'observability', 'sdk', 'open', 'peer', '20%', '15%', '10%', '5%', '50%'].every((term) => help.stdout.includes(term)));
 }
 
 async function researchDocs(): Promise<void> {
@@ -444,7 +472,10 @@ async function realProjectSkill(): Promise<void> {
   console.log(`  problems : ${JSON.stringify(problems)}`);
 
   assert('commit-message skill is discovered', skills.some((s) => s.name === 'commit-message'));
-  assert('no problems in the real skills directory', problems.length === 0);
+  // Same reason as `GLOBAL_SKILLS_ROOT` above: this check is about *this repo's*
+  // skills, so a broken skill in the developer's own global directory must not be
+  // reported here, where the message would point at the wrong tree.
+  assert('no problems in the real skills directory', problems.filter((problem) => !isUnder(problem.directory, GLOBAL_SKILLS_ROOT)).length === 0);
   assert(
     'it is found under .darwin/skills/',
     requireSkill(skills, 'commit-message').directory.includes(path.join('.darwin', SKILLS_DIRNAME)),

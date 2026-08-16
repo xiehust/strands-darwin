@@ -44,14 +44,14 @@ Before reading a single source — repository or product — run the bundled scr
 node <skill-directory>/scripts/roll-research-path.mjs
 ```
 
-It draws one of five paths on integer weights (`tui=1 observability=1 sdk=1 open=1 peer=4`, so 12.5% each for the four self-review paths and 50% for peer research) and prints a `research-path`/`focus`/`share`/`draw`/`path-source`/`rolled-at`/`weights` block.
+It draws one of five paths on the weights `tui=2 observability=0.5 sdk=1 open=1.5 peer=5` (so 20% TUI, 15% open, 10% SDK, 5% observability, and 50% peer research; the draw runs over half-units, so those shares are exact) and prints a `research-path`/`focus`/`share`/`draw`/`path-source`/`rolled-at`/`weights` block.
 
 | Path | Share | What the run looks for |
 |---|---:|---|
-| `tui` | 12.5% | TUI interaction and visual polish: the live frame, streaming and history rendering, prompts and completion, colour and severity, small-terminal layout, keyboard editing. |
-| `observability` | 12.5% | Logging and observability: notices and diagnostics, the trajectory record, usage and cost reporting, background-job and subagent visibility, what a failure leaves behind. |
-| `sdk` | 12.5% | Strands SDK capability darwin has not adopted — hooks, plugins, interventions, conversation managers, model and tool features — measured against what darwin hand-rolls or lives without. |
-| `open` | 12.5% | Anything else worth improving; deliberately unscoped. |
+| `tui` | 20% | TUI interaction and visual polish: the live frame, streaming and history rendering, prompts and completion, colour and severity, small-terminal layout, keyboard editing. |
+| `observability` | 5% | Logging and observability: notices and diagnostics, the trajectory record, usage and cost reporting, background-job and subagent visibility, what a failure leaves behind. |
+| `sdk` | 10% | Strands SDK capability darwin has not adopted — hooks, plugins, interventions, conversation managers, model and tool features — measured against what darwin hand-rolls or lives without. |
+| `open` | 15% | Anything else worth improving; deliberately unscoped. |
 | `peer` | 50% | The sourced comparable-product analysis in 3.3. |
 
 The roll is binding, and these rules are what make it worth running at all:
