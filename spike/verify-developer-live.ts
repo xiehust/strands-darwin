@@ -55,8 +55,9 @@ async function fixture(): Promise<string> {
     `- The absolute target repository root is ${root}. Stay inside it; do not cd elsewhere.`,
     '- The child executable is `./node_modules/.bin/darwin`; use it directly without inspecting darwin source or implementation.',
     '- The child is the direct implementation worker. Its prompts must forbid loading the developer skill, starting another darwin, or delegating again.',
+    '- This fixture is a small task: use the small preset (planning soft/hard 10/20, implementation 40/80, correction 15/30).',
     '- For the first child turn, run `DARWIN_PLANNING_ONLY=1 ./node_modules/.bin/darwin -p <planning-prompt> --yolo --context-offload --max-model-calls 20`.',
-    '- For implementation, run `./node_modules/.bin/darwin -p <follow-up> --session <captured-id> --yolo --context-offload --compact-before --max-model-calls 120`. Never omit these flags.',
+    '- For implementation, run `./node_modules/.bin/darwin -p <follow-up> --session <captured-id> --yolo --context-offload --compact-before --max-model-calls 80`. Never omit these flags.',
     '- The only requested product change is the `sum.js` fix described by the user.',
     '',
   ].join('\n'));
@@ -160,9 +161,9 @@ async function main(): Promise<void> {
     assert('the Host consumed incremental output', transcript.includes('bash output:'));
     assert('the first child emitted an exact session record', selectedSession !== undefined && directLogs.length >= 2);
     assert('the planning command is hook-enforced read-only', planningCommand.includes('DARWIN_PLANNING_ONLY=1') && /plan/iu.test(planningCommand));
-    assert('the planning command carries its yolo/offload/budget controls', /(?:^|\s)--yolo(?:\s|$)/u.test(planningCommand) && planningCommand.includes('--context-offload') && planningCommand.includes('--max-model-calls 20'));
+    assert('the planning command carries its yolo/offload/budget controls', /(?:^|\s)--yolo(?:\s|$)/u.test(planningCommand) && planningCommand.includes('--context-offload') && planningCommand.includes('--max-model-calls 20') && /small preset/iu.test(transcript));
     assert('the implementation command explicitly selected the first session', selectedSession !== undefined);
-    assert('the implementation command carries phase compaction, offload, and budget controls', /(?:^|\s)--yolo(?:\s|$)/u.test(implementationCommand) && implementationCommand.includes('--context-offload') && implementationCommand.includes('--compact-before') && implementationCommand.includes('--max-model-calls 120'));
+    assert('the implementation command carries phase compaction, offload, and budget controls', /(?:^|\s)--yolo(?:\s|$)/u.test(implementationCommand) && implementationCommand.includes('--context-offload') && implementationCommand.includes('--compact-before') && implementationCommand.includes('--max-model-calls 80'));
     assert('the implementation command did not use pointer-based continuation', !/--continue|--resume/u.test(implementationCommand));
     assert('the same child session appeared in both direct child logs', directLogs.length >= 2);
     assert('the planning log contains no successful mutating tool call', planningLog !== '');

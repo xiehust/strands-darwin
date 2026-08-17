@@ -157,8 +157,8 @@ pointer, and runtime cleanup succeed. SIGINT cancels and exits nonzero.
 Three opt-in headless controls support bounded long-running automation:
 
 ```bash
-darwin -p "plan the change" --max-model-calls 20 --context-offload
-darwin -p "implement the plan" --session <id> --compact-before --max-model-calls 120 --context-offload
+darwin -p "plan the change" --max-model-calls 40 --context-offload
+darwin -p "implement the plan" --session <id> --compact-before --max-model-calls 200 --context-offload
 ```
 
 `--max-model-calls` refuses the next provider request after the positive-integer ceiling.
@@ -824,16 +824,20 @@ Two ids participate and are not interchangeable:
   pointer, or a background id.
 
 Headless children have no person available to answer permission prompts, so the built-in developer
-workflow runs every child invocation with `--yolo` and process-only context offload. Planning is
-capped at 20 model calls, implementation at 120, and correction/retry at 40. The implementation
-continuation compacts restored planning history first; a correction compacts only after a large prior
-turn. Child prompts batch independent reads/checks, serialize dependent writes, and use a test
-pyramid: focused checks while editing, one child full gate after source settles, then one independent
-Host full gate. The Host still constrains each child to the named repository and authorized task
-scope; yolo changes confirmation behavior, not that scope. It does not silently patch over a child
-failure: it independently inspects the diff and runs the requested checks, then either sends a
-focused correction to the same child session or reports the blocker. Its final report includes the
-child session id, background outcomes, acceptance evidence, token spend, and unresolved risks.
+workflow runs every child invocation with `--yolo` and process-only context offload. It selects an
+evidence-based `small`, `normal`, or `complex` preset before launch. Normal work targets
+20/120/40 planning/implementation/correction calls softly, with hard ceilings 40/200/80; small uses
+10/40/15 soft and 20/80/30 hard, while complex uses 40/200/80 soft and 80/320/120 hard. At 80% of a
+hard ceiling the child persists progress and converges rather than exploring further. The
+implementation continuation compacts restored planning history first; a correction compacts only
+after a large prior turn. Child prompts batch independent reads/checks, serialize dependent writes,
+and use a test pyramid: focused checks while editing, one child full gate after source settles, then
+one independent Host full gate. The Host still constrains each child to the named repository and
+authorized task scope; yolo changes confirmation behavior, not that scope. It does not silently
+patch over a child failure: it independently inspects the diff and runs the requested checks, then
+either sends a focused correction to the same child session or reports the blocker. Its final report
+includes the child session id, background outcomes, acceptance evidence, token spend, and
+unresolved risks.
 
 A project skill cannot replace this built-in name. A case-insensitive `developer` collision is
 skipped and reported with the other skill problems.

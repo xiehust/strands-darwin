@@ -18,11 +18,21 @@ Before launching anything, establish from the request and repository evidence:
 
 Ask the user when any of these boundaries is unresolved. Never infer authorization merely because a command is convenient.
 
+Classify one budget preset from repository evidence before the first launch, state it to the user, and keep it for the whole delegation unless scope materially changes:
+
+| Preset | Use when | Planning soft / hard | Implementation soft / hard | Correction soft / hard |
+|---|---|---:|---:|---:|
+| `small` | Localized, known approach, few files and one focused check | 10 / 20 | 40 / 80 | 15 / 30 |
+| `normal` | Default feature or bug spanning several files | 20 / 40 | 120 / 200 | 40 / 80 |
+| `complex` | SDK migration, security boundary, cross-layer protocol, or broad refactor | 40 / 80 | 200 / 320 | 80 / 120 |
+
+The first number is a **soft target**: tell the child to finish near it, but crossing it is not failure. The second is the CLI **hard ceiling** that refuses the next provider request. At 80% of the hard ceiling, the child must stop unrelated exploration, persist current decisions/progress to task artifacts, run the smallest relevant check, and either finish or leave a precise continuation report. Use the hard value in `--max-model-calls`; never put the soft value there. A user-specified budget overrides the preset.
+
 ## 2. Launch a planning-only child turn
 
-Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Run every child invocation with `--yolo --context-offload --max-model-calls 20`; the built-in developer workflow uses yolo mode by default so headless children never block on interactive permission prompts, offloads oversized tool results without changing target config, and stops a runaway planning loop before model call 21. Prefix the planning process with `DARWIN_PLANNING_ONLY=1` so repository hooks can enforce read-only behavior when provided. The first prompt must give the child the requirement, evidence, repository scope, and acceptance criteria, and explicitly request a plan and questions only with no edits or implementation. Tell the child it is the direct implementation worker: it must not load the `developer` skill, start another darwin, or delegate the task again.
+Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Run every child invocation with `--yolo --context-offload --max-model-calls <planning-hard>` from the selected preset; the built-in developer workflow uses yolo mode by default so headless children never block on interactive permission prompts, offloads oversized tool results without changing target config, and retains a hard runaway guard above the planning soft target. Prefix the planning process with `DARWIN_PLANNING_ONLY=1` so repository hooks can enforce read-only behavior when provided. The first prompt must give the child the requirement, evidence, repository scope, acceptance criteria, selected preset, soft target, hard ceiling, and 80% checkpoint, and explicitly request a plan and questions only with no edits or implementation. Tell the child it is the direct implementation worker: it must not load the `developer` skill, start another darwin, or delegate the task again.
 
-Give the planning child an explicit work budget: no more than 20 model calls, about 25 tool calls, and a concise final plan containing only confirmed facts, file scope, implementation steps, acceptance commands, risks and unresolved questions. The CLI ceiling is authoritative for model calls; the tool/final-plan limits are workflow targets the child must self-manage. Planning artifacts carry detail forward, so the reply must not repeat their full text.
+Give the planning child a concise final-plan target containing only confirmed facts, file scope, implementation steps, acceptance commands, risks and unresolved questions. Planning artifacts carry detail forward, so the reply must not repeat their full text.
 
 ### Tool batching and verification economy
 
@@ -59,9 +69,9 @@ Read the complete planning reply and compare it with the requirement and reposit
 
 ## 4. Continue the exact child session
 
-Launch every follow-up as another `bash start` task in the same target root. The first implementation continuation uses explicit `--session <captured-id> --yolo --context-offload --compact-before --max-model-calls 120`: it compacts the planning transcript before implementation and gives the substantive phase a fresh bounded budget. Never use `--continue` or `--resume`, and never omit the explicit session, yolo, context-offload, or budget flags. The follow-up prompt must state the approval/correction, tell the child to proceed without asking for another approval, and name the requested next work.
+Launch every follow-up as another `bash start` task in the same target root. The first implementation continuation uses explicit `--session <captured-id> --yolo --context-offload --compact-before --max-model-calls <implementation-hard>` from the selected preset: it compacts the planning transcript before implementation and gives the substantive phase a fresh hard ceiling above its soft target. Never use `--continue` or `--resume`, and never omit the explicit session, yolo, context-offload, or budget flags. The follow-up prompt must state the approval/correction, selected preset, implementation soft target/hard ceiling/80% checkpoint, tell the child to proceed without asking for another approval, and name the requested next work.
 
-A correction/retry uses `--session <captured-id> --yolo --context-offload --max-model-calls 40`. Add `--compact-before` only when the previous child turn was large (for example, it exhausted its budget, reported more than 40,000 output tokens, or the Host observed a broad implementation/check transcript); a narrow correction should retain cached continuity without paying for an unnecessary summary. State the chosen correction budget and compaction decision in the prompt.
+A correction/retry uses `--session <captured-id> --yolo --context-offload --max-model-calls <correction-hard>` from the same preset. Add `--compact-before` only when the previous child turn was large (for example, it exhausted its budget, crossed its soft target substantially, or the Host observed a broad implementation/check transcript); a narrow correction should retain cached continuity without paying for an unnecessary summary. State the correction soft target, hard ceiling, 80% checkpoint, and compaction decision in the prompt.
 
 Headless children cannot receive interactive permission prompts, so this workflow always runs them in yolo mode. Keep every child command inside the authorized target repository and mutation scope established above; yolo changes confirmation behavior, not task scope.
 
