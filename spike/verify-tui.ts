@@ -19,7 +19,7 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion | toolDetails |
- *                 agentsMd | usage | tasks | effort | model | plan
+ *                 agentsMd | usage | tasks | effort | model | plan | longAnswer
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -1423,6 +1423,68 @@ async function planHeader(): Promise<void> {
   }
 }
 
+/**
+ * A long answer must scroll, not flicker.
+ *
+ * Ink repaints the live region in place only while it fits the viewport; one row
+ * over, and every render becomes `clearTerminal` + the whole static transcript
+ * written straight to stdout, at text-delta rate — the screen strobes and the
+ * scrollback is erased with it (`spike/probe-live-frame-overflow.tsx` measures
+ * the mechanism in isolation). So the assertion is on the raw pty bytes: no
+ * whole-screen clear during a turn whose answer is several times taller than the
+ * terminal, and the finished answer still complete in the transcript.
+ *
+ * A deliberately short terminal: 20 rows makes an over-tall live region certain
+ * without needing a 500-line answer, and the header alone takes a third of it.
+ */
+async function longAnswer(): Promise<void> {
+  header('TUI — a long streamed answer does not repaint the whole screen');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR, cols: 100, rows: 20 });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const beforeTurn = tui.mark();
+    const rawBeforeTurn = tui.raw.length;
+    tui.submit(
+      'Print the numbers 1 to 120, one per line, formatted as "row 1", "row 2" and so on. ' +
+        'No other text, no code fences. Do not use any tools.',
+    );
+    await tui.waitFor('working…', { timeoutMs: 60_000, from: beforeTurn });
+    await tui.waitFor('row 120', { timeoutMs: 240_000, from: beforeTurn });
+    await waitForIdle(tui, 240_000);
+
+    const rawTurn = tui.raw.slice(rawBeforeTurn);
+    const clears = rawTurn.split('\u001b[3J').length - 1;
+    console.log(`  full-screen clears during the turn: ${clears}`);
+    assert('the screen (and the scrollback) is never cleared while streaming', clears === 0);
+
+    // The tail itself: the live view says what it is not showing rather than
+    // starting mid-sentence with no explanation.
+    assert(
+      'the live view reports the rows that scrolled out of it',
+      /… \d+ earlier lines? scrolled out of the live view/.test(tui.screen.slice(beforeTurn)),
+    );
+
+    // Bounding the *live* region must not bound the transcript: the assembled
+    // block goes to `<Static>` in full, which is the one write allowed to be
+    // taller than the screen.
+    const transcript = tui.screen.slice(beforeTurn);
+    assert('the whole answer still reached the transcript',
+      /row 1(?!\d)/.test(transcript) && transcript.includes('row 60') && transcript.includes('row 120'));
+    assert('the scrolled-out notice is gone once the answer is history',
+      !tui.frame.includes('scrolled out of the live view'));
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly after a long answer', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -1443,6 +1505,7 @@ const SCENARIOS = {
   effort: effortCommand,
   model: modelCommand,
   plan: planHeader,
+  longAnswer,
 } as const;
 
 async function main(): Promise<void> {

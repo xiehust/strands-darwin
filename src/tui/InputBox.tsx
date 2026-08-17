@@ -21,23 +21,31 @@ export function InputBox({
   selectedCompletion,
   editable,
   hint,
+  offset,
 }: {
   readonly layout: EditorLayout;
   readonly completions: readonly string[];
   readonly selectedCompletion: number;
   readonly editable: boolean;
   readonly hint: string | undefined;
+  /** Position of this box's parent within the live frame; see below. */
+  readonly offset: { readonly top: number; readonly left: number };
 }): React.JSX.Element {
   const visible = completions.slice(0, MAX_COMPLETIONS);
   const inputRef = useRef<DOMElement>(null);
   const metrics = useBoxMetrics(inputRef);
   const { setCursorPosition } = useCursor();
 
-  // Ink's cursor coordinates are relative to the whole live frame, while the
-  // editor layout is local to this box. Hide it until layout has been measured.
+  // Ink's cursor coordinates are relative to the whole live frame, while
+  // `useBoxMetrics` reports a box's position within its *parent* and the editor
+  // layout is local to this box — hence three terms, not two. Hide the cursor
+  // until layout has been measured.
   setCursorPosition(
     editable && metrics.hasMeasured
-      ? { x: metrics.left + layout.cursor.column, y: metrics.top + layout.cursor.row }
+      ? {
+          x: offset.left + metrics.left + layout.cursor.column,
+          y: offset.top + metrics.top + layout.cursor.row,
+        }
       : undefined,
   );
 

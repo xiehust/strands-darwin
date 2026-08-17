@@ -11,7 +11,7 @@
  * unfinished answer; a second press within a short window, or any press while
  * idle, exits. Ctrl+D always exits.
  */
-import { Box, Text, useApp, useInput, usePaste, useWindowSize } from 'ink';
+import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useWindowSize, type DOMElement } from 'ink';
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
@@ -34,6 +34,7 @@ import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
 import { InputBox } from './InputBox.js';
+import { MINIMUM_LIVE_BLOCK_ROWS } from './live-text.js';
 import { MessageList } from './MessageList.js';
 import { PermissionPrompt } from './PermissionPrompt.js';
 import { ActiveToolCalls } from './ToolCallPanel.js';
@@ -60,6 +61,13 @@ import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js'
 const DOUBLE_INTERRUPT_MS = 2000;
 const SPINNER_INTERVAL_MS = 90;
 
+/**
+ * Chrome height assumed before the first layout pass: this project's own header
+ * plus a hint line and a one-line draft, rounded up. Guessing high only costs a
+ * few rows of the first streamed frame; guessing low costs the scrollback.
+ */
+const ASSUMED_CHROME_ROWS = 14;
+
 /** C0 controls except LF and tab, plus DEL: never treated as draft text. */
 const NON_TEXT_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
 
@@ -78,7 +86,7 @@ export function App({
   readonly permissions: PermissionQueue;
 }): React.JSX.Element {
   const { exit } = useApp();
-  const { columns } = useWindowSize();
+  const { columns, rows } = useWindowSize();
   const [state, recordAction] = useReducer(turnReducer, initialTurnState);
   // Swapped whole rather than branched per call: with `diagnostics` off — the default —
   // `dispatch` *is* the reducer's own dispatch, so not one of the ~50 notice sites
@@ -104,6 +112,18 @@ export function App({
   const draft = editor.text;
   const layout = layoutEditor(draft, columns, editor.cursor);
   const preferredColumn = useRef<number | undefined>(undefined);
+
+  // The frame's fixed furniture, measured rather than estimated: the header grows
+  // a line for every degradation it has to report, and the box below it grows with
+  // the draft, the completion menu and the running tool calls. What is left over
+  // is what the streaming answer may use — see `live-text.ts` for what happens to
+  // a live region that outgrows the terminal. Neither measurement depends on the
+  // answer's height, so this cannot oscillate.
+  const headerRef = useRef<DOMElement>(null);
+  const chromeRef = useRef<DOMElement>(null);
+  const header = useBoxMetrics(headerRef);
+  const chrome = useBoxMetrics(chromeRef);
+  const maxLiveRows = liveRowBudget(rows, header.hasMeasured && chrome.hasMeasured ? header.height + chrome.height : undefined);
 
   const [selectedCompletion, setSelectedCompletion] = useState(0);
   const [frame, setFrame] = useState(0);
@@ -719,35 +739,64 @@ export function App({
 
   return (
     <Box flexDirection="column">
-      <Header runtime={runtime} />
-      <MessageList history={state.history} liveText={state.liveText} />
-
-      {state.thinking && effectiveStatus === 'streaming' && <Text dimColor>thinking…</Text>}
-      <ActiveToolCalls
-        tools={state.activeTools}
-        frame={frame}
-        toolDetailsExpanded={state.toolDetailsExpanded}
+      <Box ref={headerRef} flexDirection="column">
+        <Header runtime={runtime} />
+      </Box>
+      <MessageList
+        history={state.history}
+        liveText={state.liveText}
+        columns={columns}
+        maxLiveRows={maxLiveRows}
       />
 
-      {pendingPermission !== undefined ? (
-        <PermissionPrompt request={pendingPermission} waiting={permissions.waiting} />
-      ) : (
-        <InputBox
-          layout={layout}
-          completions={completions}
-          selectedCompletion={selectedCompletion}
-          editable={effectiveStatus !== 'compacting'}
-          hint={
-            effectiveStatus === 'streaming'
-              ? 'working… /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn'
-              : effectiveStatus === 'compacting'
-                ? 'compacting conversation…'
-                : undefined
-          }
+      <Box ref={chromeRef} flexDirection="column">
+        {state.thinking && effectiveStatus === 'streaming' && <Text dimColor>thinking…</Text>}
+        <ActiveToolCalls
+          tools={state.activeTools}
+          frame={frame}
+          toolDetailsExpanded={state.toolDetailsExpanded}
         />
-      )}
+
+        {pendingPermission !== undefined ? (
+          <PermissionPrompt request={pendingPermission} waiting={permissions.waiting} />
+        ) : (
+          <InputBox
+            layout={layout}
+            completions={completions}
+            selectedCompletion={selectedCompletion}
+            editable={effectiveStatus !== 'compacting'}
+            offset={{ top: chrome.top, left: chrome.left }}
+            hint={
+              effectiveStatus === 'streaming'
+                ? 'working… /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn'
+                : effectiveStatus === 'compacting'
+                  ? 'compacting conversation…'
+                  : undefined
+            }
+          />
+        )}
+      </Box>
     </Box>
   );
+}
+
+/**
+ * Rows the streaming answer may occupy, given the measured height of the header
+ * and the box below it.
+ *
+ * One row is left spare on purpose: Ink treats a frame as fullscreen at exactly
+ * `rows` and clears the whole screen when the next one shrinks below that, so
+ * "fits" has to mean *strictly* shorter than the viewport. Before the first
+ * layout pass the chrome height is unknown, and a generous guess is the safe
+ * one — a first frame that overflows costs the scrollback.
+ *
+ * The floor is a genuine floor, not a fit: a terminal whose furniture alone
+ * fills the screen has no room to give, and clamping here at least keeps the
+ * newest lines of the answer visible.
+ */
+export function liveRowBudget(rows: number, measuredChrome: number | undefined): number {
+  const chrome = measuredChrome ?? ASSUMED_CHROME_ROWS;
+  return Math.max(MINIMUM_LIVE_BLOCK_ROWS, rows - chrome - 1);
 }
 
 function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Element {
