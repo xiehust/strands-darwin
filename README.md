@@ -107,6 +107,44 @@ are appropriate for automation. A denied tool is not itself a failed process if 
 handles the denial and completes. Exit status is zero only after the turn, snapshot, resume
 pointer, and runtime cleanup succeed. SIGINT cancels and exits nonzero.
 
+#### Structured output
+
+The default is `--output-format text`, which is the protocol above unchanged. Two opt-in formats
+make the same one-shot run available without parsing human progress records:
+
+```bash
+darwin -p "reply with ok" --output-format json
+darwin -p "inspect the project" --output-format stream-json
+```
+
+`json` writes exactly one versioned result document to stdout, including failures and cancellation.
+`stream-json` writes one versioned JSON object per line: session/run/turn lifecycle, completed
+assistant messages, permission denials, tool start/completion, SDK diagnostics, and one authoritative
+terminal `result`. Every object has `schemaVersion: 1`, a process-output `sequence` starting at 1,
+an ISO `timestamp`, and the requested/resolved `sessionId` (or `null` only when startup failed before
+resolution). Structured stderr is empty during a valid invocation; post-parse progress and warnings
+are records rather than human lines. CLI usage errors still use stderr and exit 2 because no valid
+output contract was established.
+
+A terminal `outcome` is `success`, `failure`, or `cancelled`. Success is emitted only after strict
+runtime shutdown and the resume-pointer write both complete; turn, cleanup and persistence errors
+are ordered under `errors`, observer/SDK degradations under `warnings`, and cancellation remains
+nonzero. `usage` has mutually exclusive `input`, `output`, `cacheRead`, and `cacheWrite` buckets. An
+unreported metric is an absent key, while a measured zero stays `0`.
+
+V1 deliberately streams **completed assistant text**, not raw token deltas. Provider output
+guardrails can expose text in deltas and replace it only after aggregation, so public
+`assistant.message` records come from the post-redaction completed SDK message. The public format is
+an allowlisted projection, never a raw SDK object: it excludes model reasoning text/signatures,
+reasoning and guardrail-redacted content, raw tool input/results, traces, metrics, and live agent or
+invocation state. Tool/error/diagnostic fields are bounded and explicitly marked when truncated;
+long assistant messages are split into numbered bounded records, while the successful terminal
+`result` remains complete like text mode. JSON escaping keeps each JSONL object on one physical line.
+Uncatchable `SIGKILL` and a broken stdout pipe (`EPIPE`) cannot guarantee a terminal record.
+
+`--output-format` may appear once and is valid only with `-p/--print`; invalid or unknown values fail
+before runtime construction. It does not add a server, daemon, SDK API, or checkpoint mechanism.
+
 Run it from the repository you want it to work on. The **current working directory** is
 the project root, and everything darwin reads or writes lives there:
 

@@ -79,20 +79,26 @@ async function parserContracts(): Promise<void> {
   header('headless CLI parser');
   assert.deepEqual(parseCliArgs(['-p', 'hello']), {
     prompt: 'hello',
+    outputFormat: 'text',
     session: { kind: 'new' },
     permissionModeOverride: undefined,
   });
   assert.deepEqual(parseCliArgs(['--print', 'hello', '--continue']), {
     prompt: 'hello',
+    outputFormat: 'text',
     session: { kind: 'continue' },
     permissionModeOverride: undefined,
   });
   assert.deepEqual(parseCliArgs(['-p', 'hello', '--continue', '--session', 'chosen_1']), {
     prompt: 'hello',
+    outputFormat: 'text',
     session: { kind: 'id', sessionId: 'chosen_1' },
     permissionModeOverride: undefined,
   });
   assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', 'plan']).permissionModeOverride, 'plan');
+  assert.equal(parseCliArgs(['-p', 'x', '--output-format', 'json']).outputFormat, 'json');
+  assert.equal(parseCliArgs(['--output-format', 'stream-json', '-p', 'x']).outputFormat, 'stream-json');
+
   assert.equal(parseCliArgs(['--permission-mode', 'plan']).permissionModeOverride, 'plan');
   assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', 'plan', '--yolo']).permissionModeOverride, 'yolo');
   assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', 'auto', '--yolo']).permissionModeOverride, 'yolo');
@@ -111,6 +117,7 @@ async function parserContracts(): Promise<void> {
   // refuses an id with no persisted snapshot.
   assert.deepEqual(parseCliArgs(['--session', 'forked_1']), {
     prompt: undefined,
+    outputFormat: 'text',
     session: { kind: 'id', sessionId: 'forked_1' },
     permissionModeOverride: undefined,
   });
@@ -125,6 +132,9 @@ async function parserContracts(): Promise<void> {
     // `--continue` stays headless-only (`--resume` is its TUI spelling), and an
     // invalid id is still refused in either mode.
     ['--continue'], ['--session', 'UPPER'], ['--session', 'one', '--session', 'two'],
+    ['--output-format', 'json'], ['-p', 'x', '--output-format'],
+    ['-p', 'x', '--output-format', 'xml'],
+    ['-p', 'x', '--output-format', 'json', '--output-format', 'text'],
     ['--unknown'], ['bare'],
   ]) {
     assert.throws(() => parseCliArgs(argv), CliUsageError, argv.join(' '));

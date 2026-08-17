@@ -1,0 +1,4 @@
+{"file":"docs/research/research_2026-08-17.md","reason":"Check every independently observable SER-011 acceptance point"}
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Verify no SDK-loop, cancellation, cleanup or serialization regression"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify failures and unknown metrics remain honest"}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Use bounded real-process exit/signal assertions"}

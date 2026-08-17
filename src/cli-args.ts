@@ -9,9 +9,14 @@ export class CliUsageError extends Error {
   }
 }
 
+export const HEADLESS_OUTPUT_FORMATS = ['text', 'json', 'stream-json'] as const;
+export type HeadlessOutputFormat = (typeof HEADLESS_OUTPUT_FORMATS)[number];
+
 export interface CliOptions {
   /** Present only for one-shot/headless mode. */
   prompt: string | undefined;
+  /** `text` preserves the original stdout/stderr protocol and is always the default. */
+  outputFormat: HeadlessOutputFormat;
   /**
    * Which conversation to open. `--session <id>` is accepted in both modes: an id
    * is alphabet-validated here and `resolveSession` refuses one with no persisted
@@ -29,6 +34,8 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let sessionId: string | undefined;
   let permissionMode: ApprovalMode | undefined;
   let permissionModeSeen = false;
+  let outputFormat: HeadlessOutputFormat = 'text';
+  let outputFormatSeen = false;
   let continueRequested = false;
   let resumeRequested = false;
   let yolo = argv.includes('--yolo');
@@ -44,6 +51,24 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
           throw new CliUsageError(`${flag} expects a non-empty message.`);
         }
         prompt = value;
+        index += 1;
+        break;
+      }
+      case '--output-format': {
+        if (outputFormatSeen) throw new CliUsageError('--output-format may be specified only once.');
+        outputFormatSeen = true;
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith('-')) {
+          throw new CliUsageError(
+            `--output-format expects one of ${HEADLESS_OUTPUT_FORMATS.join(', ')}, got ${JSON.stringify('(nothing)')}.`,
+          );
+        }
+        if (!(HEADLESS_OUTPUT_FORMATS as readonly string[]).includes(value)) {
+          throw new CliUsageError(
+            `--output-format expects one of ${HEADLESS_OUTPUT_FORMATS.join(', ')}, got ${JSON.stringify(value)}.`,
+          );
+        }
+        outputFormat = value as HeadlessOutputFormat;
         index += 1;
         break;
       }
@@ -108,6 +133,9 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   if (prompt === undefined && continueRequested) {
     throw new CliUsageError('--continue is available only with -p/--print; use --resume for the TUI.');
   }
+  if (prompt === undefined && outputFormatSeen) {
+    throw new CliUsageError('--output-format is available only with -p/--print.');
+  }
 
   const session: SessionSelector = sessionId !== undefined
     ? { kind: 'id', sessionId }
@@ -117,6 +145,7 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
 
   return {
     prompt,
+    outputFormat,
     session,
     // Preserve the existing shorthand contract: --yolo wins over the value flag.
     permissionModeOverride: yolo ? 'yolo' : permissionMode,

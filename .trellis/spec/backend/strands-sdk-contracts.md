@@ -877,6 +877,7 @@ stdout is an atomic result channel, and stderr is bounded progress/diagnostics.
 
 ```text
 darwin -p|--print <message>
+  [--output-format text|json|stream-json]
   [--continue|--resume|--session <id>]
   [--permission-mode default|auto|plan|yolo|--yolo]
 
@@ -913,6 +914,21 @@ missing or unreadable record, 2 for usage.
 - The SDK bash module installs SIGINT/SIGTERM listeners that call `process.exit(0)`. Headless mode
   must replace those handlers, keep its own handler installed through cleanup/persistence, cancel
   active work, and exit nonzero. Interactive mode keeps its established Ctrl+C policy.
+
+Structured output is an opt-in projection over this same loop; the complete public schema and
+privacy/bounds policy live in `structured-headless-output.md`. Two SDK details determine that
+policy: provider output guardrails can expose blocked text in `modelStreamUpdateEvent` and replace
+it only during `Model.streamAggregated`, so v1 publishes completed `modelMessageEvent` `TextBlock`s
+rather than raw deltas; and both `reasoningContentDelta` and `ReasoningBlock` can carry text,
+signatures or `redactedContent`, none of which may enter the public protocol. The projector is an
+explicit typed allowlist and never SDK `toJSON()` — that serialization seam is safe from live agent
+state for the trajectory, but it is not a stable public API and still contains private payloads.
+
+`--output-format text` is the literal old protocol. `json` buffers all progress and writes one
+terminal result; `stream-json` emits versioned lifecycle/tool/completed-message records and one
+terminal result. In both structured modes ordinary human stderr is silent after successful parsing,
+and terminal success remains gated by strict shutdown and resume-pointer persistence. CLI usage
+failure is the only case that has no structured output contract and retains human stderr/exit 2.
 
 ### 4. Validation & Error Matrix
 
