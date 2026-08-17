@@ -55,8 +55,7 @@ async function fixture(): Promise<string> {
     `- The absolute target repository root is ${root}. Stay inside it; do not cd elsewhere.`,
     '- The child executable is `./node_modules/.bin/darwin`; use it directly without inspecting darwin source or implementation.',
     '- The child is the complete direct worker. It may load configured non-developer skills and owns planning, implementation, checks, and commit. It must not load developer, start another darwin, or delegate supervision.',
-    '- This fixture is a small task: use the small direct-worker soft/hard budget 50/100 and correction 15/30.',
-    '- Run one child turn: `./node_modules/.bin/darwin -p <complete-worker-prompt> --yolo --context-offload --max-model-calls 100`. Do not set DARWIN_PLANNING_ONLY, do not use --compact-before, and do not require a second implementation turn.',
+    '- Run one child turn: `./node_modules/.bin/darwin -p <complete-worker-prompt> --yolo --context-offload`. Do not set DARWIN_PLANNING_ONLY, do not use --compact-before or --max-model-calls, and do not require a second implementation turn.',
     '- The only requested product change is the `sum.js` fix described by the user.',
     '',
   ].join('\n'));
@@ -123,7 +122,7 @@ async function main(): Promise<void> {
     tui.submit(
       `/developer The absolute target repository is ${fixtureRoot}. Stay in that root and supervise a headless child to fix sum.js. ` +
       'Do not inspect darwin source: the verified child command is ./node_modules/.bin/darwin. ' +
-      'Launch one complete direct worker with the small preset, context offload, and hard budget 100. ' +
+      'Launch one complete direct worker with context offload and no automatic model-call budget. ' +
       'Let it use configured non-developer skills and complete planning, implementation, checks, and commit without a Host plan-approval turn. Use only bash start/status/output (never foreground execution or ' +
       'fixed sleeps) for child invocations. For every child task, call bash output at least once and, after terminal status, ' +
       'drain it through hasMore false before proceeding. Tell me /tasks is available. Independently inspect git diff and run node test.mjs.',
@@ -153,8 +152,8 @@ async function main(): Promise<void> {
     assert('the Host monitored lifecycle status', transcript.includes('bash status:'));
     assert('the Host consumed incremental output', transcript.includes('bash output:'));
     assert('the direct worker emitted an exact session record', selectedSession !== undefined);
-    assert('the direct worker uses yolo, offload, and the small whole-worker hard budget', /(?:^|\s)--yolo(?:\s|$)/u.test(workerCommand) && workerCommand.includes('--context-offload') && workerCommand.includes('--max-model-calls 100') && /small preset/iu.test(transcript));
-    assert('the direct worker is not planning-only or pre-compacted', !workerCommand.includes('DARWIN_PLANNING_ONLY') && !workerCommand.includes('--compact-before'));
+    assert('the direct worker uses yolo and process-only offload', /(?:^|\s)--yolo(?:\s|$)/u.test(workerCommand) && workerCommand.includes('--context-offload'));
+    assert('the direct worker is not planning-only, pre-compacted, or automatically budgeted', !workerCommand.includes('DARWIN_PLANNING_ONLY') && !workerCommand.includes('--compact-before') && !workerCommand.includes('--max-model-calls'));
     assert('the direct worker did not use pointer-based continuation', !/--continue|--resume|--session/u.test(workerCommand));
     assert('the one worker log contains the implementation write', /tool fileEditor — fileEditor (?:create|str_replace|insert):/u.test(directLog));
 

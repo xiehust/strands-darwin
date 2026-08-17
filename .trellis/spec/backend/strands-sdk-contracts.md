@@ -1170,11 +1170,9 @@ agent.addHook(BeforeInvocationEvent, ({ agent }) => {
 
 ```text
 /developer <delegated requirement>
-preset: small = worker 50/100, correction 15/30 (soft/hard)
-preset: normal = worker 140/240, correction 40/80 (soft/hard)
-preset: complex = worker 240/400, correction 80/120 (soft/hard)
-bash start: darwin -p <complete worker> --yolo --context-offload --max-model-calls <worker-hard>
-bash start: darwin -p <correction> --session <id> --yolo --context-offload [--compact-before] --max-model-calls <correction-hard>
+bash start: darwin -p <complete worker> --yolo --context-offload
+bash start: darwin -p <correction> --session <id> --yolo --context-offload [--compact-before]
+optional explicit ceiling on either: --max-model-calls <positive integer>
 child stderr: ^session: ([a-z0-9_-]+)$
 user view: /tasks
 ```
@@ -1189,12 +1187,10 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 - Run each child from the exact target root. The child prompt says it is the direct worker and must not load `developer`, start another darwin, or delegate again; without that guard a built-in skill advertised to both Host and child can recurse.
 - The first child is one complete direct worker, not a planning-only turn. It may load the target's configured non-developer skills and owns task/planning/research artifacts, implementation, checks, spec updates and authorized commits. Do not set `DARWIN_PLANNING_ONLY`, do not pre-compact a fresh session, and do not make implementation wait for Host plan approval. Only unresolved product/scope/authorization decisions return to the Host/user.
 - Every child invocation uses `--yolo` by default because a headless process cannot answer permission prompts. Yolo changes confirmation behavior only: the Host still establishes and enforces the named repository and authorized task scope. The Host independently inspects the diff and runs acceptance checks; failed acceptance returns to the same child session rather than being hidden by a Host edit.
-- Before launch, the Host selects and reports one evidence-based `small`, `normal`, or `complex`
-  whole-worker preset. Small uses 50/100 worker soft/hard and 15/30 correction; normal uses 140/240
-  and 40/80; complex uses 240/400 and 80/120. At 80% of hard, the child stops unrelated exploration,
-  persists progress, runs the smallest relevant check and finishes or leaves a continuation report.
-  Every turn enables process-only context offload; correction compacts only after a large prior turn.
-  Children batch independent reads/checks and serialize dependent writes.
+- Developer commands enable process-only context offload but no model-call budget by default; the
+  direct worker follows repository skills to a natural completion. The generic hard CLI ceiling is
+  added only when the user or Host explicitly supplies a positive integer. Correction compacts only
+  after a large prior turn. Children batch independent reads/checks and serialize dependent writes.
 - Verification follows a pyramid: minimal reproduction/focused suite/typecheck while editing; one
   child full gate after source settles; commit/diff/status only after a no-source-change commit; one
   independent Host full gate. Green full suites are not repeated for reassurance.
@@ -1239,10 +1235,10 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 # WRONG: pointer identity, foreground blocking, recursion, and no cost bounds
 darwin -p "use developer to fix it" --continue
 
-# CORRECT: one normal worker uses soft target 140 and hard limit 240
-bash start -> darwin -p "own the full workflow; soft 140, hard 240" --yolo --context-offload --max-model-calls 240
+# CORRECT: one complete worker, with a budget only when explicitly requested
+bash start -> darwin -p "own the full repository workflow" --yolo --context-offload
 # only after Host acceptance fails:
-bash start -> darwin -p "fix this finding; soft 40, hard 80" --session session-123 --yolo --context-offload --max-model-calls 80
+bash start -> darwin -p "fix this exact finding" --session session-123 --yolo --context-offload
 ```
 
 ---

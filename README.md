@@ -157,8 +157,8 @@ pointer, and runtime cleanup succeed. SIGINT cancels and exits nonzero.
 Three opt-in headless controls support bounded long-running automation:
 
 ```bash
-darwin -p "plan the change" --max-model-calls 40 --context-offload
-darwin -p "implement the plan" --session <id> --compact-before --max-model-calls 200 --context-offload
+darwin -p "run the complete task" --context-offload
+darwin -p "bounded CI task" --context-offload --max-model-calls 200
 ```
 
 `--max-model-calls` refuses the next provider request after the positive-integer ceiling.
@@ -824,13 +824,13 @@ Two ids participate and are not interchangeable:
   session and never relies on `--continue`, the resume pointer, or a background id.
 
 Headless children have no person available to answer permission prompts, so the built-in developer
-workflow runs every child invocation with `--yolo` and process-only context offload. It selects an
-evidence-based `small`, `normal`, or `complex` whole-worker preset before launch: small uses 50/100,
-normal 140/240, and complex 240/400 soft/hard calls; corrections use 15/30, 40/80, or 80/120. At
-80% of a hard ceiling the child persists progress and converges rather than exploring further. A
-focused correction compacts the prior session only after a large worker turn. Child prompts batch independent reads/checks, serialize dependent writes,
-and use a test pyramid: focused checks while editing, one child full gate after source settles, then
-one independent Host full gate. The Host still constrains each child to the named repository and
+workflow runs every child invocation with `--yolo` and process-only context offload. It does not
+apply a model-call budget by default: the child can follow the target repository's workflow to a
+natural completion. `--max-model-calls <n>` remains available only when the user or Host explicitly
+sets a cost ceiling. A focused correction compacts the prior session only after a large worker turn.
+Child prompts batch independent reads/checks, serialize dependent writes, and use a test pyramid:
+focused checks while editing, one child full gate after source settles, then one independent Host
+full gate. The Host still constrains each child to the named repository and
 authorized task scope; yolo changes confirmation behavior, not that scope. It does not silently
 patch over a child failure: it independently inspects the diff and runs the requested checks, then
 either sends a focused correction to the same child session or reports the blocker. Its final report
