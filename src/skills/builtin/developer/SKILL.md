@@ -1,6 +1,6 @@
 ---
 name: developer
-description: Supervise a headless darwin child through planning, implementation, and independent acceptance. Use when delegating repository work to another persistent darwin conversation.
+description: Supervise one complete headless darwin worker and independently accept its result. Use when delegating repository work to a persistent darwin conversation.
 ---
 
 # Developer supervisor
@@ -20,19 +20,19 @@ Ask the user when any of these boundaries is unresolved. Never infer authorizati
 
 Classify one budget preset from repository evidence before the first launch, state it to the user, and keep it for the whole delegation unless scope materially changes:
 
-| Preset | Use when | Planning soft / hard | Implementation soft / hard | Correction soft / hard |
-|---|---|---:|---:|---:|
-| `small` | Localized, known approach, few files and one focused check | 10 / 20 | 40 / 80 | 15 / 30 |
-| `normal` | Default feature or bug spanning several files | 20 / 40 | 120 / 200 | 40 / 80 |
-| `complex` | SDK migration, security boundary, cross-layer protocol, or broad refactor | 40 / 80 | 200 / 320 | 80 / 120 |
+| Preset | Use when | Direct worker soft / hard | Correction soft / hard |
+|---|---|---:|---:|
+| `small` | Localized, known approach, few files and one focused check | 50 / 100 | 15 / 30 |
+| `normal` | Default feature or bug spanning several files | 140 / 240 | 40 / 80 |
+| `complex` | SDK migration, security boundary, cross-layer protocol, or broad refactor | 240 / 400 | 80 / 120 |
 
 The first number is a **soft target**: tell the child to finish near it, but crossing it is not failure. The second is the CLI **hard ceiling** that refuses the next provider request. At 80% of the hard ceiling, the child must stop unrelated exploration, persist current decisions/progress to task artifacts, run the smallest relevant check, and either finish or leave a precise continuation report. Use the hard value in `--max-model-calls`; never put the soft value there. A user-specified budget overrides the preset.
 
-## 2. Launch a planning-only child turn
+## 2. Launch the complete child worker
 
-Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Run every child invocation with `--yolo --context-offload --max-model-calls <planning-hard>` from the selected preset; the built-in developer workflow uses yolo mode by default so headless children never block on interactive permission prompts, offloads oversized tool results without changing target config, and retains a hard runaway guard above the planning soft target. Prefix the planning process with `DARWIN_PLANNING_ONLY=1` so repository hooks can enforce read-only behavior when provided. The first prompt must give the child the requirement, evidence, repository scope, acceptance criteria, selected preset, soft target, hard ceiling, and 80% checkpoint, and explicitly request a plan and questions only with no edits or implementation. Tell the child it is the direct implementation worker: it must not load the `developer` skill, start another darwin, or delegate the task again.
+Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Run the first worker with `--yolo --context-offload --max-model-calls <worker-hard>` from the selected preset. Do not set `DARWIN_PLANNING_ONLY` and do not use `--compact-before` on a fresh child: this one turn owns the complete repository workflow.
 
-Give the planning child a concise final-plan target containing only confirmed facts, file scope, implementation steps, acceptance commands, risks and unresolved questions. Planning artifacts carry detail forward, so the reply must not repeat their full text.
+The first prompt must give the child the requirement, evidence, repository scope, acceptance criteria, authorized mutation/command scope, selected preset, worker soft target, hard ceiling, and 80% checkpoint. Tell it to proceed autonomously through the repository's own configured workflow: load any relevant non-developer skills, create or maintain task/planning/research artifacts when those skills require them, implement, run focused and final checks, update specs, and commit when authorized. It must not load the `developer` skill, start another darwin, or delegate the supervision task again. Do not make the child wait for Host plan approval; unresolved product, scope, or authorization questions are the only reason to stop and ask.
 
 ### Tool batching and verification economy
 
@@ -51,7 +51,7 @@ From the first task's combined output, capture only the exact stderr record matc
 
 That captured value is the **child conversation session id**. It is not the `bg-*` task id. Never use a background id as a session id, and never recover identity from `--continue` or `.darwin/last-session.json`.
 
-From **every** child task's drained output — planning, implementation, correction, and retry alike — also capture the exact stderr record matching:
+From **every** child task's drained output — initial worker, correction, and retry alike — also capture the exact stderr record matching:
 
 ```text
 ^usage: input=(\d+|-) output=(\d+|-) cacheRead=(\d+|-) cacheWrite=(\d+|-)$
@@ -59,19 +59,13 @@ From **every** child task's drained output — planning, implementation, correct
 
 That is the child process's token spend for that one invocation. The four fields are mutually exclusive cost buckets: `input` excludes every reported cache read and cache write, so aggregate each field independently across tasks and apply its own provider rate. A `-` means the provider never reported that metric; it does not mean zero, so carry it through as unknown rather than adding it in as `0`. Each child process reports only its own run, so the totals never overlap. A task that fails before any model call completes may report zeros or no line at all — record its absence rather than inventing a number.
 
-## 3. Review the plan and decide
+## 3. Handle child questions or completion
 
-Read the complete planning reply and compare it with the requirement and repository evidence.
+Read the complete worker reply and compare it with the requirement and repository evidence. Answer a child question directly only when existing evidence resolves it. If product intent, scope, or authorization remains unresolved, ask the user in this Host conversation instead of inventing an answer. A worker that stopped only because it reached its hard ceiling may continue in the same session with a correction budget and a precise remaining-work prompt; do not call incomplete work accepted.
 
-- Answer child questions only when the user's requirement or inspected repository evidence resolves them.
-- If product intent, scope, or authorization remains unresolved, ask the user in this Host conversation instead of inventing an answer.
-- Approve only a conforming plan. Otherwise send focused corrections.
+## 4. Continue the exact child session only for correction
 
-## 4. Continue the exact child session
-
-Launch every follow-up as another `bash start` task in the same target root. The first implementation continuation uses explicit `--session <captured-id> --yolo --context-offload --compact-before --max-model-calls <implementation-hard>` from the selected preset: it compacts the planning transcript before implementation and gives the substantive phase a fresh hard ceiling above its soft target. Never use `--continue` or `--resume`, and never omit the explicit session, yolo, context-offload, or budget flags. The follow-up prompt must state the approval/correction, selected preset, implementation soft target/hard ceiling/80% checkpoint, tell the child to proceed without asking for another approval, and name the requested next work.
-
-A correction/retry uses `--session <captured-id> --yolo --context-offload --max-model-calls <correction-hard>` from the same preset. Add `--compact-before` only when the previous child turn was large (for example, it exhausted its budget, crossed its soft target substantially, or the Host observed a broad implementation/check transcript); a narrow correction should retain cached continuity without paying for an unnecessary summary. State the correction soft target, hard ceiling, 80% checkpoint, and compaction decision in the prompt.
+After independent acceptance finds a concrete failure, launch a correction as another `bash start` task in the same target root with `--session <captured-id> --yolo --context-offload --max-model-calls <correction-hard>` from the selected preset. Never use `--continue` or `--resume`, and never omit the explicit session, yolo, context-offload, or budget flags. Add `--compact-before` only when the prior worker turn was large (for example, it exhausted its budget, crossed its soft target substantially, or left a broad implementation/check transcript); a narrow correction should retain cached continuity without paying for an unnecessary summary. State the exact acceptance failure, correction soft target, hard ceiling, 80% checkpoint, and compaction decision. Tell the child to correct, run affected focused checks, commit the fix when authorized, and report without reopening unrelated work.
 
 Headless children cannot receive interactive permission prompts, so this workflow always runs them in yolo mode. Keep every child command inside the authorized target repository and mutation scope established above; yolo changes confirmation behavior, not task scope.
 
@@ -79,7 +73,7 @@ For each task, retain its new `bg-*` id, monitor with `status`, consume output i
 
 ### Retry transient child server failures
 
-If the drained child output contains a transient provider failure such as `turn failed: The server had an error while processing your request. Sorry about that!`, retry the same requested turn automatically. Use another managed `bash start` invocation with the same target root, prompt, yolo/context-offload flags and phase budget; when a child session id has been captured, include the same explicit `--session <captured-id>`. Preserve the prior turn's compact-before decision unless the retry follows a budget exhaustion, which qualifies as a large turn. If the first planning attempt failed before emitting an exact session record, start a fresh planning attempt and capture its new record instead of guessing an id.
+If the drained child output contains a transient provider failure such as `turn failed: The server had an error while processing your request. Sorry about that!`, retry the same requested turn automatically. Use another managed `bash start` invocation with the same target root, prompt, yolo/context-offload flags and worker/correction budget; when a child session id has been captured, include the same explicit `--session <captured-id>`. Preserve the prior turn's compact-before decision unless the retry follows a budget exhaustion, which qualifies as a large turn. If the first worker attempt failed before emitting an exact session record, start a fresh worker attempt and capture its new record instead of guessing an id.
 
 Retry at most two times after the original attempt. Drain and record every retry task normally. Do not retry deterministic failures such as invalid configuration, denied scope, failed tests, or rejected tool input under this rule. If the transient server failure persists after two retries, report it as a blocker rather than looping or implementing in the Host.
 

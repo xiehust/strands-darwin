@@ -808,29 +808,27 @@ no `.darwin/skills/`. Invoke it with a delegated requirement after the command:
 /developer Fix the arithmetic defect, run node test.mjs, and show the diff.
 ```
 
-The Host remains in the interactive conversation and supervises a separate headless darwin.
-It first asks the child for a plan, reviews questions and escalates unresolved product choices
-to you, then explicitly approves or corrects the plan. Planning processes carry
-`DARWIN_PLANNING_ONLY=1`, which target repositories may enforce in PreToolUse hooks. Every
-child invocation is launched as a managed background `bash start` job, monitored with `status`
-and incremental `output`; type `/tasks` while the Host turn is streaming to inspect those jobs
-without interrupting it.
+The Host remains in the interactive conversation and supervises one complete headless Darwin
+worker. The child uses the target repository's configured non-developer skills and owns its normal
+workflow — task/planning artifacts, research, implementation, checks, spec updates and authorized
+commits — in the first `darwin -p` turn. There is no separate planning-only child or Host plan
+approval round. Only unresolved product, scope or authorization questions return to the Host/user.
+Every invocation is a managed background `bash start` job, monitored with `status` and incremental
+`output`; type `/tasks` while the Host turn is streaming to inspect it without interrupting it.
 
 Two ids participate and are not interchangeable:
 
 - `bg-…` identifies one short-lived managed process and is used by `bash status`/`output`;
 - the exact `session: session-…` stderr record identifies the child's persisted conversation.
-  Every follow-up uses `--session <captured-id>`; it never relies on `--continue`, the resume
-  pointer, or a background id.
+  A focused correction uses `--session <captured-id>`; the first complete worker uses a fresh
+  session and never relies on `--continue`, the resume pointer, or a background id.
 
 Headless children have no person available to answer permission prompts, so the built-in developer
 workflow runs every child invocation with `--yolo` and process-only context offload. It selects an
-evidence-based `small`, `normal`, or `complex` preset before launch. Normal work targets
-20/120/40 planning/implementation/correction calls softly, with hard ceilings 40/200/80; small uses
-10/40/15 soft and 20/80/30 hard, while complex uses 40/200/80 soft and 80/320/120 hard. At 80% of a
-hard ceiling the child persists progress and converges rather than exploring further. The
-implementation continuation compacts restored planning history first; a correction compacts only
-after a large prior turn. Child prompts batch independent reads/checks, serialize dependent writes,
+evidence-based `small`, `normal`, or `complex` whole-worker preset before launch: small uses 50/100,
+normal 140/240, and complex 240/400 soft/hard calls; corrections use 15/30, 40/80, or 80/120. At
+80% of a hard ceiling the child persists progress and converges rather than exploring further. A
+focused correction compacts the prior session only after a large worker turn. Child prompts batch independent reads/checks, serialize dependent writes,
 and use a test pyramid: focused checks while editing, one child full gate after source settles, then
 one independent Host full gate. The Host still constrains each child to the named repository and
 authorized task scope; yolo changes confirmation behavior, not that scope. It does not silently

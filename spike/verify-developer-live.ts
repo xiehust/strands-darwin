@@ -54,10 +54,9 @@ async function fixture(): Promise<string> {
     '- This disposable repository explicitly authorizes `--yolo` for all work inside this root.',
     `- The absolute target repository root is ${root}. Stay inside it; do not cd elsewhere.`,
     '- The child executable is `./node_modules/.bin/darwin`; use it directly without inspecting darwin source or implementation.',
-    '- The child is the direct implementation worker. Its prompts must forbid loading the developer skill, starting another darwin, or delegating again.',
-    '- This fixture is a small task: use the small preset (planning soft/hard 10/20, implementation 40/80, correction 15/30).',
-    '- For the first child turn, run `DARWIN_PLANNING_ONLY=1 ./node_modules/.bin/darwin -p <planning-prompt> --yolo --context-offload --max-model-calls 20`.',
-    '- For implementation, run `./node_modules/.bin/darwin -p <follow-up> --session <captured-id> --yolo --context-offload --compact-before --max-model-calls 80`. Never omit these flags.',
+    '- The child is the complete direct worker. It may load configured non-developer skills and owns planning, implementation, checks, and commit. It must not load developer, start another darwin, or delegate supervision.',
+    '- This fixture is a small task: use the small direct-worker soft/hard budget 50/100 and correction 15/30.',
+    '- Run one child turn: `./node_modules/.bin/darwin -p <complete-worker-prompt> --yolo --context-offload --max-model-calls 100`. Do not set DARWIN_PLANNING_ONLY, do not use --compact-before, and do not require a second implementation turn.',
     '- The only requested product change is the `sum.js` fix described by the user.',
     '',
   ].join('\n'));
@@ -124,8 +123,8 @@ async function main(): Promise<void> {
     tui.submit(
       `/developer The absolute target repository is ${fixtureRoot}. Stay in that root and supervise a headless child to fix sum.js. ` +
       'Do not inspect darwin source: the verified child command is ./node_modules/.bin/darwin. ' +
-      'The child must first return a planning-only reply without edits; review and approve it, then continue that exact ' +
-      'session with --session, --yolo, context offload, phase compaction, and the developer budgets to implement. Use only bash start/status/output (never foreground execution or ' +
+      'Launch one complete direct worker with the small preset, context offload, and hard budget 100. ' +
+      'Let it use configured non-developer skills and complete planning, implementation, checks, and commit without a Host plan-approval turn. Use only bash start/status/output (never foreground execution or ' +
       'fixed sleeps) for child invocations. For every child task, call bash output at least once and, after terminal status, ' +
       'drain it through hasMore false before proceeding. Tell me /tasks is available. Independently inspect git diff and run node test.mjs.',
     );
@@ -142,32 +141,22 @@ async function main(): Promise<void> {
     const transcript = tui.screen.slice(turnStart);
     const commands = await startedCommands(fixtureRoot);
     const logFiles = await backgroundLogs(fixtureRoot);
-    const planningCommand = commands.find((command) => command.includes('DARWIN_PLANNING_ONLY=1')) ?? '';
-    const implementationCommand = commands.find((command) => /--session [a-z0-9_-]+/u.test(command)) ?? '';
-    const selectedSession = /--session ([a-z0-9_-]+)/u.exec(implementationCommand)?.[1];
-    const directLogs = selectedSession === undefined
-      ? []
-      : logFiles.filter((log) => log.startsWith(`session: ${selectedSession}\n`));
-    const planningLog = directLogs.find(
-      (log) => !/tool (?:fileEditor|bash) — (?:fileEditor (?:create|str_replace|insert):|bash:)[\s\S]*tool (?:fileEditor|bash) — ok/u.test(log),
-    ) ?? '';
+    const workerCommand = commands[0] ?? '';
+    const directLog = logFiles.find((log) => /^session: ([a-z0-9_-]+)$/mu.test(log)) ?? '';
+    const selectedSession = /^session: ([a-z0-9_-]+)$/mu.exec(directLog)?.[1];
 
     assert('the built-in /developer workflow started a Host turn', /developer|supervis/iu.test(transcript));
     assert('/tasks observed a managed job during the Host turn', /background tasks — this run \(\d+\)[\s\S]*bg-/u.test(transcript));
-    assert('the Host used managed planning and implementation starts', planningCommand !== '' && implementationCommand !== '' && logFiles.length >= 2);
+    assert('the Host used one managed complete worker start', commands.length === 1 && workerCommand !== '' && logFiles.length >= 1);
     assert('the workflow did not recurse into a grandchild darwin', commands.every((command) => command.match(/\.\/node_modules\/\.bin\/darwin/gu)?.length === 1));
-    assert('every child command stayed in the temporary target', commands.every((command) => command.includes(fixtureRoot) && !command.includes(REPO_ROOT)));
+    assert('the child command stayed in the temporary target', workerCommand.includes(fixtureRoot) && !workerCommand.includes(REPO_ROOT));
     assert('the Host monitored lifecycle status', transcript.includes('bash status:'));
     assert('the Host consumed incremental output', transcript.includes('bash output:'));
-    assert('the first child emitted an exact session record', selectedSession !== undefined && directLogs.length >= 2);
-    assert('the planning command is hook-enforced read-only', planningCommand.includes('DARWIN_PLANNING_ONLY=1') && /plan/iu.test(planningCommand));
-    assert('the planning command carries its yolo/offload/budget controls', /(?:^|\s)--yolo(?:\s|$)/u.test(planningCommand) && planningCommand.includes('--context-offload') && planningCommand.includes('--max-model-calls 20') && /small preset/iu.test(transcript));
-    assert('the implementation command explicitly selected the first session', selectedSession !== undefined);
-    assert('the implementation command carries phase compaction, offload, and budget controls', /(?:^|\s)--yolo(?:\s|$)/u.test(implementationCommand) && implementationCommand.includes('--context-offload') && implementationCommand.includes('--compact-before') && implementationCommand.includes('--max-model-calls 80'));
-    assert('the implementation command did not use pointer-based continuation', !/--continue|--resume/u.test(implementationCommand));
-    assert('the same child session appeared in both direct child logs', directLogs.length >= 2);
-    assert('the planning log contains no successful mutating tool call', planningLog !== '');
-    assert('the implementation log is distinct from the planning log', directLogs.some((log) => log !== planningLog && /tool fileEditor — fileEditor (?:create|str_replace|insert):/u.test(log)));
+    assert('the direct worker emitted an exact session record', selectedSession !== undefined);
+    assert('the direct worker uses yolo, offload, and the small whole-worker hard budget', /(?:^|\s)--yolo(?:\s|$)/u.test(workerCommand) && workerCommand.includes('--context-offload') && workerCommand.includes('--max-model-calls 100') && /small preset/iu.test(transcript));
+    assert('the direct worker is not planning-only or pre-compacted', !workerCommand.includes('DARWIN_PLANNING_ONLY') && !workerCommand.includes('--compact-before'));
+    assert('the direct worker did not use pointer-based continuation', !/--continue|--resume|--session/u.test(workerCommand));
+    assert('the one worker log contains the implementation write', /tool fileEditor — fileEditor (?:create|str_replace|insert):/u.test(directLog));
 
     const source = await readFile(path.join(fixtureRoot, 'sum.js'), 'utf8');
     assert('the intended source now adds', /a\s*\+\s*b/u.test(source));

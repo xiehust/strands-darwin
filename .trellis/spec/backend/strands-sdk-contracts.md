@@ -1170,11 +1170,10 @@ agent.addHook(BeforeInvocationEvent, ({ agent }) => {
 
 ```text
 /developer <delegated requirement>
-preset: small = plan 10/20, implement 40/80, correct 15/30 (soft/hard)
-preset: normal = plan 20/40, implement 120/200, correct 40/80 (soft/hard)
-preset: complex = plan 40/80, implement 200/320, correct 80/120 (soft/hard)
-bash start: darwin -p <planning> --yolo --context-offload --max-model-calls <planning-hard>
-bash start: darwin -p <implementation> --session <id> --yolo --context-offload --compact-before --max-model-calls <implementation-hard>
+preset: small = worker 50/100, correction 15/30 (soft/hard)
+preset: normal = worker 140/240, correction 40/80 (soft/hard)
+preset: complex = worker 240/400, correction 80/120 (soft/hard)
+bash start: darwin -p <complete worker> --yolo --context-offload --max-model-calls <worker-hard>
 bash start: darwin -p <correction> --session <id> --yolo --context-offload [--compact-before] --max-model-calls <correction-hard>
 child stderr: ^session: ([a-z0-9_-]+)$
 user view: /tasks
@@ -1188,16 +1187,14 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 - Keep the supervisor in the Host conversation: only that conversation can escalate product decisions to the user. The `subagent` tool returns one final report and is the wrong boundary for this dialogue.
 - Every child invocation uses `bash start`; retain its `bg-*` id for `status`/`output`. For every task, call `output` at least once and, after terminal status, drain it through `hasMore: false` before reviewing the reply or proceeding; status metadata and `outputBytes` never substitute for the child response. Capture conversational identity only from the exact `session:` stderr record and use explicit `--session` on every follow-up.
 - Run each child from the exact target root. The child prompt says it is the direct worker and must not load `developer`, start another darwin, or delegate again; without that guard a built-in skill advertised to both Host and child can recurse.
-- Planning is a no-edit first turn, prefixed with `DARWIN_PLANNING_ONLY=1` so target hooks can enforce read-only behavior. Approval/correction is a later turn in the same session and tells the child to proceed without another approval question.
+- The first child is one complete direct worker, not a planning-only turn. It may load the target's configured non-developer skills and owns task/planning/research artifacts, implementation, checks, spec updates and authorized commits. Do not set `DARWIN_PLANNING_ONLY`, do not pre-compact a fresh session, and do not make implementation wait for Host plan approval. Only unresolved product/scope/authorization decisions return to the Host/user.
 - Every child invocation uses `--yolo` by default because a headless process cannot answer permission prompts. Yolo changes confirmation behavior only: the Host still establishes and enforces the named repository and authorized task scope. The Host independently inspects the diff and runs acceptance checks; failed acceptance returns to the same child session rather than being hidden by a Host edit.
-- Before planning, the Host selects and reports one evidence-based `small`, `normal`, or `complex`
-  preset. Each phase has a soft convergence target and a higher hard CLI ceiling; 20/120/40 are the
-  normal soft targets, not hard stops. Small uses 10/40/15 soft and 20/80/30 hard; normal uses
-  20/120/40 soft and 40/200/80 hard; complex uses 40/200/80 soft and 80/320/120 hard. At 80% of hard,
-  the child stops unrelated exploration, persists progress, runs the smallest relevant check and
-  finishes or leaves a continuation report. Every turn enables process-only context offload;
-  implementation compacts restored planning history first, while correction compacts only after a
-  large prior turn. Children batch independent reads/checks and serialize dependent writes.
+- Before launch, the Host selects and reports one evidence-based `small`, `normal`, or `complex`
+  whole-worker preset. Small uses 50/100 worker soft/hard and 15/30 correction; normal uses 140/240
+  and 40/80; complex uses 240/400 and 80/120. At 80% of hard, the child stops unrelated exploration,
+  persists progress, runs the smallest relevant check and finishes or leaves a continuation report.
+  Every turn enables process-only context offload; correction compacts only after a large prior turn.
+  Children batch independent reads/checks and serialize dependent writes.
 - Verification follows a pyramid: minimal reproduction/focused suite/typecheck while editing; one
   child full gate after source settles; commit/diff/status only after a no-source-change commit; one
   independent Host full gate. Green full suites are not repeated for reassurance.
@@ -1219,7 +1216,7 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 
 ### 5. Good / Base / Bad Cases
 
-- **Good:** one Host turn starts a planning task, exposes it through `/tasks`, captures `session-*`, starts an approved implementation task with that id, then independently verifies the diff and test.
+- **Good:** one Host turn starts a complete worker, exposes it through `/tasks`, captures `session-*`, and independently verifies its diff and tests; only a failed acceptance launches a same-session correction.
 - **Base:** a built-in-only repository expands `/developer` through the ordinary skill path and keeps progressive disclosure.
 - **Bad:** using `--continue`, a `bg-*` id, foreground `bash execute`, Host source cwd, or a child prompt that permits recursive developer delegation breaks identity, responsiveness, or target isolation.
 
@@ -1242,10 +1239,10 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 # WRONG: pointer identity, foreground blocking, recursion, and no cost bounds
 darwin -p "use developer to fix it" --continue
 
-# CORRECT: normal preset uses soft targets 20/120/40, hard limits 40/200/80
-bash start -> DARWIN_PLANNING_ONLY=1 darwin -p "plan only; soft 20, hard 40" --yolo --context-offload --max-model-calls 40
-# parse session: session-123 from output
-bash start -> darwin -p "implement; soft 120, hard 200" --session session-123 --yolo --context-offload --compact-before --max-model-calls 200
+# CORRECT: one normal worker uses soft target 140 and hard limit 240
+bash start -> darwin -p "own the full workflow; soft 140, hard 240" --yolo --context-offload --max-model-calls 240
+# only after Host acceptance fails:
+bash start -> darwin -p "fix this finding; soft 40, hard 80" --session session-123 --yolo --context-offload --max-model-calls 80
 ```
 
 ---
