@@ -348,6 +348,22 @@ wait converts that bug into a suite hang.
   last hit: a long details block (a big file body) pushes `permission required (write)`
   out of any fixed-size tail window.
 
+## Known flake: a model-driven scenario must not assert the model's precision
+
+Three separate flakes in one scenario (`approve`) on 2026-08-17, all of them the scenario asking the
+*model* for something instead of asking darwin. Each is worth recognising by shape.
+
+**Do not assert byte-equality against text the model had to transcribe.** `approve` compared the
+edited file with a 620-character expectation, which failed in two of three full-suite runs — the
+model writes 617 x's, or 621. What the scenario is *for* is that approving the prompt applies the
+edit in place and touches nothing else, so it now asserts that structurally (`approvedEditIsExact`)
+and leaves the exact length where it is darwin's own business: the `… truncated N code points`
+marker on the permission frame, which is computed from whatever the model actually sent.
+
+**A scenario that goes off-script fails twice.** When the model answered with a question instead of
+the edit, the disk assertion failed *and* the following `/exit` landed mid-turn, so the run died on
+`exitedWithin` 30s later. A second failure downstream of a model deviation is not a second bug.
+
 ## Known flake: a prompt cannot forbid a tool call, and an unanswered prompt hangs the scenario
 
 `approve` tells the model, in words, not to run shell commands. It mostly obeys. When it does not,

@@ -96,7 +96,29 @@ const APPROVE_PREFIX = 'SER009-DETAIL-PREFIX-';
  */
 const APPROVE_TARGET_ANCHOR = 'ser009-pppppppppp';
 const APPROVE_REPLACEMENT = `  return n * 2; // ${APPROVE_PREFIX}${'x'.repeat(620)}`;
-const APPROVE_EXPECTED = BUGGY.replace('  return n + 2;', APPROVE_REPLACEMENT);
+/**
+ * What the file must look like after the approved edit — structurally.
+ *
+ * Deliberately *not* byte-equality with a 620-character replacement. That asserted
+ * the model can transcribe 620 identical characters exactly, which it manages
+ * roughly half the time (two failures in three full-suite runs on 2026-08-17), and
+ * which is not what this scenario is for. What must hold is that approving the prompt
+ * applied the edit *darwin was asked to apply*: the buggy line replaced in place, the
+ * marker present, a long run of `x` behind it, and nothing else in the file touched.
+ * The exact length still matters where it is darwin's business — the permission box's
+ * `… truncated N code points` marker, asserted on the frame above.
+ */
+function approvedEditIsExact(after: string): boolean {
+  const [before, ...rest] = BUGGY.split('  return n + 2;');
+  if (before === undefined || rest.length !== 1) return false;
+  const suffix = rest[0] as string;
+  const match = after.match(/^([\s\S]*?)  return n \* 2; \/\/ SER009-DETAIL-PREFIX-(x+)([\s\S]*)$/u);
+  if (match === null) return false;
+  const [, head, xs, tail] = match as unknown as [string, string, string, string];
+  // Everything around the replaced line is untouched, and the replacement is long
+  // enough to have exercised the projection bound.
+  return head === before && tail === suffix && xs.length >= 200;
+}
 const APPROVE_REQUEST =
   `Read ${APPROVE_TARGET}. Then use fileEditor str_replace to replace exactly \`  return n + 2;\` ` +
   `with exactly \`${APPROVE_REPLACEMENT}\`. Do not run shell commands or make any other edit.`;
@@ -216,7 +238,7 @@ async function approvePath(): Promise<void> {
     const after = await readFile(APPROVE_TARGET, 'utf8');
     console.log(`  calc.js now: ${after.replace(/\n/g, ' ').slice(0, 160)}…`);
 
-    assert('approved edit was applied exactly to disk', after === APPROVE_EXPECTED);
+    assert('approved edit was applied in place, and nothing else was', approvedEditIsExact(after));
     assert('the bug is gone', !after.includes('n + 2'));
 
     tui.send('\u0015'); // ctrl+u clears the retained permission-ownership draft
