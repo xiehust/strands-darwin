@@ -222,7 +222,25 @@ async function composition(): Promise<void> {
 function resumedPrompt(): void {
   header('working context — refreshed on a restored prompt');
 
-  const stale = `BASE\n\n<available-skills>menu</available-skills>\n\n<${WORKING_CONTEXT_TAG}>\n- date: 2026-08-01 (UTC)\n</${WORKING_CONTEXT_TAG}>`;
+  const stale = [
+    'BASE',
+    [
+      '<available-skills>',
+      'Skills are instruction sets for specific tasks. When a request matches one,',
+      'call the load_skill tool with its name to read the full instructions before',
+      'you begin. Only the name and description are shown here.',
+      '  <skill name="old">menu</skill>',
+      '</available-skills>',
+    ].join('\n'),
+    [
+      `<${WORKING_CONTEXT_TAG}>`,
+      'Where this session started. The directory listing and the date are a snapshot taken at',
+      'startup, not live state: re-check anything that may have changed since, including your own',
+      'edits. Paths are absolute unless stated otherwise.',
+      '- date: 2026-08-01 (UTC)',
+      `</${WORKING_CONTEXT_TAG}>`,
+    ].join('\n'),
+  ].join('\n\n');
   const today = `<${WORKING_CONTEXT_TAG}>\n- date: 2026-08-16 (UTC)\n</${WORKING_CONTEXT_TAG}>`;
 
   // Exactly what `initialize()` hands back for a resumed session: the two blocks

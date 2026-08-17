@@ -146,12 +146,25 @@ async function legacyResume(cached: boolean): Promise<void> {
   const storage = new LocalFileStorage(root);
   const sessionId = `legacy-${shape}`;
   const agentId = `darwin-skills-legacy-${shape}`;
-  const legacyPrompt = [
-    'BASE',
-    LEGACY_PROJECT_RULES,
-    '<available-skills>\n  <skill name="stale">old</skill>\n</available-skills>',
-    '<working-context>stale-context</working-context>',
-  ].join('\n\n');
+  const legacyCatalogue = [
+    '<available-skills>',
+    'Skills are instruction sets for specific tasks. When a request matches one,',
+    'call the load_skill tool with its name to read the full instructions before',
+    'you begin. Only the name and description are shown here.',
+    '  <skill name="stale">description includes literal <available-skills> text</skill>',
+    '</available-skills>',
+  ].join('\n');
+  const legacyWorkingContext = [
+    '<working-context>',
+    'Where this session started. The directory listing and the date are a snapshot taken at',
+    'startup, not live state: re-check anything that may have changed since, including your own',
+    'edits. Paths are absolute unless stated otherwise.',
+    '- working directory: /tmp/literal-<working-context>-name',
+    '- contents (0 directories, 1 file):',
+    '    literal-<working-context>-file',
+    '</working-context>',
+  ].join('\n');
+  const legacyPrompt = ['BASE', LEGACY_PROJECT_RULES, legacyCatalogue, legacyWorkingContext].join('\n\n');
   const legacy = new Agent({
     id: agentId,
     model: new CaptureModel(),
@@ -192,6 +205,10 @@ async function legacyResume(cached: boolean): Promise<void> {
       assert(`${shape}: full base/project bytes survive exactly`, blocks[0] instanceof TextBlock && blocks[0].text === `BASE\n\n${LEGACY_PROJECT_RULES}`);
       assert(`${shape}: stale Darwin catalogue is removed`, !text.includes('name="stale"') && !text.includes('<skill name="stale">'));
       assert(`${shape}: literal tag mention inside project rules survives`, text.includes('literal <available-skills> tag here'));
+      assert(`${shape}: literal opener in stale catalogue body is removed with that catalogue`, !text.includes('description includes literal <available-skills> text'));
+      assert(`${shape}: literal opener in stale working-context body is removed with stale context`, !text.includes('literal-<working-context>-file'));
+      assert(`${shape}: exactly one current working context remains`, blocks.filter((block) => block instanceof TextBlock && block.text.trim().startsWith('<working-context>')).length === 1 && text.includes('current-context'));
+
       assert(`${shape}: one current official catalogue remains`, blocks.filter((block) => block instanceof TextBlock && block.text.trim().startsWith('<available_skills>')).length === 1);
       assert(`${shape}: current official catalogue names the current skill`, text.includes('<name>current-skill</name>'));
     } finally {
@@ -200,6 +217,25 @@ async function legacyResume(cached: boolean): Promise<void> {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+async function ambiguousLegacySuffixRefused(): Promise<void> {
+  header('official AgentSkills — ambiguous legacy suffix is refused unchanged');
+  const ambiguous = [
+    `BASE\n\n${LEGACY_PROJECT_RULES}`,
+    [
+      '<available-skills>',
+      'Skills are instruction sets for specific tasks. When a request matches one,',
+      'call the load_skill tool with its name to read the full instructions before',
+      'you begin. Only the name and description are shown here.',
+      'body without a proven adjacent working-context suffix',
+      '</available-skills>',
+    ].join('\n'),
+  ].join('\n\n');
+  const agent = new Agent({ model: new CaptureModel(), systemPrompt: ambiguous, printer: false });
+  const before = agent.systemPrompt;
+  assert('ambiguous historical shape is refused', !applyWorkingContext(agent, '<working-context>current</working-context>'));
+  assert('refusal leaves ambiguous prompt unchanged', agent.systemPrompt === before);
 }
 
 async function activationAndBounds(): Promise<void> {
@@ -338,6 +374,7 @@ try {
   await promptAndResume();
   await legacyResume(false);
   await legacyResume(true);
+  await ambiguousLegacySuffixRefused();
   await activationAndBounds();
   await resourceSafety();
 } finally {

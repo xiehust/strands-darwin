@@ -51,4 +51,10 @@ override; because Darwin supplies every skill as a `Skill` instance, official ac
 proxy falls back from its per-Agent WeakMap to the same base catalogue, while forwarded `appState`
 still records activation on the original Agent. This residual is documented rather than called an
 identity guarantee. Final commit hashes/checks are reported by the worker; independent Host recheck
-remains the acceptance authority.
+remains the acceptance authority. A further Host recheck found that choosing the last opening tag
+was still ambiguous when literal openers occurred inside old catalogue/context bodies. The final
+migration now requires the exact historical skills and working-context prologues plus their proven
+adjacency and trailing closes; ambiguous suffixes are refused unchanged. Cached and uncached real
+SessionManager tests include literal opening tags in project instructions, skill descriptions and
+working-context filenames, while proving exact base/project preservation and one current
+catalogue/context.

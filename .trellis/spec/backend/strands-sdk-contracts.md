@@ -1109,7 +1109,7 @@ state key:        darwin_agent_skills ({ lastInjectedXml, activatedSkills })
 | Unknown `load_skill` name | Recoverable result listing accepted names |
 | Resource directory/file is a symlink or resolves outside skill root, including a post-preflight swap | Preflight rejects it, or guarded use-time listing suppresses that directory before outside names are enumerated |
 | Resource preflight exceeds 200 entries | Deny activation at the bound before official traversal |
-| Legacy cached/uncached prompt has a standalone trailing `<available-skills>` block | Remove only that trailing block before official current catalogue injection; preserve literal tag mentions inside base/project rules byte-for-byte |
+| Legacy cached/uncached prompt matches the exact historical skills prologue, adjacent historical working-context prologue, and trailing closes | Remove only those proven suffix blocks; preserve literal opening-tag text in project rules or either body; refuse ambiguous shapes unchanged |
 | Cache mutation sees unknown multi-block shape | Refuse unchanged; `/model` fails before swapping live config/model |
 | More than 20 resource files | First 20 plus official truncation marker |
 | Native `skills` appears in `agent.tools` | Contract failure: do not expose a second tool |

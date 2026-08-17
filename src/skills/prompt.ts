@@ -12,6 +12,19 @@ import type { LocalAgent, SystemPrompt } from '@strands-agents/sdk';
 const WORKING_CONTEXT_TAG = 'working-context';
 const AVAILABLE_SKILLS_OPEN = '<available_skills>';
 const AVAILABLE_SKILLS_CLOSE = '</available_skills>';
+const LEGACY_SKILLS_TAG = 'available-skills';
+const LEGACY_SKILLS_PROLOGUE = [
+  `<${LEGACY_SKILLS_TAG}>`,
+  'Skills are instruction sets for specific tasks. When a request matches one,',
+  'call the load_skill tool with its name to read the full instructions before',
+  'you begin. Only the name and description are shown here.',
+].join('\n');
+const LEGACY_WORKING_PROLOGUE = [
+  `<${WORKING_CONTEXT_TAG}>`,
+  'Where this session started. The directory listing and the date are a snapshot taken at',
+  'startup, not live state: re-check anything that may have changed since, including your own',
+  'edits. Paths are absolute unless stated otherwise.',
+].join('\n');
 
 /** Reorders one official catalogue block for the imminent model request. */
 export function orderOfficialSkillsPrompt(agent: LocalAgent): boolean {
@@ -42,10 +55,15 @@ export function refreshKnownPrompt(
     // Pre-migration uncached/OpenAI snapshots stored the whole prompt as one
     // string. Split only standalone trailing blocks: project instructions may
     // legitimately mention either tag as prose and must remain byte-identical.
-    const withContext = splitTrailingBlock(prompt, WORKING_CONTEXT_TAG);
-    const withoutContext = withContext?.prefix ?? prompt.trimEnd();
-    const legacy = splitTrailingBlock(withoutContext, 'available-skills');
-    const base = legacy?.prefix ?? withoutContext;
+    const legacy = splitLegacyPrompt(prompt);
+    if (legacy !== undefined) return [new TextBlock(legacy.base), new TextBlock(fragment)];
+    // A fresh base/project prompt has no historical structural prologue. If one
+    // is present but the complete suffix cannot be proven, refuse instead of
+    // treating potentially stale blocks as generic base text.
+    if (prompt.includes(LEGACY_SKILLS_PROLOGUE) || prompt.includes(LEGACY_WORKING_PROLOGUE)) {
+      return undefined;
+    }
+    const base = prompt.trimEnd();
     return base === '' ? undefined : [new TextBlock(base), new TextBlock(fragment)];
   }
   if (!Array.isArray(prompt)) return undefined;
@@ -116,46 +134,50 @@ function parseLegacyCachedPrompt(prompt: SystemPrompt): PromptParts | undefined 
   if (!Array.isArray(prompt) || prompt.length !== 2) return undefined;
   const [text, cachePoint] = prompt;
   if (!(text instanceof TextBlock) || !(cachePoint instanceof CachePointBlock)) return undefined;
-  const withContext = splitTrailingBlock(text.text, WORKING_CONTEXT_TAG);
-  if (withContext === undefined) return undefined;
-  const legacy = splitTrailingBlock(withContext.prefix, 'available-skills');
-  if (legacy === undefined || legacy.prefix === '') return undefined;
+  const legacy = splitLegacyPrompt(text.text);
+  if (legacy === undefined) return undefined;
   return {
-    base: legacy.prefix,
+    base: legacy.base,
     // The legacy catalogue used Darwin's old XML shape and has no official
     // lastInjectedXml state. Drop it so official AgentSkills injects exactly one
     // current catalogue on the first resumed invocation.
     catalogue: undefined,
-    workingContext: new TextBlock(withContext.block),
+    workingContext: new TextBlock(legacy.workingContext),
     cachePoint,
   };
 }
 
-interface TrailingBlock {
-  /** Prefix with only the separator newlines before the block removed. */
-  prefix: string;
-  /** Exact standalone block text, without separator newlines. */
-  block: string;
+interface LegacyPromptParts {
+  base: string;
+  workingContext: string;
 }
 
 /**
- * Splits only a whole block at the end of a string. Searching backward from the
- * exact closing tag prevents an earlier literal opening-tag mention in project
- * instructions from becoming the migration boundary.
+ * Recognizes exactly the historical Darwin suffix:
+ * `<fixed skills prologue>…</available-skills>\n\n<fixed working prologue>…</working-context>`.
+ * Fixed prologues establish the outer openings; known adjacency establishes both
+ * boundaries. Literal opening-tag text inside project rules or either body is data.
  */
-function splitTrailingBlock(text: string, tag: string): TrailingBlock | undefined {
+function splitLegacyPrompt(text: string): LegacyPromptParts | undefined {
   const trimmed = text.trimEnd();
-  const close = `</${tag}>`;
-  if (!trimmed.endsWith(close)) return undefined;
-  const open = `<${tag}>`;
-  const start = trimmed.lastIndexOf(open, trimmed.length - close.length);
-  if (start === -1) return undefined;
-  const before = trimmed.slice(0, start);
-  if (before !== '' && !before.endsWith('\n\n')) return undefined;
-  return {
-    prefix: before.replace(/\n+$/, ''),
-    block: trimmed.slice(start),
-  };
+  const workingClose = `</${WORKING_CONTEXT_TAG}>`;
+  if (!trimmed.endsWith(workingClose)) return undefined;
+
+  const skillsBoundary = `</${LEGACY_SKILLS_TAG}>\n\n${LEGACY_WORKING_PROLOGUE}`;
+  const boundary = trimmed.lastIndexOf(skillsBoundary);
+  if (boundary === -1) return undefined;
+  const workingStart = boundary + `</${LEGACY_SKILLS_TAG}>\n\n`.length;
+  const workingContext = trimmed.slice(workingStart);
+  if (!workingContext.startsWith(LEGACY_WORKING_PROLOGUE)) return undefined;
+
+  const beforeClose = trimmed.slice(0, boundary);
+  const skillsSeparator = `\n\n${LEGACY_SKILLS_PROLOGUE}`;
+  const skillsStart = beforeClose.lastIndexOf(skillsSeparator);
+  if (skillsStart === -1) return undefined;
+  const base = beforeClose.slice(0, skillsStart);
+  const skillsBody = beforeClose.slice(skillsStart + 2);
+  if (base === '' || !skillsBody.startsWith(LEGACY_SKILLS_PROLOGUE)) return undefined;
+  return { base, workingContext };
 }
 
 interface PromptParts {
