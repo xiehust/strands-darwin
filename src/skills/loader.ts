@@ -151,9 +151,10 @@ async function scanDirectory(
 }
 
 /**
- * Hands all real parsing to the official SDK. Darwin keeps one compatibility
- * transform: a missing name defaults to the containing directory, as documented
- * since the baseline release.
+ * Hands frontmatter/body parsing to the official SDK. Darwin keeps two product
+ * compatibility decisions: a missing name defaults to the directory, and the
+ * established name grammar remains `[A-Za-z0-9_-]+` rather than the SDK's stricter
+ * lowercase/hyphen recommendation.
  */
 function parseOfficialSkill(raw: string, directory: string, dirName: string): Skill | { reason: string } {
   try {

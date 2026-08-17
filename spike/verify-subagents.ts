@@ -29,6 +29,7 @@ import { PermissionGate, type AssessedPermissionRequest } from '../src/agent/per
 import { ToolHookGate } from '../src/hooks/tool-hooks.js';
 
 import { darwinDir } from '../src/paths.js';
+import { SkillsPlugin } from '../src/skills/plugin.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-subagents-test';
@@ -439,6 +440,34 @@ async function dispatchContracts(registry: AgentDefinitionRegistry): Promise<voi
   await subagents.shutdown();
 }
 
+async function officialSkillChildCatalogue(registry: AgentDefinitionRegistry): Promise<void> {
+  header('subagents — official skills compatibility reaches real child catalogue');
+  const skills = await SkillsPlugin.load(ROOT);
+  const parent = new Agent({ model: new ScriptedChildModel(), plugins: [skills], printer: false });
+  await parent.initialize();
+  const eligible = parent.tools;
+  const childTools: string[][] = [];
+  const subagents = new SubagentTool({
+    registry,
+    tools: eligible,
+    intervention: new PermissionGate({ mode: 'yolo', projectRoot: ROOT, ask: async () => ({ allowed: true }) }),
+    projectInstructions: undefined,
+    config: fakeConfig('skills-child'),
+    createModel: async () => new ScriptedChildModel(),
+    onChildInitialized: (child) => childTools.push(child.tools.map((tool) => tool.name)),
+  });
+  try {
+    const host = new Agent({ model: new ScriptedChildModel(), tools: [subagents.tool], printer: false });
+    await host.initialize();
+    await host.tool.subagent?.invoke({ task: 'inspect child skills' });
+    const names = childTools[0] ?? [];
+    assert('the actual child receives load_skill', names.includes('load_skill'));
+    assert('the actual child never receives native skills', !names.includes('skills'));
+  } finally {
+    await subagents.shutdown();
+  }
+}
+
 async function permissionContracts(registry: AgentDefinitionRegistry): Promise<void> {
   header('subagents — shared permission gate');
 
@@ -789,6 +818,7 @@ function fakeConfig(model: string) {
 const registry = await loader();
 await missingDirectory();
 await dispatchContracts(registry);
+await officialSkillChildCatalogue(registry);
 
 async function cancellation(registry: AgentDefinitionRegistry): Promise<void> {
   header('subagents — parent cancellation reaches an active child');

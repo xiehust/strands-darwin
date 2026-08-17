@@ -14,6 +14,8 @@ import { DEFAULT_AGENT_NAME } from './loader.js';
 
 export const SUBAGENT_TOOL_NAME = 'subagent';
 
+type ChildAgentObserver = (agent: Agent) => void;
+
 export interface SubagentToolOptions {
   registry: AgentDefinitionRegistry;
   tools: readonly Tool[];
@@ -27,6 +29,8 @@ export interface SubagentToolOptions {
    * dispatch is unobservable and its child's approvals cannot be labelled.
    */
   dispatches?: SubagentDispatchRegistry;
+  /** Test/diagnostic observer; receives the real child after initialization. */
+  onChildInitialized?: ChildAgentObserver;
 }
 
 /**
@@ -161,6 +165,7 @@ export class SubagentTool {
 
     try {
       await child.initialize();
+      this.options.onChildInitialized?.(child);
       const invocationState = {};
       const result = await child.invoke(task, { invocationState });
       dispatch?.finish(result.stopReason === 'cancelled' ? 'cancelled' : 'succeeded');

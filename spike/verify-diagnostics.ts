@@ -579,6 +579,66 @@ async function observer(): Promise<void> {
   assert('…it latches the log instead', hostile.status.problem?.includes('message getter exploded') === true);
 }
 
+async function runtimeCreateFailureUnwinds(): Promise<void> {
+  header('diagnostics — AgentRuntime.create failure unwinds the installed tap');
+  const root = await caseDir('runtime-create-failure');
+  const configDir = path.join(OWNED_HOME, '.darwin');
+  await mkdir(configDir, { recursive: true });
+  await writeFile(
+    path.join(configDir, 'config.json'),
+    JSON.stringify({
+      provider: 'bedrock',
+      model: 'global.anthropic.claude-opus-5',
+      region: 'us-west-2',
+      maxTokens: 1024,
+      diagnostics: true,
+      permissionMode: 'yolo',
+    }),
+  );
+
+  const { AgentRuntime, setRuntimeCreateCheckpointForTest } = await import('../src/agent/runtime.js');
+  setRuntimeCreateCheckpointForTest(() => {
+    throw new Error('injected AgentRuntime.create failure after initialization');
+  });
+  let sessionId = '';
+  let failure = '';
+  try {
+    await AgentRuntime.create({
+      projectRoot: root,
+      session: { kind: 'new' },
+      onSessionResolved: (resolved) => { sessionId = resolved; },
+      permissionBridge: async () => ({ allowed: true }),
+    });
+  } catch (error) {
+    failure = error instanceof Error ? error.message : String(error);
+  } finally {
+    setRuntimeCreateCheckpointForTest(undefined);
+  }
+  assert('the injected startup failure reaches the caller', failure.includes('injected AgentRuntime.create failure'));
+  const file = diagnosticsPath(root, sessionId);
+  const before = (await stat(file)).size;
+  assert('startup diagnostics were flushed before failure returned', before > 0);
+
+  // A real local Agent tool call emits SDK debug lines. If create left its verbose
+  // tap installed, this would append to the failed runtime's log.
+  await runTurn(newAgent());
+
+  const fakeClient = { disconnect: async () => { throw new Error('cleanup mcp'); } };
+  const fakeBackground = { shutdown: async () => { throw new Error('cleanup bash'); } };
+  const aggregateLog = new DiagnosticsLog({ file: path.join(root, 'aggregate-unwind.log'), run: RUN });
+  setSdkVerboseSink(aggregateLog.sdkSink);
+  await AgentRuntime.unwindCreate(
+    aggregateLog,
+    [fakeClient as never],
+    fakeBackground as never,
+  );
+  assert('startup unwind settles every cleanup even when peers fail', aggregateLog.status.active === false);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert('the failed runtime log is closed and the SDK tap is reset', (await stat(file)).size === before);
+}
+
+
 async function main(): Promise<void> {
   await rm(ROOT, { recursive: true, force: true });
   await mkdir(ROOT, { recursive: true });
@@ -589,6 +649,8 @@ async function main(): Promise<void> {
   await offIsOff();
   await warnRouting();
   await notices();
+  await runtimeCreateFailureUnwinds();
+
   await writeFailure();
   await budget();
   await backpressure();

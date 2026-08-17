@@ -1076,11 +1076,13 @@ state key:        darwin_agent_skills ({ lastInjectedXml, activatedSkills })
 ### 3. Contracts
 
 - Official SDK code owns frontmatter/body parsing, `<available_skills>` generation, activation
-  formatting, sandbox resource traversal and persisted activation state.
+  formatting, bounded resource listing and persisted activation state. Darwin preflights the host
+  resource tree before delegation because the SDK's host sandbox follows directory symlinks.
 - `src/skills/loader.ts` supplies official `Skill` instances after required built-ins first,
   case-insensitive built-in reservation, project-over-global precedence, optional skip-and-surface,
-  and fatal required assets. Missing `name` alone is filled from the directory before official
-  parsing, preserving Darwin's documented compatibility.
+  and fatal required assets. Missing names default to the directory and names retain Darwin's
+  established `[A-Za-z0-9_-]+` grammar; SDK strict lowercase/hyphen validation is deliberately not
+  enabled because it would break existing uppercase/underscore skills.
 - `src/skills/plugin.ts` delegates initialization/activation to official `AgentSkills`. Its native
   tool remains private; the model and child-tool catalogue see exactly one statically-safe
   `load_skill({name})` tool. Success remains `{ instructions }`.
@@ -1101,6 +1103,10 @@ state key:        darwin_agent_skills ({ lastInjectedXml, activatedSkills })
 | Project/global name collision | Valid project wins; invalid project claims nothing |
 | Built-in collision, any case | Built-in wins; optional entry is reported reserved |
 | Unknown `load_skill` name | Recoverable result listing accepted names |
+| Resource directory/file is a symlink or resolves outside skill root | Deny activation before official traversal; reveal no outside names |
+| Resource preflight exceeds 200 entries | Deny activation at the bound before official traversal |
+| Legacy uncached string contains `<available-skills>` | Remove stale block before official current catalogue injection |
+| Cache mutation sees unknown multi-block shape | Refuse unchanged; `/model` fails before swapping live config/model |
 | More than 20 resource files | First 20 plus official truncation marker |
 | Native `skills` appears in `agent.tools` | Contract failure: do not expose a second tool |
 | Prompt shape cannot be reordered | Fail the invocation before its model call |
@@ -1117,8 +1123,9 @@ state key:        darwin_agent_skills ({ lastInjectedXml, activatedSkills })
 ### 6. Tests Required
 
 - `spike/verify-agent-skills.ts`: real offline Agents and SessionManager; assert tool names/schema,
-  actual first/repeated/resumed `StreamOptions.systemPrompt`, one catalogue/context/cache, restored
-  state, compatibility activation, unknown-name result and resource truncation.
+  actual first/repeated/resumed `StreamOptions.systemPrompt`, cached and uncached legacy migration,
+  canonical restored activation, one catalogue/context/cache, compatibility activation,
+  unknown-name result, resource truncation, symlink refusal and preflight bounds.
 - `spike/verify-skills.ts`: required fatality, built-in/project/global policy, optional problems,
   official Skill body/path, case-insensitive slash expansion and bundled workflow contracts.
 - `spike/verify-permission-modes.ts` keeps `load_skill` statically safe;

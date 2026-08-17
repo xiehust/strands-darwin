@@ -116,6 +116,12 @@ export interface SystemPromptHolder {
   systemPrompt?: SystemPrompt | undefined;
 }
 
+
+/** Whether cache mutation can safely recognize the current Darwin-owned prompt shape. */
+export function canUpdateSystemPromptCache(agent: SystemPromptHolder): boolean {
+  return normalizedPromptBlocks(agent.systemPrompt) !== undefined;
+}
+
 /**
  * Places or removes Darwin's final system-prompt cache point.
  *
@@ -149,8 +155,37 @@ function normalizedPromptBlocks(prompt: SystemPrompt | undefined): Exclude<Syste
   if (prompt.some((block) => !(block instanceof TextBlock) && !(block instanceof CachePointBlock))) {
     return undefined;
   }
-  if (prompt.slice(0, -1).some((block) => block instanceof CachePointBlock)) return undefined;
-  return [...prompt];
+
+  const withoutCache = prompt.filter((block) => !(block instanceof CachePointBlock));
+  if (prompt.length - withoutCache.length > 1) return undefined;
+  const cacheCount = prompt.length - withoutCache.length;
+  if (cacheCount === 1 && !(prompt.at(-1) instanceof CachePointBlock)) return undefined;
+
+  // Darwin owns one of three shapes: initial base text; base + working context;
+  // or base + official catalogue + working context. Arbitrary text arrays are
+  // not safe to rewrite during /model switching.
+  if (withoutCache.length === 1) return [...prompt];
+  if (withoutCache.length === 2 && isWorkingContextBlock(withoutCache[1])) return [...prompt];
+  if (
+    withoutCache.length === 3 &&
+    isOfficialSkillsBlock(withoutCache[1]) &&
+    isWorkingContextBlock(withoutCache[2])
+  ) {
+    return [...prompt];
+  }
+  return undefined;
+}
+
+function isOfficialSkillsBlock(block: unknown): block is TextBlock {
+  if (!(block instanceof TextBlock)) return false;
+  const text = block.text.trim();
+  return text.startsWith('<available_skills>') && text.endsWith('</available_skills>');
+}
+
+function isWorkingContextBlock(block: unknown): block is TextBlock {
+  if (!(block instanceof TextBlock)) return false;
+  const text = block.text.trim();
+  return text.startsWith('<working-context>') && text.endsWith('</working-context>');
 }
 
 /** True when a Bedrock model id names a Claude model. */

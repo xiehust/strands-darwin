@@ -175,6 +175,25 @@ function systemPromptCachePoint(): void {
   assert('refresh still leaves exactly one final cache point', Array.isArray(already.systemPrompt) && already.systemPrompt.length === 2 && already.systemPrompt[1] instanceof CachePointBlock);
 
   const empty: SystemPromptHolder = { systemPrompt: '   ' };
+
+  const knownShape: SystemPromptHolder = {
+    systemPrompt: [
+      new TextBlock('base'),
+      new TextBlock('<available_skills>\nNo skills are currently available.\n</available_skills>'),
+      new TextBlock('<working-context>current</working-context>'),
+      new CachePointBlock({ cacheType: 'default' }),
+    ],
+  };
+  assert('the explicit official-skills shape supports cache removal', !applySystemPromptCachePoint(knownShape, planPromptCache({ ...CLAUDE_CONFIG, promptCache: false })));
+  assert('cache removal preserves base/catalogue/context blocks', Array.isArray(knownShape.systemPrompt) && knownShape.systemPrompt.length === 3);
+
+  const unknownArray: SystemPromptHolder = {
+    systemPrompt: [new TextBlock('base'), new TextBlock('arbitrary second text block')],
+  };
+  const beforeUnknown = unknownArray.systemPrompt;
+  assert('an arbitrary multi-TextBlock array is refused', !applySystemPromptCachePoint(unknownArray, planPromptCache(CLAUDE_CONFIG)));
+  assert('refusal leaves the unknown array untouched', unknownArray.systemPrompt === beforeUnknown);
+
   assert(
     'an empty prompt gets no cache point (nothing to cache)',
     !applySystemPromptCachePoint(empty, planPromptCache(CLAUDE_CONFIG)),

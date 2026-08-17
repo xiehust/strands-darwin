@@ -16,8 +16,9 @@
 2. Keep constants and diagnostic path metadata required by build/runtime/tests.
 3. Preserve required built-in order/fatality and project-over-global case-insensitive precedence.
 4. Preserve optional failure collection and silent absent directories.
-5. Keep only the missing-name compatibility transform, handing all actual parsing/validation/body
-   extraction to `Skill.fromContent` in strict mode.
+5. Keep only the missing-name and established `[A-Za-z0-9_-]+` name-policy compatibility
+   boundaries, while handing frontmatter/body parsing and Skill field extraction to
+   `Skill.fromContent` without stricter SDK name validation.
 6. Delete Darwin's parser, prompt renderer, loaded-skill model, formatter, and recursive resource
    traversal.
 7. Update `spike/verify-skills.ts` and `spike/verify-state-layers.ts` for official objects and
@@ -31,7 +32,7 @@ preserve accepted existing skills and exact failure isolation.
 
 1. Replace `SkillsPlugin` in `src/skills/plugin.ts` with the thin official adapter.
 2. Construct official `AgentSkills` with policy-filtered `Skill` instances, explicit resource cap
-   20, strict validation and an isolated state key.
+   20, Darwin-compatible name policy and an isolated state key.
 3. Delegate plugin initialization to official `initAgent`, but never expose its native tool.
 4. Capture the native official tool through public `getTools()` and invoke it internally from one
    registered `load_skill({ name })` compatibility tool.

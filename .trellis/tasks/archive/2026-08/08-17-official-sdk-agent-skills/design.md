@@ -27,8 +27,10 @@ Use official `Skill` fields (`name`, `description`, `instructions`, `path`) ever
 ### Layering algorithm
 
 1. Discover required built-in directories in the declared required-name order.
-2. Parse each through official `Skill.fromContent(..., { strict: true, path })`; any missing or
-   invalid required asset throws with path/reason.
+2. Parse frontmatter/body through official `Skill.fromContent`; any missing or invalid required
+   asset throws with path/reason. Darwin deliberately retains its established
+   `[A-Za-z0-9_-]+` product-policy name grammar (including uppercase/underscore) instead of
+   enabling the SDK's stricter lowercase/hyphen validation.
 3. Discover project directories deterministically and parse valid entries through official
    `Skill.fromContent`.
 4. Discover global directories similarly.
@@ -49,8 +51,9 @@ README contract while leaving validation and the resulting object official.
 Use a Darwin-owned class (rename the old `SkillsPlugin` to make official ownership visible, e.g.
 `DarwinSkills`) that:
 
-- constructs `AgentSkills({ skills: officialSkills, maxResourceFiles: 20, strict: true,
-  stateKey: ... })`;
+- constructs `AgentSkills({ skills: officialSkills, maxResourceFiles: 20, stateKey: ... })` from
+  already parsed/policy-filtered official `Skill` instances; strict SDK name validation is not
+  enabled because it would reject Darwin-compatible uppercase/underscore names;
 - delegates `initAgent(agent)` to the official plugin so its `BeforeInvocationEvent` hook owns
   catalogue injection;
 - intentionally does **not** expose official `getTools()` directly;
@@ -183,8 +186,9 @@ must state the file count and depth honestly.
   actual `SessionManager` snapshot.
 - **Adapter accidentally exposes `skills`:** assert both tool registry and child-visible tools
   contain `load_skill` and not `skills`.
-- **Validation drift:** official strict validation is narrower than Darwin's prior regex. Preserve
-  existing valid samples; report newly-invalid optional entries and fail bundled entries.
+- **Validation drift:** official strict validation is narrower than Darwin's established regex.
+  Keep official parsing while applying Darwin's explicit `[A-Za-z0-9_-]+` compatibility boundary;
+  regression-test uppercase and underscore names rather than silently narrowing the product.
 - **Slash expansion without ToolContext:** it must activate against the initialized live Agent;
   don't call the official tool without context.
 - **SDK private behavior:** use only public `AgentSkills`, `Skill`, `getTools`,

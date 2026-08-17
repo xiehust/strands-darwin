@@ -22,6 +22,7 @@ import {
   scanSkills,
 } from '../src/skills/loader.js';
 import { SkillsPlugin, expandSkillCommand } from '../src/skills/plugin.js';
+import { CaptureModel } from './offline-model.js';
 import { assert, header, report } from './shared.js';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '..');
@@ -95,6 +96,15 @@ async function buildFixture(): Promise<void> {
     'utf8',
   );
 
+  const compatible = path.join(SKILLS_ROOT, 'compatible-name');
+  await mkdir(compatible, { recursive: true });
+  await writeFile(
+    path.join(compatible, 'SKILL.md'),
+    `---\nname: BUILD_Helper\ndescription: Preserve Darwin's established name grammar.\n---\n\ncompatible body\n`,
+    'utf8',
+  );
+
+
   // A directory with no SKILL.md is not a skill and should be ignored quietly.
   await mkdir(path.join(SKILLS_ROOT, 'not-a-skill'), { recursive: true });
   await writeFile(path.join(SKILLS_ROOT, 'not-a-skill', 'README.md'), 'hi\n', 'utf8');
@@ -125,6 +135,9 @@ async function scanning(): Promise<void> {
   assert('skipped the skill missing a description', !names.includes('broken'));
   assert('reported the missing description as a problem', problemDirs.includes('no-description'));
   assert('reported the unparseable YAML as a problem', problemDirs.includes('bad-yaml'));
+  assert('uppercase/underscore names remain accepted by Darwin product policy', names.includes('BUILD_Helper'));
+  assert('compatible names still use official Skill body parsing', requireSkill(skills, 'BUILD_Helper').instructions === 'compatible body');
+
   assert('ignored a directory without SKILL.md silently', !problemDirs.includes('not-a-skill'));
   assert('one bad skill did not prevent loading the good ones', names.includes('pdf-forms'));
   assert('every required built-in is merged into project skills', REQUIRED_BUILTIN_SKILLS.every((name) => names.includes(name)));
@@ -356,7 +369,8 @@ async function pluginShape(): Promise<void> {
 
   const plugin = await SkillsPlugin.load(TMP_ROOT);
   const tools = plugin.getTools();
-  const agent = new Agent({ systemPrompt: 'BASE PROMPT', plugins: [plugin], printer: false });
+  const model = new CaptureModel();
+  const agent = new Agent({ model, systemPrompt: 'BASE PROMPT', plugins: [plugin], printer: false });
   await agent.initialize();
 
   console.log(`  tools: ${JSON.stringify(agent.tools.map((tool) => tool.name))}`);
@@ -370,6 +384,8 @@ async function pluginShape(): Promise<void> {
   const injected = typeof agent.systemPrompt === 'string'
     ? agent.systemPrompt
     : agent.systemPrompt?.map((block) => block.type === 'textBlock' ? block.text : '').join('\n') ?? '';
+  assert('plugin shape used the deterministic offline model exactly once', model.calls.length === 1);
+
   assert('official catalogue is injected before invocation', injected.includes('<available_skills>'));
   assert('official progressive disclosure omits bodies', !injected.includes('Run scripts/fill.py'));
 

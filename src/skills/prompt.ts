@@ -39,8 +39,11 @@ export function refreshKnownPrompt(
   fragment: string,
 ): SystemPrompt | undefined {
   if (typeof prompt === 'string') {
-    const base = stripWorkingContextText(prompt);
-    return [new TextBlock(base), new TextBlock(fragment)];
+    // Pre-migration uncached/OpenAI snapshots stored the whole prompt as one
+    // string, including Darwin's old catalogue. Remove it before official
+    // AgentSkills injects the one current catalogue on the resumed invocation.
+    const base = stripWorkingContextText(stripLegacyCatalogues(prompt));
+    return base === '' ? undefined : [new TextBlock(base), new TextBlock(fragment)];
   }
   if (!Array.isArray(prompt)) return undefined;
 
@@ -50,6 +53,7 @@ export function refreshKnownPrompt(
     new TextBlock(parsed.base),
     ...(parsed.catalogue === undefined ? [] : [parsed.catalogue]),
     new TextBlock(fragment),
+    ...(parsed.cachePoint === undefined ? [] : [parsed.cachePoint]),
   ];
 }
 
@@ -154,4 +158,8 @@ function extractWorkingContext(text: string): string | undefined {
 function stripWorkingContextText(text: string): string {
   const block = new RegExp(`\\n*<${WORKING_CONTEXT_TAG}>[\\s\\S]*?</${WORKING_CONTEXT_TAG}>`, 'g');
   return text.replace(block, '').trimEnd();
+}
+
+function stripLegacyCatalogues(text: string): string {
+  return text.replace(/\n*<available-skills>[\s\S]*?<\/available-skills>/g, '').trimEnd();
 }

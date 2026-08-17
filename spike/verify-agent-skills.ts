@@ -1,5 +1,5 @@
 /** Offline real-Agent contracts for Darwin's official AgentSkills adapter. */
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -7,13 +7,8 @@ import {
   Agent,
   BeforeInvocationEvent,
   CachePointBlock,
-  Message,
-  Model,
   SessionManager,
   TextBlock,
-  type BaseModelConfig,
-  type ModelStreamEvent,
-  type StreamOptions,
   type SystemPrompt,
 } from '@strands-agents/sdk';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
@@ -23,6 +18,8 @@ import { applySystemPromptCachePoint, type PromptCachePlan } from '../src/agent/
 import { applyWorkingContext } from '../src/agent/working-context.js';
 import { orderOfficialSkillsPrompt } from '../src/skills/prompt.js';
 import { MAX_SKILL_RESOURCE_FILES, SkillsPlugin } from '../src/skills/plugin.js';
+import { MAX_SKILL_RESOURCE_PREFLIGHT_ENTRIES } from '../src/skills/resource-safety.js';
+import { CaptureModel } from './offline-model.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 ownPrivateHome('agent-skills');
@@ -34,31 +31,11 @@ const CACHE_PLAN: PromptCachePlan = {
   problem: undefined,
 };
 
-class CaptureModel extends Model<BaseModelConfig> {
-  readonly calls: { prompt: SystemPrompt | undefined; tools: string[] }[] = [];
-  private config: BaseModelConfig = { modelId: 'fake.skills', contextWindowLimit: 200_000 };
-
-  override updateConfig(config: BaseModelConfig): void {
-    this.config = { ...this.config, ...config };
-  }
-
-  override getConfig(): BaseModelConfig {
-    return this.config;
-  }
-
-  override async *stream(_messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
-    this.calls.push({ prompt: options?.systemPrompt, tools: options?.toolSpecs?.map((tool) => tool.name) ?? [] });
-    yield { type: 'modelMessageStartEvent', role: 'assistant' };
-    yield { type: 'modelContentBlockStartEvent' };
-    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'ok' } };
-    yield { type: 'modelContentBlockStopEvent' };
-    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
-  }
-}
-
 function installOrdering(agent: Agent): void {
   agent.addHook(BeforeInvocationEvent, ({ agent: invokingAgent }) => {
-    orderOfficialSkillsPrompt(invokingAgent);
+    if (!orderOfficialSkillsPrompt(invokingAgent)) {
+      throw new Error('Could not place the official skills catalogue before working context and cache.');
+    }
   });
 }
 
@@ -104,6 +81,7 @@ async function promptAndResume(): Promise<void> {
   try {
     await first.initialize();
     installOrdering(first);
+
     assert('only load_skill is registered after initialization', first.tools.map((tool) => tool.name).join(',') === 'load_skill');
     const spec = first.tools[0]?.toolSpec.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
     assert('load_skill schema exposes required name', spec.properties?.['name'] !== undefined && spec.required?.includes('name') === true);
@@ -112,11 +90,14 @@ async function promptAndResume(): Promise<void> {
     assert('fresh working context is applied to explicit blocks', applyWorkingContext(first, currentOne));
     assert('fresh cache point is placed', applySystemPromptCachePoint(first, CACHE_PLAN));
     await first.invoke('first');
-    assertRequestOrder('first request', firstModel.calls[0]?.prompt, 'current-one');
+    await firstPlugin.activate(firstPlugin.find('probe-skill')!);
+    assert('activation is recorded before the session snapshot', firstPlugin.getActivatedSkills(first).join(',') === 'probe-skill');
+
+    assertRequestOrder('first request', firstModel.calls[0]?.systemPrompt, 'current-one');
     assert('model sees no native skills tool', firstModel.calls[0]?.tools.join(',') === 'load_skill');
 
     await first.invoke('second');
-    assertRequestOrder('repeated request', firstModel.calls[1]?.prompt, 'current-one');
+    assertRequestOrder('repeated request', firstModel.calls[1]?.systemPrompt, 'current-one');
 
     const resumedPlugin = await pluginFrom([skill]);
     const resumedModel = new CaptureModel();
@@ -131,13 +112,71 @@ async function promptAndResume(): Promise<void> {
     await resumed.initialize();
     installOrdering(resumed);
     const currentTwo = '<working-context>current-two</working-context>';
+    const activated = resumed.appState.get('darwin_agent_skills') as { activatedSkills?: unknown } | undefined;
+    assert('resume restores the canonical activated skill name', activated?.activatedSkills instanceof Array && activated.activatedSkills.join(',') === 'probe-skill');
+
     assert('resumed known block shape accepts current context', applyWorkingContext(resumed, currentTwo));
     assert('resumed cache point is re-placed', applySystemPromptCachePoint(resumed, CACHE_PLAN));
     await resumed.invoke('resumed');
-    assertRequestOrder('resumed request', resumedModel.calls[0]?.prompt, 'current-two');
-    const resumedText = promptText(resumedModel.calls[0]?.prompt);
+    assertRequestOrder('resumed request', resumedModel.calls[0]?.systemPrompt, 'current-two');
+    const resumedText = promptText(resumedModel.calls[0]?.systemPrompt);
     assert('resumed request removed stale working context', !resumedText.includes('current-one'));
     assert('resume restored official plugin state', resumed.appState.get('darwin_agent_skills') !== undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+
+async function legacyUncachedResume(): Promise<void> {
+  header('official AgentSkills — legacy uncached string resume migration');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'darwin-agent-skills-legacy-'));
+  const storage = new LocalFileStorage(root);
+  const sessionId = 'legacy-uncached';
+  const agentId = 'darwin-skills-legacy';
+  const legacy = new Agent({
+    id: agentId,
+    model: new CaptureModel(),
+    sessionManager: new SessionManager({ sessionId, storage, saveLatestOn: 'invocation' }),
+    systemPrompt:
+      'BASE\n\n<project-instructions>RULES</project-instructions>\n\n' +
+      '<available-skills>\n  <skill name="stale">old</skill>\n</available-skills>\n\n' +
+      '<working-context>stale-context</working-context>',
+    printer: false,
+  });
+
+  try {
+    await legacy.initialize();
+    await legacy.invoke('save legacy string');
+
+    const pluginRoot = await mkdtemp(path.join(os.tmpdir(), 'darwin-agent-skills-current-'));
+    const plugin = await pluginFrom(
+      [new Skill({ name: 'current-skill', description: 'Current.', instructions: 'CURRENT' })],
+      pluginRoot,
+    );
+    try {
+      const model = new CaptureModel();
+      const resumed = new Agent({
+        id: agentId,
+        model,
+        plugins: [plugin],
+        sessionManager: new SessionManager({ sessionId, storage, saveLatestOn: 'invocation' }),
+        systemPrompt: 'FRESH',
+        printer: false,
+      });
+      await resumed.initialize();
+      installOrdering(resumed);
+      assert('legacy string accepts current working context', applyWorkingContext(resumed, '<working-context>current-context</working-context>'));
+      await resumed.invoke('resume legacy string');
+      const prompt = model.calls[0]?.systemPrompt;
+      const blocks = Array.isArray(prompt) ? prompt : [];
+      const text = promptText(prompt);
+      assert('legacy Darwin catalogue is removed', !text.includes('<available-skills>') && !text.includes('name="stale"'));
+      assert('one current official catalogue remains', blocks.filter((block) => block instanceof TextBlock && block.text.trim().startsWith('<available_skills>')).length === 1);
+      assert('current official catalogue names the current skill', text.includes('<name>current-skill</name>'));
+    } finally {
+      await rm(pluginRoot, { recursive: true, force: true });
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -187,9 +226,54 @@ async function activationAndBounds(): Promise<void> {
   }
 }
 
-async function pluginFrom(skills: Skill[]): Promise<SkillsPlugin> {
+async function resourceSafety(): Promise<void> {
+  header('official AgentSkills — resource symlink and preflight safety');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'darwin-agent-skills-safety-'));
+  const project = path.join(root, 'project');
+  const directory = path.join(project, '.darwin', 'skills', 'safe-skill');
+  const outside = path.join(root, 'outside');
+  await mkdir(directory, { recursive: true });
+  await mkdir(outside, { recursive: true });
+  await writeFile(path.join(directory, 'SKILL.md'), '---\nname: safe-skill\ndescription: Safe.\n---\nSAFE BODY\n');
+  await writeFile(path.join(outside, 'secret-name.txt'), 'secret\n');
+
+  try {
+    await symlink(outside, path.join(directory, 'references'));
+    const plugin = await SkillsPlugin.load(project);
+    const agent = new Agent({ model: new CaptureModel(), plugins: [plugin], printer: false });
+    await agent.initialize();
+    let symlinkError = '';
+    try {
+      await plugin.activate(plugin.find('safe-skill')!);
+    } catch (error) {
+      symlinkError = error instanceof Error ? error.message : String(error);
+    }
+    assert('resource symlink is refused before official traversal', symlinkError.includes('must not contain symbolic links'));
+    assert('outside filenames are never returned', !symlinkError.includes('secret-name.txt'));
+
+    await rm(path.join(directory, 'references'));
+    await mkdir(path.join(directory, 'references'), { recursive: true });
+    await Promise.all(Array.from({ length: MAX_SKILL_RESOURCE_PREFLIGHT_ENTRIES + 1 }, (_, index) =>
+      writeFile(path.join(directory, 'references', `file-${index}.md`), 'x'),
+    ));
+    let broadError = '';
+    try {
+      await plugin.activate(plugin.find('safe-skill')!);
+    } catch (error) {
+      broadError = error instanceof Error ? error.message : String(error);
+    }
+    assert('broad resource tree stops at the preflight entry bound', broadError.includes(`${MAX_SKILL_RESOURCE_PREFLIGHT_ENTRIES}-entry safety preflight`));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+const pluginRoots = new Set<string>();
+
+async function pluginFrom(skills: Skill[], requestedRoot?: string): Promise<SkillsPlugin> {
   // Build through the production catalogue by writing ordinary project skills.
-  const root = await mkdtemp(path.join(os.tmpdir(), 'darwin-agent-skills-plugin-'));
+  const root = requestedRoot ?? await mkdtemp(path.join(os.tmpdir(), 'darwin-agent-skills-plugin-'));
+  pluginRoots.add(root);
   for (const skill of skills) {
     const directory = path.join(root, '.darwin', 'skills', skill.name);
     await mkdir(directory, { recursive: true });
@@ -198,6 +282,12 @@ async function pluginFrom(skills: Skill[]): Promise<SkillsPlugin> {
   return SkillsPlugin.load(root);
 }
 
-await promptAndResume();
-await activationAndBounds();
+try {
+  await promptAndResume();
+  await legacyUncachedResume();
+  await activationAndBounds();
+  await resourceSafety();
+} finally {
+  await Promise.all([...pluginRoots].map((root) => rm(root, { recursive: true, force: true })));
+}
 report();

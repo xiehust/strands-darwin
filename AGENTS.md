@@ -92,7 +92,9 @@ adapter preserves product policy the SDK does not own: required/reserved built-i
 global precedence, optional problem reporting, case-insensitive `/skill-name`, and the observable
 safe `load_skill({name})` contract. The native `skills({skill_name})` tool stays private so the
 model never sees two ways to load the same capability. Official activation owns appState and the
-resource listing, explicitly capped at 20 files and three recursive levels.
+resource listing, explicitly capped at 20 files and three recursive levels. Before official
+activation, Darwin rejects resource symlinks/outside-root resolution and caps host preflight at
+200 entries because the SDK's host sandbox follows directory symlinks before applying its file cap.
 
 **System prompt composition order is fixed** on every actual model request: base prompt →
 `<project-instructions>` (AGENTS.md, `src/agent/instructions.ts`) → official

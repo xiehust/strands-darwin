@@ -18,6 +18,7 @@ import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills';
 import { z } from 'zod';
 
 import { scanSkills, type SkillProblem } from './loader.js';
+import { guardSkillActivation } from './resource-safety.js';
 
 /** Explicitly bound: the SDK also bounds resource recursion to three levels. */
 export const MAX_SKILL_RESOURCE_FILES = 20;
@@ -101,7 +102,8 @@ export class SkillsPlugin implements Plugin {
   /** Official activation, used by both the tool callback and slash expansion. */
   async activate(skill: Skill, context?: ToolContext): Promise<string> {
     const liveContext = context ?? this.slashContext(skill);
-    return this.officialTool.invoke({ skill_name: skill.name }, liveContext);
+    const guardedContext = await guardSkillActivation(liveContext, skill);
+    return this.officialTool.invoke({ skill_name: skill.name }, guardedContext);
   }
 
   getActivatedSkills(agent: LocalAgent): readonly string[] {

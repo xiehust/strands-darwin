@@ -61,7 +61,12 @@ import {
   type ProjectInstructionsSummary,
 } from './instructions.js';
 import { PermissionGate, type ApprovalMode, type PermissionBridge } from './permission.js';
-import { applySystemPromptCachePoint, planPromptCache, type PromptCachePlan } from './prompt-cache.js';
+import {
+  applySystemPromptCachePoint,
+  canUpdateSystemPromptCache,
+  planPromptCache,
+  type PromptCachePlan,
+} from './prompt-cache.js';
 import { createModelClassifier } from './safety-classifier.js';
 import {
   createSessionManager,
@@ -77,6 +82,16 @@ import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { applyWorkingContext, buildWorkingContext } from './working-context.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
 import { deltaUsage, startTurnSpend, type UsageTotals } from './usage.js';
+
+/** Test seam for proving startup unwind after resources have been acquired. */
+type RuntimeCreateCheckpoint = 'after-initialize';
+let runtimeCreateCheckpoint: ((checkpoint: RuntimeCreateCheckpoint) => void) | undefined;
+
+export function setRuntimeCreateCheckpointForTest(
+  callback: ((checkpoint: RuntimeCreateCheckpoint) => void) | undefined,
+): void {
+  runtimeCreateCheckpoint = callback;
+}
 
 /**
  * Stable across runs by necessity: session snapshots are stored under
@@ -260,6 +275,23 @@ export class AgentRuntime {
     this.promptCachePlan = info.promptCache;
   }
 
+  /**
+   * Releases startup-owned observers and external clients when construction fails.
+   * Successful creation transfers the same resources to `shutdown()` instead.
+   */
+  static async unwindCreate(
+    diagnosticsLog: DiagnosticsLog | undefined,
+    mcpClients: readonly McpClient[] = [],
+    backgroundBash?: BackgroundBashManager,
+  ): Promise<void> {
+    if (diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
+    await Promise.allSettled([
+      disconnectAll(mcpClients),
+      backgroundBash?.shutdown() ?? Promise.resolve(),
+      diagnosticsLog?.close() ?? Promise.resolve(),
+    ]);
+  }
+
   static async create(options: RuntimeOptions): Promise<AgentRuntime> {
     // Resolve explicit ids before provider/model construction: a bad automation
     // selector must fail locally without initializing anything billable.
@@ -287,6 +319,12 @@ export class AgentRuntime {
           })
         : undefined;
     if (diagnosticsLog !== undefined) setSdkVerboseSink(diagnosticsLog.sdkSink);
+    let startupMcpClients: readonly McpClient[] = [];
+    let startupBackgroundBash: BackgroundBashManager | undefined;
+
+    // Keep assembly in one function so one catch owns every resource acquired
+    // after the process-global diagnostics tap is installed.
+    const assemble = async (): Promise<AgentRuntime> => {
     const model = await createModelFromConfig(config);
     const skills = await SkillsPlugin.load(options.projectRoot);
     const commands = await loadCustomCommands(
@@ -299,6 +337,7 @@ export class AgentRuntime {
     const mcp = await loadMcpClients(options.projectRoot, {
       quietStdioStderr: options.quietMcpStderr === true,
     });
+    startupMcpClients = mcp.clients;
 
     const permissionMode = options.permissionModeOverride ?? config.permissionMode;
     // Built before the gate on purpose: the gate must resolve provenance for
@@ -328,6 +367,7 @@ export class AgentRuntime {
     // One manager and wrapper are shared by the main Agent and every child tool
     // catalogue. Foreground calls still delegate with the caller's ToolContext.
     const backgroundBash = new BackgroundBashManager(options.projectRoot, session.sessionId);
+    startupBackgroundBash = backgroundBash;
     const bash = createBackgroundBashTool(backgroundBash);
     const imageViewer = createImageViewerTool(options.projectRoot);
     const conversationManager = new SummarizingConversationManager({
@@ -387,12 +427,7 @@ export class AgentRuntime {
     // invocation. Session restore runs on InitializedEvent, MCP tools are
     // discovered here, and plugins inject their system prompt fragments — so
     // without this the resumed history and MCP tools would not exist yet.
-    try {
-      await agent.initialize();
-    } catch (error) {
-      await disconnectAll(mcp.clients);
-      throw error;
-    }
+    await agent.initialize();
 
     // Official AgentSkills injects its catalogue on BeforeInvocationEvent. This
     // callback is registered afterwards, so it moves that official TextBlock
@@ -437,14 +472,13 @@ export class AgentRuntime {
     // prompt can still be corrected by.
     const workingContext = await buildWorkingContext(options.projectRoot);
     if (!applyWorkingContext(agent, workingContext.fragment)) {
-      await disconnectAll(mcp.clients);
       throw new Error('Could not refresh working context on the restored system prompt.');
     }
     const promptCache = planPromptCache(config);
     if (promptCache.parts.includes('system prompt') && !applySystemPromptCachePoint(agent, promptCache)) {
-      await disconnectAll(mcp.clients);
       throw new Error('Could not place the final cache point on the assembled system prompt.');
     }
+    runtimeCreateCheckpoint?.('after-initialize');
 
     // Built last and given nothing but facts: the recorder is an observer, so it
     // must not be able to influence assembly. It opens no file here — the first
@@ -469,7 +503,7 @@ export class AgentRuntime {
             },
           });
 
-    return new AgentRuntime(
+    const runtime = new AgentRuntime(
       agent,
       model,
       options.projectRoot,
@@ -521,6 +555,12 @@ export class AgentRuntime {
         diagnosticsFile: diagnosticsLog?.path,
       },
     );
+    return runtime;
+    };
+    return assemble().catch(async (error: unknown) => {
+      await AgentRuntime.unwindCreate(diagnosticsLog, startupMcpClients, startupBackgroundBash);
+      throw error;
+    });
   }
 
   /**
@@ -734,15 +774,25 @@ export class AgentRuntime {
     // a bad region) must leave the session on the model it was already using.
     const model = await createModelFromConfig(next);
 
+    const thinkingPlan = planThinking(next);
+    const promptCachePlan = planPromptCache(next);
+    // Validate/cache-shape mutation before swapping the live model. A malformed
+    // prompt must leave provider/config selection untouched, even when the target
+    // provider needs no explicit cache point.
+    if (!canUpdateSystemPromptCache(this.agent)) {
+      throw new Error('Could not update the final cache point on the assembled system prompt.');
+    }
+    const cacheUpdated = applySystemPromptCachePoint(this.agent, promptCachePlan);
+    if (promptCachePlan.parts.includes('system prompt') !== cacheUpdated) {
+      throw new Error('Could not update the final cache point on the assembled system prompt.');
+    }
+
     this.agent.model = model;
     this.model = model;
     this.liveConfig = next;
     this.subagents.updateConfig(next);
-    this.thinkingPlan = planThinking(next);
-    this.promptCachePlan = planPromptCache(next);
-    // Replaces or removes the final system-prompt cache point for the new model.
-    // The explicit official-skills prompt shape survives either direction.
-    applySystemPromptCachePoint(this.agent, this.promptCachePlan);
+    this.thinkingPlan = thinkingPlan;
+    this.promptCachePlan = promptCachePlan;
 
     const choice = next.modelChoices.find((entry) => entry.index === target.index) as ModelChoice;
     return {

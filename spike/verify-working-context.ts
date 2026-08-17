@@ -181,16 +181,16 @@ async function composition(): Promise<void> {
   // working context (after it) → cache point.
   const loaded = await loadProjectInstructions(root);
   const composed = composeSystemPrompt(DEFAULT_SYSTEM_PROMPT, loaded.instructions);
-  const withSkills = `${composed}\n\n<available-skills>\n  <skill name="x">y</skill>\n</available-skills>`;
+  const withSkills = new TextBlock('<available_skills>\n  <skill><name>x</name><description>y</description></skill>\n</available_skills>');
   const { fragment } = await buildWorkingContext(root, FIXED_NOW);
 
-  const holder: SystemPromptHolder = { systemPrompt: withSkills };
+  const holder: SystemPromptHolder = { systemPrompt: [new TextBlock(composed), withSkills] };
   assert('the fragment converts the known prompt to explicit blocks', applyWorkingContext(holder, fragment));
   const assembled = Array.isArray(holder.systemPrompt)
     ? holder.systemPrompt.map((block) => block instanceof TextBlock ? block.text : '').join('\n')
     : '';
 
-  const order = ['You are darwin', '<project-instructions', '<available-skills>', `<${WORKING_CONTEXT_TAG}>`].map((marker) =>
+  const order = ['You are darwin', '<project-instructions', '<available_skills>', `<${WORKING_CONTEXT_TAG}>`].map((marker) =>
     assembled.indexOf(marker),
   );
   assert('every part is present', order.every((index) => index >= 0));
@@ -204,9 +204,9 @@ async function composition(): Promise<void> {
   // rather than after it, where it would cache nothing.
   const placed = applySystemPromptCachePoint(holder, planPromptCache(CLAUDE_CONFIG));
   const blocks = Array.isArray(holder.systemPrompt) ? holder.systemPrompt : [];
-  assert('the cache point is added to explicit prompt blocks', placed && blocks.length === 3);
-  assert('the working context stays immediately before the cache point', blocks[1] instanceof TextBlock && (blocks[1] as TextBlock).text.trimEnd().endsWith(`</${WORKING_CONTEXT_TAG}>`));
-  assert('the cache point is last', blocks[2] instanceof CachePointBlock);
+  assert('the cache point is added to explicit prompt blocks', placed && blocks.length === 4);
+  assert('the working context stays immediately before the cache point', blocks[2] instanceof TextBlock && (blocks[2] as TextBlock).text.trimEnd().endsWith(`</${WORKING_CONTEXT_TAG}>`));
+  assert('the cache point is last', blocks[3] instanceof CachePointBlock);
 
   // Order broken by something other than darwin: the text boundary is no longer
   // knowable, so refuse rather than guess.
@@ -231,7 +231,7 @@ function resumedPrompt(): void {
     systemPrompt: [new TextBlock(stale), new CachePointBlock({ cacheType: 'default' })],
   };
   assert('darwin\'s own cached shape is accepted', applyWorkingContext(restored, today));
-  assert('it is migrated to explicit base/context blocks and drops the stale catalogue', Array.isArray(restored.systemPrompt) && restored.systemPrompt.length === 2);
+  assert('it is migrated to explicit base/context/cache blocks and drops the stale catalogue', Array.isArray(restored.systemPrompt) && restored.systemPrompt.length === 3);
   const refreshed = Array.isArray(restored.systemPrompt)
     ? restored.systemPrompt.map((block) => block instanceof TextBlock ? block.text : '').join('\n')
     : '';

@@ -14,6 +14,8 @@ import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { CachePointBlock, TextBlock, type Agent } from '@strands-agents/sdk';
+
 import { AgentRuntime } from '../src/agent/runtime.js';
 import { allowAllBridge } from '../src/agent/permission.js';
 import { configPath, loadConfig, type ModelChoice } from '../src/config.js';
@@ -83,6 +85,52 @@ function resolution(): void {
   const exactWins = resolveModelChoice(shadowed, 'sol');
   assert('an exact name beats a longer name containing it', exactWins !== 'ambiguous' && exactWins?.index === 0);
 }
+
+function runtimeAgent(runtime: AgentRuntime): Agent {
+  return (runtime as unknown as { agent: Agent }).agent;
+}
+
+async function offlineCacheShapeSwitch(): Promise<void> {
+  header('/model — cache mutation accepts only Darwin-owned prompt shapes');
+  const root = await fixture();
+  const runtime = await AgentRuntime.create({
+    projectRoot: root,
+    session: { kind: 'new' },
+    permissionBridge: allowAllBridge,
+  });
+  try {
+    const target = runtime.modelChoices.find((entry) => entry.name === 'sol') as ModelChoice;
+    const agent = runtimeAgent(runtime);
+    agent.systemPrompt = [
+      new TextBlock('base'),
+      new TextBlock('<available_skills>\nNo skills are currently available.\n</available_skills>'),
+      new TextBlock('<working-context>current</working-context>'),
+      new CachePointBlock({ cacheType: 'default' }),
+    ];
+    const switched = await runtime.changeModel(target);
+    await switched.saved;
+    assert('valid official-skills shape removes the cache point for OpenAI', Array.isArray(agent.systemPrompt) && agent.systemPrompt.length === 3 && !(agent.systemPrompt.at(-1) instanceof CachePointBlock));
+
+    const back = runtime.modelChoices.find((entry) => entry.name === 'opus') as ModelChoice;
+    const returned = await runtime.changeModel(back);
+    await returned.saved;
+    assert('switching back restores one final cache point', Array.isArray(agent.systemPrompt) && agent.systemPrompt.length === 4 && agent.systemPrompt.at(-1) instanceof CachePointBlock);
+
+    agent.systemPrompt = [new TextBlock('base'), new TextBlock('unknown second block')];
+    let refusal = '';
+    try {
+      await runtime.changeModel(target);
+    } catch (error) {
+      refusal = error instanceof Error ? error.message : String(error);
+    }
+    assert('unknown prompt arrays fail the switch explicitly', refusal.includes('Could not update the final cache point'));
+    assert('failed switch keeps the previous live model', runtime.config.model === 'global.anthropic.claude-opus-5');
+  } finally {
+    await runtime.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 
 /** A project root with two models configured, `opus` enabled. */
 async function fixture(): Promise<string> {
@@ -208,6 +256,7 @@ async function liveSwitch(): Promise<void> {
 
 async function main(): Promise<void> {
   resolution();
+  await offlineCacheShapeSwitch();
   if (process.argv.includes('--live')) await liveSwitch();
   else console.log('\n(skipping the live switch — pass --live to make real model calls)');
   report();

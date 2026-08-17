@@ -21,6 +21,7 @@ import {
   type ProjectInstructions,
 } from '../src/agent/instructions.js';
 import { SkillsPlugin } from '../src/skills/plugin.js';
+import { CaptureModel } from './offline-model.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-agents-md';
@@ -151,10 +152,13 @@ async function promptComposition(): Promise<void> {
 
   // Official AgentSkills injects before the first invocation, not initialize.
   const skills = await SkillsPlugin.load(path.resolve(import.meta.dirname, '..'));
-  const agent = new Agent({ systemPrompt: composed, plugins: [skills], printer: false });
+  const model = new CaptureModel();
+  const agent = new Agent({ model, systemPrompt: composed, plugins: [skills], printer: false });
   await agent.initialize();
   assert('initialize preserves the composed string', agent.systemPrompt === composed);
   await agent.invoke('show catalogue');
+  assert('prompt composition used the deterministic offline model exactly once', model.calls.length === 1);
+
   const full = typeof agent.systemPrompt === 'string'
     ? agent.systemPrompt
     : agent.systemPrompt?.map((block) => block.type === 'textBlock' ? block.text : '').join('\n') ?? '';

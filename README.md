@@ -721,7 +721,9 @@ description: Write git commit messages following this project's conventions. Use
 accepted entries as official SDK `Skill` objects to official `AgentSkills`; the SDK parses the
 frontmatter/body, injects the catalogue, records activation state, and lists files under
 `scripts/`, `references/` and `assets/`. Listings are bounded to 20 files and three recursive
-levels, with an explicit truncation marker.
+levels, with an explicit truncation marker. Host resource trees must contain no symlinks or
+outside-root resolutions, and Darwin stops the safety preflight after 200 entries before invoking
+the official loader.
 
 Two ways a skill gets used:
 
