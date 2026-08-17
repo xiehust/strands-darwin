@@ -465,8 +465,8 @@ clean-tree verification. All passed.
 
 Token spend: planning `input=66 output=86,605 cacheRead=5,691,673 cacheWrite=335,535`;
 implementation `input=338 output=53,844 cacheRead=66,285,504 cacheWrite=476,107`; correction
-`input=46 output=4,767 cacheRead=11,374,021 cacheWrite=45,234`; aggregate `input=450
-output=145,216 cacheRead=83,351,198 cacheWrite=856,876`. The failed first launch emitted no usage
+`input=46 output=4,767 cacheRead=11,375,021 cacheWrite=45,234`; aggregate `input=450
+output=145,216 cacheRead=83,352,198 cacheWrite=856,876`. The failed first launch emitted no usage
 line and spent no recorded model tokens.
 
 | Date | Commit | Milestone |
