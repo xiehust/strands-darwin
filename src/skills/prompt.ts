@@ -40,9 +40,12 @@ export function refreshKnownPrompt(
 ): SystemPrompt | undefined {
   if (typeof prompt === 'string') {
     // Pre-migration uncached/OpenAI snapshots stored the whole prompt as one
-    // string, including Darwin's old catalogue. Remove it before official
-    // AgentSkills injects the one current catalogue on the resumed invocation.
-    const base = stripWorkingContextText(stripLegacyCatalogues(prompt));
+    // string. Split only standalone trailing blocks: project instructions may
+    // legitimately mention either tag as prose and must remain byte-identical.
+    const withContext = splitTrailingBlock(prompt, WORKING_CONTEXT_TAG);
+    const withoutContext = withContext?.prefix ?? prompt.trimEnd();
+    const legacy = splitTrailingBlock(withoutContext, 'available-skills');
+    const base = legacy?.prefix ?? withoutContext;
     return base === '' ? undefined : [new TextBlock(base), new TextBlock(fragment)];
   }
   if (!Array.isArray(prompt)) return undefined;
@@ -113,25 +116,46 @@ function parseLegacyCachedPrompt(prompt: SystemPrompt): PromptParts | undefined 
   if (!Array.isArray(prompt) || prompt.length !== 2) return undefined;
   const [text, cachePoint] = prompt;
   if (!(text instanceof TextBlock) || !(cachePoint instanceof CachePointBlock)) return undefined;
-  const catalogue = extractLegacyCatalogue(text.text);
-  if (catalogue === undefined) return undefined;
-  const withoutCatalogue = text.text.replace(catalogue, '').trimEnd();
-  const working = extractWorkingContext(withoutCatalogue);
-  const base = stripWorkingContextText(withoutCatalogue);
-  if (base === '' || working === undefined) return undefined;
+  const withContext = splitTrailingBlock(text.text, WORKING_CONTEXT_TAG);
+  if (withContext === undefined) return undefined;
+  const legacy = splitTrailingBlock(withContext.prefix, 'available-skills');
+  if (legacy === undefined || legacy.prefix === '') return undefined;
   return {
-    base,
+    base: legacy.prefix,
     // The legacy catalogue used Darwin's old XML shape and has no official
     // lastInjectedXml state. Drop it so official AgentSkills injects exactly one
     // current catalogue on the first resumed invocation.
     catalogue: undefined,
-    workingContext: new TextBlock(working),
+    workingContext: new TextBlock(withContext.block),
     cachePoint,
   };
 }
 
-function extractLegacyCatalogue(text: string): string | undefined {
-  return text.match(/\n*<available-skills>[\s\S]*?<\/available-skills>/)?.[0];
+interface TrailingBlock {
+  /** Prefix with only the separator newlines before the block removed. */
+  prefix: string;
+  /** Exact standalone block text, without separator newlines. */
+  block: string;
+}
+
+/**
+ * Splits only a whole block at the end of a string. Searching backward from the
+ * exact closing tag prevents an earlier literal opening-tag mention in project
+ * instructions from becoming the migration boundary.
+ */
+function splitTrailingBlock(text: string, tag: string): TrailingBlock | undefined {
+  const trimmed = text.trimEnd();
+  const close = `</${tag}>`;
+  if (!trimmed.endsWith(close)) return undefined;
+  const open = `<${tag}>`;
+  const start = trimmed.lastIndexOf(open, trimmed.length - close.length);
+  if (start === -1) return undefined;
+  const before = trimmed.slice(0, start);
+  if (before !== '' && !before.endsWith('\n\n')) return undefined;
+  return {
+    prefix: before.replace(/\n+$/, ''),
+    block: trimmed.slice(start),
+  };
 }
 
 interface PromptParts {
@@ -158,8 +182,4 @@ function extractWorkingContext(text: string): string | undefined {
 function stripWorkingContextText(text: string): string {
   const block = new RegExp(`\\n*<${WORKING_CONTEXT_TAG}>[\\s\\S]*?</${WORKING_CONTEXT_TAG}>`, 'g');
   return text.replace(block, '').trimEnd();
-}
-
-function stripLegacyCatalogues(text: string): string {
-  return text.replace(/\n*<available-skills>[\s\S]*?<\/available-skills>/g, '').trimEnd();
 }

@@ -128,26 +128,40 @@ async function promptAndResume(): Promise<void> {
 }
 
 
-async function legacyUncachedResume(): Promise<void> {
-  header('official AgentSkills — legacy uncached string resume migration');
-  const root = await mkdtemp(path.join(os.tmpdir(), 'darwin-agent-skills-legacy-'));
+const LEGACY_PROJECT_RULES = [
+  '<project-instructions source="AGENTS.md">',
+  'Keep this entire rule block byte-identical.',
+  'The old architecture documented the literal <available-skills> tag here.',
+  'Keep this rule after the literal tag too.',
+  '</project-instructions>',
+].join('\n');
+
+async function legacyResume(cached: boolean): Promise<void> {
+  const shape = cached ? 'cached' : 'uncached';
+  header(`official AgentSkills — legacy ${shape} resume migration`);
+  const root = await mkdtemp(path.join(os.tmpdir(), `darwin-agent-skills-legacy-${shape}-`));
   const storage = new LocalFileStorage(root);
-  const sessionId = 'legacy-uncached';
-  const agentId = 'darwin-skills-legacy';
+  const sessionId = `legacy-${shape}`;
+  const agentId = `darwin-skills-legacy-${shape}`;
+  const legacyPrompt = [
+    'BASE',
+    LEGACY_PROJECT_RULES,
+    '<available-skills>\n  <skill name="stale">old</skill>\n</available-skills>',
+    '<working-context>stale-context</working-context>',
+  ].join('\n\n');
   const legacy = new Agent({
     id: agentId,
     model: new CaptureModel(),
     sessionManager: new SessionManager({ sessionId, storage, saveLatestOn: 'invocation' }),
-    systemPrompt:
-      'BASE\n\n<project-instructions>RULES</project-instructions>\n\n' +
-      '<available-skills>\n  <skill name="stale">old</skill>\n</available-skills>\n\n' +
-      '<working-context>stale-context</working-context>',
+    systemPrompt: cached
+      ? [new TextBlock(legacyPrompt), new CachePointBlock({ cacheType: 'default' })]
+      : legacyPrompt,
     printer: false,
   });
 
   try {
     await legacy.initialize();
-    await legacy.invoke('save legacy string');
+    await legacy.invoke(`save legacy ${shape}`);
 
     const pluginRoot = await mkdtemp(path.join(os.tmpdir(), 'darwin-agent-skills-current-'));
     const plugin = await pluginFrom(
@@ -166,14 +180,17 @@ async function legacyUncachedResume(): Promise<void> {
       });
       await resumed.initialize();
       installOrdering(resumed);
-      assert('legacy string accepts current working context', applyWorkingContext(resumed, '<working-context>current-context</working-context>'));
-      await resumed.invoke('resume legacy string');
+      assert(`${shape}: legacy prompt accepts current working context`, applyWorkingContext(resumed, '<working-context>current-context</working-context>'));
+      if (cached) assert(`${shape}: final cache point is re-placed`, applySystemPromptCachePoint(resumed, CACHE_PLAN));
+      await resumed.invoke(`resume legacy ${shape}`);
       const prompt = model.calls[0]?.systemPrompt;
       const blocks = Array.isArray(prompt) ? prompt : [];
       const text = promptText(prompt);
-      assert('legacy Darwin catalogue is removed', !text.includes('<available-skills>') && !text.includes('name="stale"'));
-      assert('one current official catalogue remains', blocks.filter((block) => block instanceof TextBlock && block.text.trim().startsWith('<available_skills>')).length === 1);
-      assert('current official catalogue names the current skill', text.includes('<name>current-skill</name>'));
+      assert(`${shape}: full base/project bytes survive exactly`, blocks[0] instanceof TextBlock && blocks[0].text === `BASE\n\n${LEGACY_PROJECT_RULES}`);
+      assert(`${shape}: stale Darwin catalogue is removed`, !text.includes('name="stale"') && !text.includes('<skill name="stale">'));
+      assert(`${shape}: literal tag mention inside project rules survives`, text.includes('literal <available-skills> tag here'));
+      assert(`${shape}: one current official catalogue remains`, blocks.filter((block) => block instanceof TextBlock && block.text.trim().startsWith('<available_skills>')).length === 1);
+      assert(`${shape}: current official catalogue names the current skill`, text.includes('<name>current-skill</name>'));
     } finally {
       await rm(pluginRoot, { recursive: true, force: true });
     }
@@ -189,7 +206,7 @@ async function activationAndBounds(): Promise<void> {
   await mkdir(path.join(skillDir, 'references'), { recursive: true });
   await writeFile(path.join(skillDir, 'SKILL.md'), '---\nname: bounded-skill\ndescription: Bound it.\n---\nOFFICIAL BODY\n');
 
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 25; index += 1) {
     await writeFile(path.join(skillDir, 'references', `${index}.md`), `${index}\n`);
   }
 
@@ -197,7 +214,7 @@ async function activationAndBounds(): Promise<void> {
   await mkdir(path.join(project, '.darwin', 'skills', 'bounded-skill'), { recursive: true });
   await writeFile(path.join(project, '.darwin', 'skills', 'bounded-skill', 'SKILL.md'), await readFile(path.join(skillDir, 'SKILL.md')));
   await mkdir(path.join(project, '.darwin', 'skills', 'bounded-skill', 'references'), { recursive: true });
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 25; index += 1) {
     await writeFile(path.join(project, '.darwin', 'skills', 'bounded-skill', 'references', `${index}.md`), `${index}\n`);
   }
 
@@ -219,7 +236,16 @@ async function activationAndBounds(): Promise<void> {
     assert('official resource truncation is explicit', loaded.instructions?.includes('... (truncated at 2 files)') === true);
     assert('official appState tracks canonical activation', plugin.getActivatedSkills(agent).join(',') === 'bounded-skill');
     const unknown = await compatibility?.invoke({ name: 'nope' }, { ...context, toolUse: { name: 'load_skill', toolUseId: 'compat-2', input: { name: 'nope' } } }) as { error?: string; availableSkills?: string[] };
+    assert('resource safety preserves exact Agent identity for official WeakMap state', plugin.getActivatedSkills(agent).join(',') === 'bounded-skill');
+
     assert('unknown skill remains recoverable and lists names', unknown.error?.includes('nope') === true && unknown.availableSkills?.includes('bounded-skill') === true);
+    const defaultPlugin = await SkillsPlugin.load(project);
+    const defaultAgent = new Agent({ model: new CaptureModel(), plugins: [defaultPlugin], printer: false });
+    await defaultAgent.initialize();
+    const defaultInstructions = await defaultPlugin.activate(defaultPlugin.find('bounded-skill')!);
+    assert('the production default lists no more than 20 resource files', (defaultInstructions.match(/^  references\//gm) ?? []).length === 20);
+    assert('the production default emits the official 20-file truncation marker', defaultInstructions.includes('... (truncated at 20 files)'));
+
     assert('production resource cap is explicit and finite', MAX_SKILL_RESOURCE_FILES === 20);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -284,7 +310,8 @@ async function pluginFrom(skills: Skill[], requestedRoot?: string): Promise<Skil
 
 try {
   await promptAndResume();
-  await legacyUncachedResume();
+  await legacyResume(false);
+  await legacyResume(true);
   await activationAndBounds();
   await resourceSafety();
 } finally {
