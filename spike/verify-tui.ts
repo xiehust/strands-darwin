@@ -20,7 +20,7 @@
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion | toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
- *                 tallDraftStreaming
+ *                 tallDraftStreaming | drainPrompt
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -1715,6 +1715,46 @@ function clearCount(raw: string): number {
   return raw.split('\u001b[3J').length - 1;
 }
 
+
+/**
+ * The teardown helper itself: an unanswered permission box must not hang a run.
+ *
+ * `settleTurn` exists because the model occasionally volunteers a call the request
+ * asked it not to make, leaving a box the scenario never answers. That path was
+ * insurance nobody had executed, and insurance nobody has executed is a guess. Here
+ * the prompt is left unanswered *deliberately* — bash is always an execute call, so
+ * in default mode the box is certain — and the assertion is that teardown denies it
+ * and reaches an idle prompt.
+ */
+async function drainPrompt(): Promise<void> {
+  header('TUI — teardown drains a permission prompt nobody answered');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const turnStart = tui.mark();
+    // Redirection, so the gate always stops it: `echo` on its own is allowlisted and
+    // would run straight through without a prompt (see `safePassthrough`).
+    tui.submit('Run the shell command `echo drain > /tmp/darwin-tui/drain.txt` and then say done.');
+    await tui.waitFor('allow?', { timeoutMs: 180_000, from: turnStart, settleMs: 400 });
+    assert('a prompt is up and unanswered', awaitsPermission(tui.frame));
+
+    // Not answered here: this is exactly the state that used to burn the timeout.
+    await settleTurn(tui, 120_000);
+    assert('teardown reached an idle prompt', !awaitsPermission(tui.frame));
+    assert('and the unanswered call was denied, not run',
+      tui.screen.slice(turnStart).includes('⊘'));
+
+    tui.submit('/exit');
+    assert('drain scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -1738,6 +1778,7 @@ const SCENARIOS = {
   longAnswer,
   tallDraft,
   tallDraftStreaming,
+  drainPrompt,
 } as const;
 
 async function main(): Promise<void> {
