@@ -68,8 +68,15 @@ export function refreshKnownPrompt(
   }
   if (!Array.isArray(prompt)) return undefined;
 
-  const parsed = parseLegacyCachedPrompt(prompt) ?? parseKnownPrompt(prompt);
+  const legacy = parseLegacyCachedPrompt(prompt);
+  if (legacy !== undefined) return refreshParsedPrompt(legacy, fragment);
+  if (isAmbiguousLegacyCachedPrompt(prompt)) return undefined;
+  const parsed = parseKnownPrompt(prompt);
   if (parsed === undefined) return undefined;
+  return refreshParsedPrompt(parsed, fragment);
+}
+
+function refreshParsedPrompt(parsed: PromptParts, fragment: string): SystemPrompt {
   return [
     new TextBlock(parsed.base),
     ...(parsed.catalogue === undefined ? [] : [parsed.catalogue]),
@@ -145,6 +152,16 @@ function parseLegacyCachedPrompt(prompt: SystemPrompt): PromptParts | undefined 
     workingContext: new TextBlock(legacy.workingContext),
     cachePoint,
   };
+}
+
+function isAmbiguousLegacyCachedPrompt(prompt: SystemPrompt): boolean {
+  if (!Array.isArray(prompt) || prompt.length !== 2) return false;
+  const [text, cachePoint] = prompt;
+  return (
+    text instanceof TextBlock &&
+    cachePoint instanceof CachePointBlock &&
+    (text.text.includes(LEGACY_SKILLS_PROLOGUE) || text.text.includes(LEGACY_WORKING_PROLOGUE))
+  );
 }
 
 interface LegacyPromptParts {

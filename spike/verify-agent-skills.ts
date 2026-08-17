@@ -234,8 +234,16 @@ async function ambiguousLegacySuffixRefused(): Promise<void> {
   ].join('\n\n');
   const agent = new Agent({ model: new CaptureModel(), systemPrompt: ambiguous, printer: false });
   const before = agent.systemPrompt;
-  assert('ambiguous historical shape is refused', !applyWorkingContext(agent, '<working-context>current</working-context>'));
-  assert('refusal leaves ambiguous prompt unchanged', agent.systemPrompt === before);
+  assert('uncached ambiguous historical shape is refused', !applyWorkingContext(agent, '<working-context>current</working-context>'));
+  assert('uncached refusal leaves prompt identity unchanged', agent.systemPrompt === before);
+
+  const cachedPrompt = [new TextBlock(ambiguous), new CachePointBlock({ cacheType: 'default' })];
+  const cached = new Agent({ model: new CaptureModel(), systemPrompt: cachedPrompt, printer: false });
+  const cachedBefore = cached.systemPrompt;
+  const cachedJson = JSON.stringify(cachedBefore);
+  assert('cached ambiguous historical shape is refused', !applyWorkingContext(cached, '<working-context>current</working-context>'));
+  assert('cached refusal leaves prompt identity unchanged', cached.systemPrompt === cachedBefore);
+  assert('cached refusal leaves prompt content unchanged', JSON.stringify(cached.systemPrompt) === cachedJson);
 }
 
 async function activationAndBounds(): Promise<void> {

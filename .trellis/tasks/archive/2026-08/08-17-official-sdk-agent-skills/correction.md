@@ -57,4 +57,6 @@ migration now requires the exact historical skills and working-context prologues
 adjacency and trailing closes; ambiguous suffixes are refused unchanged. Cached and uncached real
 SessionManager tests include literal opening tags in project instructions, skill descriptions and
 working-context filenames, while proving exact base/project preservation and one current
-catalogue/context.
+catalogue/context. The final Host probe found cached ambiguity still fell through to the generic
+known-block parser; cached monolithic legacy-shaped arrays now receive the same prologue check and
+are refused with object identity and content unchanged.
