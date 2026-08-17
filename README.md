@@ -15,16 +15,52 @@ baseline exists so there is always a fixed point to measure that evolution again
 
 ### How darwin develops darwin
 
-A human remains the developer of record: they state the requirement, approve the plan, resolve
-product or permission decisions, and independently accept the result. The implementation itself
-is written by the current darwin running in this repository; once accepted and committed, that
-revision becomes the darwin used to write the next one.
+A human remains the developer of record: they set product and safety boundaries, approve plans,
+resolve decisions the repository cannot answer, and independently accept the result. The
+implementation itself is written by the current darwin running in this repository; once accepted
+and committed, that revision becomes the darwin used to write the next one.
 
-The full story — how the control loop evolved from scripted `dev-repl` input to the built-in
-`/developer` Host-supervisor workflow, the capability milestones since the v0.0.1 baseline, and
-a record of every supervised iteration batch — lives in
-**[docs/iteration-log.md](docs/iteration-log.md)**. Every `/developer` run appends its batch
-record there.
+The built-in [`self-evolution-research`](#built-in-self-evolution-research) workflow adds the
+selection loop in front of the [`developer`](#built-in-developer-supervisor) implementation loop.
+It first advances unfinished work in the persistent research backlog. Only when that queue is
+empty does it make a **weighted random draw** for the next research path, before reading any source:
+50% comparable-product research, 20% TUI self-review, 15% open-ended improvement, 10% unused
+Strands SDK capability, and 5% logging and observability.
+
+The random draw is load-bearing. Without it, a model tends to keep selecting familiar,
+easy-to-articulate improvements and leaves less obvious weaknesses unexamined. The first draw is
+binding: it runs once, is never re-rolled because its result looks uninteresting, and is copied
+verbatim into the dated research report. A user may explicitly choose a path, but the report marks
+that as `override (user-directed)` rather than presenting it as chance. The script uses a uniform
+cryptographic integer draw over exact half-weight units and prints the raw draw beside the weights,
+so path selection is diverse and auditable without offering a seed that could be shopped for a
+preferred outcome.
+
+Darwin then inspects its current behavior and architecture through the selected lens, compares the
+available evidence, and proposes scored, non-duplicate improvement directions. Every qualifying
+direction is handed to `developer` separately for planning, implementation, and independent Host
+acceptance, with each accepted commit becoming the Darwin revision used for the next direction:
+
+```text
+unfinished backlog, or one weighted random research-path draw
+  → evidence-backed research or self-review
+  → scored improvement backlog
+  → developer-supervised implementation
+  → independent acceptance and commit
+  → the new Darwin researches and builds the next improvement
+```
+
+That closes the self-improvement loop instead of merely letting Darwin implement requirements
+chosen elsewhere: Darwin can discover opportunities, rank them, build them through its existing
+supervision boundary, verify them, and continue from the improved revision. It is deliberately
+not unbounded autonomy—failed acceptance, a falsified premise, a dirty starting point, or a product
+or safety decision only the human can make stops the batch and leaves the reason on disk.
+
+The durable evidence is split by purpose: [`docs/research/backlog_index.md`](docs/research/backlog_index.md)
+and the dated reports under [`docs/research/`](docs/research/) record selection and rationale;
+**[docs/iteration-log.md](docs/iteration-log.md)** records the capability milestones and every
+supervised implementation batch. Every `/developer` run appends its child session, accepted
+commit, and Host-rerun checks there.
 
 ```
 darwin
@@ -50,6 +86,17 @@ agent
 └─
   allow? y / n (esc denies)
 ```
+
+## Architecture
+
+Detailed architecture decisions live under [`docs/architecture/`](docs/architecture/), with one
+focused Markdown document per subsystem. This section is the index: future architecture documents
+belong in that directory and should be linked here rather than scattered through unrelated README
+sections.
+
+- [Sub-agents](docs/architecture/sub-agents.md) — definition discovery, runtime assembly, context
+  isolation, parallel dispatch, shared permissions, observability, cancellation, and deliberate
+  concurrency boundaries.
 
 ## Requirements
 
@@ -781,14 +828,17 @@ skipped and reported with the other skill problems.
 existing directions before considering new peer-product research. Unfinished `in-progress`
 work comes first, then ranked `not-started` work; either suppresses fresh research.
 
-When the backlog has no unfinished work, the skill first rolls its research path with a
-bundled script — 50% the comparable-product analysis it has always done, and 12.5% each for
-self-review of TUI polish, logging and observability, Strands SDK capability darwin has not
-adopted, or anything else worth improving. The roll exists because a model choosing its own
-research direction keeps choosing the familiar one, so darwin's own rough edges were never
-anybody's assignment. It is rolled once, before any source is read, and its verbatim output goes
-into the report; a run that was *told* which path to take records `path-source: override` and
-cannot present that as chance.
+When the backlog has no unfinished work, the skill rolls one research path before reading any
+source: 50% comparable-product analysis, 20% TUI self-review, 15% open-ended improvement, 10%
+unused Strands SDK capability, and 5% logging and observability. The weighted randomness is what
+forces unfamiliar but potentially valuable areas to receive attention instead of letting the model
+choose the same comfortable category on every run.
+
+The first draw is binding and auditable. It uses exact half-weight units, is rolled once, is never
+re-rolled because the outcome seems unproductive, and is copied verbatim into the report with its
+raw draw and weight table. `--path <id>` exists only for an explicit user direction; that record
+says `path-source: override (user-directed)` and cannot be presented as chance. There is no seed,
+because a reproducible draw would also make it possible to shop for a preferred result.
 
 On the peer path it compares sourced evidence from Claude Code, Codex, DeepSeek harness,
 PenguinHarness, and other relevant products with Darwin's current code and architecture; on a
@@ -800,20 +850,25 @@ the backlog. Those directions form one **batch**, and a score gate
 below it out of the queue.
 
 It then loads the existing `developer` skill and works the batch iteratively: one direction at a
-time, each delegated to the Darwin revision the previous one produced, continuing without
-stopping until the batch is exhausted or a recorded halt condition fires — repeated acceptance
-failure, a falsified premise, a decision only the user can make, an unverifiable starting point,
-or nothing left worth building. A direction becomes `done` only after independent acceptance;
-blocked work stays `in-progress`, and `abandoned` requires an explicit recorded reason or the
-gate. The committed `docs/research/research_template.md` defines the report and source-citation
-shape.
+time, each in a fresh child session and delegated to the Darwin revision the previous direction
+produced. Before each handoff the tree and baseline checks must be clean; after each child, the Host
+independently inspects and verifies the result before accepting its commit. The loop continues until
+the batch is exhausted or a recorded halt condition fires — repeated acceptance failure, a
+falsified premise, a decision only the user can make, an unverifiable starting point, or nothing
+left worth building. A direction becomes `done` only after independent acceptance; blocked work
+stays `in-progress`, and `abandoned` requires an explicit recorded reason or the score gate. This
+research → developer → acceptance → next-revision cycle is Darwin's self-evolution mechanism while
+preserving the human decision boundary. The committed `docs/research/research_template.md` defines
+the report and source-citation shape.
 
 ## Subagents
 
 The main agent has a `subagent` tool for delegating a self-contained task to a fresh child
-agent. Child work has its own conversation: reasoning, intermediate messages and tool calls
-stay out of the main transcript, and only the final report comes back as the tool result. The
-built-in `general` agent is always available and is suitable for broad code searches,
+agent. Child work has its own conversation: intermediate messages and tool calls stay out of the
+main transcript, and the child's rendered terminal result comes back as the tool result. The
+current SDK rendering can include child reasoning in that result; the exact boundary and its
+limitations are documented in the [sub-agent architecture](docs/architecture/sub-agents.md).
+The built-in `general` agent is always available and is suitable for broad code searches,
 independent implementation tasks and verification.
 
 Add specialists as direct Markdown files under `.darwin/agents/`:
