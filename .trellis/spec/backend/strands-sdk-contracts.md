@@ -49,6 +49,25 @@ list, or arbitrary per-invocation objects onto disk. Serialize events that way; 
 field-by-field projection has to be re-audited on every SDK upgrade, and gets this wrong the
 first time an event gains a field.
 
+### Contract: the assembled `contentBlockEvent` is built from the deltas the model just yielded
+
+`Model.streamAggregated` (`models/model.js`, measured on 1.12.0) is implemented in the SDK's
+**base** class: it yields each `ModelStreamEvent` a subclass's `stream()` produces and accumulates
+the finished `ContentBlock` from those same events (`accumulatedText` for `textDelta`, a
+`CitationAccumulator` for citations). `Agent` then wraps whatever comes out as either
+`ModelStreamUpdateEvent` or `ContentBlockEvent` (`agent/agent.js`).
+
+Two things follow, and darwin depends on both:
+
+- The authoritative text block **cannot disagree** with the concatenated text deltas for any model
+  that implements `stream()` — including every offline test model. Code that reconciles the two
+  (`src/tui/turn-state.ts`, which commits finished lines to `<Static>` before the block closes)
+  therefore has a branch that no fake provider can reach: exercise it at the reducer with stated
+  events, not by trying to build a model that lies.
+- What *can* still differ is the `trim()` a consumer applies on close, citation text the deltas
+  never carried, and a model that overrides `streamAggregated` itself — which is why that branch
+  exists at all rather than being deleted as unreachable.
+
 ### Contract: `toJSON()` gives the *wire* shape, which is not the shape a reducer reads
 
 Measured on 1.12.0, and the trap in this area:
