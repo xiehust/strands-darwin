@@ -525,3 +525,35 @@ cacheWrite=1,653,107`.
 | 2026-08-17 | `06ef164` | Enforce symlink and outside-root resource safety at official traversal time, including post-preflight swaps |
 | 2026-08-17 | `16cee9a` | Recognize exact historical prompt boundaries and refuse ambiguous legacy suffixes |
 | 2026-08-17 | `d5b0d68` | Refuse cached legacy ambiguity before the generic known-block parser can retain stale content |
+
+### Batch — `/clear`: leave a session without losing it (2026-08-17)
+
+One managed child task in child session `session-20260817-152525893` (`bg-11f24340`, exit 0), run
+`--yolo --context-offload` with no model-call ceiling. The user fixed both product decisions up
+front: `/clear` does reset the visible screen, and the session being left stays fully on disk and
+resumable by id. No correction turn was needed — Host acceptance passed on the first pass.
+
+The accepted shape builds a *successor* `AgentRuntime` through the same `create()` factory rather
+than swapping a `SessionManager`: SDK session identity is fixed at construction (snapshot hooks are
+registered in `initialize()` with no removal path), so a swap would let the retired manager overwrite
+the previous session's `snapshot_latest.json` with the cleared conversation — destroying the one
+thing the command exists to protect. Process-scoped resources (live `AppConfig`, connected MCP
+clients, the background-job manager) are handed over; everything session-scoped is rebuilt, which is
+why the header, `/usage`, `/context` and `/trajectory` cannot report the old session's numbers
+afterwards. The resume pointer deliberately does not move: an empty session has no snapshot, so the
+successor claims it on its first finished turn. The one-shot `clearTerminal` is paired with a
+`<Static>` remount, without which Ink replays the cleared transcript from `fullStaticOutput` at the
+next whole-screen redraw.
+
+Host acceptance independently inspected the full commit diff and re-ran: `pnpm typecheck` (exit 0);
+`pnpm tsx spike/verify-clear-session.ts` (33 passed, 0 failed); `pnpm tsx spike/verify-tui.ts clear`
+(19 passed, 0 failed, no model call); `pnpm tsx spike/verify-tui.ts completion` (28 passed, all ten
+built-ins listed); and `pnpm test` (exit 0, 1846 assertions, 0 failed, new suite registered).
+Working tree clean. No live, network or provider call was made during Host acceptance.
+
+Token spend, single managed task: `input=402 output=105,181 cacheRead=33,817,168 cacheWrite=285,224`
+— also the batch aggregate.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-17 | `d4a32d1` | Add `/clear`: start a new session mid-run, leaving the previous one saved and resumable |
