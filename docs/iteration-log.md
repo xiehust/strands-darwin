@@ -424,3 +424,52 @@ Host acceptance first exposed a real pty race: terminals may deliver `\rslash-de
 |---|---|---|
 | 2026-08-16 | `b11c281` | Keep the streaming prompt visibly editable while retaining the no-queue busy guard and permission/compaction ownership |
 | 2026-08-16 | `81e5897` | Handle leading batched Enter so continuation syntax remains correct under real pty event coalescing |
+
+### Batch 13 — structured headless output (2026-08-17)
+
+SER-011 runs in child session `session-20260817-011454108`. The Host's first planning launch,
+`bg-5927f1f9-1bdf-47b7-8bc0-11ca426a87a5`, failed deterministically before any session, model call
+or usage record because it passed an extra `--`. Planning then succeeded in
+`bg-1469d76f-3003-4935-8e70-2b4dbbe7c790`; implementation and the feature commit ran in
+`bg-47edad5c-778c-41b0-b263-efa8c5f3e12d`; the Host's acceptance-driven path correction ran in
+`bg-62b735bb-87de-4986-b287-67322e70c6f8`. Repository work is tracked in
+`08-17-structured-headless-output`.
+
+The delivered `--output-format json|stream-json` protocols are explicit version-1 projections over
+the existing one-shot runtime. Final JSON writes one terminal document; JSONL emits monotonic
+session/run/turn, completed post-redaction assistant-message, permission, tool and diagnostic
+records before one authoritative terminal result. Durable success still means the turn, strict
+runtime cleanup and resume-pointer write all succeeded. Unknown usage stays absent rather than
+becoming zero. The projector never serializes raw SDK events, model reasoning, signatures,
+redacted content, tool payloads, metrics, traces or live agent state. V1 deliberately does not
+stream token deltas: provider guardrails can expose blocked output before aggregation, so public
+assistant text starts at the SDK's completed post-redaction message boundary. The established text
+stdout/stderr protocol remains the byte-compatible default.
+
+The implementation worker ran exactly two authorized low-token live Bedrock calls in disposable
+HOME/project state with Haiku 4.5, low effort, 128 max tokens and prompt caching disabled. JSON
+exited 0 with empty stderr and one sequence-1 success containing `OK`; stream-json exited 0 with
+empty stderr and five parseable records, sequences 1–5, one session id and one terminal success
+containing `STREAM-OK`. The Host confirmed those commands and result fields in the append-only child
+trajectory rather than accepting the summary alone.
+
+Host acceptance read the implementation diff and found one blocker before accepting it:
+`process.cwd()` had moved from `src/cli.ts` into the extracted runner, violating the repository's
+explicit path boundary. The child corrected this in the same session: the entry point now passes an
+explicit `projectRoot`, the runner forwards exactly that value, and the fixture rejects a mismatch.
+The Host then independently re-ran `pnpm typecheck`; all 30 fast suites; focused headless (68
+passed), structured headless (8), trajectory (257) and max-token recovery (20); `pnpm build`;
+Trellis validation (only the known large SDK-spec injection warnings); `git diff --check`;
+`git show --check` for both commits; the explicit cwd-location check; Host-owned-path checks; and
+clean-tree verification. All passed.
+
+Token spend: planning `input=66 output=86,605 cacheRead=5,691,673 cacheWrite=335,535`;
+implementation `input=338 output=53,844 cacheRead=66,285,504 cacheWrite=476,107`; correction
+`input=46 output=4,767 cacheRead=11,374,021 cacheWrite=45,234`; aggregate `input=450
+output=145,216 cacheRead=83,351,198 cacheWrite=856,876`. The failed first launch emitted no usage
+line and spent no recorded model tokens.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-17 | `58a20b5` | Add versioned final JSON and safe live JSONL one-shot output while preserving the text protocol and durability gates |
+| 2026-08-17 | `ebd4796` | Keep project-root resolution in the CLI entry and pin explicit propagation to runtime construction |
