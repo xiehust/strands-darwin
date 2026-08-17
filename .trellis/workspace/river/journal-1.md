@@ -72,3 +72,25 @@ Redesigned the permission gate into three approval modes. default: whitelist-bas
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: Bound the live frame so a long streamed answer cannot flicker
+
+**Date**: 2026-08-17
+**Task**: Bound the live frame so a long streamed answer cannot flicker
+**Branch**: `main`
+
+### Summary
+
+A long streaming answer made the TUI strobe: Ink stops repainting in place once the live frame exceeds the viewport and instead writes a whole-screen clear (scrollback included) plus the entire transcript per render, bypassing its frame-rate cap. Measured with a new pty probe (43 clears for a 60-line answer in 24 rows, 0 when bounded). The in-flight answer is now the newest rows that fit, wrapped by darwin so the height is exact and drawn one truncated Text per row, with a notice for the rows that scrolled out; the assembled block still enters Static history whole. The row budget is measured from the header and the box below rather than assumed, which also required composing the prompt cursor position explicitly since box metrics are parent-relative. Verified by verify-live-text (28 pure assertions), a new verify-tui longAnswer scenario asserting no ESC[3J in raw pty bytes (and proven able to fail), the full 182-assertion TUI suite, and pnpm test.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `509de38` | (see git log) |
+| `17446db` | (see git log) |
+
+### Status
+
+[OK] **Completed**
