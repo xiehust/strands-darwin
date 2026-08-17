@@ -1,0 +1,456 @@
+/**
+ * Pure contracts for the frame's row budget. No terminal, no model.
+ *
+ * Round 1 proved the arithmetic for one participant (`verify-live-text.ts`): the
+ * block drawn for still-arriving text is never taller than the rows it was given.
+ * This suite proves it for *all* of them at once, which is the property that
+ * actually keeps Ink out of its `clearTerminal` branch — three individually
+ * bounded boxes still overflow together.
+ *
+ * The numbers being defended are in
+ * `.trellis/tasks/08-17-live-frame-chrome/research/probe-results.md`.
+ */
+import { renderToString } from 'ink';
+import React from 'react';
+
+import { InputBox } from '../src/tui/InputBox.js';
+import { PermissionPrompt } from '../src/tui/PermissionPrompt.js';
+import { ActiveToolCalls } from '../src/tui/ToolCallPanel.js';
+import { layoutEditor } from '../src/tui/prompt-editor.js';
+import {
+  PERMISSION_BOX_FIXED_ROWS,
+  SPARE_FRAME_ROW,
+  draftWindow,
+  frameBudget,
+  hiddenDetailNotice,
+  hiddenDraftNotice,
+  hiddenPermissionNotice,
+  hiddenToolsNotice,
+  planPermissionBox,
+  planPromptBox,
+  planToolPanel,
+  type FrameClaims,
+} from '../src/tui/frame-budget.js';
+import { assert, header, report } from './shared.js';
+
+/** Rows the frame really draws for a set of grants. */
+function frameHeight(claims: FrameClaims): number {
+  const grants = frameBudget(claims);
+  return claims.headerRows + claims.thinkingRows + grants.prompt + grants.tools + grants.live;
+}
+
+header('frame budget — the invariant, over every shape that reaches it');
+
+// The property: whatever anyone asks for, the frame stays strictly shorter than the
+// viewport. `rows - SPARE_FRAME_ROW` is the limit because Ink calls a frame
+// fullscreen at `outputHeight >= rows` and clears the screen when it shrinks again.
+{
+  let worst = { over: 0, at: '' };
+  for (const rows of [10, 20, 24, 40, 50, 80]) {
+    for (const headerRows of [3, 6, 12, 14]) {
+      for (const thinkingRows of [0, 1]) {
+        for (const promptWanted of [1, 2, 13, 41, 200]) {
+          for (const toolsWanted of [0, 1, 5, 41, 102]) {
+            for (const liveWanted of [0, 4, 12, 122]) {
+              const claims: FrameClaims = {
+                rows,
+                headerRows,
+                thinkingRows,
+                prompt: { wanted: promptWanted, floor: 1 },
+                tools: { wanted: toolsWanted, floor: toolsWanted > 0 ? 1 : 0 },
+                live: { wanted: liveWanted, floor: 0 },
+              };
+              const height = frameHeight(claims);
+              const limit = rows - SPARE_FRAME_ROW;
+              // The header is the one participant this module cannot bound, so a
+              // header taller than the terminal is excluded from the property (and
+              // is exactly what `degraded` reports).
+              if (headerRows + thinkingRows > limit) continue;
+              if (height - limit > worst.over) {
+                worst = { over: height - limit, at: `${rows}x header ${headerRows} prompt ${promptWanted} tools ${toolsWanted} live ${liveWanted}` };
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  assert(`the frame never reaches the viewport height (worst overshoot ${worst.over}${worst.at === '' ? '' : ` at ${worst.at}`})`,
+    worst.over === 0);
+}
+
+header('frame budget — who yields, and who never does');
+
+const streaming: FrameClaims = {
+  rows: 24,
+  headerRows: 12,
+  thinkingRows: 0,
+  // The measured case: a 200-row pasted draft while an answer streams.
+  prompt: { wanted: 200, floor: 1 },
+  tools: { wanted: 0, floor: 0 },
+  live: { wanted: 122, floor: 0 },
+};
+const whileStreaming = frameBudget(streaming);
+assert('a 200-row draft is windowed rather than allowed to fill the frame',
+  whileStreaming.prompt < 200 && whileStreaming.prompt > 0);
+assert('the streaming answer still gets rows when the draft is huge', whileStreaming.live > 0);
+assert('the answer yields first: the draft is served before it',
+  whileStreaming.prompt >= whileStreaming.live);
+
+const idle = frameBudget({ ...streaming, live: { wanted: 0, floor: 0 } });
+assert('with nothing streaming the draft may use the whole screen',
+  idle.prompt === streaming.rows - SPARE_FRAME_ROW - streaming.headerRows);
+assert('this is the case that used to clear the screen at 13 rows', idle.prompt >= 11);
+
+const withTools = frameBudget({
+  ...streaming,
+  prompt: { wanted: 1, floor: 1 },
+  tools: { wanted: 41, floor: 1 },
+});
+assert('an over-tall tool panel is cut, not drawn', withTools.tools < 41);
+assert('a running tool keeps at least its collapsed row', withTools.tools >= 1);
+assert('expanded tool detail yields before the draft',
+  withTools.prompt >= 1 && withTools.tools < 41);
+
+// The permission box is modal — the loop is blocked on it — so it is not asked to
+// share with the call it is asking about. Getting this wrong cost the box its last
+// detail row, which is where `permissionDetail` puts `… truncated N code points`:
+// the line stating that the value shown is not the whole value.
+{
+  const claims: FrameClaims = {
+    rows: 50,
+    headerRows: 7,
+    thinkingRows: 0,
+    prompt: { wanted: 25, floor: PERMISSION_BOX_FIXED_ROWS, modal: true },
+    tools: { wanted: 1, floor: 1 },
+    live: { wanted: 9, floor: 0 },
+  };
+  assert('a modal permission box gets every row it asks for while a call runs',
+    frameBudget(claims).prompt === 25);
+  assert('and the same claim without `modal` is halved — the bug this guards',
+    frameBudget({ ...claims, prompt: { wanted: 25, floor: PERMISSION_BOX_FIXED_ROWS } }).prompt === 21);
+  assert('a modal box still cannot take rows that do not exist',
+    frameBudget({ ...claims, rows: 20 }).prompt === 12);
+}
+
+header('frame budget — a terminal smaller than its own furniture');
+
+const tiny = frameBudget({
+  rows: 8,
+  headerRows: 12,
+  thinkingRows: 0,
+  prompt: { wanted: 4, floor: 1 },
+  tools: { wanted: 3, floor: 1 },
+  live: { wanted: 9, floor: 0 },
+});
+assert('nothing below a too-tall header is granted a single row',
+  tiny.prompt === 0 && tiny.tools === 0 && tiny.live === 0);
+assert('and that is reported rather than pretended away', tiny.degraded);
+assert('a frame that fits is not reported as degraded',
+  !frameBudget({ rows: 40, headerRows: 6, thinkingRows: 0, prompt: { wanted: 3, floor: 1 }, tools: { wanted: 0, floor: 0 }, live: { wanted: 4, floor: 0 } }).degraded);
+
+header('draft window — the cursor is always on screen');
+
+{
+  let worstHeight = 0;
+  let cursorLost = '';
+  for (const total of [1, 2, 13, 68, 200]) {
+    for (const maxRows of [1, 2, 3, 6, 11, 24]) {
+      for (const cursorRow of [0, 1, Math.floor(total / 2), total - 2, total - 1]) {
+        if (cursorRow < 0 || cursorRow >= total) continue;
+        const view = draftWindow(total, cursorRow, maxRows);
+        const drawn = view.end - view.start + (view.notice ? 1 : 0);
+        worstHeight = Math.max(worstHeight, drawn - maxRows);
+        if (!(cursorRow >= view.start && cursorRow < view.end)) {
+          cursorLost = `total ${total} cursor ${cursorRow} maxRows ${maxRows}`;
+        }
+        if (view.hiddenAbove + view.hiddenBelow + (view.end - view.start) !== total) {
+          cursorLost = `lost rows: total ${total} cursor ${cursorRow} maxRows ${maxRows}`;
+        }
+      }
+    }
+  }
+  assert('the window plus its notice never exceeds the rows it was given', worstHeight <= 0);
+  assert(`the cursor's row is always inside the window${cursorLost === '' ? '' : ` (${cursorLost})`}`, cursorLost === '');
+}
+
+assert('a draft that fits is shown whole, with nothing hidden',
+  draftWindow(5, 0, 10).end === 5 && draftWindow(5, 0, 10).hiddenAbove === 0 && draftWindow(5, 0, 10).hiddenBelow === 0);
+{
+  const tail = draftWindow(200, 199, 6);
+  assert('typing at the end shows the newest rows', tail.end === 200 && tail.hiddenAbove === 195 && tail.hiddenBelow === 0);
+  const middle = draftWindow(200, 100, 6);
+  assert('moving up scrolls the window to the cursor',
+    middle.start <= 100 && middle.end > 100 && middle.hiddenAbove > 0 && middle.hiddenBelow > 0);
+  assert('one notice counts both directions',
+    hiddenDraftNotice(96, 99) === '… 195 draft rows not shown (96 above, 99 below)');
+  assert('one hidden row is singular', hiddenDraftNotice(1, 0) === '… 1 draft row not shown (1 above)');
+}
+
+header('prompt region — draft, completion menu and hint share one grant');
+
+{
+  let worst = 0;
+  for (const maxRows of [1, 2, 3, 5, 8, 13, 24]) {
+    for (const draftRows of [1, 2, 40]) {
+      for (const completions of [0, 3, 9]) {
+        for (const hasHint of [false, true]) {
+          const plan = planPromptBox({ maxRows, draftRows, completions, moreCompletions: completions === 9, hasHint });
+          const window = draftWindow(draftRows, draftRows - 1, plan.draftRows);
+          const drawn =
+            (window.end - window.start) +
+            (window.notice ? 1 : 0) +
+            (plan.completionItems > 0 ? 2 + plan.completionItems + (plan.completionMore ? 1 : 0) : 0) +
+            (plan.hint ? 2 : 0);
+          worst = Math.max(worst, drawn - maxRows);
+        }
+      }
+    }
+  }
+  assert('everything the prompt region draws fits the rows it was granted', worst <= 0);
+}
+
+assert('a roomy region shows the menu, the hint and the whole draft',
+  (() => {
+    const plan = planPromptBox({ maxRows: 20, draftRows: 3, completions: 9, moreCompletions: true, hasHint: true });
+    return plan.completionItems === 9 && plan.completionMore && plan.hint && plan.draftRows >= 3;
+  })());
+assert('the hint is the first thing dropped',
+  !planPromptBox({ maxRows: 13, draftRows: 1, completions: 9, moreCompletions: true, hasHint: true }).hint);
+assert('a menu with no room for an entry is not drawn at all',
+  planPromptBox({ maxRows: 3, draftRows: 1, completions: 9, moreCompletions: false, hasHint: false }).completionItems === 0);
+assert('a partly shown menu says there is more',
+  planPromptBox({ maxRows: 6, draftRows: 1, completions: 9, moreCompletions: false, hasHint: false }).completionMore);
+assert('the draft keeps its cursor row even with one row to spend',
+  planPromptBox({ maxRows: 1, draftRows: 40, completions: 0, moreCompletions: false, hasHint: false }).draftRows === 1);
+
+header('tool panel — summaries before detail');
+
+{
+  let worst = 0;
+  for (const maxRows of [0, 1, 2, 5, 12, 45]) {
+    for (const count of [0, 1, 3, 10]) {
+      for (const detailRows of [0, 4, 41]) {
+        const tools = Array.from({ length: count }, () => ({ detailRows }));
+        const plan = planToolPanel(tools, maxRows);
+        const drawn =
+          plan.entries.reduce((total, entry) => total + 1 + entry.detailRows + (entry.hiddenDetailRows > 0 ? 1 : 0), 0) +
+          (plan.hiddenTools > 0 ? 1 : 0);
+        worst = Math.max(worst, drawn - maxRows);
+      }
+    }
+  }
+  assert('the panel never draws more rows than it was granted', worst <= 0);
+}
+
+assert('the measured 41-row expanded input is cut and says so',
+  (() => {
+    const plan = planToolPanel([{ detailRows: 41 }], 6);
+    const entry = plan.entries[0];
+    return entry !== undefined && entry.detailRows < 41 && entry.hiddenDetailRows > 0;
+  })());
+assert('everything fitting is shown untouched',
+  planToolPanel([{ detailRows: 3 }], 12).entries[0]?.hiddenDetailRows === 0);
+assert('more calls than rows collapse into one counted line',
+  (() => {
+    const plan = planToolPanel(Array.from({ length: 10 }, () => ({ detailRows: 0 })), 4);
+    return plan.entries.length === 3 && plan.hiddenTools === 7;
+  })());
+assert('the collapsed line names how many calls it stands for',
+  hiddenToolsNotice(7) === '… 7 more tool calls running' && hiddenToolsNotice(1) === '… 1 more tool call running');
+assert('a cut detail names how many rows are missing',
+  hiddenDetailNotice(37) === '… 37 more input rows not shown');
+
+header('permission box — the question never yields');
+
+{
+  let worst = 0;
+  for (const maxRows of [1, 4, 6, 8, 11, 25, 41]) {
+    for (const blocks of [[], [1], [1, 14], [14, 14, 14]]) {
+      const plan = planPermissionBox(blocks, maxRows);
+      // Counted exactly the way `PermissionPrompt` draws it.
+      const drawn = plan.compact
+        ? 1 + (plan.summary ? 1 : 0) + (plan.notice ? 1 : 0)
+        : PERMISSION_BOX_FIXED_ROWS +
+          plan.blocks.reduce((total, block) => total + (block.rows > 0 ? block.rows + 2 : 0), 0) +
+          (plan.notice ? 1 : 0);
+      worst = Math.max(worst, drawn - maxRows);
+    }
+  }
+  assert('the box, including the line about what it hid, fits its grant', worst <= 0);
+}
+
+assert('a 50-row terminal shows every detail untouched — the approve scenario',
+  (() => {
+    const plan = planPermissionBox([1, 14], 41);
+    return plan.blocks.every((block) => block.hiddenRows === 0) && plan.hiddenBlocks === 0 && !plan.compact;
+  })());
+assert('a 24-row terminal cuts detail but keeps the box',
+  (() => {
+    const plan = planPermissionBox([1, 14], 11);
+    return !plan.compact && plan.blocks.some((block) => block.hiddenRows > 0 || block.rows === 0);
+  })());
+assert('below the box\'s fixed cost only the question is drawn',
+  planPermissionBox([1, 14], 5).compact);
+assert('what the box hid is stated, blocks included',
+  hiddenPermissionNotice(12, 1) === '… 12 detail rows in 1 hidden block not shown — the terminal is too short' &&
+  hiddenPermissionNotice(1, 0) === '… 1 detail row not shown — the terminal is too short');
+
+header('rendered height — what Ink actually draws, not what we counted');
+
+/**
+ * Rows Ink lays out for a component at a given width.
+ *
+ * This is the assertion the arithmetic above cannot make on its own: the plans are
+ * exact only if the components draw one row per row they were granted, and the one
+ * thing that would break that silently is Ink's own word wrap disagreeing with
+ * `wrapToRows`. `renderToString` runs the real layout, so a disagreement shows up
+ * here as a height instead of as a cleared screen in front of a user.
+ */
+function renderedRows(element: React.ReactElement, columns: number): number {
+  const output = renderToString(element, { columns });
+  return output === '' ? 0 : output.split('\n').length;
+}
+
+{
+  // The measured case: expanded input of a 300-line file write — 4 bounded logical
+  // lines, 41 terminal rows at 80 columns.
+  const input = {
+    path: '/repo/src/x.ts',
+    content: Array.from({ length: 300 }, (_, index) => `line ${index + 1}`).join('\n'),
+  };
+  const tools = [
+    { id: 't1', name: 'fileEditor', summary: 'fileEditor create: /repo/src/x.ts', startedAt: Date.now(), input },
+  ];
+
+  let worst = 0;
+  for (const columns of [40, 80, 100]) {
+    for (const maxRows of [1, 2, 4, 8, 20, 60]) {
+      const rendered = renderedRows(
+        React.createElement(ActiveToolCalls, { tools, frame: 0, toolDetailsExpanded: true, columns, maxRows }),
+        columns,
+      );
+      worst = Math.max(worst, rendered - maxRows);
+    }
+  }
+  assert('the tool panel Ink draws is never taller than its grant', worst <= 0);
+
+  // Ten concurrent calls, the shape parallel subagents produce.
+  const many = Array.from({ length: 10 }, (_, index) => ({
+    id: `t${index}`,
+    name: 'bash',
+    summary: `bash: sleep ${index}`,
+    startedAt: Date.now(),
+    input: { command: `sleep ${index}` },
+  }));
+  let worstMany = 0;
+  for (const maxRows of [1, 3, 7, 12]) {
+    worstMany = Math.max(
+      worstMany,
+      renderedRows(
+        React.createElement(ActiveToolCalls, { tools: many, frame: 0, toolDetailsExpanded: false, columns: 80, maxRows }),
+        80,
+      ) - maxRows,
+    );
+  }
+  assert('ten concurrent calls fit whatever the panel was granted', worstMany <= 0);
+}
+
+{
+  const long = 'x'.repeat(900);
+  const request = {
+    toolName: 'fileEditor',
+    kind: 'write' as const,
+    summary: `fileEditor str_replace: /tmp/target/${'deep/'.repeat(20)}file.ts`,
+    details: [
+      { label: 'Path', value: '/tmp/target/file.ts' },
+      { label: 'With', value: long },
+      { label: 'Reason', value: Array.from({ length: 30 }, (_, index) => `reason line ${index + 1}`).join('\n') },
+    ],
+    input: {},
+    risk: 'dangerous' as const,
+    riskReason: 'outside the project',
+    source: { kind: 'parent' as const, label: 'parent' },
+    suggestions: [],
+  };
+
+  let worst = 0;
+  for (const columns of [40, 80, 100]) {
+    for (const maxRows of [1, 2, 3, 5, 6, 9, 14, 41]) {
+      const rendered = renderedRows(
+        React.createElement(PermissionPrompt, { request, waiting: 0, columns, maxRows }),
+        columns,
+      );
+      worst = Math.max(worst, rendered - maxRows);
+    }
+  }
+  assert('the permission box Ink draws is never taller than its grant', worst <= 0);
+
+  for (const maxRows of [1, 2, 3, 5]) {
+    const output = renderToString(
+      React.createElement(PermissionPrompt, { request, waiting: 0, columns: 80, maxRows }),
+      { columns: 80 },
+    );
+    assert(`a ${maxRows}-row grant still asks the question`, output.includes('allow?'));
+  }
+}
+
+{
+  const draft = Array.from({ length: 200 }, (_, index) => `pasted line ${index + 1}`).join('\n');
+  let worst = 0;
+  for (const columns of [40, 80]) {
+    for (const maxRows of [1, 2, 3, 6, 11, 24]) {
+      for (const completions of [[], ['tasks', 'usage', 'effort', 'model', 'agents', 'compact', 'exit', 'skill', 'plan', 'extra']]) {
+        for (const hint of [undefined, 'working… /tasks lists jobs · ctrl+c cancels this turn']) {
+          const layout = layoutEditor(draft, columns, { offset: draft.length, affinity: 'upstream' });
+          const rendered = renderedRows(
+            React.createElement(InputBox, {
+              layout,
+              completions,
+              selectedCompletion: 0,
+              editable: true,
+              hint,
+              offset: { top: 0, left: 0 },
+              maxRows,
+            }),
+            columns,
+          );
+          worst = Math.max(worst, rendered - maxRows);
+        }
+      }
+    }
+  }
+  assert('the prompt region Ink draws is never taller than its grant', worst <= 0);
+
+  const layout = layoutEditor(draft, 80, { offset: draft.length, affinity: 'upstream' });
+  const windowed = renderToString(
+    React.createElement(InputBox, {
+      layout,
+      completions: [],
+      selectedCompletion: 0,
+      editable: true,
+      hint: undefined,
+      offset: { top: 0, left: 0 },
+      maxRows: 11,
+    }),
+    { columns: 80 },
+  );
+  assert('a windowed draft says how many rows it is not showing',
+    /… \d+ draft rows not shown/.test(windowed));
+  assert('and shows the newest rows, where the cursor is',
+    windowed.includes('pasted line 200') && !windowed.includes('pasted line 1\n'));
+
+  // The window is a *view*. Submission reads the editor value, and the layout the
+  // view is sliced from still holds every row — so a windowed draft is still sent
+  // whole. (`verify-tui.ts multiline` is the end-to-end half of this: a multi-row
+  // draft submits as one prompt with its newlines intact.)
+  assert('windowing leaves the draft the editor holds untouched',
+    layout.rows.length === 200 && layout.rows.map((row) => row.text).join('\n') === draft);
+  const view = draftWindow(layout.rows.length, 199, 11);
+  assert('the drawn rows are a contiguous slice of the draft, ending at the cursor',
+    view.end === 200 && view.start === 200 - (11 - 1) &&
+    layout.rows.slice(view.start, view.end).map((row) => row.text).join('\n') ===
+      draft.split('\n').slice(view.start).join('\n'));
+}
+
+report();

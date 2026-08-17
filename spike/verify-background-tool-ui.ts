@@ -265,16 +265,22 @@ let ordinaryActive = reduce(initialTurnState, event({
     input: { query: 'needle', nested: { enabled: true } },
   },
 }));
+// Rendered with room to spare: what this asserts is the panel's content, and the
+// bounded case is `verify-frame-budget.ts`'s property.
 const compactActiveRender = renderToString(React.createElement(ActiveToolCalls, {
   tools: ordinaryActive.activeTools,
   frame: 0,
   toolDetailsExpanded: ordinaryActive.toolDetailsExpanded,
+  columns: 80,
+  maxRows: 200,
 }));
 ordinaryActive = turnReducer(ordinaryActive, { type: 'toggleToolDetails' });
 const expandedActiveRender = renderToString(React.createElement(ActiveToolCalls, {
   tools: ordinaryActive.activeTools,
   frame: 0,
   toolDetailsExpanded: ordinaryActive.toolDetailsExpanded,
+  columns: 80,
+  maxRows: 200,
 }));
 assert('an active ordinary tool immediately gains bounded input when expanded',
   !compactActiveRender.includes('Input:') &&

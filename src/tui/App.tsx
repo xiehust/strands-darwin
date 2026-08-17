@@ -33,10 +33,17 @@ import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
-import { InputBox } from './InputBox.js';
-import { MINIMUM_LIVE_BLOCK_ROWS } from './live-text.js';
+import { InputBox, MAX_COMPLETIONS } from './InputBox.js';
+import { LIVE_BLOCK_CHROME_ROWS, wrapToRows } from './live-text.js';
+import {
+  PERMISSION_BOX_FIXED_ROWS,
+  frameBudget,
+  promptBoxWanted,
+  toolInputRows,
+  toolPanelWanted,
+} from './frame-budget.js';
 import { MessageList } from './MessageList.js';
-import { PermissionPrompt } from './PermissionPrompt.js';
+import { PermissionPrompt, permissionBoxClaim } from './PermissionPrompt.js';
 import { ActiveToolCalls } from './ToolCallPanel.js';
 import type { PermissionQueue } from './permission-queue.js';
 import {
@@ -62,11 +69,11 @@ const DOUBLE_INTERRUPT_MS = 2000;
 const SPINNER_INTERVAL_MS = 90;
 
 /**
- * Chrome height assumed before the first layout pass: this project's own header
- * plus a hint line and a one-line draft, rounded up. Guessing high only costs a
- * few rows of the first streamed frame; guessing low costs the scrollback.
+ * Header height assumed before the first layout pass: this project's own header,
+ * rounded up. Guessing high only costs a few rows of the first streamed frame;
+ * guessing low costs the scrollback.
  */
-const ASSUMED_CHROME_ROWS = 14;
+const ASSUMED_HEADER_ROWS = 14;
 
 /** C0 controls except LF and tab, plus DEL: never treated as draft text. */
 const NON_TEXT_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
@@ -113,17 +120,17 @@ export function App({
   const layout = layoutEditor(draft, columns, editor.cursor);
   const preferredColumn = useRef<number | undefined>(undefined);
 
-  // The frame's fixed furniture, measured rather than estimated: the header grows
-  // a line for every degradation it has to report, and the box below it grows with
-  // the draft, the completion menu and the running tool calls. What is left over
-  // is what the streaming answer may use — see `live-text.ts` for what happens to
-  // a live region that outgrows the terminal. Neither measurement depends on the
-  // answer's height, so this cannot oscillate.
+  // The frame's fixed furniture. Only the header is *measured*: its height depends
+  // on nothing below it, so measuring it cannot oscillate. Everything else states
+  // what it wants and `frameBudget` hands out the rows — see `frame-budget.ts` for
+  // why the round-1 arrangement (measure the chrome, give the answer the rest) was
+  // not enough once the chrome turned out to be unbounded too.
   const headerRef = useRef<DOMElement>(null);
   const chromeRef = useRef<DOMElement>(null);
   const header = useBoxMetrics(headerRef);
+  // Still measured, but only for the cursor: `useBoxMetrics` is parent-relative and
+  // `useCursor` is frame-absolute, so `InputBox` needs its parent's offset.
   const chrome = useBoxMetrics(chromeRef);
-  const maxLiveRows = liveRowBudget(rows, header.hasMeasured && chrome.hasMeasured ? header.height + chrome.height : undefined);
 
   const [selectedCompletion, setSelectedCompletion] = useState(0);
   const [frame, setFrame] = useState(0);
@@ -150,6 +157,52 @@ export function App({
     ...runtime.info.commandNames,
     ...runtime.info.skillNames,
   ]);
+
+  // Every participant of the redrawn frame states what it wants; the header is the
+  // only one measured. The grants are what each box is then allowed to draw, and
+  // `frame-budget.ts` owns the priority between them (prompt, tools, answer) as
+  // well as the share ceiling that stops the first from taking everything.
+  const streamingHint = hintForStatus(effectiveStatus);
+  const activeToolClaims = state.activeTools.map((tool) => ({
+    detailRows: state.toolDetailsExpanded ? toolInputRows(tool.input, columns).length : 0,
+  }));
+  const offeredCompletions = Math.min(completions.length, MAX_COMPLETIONS);
+  const liveTextRows = state.liveText === '' ? 0 : wrapToRows(state.liveText, columns).length;
+  const thinkingRows = state.thinking && effectiveStatus === 'streaming' ? 1 : 0;
+
+  const grants = frameBudget({
+    rows,
+    headerRows: header.hasMeasured ? header.height : ASSUMED_HEADER_ROWS,
+    thinkingRows,
+    prompt:
+      pendingPermission === undefined
+        ? {
+            wanted: promptBoxWanted({
+              draftRows: layout.rows.length,
+              completions: offeredCompletions,
+              moreCompletions: completions.length > offeredCompletions,
+              hasHint: streamingHint !== undefined,
+            }),
+            // The row the cursor is on. Everything else in the region can go.
+            floor: 1,
+          }
+        : {
+            wanted: permissionBoxClaim(pendingPermission, permissions.waiting, columns),
+            // The box keeps its heading, summary and decision row while it can:
+            // a question that scrolled off the frame blocks the agent loop.
+            floor: PERMISSION_BOX_FIXED_ROWS,
+            // And it is never asked to share with the call it is asking about: it
+            // is modal, so those rows are not what the answer or the spinner need.
+            modal: true,
+          },
+    tools: {
+      wanted: toolPanelWanted(activeToolClaims),
+      floor: activeToolClaims.length > 0 ? 1 : 0,
+    },
+    // The answer yields first: it is the one participant whose content is already
+    // guaranteed to reach `<Static>` history in full.
+    live: { wanted: liveTextRows === 0 ? 0 : liveTextRows + LIVE_BLOCK_CHROME_ROWS, floor: 0 },
+  });
 
   // Spinner tick, only while a model is actually streaming. `/compact` waits on
   // its own model calls too, but has no per-call tool panel to animate.
@@ -746,7 +799,7 @@ export function App({
         history={state.history}
         liveText={state.liveText}
         columns={columns}
-        maxLiveRows={maxLiveRows}
+        maxLiveRows={grants.live}
       />
 
       <Box ref={chromeRef} flexDirection="column">
@@ -755,10 +808,17 @@ export function App({
           tools={state.activeTools}
           frame={frame}
           toolDetailsExpanded={state.toolDetailsExpanded}
+          columns={columns}
+          maxRows={grants.tools}
         />
 
         {pendingPermission !== undefined ? (
-          <PermissionPrompt request={pendingPermission} waiting={permissions.waiting} />
+          <PermissionPrompt
+            request={pendingPermission}
+            waiting={permissions.waiting}
+            columns={columns}
+            maxRows={grants.prompt}
+          />
         ) : (
           <InputBox
             layout={layout}
@@ -766,13 +826,8 @@ export function App({
             selectedCompletion={selectedCompletion}
             editable={effectiveStatus !== 'compacting'}
             offset={{ top: chrome.top, left: chrome.left }}
-            hint={
-              effectiveStatus === 'streaming'
-                ? 'working… /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn'
-                : effectiveStatus === 'compacting'
-                  ? 'compacting conversation…'
-                  : undefined
-            }
+            maxRows={grants.prompt}
+            hint={streamingHint}
           />
         )}
       </Box>
@@ -780,23 +835,12 @@ export function App({
   );
 }
 
-/**
- * Rows the streaming answer may occupy, given the measured height of the header
- * and the box below it.
- *
- * One row is left spare on purpose: Ink treats a frame as fullscreen at exactly
- * `rows` and clears the whole screen when the next one shrinks below that, so
- * "fits" has to mean *strictly* shorter than the viewport. Before the first
- * layout pass the chrome height is unknown, and a generous guess is the safe
- * one — a first frame that overflows costs the scrollback.
- *
- * The floor is a genuine floor, not a fit: a terminal whose furniture alone
- * fills the screen has no room to give, and clamping here at least keeps the
- * newest lines of the answer visible.
- */
-export function liveRowBudget(rows: number, measuredChrome: number | undefined): number {
-  const chrome = measuredChrome ?? ASSUMED_CHROME_ROWS;
-  return Math.max(MINIMUM_LIVE_BLOCK_ROWS, rows - chrome - 1);
+/** The hint row under the draft, or nothing when the session is idle. */
+function hintForStatus(status: Status): string | undefined {
+  if (status === 'streaming') {
+    return 'working… /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn';
+  }
+  return status === 'compacting' ? 'compacting conversation…' : undefined;
 }
 
 function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Element {

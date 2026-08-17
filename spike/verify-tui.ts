@@ -19,7 +19,8 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion | toolDetails |
- *                 agentsMd | usage | tasks | effort | model | plan | longAnswer
+ *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
+ *                 tallDraftStreaming
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -1485,6 +1486,145 @@ async function longAnswer(): Promise<void> {
   }
 }
 
+
+/**
+ * A draft taller than the terminal is the other half of the live-frame contract.
+ *
+ * Measured before the fix (`.trellis/tasks/08-17-live-frame-chrome/research/`): in
+ * an 80x24 terminal the first `ESC[3J` appeared at a **13-row draft** and every
+ * further row cost 2 more — with no model streaming at all, just an idle session
+ * being typed into. `ESC[3J` erases the scrollback, so this was the transcript
+ * being destroyed by the editor.
+ *
+ * Free: bracketed paste is delivered to `usePaste` and never submits, and the
+ * scenario leaves through the local `/exit`. Keep it that way — growing a draft
+ * with `send("\n" + text)` would take the batched-Enter path and submit a prompt.
+ */
+async function tallDraft(): Promise<void> {
+  header('TUI — a draft taller than the terminal keeps the frame inside it');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR, cols: 80, rows: 24 });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const beforePaste = tui.mark();
+    const rawBeforePaste = tui.raw.length;
+    const rows = Array.from({ length: 40 }, (_, index) => `draft row ${index + 1}`);
+    tui.send(`\u001b[200~${rows.join('\r\n')}\u001b[201~`);
+    await tui.waitFor('...> draft row 40', { timeoutMs: 30_000, from: beforePaste, settleMs: 600 });
+
+    assert('a 40-row draft never clears the screen or the scrollback',
+      clearCount(tui.raw.slice(rawBeforePaste)) === 0);
+    assert('the draft states the rows it is not showing',
+      /… \d+ draft rows not shown \(\d+ above\)/.test(tui.frame));
+    assert('the rows it shows are the newest, where the cursor is',
+      tui.frame.includes('...> draft row 40'));
+    assert('pasting a tall draft does not submit it',
+      !tui.screen.slice(beforePaste).includes('working…'));
+
+    // The pre-fix cost was per added row, so growing it again is its own assertion.
+    const beforeMore = tui.mark();
+    const rawBeforeMore = tui.raw.length;
+    tui.send('\u001b[200~\r\ndraft row 41\u001b[201~');
+    await tui.waitFor('...> draft row 41', { timeoutMs: 30_000, from: beforeMore, settleMs: 400 });
+    assert('and one more row still does not', clearCount(tui.raw.slice(rawBeforeMore)) === 0);
+
+    // Shrinking is the other trigger: Ink clears when a frame that filled the
+    // viewport gets shorter (`isLeavingFullscreen`), so the window must never have
+    // filled it in the first place.
+    const beforeShrink = tui.mark();
+    const rawBeforeShrink = tui.raw.length;
+    tui.send('\u007f'.repeat(700));
+    tui.send('x');
+    await tui.waitFor('you> x', { timeoutMs: 30_000, from: beforeShrink, settleMs: 400 });
+    assert('collapsing the draft back to one row does not clear either',
+      clearCount(tui.raw.slice(rawBeforeShrink)) === 0);
+    assert('the notice is gone once everything fits',
+      !tui.frame.includes('draft rows not shown'));
+
+    tui.send('\u007f');
+    tui.submit('/exit');
+    assert('tall-draft scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+
+/**
+ * The combination, in one frame: a streaming answer, a running-tool-free turn, and
+ * a draft taller than the terminal typed while the answer arrives.
+ *
+ * Each participant is bounded on its own by now; this is the assertion that they
+ * are bounded *together*, which is the only thing Ink actually cares about. It is
+ * also what the share ceiling in `frame-budget.ts` exists for: served first, the
+ * draft would take the whole frame and leave the answer nothing.
+ *
+ * Costs one model turn, like `longAnswer`.
+ */
+async function tallDraftStreaming(): Promise<void> {
+  header('TUI — a tall draft and a streaming answer share one frame');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR, cols: 80, rows: 24 });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const turnStart = tui.mark();
+    const rawBeforeTurn = tui.raw.length;
+    tui.submit(
+      'Print the numbers 1 to 90, one per line, formatted as "row 1", "row 2" and so on. ' +
+        'No other text, no code fences. Do not use any tools.',
+    );
+    await tui.waitFor('working…', { timeoutMs: 60_000, from: turnStart });
+
+    // Paste a draft taller than the terminal while the answer is still arriving.
+    const rows = Array.from({ length: 40 }, (_, index) => `draft row ${index + 1}`);
+    tui.send(`\u001b[200~${rows.join('\r\n')}\u001b[201~`);
+    await tui.waitFor('...> draft row 40', { timeoutMs: 60_000, from: turnStart, settleMs: 400 });
+
+    await tui.waitFor('row 90', { timeoutMs: 240_000, from: turnStart });
+
+    // Asserted before the draft is cleared: this is the state under test — the
+    // answer's tail, the windowed draft and the hint in one frame that fits.
+    assert('the answer and the tall draft are both in the frame, bounded',
+      /… \d+ earlier lines? scrolled out of the live view/.test(tui.frame) &&
+      /… \d+ draft rows not shown/.test(tui.frame) &&
+      tui.frame.includes('...> draft row 40'));
+
+    // A windowed draft has no `you>` row — that row is one of the ones scrolled out
+    // of the window — so `waitForIdle` (which keys on `you>` being newer than
+    // `working…`) cannot be used until the draft fits again. Backspaces, not ctrl+u:
+    // that kills to the *row* start, which would leave 39 rows in front of `/exit`
+    // and submit the lot as a prompt.
+    const beforeClear = tui.mark();
+    tui.send('\u007f'.repeat(700));
+    tui.send('x');
+    await tui.waitFor('you> x', { timeoutMs: 60_000, from: beforeClear, settleMs: 400 });
+    await waitForIdle(tui, 240_000);
+
+    assert('the screen is never cleared with both a tall draft and a long answer',
+      clearCount(tui.raw.slice(rawBeforeTurn)) === 0);
+    assert('the answer still reached the transcript in full',
+      /row 1(?!\d)/.test(tui.screen.slice(turnStart)) && tui.screen.slice(turnStart).includes('row 90'));
+
+    tui.send('\u007f');
+    tui.submit('/exit');
+    assert('tall-draft-while-streaming scenario exits cleanly',
+      (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/** Whole-screen (and scrollback) clears in a slice of raw pty output. */
+function clearCount(raw: string): number {
+  return raw.split('\u001b[3J').length - 1;
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -1506,6 +1646,8 @@ const SCENARIOS = {
   model: modelCommand,
   plan: planHeader,
   longAnswer,
+  tallDraft,
+  tallDraftStreaming,
 } as const;
 
 async function main(): Promise<void> {

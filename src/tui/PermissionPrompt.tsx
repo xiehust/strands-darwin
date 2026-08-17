@@ -17,20 +17,94 @@ import { Box, Text } from 'ink';
 import React from 'react';
 
 import type { AssessedPermissionRequest } from '../agent/permission.js';
-import { permissionDetail, permissionSummary } from './tool-detail-presentation.js';
+import {
+  PERMISSION_BOX_CHROME_COLUMNS,
+  PERMISSION_DETAIL_INDENT,
+  hiddenPermissionNotice,
+  permissionBoxWanted,
+  permissionDetailRows,
+  planPermissionBox,
+} from './frame-budget.js';
+import { wrapToRows } from './live-text.js';
+import { permissionSummary } from './tool-detail-presentation.js';
 
 export function PermissionPrompt({
   request,
   waiting,
+  columns,
+  maxRows,
 }: {
   readonly request: AssessedPermissionRequest;
   readonly waiting: number;
+  /** Terminal width, so the detail rows can be counted before they are drawn. */
+  readonly columns: number;
+  /**
+   * Rows this box may draw.
+   *
+   * `PERMISSION_DETAIL_LINES` bounds each block's *content*, not the box's height,
+   * and the number of blocks is per call — so on a short terminal this box was
+   * another way to push the frame past the viewport, which costs the scrollback.
+   */
+  readonly maxRows: number;
 }): React.JSX.Element {
-  const options = ruleOptions(request);
+  const { options, blocks, headingText, decisionText, fixedRows } = boxGeometry(request, waiting, columns);
+  const plan = planPermissionBox(blocks.map((block) => block.rows.length), maxRows, fixedRows);
+  const hiddenRows = plan.blocks.reduce((total, block, index) => {
+    const source = blocks[index];
+    return total + (source === undefined ? 0 : source.rows.length - block.rows);
+  }, 0);
+
+  // Every row here is **one** `<Text>` with nested spans, never several `<Text>`
+  // children of a `<Box>`. Ink lays those out as flex items and shrinks or wraps
+  // them independently — measured: the summary row rendered as two rows and ate the
+  // `] ` after `[parent`. One text node wraps as one string, which is also the
+  // string counted above.
+  const summaryRow = (
+    <Text wrap="truncate-end">
+      <Text color="cyan">[{request.source.label}] </Text>
+      {permissionSummary(request.summary)}
+    </Text>
+  );
+  const decisionRow = (
+    <Text>
+      <Text bold>allow? </Text>
+      <Text color="green">y</Text>
+      <Text dimColor> </Text>
+      <Text color="red">n</Text>
+      {options.length > 0 && <Text dimColor> always:</Text>}
+      {options.map((option) => (
+        <React.Fragment key={option.key}>
+          <Text dimColor> </Text>
+          <Text color="cyan">{option.key}</Text>
+          <Text dimColor>={option.label}</Text>
+        </React.Fragment>
+      ))}
+      <Text dimColor> esc=deny</Text>
+    </Text>
+  );
+
+  // A terminal too short for the box drops the border and the details, never the
+  // question: an unanswerable prompt blocks the agent loop, and a prompt whose
+  // details vanished silently would be a security problem, so the notice outlives
+  // them both. Here the decision row is one truncated line rather than the coloured
+  // one — at two or three rows, fitting is worth more than the colour.
+  if (plan.compact) {
+    return (
+      <Box flexDirection="column">
+        {plan.summary && summaryRow}
+        {plan.notice && (
+          <Text color="yellow" wrap="truncate-end">
+            {hiddenPermissionNotice(hiddenRows, plan.hiddenBlocks)}
+          </Text>
+        )}
+        <Text bold wrap="truncate-end">{decisionText}</Text>
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
-      <Box>
+      <Text>
         <Text color="yellow" bold>
           permission required
         </Text>
@@ -39,43 +113,81 @@ export function PermissionPrompt({
           ({request.kind} — {request.riskReason})
         </Text>
         {waiting > 0 && <Text dimColor> — {waiting} more queued</Text>}
-      </Box>
+      </Text>
 
-      <Box>
-        <Text color="cyan">[{request.source.label}] </Text>
-        <Text>{permissionSummary(request.summary)}</Text>
-      </Box>
+      {summaryRow}
 
-      {request.details.map((detail) => (
-        <Box key={detail.label} flexDirection="column" marginTop={1}>
-          <Text color="yellow">{detail.label}:</Text>
-          {permissionDetail(detail.value).map((line, index) => (
-            // Detail lines are static text with no identity of their own.
-            <Text key={index}>
-              {'  '}
-              {line}
-            </Text>
-          ))}
-        </Box>
-      ))}
+      {plan.blocks.map((granted, index) => {
+        const block = blocks[index];
+        if (block === undefined || granted.rows === 0) return null;
+        return (
+          <Box key={block.label} flexDirection="column" marginTop={1}>
+            <Text color="yellow">{block.label}:</Text>
+            {block.rows.slice(0, granted.rows).map((line, row) => (
+              // Detail lines are static text with no identity of their own.
+              <Text key={row} wrap="truncate-end">{`${PERMISSION_DETAIL_INDENT}${line}`}</Text>
+            ))}
+          </Box>
+        );
+      })}
 
-      <Box marginTop={1}>
-        <Text bold>allow? </Text>
-        <Text color="green">y</Text>
-        <Text dimColor> </Text>
-        <Text color="red">n</Text>
-        {options.length > 0 && <Text dimColor> always:</Text>}
-        {options.map((option) => (
-          <React.Fragment key={option.key}>
-            <Text dimColor> </Text>
-            <Text color="cyan">{option.key}</Text>
-            <Text dimColor>={option.label}</Text>
-          </React.Fragment>
-        ))}
-        <Text dimColor> esc=deny</Text>
-      </Box>
+      {plan.notice && (
+        <Text color="yellow" wrap="truncate-end">
+          {hiddenPermissionNotice(hiddenRows, plan.hiddenBlocks)}
+        </Text>
+      )}
+
+      <Box marginTop={1}>{decisionRow}</Box>
     </Box>
   );
+}
+
+/**
+ * Everything about this box's height at this width, in one place.
+ *
+ * `App` asks for the *claim* built from it and the box renders from it, so the rows
+ * the budget hands out and the rows the box draws cannot come from two different
+ * calculations — which is exactly how the modal box lost its truncation marker
+ * once already.
+ */
+function boxGeometry(request: AssessedPermissionRequest, waiting: number, columns: number): {
+  options: { key: string; label: string }[];
+  blocks: { label: string; rows: readonly string[] }[];
+  headingText: string;
+  decisionText: string;
+  fixedRows: number;
+} {
+  const options = ruleOptions(request);
+  // Text inside the box is laid out in the box's width, not the terminal's: the
+  // border and `paddingX` are not available to it.
+  const boxColumns = Math.max(1, columns - PERMISSION_BOX_CHROME_COLUMNS);
+  const blocks = request.details.map((detail) => ({
+    label: detail.label,
+    rows: permissionDetailRows(detail.value, boxColumns),
+  }));
+  const headingText = `permission required (${request.kind} — ${request.riskReason})${
+    waiting > 0 ? ` — ${waiting} more queued` : ''
+  }`;
+  const decisionText = `allow? y n${
+    options.length > 0 ? ` always: ${options.map((option) => `${option.key}=${option.label}`).join(' ')}` : ''
+  } esc=deny`;
+  // The heading and the decision row wrap on a narrow terminal, so they are counted
+  // rather than assumed to be one row each. Border + heading + summary + the blank
+  // row above the decision + decision.
+  const fixedRows =
+    2 + wrapToRows(headingText, boxColumns).length + 1 + 1 + wrapToRows(decisionText, boxColumns).length;
+
+  return { options, blocks, headingText, decisionText, fixedRows };
+}
+
+/** Rows this box wants at this width, for `frameBudget`. */
+export function permissionBoxClaim(
+  request: AssessedPermissionRequest,
+  waiting: number,
+  columns: number,
+): number {
+  const { blocks, fixedRows } = boxGeometry(request, waiting, columns);
+  return permissionBoxWanted(blocks.map((block) => block.rows.length), fixedRows);
 }
 
 /**

@@ -27,7 +27,7 @@ import { spawn } from 'node-pty';
 import { Box, render, Text } from 'ink';
 import React, { useEffect, useState } from 'react';
 
-import { liveRowBudget } from '../src/tui/App.js';
+import { frameBudget } from '../src/tui/frame-budget.js';
 import { MessageList } from '../src/tui/MessageList.js';
 import type { HistoryItem } from '../src/tui/turn-state.js';
 
@@ -44,7 +44,17 @@ const bounded = process.argv.includes('--bounded');
  * unbounded live region this project had before the fix.
  */
 function maxLiveRows(): number {
-  return bounded ? liveRowBudget(ROWS, CHROME_ROWS) : Number.MAX_SAFE_INTEGER;
+  if (!bounded) return Number.MAX_SAFE_INTEGER;
+  // The filler rows below stand in for the prompt region, so they are what the
+  // answer has to share the frame with.
+  return frameBudget({
+    rows: ROWS,
+    headerRows: CHROME_ROWS,
+    thinkingRows: 0,
+    prompt: { wanted: 1, floor: 1 },
+    tools: { wanted: 0, floor: 0 },
+    live: { wanted: Number.MAX_SAFE_INTEGER, floor: 0 },
+  }).live;
 }
 
 /** Header stand-in (4 rows incl. margin) plus the input stand-in (1 row). */

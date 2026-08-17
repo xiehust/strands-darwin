@@ -6,7 +6,6 @@
  * was given. `spike/probe-live-frame-overflow.tsx` shows what happens when it is
  * (a whole-screen repaint, scrollback included, per text delta).
  */
-import { liveRowBudget } from '../src/tui/App.js';
 import { hiddenRowsNotice, liveTextView, MINIMUM_LIVE_BLOCK_ROWS, wrapToRows } from '../src/tui/live-text.js';
 import { assert, header, report } from './shared.js';
 
@@ -46,8 +45,18 @@ const long = Array.from({ length: 200 }, (_, index) => `line ${index + 1}`).join
 for (const maxRows of [4, 5, 8, 12, 24, 50]) {
   assert(`a 200-line answer fits ${maxRows} rows`, blockHeight(long, 80, maxRows) <= maxRows);
 }
-assert('below the four-row minimum the block stops shrinking instead of lying',
-  blockHeight(long, 80, 2) === MINIMUM_LIVE_BLOCK_ROWS && blockHeight(long, 80, 0) === MINIMUM_LIVE_BLOCK_ROWS);
+// Round 2: the block used to clamp up to its minimum, which meant a frame with
+// less room than that overflowed by the difference. It now yields the frame
+// instead — the answer is the participant whose text `<Static>` history is already
+// guaranteed to hold in full. `verify-frame-budget.ts` owns who gets those rows.
+for (const maxRows of [0, 1, 2, 3]) {
+  assert(`a grant of ${maxRows} rows draws a block that fits it`, blockHeight(long, 80, maxRows) <= maxRows);
+}
+assert('an answer that fits without a notice is still shown below the minimum',
+  blockHeight('one line', 80, 3) === 3 && liveTextView('one line', 80, 3).hiddenRows === 0);
+assert('a tail that would need a notice yields the frame entirely',
+  blockHeight(long, 80, 3) === 0 && liveTextView(long, 80, 3).rows.length === 0);
+assert('the minimum is what a tail with its notice costs', MINIMUM_LIVE_BLOCK_ROWS === 4);
 const tail = liveTextView(long, 80, 12);
 assert('the tail is the newest rows, in order',
   tail.rows[tail.rows.length - 1] === 'line 200' &&
@@ -61,14 +70,5 @@ const wrapped = 'x'.repeat(4000);
 assert('one enormous unbroken paragraph is bounded too — the common streaming case',
   blockHeight(wrapped, 80, 10) <= 10 && liveTextView(wrapped, 80, 10).hiddenRows > 0);
 assert('a narrow terminal is still bounded', blockHeight(long, 4, 6) <= 6);
-
-header('live text — the row budget');
-assert('the budget is the viewport minus the measured chrome, minus a spare row',
-  liveRowBudget(50, 14) === 35);
-assert('an unmeasured first frame assumes chrome rather than guessing low',
-  liveRowBudget(50, undefined) === 35);
-assert('chrome taller than the terminal still leaves the newest lines visible',
-  liveRowBudget(10, 40) === MINIMUM_LIVE_BLOCK_ROWS);
-assert('the budget never goes negative', liveRowBudget(1, 1) === MINIMUM_LIVE_BLOCK_ROWS);
 
 report();

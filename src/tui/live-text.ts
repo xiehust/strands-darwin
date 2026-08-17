@@ -25,16 +25,22 @@ import { cellWidth } from './prompt-editor.js';
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 
-/** The `agent` label above the text and the blank row below it. */
-const LABEL_AND_MARGIN_ROWS = 2;
+/**
+ * The `agent` label above the text and the blank row below it.
+ *
+ * Exported because the block's *claim* on the frame is stated in `App` and its
+ * height is decided here: a claim that forgot the label would be short by two rows.
+ */
+export const LIVE_BLOCK_CHROME_ROWS = 2;
 
 /**
  * Shortest block this can draw: the label, one row of answer, the notice that
- * says rows are missing, and the bottom margin. A budget below it is not a fit
- * but a floor — a frame with less room to spare than this has already lost to
- * its own furniture.
+ * says rows are missing, and the bottom margin. Below it the block does not
+ * shrink further — it yields the frame entirely, because the streaming answer is
+ * the one participant whose text is already guaranteed to reach `<Static>` history
+ * in full, and a block that "stops shrinking" is a block that overflows.
  */
-export const MINIMUM_LIVE_BLOCK_ROWS = LABEL_AND_MARGIN_ROWS + 2;
+export const MINIMUM_LIVE_BLOCK_ROWS = LIVE_BLOCK_CHROME_ROWS + 2;
 
 /** Same visible tab stop the prompt editor uses, so row widths stay honest. */
 const TAB = '    ';
@@ -60,7 +66,15 @@ export function liveTextView(text: string, columns: number, maxRows: number): Li
   if (text === '') return EMPTY;
 
   const rows = wrapToRows(text, columns);
-  const budget = Math.max(1, maxRows - LABEL_AND_MARGIN_ROWS);
+  if (maxRows < MINIMUM_LIVE_BLOCK_ROWS) {
+    // Too short for label + one row + notice + margin. Show the whole answer if it
+    // happens to fit anyway, otherwise draw nothing at all: this is the
+    // participant that yields first, and it yields completely rather than
+    // overflowing by the rows its own notice would need.
+    return rows.length + LIVE_BLOCK_CHROME_ROWS <= maxRows ? { rows, hiddenRows: 0 } : EMPTY;
+  }
+
+  const budget = Math.max(1, maxRows - LIVE_BLOCK_CHROME_ROWS);
   if (rows.length <= budget) return { rows, hiddenRows: 0 };
 
   // One row of the budget pays for the notice that says rows are missing: a tail

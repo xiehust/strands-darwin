@@ -218,14 +218,26 @@ stream events map per the table in the archived MVP task's `research/spike-resul
 **Whatever is redrawn must fit the terminal**: Ink does not clip an over-tall live frame, it
 switches to `clearTerminal` + a full transcript reprint *per render*, which is a strobing
 screen and an erased scrollback (`spike/probe-live-frame-overflow.tsx` counts them: 43 clears
-for a 60-line answer in 24 rows, 0 when bounded). So the still-arriving answer is drawn as a
-tail — `src/tui/live-text.ts` wraps it to real rows itself, because the height has to be exact,
-and says how many rows scrolled out; the assembled block still reaches `<Static>` whole, the one
-write allowed to exceed the viewport. The budget is measured (`useBoxMetrics` on the header and
-on the box below), never estimated, since the header grows a line per degradation it reports —
-and because those metrics are *parent*-relative while `useCursor` is frame-absolute, `InputBox`
-is handed its parent's offset. Contract and required checks:
-`.trellis/spec/frontend/tui-testing.md`.
+for a 60-line answer in 24 rows, 0 when bounded). This is a rule about *every* redrawn
+participant, not just the answer: a 13-row draft in a 24-row terminal cost 2 clears per further
+row with nothing streaming at all. So `src/tui/frame-budget.ts` hands out the rows — one
+budget, `rows - 1 - header`, divided in a fixed priority order (prompt region, then tool panel,
+then the still-arriving answer, which yields first because `<Static>` history is already
+guaranteed to hold its text in full), with a share ceiling so the first served cannot take
+everything and a `modal` exemption for the permission box, which blocks the loop and so is never
+asked to share with the call it is asking about. Only the **header** is measured
+(`useBoxMetrics`); measuring the boxes being bounded is what would oscillate. Everything else
+states the rows it wants, counted — never estimated — through the same pure helpers the
+components render from, because two calculations of one height is how the box lost the
+`… truncated N code points` line the first time. Heights are counted in *visual rows at the
+current width*: the content caps (`EXPANDED_INPUT_LINES`, `PERMISSION_DETAIL_LINES`) bound what
+is read, and 4 capped logical lines measured 41 terminal rows. What is not shown is always
+stated (`… N draft rows not shown`, `… N more input rows not shown`, the answer's
+scrolled-out notice). Two Ink traps are load-bearing here: a row whose height must be known is
+**one** `<Text>` with nested spans, never several `<Text>` children of a `<Box>` (Ink lays those
+out as flex items and wraps them independently); and `useBoxMetrics` is *parent*-relative while
+`useCursor` is frame-absolute, so `InputBox` is handed its parent's offset and adds the rows its
+own window hides. Contract and required checks: `.trellis/spec/frontend/tui-testing.md`.
 
 ## Project conventions worth knowing before editing
 
