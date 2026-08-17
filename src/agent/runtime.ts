@@ -155,7 +155,7 @@ export type ExpandedSlashCommand =
 
 /** Estimated size of the next request's context, plus the model's window. */
 export interface ContextEstimate {
-  /** Heuristic token count over messages, system prompt, and tool schemas. */
+  /** Provider-native count when enabled/supported, otherwise the SDK heuristic. */
   estimatedTokens: number;
   messageCount: number;
   /** The model's context window, when the SDK knows it for this model id. */

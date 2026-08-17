@@ -24,6 +24,7 @@ import {
   permissionRulesPath,
   saveEnabledModel,
   saveThinkingEffort,
+  openAIContextWindowLimit,
   resolveRegion,
   withModelChoice,
 } from '../src/config.js';
@@ -166,7 +167,12 @@ async function providerSwitching(): Promise<void> {
     await writeConfig('{ "provider": "bedrock", "model": "global.anthropic.claude-sonnet-4-6" }'),
   );
   assert('bedrock is selected from config', bedrock.provider === 'bedrock');
-  assert('a global. profile is accepted', (await createModelFromConfig(bedrock)) !== undefined);
+  const bedrockModel = await createModelFromConfig(bedrock);
+  assert('a global. profile is accepted', bedrockModel !== undefined);
+  assert(
+    'bedrock native CountTokens is enabled',
+    (bedrockModel.getConfig() as { useNativeTokenCount?: boolean }).useNativeTokenCount === true,
+  );
 
   // Anthropic and OpenAI need peer dependencies this install does not carry. The
   // config path is still proven: it reaches provider construction and fails there
@@ -216,7 +222,11 @@ async function providerSwitching(): Promise<void> {
       ),
     );
     const mantleModel = await createModelFromConfig(mantle);
-    const mantleParams = (mantleModel.getConfig() as { params?: Record<string, unknown> }).params;
+    const mantleConfig = mantleModel.getConfig() as {
+      params?: Record<string, unknown>;
+      contextWindowLimit?: number;
+    };
+    const mantleParams = mantleConfig.params;
     console.log(`  mantle params: ${JSON.stringify(mantleParams)}`);
     // The Responses API rejects the flat `reasoning_effort` outright, and Mantle
     // serves the whole ladder — so `max` must arrive nested and unclamped.
@@ -224,6 +234,7 @@ async function providerSwitching(): Promise<void> {
       'mantle sends nested reasoning.effort, unclamped',
       JSON.stringify(mantleParams) === JSON.stringify({ reasoning: { effort: 'max' } }),
     );
+    assert('mantle prefixed model id receives its known context window', mantleConfig.contextWindowLimit === 1_050_000);
 
     const chat = await loadConfig(
       await writeConfig(
@@ -231,16 +242,38 @@ async function providerSwitching(): Promise<void> {
       ),
     );
     process.env['OPENAI_API_KEY'] = 'sk-test';
-    const chatParams = (
-      (await createModelFromConfig(chat)).getConfig() as { params?: Record<string, unknown> }
-    ).params;
+    const chatConfig = (await createModelFromConfig(chat)).getConfig() as {
+      params?: Record<string, unknown>;
+      contextWindowLimit?: number;
+    };
     assert(
       'native openai still sends flat reasoning_effort, clamped to high',
-      JSON.stringify(chatParams) === JSON.stringify({ reasoning_effort: 'high' }),
+      JSON.stringify(chatConfig.params) === JSON.stringify({ reasoning_effort: 'high' }),
+    );
+    assert('other SDK-known OpenAI ids retain SDK metadata', chatConfig.contextWindowLimit === 272_000);
+
+    const known = await loadConfig(
+      await writeConfig(
+        '{ "provider": "openai", "model": "gpt-5.6-sol", "apiKeyEnv": "OPENAI_API_KEY" }',
+      ),
+    );
+    assert(
+      'unprefixed known OpenAI ids use the same metadata lookup',
+      (await createModelFromConfig(known)).getConfig().contextWindowLimit === 1_050_000,
+    );
+    const unknown = await loadConfig(
+      await writeConfig(
+        '{ "provider": "openai", "model": "custom-unknown", "apiKeyEnv": "OPENAI_API_KEY" }',
+      ),
+    );
+    assert(
+      'unknown OpenAI ids keep their window unknown',
+      (await createModelFromConfig(unknown)).getConfig().contextWindowLimit === undefined,
     );
   } finally {
     restoreEnv('OPENAI_API_KEY', savedKey);
   }
+  assert('the prefixed lookup normalizes only known ids', openAIContextWindowLimit('openai.custom-unknown') === undefined);
 
   // Both new keys are openai-only and mutually exclusive with a credential; each
   // mistake is rejected at load time rather than as an opaque SDK error later.

@@ -402,6 +402,24 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
  */
 export const OFFLOAD_PREVIEW_TOKENS = 1_000;
 
+/** Context windows the installed SDK knows only for unprefixed OpenAI IDs. */
+const OPENAI_CONTEXT_WINDOW_LIMITS: Readonly<Record<string, number>> = {
+  'gpt-5.6': 1_050_000,
+  'gpt-5.6-sol': 1_050_000,
+  'gpt-5.6-terra': 1_050_000,
+  'gpt-5.6-luna': 1_050_000,
+  'gpt-5.5': 1_050_000,
+  'gpt-5.5-pro': 1_050_000,
+  'gpt-5.4': 1_050_000,
+  'gpt-5.4-pro': 1_050_000,
+};
+
+/** Mantle catalog IDs carry `openai.`; normalize it before the metadata lookup. */
+export function openAIContextWindowLimit(modelId: string): number | undefined {
+  const normalized = modelId.startsWith('openai.') ? modelId.slice('openai.'.length) : modelId;
+  return OPENAI_CONTEXT_WINDOW_LIMITS[normalized];
+}
+
 /** Bedrock rejects bare model ids; only cross-region inference profiles work. */
 const BEDROCK_PROFILE_PREFIXES = ['us.', 'eu.', 'apac.', 'global.'];
 
@@ -1165,6 +1183,10 @@ function createBedrockModel(config: AppConfig): Model {
     region: resolveRegion(config.region),
     modelId: config.model,
     maxTokens: config.maxTokens,
+    // `/context` and proactive context management use Bedrock's native
+    // CountTokensCommand. The SDK caches unsupported/IAM failures and falls back
+    // to its character heuristic, so enabling this cannot break later turns.
+    useNativeTokenCount: true,
     // Idle timeout for the response stream: no bytes for this long fails the
     // request as a TimeoutError. Always passed explicitly — the SDK's own 120s
     // default has been outlived by real turns, so darwin owns the number.
@@ -1222,9 +1244,11 @@ async function createOpenAIModel(config: AppConfig): Promise<Model> {
       ? { bedrockMantleConfig: { region: resolveRegion(config.region) } }
       : optionalApiKey(readApiKey(config));
 
+  const contextWindowLimit = openAIContextWindowLimit(config.model);
   const options = {
     modelId: config.model,
     maxTokens: config.maxTokens,
+    ...(contextWindowLimit === undefined ? {} : { contextWindowLimit }),
     ...client,
     ...(params !== undefined && { params }),
   };

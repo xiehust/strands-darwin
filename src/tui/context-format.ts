@@ -2,9 +2,9 @@
  * Pure presentation for `/context`: how big the conversation has grown and how
  * much of the model's window it occupies.
  *
- * Numbers are always called estimates — the count is the SDK's character
- * heuristic, not a billing figure — and an unknown window is said out loud
- * rather than silently divided against a guessed limit.
+ * Numbers are request-size estimates, not billing figures. Bedrock may supply a
+ * native count; other providers or unsupported calls use the SDK character
+ * heuristic. An unknown window is said out loud rather than silently guessed.
  */
 import type { ContextEstimate } from '../agent/runtime.js';
 

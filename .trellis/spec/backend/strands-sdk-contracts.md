@@ -1059,6 +1059,63 @@ try {
 
 ---
 
+## Scenario: `/context` counting and model metadata
+
+### 1. Scope / Trigger
+
+Use this contract when `/context`, `Model.countTokens`, provider model construction, or context
+window metadata changes.
+
+### 2. Signatures
+
+```text
+BedrockModel({ useNativeTokenCount: true })
+OpenAIModel({ contextWindowLimit?: number })
+/context -> estimated context — ~N tokens · P% of W window · M message(s)
+```
+
+### 3. Contracts
+
+`/context` delegates to `Model.countTokens(messages, { systemPrompt, toolSpecs })`. Supported Bedrock
+models use CountTokensCommand over the complete next request. SDK unsupported/IAM failures are
+cached and fall back to chars/4 text and chars/2 JSON. OpenAI Responses has no native counter and
+stays heuristic. Mantle IDs carry an `openai.` prefix the SDK table does not strip, so Darwin supplies
+known metadata (`openai.gpt-5.6-sol` = 1,050,000); unknown IDs remain unknown. The display remains an
+estimated request size, not a billing metric.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| Bedrock CountTokens supported and authorized | Return provider-native complete-request count |
+| Bedrock CountTokens unsupported/IAM denied | SDK caches failure and uses heuristic thereafter |
+| OpenAI Responses | Use heuristic; no token-count provider request |
+| Known prefixed Mantle model | Report mapped window and percentage |
+| Unknown OpenAI model | Report `window unknown`; do not guess |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** Mantle Sol reports its 1,050,000 window and a heuristic request-size percentage.
+- **Base:** an unknown OpenAI model reports a count with `window unknown`.
+- **Bad:** leaving the `openai.` prefix unhandled keeps a known Mantle model unknown and disables warnings.
+
+### 6. Tests Required
+
+`spike/verify-config.ts` asserts native Bedrock counting, prefixed/unprefixed known OpenAI metadata,
+and unknown-model degradation. `spike/verify-context-format.ts` pins presentation.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: known Mantle ID misses SDK's unprefixed table.
+new OpenAIModel({ modelId: 'openai.gpt-5.6-sol' })
+
+// CORRECT: pass Darwin's normalized metadata; counting remains provider-specific.
+new OpenAIModel({ modelId, contextWindowLimit: 1_050_000 })
+```
+
+---
+
 ## Scenario: official Agent Skills with Darwin compatibility
 
 ### 1. Scope / Trigger
