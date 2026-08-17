@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "The frame-height and header contracts this task extends; also how to write the pty checks (anchored waits, state-exclusive strings, exitedWithin)"}
+{"file": ".trellis/tasks/08-17-live-frame-chrome/research/probe-results.md", "reason": "The measured before-numbers: 13-row draft threshold, 41 rows of expanded tool input, why send('\\n'+text) submits"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Ink component conventions for the boxes being changed"}

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "The live-frame/tail contract this changes, and the pty test conventions"}
+{"file": ".trellis/spec/backend/session-trajectory.md", "reason": "Replay reuses turnReducer, so the new split must not make live and replay disagree"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "turnReducer must stay the single projection of stream events"}
+{"file": ".trellis/spec/backend/structured-headless-output.md", "reason": "Headless output reads the same events; its shape must not change"}
+{"file": ".trellis/tasks/08-17-live-frame-chrome/research/probe-results.md", "reason": "Why the tail stays necessary for the unbroken-paragraph shape"}
