@@ -170,12 +170,15 @@ row that passed through the live tail was drawn once per repaint.
 
 ### Next Steps
 
-- `spike/verify-tui.ts approve` flaked twice in full-suite runs while passing three times
-  standalone, both times because the model volunteered shell commands the prompt asked it not to
-  run: the extra call raises a second permission box the scenario never answers, so every assertion
-  passes and the run then times out waiting for idle. Written up in `frontend/tui-testing.md`; the
-  fix is to make the extra call harmless (permission mode or an allow rule) rather than to rely on
-  the model declining. Its 170-character path anchor is worth shortening in the same pass.
+- Follow-up landed the same day: `approve` was flaky three different ways, all of them the scenario
+  asserting something about the *model* rather than about darwin. An unanswered second permission
+  box now gets drained by the teardown (`settleTurn`, proven by a new `drainPrompt` scenario that
+  leaves a box unanswered on purpose); the wait on a 170-character path was self-fulfilling — it
+  waited for the string it then asserted, and the path never appears contiguously because Ink breaks
+  it — so it waits on a short anchor and compares with the wrap removed; and the disk check no
+  longer demands the model transcribe 620 identical characters exactly, but asserts the edit was
+  applied in place with nothing else touched. Full suite after all three: 24 scenarios, 202
+  assertions, green. All three shapes are written up in `frontend/tui-testing.md`.
 
 
 ### Git Commits
