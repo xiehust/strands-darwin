@@ -239,6 +239,24 @@ out as flex items and wraps them independently); and `useBoxMetrics` is *parent*
 `useCursor` is frame-absolute, so `InputBox` is handed its parent's offset and adds the rows its
 own window hides. Contract and required checks: `.trellis/spec/frontend/tui-testing.md`.
 
+**A finished answer line belongs to `<Static>`, not to the live frame** (`src/tui/turn-state.ts`):
+answer text is committed to history *while the turn runs* — every complete line up to but not
+including the last non-blank one — so a long answer scrolls into the terminal's own scrollback as
+it arrives instead of landing in one write at the end. Measured cheaper, not dearer: 30,675 bytes
+against 60,040 for a 120-line answer, because the alternative redraws the whole bounded tail on
+every delta. Three things keep it honest. `<Static>` cannot be recalled, so the last non-blank
+line and any trailing blank lines are held back — the assembled block trims its end, and
+committing a trailing blank line made a clean answer report a divergence. The authoritative
+`contentBlockEvent` still decides: it is reconciled against what was committed, a continuation
+commits only the remainder, and a real disagreement is *stated* as a warning with the
+authoritative text written in full (unreachable through an ordinary model, since the SDK's base
+`Model.streamAggregated` assembles the block from the deltas it just yielded — so it is exercised
+at the reducer). And because Ink fixes an entry's margin when it writes it, `AnswerPart`
+(`whole | first | middle | last`) decides at push time which piece carries the `agent` label and
+which carries the blank row below; `formatReplay` respects the same flags, or a replay prints one
+`darwin>` per piece and is a different transcript from the session it replays. The tail still
+matters for the shape with no finished lines — one unbroken paragraph.
+
 ## Project conventions worth knowing before editing
 
 - Deep documentation lives in `.trellis/spec/` — `backend/strands-sdk-contracts.md` (SDK

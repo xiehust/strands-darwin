@@ -242,7 +242,12 @@ export function formatReplay(result: ReplayResult): string {
         lines.push(`you> ${item.text}`);
         break;
       case 'assistant':
-        lines.push(`darwin> ${item.text}`);
+        // One `darwin>` per answer, not per piece: a streamed answer reaches history
+        // in several entries (`turn-state.ts`), and replaying it as several replies
+        // would be a different transcript from the one the session showed. An empty
+        // closing piece is the blank row a live frame owes and a replay does not.
+        if (item.text === '') break;
+        lines.push(item.part === 'whole' || item.part === 'first' ? `darwin> ${item.text}` : item.text);
         break;
       case 'tool':
         lines.push(`  tool ${item.name} [${item.status}] ${item.summary}`);

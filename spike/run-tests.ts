@@ -8,6 +8,7 @@ const suites = [
   'verify-prompt-editor.ts',
   'verify-live-text.ts',
   'verify-frame-budget.ts',
+  'verify-stream-into-static.ts',
   'verify-config.ts',
   'verify-state-layers.ts',
   'verify-headless.ts',

@@ -22,7 +22,7 @@ import { expandedToolInput, toolResultPreview } from './tool-detail-presentation
 
 export type HistoryItem =
   | { kind: 'user'; id: string; text: string }
-  | { kind: 'assistant'; id: string; text: string }
+  | { kind: 'assistant'; id: string; text: string; part: AnswerPart }
   | {
       kind: 'tool';
       id: string;
@@ -35,6 +35,23 @@ export type HistoryItem =
       expanded: boolean;
     }
   | { kind: 'notice'; id: string; text: string; severity: NoticeSeverity };
+
+/**
+ * Where one assistant entry sits in its answer.
+ *
+ * An answer reaches history in pieces now — finished lines are committed to
+ * `<Static>` while the rest is still arriving — so the label and the blank row
+ * below cannot both belong to every entry, or a 120-line answer becomes 120
+ * labelled blocks. `<Static>` never redraws what it wrote, so which piece carries
+ * which cannot be decided later: it is decided as each piece is pushed, which is
+ * why the last complete line is always held back (see `commitFinishedLines`).
+ *
+ * - `whole` — the entire answer in one entry: label above, blank row below.
+ * - `first` — label, no blank row; more is coming.
+ * - `middle` — neither.
+ * - `last` — no label, blank row below.
+ */
+export type AnswerPart = 'whole' | 'first' | 'middle' | 'last';
 
 export type ToolStatus = 'ok' | 'error' | 'denied';
 
@@ -60,8 +77,18 @@ export interface ActiveTool {
 export interface TurnState {
   /** Finished entries, rendered once and never redrawn. */
   history: HistoryItem[];
-  /** Assistant text still arriving. */
+  /** Assistant text still arriving, and not yet committed to history. */
   liveText: string;
+  /**
+   * Text of the in-flight answer already committed to `<Static>`, newlines
+   * included, `''` when no piece of the current answer has been written yet.
+   *
+   * Kept because `<Static>` cannot be taken back: when `contentBlockEvent` closes
+   * the answer with the authoritative text, this is what that text is reconciled
+   * against — the remainder is appended if it is a continuation, and a divergence
+   * has to be *said* rather than silently corrected.
+   */
+  committedAnswer: string;
   /** True while the model is emitting reasoning rather than answer text. */
   thinking: boolean;
   activeTools: ActiveTool[];
@@ -72,6 +99,7 @@ export interface TurnState {
 export const initialTurnState: TurnState = {
   history: [],
   liveText: '',
+  committedAnswer: '',
   thinking: false,
   activeTools: [],
   toolDetailsExpanded: false,
@@ -143,7 +171,11 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       switch (inner.delta.type) {
         case 'textDelta':
           // Incremental answer text: the only thing appended character by character.
-          return { ...state, liveText: state.liveText + inner.delta.text, thinking: false };
+          return commitFinishedLines({
+            ...state,
+            liveText: state.liveText + inner.delta.text,
+            thinking: false,
+          });
         case 'reasoningContentDelta':
           // Reasoning is shown as a status indicator, never as answer text: it is
           // a different register from the reply and interleaving them reads as
@@ -161,15 +193,10 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       const block = event.contentBlock;
       if (block.type === 'textBlock') {
         // The assembled block is authoritative — it closes off the accumulated
-        // deltas and survives any delta we failed to observe.
-        const text = block.text.trim();
-        if (text === '') return { ...state, liveText: '' };
-        return {
-          ...state,
-          liveText: '',
-          thinking: false,
-          history: [...state.history, { kind: 'assistant', id: nextId('assistant'), text }],
-        };
+        // deltas and survives any delta we failed to observe. What is different now
+        // is that some of those deltas are already in `<Static>`, which cannot be
+        // taken back, so this is a reconciliation rather than a write.
+        return closeAnswer(state, block.text.trim());
       }
       if (block.type === 'reasoningBlock') {
         return { ...state, thinking: false };
@@ -279,14 +306,151 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
   }
 }
 
-/** Moves any in-progress assistant text into history. */
+/**
+ * Moves answer lines that can no longer change into `<Static>` history.
+ *
+ * Committed is every complete line up to — but not including — the **last non-blank
+ * complete line**. Two things fall out of that, and both are load-bearing:
+ *
+ * - The newest finished line is always held back, so `closeAnswer` always has
+ *   something left to write. That closing piece is what carries the `last` part, and
+ *   with it the blank row below the answer; Ink fixes an entry's margin when it
+ *   writes it, so an answer that had already committed everything could never get
+ *   that row back.
+ * - **Trailing blank lines are held back too.** `contentBlockEvent` trims the
+ *   assembled text, so a blank line at the end of the answer is not part of it —
+ *   committing one would make the authoritative text disagree with history and
+ *   report a divergence for an answer that had none. Measured on `a\nb\nc\n\n\n`,
+ *   which is an ordinary way for a model to finish.
+ *
+ * Interior blank lines *are* committed: a paragraph break is content, and holding it
+ * back would move the text under the cursor as the answer arrives.
+ *
+ * The committed text is recorded in `committedAnswer` verbatim, because that is what
+ * makes the reconciliation at the end a comparison rather than a guess.
+ */
+function commitFinishedLines(state: TurnState): TurnState {
+  const lines = state.liveText.split('\n');
+  // The final element is the line still arriving — never complete, always held.
+  let hold = lines.length - 1;
+  for (let index = lines.length - 2; index >= 0; index -= 1) {
+    if ((lines[index] as string).trim() !== '') {
+      hold = index;
+      break;
+    }
+  }
+  if (hold === 0) return state;
+
+  let text = lines.slice(0, hold).join('\n');
+  const liveText = lines.slice(hold).join('\n');
+  if (state.committedAnswer === '') {
+    // The assembled block is trimmed at both ends, so leading blank lines are not
+    // part of the answer either.
+    text = text.replace(/^\s+/u, '');
+    if (text === '') return { ...state, liveText };
+  }
+
+  return {
+    ...state,
+    liveText,
+    committedAnswer: state.committedAnswer === '' ? text : `${state.committedAnswer}\n${text}`,
+    history: [
+      ...state.history,
+      {
+        kind: 'assistant',
+        id: nextId('assistant'),
+        text,
+        part: state.committedAnswer === '' ? 'first' : 'middle',
+      },
+    ],
+  };
+}
+
+/**
+ * Closes the answer against the authoritative assembled text.
+ *
+ * Three outcomes, and the middle one is the whole reason this is not a plain write:
+ *
+ * - nothing committed yet → the answer enters history in one entry, exactly as it
+ *   did before any of this existed;
+ * - the authoritative text continues what was committed → only the remainder is
+ *   written, as the `last` part;
+ * - it *diverges* → the difference is stated as a warning and the authoritative
+ *   text is written in full. The rows already printed are not retracted, because
+ *   they cannot be; showing two versions with a line explaining why is the honest
+ *   option, and silently dropping either one is not.
+ */
+function closeAnswer(state: TurnState, authoritative: string): TurnState {
+  const settled: TurnState = { ...state, liveText: '', committedAnswer: '', thinking: false };
+  if (state.committedAnswer === '') {
+    if (authoritative === '') return settled;
+    return { ...settled, history: [...state.history, answerEntry(authoritative, 'whole')] };
+  }
+
+  const prefix = `${state.committedAnswer}\n`;
+  if (authoritative === state.committedAnswer) {
+    // Defensive: `commitFinishedLines` holds back the last non-blank line, so there
+    // is normally something left to write. If a stream ever leaves nothing, the
+    // blank row below the answer is still owed, and an empty `last` entry is exactly
+    // that row and nothing else.
+    return { ...settled, history: [...state.history, answerEntry('', 'last')] };
+  }
+  if (authoritative.startsWith(prefix)) {
+    return {
+      ...settled,
+      history: [...state.history, answerEntry(authoritative.slice(prefix.length), 'last')],
+    };
+  }
+
+  return {
+    ...settled,
+    history: [
+      ...state.history,
+      {
+        kind: 'notice',
+        id: nextId('notice'),
+        text:
+          'the model’s final text differs from what was streamed; the lines above are what arrived, ' +
+          'and the answer below is the authoritative version',
+        severity: 'warn',
+      },
+      answerEntry(authoritative, 'whole'),
+    ],
+  };
+}
+
+function answerEntry(text: string, part: AnswerPart): HistoryItem {
+  return { kind: 'assistant', id: nextId('assistant'), text, part };
+}
+
+/**
+ * Writes out whatever answer text is still uncommitted.
+ *
+ * Reached when a tool call interrupts the text, and when a turn ends without the
+ * model closing its block (a cancel, or a failure). Only the *uncommitted*
+ * remainder is written — the committed lines are already in history, and writing
+ * them again is the one thing progressive commits make easy to get wrong.
+ */
 function flushLiveText(state: TurnState): TurnState {
   const text = state.liveText.trim();
-  if (text === '') return { ...state, liveText: '' };
+  if (text === '') {
+    if (state.committedAnswer === '') return { ...state, liveText: '' };
+    // Committed lines with nothing left over still owe the blank row below.
+    return {
+      ...state,
+      liveText: '',
+      committedAnswer: '',
+      history: [...state.history, answerEntry('', 'last')],
+    };
+  }
   return {
     ...state,
     liveText: '',
-    history: [...state.history, { kind: 'assistant', id: nextId('assistant'), text }],
+    committedAnswer: '',
+    history: [
+      ...state.history,
+      answerEntry(text, state.committedAnswer === '' ? 'whole' : 'last'),
+    ],
   };
 }
 

@@ -64,13 +64,21 @@ function HistoryEntry({ item }: { readonly item: HistoryItem }): React.JSX.Eleme
         </Box>
       );
 
-    case 'assistant':
+    case 'assistant': {
+      // An answer arrives in pieces (`turn-state.ts`), and `<Static>` never redraws
+      // what it wrote — so the label belongs to the piece that opened the answer and
+      // the blank row to the piece that closed it. A closing piece may be empty:
+      // that is the blank row on its own, owed to an answer that committed every
+      // line it had.
+      const labelled = item.part === 'whole' || item.part === 'first';
+      const closing = item.part === 'whole' || item.part === 'last';
       return (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text color="green">agent</Text>
-          <Text>{item.text}</Text>
+        <Box flexDirection="column" marginBottom={closing ? 1 : 0}>
+          {labelled && <Text color="green">agent</Text>}
+          {item.text !== '' && <Text>{item.text}</Text>}
         </Box>
       );
+    }
 
     case 'tool':
       return <ToolCallResult item={item} />;

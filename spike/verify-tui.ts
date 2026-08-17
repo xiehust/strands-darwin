@@ -1454,28 +1454,57 @@ async function longAnswer(): Promise<void> {
         'No other text, no code fences. Do not use any tools.',
     );
     await tui.waitFor('working…', { timeoutMs: 60_000, from: beforeTurn });
+
+    // Progressive: finished lines reach `<Static>` while the turn is still running,
+    // so the top of the answer is in the scrollback long before the block closes.
+    // Before that change the transcript stayed empty until the very last frame, so
+    // this is the assertion that tells the two apart.
+    await tui.waitFor('row 60', { timeoutMs: 240_000, from: beforeTurn });
+    const midTurn = tui.screen.slice(beforeTurn);
+    assert('the start of the answer is already in the transcript mid-turn',
+      /row 1(?!\d)/.test(midTurn) && midTurn.includes('working…'));
+
     await tui.waitFor('row 120', { timeoutMs: 240_000, from: beforeTurn });
     await waitForIdle(tui, 240_000);
 
     const rawTurn = tui.raw.slice(rawBeforeTurn);
-    const clears = rawTurn.split('\u001b[3J').length - 1;
+    const clears = clearCount(rawTurn);
     console.log(`  full-screen clears during the turn: ${clears}`);
+    console.log(`  bytes written for a 120-line answer: ${rawTurn.length}`);
     assert('the screen (and the scrollback) is never cleared while streaming', clears === 0);
 
-    // The tail itself: the live view says what it is not showing rather than
-    // starting mid-sentence with no explanation.
-    assert(
-      'the live view reports the rows that scrolled out of it',
-      /… \d+ earlier lines? scrolled out of the live view/.test(tui.screen.slice(beforeTurn)),
-    );
-
-    // Bounding the *live* region must not bound the transcript: the assembled
-    // block goes to `<Static>` in full, which is the one write allowed to be
-    // taller than the screen.
+    // Bounding the *live* region must not bound the transcript, and committing lines
+    // as they finish must not lose or duplicate any of them.
     const transcript = tui.screen.slice(beforeTurn);
     assert('the whole answer still reached the transcript',
       /row 1(?!\d)/.test(transcript) && transcript.includes('row 60') && transcript.includes('row 120'));
-    assert('the scrolled-out notice is gone once the answer is history',
+    // No count assertions on accumulated pty output: every row that passed through
+    // the live tail was drawn once per repaint, so "exactly once" is not a property
+    // of these bytes. Duplication is proved where a stable projection exists —
+    // `verify-stream-into-static.ts` over the reducer's history and its replay.
+    assert('nothing is left in the live region once the answer is history',
+      !tui.frame.includes('scrolled out of the live view'));
+
+    // The tail is still load-bearing — for the shape that has no finished lines to
+    // commit. This assertion used to ride on the 120-line answer above; committing
+    // finished lines means that answer no longer needs a tail at all, so the check
+    // moves to the shape that does rather than being dropped.
+    const paragraphStart = tui.mark();
+    const rawBeforeParagraph = tui.raw.length;
+    tui.submit(
+      'Write one single paragraph of at least 1200 characters about rivers, as one line ' +
+        'with no line breaks at all and no lists. Do not use any tools.',
+    );
+    await tui.waitFor('working…', { timeoutMs: 60_000, from: paragraphStart });
+    await tui.waitUntil(
+      (screen) => /… \d+ earlier lines? scrolled out of the live view/.test(screen.slice(paragraphStart)),
+      { timeoutMs: 240_000, label: 'the scrolled-out notice on an unbroken paragraph' },
+    );
+    await waitForIdle(tui, 240_000);
+    assert('an unbroken paragraph is still shown as a bounded tail that says what it hides',
+      /… \d+ earlier lines? scrolled out of the live view/.test(tui.screen.slice(paragraphStart)));
+    assert('and it too never clears the screen', clearCount(tui.raw.slice(rawBeforeParagraph)) === 0);
+    assert('the paragraph reached history whole',
       !tui.frame.includes('scrolled out of the live view'));
 
     tui.submit('/exit');
@@ -1485,7 +1514,6 @@ async function longAnswer(): Promise<void> {
     tui.kill();
   }
 }
-
 
 /**
  * A draft taller than the terminal is the other half of the live-frame contract.
