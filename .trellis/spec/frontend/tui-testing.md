@@ -382,7 +382,7 @@ and a destroyed transcript. The limit is `rows - 1`: Ink calls a frame fullscree
 
 Every redrawn participant is in scope: measured, a 13-row draft in a 24-row terminal costs 2 clears
 per further row with nothing streaming, and one in-flight call with details expanded draws 41 rows
-(`08-17-live-frame-chrome/research/probe-results.md`).
+(`tasks/archive/2026-08/08-17-live-frame-chrome/research/`).
 
 - **One budget, handed out, not measured.** `src/tui/frame-budget.ts` divides
   `rows - 1 - header - thinking` between prompt region, tool panel and answer, in that priority
@@ -420,7 +420,7 @@ including the last non-blank one (`commitFinishedLines`, `src/tui/turn-state.ts`
 answer then needs no tail; the tail stays load-bearing for the shape with no finished lines, one
 unbroken paragraph. It is *cheaper* — 30,675 bytes against 60,040 for a 120-line answer, since the
 alternative redraws the whole tail per delta
-(`08-17-stream-into-static/research/probe-static-commit.tsx`).
+(`tasks/archive/2026-08/08-17-stream-into-static/research/`).
 
 - **`<Static>` cannot be recalled**, so nothing provisional enters it. The last non-blank line is
   held back, and trailing blank lines with it — the assembled block trims its end, and committing a
