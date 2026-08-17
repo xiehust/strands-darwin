@@ -1076,8 +1076,12 @@ state key:        darwin_agent_skills ({ lastInjectedXml, activatedSkills })
 ### 3. Contracts
 
 - Official SDK code owns frontmatter/body parsing, `<available_skills>` generation, activation
-  formatting, bounded resource listing and persisted activation state. Darwin preflights the host
-  resource tree before delegation because the SDK's host sandbox follows directory symlinks.
+  formatting, bounded resource listing and persisted activation state. Darwin both preflights and
+  wraps host `sandbox.listFiles` with use-time `lstat`/realpath checks because the SDK host sandbox
+  follows directory symlinks. SDK 1.12.0 has no public same-Agent sandbox override, so the wrapper
+  uses an Agent proxy: all Darwin skills are Skill instances, making official activation fall back
+  to the same base catalogue; forwarded appState still records on the original Agent, but exact
+  per-Agent WeakMap identity is not preserved and must not be claimed.
 - `src/skills/loader.ts` supplies official `Skill` instances after required built-ins first,
   case-insensitive built-in reservation, project-over-global precedence, optional skip-and-surface,
   and fatal required assets. Missing names default to the directory and names retain Darwin's
@@ -1103,7 +1107,7 @@ state key:        darwin_agent_skills ({ lastInjectedXml, activatedSkills })
 | Project/global name collision | Valid project wins; invalid project claims nothing |
 | Built-in collision, any case | Built-in wins; optional entry is reported reserved |
 | Unknown `load_skill` name | Recoverable result listing accepted names |
-| Resource directory/file is a symlink or resolves outside skill root | Deny activation before official traversal; reveal no outside names |
+| Resource directory/file is a symlink or resolves outside skill root, including a post-preflight swap | Preflight rejects it, or guarded use-time listing suppresses that directory before outside names are enumerated |
 | Resource preflight exceeds 200 entries | Deny activation at the bound before official traversal |
 | Legacy cached/uncached prompt has a standalone trailing `<available-skills>` block | Remove only that trailing block before official current catalogue injection; preserve literal tag mentions inside base/project rules byte-for-byte |
 | Cache mutation sees unknown multi-block shape | Refuse unchanged; `/model` fails before swapping live config/model |

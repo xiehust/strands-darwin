@@ -43,6 +43,12 @@ regexes could start at a literal `<available-skills>` mention inside project ins
 rules through the real appended catalogue. The final focused fix replaces regex guessing with
 standalone trailing-block parsing and proves cached plus uncached real SessionManager resumes keep
 the full project-rule bytes, remove only the stale catalogue, and inject exactly one current
-catalogue. Resource guarding now preserves exact `context.agent` identity while retaining complete
-preflight safety. Final commit hashes/checks are reported by the worker; independent Host recheck
+catalogue. A subsequent security recheck rejected preflight-only resource validation as TOCTOU:
+the SDK host sandbox follows symlinks at traversal time. The final correction restores the guarded
+Agent/sandbox proxy with use-time `lstat`/realpath enforcement and adds a deterministic
+post-preflight path-swap regression. SDK 1.12.0 exposes no public identity-preserving sandbox
+override; because Darwin supplies every skill as a `Skill` instance, official activation on the
+proxy falls back from its per-Agent WeakMap to the same base catalogue, while forwarded `appState`
+still records activation on the original Agent. This residual is documented rather than called an
+identity guarantee. Final commit hashes/checks are reported by the worker; independent Host recheck
 remains the acceptance authority.

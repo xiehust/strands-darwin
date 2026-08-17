@@ -18,7 +18,10 @@ import { applySystemPromptCachePoint, type PromptCachePlan } from '../src/agent/
 import { applyWorkingContext } from '../src/agent/working-context.js';
 import { orderOfficialSkillsPrompt } from '../src/skills/prompt.js';
 import { MAX_SKILL_RESOURCE_FILES, SkillsPlugin } from '../src/skills/plugin.js';
-import { MAX_SKILL_RESOURCE_PREFLIGHT_ENTRIES } from '../src/skills/resource-safety.js';
+import {
+  MAX_SKILL_RESOURCE_PREFLIGHT_ENTRIES,
+  setResourceSafetyCheckpointForTest,
+} from '../src/skills/resource-safety.js';
 import { CaptureModel } from './offline-model.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
@@ -236,7 +239,10 @@ async function activationAndBounds(): Promise<void> {
     assert('official resource truncation is explicit', loaded.instructions?.includes('... (truncated at 2 files)') === true);
     assert('official appState tracks canonical activation', plugin.getActivatedSkills(agent).join(',') === 'bounded-skill');
     const unknown = await compatibility?.invoke({ name: 'nope' }, { ...context, toolUse: { name: 'load_skill', toolUseId: 'compat-2', input: { name: 'nope' } } }) as { error?: string; availableSkills?: string[] };
-    assert('resource safety preserves exact Agent identity for official WeakMap state', plugin.getActivatedSkills(agent).join(',') === 'bounded-skill');
+    // With Skill instances, official activation falls back from its per-Agent
+    // WeakMap to the same base catalogue. Activated state is still written via
+    // forwarded appState onto the original Agent, but this is not an identity proof.
+    assert('guarded activation records canonical appState on the original Agent', plugin.getActivatedSkills(agent).join(',') === 'bounded-skill');
 
     assert('unknown skill remains recoverable and lists names', unknown.error?.includes('nope') === true && unknown.availableSkills?.includes('bounded-skill') === true);
     const defaultPlugin = await SkillsPlugin.load(project);
@@ -289,7 +295,27 @@ async function resourceSafety(): Promise<void> {
       broadError = error instanceof Error ? error.message : String(error);
     }
     assert('broad resource tree stops at the preflight entry bound', broadError.includes(`${MAX_SKILL_RESOURCE_PREFLIGHT_ENTRIES}-entry safety preflight`));
+
+    await rm(path.join(directory, 'references'), { recursive: true, force: true });
+    await mkdir(path.join(directory, 'references'), { recursive: true });
+    await writeFile(path.join(directory, 'references', 'inside.txt'), 'inside\n');
+    let swapped = false;
+    setResourceSafetyCheckpointForTest(async () => {
+      swapped = true;
+      await rm(path.join(directory, 'references'), { recursive: true, force: true });
+      await symlink(outside, path.join(directory, 'references'));
+    });
+    let swappedResult = '';
+    try {
+      swappedResult = await plugin.activate(plugin.find('safe-skill')!);
+    } finally {
+      setResourceSafetyCheckpointForTest(undefined);
+    }
+    assert('the deterministic TOCTOU swap happened after preflight', swapped);
+    assert('use-time guard suppresses a directory swapped to a symlink', !swappedResult.includes('Available resources:'));
+    assert('TOCTOU swap returns no outside filename', !swappedResult.includes('secret-name.txt'));
   } finally {
+    setResourceSafetyCheckpointForTest(undefined);
     await rm(root, { recursive: true, force: true });
   }
 }
