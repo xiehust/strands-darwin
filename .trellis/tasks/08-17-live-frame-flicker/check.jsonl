@@ -1,0 +1,1 @@
+{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Every rule about what the live frame may draw, and which verify-tui scenarios must be re-run after touching it"}
