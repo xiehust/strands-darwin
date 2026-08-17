@@ -11,6 +11,8 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { Agent } from '@strands-agents/sdk';
+
 import {
   AGENTS_FILENAME,
   MAX_INSTRUCTIONS_BYTES,
@@ -147,23 +149,22 @@ async function promptComposition(): Promise<void> {
   assert('instructions follow it', composed.indexOf('Prefer small commits') > composed.indexOf('BASE PROMPT'));
   assert('no instructions leaves the prompt untouched', composeSystemPrompt('BASE PROMPT', undefined) === 'BASE PROMPT');
 
-  // The skills catalogue is appended later, by the plugin during initialize(). The
-  // two injections have to compose, since both are plain string appends onto the
-  // same prompt.
+  // Official AgentSkills injects before the first invocation, not initialize.
   const skills = await SkillsPlugin.load(path.resolve(import.meta.dirname, '..'));
-  const fakeAgent = { systemPrompt: composed } as Parameters<SkillsPlugin['initAgent']>[0];
-  skills.initAgent(fakeAgent);
-  const full = fakeAgent.systemPrompt;
+  const agent = new Agent({ systemPrompt: composed, plugins: [skills], printer: false });
+  await agent.initialize();
+  assert('initialize preserves the composed string', agent.systemPrompt === composed);
+  await agent.invoke('show catalogue');
+  const full = typeof agent.systemPrompt === 'string'
+    ? agent.systemPrompt
+    : agent.systemPrompt?.map((block) => block.type === 'textBlock' ? block.text : '').join('\n') ?? '';
 
-  assert('the assembled prompt is still a plain string', typeof full === 'string');
-  if (typeof full === 'string') {
-    console.log(`  order: base(${full.indexOf('BASE PROMPT')}) → instructions(${full.indexOf('<project-instructions')}) → skills(${full.indexOf('<available-skills>')})`);
-    assert('project instructions survive the skills injection', full.includes('<project-instructions'));
-    assert(
-      'the skills catalogue is appended after the instructions',
-      full.indexOf('<available-skills>') > full.indexOf('<project-instructions'),
-    );
-  }
+  console.log(`  order: base(${full.indexOf('BASE PROMPT')}) → instructions(${full.indexOf('<project-instructions')}) → skills(${full.indexOf('<available_skills>')})`);
+  assert('project instructions survive the official skills injection', full.includes('<project-instructions'));
+  assert(
+    'the official skills catalogue follows project instructions',
+    full.indexOf('<available_skills>') > full.indexOf('<project-instructions'),
+  );
 }
 
 async function main(): Promise<void> {

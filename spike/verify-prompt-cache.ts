@@ -165,19 +165,14 @@ function systemPromptCachePoint(): void {
   assert('a configured TTL reaches the cache point', (ttlBlocks[1] as CachePointBlock).ttl === '1h');
 
   const untouched: SystemPromptHolder = { systemPrompt: prompt };
-  assert(
-    'caching off leaves the prompt a plain string',
-    !applySystemPromptCachePoint(untouched, planPromptCache({ ...CLAUDE_CONFIG, promptCache: false })) &&
-      untouched.systemPrompt === prompt,
-  );
+  assert('caching off reports no placement', !applySystemPromptCachePoint(untouched, planPromptCache({ ...CLAUDE_CONFIG, promptCache: false })));
+  const uncachedBlocks = Array.isArray(untouched.systemPrompt) ? untouched.systemPrompt : [];
+  assert('caching off keeps the text but removes cache blocks', uncachedBlocks.length === 1 && uncachedBlocks[0] instanceof TextBlock && uncachedBlocks[0].text === prompt);
 
-  // Applying twice would nest a cache point inside an already-cached prompt; the
-  // guard makes the second call a no-op instead.
+  // Reapplying replaces the prior point rather than nesting or duplicating it.
   const already: SystemPromptHolder = { systemPrompt: [new TextBlock(prompt), new CachePointBlock({ cacheType: 'default' })] };
-  assert(
-    'a prompt that is already a block array is left alone',
-    !applySystemPromptCachePoint(already, planPromptCache(CLAUDE_CONFIG)),
-  );
+  assert('an already-cached known shape is refreshed', applySystemPromptCachePoint(already, planPromptCache(CLAUDE_CONFIG)));
+  assert('refresh still leaves exactly one final cache point', Array.isArray(already.systemPrompt) && already.systemPrompt.length === 2 && already.systemPrompt[1] instanceof CachePointBlock);
 
   const empty: SystemPromptHolder = { systemPrompt: '   ' };
   assert(

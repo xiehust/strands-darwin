@@ -5,7 +5,7 @@
  * raw event stream to whatever is driving it. Callers (the dev REPL now, Ink
  * later) decide how to render.
  */
-import { Agent, SummarizingConversationManager } from '@strands-agents/sdk';
+import { Agent, BeforeInvocationEvent, SummarizingConversationManager } from '@strands-agents/sdk';
 import type { AgentStreamEvent, InterventionHandler, McpClient, Model } from '@strands-agents/sdk';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
@@ -51,6 +51,7 @@ import { createImageViewerTool } from '../tools/image-viewer.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
+import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
 import { recordStream } from '../trajectory/stream.js';
 import { TrajectoryRecorder, type TrajectoryStatus } from '../trajectory/writer.js';
 import { DARWIN_VERSION } from '../version.js';
@@ -365,10 +366,9 @@ export class AgentRuntime {
     const agent = new Agent({
       id: AGENT_ID,
       model,
-      // AGENTS.md is folded in here; the skills catalogue is appended afterwards
-      // by SkillsPlugin.initAgent during initialize(), keeping the assembled
-      // prompt in a fixed order. Only the base is user-overridable: the project's
-      // own instructions are appended to whichever base is in effect.
+      // AGENTS.md is folded in here. Official AgentSkills injects its catalogue
+      // before each invocation; the post-plugin hook below restores Darwin's fixed
+      // order. Only the base is user-overridable: project instructions stay additive.
       systemPrompt: composeSystemPrompt(basePrompt.prompt, instructions),
       // McpClient instances act as tool sources: the SDK discovers and registers
       // their tools during initialize().
@@ -394,6 +394,17 @@ export class AgentRuntime {
       throw error;
     }
 
+    // Official AgentSkills injects its catalogue on BeforeInvocationEvent. This
+    // callback is registered afterwards, so it moves that official TextBlock
+    // ahead of current working context and Darwin's final cache point before the
+    // model sees the request. Repeated and resumed calls keep one catalogue: the
+    // official callback removes its previous exact block first.
+    agent.addHook(BeforeInvocationEvent, ({ agent: invokingAgent }) => {
+      if (!orderOfficialSkillsPrompt(invokingAgent)) {
+        throw new Error('Could not place the official skills catalogue before working context and cache.');
+      }
+    });
+
     // Child tool allowlists can include MCP and plugin tools, whose final names do
     // not exist until initialization. Capture that catalogue before registering
     // `subagent` so children can never recursively delegate.
@@ -413,9 +424,10 @@ export class AgentRuntime {
     });
     agent.toolRegistry.add(subagents.tool);
 
-    // Strictly after initialize(): the skills catalogue is appended during it, and
-    // the cache point has to sit at the very end of the finished prompt (the skills
-    // plugin also refuses to append to a block-array prompt). Tools and the
+    // Strictly after initialize(): session restore may have replaced both prompt
+    // and official skill appState. Refresh current facts, then place the final
+    // cache point. On invocation, official AgentSkills injects one catalogue and
+    // Darwin's later hook moves it before these two trailing blocks. Tools and the
     // conversation are cached by the model's own cacheConfig, set in config.ts.
     //
     // The working context is refreshed here for a second reason: restoring a
@@ -424,9 +436,15 @@ export class AgentRuntime {
     // directory listing. Applied last, it is also the only fragment a resumed
     // prompt can still be corrected by.
     const workingContext = await buildWorkingContext(options.projectRoot);
-    applyWorkingContext(agent, workingContext.fragment);
+    if (!applyWorkingContext(agent, workingContext.fragment)) {
+      await disconnectAll(mcp.clients);
+      throw new Error('Could not refresh working context on the restored system prompt.');
+    }
     const promptCache = planPromptCache(config);
-    applySystemPromptCachePoint(agent, promptCache);
+    if (promptCache.parts.includes('system prompt') && !applySystemPromptCachePoint(agent, promptCache)) {
+      await disconnectAll(mcp.clients);
+      throw new Error('Could not place the final cache point on the assembled system prompt.');
+    }
 
     // Built last and given nothing but facts: the recorder is an observer, so it
     // must not be able to influence assembly. It opens no file here — the first
@@ -722,10 +740,8 @@ export class AgentRuntime {
     this.subagents.updateConfig(next);
     this.thinkingPlan = planThinking(next);
     this.promptCachePlan = planPromptCache(next);
-    // Adds the system-prompt cache point when the new model can cache and the old
-    // one could not. Already-placed points are left alone — the helper refuses a
-    // non-string prompt — and a stale point costs nothing: a provider that cannot
-    // cache ignores the block (measured in probe-model-switch.ts).
+    // Replaces or removes the final system-prompt cache point for the new model.
+    // The explicit official-skills prompt shape survives either direction.
     applySystemPromptCachePoint(this.agent, this.promptCachePlan);
 
     const choice = next.modelChoices.find((entry) => entry.index === target.index) as ModelChoice;

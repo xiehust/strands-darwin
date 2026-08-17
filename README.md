@@ -205,13 +205,14 @@ are always available (`fileEditor`, `bash`), and states the working rules the re
 program depends on — read a file before editing it, keep edits small, verify changes by
 running something, and never work around a tool call the permission gate denied.
 
-The assembled prompt always has the same four parts, in this order:
+Every actual model request has the same four text parts followed by the final cache point:
 
 ```
 <base prompt>                                  ← darwin's default, or your override
 <project-instructions source="AGENTS.md">…     ← your repository's standing rules
-<available-skills>…                            ← the skills catalogue
+<available_skills>…                            ← the official SDK skills catalogue
 <working-context>…                             ← where this session is standing
+<cache point>                                  ← final cached-prefix boundary, when supported
 ```
 
 Only the **base** is overridable, and an override replaces it entirely — nothing of the
@@ -347,6 +348,10 @@ for an hour instead of five minutes (a longer TTL costs more to write). Non-Clau
 cannot cache; the header says so rather than pretending otherwise. Two things naturally cost
 a cache miss: the turn on which the conversation is summarized (its history is rewritten), and
 any change to AGENTS.md, the system prompt, or the set of tools.
+
+Official AgentSkills injects its catalogue immediately before each invocation. Darwin then moves
+that exact catalogue block ahead of current working context and the final system cache point, so
+first, repeated and resumed model requests keep one catalogue and the same cached-prefix order.
 
 ### Thinking effort
 
@@ -712,19 +717,24 @@ description: Write git commit messages following this project's conventions. Use
 ```
 
 `description` is required — it is the only thing the model sees up front, so write it as
-"what this is for and when to use it". `name` defaults to the directory name. Files under
-`scripts/`, `references/` and `assets/` are listed to the model when the skill loads, so
-instructions can point at them.
+"what this is for and when to use it". `name` defaults to the directory name. Darwin supplies
+accepted entries as official SDK `Skill` objects to official `AgentSkills`; the SDK parses the
+frontmatter/body, injects the catalogue, records activation state, and lists files under
+`scripts/`, `references/` and `assets/`. Listings are bounded to 20 files and three recursive
+levels, with an explicit truncation marker.
 
 Two ways a skill gets used:
 
 - **The model decides.** Only names and descriptions go in the system prompt; when a
-  request matches, the model calls `load_skill` to read the rest. This progressive
-  disclosure is what keeps many skills affordable.
+  request matches, the model calls the single safe `load_skill({name})` tool to read the rest.
+  The SDK-native `skills({skill_name})` tool stays private, avoiding a second model-facing path.
+  This progressive disclosure is what keeps many skills affordable.
 - **You decide.** Type `/commit-message` (optionally with a request after it) and the
   skill's full text is sent with your message.
 
-A malformed skill is reported at startup and skipped; the rest still load.
+A malformed optional skill is reported at startup and skipped; the rest still load. Required
+built-ins are fatal, built-in names are reserved case-insensitively, and valid project entries
+override global entries with the same name.
 
 
 ### Built-in developer supervisor
@@ -934,7 +944,8 @@ rather than print, and exit non-zero on failure:
 ```bash
 pnpm tsx spike/verify-config.ts                            # config parsing and provider switching, no model calls
 pnpm tsx spike/verify-mcp-config.ts                        # MCP config precedence and error paths, no servers started
-pnpm tsx spike/verify-skills.ts                            # project and built-in skill discovery, no model calls
+pnpm tsx spike/verify-skills.ts                            # layered skill policy and slash UX, no model calls
+pnpm tsx spike/verify-agent-skills.ts                      # real offline Agents: official tool, prompt/cache/resume and bounds
 pnpm tsx spike/verify-headless.ts                          # parser/output/session contracts with counted assertions
 pnpm tsx spike/verify-agents-md.ts                         # AGENTS.md loading, truncation, prompt order, no model calls
 pnpm tsx spike/verify-system-prompt.ts                     # default prompt, override precedence, fallbacks, no model calls
@@ -944,7 +955,7 @@ AWS_REGION=us-west-2 pnpm tsx spike/verify-classifier.ts   # auto mode's safety 
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written, then read
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts     # agent core, permissions, resume, AGENTS.md injection
 AWS_REGION=us-west-2 pnpm tsx spike/verify-mcp.ts          # real stdio MCP server
-AWS_REGION=us-west-2 pnpm tsx spike/verify-skills-live.ts  # both skill trigger paths
+AWS_REGION=us-west-2 pnpm tsx spike/verify-skills-live.ts autonomous # one low-token autonomous load_skill smoke
 AWS_REGION=us-west-2 pnpm tsx spike/verify-developer-live.ts # opt-in Host → persistent child workflow
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts          # the TUI, driven through a pty
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts      # real git repo, read → fix → test

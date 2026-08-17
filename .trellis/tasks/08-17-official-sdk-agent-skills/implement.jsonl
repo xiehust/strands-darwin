@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend pre-development and quality checklist for runtime/plugin changes."}
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Load-bearing Agent initialization, session restore, skills, prompt cache, subagent-tool and tested SDK contracts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Required built-in fatality versus optional skill skip-and-surface behavior must remain unchanged."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared guide routing for cross-layer and code-reuse changes."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Migration deletes duplicated SDK behavior while retaining only product-policy compatibility code."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The change crosses discovery, SDK plugin/tool, permission, prompt/cache/session, TUI metadata and docs."}
+{"file":".trellis/tasks/08-17-official-sdk-agent-skills/research/official-agent-skills-probe.md","reason":"Measured official AgentSkills first/repeat/resume, block-array and activation/resource behavior that drives the design."}

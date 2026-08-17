@@ -3,7 +3,7 @@
  * ways a project can replace them.
  *
  * This is only the *base* of the prompt. The composition order stays fixed —
- * base prompt → `<project-instructions>` (AGENTS.md) → `<available-skills>` —
+ * base prompt → `<project-instructions>` (AGENTS.md) → `<available_skills>` —
  * so an override swaps out darwin's own instructions and never the project's:
  * AGENTS.md remains the place for repository rules that add to a prompt rather
  * than replace it.

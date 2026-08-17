@@ -2,7 +2,7 @@
  * Prompt caching: where the cache points go, and when there are none.
  *
  * Everything darwin sends is re-sent: the tool schemas never change within a
- * session, the system prompt (base + AGENTS.md + `<available-skills>` +
+ * session, the system prompt (base + AGENTS.md + `<available_skills>` +
  * `<working-context>`) is fixed once assembled, and the conversation only grows at
  * the end. Cache points mark
  * that unchanged prefix so the provider bills it as a cache read instead of fresh
@@ -14,11 +14,10 @@
  *
  * - tools + conversation: `BedrockModel({ cacheConfig })` appends a cache point
  *   after `toolConfig.tools` and to the last user message on every request.
- * - system prompt: a `CachePointBlock` appended to `Agent.systemPrompt`, which is
- *   why {@link applySystemPromptCachePoint} runs after `agent.initialize()` —
- *   `SkillsPlugin.initAgent` appends its fragment first, and refuses a block array.
- *   The working context is applied in between, so it lands inside the cached prefix
- *   rather than after it.
+ * - system prompt: a final `CachePointBlock` appended after initialization and
+ *   session restore. Official AgentSkills appends its catalogue before each
+ *   invocation; Darwin's later hook moves that block ahead of working context and
+ *   this final cache point.
  *
  * These explicit cache points are Claude-only. OpenAI performs prompt caching
  * automatically at the provider, so darwin neither configures nor reports it as
@@ -118,28 +117,40 @@ export interface SystemPromptHolder {
 }
 
 /**
- * Turns a fully assembled string prompt into `[text, cachePoint]`.
+ * Places or removes Darwin's final system-prompt cache point.
  *
- * Must run after `agent.initialize()`: the skills catalogue is appended during
- * initialization, and a cache point placed before it would sit in the middle of
- * the prompt — caching a prefix that ends mid-sentence and, worse, being silently
- * dropped by `SkillsPlugin.initAgent`, which throws on a block-array prompt.
- *
- * A non-string prompt therefore means the order was broken (or someone already
- * placed cache points); leave it alone rather than guessing where the boundary
- * belongs. Returns whether the cache point was placed.
+ * Official AgentSkills supports block arrays and injects its catalogue on every
+ * invocation. Darwin keeps prompt parts as separate text blocks and appends one
+ * cache point only at the tail. Unknown block arrays are refused rather than
+ * guessed at.
  */
 export function applySystemPromptCachePoint(agent: SystemPromptHolder, plan: PromptCachePlan): boolean {
-  if (!plan.parts.includes('system prompt')) return false;
+  const prompt = normalizedPromptBlocks(agent.systemPrompt);
+  if (prompt === undefined) return false;
 
-  const prompt = agent.systemPrompt;
-  if (typeof prompt !== 'string' || prompt.trim() === '') return false;
+  const withoutCache = prompt.filter((block) => !(block instanceof CachePointBlock));
+  if (!plan.parts.includes('system prompt')) {
+    agent.systemPrompt = withoutCache;
+    return false;
+  }
 
   agent.systemPrompt = [
-    new TextBlock(prompt),
+    ...withoutCache,
     new CachePointBlock({ cacheType: 'default', ...(plan.ttl !== undefined && { ttl: plan.ttl }) }),
   ];
   return true;
+}
+
+function normalizedPromptBlocks(prompt: SystemPrompt | undefined): Exclude<SystemPrompt, string> | undefined {
+  if (typeof prompt === 'string') {
+    return prompt.trim() === '' ? undefined : [new TextBlock(prompt)];
+  }
+  if (!Array.isArray(prompt) || prompt.length === 0) return undefined;
+  if (prompt.some((block) => !(block instanceof TextBlock) && !(block instanceof CachePointBlock))) {
+    return undefined;
+  }
+  if (prompt.slice(0, -1).some((block) => block instanceof CachePointBlock)) return undefined;
+  return [...prompt];
 }
 
 /** True when a Bedrock model id names a Claude model. */

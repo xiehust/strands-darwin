@@ -708,7 +708,10 @@ async function slashCompletion(): Promise<void> {
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
     await tui.waitFor('skill /commit-message', { timeoutMs: 30_000, settleMs: 400 });
-    assert('skills are advertised in the header', tui.screen.includes('skills: commit-message'));
+    assert(
+      'skills are advertised in the header after required built-ins',
+      tui.screen.includes('skills: developer, self-evolution-research, commit-message'),
+    );
     assert(
       'a command colliding with a skill is warned and skipped',
       tui.screen.includes('command skipped:') && tui.screen.includes('skill /commit-message'),

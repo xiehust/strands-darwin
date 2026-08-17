@@ -1,77 +1,74 @@
 /**
- * Skills packaged as an SDK `Plugin`.
+ * Darwin's compatibility adapter around the official SDK `AgentSkills` plugin.
  *
- * Plugin evaluation (SDK 1.12, read from `plugins/plugin.d.ts`): the interface is
- * sufficient for this job, so skills ship as a plugin rather than loose wiring.
- * It provides exactly the two hooks needed:
- *
- * - `getTools(): Tool[]` — the registry auto-registers `load_skill`, so the
- *   runtime never has to know skills contribute a tool.
- * - `initAgent(agent)` — receives the agent, and `LocalAgent.systemPrompt` is a
- *   writable `string | SystemContentBlock[]`. The agent reads `this.systemPrompt`
- *   at each model call, and `initAgent` runs during `agent.initialize()` (before
- *   any model call), so appending there reliably reaches the first request.
- *
- * The one thing Plugin does not offer is a dedicated prompt-contribution hook, so
- * injection is a string append guarded to the plain-string case.
- *
- * This mirrors how the Python SDK exposes `AgentSkills` as a plugin, which keeps
- * the swap to official TypeScript support close to a deletion.
+ * The SDK owns parsing, catalogue injection, activation state and bounded resource
+ * listing. Darwin keeps one model-facing contract — `load_skill({ name })` — so
+ * existing prompts, permissions and child allowlists do not see a second `skills`
+ * tool with a different schema.
  */
 import { tool } from '@strands-agents/sdk';
-import type { LocalAgent, Plugin, Tool } from '@strands-agents/sdk';
+import type {
+  InvokableTool,
+  LocalAgent,
+  Plugin,
+  Tool,
+  ToolContext,
+} from '@strands-agents/sdk';
+import { AgentSkills, Skill } from '@strands-agents/sdk/vended-plugins/skills';
 import { z } from 'zod';
 
-import {
-  formatSkillForModel,
-  loadSkill,
-  renderAvailableSkills,
-  scanSkills,
-  type Skill,
-  type SkillProblem,
-} from './loader.js';
+import { scanSkills, type SkillProblem } from './loader.js';
+
+/** Explicitly bound: the SDK also bounds resource recursion to three levels. */
+export const MAX_SKILL_RESOURCE_FILES = 20;
+const SKILL_STATE_KEY = 'darwin_agent_skills';
+
+type OfficialSkillsTool = InvokableTool<{ skill_name: string }, string>;
 
 export class SkillsPlugin implements Plugin {
   readonly name = 'darwin:skills';
+  private readonly official: AgentSkills;
+  private readonly officialTool: OfficialSkillsTool;
+  private agent: LocalAgent | undefined;
 
   private constructor(
     readonly skills: readonly Skill[],
     readonly problems: readonly SkillProblem[],
-  ) {}
-
-  /** Scans `<root>/.darwin/skills/` and returns a plugin ready to attach to an Agent. */
-  static async load(root: string): Promise<SkillsPlugin> {
-    const { skills, problems } = await scanSkills(root);
-    return new SkillsPlugin(skills, problems);
+    maxResourceFiles: number,
+  ) {
+    this.official = new AgentSkills({
+      skills: [...skills],
+      maxResourceFiles,
+      stateKey: SKILL_STATE_KEY,
+    });
+    const nativeTools = this.official.getTools();
+    const native = nativeTools[0];
+    if (nativeTools.length !== 1 || native?.name !== 'skills' || !('invoke' in native)) {
+      throw new Error('Official AgentSkills plugin did not provide an invokable skills tool.');
+    }
+    this.officialTool = native as OfficialSkillsTool;
   }
 
-  initAgent(agent: LocalAgent): void {
-    const fragment = renderAvailableSkills(this.skills);
-    if (fragment === undefined) return;
-
-    const current = agent.systemPrompt;
-    if (current === undefined) {
-      agent.systemPrompt = fragment;
-      return;
-    }
-    if (typeof current === 'string') {
-      agent.systemPrompt = `${current}\n\n${fragment}`;
-      return;
-    }
-    // Block-array prompts carry cache points and guard content whose ordering
-    // matters; appending blindly could invalidate a cache boundary. The runtime
-    // only ever sets a string, so refuse loudly instead of guessing.
-    throw new Error(
-      'SkillsPlugin cannot inject into a block-array system prompt. ' +
-        'Pass the system prompt as a string, or extend this method to append a text block deliberately.',
+  /** Scans Darwin's layers and builds an adapter over official SDK Skill objects. */
+  static async load(
+    root: string,
+    options: { maxResourceFiles?: number } = {},
+  ): Promise<SkillsPlugin> {
+    const { skills, problems } = await scanSkills(root);
+    return new SkillsPlugin(
+      skills,
+      problems,
+      options.maxResourceFiles ?? MAX_SKILL_RESOURCE_FILES,
     );
   }
 
-  getTools(): Tool[] {
-    // No skills means no tool: advertising load_skill with nothing to load only
-    // invites the model to call it and get an error.
-    if (this.skills.length === 0) return [];
+  async initAgent(agent: LocalAgent): Promise<void> {
+    this.agent = agent;
+    await this.official.initAgent(agent);
+  }
 
+  getTools(): Tool[] {
+    if (this.skills.length === 0) return [];
     const known = this.skills.map((skill) => skill.name).join(', ');
 
     return [
@@ -83,25 +80,58 @@ export class SkillsPlugin implements Plugin {
         inputSchema: z.object({
           name: z.string().describe('Name of the skill to load'),
         }),
-        callback: async ({ name }) => {
+        callback: async ({ name }, context) => {
           const skill = this.find(name);
-          if (skill === undefined) {
-            return {
-              error: `No skill named ${JSON.stringify(name)}.`,
-              availableSkills: this.skills.map((s) => s.name),
-            };
+          if (skill === undefined) return this.notFound(name);
+          if (context === undefined) {
+            throw new Error('load_skill requires a ToolContext with an agent reference');
           }
-          const loaded = await loadSkill(skill);
-          return { instructions: formatSkillForModel(loaded, skill) };
+          return { instructions: await this.activate(skill, context) };
         },
       }),
     ];
   }
 
-  /** Case-insensitive so `/Commit-Message` finds `commit-message`. */
+  /** Case-insensitive for both the compatibility tool and `/Commit-Message`. */
   find(name: string): Skill | undefined {
     const wanted = name.trim().toLowerCase();
     return this.skills.find((skill) => skill.name.toLowerCase() === wanted);
+  }
+
+  /** Official activation, used by both the tool callback and slash expansion. */
+  async activate(skill: Skill, context?: ToolContext): Promise<string> {
+    const liveContext = context ?? this.slashContext(skill);
+    return this.officialTool.invoke({ skill_name: skill.name }, liveContext);
+  }
+
+  getActivatedSkills(agent: LocalAgent): readonly string[] {
+    return this.official.getActivatedSkills(agent);
+  }
+
+  private notFound(name: string): { error: string; availableSkills: string[] } {
+    return {
+      error: `No skill named ${JSON.stringify(name)}.`,
+      availableSkills: this.skills.map((skill) => skill.name),
+    };
+  }
+
+  private slashContext(skill: Skill): ToolContext {
+    const agent = this.agent;
+    if (agent === undefined) {
+      throw new Error(`Cannot expand /${skill.name} before the skills plugin is initialized.`);
+    }
+    return {
+      agent,
+      invocationState: {},
+      toolUse: {
+        name: 'load_skill',
+        toolUseId: `slash-${skill.name}`,
+        input: { name: skill.name },
+      },
+      interrupt: () => {
+        throw new Error('load_skill activation does not support interrupts');
+      },
+    };
   }
 }
 
@@ -111,18 +141,7 @@ export interface ExpandedSkillCommand {
   message: string;
 }
 
-/**
- * Expands a `/skill-name` slash command into a message carrying the skill's full
- * text, for the manual-invocation path.
- *
- * Returns null when the input is not a slash command or names no known skill, so
- * the caller can treat it as ordinary input. That keeps unrelated slash commands
- * (`/exit`) and plain prose working, and avoids swallowing a typo into a
- * confusing agent turn.
- *
- * Anything after the skill name is preserved as the user's request, so
- * `/commit-message make it terse` still carries the instruction.
- */
+/** Expands `/skill-name [request]` through the official activation path. */
 export async function expandSkillCommand(
   plugin: SkillsPlugin,
   input: string,
@@ -138,21 +157,16 @@ export async function expandSkillCommand(
   const skill = plugin.find(name);
   if (skill === undefined) return null;
 
-  const loaded = await loadSkill(skill);
-  const request =
-    remainder === ''
-      ? `Apply the "${skill.name}" skill to what we are working on.`
-      : remainder;
-
-  // Say the instructions are already here: the system prompt tells the model to
-  // call load_skill before using a skill, and it otherwise obeys that even when
-  // the full text is already inlined, wasting a round trip on every command.
+  const instructions = await plugin.activate(skill);
+  const request = remainder === ''
+    ? `Apply the "${skill.name}" skill to what we are working on.`
+    : remainder;
   const alreadyLoaded =
     `The full instructions for the "${skill.name}" skill are included above — ` +
     `do not call load_skill for it.`;
 
   return {
     skill,
-    message: `${formatSkillForModel(loaded, skill)}\n\n${alreadyLoaded}\n\n${request}`,
+    message: `${instructions}\n\n${alreadyLoaded}\n\n${request}`,
   };
 }

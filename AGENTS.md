@@ -87,23 +87,26 @@ call is offered no rule at all, because an offer that could never apply is a lie
 security prompt.
 
 
-**Skills** (`src/skills/`): the one self-built module — the TS SDK has no Skills support yet.
-It's an SDK `Plugin` mirroring Python's `AgentSkills`: `load_skill` tool + progressive
-disclosure (`<available-skills>` names/descriptions in the prompt), plus `/skill-name` slash
-expansion in the TUI. When the SDK ships official skills, this module is designed to be
-deleted.
+**Skills** (`src/skills/`): Darwin uses the official SDK `AgentSkills`/`Skill` core. A thin
+adapter preserves product policy the SDK does not own: required/reserved built-ins, project-over-
+global precedence, optional problem reporting, case-insensitive `/skill-name`, and the observable
+safe `load_skill({name})` contract. The native `skills({skill_name})` tool stays private so the
+model never sees two ways to load the same capability. Official activation owns appState and the
+resource listing, explicitly capped at 20 files and three recursive levels.
 
-**System prompt composition order is fixed**: base prompt → `<project-instructions>`
-(AGENTS.md, `src/agent/instructions.ts`) → `<available-skills>` (skills plugin during
-`agent.initialize()`) → `<working-context>` (`src/agent/working-context.ts`, applied after
-`initialize()`). Composition is all string concatenation — the skills plugin refuses a
-block-array prompt — and only after that does `src/agent/prompt-cache.ts` wrap the
-finished string as `[TextBlock, CachePointBlock]`. The working context is the one fragment
+**System prompt composition order is fixed** on every actual model request: base prompt →
+`<project-instructions>` (AGENTS.md, `src/agent/instructions.ts`) → official
+`<available_skills>` → `<working-context>` (`src/agent/working-context.ts`) → final cache point.
+Official AgentSkills injects before each invocation; Darwin registers a later hook that moves that
+exact catalogue TextBlock ahead of current working context and cache. Repeated/resumed invocations
+remove the previous official block via persisted appState before reordering, so the catalogue is
+never duplicated. The working context is the one fragment
 that describes *now* rather than rules (cwd, OS, date, one-level directory listing), so it is
-re-derived every run and *replaces* any block already in the prompt: restoring a session
-replays the prompt darwin last sent — as `[TextBlock, CachePointBlock]`, which is why
-`applyWorkingContext` unwraps that exact shape — and a resumed run must not state the
-creating run's date as today's. The base is the only user-replaceable part
+re-derived every run and *replaces* the known working-context TextBlock after restore. Current
+snapshots carry separate base/catalogue/context blocks plus the final cache point; pre-migration
+`[TextBlock, CachePointBlock]` snapshots are recognized, their stale Darwin catalogue is dropped,
+and official AgentSkills injects one current catalogue on the resumed invocation. A resumed run
+must never state the creating run's date as today's. The base is the only user-replaceable part
 (`src/agent/system-prompt.ts`: `config.systemPrompt` > `.darwin/system-prompt.md` >
 `DEFAULT_SYSTEM_PROMPT`), so the project's own instructions stay additive on top of whichever
 base is in effect.

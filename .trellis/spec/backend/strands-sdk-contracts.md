@@ -845,25 +845,25 @@ tool call is silently denied with no prompt shown.
   headless-only restriction protected nothing — and a fork, whose id exists only on stdout,
   would otherwise be impossible to open in the TUI. `--continue` remains headless-only.
 
-### Contract: restoring a session replays the system prompt, cache point included
+### Contract: restoring a session replays system prompt and official skill state
 
-`takeSnapshot({ preset: 'session' })` includes `systemPrompt`, and the restore runs on
-`InitializedEvent` — *after* the constructor's prompt was set and after
-`SkillsPlugin.initAgent` ran. So a resumed session does not use the freshly composed
-prompt at all: it uses the snapshot's, and because darwin snapshots after the cache point
-is placed, what comes back is exactly `[TextBlock, CachePointBlock]`. Measured, not
-inferred: a second `Agent` constructed with `systemPrompt: 'FRESH'` reports the previous
-run's text after `initialize()`.
+`takeSnapshot({ preset: 'session' })` includes both `systemPrompt` and `appState`, and restore runs
+on `InitializedEvent` after constructor prompt/plugin setup. A resumed session therefore uses the
+snapshot's base/project/catalogue rules and the official AgentSkills `lastInjectedXml` /
+`activatedSkills`, not the freshly constructed values. Editing AGENTS.md still does not change an
+existing session.
 
-Two consequences. Anything composed before `initialize()` — the base prompt, AGENTS.md,
-the skills catalogue — is frozen for the life of a session; editing AGENTS.md does not
-affect a resumed one. And a fragment that must be current has to be applied *after*
-`initialize()` and must replace, not append: that is what `applyWorkingContext`
-(`src/agent/working-context.ts`) does, unwrapping that exact two-block shape back to a
-string so `applySystemPromptCachePoint` can re-place the cache point with this run's TTL.
-Any other block shape is refused rather than guessed at. (Verified:
-`spike/verify-working-context.ts`, 45 assertions; and live, by resuming a session in a
-directory that had gained a file and seeing the new listing.)
+Current Darwin snapshots use explicit blocks: base/project text, one official
+`<available_skills>` TextBlock, current `<working-context>` TextBlock, then the final
+CachePointBlock. After restore, `applyWorkingContext` replaces only the known context block and
+`applySystemPromptCachePoint` replaces the final cache point with this run's plan/TTL. On the next
+invocation official AgentSkills removes its prior exact catalogue using restored appState and
+appends one current copy; Darwin's later BeforeInvocation hook moves that copy back ahead of
+working context/cache. Pre-migration `[TextBlock, CachePointBlock]` snapshots are recognized,
+their stale `<available-skills>` catalogue is dropped, and official AgentSkills supplies one
+current catalogue. Unknown arrays are refused rather than guessed at. Verified through a real
+`Agent`/`SessionManager` in `spike/verify-agent-skills.ts` and helper cases in
+`spike/verify-working-context.ts`.
 
 ## Scenario: headless one-shot CLI
 
@@ -1052,19 +1052,93 @@ try {
 
 ---
 
-## Skills (the one self-built module)
+## Scenario: official Agent Skills with Darwin compatibility
 
-The TS SDK has no Skills support yet ("Skills are not yet available in TypeScript SDK").
-`src/skills/` implements the Agent Skills spec as an SDK `Plugin` (same shape as Python's
-`AgentSkills`): `getTools()` contributes `load_skill`, `initAgent()` appends the
-`<available-skills>` name+description list to the system prompt (progressive disclosure).
-When the SDK ships official support, delete the module and swap in theirs.
+### 1. Scope / Trigger
 
-- `LocalAgent.systemPrompt` is writable and read per model call, so `initAgent()` mutation
-  is reliable — but only string prompts; block-array prompts throw (cachePoint ordering).
-  The prompt-cache wrapper therefore runs *after* `initialize()`, never before.
-- Slash-expanded messages must include "the full text is above, do not call load_skill" or
-  the model redundantly loads the skill it was just given.
+Use this contract whenever skill discovery, loading, slash expansion, prompt composition, cache
+placement or session restore changes. Production imports `AgentSkills` and `Skill` from
+`@strands-agents/sdk/vended-plugins/skills`; do not reintroduce a parser, catalogue renderer,
+activation formatter or resource walker.
+
+### 2. Signatures
+
+```text
+public model tool: load_skill({ name: string }) -> { instructions: string }
+unknown skill:    { error: string, availableSkills: string[] }
+private SDK tool: skills({ skill_name: string }) -> string  // never registered
+manual command:   /<skill-name> [request]
+prompt request:   base/project -> <available_skills> -> <working-context> -> CachePointBlock?
+resource bounds:  maxResourceFiles=20; SDK recursion depth=3
+state key:        darwin_agent_skills ({ lastInjectedXml, activatedSkills })
+```
+
+### 3. Contracts
+
+- Official SDK code owns frontmatter/body parsing, `<available_skills>` generation, activation
+  formatting, sandbox resource traversal and persisted activation state.
+- `src/skills/loader.ts` supplies official `Skill` instances after required built-ins first,
+  case-insensitive built-in reservation, project-over-global precedence, optional skip-and-surface,
+  and fatal required assets. Missing `name` alone is filled from the directory before official
+  parsing, preserving Darwin's documented compatibility.
+- `src/skills/plugin.ts` delegates initialization/activation to official `AgentSkills`. Its native
+  tool remains private; the model and child-tool catalogue see exactly one statically-safe
+  `load_skill({name})` tool. Success remains `{ instructions }`.
+- `load_skill` and `/skill-name` resolve case-insensitively to a canonical official Skill. Both use
+  official activation, so appState/resource behavior is not duplicated. Slash expansion keeps the
+  "full text is above, do not call load_skill" guard.
+- Official AgentSkills injects on each `BeforeInvocationEvent`, not initialize. With a raw cached
+  block array it appends after the cache point. Darwin's later hook reorders known blocks; inability
+  to prove that order fails before the model request rather than sending an uncached/duplicated
+  catalogue.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Required built-in absent/unreadable/invalid | Refuse startup with packaged path/reason |
+| Optional entry invalid/unreadable/duplicate | Skip one entry and add `RuntimeInfo.skillProblems` |
+| Project/global name collision | Valid project wins; invalid project claims nothing |
+| Built-in collision, any case | Built-in wins; optional entry is reported reserved |
+| Unknown `load_skill` name | Recoverable result listing accepted names |
+| More than 20 resource files | First 20 plus official truncation marker |
+| Native `skills` appears in `agent.tools` | Contract failure: do not expose a second tool |
+| Prompt shape cannot be reordered | Fail the invocation before its model call |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** a cached resumed Agent restores official appState, refreshes current context, removes
+  the prior catalogue, then sends one catalogue before context and one final cache point.
+- **Base:** `/commit-message terse` activates officially, inlines instructions/resources and sends
+  `terse` without another tool call.
+- **Bad:** registering official `AgentSkills` directly exposes `skills({skill_name})`, makes
+  permission classification fail closed, and places its catalogue after Darwin's cache point.
+
+### 6. Tests Required
+
+- `spike/verify-agent-skills.ts`: real offline Agents and SessionManager; assert tool names/schema,
+  actual first/repeated/resumed `StreamOptions.systemPrompt`, one catalogue/context/cache, restored
+  state, compatibility activation, unknown-name result and resource truncation.
+- `spike/verify-skills.ts`: required fatality, built-in/project/global policy, optional problems,
+  official Skill body/path, case-insensitive slash expansion and bundled workflow contracts.
+- `spike/verify-permission-modes.ts` keeps `load_skill` statically safe;
+  `spike/verify-tui.ts completion` keeps built-ins first and every accepted skill invokable.
+- One opt-in `verify-skills-live.ts autonomous` call proves a real model autonomously chooses and
+  completes `load_skill`. Do not make it part of the offline aggregate.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: exposes a second schema and lets official injection land after cache.
+new Agent({ plugins: [new AgentSkills({ skills })] })
+
+// CORRECT: policy-filter official Skills, vend only load_skill, then reorder after
+// the official BeforeInvocation hook and before the model sees StreamOptions.
+new Agent({ plugins: [darwinSkills] })
+agent.addHook(BeforeInvocationEvent, ({ agent }) => {
+  if (!orderOfficialSkillsPrompt(agent)) throw new Error('skills prompt order')
+})
+```
 
 ---
 
@@ -1088,7 +1162,7 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 
 ### 3. Contracts
 
-- `scanSkills()` loads built-ins before `<target>/.darwin/skills`, then sorts the merged catalogue. A case-insensitive project collision is skipped and reported; a missing/invalid required built-in fails startup because it is a promised product capability, not optional project configuration.
+- `scanSkills()` loads required built-ins first in declared order, then deterministic project and global tails. Built-in names are reserved case-insensitively, valid project entries override global entries, and a missing/invalid required built-in fails startup because it is a promised product capability, not optional configuration.
 - Keep the supervisor in the Host conversation: only that conversation can escalate product decisions to the user. The `subagent` tool returns one final report and is the wrong boundary for this dialogue.
 - Every child invocation uses `bash start`; retain its `bg-*` id for `status`/`output`. For every task, call `output` at least once and, after terminal status, drain it through `hasMore: false` before reviewing the reply or proceeding; status metadata and `outputBytes` never substitute for the child response. Capture conversational identity only from the exact `session:` stderr record and use explicit `--session` on every follow-up.
 - Run each child from the exact target root. The child prompt says it is the direct worker and must not load `developer`, start another darwin, or delegate again; without that guard a built-in skill advertised to both Host and child can recurse.
@@ -1217,18 +1291,21 @@ Bedrock: `spike/verify-prompt-cache-live.ts` — 11,737 tokens written on turn o
 |---|---|---|
 | tool schemas | `BedrockModel({ cacheConfig: { strategy: 'auto' } })` | cache point appended after `toolConfig.tools` |
 | conversation | same `cacheConfig` | cache point moved to the last user message each request; the SDK strips any earlier ones |
-| system prompt | `agent.systemPrompt = [TextBlock, CachePointBlock]` | placed by us, after `initialize()` |
+| system prompt | explicit text blocks + final `CachePointBlock` | working context/cache prepared after initialize; official catalogue reordered before every model call |
 
 `AnthropicModelConfig` has **no** `cacheConfig`, so the `anthropic` provider gets the system
 prompt cache point only. Darwin adds no cache points for OpenAI because OpenAI prompt caching
 is provider-managed and automatic; this is not reported as an unsupported-provider warning.
 
-### Contract: the system prompt cache point goes on after `initialize()`
+### Contract: the final system cache point is prepared after initialize and repaired per invocation
 
-`SkillsPlugin.initAgent` appends `<available-skills>` during initialization and throws on a
-block-array prompt. Wrapping earlier therefore either crashes or caches a prefix that ends
-mid-prompt. The SDK never rewrites `systemPrompt` itself (session restore does not touch it),
-so the post-initialize assignment survives for the life of the agent.
+Session restore occurs during initialize, so Darwin refreshes working context and replaces the
+final cache point afterwards. Official AgentSkills supports block arrays but injects
+`<available_skills>` on every BeforeInvocationEvent; without adaptation it appends after an
+existing cache point. Darwin registers its ordering hook after the official callback, moving the
+one official catalogue block ahead of working context/cache before each actual model request.
+First, repeated and resumed requests are measured in `spike/verify-agent-skills.ts`; assertions on
+post-create strings alone are insufficient because official injection has not happened yet.
 
 ### Contract: never hand `strategy: 'auto'` to a model that cannot cache
 

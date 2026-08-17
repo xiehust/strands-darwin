@@ -26,9 +26,9 @@ async function autonomousTrigger(): Promise<void> {
   const run = await runRepl({
     cwd: REPO_ROOT,
     turns: [
-      'Write me a git commit message for a change that made the permission gate ' +
-        'default unknown tools to "execute" so new tools are gated until classified. ' +
-        'Do not read or edit any files, and do not run any commands — just write the message.',
+      'Write only the one-line conventional-commit subject for a change that replaced the ' +
+        'hand-built skills core with the official SDK plugin. Use the project commit-message ' +
+        'skill, do not read or edit files, and do not run commands.',
       '/exit',
     ],
     permissionAnswer: 'n',
@@ -36,7 +36,7 @@ async function autonomousTrigger(): Promise<void> {
   });
 
   assert('REPL exited cleanly', run.exitCode === 0);
-  assert('skills were advertised at startup', run.transcript.includes('skills   : commit-message'));
+  assert('skills were advertised at startup', run.transcript.includes('commit-message') && run.transcript.includes('(use /<name> to load one)'));
   assert('load_skill was registered as a tool', run.transcript.includes('load_skill'));
   assert('model called load_skill without being told to', run.transcript.includes('calling load_skill'));
   assert('load_skill succeeded', run.transcript.includes('load_skill → ok'));
@@ -74,8 +74,12 @@ async function slashCommandTrigger(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  await autonomousTrigger();
-  await slashCommandTrigger();
+  const scenario = process.argv[2];
+  if (scenario === undefined || scenario === 'autonomous') await autonomousTrigger();
+  if (scenario === undefined || scenario === 'slash') await slashCommandTrigger();
+  if (scenario !== undefined && scenario !== 'autonomous' && scenario !== 'slash') {
+    throw new Error(`unknown skills-live scenario ${JSON.stringify(scenario)} (expected autonomous or slash)`);
+  }
   report();
 }
 

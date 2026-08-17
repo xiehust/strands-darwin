@@ -21,6 +21,7 @@ const suites = [
   'verify-tool-hooks.ts',
   'verify-mcp-config.ts',
   'verify-skills.ts',
+  'verify-agent-skills.ts',
   'verify-custom-commands.ts',
   'verify-subagents.ts',
   'verify-subagent-format.ts',

@@ -11,16 +11,15 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { Agent } from '@strands-agents/sdk';
+import { Skill } from '@strands-agents/sdk/vended-plugins/skills';
+
 import { darwinDir, userDarwinDir } from '../src/paths.js';
 import {
   BUILTIN_SKILLS_DIR,
   REQUIRED_BUILTIN_SKILLS,
   SKILLS_DIRNAME,
-  formatSkillForModel,
-  loadSkill,
-  renderAvailableSkills,
   scanSkills,
-  type Skill,
 } from '../src/skills/loader.js';
 import { SkillsPlugin, expandSkillCommand } from '../src/skills/plugin.js';
 import { assert, header, report } from './shared.js';
@@ -49,8 +48,13 @@ function isUnder(directory: string, root: string): boolean {
   return directory.startsWith(`${root}${path.sep}`);
 }
 
+function skillDirectory(skill: Skill): string {
+  if (skill.path === undefined) throw new Error(`skill ${skill.name} has no host path`);
+  return skill.path;
+}
+
 function builtinsOf(skills: readonly Skill[]): Skill[] {
-  return skills.filter((skill) => isUnder(skill.directory, BUILTIN_SKILLS_DIR));
+  return skills.filter((skill) => isUnder(skillDirectory(skill), BUILTIN_SKILLS_DIR));
 }
 
 /** Builds a throwaway skills tree covering the good and broken cases. */
@@ -124,7 +128,8 @@ async function scanning(): Promise<void> {
   assert('ignored a directory without SKILL.md silently', !problemDirs.includes('not-a-skill'));
   assert('one bad skill did not prevent loading the good ones', names.includes('pdf-forms'));
   assert('every required built-in is merged into project skills', REQUIRED_BUILTIN_SKILLS.every((name) => names.includes(name)));
-  assert('skills are sorted by name', names.join(',') === [...names].sort().join(','));
+  assert('required built-ins stay first in declared order', names.slice(0, REQUIRED_BUILTIN_SKILLS.length).join(',') === REQUIRED_BUILTIN_SKILLS.join(','));
+  assert('project and global skills are sorted within their product-policy tail', names.slice(REQUIRED_BUILTIN_SKILLS.length).join(',') === [...names.slice(REQUIRED_BUILTIN_SKILLS.length)].sort().join(','));
 }
 
 async function missingDirectory(): Promise<void> {
@@ -134,15 +139,16 @@ async function missingDirectory(): Promise<void> {
 
   assert('all required built-ins remain without a project directory', builtinsOf(skills).length === REQUIRED_BUILTIN_SKILLS.length && REQUIRED_BUILTIN_SKILLS.every((name) => builtinsOf(skills).some((skill) => skill.name === name)));
   assert('no problems reported (project absence is normal, not an error)', problems.filter((problem) => !isUnder(problem.directory, GLOBAL_SKILLS_ROOT)).length === 0);
-  assert('the built-ins resolve beside the loader module', REQUIRED_BUILTIN_SKILLS.every((name) => requireSkill(skills, name).directory === path.join(BUILTIN_SKILLS_DIR, name)));
+  assert('the built-ins resolve beside the loader module', REQUIRED_BUILTIN_SKILLS.every((name) => skillDirectory(requireSkill(skills, name)) === path.join(BUILTIN_SKILLS_DIR, name)));
 
   const plugin = await SkillsPlugin.load('/tmp/darwin-skills-does-not-exist');
+  const agent = new Agent({ plugins: [plugin], printer: false });
+  await agent.initialize();
   const expanded = await expandSkillCommand(plugin, '/developer fix the defect');
   assert('/developer expands without any project skills', expanded?.message.includes('# Developer supervisor') === true);
   const developer = plugin.find('developer');
-  const loaded = developer === undefined ? undefined : await loadSkill(developer);
-  assert('load_skill can load the built-in developer', loaded?.content.includes('# Developer supervisor') === true);
-  const workflow = loaded?.content ?? '';
+  const workflow = developer?.instructions ?? '';
+  assert('official Skill parsed the built-in developer', workflow.includes('# Developer supervisor'));
   assert('developer frames requirement, acceptance, repository, and authorization', ['exact requirement', 'acceptance checks', 'absolute target repository root', 'authorized mutation'].every((term) => workflow.includes(term)));
   assert('developer requires managed launch and complete output consumption', workflow.includes('`start` mode') && workflow.includes('bash status') && workflow.includes('call `bash output` at least once') && workflow.includes('until `hasMore: false`'));
   assert('developer forbids recursive delegation and target-root drift', workflow.includes('must not load the `developer` skill') && workflow.includes('Do not substitute the Host\'s source repository'));
@@ -162,9 +168,8 @@ async function missingDirectory(): Promise<void> {
   const researchExpanded = await expandSkillCommand(plugin, '/self-evolution-research choose the next iteration');
   assert('/self-evolution-research expands without project skills', researchExpanded?.message.includes('# Self-evolution research') === true);
   const research = plugin.find('self-evolution-research');
-  const researchLoaded = research === undefined ? undefined : await loadSkill(research);
-  assert('load_skill can load self-evolution-research', researchLoaded?.content.includes('# Self-evolution research') === true);
-  const researchWorkflow = researchLoaded?.content ?? '';
+  const researchWorkflow = research?.instructions ?? '';
+  assert('official Skill parsed self-evolution-research', researchWorkflow.includes('# Self-evolution research'));
   assert('research inspects the backlog before any product source', researchWorkflow.includes('Before using any product-research source, read `docs/research/backlog_index.md`'));
   assert(
     'the research path is rolled once, before any source is read',
@@ -195,7 +200,7 @@ async function missingDirectory(): Promise<void> {
       researchWorkflow.includes('never list a product the run did not open') &&
       researchWorkflow.includes('propose nothing'),
   );
-  assert('the roll is bundled with the skill and advertised to the model', researchLoaded?.resources.includes(path.join('scripts', 'roll-research-path.mjs')) === true);
+  assert('the roll is bundled with the skill and advertised to the model', researchExpanded?.message.includes('scripts/roll-research-path.mjs') === true);
   assert('research prioritizes in-progress then not-started work and suppresses fresh research', researchWorkflow.indexOf('`in-progress` direction') < researchWorkflow.indexOf('`not-started` direction') && researchWorkflow.includes('do **not** perform fresh product research'));
   assert('research has the exact four-state vocabulary', ['`not-started`', '`in-progress`', '`done`', '`abandoned`'].every((status) => researchWorkflow.includes(status)));
   assert('fresh research covers named and additional products', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', 'at least one additional relevant'].every((term) => researchWorkflow.includes(term)));
@@ -245,7 +250,7 @@ async function missingDirectory(): Promise<void> {
   const legacyScan = await scanSkills(legacyRoot);
   assert(
     'a root skills/ directory is no longer scanned',
-    !legacyScan.skills.some((skill) => isUnder(skill.directory, legacyRoot)) &&
+    !legacyScan.skills.some((skill) => isUnder(skillDirectory(skill), legacyRoot)) &&
       builtinsOf(legacyScan.skills).length === REQUIRED_BUILTIN_SKILLS.length &&
       REQUIRED_BUILTIN_SKILLS.every((name) => legacyScan.skills.some((skill) => skill.name === name)),
   );
@@ -273,40 +278,52 @@ async function builtinCollision(): Promise<void> {
   }
 }
 
-async function promptFragment(): Promise<void> {
-  header('renderAvailableSkills / loadSkill — progressive disclosure');
+async function requiredBuiltinFailures(): Promise<void> {
+  header('scanSkills — required built-ins are fatal');
+  const root = '/tmp/darwin-skills-required';
+  const builtins = path.join(root, 'builtins');
+  await rm(root, { recursive: true, force: true });
+  await mkdir(path.join(builtins, 'developer'), { recursive: true });
+  await writeFile(path.join(builtins, 'developer', 'SKILL.md'), '---\nname: developer\ndescription: required\n---\nbody\n');
+
+  let missing = '';
+  try {
+    await scanSkills(path.join(root, 'project'), { builtinSkillsDir: builtins });
+  } catch (error) {
+    missing = error instanceof Error ? error.message : String(error);
+  }
+  assert('a missing required built-in refuses discovery', missing.includes('self-evolution-research') && missing.includes(builtins));
+
+  await mkdir(path.join(builtins, 'self-evolution-research'), { recursive: true });
+  await writeFile(path.join(builtins, 'self-evolution-research', 'SKILL.md'), '---\nname: self-evolution-research\n---\nbody\n');
+  let invalid = '';
+  try {
+    await scanSkills(path.join(root, 'project'), { builtinSkillsDir: builtins });
+  } catch (error) {
+    invalid = error instanceof Error ? error.message : String(error);
+  }
+  assert('an invalid required built-in names its packaged path and reason', invalid.includes(path.join(builtins, 'self-evolution-research')) && invalid.includes('description'));
+}
+
+
+async function officialSkillModel(): Promise<void> {
+  header('official Skill — parsing and host paths');
 
   const { skills } = await scanSkills(TMP_ROOT);
-  const fragment = renderAvailableSkills(skills);
   const pdfSkill = requireSkill(skills, 'pdf-forms');
-  const loaded = await loadSkill(pdfSkill);
 
-  console.log(`  fragment:\n${fragment}`);
-
-  assert('fragment produced', fragment !== undefined);
-  assert('lists the skill name', fragment?.includes('pdf-forms') === true);
-  assert('lists the description', fragment?.includes('Fill in PDF form fields.') === true);
-  assert('names the load_skill tool so the model knows how to fetch more', fragment?.includes('load_skill') === true);
-  assert(
-    'does NOT include the skill body (the point of progressive disclosure)',
-    fragment?.includes('Run scripts/fill.py') === false,
-  );
-  assert('empty skill list yields no fragment', renderAvailableSkills([]) === undefined);
-
-  console.log(`  resources: ${JSON.stringify(loaded.resources)}`);
-  assert('loadSkill returns the full body', loaded.content.includes('Run scripts/fill.py'));
-  assert('loadSkill lists scripts/', loaded.resources.includes(path.join('scripts', 'fill.py')));
-  assert('loadSkill lists references/', loaded.resources.includes(path.join('references', 'spec.md')));
-
-  const formatted = formatSkillForModel(loaded, pdfSkill);
-  assert('formatted output mentions the resource files', formatted.includes('scripts/fill.py'));
-  assert('formatted output carries the skill directory', formatted.includes(TMP_ROOT));
+  assert('official Skill carries the parsed description', pdfSkill.description === 'Fill in PDF form fields.');
+  assert('official Skill carries only the instruction body', pdfSkill.instructions.includes('Run scripts/fill.py') && !pdfSkill.instructions.includes('description:'));
+  assert('official Skill carries the host directory for resources', skillDirectory(pdfSkill).includes(TMP_ROOT));
 }
 
 async function slashCommands(): Promise<void> {
   header('expandSkillCommand — slash-command expansion');
 
   const plugin = await SkillsPlugin.load(TMP_ROOT);
+  const agent = new Agent({ plugins: [plugin], printer: false });
+  await agent.initialize();
+
 
   const exact = await expandSkillCommand(plugin, '/pdf-forms');
   const withArgs = await expandSkillCommand(plugin, '/pdf-forms fill in the tax form');
@@ -335,32 +352,29 @@ async function slashCommands(): Promise<void> {
 }
 
 async function pluginShape(): Promise<void> {
-  header('SkillsPlugin — tool registration and prompt injection');
+  header('SkillsPlugin — one compatibility tool over official AgentSkills');
 
   const plugin = await SkillsPlugin.load(TMP_ROOT);
   const tools = plugin.getTools();
+  const agent = new Agent({ systemPrompt: 'BASE PROMPT', plugins: [plugin], printer: false });
+  await agent.initialize();
 
-  console.log(`  tools: ${JSON.stringify(tools.map((t) => t.name))}`);
+  console.log(`  tools: ${JSON.stringify(agent.tools.map((tool) => tool.name))}`);
 
-  assert('exposes exactly the load_skill tool', tools.length === 1 && tools[0]?.name === 'load_skill');
+  assert('exposes exactly the load_skill tool', tools.length === 1 && agent.tools.map((tool) => tool.name).join(',') === 'load_skill');
+  assert('does not expose the native skills tool', !agent.tools.some((tool) => tool.name === 'skills'));
   assert('tool description enumerates the skills', tools[0]?.description.includes('pdf-forms') === true);
+  assert('official plugin waits until invocation to inject', agent.systemPrompt === 'BASE PROMPT');
 
-  // Minimal stand-in for LocalAgent: initAgent only touches systemPrompt.
-  const fakeAgent = { systemPrompt: 'BASE PROMPT' } as Parameters<SkillsPlugin['initAgent']>[0];
-  plugin.initAgent(fakeAgent);
-  const injected = fakeAgent.systemPrompt;
-
-  assert('base prompt is preserved', typeof injected === 'string' && injected.includes('BASE PROMPT'));
-  assert('skills section is appended', typeof injected === 'string' && injected.includes('<available-skills>'));
+  await agent.invoke('show catalogue');
+  const injected = typeof agent.systemPrompt === 'string'
+    ? agent.systemPrompt
+    : agent.systemPrompt?.map((block) => block.type === 'textBlock' ? block.text : '').join('\n') ?? '';
+  assert('official catalogue is injected before invocation', injected.includes('<available_skills>'));
+  assert('official progressive disclosure omits bodies', !injected.includes('Run scripts/fill.py'));
 
   const builtinOnlyPlugin = await SkillsPlugin.load('/tmp/darwin-skills-does-not-exist');
-  const builtinPrompt = { systemPrompt: 'BASE' } as Parameters<SkillsPlugin['initAgent']>[0];
-  builtinOnlyPlugin.initAgent(builtinPrompt);
-
-  const builtinText = typeof builtinPrompt.systemPrompt === 'string' ? builtinPrompt.systemPrompt : '';
   assert('built-in-only discovery still registers load_skill', builtinOnlyPlugin.getTools().length === 1);
-  assert('built-in-only discovery advertises every required skill', REQUIRED_BUILTIN_SKILLS.every((name) => builtinText.includes(`<skill name="${name}">`)));
-  assert('progressive disclosure omits built-in bodies', !builtinText.includes('# Developer supervisor') && !builtinText.includes('# Self-evolution research'));
 }
 
 async function researchPathRoll(): Promise<void> {
@@ -478,19 +492,22 @@ async function realProjectSkill(): Promise<void> {
   assert('no problems in the real skills directory', problems.filter((problem) => !isUnder(problem.directory, GLOBAL_SKILLS_ROOT)).length === 0);
   assert(
     'it is found under .darwin/skills/',
-    requireSkill(skills, 'commit-message').directory.includes(path.join('.darwin', SKILLS_DIRNAME)),
+    skillDirectory(requireSkill(skills, 'commit-message')).includes(path.join('.darwin', SKILLS_DIRNAME)),
   );
 
-  const loaded = await loadSkill(requireSkill(skills, 'commit-message'));
-  console.log(`  resources: ${JSON.stringify(loaded.resources)}`);
-  assert('its reference file is listed', loaded.resources.includes(path.join('references', 'types.md')));
+  const plugin = await SkillsPlugin.load(REPO_ROOT);
+  const agent = new Agent({ plugins: [plugin], printer: false });
+  await agent.initialize();
+  const expanded = await expandSkillCommand(plugin, '/commit-message test resources');
+  assert('official activation lists its reference file', expanded?.message.includes('references/types.md') === true);
 }
 
 async function main(): Promise<void> {
   await scanning();
   await missingDirectory();
   await builtinCollision();
-  await promptFragment();
+  await requiredBuiltinFailures();
+  await officialSkillModel();
   await slashCommands();
   await pluginShape();
   await researchPathRoll();

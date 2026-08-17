@@ -1,28 +1,19 @@
 /**
- * Skill discovery and loading.
+ * Darwin's product-policy layer over the SDK's official Agent Skills model.
  *
- * The only hand-built subsystem in this project: the TypeScript SDK has no Skills
- * support yet (the Python SDK ships an `AgentSkills` plugin). Semantics follow the
- * Agent Skills convention — a `SKILL.md` per directory with YAML frontmatter, and
- * progressive disclosure: only names and descriptions go into the system prompt,
- * with full text fetched on demand.
- *
- * Frontmatter is parsed with `gray-matter` rather than a hand-rolled reader. Real
- * SKILL.md files quote strings, wrap long descriptions across lines and carry
- * fields we do not model; a five-line parser silently mangles those, and the
- * loader's job is to be forgiving about author formatting.
+ * `Skill` owns frontmatter parsing and the instruction data model. This file owns
+ * only the behaviour that is specific to Darwin: bundled skills are required and
+ * reserved, project skills override global skills, and optional failures are
+ * isolated for the startup UI to report.
  */
 import type { Dirent } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import matter from 'gray-matter';
+import { Skill } from '@strands-agents/sdk/vended-plugins/skills';
 
 import { darwinDir, userDarwinDir } from '../paths.js';
-
-/** Directories checked for supporting files when a skill is loaded. */
-export const RESOURCE_DIRS = ['scripts', 'references', 'assets'] as const;
 
 export const SKILL_FILENAME = 'SKILL.md';
 export const SKILLS_DIRNAME = 'skills';
@@ -31,15 +22,6 @@ export const SKILLS_DIRNAME = 'skills';
 export const BUILTIN_SKILLS_DIR = fileURLToPath(new URL('./builtin', import.meta.url));
 export const REQUIRED_BUILTIN_SKILLS = ['developer', 'self-evolution-research'] as const;
 
-export interface Skill {
-  name: string;
-  description: string;
-  /** Absolute path to the skill's SKILL.md. */
-  skillFile: string;
-  /** Absolute path to the directory containing SKILL.md. */
-  directory: string;
-}
-
 /** A skill directory that could not be used, kept so the UI can surface it. */
 export interface SkillProblem {
   directory: string;
@@ -47,56 +29,78 @@ export interface SkillProblem {
 }
 
 export interface SkillScan {
+  /** Official SDK Skill instances, already filtered into Darwin precedence order. */
   skills: Skill[];
   problems: SkillProblem[];
 }
 
+type SkillOwner = 'built-in' | 'project' | 'global';
+
 /**
- * Scans `<root>/.darwin/skills/*​/SKILL.md`.
+ * Scans bundled, project and global skill directories.
  *
- * A malformed skill is collected into `problems` and skipped rather than thrown:
- * one bad directory should never stop the agent from starting, and the user still
- * needs to be told why their skill is not showing up.
+ * Required built-ins come first and fail startup when broken. Optional layers are
+ * project then global so a valid project definition claims its name first; an
+ * invalid definition claims nothing and cannot hide a valid lower layer.
  */
-export async function scanSkills(root: string): Promise<SkillScan> {
+export async function scanSkills(
+  root: string,
+  options: { builtinSkillsDir?: string } = {},
+): Promise<SkillScan> {
+  const builtinSkillsDir = options.builtinSkillsDir ?? BUILTIN_SKILLS_DIR;
   const globalSkillsDir = path.join(userDarwinDir(), SKILLS_DIRNAME);
   const projectSkillsDir = path.join(darwinDir(root), SKILLS_DIRNAME);
   const skills: Skill[] = [];
   const problems: SkillProblem[] = [];
-  const seen = new Map<string, string>();
+  const seen = new Map<string, { directory: string; owner: SkillOwner }>();
 
-  // Built-ins are a product contract: unlike optional project skills, a missing
-  // packaged asset is fatal rather than silently removing a promised capability.
-  const builtinEntries = await readdir(BUILTIN_SKILLS_DIR, { withFileTypes: true });
-  await scanDirectory(BUILTIN_SKILLS_DIR, builtinEntries, 'built-in', skills, problems, seen);
+  const builtinEntries = orderBuiltinEntries(
+    await readdir(builtinSkillsDir, { withFileTypes: true }),
+  );
+  await scanDirectory(builtinSkillsDir, builtinEntries, 'built-in', skills, problems, seen);
   for (const required of REQUIRED_BUILTIN_SKILLS) {
     if (!skills.some((skill) => skill.name.toLowerCase() === required)) {
-      throw new Error(`Required built-in ${required} skill is missing from ${BUILTIN_SKILLS_DIR}`);
+      throw new Error(`Required built-in ${required} skill is missing from ${builtinSkillsDir}`);
     }
   }
 
-  // Validate project entries before global entries so a valid project definition
-  // overrides its global counterpart, while an invalid one claims no name.
   for (const [directory, owner] of [[projectSkillsDir, 'project'], [globalSkillsDir, 'global']] as const) {
-    if (directory === BUILTIN_SKILLS_DIR) continue;
+    if (directory === builtinSkillsDir) continue;
+    let entries: Dirent[];
     try {
-      const entries = await readdir(directory, { withFileTypes: true });
-      await scanDirectory(directory, entries, owner, skills, problems, seen);
+      entries = await readdir(directory, { withFileTypes: true });
     } catch {
-      // Missing optional layers are normal.
+      // Missing or unreadable optional roots carry no attributable skill entry.
+      continue;
     }
+    await scanDirectory(directory, sortedDirectories(entries), owner, skills, problems, seen);
   }
-  skills.sort((a, b) => a.name.localeCompare(b.name));
+
   return { skills, problems };
+}
+
+function orderBuiltinEntries(entries: readonly Dirent[]): Dirent[] {
+  const directories = sortedDirectories(entries);
+  const required = REQUIRED_BUILTIN_SKILLS.flatMap((name) =>
+    directories.filter((entry) => entry.name === name),
+  );
+  const requiredNames = new Set<string>(REQUIRED_BUILTIN_SKILLS);
+  return [...required, ...directories.filter((entry) => !requiredNames.has(entry.name))];
+}
+
+function sortedDirectories(entries: readonly Dirent[]): Dirent[] {
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 async function scanDirectory(
   skillsDir: string,
   entries: readonly Dirent[],
-  owner: 'built-in' | 'project' | 'global',
+  owner: SkillOwner,
   skills: Skill[],
   problems: SkillProblem[],
-  seen: Map<string, string>,
+  seen: Map<string, { directory: string; owner: SkillOwner }>,
 ): Promise<void> {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -108,12 +112,19 @@ async function scanDirectory(
     try {
       raw = await readFile(skillFile, 'utf8');
     } catch (error) {
-      if (owner === 'built-in') throw error;
-      // A project directory without SKILL.md is not a skill; ignore it silently.
+      if (owner === 'built-in') {
+        throw new Error(`Required built-in skill asset could not be read at ${skillFile}: ${describe(error)}`);
+      }
+      if (isMissing(error)) {
+        // A directory without SKILL.md is not a skill. This matches the SDK's
+        // directory scanner and keeps optional grouping folders silent.
+        continue;
+      }
+      problems.push({ directory, reason: `could not read ${SKILL_FILENAME}: ${describe(error)}` });
       continue;
     }
 
-    const parsed = parseSkill(raw, directory, skillFile, entry.name);
+    const parsed = parseOfficialSkill(raw, directory, entry.name);
     if ('reason' in parsed) {
       if (owner === 'built-in') {
         throw new Error(`Invalid built-in skill at ${directory}: ${parsed.reason}`);
@@ -127,138 +138,84 @@ async function scanDirectory(
     if (duplicateOf !== undefined) {
       problems.push({
         directory,
-        reason:
-          owner === 'project' && duplicateOf.startsWith(`${BUILTIN_SKILLS_DIR}${path.sep}`)
-            ? `skill name "${parsed.name}" is reserved by built-in skill ${path.basename(duplicateOf)}`
-            : `duplicate skill name "${parsed.name}" (already defined by ${duplicateOf})`,
+        reason: duplicateOf.owner === 'built-in'
+          ? `skill name "${parsed.name}" is reserved by built-in skill ${path.basename(duplicateOf.directory)}`
+          : `duplicate skill name "${parsed.name}" (already defined by ${duplicateOf.directory})`,
       });
       continue;
     }
 
-    seen.set(key, directory);
+    seen.set(key, { directory, owner });
     skills.push(parsed);
   }
 }
 
-function parseSkill(
-  raw: string,
-  directory: string,
-  skillFile: string,
-  dirName: string,
-): Skill | { reason: string } {
-  let data: Record<string, unknown>;
-  try {
-    ({ data } = matter(raw) as unknown as { data: Record<string, unknown> });
-  } catch (error) {
-    return { reason: `invalid YAML frontmatter: ${error instanceof Error ? error.message : String(error)}` };
-  }
-
-  const description = readString(data['description']);
-  if (description === undefined) {
-    return { reason: `${SKILL_FILENAME} frontmatter is missing a "description" field` };
-  }
-
-  // The directory name is a sensible fallback for `name`, and matches how authors
-  // usually expect a skill to be addressed.
-  const name = readString(data['name']) ?? dirName;
-  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-    return {
-      reason: `skill name ${JSON.stringify(name)} must contain only letters, numbers, hyphens and underscores`,
-    };
-  }
-
-  return { name, description, skillFile, directory };
-}
-
-function readString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed === '' ? undefined : trimmed;
-}
-
 /**
- * The system-prompt fragment advertising available skills.
- *
- * Names and descriptions only — this is the progressive-disclosure half of the
- * design. Returns undefined when there is nothing to advertise so callers can
- * skip appending an empty section.
+ * Hands all real parsing to the official SDK. Darwin keeps one compatibility
+ * transform: a missing name defaults to the containing directory, as documented
+ * since the baseline release.
  */
-export function renderAvailableSkills(skills: readonly Skill[]): string | undefined {
-  if (skills.length === 0) return undefined;
-
-  const entries = skills.map((skill) => `  <skill name="${skill.name}">${skill.description}</skill>`);
-  return [
-    '<available-skills>',
-    'Skills are instruction sets for specific tasks. When a request matches one,',
-    'call the load_skill tool with its name to read the full instructions before',
-    'you begin. Only the name and description are shown here.',
-    ...entries,
-    '</available-skills>',
-  ].join('\n');
-}
-
-export interface LoadedSkill {
-  name: string;
-  /** Full SKILL.md text, frontmatter included. */
-  content: string;
-  /** Relative paths of files in the skill's resource directories. */
-  resources: string[];
-}
-
-/**
- * Reads a skill's full instructions plus a listing of its resource files.
- *
- * The file list matters as much as the text: skills routinely tell the model to
- * run `scripts/foo.py` or consult `references/bar.md`, and the model needs to know
- * those exist and where they are.
- */
-export async function loadSkill(skill: Skill): Promise<LoadedSkill> {
-  const content = await readFile(skill.skillFile, 'utf8');
-  const resources: string[] = [];
-
-  for (const dirName of RESOURCE_DIRS) {
-    const found = await listFilesRecursively(path.join(skill.directory, dirName));
-    resources.push(...found.map((file) => path.join(dirName, file)));
-  }
-
-  return { name: skill.name, content, resources };
-}
-
-async function listFilesRecursively(dir: string): Promise<string[]> {
-  let entries: Dirent[];
+function parseOfficialSkill(raw: string, directory: string, dirName: string): Skill | { reason: string } {
   try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    // Resource directories are optional.
-    return [];
-  }
+    const parsed = parseWithDefaultName(raw, dirName);
+    const name = parsed.name.trim();
+    const description = parsed.description.trim();
 
-  const files: string[] = [];
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const nested = await listFilesRecursively(path.join(dir, entry.name));
-      files.push(...nested.map((file) => path.join(entry.name, file)));
-    } else {
-      files.push(entry.name);
+    if (description === '') {
+      return { reason: `${SKILL_FILENAME} frontmatter is missing a "description" field` };
     }
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      return {
+        reason: `skill name ${JSON.stringify(name)} must contain only letters, numbers, hyphens and underscores`,
+      };
+    }
+
+    // `Skill.fromContent` parsed every field. Reconstructing the official model
+    // only supplies its host path without imposing the SDK's optional
+    // name-equals-directory warning on Darwin's established naming contract.
+    return new Skill({
+      name,
+      description,
+      instructions: parsed.instructions,
+      path: directory,
+      allowedTools: parsed.allowedTools,
+      metadata: parsed.metadata,
+      license: parsed.license,
+      compatibility: parsed.compatibility,
+    });
+  } catch (error) {
+    return { reason: officialReason(error) };
   }
-  return files.sort();
 }
 
-/**
- * Formats a loaded skill for the model, as both the `load_skill` result and the
- * slash-command expansion use the same shape.
- */
-export function formatSkillForModel(loaded: LoadedSkill, skill: Skill): string {
-  const sections = [`<skill name="${loaded.name}" directory="${skill.directory}">`, loaded.content];
+function parseWithDefaultName(raw: string, dirName: string): Skill {
+  try {
+    return Skill.fromContent(raw);
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "SKILL.md content must have a 'name' field in frontmatter") {
+      throw error;
+    }
 
-  if (loaded.resources.length > 0) {
-    sections.push(
-      '',
-      'Files bundled with this skill (paths are relative to the skill directory above):',
-      ...loaded.resources.map((file) => `  ${file}`),
+    const withName = raw.replace(
+      /^(\s*---\s*\r?\n)/,
+      `$1name: ${JSON.stringify(dirName)}\n`,
     );
+    return Skill.fromContent(withName);
   }
-  sections.push('</skill>');
-  return sections.join('\n');
+}
+
+function officialReason(error: unknown): string {
+  const message = describe(error);
+  if (message === "SKILL.md content must have a 'description' field in frontmatter") {
+    return `${SKILL_FILENAME} frontmatter is missing a "description" field`;
+  }
+  return /yaml/i.test(message) ? `invalid YAML frontmatter: ${message}` : message;
+}
+
+function isMissing(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
+}
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

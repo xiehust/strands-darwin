@@ -27,10 +27,8 @@ import type { Dirent } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import os from 'node:os';
 
-import { CachePointBlock, TextBlock } from '@strands-agents/sdk';
-import type { SystemPrompt } from '@strands-agents/sdk';
-
 import type { SystemPromptHolder } from './prompt-cache.js';
+import { refreshKnownPrompt } from '../skills/prompt.js';
 
 export const WORKING_CONTEXT_TAG = 'working-context';
 
@@ -114,44 +112,18 @@ export function withWorkingContext(prompt: string, fragment: string): string {
 }
 
 /**
- * Puts the fragment on a live agent, and reports whether it went on.
+ * Refreshes the one current working-context block after initialization/restore.
  *
- * Must run after `agent.initialize()` and before the cache point, for the reasons
- * in {@link withWorkingContext} and `./prompt-cache.ts`.
- *
- * Two prompt shapes are accepted. A plain string is the fresh-session case. A
- * `[TextBlock, CachePointBlock]` pair is the *resumed* case: restoring a session
- * replays the prompt darwin itself last sent, cache point and all, and refusing it
- * here would leave a resumed run stating the date and directory listing of the run
- * that created the session — days old, and stated with total confidence. Unwrapping
- * back to a string is safe precisely because that shape is darwin's own output
- * (`applySystemPromptCachePoint` produces exactly two blocks), and the caller
- * re-places the cache point immediately afterwards, with this run's TTL.
- *
- * Anything else means the composition order was broken by someone else; leave it
- * alone rather than guessing where the text ends, exactly as the cache point does.
- *
- * The refreshed prompt is byte-identical when nothing changed, so a resume on the
- * same day in an unchanged directory still reads the provider's cache; the cache is
- * only paid for when the facts it describes actually moved.
+ * The official skills plugin keeps its catalogue in a separate TextBlock, and
+ * Darwin keeps the cache point last. `refreshKnownPrompt` accepts only those
+ * explicit Darwin-owned shapes, preserves the catalogue, replaces working
+ * context, and drops the old cache point so the current run can re-place it.
  */
 export function applyWorkingContext(agent: SystemPromptHolder, fragment: string): boolean {
-  const prompt = agent.systemPrompt;
-  const text = typeof prompt === 'string' ? prompt : cachedPromptText(prompt);
-  if (text === undefined) return false;
-  agent.systemPrompt = withWorkingContext(text, fragment);
+  const refreshed = refreshKnownPrompt(agent.systemPrompt, fragment);
+  if (refreshed === undefined) return false;
+  agent.systemPrompt = refreshed;
   return true;
-}
-
-/**
- * The text of a prompt darwin previously cached, or undefined for any other block
- * shape. Deliberately exact: two blocks, text then cache point.
- */
-function cachedPromptText(prompt: SystemPrompt | undefined): string | undefined {
-  if (!Array.isArray(prompt) || prompt.length !== 2) return undefined;
-  const [text, cachePoint] = prompt;
-  if (!(text instanceof TextBlock) || !(cachePoint instanceof CachePointBlock)) return undefined;
-  return text.text;
 }
 
 /** Removes every working-context block, leaving the rest of the prompt intact. */

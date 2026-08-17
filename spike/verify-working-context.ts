@@ -185,8 +185,10 @@ async function composition(): Promise<void> {
   const { fragment } = await buildWorkingContext(root, FIXED_NOW);
 
   const holder: SystemPromptHolder = { systemPrompt: withSkills };
-  assert('the fragment goes on a string prompt', applyWorkingContext(holder, fragment));
-  const assembled = typeof holder.systemPrompt === 'string' ? holder.systemPrompt : '';
+  assert('the fragment converts the known prompt to explicit blocks', applyWorkingContext(holder, fragment));
+  const assembled = Array.isArray(holder.systemPrompt)
+    ? holder.systemPrompt.map((block) => block instanceof TextBlock ? block.text : '').join('\n')
+    : '';
 
   const order = ['You are darwin', '<project-instructions', '<available-skills>', `<${WORKING_CONTEXT_TAG}>`].map((marker) =>
     assembled.indexOf(marker),
@@ -202,9 +204,9 @@ async function composition(): Promise<void> {
   // rather than after it, where it would cache nothing.
   const placed = applySystemPromptCachePoint(holder, planPromptCache(CLAUDE_CONFIG));
   const blocks = Array.isArray(holder.systemPrompt) ? holder.systemPrompt : [];
-  assert('the cache point still lands on a plain string', placed && blocks.length === 2);
-  assert('the working context is inside the cached text', blocks[0] instanceof TextBlock && (blocks[0] as TextBlock).text.trimEnd().endsWith(`</${WORKING_CONTEXT_TAG}>`));
-  assert('the cache point is last', blocks[1] instanceof CachePointBlock);
+  assert('the cache point is added to explicit prompt blocks', placed && blocks.length === 3);
+  assert('the working context stays immediately before the cache point', blocks[1] instanceof TextBlock && (blocks[1] as TextBlock).text.trimEnd().endsWith(`</${WORKING_CONTEXT_TAG}>`));
+  assert('the cache point is last', blocks[2] instanceof CachePointBlock);
 
   // Order broken by something other than darwin: the text boundary is no longer
   // knowable, so refuse rather than guess.
@@ -229,24 +231,21 @@ function resumedPrompt(): void {
     systemPrompt: [new TextBlock(stale), new CachePointBlock({ cacheType: 'default' })],
   };
   assert('darwin\'s own cached shape is accepted', applyWorkingContext(restored, today));
-  assert(
-    'it is unwrapped back to a string so the cache point can be re-placed',
-    typeof restored.systemPrompt === 'string',
-  );
-  const refreshed = typeof restored.systemPrompt === 'string' ? restored.systemPrompt : '';
+  assert('it is migrated to explicit base/context blocks and drops the stale catalogue', Array.isArray(restored.systemPrompt) && restored.systemPrompt.length === 2);
+  const refreshed = Array.isArray(restored.systemPrompt)
+    ? restored.systemPrompt.map((block) => block instanceof TextBlock ? block.text : '').join('\n')
+    : '';
   assert('the stale date is gone', !refreshed.includes('2026-08-01'));
   assert('the current one is there, exactly once', refreshed.split(`<${WORKING_CONTEXT_TAG}>`).length - 1 === 1 && refreshed.includes('2026-08-16'));
-  assert('the rest of the restored prompt survives', refreshed.startsWith('BASE') && refreshed.includes('<available-skills>menu</available-skills>'));
+  assert('the base survives while the stale pre-official catalogue is removed', refreshed.startsWith('BASE') && !refreshed.includes('<available-skills>'));
 
   assert('the cache point is placed again', applySystemPromptCachePoint(restored, planPromptCache(CLAUDE_CONFIG)));
 
-  // The cost model: an unchanged day in an unchanged directory reproduces the same
-  // bytes, so the provider still serves it from cache.
-  const again: SystemPromptHolder = {
-    systemPrompt: [new TextBlock(refreshed), new CachePointBlock({ cacheType: 'default' })],
-  };
-  applyWorkingContext(again, today);
-  assert('refreshing with identical facts changes nothing', again.systemPrompt === refreshed);
+  // Identical current facts preserve the same explicit text blocks.
+  const before = JSON.stringify(restored.systemPrompt);
+  applyWorkingContext(restored, today);
+  applySystemPromptCachePoint(restored, planPromptCache(CLAUDE_CONFIG));
+  assert('refreshing with identical facts changes nothing', JSON.stringify(restored.systemPrompt) === before);
 }
 
 async function main(): Promise<void> {
