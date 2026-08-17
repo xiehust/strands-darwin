@@ -360,9 +360,12 @@ So: a scenario that depends on the model *not* doing something is a scenario tha
 passed, then the run timed out waiting for idle" as this shape rather than as a regression in what
 was under test.
 
-Related, in the same scenario: `waitFor(APPROVE_TARGET)` anchors on a 170-character path. Long
-unbreakable strings survive Ink's word wrap intact today, which is the only reason it matches at
-all — a shorter anchor is worth more than the precision.
+Related, and measured while fixing it: a wait on a 170-character path followed by an assertion on
+the same string is **self-fulfilling** — the wait *is* the assertion, and it hides the fact that the
+path never appears contiguously (Ink breaks a string wider than the terminal). Split the two: wait
+on a short unique anchor, and compare the long value with `withoutWhitespace(...)`, which drops the
+wrap. That is also what made the wait occasionally burn its whole 60s budget on an otherwise healthy
+run.
 
 ## Contract: assertion strings must be exclusive to the state under test
 

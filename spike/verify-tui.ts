@@ -85,6 +85,16 @@ module.exports = { double };
 const APPROVE_TARGET_DIR = path.join(TARGET_DIR, 'ser009-' + 'p'.repeat(90), 'nested-' + 'q'.repeat(70));
 const APPROVE_TARGET = path.join(APPROVE_TARGET_DIR, 'calc.js');
 const APPROVE_PREFIX = 'SER009-DETAIL-PREFIX-';
+/**
+ * Short, unique anchor for waits that only need "the target path was drawn".
+ *
+ * The full path is ~170 characters and does **not** appear contiguously in the
+ * stripped output: it is drawn across a wrap. Waiting on it and then asserting it was
+ * self-fulfilling — the wait *was* the assertion — and it is why the wait
+ * occasionally spent its whole 60s budget with the run otherwise healthy. Wait on
+ * this anchor; compare the full path with {@link withoutWhitespace}.
+ */
+const APPROVE_TARGET_ANCHOR = 'ser009-pppppppppp';
 const APPROVE_REPLACEMENT = `  return n * 2; // ${APPROVE_PREFIX}${'x'.repeat(620)}`;
 const APPROVE_EXPECTED = BUGGY.replace('  return n + 2;', APPROVE_REPLACEMENT);
 const APPROVE_REQUEST =
@@ -151,8 +161,9 @@ async function approvePath(): Promise<void> {
     tui.send(hiddenDraft);
     await tui.waitFor(`you> ${hiddenDraft}`, { timeoutMs: 30_000, from: turnStart, settleMs: 400 });
 
-    await tui.waitFor(APPROVE_TARGET, { timeoutMs: 60_000, from: turnStart });
-    assert('user message appears in history', tui.screen.includes(APPROVE_TARGET));
+    await tui.waitFor(APPROVE_TARGET_ANCHOR, { timeoutMs: 60_000, from: turnStart });
+    assert('user message appears in history',
+      withoutWhitespace(tui.screen).includes(withoutWhitespace(APPROVE_TARGET)));
 
     // Reading the file is a read: it must run without asking.
     await tui.waitFor('fileEditor view', { timeoutMs: 120_000, from: turnStart });
@@ -195,7 +206,12 @@ async function approvePath(): Promise<void> {
 
     // The exact disk content below is the approval proof. Wait for the turn to
     // finish rather than for an immutable tool row that may have scrolled off 50 rows.
-    await waitForIdle(tui, 240_000);
+    // Draining, not a plain idle wait: the request says not to run shell commands and
+    // the model mostly obeys, but when it does not, the extra call raises a second
+    // permission box this scenario never answers — every assertion passes and the run
+    // then burns its whole timeout. See the known-flake note in
+    // `.trellis/spec/frontend/tui-testing.md`.
+    await settleTurn(tui, 240_000);
 
     const after = await readFile(APPROVE_TARGET, 'utf8');
     console.log(`  calc.js now: ${after.replace(/\n/g, ' ').slice(0, 160)}…`);
@@ -1216,6 +1232,47 @@ async function waitForIdle(tui: TuiSession, timeoutMs: number): Promise<void> {
     // where input is correctly ignored, and the app then never exits.
     settleMs: 400,
   });
+}
+
+/**
+ * Waits for an idle prompt, denying any permission box that appears on the way.
+ *
+ * For scenarios whose assertions are already done and which only need the turn to
+ * *end*. A prompt nobody answers blocks the agent loop for as long as the harness is
+ * willing to wait, so "unexpected prompt" has to be a case the teardown handles
+ * rather than a case it hangs on. Denial, not approval: a stray call this scenario
+ * never asked for should not run.
+ */
+async function settleTurn(tui: TuiSession, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (let drained = 0; drained < 4; drained += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    try {
+      await tui.waitUntil((screen) => screen.lastIndexOf('you>') > screen.lastIndexOf('working…'), {
+        timeoutMs: Math.min(remaining, 30_000),
+        label: 'an idle prompt',
+        settleMs: 400,
+      });
+      return;
+    } catch {
+      if (!awaitsPermission(tui.frame)) continue;
+      console.log('  (draining a permission prompt this scenario did not ask for)');
+      tui.send('\u001b'); // esc = deny
+    }
+  }
+  await waitForIdle(tui, Math.max(1_000, deadline - Date.now()));
+}
+
+/**
+ * Drops every space and line break, so a comparison cannot fail on a wrap.
+ *
+ * For asserting that a long path or command reached the screen: Ink breaks a string
+ * wider than the terminal, and the break is not part of what is under test. Safe for
+ * values that contain no significant whitespace — a path, a command, an id.
+ */
+function withoutWhitespace(text: string): string {
+  return text.replace(/\s+/gu, '');
 }
 
 /** True when the newest frame is the permission box rather than the input box. */
