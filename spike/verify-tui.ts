@@ -18,7 +18,8 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion | toolDetails |
+ *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion | clear |
+ *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
  */
@@ -27,6 +28,7 @@ import os from 'node:os';
 import process from 'node:process';
 import path from 'node:path';
 
+import { sessionPaths, trajectoryPath } from '../src/agent/session.js';
 import { darwinDir, DARWIN_DIRNAME } from '../src/paths.js';
 import { CONFIG_FILENAME, permissionRulesPath } from '../src/config.js';
 import { AGENTS_DIRNAME } from '../src/agents/loader.js';
@@ -825,9 +827,15 @@ async function slashCompletion(): Promise<void> {
     // selected row, two spaces otherwise) — a bare '/exit' also occurs in the
     // header line, so it would pass with no list on screen at all.
     assert('the built-ins are listed first', completed.includes('❯ /agents'));
+    // Every built-in, not a sample: MAX_COMPLETIONS is what makes the whole list fit,
+    // so a built-in added without growing it must fail here rather than silently
+    // disappear behind the "… n more" row.
+    assert('the built-in /clear is listed', completed.includes('  /clear'));
     assert('the built-in /compact is listed', completed.includes('  /compact'));
+    assert('the built-in /context is listed', completed.includes('  /context'));
     assert('the built-in /effort is listed', completed.includes('  /effort'));
     assert('the built-in /exit is listed', completed.includes('  /exit'));
+    assert('the built-in /model is listed', completed.includes('  /model'));
     assert('the built-in /tasks is listed', completed.includes('  /tasks'));
     assert('the built-in /trajectory is listed', completed.includes('  /trajectory'));
     assert('the built-in /usage is listed', completed.includes('  /usage'));
@@ -1737,6 +1745,107 @@ function clearCount(raw: string): number {
   return raw.split('\u001b[3J').length - 1;
 }
 
+/** The `session <id>` the header is currently showing, or '' if it is not on screen. */
+function headerSessionId(frame: string): string {
+  return /session (session-[0-9a-z-]+)/.exec(frame)?.[1] ?? '';
+}
+
+/**
+ * `/clear` starts a new session; the one being left stays on disk.
+ *
+ * Free — no model call. What only a pty can show is here: the header moving to the
+ * new session, the screen actually being cleared *once*, the old transcript being
+ * gone from it, and one notice naming both ids so the saved session is still
+ * findable. What files survive a switch is `spike/verify-clear-session.ts`, which can
+ * assert bytes; this scenario asserts the previous session's directory is still
+ * there, and that the resume pointer has not been handed to the empty new session.
+ */
+async function clearSession(): Promise<void> {
+  header('TUI — /clear starts a new session and keeps the old one');
+
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const firstSession = headerSessionId(tui.frame);
+    assert('the header names the session it started in', firstSession !== '');
+
+    // A canary in the first session's own state directory. Without a model call there
+    // is no recorded turn and so no record of darwin's own making (the recorder opens
+    // the file on the first turn), so these are the bytes that stand in for one — the
+    // point being that a session switch neither deletes nor rewrites them.
+    // `spike/verify-clear-session.ts` makes the same measurement over a real snapshot.
+    const firstTrajectory = trajectoryPath(WORK_DIR, firstSession);
+    const canary = '{"type":"canary","note":"stands in for a recorded turn"}\n';
+    await mkdir(path.dirname(firstTrajectory), { recursive: true });
+    await writeFile(firstTrajectory, canary, 'utf8');
+
+    // Something in the transcript that must not survive the clear. A local report
+    // rather than a turn: this scenario makes no model call.
+    const beforeMarker = tui.mark();
+    tui.submit('/agents');
+    await tui.waitFor('subagent dispatches — none in this run', { timeoutMs: 30_000, from: beforeMarker, settleMs: 400 });
+    assert('the transcript has content before the clear', tui.frame.includes('subagent dispatches'));
+
+    const beforeArgument = tui.mark();
+    tui.submit('/clear extra');
+    await tui.waitFor('/clear takes no arguments', { timeoutMs: 30_000, from: beforeArgument, settleMs: 400 });
+    const rejected = tui.screen.slice(beforeArgument);
+    assert('/clear rejects arguments locally', !rejected.includes('working…'));
+    assert('…and does not switch session', headerSessionId(tui.frame) === firstSession);
+
+    const beforeTabArgument = tui.mark();
+    tui.submit('/clear\textra');
+    await tui.waitFor('/clear takes no arguments', { timeoutMs: 30_000, from: beforeTabArgument, settleMs: 400 });
+    assert('/clear rejects non-space argument separators locally', !tui.screen.slice(beforeTabArgument).includes('working…'));
+
+    const beforeClear = tui.mark();
+    const rawBeforeClear = tui.raw.length;
+    tui.submit('/clear');
+    await tui.waitFor('cleared — new session', { timeoutMs: 60_000, from: beforeClear, settleMs: 600 });
+
+    const secondSession = headerSessionId(tui.frame);
+    assert('the header moves to a new session', secondSession !== '' && secondSession !== firstSession);
+    const notice = tui.screen.slice(beforeClear);
+    assert('the notice names the new session', notice.includes(`new session ${secondSession}`));
+    assert('…and the previous one, so it stays findable', notice.includes(`Previous session ${firstSession}`));
+    assert('…with the command that reopens it', notice.includes(`darwin --session ${firstSession}`));
+    assert('/clear starts no model turn', !notice.includes('working…'));
+
+    // One deliberate whole-screen clear, not the per-render clear the frame budget
+    // exists to prevent (`.trellis/spec/frontend/live-frame.md`).
+    assert('the screen is cleared exactly once', clearCount(tui.raw.slice(rawBeforeClear)) === 1);
+    assert('the pre-clear transcript is gone from the frame', !tui.frame.includes('subagent dispatches'));
+    assert('the prompt is usable again', tui.frame.includes('you>'));
+
+    // The new session is empty and reports itself, not its predecessor.
+    const beforeTrajectory = tui.mark();
+    tui.submit('/trajectory');
+    await tui.waitFor('trajectory: recording', { timeoutMs: 30_000, from: beforeTrajectory, settleMs: 400 });
+    const trajectoryReport = withoutWhitespace(tui.screen.slice(beforeTrajectory));
+    assert('/trajectory names the new session\u2019s record', trajectoryReport.includes(secondSession));
+    assert('…and not the previous one\u2019s', !trajectoryReport.includes(firstSession));
+    assert('…with nothing recorded in it yet', trajectoryReport.includes('recordsthisrun0'));
+
+    // The previous session's bytes are exactly as they were, and `--resume` still
+    // points at the session that has something to resume.
+    assert('the previous session\u2019s trajectory keeps its bytes', (await readFile(firstTrajectory, 'utf8')) === canary);
+    let pointer = '';
+    try {
+      pointer = await readFile(sessionPaths(WORK_DIR).pointerFile, 'utf8');
+    } catch {
+      // No pointer at all is the expected state here: no turn has completed.
+      pointer = '';
+    }
+    assert('the empty new session does not claim --resume', !pointer.includes(secondSession));
+
+    tui.submit('/exit');
+    assert('TUI exits cleanly after a session switch', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 
 /**
  * The teardown helper itself: an unanswered permission box must not hang a run.
@@ -1789,6 +1898,7 @@ const SCENARIOS = {
   compacting: compactingInputOwnership,
   cursor: cursorEditing,
   completion: slashCompletion,
+  clear: clearSession,
   toolDetails: toolDetailsToggle,
   agents: agentDispatches,
   agentsMd: agentsMdHeader,

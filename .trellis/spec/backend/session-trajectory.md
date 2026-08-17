@@ -37,6 +37,36 @@ is a session key (`SESSION_KEYS`), so `/model` preserves it and a `models` entry
 rejected. Unlike `contextOffload` this changes nothing the model sees, which is why it defaults on
 while that one defaults off.
 
+### Contract: a session can be *left* mid-process, and leaving it touches none of its files
+
+`/clear` (TUI only — headless has no such command) starts a new session in the same process:
+`AgentRuntime.startNewSession()` builds a successor runtime with `session: { kind: 'new' }` and
+retires the predecessor. Everything the recorder promises must survive that, so the switch is
+defined by what it does *not* do:
+
+- **The old record is closed, never rewritten.** `retire()` awaits `TrajectoryRecorder.close()`, so
+  the last buffered turn is durable; no byte already written is re-read, repaired or truncated, and
+  nothing appends to that file again. A `/clear`ed session's record ends where its last turn ended.
+- **The successor records to its own file**, `trajectoryPath(projectRoot, <new id>)`, created lazily
+  on its first turn exactly as any new session's is. One file is one session; a switch never
+  interleaves two conversations in one record, which is what keeps `replay` faithful.
+- **The `offload/` and `background/` siblings of the old session are left in place.** Offload
+  references the *old* conversation held are still resolvable by a `--session <old id>` resume, and
+  the successor offloads into its own `<new id>/offload/` (its `ContextOffloader` is built by
+  `create()`, from the new id). Background jobs keep running and keep logging where they started:
+  the manager is handed to the successor (a job belongs to the process, not the conversation), so
+  `/tasks` still lists them and the single `shutdown()` at exit still reaps them.
+- **The resume pointer stays where it was.** Writing it at `/clear` would point `--resume` at a
+  session with no snapshot, which resolves to "start fresh" and would cost the user the conversation
+  they just set aside. The successor claims the pointer from `markResumable()` after its first
+  finished turn, like any other session.
+- **The diagnostics log follows the session, not the process**: the predecessor's is closed and the
+  successor opens `<new id>/diagnostics.log`, taking over the process-global SDK verbose tap. The
+  retirement must therefore *not* clear that tap, or the new session's diagnostics would go silent.
+
+Proven free (no model call, no network) by `spike/verify-clear-session.ts`; the notice naming both
+ids and the cleared screen are `spike/verify-tui.ts clear`.
+
 ## 3. Record format
 
 JSONL: one JSON object per line, UTF-8, LF-terminated, opened `'a'`. Every record carries the
@@ -475,3 +505,13 @@ payload reading as unknown; and determinism over the same bytes.
 
 Run `pnpm typecheck`, `pnpm test`, and — because `/trajectory` adds a completion row —
 `pnpm tsx spike/verify-tui.ts completion`.
+
+For leaving a session mid-process, `spike/verify-clear-session.ts` (free, in `pnpm test`, real
+`AgentRuntime`, no model call) must cover: a different and later new id; an empty successor
+conversation with its own Agent and session manager; the previous snapshot byte-identical after the
+successor writes its own, and still resolvable by `hasSnapshot`; the previous `trajectory.jsonl` and
+`offload/` bytes and sizes unchanged; the retired recorder closed without a problem; a live-config
+change surviving the switch while a rewritten config file does not take effect; the pointer unwritten
+by the switch and claimed by `markResumable()`; an inherited background job still listed and running,
+its log still under the previous session; a fresh shell for the successor; and one `shutdown()`
+stopping the inherited job. The UI half is `spike/verify-tui.ts clear`.

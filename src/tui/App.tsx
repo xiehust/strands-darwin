@@ -11,7 +11,7 @@
  * unfinished answer; a second press within a short window, or any press while
  * idle, exits. Ctrl+D always exits.
  */
-import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useWindowSize, type DOMElement } from 'ink';
+import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize, type DOMElement } from 'ink';
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
@@ -78,6 +78,17 @@ const ASSUMED_HEADER_ROWS = 14;
 /** C0 controls except LF and tab, plus DEL: never treated as draft text. */
 const NON_TEXT_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
 
+/**
+ * Erase the screen, the scrollback and home the cursor — Ink's own `clearTerminal`,
+ * spelled out here because `ansi-escapes` is Ink's dependency and not darwin's.
+ *
+ * Written exactly once per `/clear`, through Ink's stdout writer. This is the same
+ * sequence Ink's pathological over-tall-frame branch writes per render, which is what
+ * `frame-budget.ts` exists to avoid: one deliberate clear on an explicit command is a
+ * different thing from one per text delta.
+ */
+const CLEAR_TERMINAL = '\u001B[2J\u001B[3J\u001B[H';
+
 /** Canonicalizes terminal line endings and drops controls without losing layout. */
 function normalizeDraftText(value: string): string {
   return value.replace(/\r+\n/g, '\n').replace(/\r/g, '\n').replace(NON_TEXT_CONTROLS, '');
@@ -86,14 +97,27 @@ function normalizeDraftText(value: string): string {
 type Status = 'idle' | 'streaming' | 'compacting' | 'awaiting-permission';
 
 export function App({
-  runtime,
+  runtime: initialRuntime,
   permissions,
+  startNewSession,
 }: {
   readonly runtime: AgentRuntime;
   readonly permissions: PermissionQueue;
+  /**
+   * Hands this conversation to a new, empty session and returns the runtime that owns
+   * it — `/clear`. Optional so a driver that does not own runtime lifecycle (and so
+   * could not shut the successor down) simply does not offer the command.
+   */
+  readonly startNewSession?: () => Promise<AgentRuntime>;
 }): React.JSX.Element {
   const { exit } = useApp();
   const { columns, rows } = useWindowSize();
+  const { write: writeToTerminal } = useStdout();
+  // The live session. A prop at startup, state afterwards: `/clear` replaces the
+  // runtime rather than resetting one, so everything read off it — session id, usage
+  // meter, trajectory recorder, context estimate — moves to the new session together,
+  // and the old session's numbers cannot leak into the new transcript.
+  const [runtime, setRuntime] = useState(initialRuntime);
   const [state, recordAction] = useReducer(turnReducer, initialTurnState);
   // Swapped whole rather than branched per call: with `diagnostics` off — the default —
   // `dispatch` *is* the reducer's own dispatch, so not one of the ~50 notice sites
@@ -140,6 +164,8 @@ export function App({
   const trajectoryWarned = useRef(false);
   /** Same, once, for the diagnostics log: it latches its own failure too. */
   const diagnosticsWarned = useRef(false);
+  /** True while `/clear` is assembling the successor runtime; see the handler. */
+  const clearing = useRef(false);
 
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(onChange),
@@ -445,6 +471,71 @@ export function App({
         return;
       }
 
+      // Deliberately *below* the busy check, with /compact and /model rather than with
+      // the local reports above it: this replaces the conversation the running turn is
+      // streaming into, and the SDK's session snapshot is written when that turn ends —
+      // so a mid-turn switch would hand the old session's manager a conversation it no
+      // longer owns. `/clear` is idle-only, and the wording says why.
+      if (/^\/clear(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/clear') {
+          dispatch({ type: 'notice', text: '/clear takes no arguments' });
+          return;
+        }
+        if (startNewSession === undefined) {
+          dispatch({ type: 'notice', text: '/clear is not available in this driver', severity: 'warn' });
+          return;
+        }
+        // The switch awaits an assembly (skills, tools, a new Agent), and `status` stays
+        // idle throughout — so without this latch a second enter could start a second
+        // successor and leak the first.
+        if (clearing.current) {
+          dispatch({ type: 'notice', text: 'still starting the new session — press enter again once it appears' });
+          return;
+        }
+        clearing.current = true;
+        const previousSessionId = runtime.info.sessionId;
+        let next: AgentRuntime;
+        try {
+          next = await startNewSession();
+        } catch (error) {
+          // Nothing was released: the session that was live is still live.
+          dispatch({
+            type: 'notice',
+            text: `could not start a new session; still in ${previousSessionId}: ${error instanceof Error ? error.message : String(error)}`,
+            severity: 'error',
+          });
+          return;
+        } finally {
+          clearing.current = false;
+        }
+
+        // `<Static>` cannot be recalled, so a fresh screen means clearing the terminal —
+        // once, here, not the per-render clear the live-frame budget exists to prevent.
+        // Routed through Ink's own stdout writer so the frame is torn down and restored
+        // around it, and paired with the reducer's `<Static>` remount, which is what
+        // makes Ink drop the transcript it would otherwise replay on the next
+        // whole-screen redraw.
+        writeToTerminal(CLEAR_TERMINAL);
+        dispatch({ type: 'clear' });
+        setRuntime(next);
+        // Per-session latches, reset with the session they were latched for.
+        contextWarnLatch.current = createContextWarnLatch();
+        trajectoryWarned.current = false;
+        diagnosticsWarned.current = false;
+        // Mirrored to the *successor's* diagnostics log: the memoized `dispatch` still
+        // points at the predecessor's, which this switch has just closed.
+        withNoticeDiagnostics(recordAction, next.diagnostics)({
+          type: 'notice',
+          text:
+            `cleared — new session ${next.info.sessionId}. Previous session ${previousSessionId} is saved and ` +
+            `resumable (darwin --session ${previousSessionId}); background jobs and MCP servers keep running.`,
+        });
+        return;
+      }
+
       if (text === '/compact' || text.startsWith('/compact ')) {
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
@@ -509,7 +600,7 @@ export function App({
 
       await runTurn(toSend);
     },
-    [exit, runtime, runTurn, status],
+    [dispatch, exit, recordAction, runtime, runTurn, startNewSession, status, writeToTerminal],
   );
 
   /**
@@ -800,6 +891,7 @@ export function App({
         liveText={state.liveText}
         columns={columns}
         maxLiveRows={grants.live}
+        staticEpoch={state.staticEpoch}
       />
 
       <Box ref={chromeRef} flexDirection="column">

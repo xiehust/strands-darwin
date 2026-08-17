@@ -30,6 +30,44 @@ explicit await, `--resume` silently restores nothing and MCP tools don't exist y
 Session snapshots live under `<sessionId>/scopes/agent/<agentId>/`. A changing agent id
 hides all previous snapshots from resume. The id is the constant `AGENT_ID` in runtime.ts.
 
+### Contract: a session id cannot be changed on a live `Agent` — a new session needs a new `Agent`
+
+`SessionManager` is a `Plugin`. `Agent`'s constructor appends it to the `PluginRegistry`
+(`agent.js`: `...(config?.sessionManager ? [config.sessionManager] : [])`) and `initialize()`
+calls `PluginRegistry.initialize(this)`, which runs `SessionManager.initAgent(agent)` — that is
+where its `AfterInvocationEvent` / `MessageAddedEvent` snapshot callbacks are registered. Three
+facts make in-place session switching impossible:
+
+- `_sessionId` is `private readonly`; there is no setter and no `updateConfig`.
+- `PluginRegistry` exposes no removal, and the `HookCleanup` returned by each `addCallback` is
+  kept inside the plugin. Nothing can un-register a manager's hooks.
+- `agent.sessionManager` is a plain field, so *assigning* a second manager type-checks and
+  silently leaves the first one live. At the end of the next turn **both** save: the retired
+  manager overwrites the previous session's `snapshot_latest.json` with the new conversation.
+
+So `/clear` constructs a successor `Agent` through `AgentRuntime.create()` and retires the
+predecessor. Verified in `spike/verify-clear-session.ts`: the successor's snapshot lands under
+its own session id and the previous session's snapshot file is byte-identical afterwards, still
+holding only its own conversation.
+
+### Contract: an `McpClient` may be shared with a second `Agent`; `onToolsChanged` is single-slot
+
+`Agent.initialize()` does two things per client: `await client.listTools()` and
+`client.onToolsChanged = …`. `McpClient.connect()` returns immediately unless the state is
+`disconnected`, so handing the *same* client objects to a second `Agent` re-lists tools over the
+live connection and spawns no second stdio server. But `onToolsChanged` is one assignable
+property, not a listener list: the **last** `Agent` initialized owns tool-change updates. That is
+only correct if the predecessor is retired straight away — which is what `startNewSession()` does,
+and why `retire()` must *not* call `disconnectAll`.
+
+### Contract: the vended bash tool keys its persistent shell per `Agent` instance
+
+`vended-tools/bash` holds `sessions: WeakMap<Agent, BashSession>` off `context.agent`. Two
+consequences: a new `Agent` always starts with a fresh shell (cwd and exported variables do not
+survive `/clear`), and the *old* Agent's shell must be stopped explicitly via
+`invoke({ mode: 'restart' })` — the SDK's `beforeExit` reaper never runs, and leaving it costs
+~15 s of extra process exit time (measured with `retire()`'s `stopBashSession()` removed).
+
 ---
 
 ## Observing the stream (what darwin measured to record it)

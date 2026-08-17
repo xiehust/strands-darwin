@@ -22,18 +22,28 @@ export function MessageList({
   liveText,
   columns,
   maxLiveRows,
+  staticEpoch,
 }: {
   readonly history: readonly HistoryItem[];
   readonly liveText: string;
   readonly columns: number;
   /** Rows the live answer may occupy, label and margin included. */
   readonly maxLiveRows: number;
+  /**
+   * Identity of the current transcript; changed by `/clear`.
+   *
+   * Remounting `<Static>` is the only supported way to make Ink forget what it has
+   * already written (`turn-state.ts`, `staticEpoch`): emptying `items` leaves Ink's
+   * `fullStaticOutput` holding the old transcript, ready to be replayed by the next
+   * whole-screen redraw.
+   */
+  readonly staticEpoch: number;
 }): React.JSX.Element {
   const live = liveTextView(liveText, columns, maxLiveRows);
 
   return (
     <Box flexDirection="column">
-      <Static items={[...history]}>{(item) => <HistoryEntry key={item.id} item={item} />}</Static>
+      <Static key={staticEpoch} items={[...history]}>{(item) => <HistoryEntry key={item.id} item={item} />}</Static>
       {live.rows.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <Text color="green">agent</Text>

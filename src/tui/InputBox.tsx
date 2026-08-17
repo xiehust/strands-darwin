@@ -7,7 +7,7 @@ import { draftWindow, hiddenDraftNotice, planPromptBox } from './frame-budget.js
 import type { EditorLayout } from './prompt-editor.js';
 
 /**
- * Completion rows shown at once; sized so all nine built-ins fit on one screen.
+ * Completion rows shown at once; sized so all ten built-ins fit on one screen.
  *
  * Adding a built-in means growing this number, or the last one silently falls off
  * behind the "… n more" line — a command nobody can see is a command nobody uses.
@@ -16,7 +16,7 @@ import type { EditorLayout } from './prompt-editor.js';
  * on what is *offered*; how much of it survives a short terminal is
  * `planPromptBox`'s decision.
  */
-export const MAX_COMPLETIONS = 9;
+export const MAX_COMPLETIONS = 10;
 
 export function InputBox({
   layout,

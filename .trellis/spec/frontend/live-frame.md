@@ -86,3 +86,30 @@ Two assertion traps, both paid for once:
 Tests required: `spike/verify-stream-into-static.ts` (pure, plus one offline `Agent`), and the pty
 scenarios `longAnswer` and `tallDraftStreaming`. `verify-trajectory.ts` covers replay agreeing with
 the live reducer.
+
+## Contract: the only sanctioned whole-screen clear is `/clear`, and it costs two things at once
+
+`<Static>` cannot be recalled, so "reset the transcript" means clearing the terminal — the same
+`ESC[2J ESC[3J ESC[H` Ink writes in its pathological branch. That is not a contradiction of the
+budget above: the rule is *never per render*. `/clear` writes it **once**, from the submit handler,
+on explicit user action, and `spike/verify-tui.ts clear` asserts the count is exactly 1.
+
+Two mechanisms are needed, and either one alone is a bug:
+
+- **Write it through Ink**, `useStdout().write(...)`, not `process.stdout.write`. Ink's
+  `writeToStdout` clears its live frame, writes the data, then restores the frame (`restoreLastOutput`
+  replays the frame only, never the static transcript), so the escape sequence cannot land in the
+  middle of a repaint.
+- **Remount `<Static>`** by changing its React key (`TurnState.staticEpoch`, passed to `MessageList`).
+  Ink accumulates every byte `<Static>` has written in `Ink.fullStaticOutput` and re-emits it on the
+  next whole-screen redraw; emptying `items` does not touch that buffer. `reconciler.js` fires
+  `onStaticChange` when the `<Static>` node identity changes and `handleStaticChange` resets the
+  buffer — a key-driven remount is the supported reset. Without it the cleared transcript reappears
+  the first time a frame overflows.
+
+Whatever holds per-session UI state resets with it (`contextWarnLatch`, the one-shot trajectory and
+diagnostics problem notices); a *display preference* like `toolDetailsExpanded` does not — it belongs
+to the user, not to the conversation.
+
+Tests required: `spike/verify-tui.ts clear` (free — no model call) for the single clear, the gone
+transcript and the usable prompt; `spike/verify-clear-session.ts` for what the switch does off-screen.

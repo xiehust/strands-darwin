@@ -35,6 +35,7 @@ const suites = [
   'verify-usage.ts',
   'verify-compact.ts',
   'verify-trajectory.ts',
+  'verify-clear-session.ts',
   'verify-diagnostics.ts',
   'verify-max-tokens-recovery.ts',
   'verify-model-call-budget.ts',

@@ -86,7 +86,7 @@ function Child(): React.JSX.Element {
         <Text dimColor>bedrock/probe · session probe</Text>
         <Text dimColor>probe header row</Text>
       </Box>
-      <MessageList history={history} liveText={text} columns={COLS} maxLiveRows={maxLiveRows()} />
+      <MessageList history={history} liveText={text} columns={COLS} maxLiveRows={maxLiveRows()} staticEpoch={0} />
       {/* Stand-in for InputBox. */}
       <Text dimColor>you&gt; </Text>
     </Box>

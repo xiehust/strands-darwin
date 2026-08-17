@@ -272,6 +272,7 @@ header('streaming into history — what the transcript looks like');
       liveText: '',
       columns: 80,
       maxLiveRows: 10,
+      staticEpoch: 0,
     }),
     { columns: 80 },
   );

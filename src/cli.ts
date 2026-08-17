@@ -107,15 +107,31 @@ async function runInteractive(options: CliOptions): Promise<void> {
     }
     throw error;
   }
+  /** The session that is live right now; `/clear` replaces it with a successor. */
+  let current = runtime;
 
-  const instance = render(React.createElement(App, { runtime, permissions }), {
-    exitOnCtrlC: false,
-  });
+  const instance = render(
+    React.createElement(App, {
+      runtime,
+      permissions,
+      // `/clear` starts a new session by handing this conversation to a successor
+      // runtime (`AgentRuntime.startNewSession`). Ownership of shutdown stays here,
+      // where it always was: `current` is what the exit path reaps, so the retired
+      // predecessor's shell and observers are released by the switch itself and the
+      // live session is released once, on exit.
+      startNewSession: async () => {
+        const next = await current.startNewSession();
+        current = next;
+        return next;
+      },
+    }),
+    { exitOnCtrlC: false },
+  );
   try {
     await instance.waitUntilExit();
   } finally {
     permissions.close();
-    await runtime.shutdown();
+    await current.shutdown();
     forceExitIfHung();
   }
 }

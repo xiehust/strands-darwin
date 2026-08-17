@@ -50,7 +50,7 @@ import {
 } from '../tools/background-bash.js';
 import { createImageViewerTool } from '../tools/image-viewer.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
-import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
+import { disconnectAll, loadMcpClients, type McpLoadResult } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
 import { recordStream } from '../trajectory/stream.js';
@@ -117,6 +117,38 @@ export interface RuntimeOptions {
   contextOffloadOverride?: true;
   /** Refuses the next parent-Agent SDK model call after this many in the process. */
   maxModelCalls?: number;
+  /**
+   * Resources a predecessor runtime hands to its successor across `/clear`.
+   *
+   * Set only by {@link AgentRuntime.startNewSession}. Everything here belongs to the
+   * *process* rather than to the conversation, so duplicating it would spawn a second
+   * copy and releasing it would break something the user is still using. Everything
+   * *not* here is session-scoped and rebuilt: session manager, trajectory recorder,
+   * diagnostics log, offload storage, skills plugin, permission gate, dispatch
+   * registry, usage meter and message history.
+   */
+  inherit?: InheritedRuntimeResources;
+}
+
+/** @see RuntimeOptions.inherit */
+export interface InheritedRuntimeResources {
+  /**
+   * The predecessor's *live* config, so a `/model` or `/effort` change made this
+   * session does not silently revert to whatever is on disk.
+   */
+  config: AppConfig;
+  /**
+   * The already-connected MCP clients and the metadata the header reports about
+   * them. Reusing the client objects spawns no second stdio server: `initialize()`
+   * only calls `listTools()`, and `McpClient.connect()` no-ops when connected.
+   */
+  mcp: McpLoadResult;
+  /**
+   * The background-job manager, with its running jobs. Jobs are owned by the
+   * process, so `/clear` neither stops them nor loses track of them; their logs stay
+   * in the directory of the session that started them.
+   */
+  backgroundBash: BackgroundBashManager;
 }
 
 export type { CompactResult } from './compact.js';
@@ -260,7 +292,8 @@ export class AgentRuntime {
     // mutable property matters — the conversation survives a provider change.
     private model: Model,
     private readonly projectRoot: string,
-    private readonly mcpClients: readonly McpClient[],
+    /** Kept whole, not just the clients: a successor inherits the header metadata too. */
+    private readonly mcp: McpLoadResult,
     private readonly skills: SkillsPlugin,
     private readonly commands: CustomCommandRegistry,
     private readonly subagents: SubagentTool,
@@ -274,6 +307,11 @@ export class AgentRuntime {
     /** Undefined unless `diagnostics: true` asked for the log. Off is the default. */
     private readonly diagnosticsLog: DiagnosticsLog | undefined,
     readonly info: RuntimeInfo,
+    /**
+     * What this runtime was created with, so {@link startNewSession} can assemble its
+     * successor through the same factory instead of a second, drifting assembly.
+     */
+    private readonly createOptions: RuntimeOptions,
   ) {
     this.thinkingPlan = info.thinking;
     this.liveConfig = info.config;
@@ -302,7 +340,10 @@ export class AgentRuntime {
     // selector must fail locally without initializing anything billable.
     const session = await resolveSession(options.projectRoot, options.session, AGENT_ID);
     options.onSessionResolved?.(session.sessionId);
-    const config = await loadConfig(options.projectRoot);
+    // A successor created by `/clear` takes the predecessor's *live* config instead of
+    // re-reading the file, so a `/model` or `/effort` change made this session survives
+    // the switch (see InheritedRuntimeResources).
+    const config = options.inherit?.config ?? (await loadConfig(options.projectRoot));
     const policy = await loadProjectPolicy(options.projectRoot);
     // Built here, before the model, the MCP clients and the skills plugin, because all
     // three log at `debug` while they start up (MCP tool renames, skill discovery) and
@@ -339,10 +380,12 @@ export class AgentRuntime {
     const loadedInstructions = await loadProjectInstructions(options.projectRoot);
     const instructions = loadedInstructions.instructions;
     const basePrompt = await loadSystemPrompt(options.projectRoot, config.systemPrompt);
-    const mcp = await loadMcpClients(options.projectRoot, {
+    const mcp = options.inherit?.mcp ?? await loadMcpClients(options.projectRoot, {
       quietStdioStderr: options.quietMcpStderr === true,
     });
-    startupMcpClients = mcp.clients;
+    // Inherited resources belong to a predecessor that is still alive: if this
+    // assembly fails, the unwind must not release them out from under it.
+    if (options.inherit === undefined) startupMcpClients = mcp.clients;
 
     const permissionMode = options.permissionModeOverride ?? config.permissionMode;
     // Built before the gate on purpose: the gate must resolve provenance for
@@ -371,8 +414,12 @@ export class AgentRuntime {
     const sessionManager = createSessionManager(options.projectRoot, session.sessionId);
     // One manager and wrapper are shared by the main Agent and every child tool
     // catalogue. Foreground calls still delegate with the caller's ToolContext.
-    const backgroundBash = new BackgroundBashManager(options.projectRoot, session.sessionId);
-    startupBackgroundBash = backgroundBash;
+    // Across `/clear` the manager is inherited, not rebuilt: its jobs are running
+    // processes owned by this process, and a second manager would leave them
+    // unlistable and unreaped.
+    const backgroundBash =
+      options.inherit?.backgroundBash ?? new BackgroundBashManager(options.projectRoot, session.sessionId);
+    if (options.inherit === undefined) startupBackgroundBash = backgroundBash;
     const bash = createBackgroundBashTool(backgroundBash);
     const imageViewer = createImageViewerTool(options.projectRoot);
     const conversationManager = new SummarizingConversationManager({
@@ -515,7 +562,7 @@ export class AgentRuntime {
       agent,
       model,
       options.projectRoot,
-      mcp.clients,
+      mcp,
       skills,
       commands,
       subagents,
@@ -562,6 +609,7 @@ export class AgentRuntime {
         trajectoryFile: trajectory?.status.file,
         diagnosticsFile: diagnosticsLog?.path,
       },
+      options,
     );
     return runtime;
     };
@@ -899,6 +947,80 @@ export class AgentRuntime {
   }
 
   /**
+   * Starts a brand-new session in this process and returns the runtime that owns it.
+   * This runtime is retired and must not be used again; the caller becomes
+   * responsible for shutting the successor down.
+   *
+   * A *new Agent* is what makes this a new session, and there is no cheaper way:
+   * `SessionManager` is an SDK plugin whose snapshot hooks are registered during
+   * `initialize()` with no removal path, and its session id is private and readonly
+   * (`.trellis/spec/backend/strands-sdk-contracts.md`). Assigning a second manager
+   * would leave the first one's hooks live, and at the end of the next turn it would
+   * overwrite the *previous* session's `snapshot_latest.json` with the cleared
+   * conversation — destroying the thing `/clear` exists to preserve. So the successor
+   * is assembled through the same {@link create} factory rather than a second
+   * hand-written assembly that could drift from it.
+   *
+   * Nothing is deleted, moved or rewritten: the session being left keeps its snapshot,
+   * its `trajectory.jsonl` (flushed here, never truncated), its `offload/` and its
+   * `background/` exactly as they are, and stays resumable by id.
+   *
+   * The resume pointer is deliberately *not* moved. `markResumable()` writes it after a
+   * completed turn precisely so an unused session cannot displace a useful one — and
+   * an empty session has no snapshot to resume, so pointing `--resume` at it would cost
+   * the user the conversation they just set aside. The successor claims the pointer on
+   * its first finished turn, through the ordinary path.
+   *
+   * If assembling the successor fails, this runtime stays fully usable: nothing it owns
+   * has been released yet, and the diagnostics tap it installed at startup is put back
+   * (the failed successor's unwind clears the process-global sink).
+   */
+  async startNewSession(): Promise<AgentRuntime> {
+    let successor: AgentRuntime;
+    try {
+      successor = await AgentRuntime.create({
+        ...this.createOptions,
+        session: { kind: 'new' },
+        inherit: {
+          config: this.liveConfig,
+          mcp: this.mcp,
+          backgroundBash: this.backgroundBash,
+        },
+      });
+    } catch (error) {
+      if (this.diagnosticsLog !== undefined) setSdkVerboseSink(this.diagnosticsLog.sdkSink);
+      throw error;
+    }
+    await this.retire();
+    return successor;
+  }
+
+  /**
+   * Releases what this runtime owns *alone* after a successor has taken over.
+   *
+   * The complement of {@link shutdown}, and the difference is the point: the MCP
+   * clients and the background-job manager now belong to the successor, so
+   * disconnecting the servers or stopping the jobs here would break a live session.
+   * The process-global SDK verbose sink is left alone for the same reason — the
+   * successor installed its own, and clearing it would silence the new session's
+   * diagnostics.
+   *
+   * What is released: this Agent's own persistent bash shell (the vended tool keys
+   * shells per Agent, so leaving it would hold the event loop open forever), the
+   * subagent tool, and the two observers, closed so their bytes are durable. Failures
+   * are settled, not thrown: a retirement that cannot flush must not take the new
+   * session down with it.
+   */
+  private async retire(): Promise<void> {
+    await Promise.allSettled([
+      this.subagents.shutdown(),
+      this.stopBashSession(),
+      this.trajectory?.close() ?? Promise.resolve(),
+      this.diagnosticsLog?.close() ?? Promise.resolve(),
+    ]);
+  }
+
+  /**
    * Expands a skill or project command into the prompt sent to the model.
    * Skills are checked first as a defensive backstop to the loader's collision
    * filtering. Unknown slash input remains ordinary user input.
@@ -926,7 +1048,7 @@ export class AgentRuntime {
       this.subagents.shutdown(),
       this.backgroundBash.shutdown(),
       this.stopBashSession(options.throwOnError === true),
-      disconnectAll(this.mcpClients, { throwOnError: options.throwOnError === true }),
+      disconnectAll(this.mcp.clients, { throwOnError: options.throwOnError === true }),
       // The one place the append chain is awaited, so the last turn's records are
       // durable before the process exits. Settled alongside the rest: a record that
       // cannot be written must not skip process cleanup.

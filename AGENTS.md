@@ -47,10 +47,10 @@ pnpm tsx spike/probe-model-switch.ts                          # what survives ha
 pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-tall live frame costs: whole-screen clears per render
 ```
 
-`spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model` and
-`spike/verify-tui.ts completion` make no model calls at all, so all three are free to run;
-`completion` is the scenario to re-run after touching the built-in slash commands, since the
-menu row count (`MAX_COMPLETIONS`) has to keep every built-in visible.
+`spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model`,
+`spike/verify-tui.ts clear` and `spike/verify-tui.ts completion` make no model calls at all, so
+all four are free to run; `completion` is the scenario to re-run after touching the built-in slash
+commands, since the menu row count (`MAX_COMPLETIONS`) has to keep every built-in visible.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
 calls. `spike/` is the test suite, not scratch space.
@@ -63,6 +63,24 @@ through SDK extension points: interventions (permissions), plugins (skills), con
 manager. If a change seems to require intercepting the loop itself, check
 `.trellis/spec/backend/strands-sdk-contracts.md` first — every non-obvious SDK behavior this
 project relies on (and the runnable script that proves it) is recorded there.
+
+**A session's identity is fixed at `Agent` construction, so `/clear` builds a successor rather
+than resetting anything** (`AgentRuntime.startNewSession`, spec:
+`backend/strands-sdk-contracts.md` + `backend/session-trajectory.md`): `SessionManager` is an SDK
+plugin whose snapshot hooks are registered during `initialize()` with no removal path, so a second
+manager on the same `Agent` would let the retired one overwrite the *previous* session's snapshot
+with the cleared conversation. The successor therefore goes through the same `create()` factory
+(`session: { kind: 'new' }`) and the predecessor is *retired*, not shut down — the split is the
+contract: the live config, the connected MCP clients and the `BackgroundBashManager` are handed
+over because they belong to the process, while the session manager, trajectory recorder,
+diagnostics log, offload storage, skills plugin, permission gate, dispatch registry, usage meter
+and message history are all rebuilt, which is what stops the old session's numbers leaking into
+the new one. Nothing on disk is deleted, moved or rewritten and the resume pointer is deliberately
+*not* moved: an empty session has no snapshot to resume, so `markResumable()`'s invariant (an
+unused session never displaces a useful one) keeps `--resume` on the conversation the user just set
+aside until the new one has finished a turn. `cli.ts` still owns lifecycle — it tracks the live
+runtime so exit reaps exactly one. Required checks: `spike/verify-clear-session.ts` (in `pnpm
+test`) and `spike/verify-tui.ts clear`, both free.
 
 **Permissions** (`src/agent/permission.ts`): a `PermissionGate extends InterventionHandler`
 classifies each tool call by `(toolName, input)` — not name alone, because `fileEditor` spans
@@ -205,12 +223,14 @@ the trajectory records no child event.
 else takes an explicit `projectRoot`.
 
 **Process exit is engineered, not assumed.** The vended bash tool's persistent shell is
-reaped in `runtime.shutdown()` via direct `restart`; session-owned background bash jobs are
+reaped in `runtime.shutdown()` via direct `restart` — the tool keys shells per `Agent` in a
+`WeakMap`, so a runtime retired by `/clear` has to reap its *own* shell (`retire()`) or that one
+is never released and exit takes ~15s longer; session-owned background bash jobs are
 reaped as whole process groups with bounded TERM→KILL cleanup plus a synchronous `exit`
 fallback; and a cancelled model stream's socket has no public cleanup, so `cli.ts` arms an
 unref'd 500ms `process.exit` fallback *after* shutdown completes. Don't change these paths
-without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`, and the
-`bashExit` / `cancelThenContinue` TUI scenarios.
+without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`,
+`spike/verify-clear-session.ts`, and the `bashExit` / `cancelThenContinue` TUI scenarios.
 
 **TUI** (`src/tui/`): Ink 7 + React 19. The Agent must be constructed with `printer: false`
 or the SDK writes to stdout and fights Ink. Completed history renders through `<Static>`;

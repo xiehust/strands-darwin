@@ -94,6 +94,17 @@ export interface TurnState {
   activeTools: ActiveTool[];
   /** Session-local display preference; immutable Static history is never rewritten. */
   toolDetailsExpanded: boolean;
+  /**
+   * Bumped by `clear`, and used as the `<Static>` React key.
+   *
+   * Emptying `history` is not enough to clear the screen: Ink accumulates every byte
+   * `<Static>` ever wrote in `fullStaticOutput` and re-emits it on any later
+   * whole-screen redraw, so the old transcript would reappear at the next overflow.
+   * Remounting `<Static>` is what makes Ink drop that buffer (`reconciler.js` fires
+   * `onStaticChange` on a node-identity change), which is why this is a key and not a
+   * counter nobody reads.
+   */
+  staticEpoch: number;
 }
 
 export const initialTurnState: TurnState = {
@@ -103,6 +114,7 @@ export const initialTurnState: TurnState = {
   thinking: false,
   activeTools: [],
   toolDetailsExpanded: false,
+  staticEpoch: 0,
 };
 
 let idCounter = 0;
@@ -116,7 +128,8 @@ export type TurnAction =
   | { type: 'notice'; text: string; severity?: NoticeSeverity }
   | { type: 'toggleToolDetails' }
   | { type: 'streamEvent'; event: AgentStreamEvent }
-  | { type: 'turnEnded' };
+  | { type: 'turnEnded' }
+  | { type: 'clear' };
 
 export function turnReducer(state: TurnState, action: TurnAction): TurnState {
   switch (action.type) {
@@ -156,6 +169,17 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       // Flush anything the model left unterminated (e.g. a cancelled turn) so it
       // is not lost when the live area clears.
       return { ...flushLiveText(state), thinking: false, activeTools: [] };
+
+    case 'clear':
+      // `/clear` starts a new session, so the transcript of the old one goes with it.
+      // Everything conversation-shaped is dropped and the `<Static>` epoch is bumped
+      // (see {@link TurnState.staticEpoch}); `toolDetailsExpanded` is not, because it
+      // is how this *user* wants tool calls drawn, not part of any conversation.
+      return {
+        ...initialTurnState,
+        toolDetailsExpanded: state.toolDetailsExpanded,
+        staticEpoch: state.staticEpoch + 1,
+      };
 
     case 'streamEvent':
       return applyStreamEvent(state, action.event);
