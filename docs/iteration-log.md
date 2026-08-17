@@ -473,3 +473,55 @@ line and spent no recorded model tokens.
 |---|---|---|
 | 2026-08-17 | `58a20b5` | Add versioned final JSON and safe live JSONL one-shot output while preserving the text protocol and durability gates |
 | 2026-08-17 | `ebd4796` | Keep project-root resolution in the CLI entry and pin explicit propagation to runtime construction |
+
+### Batch 14 — official SDK Agent Skills (2026-08-17)
+
+SER-012 ran in child session `session-20260817-025133040`. Planning ran as
+`bg-5f05811b-72e5-4ac7-a7e8-33a62fc7bd50`; implementation and the authorized single low-token
+live skills smoke ran as `bg-2f26ad22-052f-4310-8a9a-db49cf76abef`. Host acceptance then drove five
+offline correction turns in the same persisted conversation:
+`bg-e7db77f6-3eb2-4071-8d69-6bb8c787938b`,
+`bg-b312cbc0-248c-4796-808a-09e478b94b1e`,
+`bg-65e0a01a-a9f2-482e-9541-6d37daa16e64`,
+`bg-9fc7b60a-f7d6-413d-bdb7-615d0c69ffb6`, and
+`bg-2f789754-82a5-48f0-94c9-0859e7cb80af`. All seven managed tasks succeeded. Repository work is
+recorded in the archived Trellis task `08-17-official-sdk-agent-skills`.
+
+The migration adopts SDK 1.12.0 `AgentSkills` and `Skill` while retaining one safe model-facing
+`load_skill({name})` compatibility tool and Darwin's required-built-in, project-over-global and
+slash-command policy. Host review rejected broad legacy-prompt regexes, preflight-only filesystem
+validation, opening-tag boundary guesses and cached ambiguity fallback. The accepted shape now
+recognizes only the exact historical catalogue/context suffix, preserves project bytes, refuses
+ambiguous cached and uncached prompts unchanged, and guards SDK resource listing both before and at
+traversal time. SDK 1.12.0 has no public identity-preserving sandbox override, so the Agent proxy
+residual is documented honestly: Skill-instance activation falls back to the same base catalogue
+while forwarded `appState` remains on the original Agent.
+
+Final Host acceptance inspected the correction diffs and independently re-ran: the focused real
+Agent/SessionManager skills suite (69 passed); adversarial cached and uncached ambiguity probes;
+`pnpm typecheck`; `pnpm test` (31 suite summaries, all zero failures); `pnpm build` plus both bundled
+skill assets; the free completion pty scenario (25 passed); archived Trellis validation (only the
+known large-spec injection warnings); `git diff --check`; protected-history/research hashes; and
+`git show --check` for every accepted commit. No additional live, network, provider or real-model
+call was made during correction or final Host acceptance. A final auxiliary read-only review request
+was blocked by the platform's safety filter, so it was not counted as acceptance evidence.
+
+Token spend by managed task: planning `input=118 output=110,844 cacheRead=13,847,269
+cacheWrite=319,179`; implementation `input=486 output=77,624 cacheRead=107,681,522
+cacheWrite=538,899`; first correction `input=464 output=64,382 cacheRead=147,111,386
+cacheWrite=695,883`; project-instruction correction `input=114 output=19,230 cacheRead=40,967,737
+cacheWrite=36,676`; traversal-time correction `input=98 output=9,106 cacheRead=36,702,015
+cacheWrite=28,753`; historical-boundary correction `input=88 output=12,145 cacheRead=34,112,345
+cacheWrite=23,155`; cached-ambiguity correction `input=44 output=3,111 cacheRead=17,397,285
+cacheWrite=10,562`. Aggregate: `input=1,412 output=296,442 cacheRead=397,819,559
+cacheWrite=1,653,107`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-17 | `53105b0` | Replace Darwin's custom skills core with the official SDK plugin behind one compatible `load_skill` tool |
+| 2026-08-17 | `02dbcb2` | Archive the completed official-Agent-Skills Trellis task |
+| 2026-08-17 | `6fc919a` | Close offline-model, legacy-resume, resource, cache-shape and startup-unwind gaps found by Host acceptance |
+| 2026-08-17 | `906c400` | Preserve complete project instructions during cached and uncached legacy catalogue migration |
+| 2026-08-17 | `06ef164` | Enforce symlink and outside-root resource safety at official traversal time, including post-preflight swaps |
+| 2026-08-17 | `16cee9a` | Recognize exact historical prompt boundaries and refuse ambiguous legacy suffixes |
+| 2026-08-17 | `d5b0d68` | Refuse cached legacy ambiguity before the generic known-block parser can retain stale content |
