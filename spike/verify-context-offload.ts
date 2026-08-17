@@ -5,7 +5,7 @@
  * is deliberately larger than the offload threshold, and the assertions are on
  * what ends up in the conversation and in the tool catalogue.
  */
-import { rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -20,11 +20,13 @@ import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-off
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import { z } from 'zod';
 
+import { AgentRuntime } from '../src/agent/runtime.js';
 import { classify } from '../src/agent/permission.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-context-offload-test';
 const HUGE = 'x'.repeat(40_000);
+ownPrivateHome('context-offload-runtime');
 
 class OneToolCallModel extends Model<BaseModelConfig> {
   private config: BaseModelConfig = { modelId: 'fake.offload', contextWindowLimit: 200_000 };
@@ -157,6 +159,22 @@ assert('a missing reference still classifies as read rather than falling through
   missingReference.kind === 'read' && missingReference.summary.includes('no reference'));
 const unknownTool = classify('some_unregistered_tool', {});
 assert('unrelated unknown tools still fail closed as execute', unknownTool.kind === 'execute');
+
+header('context offload — process override uses runtime plugin without config persistence');
+const runtimeRoot = path.join(ROOT, 'runtime-project');
+await mkdir(runtimeRoot, { recursive: true });
+const runtime = await AgentRuntime.create({
+  projectRoot: runtimeRoot,
+  session: { kind: 'new' },
+  permissionBridge: async () => ({ allowed: false }),
+  contextOffloadOverride: true,
+});
+try {
+  assert('the process override registers the retrieval tool', runtime.info.toolNames.includes('retrieve_offloaded_content'));
+  assert('the loaded config remains unchanged', runtime.config.contextOffload === undefined);
+} finally {
+  await runtime.shutdown();
+}
 
 await rm(ROOT, { recursive: true, force: true });
 report();

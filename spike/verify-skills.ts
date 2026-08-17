@@ -166,9 +166,13 @@ async function missingDirectory(): Promise<void> {
   assert('developer requires managed launch and complete output consumption', workflow.includes('`start` mode') && workflow.includes('bash status') && workflow.includes('call `bash output` at least once') && workflow.includes('until `hasMore: false`'));
   assert('developer forbids recursive delegation and target-root drift', workflow.includes('must not load the `developer` skill') && workflow.includes('Do not substitute the Host\'s source repository'));
   assert('developer marks planning turns for hook-enforced read-only behavior', workflow.includes('DARWIN_PLANNING_ONLY=1'));
-  assert('developer runs every headless child turn in yolo mode', workflow.includes('Run every child invocation with `--yolo`') && workflow.includes('`--session <captured-id> --yolo`'));
+  assert('developer budgets planning and enables process-only offload', workflow.includes('`--yolo --context-offload --max-model-calls 20`') && workflow.includes('about 25 tool calls'));
+  assert('developer compacts before bounded implementation', workflow.includes('--compact-before --max-model-calls 120') && workflow.includes('compacts the planning transcript'));
+  assert('developer bounds corrections and compacts only large prior turns', workflow.includes('--max-model-calls 40') && workflow.includes('more than 40,000 output tokens') && workflow.includes('narrow correction'));
+  assert('developer batches independent tools but serializes dependent writes', workflow.includes('batch mutually independent read-only work') && workflow.includes('Writes, commits, and commands whose inputs depend on an earlier result stay serial'));
+  assert('developer enforces the focused-child/full-child/full-Host test pyramid', workflow.includes('smallest reproduction and focused suite') && workflow.includes('complete project gate once before commit') && workflow.includes('Host independently runs the complete acceptance gate once'));
   assert('developer separates task and conversation ids', workflow.includes('not the `bg-*` task id') && workflow.includes('^session: ([a-z0-9_-]+)$'));
-  assert('developer requires explicit same-session continuation', workflow.includes('`--session <captured-id> --yolo`') && workflow.includes('Never use `--continue` or `--resume`'));
+  assert('developer requires explicit same-session continuation', workflow.includes('`--session <captured-id> --yolo --context-offload') && workflow.includes('Never use `--continue` or `--resume`'));
   assert('developer preserves product and task-scope authority', workflow.includes('ask the user') && workflow.includes('yolo changes confirmation behavior, not task scope'));
   assert('developer requires independent acceptance and no hidden Host patch', workflow.includes('independently inspect') && workflow.includes('Do not patch the implementation yourself'));
   assert(

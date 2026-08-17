@@ -1,4 +1,4 @@
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
@@ -33,6 +33,14 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
       `fixture project root mismatch: expected ${JSON.stringify(expectedProjectRoot)}, got ${JSON.stringify(options.projectRoot)}`,
     );
   }
+  const traceFile = process.env['DARWIN_HEADLESS_FIXTURE_TRACE'];
+  if (traceFile !== undefined) {
+    appendFileSync(traceFile, `${JSON.stringify({
+      type: 'create',
+      maxModelCalls: options.maxModelCalls,
+      contextOffloadOverride: options.contextOffloadOverride,
+    })}\n`);
+  }
 
   const sessionId = options.session.kind === 'id' ? options.session.sessionId : 'session-fixture';
   options.onSessionResolved?.(sessionId);
@@ -58,10 +66,23 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
     diagnosticsStatus: undefined,
     diagnostics: undefined,
     expandSlashCommand: async () => null,
+    async compact() {
+      if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'compact' })}\n`);
+      if (mode === 'compact-failure') throw new Error('fixture compact failed');
+      return {
+        messagesBefore: 12,
+        messagesAfter: 5,
+        estimatedTokensBefore: 10_000,
+        estimatedTokensAfter: 2_000,
+        estimatedTokensSaved: 8_000,
+        compacted: true,
+      };
+    },
     cancel() {
       cancelled = true;
     },
     async *send(): AsyncIterable<AgentStreamEvent> {
+      if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'send' })}\n`);
       yield event({
         type: 'beforeToolCallEvent',
         toolUse: {

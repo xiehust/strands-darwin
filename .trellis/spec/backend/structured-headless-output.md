@@ -17,6 +17,7 @@ darwin -p|--print <message>
   [--output-format text|json|stream-json]
   [--continue|--resume|--session <id>]
   [--permission-mode default|auto|plan|yolo|--yolo]
+  [--max-model-calls <positive integer>] [--context-offload] [--compact-before]
 ```
 
 `text` is the default and its stdout/stderr bytes and ordering are the pre-SER-011 protocol.
@@ -32,6 +33,11 @@ The production entry reads cwd and calls the runner with an explicit `projectRoo
 that exact value to `AgentRuntime.create`. No module below `src/cli.ts` may recover cwd ambiently.
 Fixture drivers likewise name their root explicitly, and focused tests make runtime creation reject a
 mismatch.
+The optional token-efficiency controls are prepared before the public turn boundary. Runtime
+creation receives the model-call ceiling and process-only offload override. `--compact-before`
+awaits reversible persisted compaction after restore and `run.started`; only then may JSONL emit
+`turn.started` and call `send`. A compaction failure is a runtime-stage terminal failure with no
+turn/result, while text mode keeps its atomic empty-stdout failure contract.
 
 ### 3. Contracts
 

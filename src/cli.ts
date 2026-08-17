@@ -5,6 +5,7 @@
  * Usage: darwin [--resume|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]
  *        darwin -p <message> [--output-format text|json|stream-json]
  *          [--continue|--resume|--session <id>] [permission flags]
+ *          [--max-model-calls <n>] [--context-offload] [--compact-before]
  *        darwin trajectory <list|search|replay|fork> …
  */
 import process from 'node:process';

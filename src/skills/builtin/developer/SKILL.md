@@ -20,7 +20,16 @@ Ask the user when any of these boundaries is unresolved. Never infer authorizati
 
 ## 2. Launch a planning-only child turn
 
-Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Run every child invocation with `--yolo`; the built-in developer workflow uses yolo mode by default so headless children never block on interactive permission prompts. Prefix the planning process with `DARWIN_PLANNING_ONLY=1` so repository hooks can enforce read-only behavior when provided. The first prompt must give the child the requirement, evidence, repository scope, and acceptance criteria, and explicitly request a plan and questions only with no edits or implementation. Tell the child it is the direct implementation worker: it must not load the `developer` skill, start another darwin, or delegate the task again.
+Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Run every child invocation with `--yolo --context-offload --max-model-calls 20`; the built-in developer workflow uses yolo mode by default so headless children never block on interactive permission prompts, offloads oversized tool results without changing target config, and stops a runaway planning loop before model call 21. Prefix the planning process with `DARWIN_PLANNING_ONLY=1` so repository hooks can enforce read-only behavior when provided. The first prompt must give the child the requirement, evidence, repository scope, and acceptance criteria, and explicitly request a plan and questions only with no edits or implementation. Tell the child it is the direct implementation worker: it must not load the `developer` skill, start another darwin, or delegate the task again.
+
+Give the planning child an explicit work budget: no more than 20 model calls, about 25 tool calls, and a concise final plan containing only confirmed facts, file scope, implementation steps, acceptance commands, risks and unresolved questions. The CLI ceiling is authoritative for model calls; the tool/final-plan limits are workflow targets the child must self-manage. Planning artifacts carry detail forward, so the reply must not repeat their full text.
+
+### Tool batching and verification economy
+
+Tell every child turn to batch mutually independent read-only work in one assistant message: file reads, symbol searches, status/output checks, and independent offline checks may run together. Writes, commits, and commands whose inputs depend on an earlier result stay serial. The child must never repeat a file read or a green check merely to reconfirm it.
+
+Use a verification pyramid. While editing, run the smallest reproduction and focused suite, then typecheck. After source settles, the child runs the complete project gate once before commit. A commit with no source change is followed only by commit/diff/status checks, not another full suite. The Host independently runs the complete acceptance gate once. A failed check is fixed and rerun; this rule removes duplicate green runs, not failure diagnosis.
+
 
 Run the child from the exact target root. Do not substitute the Host's source repository or prepend a `cd` to some other directory. Keep the returned `bg-*` background task id. Tell the user that `/tasks` remains available while this Host turn runs. Monitor completion with `bash status` and incremental `bash output`; do not synchronize with fixed sleeps. For every child task, call `bash output` at least once. After it reaches a terminal state, keep calling `bash output` until `hasMore: false` before reviewing the reply or taking the next step. Status metadata and `outputBytes` are not the child's response.
 
@@ -50,7 +59,9 @@ Read the complete planning reply and compare it with the requirement and reposit
 
 ## 4. Continue the exact child session
 
-Launch every follow-up as another `bash start` task, in the same target root, with explicit `--session <captured-id> --yolo` arguments. Never use `--continue` or `--resume`, and never omit `--session` or `--yolo` on an implementation/correction turn. The follow-up prompt must state the approval/correction, tell the child to proceed without asking for another approval, and name the requested next work.
+Launch every follow-up as another `bash start` task in the same target root. The first implementation continuation uses explicit `--session <captured-id> --yolo --context-offload --compact-before --max-model-calls 120`: it compacts the planning transcript before implementation and gives the substantive phase a fresh bounded budget. Never use `--continue` or `--resume`, and never omit the explicit session, yolo, context-offload, or budget flags. The follow-up prompt must state the approval/correction, tell the child to proceed without asking for another approval, and name the requested next work.
+
+A correction/retry uses `--session <captured-id> --yolo --context-offload --max-model-calls 40`. Add `--compact-before` only when the previous child turn was large (for example, it exhausted its budget, reported more than 40,000 output tokens, or the Host observed a broad implementation/check transcript); a narrow correction should retain cached continuity without paying for an unnecessary summary. State the chosen correction budget and compaction decision in the prompt.
 
 Headless children cannot receive interactive permission prompts, so this workflow always runs them in yolo mode. Keep every child command inside the authorized target repository and mutation scope established above; yolo changes confirmation behavior, not task scope.
 
@@ -58,13 +69,13 @@ For each task, retain its new `bg-*` id, monitor with `status`, consume output i
 
 ### Retry transient child server failures
 
-If the drained child output contains a transient provider failure such as `turn failed: The server had an error while processing your request. Sorry about that!`, retry the same requested turn automatically. Use another managed `bash start` invocation with the same target root, prompt, and `--yolo`; when a child session id has been captured, include the same explicit `--session <captured-id>`. If the first planning attempt failed before emitting an exact session record, start a fresh planning attempt and capture its new record instead of guessing an id.
+If the drained child output contains a transient provider failure such as `turn failed: The server had an error while processing your request. Sorry about that!`, retry the same requested turn automatically. Use another managed `bash start` invocation with the same target root, prompt, yolo/context-offload flags and phase budget; when a child session id has been captured, include the same explicit `--session <captured-id>`. Preserve the prior turn's compact-before decision unless the retry follows a budget exhaustion, which qualifies as a large turn. If the first planning attempt failed before emitting an exact session record, start a fresh planning attempt and capture its new record instead of guessing an id.
 
 Retry at most two times after the original attempt. Drain and record every retry task normally. Do not retry deterministic failures such as invalid configuration, denied scope, failed tests, or rejected tool input under this rule. If the transient server failure persists after two retries, report it as a blocker rather than looping or implementing in the Host.
 
 ## 5. Accept independently
 
-After the child reports completion, independently inspect the repository diff and run the named acceptance checks from the Host. Do not accept the child's prose or its claimed test result as evidence. If acceptance fails, send the exact failure and a focused correction to the same child session through another managed background invocation. Do not patch the implementation yourself merely to conceal the failure.
+After the child reports completion, independently inspect the repository diff and run the named acceptance checks from the Host. This is the one Host full-gate pass in the verification pyramid; do not duplicate a green child full gate before inspecting the diff. Do not accept the child's prose or its claimed test result as evidence. If acceptance fails, send the exact failure and a focused correction to the same child session through another managed background invocation, then rerun only affected focused checks before the final full gate. Do not patch the implementation yourself merely to conceal the failure.
 
 ## 6. Report
 

@@ -76,6 +76,7 @@ export async function runHeadlessProcess(
   let interrupted = false;
   let cancelled = false;
   let failed = false;
+  let turnStarted = false;
   let turnFailure: unknown;
   const errors: StructuredFailure[] = [];
   const warnings: StructuredWarning[] = [];
@@ -133,18 +134,28 @@ export async function runHeadlessProcess(
       ...(options.permissionModeOverride !== undefined && {
         permissionModeOverride: options.permissionModeOverride,
       }),
+      ...(options.contextOffloadOverride !== undefined && {
+        contextOffloadOverride: options.contextOffloadOverride,
+      }),
+      ...(options.maxModelCalls !== undefined && {
+        maxModelCalls: options.maxModelCalls,
+      }),
     });
     if (structured && options.session.kind === 'id') {
       protocol?.sessionResolved(runtime.info.sessionId);
     }
     if (interrupted) throw new Error('Interrupted.');
-
     if (structured) {
       protocol?.runStarted({
         permissionMode: runtime.info.permissionMode,
         resumed: runtime.info.resumed,
         ...(runtime.info.diagnosticsFile === undefined ? {} : { diagnosticsFile: runtime.info.diagnosticsFile }),
       });
+    }
+    if (options.compactBefore) await runtime.compact();
+    turnStarted = true;
+
+    if (structured) {
       protocol?.turnStarted();
       const turn = await runStructuredHeadlessTurn(
         runtime,
@@ -167,8 +178,8 @@ export async function runHeadlessProcess(
     } else {
       failed = true;
       if (structured) {
-        errors.push(structuredFailure(runtime === undefined ? 'runtime' : 'turn', error));
-        if (runtime !== undefined) turnFailure = error;
+        errors.push(structuredFailure(runtime === undefined || !turnStarted ? 'runtime' : 'turn', error));
+        if (runtime !== undefined && turnStarted) turnFailure = error;
       } else {
         note(`error: ${errorMessage(error)}\n`, 'error');
       }

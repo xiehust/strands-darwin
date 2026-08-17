@@ -880,6 +880,7 @@ darwin -p|--print <message>
   [--output-format text|json|stream-json]
   [--continue|--resume|--session <id>]
   [--permission-mode default|auto|plan|yolo|--yolo]
+  [--max-model-calls <positive integer>] [--context-offload] [--compact-before]
 
 darwin trajectory <list|search|replay|fork> …    (no model call, no network)
 
@@ -914,6 +915,12 @@ missing or unreadable record, 2 for usage.
 - The SDK bash module installs SIGINT/SIGTERM listeners that call `process.exit(0)`. Headless mode
   must replace those handlers, keep its own handler installed through cleanup/persistence, cancel
   active work, and exit nonzero. Interactive mode keeps its established Ctrl+C policy.
+- The three token-efficiency controls are headless-only and opt-in. `--max-model-calls` installs a
+  `BeforeModelCallEvent` hook that throws before provider call `limit + 1`; each process gets a fresh
+  count. `--context-offload` enables the existing session-scoped ContextOffloader without changing
+  loaded/persisted config. `--compact-before` runs the existing reversible `AgentRuntime.compact()`
+  after restore and before the requested turn; failure starts no public turn and follows the runtime
+  failure/strict-cleanup path. With none of these flags, text and structured protocols are unchanged.
 
 Structured output is an opt-in projection over this same loop; the complete public schema and
 privacy/bounds policy live in `structured-headless-output.md`. Two SDK details determine that
@@ -1163,8 +1170,9 @@ agent.addHook(BeforeInvocationEvent, ({ agent }) => {
 
 ```text
 /developer <delegated requirement>
-bash start: darwin -p <planning prompt> --yolo
-bash start: darwin -p <approval/correction> --session <captured-id> --yolo
+bash start: darwin -p <planning prompt> --yolo --context-offload --max-model-calls 20
+bash start: darwin -p <implementation> --session <captured-id> --yolo --context-offload --compact-before --max-model-calls 120
+bash start: darwin -p <correction> --session <captured-id> --yolo --context-offload [--compact-before] --max-model-calls 40
 child stderr: ^session: ([a-z0-9_-]+)$
 user view: /tasks
 ```
@@ -1179,6 +1187,14 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 - Run each child from the exact target root. The child prompt says it is the direct worker and must not load `developer`, start another darwin, or delegate again; without that guard a built-in skill advertised to both Host and child can recurse.
 - Planning is a no-edit first turn, prefixed with `DARWIN_PLANNING_ONLY=1` so target hooks can enforce read-only behavior. Approval/correction is a later turn in the same session and tells the child to proceed without another approval question.
 - Every child invocation uses `--yolo` by default because a headless process cannot answer permission prompts. Yolo changes confirmation behavior only: the Host still establishes and enforces the named repository and authorized task scope. The Host independently inspects the diff and runs acceptance checks; failed acceptance returns to the same child session rather than being hidden by a Host edit.
+- Developer turns use hard per-process ceilings: planning 20, implementation 120, correction/retry
+  40. Every turn enables process-only context offload; implementation compacts restored planning
+  history before its requested turn, while a correction compacts only after a large prior turn.
+  Children batch independent reads/search/status checks and independent offline checks, but serialize
+  writes and dependent commands.
+- Verification follows a pyramid: minimal reproduction/focused suite/typecheck while editing; one
+  child full gate after source settles; commit/diff/status only after a no-source-change commit; one
+  independent Host full gate. Green full suites are not repeated for reassurance.
 - A drained child reply containing the provider's transient `turn failed: The server had an error while processing your request. Sorry about that!` message is retried automatically, at most twice after the original attempt. Reuse the same prompt, target root, yolo mode, and captured session id; if planning failed before emitting one, start a fresh planning attempt rather than guessing identity. Deterministic failures are corrected or reported, not blindly retried.
 
 ### 4. Validation & Error Matrix
@@ -1203,7 +1219,13 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 
 ### 6. Tests Required
 
-- `spike/verify-skills.ts`: built-in-only discovery/load/slash expansion, progressive disclosure, workflow guard text, deterministic merge, and collision isolation.
+- `spike/verify-skills.ts`: built-in-only discovery/load/slash expansion, progressive disclosure, workflow guard text, budgets, batching/test-pyramid policy, deterministic merge, and collision isolation.
+- `spike/verify-headless.ts` / `verify-headless-structured.ts`: parse/reject tuning flags, pass
+  overrides explicitly, compact before `turn.started`/send, and classify compact failure as runtime.
+- `spike/verify-model-call-budget.ts`: a real offline Agent/tool loop reaches the limit and proves the
+  provider never sees call `limit + 1`.
+- `spike/verify-context-offload.ts`: process override registers retrieval while loaded config remains
+  unchanged.
 - `pnpm build` plus package dry-run: compiled and packed Markdown asset exists.
 - `spike/verify-developer-live.ts`: real Host TUI, managed planning + explicit-session implementation turns, `/tasks` during streaming, status/output monitoring, no recursion/cwd drift, independent file/test/diff acceptance, and deadline-bounded exit.
 - Keep the live scenario opt-in because it makes real model calls.
@@ -1211,13 +1233,13 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 ### 7. Wrong vs Correct
 
 ```text
-# WRONG: pointer identity, foreground blocking, and recursive child role
+# WRONG: pointer identity, foreground blocking, recursion, and no cost bounds
 darwin -p "use developer to fix it" --continue
 
-# CORRECT: managed direct-worker turns with distinct process/conversation ids
-bash start -> DARWIN_PLANNING_ONLY=1 darwin -p "plan only; do not delegate" --yolo
+# CORRECT: managed direct-worker turns with distinct ids and phase controls
+bash start -> DARWIN_PLANNING_ONLY=1 darwin -p "plan only" --yolo --context-offload --max-model-calls 20
 # parse session: session-123 from output
-bash start -> darwin -p "approved; implement now" --session session-123 --yolo
+bash start -> darwin -p "approved; implement now" --session session-123 --yolo --context-offload --compact-before --max-model-calls 120
 ```
 
 ---

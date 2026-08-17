@@ -15,6 +15,7 @@ import path from 'node:path';
 import { compactConversation, countConversationTokens, type CompactResult } from './compact.js';
 import { DiagnosticsLog, type DiagnosticsStatus } from './diagnostics.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
+import { installModelCallBudget } from './model-call-budget.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
 import {
   SubagentDispatchRegistry,
@@ -112,6 +113,10 @@ export interface RuntimeOptions {
   permissionBridge: PermissionBridge;
   /** Overrides the config's `permissionMode` (CLI flags win over the file). */
   permissionModeOverride?: ApprovalMode;
+  /** Process-local opt-in for the existing ContextOffloader; never persisted. */
+  contextOffloadOverride?: true;
+  /** Refuses the next parent-Agent SDK model call after this many in the process. */
+  maxModelCalls?: number;
 }
 
 export type { CompactResult } from './compact.js';
@@ -392,8 +397,9 @@ export class AgentRuntime {
     // on `contextOffload` in config.ts. Do not add per-session cleanup here: a
     // fresh session id is timestamp-unique, so its offload dir never pre-exists,
     // and any other session's dir may still be resumed.
+    const contextOffload = options.contextOffloadOverride === true || config.contextOffload === true;
     const offloader =
-      config.contextOffload === true
+      contextOffload
         ? new ContextOffloader({
             storage: new LocalFileStorage(
               path.join(sessionPaths(options.projectRoot).sessionsDir, session.sessionId, 'offload'),
@@ -439,6 +445,8 @@ export class AgentRuntime {
         throw new Error('Could not place the official skills catalogue before working context and cache.');
       }
     });
+
+    if (options.maxModelCalls !== undefined) installModelCallBudget(agent, options.maxModelCalls);
 
     // Child tool allowlists can include MCP and plugin tools, whose final names do
     // not exist until initialization. Capture that catalogue before registering

@@ -17,6 +17,12 @@ export interface CliOptions {
   prompt: string | undefined;
   /** `text` preserves the original stdout/stderr protocol and is always the default. */
   outputFormat: HeadlessOutputFormat;
+  /** Optional per-process ceiling enforced before each SDK model call. */
+  maxModelCalls: number | undefined;
+  /** Process-only context-offload opt-in; never persisted to config. */
+  contextOffloadOverride: true | undefined;
+  /** Summarize restored history before the requested one-shot turn. */
+  compactBefore: boolean;
   /**
    * Which conversation to open. `--session <id>` is accepted in both modes: an id
    * is alphabet-validated here and `resolveSession` refuses one with no persisted
@@ -36,6 +42,12 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   let permissionModeSeen = false;
   let outputFormat: HeadlessOutputFormat = 'text';
   let outputFormatSeen = false;
+  let maxModelCalls: number | undefined;
+  let maxModelCallsSeen = false;
+  let contextOffloadOverride: true | undefined;
+  let contextOffloadSeen = false;
+  let compactBefore = false;
+  let compactBeforeSeen = false;
   let continueRequested = false;
   let resumeRequested = false;
   let yolo = argv.includes('--yolo');
@@ -72,6 +84,32 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
         index += 1;
         break;
       }
+      case '--max-model-calls': {
+        if (maxModelCallsSeen) throw new CliUsageError('--max-model-calls may be specified only once.');
+        maxModelCallsSeen = true;
+        const value = argv[index + 1];
+        if (value === undefined || !/^[1-9]\d*$/u.test(value)) {
+          throw new CliUsageError(
+            `--max-model-calls expects a positive integer, got ${JSON.stringify(value ?? '(nothing)')}.`,
+          );
+        }
+        maxModelCalls = Number(value);
+        if (!Number.isSafeInteger(maxModelCalls)) {
+          throw new CliUsageError(`--max-model-calls is too large: ${JSON.stringify(value)}.`);
+        }
+        index += 1;
+        break;
+      }
+      case '--context-offload':
+        if (contextOffloadSeen) throw new CliUsageError('--context-offload may be specified only once.');
+        contextOffloadSeen = true;
+        contextOffloadOverride = true;
+        break;
+      case '--compact-before':
+        if (compactBeforeSeen) throw new CliUsageError('--compact-before may be specified only once.');
+        compactBeforeSeen = true;
+        compactBefore = true;
+        break;
       case '--session': {
         if (sessionId !== undefined) throw new CliUsageError('--session may be specified only once.');
         const value = argv[index + 1];
@@ -136,6 +174,15 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   if (prompt === undefined && outputFormatSeen) {
     throw new CliUsageError('--output-format is available only with -p/--print.');
   }
+  if (prompt === undefined && maxModelCallsSeen) {
+    throw new CliUsageError('--max-model-calls is available only with -p/--print.');
+  }
+  if (prompt === undefined && contextOffloadSeen) {
+    throw new CliUsageError('--context-offload is available only with -p/--print.');
+  }
+  if (prompt === undefined && compactBeforeSeen) {
+    throw new CliUsageError('--compact-before is available only with -p/--print.');
+  }
 
   const session: SessionSelector = sessionId !== undefined
     ? { kind: 'id', sessionId }
@@ -146,6 +193,9 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
   return {
     prompt,
     outputFormat,
+    maxModelCalls,
+    contextOffloadOverride,
+    compactBefore,
     session,
     // Preserve the existing shorthand contract: --yolo wins over the value flag.
     permissionModeOverride: yolo ? 'yolo' : permissionMode,

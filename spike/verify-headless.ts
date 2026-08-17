@@ -80,18 +80,27 @@ async function parserContracts(): Promise<void> {
   assert.deepEqual(parseCliArgs(['-p', 'hello']), {
     prompt: 'hello',
     outputFormat: 'text',
+    maxModelCalls: undefined,
+    contextOffloadOverride: undefined,
+    compactBefore: false,
     session: { kind: 'new' },
     permissionModeOverride: undefined,
   });
   assert.deepEqual(parseCliArgs(['--print', 'hello', '--continue']), {
     prompt: 'hello',
     outputFormat: 'text',
+    maxModelCalls: undefined,
+    contextOffloadOverride: undefined,
+    compactBefore: false,
     session: { kind: 'continue' },
     permissionModeOverride: undefined,
   });
   assert.deepEqual(parseCliArgs(['-p', 'hello', '--continue', '--session', 'chosen_1']), {
     prompt: 'hello',
     outputFormat: 'text',
+    maxModelCalls: undefined,
+    contextOffloadOverride: undefined,
+    compactBefore: false,
     session: { kind: 'id', sessionId: 'chosen_1' },
     permissionModeOverride: undefined,
   });
@@ -104,6 +113,19 @@ async function parserContracts(): Promise<void> {
   assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', 'auto', '--yolo']).permissionModeOverride, 'yolo');
   assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', 'bogus', '--yolo']).permissionModeOverride, 'yolo');
   assert.equal(parseCliArgs(['-p', 'x', '--yolo', '--permission-mode', 'bogus']).permissionModeOverride, 'yolo');
+  assert.deepEqual(
+    parseCliArgs(['-p', 'x', '--max-model-calls', '20', '--context-offload', '--compact-before']),
+    {
+      prompt: 'x',
+      outputFormat: 'text',
+      maxModelCalls: 20,
+      contextOffloadOverride: true,
+      compactBefore: true,
+      session: { kind: 'new' },
+      permissionModeOverride: undefined,
+    },
+  );
+
   assert.equal(parseCliArgs(['-p', 'x', '--permission-mode', '--yolo']).permissionModeOverride, 'yolo');
   assert.throws(
     () => parseCliArgs(['-p', 'x', '--permission-mode', 'bogus', '--permission-mode', 'auto', '--yolo']),
@@ -118,6 +140,9 @@ async function parserContracts(): Promise<void> {
   assert.deepEqual(parseCliArgs(['--session', 'forked_1']), {
     prompt: undefined,
     outputFormat: 'text',
+    maxModelCalls: undefined,
+    contextOffloadOverride: undefined,
+    compactBefore: false,
     session: { kind: 'id', sessionId: 'forked_1' },
     permissionModeOverride: undefined,
   });
@@ -135,6 +160,13 @@ async function parserContracts(): Promise<void> {
     ['--output-format', 'json'], ['-p', 'x', '--output-format'],
     ['-p', 'x', '--output-format', 'xml'],
     ['-p', 'x', '--output-format', 'json', '--output-format', 'text'],
+    ['--max-model-calls', '2'], ['--context-offload'], ['--compact-before'],
+    ['-p', 'x', '--max-model-calls'], ['-p', 'x', '--max-model-calls', '0'],
+    ['-p', 'x', '--max-model-calls', '-1'], ['-p', 'x', '--max-model-calls', '1.5'],
+    ['-p', 'x', '--max-model-calls', 'many'],
+    ['-p', 'x', '--max-model-calls', '2', '--max-model-calls', '3'],
+    ['-p', 'x', '--context-offload', '--context-offload'],
+    ['-p', 'x', '--compact-before', '--compact-before'],
     ['--unknown'], ['bare'],
   ]) {
     assert.throws(() => parseCliArgs(argv), CliUsageError, argv.join(' '));

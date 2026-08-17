@@ -34,6 +34,7 @@ const suites = [
   'verify-trajectory.ts',
   'verify-diagnostics.ts',
   'verify-max-tokens-recovery.ts',
+  'verify-model-call-budget.ts',
   'verify-thinking.ts',
   'verify-model-command.ts',
 ] as const;

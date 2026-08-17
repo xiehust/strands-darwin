@@ -2,6 +2,7 @@
 import nodeAssert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, rmSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
@@ -39,10 +40,11 @@ interface ProcessResult {
 async function cli(
   mode: string,
   outputFormat: 'text' | 'json' | 'stream-json',
-  options: { signal?: 'SIGINT' } = {},
+  options: { signal?: 'SIGINT'; args?: string[]; traceFile?: string } = {},
 ): Promise<ProcessResult> {
   const args = ['--import', 'tsx', 'spike/fixtures/headless-cli.ts', '-p', 'fixture prompt'];
   if (outputFormat !== 'text') args.push('--output-format', outputFormat);
+  args.push(...(options.args ?? []));
   const readyFile = path.join(os.tmpdir(), `darwin-headless-ready-${process.pid}-${Date.now()}-${Math.random()}`);
   const child = spawn(process.execPath, args, {
     cwd: process.cwd(),
@@ -52,6 +54,7 @@ async function cli(
       DARWIN_HEADLESS_RUNTIME_FIXTURE: FIXTURE,
       ...(options.signal === undefined ? {} : { DARWIN_HEADLESS_FIXTURE_READY: readyFile }),
       DARWIN_HEADLESS_FIXTURE_PROJECT_ROOT: FIXTURE_PROJECT_ROOT,
+      ...(options.traceFile === undefined ? {} : { DARWIN_HEADLESS_FIXTURE_TRACE: options.traceFile }),
       DARWIN_HEADLESS_FIXTURE_EXPECTED_PROJECT_ROOT: FIXTURE_PROJECT_ROOT,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -136,6 +139,41 @@ async function parserAndTextCompatibility(): Promise<void> {
       'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n',
   });
   assert('text success/failure/interrupt stdout and stderr order are exact', true);
+}
+
+async function phaseControls(): Promise<void> {
+  header('structured headless — phase controls precede the requested turn');
+  const traceFile = path.join(os.tmpdir(), `darwin-headless-phase-${process.pid}.jsonl`);
+  rmSync(traceFile, { force: true });
+  const tuned = await cli('success', 'stream-json', {
+    args: ['--max-model-calls', '20', '--context-offload', '--compact-before'],
+    traceFile,
+  });
+  const traced = (await readFile(traceFile, 'utf8'))
+    .trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+  nodeAssert.deepEqual(traced.map((record) => record.type), ['create', 'compact', 'send']);
+  nodeAssert.equal(traced[0]?.maxModelCalls, 20);
+  nodeAssert.equal(traced[0]?.contextOffloadOverride, true);
+  nodeAssert.deepEqual(lines(tuned.stdout).slice(0, 3).map((record) => record.type), [
+    'session.resolved', 'run.started', 'turn.started',
+  ]);
+
+  rmSync(traceFile, { force: true });
+  const failed = await cli('compact-failure', 'stream-json', {
+    args: ['--compact-before'],
+    traceFile,
+  });
+  const failedTrace = (await readFile(traceFile, 'utf8'))
+    .trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+  const failedRecords = lines(failed.stdout);
+  nodeAssert.deepEqual(failedTrace.map((record) => record.type), ['create', 'compact']);
+  nodeAssert.ok(!failedRecords.some((record) => record.type === 'turn.started'));
+  nodeAssert.equal((failedRecords.at(-1)?.errors as { stage: string }[])[0]?.stage, 'runtime');
+  nodeAssert.equal(failedRecords.at(-1)?.outcome, 'failure');
+  nodeAssert.equal(failed.code, 1);
+  nodeAssert.equal(failed.stderr, '');
+  rmSync(traceFile, { force: true });
+  assert('runtime tuning reaches create, compaction precedes send, and compaction failure starts no turn', true);
 }
 
 async function terminalLifecycle(): Promise<void> {
@@ -315,6 +353,7 @@ function boundsAndEscaping(): void {
 }
 
 await parserAndTextCompatibility();
+await phaseControls();
 await terminalLifecycle();
 await sdkProjectionPrivacy();
 usageContract();
