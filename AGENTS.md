@@ -35,7 +35,7 @@ inference-profile model ids, never bare `anthropic.*`):
 
 ```bash
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven TUI suite
-AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|agents|bashExit|cancelThenContinue|agentsMd|usage|effort|model)
+AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|agents|bashExit|cancelThenContinue|agentsMd|usage|effort|model|longAnswer)
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
@@ -44,6 +44,7 @@ pnpm tsx spike/verify-mantle-live.ts                          # openai.* over Be
 pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2    # which models Mantle actually serves, per region
 pnpm tsx spike/verify-model-command.ts --live                  # /model: switch provider mid-session, conversation intact
 pnpm tsx spike/probe-model-switch.ts                          # what survives handing a conversation to another provider
+pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-tall live frame costs: whole-screen clears per render
 ```
 
 `spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model` and
@@ -214,6 +215,17 @@ without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.t
 **TUI** (`src/tui/`): Ink 7 + React 19. The Agent must be constructed with `printer: false`
 or the SDK writes to stdout and fights Ink. Completed history renders through `<Static>`;
 stream events map per the table in the archived MVP task's `research/spike-results.md`.
+**Whatever is redrawn must fit the terminal**: Ink does not clip an over-tall live frame, it
+switches to `clearTerminal` + a full transcript reprint *per render*, which is a strobing
+screen and an erased scrollback (`spike/probe-live-frame-overflow.tsx` counts them: 43 clears
+for a 60-line answer in 24 rows, 0 when bounded). So the still-arriving answer is drawn as a
+tail — `src/tui/live-text.ts` wraps it to real rows itself, because the height has to be exact,
+and says how many rows scrolled out; the assembled block still reaches `<Static>` whole, the one
+write allowed to exceed the viewport. The budget is measured (`useBoxMetrics` on the header and
+on the box below), never estimated, since the header grows a line per degradation it reports —
+and because those metrics are *parent*-relative while `useCursor` is frame-absolute, `InputBox`
+is handed its parent's offset. Contract and required checks:
+`.trellis/spec/frontend/tui-testing.md`.
 
 ## Project conventions worth knowing before editing
 

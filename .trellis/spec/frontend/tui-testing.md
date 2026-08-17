@@ -370,6 +370,43 @@ itself still worked. Add startup state as a suffix on an existing line (the mode
 whole new lines for rare warnings, and re-run `verify-tui.ts approve` after touching the
 header: it is the only check that sees the header and the box in the same frame.
 
+## Contract: the live frame must fit the viewport, so streaming text is a tail
+
+The header contract above is one half of a harder rule: **nothing that is redrawn may make the
+live frame taller than the terminal.** Ink 7 does not clip an over-tall frame, it changes
+strategy — `shouldClearTerminalForFrame()` in `ink/build/ink.js` returns true as soon as
+`outputHeight > rows`, and that branch writes `clearTerminal + the entire static transcript +
+the frame` **directly to stdout**, bypassing the throttled log. `clearTerminal` is
+`ESC[2J ESC[3J ESC[H`: the screen *and the scrollback*. At text-delta rate that is a strobing
+screen and a destroyed transcript, from a feature that looked purely additive.
+
+- Measured, not assumed: `spike/probe-live-frame-overflow.tsx` grows a live region in a pty
+  and counts `ESC[3J`. 60 lines of answer in a 24-row terminal = 43 whole-screen clears
+  unbounded, 0 bounded. Run it after any change to what the live frame draws.
+- The streaming answer (`liveText`) is therefore rendered as a **tail**: `live-text.ts` wraps
+  it to real terminal rows and returns only the newest that fit, plus a count of what
+  scrolled out, which is stated on screen (`… N earlier lines scrolled out of the live view`)
+  rather than silently dropped. Nothing is lost — the assembled block still enters `<Static>`
+  history in full, which is the one write allowed to exceed the viewport.
+- The wrapping is darwin's, not Ink's, and the caller renders **one `<Text wrap="truncate-end">`
+  per row**. A budget computed against char-wrapped rows and then handed to Ink's word wrap is
+  a budget that can be exceeded by exactly the words that do not fit.
+- The row budget is **measured, not estimated**: `useBoxMetrics` on the header box and on the
+  box holding tool panel + permission/input gives `rows - header - chrome - 1`. The spare row
+  is not decoration — Ink also clears the whole screen when a frame that was exactly `rows`
+  tall shrinks (`isLeavingFullscreen`). Neither measurement may depend on the live text's own
+  height, or the budget oscillates.
+- `useBoxMetrics` reports a box's layout **relative to its parent**, while `useCursor` wants
+  coordinates in the whole live frame. Wrapping part of the tree in a new `Box` therefore
+  silently moves the terminal cursor: `InputBox` takes its parent's offset as a prop and adds
+  it. If the cursor lands in the header after a layout change, this is why.
+- Tests required: `spike/verify-live-text.ts` (pure: wrapping, the tail, the budget — the
+  property is "the block is never taller than the rows it was given") and
+  `spike/verify-tui.ts longAnswer`, which asserts on the **raw pty bytes** that no `ESC[3J`
+  appears during a 120-line answer in a 20-row terminal, that the scrolled-out notice is
+  shown, and that the whole answer still reaches the transcript. Verify the scenario can
+  fail: passing an unbounded `maxLiveRows` turns those 0 clears into ~60.
+
 ## Contract: effective plan mode stays on the existing mode row
 
 `plan` is a permission mode, not a new panel. Render `mode: plan — read-only; write and execute
