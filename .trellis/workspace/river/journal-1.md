@@ -94,3 +94,100 @@ A long streaming answer made the TUI strobe: Ink stops repainting in place once 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: Make the whole live frame fit, and stream finished answer lines into scrollback
+
+**Date**: 2026-08-17
+**Task**: Make the whole live frame fit, and stream finished answer lines into scrollback
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Main Changes
+
+### Summary
+
+Round 2 of the live-frame work, as one parent with two children.
+
+Round 1 bounded the streaming answer against a *measured* chrome height and closed with two items
+recorded as out of scope. Measurement turned both into work. The chrome was unbounded too: in an
+80x24 terminal a **13-row draft** already took Ink's `clearTerminal` branch and cost two
+whole-screen clears (scrollback included) per further row, with nothing streaming at all — an idle
+session being typed into — and one in-flight tool call with details expanded drew **41 terminal
+rows** from caps that count logical lines and code points. The first probe written for this got the
+measurement wrong in an instructive way: it grew the draft with `send("\n" + text)`, which is the
+batched-Enter path, so it submitted the draft and spent a real model turn measuring nothing.
+
+`live-frame-chrome` inverted the budget. Every participant now states the rows it wants and
+`src/tui/frame-budget.ts` hands them out in a fixed priority order — prompt region, tool panel,
+answer — with a share ceiling so the first served cannot take everything, and a `modal` exemption
+for the permission box. Only the header is still measured; measuring the boxes being bounded is
+what oscillates. Two Ink behaviours turned out to matter more than the arithmetic. Several `<Text>`
+children of a `<Box>` are laid out as flex items and wrap *independently*, which made the
+permission summary two rows tall and ate the `] ` after `[parent`; rows whose height must be known
+are now one `<Text>` with nested spans. And the share ceiling starved the modal permission box
+while the call it was asking about ran, cutting its last detail row — which is where
+`… truncated N code points` lives, the line saying the value shown is not the whole value.
+
+`stream-into-static` took the trade round 1 refused. Finished answer lines go to `<Static>` while
+the turn runs, except the last non-blank one and any trailing blank lines, because the assembled
+block is trimmed at the end and committing a trailing blank line made a clean answer report a
+divergence. The close is a reconciliation against what was committed: a continuation writes the
+remainder, a real disagreement is stated as a warning with the authoritative text in full. It is
+*cheaper* than what it replaced — 30,675 bytes against 60,040 for a 120-line answer, because the
+alternative redraws the whole tail on every delta.
+
+Two PRD assumptions were wrong and are recorded as such. The divergence branch cannot be reached
+through any ordinary model: the SDK's base `Model.streamAggregated` assembles the finished block
+from the deltas it has just yielded, so it is exercised at the reducer rather than through a fake
+provider. And "appears exactly once" cannot be asserted against accumulated pty output, since every
+row that passed through the live tail was drawn once per repaint.
+
+### Main Changes
+
+- `src/tui/frame-budget.ts` (new): one shared row budget, priority order, share ceiling, `modal`
+  exemption, and the per-participant plans; all pure.
+- `InputBox` windows the draft around the cursor, `ActiveToolCalls` and `PermissionPrompt` draw
+  pre-counted rows, and each states what it hides.
+- `src/tui/turn-state.ts`: `commitFinishedLines`, `closeAnswer`, and `AnswerPart` deciding at push
+  time which piece owns the `agent` label and which owns the blank row; `formatReplay` honours it.
+- `.trellis/spec/frontend/live-frame.md` (new): both contracts, split out of `tui-testing.md`,
+  which is injected as context and silently truncated past 32 KB.
+
+### Testing
+
+- `spike/verify-frame-budget.ts` (new, 51): the invariant over a matrix, plus `renderToString` of
+  the real components — that is what caught the flex-layout rows.
+- `spike/verify-stream-into-static.ts` (new, 58): commit timing, the shapes that must not change,
+  the authoritative close, interruptions, and one offline `Agent`.
+- New pty scenarios `tallDraft` (free) and `tallDraftStreaming`; `longAnswer` now asserts
+  progressive visibility and moves its scrolled-out-notice assertion onto an unbroken paragraph.
+- Shown able to fail: unbounding the draft turns `tallDraft`'s 8 passes into 4 failures.
+- `pnpm typecheck`, `pnpm test` (1813), the full `verify-tui.ts` suite, both probe modes.
+
+### Next Steps
+
+- `spike/verify-tui.ts approve` flaked twice in full-suite runs while passing three times
+  standalone, both times because the model volunteered shell commands the prompt asked it not to
+  run: the extra call raises a second permission box the scenario never answers, so every assertion
+  passes and the run then times out waiting for idle. Written up in `frontend/tui-testing.md`; the
+  fix is to make the extra call harmless (permission mode or an allow rule) rather than to rely on
+  the model declining. Its 170-character path anchor is worth shortening in the same pass.
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `898ad46` | (see git log) |
+| `c21cd09` | (see git log) |
+| `a5f4b2a` | (see git log) |
+| `901283d` | (see git log) |
+| `9e487a1` | (see git log) |
+
+### Status
+
+[OK] **Completed**
