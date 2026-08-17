@@ -25,7 +25,7 @@ import {
   type StructuredWarning,
 } from './headless-protocol.js';
 
-export type HeadlessOptions = CliOptions & { prompt: string };
+export type HeadlessOptions = CliOptions & { prompt: string; projectRoot: string };
 
 type HeadlessProcess = Pick<
   typeof process,
@@ -114,7 +114,7 @@ export async function runHeadlessProcess(
 
   try {
     runtime = await dependencies.createRuntime({
-      projectRoot: process.cwd(),
+      projectRoot: options.projectRoot,
       session: options.session,
       ...(options.session.kind !== 'id' && {
         onSessionResolved: (sessionId: string) => {

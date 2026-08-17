@@ -2,9 +2,11 @@
 
 ## Boundary
 
-`src/cli.ts` remains the only process driver and `src/agent/runtime.ts` remains the only main SDK
-`Agent` constructor. One headless orchestration state machine owns turn, strict shutdown, pointer
-persistence, usage and exit status; renderers only choose the external protocol.
+`src/cli.ts` remains the production process entry and `src/agent/runtime.ts` remains the only main
+SDK `Agent` constructor. The entry reads `process.cwd()` once and passes an explicit `projectRoot`
+through the testable runner into runtime construction; no extracted module re-reads ambient cwd.
+One headless orchestration state machine owns turn, strict shutdown, pointer persistence, usage and
+exit status; renderers only choose the external protocol.
 
 ## CLI and compatibility
 

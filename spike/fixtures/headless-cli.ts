@@ -14,7 +14,9 @@ const fixture = await import(fixtureUrl) as {
 };
 const options = parseCliArgs(process.argv.slice(2));
 if (options.prompt === undefined) throw new Error('fixture driver requires -p/--print');
-await runHeadlessProcess({ ...options, prompt: options.prompt }, {
+const projectRoot = process.env['DARWIN_HEADLESS_FIXTURE_PROJECT_ROOT'];
+if (projectRoot === undefined) throw new Error('DARWIN_HEADLESS_FIXTURE_PROJECT_ROOT is required');
+await runHeadlessProcess({ ...options, prompt: options.prompt, projectRoot }, {
   ...productionHeadlessDependencies,
   createRuntime: fixture.createRuntime,
   // A fixture process has no provider socket to guard against; keep exact ordering

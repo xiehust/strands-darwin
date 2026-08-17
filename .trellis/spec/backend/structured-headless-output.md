@@ -28,6 +28,11 @@ Once a structured invocation parses, stdout is exclusively the structured protoc
 stderr is empty. MCP subprocess banners stay suppressed. SIGKILL and stdout failure such as EPIPE are
 outside the caught protocol and cannot guarantee a terminal record.
 
+The production entry reads cwd and calls the runner with an explicit `projectRoot`; the runner passes
+that exact value to `AgentRuntime.create`. No module below `src/cli.ts` may recover cwd ambiently.
+Fixture drivers likewise name their root explicitly, and focused tests make runtime creation reject a
+mismatch.
+
 ### 3. Contracts
 
 #### Version 1 envelope

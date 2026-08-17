@@ -72,7 +72,7 @@ async function runTrajectory(argv: readonly string[]): Promise<void> {
 }
 
 async function runHeadless(options: CliOptions & { prompt: string }): Promise<void> {
-  await runHeadlessProcess(options, {
+  await runHeadlessProcess({ ...options, projectRoot: process.cwd() }, {
     ...productionHeadlessDependencies,
     forceExitIfHung,
   });

@@ -28,6 +28,7 @@ import { assert, header, report } from './shared.js';
 
 const FIXTURE = pathToFileURL(path.join(import.meta.dirname, 'fixtures/headless-runtime.ts')).href;
 const BASE_ENV = { ...process.env };
+const FIXTURE_PROJECT_ROOT = '/tmp/darwin-headless-explicit-project-root';
 
 interface ProcessResult {
   code: number | null;
@@ -50,6 +51,8 @@ async function cli(
       DARWIN_HEADLESS_FIXTURE_MODE: mode,
       DARWIN_HEADLESS_RUNTIME_FIXTURE: FIXTURE,
       ...(options.signal === undefined ? {} : { DARWIN_HEADLESS_FIXTURE_READY: readyFile }),
+      DARWIN_HEADLESS_FIXTURE_PROJECT_ROOT: FIXTURE_PROJECT_ROOT,
+      DARWIN_HEADLESS_FIXTURE_EXPECTED_PROJECT_ROOT: FIXTURE_PROJECT_ROOT,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -90,9 +93,12 @@ async function parserAndTextCompatibility(): Promise<void> {
   nodeAssert.equal(parseCliArgs(['-p', 'x']).outputFormat, 'text');
   nodeAssert.equal(parseCliArgs(['-p', 'x', '--output-format', 'json']).outputFormat, 'json');
   nodeAssert.throws(() => parseCliArgs(['--output-format', 'json']));
+  const explicitRoot = await cli('success', 'json');
+  nodeAssert.equal(lines(explicitRoot.stdout)[0]?.outcome, 'success');
+
   nodeAssert.throws(() => parseCliArgs(['-p', 'x', '--output-format', 'bad']));
   nodeAssert.throws(() => parseCliArgs(['-p', 'x', '--output-format', 'json', '--output-format', 'text']));
-  assert('parser keeps text default and rejects invalid structured use before runtime', true);
+  assert('parser rejects invalid structured use and the explicit project root reaches runtime creation', true);
 
   const success = await cli('success', 'text');
   nodeAssert.deepEqual(success, {

@@ -27,6 +27,13 @@ function event(value: unknown): AgentStreamEvent {
 export async function createRuntime(options: RuntimeOptions): Promise<AgentRuntime> {
   const mode = process.env['DARWIN_HEADLESS_FIXTURE_MODE'] ?? 'success';
   if (mode === 'runtime-failure') throw new Error('fixture runtime failed');
+  const expectedProjectRoot = process.env['DARWIN_HEADLESS_FIXTURE_EXPECTED_PROJECT_ROOT'];
+  if (expectedProjectRoot === undefined || options.projectRoot !== expectedProjectRoot) {
+    throw new Error(
+      `fixture project root mismatch: expected ${JSON.stringify(expectedProjectRoot)}, got ${JSON.stringify(options.projectRoot)}`,
+    );
+  }
+
   const sessionId = options.session.kind === 'id' ? options.session.sessionId : 'session-fixture';
   options.onSessionResolved?.(sessionId);
   let cancelled = false;
