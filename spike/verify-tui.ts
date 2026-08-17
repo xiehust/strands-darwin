@@ -1614,14 +1614,19 @@ async function tallDraftStreaming(): Promise<void> {
     tui.send(`\u001b[200~${rows.join('\r\n')}\u001b[201~`);
     await tui.waitFor('...> draft row 40', { timeoutMs: 60_000, from: turnStart, settleMs: 400 });
 
-    await tui.waitFor('row 90', { timeoutMs: 240_000, from: turnStart });
+    // Sampled mid-answer, which is the only moment both participants are in the live
+    // frame at once. The answer contributes its *uncommitted* rows only: finished
+    // lines are in `<Static>` by now (`turn-state.ts`), so this frame does not carry
+    // the scrolled-out notice a line-oriented answer used to need — asserting it here
+    // would be asserting the absence of that feature.
+    await tui.waitFor('row 30', { timeoutMs: 240_000, from: turnStart, settleMs: 300 });
+    const shared = tui.frame;
+    assert('the tall draft is windowed while the answer streams',
+      /… \d+ draft rows not shown/.test(shared) && shared.includes('...> draft row 40'));
+    assert('and the answer is still arriving in the same frame',
+      shared.includes('working…') && /row \d+/.test(shared));
 
-    // Asserted before the draft is cleared: this is the state under test — the
-    // answer's tail, the windowed draft and the hint in one frame that fits.
-    assert('the answer and the tall draft are both in the frame, bounded',
-      /… \d+ earlier lines? scrolled out of the live view/.test(tui.frame) &&
-      /… \d+ draft rows not shown/.test(tui.frame) &&
-      tui.frame.includes('...> draft row 40'));
+    await tui.waitFor('row 90', { timeoutMs: 240_000, from: turnStart });
 
     // A windowed draft has no `you>` row — that row is one of the ones scrolled out
     // of the window — so `waitForIdle` (which keys on `you>` being newer than

@@ -348,6 +348,22 @@ wait converts that bug into a suite hang.
   last hit: a long details block (a big file body) pushes `permission required (write)`
   out of any fixed-size tail window.
 
+## Known flake: a prompt cannot forbid a tool call, and an unanswered prompt hangs the scenario
+
+`approve` tells the model, in words, not to run shell commands. It mostly obeys. When it does not,
+the extra call raises a **second** permission box, the scenario answers only the first, and the
+following `waitForIdle` burns its whole timeout with every assertion already passed. Observed twice
+in a full-suite run on 2026-08-17 while the same scenario passed three times standalone.
+
+So: a scenario that depends on the model *not* doing something is a scenario that will flake. Prefer
+`--permission-mode` or an allow rule to make the extra call harmless, and treat "all assertions
+passed, then the run timed out waiting for idle" as this shape rather than as a regression in what
+was under test.
+
+Related, in the same scenario: `waitFor(APPROVE_TARGET)` anchors on a 170-character path. Long
+unbreakable strings survive Ink's word wrap intact today, which is the only reason it matches at
+all — a shorter anchor is worth more than the precision.
+
 ## Contract: assertion strings must be exclusive to the state under test
 
 Renaming the product from `strands-darwin` to `darwin` silently turned
@@ -370,75 +386,16 @@ itself still worked. Add startup state as a suffix on an existing line (the mode
 whole new lines for rare warnings, and re-run `verify-tui.ts approve` after touching the
 header: it is the only check that sees the header and the box in the same frame.
 
-## Contract: the live frame is one shared row budget
+## Contract: the live frame's row budget lives in its own document
 
-**Nothing that is redrawn may make the live frame as tall as the terminal.** Ink 7 does not clip
-an over-tall frame, it changes strategy — `shouldClearTerminalForFrame()` in `ink/build/ink.js`
-returns true as soon as `outputHeight > rows`, and that branch writes `clearTerminal + the entire
-static transcript + the frame` **directly to stdout**, bypassing the throttled log. `clearTerminal`
-is `ESC[2J ESC[3J ESC[H`: the screen *and the scrollback*. At delta rate that is a strobing screen
-and a destroyed transcript. The limit is `rows - 1`: Ink calls a frame fullscreen at
-`outputHeight >= rows` and clears when the next one shrinks below that (`isLeavingFullscreen`).
+Everything about how the redrawn frame divides its rows between header, answer, tool panel,
+permission box and draft — and about committing finished answer lines to `<Static>` while a turn is
+still running — is **`.trellis/spec/frontend/live-frame.md`**. Read it before changing anything that
+draws inside the live frame; the one-line version is that Ink does not clip an over-tall frame, it
+clears the screen *and the scrollback* per render instead.
 
-Every redrawn participant is in scope: measured, a 13-row draft in a 24-row terminal costs 2 clears
-per further row with nothing streaming, and one in-flight call with details expanded draws 41 rows
-(`tasks/archive/2026-08/08-17-live-frame-chrome/research/`).
-
-- **One budget, handed out, not measured.** `src/tui/frame-budget.ts` divides
-  `rows - 1 - header - thinking` between prompt region, tool panel and answer, in that priority
-  order. Only the **header** is measured (`useBoxMetrics`) — its height depends on nothing below
-  it; measuring the boxes being bounded is what oscillates.
-- **Priority follows what the user cannot act without**: the draft row under the cursor and the
-  question asked never yield, expanded detail yields before them, the answer yields first
-  (`<Static>` already holds its text in full). A **share ceiling** — no more than half while
-  something lower wants rows — stops the first served taking everything; the permission box is
-  exempt (`modal: true`) because the loop is blocked on it. Without that exemption it lost its last
-  detail row, which is where `… truncated N code points` lives.
-- **Heights are counted in visual rows at the current width**, through the same helpers the
-  components render from. `EXPANDED_INPUT_LINES` / `PERMISSION_DETAIL_LINES` bound what is *read*:
-  4 capped logical lines measured 41 terminal rows.
-- **A row whose height must be known is one `<Text>` with nested spans.** Several `<Text>` children
-  of a `<Box>` are flex items and wrap independently — that made the permission summary two rows
-  and ate the `] ` after `[parent`. Pre-wrapped content is one `<Text wrap="truncate-end">` per row.
-- **What is hidden is stated**, one row each: scrolled-out answer lines, draft rows above/below,
-  cut tool input, collapsed tool calls, cut permission detail.
-- `useBoxMetrics` is **parent**-relative while `useCursor` is frame-absolute, and a windowed draft
-  moves the cursor's row again: `InputBox` takes its parent's offset as a prop and adds the rows its
-  window hides. If the cursor lands in the header after a layout change, this is why.
-- A **windowed draft has no `you>` row** (it scrolled out), so `waitForIdle` and `awaitsPermission`
-  cannot be used while a tall draft is up — clear the draft first.
-- Tests required: `spike/verify-frame-budget.ts` (arithmetic **plus** `renderToString` of the real
-  components — "what Ink draws is never taller than the grant", which caught the flex rows),
-  `verify-live-text.ts`, `probe-live-frame-overflow.tsx` both modes, and `verify-tui.ts`
-  `tallDraft` (free) / `tallDraftStreaming` / `approve` / `cursor` / `completion` / `longAnswer`.
-  Unbounding the draft turns `tallDraft`'s 8 passes into 4 failures.
-
-## Contract: a finished answer line belongs to `<Static>`, not to the live frame
-
-Answer text is committed to history **while the turn runs**: every complete line up to but not
-including the last non-blank one (`commitFinishedLines`, `src/tui/turn-state.ts`). A line-oriented
-answer then needs no tail; the tail stays load-bearing for the shape with no finished lines, one
-unbroken paragraph. It is *cheaper* — 30,675 bytes against 60,040 for a 120-line answer, since the
-alternative redraws the whole tail per delta
-(`tasks/archive/2026-08/08-17-stream-into-static/research/`).
-
-- **`<Static>` cannot be recalled**, so nothing provisional enters it. The last non-blank line is
-  held back, and trailing blank lines with it — the assembled block trims its end, and committing a
-  trailing blank line made a clean answer report a divergence.
-- **The authoritative block still decides.** `contentBlockEvent` is reconciled against
-  `committedAnswer`: a continuation commits the remainder; a real disagreement is **stated** as a
-  `warn` notice with the authoritative text in full. No ordinary model can reach that branch (the
-  SDK's base `Model.streamAggregated` assembles the block from the deltas it just yielded), so it is
-  exercised at the reducer, not through a fake provider.
-- **The label and the blank row belong to specific pieces.** `AnswerPart` is
-  `whole | first | middle | last`: label on `whole`/`first`, bottom margin on `whole`/`last`. Ink
-  fixes a margin when it writes the entry, so this cannot be decided later — and `formatReplay` must
-  respect the same flags or a replay prints one `darwin>` per piece.
-
-Do **not** assert "appears exactly once" against accumulated pty output: every row that passed
-through the live tail was drawn once per repaint. Duplication is asserted over the reducer's history
-and over `formatReplay` (`spike/verify-stream-into-static.ts`, which also drives a real offline
-`Agent`).
+Split out because this file is injected into implement and check runs and is silently truncated past
+32 KB, which would drop whichever contract happened to sit last.
 
 ## Contract: effective plan mode stays on the existing mode row
 

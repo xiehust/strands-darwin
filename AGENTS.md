@@ -237,7 +237,8 @@ scrolled-out notice). Two Ink traps are load-bearing here: a row whose height mu
 **one** `<Text>` with nested spans, never several `<Text>` children of a `<Box>` (Ink lays those
 out as flex items and wraps them independently); and `useBoxMetrics` is *parent*-relative while
 `useCursor` is frame-absolute, so `InputBox` is handed its parent's offset and adds the rows its
-own window hides. Contract and required checks: `.trellis/spec/frontend/tui-testing.md`.
+own window hides. Contract and required checks: `.trellis/spec/frontend/live-frame.md` (pty
+mechanics stay in `frontend/tui-testing.md`).
 
 **A finished answer line belongs to `<Static>`, not to the live frame** (`src/tui/turn-state.ts`):
 answer text is committed to history *while the turn runs* — every complete line up to but not
