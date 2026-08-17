@@ -685,11 +685,13 @@ export class AgentRuntime {
   }
 
   /**
-   * Estimates the context the next model request would carry, without sending
-   * anything: the SDK's default `countTokens` is a character heuristic (darwin
-   * never enables the native counting API), so this is free, offline, and safe
-   * to call mid-turn — it reads messages and never mutates them. The window
-   * comes from the SDK's own per-model table, `undefined` when unknown.
+   * Estimates the context the next model request would carry, without sending it:
+   * this reads messages and never mutates them, so it is safe to call mid-turn. The
+   * count itself is the SDK's character heuristic in practice — `useNativeTokenCount`
+   * is on, but Bedrock's `CountTokens` refuses the inference-profile ids darwin
+   * requires (see README "Known limitations"), so the first attempt per model may
+   * make one cheap non-streaming call that fails and is then cached as skipped. The
+   * window comes from the SDK's own per-model table, `undefined` when unknown.
    */
   async contextEstimate(): Promise<ContextEstimate> {
     return {

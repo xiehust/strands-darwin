@@ -994,6 +994,22 @@ Note that the snapshot path includes the agent id, so changing `AGENT_ID` in
 - **No sandboxing.** `bash` runs commands directly on your machine. The confirmation
   prompt is the only thing between the model and your shell.
 - **No autonomous scheduler or agent swarm.** The optional built-in developer workflow supervises one external headless child through existing sessions and managed bash jobs; it does not add another in-process agent loop.
+- **Context size is an estimate, not a provider count, on Bedrock.** `/context`, the context
+  warning and `/compact`'s before/after numbers ask the model to count tokens, and darwin does
+  enable Bedrock's native `CountTokens` (`useNativeTokenCount: true`) — but the API cannot be
+  reached for the models darwin runs, so it always falls back to the SDK's character heuristic.
+  Two separate reasons, both measured against `us-east-1`/`us-west-2` in August 2026:
+  `CountTokens` accepts only a **bare** foundation-model id, so every id darwin uses is rejected
+  (`anthropic.claude-sonnet-4-6` counts; `us.` / `global.` / an inference-profile or
+  foundation-model ARN of the same model all answer `ValidationException: The provided model
+  doesn't support counting tokens` — and a profile id is exactly what Bedrock *requires* for
+  these models); and past 4.6 the bare id is refused too (4.5 and 4.6 count, `claude-opus-4-7`,
+  `claude-opus-4-8`, `claude-sonnet-5`, `claude-opus-5` and `claude-fable-5` do not). Stripping
+  the prefix ourselves would therefore buy real counts only on 4.6 and older, so nothing is
+  stripped and the estimate stands until the upstream API takes profile ids. Note that the
+  fallback is silent by design: the SDK says it only at `debug`, which needs
+  [`diagnostics`](#session-diagnostics) — except when the caller's IAM policy is missing
+  `bedrock:CountTokens`, which is a `warn` on the transcript once per model per process.
 - **Recorded turn numbers restart with each process.** A session's turns are numbered from 1 per
   run, so a resumed session's record can hold several `turn 1` lines and `trajectory list` counts
   distinct numbers rather than turns. Spend totals are unaffected — they add up the turns actually
