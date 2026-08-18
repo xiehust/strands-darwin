@@ -16,7 +16,12 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, u
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
 import type { DiagnosticsLog } from '../agent/diagnostics.js';
-import type { PermissionDecision } from '../agent/permission.js';
+import {
+  APPROVAL_MODES,
+  describeApprovalMode,
+  isApprovalMode,
+  type PermissionDecision,
+} from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { AgentRuntime, CompactResult, UsageTotals } from '../agent/runtime.js';
 import { formatUsageValue, usageRows, cacheEffectivenessRows } from '../agent/usage.js';
@@ -368,6 +373,20 @@ export function App({
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
         applyEffortCommand(runtime, text, dispatch);
+        return;
+      }
+
+      // Before the busy check for the strongest reason of all: mid-turn is exactly
+      // when the enforcement policy needs changing — the model is about to write
+      // something that should have been planned first, or the user has stopped
+      // wanting to confirm every call. It sends nothing and rebuilds nothing: the
+      // gate takes the new mode for its next decision and withdraws any decision
+      // still pending, so no call is judged half by one mode and half by another.
+      if (text === '/mode' || text.startsWith('/mode ')) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        applyModeCommand(runtime, text, dispatch);
         return;
       }
 
@@ -938,6 +957,10 @@ function hintForStatus(status: Status): string | undefined {
 function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Element {
   const info = runtime.info;
   const instructions = info.projectInstructions;
+  // Live, not info.permissionMode: /mode moves it mid-session, and a header still
+  // naming the startup policy would be worse than no header — this row is the only
+  // place the effective mode is stated, and it must not gain a second one.
+  const mode = runtime.permissionMode;
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -950,10 +973,10 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
         {formatPromptCache(runtime.promptCache)}
         {formatThinking(runtime.thinking)}
       </Text>
-      {info.permissionMode === 'yolo' ? (
+      {mode === 'yolo' ? (
         // Yellow: yolo disables a safety layer, same convention as other warnings.
         <Text color="yellow">mode: yolo — every tool call runs without confirmation</Text>
-      ) : info.permissionMode === 'plan' ? (
+      ) : mode === 'plan' ? (
         // One existing row, not a new one: the header competes with permission and
         // tool detail for frame height. Rules remain stored but cannot bypass plan.
         <Text color="yellow">
@@ -964,7 +987,7 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
         // Rule count rides along on this line rather than taking one of its own:
         // see the frame-height comment below.
         <Text dimColor>
-          mode: {info.permissionMode}
+          mode: {mode}
           {runtime.allowRuleCount > 0 ? ` · ${runtime.allowRuleCount} allow rule(s)` : ''}
         </Text>
       )}
@@ -1277,6 +1300,70 @@ function applyEffortCommand(
       });
     },
   );
+}
+
+/**
+ * Runs `/mode`, dispatching whatever notice it earns.
+ *
+ * Reporting and switching share one entry point, like `/effort` and `/model`: both
+ * answer "what is being enforced right now". An unusable argument changes nothing,
+ * names the valid modes, and never falls through to the model as a prompt.
+ *
+ * Nothing is awaited and nothing is written: this is session-scoped state by
+ * design, so — unlike `/effort` and `/model` — there is no "saved to …" half of the
+ * report. The notice says so, because a user who has met the other two commands
+ * will otherwise assume the mode is remembered.
+ */
+function applyModeCommand(
+  runtime: AgentRuntime,
+  text: string,
+  dispatch: (action: TurnAction) => void,
+): void {
+  const argument = text.slice('/mode'.length).trim().toLowerCase();
+  const available = `  available: ${APPROVAL_MODES.join(', ')} · /mode <name> switches for this session only`;
+
+  if (argument === '') {
+    dispatch({
+      type: 'notice',
+      text: `permission mode: ${describeApprovalMode(runtime.permissionMode)}\n${available}`,
+    });
+    return;
+  }
+
+  if (!isApprovalMode(argument)) {
+    dispatch({
+      type: 'notice',
+      text:
+        `${argument} is not a permission mode — expected one of ${APPROVAL_MODES.join(', ')}\n` +
+        `  permission mode: ${describeApprovalMode(runtime.permissionMode)} (unchanged)`,
+    });
+    return;
+  }
+
+  const change = runtime.changePermissionMode(argument);
+  if (change.previous === change.mode) {
+    dispatch({
+      type: 'notice',
+      text: `already in ${change.mode} mode — ${describeApprovalMode(change.mode)}\n${available}`,
+    });
+    return;
+  }
+
+  // The withdrawal line is the visible half of the in-flight contract: a prompt
+  // that vanished or a classifier check that was abandoned must be accounted for,
+  // or the user is left wondering which mode answered their question.
+  const withdrawn =
+    change.withdrawn === 0
+      ? ''
+      : `\n  ${change.withdrawn} pending tool decision(s) withdrawn and re-decided under ${change.mode}`;
+  dispatch({
+    type: 'notice',
+    text:
+      `permission mode: ${describeApprovalMode(change.mode)} (was ${change.previous})${withdrawn}\n` +
+      `  this session only — ~/${DARWIN_DIRNAME}/${CONFIG_FILENAME} is unchanged`,
+    // Widening enforcement is a warning, exactly as the header colours yolo.
+    ...(change.mode === 'yolo' ? { severity: 'warn' as const } : {}),
+  });
 }
 
 /** One line covering both what was asked for and what the model will actually do. */

@@ -13,6 +13,7 @@
 import { renderToString } from 'ink';
 import React from 'react';
 
+import { NEVER_WITHDRAWN } from '../src/agent/permission.js';
 import { InputBox } from '../src/tui/InputBox.js';
 import { PermissionPrompt } from '../src/tui/PermissionPrompt.js';
 import { ActiveToolCalls } from '../src/tui/ToolCallPanel.js';
@@ -372,6 +373,7 @@ function renderedRows(element: React.ReactElement, columns: number): number {
     riskReason: 'outside the project',
     source: { kind: 'parent' as const, label: 'parent' },
     suggestions: [],
+    withdrawn: NEVER_WITHDRAWN,
   };
 
   let worst = 0;

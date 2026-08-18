@@ -46,6 +46,28 @@ export type ApprovalMode = 'default' | 'auto' | 'plan' | 'yolo';
 
 export const APPROVAL_MODES = ['default', 'auto', 'plan', 'yolo'] as const satisfies readonly ApprovalMode[];
 
+export function isApprovalMode(value: unknown): value is ApprovalMode {
+  return typeof value === 'string' && (APPROVAL_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * One clause per mode, for a notice that has to say what the mode the user just
+ * typed actually does. The header words the same three states itself, because it
+ * has one row to spend and a notice does not.
+ */
+export function describeApprovalMode(mode: ApprovalMode): string {
+  switch (mode) {
+    case 'default':
+      return 'default — statically safe calls run silently; everything else asks';
+    case 'auto':
+      return 'auto — a model classifier judges what the static rules cannot clear; only flagged calls ask';
+    case 'plan':
+      return 'plan — read-only; write and execute calls are denied';
+    case 'yolo':
+      return 'yolo — every tool call runs without confirmation';
+  }
+}
+
 /**
  * Whether a call is *provably* safe. `dangerous` means "not on the safe list",
  * not "known harmful": the rules only whitelist, so a parsing miss can cost an
@@ -133,7 +155,26 @@ export interface AssessedPermissionRequest extends PermissionRequest, RiskAssess
    * first. Empty when no rule could ever cover the call.
    */
   suggestions: readonly RuleSuggestion[];
+  /**
+   * Aborts when the user changes the permission mode while this request is
+   * pending — the one case where the question on screen was asked under a policy
+   * that is no longer in force.
+   *
+   * A bridge that shows a prompt **must** drop it when this fires: the gate has
+   * stopped waiting and will re-decide the whole call under the new mode, so an
+   * answer arriving afterwards is discarded rather than applied. A bridge that
+   * ignores the signal is not unsafe (the answer is still discarded), it merely
+   * leaves a stale question on screen.
+   */
+  withdrawn: AbortSignal;
 }
+
+/**
+ * A signal that never aborts, for the bridges and fixtures that construct a
+ * request themselves. Frozen into one instance on purpose: an
+ * {@link AbortController} per fixture would suggest withdrawal is in play there.
+ */
+export const NEVER_WITHDRAWN: AbortSignal = new AbortController().signal;
 
 /** What the human answered: allow or not, and any rule to remember. */
 export interface PermissionDecision {
@@ -171,6 +212,7 @@ export interface SafetyVerdict {
 export type SafetyClassifier = (request: AssessedPermissionRequest) => Promise<SafetyVerdict>;
 
 export interface PermissionGateOptions {
+  /** Where enforcement starts. `PermissionGate.setMode` moves it, user-only. */
   mode: ApprovalMode;
   /** Root the static path-containment rules resolve against. */
   projectRoot: string;
@@ -190,15 +232,88 @@ export interface PermissionGateOptions {
 
 const DEFAULT_CLASSIFIER_TIMEOUT_MS = 5000;
 
+/**
+ * How many times one tool call may be re-decided because the mode changed under
+ * it. Every restart costs the user a deliberate keystroke, so this is unreachable
+ * in practice; it exists so the loop is bounded by construction rather than by
+ * an argument about human behaviour. Reaching it denies — the fail-closed
+ * direction — and says why.
+ */
+const MAX_MODE_CHANGE_RESTARTS = 16;
+
+/** A decision abandoned because the mode changed while it was pending. */
+const WITHDRAWN = Symbol('withdrawn');
+
+/** What a mode change did, for the notice that reports it. */
+export interface PermissionModeChange {
+  /** The mode now in force. */
+  mode: ApprovalMode;
+  previous: ApprovalMode;
+  /**
+   * Pending tool decisions withdrawn by the change — a classifier call in flight
+   * or a prompt waiting for an answer. Each is re-decided from the top under
+   * {@link mode}; none is resolved under {@link previous}.
+   */
+  withdrawn: number;
+}
+
 export class PermissionGate extends InterventionHandler {
   readonly name = 'darwin:permission-gate';
 
   /** Config rules plus anything the user accepted during this session. */
   private readonly rules: string[];
 
+  /**
+   * Live enforcement policy, not `options.mode`: `/mode` moves it mid-session and
+   * every decision — parent and child, since they share this instance — reads it
+   * from here.
+   */
+  private currentMode: ApprovalMode;
+
+  /**
+   * One controller per in-flight decision that is waiting on something external
+   * (a classifier verdict, or the user's answer). {@link setMode} aborts them all.
+   */
+  private readonly waiting = new Set<AbortController>();
+
   constructor(private readonly options: PermissionGateOptions) {
     super();
     this.rules = [...(options.allowRules ?? [])];
+    this.currentMode = options.mode;
+  }
+
+  /** The mode enforcing right now. */
+  get mode(): ApprovalMode {
+    return this.currentMode;
+  }
+
+  /**
+   * Switches the mode for the rest of the session. **User-only**: nothing the
+   * model can emit reaches this — no tool mutates the gate, the value is never
+   * read back from a file after startup, and the two callers (the TUI's submit
+   * handler and the dev REPL's input loop) are fed by the keyboard alone.
+   *
+   * Every decision still pending is *withdrawn* rather than resolved: a
+   * classifier verdict answers a question only `auto` asks, and a prompt on screen
+   * was worded under the previous policy. The gate re-decides each of those calls
+   * from the top under the new mode, so no call is ever half-judged by two modes.
+   * One rule for every transition on purpose — the alternative is a table of which
+   * transitions are benign, and that table is where the bug would live.
+   *
+   * Deliberately not persisted: this changes *enforcement*, and a widening that
+   * outlives the session is exactly what the allow-rule exemptions exist to
+   * prevent (`./permission-rules.ts`).
+   */
+  setMode(next: ApprovalMode): PermissionModeChange {
+    const previous = this.currentMode;
+    if (next === previous) return { mode: previous, previous, withdrawn: 0 };
+
+    this.currentMode = next;
+    // Copied before aborting: a bridge that drops its prompt synchronously lets
+    // the awaiting decision remove itself from this set as we iterate it.
+    const waiting = [...this.waiting];
+    for (const controller of waiting) controller.abort();
+    return { mode: next, previous, withdrawn: waiting.length };
   }
 
   /**
@@ -219,18 +334,61 @@ export class PermissionGate extends InterventionHandler {
    * Denies plan-mode mutation before hooks, rules, classifiers, or prompts can
    * have side effects. Undefined means the ordinary permission flow still owns
    * the call; callers must not treat it as approval.
+   *
+   * Reads the live mode, so entering plan mid-session guards the very next call
+   * and leaving it stops guarding immediately.
    */
   planGuard(toolName: string, input: unknown): InterventionAction | undefined {
-    if (this.options.mode !== 'plan') return undefined;
+    if (this.currentMode !== 'plan') return undefined;
     const request = classify(toolName, input);
     if (request.kind === 'read') return undefined;
     return InterventionActions.deny(
       `Plan mode blocked this ${request.kind} call to ${request.toolName}. ` +
-        `Continue with read-only inspection, or ask the user to run outside plan mode before changing or executing anything.`,
+        `Continue with read-only inspection, or ask the user to run outside plan mode ` +
+        `(they can leave it with /mode default) before changing or executing anything.`,
     );
   }
 
+  /**
+   * Decides one call, restarting whenever the user changes the mode underneath it.
+   *
+   * The loop is the whole in-flight contract: a withdrawn decision is discarded,
+   * never applied, and the call is judged again from the top — plan guard first —
+   * by whatever mode is in force now.
+   */
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<InterventionAction> {
+    for (let attempt = 1; ; attempt += 1) {
+      const withdrawal = new AbortController();
+      this.waiting.add(withdrawal);
+      let action: InterventionAction | typeof WITHDRAWN;
+      try {
+        action = await this.decideOnce(event, withdrawal.signal);
+      } finally {
+        this.waiting.delete(withdrawal);
+      }
+      if (action !== WITHDRAWN) return action;
+
+      if (attempt >= MAX_MODE_CHANGE_RESTARTS) {
+        return InterventionActions.deny(
+          `The permission mode changed ${attempt} times while ${event.toolUse.name} was waiting for a decision, ` +
+            `so darwin stopped re-asking. Tell the user, and try again once they have settled on a mode.`,
+        );
+      }
+    }
+  }
+
+  /**
+   * One pass of the decision, under the mode in force when it started.
+   *
+   * Returns {@link WITHDRAWN} instead of a decision when the mode changed while
+   * this pass was waiting on the classifier or on the user — including the case
+   * where the answer and the change land in the same tick, which is why the race
+   * re-checks `aborted` after the promise settles.
+   */
+  private async decideOnce(
+    event: BeforeToolCallEvent,
+    withdrawn: AbortSignal,
+  ): Promise<InterventionAction | typeof WITHDRAWN> {
     const guarded = this.planGuard(event.toolUse.name, event.toolUse.input);
     if (guarded !== undefined) return guarded;
 
@@ -243,9 +401,10 @@ export class PermissionGate extends InterventionHandler {
       // reconstruct it from the tool input.
       source: this.sourceOf(event.agent.id),
       suggestions: suggestRules(base, this.options.projectRoot),
+      withdrawn,
     };
 
-    if (this.options.mode === 'yolo') {
+    if (this.currentMode === 'yolo') {
       return InterventionActions.proceed({ reason: 'yolo mode approves everything' });
     }
 
@@ -260,8 +419,11 @@ export class PermissionGate extends InterventionHandler {
       return InterventionActions.proceed({ reason: `allowed by rule ${matched}` });
     }
 
-    if (this.options.mode === 'auto') {
-      const verdict = await this.classifierVerdict(request);
+    if (this.currentMode === 'auto') {
+      const verdict = await raceWithdrawal(this.classifierVerdict(request), withdrawn);
+      // The verdict answers "may auto mode skip the prompt", so a mode change
+      // makes it moot — discarded, exactly as the peer product documents.
+      if (verdict === WITHDRAWN) return WITHDRAWN;
       if (verdict.safe) {
         return InterventionActions.proceed({ reason: `classifier: ${verdict.reason}` });
       }
@@ -271,7 +433,8 @@ export class PermissionGate extends InterventionHandler {
       request.details.push({ label: 'Classifier', value: verdict.reason });
     }
 
-    const decision = await this.options.ask(request);
+    const decision = await raceWithdrawal(this.options.ask(request), withdrawn);
+    if (decision === WITHDRAWN) return WITHDRAWN;
     if (decision.allowed) {
       // Only on approval: a rule attached to a refusal would be a contradiction.
       if (decision.rule !== undefined) this.addAllowRule(decision.rule);
@@ -323,6 +486,33 @@ export class PermissionGate extends InterventionHandler {
       return { safe: false, reason: `classifier unavailable (${cause}) — asking user` };
     }
   }
+}
+
+/**
+ * Resolves with {@link WITHDRAWN} as soon as the mode changes, and — the part that
+ * matters — also when the promise settles in the same tick as the change. A
+ * decision taken under a mode that is no longer in force is never applied, so the
+ * check happens after the settle, not only before the wait.
+ *
+ * A rejection still propagates: an `ask` that throws is a bridge failure, not a
+ * withdrawal, and the gate's callers have always seen it.
+ */
+function raceWithdrawal<T>(promise: Promise<T>, withdrawn: AbortSignal): Promise<T | typeof WITHDRAWN> {
+  if (withdrawn.aborted) return Promise.resolve(WITHDRAWN);
+  return new Promise<T | typeof WITHDRAWN>((resolve, reject) => {
+    const onAbort = (): void => resolve(WITHDRAWN);
+    withdrawn.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        withdrawn.removeEventListener('abort', onAbort);
+        resolve(withdrawn.aborted ? WITHDRAWN : value);
+      },
+      (error: unknown) => {
+        withdrawn.removeEventListener('abort', onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {

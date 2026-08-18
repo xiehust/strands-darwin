@@ -14,7 +14,13 @@ import process from 'node:process';
 import { AGENTS_FILENAME } from './agent/instructions.js';
 import { AgentRuntime } from './agent/runtime.js';
 import { formatUsageValue, usageRows } from './agent/usage.js';
-import type { AssessedPermissionRequest, PermissionDecision } from './agent/permission.js';
+import {
+  APPROVAL_MODES,
+  describeApprovalMode,
+  isApprovalMode,
+  type AssessedPermissionRequest,
+  type PermissionDecision,
+} from './agent/permission.js';
 import { isThinkingEffort, THINKING_EFFORTS, type ThinkingPlan } from './agent/thinking.js';
 import { CONFIG_FILENAME, ConfigError } from './config.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
@@ -228,7 +234,8 @@ async function main(): Promise<void> {
     }
     console.log(`  subagents: ${info.agentNames.join(', ')}`);
     console.log(`  tools    : ${info.toolNames.join(', ')}`);
-    console.log('  commands : /exit to quit · /usage for token counts · /effort [level]\n');
+    console.log(`  mode     : ${describeApprovalMode(runtime.permissionMode)}`);
+    console.log('  commands : /exit to quit · /usage for token counts · /effort [level] · /mode [name]\n');
 
     for (;;) {
       let input: string;
@@ -256,6 +263,14 @@ async function main(): Promise<void> {
       // turn is spent, and the conversation is untouched.
       if (input === '/effort' || input.startsWith('/effort ')) {
         await runEffortCommand(runtime, input);
+        continue;
+      }
+
+      // Session-scoped and user-only, exactly as in the TUI. Reachable here because
+      // this driver is how the runtime is exercised without Ink, and enforcement is
+      // one of the things worth exercising; nothing is written to the config.
+      if (input === '/mode' || input.startsWith('/mode ')) {
+        runModeCommand(runtime, input);
         continue;
       }
 
@@ -325,6 +340,41 @@ async function runEffortCommand(runtime: AgentRuntime, input: string): Promise<v
         `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}\n`,
     );
   }
+}
+
+/**
+ * Reports or switches the permission mode. Session-scoped: no file is written, so
+ * unlike `/effort` there is nothing to await and nothing to report about a write.
+ *
+ * A REPL line is a synchronous unit of work and the permission bridge owns the
+ * input while it is asking, so a pending prompt cannot be withdrawn from here —
+ * the withdrawal count is reported anyway rather than assumed to be zero.
+ */
+function runModeCommand(runtime: AgentRuntime, input: string): void {
+  const argument = input.slice('/mode'.length).trim().toLowerCase();
+
+  if (argument === '') {
+    console.log(`  mode     : ${describeApprovalMode(runtime.permissionMode)}\n`);
+    return;
+  }
+  if (!isApprovalMode(argument)) {
+    console.warn(
+      `  mode     : ${argument} is not a permission mode — expected one of ${APPROVAL_MODES.join(', ')} ` +
+        `(still ${runtime.permissionMode})\n`,
+    );
+    return;
+  }
+
+  const change = runtime.changePermissionMode(argument);
+  if (change.previous === change.mode) {
+    console.log(`  mode     : already ${describeApprovalMode(change.mode)}\n`);
+    return;
+  }
+  const withdrawn = change.withdrawn === 0 ? '' : ` · ${change.withdrawn} pending decision(s) withdrawn`;
+  console.log(
+    `  mode     : ${describeApprovalMode(change.mode)} (was ${change.previous})${withdrawn} ` +
+      `— this session only\n`,
+  );
 }
 
 /** The level in force, plus the reason it is not the one that was asked for. */

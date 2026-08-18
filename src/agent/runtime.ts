@@ -61,7 +61,7 @@ import {
   loadProjectInstructions,
   type ProjectInstructionsSummary,
 } from './instructions.js';
-import { PermissionGate, type ApprovalMode, type PermissionBridge } from './permission.js';
+import { PermissionGate, type ApprovalMode, type PermissionBridge, type PermissionModeChange } from './permission.js';
 import {
   applySystemPromptCachePoint,
   canUpdateSystemPromptCache,
@@ -398,10 +398,10 @@ export class AgentRuntime {
       ask: options.permissionBridge,
       allowRules: policy.allowRules,
       dispatchSource: (agentId) => subagentDispatches.sourceFor(agentId),
-      // Only auto consults it; constructing it is free (the model is lazy).
-      ...(permissionMode === 'auto' && {
-        classifier: createModelClassifier(config, options.projectRoot),
-      }),
+      // Built for every run, not only an `auto` one: `/mode auto` can arrive
+      // mid-session and the gate must have a classifier to consult. Costs nothing
+      // until it is used — the closure defers building its model to the first call.
+      classifier: createModelClassifier(config, options.projectRoot),
     });
 
     // No configured hooks means the exact pre-existing handler is registered and
@@ -769,6 +769,33 @@ export class AgentRuntime {
     await appendAllowRule(this.projectRoot, rule);
   }
 
+  /**
+   * The approval mode enforcing right now — `info.permissionMode` is the startup
+   * one, which is a different question and the one the trajectory record and the
+   * headless report mean. Read live from the gate, which owns the value.
+   */
+  get permissionMode(): ApprovalMode {
+    return this.gate.mode;
+  }
+
+  /**
+   * Switches the approval mode for the rest of this session, on the user's
+   * instruction only.
+   *
+   * Nothing is persisted, deliberately and unlike `/effort` or `/model`: this
+   * changes *enforcement*, so a widening that outlived the process would defeat the
+   * rule that no allow-rule may cover `~/.darwin/config.json`. The next process
+   * starts from configured/CLI policy again.
+   *
+   * Synchronous, and it must stay that way: the mode has to be in force before the
+   * very next gate decision, and there is nothing to await — no file, no model, no
+   * rebuild. The gate is the single decision point, so the intervention the parent
+   * and every child share sees the new value with no further plumbing.
+   */
+  changePermissionMode(next: ApprovalMode): PermissionModeChange {
+    return this.gate.setMode(next);
+  }
+
   /** How hard the model is thinking right now, and why that is not what was asked. */
   get thinking(): ThinkingPlan {
     return this.thinkingPlan;
@@ -981,6 +1008,11 @@ export class AgentRuntime {
       successor = await AgentRuntime.create({
         ...this.createOptions,
         session: { kind: 'new' },
+        // The live mode, not the one this runtime was created with: `/mode` is the
+        // user's own standing instruction about enforcement, and letting `/clear`
+        // quietly restore a *wider* startup policy would be a widening nobody asked
+        // for. A fresh process still starts from configured/CLI policy.
+        permissionModeOverride: this.gate.mode,
         inherit: {
           config: this.liveConfig,
           mcp: this.mcp,

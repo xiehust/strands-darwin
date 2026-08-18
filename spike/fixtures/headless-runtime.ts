@@ -2,6 +2,7 @@ import { appendFileSync, writeFileSync } from 'node:fs';
 
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
+import { NEVER_WITHDRAWN } from '../../src/agent/permission.js';
 import type { AgentRuntime, RuntimeOptions } from '../../src/agent/runtime.js';
 import type { AppConfig } from '../../src/config.js';
 
@@ -107,6 +108,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
           riskReason: 'fixture',
           source: { kind: 'parent', label: 'parent' },
           suggestions: [],
+          withdrawn: NEVER_WITHDRAWN,
         });
         if (decision.allowed) throw new Error('fixture permission unexpectedly allowed');
       }

@@ -157,6 +157,13 @@ async function main(): Promise<void> {
     // that re-read it would silently move the session to another model.
     await writeConfig('sonnet');
 
+    // A session-scoped `/mode` switch, made before the switch: the configured mode is
+    // `yolo`, so a successor that restored startup policy would silently *widen*
+    // enforcement behind a command whose whole promise is that it changes nothing but
+    // the session.
+    assert('the live mode starts from the configured one', live.permissionMode === 'yolo');
+    live.changePermissionMode('plan');
+
     const next = await live.startNewSession();
     live = next;
 
@@ -199,6 +206,12 @@ async function main(): Promise<void> {
       { recordDirectToolCall: false },
     );
     assert('the new session gets a fresh shell', JSON.stringify(nextShell).includes('marker=none'));
+    assert('the new session inherits the live permission mode', next.permissionMode === 'plan');
+    assert('…and reports it as its effective startup mode too', next.info.permissionMode === 'plan');
+    assert(
+      '…rather than re-reading the wider configured one',
+      (JSON.parse(await readFile(configPath(), 'utf8')) as { permissionMode: string }).permissionMode === 'yolo',
+    );
 
     // ---- the session that was left --------------------------------------------
     const snapshotAfter = await readFile(previousSnapshot, 'utf8');

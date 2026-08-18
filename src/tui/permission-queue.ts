@@ -8,6 +8,10 @@
  *
  * Requests are serialized: concurrent tool calls each get their own prompt, one
  * at a time, so two confirmations can never race for the same keystroke.
+ *
+ * One request can also leave without being answered: `request.withdrawn` fires when
+ * the user changes the permission mode, and the entry is dropped so the question
+ * asked under the old policy cannot stay on screen.
  */
 import type {
   AssessedPermissionRequest,
@@ -18,6 +22,8 @@ import type {
 interface QueueEntry {
   request: AssessedPermissionRequest;
   resolve: (decision: PermissionDecision) => void;
+  /** Stops listening for withdrawal once this entry has left the queue. */
+  release: () => void;
 }
 
 export class PermissionQueue {
@@ -29,11 +35,22 @@ export class PermissionQueue {
   /** The {@link PermissionBridge} to hand to the runtime. */
   readonly bridge: PermissionBridge = (request) =>
     new Promise<PermissionDecision>((resolve) => {
-      if (this.closed) {
+      if (this.closed || request.withdrawn.aborted) {
         resolve({ allowed: false });
         return;
       }
-      this.entries.push({ request, resolve });
+      const entry: QueueEntry = { request, resolve, release: () => undefined };
+      // A mode change withdraws the question itself: the gate has stopped waiting
+      // and will re-decide the call under the new mode, so the prompt has to leave
+      // the screen. Resolving it is bookkeeping — the gate discards this answer.
+      const onWithdraw = (): void => {
+        this.remove(entry);
+      };
+      request.withdrawn.addEventListener('abort', onWithdraw, { once: true });
+      entry.release = () => {
+        request.withdrawn.removeEventListener('abort', onWithdraw);
+      };
+      this.entries.push(entry);
       this.emit();
     });
 
@@ -51,6 +68,7 @@ export class PermissionQueue {
   answer(decision: PermissionDecision): void {
     const entry = this.entries.shift();
     if (entry === undefined) return;
+    entry.release();
     entry.resolve(decision);
     this.emit();
   }
@@ -64,7 +82,10 @@ export class PermissionQueue {
    */
   denyPending(): void {
     while (this.entries.length > 0) {
-      this.entries.shift()?.resolve({ allowed: false });
+      const entry = this.entries.shift();
+      if (entry === undefined) continue;
+      entry.release();
+      entry.resolve({ allowed: false });
     }
     this.emit();
   }
@@ -77,6 +98,21 @@ export class PermissionQueue {
   close(): void {
     this.closed = true;
     this.denyPending();
+  }
+
+  /**
+   * Drops one entry wherever it sits, current or queued, and lets whatever is
+   * behind it take the screen. Used only for withdrawal: the promise is settled so
+   * the awaiting gate is not left holding it, and the gate discards the value
+   * because the withdrawal signal already fired.
+   */
+  private remove(entry: QueueEntry): void {
+    const index = this.entries.indexOf(entry);
+    if (index === -1) return;
+    this.entries.splice(index, 1);
+    entry.release();
+    entry.resolve({ allowed: false });
+    this.emit();
   }
 
   subscribe(listener: () => void): () => void {

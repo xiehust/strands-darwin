@@ -835,7 +835,10 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /context is listed', completed.includes('  /context'));
     assert('the built-in /effort is listed', completed.includes('  /effort'));
     assert('the built-in /exit is listed', completed.includes('  /exit'));
-    assert('the built-in /model is listed', completed.includes('  /model'));
+    // Matched with its description: '  /mode' alone is also a prefix of the /model
+    // row, so the bare-name form would pass with /mode missing entirely.
+    assert('the built-in /mode is listed', completed.includes('  /mode — set the permission mode'));
+    assert('the built-in /model is listed', completed.includes('  /model — list or switch models'));
     assert('the built-in /tasks is listed', completed.includes('  /tasks'));
     assert('the built-in /trajectory is listed', completed.includes('  /trajectory'));
     assert('the built-in /usage is listed', completed.includes('  /usage'));
@@ -1487,6 +1490,120 @@ async function modelCommand(): Promise<void> {
   }
 }
 
+/**
+ * `/mode` — the enforcement policy is live session state, and the header says so.
+ *
+ * Five things a unit test cannot show: the switch reaches the *header* (its one mode
+ * row, moved, never doubled), it costs no turn, an unusable argument changes nothing,
+ * an idle live frame does not grow by a row, and nothing at all is written to
+ * `~/.darwin/config.json` — the one difference from `/effort` and `/model`, and the
+ * whole point of the mode being session-scoped.
+ *
+ * Deliberately makes no model calls: `/mode` sends nothing, so this scenario is free
+ * apart from starting the TUI. What the gate then *enforces* mid-session is proven
+ * offline in `spike/verify-permission-mode-switch.ts`.
+ */
+async function modeCommand(): Promise<void> {
+  header('TUI — /mode switches the permission mode for this session only');
+
+  await resetWorkDir();
+  await writeHomeConfig({ permissionMode: 'default' });
+
+  const tui = startTui({ cwd: WORK_DIR });
+
+  /**
+   * The redrawn frame only: `tui.frame` is everything after Ink's last frame erase,
+   * which also carries any `<Static>` notice written since — and a notice is
+   * transcript, not live frame. The live frame starts at the header's title row, so
+   * the last one of those is where the measurement begins.
+   */
+  const liveFrame = (): string => {
+    const text = tui.frame.replaceAll('\r', '');
+    let start = 0;
+    for (const match of text.matchAll(/(?:^|\n)darwin\n/g)) {
+      start = (match.index ?? 0) + (match[0].startsWith('\n') ? 1 : 0);
+    }
+    return text.slice(start);
+  };
+  /** Rows Ink redraws, trailing blanks dropped. */
+  const frameRows = (): number => liveFrame().replace(/\s+$/, '').split('\n').length;
+  /** The header's mode row, which must stay exactly one row however it reads. */
+  const modeRows = (): number => (liveFrame().match(/^\s*mode: /gm) ?? []).length;
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('the header starts on the configured mode', tui.screen.includes('mode: default'));
+    const rowsBefore = frameRows();
+    assert('the header has exactly one mode row to start with', modeRows() === 1);
+
+    const beforeReport = tui.mark();
+    tui.submit('/mode');
+    await tui.waitFor('permission mode: default', { timeoutMs: 30_000, from: beforeReport, settleMs: 400 });
+    const reported = tui.screen.slice(beforeReport);
+    assert('a bare /mode reports the mode in force', reported.includes('permission mode: default'));
+    assert('…and names every mode it could be given', reported.includes('available: default, auto, plan, yolo'));
+    assert('reporting did not start a turn', !reported.includes('working…'));
+
+    const beforePlan = tui.mark();
+    tui.submit('/mode plan');
+    await tui.waitFor('mode: plan — read-only', { timeoutMs: 30_000, from: beforePlan, settleMs: 400 });
+    const planned = tui.screen.slice(beforePlan);
+    assert('the switch is confirmed', planned.includes('permission mode: plan'));
+    assert('…naming the mode it came from', planned.includes('(was default)'));
+    assert('…and stating that it is not remembered', planned.includes(`this session only — ${HOME_CONFIG_LABEL} is unchanged`));
+    // Sliced, not searched whole: the startup frame already said `mode: default`.
+    assert('the header follows the switch', planned.includes('mode: plan — read-only'));
+    assert('switching did not start a turn', !planned.includes('working…'));
+    assert('the header still has exactly one mode row', modeRows() === 1);
+    assert('…and the live frame is no taller than before', frameRows() === rowsBefore);
+
+    const beforeBad = tui.mark();
+    tui.submit('/mode sudo');
+    await tui.waitFor('is not a permission mode', { timeoutMs: 30_000, from: beforeBad, settleMs: 400 });
+    const refused = tui.screen.slice(beforeBad);
+    assert('an unusable argument is refused with the valid values', refused.includes('expected one of default, auto, plan, yolo'));
+    assert('…says what is still in force', refused.includes('permission mode: plan — read-only') && refused.includes('(unchanged)'));
+    assert('…and does not reach the model as a prompt', !refused.includes('working…'));
+    assert('the header still shows plan after the refusal', tui.frame.includes('mode: plan — read-only'));
+
+    const beforeSame = tui.mark();
+    tui.submit('/mode plan');
+    await tui.waitFor('already in plan mode', { timeoutMs: 30_000, from: beforeSame, settleMs: 400 });
+    assert('switching to the mode already in force says so', tui.screen.slice(beforeSame).includes('already in plan mode'));
+
+    const beforeYolo = tui.mark();
+    tui.submit('/mode yolo');
+    await tui.waitFor('mode: yolo — every tool call runs without confirmation', {
+      timeoutMs: 30_000,
+      from: beforeYolo,
+      settleMs: 400,
+    });
+    assert('a widening switch is reported too', tui.screen.slice(beforeYolo).includes('permission mode: yolo'));
+    assert('the header follows it', tui.frame.includes('mode: yolo'));
+    assert('the header still has exactly one mode row in yolo', modeRows() === 1);
+    assert('…and still no extra frame row', frameRows() === rowsBefore);
+
+    const beforeBack = tui.mark();
+    tui.submit('/mode default');
+    await tui.waitFor('(was yolo)', { timeoutMs: 30_000, from: beforeBack, settleMs: 400 });
+    assert('the header comes back to default', tui.frame.includes('mode: default'));
+
+    // The one assertion that separates this command from /effort and /model: the file
+    // the session was started from is byte-identical, so the next process starts from
+    // configured policy again.
+    const saved = JSON.parse(await readFile(HOME_CONFIG, 'utf8')) as Record<string, unknown>;
+    console.log(`  config after four switches: ${JSON.stringify(saved)}`);
+    assert('no switch was written to the config', saved['permissionMode'] === 'default');
+    assert('…and nothing else was added to it', Object.keys(saved).length === 1);
+
+    tui.submit('/exit');
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('TUI exited cleanly after changing the permission mode', code === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 async function planHeader(): Promise<void> {
   header('TUI — CLI plan override is visible without a model call');
   await resetWorkDir();
@@ -1906,6 +2023,7 @@ const SCENARIOS = {
   tasks: taskMonitoring,
   effort: effortCommand,
   model: modelCommand,
+  mode: modeCommand,
   plan: planHeader,
   longAnswer,
   tallDraft,

@@ -9,7 +9,13 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-classifier.ts
  */
 import { suggestRules } from '../src/agent/permission-rules.js';
-import { assessRisk, classify, PARENT_PERMISSION_SOURCE, type AssessedPermissionRequest } from '../src/agent/permission.js';
+import {
+  assessRisk,
+  classify,
+  NEVER_WITHDRAWN,
+  PARENT_PERMISSION_SOURCE,
+  type AssessedPermissionRequest,
+} from '../src/agent/permission.js';
 import { createModelClassifier } from '../src/agent/safety-classifier.js';
 import { withSoleChoice } from '../src/config.js';
 import type { AppConfig } from '../src/config.js';
@@ -39,6 +45,8 @@ function request(command: string): AssessedPermissionRequest {
     ...assessRisk(base, ROOT),
     source: PARENT_PERMISSION_SOURCE,
     suggestions: suggestRules(base, ROOT),
+    // No mode change can reach this fixture: the classifier is called directly.
+    withdrawn: NEVER_WITHDRAWN,
   };
 }
 

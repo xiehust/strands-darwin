@@ -13,7 +13,7 @@ import { BedrockModel } from '@strands-agents/sdk';
 import type { BaseModelConfig, JSONValue, Model } from '@strands-agents/sdk';
 
 import { isValidRule } from './agent/permission-rules.js';
-import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
+import { APPROVAL_MODES, isApprovalMode, type ApprovalMode } from './agent/permission.js';
 import {
   bedrockCacheConfig,
   planPromptCache,
@@ -1344,10 +1344,6 @@ function readApiKey(config: AppConfig): string | undefined {
 
 function isProvider(value: unknown): value is Provider {
   return typeof value === 'string' && (PROVIDERS as readonly string[]).includes(value);
-}
-
-function isApprovalMode(value: unknown): value is ApprovalMode {
-  return typeof value === 'string' && (APPROVAL_MODES as readonly string[]).includes(value);
 }
 
 function isOpenAIApiMode(value: unknown): value is OpenAIApiMode {
