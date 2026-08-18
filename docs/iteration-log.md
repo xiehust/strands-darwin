@@ -720,3 +720,37 @@ Token spend, single managed task: `input=394 output=126,238 cacheRead=35,947,553
 |---|---|---|
 | 2026-08-18 | `13e8968` | Recall previous prompts from the trajectory record, without taking a key that already had a meaning |
 | 2026-08-18 | `7abc916` | Record the prompt-recall contract and its bounds |
+
+
+### Batch 19 — cohesive TUI visual language (2026-08-18)
+
+One managed child task in child session `session-20260818-061057110`
+(`bg-f42e105b-399c-44e0-9107-651af1226311`, exit 0), run `--yolo --context-offload` with no
+model-call ceiling and launched from repository source at `eec27a7`. No correction turn was needed.
+This is `SER-016`, the only direction in the user-directed `tui`-path research batch recorded in
+[`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md).
+
+The implementation adds one dependency-free semantic vocabulary in `src/tui/visual-language.ts`
+and applies it across the header, transcript, composer/completion menu, active/completed tools,
+notices, and permission modal. Critical states now have stable text markers (`you>`, `darwin>`,
+`tool ·`, severity markers, `❯`, and the permission heading), so ANSI colour reinforces rather than
+creates meaning. The header leads with live status, retains model/session/cache/effort and exactly
+one mode row, and replaces long skill/command/agent/MCP inventories with counts; the deterministic
+80-column fixture proves it does not exceed the previous eight-row baseline. The frame budget,
+stream-to-`<Static>` ownership, `AnswerPart` margins, cursor geometry, key ownership, permission
+content, and no-queue busy-submit behavior were left intact. README and the frontend specs now pin
+the accepted appearance and constraints.
+
+Host acceptance independently read the full 22-file commit and re-ran: `pnpm typecheck`; `pnpm test`
+(40 suite summaries, all `0 failed`); `verify-visual-language` (22), `verify-frame-budget` (61),
+`verify-stream-into-static` (58); the free pty scenarios `completion` (29), `pathCompletion` (18),
+`recall` (20), `cursor` (5), `multiline` (9), `mode` (25), `plan` (4), `clear` (19), and `tallDraft`
+(8); and the real Bedrock 120x50 `approve` scenario (23/23), which retained provenance, bounded
+details, risk, rule offers, and the reachable decision row. Trellis validation, `git diff --check`,
+`git show --check`, and clean-tree verification also passed.
+
+Token spend, single managed task: `input=300 output=34,754 cacheRead=12,965,635 cacheWrite=144,231`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `ab71a8c` | Unify the TUI around a compact, terminal-safe semantic visual language |

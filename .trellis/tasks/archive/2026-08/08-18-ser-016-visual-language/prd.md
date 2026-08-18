@@ -24,4 +24,4 @@ Apply one cohesive, scan-friendly Darwin visual language across the existing Ink
 - [x] Real-model 120x50 `approve` retains the complete permission modal.
 - [x] `pnpm typecheck`, `pnpm test`, Trellis validation, and `git diff --check` pass.
 - [x] README, frontend spec, and task artifacts describe the accepted appearance and constraints.
-- [ ] Authorized changes are committed with a clean worktree.
+- [x] Authorized changes are committed with a clean worktree (`ab71a8c`; independently verified before closure).
