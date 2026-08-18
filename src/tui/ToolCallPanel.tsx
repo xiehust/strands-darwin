@@ -9,7 +9,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 
 import { activeToolCallSummary } from './background-tool-presentation.js';
-import { diffLineTone } from './edit-diff.js';
+import { diffLineEmphasis, diffLineTone, emphasisSpans, formatDiffStat, type DiffEmphasis } from './edit-diff.js';
 import {
   TOOL_INPUT_INDENT,
   hiddenDetailNotice,
@@ -80,13 +80,15 @@ export function ActiveToolCalls({
             </Text>
             {rows.map((row, index) => (
               // Diff-toned rows trade the dim input styling for their tone
-              // colour; the `+ `/`- ` marker on the text is the durable signal.
+              // colour; the `+ `/`- ` marker on the text is the durable signal,
+              // and the bold span is the same enhancement layer as the tone.
               <Text
                 key={index}
                 {...(row.tone === undefined ? { dimColor: true } : { color: diffToneColor(row.tone) })}
                 wrap="truncate-end"
               >
-                {index === 0 ? `    Input: ${row.text}` : `${TOOL_INPUT_INDENT}${row.text}`}
+                {index === 0 ? '    Input: ' : TOOL_INPUT_INDENT}
+                {emphasized(row.text, row.emphasis)}
               </Text>
             ))}
             {entry.hiddenDetailRows > 0 && (
@@ -108,27 +110,46 @@ export function ToolCallResult({
   readonly item: Extract<HistoryItem, { kind: 'tool' }>;
 }): React.JSX.Element {
   const { icon, color } = statusStyle(item.status);
-  const input = item.expanded && item.inputPreview !== '' ? item.inputPreview.split('\n') : [];
+  // Compact rows carry the bounded diff excerpt now (`compactEditDiff`), so a
+  // finished write shows its change without Ctrl+T; expanded rows keep the
+  // complete labelled projection exactly as before.
+  const input = item.inputPreview !== '' ? item.inputPreview.split('\n') : [];
   const preview = item.preview === '' ? [] : item.preview.split('\n');
+  // Emphasis, like tone, is scoped to fileEditor and re-derived from the marker
+  // vocabulary the stored lines themselves carry.
+  const emphasis = item.name === 'fileEditor' ? diffLineEmphasis(input) : [];
 
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text wrap="truncate-end">
         <Text color={visualColor.tool} bold>{visualMarker.tool} </Text>
         <Text color={color}>{icon} </Text>
-        {item.summary}
+        {/* The +N -N stat rides the existing summary row — never a row of its
+            own — and is absent when the call was not a recognized edit. It sits
+            after the command and *before* the path because the row truncates
+            end-first and the path is its one unbounded part: a suffix stat was
+            exactly what a long path's truncation ate (measured in the 120x50
+            approve scenario). `✓ fileEditor str_replace` stays adjacent, which
+            existing pty waits anchor on. */}
+        {item.diffStat === undefined
+          ? item.summary
+          : statedSummary(item.summary, item.diffStat)}
       </Text>
       {input.map((line, index) => {
         // The finished projection is the same diff the permission box showed;
         // tone is re-read from the marker the line itself carries, scoped to
         // fileEditor so no other tool's text can turn a row red or green.
         const tone = item.name === 'fileEditor' ? diffLineTone(line) : undefined;
+        const label = item.expanded
+          ? index === 0 ? '    Input: ' : '           '
+          : '    ';
         return (
           <Text
             key={`input-${index}`}
             {...(tone === undefined ? { dimColor: true } : { color: diffToneColor(tone) })}
           >
-            {index === 0 ? `    Input: ${line}` : `           ${line}`}
+            {label}
+            {emphasized(line, emphasis[index])}
           </Text>
         );
       })}
@@ -142,6 +163,61 @@ export function ToolCallResult({
         </Text>
       ))}
     </Box>
+  );
+}
+
+/**
+ * The summary row's content with the `(+N -N)` stat spliced in after the leading
+ * `tool command:` piece — before the path, so an arbitrarily long path's
+ * `truncate-end` never eats the stat. A summary without the `: ` seam (an
+ * unrecognized shape classified some other way) keeps the stat as a suffix
+ * rather than guessing where its path starts.
+ */
+function statedSummary(
+  summary: string,
+  stat: { readonly added: number; readonly removed: number },
+): React.ReactNode {
+  const spans = (
+    <Text>
+      {' ('}
+      <Text color={visualColor.success}>+{stat.added}</Text>
+      {' '}
+      <Text color={visualColor.danger}>-{stat.removed}</Text>
+      {')'}
+    </Text>
+  );
+  const seam = summary.indexOf(': ');
+  if (seam === -1) {
+    return (
+      <>
+        {summary}
+        {spans}
+      </>
+    );
+  }
+  return (
+    <>
+      {summary.slice(0, seam)}
+      {spans}
+      {summary.slice(seam)}
+    </>
+  );
+}
+
+/**
+ * A row's text with its intraline changed span bolded — nested spans inside the
+ * row's one `<Text>`, so the row count never changes and the ANSI-stripped
+ * output is exactly the plain text (`emphasisSpans` slices are an identity).
+ */
+function emphasized(text: string, emphasis: DiffEmphasis | undefined): React.ReactNode {
+  if (emphasis === undefined) return text;
+  const { pre, mid, post } = emphasisSpans(text, emphasis);
+  return (
+    <>
+      {pre}
+      <Text bold>{mid}</Text>
+      {post}
+    </>
   );
 }
 

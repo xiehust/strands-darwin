@@ -25,7 +25,7 @@
  * full. The counter-rule is the share ceiling below, so "served first" cannot mean
  * "takes everything".
  */
-import { diffLineTone } from './edit-diff.js';
+import { diffLineEmphasis, diffLineTone, type DiffEmphasis } from './edit-diff.js';
 import { wrapToRows } from './live-text.js';
 import { expandedToolInput, permissionDetail } from './tool-detail-presentation.js';
 
@@ -143,11 +143,48 @@ export const PERMISSION_DETAIL_INDENT = '  ';
  * One counted terminal row of bounded content, with the diff tone its logical
  * line carried. Tone rides the row the budget counts — never a second pass over
  * the text — so a wrapped continuation of a `+ `/`- ` line keeps its colour and
- * the coloured rows are exactly the rows the height came from.
+ * the coloured rows are exactly the rows the height came from. The optional
+ * intraline emphasis span rides the same row for the same reason: it is UTF-16
+ * offsets *into `text`*, styling only, so the counted string never changes.
  */
 export interface BoundedContentRow {
   readonly text: string;
   readonly tone?: 'add' | 'remove';
+  /** Changed span within `text` to render bold; never alters the text itself. */
+  readonly emphasis?: DiffEmphasis;
+}
+
+/**
+ * One logical line as counted rows, tone and intraline emphasis riding along.
+ *
+ * The emphasis range names offsets in the *logical line*; each wrapped row is a
+ * contiguous slice of it, located by scanning forward (word wrap only drops
+ * whitespace at wrap points), so the range is intersected per row. Lines
+ * containing tabs skip emphasis — `wrapToRows` expands them, which would skew
+ * the offsets — and keep their tone; the `+ `/`- ` markers stay the durable
+ * statement either way.
+ */
+function contentRows(
+  line: string,
+  width: number,
+  tone: 'add' | 'remove' | undefined,
+  emphasis: DiffEmphasis | undefined,
+): BoundedContentRow[] {
+  const mappable = emphasis !== undefined && !line.includes('\t') ? emphasis : undefined;
+  let cursor = 0;
+  return wrapToRows(line, width).map((text) => {
+    const row: { text: string; tone?: 'add' | 'remove'; emphasis?: DiffEmphasis } = { text };
+    if (tone !== undefined) row.tone = tone;
+    if (mappable !== undefined && text !== '') {
+      const found = line.indexOf(text, cursor);
+      const at = found === -1 ? cursor : found;
+      cursor = at + text.length;
+      const start = Math.max(mappable.start, at) - at;
+      const end = Math.min(mappable.end, at + text.length) - at;
+      if (start < end) row.emphasis = { start, end };
+    }
+    return row;
+  });
 }
 
 /**
@@ -161,14 +198,14 @@ export interface BoundedContentRow {
  */
 export function toolInputRows(input: unknown, columns: number, toolName?: string): readonly BoundedContentRow[] {
   const width = Math.max(1, columns - TOOL_INPUT_INDENT.length);
-  const rows: BoundedContentRow[] = [];
-  for (const line of expandedToolInput(input, toolName)) {
-    // Only fileEditor inputs are diff projections; a bash command that happens
-    // to start with `- ` must not turn red.
-    const tone = toolName === 'fileEditor' ? diffLineTone(line) : undefined;
-    for (const text of wrapToRows(line, width)) rows.push(tone === undefined ? { text } : { text, tone });
-  }
-  return rows;
+  const lines = expandedToolInput(input, toolName);
+  // Only fileEditor inputs are diff projections; a bash command that happens
+  // to start with `- ` must not turn red — nor gain an emphasis span.
+  const isDiff = toolName === 'fileEditor';
+  const emphasis = isDiff ? diffLineEmphasis(lines) : [];
+  return lines.flatMap((line, index) =>
+    contentRows(line, width, isDiff ? diffLineTone(line) : undefined, emphasis[index]),
+  );
 }
 
 /**
@@ -178,10 +215,11 @@ export function toolInputRows(input: unknown, columns: number, toolName?: string
  */
 export function permissionDetailRows(value: string, columns: number, diff = false): readonly BoundedContentRow[] {
   const width = Math.max(1, columns - PERMISSION_DETAIL_INDENT.length);
-  return permissionDetail(value).flatMap((line) => {
-    const tone = diff ? diffLineTone(line) : undefined;
-    return wrapToRows(line, width).map((text) => (tone === undefined ? { text } : { text, tone }));
-  });
+  const lines = permissionDetail(value);
+  const emphasis = diff ? diffLineEmphasis(lines) : [];
+  return lines.flatMap((line, index) =>
+    contentRows(line, width, diff ? diffLineTone(line) : undefined, emphasis[index]),
+  );
 }
 
 /** Rows the prompt region would draw with nothing bounding it. */

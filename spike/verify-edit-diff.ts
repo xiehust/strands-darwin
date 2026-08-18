@@ -11,17 +11,24 @@ import {
   DIFF_ADDED,
   DIFF_CONTEXT,
   DIFF_REMOVED,
+  diffLineEmphasis,
   diffLineTone,
+  diffStat,
+  emphasisSpans,
   fileEditorDiff,
   fileEditorInputProjection,
+  formatDiffStat,
   permissionDisplayDetails,
 } from '../src/tui/edit-diff.js';
 import { permissionDetailRows, toolInputRows } from '../src/tui/frame-budget.js';
 import {
+  COMPACT_DIFF_CODE_POINTS,
+  COMPACT_DIFF_LINES,
   EXPANDED_INPUT_CODE_POINTS,
   EXPANDED_INPUT_LINES,
   PERMISSION_DETAIL_CODE_POINTS,
   PERMISSION_DETAIL_LINES,
+  compactEditDiff,
   expandedToolInput,
   permissionDetail,
 } from '../src/tui/tool-detail-presentation.js';
@@ -121,14 +128,15 @@ assert('classify marks exactly the content blocks as edit content',
 editRequest.details.push({ label: 'Classifier', value: 'flagged for review' });
 const displayed = permissionDisplayDetails(editRequest);
 assert('content blocks collapse into one Diff block in place',
-  displayed.map((d) => d.label).join(',') === 'Path,Operation,Diff,Classifier');
-assert('only the Diff block is toned', displayed.filter((d) => d.diff).map((d) => d.label).join(',') === 'Diff');
+  displayed.map((d) => d.label).join(',') === 'Path,Operation,Diff (+1 -1),Classifier');
+assert('only the Diff block is toned',
+  displayed.filter((d) => d.diff).map((d) => d.label).join(',') === 'Diff (+1 -1)');
 assert('the Diff block carries both sides',
   displayed[2]?.value === `${DIFF_REMOVED}  return n + 2;\n${DIFF_ADDED}  return n * 2;`);
 
 const insertRequest = classify('fileEditor', { command: 'insert', path: '/tmp/x.ts', insert_line: 3, new_str: 'x' });
 assert('insert keeps its At line block beside the diff',
-  permissionDisplayDetails(insertRequest).map((d) => d.label).join(',') === 'Path,Operation,At line,Diff');
+  permissionDisplayDetails(insertRequest).map((d) => d.label).join(',') === 'Path,Operation,At line,Diff (+1 -0)');
 
 const bashRequest = classify('bash', { command: 'printf -- "- not a diff"' });
 assert('non-fileEditor requests pass through untouched',
@@ -194,5 +202,127 @@ assert('active-panel rows carry the same tones',
   activeRows.some((row) => row.tone === 'remove') && activeRows.some((row) => row.tone === 'add'));
 assert('active-panel rows for bash stay untoned',
   toolInputRows({ command: '- rm -rf /' }, 80, 'bash').every((row) => row.tone === undefined));
+
+header('edit diff — change stats counted from the same markers');
+
+const statOf = (input: unknown): string => formatDiffStat(diffStat(fileEditorDiff(input) ?? ''));
+assert('str_replace counts one removal and one addition', statOf(strReplace('old', 'new')) === '+1 -1');
+assert('create counts every added line, trailing empty line included',
+  statOf({ command: 'create', path: '/tmp/new.ts', file_text: 'a\nb\n' }) === '+3 -0');
+assert('insert counts its added lines',
+  statOf({ command: 'insert', path: '/tmp/x.ts', insert_line: 3, new_str: 'a\nb' }) === '+2 -0');
+assert('deletion counts removals only', statOf(strReplace('doomed line')) === '+0 -1');
+assert('an explicit empty replacement keeps its one empty addition',
+  statOf(strReplace('doomed line', '')) === '+1 -1');
+assert('context lines never count',
+  statOf(strReplace('keep\nold\nkeep too', 'keep\nnew\nkeep too')) === '+1 -1');
+assert('an unknown shape has no diff to count', fileEditorDiff({ command: 'view', path: '/x' }) === undefined);
+assert('a marker-truncated bare line still counts its tone',
+  formatDiffStat(diffStat('- \n+\n-')) === '+1 -2');
+
+header('edit diff — compact excerpt: bounded, explicit, silent when complete');
+
+const wholeExcerpt = compactEditDiff(strReplace('old', 'new'), 'fileEditor');
+assert('a small edit is excerpted whole',
+  wholeExcerpt.join('\n') === `${DIFF_REMOVED}old\n${DIFF_ADDED}new`);
+assert('nothing withheld states nothing', wholeExcerpt.every((line) => !line.startsWith('…')));
+assert('non-fileEditor tools get no excerpt', compactEditDiff({ command: 'ls' }, 'bash').length === 0);
+assert('an unrecognized fileEditor shape gets no excerpt',
+  compactEditDiff({ command: 'view', path: '/x' }, 'fileEditor').length === 0);
+assert('no tool name gets no excerpt', compactEditDiff(strReplace('a', 'b')).length === 0);
+
+const longCreate = compactEditDiff(
+  { command: 'create', path: '/tmp/big.ts', file_text: Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n') },
+  'fileEditor',
+);
+assert('a long create is bounded to the compact budget (marker row included)', longCreate.length <= COMPACT_DIFF_LINES + 1);
+assert('the withheld tail is stated explicitly', longCreate.at(-1)?.startsWith('… truncated ') === true);
+assert('the excerpt keeps the head of the diff', longCreate[0] === `${DIFF_ADDED}line-0`);
+
+const context = Array.from({ length: 12 }, (_, i) => `ctx-${i}`);
+const contextHeavy = compactEditDiff(
+  strReplace([...context, 'old middle'].join('\n'), [...context, 'new middle'].join('\n')),
+  'fileEditor',
+);
+assert('leading unchanged context is skipped with an explicit statement',
+  contextHeavy[0] === '… 11 earlier lines');
+assert('one context line is kept above the first change', contextHeavy[1] === `${DIFF_CONTEXT}ctx-11`);
+assert('the excerpt window lands on the change',
+  contextHeavy.includes(`${DIFF_REMOVED}old middle`) && contextHeavy.includes(`${DIFF_ADDED}new middle`));
+assert('a skipped-context excerpt stays within its row budget', contextHeavy.length <= COMPACT_DIFF_LINES + 1);
+
+const hugeLine = compactEditDiff(strReplace('a', `x${'y'.repeat(3_000)}`), 'fileEditor');
+assert('an oversized single line is code-point bounded',
+  [...hugeLine.join('\n')].length <= COMPACT_DIFF_CODE_POINTS + 80);
+assert('the code-point cut is stated explicitly', hugeLine.at(-1)?.startsWith('… truncated ') === true);
+
+header('edit diff — intraline emphasis: bold span over the same bytes');
+
+const pairLines = (fileEditorDiff(strReplace('  return n + 2;', '  return n * 2;')) ?? '').split('\n');
+const pairRanges = diffLineEmphasis(pairLines);
+const removedAt = pairLines.findIndex((line) => line.startsWith(DIFF_REMOVED));
+const addedAt = pairLines.findIndex((line) => line.startsWith(DIFF_ADDED));
+const removedRange = pairRanges[removedAt];
+const addedRange = pairRanges[addedAt];
+assert('a replaced pair emphasizes exactly the changed span on the removal',
+  removedRange !== undefined && emphasisSpans(pairLines[removedAt] as string, removedRange).mid === '+');
+assert('a replaced pair emphasizes exactly the changed span on the addition',
+  addedRange !== undefined && emphasisSpans(pairLines[addedAt] as string, addedRange).mid === '*');
+assert('emphasis slices reassemble the exact line — the text never changes',
+  pairLines.every((line, index) => {
+    const range = pairRanges[index];
+    if (range === undefined) return true;
+    const { pre, mid, post } = emphasisSpans(line, range);
+    return `${pre}${mid}${post}` === line;
+  }));
+
+const unicodePair = (fileEditorDiff(strReplace('emoji 😀 old span', 'emoji 😀 new😀 span')) ?? '').split('\n');
+const unicodeRanges = diffLineEmphasis(unicodePair);
+const uniRemoved = unicodeRanges[0];
+const uniAdded = unicodeRanges[1];
+assert('unicode prefix trim never splits a surrogate pair',
+  uniRemoved !== undefined && emphasisSpans(unicodePair[0] as string, uniRemoved).mid === 'old' &&
+  uniAdded !== undefined && emphasisSpans(unicodePair[1] as string, uniAdded).mid === 'new😀');
+
+assert('a pair sharing no edge context is unrelated lines, not an intraline edit',
+  diffLineEmphasis((fileEditorDiff(strReplace('abc', 'xyz')) ?? '').split('\n'))
+    .every((range) => range === undefined));
+assert('an unequal changed run is never paired',
+  diffLineEmphasis((fileEditorDiff(strReplace('a1\na2', 'b1')) ?? '').split('\n'))
+    .every((range) => range === undefined));
+const insertion = diffLineEmphasis([`${DIFF_REMOVED}ab`, `${DIFF_ADDED}axb`]);
+assert('a pure intraline insertion emphasizes only the added side',
+  insertion[0] === undefined && insertion[1] !== undefined &&
+  emphasisSpans(`${DIFF_ADDED}axb`, insertion[1]).mid === 'x');
+assert('context and marker rows carry no emphasis',
+  diffLineEmphasis([`${DIFF_CONTEXT}keep`, '… truncated 3 code points']).every((range) => range === undefined));
+
+header('edit diff — emphasis rides the counted rows');
+
+const emphasisDetail = permissionDetailRows(`${DIFF_REMOVED}alpha old beta\n${DIFF_ADDED}alpha new beta`, 60, true);
+const emphasisRemoved = emphasisDetail.find((row) => row.tone === 'remove');
+assert('a permission diff row carries its emphasis span',
+  emphasisRemoved?.emphasis !== undefined &&
+  emphasisRemoved.text.slice(emphasisRemoved.emphasis.start, emphasisRemoved.emphasis.end) === 'old');
+assert('a non-diff block never carries emphasis',
+  permissionDetailRows('- alpha old beta\n+ alpha new beta', 60, false).every((row) => row.emphasis === undefined));
+
+const wrappedPair = `${DIFF_REMOVED}${'a'.repeat(30)}OLD${'b'.repeat(30)}\n${DIFF_ADDED}${'a'.repeat(30)}NEW${'b'.repeat(30)}`;
+const wrappedRows = permissionDetailRows(wrappedPair, 40, true);
+const wrappedEmphasized = wrappedRows.filter((row) => row.emphasis !== undefined);
+assert('a wrapped line intersects its emphasis with exactly the rows that hold it',
+  wrappedEmphasized.length === 2 &&
+  wrappedEmphasized.every((row) =>
+    row.text.slice(row.emphasis?.start, row.emphasis?.end) === (row.tone === 'remove' ? 'OLD' : 'NEW')));
+assert('emphasis never changes the counted row text',
+  wrappedRows.map((row) => row.text).join('\n') ===
+  permissionDetailRows(wrappedPair, 40, false).map((row) => row.text).join('\n'));
+
+const emphasizedActive = toolInputRows(strReplace('  return n + 2;', '  return n * 2;'), 80, 'fileEditor');
+assert('active-panel rows carry the same emphasis',
+  emphasizedActive.some((row) => row.tone === 'add' &&
+    row.emphasis !== undefined && row.text.slice(row.emphasis.start, row.emphasis.end) === '*'));
+assert('active-panel bash rows never carry emphasis',
+  toolInputRows({ command: '- rm -rf /' }, 80, 'bash').every((row) => row.emphasis === undefined));
 
 report();

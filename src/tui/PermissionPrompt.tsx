@@ -17,7 +17,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 
 import type { AssessedPermissionRequest } from '../agent/permission.js';
-import { permissionDisplayDetails } from './edit-diff.js';
+import { emphasisSpans, permissionDisplayDetails } from './edit-diff.js';
 import {
   PERMISSION_BOX_CHROME_COLUMNS,
   PERMISSION_DETAIL_INDENT,
@@ -129,13 +129,15 @@ export function PermissionPrompt({
             {block.rows.slice(0, granted.rows).map((row, rowIndex) => (
               // Detail lines are static text with no identity of their own. Diff
               // rows carry their tone; colour reinforces the `+ `/`- ` marker,
-              // which is what survives ANSI stripping.
+              // which is what survives ANSI stripping, and the bold changed span
+              // is the same enhancement layer nested in the same counted row.
               <Text
                 key={rowIndex}
                 {...(row.tone === undefined ? {} : { color: diffToneColor(row.tone) })}
                 wrap="truncate-end"
               >
-                {`${PERMISSION_DETAIL_INDENT}${row.text}`}
+                {PERMISSION_DETAIL_INDENT}
+                {row.emphasis === undefined ? row.text : emphasizedRow(row.text, row.emphasis)}
               </Text>
             ))}
           </Box>
@@ -150,6 +152,22 @@ export function PermissionPrompt({
 
       <Box marginTop={1}>{decisionRow}</Box>
     </Box>
+  );
+}
+
+/**
+ * A detail row's text with its intraline changed span bolded — nested spans in
+ * the row's one `<Text>`, so the counted geometry and the ANSI-stripped text are
+ * exactly what they were plain.
+ */
+function emphasizedRow(text: string, emphasis: NonNullable<BoundedContentRow['emphasis']>): React.JSX.Element {
+  const { pre, mid, post } = emphasisSpans(text, emphasis);
+  return (
+    <>
+      {pre}
+      <Text bold>{mid}</Text>
+      {post}
+    </>
   );
 }
 

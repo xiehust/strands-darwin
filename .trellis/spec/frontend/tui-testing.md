@@ -442,12 +442,22 @@ the permission prompt or in the expanded tool input (active panel and finished `
   `fileEditorDiff(rawInput): string | undefined` (marker-prefixed diff of the input's own strings),
   `fileEditorInputProjection(rawInput): string | undefined` (`command:`/`path:`(/`insert line:`)
   header lines + diff), `permissionDisplayDetails(request): PermissionDisplayDetail[]`,
-  `diffLineTone(line): 'add' | 'remove' | undefined`.
+  `diffLineTone(line): 'add' | 'remove' | undefined`. SER-023 additions, same purity:
+  `diffStat(diffText): { added, removed }` and `formatDiffStat(stat): '+N -N'` (counted from the
+  markers, on the *untruncated* diff), `diffLineEmphasis(lines): (DiffEmphasis | undefined)[]`
+  (per-line intraline changed span, UTF-16 offsets into the marker-prefixed line) and
+  `emphasisSpans(text, emphasis): { pre, mid, post }` (identity slicing for renderers).
 - `PermissionDetail.editContent?: boolean` (`classify()` in `src/agent/permission.ts`) marks the
   raw content blocks a diffing UI may substitute; every unmarked block must stay stated.
 - `permissionDetailRows(value, columns, diff = false)` and `toolInputRows(input, columns, toolName?)`
-  return `BoundedContentRow { text, tone? }` — tone travels with the counted row so wrapped
-  continuations of a `+ `/`- ` line stay coloured, and the counted text never changes with tone.
+  return `BoundedContentRow { text, tone?, emphasis? }` — tone and emphasis travel with the counted
+  row so wrapped continuations of a `+ `/`- ` line stay coloured and the changed span stays bold,
+  and the counted text never changes with either.
+- `compactEditDiff(input, toolName?): string[]` (`src/tui/tool-detail-presentation.ts`) — the
+  bounded compact-mode excerpt; `[]` for anything that is not a recognized `fileEditor` write.
+- The tool history item carries `diffStat?: { added, removed }` (`turn-state.ts`) — absent means
+  "not a diff", never 0. `formatReplay` prints only `summary`/`preview`, which is what keeps
+  `/export` and `trajectory replay` byte-stable; never fold the stat into `summary`.
 
 ### 3. Contracts
 
@@ -460,8 +470,21 @@ the permission prompt or in the expanded tool input (active panel and finished `
 - Bounding rides the existing budgets (`permissionDetail`, `expandedToolInput`); the truncation
   marker row is never toned. An input the reader does not recognize (unknown command, wrong
   types, extra keys) falls back to the raw blocks / JSON, losing nothing.
-- Tone scope is the tool: only `fileEditor` rows are ever toned, so a bash command starting with
-  `- ` stays plain. dev-repl keeps the raw `Replace:`/`With:` blocks.
+- Compact mode shows the bounded excerpt (`compactEditDiff`), explicit about what it withheld
+  (`… N earlier lines` for skipped leading context, the standard `… truncated …` marker for the
+  bounded tail); **absence of a marker means nothing was withheld**. The full diff stays on the
+  expanded (Ctrl+T) view and the permission box, complete. Excerpt strings are bounded before
+  they enter immutable history state.
+- The `+N -N` stat rides existing surfaces only — spliced into the finished summary row *before*
+  the path (`✓ fileEditor str_replace (+1 -1): /path`; the row truncates end-first and the path
+  is its one unbounded part — a suffix stat is exactly what a long path eats) and into the
+  permission block label (`Diff (+1 -1):`). Never a new row.
+- Intraline emphasis is enhancement layered like tone: replaced pairs (equal-count `- `/`+ ` runs,
+  k-th with k-th) get their common-prefix/suffix-trimmed span bolded; pairs sharing no edge
+  context, empty spans, unequal runs and tab-bearing lines (wrap expansion would skew offsets)
+  get none. ANSI-stripped output stays byte-identical to the plain diff.
+- Tone scope is the tool: only `fileEditor` rows are ever toned or emphasized, so a bash command
+  starting with `- ` stays plain. dev-repl keeps the raw `Replace:`/`With:` blocks.
 
 ### 4. Tests required
 

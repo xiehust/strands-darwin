@@ -152,7 +152,7 @@ const editPermission = plain(renderToString(
 for (const detail of [
   '[parent] fileEditor str_replace: /workspace/src/calc.ts',
   'Path:', '/workspace/src/calc.ts', 'Operation:', 'str_replace',
-  'Diff:', '-   return n + 2;', '+   return n * 2;',
+  'Diff (+1 -1):', '-   return n + 2;', '+   return n * 2;',
   'allow? y n always: a=/workspace/src/** A=all fileEditor esc=deny',
 ]) {
   assert(`edit modal retains ${detail}`, editPermission.includes(detail));
@@ -165,6 +165,7 @@ const editHistory: HistoryItem[] = [{
   kind: 'tool', id: 'te', name: 'fileEditor', summary: 'fileEditor str_replace: /workspace/src/calc.ts',
   status: 'ok', preview: 'edited /workspace/src/calc.ts', expanded: true,
   inputPreview: 'command: str_replace\npath: /workspace/src/calc.ts\n- old line\n+ new line',
+  diffStat: { added: 1, removed: 1 },
 }];
 const editTranscript = plain(renderToString(
   <MessageList history={editHistory} liveText="" liveCodeOpen={false} columns={80} maxLiveRows={8} staticEpoch={0} />,
@@ -173,6 +174,29 @@ const editTranscript = plain(renderToString(
 for (const marker of ['- old line', '+ new line', 'command: str_replace']) {
   assert(`finished edit keeps the diff after ANSI stripping: ${marker}`, editTranscript.includes(marker));
 }
+assert('the +N -N stat rides the existing summary row, before the truncatable path',
+  editTranscript.includes('fileEditor str_replace (+1 -1): /workspace/src/calc.ts'));
+
+// The default compact mode: the bounded excerpt rows and the stat are stated
+// without Ctrl+T, and what the excerpt withheld is stated on its own row. The
+// intraline bold is enhancement only, so the stripped text is exactly the diff.
+const compactEditHistory: HistoryItem[] = [{
+  kind: 'tool', id: 'tc', name: 'fileEditor', summary: 'fileEditor str_replace: /workspace/src/calc.ts',
+  status: 'ok', preview: '', expanded: false,
+  inputPreview: '-   return n + 2;\n+   return n * 2;\n… truncated 41 code points and 2 lines',
+  diffStat: { added: 3, removed: 1 },
+}];
+const compactTranscript = plain(renderToString(
+  <MessageList history={compactEditHistory} liveText="" liveCodeOpen={false} columns={80} maxLiveRows={8} staticEpoch={0} />,
+  { columns: 80 },
+));
+for (const marker of [
+  '-   return n + 2;', '+   return n * 2;', '(+3 -1)', '… truncated 41 code points and 2 lines',
+]) {
+  assert(`compact finished edit states ${marker}`, compactTranscript.includes(marker));
+}
+assert('the compact excerpt carries no Input label — it is the diff itself',
+  !compactTranscript.includes('Input:'));
 
 header('visual language — markdown answers keep their plain text');
 // The full projection contracts live in verify-markdown.tsx; this guards the

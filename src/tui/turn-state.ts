@@ -17,9 +17,10 @@ import {
   compactBackgroundResult,
   type BackgroundBashMode,
 } from './background-tool-presentation.js';
+import { diffStat, fileEditorDiff } from './edit-diff.js';
 import { fenceOpenAfter } from './markdown.js';
 import { subagentCallSummary } from './subagent-format.js';
-import { expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
+import { compactEditDiff, expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 
 export type HistoryItem =
   | { kind: 'user'; id: string; text: string }
@@ -46,6 +47,14 @@ export type HistoryItem =
       /** Already bounded before entering immutable transcript history. */
       inputPreview: string;
       expanded: boolean;
+      /**
+       * `+added/-removed` line counts of a `fileEditor` write's diff, derived from
+       * the same markers the diff states (`edit-diff.ts`). Absent means "not a
+       * diff", never 0 — non-fileEditor calls and unrecognized shapes carry
+       * nothing. Rendering only: `formatReplay` prints `summary`/`preview` alone,
+       * so replay and `/export` output stay byte-identical.
+       */
+      diffStat?: { readonly added: number; readonly removed: number };
     }
   | { kind: 'notice'; id: string; text: string; severity: NoticeSeverity };
 
@@ -316,6 +325,14 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
         }
       }
 
+      // The diff-bearing presentation of a finished fileEditor write, computed
+      // from the same input the SDK received. In compact mode the excerpt is the
+      // diff's bounded head (explicit about anything withheld); the stat is
+      // counted on the untruncated diff, so it states the whole edit's size
+      // whichever mode stamped the row.
+      const toolInput = active?.input ?? event.toolUse.input;
+      const fullDiff = event.toolUse.name === 'fileEditor' ? fileEditorDiff(toolInput) : undefined;
+
       return {
         ...state,
         activeTools,
@@ -330,9 +347,10 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
             // Bound before immutable history/replay state owns the string.
             preview: toolResultPreview(preview, status, state.toolDetailsExpanded).join('\n'),
             inputPreview: state.toolDetailsExpanded
-              ? expandedToolInput(active?.input ?? event.toolUse.input, event.toolUse.name).join('\n')
-              : '',
+              ? expandedToolInput(toolInput, event.toolUse.name).join('\n')
+              : compactEditDiff(toolInput, event.toolUse.name).join('\n'),
             expanded: state.toolDetailsExpanded,
+            ...(fullDiff === undefined ? {} : { diffStat: diffStat(fullDiff) }),
           },
         ],
       };

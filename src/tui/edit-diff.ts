@@ -22,6 +22,11 @@
  * of `''` — removals plus one empty addition). Bounding is *not* done here: the
  * diff text flows through the same `permissionDetail` / `expandedToolInput`
  * budgets as every other block, so truncation stays explicit and single-sourced.
+ *
+ * Everything vivid is derived from those same markers and never rewrites them:
+ * {@link diffStat} counts them, {@link diffLineEmphasis} pairs them into replaced
+ * lines and names the changed span — both projections of the diff text, so the
+ * ANSI-stripped output stays byte-identical to the plain diff.
  */
 import type { PermissionDetail } from '../agent/permission.js';
 
@@ -42,6 +47,132 @@ export function diffLineTone(line: string): 'add' | 'remove' | undefined {
   if (line.startsWith(DIFF_ADDED) || line === '+') return 'add';
   if (line.startsWith(DIFF_REMOVED) || line === '-') return 'remove';
   return undefined;
+}
+
+/** Added/removed line counts of one marker-prefixed diff text. */
+export interface DiffStat {
+  readonly added: number;
+  readonly removed: number;
+}
+
+/**
+ * Change stats derived from the same marker vocabulary the diff states — never a
+ * second diff calculation, so the counts cannot disagree with the rows shown.
+ * Compute it on the *untruncated* diff: a bounded excerpt has fewer rows, and the
+ * stat's job is to state the whole edit's size on the one row that always fits.
+ */
+export function diffStat(diffText: string): DiffStat {
+  let added = 0;
+  let removed = 0;
+  for (const line of diffText.split('\n')) {
+    const tone = diffLineTone(line);
+    if (tone === 'add') added += 1;
+    else if (tone === 'remove') removed += 1;
+  }
+  return { added, removed };
+}
+
+/** The one textual shape of a stat: `+N -N`, assertable after ANSI stripping. */
+export function formatDiffStat(stat: DiffStat): string {
+  return `+${stat.added} -${stat.removed}`;
+}
+
+/**
+ * The intraline changed span of one diff line, as UTF-16 offsets into the full
+ * marker-prefixed line text. Enhancement only (bold layered over the row tone):
+ * it never changes any text, so ANSI-stripped output stays byte-identical to the
+ * plain diff and the two-character markers remain the durable statement.
+ */
+export interface DiffEmphasis {
+  readonly start: number;
+  readonly end: number;
+}
+
+/**
+ * Per-line intraline emphasis for marker-prefixed diff lines, index-aligned with
+ * `lines`.
+ *
+ * A changed run — consecutive `- ` lines followed immediately by consecutive
+ * `+ ` lines — is treated as replaced line pairs **only when it has equally many
+ * removals and additions**; the k-th removal is paired with the k-th addition,
+ * mirroring how `diffMiddle` prints removals before the additions of the same
+ * run. For each pair the common code-point prefix and suffix are trimmed (never
+ * splitting a surrogate pair) and the middle is the emphasis span. Pairs that
+ * share no edge context are unrelated lines, not an intraline edit, and an empty
+ * middle says nothing — both yield `undefined`, as do context lines, unequal
+ * runs and the bare `+`/`-` a truncation can leave.
+ */
+export function diffLineEmphasis(lines: readonly string[]): readonly (DiffEmphasis | undefined)[] {
+  const out: (DiffEmphasis | undefined)[] = lines.map(() => undefined);
+  let index = 0;
+  while (index < lines.length) {
+    if (!(lines[index] as string).startsWith(DIFF_REMOVED)) {
+      index += 1;
+      continue;
+    }
+    const removedStart = index;
+    while (index < lines.length && (lines[index] as string).startsWith(DIFF_REMOVED)) index += 1;
+    const addedStart = index;
+    while (index < lines.length && (lines[index] as string).startsWith(DIFF_ADDED)) index += 1;
+    const removedCount = addedStart - removedStart;
+    const addedCount = index - addedStart;
+    if (removedCount !== addedCount) continue;
+    for (let pair = 0; pair < removedCount; pair += 1) {
+      const removedIndex = removedStart + pair;
+      const addedIndex = addedStart + pair;
+      const [removedSpan, addedSpan] = pairEmphasis(
+        lines[removedIndex] as string,
+        lines[addedIndex] as string,
+      );
+      out[removedIndex] = removedSpan;
+      out[addedIndex] = addedSpan;
+    }
+  }
+  return out;
+}
+
+/**
+ * The three slices an emphasis span splits a text into. Pure string slicing, so
+ * every renderer that bolds a span draws exactly the same characters it would
+ * have drawn plain — concatenating the slices is the identity.
+ */
+export function emphasisSpans(text: string, emphasis: DiffEmphasis): { pre: string; mid: string; post: string } {
+  return {
+    pre: text.slice(0, emphasis.start),
+    mid: text.slice(emphasis.start, emphasis.end),
+    post: text.slice(emphasis.end),
+  };
+}
+
+/** Common code-point prefix/suffix trim of one replaced line pair, marker included. */
+function pairEmphasis(
+  removedLine: string,
+  addedLine: string,
+): [DiffEmphasis | undefined, DiffEmphasis | undefined] {
+  const removed = [...removedLine.slice(DIFF_REMOVED.length)];
+  const added = [...addedLine.slice(DIFF_ADDED.length)];
+  let prefix = 0;
+  while (prefix < removed.length && prefix < added.length && removed[prefix] === added[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < removed.length - prefix &&
+    suffix < added.length - prefix &&
+    removed[removed.length - 1 - suffix] === added[added.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  // No shared edge at all: two unrelated lines, not one edited line.
+  if (prefix === 0 && suffix === 0) return [undefined, undefined];
+
+  const span = (content: readonly string[], marker: string): DiffEmphasis | undefined => {
+    if (content.length - prefix - suffix <= 0) return undefined;
+    const start = marker.length + content.slice(0, prefix).join('').length;
+    const end = start + content.slice(prefix, content.length - suffix).join('').length;
+    return { start, end };
+  };
+  return [span(removed, DIFF_REMOVED), span(added, DIFF_ADDED)];
 }
 
 /**
@@ -116,7 +247,10 @@ export function permissionDisplayDetails(request: {
   for (const detail of request.details) {
     if (detail.editContent === true) {
       if (!replaced) {
-        out.push({ label: 'Diff', value: diff, diff: true });
+        // The stat is derived from the full diff's own markers and rides the
+        // existing label — never a detail row of its own, so the box's counted
+        // geometry gains nothing.
+        out.push({ label: `Diff (${formatDiffStat(diffStat(diff))})`, value: diff, diff: true });
         replaced = true;
       }
       continue;

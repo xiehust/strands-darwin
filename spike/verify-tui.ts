@@ -213,7 +213,8 @@ async function approvePath(): Promise<void> {
     assert('detail prefix and explicit marker coexist',
       permissionFrame.includes(APPROVE_PREFIX) && /… truncated \d+ code points/.test(permissionFrame));
     assert('the omitted replacement tail is absent', !permissionFrame.includes('x'.repeat(200)));
-    assert('prompt keeps detail labels', permissionFrame.includes('Path:') && permissionFrame.includes('Diff:'));
+    assert('prompt keeps detail labels, the Diff stat included',
+      permissionFrame.includes('Path:') && /Diff \(\+1 -1\):/.test(permissionFrame));
     // The edit is presented as a line diff computed from the tool input itself:
     // the buggy line under `- `, the replacement under `+ `, markers that are
     // plain text and therefore survive the ANSI strip this suite asserts through.
@@ -256,6 +257,23 @@ async function approvePath(): Promise<void> {
 
     assert('approved edit was applied in place, and nothing else was', approvedEditIsExact(after));
     assert('the bug is gone', !after.includes('n + 2'));
+
+    // SER-023: the finished edit's compact diff excerpt and the +N -N stat reach
+    // the transcript without Ctrl+T. The stat sits between the command and the
+    // path on the finished `✓` row — this scenario's deliberately huge path
+    // truncates the row's end, so a suffix stat would never be visible — and the
+    // permission box (whose label also states the stat) never draws a `✓` row,
+    // so the anchor cannot match box output. The `+ ` diff row is asserted only
+    // up to `//` because the 641-code-point replacement wraps onto marker-less
+    // continuation rows (see the frame assertions above).
+    const afterApproval = tui.screen.slice(afterAnswer);
+    const summaryAt = afterApproval.search(/✓ fileEditor str_replace \(\+1 -1\):/);
+    assert('the +1 -1 stat rides the finished summary row', summaryAt >= 0);
+    const finishedTranscript = summaryAt >= 0 ? afterApproval.slice(summaryAt) : '';
+    assert('finished edit shows its removed line in the compact transcript',
+      /- +return n \+ 2;/.test(finishedTranscript));
+    assert('finished edit shows its added line in the compact transcript',
+      /\+ +return n \* 2; \/\//.test(finishedTranscript));
 
     tui.send('\u0015'); // ctrl+u clears the retained permission-ownership draft
     tui.submit('/exit');
