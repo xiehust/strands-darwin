@@ -907,3 +907,44 @@ cacheWrite=188,939` (failed first task `36/9,905/911,932/81,805` + retry
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-18 | `dfbab04` | File edits rendered as bounded coloured line diffs at approval and in tool results |
+
+### Batch 24 — assistant answers styled as markdown (2026-08-18)
+
+One managed child task in child session `session-20260818-134215605`
+(`bg-9da6e671-16cc-4d91-bd99-03afa8a514e3`, exit 0), run `--yolo --context-offload` with no
+model-call ceiling and launched from repository source at `b2bdbeb` — the revision the previous
+direction produced. No correction turn was needed. This is `SER-021`, the second direction of the
+user-directed `tui`-path research batch recorded in
+[`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md) (run `12:30:29Z`).
+
+The styling is a pure projection over text nothing else stops owning: `src/tui/markdown.ts`
+(dependency-free, line-oriented, zero imports) classifies lines (`text|heading|fence|code|rule`)
+and splits prose into inline spans whose concatenation is the input verbatim — markers like `**`
+and fences are de-emphasized in place, never stripped, so ANSI-stripped output, the trajectory
+record, `/export` and replay are untouched by construction. Because `<Static>` pieces are never
+redrawn, the one piece of cross-piece state — inside or outside a fenced code block — is a boolean
+decided at push time: each assistant history entry carries `codeOpen = fenceOpenAfter(committed
+prefix)` and the live region derives its state with the same function over the same string, so
+live and committed rendering cannot disagree. A history piece renders as ONE `<Text>` of nested
+spans (measured: an empty per-line `<Text>` renders zero rows and would swallow committed
+paragraph breaks); live rows keep exactly the row count `liveTextView` granted. `_underscore_`
+emphasis is deliberately unrecognized (snake_case is common in answers) and language-aware
+highlighting is deliberately out of scope.
+
+Host acceptance independently read the full 22-file commit and re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (exit 0, 45 suite summaries, all `0 failed`, no `FAIL`); the new `verify-markdown.tsx`
+(49) and extended `verify-visual-language.tsx` (41); free pty `completion` (35), `recall` (20),
+`multiline` (9), `clear` (19); the live 120×50 `verify-tui.ts approve` (26/26, exit 0); `git diff
+--check` / `git show --check`; Trellis validation (`✓`); protected docs untouched. Plus two
+Host-written probes: a 16-assertion reassembly/fence probe (joined spans byte-equal the input on
+adversarial cases incl. unclosed bold, snake_case, CJK+emoji; fence state deterministic across
+piece boundaries; carried `codeOpen` classifies a middle piece as code), and an independent
+byte-stability proof the child's stash comparison could not give — two git worktrees at `b2bdbeb`
+(pre) and `0b9adea` (post) replaying the same copied 96,740-byte real record with 427
+markdown-bearing lines: `cmp` byte-identical.
+
+Token spend, single managed task: `input=206 output=77,862 cacheRead=11,586,921 cacheWrite=169,525`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `0b9adea` | Assistant answers styled as markdown at render time, byte-stable everywhere else |
