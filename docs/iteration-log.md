@@ -664,3 +664,59 @@ Token spend, single managed task: `input=216 output=81,016 cacheRead=13,906,719 
 |---|---|---|
 | 2026-08-18 | `70d3655` | Complete workspace paths from `@` in the prompt editor, inserting the path and never the content |
 | 2026-08-18 | `279121b` | Record the prompt-completion contract and its frame-budget consequences |
+
+### Batch 18 — `Up`/`Down` recall prompts from the record darwin already keeps (2026-08-18)
+
+One managed child task in child session `session-20260818-025938746`
+(`bg-a81befde-394b-4214-9b14-2b2ef2378581`, exit 0), run `--yolo --context-offload` with no
+model-call ceiling, launched from repository source at `9d3b4cc` — the revision the previous
+direction produced. Host acceptance passed on the first pass. This is `SER-015`, the third and last
+direction of the `peer`-path batch in
+[`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md), and it closes that
+batch.
+
+Claude Code documents the semantics worth copying (history per working directory, recall reaching
+past sessions of the same project, consecutive duplicates collapsed, `Ctrl+R` reverse search) and
+Codex confirms `Up`/`Down` plus `Ctrl+R`. The point of interest here is that Darwin needed **no
+store**: every prompt a session sent is already a `userInput` line in the trajectory record, so
+`src/trajectory/prompt-history.ts` is a *reader* over bytes that exist — it reads 256 KiB **tails**
+of at most 20 records ordered by mtime, keeps 100 entries newest-first with consecutive duplicates
+collapsed, drops the half-line a byte-offset window begins with, and counts everything it did not
+show. `src/tui/prompt-recall.ts` is the pure walk over a snapshot of those entries, so a re-read
+landing mid-walk cannot renumber it.
+
+The binding is the risk this direction had to retire, and it is enforced **by position rather than by
+a predicate**: `App.tsx` already gives `Up`/`Down` to the completion menu whenever one is open — now
+both `/` and `@` — so recall is unreachable there by construction; recall then fires only from an
+empty draft, or from the first visual row of a draft that is already a walk, and everything else
+falls through to `moveVertical`. That is what makes recall *incapable* of replacing typed text, which
+is why no stashed draft exists. Two smaller decisions are worth keeping: history is what was *sent*
+(local commands never reached `send`, so they are absent with no filtering), and an expanded skill
+body is excluded by a 4000-code-point cap set deliberately **below** the record's own 8000-code-point
+field cap, so a prompt the recorder truncated can never be silently re-sent. The child declined
+`Ctrl+R` — explicitly optional in the requirement — because a second focus-owning input mode would
+have cost exactly the key-ownership and frame-row risk the direction was told to avoid.
+
+Host acceptance independently read the full 20-file diff (both commits) and re-ran: `pnpm typecheck`
+(exit 0); `pnpm test` (exit 0, **39** suite summaries, all `0 failed`, no `FAIL`); the new
+`spike/verify-prompt-recall.ts` (61), `verify-frame-budget` (61), `verify-trajectory` (257),
+`verify-path-completion` (59), `verify-prompt-editor` (28); the free pty scenarios `recall` (20),
+`recallEmpty` (4), `completion` (29), `pathCompletion` (18), `cursor` (5), `multiline` (9), `mode`
+(25), `clear` (19), `tallDraft` (8); `git diff --check`, `git show --check` on both commits, Trellis
+validation and a clean tree. No live model call was needed for this direction — the pty scenarios seed
+history straight into trajectory records.
+
+The Host again wrote its own probe rather than trusting the read-only claim, and all 12 assertions
+passed: the newest prompt comes first, consecutive duplicates collapse, recall reaches a prompt from
+an **earlier session of the same project**, every seeded record is **byte-identical by sha256** after
+the read, no resume pointer is created, the read still works with `AWS_REGION`, endpoint and profile
+sabotaged (so no network and no model), a project with no records reads as "no history" rather than an
+error, a corrupt line and a half-written trailing line are tolerated and not repaired, and an
+over-long prompt is skipped, counted and stated. Measured 1.9 ms for two records.
+
+Token spend, single managed task: `input=394 output=126,238 cacheRead=35,947,553 cacheWrite=302,338`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `13e8968` | Recall previous prompts from the trajectory record, without taking a key that already had a meaning |
+| 2026-08-18 | `7abc916` | Record the prompt-recall contract and its bounds |
