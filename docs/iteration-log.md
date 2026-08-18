@@ -789,3 +789,39 @@ Token spend, single managed task: `input=160 output=49,146 cacheRead=8,014,158 c
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-18 | `8d120dd` | List and revoke permission allow-rules in-session with `/permissions` |
+
+### Batch 21 — in-session MCP server inspection (2026-08-18)
+
+One managed child task in child session `session-20260818-100731833`
+(`bg-f67fc62b-4ce7-4cf0-8ebb-c7707f72d2cd`, exit 0), run `--yolo --context-offload` with no
+model-call ceiling and launched from repository source at `55f71f5`. No correction turn was needed.
+This is `SER-018`, the second direction of the rolled `peer`-path research batch recorded in
+[`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md) (run `09:15:03Z`).
+
+The implementation answers "which external tools can the model call right now, and is the server
+up" without a model call: `/mcp` (13th built-in, available mid-turn) names every configured server
+with its connection state, a bounded tool listing (`MAX_MCP_TOOL_NAMES = 8`, explicit `… N more`),
+and config provenance — contributing files with global/project labels, project-over-global
+overrides, and an ignored root `.mcp.json`. A failed server is stated as failed and contributing
+no tools, never omitted; zero servers reads as a normal notice naming the three files darwin looked
+for. Reading never mutates: `listTools()` connects lazily, so the report never calls it — state
+comes from the public `connectionState` getter and tool names from the SDK's own
+`_registeredToolNames` on the established private-field precedent, guarded to degrade to
+"unavailable". `reconnect` was deliberately not shipped: the SDK's `connect(true)` flips state
+without re-registering tools into the agent's registry, so it would advertise a "connected" server
+whose tools the model cannot call — recorded in the PRD and `strands-sdk-contracts.md` § MCP.
+
+Host acceptance independently read the full 18-file commit and re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (exit 0, 42 suite summaries, all `0 failed`); the new `verify-mcp-command.ts` (33); the
+new free pty `mcp` scenario (9); `completion` (31, `/mcp` visible); `pathCompletion` (18); Trellis
+validation; `git diff --check` / `git show --check`; and an 11-assertion Host-written probe in a
+throwaway HOME running the acceptance scenario against real MCP servers: a healthy fixture and a
+broken command both named, the broken one stated rather than omitted, bounded tool names, config
+and ignored-file provenance stated, connection states byte-identical before and after the read,
+and an unconfigured project degrading to the candidate-file notice. No live model call was needed.
+
+Token spend, single managed task: `input=200 output=52,109 cacheRead=10,652,629 cacheWrite=165,195`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `a443981` | Inspect MCP servers, states, tools and config provenance with `/mcp` |
