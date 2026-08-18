@@ -369,6 +369,30 @@ which carries the blank row below; `formatReplay` respects the same flags, or a 
 `darwin>` per piece and is a different transcript from the session it replays. The tail still
 matters for the shape with no finished lines — one unbroken paragraph.
 
+**Markdown styling is a projection over the committed answer text, never a rewrite of it**
+(`src/tui/markdown.ts` pure and dependency-free, `src/tui/MarkdownText.tsx`, contract:
+`.trellis/spec/frontend/live-frame.md` § markdown styling): assistant answers — `<Static>` pieces
+and the live region — draw headings bold, `**bold**`/`*italic*` emphasized, inline and fenced code
+in `markdownCodeColor`, and fence delimiters/rules/markers dim; syntax highlighting by language is
+out of scope. Four things are load-bearing. **Every character is kept** — markers are dimmed in
+place, never stripped, so a line's spans concatenate back to the line byte for byte, ANSI-stripped
+output *is* the committed plain text, and `formatReplay` / `/export` are byte-identical to before
+the feature (proven against real recorded sessions); `turn-state.ts` still commits exact plain
+lines and reconciles/diverges on plain strings. **Fence state across pieces is one boolean decided
+at push time**: each assistant piece carries `codeOpen = fenceOpenAfter(committedAnswer)` and the
+live region derives `liveCodeOpen` with the same function over the same string, so a live
+re-render cannot disagree with what `<Static>` already wrote — which is also why the fence
+classifier is a boolean toggle by design. **The Ink traps still bind**: a history piece is ONE
+outer `<Text>` of nested spans and literal `'\n'` strings (an empty `<Text>` renders zero rows —
+per-line `<Text>`s would swallow committed paragraph breaks), and a live row stays ONE
+`<Text wrap="truncate-end">` whose count is exactly what `liveTextView` said, toned via the row's
+`LiveRow.line` source index rather than a second wrap. And **scope is answers only** — user
+messages, notices, tool output, the prompt editor and dev-repl are untouched, and `_underscore_`
+emphasis is deliberately not recognized (snake_case is far more common in answers). Free checks:
+`spike/verify-markdown.tsx` (force color first via `spike/force-color.ts`, or the "styling
+happened" assertion passes vacuously on a pipe) and the markdown section of
+`spike/verify-visual-language.tsx`, both in `pnpm test`.
+
 **`@` in the prompt completes a workspace path, and inserts the path text — never the file's
 content** (`src/tui/path-completion.ts`, spec: `.trellis/spec/frontend/prompt-completion.md`). Three
 peers disagree here (Codex adds the path, OpenCode inlines the content, Claude Code autocompletes),

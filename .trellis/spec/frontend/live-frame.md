@@ -138,6 +138,43 @@ Tests required: `spike/verify-stream-into-static.ts` (pure, plus one offline `Ag
 scenarios `longAnswer` and `tallDraftStreaming`. `verify-trajectory.ts` covers replay agreeing with
 the live reducer.
 
+## Contract: markdown styling is a projection over the committed text, never a rewrite of it
+
+Assistant answer text — history pieces and the live region — is drawn with markdown-aware styling
+(`src/tui/markdown.ts` pure and dependency-free, `src/tui/MarkdownText.tsx` the renderer): headings
+bold with a dim `#` marker, `**bold**`/`*italic*` emphasized, inline and fenced code in
+`markdownCodeColor`, fence delimiters/rules/inline markers dim. Syntax highlighting by language is
+deliberately out of scope.
+
+- **Every character is kept.** Markers are de-emphasized in place, never stripped: concatenating a
+  line's spans reproduces the line byte for byte, so ANSI-stripped output *is* the committed plain
+  text, pty assertions keep matching answer substrings, and `formatReplay` (`/export`, replay) is
+  byte-identical to before the feature existed — proven against real recorded sessions, not assumed.
+  `turn-state.ts` still commits exact plain lines; reconciliation and the divergence warning compare
+  plain strings.
+- **Fence state across pieces is one boolean, decided at push time.** `<Static>` never redraws, so
+  each assistant piece carries `codeOpen` — `fenceOpenAfter(committedAnswer)` when it is pushed —
+  and the live region derives its own initial state with the *same function over the same string*
+  (`liveCodeOpen` in `App`), which is what makes a live re-render unable to disagree with what
+  `<Static>` already wrote. The fence classifier is therefore a boolean toggle by design (any
+  ```` ``` ````/`~~~` line opens; inside a block a bare one closes): a classifier needing the
+  opening fence's character or length would need more state than the reducer carries.
+- **The Ink traps still bind.** A history piece is ONE outer `<Text>` whose children are nested
+  styled spans and literal `'\n'` strings — an empty `<Text>` renders **zero** rows (measured), so
+  one-`<Text>`-per-line would swallow the blank lines a paragraph break committed. A live row stays
+  ONE `<Text wrap="truncate-end">` and the row list is exactly what `liveTextView` counted; rows
+  carry their source line index (`LiveRow.line`) so tone needs no second wrapping calculation, and a
+  row that is not its whole logical line falls back to whole-row tone rather than re-deriving inline
+  spans against transformed text.
+- **Scope is answers only.** User messages, notices, tool output, the prompt editor and dev-repl are
+  untouched; `_underscore_` emphasis is deliberately not recognized (snake_case identifiers are far
+  more common in answers than underscore emphasis).
+
+Tests required: `spike/verify-markdown.tsx` (module invariants, reducer-carried fence state,
+ANSI-strip equality, `formatReplay` byte-stability — force color first via `spike/force-color.ts`,
+or the "styling happened" assertion passes vacuously on a pipe), the markdown section of
+`spike/verify-visual-language.tsx`, and the pty scenarios above unchanged.
+
 ## Contract: the only sanctioned whole-screen clear is `/clear`, and it costs two things at once
 
 `<Static>` cannot be recalled, so "reset the transcript" means clearing the terminal — the same

@@ -38,7 +38,7 @@ header('live text — the tail that fits');
 assert('empty text draws nothing at all', blockHeight('', 80, 10) === 0);
 const short = 'one\ntwo\nthree';
 assert('text that fits is shown whole and reports nothing hidden',
-  liveTextView(short, 80, 10).rows.join('|') === 'one|two|three' &&
+  liveTextView(short, 80, 10).rows.map((row) => row.text).join('|') === 'one|two|three' &&
   liveTextView(short, 80, 10).hiddenRows === 0);
 
 const long = Array.from({ length: 200 }, (_, index) => `line ${index + 1}`).join('\n');
@@ -59,8 +59,10 @@ assert('a tail that would need a notice yields the frame entirely',
 assert('the minimum is what a tail with its notice costs', MINIMUM_LIVE_BLOCK_ROWS === 4);
 const tail = liveTextView(long, 80, 12);
 assert('the tail is the newest rows, in order',
-  tail.rows[tail.rows.length - 1] === 'line 200' &&
-  tail.rows.join('|').includes('line 199|line 200'));
+  tail.rows[tail.rows.length - 1]?.text === 'line 200' &&
+  tail.rows.map((row) => row.text).join('|').includes('line 199|line 200'));
+assert('a tail row remembers which logical line it came from',
+  tail.rows[tail.rows.length - 1]?.line === 199);
 assert('everything dropped is counted', tail.hiddenRows + tail.rows.length === 200);
 assert('the notice says how much scrolled out',
   hiddenRowsNotice(tail.hiddenRows).includes(String(tail.hiddenRows)));

@@ -61,14 +61,14 @@ assert(`baseline header does not grow (${rows(headerOutput)} <= 8 rows)`, rows(h
 header('visual language — ANSI-stripped transcript hierarchy');
 const history: HistoryItem[] = [
   { kind: 'user', id: 'u', text: 'Review this change.' },
-  { kind: 'assistant', id: 'a', text: 'Looks sound.', part: 'whole' },
+  { kind: 'assistant', id: 'a', text: 'Looks sound.', part: 'whole', codeOpen: false },
   { kind: 'tool', id: 't', name: 'bash', summary: 'bash: pnpm typecheck', status: 'ok', preview: '', inputPreview: '', expanded: false },
   { kind: 'notice', id: 'ni', text: 'session resumed', severity: 'info' },
   { kind: 'notice', id: 'nw', text: 'cache unavailable', severity: 'warn' },
   { kind: 'notice', id: 'ne', text: 'turn failed', severity: 'error' },
 ];
 const transcript = plain(renderToString(
-  <MessageList history={history} liveText="" columns={80} maxLiveRows={8} staticEpoch={0} />,
+  <MessageList history={history} liveText="" liveCodeOpen={false} columns={80} maxLiveRows={8} staticEpoch={0} />,
   { columns: 80 },
 ));
 for (const marker of ['you>', 'darwin>', 'tool · ✓', 'info ·', 'warn !', 'error !']) {
@@ -167,11 +167,29 @@ const editHistory: HistoryItem[] = [{
   inputPreview: 'command: str_replace\npath: /workspace/src/calc.ts\n- old line\n+ new line',
 }];
 const editTranscript = plain(renderToString(
-  <MessageList history={editHistory} liveText="" columns={80} maxLiveRows={8} staticEpoch={0} />,
+  <MessageList history={editHistory} liveText="" liveCodeOpen={false} columns={80} maxLiveRows={8} staticEpoch={0} />,
   { columns: 80 },
 ));
 for (const marker of ['- old line', '+ new line', 'command: str_replace']) {
   assert(`finished edit keeps the diff after ANSI stripping: ${marker}`, editTranscript.includes(marker));
 }
+
+header('visual language — markdown answers keep their plain text');
+// The full projection contracts live in verify-markdown.tsx; this guards the
+// composed surface: a markdown-bearing answer drawn through MessageList still
+// reads as the exact committed text once ANSI is stripped, markers included.
+const markdownHistory: HistoryItem[] = [
+  { kind: 'assistant', id: 'md1', text: '## Plan\nUse `pnpm test` — it is **fast**.', part: 'first', codeOpen: false },
+  { kind: 'assistant', id: 'md2', text: '```ts\nconst ok = true;\n```', part: 'last', codeOpen: false },
+];
+const markdownTranscript = plain(renderToString(
+  <MessageList history={markdownHistory} liveText="" liveCodeOpen={false} columns={120} maxLiveRows={8} staticEpoch={0} />,
+  { columns: 120 },
+));
+for (const marker of ['## Plan', 'Use `pnpm test` — it is **fast**.', '```ts', 'const ok = true;']) {
+  assert(`markdown answer survives ANSI stripping verbatim: ${marker}`, markdownTranscript.includes(marker));
+}
+assert('the pieced markdown answer still names darwin once',
+  markdownTranscript.split('\n').filter((line) => line === 'darwin>').length === 1);
 
 report();

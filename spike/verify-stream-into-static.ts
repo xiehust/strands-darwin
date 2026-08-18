@@ -270,6 +270,7 @@ header('streaming into history — what the transcript looks like');
     React.createElement(MessageList, {
       history: state.history,
       liveText: '',
+      liveCodeOpen: false,
       columns: 80,
       maxLiveRows: 10,
       staticEpoch: 0,

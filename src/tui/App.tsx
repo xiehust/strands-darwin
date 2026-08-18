@@ -46,6 +46,7 @@ import {
 } from '../trajectory/prompt-history.js';
 import { InputBox, MAX_COMPLETIONS, type CompletionKind } from './InputBox.js';
 import { LIVE_BLOCK_CHROME_ROWS, wrapToRows } from './live-text.js';
+import { fenceOpenAfter } from './markdown.js';
 import {
   PERMISSION_BOX_FIXED_ROWS,
   frameBudget,
@@ -1208,6 +1209,7 @@ export function App({
       <MessageList
         history={state.history}
         liveText={state.liveText}
+        liveCodeOpen={fenceOpenAfter(state.committedAnswer)}
         columns={columns}
         maxLiveRows={grants.live}
         staticEpoch={state.staticEpoch}

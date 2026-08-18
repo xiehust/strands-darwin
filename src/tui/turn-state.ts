@@ -17,12 +17,25 @@ import {
   compactBackgroundResult,
   type BackgroundBashMode,
 } from './background-tool-presentation.js';
+import { fenceOpenAfter } from './markdown.js';
 import { subagentCallSummary } from './subagent-format.js';
 import { expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 
 export type HistoryItem =
   | { kind: 'user'; id: string; text: string }
-  | { kind: 'assistant'; id: string; text: string; part: AnswerPart }
+  | {
+      kind: 'assistant';
+      id: string;
+      text: string;
+      part: AnswerPart;
+      /**
+       * Fence state at the start of this piece — true when a fenced code block
+       * opened by an earlier piece of the same answer is still open. Decided at
+       * push time like {@link AnswerPart}, because `<Static>` never redraws what
+       * it wrote; purely presentational (`markdown.ts`), invisible to replay.
+       */
+      codeOpen: boolean;
+    }
   | {
       kind: 'tool';
       id: string;
@@ -385,6 +398,9 @@ function commitFinishedLines(state: TurnState): TurnState {
         id: nextId('assistant'),
         text,
         part: state.committedAnswer === '' ? 'first' : 'middle',
+        // The fence state the pieces already in `<Static>` left behind; `''`
+        // (a `first` piece) is always closed-state.
+        codeOpen: fenceOpenAfter(state.committedAnswer),
       },
     ],
   };
@@ -408,21 +424,22 @@ function closeAnswer(state: TurnState, authoritative: string): TurnState {
   const settled: TurnState = { ...state, liveText: '', committedAnswer: '', thinking: false };
   if (state.committedAnswer === '') {
     if (authoritative === '') return settled;
-    return { ...settled, history: [...state.history, answerEntry(authoritative, 'whole')] };
+    return { ...settled, history: [...state.history, answerEntry(authoritative, 'whole', false)] };
   }
 
+  const committedCodeOpen = fenceOpenAfter(state.committedAnswer);
   const prefix = `${state.committedAnswer}\n`;
   if (authoritative === state.committedAnswer) {
     // Defensive: `commitFinishedLines` holds back the last non-blank line, so there
     // is normally something left to write. If a stream ever leaves nothing, the
     // blank row below the answer is still owed, and an empty `last` entry is exactly
     // that row and nothing else.
-    return { ...settled, history: [...state.history, answerEntry('', 'last')] };
+    return { ...settled, history: [...state.history, answerEntry('', 'last', committedCodeOpen)] };
   }
   if (authoritative.startsWith(prefix)) {
     return {
       ...settled,
-      history: [...state.history, answerEntry(authoritative.slice(prefix.length), 'last')],
+      history: [...state.history, answerEntry(authoritative.slice(prefix.length), 'last', committedCodeOpen)],
     };
   }
 
@@ -438,13 +455,14 @@ function closeAnswer(state: TurnState, authoritative: string): TurnState {
           'and the answer below is the authoritative version',
         severity: 'warn',
       },
-      answerEntry(authoritative, 'whole'),
+      // The authoritative text is written in full, so it styles from its own start.
+      answerEntry(authoritative, 'whole', false),
     ],
   };
 }
 
-function answerEntry(text: string, part: AnswerPart): HistoryItem {
-  return { kind: 'assistant', id: nextId('assistant'), text, part };
+function answerEntry(text: string, part: AnswerPart, codeOpen: boolean): HistoryItem {
+  return { kind: 'assistant', id: nextId('assistant'), text, part, codeOpen };
 }
 
 /**
@@ -464,7 +482,7 @@ function flushLiveText(state: TurnState): TurnState {
       ...state,
       liveText: '',
       committedAnswer: '',
-      history: [...state.history, answerEntry('', 'last')],
+      history: [...state.history, answerEntry('', 'last', fenceOpenAfter(state.committedAnswer))],
     };
   }
   return {
@@ -473,7 +491,12 @@ function flushLiveText(state: TurnState): TurnState {
     committedAnswer: '',
     history: [
       ...state.history,
-      answerEntry(text, state.committedAnswer === '' ? 'whole' : 'last'),
+      answerEntry(
+        text,
+        state.committedAnswer === '' ? 'whole' : 'last',
+        // `''` is closed-state, so this is right for the `whole` case too.
+        fenceOpenAfter(state.committedAnswer),
+      ),
     ],
   };
 }

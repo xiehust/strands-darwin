@@ -50,3 +50,11 @@ export function noticeColor(severity: 'info' | 'warn' | 'error'): (typeof visual
 export function diffToneColor(tone: 'add' | 'remove'): (typeof visualColor)[keyof typeof visualColor] {
   return tone === 'add' ? visualColor.success : visualColor.danger;
 }
+
+/**
+ * Colour for markdown code in an assistant answer — inline `` `code` `` spans
+ * and fenced code block lines. The backticks and fences on the text stay the
+ * durable statement (they survive ANSI stripping); this is the enhancement
+ * layered over them, exactly like a diff row's tone.
+ */
+export const markdownCodeColor: (typeof visualColor)[keyof typeof visualColor] = visualColor.active;

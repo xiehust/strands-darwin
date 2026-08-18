@@ -45,9 +45,21 @@ export const MINIMUM_LIVE_BLOCK_ROWS = LIVE_BLOCK_CHROME_ROWS + 2;
 /** Same visible tab stop the prompt editor uses, so row widths stay honest. */
 const TAB = '    ';
 
+/** One pre-wrapped terminal row of the live block. */
+export interface LiveRow {
+  /** The row's text, already wrapped to the terminal width. */
+  readonly text: string;
+  /**
+   * Index of the logical line (in the live text split on `\n`) this row came
+   * from — how a wrapped row finds its markdown line kind without a second
+   * wrapping calculation.
+   */
+  readonly line: number;
+}
+
 export interface LiveTextView {
   /** Rows to draw, already wrapped to the terminal width, oldest first. */
-  readonly rows: readonly string[];
+  readonly rows: readonly LiveRow[];
   /** Wrapped rows dropped off the top; `0` when the whole answer fits. */
   readonly hiddenRows: number;
 }
@@ -65,7 +77,7 @@ const EMPTY: LiveTextView = { rows: [], hiddenRows: 0 };
 export function liveTextView(text: string, columns: number, maxRows: number): LiveTextView {
   if (text === '') return EMPTY;
 
-  const rows = wrapToRows(text, columns);
+  const rows = liveRows(text, columns);
   if (maxRows < MINIMUM_LIVE_BLOCK_ROWS) {
     // Too short for label + one row + notice + margin. Show the whole answer if it
     // happens to fit anyway, otherwise draw nothing at all: this is the
@@ -96,9 +108,16 @@ export function hiddenRowsNotice(hiddenRows: number): string {
  * on its own is a row Ink did not count.
  */
 export function wrapToRows(text: string, columns: number): readonly string[] {
+  return liveRows(text, columns).map((row) => row.text);
+}
+
+/** The wrapped rows with their source logical line — one wrapping calculation. */
+function liveRows(text: string, columns: number): LiveRow[] {
   const width = Math.max(1, columns - 1);
-  const rows: string[] = [];
-  for (const line of text.split('\n')) rows.push(...wrapLine(line.replaceAll('\t', TAB), width));
+  const rows: LiveRow[] = [];
+  text.split('\n').forEach((line, index) => {
+    for (const row of wrapLine(line.replaceAll('\t', TAB), width)) rows.push({ text: row, line: index });
+  });
   return rows;
 }
 

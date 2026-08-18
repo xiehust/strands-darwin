@@ -14,6 +14,8 @@ import { Box, Static, Text } from 'ink';
 import React from 'react';
 
 import { hiddenRowsNotice, liveTextView } from './live-text.js';
+import { markdownLines } from './markdown.js';
+import { liveRowText, MarkdownAnswerText } from './MarkdownText.js';
 import { ToolCallResult } from './ToolCallPanel.js';
 import type { HistoryItem } from './turn-state.js';
 import { noticeColor, visualColor, visualMarker } from './visual-language.js';
@@ -21,12 +23,19 @@ import { noticeColor, visualColor, visualMarker } from './visual-language.js';
 export function MessageList({
   history,
   liveText,
+  liveCodeOpen,
   columns,
   maxLiveRows,
   staticEpoch,
 }: {
   readonly history: readonly HistoryItem[];
   readonly liveText: string;
+  /**
+   * Fence state at the start of `liveText` — what the already-committed pieces
+   * of the in-flight answer left behind (`fenceOpenAfter(committedAnswer)`), so
+   * the live region styles a code block opened in a piece `<Static>` already wrote.
+   */
+  readonly liveCodeOpen: boolean;
   readonly columns: number;
   /** Rows the live answer may occupy, label and margin included. */
   readonly maxLiveRows: number;
@@ -41,6 +50,10 @@ export function MessageList({
   readonly staticEpoch: number;
 }): React.JSX.Element {
   const live = liveTextView(liveText, columns, maxLiveRows);
+  // Markdown line kinds for the live rows; indices match `LiveRow.line` because
+  // both sides split the same text on '\n'. Styling only — the row list and its
+  // count stay exactly what `liveTextView` said.
+  const liveLines = live.rows.length > 0 ? markdownLines(liveText, liveCodeOpen) : [];
 
   return (
     <Box flexDirection="column">
@@ -52,11 +65,7 @@ export function MessageList({
           {/* One Text per pre-wrapped row, truncated: the block's height is then
               exactly what `liveTextView` counted, whatever Ink's own word wrap
               would have done with the same string. */}
-          {live.rows.map((row, index) => (
-            <Text key={index} wrap="truncate-end">
-              {row}
-            </Text>
-          ))}
+          {live.rows.map((row, index) => liveRowText(row.text, liveLines[row.line], index))}
         </Box>
       )}
     </Box>
@@ -84,7 +93,7 @@ function HistoryEntry({ item }: { readonly item: HistoryItem }): React.JSX.Eleme
       return (
         <Box flexDirection="column" marginBottom={closing ? 1 : 0}>
           {labelled && <Text color={visualColor.assistant} bold>{visualMarker.assistant}</Text>}
-          {item.text !== '' && <Text>{item.text}</Text>}
+          {item.text !== '' && <MarkdownAnswerText text={item.text} codeOpen={item.codeOpen} />}
         </Box>
       );
     }
