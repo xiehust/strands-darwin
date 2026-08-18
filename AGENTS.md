@@ -35,7 +35,7 @@ inference-profile model ids, never bare `anthropic.*`):
 
 ```bash
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven TUI suite
-AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|agents|bashExit|cancelThenContinue|agentsMd|usage|effort|model|longAnswer)
+AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|agents|bashExit|cancelThenContinue|agentsMd|usage|effort|mode|model|longAnswer)
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
@@ -48,9 +48,10 @@ pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-ta
 ```
 
 `spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model`,
-`spike/verify-tui.ts clear` and `spike/verify-tui.ts completion` make no model calls at all, so
-all four are free to run; `completion` is the scenario to re-run after touching the built-in slash
-commands, since the menu row count (`MAX_COMPLETIONS`) has to keep every built-in visible.
+`spike/verify-tui.ts mode`, `spike/verify-tui.ts clear` and `spike/verify-tui.ts completion` make no
+model calls at all, so all five are free to run; `completion` is the scenario to re-run after
+touching the built-in slash commands, since the menu row count (`MAX_COMPLETIONS`) has to keep every
+built-in visible.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
 calls. `spike/` is the test suite, not scratch space.
@@ -92,6 +93,23 @@ side is a `PermissionBridge` (async request → `PermissionDecision`): the Ink `
 implements it today; `allowAllBridge` exists for non-interactive runs. On turn cancel,
 release prompts with `denyPending()` — `close()` latches shut and silently denies everything
 afterward.
+
+**The mode is live session state, and only the user moves it** (`/mode`, `PermissionGate.setMode`,
+`AgentRuntime.changePermissionMode`, spec: `backend/strands-sdk-contracts.md` § switching the
+permission mode): every decision reads `gate.mode`, never the construction option, so plan entered
+mid-session guards the very next call with its whole ordering intact. Three things are load-bearing.
+It is **never persisted** — unlike `/effort` and `/model` this changes *enforcement*, so a widening
+that outlived the process would defeat the rule that no allow-rule may cover `~/.darwin/config.json`;
+a fresh process starts from configured/CLI policy, while `/clear`'s successor inherits the *live*
+mode because restoring a wider startup policy is a widening nobody asked for. **No decision already
+in flight is resolved under a mode that would not have asked for it**: a pending `auto` classifier
+verdict is discarded and a prompt on screen or queued is withdrawn (`request.withdrawn`, an
+`AbortSignal` the `PermissionQueue` honours by dropping the entry), and the call is re-decided from
+the top — the race re-checks `aborted` *after* the awaited promise settles, so an answer landing in
+the same tick is discarded too, and the loop is bounded at 16 restarts rather than by an argument
+about human behaviour. And the header states it in **the row it already has**: `mode:` appears
+exactly once, the transition and the withdrawal count go to a notice, and `spike/verify-tui.ts mode`
+(free) plus `approve` are what keep the permission box on a 50-row screen.
 
 **Wildcard allow-rules** (`src/agent/permission-rules.ts`) are the only thing that turns a
 prompt into silence: a decision may carry a rule (`bash:pnpm *`, `fileEditor:src/**`, or a

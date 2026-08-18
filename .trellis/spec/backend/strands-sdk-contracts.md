@@ -284,6 +284,8 @@ TUI: mode: plan — read-only; write and execute calls are denied
   `write`/`execute` deterministically deny.
 - Run the plan guard before risk approval, wildcard rules, the `auto` classifier, and the
   permission bridge. Unknown/MCP tools remain `execute`; no rule can widen plan.
+- The guard reads the **live** mode (`PermissionGate.mode`), never `options.mode`: every contract in
+  this scenario has to hold identically when plan is entered mid-session. See the next scenario.
 - The denial tells the model to continue with read-only inspection or ask the user to leave plan.
 - `ToolHookGate` invokes only this narrow guard before `PreToolUse`. A blocked call causes no hook
   shell execution. Calls it does not deny, and every non-plan mode, retain
@@ -318,6 +320,7 @@ TUI: mode: plan — read-only; write and execute calls are denied
 
 - `spike/verify-permission-modes.ts`: read proceeds; safe write, bash execute, and unknown tool
   deny; zero prompt/classifier calls; broad rules do not bypass; denial is actionable.
+- `spike/verify-permission-mode-switch.ts`: the same assertions for plan **entered mid-session**.
 - `spike/verify-tool-hooks.ts`: blocked call runs no Pre/Post/body while existing ordering tests
   stay green.
 - `spike/verify-subagents.ts`: a child execute is denied without bridge or body execution.
@@ -337,6 +340,118 @@ const guarded = permissionGate.planGuard(event.toolUse.name, event.toolUse.input
 if (guarded !== undefined) return guarded;
 await runPreHooks(event);
 return permissionGate.beforeToolCall(event);
+```
+
+
+## Scenario: switching the permission mode inside a running session
+
+### 1. Scope / Trigger
+
+Use this contract for `/mode <name>` (TUI and dev REPL) and anything else that would move the
+approval mode of a live session. It is a change of *enforcement*, which makes it different in kind
+from `/effort` and `/model`.
+
+### 2. Signatures
+
+```text
+PermissionGate.mode: ApprovalMode                        // live, never options.mode
+PermissionGate.setMode(next): { mode, previous, withdrawn }
+AgentRuntime.permissionMode: ApprovalMode                // live; info.permissionMode is the startup one
+AgentRuntime.changePermissionMode(next): PermissionModeChange   // synchronous, persists nothing
+AssessedPermissionRequest.withdrawn: AbortSignal         // fires when the mode changes under a pending request
+TUI: /mode [default|auto|plan|yolo]  → the header's existing mode row
+```
+
+### 3. Contracts
+
+- **User-only.** The gate is the only holder of the value and nothing re-reads it from a file after
+  startup, so the model's channels (writing `~/.darwin/config.json`, relaunching darwin with a
+  flag, calling a policy-sounding tool) change nothing and stay gated. `.darwin/config.json` remains
+  `dangerous` and un-ruleable, so "always allow" is not a way in either.
+- **Session-scoped.** Nothing is written to the config; `changePermissionMode` is synchronous and
+  has no `saved` half. A fresh process starts from configured/CLI policy. `/clear`'s successor, by
+  contrast, inherits the **live** mode — restoring a wider startup policy would be a widening the
+  user never asked for.
+- **The gate stays the single decision point**, so the intervention shared with children (and the
+  `ToolHookGate` wrapper) sees the new value with no extra plumbing.
+- **No in-flight decision is resolved under a mode that would not have asked for it.** A pending
+  `auto` classifier verdict is *discarded*; a prompt on screen or queued is *withdrawn* through
+  `request.withdrawn`; in both cases the call is re-decided **from the top** (plan guard first)
+  under the new mode. One rule for every transition, not a table of benign ones.
+- **The mode in force when a decision is applied is the mode that decided it**: the race re-checks
+  `aborted` *after* the awaited promise settles, so an answer landing in the same tick as the switch
+  is discarded too, and an allow-rule carried by such an answer is not remembered. A bridge that
+  ignores the signal is not unsafe — only less legible.
+- **The loop is bounded by construction** (16 restarts, then a deny naming the repeated changes),
+  because "a human will stop eventually" is not a bound.
+- **What a mid-session switch does not do:** stop a tool already executing, or un-run a `PreToolUse`
+  hook that already ran under the previous mode. It guarantees the tool body does not run and that
+  no further call gets past the guard.
+- **The header states it in the row it already has** — no frame row is added, and `mode:` appears
+  exactly once whatever the mode reads (`.trellis/spec/frontend/live-frame.md`). The notice reports
+  the transition, the withdrawal count, and that nothing was persisted.
+- **Discoverability follows the other built-ins:** `BUILTIN_COMMAND_NAMES` + a one-phrase
+  description, with `MAX_COMPLETIONS` grown so every built-in still fits the menu. An unusable
+  argument changes nothing, names the valid values, and never falls through to the model.
+- Handled **before** the busy check (like `/effort`, unlike `/model`): it sends nothing and replaces
+  no object, and mid-turn is exactly when enforcement needs changing. It is *not* reachable while a
+  permission prompt is up, because that box owns the keyboard.
+- Headless has no such surface on purpose: it is one-shot and non-interactive, so the only actor
+  that could type is the model.
+
+### 4. Validation & Error Matrix
+
+| Input/state | Result |
+|---|---|
+| `/mode` | Reports the live mode and lists the valid ones; no turn |
+| `/mode plan` while a write is pending on a prompt | Prompt withdrawn, call re-decided, denied |
+| `/mode yolo` while an `auto` classifier call is in flight | Verdict discarded, call proceeds |
+| `/mode default` while an `auto` classifier said "safe" | Verdict discarded, user is asked |
+| `/mode <current>` | "already in <mode>", nothing withdrawn |
+| `/mode bogus` | Unchanged, valid values named, no turn started |
+| A model attempt (config write, relaunch flag, policy-shaped tool) | Mode unchanged; call gated |
+| 16 mode changes under one pending call | Deny naming the repeated changes |
+| `/clear` after a switch | Successor enforces the live mode; config untouched |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** plan → inspect → `/mode default` → apply the plan, in one session, with the header
+  saying which policy is live at every point.
+- **Base:** a session that never types `/mode` behaves exactly as before, including which decisions
+  the gate takes synchronously.
+- **Bad:** reading `options.mode` anywhere (plan stops guarding mid-session); persisting the new
+  mode (a widening that outlives the process); applying a verdict or answer produced under the old
+  mode; leaving a withdrawn prompt on screen; adding a header row for the mode.
+
+### 6. Tests Required
+
+- `spike/verify-permission-mode-switch.ts`: live value and guards; plan entered/left mid-session for
+  parent and child; the composed `ToolHookGate` following the live mode; classifier-in-flight for
+  every transition, including a verdict settling in the same tick; queue withdrawal (on screen and
+  behind); a bridge that ignores the signal; the restart cap; model-driven attempts.
+- `spike/verify-tui.ts mode` (free): report, switch, header follow, refusal, "already in", one
+  `mode:` row, no extra frame row, and a byte-unchanged config.
+- `spike/verify-tui.ts completion` (free): `/mode` still visible in the menu.
+- `spike/verify-tui.ts approve` (live): the permission box still fits 50 rows.
+- `spike/verify-clear-session.ts`: the successor inherits the live mode, not the configured one.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: the mode is read from construction options, so a switch does not reach the decision,
+// and a verdict produced under the old mode is applied anyway.
+if (this.options.mode === 'auto') {
+  const verdict = await this.classifierVerdict(request);
+  if (verdict.safe) return InterventionActions.proceed({ reason: `classifier: ${verdict.reason}` });
+}
+
+// CORRECT: live mode, and anything awaited is raced against withdrawal — a withdrawn pass is
+// re-decided from the top rather than resolved.
+if (this.currentMode === 'auto') {
+  const verdict = await raceWithdrawal(this.classifierVerdict(request), withdrawn);
+  if (verdict === WITHDRAWN) return WITHDRAWN;
+  if (verdict.safe) return InterventionActions.proceed({ reason: `classifier: ${verdict.reason}` });
+}
 ```
 
 
