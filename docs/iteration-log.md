@@ -987,3 +987,54 @@ Token spend, single managed task: `input=152 output=46,401 cacheRead=6,828,903 c
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-18 | `72966f4` | Busy rows tick with live elapsed time and honest token spend |
+
+### Batch 26 — every file edit visible as a vivid bounded diff (2026-08-18)
+
+Origin: `docs/research/research_2026-08-18.md`, run `16:03:24Z` — a **user-directed** `tui`-path
+run ("优化TUI，当coding agent在编辑文件时，能以diff显示在TUI界面上，要求酷炫一点"), recorded as
+`path-source: override (user-directed)`. The headline ask (a red/green edit diff) had shipped
+hours earlier as SER-020; the repository evidence pass found the real gap: `turn-state.ts:332-335`
+stored `inputPreview: ''` in default compact mode, so an auto-approved edit left **no diff at all**
+in the transcript, no surface stated the edit's size, and replaced lines carried no intraline
+emphasis. One direction, SER-023 (Score 13), was queued; old-side absolute line numbers (would
+break SER-020's no-file-read purity), syntax highlighting and side-by-side layout were gated out
+(4/3/3 < 6).
+
+Child session `session-20260818-161103916`, managed task `bg-b660155d` (exit 0, no correction
+turn), launched from source at `9c29f2b`. Delivered in `7405d44` (+ task-record close `578cc2d`):
+compact rows now carry `compactEditDiff` — a bounded excerpt (8 lines / 1,600 code points) that
+skips leading unchanged context with an explicit `… N earlier lines` row and bounds the tail
+through the existing `boundText` vocabulary, absence of a marker meaning nothing withheld; a
+`+N -N` stat (`diffStat`, counted from the untruncated diff's own markers) spliced into the
+finished summary row *before* the path (the row truncates end-first — a suffix stat is exactly
+what the approve scenario's huge path ate, measured live) and onto the permission `Diff (+N -N):`
+label; and intraline emphasis (`diffLineEmphasis`) bolding the common-prefix/suffix-trimmed span
+of equal-count replaced pairs as an `emphasis` range on the same counted `BoundedContentRow`.
+The stat travels as an optional history field, never inside `summary`, because `formatReplay`
+prints summaries verbatim.
+
+Host acceptance independently read the full 17-file diff and re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (exit 0, 46 suite summaries, all `0 failed`, no `FAIL`); `verify-edit-diff.ts`
+(98, up from 62); `verify-visual-language.tsx` (47); free pty `completion` (35); the live 120×50
+`verify-tui.ts approve` — 29/29 on the clean run, including the three new SER-023 assertions
+(`Diff (+1 -1):` on the permission label, the stat riding the finished `✓` summary row, and the
+compact `- `/`+ ` excerpt rows in the transcript); two earlier attempts asserted 28–29 PASS and
+then timed out on the documented pre-existing model nondeterminism (an extra exploratory `bash`
+whose permission box swallows `/exit`, first recorded in SER-013's acceptance at pre-change
+commits); purity re-grep (`edit-diff.ts`'s sole import is a type); `git diff --check` /
+`git show --check` on both commits; Trellis task validation (`✓ All validations passed`);
+protected docs untouched. Plus a 20-assertion Host probe (stat counts across
+create/insert/delete/empty-replacement/unknown shapes, excerpt bounded ≤ 9 rows with the window
+landing on the first change, no-marker-means-nothing-withheld, non-fileEditor gets no excerpt,
+emphasis identity slicing, astral-safe Unicode spans, unrelated pairs and unequal runs get none,
+old/new still reconstruct byte-exactly from stripped markers) and an independent replay
+byte-stability proof: a real 9.4 MB trajectory of this project replayed at `9c29f2b` (worktree)
+vs `7405d44` — 825,149 bytes, `cmp` byte-identical. The child's one open decision — the compact
+excerpt also shows for `denied`/`error` results, marked by the existing `⊘`/`✗` icons — was
+accepted as shipped: showing what was *attempted* is information over silence.
+
+Token spend, single managed task: `input=278 output=100,516 cacheRead=19,246,585 cacheWrite=223,158`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `7405d44` | Every file edit shows a vivid bounded diff: compact excerpt, `+N -N` stat, intraline emphasis |
