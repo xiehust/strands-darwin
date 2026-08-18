@@ -948,3 +948,42 @@ Token spend, single managed task: `input=206 output=77,862 cacheRead=11,586,921 
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-18 | `0b9adea` | Assistant answers styled as markdown at render time, byte-stable everywhere else |
+
+### Batch 25 — live elapsed and token readout on the busy rows (2026-08-18)
+
+One managed child task in child session `session-20260818-142206509`
+(`bg-c8b08209-8de9-4936-bfd7-1b5d55547711`, exit 0), run `--yolo --context-offload` with no
+model-call ceiling and launched from repository source at `34513ea` — the revision the previous
+direction produced. No correction turn was needed. This is `SER-022`, the third and final
+direction of the user-directed `tui`-path research batch recorded in
+[`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md) (run `12:30:29Z`).
+
+The `working…`/`thinking…` rows now carry a live suffix (` · 12s · ↑1.2k ↓318 tokens`;
+`thinking…` elapsed-only by recorded PRD decision, since both rows can be on screen at once).
+Every constraint keeps it a suffix: the rows stay one truncated `<Text>` each so no width wraps
+them into an uncounted second row, the readout sits ahead of the static command hints so narrow
+terminals truncate the part that never changes, the only clock is the spinner interval that
+already ticks the frame, and the meter read is the synchronous `runtime.usage` getter wrapped
+cannot-throw (a failed read degrades to elapsed-only). The numbers are honest rather than fresh:
+the SDK accumulator counts a model call when it finishes — the same lagging reading `/usage`
+explains — and the `usageBuckets` rule holds: an unreported metric is absent, never rendered as
+zero, while a measured zero is shown. One pre-existing failure was fixed in passing and verified
+as pre-existing by the Host at `34513ea`: the `usage` scenario's header assertion still expected
+the pre-SER-016 line `/usage for token counts`, which `ab71a8c` had removed — the scenario had
+been failing on main since that unification.
+
+Host acceptance independently read the full 11-file commit and re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (exit 0, 46 suite summaries, all `0 failed`, no `FAIL`); the new `verify-busy-suffix.ts`
+(13); the live `verify-tui.ts usage` (22/22 — including the two new assertions that the readout
+appears mid-turn and *ticks* across two distinct elapsed readings); the live 120×50 `approve`
+(26/26); free `completion` (35); `git diff --check` / `git show --check`; Trellis validation
+(`✓`); protected docs untouched. Plus a 6-assertion Host probe of the projection's honesty rules:
+unknown spend renders no token arrows, an unreported bucket is absent (never `↑0`), a measured
+zero shows as zero, unit formatting floors rather than rounding up, big counts stay bounded, and
+the suffix is one line.
+
+Token spend, single managed task: `input=152 output=46,401 cacheRead=6,828,903 cacheWrite=146,196`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `72966f4` | Busy rows tick with live elapsed time and honest token spend |
