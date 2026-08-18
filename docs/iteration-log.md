@@ -754,3 +754,38 @@ Token spend, single managed task: `input=300 output=34,754 cacheRead=12,965,635 
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-18 | `ab71a8c` | Unify the TUI around a compact, terminal-safe semantic visual language |
+
+### Batch 20 — in-session permission-rule audit and revocation (2026-08-18)
+
+One managed child task in child session `session-20260818-093028503`
+(`bg-02b125c3-b033-47e2-b6ec-438b8074465a`, exit 0), run `--yolo --context-offload` with no
+model-call ceiling and launched from repository source at `ada6581`. No correction turn was needed.
+This is `SER-017`, the first direction of the rolled `peer`-path research batch recorded in
+[`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md) (run `09:15:03Z`).
+
+The implementation makes allow-rules auditable and retractable without leaving the session: the
+gate tracks per-rule provenance (`configured` from the project's `permission-rules.json`,
+`session` for prompt-time grants) behind a side table so the decision path stays untouched, gains
+a removal-only `removeAllowRule`, and `/permissions` lists numbered rules with origins while
+`revoke <n|rule|all>` takes effect on the live gate synchronously — the next matching call prompts
+again — with persistence written as the grant flow writes: reported, not awaited, a failed write
+costing the file and stating that the rule returns next process. There is no add form; persistence
+is filter-only (the loaded file set minus exactly the revoked rules), so no code path can widen.
+The twelfth built-in grew `MAX_COMPLETIONS` so the completion menu still shows every command.
+
+Host acceptance independently read the full 17-file commit and re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (exit 0, 41 suite summaries, all `0 failed`); the new `verify-permissions-command.ts`
+(42); the free pty scenarios `completion` (30, `/permissions` row asserted), `pathCompletion` (18),
+`recall` (20), and `mode` (25); Trellis validation; `git diff --check` / `git show --check`; and a
+14-assertion Host-written probe in a throwaway HOME over the real gate, config seam and command
+handler: configured/session origins distinguished, revoke removes from the live list and returns
+false thereafter, the file round-trip does not resurrect a revoked rule, an untouched rule survives
+as the widening canary, revoking a rule absent from the file adds nothing (filter-only proof), an
+unknown subcommand degrades to usage without adding anything, and the handler revocation empties
+the gate. No live model call was needed: the permission modal itself is unchanged.
+
+Token spend, single managed task: `input=160 output=49,146 cacheRead=8,014,158 cacheWrite=151,595`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `8d120dd` | List and revoke permission allow-rules in-session with `/permissions` |
