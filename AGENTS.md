@@ -329,6 +329,24 @@ out as flex items and wraps them independently); and `useBoxMetrics` is *parent*
 own window hides. Contract and required checks: `.trellis/spec/frontend/live-frame.md` (pty
 mechanics stay in `frontend/tui-testing.md`).
 
+**The busy rows are alive, and stay exactly the rows they were** (`src/tui/busy-suffix.ts`,
+contract: `.trellis/spec/frontend/live-frame.md` § the busy rows are alive): while a turn streams,
+the `working…` hint and the `thinking…` row carry a live suffix — elapsed turn time plus the
+session's reported token spend (` · 12s · ↑1.2k ↓318 tokens`; the `thinking…` row elapsed-only,
+so the spend is never stated twice in one frame) — with no new frame row, no new tick source and
+no new information channel. The suffix rides directly *behind* the busy word, ahead of the static
+command hints: both rows are one `<Text wrap="truncate-end">`, so they can never wrap or grow a
+row at any width and the tail that truncates on a narrow terminal is the part that never changes —
+the hint's 2-row claim in `promptBoxWanted` and `thinkingRows = 1` stay correct untouched. The
+only clock is the existing spinner interval (never a second one, no tick while idle) and the only
+read is `runtime.usage`, the SDK's synchronous in-memory accumulator — which counts a model call
+when it *finishes*, the same lagging reading mid-turn `/usage` reports as "not counted yet".
+Honesty is the `usageBuckets` rule: an unreported metric is absent, never 0; a zero accumulator
+renders `↑0 ↓0`; a meter read that throws degrades to elapsed-only. The per-turn start ref is
+cleared in `runTurn`'s `finally`, so cancelled and failed turns stop the readout with the tick.
+Free check: `spike/verify-busy-suffix.ts` (in `pnpm test`); the live `verify-tui.ts usage`
+scenario asserts the readout is present mid-turn and ticks while the turn runs.
+
 **A file edit is presented as the line diff of its own input — computed at presentation time,
 never read from disk** (`src/tui/edit-diff.ts`, contract: `.trellis/spec/frontend/tui-testing.md`
 § file edits render as marker-stable line diffs): the gate has always exposed the raw tool input

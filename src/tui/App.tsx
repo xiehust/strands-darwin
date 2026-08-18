@@ -25,7 +25,7 @@ import {
 } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { AgentRuntime, CompactResult, UsageTotals } from '../agent/runtime.js';
-import { formatUsageValue, usageRows, cacheEffectivenessRows } from '../agent/usage.js';
+import { formatUsageValue, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { routeSdkLogs } from '../agent/sdk-logging.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
 import {
@@ -45,6 +45,7 @@ import {
   type PromptHistory,
 } from '../trajectory/prompt-history.js';
 import { InputBox, MAX_COMPLETIONS, type CompletionKind } from './InputBox.js';
+import { busySuffix } from './busy-suffix.js';
 import { LIVE_BLOCK_CHROME_ROWS, wrapToRows } from './live-text.js';
 import { fenceOpenAfter } from './markdown.js';
 import {
@@ -200,6 +201,8 @@ export function App({
   const [selectedCompletion, setSelectedCompletion] = useState(0);
   const [frame, setFrame] = useState(0);
   const interruptedAt = useRef<number | undefined>(undefined);
+  /** Wall-clock start of the in-flight turn; undefined whenever no turn is running. */
+  const turnStartedAt = useRef<number | undefined>(undefined);
   const contextWarnLatch = useRef(createContextWarnLatch());
   /** One trajectory-problem notice per session; the recorder latches the failure itself. */
   const trajectoryWarned = useRef(false);
@@ -316,7 +319,19 @@ export function App({
   // only one measured. The grants are what each box is then allowed to draw, and
   // `frame-budget.ts` owns the priority between them (prompt, tools, answer) as
   // well as the share ceiling that stops the first from taking everything.
-  const streamingHint = hintForStatus(effectiveStatus);
+  //
+  // The busy rows' live readout, recomputed on every spinner tick below: elapsed
+  // wall clock from the turn's start ref, spend from `runtime.usage` — a synchronous
+  // in-memory read of the SDK's accumulator, which counts a model call when it
+  // finishes (the same reading mid-turn `/usage` reports as "not counted yet").
+  // No second interval, no I/O, and nothing of it while idle or compacting.
+  const busyElapsedMs = effectiveStatus === 'streaming' && turnStartedAt.current !== undefined
+    ? Date.now() - turnStartedAt.current
+    : undefined;
+  const streamingHint = hintForStatus(
+    effectiveStatus,
+    busyElapsedMs === undefined ? undefined : busySuffix(busyElapsedMs, liveSpend(runtime)),
+  );
   const activeToolClaims = state.activeTools.map((tool) => ({
     detailRows: state.toolDetailsExpanded ? toolInputRows(tool.input, columns, tool.name).length : 0,
   }));
@@ -411,6 +426,7 @@ export function App({
 
   const runTurn = useCallback(
     async (text: string) => {
+      turnStartedAt.current = Date.now();
       setStatus('streaming');
       try {
         for await (const event of runtime.send(text)) {
@@ -427,6 +443,9 @@ export function App({
       } finally {
         dispatch({ type: 'turnEnded' });
         setStatus('idle');
+        // Cleared with the status, so a cancelled or failed turn stops the busy
+        // readout in the same breath as the tick that was redrawing it.
+        turnStartedAt.current = undefined;
         interruptedAt.current = undefined;
         // The turn's own `userInput` line reaches the record when the turn closes (one
         // append per turn), so this is the moment the reading in memory is one prompt
@@ -1216,7 +1235,12 @@ export function App({
       />
 
       <Box ref={chromeRef} flexDirection="column">
-        {state.thinking && effectiveStatus === 'streaming' && <Text dimColor>thinking…</Text>}
+        {/* The reduced busy suffix — elapsed only, since the hint row below already
+            states the spend. Truncated, never wrapped, so its counted `thinkingRows`
+            of 1 stays true at every width with the suffix on it. */}
+        {state.thinking && effectiveStatus === 'streaming' && (
+          <Text dimColor wrap="truncate-end">{`thinking…${busyElapsedMs === undefined ? '' : busySuffix(busyElapsedMs, undefined)}`}</Text>
+        )}
         <ActiveToolCalls
           tools={state.activeTools}
           frame={frame}
@@ -1252,11 +1276,28 @@ export function App({
 }
 
 /** The hint row under the draft, or nothing when the session is idle. */
-function hintForStatus(status: Status): string | undefined {
+function hintForStatus(status: Status, busyReadout?: string): string | undefined {
   if (status === 'streaming') {
-    return 'working… /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn';
+    // The live readout rides directly behind `working…`, ahead of the static command
+    // hints: the row is one truncated <Text>, so on a narrow terminal the tail is what
+    // goes missing, and the tail should be the part that never changes.
+    return `working…${busyReadout ?? ''} /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn`;
   }
   return status === 'compacting' ? 'compacting conversation…' : undefined;
+}
+
+/**
+ * The session's reported spend, or undefined when the meter cannot be read.
+ *
+ * Read per spinner tick, so it follows `startTurnSpend`'s cannot-throw precedent: a
+ * failure degrades the suffix to elapsed-only rather than becoming a render error.
+ */
+function liveSpend(runtime: AgentRuntime): UsageBuckets | undefined {
+  try {
+    return usageBuckets(runtime.usage, runtime.config);
+  } catch {
+    return undefined;
+  }
 }
 
 export function Header({

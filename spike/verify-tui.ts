@@ -1220,7 +1220,9 @@ async function usageReport(): Promise<void> {
 
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
-    assert('the header advertises the command', tui.screen.includes('/usage for token counts'));
+    // The visual-language pass folded the per-command header hints into the compact
+    // `type / for commands` summary; /usage is advertised there and on the busy row.
+    assert('the header advertises the command menu', tui.screen.includes('type / for commands'));
 
     const beforeBaseline = tui.mark();
     tui.submit('/usage');
@@ -1279,6 +1281,20 @@ async function usageDuringATurn(tui: TuiSession): Promise<void> {
   tui.submit('Count from 1 to 60 in words, one per line. Do not use any tools.');
   await tui.waitFor('working…', { timeoutMs: 60_000, from: turn });
   assert('the busy hint says /usage still works', tui.screen.includes('/usage reports tokens'));
+
+  // SER-022: the busy hint is alive. Elapsed time and the session's reported spend
+  // ride directly behind `working…` — before the static command hints, so they are
+  // what survives truncation — and the elapsed value ticks with the spinner frame.
+  const busyReadout = /working… · (\d+s|\d+m \d+s) · (?:↑[\d.]+[kM]? )?↓[\d.]+[kM]? tokens/;
+  await tui.waitFor(busyReadout, { timeoutMs: 10_000, from: turn });
+  assert('the busy hint carries the live elapsed/spend readout', busyReadout.test(tui.screen.slice(turn)));
+  const elapsedSeen = (screen: string): Set<string> =>
+    new Set([...screen.slice(turn).matchAll(new RegExp(busyReadout.source, 'g'))].map((match) => match[1] as string));
+  await tui.waitUntil((screen) => elapsedSeen(screen).size > 1, {
+    timeoutMs: 15_000,
+    label: 'a second elapsed reading on the busy hint',
+  });
+  assert('the busy readout ticks while the turn runs', elapsedSeen(tui.screen).size > 1);
 
   const duringTurn = tui.mark();
   tui.submit('/usage');

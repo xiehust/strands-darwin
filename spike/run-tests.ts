@@ -20,6 +20,7 @@ const suites = [
   'verify-background-bash.ts',
   'verify-image-viewer.ts',
   'verify-task-format.ts',
+  'verify-busy-suffix.ts',
   'verify-context-format.ts',
   'verify-background-tool-ui.ts',
   'verify-context-offload.ts',

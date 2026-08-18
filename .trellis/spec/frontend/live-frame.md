@@ -52,6 +52,33 @@ per further row with nothing streaming, and one in-flight call with details expa
 - A **windowed draft has no `you>` row** (it scrolled out), so `waitForIdle` and `awaitsPermission`
   cannot be used while a tall draft is up — clear the draft first.
 
+## Contract: the busy rows are alive, and stay exactly the rows they were
+
+While a turn streams, the `working…` hint and the `thinking…` row carry a live suffix — elapsed
+turn time plus the session's reported token spend (`src/tui/busy-suffix.ts`, SER-022) — with no
+new frame row, no new tick source, and no new information channel.
+
+- **The suffix rides directly behind the busy word**, ahead of the static command hints: both rows
+  are one `<Text wrap="truncate-end">`, so they can never wrap or grow a row at any width, and on
+  a narrow terminal the tail that truncates is the part that never changes. The hint's claim in
+  `promptBoxWanted` (`hasHint`, 2 rows) and `thinkingRows = 1` therefore stay correct untouched.
+- **One tick, one synchronous read.** The existing spinner interval (only while
+  `effectiveStatus === 'streaming'`) is the only clock; the render recomputes elapsed from a
+  per-turn `Date.now()` ref (set in `runTurn`, cleared in its `finally`, so cancelled and failed
+  turns stop the readout with the tick) and reads spend from `runtime.usage` — the SDK's
+  in-memory accumulator, which counts a model call when it *finishes*, the same lagging reading
+  mid-turn `/usage` reports as "not counted yet". Never a second interval, never I/O per frame.
+- **Honesty is the `usageBuckets` rule.** The spend shown is `usageBuckets(runtime.usage, config)`:
+  an unreported metric (`input === undefined` on OpenAI Responses without cache detail) is absent
+  from the suffix, never rendered as 0; a genuinely zero accumulator renders `↑0 ↓0`; a meter read
+  that throws degrades to the elapsed-only suffix (the `startTurnSpend` cannot-throw precedent).
+  The `thinking…` row carries the reduced, elapsed-only suffix — both rows can be on screen at
+  once, and stating the spend twice in one frame is noise.
+
+Required checks: `spike/verify-busy-suffix.ts` (free, in `pnpm test`) and the live
+`verify-tui.ts usage` scenario, whose mid-turn half asserts the readout is present and that a
+second elapsed reading appears while the turn still runs.
+
 ## Contract: one semantic visual language, colour optional
 
 `src/tui/visual-language.ts` is the vocabulary shared by `App`, `MessageList`, `InputBox`,
