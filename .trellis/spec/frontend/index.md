@@ -16,6 +16,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 |-------|-------------|--------|
 | [TUI Testing](./tui-testing.md) | Testing Ink through a real pty: anchored waits, idle detection, exit assertions | **Filled** |
 | [Live Frame](./live-frame.md) | The redrawn frame's row budget, and committing answer lines to `<Static>` | **Filled** |
+| [Prompt Completion](./prompt-completion.md) | The two completion sources, and why `@` inserts a path and never file content | **Filled** |
 | [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | To fill |
 | [Hook Guidelines](./hook-guidelines.md) | Custom hooks, data fetching patterns | To fill |

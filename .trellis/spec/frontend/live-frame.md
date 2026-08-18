@@ -51,11 +51,18 @@ per further row with nothing streaming, and one in-flight call with details expa
   window hides. If the cursor lands in the header after a layout change, this is why.
 - A **windowed draft has no `you>` row** (it scrolled out), so `waitForIdle` and `awaitsPermission`
   cannot be used while a tall draft is up — clear the draft first.
+- The **completion menu is one budgeted block whatever fills it**: title + entries + the `… n more`
+  row, capped at `MAX_COMPLETIONS` offered entries, with `planPromptBox` deciding how many survive.
+  Both sources — slash commands and `@` workspace paths — draw the same shape, so a menu's *kind*
+  never reaches the budget; and anything a source needs to say about itself (a bounded scan, an
+  unreadable directory) is a **suffix of the existing title row**, never a row of its own. Contract:
+  `prompt-completion.md`.
 - Tests required: `spike/verify-frame-budget.ts` (arithmetic **plus** `renderToString` of the real
   components — "what Ink draws is never taller than the grant", which caught the flex rows),
   `verify-live-text.ts`, `probe-live-frame-overflow.tsx` both modes, and `verify-tui.ts`
-  `tallDraft` (free) / `tallDraftStreaming` / `approve` / `cursor` / `completion` / `longAnswer`.
-  Unbounding the draft turns `tallDraft`'s 8 passes into 4 failures.
+  `tallDraft` (free) / `tallDraftStreaming` / `approve` / `cursor` / `completion` /
+  `pathCompletion` / `longAnswer`. Unbounding the draft turns `tallDraft`'s 8 passes into 4
+  failures.
 
 ## Contract: a finished answer line belongs to `<Static>`, not to the live frame
 

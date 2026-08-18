@@ -48,10 +48,11 @@ pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-ta
 ```
 
 `spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model`,
-`spike/verify-tui.ts mode`, `spike/verify-tui.ts clear` and `spike/verify-tui.ts completion` make no
-model calls at all, so all five are free to run; `completion` is the scenario to re-run after
-touching the built-in slash commands, since the menu row count (`MAX_COMPLETIONS`) has to keep every
-built-in visible.
+`spike/verify-tui.ts mode`, `spike/verify-tui.ts clear`, `spike/verify-tui.ts completion` and
+`spike/verify-tui.ts pathCompletion` make no model calls at all, so all six are free to run;
+`completion` is the scenario to re-run after touching the built-in slash commands, since the menu row
+count (`MAX_COMPLETIONS`) has to keep every built-in visible, and `pathCompletion` is its `@`
+counterpart.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
 calls. `spike/` is the test suite, not scratch space.
@@ -295,6 +296,28 @@ at the reducer). And because Ink fixes an entry's margin when it writes it, `Ans
 which carries the blank row below; `formatReplay` respects the same flags, or a replay prints one
 `darwin>` per piece and is a different transcript from the session it replays. The tail still
 matters for the shape with no finished lines — one unbroken paragraph.
+
+**`@` in the prompt completes a workspace path, and inserts the path text — never the file's
+content** (`src/tui/path-completion.ts`, spec: `.trellis/spec/frontend/prompt-completion.md`). Three
+peers disagree here (Codex adds the path, OpenCode inlines the content, Claude Code autocompletes),
+and taking the Codex shape is the whole security argument: with a path in the draft, file bytes still
+reach the model through the gated, classified, trajectory-recorded `fileEditor` read, while inlining
+would be a second route with none of that. So the module opens no file — it reads *directory
+entries*, and `verify-path-completion.ts` greps it for every file-reading API to keep that true.
+Four things are load-bearing. The **trigger** is one rule (an `@` reached from the cursor without
+crossing whitespace, itself preceded by whitespace or the start of the draft), so `user@example.com`
+never triggers; and a query matching no path draws **no menu at all**, which is what makes
+`@someone` in prose harmless rather than a list of exceptions. The `@` is **scaffolding**: accepting
+a file replaces the token with the plain path, accepting a directory keeps the marker (`@src/`) so
+the next keystroke completes one level down. The **scan is bounded and exclusion-first** (8000
+entries, 8 levels, 4000 candidates, `node_modules`/`dist`/`.git`-class names never walked, symlinks
+never traversed and skipped when they leave the root — it *skips* where `resource-safety.ts`
+throws, because fewer menu rows must never stop somebody typing), and it is **async, cached per
+root, and never awaited by a keystroke**: measured 33ms per scan of this repository, 0.32ms per
+keystroke of matching, 0.1ms worst event-loop lag during a scan. And the second source must not make
+the first ambiguous: `computeCompletions` is untouched and wins whenever it has candidates, the menu
+shares one `MAX_COMPLETIONS`, and a bounded or degraded scan is stated as a **suffix of the title
+row the menu already has**.
 
 ## Project conventions worth knowing before editing
 
