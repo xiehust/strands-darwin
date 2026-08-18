@@ -861,3 +861,49 @@ Token spend, single managed task: `input=166 output=39,371 cacheRead=7,563,025 c
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-18 | `dd08f8f` | Export the current session's transcript to a file with `/export` |
+
+### Batch 23 — file edits rendered as coloured line diffs (2026-08-18)
+
+Two managed child tasks in child session `session-20260818-123849412`, run `--yolo
+--context-offload` with no model-call ceiling and launched from repository source at `4023e93`.
+The first task (`bg-6a49b177-9e1f-4c4e-af83-7f4b10a132b9`, exit 1) died in a transient provider
+stream timeout (`Stream timed out because of no activity for 180000 ms`) during initial research
+with nothing written; per the retry rule the same session was continued once
+(`bg-c0253f1f-3660-4704-9755-3a6d35b56fc6`, exit 0), which completed the whole task with no
+correction turn. This is `SER-020`, the first direction of the user-directed `tui`-path research
+batch recorded in [`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md)
+(run `12:30:29Z`).
+
+The implementation finally consumes the seam the gate has exposed since the beginning
+(`PermissionRequest.input`, "for a UI that wants to show or diff it itself"): a pure,
+dependency-free `src/tui/edit-diff.ts` computes a line diff from the strings already in a
+`fileEditor` write input (`str_replace` diffs `old_str` against `new_str`; `create`/`insert` are
+all additions; no file is ever read), with plain-text `- `/`+ `/`  ` markers so the distinction
+survives ANSI stripping, and hands it to the existing bounded presentation surfaces — the
+permission box collapses only the `editContent`-tagged blocks into one `Diff:` block (Path,
+Operation, At line, Classifier stay stated; unrecognized shapes keep raw blocks), and the
+active/finished tool panels reuse the same projection. Equivalence is structural: stripping the
+two-character marker recovers both sides exactly, and deleting matched text stays distinguishable
+from replacing it with the empty string. Tone travels on the counted row (no second height
+calculation), is scoped to fileEditor so a bash command starting with `- ` never turns red, and
+the hand-rolled LCS falls back to remove-all/add-all above 40k cells so a pathological input costs
+alignment quality, never a stall.
+
+Host acceptance independently read the full 20-file commit and re-ran: a purity grep (zero
+file-reading APIs in `edit-diff.ts`, its one import a type); `pnpm typecheck` (exit 0); `pnpm
+test` (exit 0, 44 suite summaries, all `0 failed`, no `FAIL`); the new `verify-edit-diff.ts` (62)
+and extended `verify-visual-language.tsx` (36); the live 120×50 `verify-tui.ts approve` with real
+model calls (26/26, exit 0 — diff `- `/`+ ` rows, truncation marker, source label and the complete
+decision row in one settled frame, and the approved edit applied exactly); `git diff --check` /
+`git show --check`; Trellis validation (`✓`); protected docs untouched by the child commit; and a
+9-assertion Host-written probe: old and new recovered byte-exactly from the markers (Unicode
+intact), delete vs empty-replacement distinguishable, create all-added, unknown shapes degrading
+to `undefined`, and a 3,000×3,000-line pathological diff equivalent and fast (measured 6ms).
+
+Token spend across both managed tasks: `input=196 output=84,135 cacheRead=11,879,551
+cacheWrite=188,939` (failed first task `36/9,905/911,932/81,805` + retry
+`160/74,230/10,967,619/107,134`; both tasks reported all four fields).
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `dfbab04` | File edits rendered as bounded coloured line diffs at approval and in tool results |
