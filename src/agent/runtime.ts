@@ -51,7 +51,7 @@ import {
 } from '../tools/background-bash.js';
 import { createImageViewerTool } from '../tools/image-viewer.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
-import { disconnectAll, loadMcpClients, type McpLoadResult } from '../mcp/registry.js';
+import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, type McpServerStatus } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
 import { recordStream } from '../trajectory/stream.js';
@@ -785,6 +785,16 @@ export class AgentRuntime {
    */
   listAllowRules(): readonly AllowRuleEntry[] {
     return this.gate.listAllowRules();
+  }
+
+  /**
+   * The configured MCP servers with their live connection state and registered
+   * tool names, for the `/mcp` report. A read-only projection — names, states and
+   * counts only, never tool results or server output — that connects nothing:
+   * a server that never connected is reported as such, not probed.
+   */
+  listMcpServers(): McpServerStatus[] {
+    return mcpServerStatuses(this.mcp.clients);
   }
 
   /**

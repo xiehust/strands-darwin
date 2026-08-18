@@ -19,7 +19,7 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion |
- *                 pathCompletion | recall | recallEmpty | clear | mcpStderr |
+ *                 pathCompletion | recall | recallEmpty | clear | mcpStderr | mcp |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
@@ -838,6 +838,9 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /context is listed', completed.includes('  /context'));
     assert('the built-in /effort is listed', completed.includes('  /effort'));
     assert('the built-in /exit is listed', completed.includes('  /exit'));
+    // Matched with its description: the header's own mcp line also says 'mcp', so
+    // the bare-name form could pass with the row missing.
+    assert('the built-in /mcp is listed', completed.includes('  /mcp — MCP servers and their tools'));
     // Matched with its description: '  /mode' alone is also a prefix of the /model
     // row, so the bare-name form would pass with /mode missing entirely.
     assert('the built-in /mode is listed', completed.includes('  /mode — set the permission mode'));
@@ -2406,6 +2409,81 @@ async function mcpStderrIsolation(): Promise<void> {
   }
 }
 
+/**
+ * `/mcp`, end to end and free: one healthy stdio server (an in-repo fixture, no
+ * network) and one whose command cannot exist, plus a root `.mcp.json` that the
+ * project `.darwin/mcp.json` makes inert. The report must name all of it — the
+ * broken server as failed rather than silently absent — without a model call,
+ * and asking must not change any connection state (the healthy server still
+ * answers in the second report).
+ */
+async function mcpReport(): Promise<void> {
+  header('TUI — /mcp names every configured server and its state');
+
+  await resetWorkDir();
+  const projectDarwinDir = path.join(WORK_DIR, DARWIN_DIRNAME);
+  await mkdir(projectDarwinDir, { recursive: true });
+  await writeFile(
+    path.join(projectDarwinDir, 'mcp.json'),
+    `${JSON.stringify({
+      mcpServers: {
+        calc: {
+          command: process.execPath,
+          args: [path.join(import.meta.dirname, 'fixtures', 'tools-mcp.mjs')],
+        },
+        broken: { command: 'this-command-does-not-exist-anywhere', args: [] },
+      },
+    }, null, 2)}\n`,
+    'utf8',
+  );
+  // Present but inert: the preferred file above takes precedence, and the report
+  // has to say so instead of leaving two files both claiming to be in effect.
+  await writeFile(
+    path.join(WORK_DIR, '.mcp.json'),
+    `${JSON.stringify({ mcpServers: { ghost: { command: 'true', args: [] } } }, null, 2)}\n`,
+    'utf8',
+  );
+
+  const tui = startTui({ cwd: WORK_DIR });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    const beforeArgument = tui.mark();
+    tui.submit('/mcp extra');
+    await tui.waitFor('/mcp takes no arguments', { timeoutMs: 30_000, from: beforeArgument, settleMs: 400 });
+    assert('/mcp degrades an unknown argument to a usage notice without starting a turn',
+      !tui.screen.slice(beforeArgument).includes('working…'));
+
+    const beforeReport = tui.mark();
+    tui.submit('/mcp');
+    await tui.waitFor('mcp servers (2)', { timeoutMs: 30_000, from: beforeReport, settleMs: 400 });
+    const reportText = tui.screen.slice(beforeReport);
+    assert('/mcp answers without a model call', !reportText.includes('working…'));
+    assert('the healthy server is connected with its tool count', reportText.includes('connected · 3 tools:'));
+    assert('the healthy server lists agent-facing tool names', reportText.includes('calc_alpha'));
+    assert('the failed server is stated as failed, not omitted',
+      reportText.includes('broken') && reportText.includes('failed — could not connect'));
+    assert('the config file in effect is named', reportText.includes(path.join(DARWIN_DIRNAME, 'mcp.json')));
+    assert('the ignored root .mcp.json is stated as inert', reportText.includes('ignored:'));
+
+    // Asking again must read the same states: the report connects nothing and
+    // retries nothing, so the answer is stable.
+    const beforeSecond = tui.mark();
+    tui.submit('/mcp');
+    await tui.waitFor('mcp servers (2)', { timeoutMs: 30_000, from: beforeSecond, settleMs: 400 });
+    const second = tui.screen.slice(beforeSecond);
+    assert('a second /mcp reports the same states — reading did not mutate',
+      second.includes('connected · 3 tools:') && second.includes('failed — could not connect'));
+
+    tui.submit('/exit');
+    assert('TUI exits cleanly with the report shown', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+    await rm(path.join(WORK_DIR, '.mcp.json'), { force: true });
+    await rm(projectDarwinDir, { recursive: true, force: true });
+  }
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -2423,6 +2501,7 @@ const SCENARIOS = {
   recallEmpty: promptRecallWithoutRecord,
   clear: clearSession,
   mcpStderr: mcpStderrIsolation,
+  mcp: mcpReport,
   toolDetails: toolDetailsToggle,
   agents: agentDispatches,
   agentsMd: agentsMdHeader,

@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'mode', 'model', 'permissions', 'tasks', 'trajectory', 'usage'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'mcp', 'mode', 'model', 'permissions', 'tasks', 'trajectory', 'usage'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -26,6 +26,9 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   context: 'estimated context size',
   effort: 'set thinking depth',
   exit: 'quit darwin',
+  // Configured servers with their connection state — a failed one is named as
+  // failed here instead of silently contributing zero tools.
+  mcp: 'MCP servers and their tools',
   // Session-scoped enforcement policy, not the model: /mode sits next to /model in
   // the menu, so both descriptions have to say which is which.
   mode: 'set the permission mode',

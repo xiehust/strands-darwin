@@ -750,7 +750,13 @@ arguments, environment, URLs and headers. Per-server `disabled`, `prefix` and
 A server that fails to start — or whose config references an unset `${VAR}` — is skipped
 rather than fatal, so one broken entry never stops the agent from launching. The SDK logs
 the reason, but that happens before the TUI takes over the screen, so in practice you
-notice it as a lower server count in the header. A file that cannot be parsed at all is a
+notice it as a lower server count in the header. `/mcp` names the culprit: it lists every
+configured server with its connection state — a failed one is stated as `failed` instead
+of silently contributing zero tools — plus each connected server's registered tool names
+(capped, with an explicit `… N more`) and the config file(s) in effect, including a root
+`.mcp.json` being ignored. The report is a pure read of state darwin already holds: it
+never connects, reconnects or probes a server, so asking cannot change anything — a
+failed server needs a restart to retry. A file that cannot be parsed at all is a
 different matter and does stop startup, with the parse error and the path. MCP tools
 always require approval.
 
@@ -1047,6 +1053,7 @@ rather than print, and exit non-zero on failure:
 ```bash
 pnpm tsx spike/verify-config.ts                            # config parsing and provider switching, no model calls
 pnpm tsx spike/verify-mcp-config.ts                        # MCP config precedence and error paths, no servers started
+pnpm tsx spike/verify-mcp-command.ts                       # /mcp projection and report over real client states, in-process servers only
 pnpm tsx spike/verify-skills.ts                            # layered skill policy and slash UX, no model calls
 pnpm tsx spike/verify-agent-skills.ts                      # real offline Agents: official tool, prompt/cache/resume and bounds
 pnpm tsx spike/verify-headless.ts                          # parser/output/session contracts with counted assertions

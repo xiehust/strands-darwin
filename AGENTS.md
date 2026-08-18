@@ -49,13 +49,15 @@ pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-ta
 
 `spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model`,
 `spike/verify-tui.ts mode`, `spike/verify-tui.ts clear`, `spike/verify-tui.ts completion`,
-`spike/verify-tui.ts pathCompletion`, `spike/verify-tui.ts recall` and
-`spike/verify-tui.ts recallEmpty` make no model calls at all, so all eight are free to run;
+`spike/verify-tui.ts pathCompletion`, `spike/verify-tui.ts recall`,
+`spike/verify-tui.ts recallEmpty` and `spike/verify-tui.ts mcp` make no model calls at all, so all
+nine are free to run;
 `completion` is the scenario to re-run after touching the built-in slash commands, since the menu row
 count (`MAX_COMPLETIONS`) has to keep every built-in visible, `pathCompletion` is its `@`
-counterpart, and `recall` is the one that keeps `Up`/`Down` shared between the menu, the cursor and
+counterpart, `recall` is the one that keeps `Up`/`Down` shared between the menu, the cursor and
 prompt history (its history is seeded straight into a trajectory record, which is why it costs
-nothing).
+nothing), and `mcp` proves the `/mcp` report over a real broken-plus-healthy server pair with
+in-repo fixtures only.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
 calls. `spike/` is the test suite, not scratch space.
@@ -136,6 +138,25 @@ user-only like `/mode` (handled before the agent, above the busy check because r
 mid-turn is the point) and has no add form at all — additions stay exclusively with the
 permission prompt. Adding the twelfth built-in grew `MAX_COMPLETIONS` with it; the free checks
 are `spike/verify-permissions-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`.
+
+**`/mcp` is a read-only projection of the MCP clients the runtime already holds, and reading
+state never mutates state** (`src/mcp/registry.ts` `mcpServerStatuses`, `src/tui/mcp-format.ts`):
+servers load with `continueOnError`, so one that fails to spawn contributes zero tools silently —
+the report exists to *name* that, stating every configured server with its `connectionState`
+(a failed one as `failed`, never omitted), a bounded tool listing (`MAX_MCP_TOOL_NAMES`, then
+`… N more` — an unbounded dump is exactly the context cost peers warn about) and the config
+source(s) in effect, including project-over-global overrides and an ignored root `.mcp.json`.
+Two things are load-bearing. The report never calls `listTools()`, because the SDK connects
+lazily inside it: tool names come from the client's `_registeredToolNames` — the set the SDK
+itself populated when `agent.initialize()` registered the tools — read on `loadServersQuietly`'s
+narrow private-field terms and guarded to degrade to "unavailable", never to a probe or a crash.
+And there is deliberately no reconnect verb: `connect(true)` would flip the state to `connected`
+while the agent's tool registry, populated once at `initialize()`, still holds nothing from that
+server — a report that then said "connected" would be a lie, so a failed server is told to
+restart instead. Names, counts, states and paths only — the projection must never become a
+second path for tool results or server output into parent context. The thirteenth built-in grew
+`MAX_COMPLETIONS` again; the free checks are `spike/verify-mcp-command.ts` (in `pnpm test`) and
+`spike/verify-tui.ts mcp` / `completion`.
 
 
 **Skills** (`src/skills/`): Darwin uses the official SDK `AgentSkills`/`Skill` core. A thin

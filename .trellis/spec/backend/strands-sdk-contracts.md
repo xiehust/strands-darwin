@@ -983,7 +983,23 @@ tool call is silently denied with no prompt shown.
   shape). Do not hand-roll config parsing; `src/mcp/registry.ts` only adds
   "missing file = no MCP" and `continueOnError: true`.
 - A failed server (bad command, unset `${VAR}`) is skipped, not fatal: `listTools()`
-  returns `[]` for it. Deliberate trade-off; the header's server count is the only signal.
+  returns `[]` for it. Deliberate trade-off; the header's server count is the only
+  *startup* signal — `/mcp` is the in-session one, naming the failed server outright.
+- **`listTools()` connects lazily** — its first line is `await this.connect()` — so any
+  status/inspection surface must never call it: on a `disconnected` client it would open a
+  connection, and on a `failed` one with `continueOnError` it silently no-ops back to `[]`.
+  Read `connectionState` (public: `'disconnected' | 'connected' | 'failed'`) and, for the
+  registered tool names, the private `_registeredToolNames` set — populated by the SDK
+  itself when `agent.initialize()` ran `listTools()` and registered the tools. That read
+  follows the `loadServersQuietly` private-field precedent and must be guarded to degrade
+  to "unavailable" (`mcpServerStatuses` in `src/mcp/registry.ts`; regression:
+  `verify-mcp-command.ts`, in `pnpm test`).
+- **`connect(true)` alone does not resurrect a failed server's tools**: the agent
+  registers MCP tools once, in `initialize()` (`listTools()` → `toolRegistry.add`, plus an
+  `onToolsChanged` refresh hook that only fires on server notifications). A forced
+  reconnect flips `connectionState` to `connected` while the registry still holds nothing
+  from that server — which is why `/mcp` ships no reconnect verb and tells the user to
+  restart instead.
 - stdio servers are child processes — `disconnectAll()` must run on every exit path. Their stderr
   is also outside both the Ink renderer and the bounded headless protocol, so every product entry
   point loads them through `loadServersQuietly()`; `spike/verify-tui.ts mcpStderr` proves a real

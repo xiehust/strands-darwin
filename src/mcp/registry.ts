@@ -21,7 +21,7 @@ import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { McpClient } from '@strands-agents/sdk';
-import type { McpServerConfig } from '@strands-agents/sdk';
+import type { McpConnectionState, McpServerConfig } from '@strands-agents/sdk';
 
 import { ConfigError } from '../config.js';
 import { darwinDir, userDarwinDir } from '../paths.js';
@@ -52,6 +52,63 @@ export interface McpLoadResult {
 }
 
 /**
+ * One configured server as `/mcp` reports it: name, state, and registered tool
+ * names — never tool results, server output, or anything else that could turn the
+ * report into a second path for server content into the conversation.
+ */
+export interface McpServerStatus {
+  /** The config entry's server name (the SDK's `clientName` / `applicationName`). */
+  name: string;
+  state: McpConnectionState;
+  /**
+   * Agent-facing names of the tools the SDK registered from this server, sorted,
+   * or undefined when they cannot be read (see {@link mcpServerStatuses}). Empty
+   * for a server that failed to connect or exposed nothing.
+   */
+  toolNames: readonly string[] | undefined;
+}
+
+/**
+ * A read-only projection of the live clients for the `/mcp` report.
+ *
+ * Reading state must not mutate state, and `listTools()` connects lazily — so it
+ * is never called here. Tool names come from the client's `_registeredToolNames`,
+ * the set the SDK itself populated when `agent.initialize()` listed and registered
+ * this server's tools. That is a private field, read on the same narrow terms as
+ * `_transport._serverParams` in {@link loadServersQuietly}: guarded so an SDK that
+ * stops exposing it degrades to `toolNames: undefined` (stated as unavailable by
+ * the formatter), never to a crash — and never to a connection attempt.
+ */
+export function mcpServerStatuses(clients: readonly McpClient[]): McpServerStatus[] {
+  return clients.map((client) => {
+    const registered = (client as unknown as { _registeredToolNames?: unknown })._registeredToolNames;
+    const toolNames =
+      registered instanceof Set && [...registered].every((name) => typeof name === 'string')
+        ? [...(registered as Set<string>)].sort((a, b) => a.localeCompare(b))
+        : undefined;
+    return { name: client.clientName, state: client.connectionState, toolNames };
+  });
+}
+
+/**
+ * Every file `loadMcpClients` considers, in read order: the global config, the
+ * preferred project config, and the project-root fallback. Exported so the `/mcp`
+ * report can name where darwin looked when nothing is configured, from the same
+ * derivation the loader uses rather than a second copy of it.
+ */
+export function mcpConfigCandidates(projectRoot: string): {
+  global: string;
+  preferred: string;
+  fallback: string;
+} {
+  return {
+    global: path.join(userDarwinDir(), MCP_CONFIG_FILENAME),
+    preferred: path.join(darwinDir(projectRoot), MCP_CONFIG_FILENAME),
+    fallback: path.join(projectRoot, ROOT_MCP_CONFIG_FILENAME),
+  };
+}
+
+/**
  * Loads every enabled MCP server declared in `<projectRoot>/.darwin/mcp.json`,
  * falling back to `<projectRoot>/.mcp.json` when the first does not exist.
  *
@@ -75,9 +132,7 @@ export async function loadMcpClients(
   projectRoot: string,
   options: { quietStdioStderr?: boolean } = {},
 ): Promise<McpLoadResult> {
-  const global = path.join(userDarwinDir(), MCP_CONFIG_FILENAME);
-  const preferred = path.join(darwinDir(projectRoot), MCP_CONFIG_FILENAME);
-  const fallback = path.join(projectRoot, ROOT_MCP_CONFIG_FILENAME);
+  const { global, preferred, fallback } = mcpConfigCandidates(projectRoot);
 
   const [hasGlobal, hasPreferred, hasFallback] = await Promise.all([
     exists(global), exists(preferred), exists(fallback),

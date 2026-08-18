@@ -36,7 +36,7 @@ import {
 import { CONFIG_FILENAME } from '../config.js';
 import type { AppConfig, ModelChoice } from '../config.js';
 import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
-import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
+import { MCP_CONFIG_FILENAME, mcpConfigCandidates } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
 import {
@@ -88,6 +88,7 @@ import {
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { formatDispatchCompletion, formatDispatchesReport } from './subagent-format.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
+import { formatMcpReport } from './mcp-format.js';
 import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
@@ -607,6 +608,32 @@ export function App({
           type: 'notice',
           text: formatTrajectoryReport(runtime.trajectoryStatus, runtime.info.sessionId),
           severity: runtime.trajectoryStatus?.problem === undefined ? 'info' : 'warn',
+        });
+        return;
+      }
+
+      // Reads the projection of the MCP clients the runtime already holds — no
+      // model call, and deliberately no connection attempt, so asking about a
+      // server cannot change its state. Available mid-turn like /tasks: a server
+      // that failed at startup contributed zero tools silently, and "where did my
+      // tools go" is asked exactly while the model is visibly not finding them.
+      if (/^\/mcp(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/mcp') {
+          dispatch({ type: 'notice', text: '/mcp takes no arguments' });
+          return;
+        }
+        const candidates = mcpConfigCandidates(runtime.info.projectRoot);
+        dispatch({
+          type: 'notice',
+          text: formatMcpReport(runtime.listMcpServers(), {
+            configPaths: runtime.info.mcpConfigPaths,
+            overriddenServerNames: runtime.info.mcpOverriddenServerNames,
+            ignoredConfigPath: runtime.info.mcpIgnoredConfigPath,
+            candidatePaths: [candidates.global, candidates.preferred, candidates.fallback],
+          }),
         });
         return;
       }
