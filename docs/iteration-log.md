@@ -557,3 +557,58 @@ Token spend, single managed task: `input=402 output=105,181 cacheRead=33,817,168
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-17 | `d4a32d1` | Add `/clear`: start a new session mid-run, leaving the previous one saved and resumable |
+
+### Batch 16 — the permission mode becomes live session state (2026-08-18)
+
+One managed child task in child session `session-20260818-012951871`
+(`bg-0f0062ef-94aa-4a92-9508-c7153cb9bf4d`, exit 0), run `--yolo --context-offload` with no
+model-call ceiling. Host acceptance passed on the first pass — no correction turn was needed. This
+is `SER-013`, the first direction of the batch from
+[`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md) (rolled `peer` path):
+Claude Code (`Shift+Tab` + mode indicator), Codex (`/permissions`, `/status`) and OpenCode
+(command-palette auto-approve toggle + muted indicator) all treat the approval policy as live
+session state, while Darwin fixed it at `Agent` construction and its own plan denial could only be
+obeyed by killing the process.
+
+The accepted shape moves the mode out of `PermissionGateOptions` and into the gate as live state
+(`PermissionGate.mode` / `setMode`), so the one instance the parent and every child share answers
+for all of them with no extra plumbing, and `AgentRuntime.changePermissionMode` stays *synchronous*
+— the new policy has to be in force before the very next gate decision, and there is nothing to
+await. Nothing is persisted, deliberately unlike `/effort` and `/model`: this changes *enforcement*,
+and a widening that outlived the process is exactly what the allow-rule exemptions exist to prevent.
+`/clear` now carries the *live* mode into its successor rather than restoring a possibly wider
+startup policy. The in-flight rule is one rule for every transition instead of a table of benign
+ones: `beforeToolCall` became a bounded re-decision loop (`MAX_MODE_CHANGE_RESTARTS = 16`, then a
+fail-closed deny that says why) around a single-pass `decideOnce`, everything awaited goes through
+`raceWithdrawal`, which re-checks `aborted` **after** the promise settles — so a verdict that lands
+in the same tick as the switch is discarded too — and `AssessedPermissionRequest.withdrawn` lets the
+Ink `PermissionQueue` drop a question asked under a policy no longer in force, wherever it sits in
+the queue. `MAX_COMPLETIONS` went 10 → 11 because a built-in nobody can see is a built-in nobody
+uses.
+
+Host acceptance independently read the full 23-file diff (both commits), then re-ran: `pnpm
+typecheck` (exit 0); `pnpm test` (exit 0, 37 suite summaries, all `0 failed`, no `FAIL`); the new
+`spike/verify-permission-mode-switch.ts` (100 passed) plus `verify-permission-modes` (101),
+`verify-tool-hooks` (44), `verify-subagents` (68), `verify-config` (205), `verify-headless` (80),
+`verify-prompt-editor` (28), `verify-clear-session` (37); the free pty scenarios `mode` (25),
+`completion` (29, `/mode` visible by name and description), `clear` (19) and `plan` (4); `git diff
+--check`, `git show --check` on both commits, Trellis validation (only the pre-existing >32 KB spec
+injection warnings) and a clean tree. The required live `verify-tui.ts approve` (real Bedrock,
+120×50) passed 23/23 on **6 of 7** Host runs; the one failure asserted 23/23 and then timed out
+waiting for exit because the model volunteered an extra exploratory `bash ls`, whose permission box
+swallows `/exit`. The Host did not take that on trust: a separate worktree at the pre-change commit
+`31a5880` failed **identically** on 1 of 5 runs, so the flake is pre-existing model nondeterminism,
+not a regression — and it was left alone rather than "fixed" by rewriting a required acceptance
+check under the feature it guards. The Host also ran its own live-free end-to-end in a throwaway
+`HOME`: `default → plan → yolo → bogus → default` each reported with the previous mode named, the
+invalid argument changing nothing and listing the valid modes, `config.json` byte-identical by
+sha256 before and after (`b66e97e6…`), and a fresh process starting from the configured policy
+again.
+
+Token spend, single managed task: `input=324 output=100,605 cacheRead=24,886,871 cacheWrite=251,526`
+— also the batch aggregate so far.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `ff0a9f5` | Switch the approval mode inside a running session, user-only and session-scoped, withdrawing any decision the old mode was still holding |
+| 2026-08-18 | `eeb32a2` | Record the live approval-mode contract in the SDK-contracts, live-frame and architecture docs |
