@@ -39,6 +39,7 @@ import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { MCP_CONFIG_FILENAME, mcpConfigCandidates } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
+import { exportTranscript } from '../trajectory/export.js';
 import {
   readPromptHistory,
   type PromptHistory,
@@ -609,6 +610,26 @@ export function App({
           text: formatTrajectoryReport(runtime.trajectoryStatus, runtime.info.sessionId),
           severity: runtime.trajectoryStatus?.problem === undefined ? 'info' : 'warn',
         });
+        return;
+      }
+
+      // Writes this session's transcript — the same `formatReplay` projection the
+      // `darwin trajectory replay` verb prints — to a file the user names. A pure
+      // *reader* over the record, so it belongs with the local reports above the
+      // busy check: reading mid-turn just sees the file one turn short, and the
+      // small local write is awaited because the notice *is* its result. Every
+      // outcome comes back as a notice; a failed export never costs the session.
+      if (/^\/export(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        const outcome = await exportTranscript({
+          argument: text.slice('/export'.length).trim(),
+          projectRoot: runtime.info.projectRoot,
+          sessionId: runtime.info.sessionId,
+          recordFile: runtime.trajectoryStatus?.file,
+        });
+        dispatch({ type: 'notice', text: outcome.text, severity: outcome.severity });
         return;
       }
 

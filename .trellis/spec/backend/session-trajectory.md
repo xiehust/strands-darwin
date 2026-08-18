@@ -281,7 +281,7 @@ Recording is an observer. It may not become a second reason a turn dies.
   turn receives the provider's error and never the recorder's. A broken recorder plus a failing
   provider must not turn into a mystery about which one broke.
 
-## 7. The three primitives (and one reader beside them)
+## 7. The three primitives (and the readers beside them)
 
 ### `search`
 
@@ -331,6 +331,40 @@ must not become a second copy of.
   exception, and no keystroke waits on the read.
 
 Full contract, including the key binding it may not disturb: `.trellis/spec/frontend/prompt-recall.md`.
+
+### A fifth reader: `/export` (`SER-019`)
+
+`exportTranscript` (`src/trajectory/export.ts`) writes the **current** session's transcript to a file
+the user names — `/export <path>` in the TUI (`App.tsx`, a local report above the busy check, exactly
+like `/trajectory`). It is a reader under every rule above, plus its own:
+
+- **One projection.** The transcript body is `formatReplay(replayRead(...))`, byte for byte — the
+  export and `darwin trajectory replay` can never disagree. The only part allowed to differ is a
+  commented header (session id, project, record path, export time, tolerated damage) that *says* it
+  is a replay projection. A second formatter here is the drift the replay design exists to prevent.
+- **Absence is an answer** on prompt recall's terms: `trajectory: false`
+  (`runtime.trajectoryStatus === undefined`), a session whose record file does not exist yet (the
+  recorder appends its first batch when a turn *ends*, so a brand-new session has no file), and a
+  record with zero turns each earn a `nothing to export` notice stating why — never an error, and
+  never an empty file.
+- **Path discipline.** No argument is a usage notice; relative targets resolve against the project
+  root; an existing target is refused via `writeFile(..., { flag: 'wx' })` — the filesystem's own
+  atomic answer, not a check-then-write race — and there is deliberately no `--force`; a target
+  inside `~/.darwin/sessions/` is refused, because a transcript planted among the records would be
+  read by every scanner above (`list`, search, prompt history, fork).
+- **A failed export costs the export only.** The small local write *is* awaited — unlike rule/config
+  persistence there is nothing else the notice could report first — but every failure comes back as
+  one notice (`error` for a failed write, `warn` for a refusal, `info` for every reading), never a
+  throw into the session.
+- Reading mid-turn is allowed and sees the file one turn short (plus, possibly, a partial trailing
+  line, tolerated and stated exactly as the reader tolerates it). The record is never repaired,
+  rewritten or reordered, and the resume pointer is never touched — asserted by hashing both.
+
+No model call by construction: `export.ts` is in `src/trajectory/**` and imports no SDK module at
+all (asserted by source grep in its suite).
+
+Free checks: `spike/verify-export-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`
+(the 14th built-in row; `/export` usage and nothing-to-export are exercised in the same scenario).
 
 ### `replay`
 
@@ -530,6 +564,15 @@ damage tolerated and the file byte-identical afterwards; a reading taken from by
 `TrajectoryRecorder` wrote; and the read-only proof (hashes before/after, the pointer, the module grep,
 a sabotaged AWS environment). The UI half is `spike/verify-tui.ts recall` / `recallEmpty`, and the
 contract is `.trellis/spec/frontend/prompt-recall.md`.
+
+For `/export` specifically, `spike/verify-export-command.ts` (free, in `pnpm test`, owns its HOME)
+must cover: the usage notice; the three nothing-to-export readings (recording off, no record file,
+zero turns) each writing no file; a written transcript whose body below the header is byte-identical
+to `formatReplay` of the same record, with the record and the resume pointer hashed unchanged; the
+atomic overwrite refusal leaving the existing file byte-identical; an unwritable path degrading to
+one error notice; the `~/.darwin/sessions/` guard; a partial trailing line tolerated, stated in the
+notice and the header, and left unrepaired; and the structural greps (no SDK import, no write API
+aimed at the record, `wx` on the target). The UI rows live in `spike/verify-tui.ts completion`.
 
 Run `pnpm typecheck`, `pnpm test`, and — because `/trajectory` adds a completion row —
 `pnpm tsx spike/verify-tui.ts completion`.

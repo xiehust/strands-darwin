@@ -25,6 +25,7 @@
  *                 tallDraftStreaming | drainPrompt
  */
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import process from 'node:process';
@@ -803,6 +804,24 @@ async function slashCompletion(): Promise<void> {
       !tui.screen.slice(beforeTrajectoryArgument).includes('working…'),
     );
 
+    // /export, on its free paths: usage and "nothing to export". This session is
+    // recording but has closed no turn, so its record file does not exist yet —
+    // exactly the absence rule the notice has to state instead of erroring or
+    // writing an empty file.
+    const beforeExportUsage = tui.mark();
+    tui.submit('/export');
+    await tui.waitFor('usage: /export <path>', { timeoutMs: 30_000, from: beforeExportUsage, settleMs: 400 });
+    assert('/export without a path yields usage without starting a turn',
+      !tui.screen.slice(beforeExportUsage).includes('working…'));
+
+    const beforeExportEmpty = tui.mark();
+    tui.submit('/export nothing-yet.md');
+    await tui.waitFor('nothing to export', { timeoutMs: 30_000, from: beforeExportEmpty, settleMs: 400 });
+    const exportEmpty = tui.screen.slice(beforeExportEmpty);
+    assert('/export before any turn says why there is nothing to export',
+      exportEmpty.includes('no recorded turns yet') && !exportEmpty.includes('working…'));
+    assert('a nothing-to-export session writes no file', !existsSync(path.join(dir, 'nothing-yet.md')));
+
     const beforeSlash = tui.mark();
     tui.send('/');
     await tui.waitFor('commands (', { timeoutMs: 30_000, from: beforeSlash });
@@ -838,6 +857,9 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /context is listed', completed.includes('  /context'));
     assert('the built-in /effort is listed', completed.includes('  /effort'));
     assert('the built-in /exit is listed', completed.includes('  /exit'));
+    // Matched with its description: '  /export' is not a prefix of any other row,
+    // but the description is what tells /export apart from a custom command.
+    assert('the built-in /export is listed', completed.includes('  /export — write this session’s transcript to a file'));
     // Matched with its description: the header's own mcp line also says 'mcp', so
     // the bare-name form could pass with the row missing.
     assert('the built-in /mcp is listed', completed.includes('  /mcp — MCP servers and their tools'));

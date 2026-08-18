@@ -158,6 +158,22 @@ second path for tool results or server output into parent context. The thirteent
 `MAX_COMPLETIONS` again; the free checks are `spike/verify-mcp-command.ts` (in `pnpm test`) and
 `spike/verify-tui.ts mcp` / `completion`.
 
+**`/export <path>` writes this session's transcript, and the transcript is the replay projection —
+never a second formatter** (`src/trajectory/export.ts`, spec: `backend/session-trajectory.md` § a
+fifth reader): the body below a small commented header is `formatReplay(replayRead(...))` byte for
+byte, so an export can never disagree with `darwin trajectory replay` of the same record. It is a
+reader under the trajectory's observer rules — never writes to, repairs or reorders the record,
+never moves the resume pointer, tolerates (and states) a partial trailing line mid-turn — and
+absence is an answer on prompt recall's terms: recording off, no record file yet (the recorder's
+first append is at turn end) and zero turns each earn a "nothing to export" notice, never an error
+and never an empty file. Path handling is deliberate: relative targets resolve against the project
+root, an existing target is refused atomically (`flag: 'wx'`, no `--force` — name another path),
+a target inside `~/.darwin/sessions/` is refused because a transcript planted among the records
+would be read by every scanner of that tree, and the one small local write is awaited with a failure
+costing the export only. Clipboard and `$EDITOR` are out of scope on purpose (SSH-hostile). The
+fourteenth built-in grew `MAX_COMPLETIONS` again; the free checks are
+`spike/verify-export-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`.
+
 
 **Skills** (`src/skills/`): Darwin uses the official SDK `AgentSkills`/`Skill` core. A thin
 adapter preserves product policy the SDK does not own: required/reserved built-ins, project-over-
