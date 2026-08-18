@@ -612,3 +612,55 @@ Token spend, single managed task: `input=324 output=100,605 cacheRead=24,886,871
 |---|---|---|
 | 2026-08-18 | `ff0a9f5` | Switch the approval mode inside a running session, user-only and session-scoped, withdrawing any decision the old mode was still holding |
 | 2026-08-18 | `eeb32a2` | Record the live approval-mode contract in the SDK-contracts, live-frame and architecture docs |
+
+### Batch 17 — `@` completes workspace paths, and only paths (2026-08-18)
+
+One managed child task in child session `session-20260818-022510423`
+(`bg-4c6db950-a46e-4cd4-9085-386dfa17931b`, exit 0), run `--yolo --context-offload` with no
+model-call ceiling, launched from repository source at `9e00301` — the revision the previous
+direction produced. Host acceptance passed on the first pass. This is `SER-014`, the second
+direction of the `peer`-path batch in
+[`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md).
+
+Claude Code, Codex and OpenCode all offer `@` in the composer and disagree about what follows:
+Codex inserts the path, OpenCode inlines the file's bytes. Darwin takes the Codex shape
+deliberately, and that is the whole product argument of this direction — inserting *text* keeps
+every byte of file content flowing through the gated, classified, trajectory-recorded `fileEditor`
+read, while inlining would be a second ungated route into the model's context. So `src/tui/path-completion.ts`
+opens no file at all: it reads directory entries (`opendir`/dirent/`realpath`) and nothing else.
+
+The accepted shape splits pure from asynchronous the way `computeCompletions` already is:
+`pathCompletionQuery` (trigger), `matchWorkspacePaths` (two-tier prefix match, never fuzzy) and
+`applyPathCompletion` (string → string) are per-keystroke and pure, while `scanWorkspacePaths` is
+bounded (8000 entries, 8 levels, 4000 candidates, 21 excluded directory names), breadth-first,
+never-throwing, and cached behind a 5 s TTL that a keystroke never awaits. A trigger is an `@`
+reached from the cursor without crossing whitespace whose own predecessor is whitespace or the start
+of the draft — so `user@example.com` never triggers — and a trigger that matches no path opens no
+menu, which is what makes `@someone` in prose a no-op rather than a hijacked keyboard. Accepting a
+directory keeps the marker (`@src/`) so the next keystroke completes one level down. The bounded-scan
+statement rides on the menu's existing title row, never a new one.
+
+Host acceptance independently read the full 16-file diff (both commits) and re-ran: `pnpm typecheck`
+(exit 0); `pnpm test` (exit 0, 38 suite summaries, all `0 failed`, no `FAIL`); the new
+`spike/verify-path-completion.ts` (59), `verify-frame-budget` (54, now including a path menu in the
+"never taller than its grant" matrix), `verify-prompt-editor` (28); the free pty scenarios
+`pathCompletion` (18), `completion` (29, every built-in still listed), `cursor` (5), `multiline` (9),
+`mode` (25, the previous direction still working), `clear` (19), `tallDraft` (8); `git diff --check`,
+`git show --check` on both commits, Trellis validation and a clean tree. No live model call was
+needed for this direction's Host acceptance.
+
+The Host also wrote its own probe rather than trusting the safety claims, and all 15 assertions
+passed: a canary string inside a completed file appears **nowhere** in the reading or in the accepted
+draft, `node_modules` and `.git` are neither offered nor walked, a symlink pointing outside the
+project root is not offered while one pointing inside is, no candidate is absolute or `..`-relative,
+`@` inside a word is not a trigger while `@` after whitespace is, and a 9,000-entry directory is
+bounded and says so. Its measurements reproduce the child's: **31 ms** for the bounded 9,000-entry
+scan (4,000 candidates, 4,001 entries seen), **893 candidates from 898 entries** for this repository
+because the dependency tree is never walked, and a worst per-keystroke match of **0.63 ms**.
+
+Token spend, single managed task: `input=216 output=81,016 cacheRead=13,906,719 cacheWrite=208,374`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `70d3655` | Complete workspace paths from `@` in the prompt editor, inserting the path and never the content |
+| 2026-08-18 | `279121b` | Record the prompt-completion contract and its frame-budget consequences |
