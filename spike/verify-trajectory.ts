@@ -1562,7 +1562,7 @@ async function replayFidelity(): Promise<void> {
   // correct with the AWS environment sabotaged, so nothing it does can be reaching
   // a provider.
   const sources = await Promise.all(
-    ['record.ts', 'reader.ts', 'replay.ts', 'search.ts', 'spend.ts', 'fork.ts', 'writer.ts', 'stream.ts'].map(
+    ['record.ts', 'reader.ts', 'replay.ts', 'search.ts', 'spend.ts', 'fork.ts', 'writer.ts', 'stream.ts', 'prompt-history.ts'].map(
       async (name) => ({ name, text: stripComments(await readFile(path.join('src', 'trajectory', name), 'utf8')) }),
     ),
   );

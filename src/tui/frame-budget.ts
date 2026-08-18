@@ -166,10 +166,21 @@ export function promptBoxWanted(input: {
   readonly completions: number;
   readonly moreCompletions: boolean;
   readonly hasHint: boolean;
+  /** The prompt-recall indicator row; absent when no recall walk is open. */
+  readonly hasRecall?: boolean;
 }): number {
   const menu = input.completions > 0 ? 2 + input.completions + (input.moreCompletions ? 1 : 0) : 0;
-  return input.draftRows + menu + (input.hasHint ? 2 : 0);
+  return input.draftRows + menu + (input.hasRecall === true ? RECALL_INDICATOR_ROWS : 0) + (input.hasHint ? 2 : 0);
 }
+
+/**
+ * Rows the prompt-recall indicator draws when it is granted one.
+ *
+ * One, and it lives here rather than beside the walk it describes because this module
+ * owns every row count in the region: a second definition is how a box comes to draw
+ * one more row than the budget handed it.
+ */
+export const RECALL_INDICATOR_ROWS = 1;
 
 /** Rows the tool panel would draw with nothing bounding it. */
 export function toolPanelWanted(tools: readonly ToolRowsClaim[]): number {
@@ -243,18 +254,26 @@ export interface PromptBoxPlan {
   readonly completionItems: number;
   /** Draw the `… n more` line under the entries. */
   readonly completionMore: boolean;
+  /** Draw the prompt-recall indicator row. */
+  readonly recall: boolean;
   /** Draw the status hint. */
   readonly hint: boolean;
 }
 
 /**
- * Splits the prompt region's grant between draft, completion menu and hint.
+ * Splits the prompt region's grant between draft, completion menu, recall indicator
+ * and hint.
  *
  * The draft keeps a floor first (its cursor row, plus the notice row it needs as
  * soon as it is windowed), then the menu — a list of commands nobody can see is a
- * list nobody uses — then the hint, which is the only purely informational row
- * here and so the first to go. Whatever is left goes back to the draft, which is
- * why an idle terminal shows a long draft in full.
+ * list nobody uses — then the recall indicator, then the hint, which is the only
+ * purely informational row here and so the first to go. Whatever is left goes back to
+ * the draft, which is why an idle terminal shows a long draft in full.
+ *
+ * Recall outranks the hint and yields to the menu on purpose: it is the one row that
+ * says *why the draft just changed under the user's hands*, so it is worth more than a
+ * standing reminder of which commands exist — and worth less than the list the other
+ * arrow key is currently driving.
  */
 export function planPromptBox(input: {
   readonly maxRows: number;
@@ -262,6 +281,8 @@ export function planPromptBox(input: {
   readonly completions: number;
   readonly moreCompletions: boolean;
   readonly hasHint: boolean;
+  /** A recall walk is open, so the indicator wants its one row. */
+  readonly hasRecall?: boolean;
 }): PromptBoxPlan {
   const maxRows = Math.max(0, input.maxRows);
   const draftFloor = Math.min(maxRows, input.draftRows <= 1 ? 1 : 2);
@@ -278,6 +299,10 @@ export function planPromptBox(input: {
   // that cannot show one entry costs nothing at all.
   if (completionItems > 0) spare -= menuRows;
 
+  // One row, or it is not drawn at all — the same all-or-nothing rule the hint has.
+  const recallRows = input.hasRecall === true && spare >= RECALL_INDICATOR_ROWS ? RECALL_INDICATOR_ROWS : 0;
+  spare -= recallRows;
+
   // The hint is one row plus the blank row above it, or it is not drawn: a block
   // granted half of what it draws is exactly how a frame outgrows its budget.
   const hintRows = input.hasHint && spare >= 2 ? 2 : 0;
@@ -287,6 +312,7 @@ export function planPromptBox(input: {
     draftRows: draftFloor + Math.max(0, spare),
     completionItems,
     completionMore: completionItems > 0 && moreRow === 1,
+    recall: recallRows > 0,
     hint: hintRows > 0,
   };
 }

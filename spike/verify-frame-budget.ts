@@ -18,8 +18,10 @@ import { InputBox } from '../src/tui/InputBox.js';
 import { PermissionPrompt } from '../src/tui/PermissionPrompt.js';
 import { ActiveToolCalls } from '../src/tui/ToolCallPanel.js';
 import { layoutEditor } from '../src/tui/prompt-editor.js';
+import { promptRecallIndicator } from '../src/tui/prompt-recall.js';
 import {
   PERMISSION_BOX_FIXED_ROWS,
+  RECALL_INDICATOR_ROWS,
   SPARE_FRAME_ROW,
   draftWindow,
   frameBudget,
@@ -30,6 +32,7 @@ import {
   planPermissionBox,
   planPromptBox,
   planToolPanel,
+  promptBoxWanted,
   type FrameClaims,
 } from '../src/tui/frame-budget.js';
 import { assert, header, report } from './shared.js';
@@ -188,7 +191,7 @@ assert('a draft that fits is shown whole, with nothing hidden',
   assert('one hidden row is singular', hiddenDraftNotice(1, 0) === '… 1 draft row not shown (1 above)');
 }
 
-header('prompt region — draft, completion menu and hint share one grant');
+header('prompt region — draft, completion menu, recall row and hint share one grant');
 
 {
   let worst = 0;
@@ -196,14 +199,24 @@ header('prompt region — draft, completion menu and hint share one grant');
     for (const draftRows of [1, 2, 40]) {
       for (const completions of [0, 3, 9]) {
         for (const hasHint of [false, true]) {
-          const plan = planPromptBox({ maxRows, draftRows, completions, moreCompletions: completions === 9, hasHint });
-          const window = draftWindow(draftRows, draftRows - 1, plan.draftRows);
-          const drawn =
-            (window.end - window.start) +
-            (window.notice ? 1 : 0) +
-            (plan.completionItems > 0 ? 2 + plan.completionItems + (plan.completionMore ? 1 : 0) : 0) +
-            (plan.hint ? 2 : 0);
-          worst = Math.max(worst, drawn - maxRows);
+          for (const hasRecall of [false, true]) {
+            const plan = planPromptBox({
+              maxRows,
+              draftRows,
+              completions,
+              moreCompletions: completions === 9,
+              hasHint,
+              hasRecall,
+            });
+            const window = draftWindow(draftRows, draftRows - 1, plan.draftRows);
+            const drawn =
+              (window.end - window.start) +
+              (window.notice ? 1 : 0) +
+              (plan.completionItems > 0 ? 2 + plan.completionItems + (plan.completionMore ? 1 : 0) : 0) +
+              (plan.recall ? RECALL_INDICATOR_ROWS : 0) +
+              (plan.hint ? 2 : 0);
+            worst = Math.max(worst, drawn - maxRows);
+          }
         }
       }
     }
@@ -224,6 +237,29 @@ assert('a partly shown menu says there is more',
   planPromptBox({ maxRows: 6, draftRows: 1, completions: 9, moreCompletions: false, hasHint: false }).completionMore);
 assert('the draft keeps its cursor row even with one row to spend',
   planPromptBox({ maxRows: 1, draftRows: 40, completions: 0, moreCompletions: false, hasHint: false }).draftRows === 1);
+
+// The recall indicator is one budgeted row like everything else here: it outranks the
+// hint (it says why the draft just changed), yields to the menu the other arrow key is
+// driving, and is never drawn on a grant that has no row for it.
+assert('a recall walk is granted its one row when there is room',
+  planPromptBox({ maxRows: 8, draftRows: 1, completions: 0, moreCompletions: false, hasHint: false, hasRecall: true }).recall);
+assert('the recall row outranks the hint',
+  (() => {
+    const plan = planPromptBox({ maxRows: 2, draftRows: 1, completions: 0, moreCompletions: false, hasHint: true, hasRecall: true });
+    return plan.recall && !plan.hint;
+  })());
+assert('a region with one row keeps the cursor row and drops the recall indicator',
+  (() => {
+    const plan = planPromptBox({ maxRows: 1, draftRows: 3, completions: 0, moreCompletions: false, hasHint: false, hasRecall: true });
+    return !plan.recall && plan.draftRows === 1;
+  })());
+assert('no walk, no row: the region is exactly what it was before recall existed',
+  planPromptBox({ maxRows: 8, draftRows: 1, completions: 0, moreCompletions: false, hasHint: false }).recall === false &&
+    promptBoxWanted({ draftRows: 1, completions: 0, moreCompletions: false, hasHint: false }) ===
+      promptBoxWanted({ draftRows: 1, completions: 0, moreCompletions: false, hasHint: false, hasRecall: false }));
+assert('and an open walk wants exactly one row more',
+  promptBoxWanted({ draftRows: 2, completions: 3, moreCompletions: true, hasHint: true, hasRecall: true }) -
+    promptBoxWanted({ draftRows: 2, completions: 3, moreCompletions: true, hasHint: true }) === RECALL_INDICATOR_ROWS);
 
 header('tool panel — summaries before detail');
 
@@ -425,22 +461,36 @@ function renderedRows(element: React.ReactElement, columns: number): number {
     for (const maxRows of [1, 2, 3, 6, 11, 24]) {
       for (const menu of menus) {
         for (const hint of [undefined, 'working… /tasks lists jobs · ctrl+c cancels this turn']) {
-          const layout = layoutEditor(draft, columns, { offset: draft.length, affinity: 'upstream' });
-          const rendered = renderedRows(
-            React.createElement(InputBox, {
-              layout,
-              completions: menu.items,
-              completionKind: menu.kind,
-              completionNote: menu.note,
-              selectedCompletion: 0,
-              editable: true,
-              hint,
-              offset: { top: 0, left: 0 },
-              maxRows,
+          // The recall indicator joins the matrix rather than getting a check of its own:
+          // it is a redrawn participant, and the long form (position plus a bound note) is
+          // the one that would wrap on a 40-column terminal if it were not truncated.
+          for (const recallIndicator of [
+            undefined,
+            promptRecallIndicator({
+              entries: ['a', 'b'],
+              index: 1,
+              pending: false,
+              note: 'newest 100 of 137, 3 session(s) not read, 2 long prompt(s) skipped',
             }),
-            columns,
-          );
-          worst = Math.max(worst, rendered - maxRows);
+          ]) {
+            const layout = layoutEditor(draft, columns, { offset: draft.length, affinity: 'upstream' });
+            const rendered = renderedRows(
+              React.createElement(InputBox, {
+                layout,
+                completions: menu.items,
+                completionKind: menu.kind,
+                completionNote: menu.note,
+                selectedCompletion: 0,
+                editable: true,
+                hint,
+                recallIndicator,
+                offset: { top: 0, left: 0 },
+                maxRows,
+              }),
+              columns,
+            );
+            worst = Math.max(worst, rendered - maxRows);
+          }
         }
       }
     }
@@ -458,6 +508,7 @@ function renderedRows(element: React.ReactElement, columns: number): number {
       selectedCompletion: 0,
       editable: true,
       hint: undefined,
+      recallIndicator: undefined,
       offset: { top: 0, left: 0 },
       maxRows: 24,
     }),
@@ -478,6 +529,7 @@ function renderedRows(element: React.ReactElement, columns: number): number {
       selectedCompletion: 0,
       editable: true,
       hint: undefined,
+      recallIndicator: undefined,
       offset: { top: 0, left: 0 },
       maxRows: 11,
     }),
@@ -494,6 +546,35 @@ function renderedRows(element: React.ReactElement, columns: number): number {
   // draft submits as one prompt with its newlines intact.)
   assert('windowing leaves the draft the editor holds untouched',
     layout.rows.length === 200 && layout.rows.map((row) => row.text).join('\n') === draft);
+  // Where the row goes matters as much as how tall it is: under the draft it describes
+  // and above the menu, so a windowed draft's cursor row (counted from the top of the
+  // frame by `useCursor`) is not moved by it.
+  const recalled = renderToString(
+    React.createElement(InputBox, {
+      layout: layoutEditor('/review the diff', 80, { offset: 16, affinity: 'upstream' }),
+      completions: ['review'],
+      completionKind: 'command',
+      completionNote: undefined,
+      selectedCompletion: 0,
+      editable: true,
+      hint: undefined,
+      recallIndicator: promptRecallIndicator({ entries: ['/review the diff', 'older'], index: 0, pending: false, note: undefined }),
+      offset: { top: 0, left: 0 },
+      maxRows: 24,
+    }),
+    { columns: 80 },
+  );
+  {
+    const lines = recalled.split('\n');
+    const draftRow = lines.findIndex((line) => line.includes('you> /review the diff'));
+    const indicatorRow = lines.findIndex((line) => line.includes('history 1/2'));
+    const menuRow = lines.findIndex((line) => line.includes('commands ('));
+    assert('the recall indicator is one row, below the draft and above the menu',
+      draftRow >= 0 && indicatorRow === draftRow + 1 && menuRow > indicatorRow);
+    assert('and it states the position and the keys on that one row',
+      lines[indicatorRow]?.includes('history 1/2 · ↑ older ↓ newer') === true);
+  }
+
   const view = draftWindow(layout.rows.length, 199, 11);
   assert('the drawn rows are a contiguous slice of the draft, ending at the cursor',
     view.end === 200 && view.start === 200 - (11 - 1) &&

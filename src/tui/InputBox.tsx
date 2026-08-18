@@ -37,6 +37,7 @@ export function InputBox({
   selectedCompletion,
   editable,
   hint,
+  recallIndicator,
   offset,
   maxRows,
 }: {
@@ -52,10 +53,17 @@ export function InputBox({
   readonly selectedCompletion: number;
   readonly editable: boolean;
   readonly hint: string | undefined;
+  /**
+   * The open recall walk's one row, or nothing when no walk is open.
+   *
+   * Pre-composed by `prompt-recall.ts` and drawn as one truncated `<Text>`: what the
+   * reading is not showing is a suffix of this row, never a row of its own.
+   */
+  readonly recallIndicator: string | undefined;
   /** Position of this box's parent within the live frame; see below. */
   readonly offset: { readonly top: number; readonly left: number };
   /**
-   * Rows this whole region may draw — draft window, notice, menu and hint.
+   * Rows this whole region may draw — draft window, notice, menu, recall row and hint.
    *
    * A draft is as tall as it is pasted, so this is not a formality: measured at
    * 80x24, a 13-row draft was enough to put Ink into its whole-screen-clear branch
@@ -70,6 +78,7 @@ export function InputBox({
     completions: offered,
     moreCompletions: completions.length > offered,
     hasHint: hint !== undefined,
+    hasRecall: recallIndicator !== undefined,
   });
   const view = draftWindow(layout.rows.length, layout.cursor.row, plan.draftRows);
   const rows = layout.rows.slice(view.start, view.end);
@@ -111,6 +120,13 @@ export function InputBox({
           <Text dimColor={!editable} wrap="truncate-end">{row.text}</Text>
         </Box>
       ))}
+
+      {/* Under the draft it describes and above the menu, so the cursor's row inside
+          the draft window is unaffected — `useCursor` counts rows from the top of the
+          frame, and a row inserted above the draft would move the cursor off it. */}
+      {recallIndicator !== undefined && plan.recall && (
+        <Text dimColor wrap="truncate-end">{recallIndicator}</Text>
+      )}
 
       {visible.length > 0 && (
         <Box flexDirection="column" marginTop={1}>

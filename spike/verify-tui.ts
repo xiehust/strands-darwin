@@ -19,11 +19,12 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion |
- *                 pathCompletion | clear |
+ *                 pathCompletion | recall | recallEmpty | clear |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
  */
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import process from 'node:process';
@@ -2137,6 +2138,238 @@ async function drainPrompt(): Promise<void> {
   }
 }
 
+
+/**
+ * Waits out one frame without anchoring on new output.
+ *
+ * For the keypresses that are asserted to change *nothing* — a cursor move, a recall
+ * that holds at the oldest entry, a menu selection. Ink writes no new text for those, so
+ * an anchored `waitFor` would burn its timeout on a screen that is already correct.
+ */
+function settle(ms = 600): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Prompt recall, end to end, with **no model call**: the history it walks is seeded
+ * straight into this project's trajectory records, which is exactly where a real
+ * session's prompts already are.
+ *
+ * What only a pty can show is here rather than in `verify-prompt-recall.ts`: that the
+ * key bindings coexist — `Up` recalls from an empty draft, moves the cursor inside a
+ * multi-row draft, and is taken by the completion menu whenever one is open — and that
+ * the records are byte-identical afterwards.
+ */
+async function promptRecall(): Promise<void> {
+  header('TUI — Up recalls previous prompts without taking the cursor or the menu keys');
+
+  const dir = '/tmp/darwin-recall-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+
+  // Two sessions, so recall has to reach past the newest record, and one prompt repeated
+  // twice in a row, so the collapse is observable rather than asserted about.
+  const older = trajectoryPath(dir, 'session-20260101-000001');
+  const newer = trajectoryPath(dir, 'session-20260102-000001');
+  await mkdir(path.dirname(older), { recursive: true });
+  await mkdir(path.dirname(newer), { recursive: true });
+  const record = (seq: number, at: string, text: string): string =>
+    `${JSON.stringify({ v: 1, seq, t: at, turn: 1, type: 'userInput', text })}\n`;
+  await writeFile(
+    older,
+    record(1, '2026-01-01T00:00:01.000Z', 'RECALL_OLDEST from an earlier session') +
+      // A skill expansion is recorded expanded, and must never be offered back.
+      record(2, '2026-01-01T00:00:02.000Z', `# Skill instructions\nRECALL_EXPANSION_BODY ${'x'.repeat(4100)}`),
+    'utf8',
+  );
+  await writeFile(
+    newer,
+    record(3, '2026-01-02T00:00:01.000Z', 'RECALL_MIDDLE prompt') +
+      record(4, '2026-01-02T00:00:02.000Z', 'RECALL_NEWEST prompt') +
+      record(5, '2026-01-02T00:00:03.000Z', 'RECALL_NEWEST prompt'),
+    'utf8',
+  );
+  const digest = async (file: string): Promise<string> =>
+    createHash('sha256').update(await readFile(file)).digest('hex');
+  const before = [await digest(older), await digest(newer)];
+
+  const tui = startTui({ cwd: dir, cols: 100, rows: 30 });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    // The read starts on this keystroke, not at startup, and is never awaited by the
+    // editor — so the wait is for the frame that arrives once it lands.
+    const beforeUp = tui.mark();
+    tui.send('\u001b[A');
+    await tui.waitFor('you> RECALL_NEWEST prompt', { timeoutMs: 30_000, from: beforeUp, settleMs: 400 });
+    const recalled = tui.frame;
+    assert('Up on an empty draft recalls the newest prompt of this project',
+      recalled.includes('you> RECALL_NEWEST prompt'));
+    assert('and one row states where in history the draft came from',
+      /history 1\/3 · ↑ older ↓ newer/.test(recalled));
+    assert('recall starts no turn and calls no tool',
+      !tui.screen.slice(beforeUp).includes('working…'));
+
+    const beforeSecond = tui.mark();
+    tui.send('\u001b[A');
+    await tui.waitFor('you> RECALL_MIDDLE prompt', { timeoutMs: 30_000, from: beforeSecond, settleMs: 400 });
+    assert('the duplicate submission collapsed, so Up reaches the previous distinct prompt',
+      tui.frame.includes('you> RECALL_MIDDLE prompt') && /history 2\/3/.test(tui.frame));
+
+    const beforeThird = tui.mark();
+    tui.send('\u001b[A');
+    await tui.waitFor('you> RECALL_OLDEST from an earlier session', { timeoutMs: 30_000, from: beforeThird, settleMs: 400 });
+    const oldest = tui.frame;
+    assert('recall reaches prompts from an earlier session of the same project',
+      oldest.includes('you> RECALL_OLDEST from an earlier session'));
+    assert('the oldest entry says so rather than wrapping around', /history 3\/3 \(oldest\)/.test(oldest));
+    assert('and it states the prompt it refused to offer back',
+      /long prompt\(s\) skipped/.test(oldest));
+
+    // Nothing changes here, so there is no new frame to anchor on: the assertion is
+    // that the draft and the row are still the same ones a beat later.
+    tui.send('\u001b[A');
+    await settle();
+    assert('Up at the oldest entry holds still, and does not wrap to the newest',
+      tui.frame.includes('you> RECALL_OLDEST from an earlier session') &&
+        tui.frame.includes('history 3/3 (oldest)'));
+
+    // An expanded skill body is in the record and must never be in the editor.
+    assert('the expanded skill body is never offered back', !tui.screen.includes('RECALL_EXPANSION_BODY'));
+
+    // Down walks forward, and past the newest it leaves the empty draft it started from.
+    const beforeDown = tui.mark();
+    tui.send('\u001b[B\u001b[B');
+    await tui.waitFor('you> RECALL_NEWEST prompt', { timeoutMs: 30_000, from: beforeDown, settleMs: 400 });
+    assert('Down walks back towards the newest prompt', /history 1\/3/.test(tui.frame));
+    const beforePast = tui.mark();
+    tui.send('\u001b[B');
+    await tui.waitFor(/you>\s*(?:\r?\n|$)/, { timeoutMs: 30_000, from: beforePast, settleMs: 400 });
+    const ended = tui.frame;
+    assert('past the newest, the draft is the empty one the walk started from',
+      !ended.includes('RECALL_NEWEST prompt'));
+    assert('and the indicator row goes with it', !ended.includes('history 1/3'));
+
+    // The binding: a multi-row draft keeps both arrows for cursor movement. Typed, so
+    // the draft is not a recalled entry — recall never replaces text the user typed.
+    // Text and the newline in separate *events*: a single write ending in `\n` is a
+    // batched Enter and would submit the draft (`chunkedEnter`), which would cost this
+    // scenario a model call — so each keystroke is awaited before the next is sent, and
+    // Ctrl+J on its own inserts the row break.
+    const beforeMultiline = tui.mark();
+    tui.send('first typed row');
+    await tui.waitFor('you> first typed row', { timeoutMs: 30_000, from: beforeMultiline, settleMs: 400 });
+    const beforeBreak = tui.mark();
+    tui.send('\n');
+    await tui.waitFor('...> ', { timeoutMs: 30_000, from: beforeBreak, settleMs: 400 });
+    const beforeSecondRow = tui.mark();
+    tui.send('second typed row');
+    await tui.waitFor('...> second typed row', { timeoutMs: 30_000, from: beforeSecondRow, settleMs: 400 });
+    // Cursor movement changes no text, so — like the still Up above — there is no new
+    // frame to anchor on and the assertion is what the frame shows a beat later.
+    tui.send('\u001b[A');
+    await settle();
+    const moved = tui.frame;
+    assert('Up in a multi-line draft moves the cursor and does not recall',
+      moved.includes('you> first typed row') && moved.includes('...> second typed row') &&
+        !moved.includes('RECALL_NEWEST'));
+    assert('and no recall row is drawn for a draft the user typed', !moved.includes('history '));
+
+    // Once at the top row, Up still must not replace typed text.
+    tui.send('\u001b[A');
+    await settle();
+    assert('Up at the first row of a typed draft recalls nothing',
+      tui.frame.includes('you> first typed row') && !tui.frame.includes('RECALL_NEWEST'));
+
+    // The menu keeps both arrows. `/` opens the command menu, which is the state where
+    // Up must select a row rather than reach into history.
+    // Down (outside a walk) and End put the cursor back at the end of the draft, which
+    // is where backspace has to start to clear it; it crosses the row break on the way
+    // (see `multiline`).
+    tui.send('\u001b[B');
+    tui.send('\u001b[F');
+    await settle(200);
+    tui.send('\u007f'.repeat('first typed row\nsecond typed row'.length + 4));
+    const beforeMenu = tui.mark();
+    tui.send('/');
+    await tui.waitFor('commands (', { timeoutMs: 30_000, from: beforeMenu, settleMs: 400 });
+    tui.send('\u001b[A');
+    await settle();
+    const menu = tui.frame;
+    assert('Up with a command menu open selects a row and does not recall',
+      menu.includes('commands (') && menu.includes('you> /') && !menu.includes('RECALL_NEWEST'));
+    assert('and draws no recall row either', !menu.includes('history 1/3'));
+
+    tui.send('\u007f');
+    tui.send('\u0004');
+    assert('recall scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+
+    // The whole feature is a reader: what it read is byte-identical afterwards.
+    assert('every trajectory record is byte-identical after recall',
+      (await digest(older)) === before[0] && (await digest(newer)) === before[1]);
+    let pointerExists = true;
+    try {
+      await readFile(sessionPaths(dir).pointerFile, 'utf8');
+    } catch {
+      pointerExists = false;
+    }
+    assert('and the resume pointer was never written by a session that only recalled',
+      !pointerExists);
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * A project with no record at all, and a session configured not to write one: both
+ * degrade to "no history" with a usable editor, and neither is an error.
+ */
+async function promptRecallWithoutRecord(): Promise<void> {
+  header('TUI — no trajectory record degrades to no history, not to an error');
+
+  const dir = '/tmp/darwin-recall-empty-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  // `trajectory: false` is a supported configuration, so recall has to be usable in a
+  // session that records nothing at all.
+  await writeHomeConfig({ trajectory: false });
+
+  const tui = startTui({ cwd: dir, cols: 100, rows: 30 });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const beforeUp = tui.mark();
+    tui.send('\u001b[A');
+    await tui.waitFor('history: no earlier prompts in this project', {
+      timeoutMs: 30_000,
+      from: beforeUp,
+      settleMs: 400,
+    });
+    const empty = tui.frame;
+    assert('a project with no record says so in one row',
+      empty.includes('history: no earlier prompts in this project'));
+    assert('nothing is reported as a failure',
+      !tui.screen.slice(beforeUp).includes('could not') && !tui.screen.slice(beforeUp).includes('Error'));
+
+    // Usable: the editor still takes text, and the notice goes away when it does.
+    const beforeType = tui.mark();
+    tui.send('still typable');
+    await tui.waitFor('you> still typable', { timeoutMs: 30_000, from: beforeType, settleMs: 400 });
+    assert('the editor is untouched by an empty history',
+      tui.frame.includes('you> still typable') && !tui.frame.includes('no earlier prompts'));
+
+    tui.send('\u007f'.repeat('still typable'.length));
+    tui.send('\u0004');
+    assert('empty-history scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+    await rm(HOME_CONFIG, { force: true });
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -2150,6 +2383,8 @@ const SCENARIOS = {
   cursor: cursorEditing,
   completion: slashCompletion,
   pathCompletion,
+  recall: promptRecall,
+  recallEmpty: promptRecallWithoutRecord,
   clear: clearSession,
   toolDetails: toolDetailsToggle,
   agents: agentDispatches,

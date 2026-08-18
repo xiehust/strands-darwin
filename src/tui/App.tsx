@@ -38,6 +38,10 @@ import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
+import {
+  readPromptHistory,
+  type PromptHistory,
+} from '../trajectory/prompt-history.js';
 import { InputBox, MAX_COMPLETIONS, type CompletionKind } from './InputBox.js';
 import { LIVE_BLOCK_CHROME_ROWS, wrapToRows } from './live-text.js';
 import {
@@ -72,6 +76,13 @@ import {
   workspacePathsNote,
   type WorkspacePaths,
 } from './path-completion.js';
+import {
+  openPromptRecall,
+  promptRecallIndicator,
+  stepPromptRecall,
+  type PromptRecall,
+  type RecallDirection,
+} from './prompt-recall.js';
 
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { formatDispatchCompletion, formatDispatchesReport } from './subagent-format.js';
@@ -252,10 +263,49 @@ export function App({
     [pathQueryText, workspacePaths],
   );
 
+  // Prompt recall. `undefined` history means "not read yet", which is a different
+  // answer from an empty reading and is stated as such on the indicator row: claiming
+  // a project has no earlier prompts before its record has been opened would be a lie
+  // in the one row the user is reading.
+  const [history, setHistory] = useState<PromptHistory | undefined>(undefined);
+  const [recall, setRecallState] = useState<PromptRecall | undefined>(undefined);
+  // Same immediate-mirror reason as `editorRef`: several stdin events can be batched
+  // into one React pass, and two Up presses in that pass must walk two entries.
+  const recallRef = useRef(recall);
+  const setRecall = useCallback((next: PromptRecall | undefined) => {
+    recallRef.current = next;
+    setRecallState(next);
+  }, []);
+  // Read bookkeeping, in a ref for the same reason the path scan's is: a landed read
+  // must not re-trigger the thing that started it. `stale` is set when a turn ends —
+  // that is when the turn's own `userInput` line reaches the file (one append per turn),
+  // so the next Up re-reads instead of offering a history that stops one prompt short.
+  const historyRead = useRef({ root: '', inFlight: false, stale: true });
+  const requestHistory = useCallback(() => {
+    const root = runtime.info.projectRoot;
+    const state = historyRead.current;
+    if (state.inFlight) return;
+    if (state.root === root && !state.stale) return;
+    state.root = root;
+    state.inFlight = true;
+    state.stale = false;
+    // Never awaited by a keystroke, exactly like the workspace scan: the editor renders
+    // from whatever the last reading produced (nothing, on the very first Up) and
+    // re-renders when one lands. `readPromptHistory` cannot reject.
+    void readPromptHistory(root)
+      .then(setHistory)
+      .finally(() => {
+        state.inFlight = false;
+      });
+  }, [runtime]);
+
   const completionKind: CompletionKind = commandCompletions.length > 0 ? 'command' : 'path';
   const completions = completionKind === 'command' ? commandCompletions : pathCompletions;
   const completionNote =
     completionKind === 'path' && completions.length > 0 ? workspacePathsNote(workspacePaths) : undefined;
+  // One row while a walk is open, composed where the walk lives so the budget below and
+  // the box that draws it are counting the same thing.
+  const recallIndicator = recall === undefined ? undefined : promptRecallIndicator(recall);
 
   // Every participant of the redrawn frame states what it wants; the header is the
   // only one measured. The grants are what each box is then allowed to draw, and
@@ -281,6 +331,7 @@ export function App({
               completions: offeredCompletions,
               moreCompletions: completions.length > offeredCompletions,
               hasHint: streamingHint !== undefined,
+              hasRecall: recallIndicator !== undefined,
             }),
             // The row the cursor is on. Everything else in the region can go.
             floor: 1,
@@ -372,6 +423,11 @@ export function App({
         dispatch({ type: 'turnEnded' });
         setStatus('idle');
         interruptedAt.current = undefined;
+        // The turn's own `userInput` line reaches the record when the turn closes (one
+        // append per turn), so this is the moment the reading in memory is one prompt
+        // short. Marked, never re-read here: the next `Up` pays for it, and a session
+        // that never recalls never opens the file at all.
+        historyRead.current.stale = true;
       }
 
       // Post-turn context-pressure check: free heuristic, idle-only, never
@@ -727,6 +783,11 @@ export function App({
     [permissions, runtime],
   );
 
+  /** Any edit ends the walk: the draft is the user's again, not an entry from the record. */
+  const endRecall = useCallback(() => {
+    if (recallRef.current !== undefined) setRecall(undefined);
+  }, [setRecall]);
+
   const acceptCompletion = useCallback(() => {
     const chosen = completions[selectedCompletion] ?? completions[0];
     if (chosen === undefined) return;
@@ -745,7 +806,85 @@ export function App({
     }
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
-  }, [completionKind, completions, selectedCompletion, setEditor]);
+    endRecall();
+  }, [completionKind, completions, endRecall, selectedCompletion, setEditor]);
+
+  /**
+   * Puts a recalled prompt in the draft, cursor at its end.
+   *
+   * The end, not the start, is what makes walking further back work on a multi-row
+   * prompt: `Up` moves up through its rows first and only steps to an older entry from
+   * the top one, which is the rule that leaves `moveVertical` intact.
+   */
+  const applyRecalled = useCallback((text: string) => {
+    setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
+    preferredColumn.current = undefined;
+    // A recalled `/…` prompt reopens the command menu, so the selection has to start
+    // from the top of it rather than from wherever the last menu was left.
+    setSelectedCompletion(0);
+  }, [setEditor]);
+
+  /**
+   * `Up`/`Down` as prompt recall, or `false` when this keypress is not recall at all.
+   *
+   * Returning `false` is the whole contract: the caller then falls through to
+   * `moveVertical`, so cursor movement in a multi-line draft is untouched, and a
+   * completion menu never reaches here because `App` handles menu selection first.
+   * State is read from the mirrors rather than from the render, because several stdin
+   * events can arrive in one React pass.
+   */
+  const stepRecall = useCallback((direction: RecallDirection): boolean => {
+    const current = recallRef.current;
+    const value = editorRef.current;
+
+    if (current === undefined) {
+      // Only from an empty draft: typed text is never replaced by a recalled prompt,
+      // which is why no stashed draft has to exist for this to be safe.
+      if (direction !== 'older' || value.text !== '') return false;
+      // A reading that a finished turn has marked stale — or one still arriving — opens a
+      // *pending* walk rather than offering last time's answer: the prompt a user wants
+      // right after a turn is usually the one that turn just sent. Read before
+      // `requestHistory()`, which clears the flag it is asking about. (A record append is
+      // scheduled at turn end, not awaited, so a prompt whose write is still in flight
+      // arrives in the reading after it — sub-millisecond in practice.)
+      const known =
+        historyRead.current.stale || historyRead.current.inFlight ? undefined : history;
+      // Started here rather than at startup, like the workspace scan: a session that
+      // never presses Up never opens a record.
+      requestHistory();
+      const opened = openPromptRecall(known);
+      setRecall(opened.recall);
+      if (opened.text !== undefined) applyRecalled(opened.text);
+      return true;
+    }
+
+    // Laid out from the mirror, not from the render's `layout`: that one may describe a
+    // draft an earlier event in this same batch has already replaced.
+    const shape = layoutEditor(value.text, columns, value.cursor);
+    const cursorRow = shape.cursor.row;
+    const rowCount = shape.rows.length;
+    // Inside a walk the arrows still move the cursor first: older only from the top
+    // row, newer only from the bottom one. Nothing above or below to move to is what
+    // makes the key mean "step in history" instead.
+    if (direction === 'older' ? cursorRow !== 0 : cursorRow !== rowCount - 1) return false;
+
+    const step = stepPromptRecall(current, direction);
+    setRecall(step.recall);
+    if (step.text !== undefined) applyRecalled(step.text);
+    return true;
+  }, [applyRecalled, columns, history, requestHistory, setRecall]);
+
+  // A walk opened before the read landed is finished here, once, and only while the
+  // draft is still the empty one it was opened on — a read that lands after the user
+  // started typing must not overwrite what they typed.
+  useEffect(() => {
+    const current = recallRef.current;
+    if (current === undefined || !current.pending) return;
+    if (history === undefined || editorRef.current.text !== '') return;
+    const opened = openPromptRecall(history);
+    setRecall(opened.recall);
+    if (opened.text !== undefined) applyRecalled(opened.text);
+  }, [applyRecalled, history, setRecall]);
 
   const handleInterrupt = useCallback(() => {
     const now = Date.now();
@@ -829,6 +968,7 @@ export function App({
       );
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
+      endRecall();
       return;
     }
 
@@ -836,6 +976,7 @@ export function App({
       setEditor((current) => deleteWordBefore(current));
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
+      endRecall();
       return;
     }
 
@@ -853,6 +994,7 @@ export function App({
         setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
         preferredColumn.current = undefined;
         setSelectedCompletion(0);
+        endRecall();
         return;
       }
 
@@ -862,6 +1004,9 @@ export function App({
         acceptCompletion();
         return;
       }
+      // Submitting is the end of the walk too: the record's entry has become this
+      // session's prompt, and the indicator has nothing left to describe.
+      endRecall();
       void submit(editorRef.current.text);
       return;
     }
@@ -885,11 +1030,13 @@ export function App({
         setEditor(leadingEnter === undefined ? continued : insertAtCursor(continued, normalizeDraftText(payload)));
         preferredColumn.current = undefined;
         setSelectedCompletion(0);
+        endRecall();
         return;
       }
       const next = leadingEnter === undefined
         ? beforeEnter
         : insertAtCursor(beforeEnter, normalizeDraftText(payload));
+      endRecall();
       void submit(next.text);
       return;
     }
@@ -900,6 +1047,7 @@ export function App({
       setEditor((current) => insertAtCursor(current, '\n'));
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
+      endRecall();
       return;
     }
 
@@ -942,6 +1090,10 @@ export function App({
     }
 
     if (key.upArrow || key.downArrow) {
+      // Recall is consulted here — after the completion menu has had both keys, and
+      // before `moveVertical` — and answers `false` for every keypress that is ordinary
+      // cursor movement, which is what leaves a multi-line draft's rows navigable.
+      if (stepRecall(key.upArrow ? 'older' : 'newer')) return;
       const moved = moveVertical(layout, key.upArrow ? -1 : 1, preferredColumn.current);
       setEditor((current) => ({ ...current, cursor: moved.cursor }));
       preferredColumn.current = moved.preferredColumn;
@@ -952,6 +1104,7 @@ export function App({
       setEditor((current) => key.backspace ? backspaceAtCursor(current) : deleteAtCursor(current));
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
+      endRecall();
       return;
     }
 
@@ -967,6 +1120,7 @@ export function App({
     setEditor((current) => insertAtCursor(current, printable));
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
+    endRecall();
   });
 
   usePaste((pasted) => {
@@ -978,6 +1132,7 @@ export function App({
     setEditor((current) => insertAtCursor(current, text));
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
+    endRecall();
   });
 
   return (
@@ -1021,6 +1176,7 @@ export function App({
             offset={{ top: chrome.top, left: chrome.left }}
             maxRows={grants.prompt}
             hint={streamingHint}
+            recallIndicator={recallIndicator}
           />
         )}
       </Box>
