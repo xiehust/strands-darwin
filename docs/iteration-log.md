@@ -825,3 +825,39 @@ Token spend, single managed task: `input=200 output=52,109 cacheRead=10,652,629 
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-18 | `a443981` | Inspect MCP servers, states, tools and config provenance with `/mcp` |
+
+### Batch 22 — in-session transcript export (2026-08-18)
+
+One managed child task in child session `session-20260818-104704270`
+(`bg-d5b3a70c-ed8a-427e-84be-5f12bd119c95`, exit 0), run `--yolo --context-offload` with no
+model-call ceiling and launched from repository source at `c6f5628`. No correction turn was needed.
+This is `SER-019`, the third and final direction of the rolled `peer`-path research batch recorded
+in [`docs/research/research_2026-08-18.md`](./research/research_2026-08-18.md) (run `09:15:03Z`).
+
+The implementation is a fifth reader over the record the session is already writing:
+`/export <path>` (14th built-in) projects the current session's trajectory through the same
+`replayRead`/`formatReplay` pipeline `darwin trajectory replay` prints — a commented header names
+the record, and the body below it is byte-identical to a replay, so the two can never disagree.
+`src/trajectory/export.ts` imports no `Agent`, no `Model` and nothing from Ink; the record is never
+opened for writing and the resume pointer never moves. Path discipline: relative targets resolve
+against the project root, an existing target is refused atomically via `wx` rather than checked
+first, targets inside `~/.darwin/sessions/` are refused (a transcript there would look like a
+record to every scanner), and an unwritable path costs one error notice. Absence is an answer:
+`trajectory: false`, a record-less session and a zero-turn record each read as "nothing to export"
+with no file written. Clipboard and `$EDITOR` integration were deliberately excluded as
+environment-dependent and SSH-hostile.
+
+Host acceptance independently read the full 13-file commit and re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (exit 0, 43 suite summaries, all `0 failed`); the new `verify-export-command.ts` (32);
+the free pty `completion` (35, `/export` row asserted), `mcp` (9) and `recall` (20); Trellis
+validation; `git diff --check`; and a 12-assertion Host-written probe against a real recorded
+session of this project: record and resume pointer byte-identical by sha256 after the export, body
+byte-identical to `formatReplay`, overwrite refusal leaving the target byte-identical, the
+sessions-directory guard, both absence readings writing no file, usage on a missing argument, and
+an unwritable directory degrading to one error notice. No live model call was needed.
+
+Token spend, single managed task: `input=166 output=39,371 cacheRead=7,563,025 cacheWrite=137,870`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-18 | `dd08f8f` | Export the current session's transcript to a file with `/export` |
