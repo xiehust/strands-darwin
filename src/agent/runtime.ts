@@ -36,6 +36,7 @@ import {
   loadConfig,
   loadProjectPolicy,
   permissionRulesPath,
+  removeAllowRules,
   saveEnabledModel,
   saveThinkingEffort,
   withModelChoice,
@@ -61,7 +62,7 @@ import {
   loadProjectInstructions,
   type ProjectInstructionsSummary,
 } from './instructions.js';
-import { PermissionGate, type ApprovalMode, type PermissionBridge, type PermissionModeChange } from './permission.js';
+import { PermissionGate, type AllowRuleEntry, type ApprovalMode, type PermissionBridge, type PermissionModeChange } from './permission.js';
 import {
   applySystemPromptCachePoint,
   canUpdateSystemPromptCache,
@@ -775,6 +776,33 @@ export class AgentRuntime {
   async saveAllowRule(rule: string): Promise<void> {
     this.gate.addAllowRule(rule);
     await appendAllowRule(this.projectRoot, rule);
+  }
+
+  /**
+   * The live allow-rules with their provenance — config-loaded vs granted this
+   * session — for the `/permissions` report. Read live from the gate, like
+   * {@link allowRuleCount}.
+   */
+  listAllowRules(): readonly AllowRuleEntry[] {
+    return this.gate.listAllowRules();
+  }
+
+  /**
+   * Revokes allow-rules, on the user's instruction only.
+   *
+   * The gate stops honouring them *before* this returns — the live rule list is
+   * the enforcement surface, so the very next matching call prompts again — and
+   * `saved` is the persistence of exactly the rules that were live, reported by
+   * the caller rather than awaited (the grant flow's shape, and the same
+   * degradation: a failed write costs the file, not the session — the rule only
+   * resurrects in the next process). Rules that were not live are skipped, never
+   * "revoked": persisting the removal of a rule that was never in force would
+   * make this command able to edit the file beyond narrowing what it showed.
+   */
+  revokeAllowRules(rules: readonly string[]): { removed: string[]; saved: Promise<void> } {
+    const removed = rules.filter((rule) => this.gate.removeAllowRule(rule));
+    const saved = removed.length === 0 ? Promise.resolve() : removeAllowRules(this.projectRoot, removed);
+    return { removed, saved };
   }
 
   /**

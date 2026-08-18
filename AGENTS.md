@@ -125,7 +125,17 @@ too). Three constraints are load-bearing, not incidental: a bash pattern must ma
 chained segment and never matches redirection/substitution; no rule may ever cover a write to
 `~/.darwin/config.json` or `.env*` (else the agent can widen its own permissions); and an exempt
 call is offered no rule at all, because an offer that could never apply is a lie told in a
-security prompt.
+security prompt. **`/permissions` is the narrowing half of that lifecycle, and only ever
+narrows**: it lists every live rule with its origin (`configured` from the rules file vs
+`granted this session`, tracked per rule in the gate) and `revoke <n|rule|all>` removes it from
+the gate *synchronously* — the live rule list is the enforcement surface, so the very next
+matching call prompts again — with the file write filter-only (`removeAllowRules` writes the
+loaded set minus exactly the revoked rules, so a session-granted rule that was persisted comes
+out of the file too) and reported, not awaited, on the grant flow's degradation terms. It is
+user-only like `/mode` (handled before the agent, above the busy check because revoking
+mid-turn is the point) and has no add form at all — additions stay exclusively with the
+permission prompt. Adding the twelfth built-in grew `MAX_COMPLETIONS` with it; the free checks
+are `spike/verify-permissions-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`.
 
 
 **Skills** (`src/skills/`): Darwin uses the official SDK `AgentSkills`/`Skill` core. A thin

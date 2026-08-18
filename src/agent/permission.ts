@@ -244,6 +244,21 @@ const MAX_MODE_CHANGE_RESTARTS = 16;
 /** A decision abandoned because the mode changed while it was pending. */
 const WITHDRAWN = Symbol('withdrawn');
 
+/**
+ * Where a live allow-rule came from. `configured` means it was loaded from the
+ * project's `permission-rules.json` at startup; `session` means the user granted
+ * it in a confirmation prompt during this session. A configured rule that is
+ * revoked and later re-granted reads as `session`, because that is when the
+ * authority it carries was actually given.
+ */
+export type AllowRuleOrigin = 'configured' | 'session';
+
+/** One live allow-rule with its provenance, for the `/permissions` report. */
+export interface AllowRuleEntry {
+  rule: string;
+  origin: AllowRuleOrigin;
+}
+
 /** What a mode change did, for the notice that reports it. */
 export interface PermissionModeChange {
   /** The mode now in force. */
@@ -264,6 +279,13 @@ export class PermissionGate extends InterventionHandler {
   private readonly rules: string[];
 
   /**
+   * Provenance of every rule in {@link rules}, keyed by the rule string. Kept as
+   * a side table rather than widening `rules` because the decision path
+   * (`matchesAnyRule`) reads the plain strings and must stay unchanged.
+   */
+  private readonly ruleOrigins = new Map<string, AllowRuleOrigin>();
+
+  /**
    * Live enforcement policy, not `options.mode`: `/mode` moves it mid-session and
    * every decision — parent and child, since they share this instance — reads it
    * from here.
@@ -279,6 +301,7 @@ export class PermissionGate extends InterventionHandler {
   constructor(private readonly options: PermissionGateOptions) {
     super();
     this.rules = [...(options.allowRules ?? [])];
+    for (const rule of this.rules) this.ruleOrigins.set(rule, 'configured');
     this.currentMode = options.mode;
   }
 
@@ -322,12 +345,38 @@ export class PermissionGate extends InterventionHandler {
    * writing it to the config fails.
    */
   addAllowRule(rule: string): void {
-    if (!this.rules.includes(rule)) this.rules.push(rule);
+    if (this.rules.includes(rule)) return;
+    this.rules.push(rule);
+    this.ruleOrigins.set(rule, 'session');
+  }
+
+  /**
+   * Stops honouring a rule immediately: the very next matching call goes back
+   * through the ordinary decision path and prompts. Removal-only by construction
+   * — this is the narrowing half of the rule lifecycle, and there is nothing it
+   * can add. Returns whether the rule was live, so the caller can refuse to
+   * "revoke" (and persist the removal of) a rule that was never in force.
+   */
+  removeAllowRule(rule: string): boolean {
+    const index = this.rules.indexOf(rule);
+    if (index === -1) return false;
+    this.rules.splice(index, 1);
+    this.ruleOrigins.delete(rule);
+    return true;
   }
 
   /** Rules currently in effect, config and session alike. */
   get allowRules(): readonly string[] {
     return this.rules;
+  }
+
+  /**
+   * The live rules with their provenance, in the order they are consulted.
+   * A fresh array per call: the report must not hand out a mutable window onto
+   * the enforcement surface.
+   */
+  listAllowRules(): AllowRuleEntry[] {
+    return this.rules.map((rule) => ({ rule, origin: this.ruleOrigins.get(rule) ?? 'session' }));
   }
 
   /**

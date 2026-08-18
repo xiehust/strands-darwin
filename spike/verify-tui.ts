@@ -842,6 +842,7 @@ async function slashCompletion(): Promise<void> {
     // row, so the bare-name form would pass with /mode missing entirely.
     assert('the built-in /mode is listed', completed.includes('  /mode — set the permission mode'));
     assert('the built-in /model is listed', completed.includes('  /model — list or switch models'));
+    assert('the built-in /permissions is listed', completed.includes('  /permissions'));
     assert('the built-in /tasks is listed', completed.includes('  /tasks'));
     assert('the built-in /trajectory is listed', completed.includes('  /trajectory'));
     assert('the built-in /usage is listed', completed.includes('  /usage'));

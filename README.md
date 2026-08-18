@@ -699,8 +699,13 @@ pattern must match **every** chained segment (`pnpm build && rm -rf /` does not 
 broad rule would let the agent grant itself more of them. And nothing is remembered
 implicitly: a plain `y` stays a one-time answer.
 
-Edit or delete rules by editing the file; an unparseable rule is a startup error rather
-than a rule that silently never matches.
+`/permissions` lists every rule in force with its origin — loaded from the file, or
+granted this session — and `/permissions revoke <n|rule|all>` removes one (or all of
+them) from the live gate *and* from the file, so the next matching call asks again and a
+fresh process does not resurrect it. The command only ever narrows: new rules keep coming
+exclusively from the prompt's "always allow" options. Editing the file by hand still
+works; an unparseable rule is a startup error rather than a rule that silently never
+matches.
 
 ## MCP servers
 

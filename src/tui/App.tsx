@@ -20,6 +20,7 @@ import {
   APPROVAL_MODES,
   describeApprovalMode,
   isApprovalMode,
+  type AllowRuleEntry,
   type PermissionDecision,
 } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
@@ -512,6 +513,21 @@ export function App({
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
         applyModeCommand(runtime, text, dispatch);
+        return;
+      }
+
+      // Before the busy check for the same reason as /mode: revocation only ever
+      // *narrows* what runs silently, and mid-turn is exactly when a rule that
+      // turned out too broad needs pulling — the gate stops honouring it before
+      // this handler returns, so the very next matching call prompts. User-only
+      // like /mode: this never reaches the agent, and there is no tool that can
+      // invoke it. Additions have no path through here; they stay exclusively
+      // with the permission-prompt grant flow.
+      if (text === '/permissions' || text.startsWith('/permissions ')) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        applyPermissionsCommand(runtime, text, dispatch);
         return;
       }
 
@@ -1645,6 +1661,126 @@ function applyModeCommand(
     ...(change.mode === 'yolo' ? { severity: 'warn' as const } : {}),
   });
 }
+
+/**
+ * The `/permissions` listing: every live allow-rule, numbered, with its origin.
+ *
+ * Origin is stated per rule because the two kinds answer different questions —
+ * a `configured` rule was a deliberate entry in the project's permission-rules
+ * file, a `granted this session` rule is minutes old and the more likely
+ * revocation target. Exported for the free spike, like `formatUsageReport`.
+ */
+export function formatPermissionRulesReport(
+  entries: readonly AllowRuleEntry[],
+  rulesFile: string,
+): string {
+  if (entries.length === 0) {
+    return (
+      'no allow-rules in effect — every non-safe call asks\n' +
+      `  rules come from the permission prompt\u2019s "always allow" options, or from ${rulesFile}`
+    );
+  }
+  const rows = entries.map(
+    (entry, index) =>
+      `  ${index + 1}. ${entry.rule} — ${entry.origin === 'configured' ? 'configured' : 'granted this session'}`,
+  );
+  return [
+    `allow-rules in effect (${entries.length}) — configured rules load from ${rulesFile}`,
+    ...rows,
+    '  /permissions revoke <n|rule|all> revokes; new rules come only from the permission prompt',
+  ].join('\n');
+}
+
+/**
+ * Runs `/permissions`, dispatching whatever notice it earns.
+ *
+ * Listing and revoking share one entry point, like `/mode`: both answer "what
+ * runs without asking right now". This command can only ever *narrow*: there is
+ * no argument form that adds or rewrites a rule, so a parsing bug costs an
+ * unrevoked rule (visible in the listing) or an extra prompt, never a widening.
+ *
+ * Revocation takes effect on the gate synchronously — the very next matching
+ * tool call prompts again — and the file write is reported rather than awaited,
+ * exactly like the grant flow: a failed write means the rule is gone for this
+ * session but will load again next process, and the notice says so.
+ */
+export function applyPermissionsCommand(
+  runtime: AgentRuntime,
+  text: string,
+  dispatch: (action: TurnAction) => void,
+): void {
+  const argument = text.slice('/permissions'.length).trim();
+  const usage = 'usage: /permissions — list allow-rules · /permissions revoke <n|rule|all>';
+
+  if (argument === '') {
+    dispatch({
+      type: 'notice',
+      text: formatPermissionRulesReport(runtime.listAllowRules(), runtime.info.permissionRulesPath),
+    });
+    return;
+  }
+
+  const separator = argument.search(/\s/);
+  const verb = separator === -1 ? argument : argument.slice(0, separator);
+  // The verb is case-insensitive; the target never is, because rules are exact
+  // strings and `bash:PNPM *` is not `bash:pnpm *`.
+  const target = separator === -1 ? '' : argument.slice(separator).trim();
+
+  if (verb.toLowerCase() !== 'revoke') {
+    dispatch({ type: 'notice', text: `${verb} is not a /permissions subcommand\n  ${usage}` });
+    return;
+  }
+  if (target === '') {
+    dispatch({ type: 'notice', text: `revoke needs a target\n  ${usage}` });
+    return;
+  }
+
+  const entries = runtime.listAllowRules();
+  let targets: readonly string[];
+  if (target.toLowerCase() === 'all') {
+    targets = entries.map((entry) => entry.rule);
+    if (targets.length === 0) {
+      dispatch({ type: 'notice', text: 'no allow-rules in effect — nothing to revoke' });
+      return;
+    }
+  } else {
+    // An index from the listing, or the exact rule string. Index wins for a
+    // purely numeric target: rules carry a tool name, so none is all digits.
+    const index = /^\d+$/.test(target) ? Number(target) : undefined;
+    const chosen = index !== undefined ? entries[index - 1] : entries.find((entry) => entry.rule === target);
+    if (chosen === undefined) {
+      dispatch({
+        type: 'notice',
+        text: `${target} matches no live allow-rule — nothing revoked\n  /permissions lists them with their numbers`,
+      });
+      return;
+    }
+    targets = [chosen.rule];
+  }
+
+  const { removed, saved } = runtime.revokeAllowRules(targets);
+  const headline =
+    removed.length === 1
+      ? `revoked ${removed[0]} — the next matching call will ask again`
+      : `revoked ${removed.length} allow-rules — the next matching calls will ask again`;
+  saved.then(
+    () => {
+      dispatch({ type: 'notice', text: `${headline}\n  removed from ${runtime.info.permissionRulesPath}` });
+    },
+    (error: unknown) => {
+      dispatch({
+        type: 'notice',
+        text:
+          `${headline}, but this session only — could not write ` +
+          `${runtime.info.permissionRulesPath}: ${error instanceof Error ? error.message : String(error)}\n` +
+          '  a fresh process will load the rule again',
+        // The gate already stopped honouring it; only the file lost out.
+        severity: 'warn',
+      });
+    },
+  );
+}
+
 
 /** One line covering both what was asked for and what the model will actually do. */
 function describeThinking(plan: ThinkingPlan): string {

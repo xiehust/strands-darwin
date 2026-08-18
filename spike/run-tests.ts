@@ -25,6 +25,7 @@ const suites = [
   'verify-permission-presentation.ts',
   'verify-permission-modes.ts',
   'verify-permission-mode-switch.ts',
+  'verify-permissions-command.ts',
   'verify-tool-hooks.ts',
   'verify-mcp-config.ts',
   'verify-skills.ts',

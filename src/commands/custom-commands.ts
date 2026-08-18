@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'mode', 'model', 'tasks', 'trajectory', 'usage'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'mode', 'model', 'permissions', 'tasks', 'trajectory', 'usage'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -30,6 +30,9 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // the menu, so both descriptions have to say which is which.
   mode: 'set the permission mode',
   model: 'list or switch models',
+  // Allow-rules, not the mode: /permissions lists and revokes what runs silently,
+  // /mode moves how much everything else asks.
+  permissions: 'list or revoke allow-rules',
   tasks: 'list background jobs',
   // The record this session is writing, not the CLI's search/fork/replay verbs.
   trajectory: 'this session\u2019s recorded trajectory',

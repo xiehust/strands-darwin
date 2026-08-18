@@ -1033,6 +1033,21 @@ export async function appendAllowRule(projectRoot: string, rule: string): Promis
   await writeConfigRecord(permissionRulesPath(projectRoot), { allow });
 }
 
+/**
+ * Persists a revocation: removes the given rules from the project-scoped file,
+ * promoting legacy rules on first write exactly like {@link appendAllowRule}.
+ *
+ * Filter-only by construction — what is written is the set the loader already
+ * reported as in force, minus the revoked rules. There is no path through here
+ * that can add or rewrite a rule, so a bug in a caller costs at most an extra
+ * prompt, never a silent widening.
+ */
+export async function removeAllowRules(projectRoot: string, rules: readonly string[]): Promise<void> {
+  const policy = await loadProjectPolicy(projectRoot);
+  const allow = policy.allowRules.filter((rule) => !rules.includes(rule));
+  await writeConfigRecord(permissionRulesPath(projectRoot), { allow });
+}
+
 function hooksFromRecord(record: Record<string, unknown> | undefined, file: string): ToolHooksConfig | undefined {
   return record?.['hooks'] === undefined ? undefined : hooksField(record['hooks'], file);
 }
