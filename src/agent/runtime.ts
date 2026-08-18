@@ -107,7 +107,7 @@ export interface RuntimeOptions {
   session: SessionSelector;
   /** Called once the effective id is known, before provider startup. */
   onSessionResolved?: (sessionId: string) => void;
-  /** Suppress unbounded MCP subprocess banners in the headless stderr protocol. */
+  /** Suppress unbounded MCP subprocess banners from the process terminal. */
   quietMcpStderr?: boolean;
   /** Asks the user to approve write and execute tool calls. */
   permissionBridge: PermissionBridge;

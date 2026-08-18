@@ -94,6 +94,9 @@ async function runInteractive(options: CliOptions): Promise<void> {
     runtime = await AgentRuntime.create({
       projectRoot,
       session: options.session,
+      // MCP servers are subprocesses outside Ink's renderer. Their banners and
+      // warnings must not write directly into the TUI frame.
+      quietMcpStderr: true,
       permissionBridge: permissions.bridge,
       ...(options.permissionModeOverride !== undefined && {
         permissionModeOverride: options.permissionModeOverride,

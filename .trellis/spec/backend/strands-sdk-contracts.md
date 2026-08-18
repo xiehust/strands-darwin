@@ -984,7 +984,10 @@ tool call is silently denied with no prompt shown.
   "missing file = no MCP" and `continueOnError: true`.
 - A failed server (bad command, unset `${VAR}`) is skipped, not fatal: `listTools()`
   returns `[]` for it. Deliberate trade-off; the header's server count is the only signal.
-- stdio servers are child processes — `disconnectAll()` must run on every exit path.
+- stdio servers are child processes — `disconnectAll()` must run on every exit path. Their stderr
+  is also outside both the Ink renderer and the bounded headless protocol, so every product entry
+  point loads them through `loadServersQuietly()`; `spike/verify-tui.ts mcpStderr` proves a real
+  server banner never reaches the interactive terminal.
 - **Duplicate tool names are fatal**: the SDK's `ToolRegistry.add` throws
   `ToolValidationError` during `agent.initialize()` when two servers expose the same tool
   name (`browser_close` ships in several published servers) or a server shadows a built-in

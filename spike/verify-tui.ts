@@ -19,7 +19,7 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion |
- *                 pathCompletion | recall | recallEmpty | clear |
+ *                 pathCompletion | recall | recallEmpty | clear | mcpStderr |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
@@ -2370,6 +2370,41 @@ async function promptRecallWithoutRecord(): Promise<void> {
   }
 }
 
+/** A stdio MCP banner must never write outside Ink and corrupt the startup frame. */
+async function mcpStderrIsolation(): Promise<void> {
+  header('TUI — stdio MCP stderr is isolated from the Ink frame');
+
+  await resetWorkDir();
+  const mcpConfig = path.join(OWNED_HOME, DARWIN_DIRNAME, 'mcp.json');
+  const marker = 'NOISY_MCP_STDERR_MUST_NOT_REACH_TUI';
+  await writeFile(
+    mcpConfig,
+    `${JSON.stringify({
+      mcpServers: {
+        noisy: {
+          command: process.execPath,
+          args: [path.join(import.meta.dirname, 'fixtures', 'noisy-mcp.mjs')],
+        },
+      },
+    }, null, 2)}\n`,
+    'utf8',
+  );
+
+  const tui = startTui({ cwd: WORK_DIR });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('the configured MCP server connected', tui.screen.includes('1 MCP server'));
+    assert('the server banner never reached the terminal', !tui.screen.includes(marker));
+
+    tui.submit('/exit');
+    assert('TUI exits cleanly with the stdio server connected',
+      (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+    await rm(mcpConfig, { force: true });
+  }
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -2386,6 +2421,7 @@ const SCENARIOS = {
   recall: promptRecall,
   recallEmpty: promptRecallWithoutRecord,
   clear: clearSession,
+  mcpStderr: mcpStderrIsolation,
   toolDetails: toolDetailsToggle,
   agents: agentDispatches,
   agentsMd: agentsMdHeader,
