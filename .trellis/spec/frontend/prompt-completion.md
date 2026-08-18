@@ -52,7 +52,9 @@ start of the draft or whitespace.
 ## Contract: two sources, and the first must not become ambiguous
 
 `computeCompletions` (slash commands) is computed first and **wins whenever it is non-empty**; the
-path query is consulted only then. `computeCompletions` itself is untouched by this feature —
+path query is consulted only then. A third owner of `Up`/`Down` joined them in `SER-015` and is
+behind both: while a menu is open the arrows select rows, and prompt recall is only consulted after
+those branches have declined the key (`prompt-recall.md`). `computeCompletions` itself is untouched by this feature —
 including its "the input must start with `/` and contain no space" rule — and
 `verify-tui.ts completion` remains the check that every built-in is still visible.
 

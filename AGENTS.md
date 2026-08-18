@@ -48,11 +48,14 @@ pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-ta
 ```
 
 `spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model`,
-`spike/verify-tui.ts mode`, `spike/verify-tui.ts clear`, `spike/verify-tui.ts completion` and
-`spike/verify-tui.ts pathCompletion` make no model calls at all, so all six are free to run;
+`spike/verify-tui.ts mode`, `spike/verify-tui.ts clear`, `spike/verify-tui.ts completion`,
+`spike/verify-tui.ts pathCompletion`, `spike/verify-tui.ts recall` and
+`spike/verify-tui.ts recallEmpty` make no model calls at all, so all eight are free to run;
 `completion` is the scenario to re-run after touching the built-in slash commands, since the menu row
-count (`MAX_COMPLETIONS`) has to keep every built-in visible, and `pathCompletion` is its `@`
-counterpart.
+count (`MAX_COMPLETIONS`) has to keep every built-in visible, `pathCompletion` is its `@`
+counterpart, and `recall` is the one that keeps `Up`/`Down` shared between the menu, the cursor and
+prompt history (its history is seeded straight into a trajectory record, which is why it costs
+nothing).
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
 calls. `spike/` is the test suite, not scratch space.
@@ -318,6 +321,29 @@ keystroke of matching, 0.1ms worst event-loop lag during a scan. And the second 
 the first ambiguous: `computeCompletions` is untouched and wins whenever it has candidates, the menu
 shares one `MAX_COMPLETIONS`, and a bounded or degraded scan is stated as a **suffix of the title
 row the menu already has**.
+
+**`Up`/`Down` recall previous prompts, read out of the record darwin already keeps — and they take no
+key that already had a meaning** (`src/trajectory/prompt-history.ts`, `src/tui/prompt-recall.ts`,
+spec: `.trellis/spec/frontend/prompt-recall.md`). There is no history store and there must never be
+one: every prompt a session sent is already a `userInput` line in
+`~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl`, so this is a *reader* over bytes
+that exist, proved read-only by hashing every record and the resume pointer before and after,
+grepping the module for write APIs, and reading with the AWS environment sabotaged. Four things are
+load-bearing. The **binding** is enforced by position, not by a predicate: the completion menu's
+`Up`/`Down` branches run first (so recall is unreachable with a `/` or `@` menu open), recall then
+fires only from an **empty draft** — or from the first visual row of a draft that *is* an open walk —
+and everything else falls through to `moveVertical`, which is what makes it *incapable* of replacing
+typed text and why no stashed draft exists. **History is what was sent**: local commands never reach
+`AgentRuntime.send` and so are absent, and a skill expansion (recorded expanded) is excluded by a
+4000-code-point cap set deliberately *below* the record's own 8000 field cap, because offering back a
+prompt this file truncated would mean silently re-sending a shortened one. The **read is bounded and
+never awaited by a keystroke**: 256 KiB *tails* of at most 20 records ordered by mtime, 100 entries
+kept, consecutive duplicates collapsed, started by the first `Up` and re-read when a turn ends —
+measured 2.6ms for 20 records with 0.00ms worst event-loop lag. And **absence is an answer**:
+`trajectory: false`, a damaged line and a first run each read as "no history" with a usable editor,
+stated on the one row recall draws (`history 3/12 · ↑ older ↓ newer — newest 100 of 137`), which is
+counted through `promptBoxWanted`/`planPromptBox` like every other row and never a header line. Free
+checks: `spike/verify-prompt-recall.ts`, `spike/verify-tui.ts recall` / `recallEmpty`.
 
 ## Project conventions worth knowing before editing
 

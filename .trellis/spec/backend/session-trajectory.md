@@ -281,7 +281,7 @@ Recording is an observer. It may not become a second reason a turn dies.
   turn receives the provider's error and never the recorder's. A broken recorder plus a failing
   provider must not turn into a mystery about which one broke.
 
-## 7. The three primitives
+## 7. The three primitives (and one reader beside them)
 
 ### `search`
 
@@ -314,14 +314,33 @@ succeeded. "0 results" for a file that was never written is a lie.
 The source directory is opened read-only. `fork` never mutates its source, and that is asserted by
 hashing the source snapshot and trajectory before and after.
 
+### A fourth reader: prompt history (`SER-015`)
+
+`readPromptHistory` (`src/trajectory/prompt-history.ts`) reads this project's `userInput` lines so the
+TUI's editor can recall previous prompts with `Up`/`Down`. It is bound by every rule above plus two of
+its own, and the reason it lives here rather than beside the editor is that the record is a *store* it
+must not become a second copy of.
+
+- It reads the **last `MAX_HISTORY_TAIL_BYTES` (256 KiB)** of at most `MAX_HISTORY_SESSIONS` (20)
+  records, ordered by their own mtime, and drops the (possibly half-cut) first line of that window.
+  Reading a 64 MiB file to keep 100 strings would be I/O nobody asked for.
+- It offers back **only what was sent**, and only under 4000 code points — under `MAX_FIELD_CHARS`
+  (8000) on purpose, so a `userInput` text this file truncated on the way in can never be re-sent
+  silently. A skill expansion (recorded expanded, per the table above) is excluded by the same cap.
+- Absence, `trajectory: false` and damage are **readings, not failures**; the caller never sees an
+  exception, and no keystroke waits on the read.
+
+Full contract, including the key binding it may not disturb: `.trellis/spec/frontend/prompt-recall.md`.
+
 ### `replay`
 
 Reads the record, rebuilds `TurnAction`s, and feeds them through the **existing `turnReducer`** from
 `src/tui/turn-state.ts`. Replay must never grow a second projection: one reducer means live
 rendering and replay cannot drift apart.
 
-Zero model calls by construction — `src/trajectory/**` and the subcommand path import no `Model`, no
-`Agent`, and not `runtime.js`. This is asserted structurally (the import graph) as well as
+Zero model calls by construction — `src/trajectory/**` (prompt history included, which is why its
+file name is in the scanned list) and the subcommand path import no `Model`, no `Agent`, and not
+`runtime.js`. This is asserted structurally (the import graph) as well as
 functionally (replay is correct with a sabotaged AWS environment).
 
 ### Reporting a failed turn
@@ -502,6 +521,15 @@ cap capped with `spend.model` in `trunc[]` and a still-bounded rendered line; `l
 reporting totals, the partial-metric marker, the per-model breakdown and a filtered replay; a
 pre-spend `v: 1` file reading as `unknown` with no fabricated zero anywhere; a damaged `spend`
 payload reading as unknown; and determinism over the same bytes.
+
+For prompt history specifically, `spike/verify-prompt-recall.ts` (free, in `pnpm test`, owns its HOME)
+must cover: absence and a record-less session reading as no history with no problem; newest-first
+ordering across two records with consecutive duplicates collapsed; every bound (entries, per-record
+entries, sessions, tail bytes) with what it cut *stated*; an over-long entry skipped and counted;
+damage tolerated and the file byte-identical afterwards; a reading taken from bytes the real
+`TrajectoryRecorder` wrote; and the read-only proof (hashes before/after, the pointer, the module grep,
+a sabotaged AWS environment). The UI half is `spike/verify-tui.ts recall` / `recallEmpty`, and the
+contract is `.trellis/spec/frontend/prompt-recall.md`.
 
 Run `pnpm typecheck`, `pnpm test`, and — because `/trajectory` adds a completion row —
 `pnpm tsx spike/verify-tui.ts completion`.

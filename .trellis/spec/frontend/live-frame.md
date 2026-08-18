@@ -57,11 +57,16 @@ per further row with nothing streaming, and one in-flight call with details expa
   never reaches the budget; and anything a source needs to say about itself (a bounded scan, an
   unreadable directory) is a **suffix of the existing title row**, never a row of its own. Contract:
   `prompt-completion.md`.
+- The **prompt-recall indicator is one row and a suffix, never a block**: `hasRecall` in
+  `promptBoxWanted`/`planPromptBox` buys exactly `RECALL_INDICATOR_ROWS` (1), granted after the menu
+  and before the hint, drawn *below* the draft (a row above it would move the frame-absolute cursor
+  off the row it is on), and everything the reading has to admit — bounds, skipped prompts, a partial
+  read — is appended to that same row. Contract: `prompt-recall.md`.
 - Tests required: `spike/verify-frame-budget.ts` (arithmetic **plus** `renderToString` of the real
   components — "what Ink draws is never taller than the grant", which caught the flex rows),
   `verify-live-text.ts`, `probe-live-frame-overflow.tsx` both modes, and `verify-tui.ts`
   `tallDraft` (free) / `tallDraftStreaming` / `approve` / `cursor` / `completion` /
-  `pathCompletion` / `longAnswer`. Unbounding the draft turns `tallDraft`'s 8 passes into 4
+  `pathCompletion` / `recall` / `longAnswer`. Unbounding the draft turns `tallDraft`'s 8 passes into 4
   failures.
 
 ## Contract: a finished answer line belongs to `<Static>`, not to the live frame
