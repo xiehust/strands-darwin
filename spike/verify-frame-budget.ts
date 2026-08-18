@@ -399,16 +399,39 @@ function renderedRows(element: React.ReactElement, columns: number): number {
 
 {
   const draft = Array.from({ length: 200 }, (_, index) => `pasted line ${index + 1}`).join('\n');
+  // Both completion sources, because their rows are drawn differently and only their
+  // *height* is shared: a command row is name plus description, a path row is one long
+  // string that must truncate rather than wrap, and the path menu's title carries a
+  // note. A path menu is also the case with far more matches than rows, so the
+  // "… n more" line is the normal state rather than the edge one.
+  const menus = [
+    { kind: 'command' as const, note: undefined, items: [] as string[] },
+    {
+      kind: 'command' as const,
+      note: undefined,
+      items: ['tasks', 'usage', 'effort', 'model', 'agents', 'compact', 'exit', 'skill', 'plan', 'extra'],
+    },
+    {
+      kind: 'path' as const,
+      note: 'bounded scan: 4000 paths',
+      items: Array.from(
+        { length: 40 },
+        (_, index) => `.trellis/tasks/archive/2026-08/08-17-live-frame-chrome/research/probe-results-${index}.md`,
+      ),
+    },
+  ];
   let worst = 0;
   for (const columns of [40, 80]) {
     for (const maxRows of [1, 2, 3, 6, 11, 24]) {
-      for (const completions of [[], ['tasks', 'usage', 'effort', 'model', 'agents', 'compact', 'exit', 'skill', 'plan', 'extra']]) {
+      for (const menu of menus) {
         for (const hint of [undefined, 'working… /tasks lists jobs · ctrl+c cancels this turn']) {
           const layout = layoutEditor(draft, columns, { offset: draft.length, affinity: 'upstream' });
           const rendered = renderedRows(
             React.createElement(InputBox, {
               layout,
-              completions,
+              completions: menu.items,
+              completionKind: menu.kind,
+              completionNote: menu.note,
               selectedCompletion: 0,
               editable: true,
               hint,
@@ -424,11 +447,34 @@ function renderedRows(element: React.ReactElement, columns: number): number {
   }
   assert('the prompt region Ink draws is never taller than its grant', worst <= 0);
 
+  // The note is a suffix of the title row, never a row of its own: the budget counts
+  // the menu as title + entries + overflow, so an extra heading row is an overflow.
+  const noted = renderToString(
+    React.createElement(InputBox, {
+      layout: layoutEditor('@src', 80, { offset: 4, affinity: 'upstream' }),
+      completions: ['src/', 'src/tui/'],
+      completionKind: 'path',
+      completionNote: 'bounded scan: 4000 paths',
+      selectedCompletion: 0,
+      editable: true,
+      hint: undefined,
+      offset: { top: 0, left: 0 },
+      maxRows: 24,
+    }),
+    { columns: 80 },
+  );
+  assert('a path menu names its own kind', noted.includes('files (↑/↓ to select, tab to complete)'));
+  assert('and states its bound on that same row',
+    /files \(.*\) — bounded scan: 4000 paths:/.test(noted));
+  assert('path rows carry no slash prefix', noted.includes('❯ src/') && !noted.includes('❯ /src/'));
+
   const layout = layoutEditor(draft, 80, { offset: draft.length, affinity: 'upstream' });
   const windowed = renderToString(
     React.createElement(InputBox, {
       layout,
       completions: [],
+      completionKind: 'command',
+      completionNote: undefined,
       selectedCompletion: 0,
       editable: true,
       hint: undefined,

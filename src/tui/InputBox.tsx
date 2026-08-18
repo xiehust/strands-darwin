@@ -1,4 +1,4 @@
-/** The editable multiline prompt, with slash-command completion. */
+/** The editable multiline prompt, with slash-command and `@` path completion. */
 import { Box, Text, useBoxMetrics, useCursor, type DOMElement } from 'ink';
 import React, { useRef } from 'react';
 
@@ -14,13 +14,26 @@ import type { EditorLayout } from './prompt-editor.js';
  * The list only ever renders in place of the permission box (`App.tsx` shows one or
  * the other), so this number does not compete with it for frame height. It is a cap
  * on what is *offered*; how much of it survives a short terminal is
- * `planPromptBox`'s decision.
+ * `planPromptBox`'s decision. Path completions share the same cap and the same
+ * "… n more" row — a workspace has more paths than any menu could hold, so for them
+ * that row is the normal case rather than the overflow one.
  */
 export const MAX_COMPLETIONS = 11;
+
+/**
+ * Which source the offered rows came from.
+ *
+ * Rows are rendered differently — a command needs its `/` and its description, a
+ * path is the text itself — but their *height* is identical, so the budget above
+ * and `planPromptBox` do not know the difference.
+ */
+export type CompletionKind = 'command' | 'path';
 
 export function InputBox({
   layout,
   completions,
+  completionKind,
+  completionNote,
   selectedCompletion,
   editable,
   hint,
@@ -29,6 +42,13 @@ export function InputBox({
 }: {
   readonly layout: EditorLayout;
   readonly completions: readonly string[];
+  readonly completionKind: CompletionKind;
+  /**
+   * What the offered rows are not saying for themselves — a bounded scan, or a
+   * directory that could not be read. Appended to the menu's existing title row,
+   * never given one of its own (the frame budget counts rows, not intentions).
+   */
+  readonly completionNote: string | undefined;
   readonly selectedCompletion: number;
   readonly editable: boolean;
   readonly hint: string | undefined;
@@ -95,17 +115,20 @@ export function InputBox({
       {visible.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
           {/* Truncated: on a narrow terminal this title wraps, and a row nobody
-              counted is a row Ink turns into a whole-screen repaint. */}
-          <Text dimColor wrap="truncate-end">commands (↑/↓ to select, tab to complete):</Text>
+              counted is a row Ink turns into a whole-screen repaint. The note rides
+              on this row for the same reason. */}
+          <Text dimColor wrap="truncate-end">{completionTitle(completionKind, completionNote)}</Text>
           {visible.map((name, index) => {
             const selected = index === selectedCompletion;
-            const description = builtinCommandDescription(name);
+            // Only commands carry one: a path describes itself, and inventing a
+            // description would mean reading the file, which this feature never does.
+            const description = completionKind === 'command' ? builtinCommandDescription(name) : undefined;
             return (
               <Box key={name}>
                 {/* Marker and name in one truncated Text: two untruncated children
                     can sum past the width and wrap, which the budget did not count. */}
                 <Text color={selected ? 'cyan' : 'gray'} wrap="truncate-end">
-                  {selected ? '❯ ' : '  '}/{name}
+                  {selected ? '❯ ' : '  '}{completionKind === 'command' ? '/' : ''}{name}
                 </Text>
                 {/* Appended after the name so pty substring assertions on
                     "  /name" rows keep matching; truncated so a narrow terminal
@@ -131,4 +154,19 @@ export function InputBox({
       )}
     </Box>
   );
+}
+
+/**
+ * The menu's one heading row.
+ *
+ * Exported so a check can assert the wording without rendering: the two kinds have
+ * to stay distinguishable from a pty transcript (`commands (` is what the slash
+ * scenario waits for), and a note may only ever extend this row — the frame budget
+ * counts the menu as title + entries + overflow, and a second heading row would be a
+ * row nobody granted.
+ */
+export function completionTitle(kind: CompletionKind, note: string | undefined): string {
+  const what = kind === 'command' ? 'commands' : 'files';
+  const keys = '↑/↓ to select, tab to complete';
+  return note === undefined ? `${what} (${keys}):` : `${what} (${keys}) — ${note}:`;
 }

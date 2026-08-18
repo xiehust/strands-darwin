@@ -196,6 +196,13 @@ export interface ContextEstimate {
 
 export interface RuntimeInfo {
   config: AppConfig;
+  /**
+   * The directory this session resolves everything against — `src/paths.ts`'s one
+   * input, carried here so a UI that has to name or scan the workspace (the `@`
+   * path completion in `src/tui/path-completion.ts`) reads it from the live session
+   * rather than calling `process.cwd()` a second time.
+   */
+  projectRoot: string;
   /** Effective approval mode after CLI overrides. */
   permissionMode: ApprovalMode;
   sessionId: string;
@@ -575,6 +582,7 @@ export class AgentRuntime {
       diagnosticsLog,
       {
         config,
+        projectRoot: options.projectRoot,
         permissionMode,
         sessionId: session.sessionId,
         resumed: session.restoreRequested && agent.messages.length > 0,

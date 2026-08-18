@@ -18,12 +18,13 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion | clear |
+ *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion |
+ *                 pathCompletion | clear |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
  */
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import process from 'node:process';
 import path from 'node:path';
@@ -34,6 +35,7 @@ import { CONFIG_FILENAME, permissionRulesPath } from '../src/config.js';
 import { AGENTS_DIRNAME } from '../src/agents/loader.js';
 import { COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
 import { SKILLS_DIRNAME } from '../src/skills/loader.js';
+import { MAX_COMPLETIONS } from '../src/tui/InputBox.js';
 import { startTui, type TuiSession } from './tui-driver.js';
 import { assert, header, report } from './shared.js';
 
@@ -866,6 +868,138 @@ async function slashCompletion(): Promise<void> {
     tui.kill();
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * `@` path completion, end to end, with no model call: nothing is ever submitted.
+ *
+ * The property that needs a real pty rather than a unit check is that accepting a
+ * completion moves *text* and nothing else — so the fixture puts a unique string
+ * inside the file being completed and a secret behind a symlink out of the project,
+ * and both are asserted absent from everything the terminal ever showed.
+ */
+async function pathCompletion(): Promise<void> {
+  header('TUI — @ completes workspace paths, and inserts only the path');
+
+  const dir = '/tmp/darwin-path-tui';
+  const outside = '/tmp/darwin-path-tui-outside';
+  await rm(dir, { recursive: true, force: true });
+  await rm(outside, { recursive: true, force: true });
+  await mkdir(path.join(dir, 'src', 'tui'), { recursive: true });
+  await mkdir(path.join(dir, 'pad'), { recursive: true });
+  await mkdir(path.join(dir, 'node_modules', 'ink'), { recursive: true });
+  await mkdir(path.join(dir, 'dist'), { recursive: true });
+  await mkdir(outside, { recursive: true });
+  await writeFile(path.join(dir, 'notes.md'), 'notes\n', 'utf8');
+  await writeFile(path.join(dir, 'src', 'tui', 'AppFixture.tsx'), 'UNIQUE_TUI_FIXTURE_CONTENT\n', 'utf8');
+  await writeFile(path.join(dir, 'node_modules', 'ink', 'index.js'), '// ink\n', 'utf8');
+  await writeFile(path.join(dir, 'dist', 'bundle.js'), '// built\n', 'utf8');
+  await writeFile(path.join(outside, 'secret.txt'), 'OUTSIDE_TUI_SECRET\n', 'utf8');
+  await symlink(outside, path.join(dir, 'escape'), 'dir');
+  // Enough entries that the menu must drop some, so "what is not shown is stated" is
+  // asserted on the real thing rather than on the helper that counts it.
+  for (let index = 1; index <= 15; index += 1) {
+    await writeFile(path.join(dir, 'pad', `p${String(index).padStart(2, '0')}.md`), 'pad\n', 'utf8');
+  }
+
+  const tui = startTui({ cwd: dir });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    // The scan starts on this keystroke, not at startup, and is never awaited by the
+    // editor — so the wait here is for the frame that arrives once it lands.
+    const beforeTrigger = tui.mark();
+    tui.send('@');
+    await tui.waitFor('files (', { timeoutMs: 30_000, from: beforeTrigger, settleMs: 400 });
+    const opened = tui.frame;
+    assert('a bare @ opens the path menu, named as files', opened.includes('files ('));
+    assert('the first workspace path is offered and selected', opened.includes('❯ notes.md'));
+    assert('a directory is offered with its trailing slash', opened.includes('  src/'));
+    assert('the menu is capped at MAX_COMPLETIONS rows', completionRowCount(opened) === MAX_COMPLETIONS);
+    assert('and states how many matches it is not showing', /… \d+ more/.test(opened));
+    assert('node_modules never appears', !opened.includes('node_modules'));
+    assert('dist never appears', !opened.includes('dist/'));
+    assert('a symlink out of the project never appears', !opened.includes('escape'));
+
+    // Narrow, then accept a directory: the marker stays so the next keystroke keeps
+    // completing inside it. Narrowed to `sr` rather than `src/` on purpose — accepting
+    // a completion that is already spelled out changes no text, so there would be no
+    // new frame to wait for.
+    const beforeDirectory = tui.mark();
+    tui.send('sr');
+    await tui.waitFor('❯ src/', { timeoutMs: 30_000, from: beforeDirectory, settleMs: 400 });
+    const beforeAcceptDirectory = tui.mark();
+    tui.send('\t');
+    await tui.waitFor('you> @src/', { timeoutMs: 30_000, from: beforeAcceptDirectory, settleMs: 400 });
+    assert('accepting a directory keeps the query open one level down',
+      tui.frame.includes('you> @src/') && tui.frame.includes('files ('));
+
+    // Accept a file: the marker is gone and the draft is the plain path.
+    const beforeFile = tui.mark();
+    tui.send('tui/App');
+    await tui.waitFor('❯ src/tui/AppFixture.tsx', { timeoutMs: 30_000, from: beforeFile, settleMs: 400 });
+    const beforeAcceptFile = tui.mark();
+    tui.send('\t');
+    await tui.waitFor('you> src/tui/AppFixture.tsx', { timeoutMs: 30_000, from: beforeAcceptFile, settleMs: 400 });
+    const accepted = tui.frame;
+    assert('accepting a file leaves the plain path in the draft', accepted.includes('you> src/tui/AppFixture.tsx'));
+    assert('the @ marker is gone once the mention resolves', !accepted.includes('you> @src/tui/AppFixture.tsx'));
+    assert('and the menu closed with it', !accepted.includes('files ('));
+
+    // The whole point of the Codex shape: a path, never the bytes behind it.
+    assert('the completed file is never read into the terminal',
+      !tui.screen.includes('UNIQUE_TUI_FIXTURE_CONTENT'));
+    assert('nor is anything behind the escaping symlink',
+      !tui.screen.includes('OUTSIDE_TUI_SECRET'));
+    assert('completion starts no turn and calls no tool',
+      !tui.screen.slice(beforeTrigger).includes('working…'));
+
+    // A non-trigger @: an email address is one word, so the menu never opens.
+    tui.send('\u007f'.repeat('src/tui/AppFixture.tsx '.length));
+    const beforeEmail = tui.mark();
+    tui.send('mail me@example.com');
+    await tui.waitFor('you> mail me@example.com', { timeoutMs: 30_000, from: beforeEmail, settleMs: 400 });
+    assert('an email address leaves the draft alone and opens no menu',
+      tui.frame.includes('you> mail me@example.com') && !tui.frame.includes('files ('));
+
+    // A trigger that matches nothing: recognized, but nothing to offer, so nothing
+    // is drawn — this is what keeps a decorator or a handle in prose harmless.
+    tui.send('\u007f'.repeat('mail me@example.com'.length));
+    const beforeProse = tui.mark();
+    tui.send('see @override in the sentence');
+    await tui.waitFor('you> see @override in the sentence', { timeoutMs: 30_000, from: beforeProse, settleMs: 400 });
+    assert('a trigger no workspace path matches opens no menu', !tui.frame.includes('files ('));
+
+    tui.send('\u0004');
+    assert('path completion scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Entry rows drawn under a completion menu's title, counted from the frame.
+ *
+ * Counted rather than assumed: `MAX_COMPLETIONS` is the promise that the menu never
+ * grows past what `planPromptBox` was granted, and a regex for one row would pass
+ * with twenty on screen.
+ */
+function completionRowCount(frame: string): number {
+  const lines = frame.split('\n');
+  const title = lines.findIndex((line) => /(?:commands|files) \(/.test(line));
+  if (title === -1) return 0;
+  let rows = 0;
+  for (const line of lines.slice(title + 1)) {
+    // The overflow row is indented like an entry and starts with a non-space, so it
+    // has to be excluded explicitly or it counts as a twelfth completion.
+    if (/^\s*…/.test(line)) break;
+    if (!/^(?:❯ |  )\S/.test(line)) break;
+    rows += 1;
+  }
+  return rows;
 }
 
 /** Zero-model proof that Ctrl+B is display-only and preserves the prompt draft. */
@@ -2015,6 +2149,7 @@ const SCENARIOS = {
   compacting: compactingInputOwnership,
   cursor: cursorEditing,
   completion: slashCompletion,
+  pathCompletion,
   clear: clearSession,
   toolDetails: toolDetailsToggle,
   agents: agentDispatches,

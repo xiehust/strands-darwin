@@ -38,7 +38,7 @@ import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { MCP_CONFIG_FILENAME } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
-import { InputBox, MAX_COMPLETIONS } from './InputBox.js';
+import { InputBox, MAX_COMPLETIONS, type CompletionKind } from './InputBox.js';
 import { LIVE_BLOCK_CHROME_ROWS, wrapToRows } from './live-text.js';
 import {
   PERMISSION_BOX_FIXED_ROWS,
@@ -63,6 +63,15 @@ import {
   moveVertical,
   type EditorValue,
 } from './prompt-editor.js';
+import {
+  NO_WORKSPACE_PATHS,
+  applyPathCompletion,
+  matchWorkspacePaths,
+  pathCompletionQuery,
+  scanWorkspacePaths,
+  workspacePathsNote,
+  type WorkspacePaths,
+} from './path-completion.js';
 
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { formatDispatchCompletion, formatDispatchesReport } from './subagent-format.js';
@@ -72,6 +81,17 @@ import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js'
 /** Window in which a second Ctrl+C means "exit", not "cancel again". */
 const DOUBLE_INTERRUPT_MS = 2000;
 const SPINNER_INTERVAL_MS = 90;
+
+/**
+ * How long one workspace path scan is reused before the next `@` re-reads the tree.
+ *
+ * Long enough that completing `@src/tui/App.tsx` one segment at a time is a single
+ * scan, short enough that a file the agent just wrote is offered the next time the
+ * user reaches for it. Staleness is only ever a missing row: an accepted completion
+ * is text, so a path that has since moved costs a wrong argument to a tool call the
+ * user can see, not a silent read of the wrong file.
+ */
+const PATH_SCAN_TTL_MS = 5000;
 
 /**
  * Header height assumed before the first layout pass: this project's own header,
@@ -183,11 +203,59 @@ export function App({
 
   // Built-ins stay first, then project commands, then skills. Collision filtering
   // happens in the command loader so every row here is actually invokable.
-  const completions = computeCompletions(draft, [
+  const commandCompletions = computeCompletions(draft, [
     ...BUILTIN_COMMAND_NAMES,
     ...runtime.info.commandNames,
     ...runtime.info.skillNames,
   ]);
+
+  // The second source, consulted only when the first has nothing: a `/prefix` and an
+  // `@` mention cannot both be under the cursor, but deciding it in one place keeps
+  // "which menu is this" a fact rather than a coincidence of two predicates.
+  const pathQuery = commandCompletions.length > 0
+    ? undefined
+    : pathCompletionQuery(draft, editor.cursor.offset);
+  const [workspacePaths, setWorkspacePaths] = useState<WorkspacePaths>(NO_WORKSPACE_PATHS);
+  // Scan bookkeeping lives in a ref so a finished scan cannot re-trigger the effect
+  // that started it. Keyed on the project root: `/clear` hands over a new runtime
+  // for the same tree, and re-reading it for that would be work for nothing.
+  const pathScan = useRef({ root: '', scannedAt: 0, inFlight: false });
+  const pathMenuOpen = pathQuery !== undefined;
+  const pathQueryText = pathQuery?.text;
+
+  // Nothing here is awaited by a keystroke: the editor renders from whatever the last
+  // scan produced (nothing, on the first `@`) and re-renders when one lands. Started
+  // by the first trigger rather than at startup, so a session that never mentions a
+  // path never walks the tree at all.
+  useEffect(() => {
+    if (!pathMenuOpen) return;
+    const root = runtime.info.projectRoot;
+    const state = pathScan.current;
+    if (state.inFlight) return;
+    if (state.root === root && Date.now() - state.scannedAt < PATH_SCAN_TTL_MS) return;
+    state.root = root;
+    state.inFlight = true;
+    // Deliberately not cancelled when the query closes: the reading describes the
+    // tree, not the query, so keeping it is what makes the *next* `@` instant. A
+    // discarded result would also have to un-stamp `scannedAt`, or a query abandoned
+    // mid-scan would leave the menu empty for the whole TTL.
+    void scanWorkspacePaths(root)
+      .then(setWorkspacePaths)
+      .finally(() => {
+        state.inFlight = false;
+        state.scannedAt = Date.now();
+      });
+  }, [pathMenuOpen, runtime]);
+
+  const pathCompletions = useMemo(
+    () => (pathQueryText === undefined ? [] : matchWorkspacePaths(workspacePaths.paths, pathQueryText)),
+    [pathQueryText, workspacePaths],
+  );
+
+  const completionKind: CompletionKind = commandCompletions.length > 0 ? 'command' : 'path';
+  const completions = completionKind === 'command' ? commandCompletions : pathCompletions;
+  const completionNote =
+    completionKind === 'path' && completions.length > 0 ? workspacePathsNote(workspacePaths) : undefined;
 
   // Every participant of the redrawn frame states what it wants; the header is the
   // only one measured. The grants are what each box is then allowed to draw, and
@@ -662,10 +730,22 @@ export function App({
   const acceptCompletion = useCallback(() => {
     const chosen = completions[selectedCompletion] ?? completions[0];
     if (chosen === undefined) return;
-    setEditor({ text: `/${chosen} `, cursor: { offset: chosen.length + 2, affinity: 'upstream' } });
+    if (completionKind === 'path') {
+      // Re-derived from the immediate editor mirror rather than from the render's
+      // `pathQuery`: several stdin events can be batched into one React pass, and
+      // splicing a path at an offset the draft has moved past would corrupt it.
+      const query = pathCompletionQuery(editorRef.current.text, editorRef.current.cursor.offset);
+      if (query === undefined) return;
+      // Text, and only text. Nothing about the chosen path is opened, stat-ed for
+      // content or sent anywhere — the whole point of the Codex shape over
+      // OpenCode's is that file bytes keep going through the gated `fileEditor` read.
+      setEditor(applyPathCompletion(editorRef.current, query, chosen));
+    } else {
+      setEditor({ text: `/${chosen} `, cursor: { offset: chosen.length + 2, affinity: 'upstream' } });
+    }
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
-  }, [completions, selectedCompletion, setEditor]);
+  }, [completionKind, completions, selectedCompletion, setEditor]);
 
   const handleInterrupt = useCallback(() => {
     const now = Date.now();
@@ -934,6 +1014,8 @@ export function App({
           <InputBox
             layout={layout}
             completions={completions}
+            completionKind={completionKind}
+            completionNote={completionNote}
             selectedCompletion={selectedCompletion}
             editable={effectiveStatus !== 'compacting'}
             offset={{ top: chrome.top, left: chrome.left }}
