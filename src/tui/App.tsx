@@ -317,7 +317,7 @@ export function App({
   // well as the share ceiling that stops the first from taking everything.
   const streamingHint = hintForStatus(effectiveStatus);
   const activeToolClaims = state.activeTools.map((tool) => ({
-    detailRows: state.toolDetailsExpanded ? toolInputRows(tool.input, columns).length : 0,
+    detailRows: state.toolDetailsExpanded ? toolInputRows(tool.input, columns, tool.name).length : 0,
   }));
   const offeredCompletions = Math.min(completions.length, MAX_COMPLETIONS);
   const liveTextRows = state.liveText === '' ? 0 : wrapToRows(state.liveText, columns).length;

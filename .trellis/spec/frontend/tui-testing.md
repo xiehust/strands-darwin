@@ -429,6 +429,47 @@ Header row acceptance is a visual-row assertion at a declared width, not a newli
 added to a measured/budgeted surface must update both its geometry helper and the structural fixture;
 do not weaken an assertion to accept omitted state.
 
+## Contract: file edits render as marker-stable line diffs
+
+### 1. Scope / trigger
+
+Any change to how a gated `fileEditor` write (`str_replace`, `create`, `insert`) is presented at
+the permission prompt or in the expanded tool input (active panel and finished `<Static>` item).
+
+### 2. Signatures
+
+- `src/tui/edit-diff.ts` — pure, dependency-free, opens no file:
+  `fileEditorDiff(rawInput): string | undefined` (marker-prefixed diff of the input's own strings),
+  `fileEditorInputProjection(rawInput): string | undefined` (`command:`/`path:`(/`insert line:`)
+  header lines + diff), `permissionDisplayDetails(request): PermissionDisplayDetail[]`,
+  `diffLineTone(line): 'add' | 'remove' | undefined`.
+- `PermissionDetail.editContent?: boolean` (`classify()` in `src/agent/permission.ts`) marks the
+  raw content blocks a diffing UI may substitute; every unmarked block must stay stated.
+- `permissionDetailRows(value, columns, diff = false)` and `toolInputRows(input, columns, toolName?)`
+  return `BoundedContentRow { text, tone? }` — tone travels with the counted row so wrapped
+  continuations of a `+ `/`- ` line stay coloured, and the counted text never changes with tone.
+
+### 3. Contracts
+
+- Marker vocabulary is `- ` removed / `+ ` added / `  ` context, plain text, at the start of the
+  logical line; colour (`diffToneColor`: success green / danger red) is enhancement only.
+- Information equivalence: stripping the two-character marker recovers the old value from
+  `- `/`  ` lines and the new value from `+ `/`  ` lines; absent `new_str` (delete) renders as
+  removals only, distinguishable from `new_str: ''` (one empty `+ ` line). Approving always
+  writes the untruncated input — the diff is a projection, never the payload.
+- Bounding rides the existing budgets (`permissionDetail`, `expandedToolInput`); the truncation
+  marker row is never toned. An input the reader does not recognize (unknown command, wrong
+  types, extra keys) falls back to the raw blocks / JSON, losing nothing.
+- Tone scope is the tool: only `fileEditor` rows are ever toned, so a bash command starting with
+  `- ` stays plain. dev-repl keeps the raw `Replace:`/`With:` blocks.
+
+### 4. Tests required
+
+`spike/verify-edit-diff.ts` (equivalence, bounds, Unicode, all three write modes, fallbacks —
+in `pnpm test`), the diff sections of `spike/verify-visual-language.tsx`, and the live
+`verify-tui.ts approve` diff assertions — which must not span a wrap boundary: a long unbroken
+token wraps onto marker-less continuation rows (measured at 116 box columns on a 120x50 pty).
+
 
 ## Contract: effective plan mode stays on the existing mode row
 

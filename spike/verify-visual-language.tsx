@@ -119,4 +119,59 @@ for (const detail of [
   assert(`permission modal retains ${detail}`, permission.includes(detail));
 }
 
+header('visual language — file edits render as marker-stable line diffs');
+const editInput = {
+  command: 'str_replace',
+  path: '/workspace/src/calc.ts',
+  old_str: '  return n + 2;',
+  new_str: '  return n * 2;',
+};
+const editRequest = {
+  toolName: 'fileEditor', kind: 'write' as const, summary: 'fileEditor str_replace: /workspace/src/calc.ts',
+  // The gate's blocks as `classify()` builds them; the box must collapse exactly
+  // the `editContent` pair into one diff and keep everything else stated.
+  details: [
+    { label: 'Path', value: editInput.path },
+    { label: 'Operation', value: 'str_replace' },
+    { label: 'Replace', value: editInput.old_str, editContent: true },
+    { label: 'With', value: editInput.new_str, editContent: true },
+  ],
+  input: editInput,
+  risk: 'dangerous' as const, riskReason: 'writes inside the project',
+  source: { kind: 'parent' as const, label: 'parent' },
+  suggestions: [
+    { rule: 'fileEditor:/workspace/src/**', label: '/workspace/src/**' },
+    { rule: 'fileEditor', label: 'all fileEditor' },
+  ],
+  withdrawn: NEVER_WITHDRAWN,
+};
+const editPermission = plain(renderToString(
+  <PermissionPrompt request={editRequest} waiting={0} columns={120} maxRows={20} />,
+  { columns: 120 },
+));
+for (const detail of [
+  '[parent] fileEditor str_replace: /workspace/src/calc.ts',
+  'Path:', '/workspace/src/calc.ts', 'Operation:', 'str_replace',
+  'Diff:', '-   return n + 2;', '+   return n * 2;',
+  'allow? y n always: a=/workspace/src/** A=all fileEditor esc=deny',
+]) {
+  assert(`edit modal retains ${detail}`, editPermission.includes(detail));
+}
+assert('raw Replace/With blocks are the diff now', !editPermission.includes('Replace:') && !editPermission.includes('With:'));
+assert('removal marker precedes addition marker',
+  editPermission.indexOf('-   return n + 2;') < editPermission.indexOf('+   return n * 2;'));
+
+const editHistory: HistoryItem[] = [{
+  kind: 'tool', id: 'te', name: 'fileEditor', summary: 'fileEditor str_replace: /workspace/src/calc.ts',
+  status: 'ok', preview: 'edited /workspace/src/calc.ts', expanded: true,
+  inputPreview: 'command: str_replace\npath: /workspace/src/calc.ts\n- old line\n+ new line',
+}];
+const editTranscript = plain(renderToString(
+  <MessageList history={editHistory} liveText="" columns={80} maxLiveRows={8} staticEpoch={0} />,
+  { columns: 80 },
+));
+for (const marker of ['- old line', '+ new line', 'command: str_replace']) {
+  assert(`finished edit keeps the diff after ANSI stripping: ${marker}`, editTranscript.includes(marker));
+}
+
 report();

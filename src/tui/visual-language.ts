@@ -41,3 +41,12 @@ export function noticeColor(severity: 'info' | 'warn' | 'error'): (typeof visual
       return visualColor.danger;
   }
 }
+
+/**
+ * Colour for one diff-toned row: additions succeed-green, removals danger-red.
+ * The `+ `/`- ` markers on the row text stay the durable statement; this is the
+ * enhancement layered over them.
+ */
+export function diffToneColor(tone: 'add' | 'remove'): (typeof visualColor)[keyof typeof visualColor] {
+  return tone === 'add' ? visualColor.success : visualColor.danger;
+}

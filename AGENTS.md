@@ -329,6 +329,28 @@ out as flex items and wraps them independently); and `useBoxMetrics` is *parent*
 own window hides. Contract and required checks: `.trellis/spec/frontend/live-frame.md` (pty
 mechanics stay in `frontend/tui-testing.md`).
 
+**A file edit is presented as the line diff of its own input — computed at presentation time,
+never read from disk** (`src/tui/edit-diff.ts`, contract: `.trellis/spec/frontend/tui-testing.md`
+§ file edits render as marker-stable line diffs): the gate has always exposed the raw tool input
+"for a UI that wants to show or diff it itself", and this is that UI. A gated `fileEditor` write
+(`str_replace`, `create`, `insert`) shows a `Diff` block at the permission prompt, and the same
+projection (with `command:`/`path:` header lines) is the expanded tool input in the active panel
+and the finished `<Static>` item — the model-visible tool content is untouched. Four things are
+load-bearing. The vocabulary is three plain-text markers (`- ` removed, `+ ` added, `  ` context)
+with colour as enhancement only, so the distinction survives ANSI stripping. Equivalence is
+structural: stripping the two-character marker recovers the old value from `- `/`  ` lines and the
+new from `+ `/`  ` lines, an absent `new_str` (removals only) stays distinguishable from an empty
+one (one empty `+ ` line), and approving writes the exact untruncated input — the diff replaces
+only the `editContent`-tagged blocks, everything else the box stated stays stated, and an input
+the reader does not recognize keeps its raw blocks. Bounds and geometry are the existing ones:
+the diff flows through `permissionDetail`/`expandedToolInput` budgets, and tone rides the counted
+row (`BoundedContentRow`) so wrapped continuations stay coloured without a second height
+calculation. And tone is scoped to `fileEditor`, so a bash command starting with `- ` never turns
+red; dev-repl keeps the raw blocks. The hand-rolled LCS is deliberately dependency-free and falls
+back to remove-all/add-all above 40k cells without losing equivalence. Free checks:
+`spike/verify-edit-diff.ts` (in `pnpm test`) and the diff sections of
+`spike/verify-visual-language.tsx`; the live `verify-tui.ts approve` scenario asserts the box.
+
 **A finished answer line belongs to `<Static>`, not to the live frame** (`src/tui/turn-state.ts`):
 answer text is committed to history *while the turn runs* — every complete line up to but not
 including the last non-blank one — so a long answer scrolls into the terminal's own scrollback as

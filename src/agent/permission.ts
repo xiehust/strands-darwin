@@ -100,6 +100,14 @@ export interface PermissionRequest {
 export interface PermissionDetail {
   label: string;
   value: string;
+  /**
+   * Marks a block whose value is raw edit content (`file_text`, `old_str`,
+   * `new_str`). A presenting UI may substitute exactly these blocks with a line
+   * diff computed from `PermissionRequest.input` — the same strings, one
+   * projection — and must keep every unmarked block stated. Renderers that do
+   * not diff (dev-repl) ignore the flag and keep the raw blocks.
+   */
+  editContent?: boolean;
 }
 
 /**
@@ -700,16 +708,20 @@ function classifyFileEditor(
 
   switch (command) {
     case 'create':
-      details.push({ label: 'New content', value: str(input['file_text']) ?? '' });
+      details.push({ label: 'New content', value: str(input['file_text']) ?? '', editContent: true });
       break;
     case 'str_replace':
-      details.push({ label: 'Replace', value: str(input['old_str']) ?? '' });
+      details.push({ label: 'Replace', value: str(input['old_str']) ?? '', editContent: true });
       // new_str is optional: omitting it deletes the matched text.
-      details.push({ label: 'With', value: str(input['new_str']) ?? '(deletes the matched text)' });
+      details.push({
+        label: 'With',
+        value: str(input['new_str']) ?? '(deletes the matched text)',
+        editContent: true,
+      });
       break;
     case 'insert':
       details.push({ label: 'At line', value: String(input['insert_line'] ?? '?') });
-      details.push({ label: 'Insert', value: str(input['new_str']) ?? '' });
+      details.push({ label: 'Insert', value: str(input['new_str']) ?? '', editContent: true });
       break;
     default:
       details.push({ label: 'Input', value: pretty(rawInput) });

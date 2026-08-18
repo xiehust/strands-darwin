@@ -81,10 +81,9 @@ tool · ✓ fileEditor view: /repo/greet.js
 │ ◆ permission required (write — modifies a file)                              │
 │ [parent] fileEditor str_replace: /repo/greet.js                              │
 │                                                                              │
-│ Replace:                                                                     │
-│   return 'Hello, ' + nam + '!';                                              │
-│ With:                                                                        │
-│   return 'Hello, ' + name + '!';                                             │
+│ Diff:                                                                        │
+│   - return 'Hello, ' + nam + '!';                                            │
+│   + return 'Hello, ' + name + '!';                                           │
 │                                                                              │
 │ allow? y n always: a=/repo/greet.js A=all fileEditor esc=deny                │
 ╰──────────────────────────────────────────────────────────────────────────────╯

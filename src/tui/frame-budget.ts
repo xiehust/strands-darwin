@@ -25,6 +25,7 @@
  * full. The counter-rule is the share ceiling below, so "served first" cannot mean
  * "takes everything".
  */
+import { diffLineTone } from './edit-diff.js';
 import { wrapToRows } from './live-text.js';
 import { expandedToolInput, permissionDetail } from './tool-detail-presentation.js';
 
@@ -139,6 +140,17 @@ export const TOOL_INPUT_INDENT = '           ';
 export const PERMISSION_DETAIL_INDENT = '  ';
 
 /**
+ * One counted terminal row of bounded content, with the diff tone its logical
+ * line carried. Tone rides the row the budget counts — never a second pass over
+ * the text — so a wrapped continuation of a `+ `/`- ` line keeps its colour and
+ * the coloured rows are exactly the rows the height came from.
+ */
+export interface BoundedContentRow {
+  readonly text: string;
+  readonly tone?: 'add' | 'remove';
+}
+
+/**
  * The expanded input of one running call, as terminal rows.
  *
  * `expandedToolInput` bounds what is *read* — 100 logical lines, 8000 code points —
@@ -147,17 +159,29 @@ export const PERMISSION_DETAIL_INDENT = '  ';
  * the one unit into the other, and both the panel and the budget call it, so they
  * cannot disagree about how tall the panel is.
  */
-export function toolInputRows(input: unknown, columns: number): readonly string[] {
+export function toolInputRows(input: unknown, columns: number, toolName?: string): readonly BoundedContentRow[] {
   const width = Math.max(1, columns - TOOL_INPUT_INDENT.length);
-  const rows: string[] = [];
-  for (const line of expandedToolInput(input)) rows.push(...wrapToRows(line, width));
+  const rows: BoundedContentRow[] = [];
+  for (const line of expandedToolInput(input, toolName)) {
+    // Only fileEditor inputs are diff projections; a bash command that happens
+    // to start with `- ` must not turn red.
+    const tone = toolName === 'fileEditor' ? diffLineTone(line) : undefined;
+    for (const text of wrapToRows(line, width)) rows.push(tone === undefined ? { text } : { text, tone });
+  }
   return rows;
 }
 
-/** One permission detail block's value, as terminal rows. */
-export function permissionDetailRows(value: string, columns: number): readonly string[] {
+/**
+ * One permission detail block's value, as terminal rows. `diff` marks a block
+ * whose value is diff text, and is what scopes the tone: a bash command whose
+ * line starts with `- ` stays plain.
+ */
+export function permissionDetailRows(value: string, columns: number, diff = false): readonly BoundedContentRow[] {
   const width = Math.max(1, columns - PERMISSION_DETAIL_INDENT.length);
-  return permissionDetail(value).flatMap((line) => wrapToRows(line, width));
+  return permissionDetail(value).flatMap((line) => {
+    const tone = diff ? diffLineTone(line) : undefined;
+    return wrapToRows(line, width).map((text) => (tone === undefined ? { text } : { text, tone }));
+  });
 }
 
 /** Rows the prompt region would draw with nothing bounding it. */

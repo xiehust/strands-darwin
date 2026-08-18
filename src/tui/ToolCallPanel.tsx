@@ -9,6 +9,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 
 import { activeToolCallSummary } from './background-tool-presentation.js';
+import { diffLineTone } from './edit-diff.js';
 import {
   TOOL_INPUT_INDENT,
   hiddenDetailNotice,
@@ -19,7 +20,7 @@ import {
 import { formatTaskDuration } from './task-format.js';
 import { expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 import type { ActiveTool, HistoryItem, ToolStatus } from './turn-state.js';
-import { visualColor, visualMarker } from './visual-language.js';
+import { diffToneColor, visualColor, visualMarker } from './visual-language.js';
 
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
 
@@ -52,7 +53,7 @@ export function ActiveToolCalls({
   // the panel's height has to be what was counted, not what Ink's own word wrap
   // makes of the same string.
   const inputs = tools.map((tool) =>
-    toolDetailsExpanded ? toolInputRows(tool.input, columns) : [],
+    toolDetailsExpanded ? toolInputRows(tool.input, columns, tool.name) : [],
   );
   const plan = planToolPanel(
     inputs.map((rows) => ({ detailRows: rows.length })),
@@ -77,9 +78,15 @@ export function ActiveToolCalls({
                   substring, and the existing spinner tick already redraws each frame. */}
               {` (${formatTaskDuration(Date.now() - tool.startedAt)})`}
             </Text>
-            {rows.map((line, row) => (
-              <Text key={row} dimColor wrap="truncate-end">
-                {row === 0 ? `    Input: ${line}` : `${TOOL_INPUT_INDENT}${line}`}
+            {rows.map((row, index) => (
+              // Diff-toned rows trade the dim input styling for their tone
+              // colour; the `+ `/`- ` marker on the text is the durable signal.
+              <Text
+                key={index}
+                {...(row.tone === undefined ? { dimColor: true } : { color: diffToneColor(row.tone) })}
+                wrap="truncate-end"
+              >
+                {index === 0 ? `    Input: ${row.text}` : `${TOOL_INPUT_INDENT}${row.text}`}
               </Text>
             ))}
             {entry.hiddenDetailRows > 0 && (
@@ -111,11 +118,20 @@ export function ToolCallResult({
         <Text color={color}>{icon} </Text>
         {item.summary}
       </Text>
-      {input.map((line, index) => (
-        <Text key={`input-${index}`} dimColor>
-          {index === 0 ? `    Input: ${line}` : `           ${line}`}
-        </Text>
-      ))}
+      {input.map((line, index) => {
+        // The finished projection is the same diff the permission box showed;
+        // tone is re-read from the marker the line itself carries, scoped to
+        // fileEditor so no other tool's text can turn a row red or green.
+        const tone = item.name === 'fileEditor' ? diffLineTone(line) : undefined;
+        return (
+          <Text
+            key={`input-${index}`}
+            {...(tone === undefined ? { dimColor: true } : { color: diffToneColor(tone) })}
+          >
+            {index === 0 ? `    Input: ${line}` : `           ${line}`}
+          </Text>
+        );
+      })}
 
       {preview.map((line, index) => (
         // Preview lines are static text with no identity of their own.

@@ -17,6 +17,7 @@ import { Box, Text } from 'ink';
 import React from 'react';
 
 import type { AssessedPermissionRequest } from '../agent/permission.js';
+import { permissionDisplayDetails } from './edit-diff.js';
 import {
   PERMISSION_BOX_CHROME_COLUMNS,
   PERMISSION_DETAIL_INDENT,
@@ -24,10 +25,11 @@ import {
   permissionBoxWanted,
   permissionDetailRows,
   planPermissionBox,
+  type BoundedContentRow,
 } from './frame-budget.js';
 import { wrapToRows } from './live-text.js';
 import { permissionSummary } from './tool-detail-presentation.js';
-import { visualColor, visualMarker } from './visual-language.js';
+import { diffToneColor, visualColor, visualMarker } from './visual-language.js';
 
 export function PermissionPrompt({
   request,
@@ -124,9 +126,17 @@ export function PermissionPrompt({
         return (
           <Box key={block.label} flexDirection="column" marginTop={1}>
             <Text color={visualColor.warning}>{block.label}:</Text>
-            {block.rows.slice(0, granted.rows).map((line, row) => (
-              // Detail lines are static text with no identity of their own.
-              <Text key={row} wrap="truncate-end">{`${PERMISSION_DETAIL_INDENT}${line}`}</Text>
+            {block.rows.slice(0, granted.rows).map((row, rowIndex) => (
+              // Detail lines are static text with no identity of their own. Diff
+              // rows carry their tone; colour reinforces the `+ `/`- ` marker,
+              // which is what survives ANSI stripping.
+              <Text
+                key={rowIndex}
+                {...(row.tone === undefined ? {} : { color: diffToneColor(row.tone) })}
+                wrap="truncate-end"
+              >
+                {`${PERMISSION_DETAIL_INDENT}${row.text}`}
+              </Text>
             ))}
           </Box>
         );
@@ -153,7 +163,7 @@ export function PermissionPrompt({
  */
 function boxGeometry(request: AssessedPermissionRequest, waiting: number, columns: number): {
   options: { key: string; label: string }[];
-  blocks: { label: string; rows: readonly string[] }[];
+  blocks: { label: string; rows: readonly BoundedContentRow[] }[];
   headingText: string;
   decisionText: string;
   fixedRows: number;
@@ -162,9 +172,11 @@ function boxGeometry(request: AssessedPermissionRequest, waiting: number, column
   // Text inside the box is laid out in the box's width, not the terminal's: the
   // border and `paddingX` are not available to it.
   const boxColumns = Math.max(1, columns - PERMISSION_BOX_CHROME_COLUMNS);
-  const blocks = request.details.map((detail) => ({
+  // A fileEditor write's content blocks collapse into one diff block here — in the
+  // geometry, so the rows the budget counts are the rows the box draws.
+  const blocks = permissionDisplayDetails(request).map((detail) => ({
     label: detail.label,
-    rows: permissionDetailRows(detail.value, boxColumns),
+    rows: permissionDetailRows(detail.value, boxColumns, detail.diff),
   }));
   const headingText = `${visualMarker.permission} permission required (${request.kind} — ${request.riskReason})${
     waiting > 0 ? ` — ${waiting} more queued` : ''

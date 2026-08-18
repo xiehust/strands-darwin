@@ -1,5 +1,7 @@
 /** Bounded, Unicode-safe presentation of tool inputs and results. */
 
+import { fileEditorInputProjection } from './edit-diff.js';
+
 export type ToolPreviewStatus = 'ok' | 'error' | 'denied';
 
 export const COMPACT_RESULT_CODE_POINTS = 2_000;
@@ -96,9 +98,18 @@ export function serializeToolInput(input: unknown): string {
   }
 }
 
-/** Expanded tool input, bounded from the head because inputs read in source order. */
-export function expandedToolInput(input: unknown): string[] {
-  return boundText(serializeToolInput(input), 'ok', {
+/**
+ * Expanded tool input, bounded from the head because inputs read in source order.
+ *
+ * A `fileEditor` write is projected as labelled header lines plus the marker-
+ * prefixed line diff of the same input — the identical strings the JSON carried,
+ * in the shape the permission box already presents — and falls back to JSON for
+ * anything the diff reader does not recognize. Presentation-time only: the SDK
+ * retains and receives the original input object either way.
+ */
+export function expandedToolInput(input: unknown, toolName?: string): string[] {
+  const projected = toolName === 'fileEditor' ? fileEditorInputProjection(input) : undefined;
+  return boundText(projected ?? serializeToolInput(input), 'ok', {
     codePoints: EXPANDED_INPUT_CODE_POINTS,
     lines: EXPANDED_INPUT_LINES,
   });

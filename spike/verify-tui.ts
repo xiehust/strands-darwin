@@ -213,7 +213,17 @@ async function approvePath(): Promise<void> {
     assert('detail prefix and explicit marker coexist',
       permissionFrame.includes(APPROVE_PREFIX) && /… truncated \d+ code points/.test(permissionFrame));
     assert('the omitted replacement tail is absent', !permissionFrame.includes('x'.repeat(200)));
-    assert('prompt keeps detail labels', permissionFrame.includes('Path:') && permissionFrame.includes('With:'));
+    assert('prompt keeps detail labels', permissionFrame.includes('Path:') && permissionFrame.includes('Diff:'));
+    // The edit is presented as a line diff computed from the tool input itself:
+    // the buggy line under `- `, the replacement under `+ `, markers that are
+    // plain text and therefore survive the ANSI strip this suite asserts through.
+    // Neither regex may span a wrap boundary: the 641-code-point replacement token
+    // wraps onto marker-less continuation rows (measured at 116 box columns), so
+    // the `+` row is asserted up to `//` and the prefix by the assertion above.
+    assert('diff shows the removed line under its minus marker', /- +return n \+ 2;/.test(permissionFrame));
+    assert('diff shows the replacement under its plus marker', /\+ +return n \* 2; \/\//.test(permissionFrame));
+    assert('the raw Replace/With blocks are the diff now',
+      !permissionFrame.includes('Replace:') && !permissionFrame.includes('With:'));
     assert('prompt offers y and n on the reachable decision row', /allow\?\s+y\s+n/.test(permissionFrame));
     // The wildcard offers stay on the same row as y/n so all decision keys remain
     // reachable without adding another row to the 50-row frame.

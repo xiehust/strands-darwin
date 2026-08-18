@@ -23,6 +23,7 @@ const suites = [
   'verify-background-tool-ui.ts',
   'verify-context-offload.ts',
   'verify-permission-presentation.ts',
+  'verify-edit-diff.ts',
   'verify-permission-modes.ts',
   'verify-permission-mode-switch.ts',
   'verify-permissions-command.ts',

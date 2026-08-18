@@ -317,7 +317,7 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
             // Bound before immutable history/replay state owns the string.
             preview: toolResultPreview(preview, status, state.toolDetailsExpanded).join('\n'),
             inputPreview: state.toolDetailsExpanded
-              ? expandedToolInput(active?.input ?? event.toolUse.input).join('\n')
+              ? expandedToolInput(active?.input ?? event.toolUse.input, event.toolUse.name).join('\n')
               : '',
             expanded: state.toolDetailsExpanded,
           },
