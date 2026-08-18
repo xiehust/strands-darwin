@@ -51,6 +51,38 @@ per further row with nothing streaming, and one in-flight call with details expa
   window hides. If the cursor lands in the header after a layout change, this is why.
 - A **windowed draft has no `you>` row** (it scrolled out), so `waitForIdle` and `awaitsPermission`
   cannot be used while a tall draft is up — clear the draft first.
+
+## Contract: one semantic visual language, colour optional
+
+`src/tui/visual-language.ts` is the vocabulary shared by `App`, `MessageList`, `InputBox`,
+`PermissionPrompt`, and `ToolCallPanel`. Components still own their geometry, but semantic colours
+and stable role/state markers must come from that module rather than accumulating unrelated local
+literals.
+
+- **Text carries critical state.** ANSI colour and emphasis reinforce the hierarchy; they never
+  create it. ANSI-stripped output distinguishes `you>`, `darwin>`, `tool ·`, `info ·`, `warn !`,
+  and `error !`; completion selection keeps `❯`; the permission heading and every decision remain
+  readable without colour.
+- **The header is status-first and compact.** `◆ DARWIN · <state>` leads, followed by the existing
+  model/session line (including cache and effort), exactly one `mode:` row, and required loader
+  state. Loaded skills, commands, agents and MCP servers are summarized by count rather than dumped
+  by name; `/` remains the discoverable inventory. The deterministic 80-column baseline is at most
+  eight visual rows, never more than the pre-SER-016 header.
+- **Transcript labels do not alter transcript ownership.** Assistant pieces still use `AnswerPart`
+  to emit exactly one `darwin>` label and one closing margin, and finished answer text still belongs
+  to `<Static>`. Tool and notice markers are prefixes on their existing rows, not new rows.
+- **Active controls remain explicit.** The editable composer emphasizes its existing `you> ` prefix
+  without changing the five-column editor geometry. Slash and path menus share a textual `❯`
+  selection plus visual emphasis. Key ownership and completion row planning do not change.
+- **The permission modal is information-equivalent.** Styling may group identity, provenance,
+  details and decisions, but exact kind/reason, source, bounded details, queue count, rule offers,
+  and reachable `y`, `n`, and `esc` decisions remain. Heading-marker changes must be included in
+  `boxGeometry`, so rendered rows and claimed rows remain one calculation.
+
+Required network-free checks: `spike/verify-visual-language.tsx`,
+`spike/verify-frame-budget.ts`, and `spike/verify-stream-into-static.ts`. Required pty checks remain
+those listed below, including the 120x50 live `approve` scenario for the complete modal.
+
 - The **completion menu is one budgeted block whatever fills it**: title + entries + the `… n more`
   row, capped at `MAX_COMPLETIONS` offered entries, with `planPromptBox` deciding how many survive.
   Both sources — slash commands and `@` workspace paths — draw the same shape, so a menu's *kind*

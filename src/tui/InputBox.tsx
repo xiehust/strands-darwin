@@ -5,6 +5,7 @@ import React, { useRef } from 'react';
 import { builtinCommandDescription } from '../commands/custom-commands.js';
 import { draftWindow, hiddenDraftNotice, planPromptBox } from './frame-budget.js';
 import type { EditorLayout } from './prompt-editor.js';
+import { visualColor, visualMarker } from './visual-language.js';
 
 /**
  * Completion rows shown at once; sized so all eleven built-ins fit on one screen.
@@ -114,7 +115,11 @@ export function InputBox({
       )}
       {rows.map((row, index) => (
         <Box key={`${row.start}:${index}`}>
-          <Text color={!editable ? 'gray' : row.prefix === 'you> ' ? 'cyan' : 'gray'} bold={row.prefix === 'you> '}>
+          <Text
+            color={!editable ? visualColor.muted : row.prefix === '     ' ? visualColor.muted : visualColor.identity}
+            bold={editable && row.prefix !== '     '}
+            inverse={editable && row.prefix === 'you> '}
+          >
             {row.prefix}
           </Text>
           <Text dimColor={!editable} wrap="truncate-end">{row.text}</Text>
@@ -141,10 +146,15 @@ export function InputBox({
             const description = completionKind === 'command' ? builtinCommandDescription(name) : undefined;
             return (
               <Box key={name}>
-                {/* Marker and name in one truncated Text: two untruncated children
-                    can sum past the width and wrap, which the budget did not count. */}
-                <Text color={selected ? 'cyan' : 'gray'} wrap="truncate-end">
-                  {selected ? '❯ ' : '  '}{completionKind === 'command' ? '/' : ''}{name}
+                {/* The selected row has a textual marker and inverse emphasis: it
+                    remains unambiguous in monochrome captures as well as colour. */}
+                <Text
+                  color={selected ? visualColor.active : visualColor.muted}
+                  bold={selected}
+                  inverse={selected}
+                  wrap="truncate-end"
+                >
+                  {selected ? `${visualMarker.completion} ` : '  '}{completionKind === 'command' ? '/' : ''}{name}
                 </Text>
                 {/* Appended after the name so pty substring assertions on
                     "  /name" rows keep matching; truncated so a narrow terminal

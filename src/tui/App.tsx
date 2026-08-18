@@ -88,6 +88,7 @@ import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { formatDispatchCompletion, formatDispatchesReport } from './subagent-format.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
 import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
+import { visualColor, visualMarker } from './visual-language.js';
 
 /** Window in which a second Ctrl+C means "exit", not "cancel again". */
 const DOUBLE_INTERRUPT_MS = 2000;
@@ -1138,7 +1139,7 @@ export function App({
   return (
     <Box flexDirection="column">
       <Box ref={headerRef} flexDirection="column">
-        <Header runtime={runtime} />
+        <Header runtime={runtime} status={effectiveStatus} />
       </Box>
       <MessageList
         history={state.history}
@@ -1192,7 +1193,13 @@ function hintForStatus(status: Status): string | undefined {
   return status === 'compacting' ? 'compacting conversation…' : undefined;
 }
 
-function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Element {
+export function Header({
+  runtime,
+  status = 'idle',
+}: {
+  readonly runtime: AgentRuntime;
+  readonly status?: Status;
+}): React.JSX.Element {
   const info = runtime.info;
   const instructions = info.projectInstructions;
   // Live, not info.permissionMode: /mode moves it mid-session, and a header still
@@ -1202,7 +1209,10 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text bold>darwin</Text>
+      <Text>
+        <Text color={visualColor.identity} bold>{visualMarker.identity} DARWIN</Text>
+        <Text dimColor> · {headerStatus(status)}</Text>
+      </Text>
       <Text dimColor>
         {/* Live, not info.config: /model changes both mid-session, and a header
             that still names the previous model is worse than no header. */}
@@ -1213,11 +1223,11 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       </Text>
       {mode === 'yolo' ? (
         // Yellow: yolo disables a safety layer, same convention as other warnings.
-        <Text color="yellow">mode: yolo — every tool call runs without confirmation</Text>
+        <Text color={visualColor.warning}>mode: yolo — every tool call runs without confirmation</Text>
       ) : mode === 'plan' ? (
         // One existing row, not a new one: the header competes with permission and
         // tool detail for frame height. Rules remain stored but cannot bypass plan.
-        <Text color="yellow">
+        <Text color={visualColor.warning}>
           mode: plan — read-only; write and execute calls are denied
           {runtime.allowRuleCount > 0 ? ` · ${runtime.allowRuleCount} allow rule(s) ignored` : ''}
         </Text>
@@ -1231,7 +1241,7 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
       )}
       {instructions !== undefined &&
         (instructions.truncated ? (
-          <Text color="yellow">
+          <Text color={visualColor.warning}>
             {AGENTS_FILENAME}: loaded ({formatBytes(instructions.bytes)}, truncated to{' '}
             {MAX_INSTRUCTIONS_BYTES / 1024} KB)
           </Text>
@@ -1241,7 +1251,7 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
           </Text>
         ))}
       {info.projectInstructionsProblem !== undefined && (
-        <Text color="yellow">
+        <Text color={visualColor.warning}>
           {AGENTS_FILENAME}: skipped — {info.projectInstructionsProblem}
         </Text>
       )}
@@ -1258,14 +1268,14 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
         </Text>
       )}
       {info.systemPromptProblem !== undefined && (
-        <Text color="yellow">
+        <Text color={visualColor.warning}>
           system prompt: using the default — {info.systemPromptProblem}
         </Text>
       )}
       {/* Only the failure: the working context itself is unremarkable, and the
           header cannot afford a line for something that worked. */}
       {info.workingContextProblem !== undefined && (
-        <Text color="yellow">
+        <Text color={visualColor.warning}>
           working context: no directory listing — {info.workingContextProblem}
         </Text>
       )}
@@ -1274,36 +1284,37 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
           live frame, and every line it grows by is one line of permission prompt
           or tool output that Ink drops off a short terminal. */}
       {info.promptCache.problem !== undefined && (
-        <Text color="yellow">prompt cache: off — {info.promptCache.problem}</Text>
+        <Text color={visualColor.warning}>prompt cache: off — {info.promptCache.problem}</Text>
       )}
       {/* Same rule as the cache problem above: the level itself rides on the model
           line, and only a gap between what was asked for and what the model can
           actually do earns a line — thinking depth is both a cost and a quality
           decision, so a silent downgrade is not acceptable. */}
       {runtime.thinking.problem !== undefined && (
-        <Text color="yellow">thinking: {runtime.thinking.problem}</Text>
+        <Text color={visualColor.warning}>thinking: {runtime.thinking.problem}</Text>
       )}
-      {info.mcpConfigPath !== undefined && <Text dimColor>mcp: {info.mcpServerCount} server(s)</Text>}
+      {hasCapabilities(info) && (
+        <Text dimColor>
+          loaded: {formatCapabilities(info)} · type / for commands
+        </Text>
+      )}
       {info.mcpIgnoredConfigPath !== undefined && (
-        <Text color="yellow">
+        <Text color={visualColor.warning}>
           mcp: using {DARWIN_DIRNAME}/{MCP_CONFIG_FILENAME} — {info.mcpIgnoredConfigPath} ignored
         </Text>
       )}
-      {info.skillNames.length > 0 && (
-        <Text dimColor>skills: {info.skillNames.join(', ')} — type / to use one</Text>
-      )}
       {info.skillProblems.map((problem) => (
-        <Text key={problem.directory} color="yellow">
+        <Text key={problem.directory} color={visualColor.warning}>
           skill skipped: {problem.directory} — {problem.reason}
         </Text>
       ))}
       {info.commandProblems.map((problem) => (
-        <Text key={problem.file} color="yellow">
+        <Text key={problem.file} color={visualColor.warning}>
           command skipped: {problem.file} — {problem.reason}
         </Text>
       ))}
       {info.agentProblems.map((problem) => (
-        <Text key={problem.file} color="yellow">
+        <Text key={problem.file} color={visualColor.warning}>
           agent skipped: {problem.file} — {problem.reason}
         </Text>
       ))}
@@ -1311,10 +1322,41 @@ function Header({ runtime }: { readonly runtime: AgentRuntime }): React.JSX.Elem
           comment above. `/trajectory` is deliberately not listed — the line is full,
           and the completion menu already advertises it with a description. */}
       <Text dimColor>
-        /exit to quit · /tasks lists jobs · /usage for token counts · /effort sets thinking depth · ctrl+c cancels a turn
+        / for actions · @ for paths · ctrl+c cancels · /exit quits
       </Text>
     </Box>
   );
+}
+
+function headerStatus(status: Status): string {
+  switch (status) {
+    case 'idle':
+      return 'ready';
+    case 'streaming':
+      return 'working';
+    case 'compacting':
+      return 'compacting';
+    case 'awaiting-permission':
+      return 'permission needed';
+  }
+}
+
+function hasCapabilities(info: AgentRuntime['info']): boolean {
+  return info.skillNames.length + info.commandNames.length + info.agentNames.length + info.mcpServerCount > 0;
+}
+
+function formatCapabilities(info: AgentRuntime['info']): string {
+  const capabilities = [
+    capabilityCount(info.skillNames.length, 'skill'),
+    capabilityCount(info.commandNames.length, 'command'),
+    capabilityCount(info.agentNames.length, 'agent'),
+    capabilityCount(info.mcpServerCount, 'MCP server'),
+  ];
+  return capabilities.filter((value): value is string => value !== undefined).join(' · ');
+}
+
+function capabilityCount(count: number, label: string): string | undefined {
+  return count > 0 ? `${count} ${label}${count === 1 ? '' : 's'}` : undefined;
 }
 
 /** Sizes are shown so an accidentally huge AGENTS.md is visible at a glance. */

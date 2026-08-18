@@ -277,8 +277,8 @@ header('streaming into history — what the transcript looks like');
     { columns: 80 },
   );
   const plain = output.replace(/\u001b\[[0-9;]*m/g, '');
-  assert('the transcript names the agent once, not once per piece',
-    plain.split('\n').filter((line) => line === 'agent').length === 1);
+  assert('the transcript names darwin once, not once per piece',
+    plain.split('\n').filter((line) => line === 'darwin>').length === 1);
   assert('every answer line is in the transcript exactly once',
     LINES.every((line) => plain.split('\n').filter((row) => row.trim() === line).length === 1));
   assert('the answer is followed by exactly one blank row',

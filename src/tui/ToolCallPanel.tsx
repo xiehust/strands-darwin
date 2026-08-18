@@ -19,6 +19,7 @@ import {
 import { formatTaskDuration } from './task-format.js';
 import { expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 import type { ActiveTool, HistoryItem, ToolStatus } from './turn-state.js';
+import { visualColor, visualMarker } from './visual-language.js';
 
 const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
 
@@ -69,8 +70,8 @@ export function ActiveToolCalls({
             {/* One `<Text>` with a nested span, not two children of a `<Box>`: Ink
                 lays those out as flex items and wraps them independently, which is a
                 row the budget did not count. */}
-            <Text dimColor wrap="truncate-end">
-              <Text color="yellow">{FRAMES[frame % FRAMES.length]} </Text>
+            <Text wrap="truncate-end">
+              <Text color={visualColor.active} bold>{`${visualMarker.activeTool} ${FRAMES[frame % FRAMES.length]} `}</Text>
               {activeToolCallSummary(tool.summary, tool.compactSummary, toolDetailsExpanded)}
               {/* Elapsed suffix, never prefix: pty assertions match the summary as a
                   substring, and the existing spinner tick already redraws each frame. */}
@@ -105,10 +106,11 @@ export function ToolCallResult({
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Box>
+      <Text wrap="truncate-end">
+        <Text color={visualColor.tool} bold>{visualMarker.tool} </Text>
         <Text color={color}>{icon} </Text>
-        <Text dimColor>{item.summary}</Text>
-      </Box>
+        {item.summary}
+      </Text>
       {input.map((line, index) => (
         <Text key={`input-${index}`} dimColor>
           {index === 0 ? `    Input: ${line}` : `           ${line}`}
@@ -130,11 +132,11 @@ export function ToolCallResult({
 function statusStyle(status: ToolStatus): { icon: string; color: string } {
   switch (status) {
     case 'ok':
-      return { icon: '✓', color: 'green' };
+      return { icon: '✓', color: visualColor.success };
     case 'denied':
-      return { icon: '⊘', color: 'yellow' };
+      return { icon: '⊘', color: visualColor.warning };
     case 'error':
-      return { icon: '✗', color: 'red' };
+      return { icon: '✗', color: visualColor.danger };
   }
 }
 

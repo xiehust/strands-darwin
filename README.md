@@ -62,30 +62,36 @@ and the dated reports under [`docs/research/`](docs/research/) record selection 
 supervised implementation batch. Every `/developer` run appends its child session, accepted
 commit, and Host-rerun checks there.
 
-```
-darwin
-bedrock/us.anthropic.claude-sonnet-4-6 · session session-20260813-112430
+```text
+◆ DARWIN · ready
+bedrock/us.anthropic.claude-sonnet-4-6 · session session-20260818-062400 · cache 5m · effort high
+mode: default
 AGENTS.md: loaded (1.2 KB)
-skills: commit-message — type / to use one
-/exit to quit · ctrl+c cancels a turn
+loaded: 3 skills · 2 agents · 1 MCP server · type / for commands
+/ for actions · @ for paths · ctrl+c cancels · /exit quits
 
-you
-  node test.js fails. Find the bug, fix it, then run the test to confirm.
+you>
+node test.js fails. Find the bug, fix it, then run the test to confirm.
 
-agent
-  Let me read the file first.
-✓ fileEditor view: /repo/greet.js
+darwin>
+Let me read the file first.
+tool · ✓ fileEditor view: /repo/greet.js
 
-┌─ permission required (write)
-│ fileEditor str_replace: /repo/greet.js
-│
-│ Replace:
-│     return 'Hello, ' + nam + '!';
-│ With:
-│     return 'Hello, ' + name + '!';
-└─
-  allow? y / n (esc denies)
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ◆ permission required (write — modifies a file)                              │
+│ [parent] fileEditor str_replace: /repo/greet.js                              │
+│                                                                              │
+│ Replace:                                                                     │
+│   return 'Hello, ' + nam + '!';                                              │
+│ With:                                                                        │
+│   return 'Hello, ' + name + '!';                                             │
+│                                                                              │
+│ allow? y n always: a=/repo/greet.js A=all fileEditor esc=deny                │
+╰──────────────────────────────────────────────────────────────────────────────╯
 ```
+
+Colour reinforces the hierarchy in a capable terminal, but the role and state markers above are
+intentional text: transcripts remain scan-friendly when ANSI styling is stripped or colour is off.
 
 ## Architecture
 

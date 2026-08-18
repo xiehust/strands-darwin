@@ -416,6 +416,20 @@ clears the screen *and the scrollback* per render instead.
 Split out because this file is injected into implement and check runs and is silently truncated past
 32 KB, which would drop whichever contract happened to sit last.
 
+## Contract: visual hierarchy is asserted structurally
+
+Use `spike/verify-visual-language.tsx` for deterministic Ink rendering. Strip ANSI before checking
+critical distinctions: colour is enhancement, so tests pin stable textual role/state markers,
+capability-count summaries, one `mode:`, model-line cache/effort, composer/menu selection, and every
+permission-modal fact. Keep the real pty suite for terminal behavior — cursor geometry, completion
+and recall key ownership, multiline drafts, frame slicing, and modal reachability — rather than
+making model-driven scenarios compare cosmetic escape sequences or exact generated prose.
+
+Header row acceptance is a visual-row assertion at a declared width, not a newline guess. Any text
+added to a measured/budgeted surface must update both its geometry helper and the structural fixture;
+do not weaken an assertion to accept omitted state.
+
+
 ## Contract: effective plan mode stays on the existing mode row
 
 `plan` is a permission mode, not a new panel. Render `mode: plan — read-only; write and execute

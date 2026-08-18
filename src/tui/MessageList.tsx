@@ -16,6 +16,7 @@ import React from 'react';
 import { hiddenRowsNotice, liveTextView } from './live-text.js';
 import { ToolCallResult } from './ToolCallPanel.js';
 import type { HistoryItem } from './turn-state.js';
+import { noticeColor, visualColor, visualMarker } from './visual-language.js';
 
 export function MessageList({
   history,
@@ -46,7 +47,7 @@ export function MessageList({
       <Static key={staticEpoch} items={[...history]}>{(item) => <HistoryEntry key={item.id} item={item} />}</Static>
       {live.rows.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
-          <Text color="green">agent</Text>
+          <Text color={visualColor.assistant} bold>{visualMarker.assistant}</Text>
           {live.hiddenRows > 0 && <Text dimColor>{hiddenRowsNotice(live.hiddenRows)}</Text>}
           {/* One Text per pre-wrapped row, truncated: the block's height is then
               exactly what `liveTextView` counted, whatever Ink's own word wrap
@@ -67,9 +68,7 @@ function HistoryEntry({ item }: { readonly item: HistoryItem }): React.JSX.Eleme
     case 'user':
       return (
         <Box flexDirection="column" marginBottom={1}>
-          <Text color="cyan" bold>
-            you
-          </Text>
+          <Text color={visualColor.identity} bold>{visualMarker.user}</Text>
           <Text>{item.text}</Text>
         </Box>
       );
@@ -84,7 +83,7 @@ function HistoryEntry({ item }: { readonly item: HistoryItem }): React.JSX.Eleme
       const closing = item.part === 'whole' || item.part === 'last';
       return (
         <Box flexDirection="column" marginBottom={closing ? 1 : 0}>
-          {labelled && <Text color="green">agent</Text>}
+          {labelled && <Text color={visualColor.assistant} bold>{visualMarker.assistant}</Text>}
           {item.text !== '' && <Text>{item.text}</Text>}
         </Box>
       );
@@ -96,12 +95,9 @@ function HistoryEntry({ item }: { readonly item: HistoryItem }): React.JSX.Eleme
     case 'notice':
       return (
         <Box marginBottom={1}>
-          {/* Severity picks the color only; the words already carry the details. */}
-          {item.severity === 'info' ? (
-            <Text dimColor>{item.text}</Text>
-          ) : (
-            <Text color={item.severity === 'error' ? 'red' : 'yellow'}>{item.text}</Text>
-          )}
+          <Text color={noticeColor(item.severity)} dimColor={item.severity === 'info'}>
+            {visualMarker.notice[item.severity]} {item.text}
+          </Text>
         </Box>
       );
   }

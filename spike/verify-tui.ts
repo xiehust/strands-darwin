@@ -169,9 +169,9 @@ async function approvePath(): Promise<void> {
     // The quit hint, not the product name: `darwin` also occurs in the temp paths
     // this scenario works in, so waiting for or asserting on the name alone would
     // pass without a header ever being drawn.
-    await tui.waitFor('/exit to quit', { timeoutMs: 60_000 });
+    await tui.waitFor('/exit quits', { timeoutMs: 60_000 });
     await tui.waitFor('you>', { timeoutMs: 60_000 });
-    assert('TUI rendered its header', tui.screen.includes('/exit to quit'));
+    assert('TUI rendered its header', tui.screen.includes('/exit quits'));
     // The inference-profile prefix is deliberately not pinned: this asserts that the
     // header names the provider and a Bedrock Claude model, not which one the
     // built-in defaults happen to select.
@@ -753,8 +753,8 @@ async function slashCompletion(): Promise<void> {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
     await tui.waitFor('skill /commit-message', { timeoutMs: 30_000, settleMs: 400 });
     assert(
-      'skills are advertised in the header after required built-ins',
-      tui.screen.includes('skills: developer, self-evolution-research, commit-message'),
+      'loaded capabilities are summarized in the header',
+      tui.screen.includes('loaded: 3 skills · 1 command · 1 agent'),
     );
     assert(
       'a command colliding with a skill is warned and skipped',
@@ -1655,7 +1655,7 @@ async function modeCommand(): Promise<void> {
   const liveFrame = (): string => {
     const text = tui.frame.replaceAll('\r', '');
     let start = 0;
-    for (const match of text.matchAll(/(?:^|\n)darwin\n/g)) {
+    for (const match of text.matchAll(/(?:^|\n)◆ DARWIN · [^\n]+\n/g)) {
       start = (match.index ?? 0) + (match[0].startsWith('\n') ? 1 : 0);
     }
     return text.slice(start);

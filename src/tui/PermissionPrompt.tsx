@@ -27,6 +27,7 @@ import {
 } from './frame-budget.js';
 import { wrapToRows } from './live-text.js';
 import { permissionSummary } from './tool-detail-presentation.js';
+import { visualColor, visualMarker } from './visual-language.js';
 
 export function PermissionPrompt({
   request,
@@ -61,21 +62,21 @@ export function PermissionPrompt({
   // string counted above.
   const summaryRow = (
     <Text wrap="truncate-end">
-      <Text color="cyan">[{request.source.label}] </Text>
+      <Text color={visualColor.identity} bold>[{request.source.label}] </Text>
       {permissionSummary(request.summary)}
     </Text>
   );
   const decisionRow = (
     <Text>
       <Text bold>allow? </Text>
-      <Text color="green">y</Text>
+      <Text color={visualColor.success} bold>y</Text>
       <Text dimColor> </Text>
-      <Text color="red">n</Text>
+      <Text color={visualColor.danger} bold>n</Text>
       {options.length > 0 && <Text dimColor> always:</Text>}
       {options.map((option) => (
         <React.Fragment key={option.key}>
           <Text dimColor> </Text>
-          <Text color="cyan">{option.key}</Text>
+          <Text color={visualColor.active}>{option.key}</Text>
           <Text dimColor>={option.label}</Text>
         </React.Fragment>
       ))}
@@ -93,7 +94,7 @@ export function PermissionPrompt({
       <Box flexDirection="column">
         {plan.summary && summaryRow}
         {plan.notice && (
-          <Text color="yellow" wrap="truncate-end">
+          <Text color={visualColor.warning} wrap="truncate-end">
             {hiddenPermissionNotice(hiddenRows, plan.hiddenBlocks)}
           </Text>
         )}
@@ -103,10 +104,10 @@ export function PermissionPrompt({
   }
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor={visualColor.warning} paddingX={1}>
       <Text>
-        <Text color="yellow" bold>
-          permission required
+        <Text color={visualColor.warning} bold>
+          {visualMarker.permission} permission required
         </Text>
         <Text dimColor>
           {' '}
@@ -122,7 +123,7 @@ export function PermissionPrompt({
         if (block === undefined || granted.rows === 0) return null;
         return (
           <Box key={block.label} flexDirection="column" marginTop={1}>
-            <Text color="yellow">{block.label}:</Text>
+            <Text color={visualColor.warning}>{block.label}:</Text>
             {block.rows.slice(0, granted.rows).map((line, row) => (
               // Detail lines are static text with no identity of their own.
               <Text key={row} wrap="truncate-end">{`${PERMISSION_DETAIL_INDENT}${line}`}</Text>
@@ -132,7 +133,7 @@ export function PermissionPrompt({
       })}
 
       {plan.notice && (
-        <Text color="yellow" wrap="truncate-end">
+        <Text color={visualColor.warning} wrap="truncate-end">
           {hiddenPermissionNotice(hiddenRows, plan.hiddenBlocks)}
         </Text>
       )}
@@ -165,7 +166,7 @@ function boxGeometry(request: AssessedPermissionRequest, waiting: number, column
     label: detail.label,
     rows: permissionDetailRows(detail.value, boxColumns),
   }));
-  const headingText = `permission required (${request.kind} — ${request.riskReason})${
+  const headingText = `${visualMarker.permission} permission required (${request.kind} — ${request.riskReason})${
     waiting > 0 ? ` — ${waiting} more queued` : ''
   }`;
   const decisionText = `allow? y n${
