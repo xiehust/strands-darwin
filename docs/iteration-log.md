@@ -1087,3 +1087,43 @@ Token spend, two managed tasks: `input=134 output=36,954 cacheRead=6,044,092 cac
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-19 | `d0fb23f` | `!` runs a user-typed shell command directly: bounded live output, honest record, report to the next prompt |
+
+### Batch 28 — `darwin sessions` lists, `--resume <id>` chooses (2026-08-19)
+
+Origin: `docs/research/research_2026-08-19.md`, run `01:20:26Z` (rolled `peer`). Codex reopens a
+recent chat from the current repository or searches local chats; OpenCode lists and switches with
+`/sessions`. Darwin could recover only the `last-session.json` pointer's session, and
+`--session <id>` demanded an id copied by hand from the store. SER-025 (Score 11) was the batch's
+second direction; an in-session switcher was deliberately out of scope.
+
+Child session `session-20260819-032859311`, managed task `bg-2343dc6a` (exit 0, no correction
+turn). Delivered in `33d5bb0` (+ task archive `9656b5b`): a new `argv[0]`-routed
+`darwin sessions` subcommand (`src/cli-sessions.ts`, on the `cli-trajectory.ts` precedent —
+imports nothing from the SDK and contains no write API, both grep-asserted) listing this
+project's resumable sessions newest-first by snapshot mtime with age, bounded first prompt from
+the trajectory's first `userInput` (degrading to `(not recorded)` per the prompt-recall absence
+rule) and a `(last)` marker; sessions without a restorable snapshot are skipped and the skip
+stated. `--resume <id>` joins the flag grammar additively — only a non-flag token is consumed, so
+bare `--resume` and `--resume --flag` parse exactly as before; combining with `--session` or
+repeating is a usage error. A typo'd id now refuses in one plain line via a named
+`SessionNotFoundError` caught beside `ConfigError` — which also fixed the pre-existing
+`--session <bogus>` TUI stack-trace crash — and never falls back to another session. Pointer
+semantics stated, not left emergent: `markResumable()` is unchanged, so the resumed session owns
+the pointer only after it finishes a turn.
+
+Host acceptance independently read the full 11-file diff and re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (exit 0, 48 suite summaries, all `0 failed`, incl. the new
+`verify-sessions-command.ts` 42/42); free pty `clear` 19, `completion` 35, `bang` 16;
+`git show --check` on both commits; Trellis archive validation (`✓`); AGENTS.md 17,031 B under
+the preload cap; protected docs untouched. Host's own probe ran against the **real** project
+store: the listing printed 30+ sessions newest-first with `(last)` on the live child's session,
+bounded prompts and one stated skip, while all 121 store files hashed byte-identical before and
+after; `--resume session-does-not-exist-0000` refused in one line (exit 1, zero stack frames);
+`sessions extra` exited 2 with usage; `--resume --session abc -p x` kept bare `--resume`'s
+meaning and refused the named `abc` rather than falling back. No model call was needed.
+
+Token spend, single managed task: `input=192 output=49,596 cacheRead=8,869,967 cacheWrite=139,896`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `33d5bb0` | `darwin sessions` lists this project's resumable sessions; `--resume <id>` reopens one by choice |
