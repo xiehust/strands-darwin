@@ -64,6 +64,7 @@ The built-in slash commands (`/` lists them together with your skills and custom
 | `/mode` | set the permission mode for this session |
 | `/model` | list or switch models |
 | `/permissions` | list or revoke allow-rules |
+| `/status` | one consolidated read-only report of the session: model, cache, effort, mode, MCP, skills, spend, context |
 | `/tasks` | list background jobs |
 | `/trajectory` | this session's recorded trajectory |
 | `/usage` | token counts this run |

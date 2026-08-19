@@ -10,12 +10,21 @@ import type { ContextEstimate } from '../agent/runtime.js';
 
 /** One transcript line: tokens, window share, and message count. */
 export function formatContextReport(estimate: ContextEstimate): string {
+  return `estimated context — ${formatContextValue(estimate)}`;
+}
+
+/**
+ * The value half of the report, without the label — shared with `/status` so the
+ * two commands cannot describe the same estimate differently (the `/export`
+ * reuses-`formatReplay` precedent, at line scale).
+ */
+export function formatContextValue(estimate: ContextEstimate): string {
   const tokens = `~${groupDigits(estimate.estimatedTokens)} tokens`;
   const window =
     estimate.windowTokens === undefined
       ? 'window unknown'
       : `${formatWindowShare(estimate.estimatedTokens, estimate.windowTokens)} of ${groupDigits(estimate.windowTokens)} window`;
-  return `estimated context — ${tokens} · ${window} · ${estimate.messageCount} message(s)`;
+  return `${tokens} · ${window} · ${estimate.messageCount} message(s)`;
 }
 
 /**

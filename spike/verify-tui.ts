@@ -850,6 +850,33 @@ async function slashCompletion(): Promise<void> {
       exportEmpty.includes('no recorded turns yet') && !exportEmpty.includes('working…'));
     assert('a nothing-to-export session writes no file', !existsSync(path.join(dir, 'nothing-yet.md')));
 
+    // /status (SER-026): the consolidated read-only report must answer without a
+    // model call, in a project with no MCP configured at all — absence is a normal
+    // state ('none configured'), never an error. The skills fixture above is what
+    // makes the skills line countable.
+    const beforeStatusArgument = tui.mark();
+    tui.submit('/status extra');
+    await tui.waitFor('/status takes no arguments', { timeoutMs: 30_000, from: beforeStatusArgument, settleMs: 400 });
+    assert('/status rejects arguments without starting a turn',
+      !tui.screen.slice(beforeStatusArgument).includes('working…'));
+
+    const beforeStatus = tui.mark();
+    tui.submit('/status');
+    await tui.waitFor('status — this session', { timeoutMs: 30_000, from: beforeStatus, settleMs: 400 });
+    const statusReport = tui.screen.slice(beforeStatus);
+    assert('/status answers without a model call', !statusReport.includes('working…'));
+    assert('/status names the model and provider', /bedrock\/(us|eu|apac|global)\.anthropic\./.test(statusReport));
+    assert('/status states the session id', statusReport.includes('session-'));
+    assert('/status states the permission mode', /mode\s+default/.test(statusReport));
+    assert('/status states no-MCP as a normal state', statusReport.includes('none configured'));
+    assert('/status counts the loaded skills', /skills\s+3 — /.test(statusReport));
+    assert('/status states the trajectory file',
+      statusReport.includes('recording — ') && withoutWhitespace(statusReport).includes('trajectory.jsonl'));
+    assert('/status states diagnostics off', /diagnostics\s+off/.test(statusReport));
+    assert('an unreported spend metric stays not reported, never 0',
+      statusReport.includes('cache read not reported') && !statusReport.includes('cache read 0'));
+    assert('/status states the context estimate', /context\s+~/.test(statusReport) && statusReport.includes('tokens'));
+
     const beforeSlash = tui.mark();
     tui.send('/');
     await tui.waitFor('commands (', { timeoutMs: 30_000, from: beforeSlash });
@@ -896,6 +923,9 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /mode is listed', completed.includes('  /mode — set the permission mode'));
     assert('the built-in /model is listed', completed.includes('  /model — list or switch models'));
     assert('the built-in /permissions is listed', completed.includes('  /permissions'));
+    // Matched with its description: '  /status' could ride along in other transcript
+    // text, and the description is what tells the built-in apart in the menu.
+    assert('the built-in /status is listed', completed.includes('  /status — session configuration and state'));
     assert('the built-in /tasks is listed', completed.includes('  /tasks'));
     assert('the built-in /trajectory is listed', completed.includes('  /trajectory'));
     assert('the built-in /usage is listed', completed.includes('  /usage'));
@@ -2643,6 +2673,18 @@ async function mcpReport(): Promise<void> {
     const second = tui.screen.slice(beforeSecond);
     assert('a second /mcp reports the same states — reading did not mutate',
       second.includes('connected · 3 tools:') && second.includes('failed — could not connect'));
+
+    // /status (SER-026) consolidates the same projection: the failed server is
+    // stated as failed there too — never omitted — and asking must be exactly as
+    // read-only as /mcp itself.
+    const beforeStatus = tui.mark();
+    tui.submit('/status');
+    await tui.waitFor('status — this session', { timeoutMs: 30_000, from: beforeStatus, settleMs: 400 });
+    const statusReport = tui.screen.slice(beforeStatus);
+    assert('/status answers without a model call', !statusReport.includes('working…'));
+    assert('/status counts both configured servers', statusReport.includes('2 servers — '));
+    assert('/status states the connected server with its tool count', statusReport.includes('calc connected (3 tools)'));
+    assert('/status states the failed server as failed, like /mcp', statusReport.includes('broken failed — could not connect'));
 
     tui.submit('/exit');
     assert('TUI exits cleanly with the report shown', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);

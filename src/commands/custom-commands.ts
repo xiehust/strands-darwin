@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'export', 'mcp', 'mode', 'model', 'permissions', 'tasks', 'trajectory', 'usage'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'export', 'mcp', 'mode', 'model', 'permissions', 'status', 'tasks', 'trajectory', 'usage'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -40,6 +40,9 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // Allow-rules, not the mode: /permissions lists and revokes what runs silently,
   // /mode moves how much everything else asks.
   permissions: 'list or revoke allow-rules',
+  // The consolidated read-only session report — configuration and live state in
+  // one transcript block, for when the header has scrolled away.
+  status: 'session configuration and state',
   tasks: 'list background jobs',
   // The record this session is writing, not the CLI's search/fork/replay verbs.
   trajectory: 'this session\u2019s recorded trajectory',

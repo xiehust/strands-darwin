@@ -23,8 +23,7 @@ import {
   type AllowRuleEntry,
   type PermissionDecision,
 } from '../agent/permission.js';
-import type { PromptCachePlan } from '../agent/prompt-cache.js';
-import type { AgentRuntime, CompactResult, UsageTotals } from '../agent/runtime.js';
+import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import { formatUsageValue, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { routeSdkLogs } from '../agent/sdk-logging.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
@@ -100,6 +99,7 @@ import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { formatDispatchCompletion, formatDispatchesReport } from './subagent-format.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
 import { formatMcpReport } from './mcp-format.js';
+import { formatPromptCache, formatStatusReport, formatThinking } from './status-format.js';
 import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
@@ -701,6 +701,51 @@ export function App({
             overriddenServerNames: runtime.info.mcpOverriddenServerNames,
             ignoredConfigPath: runtime.info.mcpIgnoredConfigPath,
             candidatePaths: [candidates.global, candidates.preferred, candidates.fallback],
+          }),
+        });
+        return;
+      }
+
+      // One consolidated read of state the session already holds (SER-026), on the
+      // /mcp precedent: a formatter over existing accessors, never a new information
+      // channel — no model call, no connection attempt, no mutation. Above the busy
+      // check because a scrolled-away header is the use case, and mid-turn is when
+      // "what is this session actually configured as" gets asked.
+      if (/^\/status(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/status') {
+          dispatch({ type: 'notice', text: '/status takes no arguments' });
+          return;
+        }
+        // The /context machinery, degraded rather than fatal: a failed estimate
+        // costs one line of the report, never the report.
+        let context: ContextEstimate | undefined;
+        let contextProblem: string | undefined;
+        try {
+          context = await runtime.contextEstimate();
+        } catch (error) {
+          contextProblem = error instanceof Error ? error.message : String(error);
+        }
+        dispatch({
+          type: 'notice',
+          text: formatStatusReport({
+            config: runtime.config,
+            sessionId: runtime.info.sessionId,
+            resumed: runtime.info.resumed,
+            promptCache: runtime.promptCache,
+            thinking: runtime.thinking,
+            mode: runtime.permissionMode,
+            allowRuleCount: runtime.allowRuleCount,
+            mcpServers: runtime.listMcpServers(),
+            skillNames: runtime.info.skillNames,
+            trajectory: runtime.trajectoryStatus,
+            diagnostics: runtime.diagnosticsStatus,
+            usage: runtime.usage,
+            turnInFlight: status === 'streaming',
+            context,
+            ...(contextProblem !== undefined && { contextProblem }),
           }),
         });
         return;
@@ -1585,31 +1630,6 @@ function capabilityCount(count: number, label: string): string | undefined {
 /** Sizes are shown so an accidentally huge AGENTS.md is visible at a glance. */
 function formatBytes(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
-}
-
-/**
- * Cache state as a suffix on the model line rather than a line of its own — see the
- * comment in {@link Header}. Empty when nothing is cached: the off case is either the
- * user's own choice (silent) or reported there as a warning.
- */
-function formatPromptCache(plan: PromptCachePlan): string {
-  if (!plan.enabled) return '';
-  const ttl = plan.ttl ?? 'on';
-  // Only the anthropic provider ends up with a single part, and "cache on" there
-  // would overstate what is actually being cached.
-  return plan.parts.length === 1 ? ` · cache ${ttl} (${plan.parts[0]})` : ` · cache ${ttl}`;
-}
-
-/**
- * Thinking depth as a suffix on the model line — same reasoning as
- * {@link formatPromptCache}. Always shown: unlike caching there is no "off" state
- * to stay quiet about, and the level is worth knowing *before* spending a turn at
- * it. A clamped level shows what will actually happen, not what was asked for; the
- * reason is the yellow line in {@link Header}.
- */
-function formatThinking(plan: ThinkingPlan): string {
-  if (!plan.enabled || plan.effective === undefined) return ' · no thinking';
-  return ` · effort ${plan.effective}`;
 }
 
 /**

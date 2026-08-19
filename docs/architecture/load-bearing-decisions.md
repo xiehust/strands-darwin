@@ -131,6 +131,28 @@ costing the export only. Clipboard and `$EDITOR` are out of scope on purpose (SS
 fourteenth built-in grew `MAX_COMPLETIONS` again; the free checks are
 `spike/verify-export-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`.
 
+## `/status` — the consolidated projection
+
+**`/status` is a formatter over accessors the runtime already exposes — never a new information
+channel** (`src/tui/status-format.ts`, on the `/mcp` precedent): model/provider and session id
+(`runtime.config`, `runtime.info`), cache and effort (the *live* plans, rendered by the very
+functions the header's model line uses — `formatPromptCache`/`formatThinking` live in
+`status-format.ts` so the two surfaces cannot diverge), permission mode and live allow-rule count
+(the header's own three-state wording), MCP server states (`runtime.listMcpServers()`, a failed
+server stated as failed exactly as `/mcp` words it), skills, trajectory/diagnostics state, process
+token spend and the `/context` estimate (`formatContextValue`, shared with `formatContextReport`).
+Four things are load-bearing. It is read-only to the byte: no config write, no pointer move, no
+connection attempt — states are reported as they are, and the awaited `contextEstimate()` is the
+same mid-turn-safe read `/context` performs, degraded to an `unavailable — <reason>` line on
+failure. Unknown metrics stay unknown, never 0: spend comes from `usageBuckets` +
+`formatUsageValue` directly (`not reported`), never the bedrock `?? 0` projection of `usageRows`.
+The report is bounded by construction: server and skill lists cap at `MAX_STATUS_NAMES`
+representative names with an explicit `… N more`, and per-server tool listings stay with `/mcp`
+(the report says `details: /mcp` instead of duplicating them). And it is transcript history only —
+the live frame gains no row; restating what the header shows is the point, because a scrolled-away
+header is the use case. The fifteenth built-in grew `MAX_COMPLETIONS` again; the free checks are
+`spike/verify-status-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion` / `mcp`.
+
 
 ## `darwin sessions` and `--resume <id>` — resume by choice
 
