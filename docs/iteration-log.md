@@ -1283,3 +1283,35 @@ Token spend, single managed task: `input=98 output=14,409 cacheRead=2,577,832 ca
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-19 | `bb89b53` | Bash `status`/`output`/`stop` ignore redundant `command` while remaining taskId-authoritative |
+
+### Batch 33 — bounded background-task wait with incremental output (2026-08-19)
+
+Origin: `docs/reflections/reflection_2026-08-19_session-20260819-094621980.md`. The reflected
+supervision turn spent 322 model-visible calls alternating `status` and `output` for two successful
+children. SRF-003 (Score 11) required one finite state-change wait that returns incremental output
+while preserving the existing cursor, cancellation and process-reaping contracts.
+
+Child session `session-20260819-112756566`. One deterministic pre-launch task
+`bg-67f2df1b-442a-4b71-9f1b-a1e37fe2d3aa` failed before a session or usage record because the
+Host passed an extra `--`. The managed implementation task
+`bg-f7b55c75-38ef-4d92-b505-95f41657656a` exited 0 with no correction turn. Delivered in
+`0f65591` (+ Trellis archive `3ca6851`): `bash wait` requires a 1–30,000 ms bound and returns one
+status-plus-output result on new complete UTF-8 output, a competing cursor change, terminal state,
+timeout, caller cancellation or manager shutdown. It consumes through the existing serialized
+cursor, is read-safe, cannot execute a command, does not stop a task when its observer is cancelled,
+and leaves shutdown's TERM→KILL group reaping intact.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck` (exit 0),
+`pnpm test` (exit 0, 51 suite summaries all `0 failed`), and the real-process
+`spike/verify-background-bash.ts` (96 passed, 0 failed), plus `git show --check` on both commits,
+clean-tree verification, and the AGENTS.md preload-size check (19,239 bytes < 32 KiB). No provider
+call was needed for acceptance.
+
+Token spend: the deterministic failed launch reported no usage line; the implementation task
+reported `input=212 output=34,259 cacheRead=8,384,186 cacheWrite=112,848`. Aggregate reported spend
+is therefore those four buckets; the failed launch has unknown/unreported spend rather than an
+invented zero.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `0f65591` | Wait once for bounded background-task output or state change while preserving the shared cursor and reaping guarantees |
