@@ -15,9 +15,11 @@ import {
   hiddenDetailNotice,
   hiddenToolsNotice,
   planToolPanel,
+  toolDetailsVisible,
   toolInputRows,
 } from './frame-budget.js';
 import { formatTaskDuration } from './task-format.js';
+import { SHELL_TOOL_NAME } from './shell-command.js';
 import { expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 import type { ActiveTool, HistoryItem, ToolStatus } from './turn-state.js';
 import { diffToneColor, visualColor, visualMarker } from './visual-language.js';
@@ -53,7 +55,7 @@ export function ActiveToolCalls({
   // the panel's height has to be what was counted, not what Ink's own word wrap
   // makes of the same string.
   const inputs = tools.map((tool) =>
-    toolDetailsExpanded ? toolInputRows(tool.input, columns, tool.name) : [],
+    toolDetailsVisible(tool.name, toolDetailsExpanded) ? toolInputRows(tool.input, columns, tool.name) : [],
   );
   const plan = planToolPanel(
     inputs.map((rows) => ({ detailRows: rows.length })),
@@ -82,12 +84,14 @@ export function ActiveToolCalls({
               // Diff-toned rows trade the dim input styling for their tone
               // colour; the `+ `/`- ` marker on the text is the durable signal,
               // and the bold span is the same enhancement layer as the tone.
+              // The `!` pseudo-tool's rows are its live *output* tail, so the
+              // `Input:` label would be a lie there — they stay plain indent.
               <Text
                 key={index}
                 {...(row.tone === undefined ? { dimColor: true } : { color: diffToneColor(row.tone) })}
                 wrap="truncate-end"
               >
-                {index === 0 ? '    Input: ' : TOOL_INPUT_INDENT}
+                {index === 0 && tool.name !== SHELL_TOOL_NAME ? '    Input: ' : TOOL_INPUT_INDENT}
                 {emphasized(row.text, row.emphasis)}
               </Text>
             ))}

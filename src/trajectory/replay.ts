@@ -102,6 +102,24 @@ export function replayRecords(
         state = turnReducer(state, { type: 'userInput', text: record.text });
         continue;
 
+      case 'shellCommand':
+        // A `!` command replays as exactly the two things the live session showed:
+        // the user row (`!command`, the normalized draft the TUI echoed) and the
+        // finished pseudo-tool row, composed by the same reducer case from the same
+        // recorded fields — printed, not skipped, because the transcript claims to
+        // be what happened and a shell command happened.
+        state = turnReducer(state, { type: 'userInput', text: `!${record.command}` });
+        state = turnReducer(state, {
+          type: 'shellCommand',
+          command: record.command,
+          exitCode: record.exitCode,
+          signal: record.signal,
+          timedOut: record.timedOut,
+          durationMs: record.durationMs,
+          output: record.output,
+        });
+        continue;
+
       case 'contentBlockEvent':
       case 'beforeToolCallEvent':
       case 'afterToolCallEvent':

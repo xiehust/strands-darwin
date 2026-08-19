@@ -83,6 +83,7 @@ envelope `{"v":1,"seq":<n>,"t":"<ISO>","turn":<n>,"type":"<t>"}`.
 | `turnEnded` | `stopReason`, `ms`, `recorded` per type, `dropped` per type, `partialText` when the turn ended with unflushed assistant text, `failure` when the turn's stream **threw**, and `spend` when the token meter could be read |
 | `forkedFrom` | `session`, `seq`, `bytes` — the first line appended to a **fork**, never to the source |
 | `recordingStopped` | `reason`: `budget` or `error` |
+| `shellCommand` | `command`, `exitCode`, `signal`, `timedOut`, `durationMs`, `output` — a user-typed `!` command (`SER-024`), run by the TUI directly. **Not** a `userInput` line: nothing was handed to `agent.stream()`, and prompt recall must never offer a shell command back. `output` is the already-bounded SER-009 projection the screen showed (`SHELL_REPORT_*` caps in `src/tui/shell-command.ts`, deliberately under `MAX_FIELD_CHARS`), so the record repeats what was shown. `turn` is the last **closed** turn's ordinal, like `recordingStopped` — the command ran between turns; the TUI refuses to run one mid-turn, which is also what keeps this record off the streaming path (`recordShellCommand` buffers synchronously and flushes through the ordinary append chain). Replay **prints** it: the record replays as the same user row + finished pseudo-tool row the live reducer produced, through the same `turnReducer` (`shellCommand` action). Asserted by `spike/verify-shell-command.ts` (free) |
 
 ### Contract: the event vocabulary is the SDK's, and `toJSON()` is the seam
 
@@ -573,6 +574,14 @@ atomic overwrite refusal leaving the existing file byte-identical; an unwritable
 one error notice; the `~/.darwin/sessions/` guard; a partial trailing line tolerated, stated in the
 notice and the header, and left unrepaired; and the structural greps (no SDK import, no write API
 aimed at the record, `wx` on the target). The UI rows live in `spike/verify-tui.ts completion`.
+
+For the `shellCommand` record specifically, `spike/verify-shell-command.ts` (free, in `pnpm test`,
+owns its HOME) must cover: the record appended with prior bytes untouched and its fields read back;
+the line parsing through the envelope validator; an oversized field capped with its truncation on
+the record; replay equality against the live reducer's rows and `formatReplay` printing the user
+row, the outcome and the bounded output; and prompt history offering the neighbouring `userInput`
+lines while never offering the shell command. The UI half is `spike/verify-tui.ts bang` (free),
+which also proves a real TUI session writes the record and no `userInput` line.
 
 Run `pnpm typecheck`, `pnpm test`, and — because `/trajectory` adds a completion row —
 `pnpm tsx spike/verify-tui.ts completion`.

@@ -342,6 +342,45 @@ export class TrajectoryRecorder {
     return new TurnRecording(this, this.turns, input, spend);
   }
 
+  /**
+   * Records one user-typed `!` command (SER-024). Between turns by nature — the
+   * TUI refuses to run one while a turn streams — so this is never on the
+   * streaming path: composing and buffering are synchronous and non-throwing like
+   * every other record, and the flush is the same fire-and-forget append chain a
+   * closing turn uses. `output` arrives already bounded (the SER-009 projection
+   * the screen showed); the field caps here are a backstop, not the bound.
+   */
+  recordShellCommand(entry: {
+    command: string;
+    exitCode: number | null;
+    signal: string | null;
+    timedOut: boolean;
+    durationMs: number;
+    output: string;
+  }): void {
+    if (!this.active) return;
+    try {
+      const command = capField(entry.command, 'command');
+      const output = capField(entry.output, 'output');
+      this.buffer(
+        {
+          turn: this.turns,
+          type: 'shellCommand',
+          command: command.value,
+          exitCode: entry.exitCode,
+          signal: entry.signal,
+          timedOut: entry.timedOut,
+          durationMs: entry.durationMs,
+          output: output.value,
+        },
+        [...command.trunc, ...output.trunc],
+      );
+      this.flush();
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
   get status(): TrajectoryStatus {
     return {
       file: this.file,

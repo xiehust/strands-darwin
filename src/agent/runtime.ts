@@ -681,6 +681,25 @@ export class AgentRuntime {
   }
 
   /**
+   * Records a user-typed `!` command (SER-024) in the session's trajectory.
+   *
+   * A passthrough to the recorder and nothing else: the command was run by the
+   * TUI under the user's own authority, so it neither enters the agent loop nor
+   * asks permission here — this is the honesty half of that bargain. No-op when
+   * recording is off or has latched itself off, like every other record.
+   */
+  recordShellCommand(entry: {
+    command: string;
+    exitCode: number | null;
+    signal: string | null;
+    timedOut: boolean;
+    durationMs: number;
+    output: string;
+  }): void {
+    this.trajectory?.recordShellCommand(entry);
+  }
+
+  /**
    * The diagnostics log, or `undefined` when nobody asked for one.
    *
    * Handed out rather than wrapped in per-entry methods so a caller can decide *once*

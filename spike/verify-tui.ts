@@ -19,7 +19,7 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion |
- *                 pathCompletion | recall | recallEmpty | clear | mcpStderr | mcp |
+ *                 pathCompletion | recall | recallEmpty | bang | clear | mcpStderr | mcp |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
@@ -2440,6 +2440,109 @@ async function promptRecallWithoutRecord(): Promise<void> {
   }
 }
 
+/**
+ * The `!` prefix (SER-024), free — no model call: a user-typed shell command runs
+ * directly (in plan mode, deliberately: the gate's subject is model tool calls),
+ * its live output reaches the panel while it runs, a submission during it is
+ * retained rather than queued (SER-010), Ctrl+C kills it without costing the
+ * session, and everything that ran is on screen and in the trajectory record —
+ * as `shellCommand` records, never as `userInput` lines.
+ */
+async function bangShellCommand(): Promise<void> {
+  header('TUI — ! runs a user shell command: live output, retention, cancel, record');
+
+  const dir = '/tmp/darwin-bang-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  await rm(HOME_CONFIG, { force: true });
+
+  // Plan mode on purpose: `!` is user-authorized and must run where the model
+  // could not — the strongest statement of the policy decision.
+  const tui = startTui({ cwd: dir, cols: 100, rows: 30, args: ['--permission-mode', 'plan'] });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    await tui.waitFor('mode: plan', { timeoutMs: 60_000 });
+
+    // A command slow enough to catch mid-flight: live tail, header status, hint.
+    // Typed with extra whitespace after the `!`, so the normalized user row the
+    // transcript commits is provably not just the draft echo.
+    const beforeSlow = tui.mark();
+    tui.submit("!  sh -c 'echo LIVE_TAIL_ROW; sleep 2'");
+    await tui.waitFor('LIVE_TAIL_ROW', { timeoutMs: 30_000, from: beforeSlow, settleMs: 200 });
+    const running = tui.frame;
+    assert('the command echoes as a normalized user row',
+      tui.screen.slice(beforeSlow).includes("!sh -c 'echo LIVE_TAIL_ROW; sleep 2'"));
+    assert('live output reaches the panel while the command runs',
+      running.includes('LIVE_TAIL_ROW') && running.includes('$ sh -c'));
+    assert('the header states the running command', running.includes('running !'));
+    assert('the hint row says how to cancel', running.includes('running ! command… ctrl+c cancels it'));
+
+    // SER-010 for `!`: a submission while one runs is retained, never queued.
+    const beforeRetained = tui.mark();
+    tui.submit('retained draft');
+    await tui.waitFor('a ! command is still running', { timeoutMs: 30_000, from: beforeRetained, settleMs: 200 });
+    assert('a mid-command submission is refused with the draft retained',
+      tui.screen.slice(beforeRetained).includes('a ! command is still running') &&
+      tui.frame.includes('you> retained draft'));
+
+    await tui.waitFor('(exit 0 in', { timeoutMs: 30_000, from: beforeSlow, settleMs: 300 });
+    const finished = tui.frame;
+    assert('the finished row states command and outcome',
+      /\$ sh -c 'echo LIVE_TAIL_ROW; sleep 2' \(exit 0 in \d+m?s\)/.test(finished));
+    assert('the retained draft survived the command', finished.includes('you> retained draft'));
+    tui.send('\u0015'); // ctrl+u clears the retained draft row
+
+    // A non-zero exit is an error row with its real code, output kept.
+    const beforeFail = tui.mark();
+    tui.submit("!sh -c 'echo OOPS_LINE; exit 3'");
+    await tui.waitFor('(exit 3 in', { timeoutMs: 30_000, from: beforeFail, settleMs: 300 });
+    assert('a failing command reports its exit code', tui.screen.slice(beforeFail).includes('(exit 3 in'));
+    assert('and its output', tui.screen.slice(beforeFail).includes('OOPS_LINE'));
+
+    // Ctrl+C kills the running command without costing the session.
+    const beforeCancel = tui.mark();
+    tui.submit('!sleep 30');
+    await tui.waitFor('running ! command…', { timeoutMs: 30_000, from: beforeCancel, settleMs: 200 });
+    tui.send('\u0003');
+    await tui.waitFor('killed by SIGTERM', { timeoutMs: 30_000, from: beforeCancel, settleMs: 300 });
+    assert('ctrl+c kills the command and says so',
+      tui.screen.slice(beforeCancel).includes('$ sleep 30 (killed by SIGTERM'));
+
+    // A bare ! is a usage notice, not an error and not a prompt.
+    const beforeBare = tui.mark();
+    tui.submit('!');
+    await tui.waitFor('! runs a shell command: !<command>', { timeoutMs: 30_000, from: beforeBare, settleMs: 200 });
+
+    // None of the above was a model turn.
+    assert('no turn ever started — the model was never called', !tui.screen.includes('working…'));
+
+    tui.send('\u0004');
+    assert('bang scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+
+    // The record: every command is a `shellCommand` record; none is a `userInput`
+    // line, so prompt recall will never offer one back.
+    const sessionsRoot = path.dirname(path.dirname(trajectoryPath(dir, 'placeholder')));
+    const { readdir } = await import('node:fs/promises');
+    const sessionDirs = await readdir(sessionsRoot);
+    assert('the session wrote exactly one record', sessionDirs.length === 1);
+    const recordFile = trajectoryPath(dir, sessionDirs[0] as string);
+    const lines = (await readFile(recordFile, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    const shellRecords = lines.filter((record) => record['type'] === 'shellCommand');
+    assert('every ! command reached the trajectory record', shellRecords.length === 3);
+    assert('the record carries command, outcome and bounded output',
+      shellRecords.some((record) =>
+        record['command'] === "sh -c 'echo LIVE_TAIL_ROW; sleep 2'" && record['exitCode'] === 0 &&
+        (record['output'] as string).includes('LIVE_TAIL_ROW')) &&
+      shellRecords.some((record) => record['exitCode'] === 3 && (record['output'] as string).includes('OOPS_LINE')) &&
+      shellRecords.some((record) => record['command'] === 'sleep 30' && record['signal'] === 'SIGTERM'));
+    assert('no ! command was recorded as a prompt', !lines.some((record) => record['type'] === 'userInput'));
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 /** A stdio MCP banner must never write outside Ink and corrupt the startup frame. */
 async function mcpStderrIsolation(): Promise<void> {
   header('TUI — stdio MCP stderr is isolated from the Ink frame');
@@ -2565,6 +2668,7 @@ const SCENARIOS = {
   pathCompletion,
   recall: promptRecall,
   recallEmpty: promptRecallWithoutRecord,
+  bang: bangShellCommand,
   clear: clearSession,
   mcpStderr: mcpStderrIsolation,
   mcp: mcpReport,

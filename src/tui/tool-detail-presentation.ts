@@ -213,7 +213,12 @@ function takeDenied(lines: readonly string[], lineLimit: number, pointLimit: num
   return keptTail === '' ? [first] : [first, ...keptTail.split('\n')];
 }
 
-function truncationMarker(omittedPoints: number, omittedLines: number): string {
+/**
+ * Exported for `shell-command.ts`, whose collection cap can drop output that
+ * `boundText` never saw: the `!` projection recomputes this marker over the true
+ * totals so the one truncation vocabulary never understates.
+ */
+export function truncationMarker(omittedPoints: number, omittedLines: number): string {
   const points = `${omittedPoints} code point${omittedPoints === 1 ? '' : 's'}`;
   const lines = omittedLines === 0
     ? ''

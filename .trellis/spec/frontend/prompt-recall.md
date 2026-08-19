@@ -21,11 +21,19 @@ store would immediately disagree with the first, and the disagreement would be i
   for write APIs, and runs the reader with the AWS environment sabotaged — the same two-halves proof
   `verify-trajectory.ts` uses for `replay`.
 - **What is in history is what was *sent*.** `userInput.text` is the string handed to
-  `agent.stream()` (`session-trajectory.md` § the record's shape), which decides three cases for
-  free and one deliberately:
+  `agent.stream()` (`session-trajectory.md` § the record's shape), which decides most cases for
+  free and two deliberately:
   - local commands (`/usage`, `/effort`, `/mode`, `/tasks`, `/agents`, `/trajectory`, `/model`,
     `/compact`, `/clear`, `/exit`) never reach `AgentRuntime.send` and so are **absent** — they are
     session controls, not prompts, and nothing filters them;
+  - a **`!` shell command** (SER-024) is absent for the same structural reason, and deliberately so:
+    it is recorded as a `shellCommand` record, never a `userInput` line, because nothing was handed
+    to `agent.stream()` — recall's contract is "what the session *sent*", and rerunning a shell
+    command has the terminal's own history as its home. The *next prompt* the user sends carries the
+    bounded `<user-shell-command>` report prepended, so that combined `userInput` text is recalled
+    exactly like an expanded project command is today (and excluded by the same 4000-point cap when
+    it grows past it). Asserted by `spike/verify-shell-command.ts` and `verify-tui.ts bang` (both
+    free);
   - an **empty submission** never reaches it either (`submit` returns on an empty trim);
   - **unknown slash input** is ordinary input and is recalled verbatim;
   - a **skill or project-command expansion** is recorded *expanded*, so it is excluded by

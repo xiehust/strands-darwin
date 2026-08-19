@@ -52,6 +52,7 @@ import {
   PERMISSION_BOX_FIXED_ROWS,
   frameBudget,
   promptBoxWanted,
+  toolDetailsVisible,
   toolInputRows,
   toolPanelWanted,
 } from './frame-budget.js';
@@ -87,6 +88,13 @@ import {
   type PromptRecall,
   type RecallDirection,
 } from './prompt-recall.js';
+import {
+  composeShellReport,
+  parseShellCommand,
+  projectShellOutput,
+  runShellCommand,
+  type RunningShellCommand,
+} from './shell-command.js';
 
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { formatDispatchCompletion, formatDispatchesReport } from './subagent-format.js';
@@ -136,7 +144,7 @@ function normalizeDraftText(value: string): string {
   return value.replace(/\r+\n/g, '\n').replace(/\r/g, '\n').replace(NON_TEXT_CONTROLS, '');
 }
 
-type Status = 'idle' | 'streaming' | 'compacting' | 'awaiting-permission';
+type Status = 'idle' | 'streaming' | 'shell' | 'compacting' | 'awaiting-permission';
 
 export function App({
   runtime: initialRuntime,
@@ -210,6 +218,17 @@ export function App({
   const diagnosticsWarned = useRef(false);
   /** True while `/clear` is assembling the successor runtime; see the handler. */
   const clearing = useRef(false);
+  /** Kill handle of the running `!` command; undefined whenever none is running. */
+  const shellRun = useRef<RunningShellCommand | undefined>(undefined);
+  /** Distinguishes the live panel rows of successive `!` commands. */
+  const shellRunCount = useRef(0);
+  /**
+   * Bounded `!` reports awaiting the next model-bound prompt (PRD D5). They ride
+   * ahead of that prompt's text through the ordinary send path — never injected
+   * into `agent.messages`, never a turn of their own — and `/clear` drops them
+   * with the conversation they were destined for.
+   */
+  const pendingShellReports = useRef<string[]>([]);
 
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(onChange),
@@ -333,7 +352,9 @@ export function App({
     busyElapsedMs === undefined ? undefined : busySuffix(busyElapsedMs, liveSpend(runtime)),
   );
   const activeToolClaims = state.activeTools.map((tool) => ({
-    detailRows: state.toolDetailsExpanded ? toolInputRows(tool.input, columns, tool.name).length : 0,
+    detailRows: toolDetailsVisible(tool.name, state.toolDetailsExpanded)
+      ? toolInputRows(tool.input, columns, tool.name).length
+      : 0,
   }));
   const offeredCompletions = Math.min(completions.length, MAX_COMPLETIONS);
   const liveTextRows = state.liveText === '' ? 0 : wrapToRows(state.liveText, columns).length;
@@ -374,13 +395,19 @@ export function App({
     live: { wanted: liveTextRows === 0 ? 0 : liveTextRows + LIVE_BLOCK_CHROME_ROWS, floor: 0 },
   });
 
-  // Spinner tick, only while a model is actually streaming. `/compact` waits on
-  // its own model calls too, but has no per-call tool panel to animate.
+  // Spinner tick, while a model is actually streaming or a `!` command is running —
+  // the running command's panel row carries the same spinner and elapsed suffix.
+  // `/compact` waits on its own model calls too, but has no per-call tool panel to
+  // animate.
   useEffect(() => {
-    if (effectiveStatus !== 'streaming') return;
+    if (effectiveStatus !== 'streaming' && effectiveStatus !== 'shell') return;
     const timer = setInterval(() => setFrame((f) => f + 1), SPINNER_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [effectiveStatus]);
+
+  // A `!` command must not outlive the TUI that ran it: on unmount (Ctrl+D, /exit,
+  // a second Ctrl+C) the group gets the same TERM→KILL reaping a cancel gives it.
+  useEffect(() => () => shellRun.current?.kill(), []);
 
   // The SDK's default logger writes to the console, which tears this frame. It has
   // something to say now that `/model` exists: switching away from Claude with a
@@ -689,8 +716,65 @@ export function App({
           text:
             status === 'compacting'
               ? 'still compacting — press enter again once it finishes'
-              : 'still working — press enter again once the turn ends (ctrl+c cancels it)',
+              : status === 'shell'
+                ? 'a ! command is still running — press enter again when it finishes (ctrl+c cancels it)'
+                : 'still working — press enter again once the turn ends (ctrl+c cancels it)',
         });
+        return;
+      }
+
+      // A user-typed shell command (SER-024). Deliberately *below* the busy check —
+      // the SER-010 contract holds for `!` exactly as for a prompt: mid-turn it is
+      // retained in the draft, never queued, never executed. And deliberately *not*
+      // through the permission gate: the gate's subject is model tool calls, and a
+      // user running their own command needs no approval from themselves — the
+      // transcript row, the trajectory record and the held report are the honesty
+      // this bargain costs. That reasoning covers plan mode too: plan constrains
+      // the model's writes, not the user's hands.
+      const shellCommand = parseShellCommand(text);
+      if (shellCommand !== undefined) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        if (shellCommand === '') {
+          dispatch({ type: 'userInput', text });
+          dispatch({ type: 'notice', text: '! runs a shell command: !<command>' });
+          return;
+        }
+        // The normalized echo (`!` + trimmed command) is also what a replayed
+        // `shellCommand` record prints, so live and replay show one user row.
+        dispatch({ type: 'userInput', text: `!${shellCommand}` });
+        shellRunCount.current += 1;
+        const id = `shell-${shellRunCount.current}`;
+        dispatch({ type: 'shellStarted', id, command: shellCommand });
+        setStatus('shell');
+        try {
+          const run = runShellCommand(shellCommand, {
+            cwd: runtime.info.projectRoot,
+            onOutput: (tail) => dispatch({ type: 'shellOutput', id, tail }),
+          });
+          shellRun.current = run;
+          const result = await run.done;
+          const output = projectShellOutput(result.output);
+          const outcome = {
+            command: shellCommand,
+            exitCode: result.exitCode,
+            signal: result.signal,
+            timedOut: result.timedOut,
+            durationMs: result.durationMs,
+          };
+          // One bounded projection, three surfaces (PRD D4): the finished
+          // transcript row, the trajectory record, and the report held for the
+          // next prompt.
+          dispatch({ type: 'shellCommand', ...outcome, output });
+          runtime.recordShellCommand({ ...outcome, output });
+          pendingShellReports.current.push(composeShellReport(outcome, output));
+        } finally {
+          // Whatever happened, the prompt is freed: a `!` command can time out or
+          // be killed, but it cannot wedge the session.
+          shellRun.current = undefined;
+          setStatus('idle');
+          interruptedAt.current = undefined;
+        }
         return;
       }
 
@@ -753,6 +837,9 @@ export function App({
         contextWarnLatch.current = createContextWarnLatch();
         trajectoryWarned.current = false;
         diagnosticsWarned.current = false;
+        // Held `!` reports were destined for the conversation just set aside; the
+        // successor starts empty, and the old session's record still has them.
+        pendingShellReports.current = [];
         // Mirrored to the *successor's* diagnostics log: the memoized `dispatch` still
         // points at the predecessor's, which this switch has just closed.
         withNoticeDiagnostics(recordAction, next.diagnostics)({
@@ -824,6 +911,15 @@ export function App({
           text: `could not expand ${text}: ${error instanceof Error ? error.message : String(error)}`,
           severity: 'error',
         });
+      }
+
+      // Reports from `!` commands run since the last turn ride ahead of this
+      // prompt (PRD D5): one string through the ordinary send path, so the
+      // trajectory's `userInput` line stays exactly what the model received.
+      const shellReports = pendingShellReports.current;
+      if (shellReports.length > 0) {
+        pendingShellReports.current = [];
+        toSend = `${shellReports.join('\n\n')}\n\n${toSend}`;
       }
 
       await runTurn(toSend);
@@ -986,6 +1082,14 @@ export function App({
     }
 
     interruptedAt.current = now;
+    if (status === 'shell') {
+      // The user's own `!` command: TERM its group now, KILL after the grace. The
+      // completion path in submit() reports it as killed and frees the prompt, so
+      // there is nothing else to withdraw — no turn, no pending permission.
+      shellRun.current?.kill();
+      dispatch({ type: 'notice', text: 'interrupted — press ctrl+c again to exit' });
+      return;
+    }
     if (status === 'compacting') {
       dispatch({ type: 'notice', text: 'compaction cannot be cancelled safely — press ctrl+c again to exit' });
       return;
@@ -1121,6 +1225,14 @@ export function App({
       const next = leadingEnter === undefined
         ? beforeEnter
         : insertAtCursor(beforeEnter, normalizeDraftText(payload));
+      // Mirrored into the editor *before* submitting, so a submission the busy
+      // check refuses (SER-010: retained, never queued) leaves the batched text
+      // visible in the draft instead of silently dropping it — a pty or paste can
+      // deliver `text\r` as one event, and retention must not depend on how the
+      // terminal chunked the keystrokes. An accepted submission clears it anyway.
+      setEditor(next);
+      preferredColumn.current = undefined;
+      setSelectedCompletion(0);
       endRecall();
       void submit(next.text);
       return;
@@ -1283,6 +1395,8 @@ function hintForStatus(status: Status, busyReadout?: string): string | undefined
     // goes missing, and the tail should be the part that never changes.
     return `working…${busyReadout ?? ''} /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn`;
   }
+  // Elapsed lives on the command's own panel row, so this row can stay static.
+  if (status === 'shell') return 'running ! command… ctrl+c cancels it';
   return status === 'compacting' ? 'compacting conversation…' : undefined;
 }
 
@@ -1441,6 +1555,8 @@ function headerStatus(status: Status): string {
       return 'ready';
     case 'streaming':
       return 'working';
+    case 'shell':
+      return 'running !';
     case 'compacting':
       return 'compacting';
     case 'awaiting-permission':

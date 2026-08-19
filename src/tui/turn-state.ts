@@ -19,6 +19,12 @@ import {
 } from './background-tool-presentation.js';
 import { diffStat, fileEditorDiff, fileEditorInputProjection } from './edit-diff.js';
 import { fenceOpenAfter } from './markdown.js';
+import {
+  SHELL_TOOL_NAME,
+  shellOutcomeStatus,
+  shellOutcomeSummary,
+  type ShellOutcome,
+} from './shell-command.js';
 import { subagentCallSummary } from './subagent-format.js';
 import { compactEditDiff, expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 
@@ -151,7 +157,17 @@ export type TurnAction =
   | { type: 'toggleToolDetails' }
   | { type: 'streamEvent'; event: AgentStreamEvent }
   | { type: 'turnEnded' }
-  | { type: 'clear' };
+  | { type: 'clear' }
+  /** A `!` command started: one pseudo-tool row in the live panel (live only, never replayed). */
+  | { type: 'shellStarted'; id: string; command: string }
+  /** Fresh live tail for the running `!` command's detail rows (live only). */
+  | { type: 'shellOutput'; id: string; tail: string }
+  /**
+   * A `!` command finished. Carries recorded fields only — the reducer composes the
+   * finished row from them, which is what lets replay dispatch the identical action
+   * from a `shellCommand` record and reproduce the identical history.
+   */
+  | ({ type: 'shellCommand'; output: string } & ShellOutcome);
 
 export function turnReducer(state: TurnState, action: TurnAction): TurnState {
   switch (action.type) {
@@ -205,6 +221,55 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
 
     case 'streamEvent':
       return applyStreamEvent(state, action.event);
+
+    case 'shellStarted':
+      // The running `!` command borrows the tool panel: spinner, elapsed suffix and
+      // counted detail rows all come from machinery that already exists, so a user
+      // command adds no frame surface of its own. `input` holds the live output
+      // tail as plain text — `toolInputRows` renders it raw for this name.
+      return {
+        ...state,
+        activeTools: [
+          ...state.activeTools,
+          {
+            id: action.id,
+            name: SHELL_TOOL_NAME,
+            summary: `$ ${action.command.replace(/\s*\n\s*/g, ' ')}`,
+            startedAt: Date.now(),
+            input: '',
+          },
+        ],
+      };
+
+    case 'shellOutput':
+      return {
+        ...state,
+        activeTools: state.activeTools.map((tool) =>
+          tool.id === action.id ? { ...tool, input: action.tail } : tool,
+        ),
+      };
+
+    case 'shellCommand':
+      // Composed from the action's recorded fields only, so a replayed
+      // `shellCommand` record produces this exact row. `expanded: false` always:
+      // the preview *is* the one bounded projection, complete with its marker.
+      return {
+        ...state,
+        activeTools: state.activeTools.filter((tool) => tool.name !== SHELL_TOOL_NAME),
+        history: [
+          ...state.history,
+          {
+            kind: 'tool',
+            id: nextId('tool'),
+            name: SHELL_TOOL_NAME,
+            summary: shellOutcomeSummary(action),
+            status: shellOutcomeStatus(action),
+            preview: action.output,
+            inputPreview: '',
+            expanded: false,
+          },
+        ],
+      };
   }
 }
 

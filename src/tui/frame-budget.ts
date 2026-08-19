@@ -27,6 +27,7 @@
  */
 import { diffLineEmphasis, diffLineTone, type DiffEmphasis } from './edit-diff.js';
 import { wrapToRows } from './live-text.js';
+import { SHELL_TOOL_NAME } from './shell-command.js';
 import { expandedToolInput, permissionDetail } from './tool-detail-presentation.js';
 
 /**
@@ -198,7 +199,13 @@ function contentRows(
  */
 export function toolInputRows(input: unknown, columns: number, toolName?: string): readonly BoundedContentRow[] {
   const width = Math.max(1, columns - TOOL_INPUT_INDENT.length);
-  const lines = expandedToolInput(input, toolName);
+  // The `!` pseudo-tool's "input" is its live output tail — already plain,
+  // already bounded (`liveShellTail`) — so it is wrapped as-is rather than
+  // JSON-stringified onto one escaped line.
+  const lines =
+    toolName === SHELL_TOOL_NAME && typeof input === 'string'
+      ? input === '' ? [] : input.split('\n')
+      : expandedToolInput(input, toolName);
   // Only fileEditor inputs are diff projections; a bash command that happens
   // to start with `- ` must not turn red — nor gain an emphasis span.
   const isDiff = toolName === 'fileEditor';
@@ -206,6 +213,17 @@ export function toolInputRows(input: unknown, columns: number, toolName?: string
   return lines.flatMap((line, index) =>
     contentRows(line, width, isDiff ? diffLineTone(line) : undefined, emphasis[index]),
   );
+}
+
+/**
+ * Whether one running call's detail rows are drawn. Ctrl+B's session-wide toggle
+ * for real tools; always on for the `!` pseudo-tool, whose live output tail is
+ * the point of running it. One predicate, used by both the claims computation in
+ * `App.tsx` and the panel in `ToolCallPanel.tsx`, so what is counted and what is
+ * drawn cannot be two different answers.
+ */
+export function toolDetailsVisible(toolName: string, toolDetailsExpanded: boolean): boolean {
+  return toolDetailsExpanded || toolName === SHELL_TOOL_NAME;
 }
 
 /**

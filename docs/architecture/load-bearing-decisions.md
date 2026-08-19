@@ -464,3 +464,28 @@ measured 2.6ms for 20 records with 0.00ms worst event-loop lag. And **absence is
 stated on the one row recall draws (`history 3/12 · ↑ older ↓ newer — newest 100 of 137`), which is
 counted through `promptBoxWanted`/`planPromptBox` like every other row and never a header line. Free
 checks: `spike/verify-prompt-recall.ts`, `spike/verify-tui.ts recall` / `recallEmpty`.
+
+## `!` shell commands
+
+**A draft starting with `!` runs as the user's own shell command — outside the permission gate,
+inside every honesty channel** (`src/tui/shell-command.ts`, App submit path; specs:
+`.trellis/spec/frontend/live-frame.md`, `frontend/prompt-recall.md`,
+`backend/session-trajectory.md` § `shellCommand`). The gate's subject is model tool calls, so the
+user typing `!rm -rf build` is the user acting directly — no approval prompt, in **every** mode
+including plan, which constrains the model's writes and not the user's hands. What the gate never
+saw is stated three ways from **one bounded projection** (`projectShellOutput`: SER-009 `boundText`,
+head kept, 4000 points / 80 lines — deliberately under the recorder's 8000 field cap): the finished
+transcript row, the `shellCommand` trajectory record, and a `<user-shell-command>` report held in
+the App and prepended to the **next** model-bound prompt — never injected into `agent.messages`
+(Bedrock rejects consecutive user roles), never a turn of its own, dropped by `/clear` with the
+conversation it was destined for. Execution is a **one-shot `bash -c` in its own process group**,
+not the runtime's persistent shell: a hung `!` must not block the model's serialized shell or cost
+its state, so timeout (2 min) and Ctrl+C both TERM→KILL the group and the busy state always ends —
+the stated tradeoff is that `!cd` persists nowhere. The prefix triggers only at the start of the
+trimmed draft; mid-turn submission follows SER-010 (retained, never queued — `status: 'shell'` runs
+the same check); the live command borrows the existing tool panel (spinner, elapsed, always-visible
+tail rows counted through the same `toolDetailsVisible`/`toolInputRows` the panel draws with), so no
+new frame surface exists. The record is **not** `userInput` — prompt recall never offers a `!` back —
+and replay *prints* it through the same `turnReducer` action the live session dispatched, so live
+and replayed transcripts are one projection. Free checks: `spike/verify-shell-command.ts`,
+`spike/verify-tui.ts bang`.

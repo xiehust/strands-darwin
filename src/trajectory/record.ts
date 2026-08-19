@@ -72,6 +72,7 @@ export type TrajectoryRecordType =
   | 'turnEnded'
   | 'forkedFrom'
   | 'recordingStopped'
+  | 'shellCommand'
   | RecordedEventType;
 
 /** Fields every record carries, whatever its type. */
@@ -245,13 +246,40 @@ export interface RecordingStoppedRecord extends RecordEnvelope {
   detail?: string;
 }
 
+/**
+ * A user-typed `!` command (SER-024), run directly by the TUI — never a model tool
+ * call, so it has no `beforeToolCallEvent`/`afterToolCallEvent` pair to ride on.
+ *
+ * Deliberately **not** a `userInput` record: nothing was handed to
+ * `agent.stream()`, and `userInput` is the one line prompt recall reads — a `!`
+ * command is a session action, not a prompt, and is not offered back. The
+ * envelope's `turn` is the last *closed* turn's ordinal (like
+ * `recordingStopped`), because the command ran between turns.
+ *
+ * `output` is the already-bounded SER-009 projection the screen showed, marker
+ * included — the record repeats what was shown, it does not re-derive it.
+ */
+export interface ShellCommandRecord extends RecordEnvelope {
+  type: 'shellCommand';
+  command: string;
+  /** Process exit code; `null` when it died to a signal or never spawned. */
+  exitCode: number | null;
+  /** Signal that ended it, `null` for a plain exit. */
+  signal: string | null;
+  /** True when the TUI's hard timeout killed it. */
+  timedOut: boolean;
+  durationMs: number;
+  output: string;
+}
+
 export type TrajectoryRecord =
   | RunStartedRecord
   | UserInputRecord
   | EventRecord
   | TurnEndedRecord
   | ForkedFromRecord
-  | RecordingStoppedRecord;
+  | RecordingStoppedRecord
+  | ShellCommandRecord;
 
 /**
  * A thrown value as the fields the record keeps.
@@ -462,6 +490,10 @@ export function searchableText(record: TrajectoryRecord): string[] {
     case 'afterToolCallEvent':
     case 'agentResultEvent':
       return collectStrings(record.data, []);
+    case 'shellCommand':
+      // Content the record already holds: "which session ran that migration"
+      // is a question `!` makes real.
+      return [record.command, record.output];
     default:
       return [];
   }

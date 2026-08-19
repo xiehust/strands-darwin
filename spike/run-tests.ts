@@ -12,6 +12,7 @@ const suites = [
   'verify-markdown.tsx',
   'verify-path-completion.ts',
   'verify-prompt-recall.ts',
+  'verify-shell-command.ts',
   'verify-stream-into-static.ts',
   'verify-config.ts',
   'verify-state-layers.ts',

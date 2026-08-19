@@ -121,6 +121,15 @@ those listed below, including the 120x50 live `approve` scenario for the complet
   and before the hint, drawn *below* the draft (a row above it would move the frame-absolute cursor
   off the row it is on), and everything the reading has to admit — bounds, skipped prompts, a partial
   read — is appended to that same row. Contract: `prompt-recall.md`.
+- A **running `!` command adds no frame surface** (SER-024): it *is* an entry in the existing tool
+  panel — spinner row, elapsed suffix, and detail rows holding a bounded live output tail
+  (`liveShellTail`: last `SHELL_LIVE_TAIL_LINES`/`SHELL_LIVE_TAIL_POINTS`). The one difference from
+  a real tool is that its detail rows are always visible, and that difference lives in **one
+  predicate** — `toolDetailsVisible` in `frame-budget.ts` — used by both the claims computation in
+  `App.tsx` and the panel, so counted and drawn stay one answer. Its status hint is the existing
+  hint row (`hasHint`), its header state moves the existing `·` status word, and the finished row
+  is `<Static>` history. An idle frame, and the 120x50 `approve` frame, gain nothing.
+  Free checks: `verify-tui.ts bang`, `verify-shell-command.ts`.
 - Tests required: `spike/verify-frame-budget.ts` (arithmetic **plus** `renderToString` of the real
   components — "what Ink draws is never taller than the grant", which caught the flex rows),
   `verify-live-text.ts`, `probe-live-frame-overflow.tsx` both modes, and `verify-tui.ts`
