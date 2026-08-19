@@ -101,6 +101,52 @@ queue recovery, normal persistence, explicit restart, per-Agent isolation, and a
 TERM→KILL/exit cleanup cases. Also run `probe-cancel-exit.ts`, `verify-clear-session.ts`, and the
 `bashExit` / `cancelThenContinue` TUI scenarios after changing the patch.
 
+### Contract: fileEditor clamps only oversized positive view ends
+
+#### Scope / trigger
+
+Darwin imports the SDK-vended `fileEditor` singleton directly in `src/agent/runtime.ts`; parent
+and child agents therefore share its provider schema and implementation. SDK 1.12.0 rejects a
+positive `view_range` end above the file's effective line count, which turns an otherwise safe
+read into a failed tool call and immediate `-1` retry. Darwin's version-pinned SDK patch changes
+only that range normalization inside `applyViewRange()`; do not wrap the tool, duplicate its
+schema, rewrite returned text, or move this policy into permissions/TUI code.
+
+#### Signature and request/response contract
+
+The provider-facing input remains `view_range?: [number, number]`, 1-indexed, with `-1` as the
+only EOF sentinel. For `command: "view"` on a non-empty regular text file, an otherwise-valid
+positive `end > nLines` uses `effectiveEnd = nLines` and returns the ordinary numbered
+``cat -n`` string. The supplied range is not rewritten in context, and the output shape, line
+numbers, tab expansion, trailing newline, read/decoding path, and 1 MiB size check remain SDK
+owned. No file write may occur.
+
+#### Validation & error matrix
+
+| `view_range` / target | Required result |
+|---|---|
+| `[1, 100]`, 41-line non-empty file | Success; exact same bytes as `[1, -1]`; exactly lines 1–41 once |
+| `[start, end]`, positive in-range end | Existing exact slice/output |
+| `[start, -1]` | Existing EOF-sentinel slice/output |
+| start `< 1` or start `> nLines` | Explicit first-element error; never clamp start |
+| effective positive end `< start` | Explicit ordering error |
+| end `0` or `< -1` | Explicit ordering error; never treat as EOF |
+| empty file with oversized positive end | Existing second-element error (empty-file behavior unchanged) |
+| directory/missing/binary/oversized file | Existing listing/path/decoder/size behavior before range normalization |
+
+Good: call the exported tool through `stream()` with `[1, 100]` and receive all 41 numbered rows
+without any sandbox write. Base: `[7, 12]` and `[7, -1]` remain byte-compatible. Bad: clamping a
+start beyond EOF, accepting `0`/`-2`, changing the public schema, or normalizing before the SDK's
+path/directory/read/size checks.
+
+Required assertions live in `spike/verify-file-editor.ts`: provider schema, real 41-line output,
+source-row uniqueness/order, sentinel/in-range compatibility, write-call and file-byte/metadata
+purity, invalid-bound errors, and unchanged empty/directory/missing/decoding/size behavior. Run it
+when upgrading `@strands-agents/sdk` or changing the pinned patch.
+
+Wrong: wrap `fileEditor` in Darwin and reproduce its mixed read/write schema or post-process an
+error string. Correct: keep runtime assembly unchanged and patch the SDK-private range helper,
+where the full content and all existing validation context already live.
 
 ## Observing the stream (what darwin measured to record it)
 

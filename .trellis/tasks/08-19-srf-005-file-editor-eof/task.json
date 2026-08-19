@@ -1,0 +1,32 @@
+{
+  "id": "srf-005-file-editor-eof",
+  "name": "srf-005-file-editor-eof",
+  "title": "SRF-005: clamp oversized fileEditor view end to EOF",
+  "description": "Normalize only otherwise-valid positive fileEditor view end lines beyond EOF, preserving all other SDK behavior.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P1",
+  "creator": "river",
+  "assignee": "river",
+  "createdAt": "2026-08-19",
+  "completedAt": "2026-08-19",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "patches/@strands-agents__sdk@1.12.0.patch",
+    "pnpm-lock.yaml",
+    "spike/verify-file-editor.ts",
+    "spike/run-tests.ts",
+    ".trellis/spec/backend/strands-sdk-contracts.md"
+  ],
+  "notes": "Implemented and verified; Host retains backlog, reflection, and iteration-log closure.",
+  "meta": {}
+}

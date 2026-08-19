@@ -232,3 +232,26 @@ index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..197045e896402c014d8e1608d3048989
      constructor(message: string);
  }
  /**
+diff --git a/dist/src/vended-tools/file-editor/file-editor.js b/dist/src/vended-tools/file-editor/file-editor.js
+index 044cf09a239dad3a846c156d0811bbead244535e..1a768b0df33bb940ca2aa232036c8d974fc172e2 100644
+--- a/dist/src/vended-tools/file-editor/file-editor.js
++++ b/dist/src/vended-tools/file-editor/file-editor.js
+@@ -110,13 +110,15 @@ function applyViewRange(fileContent, viewRange) {
+     if (start < 1 || start > nLines) {
+         throw new Error(`Invalid \`view_range\`: [${start}, ${end}]. Its first element \`${start}\` should be within the range of lines of the file: [1, ${nLines}]`);
+     }
+-    if (end !== -1 && end > nLines) {
++    const shouldClampEnd = fileContent.length > 0 && end > nLines;
++    const effectiveEnd = shouldClampEnd ? nLines : end;
++    if (end !== -1 && end > nLines && !shouldClampEnd) {
+         throw new Error(`Invalid \`view_range\`: [${start}, ${end}]. Its second element \`${end}\` should be smaller than the number of lines in the file: \`${nLines}\``);
+     }
+-    if (end !== -1 && end < start) {
++    if (end !== -1 && effectiveEnd < start) {
+         throw new Error(`Invalid \`view_range\`: [${start}, ${end}]. Its second element \`${end}\` should be larger or equal than its first \`${start}\``);
+     }
+-    const content = end === -1 ? lines.slice(start - 1).join('\n') : lines.slice(start - 1, end).join('\n');
++    const content = end === -1 ? lines.slice(start - 1).join('\n') : lines.slice(start - 1, effectiveEnd).join('\n');
+     return { content, initLine: start };
+ }
+ /**
