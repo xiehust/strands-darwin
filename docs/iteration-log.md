@@ -1315,3 +1315,35 @@ invented zero.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-19 | `0f65591` | Wait once for bounded background-task output or state change while preserving the shared cursor and reaping guarantees |
+
+### Batch 34 — recover clean foreground shell exits (2026-08-19)
+
+Origin: `docs/reflections/reflection_2026-08-19_session-20260819-094621980.md`. Five green
+acceptance commands in the reflected turn were surfaced as `Bash process exited unexpectedly with
+code 0`, forcing redundant log recovery. SRF-004 (Score 11) required clean exit 0 to remain success
+with a restart notice while nonzero/signal failures and every process-lifecycle invariant remain
+honest.
+
+Child session `session-20260819-114507345`, managed task
+`bg-dc3dfa27-b104-4645-ad9e-0bf278221c7a` (exit 0, no correction turn). Delivered in `cb3efc3`
+(+ archive `c650cd3`). The child reproduced the root cause in the installed SDK: concurrent
+foreground invocations for one Agent attached listeners to the same persistent shell and sentinel,
+so output crossed call boundaries and one `exit 0` rejected every listener. The existing pinned SDK
+patch now serializes foreground execute/restart operations per Agent, waits for both stdout and
+stderr boundaries, preserves each invocation's output, treats clean exit 0 as success with a visible
+restart notice and lazily creates a replacement shell. Nonzero and signalled exits remain typed
+failures with exit code, signal, stdout and stderr metadata. Separate Agents remain independent.
+
+Host acceptance inspected the pinned SDK patch and independently re-ran `pnpm typecheck` (exit 0),
+`pnpm test` (51 suite summaries, all green), `spike/verify-background-bash.ts` (108 passed),
+`spike/probe-cancel-exit.ts`, `spike/verify-clear-session.ts` (37), and free pty `bashExit` (3) plus
+`cancelThenContinue` (5). `git show --check` passed for both commits, AGENTS.md remained 19,210
+bytes under the 32 KiB preload cap, and the tree was clean. No provider call was needed. The patch is
+version-pinned and explicitly marked for review on the next SDK upgrade.
+
+Token spend, single managed task: `input=294 output=42,007 cacheRead=12,724,122
+cacheWrite=137,203`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `cb3efc3` | Serialize per-Agent foreground bash calls and recover clean shell exits without losing output or failure metadata |
