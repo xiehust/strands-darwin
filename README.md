@@ -2,6 +2,72 @@
 
 A terminal coding agent built on the [Strands Agents TypeScript SDK](https://www.npmjs.com/package/@strands-agents/sdk): you talk to it in a TUI, it reads and edits files and runs commands in your repository, and it asks before doing anything that changes your machine.
 
+## Features
+
+Each bullet links to the section that documents it in full.
+
+- **A safe-by-default agent loop** — reads, edits and shell commands in your repository, behind
+  a [permission gate](#permissions) with four modes (`default`, `auto`, `plan`, `yolo`) and
+  narrow, revocable ["always allow" rules](#remembering-an-answer).
+- **A terminal UI that stays readable** — assistant answers styled as markdown at render time,
+  file edits shown as bounded coloured line diffs (in the transcript and in the permission
+  prompt, derived from the proposed edit itself), and a busy line that ticks elapsed time and
+  token spend while a turn runs.
+- **Prompt affordances** — `/` completion over commands, skills and custom commands, `@` path
+  completion that inserts the path text (never file contents), and `↑`/`↓` recall of the
+  prompts already sent in this session.
+- **[Sessions](#sessions-and---resume)** — snapshotted per repository after every turn;
+  `--resume` and `--session <id>` reopen them, `/clear` starts fresh, and `trajectory fork`
+  branches a conversation.
+- **[Session trajectory](#session-trajectory)** — an append-only record of every turn, readable
+  offline with `darwin trajectory list|search|replay|fork`, exportable in-session with
+  `/export`, including [what each turn cost](#what-a-turn-cost).
+- **[One-shot / headless mode](#one-shot--headless-mode)** — `darwin -p "…"` prints only the
+  assistant reply on stdout, with opt-in [JSON / JSONL output](#structured-output) and bounded
+  automation flags for CI.
+- **[Background bash jobs](#background-bash-jobs)** — long-running commands as session-owned
+  tasks with persistent logs, `/tasks`, and guaranteed process cleanup on exit.
+- **[Subagents](#subagents)** — delegate self-contained work to child agents (parallel for
+  read-heavy work), with project-defined specialists under `.darwin/agents/` and the same
+  permission gate as the parent.
+- **[Skills](#skills)** — progressive-disclosure instruction folders under `.darwin/skills/`,
+  plus the built-in [`developer`](#built-in-developer-supervisor) supervisor and the
+  [`self-evolution-research`](#built-in-self-evolution-research) loop.
+- **Custom slash commands** — Markdown files under `.darwin/commands/` (or
+  `~/.darwin/commands/`), sent as the message with an `$ARGUMENTS` placeholder for what you
+  type after the name.
+- **[MCP servers](#mcp-servers)** — Claude Code's `.mcp.json` format, stdio and HTTP
+  transports, per-server prefixes and filters, inspected in-session with `/mcp`.
+- **Model flexibility** — Bedrock, [Anthropic and OpenAI](#anthropic-and-openai) providers,
+  switchable mid-session with `/model`; [prompt caching](#prompt-caching) on by default and
+  adjustable [thinking effort](#thinking-effort) via `/effort`.
+- **Standing context** — [`AGENTS.md` preloaded](#project-instructions-agentsmd) into the
+  system prompt, an overridable [base prompt](#system-prompt), and a
+  [working context](#working-context) re-derived on every run, including resumed ones.
+- **[Session diagnostics](#session-diagnostics)** — opt-in per-session log of the SDK's debug
+  output and darwin's notices, made for `tail -f`.
+- **Tool hooks** — `PreToolUse` / `PostToolUse` shell commands from `.darwin/hooks.json` (and
+  `~/.darwin/hooks.json`) run around tool calls in a fixed global/project order.
+
+The built-in slash commands (`/` lists them together with your skills and custom commands):
+
+| Command | Does |
+|---|---|
+| `/agents` | list subagent dispatches this run |
+| `/clear` | start a new session |
+| `/compact` | summarize older conversation |
+| `/context` | estimated context size |
+| `/effort` | report or set thinking depth |
+| `/exit` (alias `/quit`) | quit darwin |
+| `/export` | write this session's transcript to a file |
+| `/mcp` | configured MCP servers and their tools |
+| `/mode` | set the permission mode for this session |
+| `/model` | list or switch models |
+| `/permissions` | list or revoke allow-rules |
+| `/tasks` | list background jobs |
+| `/trajectory` | this session's recorded trajectory |
+| `/usage` | token counts this run |
+
 ## The experiment
 
 This is an experimental project in self-hosted AI development.
@@ -1004,9 +1070,10 @@ Note that the snapshot path includes the agent id, so changing `AGENT_ID` in
 - **Streamable HTTP MCP is configured but not live-tested.** The configuration path is
   verified; no public HTTP MCP server was available to connect to. stdio is tested
   end to end.
-- **The permission prompt is not a diff.** It shows the tool's own arguments — for
-  `str_replace` that is the old and new text, which is usually enough, but it is not a
-  computed diff against the file on disk.
+- **The permission diff is against the tool's input, not the disk.** File edits are shown
+  as a line diff, but it is computed from the old and new text the model proposed — it is
+  never re-read from the file on disk, so a file changed since the model read it can make
+  the shown diff and the actual effect differ.
 - **No sandboxing.** `bash` runs commands directly on your machine. The confirmation
   prompt is the only thing between the model and your shell.
 - **No autonomous scheduler or agent swarm.** The optional built-in developer workflow supervises one external headless child through existing sessions and managed bash jobs; it does not add another in-process agent loop.
