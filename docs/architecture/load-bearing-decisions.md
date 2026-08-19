@@ -350,13 +350,16 @@ back to remove-all/add-all above 40k cells without losing equivalence. Free chec
 `spike/verify-edit-diff.ts` (in `pnpm test`) and the diff sections of
 `spike/verify-visual-language.tsx`; the live `verify-tui.ts approve` scenario asserts the box.
 
-SER-023 made the same projection visible and vivid without weakening any of the above. Default
-compact mode now shows a finished write's bounded diff excerpt (`compactEditDiff`) instead of
-nothing: leading unchanged context beyond one line is skipped with an explicit `… N earlier
-lines` row and the tail is bounded through the same `boundText` marker vocabulary — absence of a
-marker means nothing was withheld, and the complete diff stays on the Ctrl+T expanded view and
-the permission box. A `+N -N` stat (`diffStat`, counted from the markers of the untruncated
-diff) rides existing surfaces only: spliced into the finished summary row *before* the path —
+SER-023 made the same projection visible and vivid without weakening any of the above, and a
+follow-up (user-directed) removed the compact excerpt's bounds: a finished write's rows land in
+`<Static>` scrollback — written once, never repainted — so `compactEditDiff` now returns the
+**complete** diff and the expanded finished row keeps the complete labelled projection
+(`fileEditorInputProjection`, unbounded). The frame budget governs what is *redrawn*; scrollback
+length is the deliberate cost. Only the live surfaces stay bounded: the active tool panel
+(`toolInputRows` → `expandedToolInput`) and the permission box (`permissionDetail`), both of
+which repaint every frame and must fit the terminal. A `+N -N` stat (`diffStat`, counted from
+the markers of the untruncated diff) rides existing surfaces only: spliced into the finished
+summary row *before* the path —
 the row truncates end-first and the path is its one unbounded part, so a suffix stat is exactly
 what a long path eats — and into the permission block label (`Diff (+1 -1):`). It travels as an
 optional history field, never inside `summary`, because `formatReplay` prints `summary`/`preview`

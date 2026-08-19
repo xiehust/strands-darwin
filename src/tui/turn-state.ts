@@ -17,7 +17,7 @@ import {
   compactBackgroundResult,
   type BackgroundBashMode,
 } from './background-tool-presentation.js';
-import { diffStat, fileEditorDiff } from './edit-diff.js';
+import { diffStat, fileEditorDiff, fileEditorInputProjection } from './edit-diff.js';
 import { fenceOpenAfter } from './markdown.js';
 import { subagentCallSummary } from './subagent-format.js';
 import { compactEditDiff, expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
@@ -326,12 +326,16 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       }
 
       // The diff-bearing presentation of a finished fileEditor write, computed
-      // from the same input the SDK received. In compact mode the excerpt is the
-      // diff's bounded head (explicit about anything withheld); the stat is
-      // counted on the untruncated diff, so it states the whole edit's size
-      // whichever mode stamped the row.
+      // from the same input the SDK received. A finished row lands in `<Static>`
+      // scrollback — written once, never repainted — so the diff is shown
+      // complete in both modes: compact rows carry the bare diff, expanded rows
+      // the labelled projection. Only the live surfaces (active panel,
+      // permission box) stay bounded, and other tools keep the bounded
+      // `expandedToolInput` JSON.
       const toolInput = active?.input ?? event.toolUse.input;
       const fullDiff = event.toolUse.name === 'fileEditor' ? fileEditorDiff(toolInput) : undefined;
+      const fullProjection =
+        event.toolUse.name === 'fileEditor' ? fileEditorInputProjection(toolInput) : undefined;
 
       return {
         ...state,
@@ -347,7 +351,7 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
             // Bound before immutable history/replay state owns the string.
             preview: toolResultPreview(preview, status, state.toolDetailsExpanded).join('\n'),
             inputPreview: state.toolDetailsExpanded
-              ? expandedToolInput(toolInput, event.toolUse.name).join('\n')
+              ? fullProjection ?? expandedToolInput(toolInput, event.toolUse.name).join('\n')
               : compactEditDiff(toolInput, event.toolUse.name).join('\n'),
             expanded: state.toolDetailsExpanded,
             ...(fullDiff === undefined ? {} : { diffStat: diffStat(fullDiff) }),

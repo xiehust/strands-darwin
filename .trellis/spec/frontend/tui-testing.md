@@ -454,7 +454,8 @@ the permission prompt or in the expanded tool input (active panel and finished `
   row so wrapped continuations of a `+ `/`- ` line stay coloured and the changed span stays bold,
   and the counted text never changes with either.
 - `compactEditDiff(input, toolName?): string[]` (`src/tui/tool-detail-presentation.ts`) — the
-  bounded compact-mode excerpt; `[]` for anything that is not a recognized `fileEditor` write.
+  finished row's diff, complete and never truncated; `[]` for anything that is not a recognized
+  `fileEditor` write.
 - The tool history item carries `diffStat?: { added, removed }` (`turn-state.ts`) — absent means
   "not a diff", never 0. `formatReplay` prints only `summary`/`preview`, which is what keeps
   `/export` and `trajectory replay` byte-stable; never fold the stat into `summary`.
@@ -467,14 +468,15 @@ the permission prompt or in the expanded tool input (active panel and finished `
   `- `/`  ` lines and the new value from `+ `/`  ` lines; absent `new_str` (delete) renders as
   removals only, distinguishable from `new_str: ''` (one empty `+ ` line). Approving always
   writes the untruncated input — the diff is a projection, never the payload.
-- Bounding rides the existing budgets (`permissionDetail`, `expandedToolInput`); the truncation
-  marker row is never toned. An input the reader does not recognize (unknown command, wrong
-  types, extra keys) falls back to the raw blocks / JSON, losing nothing.
-- Compact mode shows the bounded excerpt (`compactEditDiff`), explicit about what it withheld
-  (`… N earlier lines` for skipped leading context, the standard `… truncated …` marker for the
-  bounded tail); **absence of a marker means nothing was withheld**. The full diff stays on the
-  expanded (Ctrl+T) view and the permission box, complete. Excerpt strings are bounded before
-  they enter immutable history state.
+- Bounding rides the existing budgets on the **live** surfaces only (`permissionDetail`,
+  `expandedToolInput` for the active panel); the truncation marker row is never toned. An input
+  the reader does not recognize (unknown command, wrong types, extra keys) falls back to the raw
+  blocks / JSON, losing nothing.
+- Finished rows show the diff **complete, never truncated**, in both modes: compact rows carry
+  the bare diff (`compactEditDiff`), expanded rows the labelled projection
+  (`fileEditorInputProjection`, unbounded). Finished rows are written once into `<Static>`
+  scrollback and never repainted, so their length costs scrollback, not live-frame rows —
+  only the active tool panel and the permission box, which repaint every frame, stay bounded.
 - The `+N -N` stat rides existing surfaces only — spliced into the finished summary row *before*
   the path (`✓ fileEditor str_replace (+1 -1): /path`; the row truncates end-first and the path
   is its one unbounded part — a suffix stat is exactly what a long path eats) and into the

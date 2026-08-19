@@ -110,9 +110,10 @@ export function ToolCallResult({
   readonly item: Extract<HistoryItem, { kind: 'tool' }>;
 }): React.JSX.Element {
   const { icon, color } = statusStyle(item.status);
-  // Compact rows carry the bounded diff excerpt now (`compactEditDiff`), so a
-  // finished write shows its change without Ctrl+T; expanded rows keep the
-  // complete labelled projection exactly as before.
+  // Compact rows carry the complete diff now (`compactEditDiff`), so a
+  // finished write shows its whole change without Ctrl+T; expanded rows keep
+  // the complete labelled projection. Finished rows live in `<Static>`
+  // scrollback, so length costs scrollback, never live-frame rows.
   const input = item.inputPreview !== '' ? item.inputPreview.split('\n') : [];
   const preview = item.preview === '' ? [] : item.preview.split('\n');
   // Emphasis, like tone, is scoped to fileEditor and re-derived from the marker

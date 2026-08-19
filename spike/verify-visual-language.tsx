@@ -177,13 +177,14 @@ for (const marker of ['- old line', '+ new line', 'command: str_replace']) {
 assert('the +N -N stat rides the existing summary row, before the truncatable path',
   editTranscript.includes('fileEditor str_replace (+1 -1): /workspace/src/calc.ts'));
 
-// The default compact mode: the bounded excerpt rows and the stat are stated
-// without Ctrl+T, and what the excerpt withheld is stated on its own row. The
-// intraline bold is enhancement only, so the stripped text is exactly the diff.
+// The default compact mode: the complete diff rows and the stat are stated
+// without Ctrl+T — finished rows land in `<Static>` scrollback, so nothing is
+// withheld. The intraline bold is enhancement only, so the stripped text is
+// exactly the diff.
 const compactEditHistory: HistoryItem[] = [{
   kind: 'tool', id: 'tc', name: 'fileEditor', summary: 'fileEditor str_replace: /workspace/src/calc.ts',
   status: 'ok', preview: '', expanded: false,
-  inputPreview: '-   return n + 2;\n+   return n * 2;\n… truncated 41 code points and 2 lines',
+  inputPreview: '  function scale(n) {\n-   return n + 2;\n+   return n * 2;\n  }',
   diffStat: { added: 3, removed: 1 },
 }];
 const compactTranscript = plain(renderToString(
@@ -191,7 +192,7 @@ const compactTranscript = plain(renderToString(
   { columns: 80 },
 ));
 for (const marker of [
-  '-   return n + 2;', '+   return n * 2;', '(+3 -1)', '… truncated 41 code points and 2 lines',
+  '  function scale(n) {', '-   return n + 2;', '+   return n * 2;', '(+3 -1)',
 ]) {
   assert(`compact finished edit states ${marker}`, compactTranscript.includes(marker));
 }

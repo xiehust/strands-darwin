@@ -1,13 +1,11 @@
 /** Bounded, Unicode-safe presentation of tool inputs and results. */
 
-import { diffLineTone, fileEditorDiff, fileEditorInputProjection } from './edit-diff.js';
+import { fileEditorDiff, fileEditorInputProjection } from './edit-diff.js';
 
 export type ToolPreviewStatus = 'ok' | 'error' | 'denied';
 
 export const COMPACT_RESULT_CODE_POINTS = 2_000;
 export const COMPACT_RESULT_LINES = 4;
-export const COMPACT_DIFF_CODE_POINTS = 1_600;
-export const COMPACT_DIFF_LINES = 8;
 export const EXPANDED_INPUT_CODE_POINTS = 8_000;
 export const EXPANDED_INPUT_LINES = 100;
 export const EXPANDED_RESULT_CODE_POINTS = 32_000;
@@ -129,44 +127,24 @@ export function toolResultPreview(
 }
 
 /**
- * The bounded diff excerpt a finished `fileEditor` write shows in default compact
- * mode — SER-023's answer to `inputPreview: ''`, which showed no diff at all for
- * an auto-approved edit.
+ * The diff a finished `fileEditor` write shows in default compact mode —
+ * SER-023's answer to `inputPreview: ''`, which showed no diff at all for an
+ * auto-approved edit — shown **complete, never truncated**.
  *
- * Excerpt, not equivalence: the full diff stays on the expanded (Ctrl+T) view and
- * the permission box, both complete. What this bounds it states explicitly, and
- * **absence of a marker means nothing was withheld**:
- *
- * - Leading unchanged context beyond one line is skipped with an explicit
- *   `… N earlier lines` row, so the bounded window lands on the first change
- *   instead of spending itself on context.
- * - The rest flows through the same `boundText` head projection as every other
- *   compact preview, whose `… truncated …` marker stays the single truncation
- *   vocabulary (and, as on every `boundText` surface, rides one row beyond the
- *   content budget — at most `COMPACT_DIFF_LINES + 1` rows in total).
+ * Finished tool rows are written once into `<Static>` scrollback and never
+ * redrawn, so a large diff costs scrollback length, not live-frame rows — the
+ * frame budget only governs what is repainted. The live surfaces (the active
+ * tool panel and the permission box) keep their existing bounds; this
+ * projection is for history rows only.
  *
  * Returns `[]` for anything that is not a `fileEditor` write the diff reader
- * recognizes — those keep today's no-input compact presentation. Bounded here,
- * before immutable history state owns the strings (`turn-state.ts`).
+ * recognizes — those keep today's no-input compact presentation.
  */
 export function compactEditDiff(input: unknown, toolName?: string): string[] {
   if (toolName !== 'fileEditor') return [];
   const diff = fileEditorDiff(input);
   if (diff === undefined) return [];
-
-  const lines = diff.split('\n');
-  if (lines.length <= COMPACT_DIFF_LINES && [...diff].length <= COMPACT_DIFF_CODE_POINTS) {
-    return lines;
-  }
-
-  const firstChanged = lines.findIndex((line) => diffLineTone(line) !== undefined);
-  const start = Math.max(0, (firstChanged === -1 ? 0 : firstChanged) - 1);
-  const skipped = start > 0 ? [`… ${start} earlier line${start === 1 ? '' : 's'}`] : [];
-  const body = boundText(lines.slice(start).join('\n'), 'ok', {
-    codePoints: COMPACT_DIFF_CODE_POINTS,
-    lines: COMPACT_DIFF_LINES - skipped.length,
-  });
-  return [...skipped, ...body];
+  return diff.split('\n');
 }
 
 /**

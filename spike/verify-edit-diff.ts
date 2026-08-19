@@ -22,8 +22,6 @@ import {
 } from '../src/tui/edit-diff.js';
 import { permissionDetailRows, toolInputRows } from '../src/tui/frame-budget.js';
 import {
-  COMPACT_DIFF_CODE_POINTS,
-  COMPACT_DIFF_LINES,
   EXPANDED_INPUT_CODE_POINTS,
   EXPANDED_INPUT_LINES,
   PERMISSION_DETAIL_CODE_POINTS,
@@ -220,10 +218,10 @@ assert('an unknown shape has no diff to count', fileEditorDiff({ command: 'view'
 assert('a marker-truncated bare line still counts its tone',
   formatDiffStat(diffStat('- \n+\n-')) === '+1 -2');
 
-header('edit diff — compact excerpt: bounded, explicit, silent when complete');
+header('edit diff — finished-row diff: complete, never truncated');
 
 const wholeExcerpt = compactEditDiff(strReplace('old', 'new'), 'fileEditor');
-assert('a small edit is excerpted whole',
+assert('a small edit is shown whole',
   wholeExcerpt.join('\n') === `${DIFF_REMOVED}old\n${DIFF_ADDED}new`);
 assert('nothing withheld states nothing', wholeExcerpt.every((line) => !line.startsWith('…')));
 assert('non-fileEditor tools get no excerpt', compactEditDiff({ command: 'ls' }, 'bash').length === 0);
@@ -235,26 +233,31 @@ const longCreate = compactEditDiff(
   { command: 'create', path: '/tmp/big.ts', file_text: Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n') },
   'fileEditor',
 );
-assert('a long create is bounded to the compact budget (marker row included)', longCreate.length <= COMPACT_DIFF_LINES + 1);
-assert('the withheld tail is stated explicitly', longCreate.at(-1)?.startsWith('… truncated ') === true);
-assert('the excerpt keeps the head of the diff', longCreate[0] === `${DIFF_ADDED}line-0`);
+assert('a long create is shown complete — every added line present',
+  longCreate.length === 40 &&
+  longCreate[0] === `${DIFF_ADDED}line-0` && longCreate.at(-1) === `${DIFF_ADDED}line-39`);
+assert('a long diff carries no truncation marker',
+  longCreate.every((line) => !line.startsWith('… truncated')));
 
 const context = Array.from({ length: 12 }, (_, i) => `ctx-${i}`);
 const contextHeavy = compactEditDiff(
   strReplace([...context, 'old middle'].join('\n'), [...context, 'new middle'].join('\n')),
   'fileEditor',
 );
-assert('leading unchanged context is skipped with an explicit statement',
-  contextHeavy[0] === '… 11 earlier lines');
-assert('one context line is kept above the first change', contextHeavy[1] === `${DIFF_CONTEXT}ctx-11`);
-assert('the excerpt window lands on the change',
+assert('leading unchanged context is kept, never skipped',
+  contextHeavy[0] === `${DIFF_CONTEXT}ctx-0`);
+assert('the change is present in full',
   contextHeavy.includes(`${DIFF_REMOVED}old middle`) && contextHeavy.includes(`${DIFF_ADDED}new middle`));
-assert('a skipped-context excerpt stays within its row budget', contextHeavy.length <= COMPACT_DIFF_LINES + 1);
+assert('a context-heavy diff is exactly its own lines',
+  contextHeavy.join('\n') === fileEditorDiff(
+    strReplace([...context, 'old middle'].join('\n'), [...context, 'new middle'].join('\n'))));
 
-const hugeLine = compactEditDiff(strReplace('a', `x${'y'.repeat(3_000)}`), 'fileEditor');
-assert('an oversized single line is code-point bounded',
-  [...hugeLine.join('\n')].length <= COMPACT_DIFF_CODE_POINTS + 80);
-assert('the code-point cut is stated explicitly', hugeLine.at(-1)?.startsWith('… truncated ') === true);
+const hugeInput = strReplace('a', `x${'y'.repeat(3_000)}`);
+const hugeLine = compactEditDiff(hugeInput, 'fileEditor');
+assert('an oversized single line is shown complete, code point for code point',
+  hugeLine.join('\n') === fileEditorDiff(hugeInput));
+assert('an oversized line carries no truncation marker',
+  hugeLine.every((line) => !line.startsWith('… truncated')));
 
 header('edit diff — intraline emphasis: bold span over the same bytes');
 
