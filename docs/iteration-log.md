@@ -1038,3 +1038,52 @@ Token spend, single managed task: `input=278 output=100,516 cacheRead=19,246,585
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-18 | `7405d44` | Every file edit shows a vivid bounded diff: compact excerpt, `+N -N` stat, intraline emphasis |
+
+### Batch 27 — `!` runs a user shell command from the prompt (2026-08-19)
+
+Origin: `docs/research/research_2026-08-19.md`, run `01:20:26Z` — a rolled `peer` run (18 of 20
+half-units) that found `!` shell passthrough to be the one tri-peer interactive affordance darwin
+still lacked: Claude Code runs it without approval and adds output to conversation context, Codex
+applies its approval/sandbox settings, OpenCode injects a tool result. The peers' two
+disagreements (policy, context shape) were left as explicit design decisions for the child.
+SER-024 (Score 11) led the three-direction batch queued by that run.
+
+Child session `session-20260819-020346651`; first managed task `bg-2f7904c7` died in a transient
+stream timeout (`no activity for 180000 ms`) after its research phase, retry task `bg-c29768de`
+(same session, exit 0) carried the work to commit with no correction turn. Delivered in
+`d0fb23f`: `!` at the start of the draft runs one bounded one-shot `bash -c` in its own process
+group (TERM→KILL on 120 s timeout, Ctrl+C, or unmount — deliberately not the runtime's serialized
+persistent shell), streams a live tail through the existing tool panel (counted by the shared
+`toolDetailsVisible` predicate — no new frame surface), and states one SER-009-bounded projection
+on three surfaces that cannot disagree: the finished transcript row, a new `shellCommand`
+trajectory record (never a `userInput` line, so prompt recall never offers it; replay prints it
+through the same reducer action), and a `<user-shell-command>` report held and prepended to the
+next model-bound prompt (never injected into `agent.messages`, dropped by `/clear`). Policy
+decision recorded in PRD and specs: user-typed means user-authorized — the gate's subject is
+model tool calls, so `!` runs in every mode including plan. Mid-turn submission stays retained,
+never queued (SER-010), and the child also fixed a real retention gap its scenario exposed: a
+batched `text+Enter` stdin event previously bypassed the editor mirror, so a busy refusal
+silently dropped the draft.
+
+Host acceptance independently read the full 22-file diff and re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (exit 0, 47 suite summaries, all `0 failed`, no `FAIL`, incl. the new
+`verify-shell-command.ts` 56/56); the new free pty `bang` (16/16 — live output, plan-mode run,
+busy retention, Ctrl+C kill, record shape, no `userInput` line, no model call); free
+`completion` 35, `pathCompletion` 18, `recall` 20, `recallEmpty` 4, `mode` 25, `clear` 19,
+`multiline` 9, `chunkedEnter` 4, `cursor` 5, `mcp` 9; the live 120×50 `verify-tui.ts approve`
+29/29 (no added frame row); `git show --check` clean; Trellis task validation (`✓`); protected
+docs untouched; AGENTS.md at 16.4 KiB, under the preload cap. Host's own probes: a 13-assertion
+module probe (prefix rules, exit codes, sub-5s timeout kill, marker honesty on a 200k-point
+firehose stating true totals, report shape, summary flattening) plus a clean tagged orphan probe
+that disproved the one initial FAIL as pgrep matching its own command line — group reaping is
+real; and an independent replay byte-stability proof: a real 332,818-byte trajectory of this
+project replayed at `bd5cc96` (pre-change worktree code, repo cwd) vs `d0fb23f` — `cmp`
+byte-identical.
+
+Token spend, two managed tasks: `input=134 output=36,954 cacheRead=6,044,092 cacheWrite=154,399`
+(timed-out first attempt) + `input=188 output=79,611 cacheRead=21,537,230 cacheWrite=285,283`
+(retry to completion) = `input=322 output=116,565 cacheRead=27,581,322 cacheWrite=439,682`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `d0fb23f` | `!` runs a user-typed shell command directly: bounded live output, honest record, report to the next prompt |
