@@ -1347,3 +1347,32 @@ cacheWrite=137,203`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-19 | `cb3efc3` | Serialize per-Agent foreground bash calls and recover clean shell exits without losing output or failure metadata |
+
+### Batch 35 — clamp oversized fileEditor view ends (2026-08-19)
+
+Origin: `docs/reflections/reflection_2026-08-19_session-20260819-094621980.md`. One otherwise
+valid `[1,100]` view of a 41-line file failed and forced an immediate `[1,-1]` retry. SRF-005
+(Score 11) required only an oversized positive end to clamp to EOF while preserving every other
+validation and output contract.
+
+Child session `session-20260819-120322968`, managed task
+`bg-443daddc-a9fe-4017-9723-93d4c919a377` (exit 0, no correction turn). Delivered in `9d6524e`:
+the existing pinned SDK patch now normalizes an otherwise-valid positive end beyond EOF inside the
+SDK-private range helper for non-empty regular text files. Runtime assembly, provider schema,
+numbered output, `-1` sentinel and in-range slices remain unchanged; starts beyond EOF, invalid
+zero/negative ends, ordering, empty-file, directory, missing, decoder and 1 MiB size behavior remain
+explicit errors or their existing projections.
+
+Host acceptance inspected the pinned SDK patch and independently re-ran `pnpm typecheck` (exit 0),
+`pnpm test` (52 suite summaries, all green), and the new provider-facing real-file
+`spike/verify-file-editor.ts` (37 passed), plus patched-SDK syntax, `git show --check`, and
+clean-tree verification. The focused suite also proved no sandbox write, byte mutation, metadata
+mutation, duplicate row or omitted EOF row. No provider call was needed. The behavior is
+version-pinned and must be revalidated on the next SDK upgrade.
+
+Token spend, single managed task: `input=114 output=29,222 cacheRead=4,060,975
+cacheWrite=105,224`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `9d6524e` | Clamp only oversized positive fileEditor view ends to EOF while preserving schema, output and every other error boundary |
