@@ -12,7 +12,7 @@
 import process from 'node:process';
 
 import { AgentRuntime } from './agent/runtime.js';
-import { SessionNotFoundError } from './agent/session.js';
+import { SessionNotFoundError, trajectoryPath } from './agent/session.js';
 import { CliUsageError, parseCliArgs, type CliOptions } from './cli-args.js';
 import {
   isSessionsInvocation,
@@ -150,6 +150,19 @@ async function runInteractive(options: CliOptions): Promise<void> {
     }
     throw error;
   }
+  /**
+   * Human context is restored from the exact session trajectory, never from Agent
+   * messages. Fresh sessions skip even the file read and therefore render exactly
+   * as before SER-028.
+   */
+  const initialHistory = runtime.info.resumed
+    ? await import('./trajectory/resume-recap.js').then(({ loadResumeRecap }) =>
+        loadResumeRecap({
+          file: trajectoryPath(projectRoot, runtime.info.sessionId),
+          restoredMessages: runtime.messageCount,
+          trajectoryEnabled: runtime.info.config.trajectory !== false,
+        }))
+    : undefined;
   /** The session that is live right now; `/clear` replaces it with a successor. */
   let current = runtime;
 
@@ -157,6 +170,7 @@ async function runInteractive(options: CliOptions): Promise<void> {
     React.createElement(App, {
       runtime,
       permissions,
+      ...(initialHistory === undefined ? {} : { initialHistory }),
       // `/clear` starts a new session by handing this conversation to a successor
       // runtime (`AgentRuntime.startNewSession`). Ownership of shutdown stays here,
       // where it always was: `current` is what the exit path reaps, so the retired

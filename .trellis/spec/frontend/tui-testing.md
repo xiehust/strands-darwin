@@ -14,6 +14,15 @@ non-interactive mode. Tests therefore spawn the **real CLI in a node-pty pseudo-
 Ink repaints by rewriting lines, the buffer holds *every frame ever drawn* — which is the
 right shape for "did this ever appear on screen".
 
+
+For resumed-startup UI, run free scenario `pnpm tsx spike/verify-tui.ts resume`. Seed the fixture with
+a real local SDK `Agent` + `SessionManager` snapshot and the real `TrajectoryRecorder`, then launch
+the real CLI with `--resume <id>` at 120x50. Anchor on the settled prompt and assert recap/request/
+answer ordering before it, the latest-frame row bound, and state-exclusive fresh-session absence.
+Hash `trajectory.jsonl`, `snapshot_latest.json`, and `last-session.json` before and after startup;
+also compare trajectory line count. Exit from the first prompt with a deliberately invalid provider
+model id, so any accidental model/network call fails the scenario rather than passing silently.
+
 ## Multiline input contract
 
 ### 1. Scope / trigger

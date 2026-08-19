@@ -15,7 +15,8 @@ reading it tells you nothing about tool calls whose results were later compacted
 
 The trajectory is the complement: **append-only**, **observational**, and never authoritative. The
 snapshot remains the only thing `resume` and `fork` restore from. Nothing in darwin reads the
-trajectory to build context, and the model never sees it.
+trajectory to build **model** context, and the model never sees it; the resumed-TUI recap below is a
+bounded human-display projection only.
 
 ## 2. Where it lives
 
@@ -366,6 +367,26 @@ all (asserted by source grep in its suite).
 
 Free checks: `spike/verify-export-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`
 (the 14th built-in row; `/export` usage and nothing-to-export are exercised in the same scenario).
+
+
+### A sixth reader: resumed-session human recap (`SER-028`)
+
+An interactively restored TUI reads only that resolved session's `trajectory.jsonl` and projects the
+last turn that has a `turnEnded` record. Selection is record-order aware across process restarts
+(turn ordinals restart per recorder run); the selected slice is fed through `replayRecords`, so the
+ordinary `turnReducer` remains authoritative for assembled assistant text. The projection keeps only
+the request and answer — never tools or the full transcript — and bounds each independently to 600
+Unicode code points and six logical lines, including an explicit omission marker.
+
+This reader is an observer like replay/export: it imports no runtime, Agent, Model, writer or session
+manager; it makes no model/network call and writes nothing. The resulting `HistoryItem[]` seeds the
+TUI's existing `<Static>` startup transcript only. It is never injected into `agent.messages`, never
+changes `messageCount`, and `/clear` removes it with the old transcript. Fresh sessions skip the read.
+Missing files (normal for pre-recording or `trajectory: false` sessions), disabled recording, no
+closed turn, reader damage, record truncation and dropped replay payloads are distinct stated
+limitations. `spike/verify-resume-recap.ts` proves the pure/read-only projection; free pty scenario
+`verify-tui.ts resume` proves real snapshot restore, 120x50 rendering and byte-zero trajectory,
+snapshot and resume-pointer startup.
 
 ### `replay`
 

@@ -21,4 +21,3 @@
 - Final `pnpm test` — exit 0 (run once after source settled).
 - Trellis validation — passed (only existing large-spec injection warnings).
 - `git diff --check` — clean.
-

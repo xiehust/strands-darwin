@@ -19,7 +19,7 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion |
- *                 pathCompletion | recall | recallEmpty | bang | queue | clear | mcpStderr | mcp |
+ *                 pathCompletion | recall | recallEmpty | resume | bang | queue | clear | mcpStderr | mcp |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
@@ -31,13 +31,31 @@ import os from 'node:os';
 import process from 'node:process';
 import path from 'node:path';
 
-import { sessionPaths, trajectoryPath } from '../src/agent/session.js';
+import {
+  Agent,
+  Model,
+  type BaseModelConfig,
+  type Message,
+  type ModelStreamEvent,
+  type StreamOptions,
+} from '@strands-agents/sdk';
+
+import {
+  createSessionManager,
+  sessionPaths,
+  snapshotPath,
+  trajectoryPath,
+  writePointer,
+} from '../src/agent/session.js';
+import { DEFAULT_SYSTEM_PROMPT } from '../src/agent/system-prompt.js';
 import { darwinDir, DARWIN_DIRNAME } from '../src/paths.js';
 import { CONFIG_FILENAME, permissionRulesPath } from '../src/config.js';
 import { AGENTS_DIRNAME } from '../src/agents/loader.js';
 import { COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
 import { SKILLS_DIRNAME } from '../src/skills/loader.js';
 import { MAX_COMPLETIONS } from '../src/tui/InputBox.js';
+import { recordStream } from '../src/trajectory/stream.js';
+import { TrajectoryRecorder } from '../src/trajectory/writer.js';
 import { startTui, type TuiSession } from './tui-driver.js';
 import { assert, header, report } from './shared.js';
 
@@ -132,6 +150,33 @@ const APPROVE_REQUEST =
 const FIX_REQUEST =
   `The function in ${TARGET} is called double but it adds 2 instead of multiplying by 2. ` +
   `Read the file and fix it with a str_replace edit. Do not run any shell commands.`;
+
+/** Local-only model used to seed a real restorable SDK snapshot and trajectory. */
+class ResumeFixtureModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.resume-recap', contextWindowLimit: 200_000 };
+  calls = 0;
+
+  override updateConfig(config: BaseModelConfig): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  override getConfig(): BaseModelConfig {
+    return this.config;
+  }
+
+  override async *stream(_messages: Message[], _options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    this.calls += 1;
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    yield { type: 'modelContentBlockStartEvent' };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'last completed answer' } };
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+  }
+}
+
+async function fileHash(file: string): Promise<string> {
+  return createHash('sha256').update(await readFile(file)).digest('hex');
+}
 
 async function resetWorkDir(): Promise<void> {
   await rm(WORK_DIR, { recursive: true, force: true });
@@ -1200,6 +1245,106 @@ async function agentDispatches(): Promise<void> {
     tui.kill();
   }
 }
+
+/**
+ * SER-028: resume restores human context from the trajectory without touching any
+ * durable session artifact or invoking a model. The seed uses a real SDK Agent,
+ * SessionManager and TrajectoryRecorder; the resumed process exits from its first
+ * prompt, before any ordinary turn can run.
+ */
+async function resumedHumanContext(): Promise<void> {
+  header('TUI — resumed session shows bounded read-only human context');
+
+  await resetWorkDir();
+  await writeHomeConfig({
+    provider: 'bedrock',
+    model: 'us.anthropic.invalid-no-network-resume-recap',
+    // Keep recording enabled: startup must leave even an active recorder's existing
+    // file byte-identical and append no runStarted line when no turn is sent.
+    trajectory: true,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  });
+  const sessionId = 'session-resume-recap';
+  const model = new ResumeFixtureModel();
+  const manager = createSessionManager(WORK_DIR, sessionId);
+  const agent = new Agent({
+    id: 'darwin',
+    model,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    sessionManager: manager,
+    printer: false,
+  });
+  await agent.initialize();
+  const trajectory = trajectoryPath(WORK_DIR, sessionId);
+  const recorder = new TrajectoryRecorder({
+    file: trajectory,
+    run: {
+      session: sessionId,
+      agentId: 'darwin',
+      darwinVersion: 'test',
+      provider: 'bedrock',
+      model: 'fake.resume-recap',
+      permissionMode: 'default',
+      thinkingEffort: 'high',
+      resumed: false,
+      restoredMessages: 0,
+    },
+  });
+  const request = `last completed request ${'context '.repeat(120)}\n${Array.from({ length: 10 }, (_, i) => `request-line-${i}`).join('\n')}`;
+  for await (const _event of recordStream(agent.stream(request), recorder.beginTurn(request))) {
+    // Drain exactly as AgentRuntime.send's caller does.
+  }
+  await recorder.close();
+  await manager.saveSnapshot({ target: agent, isLatest: true });
+  await writePointer(WORK_DIR, sessionId);
+  assert('the fixture made exactly one local model call while seeding', model.calls === 1);
+  assert('the fixture snapshot contains one request/answer pair', agent.messages.length === 2);
+
+  const snapshot = snapshotPath(WORK_DIR, sessionId, 'darwin');
+  const pointer = sessionPaths(WORK_DIR).pointerFile;
+  const before = await Promise.all([trajectory, snapshot, pointer].map(fileHash));
+  const recordsBefore = (await readFile(trajectory, 'utf8')).split('\n').filter(Boolean).length;
+
+  const tui = startTui({ cwd: WORK_DIR, args: ['--resume', sessionId], cols: 120, rows: 50 });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 400 });
+    const screen = tui.screen;
+    const recapAt = screen.indexOf('resume recap · 2 restored model message(s)');
+    const requestAt = screen.indexOf('last completed request');
+    const answerAt = screen.indexOf('last completed answer');
+    const promptAt = screen.lastIndexOf('you>');
+    assert('recap, request and answer appear before the prompt',
+      recapAt >= 0 && requestAt > recapAt && answerAt > requestAt && promptAt > answerAt);
+    assert('the long request is bounded with an explicit marker', screen.includes('resume recap truncated'));
+    assert('enabled recording adds no disabled-state warning',
+      !screen.includes('trajectory recording is disabled for this run'));
+    assert('earlier transcript omission is explicit', screen.includes('earlier session transcript omitted'));
+    assert('the current 120x50 frame remains within its viewport', tui.frame.split('\n').length <= 50);
+
+    tui.submit('/exit');
+    assert('the resumed TUI exits without an ordinary model turn', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+
+  const after = await Promise.all([trajectory, snapshot, pointer].map(fileHash));
+  const recordsAfter = (await readFile(trajectory, 'utf8')).split('\n').filter(Boolean).length;
+  assert('trajectory, snapshot and resume pointer are byte-identical after startup',
+    before.every((hash, index) => hash === after[index]));
+  assert('startup appended no trajectory record', recordsAfter === recordsBefore);
+
+  header('TUI — fresh session has no resume recap');
+  const fresh = startTui({ cwd: WORK_DIR, cols: 120, rows: 50 });
+  try {
+    await fresh.waitFor('you>', { timeoutMs: 60_000, settleMs: 400 });
+    assert('fresh startup is unchanged', !fresh.screen.includes('resume recap'));
+    fresh.submit('/exit');
+    assert('fresh TUI exits without a model call', (await fresh.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    fresh.kill();
+  }
+}
+
 
 /**
  * An AGENTS.md the model is not getting in full — or not getting at all — has to be
@@ -2858,6 +3003,7 @@ const SCENARIOS = {
   pathCompletion,
   recall: promptRecall,
   recallEmpty: promptRecallWithoutRecord,
+  resume: resumedHumanContext,
   bang: bangShellCommand,
   queue: queueTakeback,
   clear: clearSession,

@@ -105,7 +105,7 @@ import { formatDispatchCompletion, formatDispatchesReport } from './subagent-for
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
 import { formatMcpReport } from './mcp-format.js';
 import { formatPromptCache, formatStatusReport, formatThinking } from './status-format.js';
-import { initialTurnState, turnReducer, type TurnAction } from './turn-state.js';
+import { initialTurnState, turnReducer, type HistoryItem, type TurnAction } from './turn-state.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
 /** Window in which a second Ctrl+C means "exit", not "cancel again". */
@@ -154,10 +154,13 @@ type Status = 'idle' | 'streaming' | 'shell' | 'compacting' | 'awaiting-permissi
 export function App({
   runtime: initialRuntime,
   permissions,
+  initialHistory = [],
   startNewSession,
 }: {
   readonly runtime: AgentRuntime;
   readonly permissions: PermissionQueue;
+  /** Read-only resumed-session context, written once through the existing Static transcript. */
+  readonly initialHistory?: readonly HistoryItem[];
   /**
    * Hands this conversation to a new, empty session and returns the runtime that owns
    * it — `/clear`. Optional so a driver that does not own runtime lifecycle (and so
@@ -173,7 +176,11 @@ export function App({
   // meter, trajectory recorder, context estimate — moves to the new session together,
   // and the old session's numbers cannot leak into the new transcript.
   const [runtime, setRuntime] = useState(initialRuntime);
-  const [state, recordAction] = useReducer(turnReducer, initialTurnState);
+  const [state, recordAction] = useReducer(
+    turnReducer,
+    initialHistory,
+    (history): typeof initialTurnState => ({ ...initialTurnState, history: [...history] }),
+  );
   // Swapped whole rather than branched per call: with `diagnostics` off — the default —
   // `dispatch` *is* the reducer's own dispatch, so not one of the ~50 notice sites
   // below pays anything, and the mirror cannot be forgotten at a new one either.

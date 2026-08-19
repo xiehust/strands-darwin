@@ -2,7 +2,7 @@
   "id": "ser-028-resume-recap",
   "name": "ser-028-resume-recap",
   "title": "SER-028: resumed-session human recap",
-  "description": "",
+  "description": "Restore bounded read-only human context from the exact session trajectory on interactive resume.",
   "status": "completed",
   "dev_type": null,
   "scope": "full-stack",
