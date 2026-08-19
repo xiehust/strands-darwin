@@ -29,3 +29,206 @@ index 23b1dad5bf6ca0dc60ec22d70bf195c1556ba29a..455fc41794c2b6bbe0cc5c86d428cf8c
      return mapped;
  }
  function createResponsesStreamError(message, code) {
+diff --git a/dist/src/vended-tools/bash/bash.js b/dist/src/vended-tools/bash/bash.js
+index 44fb775853169dab0fde7aee5e7cc275a060de9c..1dabf08b1c100a3b6794fb664c3bcbc9cd5bd7f0 100644
+--- a/dist/src/vended-tools/bash/bash.js
++++ b/dist/src/vended-tools/bash/bash.js
+@@ -3,6 +3,7 @@ import { z } from 'zod';
+ import { spawn } from 'child_process';
+ import { Buffer } from 'buffer';
+ import { BashTimeoutError, BashSessionError } from './types.js';
++const SHELL_RESTART_NOTICE = 'Notice: Persistent bash shell exited with code 0; it will restart before the next command.';
+ const bashInputSchema = z.object({
+     mode: z
+         .enum(['execute', 'restart'])
+@@ -18,9 +19,11 @@ class BashSession {
+     _started = false;
+     _timeout;
+     _sentinel;
++    _stderrSentinel;
+     constructor(timeout = 120) {
+         this._timeout = timeout;
+         this._sentinel = `__BASH_DONE_${Date.now()}_${Math.random().toString(36).slice(2)}__`;
++        this._stderrSentinel = `${this._sentinel}_STDERR`;
+     }
+     /**
+      * Starts the bash process if not already started.
+@@ -61,7 +64,8 @@ class BashSession {
+         activeSessions.delete(this);
+     }
+     /**
+-     * Runs a command in the bash session.
++     * Runs a command in the bash session. The per-Agent foreground queue ensures
++     * this method has exclusive ownership of the persistent process and streams.
+      */
+     async run(command, timeout) {
+         this.start();
+@@ -73,32 +77,63 @@ class BashSession {
+         let stderrData = '';
+         let timeoutHandle = null;
+         let isTimedOut = false;
++        let stdoutDone = false;
++        let stderrDone = false;
+         return new Promise((resolve, reject) => {
+             const stdout = this._process.stdout;
+             const stderr = this._process.stderr;
+             const stdin = this._process.stdin;
+             // Handlers for stdout
++            const maybeResolve = () => {
++                if (!stdoutDone || !stderrDone) {
++                    return;
++                }
++                cleanup();
++                // Remove sentinel from output
++                const output = stdoutData.replace(this._sentinel, '').trim();
++                const error = stderrData.replace(this._stderrSentinel, '').trim();
++                resolve({ output, error });
++            };
+             const onStdoutData = (chunk) => {
+                 const data = Buffer.from(chunk).toString('utf-8');
+                 stdoutData += data;
+                 // Check for sentinel
+                 if (stdoutData.includes(this._sentinel)) {
+-                    cleanup();
+-                    // Remove sentinel from output
+-                    const output = stdoutData.replace(this._sentinel, '').trim();
+-                    const error = stderrData.trim();
+-                    resolve({ output, error });
++                    stdoutDone = true;
++                    maybeResolve();
+                 }
+             };
+             // Handlers for stderr
+             const onStderrData = (chunk) => {
+                 stderrData += Buffer.from(chunk).toString('utf-8');
++                if (stderrData.includes(this._stderrSentinel)) {
++                    stderrDone = true;
++                    maybeResolve();
++                }
+             };
+-            // Handler for process close
+-            const onClose = (code) => {
++            // Handler for process close. Node emits close only after stdio has closed,
++            // so the buffers contain everything this invocation produced.
++            const onClose = (code, signal) => {
+                 if (!isTimedOut) {
+                     cleanup();
+-                    reject(new BashSessionError(`Bash process exited unexpectedly with code ${code ?? 'unknown'}`));
++                    const output = stdoutData.trim();
++                    const error = stderrData.trim();
++                    if (code === 0 && signal === null) {
++                        resolve({
++                            output,
++                            error: error ? `${error}\n${SHELL_RESTART_NOTICE}` : SHELL_RESTART_NOTICE,
++                        });
++                        return;
++                    }
++                    const metadata = signal === null
++                        ? `code ${code ?? 'unknown'}`
++                        : `signal ${signal}${code === null ? '' : ` (code ${code})`}`;
++                    const failure = new BashSessionError(`Bash process exited unexpectedly with ${metadata}`);
++                    failure.exitCode = code;
++                    failure.signal = signal;
++                    failure.output = output;
++                    failure.error = error;
++                    reject(failure);
+                 }
+             };
+             // Handler for process errors
+@@ -136,7 +171,7 @@ class BashSession {
+             this._process.on('error', onError);
+             // Send command with sentinel
+             try {
+-                stdin.write(`${command}\necho "${this._sentinel}"\n`);
++                stdin.write(`${command}\necho "${this._sentinel}"\necho "${this._stderrSentinel}" >&2\n`);
+             }
+             catch (err) {
+                 cleanup();
+@@ -151,6 +186,16 @@ class BashSession {
+  */
+ // eslint-disable-next-line @typescript-eslint/no-explicit-any
+ const sessions = new WeakMap();
++/**
++ * Serialize all foreground operations for one Agent, including explicit restart.
++ */
++const foregroundTails = new WeakMap();
++function enqueueForeground(agent, operation) {
++    const previous = foregroundTails.get(agent) ?? Promise.resolve();
++    const result = previous.then(operation, operation);
++    foregroundTails.set(agent, result.then(() => undefined, () => undefined));
++    return result;
++}
+ /**
+  * Track all active sessions for cleanup on process exit.
+  */
+@@ -234,29 +279,31 @@ export const bash = tool({
+         if (input.mode === 'execute' && !input.command) {
+             throw new Error('command is required when mode is "execute"');
+         }
+-        // Handle restart mode
+-        if (input.mode === 'restart') {
+-            const existingSession = sessions.get(agent);
+-            if (existingSession) {
+-                existingSession.stop();
+-                sessions.delete(agent);
++        return enqueueForeground(agent, async () => {
++            // Handle restart mode
++            if (input.mode === 'restart') {
++                const existingSession = sessions.get(agent);
++                if (existingSession) {
++                    existingSession.stop();
++                    sessions.delete(agent);
++                }
++                // Create new session (will be added to activeSessions when started)
++                const newSession = new BashSession(120);
++                sessions.set(agent, newSession);
++                sessionFinalizer.register(agent, newSession);
++                return 'Bash session restarted';
+             }
+-            // Create new session (will be added to activeSessions when started)
+-            const newSession = new BashSession(120);
+-            sessions.set(agent, newSession);
+-            sessionFinalizer.register(agent, newSession);
+-            return 'Bash session restarted';
+-        }
+-        // Handle execute mode
+-        // Get or create session
+-        let session = sessions.get(agent);
+-        if (!session) {
+-            session = new BashSession(input.timeout ?? 120);
+-            sessions.set(agent, session);
+-            sessionFinalizer.register(agent, session);
+-        }
+-        // Execute command
+-        return session.run(input.command, input.timeout);
++            // Handle execute mode
++            // Get or create session
++            let session = sessions.get(agent);
++            if (!session) {
++                session = new BashSession(input.timeout ?? 120);
++                sessions.set(agent, session);
++                sessionFinalizer.register(agent, session);
++            }
++            // Execute command
++            return session.run(input.command, input.timeout);
++        });
+     },
+ });
+ //# sourceMappingURL=bash.js.map
+\ No newline at end of file
+diff --git a/dist/src/vended-tools/bash/types.d.ts b/dist/src/vended-tools/bash/types.d.ts
+index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..197045e896402c014d8e1608d30489892fa18d37 100644
+--- a/dist/src/vended-tools/bash/types.d.ts
++++ b/dist/src/vended-tools/bash/types.d.ts
+@@ -65,6 +65,11 @@ export declare class BashTimeoutError extends Error {
+  * Error thrown when a bash session encounters an error.
+  */
+ export declare class BashSessionError extends Error {
++    /** Exit metadata is present when a running persistent shell closes. */
++    exitCode?: number | null;
++    signal?: NodeJS.Signals | null;
++    output?: string;
++    error?: string;
+     constructor(message: string);
+ }
+ /**

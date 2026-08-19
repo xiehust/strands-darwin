@@ -60,7 +60,7 @@ property, not a listener list: the **last** `Agent` initialized owns tool-change
 only correct if the predecessor is retired straight away — which is what `startNewSession()` does,
 and why `retire()` must *not* call `disconnectAll`.
 
-### Contract: the vended bash tool keys its persistent shell per `Agent` instance
+### Contract: the vended bash tool keys and serializes its persistent shell per `Agent` instance
 
 `vended-tools/bash` holds `sessions: WeakMap<Agent, BashSession>` off `context.agent`. Two
 consequences: a new `Agent` always starts with a fresh shell (cwd and exported variables do not
@@ -68,7 +68,39 @@ survive `/clear`), and the *old* Agent's shell must be stopped explicitly via
 `invoke({ mode: 'restart' })` — the SDK's `beforeExit` reaper never runs, and leaving it costs
 ~15 s of extra process exit time (measured with `retire()`'s `stopBashSession()` removed).
 
----
+Darwin's pinned SDK patch also serializes `execute` and `restart` per Agent. The unpatched SDK
+allows parallel calls to attach listeners for one process and sentinel, so each call can receive
+the first command's output or reject on the same close. Distinct Agents retain independent
+queues and shells. If a running command closes its shell with numeric code 0 and no signal, the
+call succeeds with that invocation's captured stdout/stderr plus a visible restart notice; the
+next queued call starts a replacement shell. Nonzero or signalled closes remain
+`BashSessionError` and expose `exitCode`, `signal`, `output`, and `error`. A second stderr
+sentinel keeps normal completion open until both streams have crossed the command boundary, so
+stderr cannot leak into the next invocation.
+
+#### Validation & error matrix
+
+| Persistent foreground outcome | Required result |
+|---|---|
+| Sentinel appears on stdout and stderr | Return the ordinary `{ output, error }` with no notice |
+| Shell closes with `code === 0`, `signal === null` | Return captured buffers; append the restart notice to `error`; next queued call starts a shell |
+| Shell closes nonzero | Throw `BashSessionError` with exact `exitCode`, `signal: null`, `output`, and `error` |
+| Shell closes by signal | Throw `BashSessionError` with `exitCode: null`, exact `signal`, `output`, and `error` |
+| Parallel executes on one Agent | Settle in invocation order with disjoint captured buffers |
+| Execute/restart on different Agents | Remain independent; do not share a queue or shell |
+
+Good: `Promise.all` of three same-Agent calls yields three command-owned results even when the
+last command runs `exit 0`, then a fourth call succeeds in the replacement shell. Base: ordinary
+commands preserve cwd/exported state and explicit restart clears it. Bad: matching the old error
+message in Darwin cannot recover captured buffers or signal metadata and leaves the listener
+race intact.
+
+Required assertions live in `spike/verify-background-bash.ts`: real parallel invocations,
+stdout/stderr ownership, visible exit-0 notice, replacement health, nonzero/signal metadata,
+queue recovery, normal persistence, explicit restart, per-Agent isolation, and all background
+TERM→KILL/exit cleanup cases. Also run `probe-cancel-exit.ts`, `verify-clear-session.ts`, and the
+`bashExit` / `cancelThenContinue` TUI scenarios after changing the patch.
+
 
 ## Observing the stream (what darwin measured to record it)
 
@@ -900,8 +932,9 @@ bash({ mode: 'stop', taskId: string, command?: string }): Promise<BackgroundTask
 new BackgroundBashManager(projectRoot, sessionId)
 ```
 
-Foreground `{ mode: 'execute'|'restart', ... }` keeps the SDK-vended signature and return
-values. Background states are `running | succeeded | failed | stopped`.
+Foreground `{ mode: 'execute'|'restart', ... }` keeps the SDK-vended signature. Normal return
+values remain unchanged; an exit-0 shell close adds its restart notice to `BashOutput.error`.
+Background states are `running | succeeded | failed | stopped`.
 
 ### 3. Contracts
 

@@ -333,11 +333,15 @@ else takes an explicit `projectRoot`.
 **Process exit is engineered, not assumed.** The vended bash tool's persistent shell is
 reaped in `runtime.shutdown()` via direct `restart` — the tool keys shells per `Agent` in a
 `WeakMap`, so a runtime retired by `/clear` has to reap its *own* shell (`retire()`) or that one
-is never released and exit takes ~15s longer; session-owned background bash jobs are
-reaped as whole process groups with bounded TERM→KILL cleanup plus a synchronous `exit`
-fallback. Their provider-facing `wait` is also bounded (1–30000 ms), observes cancellation
-and shutdown, and consumes output only through the existing serialized byte cursor; it never
-owns or delays process cleanup. A cancelled model stream's socket has no public cleanup, so `cli.ts` arms an
+is never released and exit takes ~15s longer. The pinned SDK patch serializes foreground
+execute/restart per Agent: a numeric exit 0 with no signal returns that command's captured
+stdout/stderr plus a restart notice and the next call starts a replacement shell; nonzero and
+signalled exits remain metadata-bearing failures. Serialization is also what keeps parallel
+foreground calls from sharing listeners and attributing one command's output to another.
+Session-owned background bash jobs are reaped as whole process groups with bounded TERM→KILL
+cleanup plus a synchronous `exit` fallback. Their provider-facing `wait` is also bounded
+(1–30000 ms), observes cancellation and shutdown, and consumes output only through the
+existing serialized byte cursor; it never owns or delays process cleanup. A cancelled model stream's socket has no public cleanup, so `cli.ts` arms an
 unref'd 500ms `process.exit` fallback *after* shutdown completes. Don't change these paths
 without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`,
 `spike/verify-clear-session.ts`, and the `bashExit` / `cancelThenContinue` TUI scenarios.

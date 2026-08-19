@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Persistent bash per-Agent ownership, foreground delegation, background wait, and process cleanup contracts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Cleanup and degradation boundaries must remain explicit."}
+{"file":"docs/architecture/load-bearing-decisions.md","reason":"Process exit invariant and required regression probes."}
+{"file":"docs/reflections/reflection_2026-08-19_session-20260819-094621980.md","reason":"F2 provides the exact exit-0 evidence and SRF-004 product decision."}

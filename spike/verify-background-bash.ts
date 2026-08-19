@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { Agent, Model, type BaseModelConfig, type InvokableTool, type Message, type ModelStreamEvent } from '@strands-agents/sdk';
+import { BashSessionError } from '@strands-agents/sdk/vended-tools/bash';
 import type { BashInput, BashOutput } from '@strands-agents/sdk/vended-tools/bash';
 
 import {
@@ -556,6 +557,76 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   await rm(root, { recursive: true, force: true });
 }
 
+async function foregroundShellExitContracts(): Promise<void> {
+  header('background bash — foreground shell exit recovery and serialization');
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-foreground-exit-'));
+  const manager = new BackgroundBashManager(root, 'session-foreground-exit');
+  const wrapped = createBackgroundBashTool(manager);
+  const agent = new Agent({ model: new BashStartModel(), tools: [wrapped], printer: false });
+  await agent.initialize();
+  const context = { agent } as never;
+
+  try {
+    // This is the measured SRF-004 shape: one model message can dispatch several
+    // foreground tool calls at once. The unpatched SDK attached every invocation's
+    // listeners to one shell and sentinel, so all three received alpha's output or
+    // all failed when gamma closed the shell.
+    const parallel = await Promise.all([
+      wrapped.invoke({ mode: 'execute', command: "printf 'alpha-out\\n'; printf 'alpha-err\\n' >&2; sleep 0.04" }, context),
+      wrapped.invoke({ mode: 'execute', command: "printf 'beta-out\\n'; printf 'beta-err\\n' >&2; sleep 0.02" }, context),
+      wrapped.invoke({ mode: 'execute', command: "printf 'gamma-out\\n'; printf 'gamma-err\\n' >&2; exit 0" }, context),
+    ]) as BashOutput[];
+    assert('parallel foreground calls retain invocation-owned stdout without duplicates',
+      parallel.map((value) => value.output).join('|') === 'alpha-out|beta-out|gamma-out');
+    assert('parallel foreground calls retain invocation-owned stderr without cross-attribution',
+      parallel[0]?.error === 'alpha-err' && parallel[1]?.error === 'beta-err' && parallel[2]?.error.startsWith('gamma-err\n') === true);
+    assert('exit code 0 is success with a visible non-fatal restart notice',
+      parallel[2]?.error.includes('Persistent bash shell exited with code 0') === true &&
+      parallel[2]?.error.includes('restart before the next command') === true);
+
+    const replacement = await wrapped.invoke({ mode: 'execute', command: "printf 'replacement-out\\n'; printf 'replacement-err\\n' >&2" }, context) as BashOutput;
+    assert('the next foreground call uses a healthy replacement persistent shell',
+      replacement.output === 'replacement-out' && replacement.error === 'replacement-err');
+
+    await wrapped.invoke({ mode: 'execute', command: 'export FOREGROUND_STATE=kept' }, context);
+    const persistent = await wrapped.invoke({ mode: 'execute', command: 'printf %s "$FOREGROUND_STATE"' }, context) as BashOutput;
+    assert('ordinary foreground calls still persist shell state', persistent.output === 'kept' && persistent.error === '');
+    assert('explicit foreground restart remains compatible',
+      await wrapped.invoke({ mode: 'restart' }, context) === 'Bash session restarted');
+    const restarted = await wrapped.invoke({ mode: 'execute', command: 'printf %s "${FOREGROUND_STATE-unset}"' }, context) as BashOutput;
+    assert('explicit restart still replaces persistent shell state', restarted.output === 'unset');
+
+    const failures = [
+      {
+        command: "printf 'nonzero-out\\n'; printf 'nonzero-err\\n' >&2; exit 7",
+        message: 'code 7', exitCode: 7, signal: null, output: 'nonzero-out', error: 'nonzero-err',
+      },
+      {
+        command: "printf 'signal-out\\n'; printf 'signal-err\\n' >&2; kill -TERM $$",
+        message: 'signal SIGTERM', exitCode: null, signal: 'SIGTERM', output: 'signal-out', error: 'signal-err',
+      },
+    ] as const;
+    for (const expected of failures) {
+      let caught: unknown;
+      try { await wrapped.invoke({ mode: 'execute', command: expected.command }, context); }
+      catch (error) { caught = error; }
+      const failure = caught as BashSessionError;
+      assert('nonzero and signalled foreground exits remain BashSessionError failures',
+        failure instanceof BashSessionError && failure.message.includes(expected.message));
+      assert('foreground exit failures preserve true metadata and captured output',
+        failure.exitCode === expected.exitCode && failure.signal === expected.signal &&
+        failure.output === expected.output && failure.error === expected.error);
+    }
+
+    const afterFailures = await wrapped.invoke({ mode: 'execute', command: 'echo recovered' }, context) as BashOutput;
+    assert('foreground queue continues after nonzero and signalled failures', afterFailures.output === 'recovered');
+  } finally {
+    await wrapped.invoke({ mode: 'restart' }, context);
+    await manager.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function shutdownAndExitContracts(): Promise<void> {
   header('background bash — bounded shutdown and process exit fallback');
   const root = await mkdtemp(path.join(tmpdir(), 'darwin-background-shutdown-'));
@@ -664,5 +735,6 @@ async function shutdownAndExitContracts(): Promise<void> {
 await managerContracts();
 await waitContracts();
 await wrapperAndPermissionContracts();
+await foregroundShellExitContracts();
 await shutdownAndExitContracts();
 report();

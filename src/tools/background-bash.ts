@@ -596,7 +596,7 @@ const inputSchema = z.object({
 type BackgroundBashInput = z.infer<typeof inputSchema>;
 type BackgroundBashOutput = BashOutput | 'Bash session restarted' | BackgroundStartResult | BackgroundTaskStatus | BackgroundTaskStatus[] | BackgroundOutputResult | BackgroundWaitResult;
 
-/** Wraps the SDK tool without changing its foreground persistent-shell behavior. */
+/** Wraps the pinned SDK foreground tool while preserving its per-Agent shell lifecycle. */
 export function createBackgroundBashTool(
   manager: BackgroundBashManager,
   foreground: InvokableTool<BashInput, BashOutput | 'Bash session restarted'> = sdkBash,
