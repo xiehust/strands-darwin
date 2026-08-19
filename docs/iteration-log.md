@@ -1376,3 +1376,37 @@ cacheWrite=105,224`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-19 | `9d6524e` | Clamp only oversized positive fileEditor view ends to EOF while preserving schema, output and every other error boundary |
+
+### Batch 36 — resumed-session human recap (2026-08-19)
+
+Origin: `docs/research/research_2026-08-19.md`, run `2026-08-19T14:12:37Z`, rolled
+`peer`. SER-028 (Score 13) required an interactively resumed session to restore human orientation
+from the existing trajectory without a model call, synthetic model message, or mutation of session
+state.
+
+Child session `session-20260819-141551448`. The managed implementation task
+`bg-73ccfd59-e064-4c23-8cec-72a8dbe09df4` exited 0 and delivered `977b2db` (+ task archive
+`1a74b16`). Host inspection found an archive trailing-blank warning; focused correction task
+`bg-72b35248-c8b5-40fd-ad8f-811ef19bdbbf` exited 0 and delivered `578cc04`. The implementation
+loads only the exact resumed session's tolerant trajectory reader, replays the last completed turn
+through the ordinary reducer, bounds request and answer independently, and places the result in
+startup `<Static>` history. Missing, disabled, damaged, truncated and incomplete records are stated;
+fresh/headless sessions remain unchanged.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck` (exit 0),
+`pnpm test` (all fast suites green, including `verify-resume-recap.ts` 20/20), the focused
+`spike/verify-resume-recap.ts` (20), the free 120×50 pty `spike/verify-tui.ts resume` (12),
+`spike/verify-trajectory.ts` (257), `spike/verify-sessions-command.ts` (42), and
+`spike/verify-clear-session.ts` (37), plus Trellis archive validation, range/HEAD whitespace checks,
+and AGENTS.md size (19,746 bytes < 32 KiB). The pty scenario used a real SDK snapshot and proved
+trajectory, snapshot and resume pointer hashes byte-identical after startup, with no model turn.
+
+Token spend: implementation task `input=258 output=61,611 cacheRead=18,963,325
+cacheWrite=207,279`; correction task `input=27,894 output=9,577 cacheRead=258,480
+cacheWrite=30,569`. Aggregate: `input=28,152 output=71,188 cacheRead=19,221,805
+cacheWrite=237,848`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `977b2db` | Show bounded read-only last-turn context before the prompt when a TUI session resumes |
+| 2026-08-19 | `578cc04` | Remove the archive trailing-blank warning found during Host acceptance |
