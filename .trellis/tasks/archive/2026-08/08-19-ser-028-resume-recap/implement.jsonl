@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/session-trajectory.md","reason":"Authoritative observer/replay contract and tolerant-reader behavior."}
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Session restore, message-count and resumability invariants."}
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Static transcript versus permanent redrawn frame budget."}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Real pty, anchored startup waits, frame and mutation assertions."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trajectory-to-CLI-to-TUI data-flow review."}
+{"file":"docs/research/research_2026-08-19.md","reason":"SER-028 peer and repository evidence."}
