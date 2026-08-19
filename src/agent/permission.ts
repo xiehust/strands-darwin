@@ -663,7 +663,7 @@ function classifyBash(toolName: string, input: Record<string, unknown>, rawInput
   if (mode === 'list') {
     return { toolName, kind: 'read', summary: 'bash: list background tasks', details: [], input: rawInput };
   }
-  if (mode === 'status' || mode === 'output' || mode === 'stop') {
+  if (mode === 'status' || mode === 'output' || mode === 'wait' || mode === 'stop') {
     return {
       toolName,
       kind: 'read',

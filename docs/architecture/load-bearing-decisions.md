@@ -335,7 +335,9 @@ reaped in `runtime.shutdown()` via direct `restart` — the tool keys shells per
 `WeakMap`, so a runtime retired by `/clear` has to reap its *own* shell (`retire()`) or that one
 is never released and exit takes ~15s longer; session-owned background bash jobs are
 reaped as whole process groups with bounded TERM→KILL cleanup plus a synchronous `exit`
-fallback; and a cancelled model stream's socket has no public cleanup, so `cli.ts` arms an
+fallback. Their provider-facing `wait` is also bounded (1–30000 ms), observes cancellation
+and shutdown, and consumes output only through the existing serialized byte cursor; it never
+owns or delays process cleanup. A cancelled model stream's socket has no public cleanup, so `cli.ts` arms an
 unref'd 500ms `process.exit` fallback *after* shutdown completes. Don't change these paths
 without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`,
 `spike/verify-clear-session.ts`, and the `bashExit` / `cancelThenContinue` TUI scenarios.

@@ -69,6 +69,12 @@ export interface BackgroundOutputResult {
   outputPath: string;
 }
 
+export interface BackgroundWaitResult {
+  reason: 'output' | 'changed' | 'terminal' | 'timeout' | 'cancelled' | 'shutdown';
+  status: BackgroundTaskStatus;
+  output: BackgroundOutputResult;
+}
+
 interface ManagedTask {
   readonly id: string;
   readonly command: string;
@@ -93,6 +99,7 @@ export class BackgroundBashManager {
   private readonly launches = new Set<Promise<unknown>>();
   private readonly listeners = new Set<BackgroundTaskListener>();
   private readonly outputDirectory: string;
+  private readonly shutdownController = new AbortController();
   private closing = false;
 
   constructor(
@@ -141,6 +148,47 @@ export class BackgroundBashManager {
     return this.serialize(task, () => this.readOutput(task));
   }
 
+  async wait(taskId: string, waitMs: number, signal?: AbortSignal): Promise<BackgroundWaitResult> {
+    const task = this.lookup(taskId);
+    if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > 30_000) {
+      throw new Error('Background bash waitMs must be an integer from 1 to 30000');
+    }
+    const deadline = Date.now() + waitMs;
+    const initialState = task.state;
+    const initialCursor = task.cursor;
+
+    while (true) {
+      const { output, status } = await this.serialize(task, async () => ({
+        output: await this.readOutput(task),
+        status: await this.snapshot(task),
+      }));
+      if (output.output !== '') return { reason: 'output', status, output };
+      if (status.state !== 'running') return { reason: 'terminal', status, output };
+      if (task.cursor !== initialCursor || task.state !== initialState) {
+        return { reason: 'changed', status, output };
+      }
+      if (signal?.aborted === true) return { reason: 'cancelled', status, output };
+      if (this.closing) return { reason: 'shutdown', status, output };
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return { reason: 'timeout', status, output };
+      const interrupted = await waitForInterruption(
+        Math.min(POLL_MS, remaining),
+        signal,
+        this.shutdownController.signal,
+      );
+      if (interrupted === 'cancelled' || interrupted === 'shutdown') {
+        const final = await this.serialize(task, async () => ({
+          output: await this.readOutput(task),
+          status: await this.snapshot(task),
+        }));
+        if (final.output.output !== '') return { reason: 'output', ...final };
+        if (final.status.state !== 'running') return { reason: 'terminal', ...final };
+        return { reason: interrupted, ...final };
+      }
+    }
+  }
+
   stop(taskId: string): Promise<BackgroundTaskStatus> {
     const task = this.lookup(taskId);
     if (task.state !== 'running') return this.status(taskId);
@@ -162,6 +210,7 @@ export class BackgroundBashManager {
 
   async shutdown(): Promise<void> {
     this.closing = true;
+    this.shutdownController.abort();
     await Promise.allSettled([...this.launches]);
     const running = [...this.tasks.values()].filter((task) => task.state === 'running');
     await Promise.allSettled(running.map((task) => this.stop(task.id)));
@@ -469,6 +518,34 @@ async function waitForGroupExit(pid: number, timeoutMs: number): Promise<boolean
   return gone;
 }
 
+async function waitForInterruption(
+  timeoutMs: number,
+  callerSignal: AbortSignal | undefined,
+  shutdownSignal: AbortSignal,
+): Promise<'elapsed' | 'cancelled' | 'shutdown'> {
+  if (callerSignal?.aborted === true) return 'cancelled';
+  if (shutdownSignal.aborted) return 'shutdown';
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: 'elapsed' | 'cancelled' | 'shutdown') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', onCancelled);
+      shutdownSignal.removeEventListener('abort', onShutdown);
+      resolve(result);
+    };
+    const onCancelled = () => finish('cancelled');
+    const onShutdown = () => finish('shutdown');
+    const timer = setTimeout(() => finish('elapsed'), timeoutMs);
+    callerSignal?.addEventListener('abort', onCancelled, { once: true });
+    shutdownSignal.addEventListener('abort', onShutdown, { once: true });
+    if (callerSignal?.aborted === true) finish('cancelled');
+    else if (shutdownSignal.aborted) finish('shutdown');
+  });
+}
+
 function isNoSuchProcess(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ESRCH';
 }
@@ -482,11 +559,13 @@ function errorMessage(error: unknown): string {
 // rejected before the model can call it. Keep one object and enforce the
 // mode-specific shape in refinement instead.
 const inputSchema = z.object({
-  mode: z.enum(['execute', 'restart', 'start', 'list', 'status', 'output', 'stop'])
+  mode: z.enum(['execute', 'restart', 'start', 'list', 'status', 'output', 'wait', 'stop'])
     .describe('Operation mode'),
-  command: z.string().optional().describe('Command required by execute and start; ignored by status, output, and stop'),
+  command: z.string().optional().describe('Command required by execute and start; ignored by status, output, wait, and stop'),
   timeout: z.number().positive().optional().describe('Timeout in seconds for execute mode'),
-  taskId: z.string().optional().describe('Session-local task id required by status, output, and stop'),
+  taskId: z.string().optional().describe('Session-local task id required by status, output, wait, and stop'),
+  waitMs: z.number().int().min(1).max(30_000).optional()
+    .describe('Bounded wait in milliseconds, required only by wait mode (1-30000)'),
 }).strict().superRefine((input, context) => {
   if (input.mode === 'execute' && input.command === undefined) {
     context.addIssue({ code: 'custom', path: ['command'], message: 'command is required in execute mode' });
@@ -494,8 +573,11 @@ const inputSchema = z.object({
   if (input.mode === 'start' && (input.command === undefined || input.command.trim() === '')) {
     context.addIssue({ code: 'custom', path: ['command'], message: 'command is required in start mode' });
   }
-  if ((input.mode === 'status' || input.mode === 'output' || input.mode === 'stop') && !input.taskId) {
+  if ((input.mode === 'status' || input.mode === 'output' || input.mode === 'wait' || input.mode === 'stop') && !input.taskId) {
     context.addIssue({ code: 'custom', path: ['taskId'], message: `taskId is required in ${input.mode} mode` });
+  }
+  if (input.mode === 'wait' && input.waitMs === undefined) {
+    context.addIssue({ code: 'custom', path: ['waitMs'], message: 'waitMs is required in wait mode' });
   }
   if (input.mode !== 'execute' && input.mode !== 'restart' && input.timeout !== undefined) {
     context.addIssue({ code: 'custom', path: ['timeout'], message: `timeout is not accepted in ${input.mode} mode` });
@@ -506,10 +588,13 @@ const inputSchema = z.object({
   if ((input.mode === 'start' || input.mode === 'list') && input.taskId !== undefined) {
     context.addIssue({ code: 'custom', path: ['taskId'], message: `taskId is not accepted in ${input.mode} mode` });
   }
+  if (input.mode !== 'wait' && input.waitMs !== undefined) {
+    context.addIssue({ code: 'custom', path: ['waitMs'], message: `waitMs is not accepted in ${input.mode} mode` });
+  }
 });
 
 type BackgroundBashInput = z.infer<typeof inputSchema>;
-type BackgroundBashOutput = BashOutput | 'Bash session restarted' | BackgroundStartResult | BackgroundTaskStatus | BackgroundTaskStatus[] | BackgroundOutputResult;
+type BackgroundBashOutput = BashOutput | 'Bash session restarted' | BackgroundStartResult | BackgroundTaskStatus | BackgroundTaskStatus[] | BackgroundOutputResult | BackgroundWaitResult;
 
 /** Wraps the SDK tool without changing its foreground persistent-shell behavior. */
 export function createBackgroundBashTool(
@@ -520,9 +605,10 @@ export function createBackgroundBashTool(
     name: 'bash',
     description:
       'Runs foreground commands in a persistent shell and session-owned background commands. ' +
-      'Modes: execute, restart, start, list, status, output, and stop. ' +
-      'Never block execute mode with sleep to wait for something slow: ' +
-      'start the command in the background, do other work, then poll it with status/output.',
+      'Modes: execute, restart, start, list, status, output, wait, and stop. ' +
+      'Never block execute mode with sleep to wait for something slow: start the command in the background, ' +
+      'do other work, then use wait with taskId and waitMs (an integer from 1 to 30000). ' +
+      'Wait consumes incremental output and returns {reason, status, output} on output, another consumer changing the cursor, terminal state, timeout, cancellation, or shutdown.',
     inputSchema,
     callback: (input, context?: ToolContext) => {
       switch (input.mode) {
@@ -537,6 +623,8 @@ export function createBackgroundBashTool(
           return manager.status(input.taskId!);
         case 'output':
           return manager.output(input.taskId!);
+        case 'wait':
+          return manager.wait(input.taskId!, input.waitMs!, context?.agent.cancelSignal);
         case 'stop':
           return manager.stop(input.taskId!);
       }

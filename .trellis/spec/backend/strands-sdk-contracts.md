@@ -892,6 +892,10 @@ bash({ mode: 'output', taskId: string, command?: string }): Promise<{
   taskId: string; output: string; startOffset: number; endOffset: number;
   hasMore: boolean; outputPath: string
 }>
+bash({ mode: 'wait', taskId: string, waitMs: number, command?: string }): Promise<{
+  reason: 'output' | 'changed' | 'terminal' | 'timeout' | 'cancelled' | 'shutdown';
+  status: BackgroundTaskStatus; output: BackgroundOutputResult
+}>
 bash({ mode: 'stop', taskId: string, command?: string }): Promise<BackgroundTaskStatus>
 new BackgroundBashManager(projectRoot, sessionId)
 ```
@@ -922,6 +926,14 @@ values. Background states are `running | succeeded | failed | stopped`.
   complete the final UTF-8 character, and advances a byte cursor without duplicates. Hold
   an incomplete suffix while the file is growing; terminal malformed bytes may decode as
   replacement characters so the cursor cannot stall.
+- `wait` requires integer `waitMs` in `[1, 30000]`. It probes at the manager's bounded 20 ms
+  interval without holding the task serialization queue, and returns `{ reason, status,
+  output }` on consumable output, a concurrent consumer changing the cursor, terminal
+  transition, timeout, caller cancellation, or manager shutdown. Its nested output is the
+  ordinary single-consumer cursor read, so concurrent `wait`/`output` calls consume disjoint
+  ordered byte ranges; a losing concurrent wait returns `changed`, not a full timeout. Cancellation only
+  releases the observer; it does not stop the task. Shutdown releases observers before
+  entering the unchanged process-reaping path.
 - `stop` owns the whole POSIX process group: SIGTERM, poll up to 500 ms, SIGKILL, poll up to
   500 ms. Natural leader exit performs the same descendant cleanup before terminal state.
   Explicit stop wins state races and settles as `stopped`.
@@ -934,9 +946,9 @@ values. Background states are `running | succeeded | failed | stopped`.
   so `exit` is the reliable composition point.
 - `start` is an execute permission and retains `input.command`, so existing
   `bash:<pattern>` rules and auto/default/yolo behavior apply. `list`, `status`, `output`,
-  `stop`, and `restart` are safe lifecycle calls. `status`, `output`, and `stop` tolerate and
-  ignore a redundant `command` field, but still require and dispatch only by `taskId`; `list`
-  remains strict. Existing Pre/Post hooks see each immediate outer `bash` call, not eventual
+  `wait`, `stop`, and `restart` are safe lifecycle calls. `status`, `output`, `wait`, and
+  `stop` tolerate and ignore a redundant `command` field, but still require and dispatch
+  only by `taskId`; only `wait` accepts `waitMs`, and `list` remains strict. Existing Pre/Post hooks see each immediate outer `bash` call, not eventual
   background completion.
 
 ### 4. Validation & Error Matrix
@@ -947,7 +959,10 @@ values. Background states are `running | succeeded | failed | stopped`.
 | Invalid or unknown `taskId` | Clear error; never read or signal another path/process |
 | Log deleted/unreadable | Status keeps process metadata with `outputBytes: null`; output errors with the owned path |
 | Spawn fails | Reject start, close the parent log handle, kill/register-clean any exposed group |
-| Repeated/concurrent output | Serialized, disjoint cursor ranges |
+| Repeated/concurrent output or wait | Serialized, disjoint cursor ranges |
+| `waitMs` absent, non-integer, below 1, or above 30000 | Zod tool error; manager also rejects direct invalid calls |
+| Wait sees no output/state change | Return `reason: timeout` within its declared bound with empty incremental output |
+| Wait caller cancels / manager shuts down | Return promptly; cancellation leaves task running, shutdown continues normal reaping |
 | Repeated/concurrent stop | Share one termination operation and stable terminal state |
 | Descendant ignores SIGTERM | Escalate to group SIGKILL within the bounded deadline |
 | Shutdown races launch setup | Launch rejects before spawn or becomes visible and is stopped |

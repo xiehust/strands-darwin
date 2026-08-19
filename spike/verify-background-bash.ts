@@ -21,6 +21,7 @@ import {
   BackgroundBashManager,
   createBackgroundBashTool,
   type BackgroundTaskStatus,
+  type BackgroundWaitResult,
 } from '../src/tools/background-bash.js';
 import { assert, header, report } from './shared.js';
 
@@ -279,6 +280,100 @@ async function managerContracts(): Promise<void> {
   }
 }
 
+
+async function waitContracts(): Promise<void> {
+  header('background bash — bounded wait with incremental output');
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-background-wait-'));
+  const manager = new BackgroundBashManager(root, 'session-wait');
+  try {
+    const immediate = await manager.start("printf 'ready\\n'; sleep 1000");
+    await eventually(async () => (await readFile(immediate.outputPath)).length, (size) => size > 0);
+    const immediateBefore = Date.now();
+    const immediateResult = await manager.wait(immediate.taskId, 500);
+    assert('wait returns immediately with newly available output', immediateResult.reason === 'output' && immediateResult.output.output === 'ready\n' && Date.now() - immediateBefore < 200);
+
+    const quiet = await manager.start('sleep 1000');
+    const timeoutBefore = Date.now();
+    const timedOut = await manager.wait(quiet.taskId, 80);
+    const timeoutElapsed = Date.now() - timeoutBefore;
+    assert('quiet wait returns empty running snapshot only at its finite timeout', timedOut.reason === 'timeout' && timedOut.status.state === 'running' && timedOut.output.output === '' && timeoutElapsed >= 60 && timeoutElapsed < 300);
+
+    const terminal = await manager.start('sleep .08; exit 0');
+    const terminalBefore = Date.now();
+    const terminalResult = await manager.wait(terminal.taskId, 1_000);
+    assert('wait wakes promptly on terminal transition', terminalResult.reason === 'terminal' && terminalResult.status.state === 'succeeded' && Date.now() - terminalBefore < 500);
+
+    const growing = await manager.start("sleep .05; printf 'one'; sleep .08; printf 'two'; sleep 1000");
+    const first = await manager.wait(growing.taskId, 500);
+    const second = await manager.wait(growing.taskId, 500);
+    assert('successive waits consume incremental output once and in order', first.output.output === 'one' && second.output.output === 'two' && first.output.endOffset === second.output.startOffset);
+
+    const split = await manager.start("printf '\\342'; sleep .08; printf '\\202\\254'; sleep 1000");
+    await eventually(async () => (await readFile(split.outputPath)).length, (size) => size === 1);
+    const splitResult = await manager.wait(split.taskId, 500);
+    assert('wait holds a growing UTF-8 suffix until it can return one complete code point', splitResult.reason === 'output' && splitResult.output.output === '€' && splitResult.output.startOffset === 0 && splitResult.output.endOffset === 3);
+
+    const concurrent = await manager.start("printf 'shared'; sleep 1000");
+    await eventually(async () => (await readFile(concurrent.outputPath)).length, (size) => size === 6);
+    const [waited, polled] = await Promise.all([
+      manager.wait(concurrent.taskId, 80),
+      manager.output(concurrent.taskId),
+    ]);
+    const concurrentChunks = [waited.output, polled].sort((left, right) => left.startOffset - right.startOffset);
+    assert(
+      'concurrent wait/output share one cursor without duplicate or skipped bytes',
+      concurrentChunks.map((chunk) => chunk.output).join('') === 'shared' && concurrentChunks[0]?.endOffset === concurrentChunks[1]?.startOffset,
+    );
+
+    const competing = await manager.start("sleep .08; printf 'winner'; sleep 1000");
+    const competingWaits = await Promise.all([
+      manager.wait(competing.taskId, 500),
+      manager.wait(competing.taskId, 500),
+    ]);
+    assert(
+      'concurrent waits return on shared cursor state change instead of idling to timeout',
+      competingWaits.some((result) => result.reason === 'output' && result.output.output === 'winner') &&
+        competingWaits.some((result) => result.reason === 'changed' && result.output.output === ''),
+    );
+
+    const cancellable = await manager.start('sleep 1000');
+    const controller = new AbortController();
+    const cancelBefore = Date.now();
+    const cancelledPromise = manager.wait(cancellable.taskId, 30_000, controller.signal);
+    setTimeout(() => controller.abort(), 50);
+    const cancelled = await cancelledPromise;
+    assert('caller cancellation releases wait promptly without stopping its task', cancelled.reason === 'cancelled' && cancelled.status.state === 'running' && Date.now() - cancelBefore < 300 && exists(cancellable.pid));
+
+    for (const badWait of [0, 30_001, 1.5, Number.NaN]) {
+      let waitError = '';
+      try { await manager.wait(quiet.taskId, badWait); } catch (error) { waitError = String(error); }
+      assert('manager rejects wait bounds even outside provider validation', waitError.includes('integer from 1 to 30000'));
+    }
+    let invalidId = '';
+    try { await manager.wait('not-owned', 10); } catch (error) { invalidId = String(error); }
+    let unknownId = '';
+    try { await manager.wait('bg-00000000-0000-0000-0000-000000000000', 10); } catch (error) { unknownId = String(error); }
+    assert('wait rejects a well-formed id outside this runtime', unknownId.includes('Unknown background bash task'));
+
+    assert('wait preserves the manager task-id authority boundary', invalidId.includes('Invalid background bash task id'));
+  } finally {
+    await manager.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+
+  const shutdownRoot = await mkdtemp(path.join(tmpdir(), 'darwin-background-wait-shutdown-'));
+  const shutdownManager = new BackgroundBashManager(shutdownRoot, 'session-wait-shutdown');
+  const shutdownTask = await shutdownManager.start('sleep 1000');
+  const pending = shutdownManager.wait(shutdownTask.taskId, 30_000);
+  await delay(40);
+  const shutdownBefore = Date.now();
+  const shutdown = shutdownManager.shutdown();
+  const shutdownWait = await pending;
+  await shutdown;
+  assert('shutdown releases pending wait and still reaps its process group', (shutdownWait.reason === 'shutdown' || shutdownWait.reason === 'terminal') && Date.now() - shutdownBefore < 1_300 && !exists(shutdownTask.pid));
+  await rm(shutdownRoot, { recursive: true, force: true });
+}
+
 async function wrapperAndPermissionContracts(): Promise<void> {
   header('background bash — foreground delegation and permissions');
   const root = await mkdtemp(path.join(tmpdir(), 'darwin-background-wrapper-'));
@@ -292,7 +387,7 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   assert('provider-facing bash schema has a top-level object type', wrapped.toolSpec.inputSchema?.type === 'object');
 
   const expectedTaskId = 'bg-00000000-0000-0000-0000-000000000000';
-  const managementCalls: Array<{ mode: 'status' | 'output' | 'stop'; taskId: string }> = [];
+  const managementCalls: Array<{ mode: 'status' | 'output' | 'wait' | 'stop'; taskId: string; waitMs?: number; signal?: AbortSignal }> = [];
   const managementStatus: BackgroundTaskStatus = {
     taskId: expectedTaskId, state: 'running', command: 'original', pid: 1,
     startedAt: '2026-08-19T00:00:00.000Z', finishedAt: null, exitCode: null,
@@ -304,6 +399,13 @@ async function wrapperAndPermissionContracts(): Promise<void> {
       managementCalls.push({ mode: 'output', taskId });
       return { taskId, output: 'owned output', startOffset: 0, endOffset: 12, hasMore: false, outputPath: '/owned/output.log' };
     },
+    wait: async (taskId: string, waitMs: number, signal?: AbortSignal) => {
+      managementCalls.push({ mode: 'wait', taskId, waitMs, ...(signal === undefined ? {} : { signal }) });
+      return {
+        reason: 'timeout', status: managementStatus,
+        output: { taskId, output: '', startOffset: 0, endOffset: 0, hasMore: false, outputPath: '/owned/output.log' },
+      } satisfies BackgroundWaitResult;
+    },
     stop: async (taskId: string) => { managementCalls.push({ mode: 'stop', taskId }); return managementStatus; },
   } as unknown as BackgroundBashManager;
   const managementWrapped = createBackgroundBashTool(managementManager, foreground);
@@ -313,10 +415,16 @@ async function wrapperAndPermissionContracts(): Promise<void> {
     const withCommand = await managementWrapped.invoke({ mode, taskId: expectedTaskId, command: redundantCommand } as never);
     assert(`${mode} ignores redundant command without changing the manager result`, JSON.stringify(withCommand) === JSON.stringify(withoutCommand));
   }
+  const waitController = new AbortController();
+  const waitContext = { agent: { cancelSignal: waitController.signal } } as never;
+  const waited = await managementWrapped.invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 123 }, waitContext) as BackgroundWaitResult;
+  const waitedWithCommand = await managementWrapped.invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 123, command: redundantCommand } as never, waitContext);
+  assert('wait ignores redundant command without changing the manager result', JSON.stringify(waitedWithCommand) === JSON.stringify(waited));
   assert(
-    'management callbacks forward only taskId and never execute or reinterpret redundant command',
-    managementCalls.length === 6 &&
-      managementCalls.every((call, index) => call.mode === (['status', 'status', 'output', 'output', 'stop', 'stop'] as const)[index] && call.taskId === expectedTaskId) &&
+    'management callbacks dispatch only lifecycle fields and never execute or reinterpret redundant command',
+    managementCalls.length === 8 &&
+      managementCalls.every((call, index) => call.mode === (['status', 'status', 'output', 'output', 'stop', 'stop', 'wait', 'wait'] as const)[index] && call.taskId === expectedTaskId) &&
+      managementCalls.slice(6).every((call) => call.waitMs === 123 && call.signal === waitController.signal) &&
       seen.length === 0,
   );
 
@@ -340,6 +448,22 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   const execute = await wrapped.invoke({ mode: 'execute', command: 'echo hi', timeout: 9 }, context);
   const restart = await wrapped.invoke({ mode: 'restart' }, context);
   const compatibilityRestart = await wrapped.invoke({ mode: 'restart', command: 'ignored', timeout: 3, taskId: 'ignored' } as never, context);
+
+    for (const invalidWait of [
+      { mode: 'wait', taskId: expectedTaskId },
+      { mode: 'wait', taskId: expectedTaskId, waitMs: 0 },
+      { mode: 'wait', taskId: expectedTaskId, waitMs: 30_001 },
+      { mode: 'wait', waitMs: 10 },
+      { mode: 'status', taskId: expectedTaskId, waitMs: 10 },
+    ]) {
+      let waitShapeError = '';
+      try { await managementWrapped.invoke(invalidWait as never); } catch (error) { waitShapeError = String(error); }
+      assert('bash wait rejects missing, out-of-bound, and irrelevant wait fields', waitShapeError.includes('waitMs') || waitShapeError.includes('taskId'));
+    }
+    assert('provider description states the exact bounded wait semantics', managementWrapped.description.includes('integer from 1 to 30000') && managementWrapped.description.includes('incremental output'));
+    const waitPermission = classify('bash', { mode: 'wait', taskId: expectedTaskId, waitMs: 123, command: redundantCommand });
+    assert('wait is permission-safe and cannot become command execution', waitPermission.kind === 'read' && waitPermission.summary.includes('bash wait') && assessRisk(waitPermission, root).risk === 'safe');
+
   assert('restart preserves the vended optional/unknown foreground input compatibility', compatibilityRestart === 'Bash session restarted');
   for (const blank of ['', '   \n']) {
     let blankError = '';
@@ -392,7 +516,7 @@ async function wrapperAndPermissionContracts(): Promise<void> {
 
   const start = classify('bash', { mode: 'start', command: 'pnpm test' });
   assert('start has normal execute permission semantics', start.kind === 'execute' && assessRisk(start, root).risk === 'dangerous');
-  for (const mode of ['restart', 'list', 'status', 'output', 'stop'] as const) {
+  for (const mode of ['restart', 'list', 'status', 'output', 'wait', 'stop'] as const) {
     const request = classify('bash', mode === 'restart' || mode === 'list' ? { mode } : { mode, taskId: 'bg-x' });
     assert(`${mode} is statically safe`, request.kind === 'read' && assessRisk(request, root).risk === 'safe');
   }
@@ -538,6 +662,7 @@ async function shutdownAndExitContracts(): Promise<void> {
 }
 
 await managerContracts();
+await waitContracts();
 await wrapperAndPermissionContracts();
 await shutdownAndExitContracts();
 report();
