@@ -20,4 +20,4 @@
 - `pnpm typecheck` — exit 0.
 - Final `pnpm test` — exit 0 (run once after source settled).
 - Trellis validation — passed (only existing large-spec injection warnings).
-- `git diff --check` — clean.
+- Final `git diff --check` — clean; the archived file has no trailing blank line.
