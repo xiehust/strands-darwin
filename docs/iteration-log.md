@@ -1175,3 +1175,52 @@ Token spend, two managed tasks: `input=62 output=5,631 cacheRead=1,359,509 cache
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-19 | `799a072` | `/status` consolidates the live session's configuration and state into one honest read-only report |
+
+### Batch 30 — prompts typed while a turn runs now queue (2026-08-19)
+
+Origin: `docs/research/research_2026-08-19.md`, **addendum `02:01:06Z`** — SER-027 was reopened
+by explicit user product decision ("add queue-while-working in backlog") after the same day's
+`01:20:26Z` run had declined to score it against SER-010's shipped no-queue contract. The
+supersession is the point: every spec, comment and suite that pinned "retained, never queued"
+was updated to say what replaced it and why, never worked around.
+
+Child session `session-20260819-051836979`; first managed task `bg-b60fda98` died in a transient
+`Stream ended without completing a message` with nothing written, retry task `bg-8a19690e` (same
+session, exit 0) carried the work to commit with no correction turn. Delivered in `b39cd30`: a
+submission while a turn streams or a `!` command runs leaves the editor, joins a FIFO listed
+above the input box (`queued ·` rows, one truncated `<Text>` each, a fourth counted frame-budget
+claim ranked after the tool panel with `… n more queued` for cuts) and is counted on the busy
+hint (`· N queued`) so nothing invisible accumulates. At idle the queue drains one entry per
+cycle through the ordinary submit path — its own turn for a prompt, its own run for a `!`, its
+own `userInput` recorded at send time and not before. `Up` from the draft's first visual row
+takes the whole queue back ahead of typed text, joining the fixed key chain (menu → take-back →
+recall → cursor) without eating either neighbour; Ctrl+C or a failed turn returns the queue to
+the editor unsent (auto-resending into an error is how retry loops start); a permission prompt
+holds the queue untouched and visible; `/clear` drops it with the conversation. Two deliberate
+SER-010 remnants, stated in every spec: compaction still owns the keyboard, and
+`/clear`/`/compact`/`/model`/`/exit`/`/quit` refuse to queue with the draft retained — running a
+session-replacing command minutes later, unprompted, is worse than a second Enter. Local report
+commands still answer mid-turn immediately.
+
+Host acceptance independently read the full 17-file diff — checking specifically that the
+`usage` and `bang` scenarios' SER-010 assertions were flipped 1:1 into queue assertions, not
+deleted, and that the `approve` change is an anchored wait per `tui-testing.md`, not a weakened
+assertion — and re-ran: `pnpm typecheck` (exit 0); `pnpm test` (exit 0, 50 suite summaries, all
+`0 failed`, incl. the new `verify-prompt-queue.ts` 28/28); the new free pty `queue` 17/17
+(listing, take-back ordering, cancel return, refusal, recall untouched, no `userInput` record);
+`bang` 19/19; `completion` 47, `pathCompletion` 18, `recall` 20, `recallEmpty` 4, `mode` 25,
+`clear` 19, `multiline` 9, `chunkedEnter` 4, `cursor` 5, `tallDraft` 8, `mcp` 13; the live
+120×50 `approve` 29/29 and live `usage` 23/23 — the queued prompt listed, off the editor,
+counted, then auto-sent as its own turn and recorded at send time; `git show --check` clean;
+Trellis validation (`✓`); AGENTS.md 18,510 B under the preload cap; protected docs untouched.
+Host's own 12-assertion module probe passed: the refusal set is exactly the five stated commands,
+take-back composes queue-ahead-of-draft, rows flatten to one line behind an ANSI-strippable
+marker, and a zero count is silent.
+
+Token spend, two managed tasks: `input=26 output=2,843 cacheRead=424,639 cacheWrite=49,164`
+(failed first attempt) + `input=336 output=120,802 cacheRead=30,339,130 cacheWrite=283,861`
+(retry to completion) = `input=362 output=123,645 cacheRead=30,763,769 cacheWrite=333,025`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `b39cd30` | Prompts and `!` commands typed while a turn runs queue visibly, drain at idle, and come back unsent on cancel |
