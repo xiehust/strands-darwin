@@ -887,12 +887,12 @@ bash({ mode: 'start', command: string }): Promise<{
   taskId: string; pid: number; outputPath: string
 }>
 bash({ mode: 'list' }): Promise<BackgroundTaskStatus[]>
-bash({ mode: 'status', taskId: string }): Promise<BackgroundTaskStatus>
-bash({ mode: 'output', taskId: string }): Promise<{
+bash({ mode: 'status', taskId: string, command?: string }): Promise<BackgroundTaskStatus>
+bash({ mode: 'output', taskId: string, command?: string }): Promise<{
   taskId: string; output: string; startOffset: number; endOffset: number;
   hasMore: boolean; outputPath: string
 }>
-bash({ mode: 'stop', taskId: string }): Promise<BackgroundTaskStatus>
+bash({ mode: 'stop', taskId: string, command?: string }): Promise<BackgroundTaskStatus>
 new BackgroundBashManager(projectRoot, sessionId)
 ```
 
@@ -934,8 +934,10 @@ values. Background states are `running | succeeded | failed | stopped`.
   so `exit` is the reliable composition point.
 - `start` is an execute permission and retains `input.command`, so existing
   `bash:<pattern>` rules and auto/default/yolo behavior apply. `list`, `status`, `output`,
-  `stop`, and `restart` are safe lifecycle calls. Existing Pre/Post hooks see each immediate outer
-  `bash` call, not eventual background completion.
+  `stop`, and `restart` are safe lifecycle calls. `status`, `output`, and `stop` tolerate and
+  ignore a redundant `command` field, but still require and dispatch only by `taskId`; `list`
+  remains strict. Existing Pre/Post hooks see each immediate outer `bash` call, not eventual
+  background completion.
 
 ### 4. Validation & Error Matrix
 

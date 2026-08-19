@@ -290,10 +290,35 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   } as unknown as InvokableTool<BashInput, BashOutput | 'Bash session restarted'>;
   const wrapped = createBackgroundBashTool(manager, foreground);
   assert('provider-facing bash schema has a top-level object type', wrapped.toolSpec.inputSchema?.type === 'object');
-  let shapeError = '';
-  try { await wrapped.invoke({ mode: 'status', taskId: 'bg-00000000-0000-0000-0000-000000000000', command: 'echo smuggled' } as never); }
-  catch (error) { shapeError = String(error); }
-  assert('safe management modes reject an irrelevant command field', shapeError.includes('command is not accepted'));
+
+  const expectedTaskId = 'bg-00000000-0000-0000-0000-000000000000';
+  const managementCalls: Array<{ mode: 'status' | 'output' | 'stop'; taskId: string }> = [];
+  const managementStatus: BackgroundTaskStatus = {
+    taskId: expectedTaskId, state: 'running', command: 'original', pid: 1,
+    startedAt: '2026-08-19T00:00:00.000Z', finishedAt: null, exitCode: null,
+    signal: null, outputPath: '/owned/output.log', outputBytes: 0,
+  };
+  const managementManager = {
+    status: async (taskId: string) => { managementCalls.push({ mode: 'status', taskId }); return managementStatus; },
+    output: async (taskId: string) => {
+      managementCalls.push({ mode: 'output', taskId });
+      return { taskId, output: 'owned output', startOffset: 0, endOffset: 12, hasMore: false, outputPath: '/owned/output.log' };
+    },
+    stop: async (taskId: string) => { managementCalls.push({ mode: 'stop', taskId }); return managementStatus; },
+  } as unknown as BackgroundBashManager;
+  const managementWrapped = createBackgroundBashTool(managementManager, foreground);
+  const redundantCommand = 'bg-alternate-id; echo must-not-run';
+  for (const mode of ['status', 'output', 'stop'] as const) {
+    const withoutCommand = await managementWrapped.invoke({ mode, taskId: expectedTaskId });
+    const withCommand = await managementWrapped.invoke({ mode, taskId: expectedTaskId, command: redundantCommand } as never);
+    assert(`${mode} ignores redundant command without changing the manager result`, JSON.stringify(withCommand) === JSON.stringify(withoutCommand));
+  }
+  assert(
+    'management callbacks forward only taskId and never execute or reinterpret redundant command',
+    managementCalls.length === 6 &&
+      managementCalls.every((call, index) => call.mode === (['status', 'status', 'output', 'output', 'stop', 'stop'] as const)[index] && call.taskId === expectedTaskId) &&
+      seen.length === 0,
+  );
 
   const context = { marker: true } as never;
     const listed = await wrapped.invoke({ mode: 'list' }) as BackgroundTaskStatus[];
@@ -307,6 +332,10 @@ async function wrapperAndPermissionContracts(): Promise<void> {
       try { await wrapped.invoke(smuggled as never); } catch (error) { listShapeError = String(error); }
       assert('bash list rejects irrelevant fields', listShapeError.includes('not accepted'));
     }
+    let unknownFieldError = '';
+    try { await wrapped.invoke({ mode: 'status', taskId: expectedTaskId, arbitrary: 'smuggled' } as never); }
+    catch (error) { unknownFieldError = String(error); }
+    assert('bash rejects arbitrary unknown fields', unknownFieldError.includes('Unrecognized key'));
 
   const execute = await wrapped.invoke({ mode: 'execute', command: 'echo hi', timeout: 9 }, context);
   const restart = await wrapped.invoke({ mode: 'restart' }, context);

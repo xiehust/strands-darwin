@@ -484,10 +484,10 @@ function errorMessage(error: unknown): string {
 const inputSchema = z.object({
   mode: z.enum(['execute', 'restart', 'start', 'list', 'status', 'output', 'stop'])
     .describe('Operation mode'),
-  command: z.string().optional().describe('Command required by execute and start modes'),
+  command: z.string().optional().describe('Command required by execute and start; ignored by status, output, and stop'),
   timeout: z.number().positive().optional().describe('Timeout in seconds for execute mode'),
   taskId: z.string().optional().describe('Session-local task id required by status, output, and stop'),
-}).superRefine((input, context) => {
+}).strict().superRefine((input, context) => {
   if (input.mode === 'execute' && input.command === undefined) {
     context.addIssue({ code: 'custom', path: ['command'], message: 'command is required in execute mode' });
   }
@@ -500,8 +500,8 @@ const inputSchema = z.object({
   if (input.mode !== 'execute' && input.mode !== 'restart' && input.timeout !== undefined) {
     context.addIssue({ code: 'custom', path: ['timeout'], message: `timeout is not accepted in ${input.mode} mode` });
   }
-  if (input.mode !== 'execute' && input.mode !== 'restart' && input.mode !== 'start' && input.command !== undefined) {
-    context.addIssue({ code: 'custom', path: ['command'], message: `command is not accepted in ${input.mode} mode` });
+  if (input.mode === 'list' && input.command !== undefined) {
+    context.addIssue({ code: 'custom', path: ['command'], message: 'command is not accepted in list mode' });
   }
   if ((input.mode === 'start' || input.mode === 'list') && input.taskId !== undefined) {
     context.addIssue({ code: 'custom', path: ['taskId'], message: `taskId is not accepted in ${input.mode} mode` });
