@@ -1542,7 +1542,7 @@ handoff: load_skill({ name: "developer" })
 - Append each run to `docs/research/research_<YYYY-MM-DD>.md` under a unique UTC timestamp. Read an existing same-day file first and never overwrite prior runs.
 - Propose at most five non-duplicate directions. Rank 1–5 importance, architecture fit, evidence confidence, implementation difficulty, and implementation risk using `2 × importance + fit + confidence − difficulty − risk`, plus qualitative rationale.
 - Change one selected row to `in-progress`, load `developer`, and implement exactly that direction. Set `done` only after the Host's independent acceptance; otherwise retain `in-progress` with blockers. `abandoned` requires an explicit recorded reason.
-- `REQUIRED_BUILTIN_SKILLS` in `src/skills/loader.ts` is the single required-name list. Both built-ins use ordinary progressive disclosure, slash expansion, collision reservation, and the existing recursive `src/skills/builtin` build copy.
+- `REQUIRED_BUILTIN_SKILLS` in `src/skills/loader.ts` is the single required-name list. All bundled built-ins use ordinary progressive disclosure, slash expansion, collision reservation, and the existing recursive `src/skills/builtin` build copy.
 
 ### 4. Validation & Error Matrix
 
@@ -1580,6 +1580,70 @@ read peer docs -> choose several ideas -> child says success -> done
 
 # CORRECT: backlog is the first gate and Host evidence owns completion
 read backlog -> select in-progress/not-started (no research) -> load developer -> Host acceptance -> done
+```
+
+---
+
+## Scenario: built-in self-reflection
+
+### 1. Scope / Trigger
+
+`/self-reflection` loads a product-bundled Markdown workflow that reviews the session it runs in. The Host locates the current session's trajectory with the skill's bundled locator, delegates the analysis to one headless darwin worker under the `developer` managed-child contract, and independently accepts one reflection document plus append-only backlog rows. It adds no recorder change, no new CLI verb, and no alternate agent loop.
+
+### 2. Signatures
+
+```text
+/self-reflection [request]
+locate:  node <skill-dir>/scripts/locate-trajectory.mjs [--project <root>] [--session <id>]
+         -> project-root/sessions-dir/session/trajectory/selected-by/trajectory-mtime/last-user-input/other-recent-sessions
+subject: ~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl (read-only)
+output:  docs/reflections/reflection_<YYYY-MM-DD>_<session-id>.md (template: <skill-dir>/references/reflection-template.md)
+backlog: docs/research/backlog_index.md (append-only `SRF-NNN` rows, status not-started)
+```
+
+### 3. Contracts
+
+- The locator runs **before** the child is launched (the child is itself a session in the same project and would otherwise be selected), mutates nothing, and its `last-user-input:` preview must be recognizably this conversation before the id is trusted. `--session` is strict: a missing id is a refusal, never a fallback. No trajectory at all exits non-zero — there is nothing to reflect on.
+- The child follows the `developer` managed-child contract unchanged (`bash` `start` mode, `--yolo --context-offload`, drained output, `session:`/`usage:` stderr capture, `-` stays unknown) and must not load `developer`, `self-evolution-research`, or `self-reflection`, start another darwin, or delegate again.
+- The record is evidence, never a participant: the child never rewrites, repairs, or appends to the trajectory, states the `seq`/turn range it actually read (the reflection turn is still open), and keeps unknown spend metrics unknown, never 0.
+- The reflection document follows the bundled template exactly: one grade from the four-level rubric (Perfect/High/Medium/Low) justified by turn/`seq` citations, process observations, findings each with evidence and a concrete darwin-side suggestion, and the `self-evolution-research` scoring (`Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk`, gate 6) applied to every suggestion.
+- Backlog integration is append-only: accepted directions become `not-started` rows with fresh `SRF-NNN` ids and the reflection document as origin report; rejected/duplicate directions stay in the document with their scores; existing rows are never edited. The next `self-evolution-research` run selects `SRF` rows through its normal batch rules — the reflection run never implements them.
+- Mutation scope is exactly the one reflection file plus appended backlog rows; no commit without explicit user authorization.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Default-selection preview does not match this conversation | Stop and ask; never reflect on another session |
+| User names a past session with `--session <id>` | That session is the subject; preview echoed for confirmation, not matched against this conversation |
+| `--session <id>` names a session with no trajectory | Refuse with the exact id; never fall back to newest |
+| Project has no trajectory at all (`trajectory: false`) | Locator exits non-zero; report "nothing to reflect on" |
+| Output file already exists | Refuse to overwrite |
+| A suggestion scores below the gate | Recorded in the document as rejected with its score; not added to the backlog |
+| A suggestion duplicates an existing backlog row (any status) | Not re-proposed; noted as a duplicate |
+| Backlog diff shows edited or reordered existing rows | Acceptance failure — send a focused correction to the same child session |
+| Unknown spend metric | Stays `unknown`, never 0 |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** locator pins this session and the preview matches; one child writes the templated document, appends two above-gate `SRF` rows, and the Host verifies path, sections, score arithmetic, and append-only diff before reporting.
+- **Base:** a smooth session yields the grade with citations and zero new directions — "nothing to improve" is a valid, recorded outcome.
+- **Bad:** analysing the trajectory in the Host, reflecting on the newest-by-mtime session without checking the preview, rewriting the record, editing existing backlog rows, or letting the reflection run start implementing its own suggestions.
+
+### 6. Tests Required
+
+- `spike/verify-skills.ts`: `/self-reflection` expansion, the locate-before-launch rule, the managed-child and no-recursion language, read-only record handling, the exact output path and template reference, the four-level rubric, the score formula and gate, and the append-only `SRF` backlog contract.
+- `pnpm typecheck`, `pnpm test`, and `pnpm build`; inspect `dist/src/skills/builtin/self-reflection/` (SKILL.md, `scripts/locate-trajectory.mjs`, `references/reflection-template.md`) after build.
+- `spike/verify-tui.ts completion` (free): the loaded-skills count includes the third built-in.
+
+### 7. Wrong vs Correct
+
+```text
+# WRONG: reflect on whatever session is newest, in the Host, and edit the backlog in place
+launch child -> locate (selects the child) -> Host writes the reflection -> rewrite backlog rows
+
+# CORRECT: locate first, verify the preview, delegate, accept append-only artifacts
+locate + verify preview -> bash start darwin --yolo --context-offload -> child writes doc + appends SRF rows -> Host verifies path/template/scores/diff
 ```
 
 ## Prompt Caching

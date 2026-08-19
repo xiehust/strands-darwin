@@ -791,7 +791,7 @@ async function slashCompletion(): Promise<void> {
     await tui.waitFor('skill /commit-message', { timeoutMs: 30_000, settleMs: 400 });
     assert(
       'loaded capabilities are summarized in the header',
-      tui.screen.includes('loaded: 3 skills · 1 command · 1 agent'),
+      tui.screen.includes('loaded: 4 skills · 1 command · 1 agent'),
     );
     assert(
       'a command colliding with a skill is warned and skipped',
@@ -877,7 +877,7 @@ async function slashCompletion(): Promise<void> {
     assert('/status states the session id', statusReport.includes('session-'));
     assert('/status states the permission mode', /mode\s+default/.test(statusReport));
     assert('/status states no-MCP as a normal state', statusReport.includes('none configured'));
-    assert('/status counts the loaded skills', /skills\s+3 — /.test(statusReport));
+    assert('/status counts the loaded skills', /skills\s+4 — /.test(statusReport));
     assert('/status states the trajectory file',
       statusReport.includes('recording — ') && withoutWhitespace(statusReport).includes('trajectory.jsonl'));
     assert('/status states diagnostics off', /diagnostics\s+off/.test(statusReport));

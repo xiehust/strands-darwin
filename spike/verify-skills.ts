@@ -258,6 +258,51 @@ async function missingDirectory(): Promise<void> {
   );
   assert('completion requires independent acceptance and blockers remain in progress', researchWorkflow.includes('Never mark `done` from the child\'s report alone') && researchWorkflow.includes('keep it `in-progress`') && researchWorkflow.includes('explicit product decision'));
 
+  const reflectionExpanded = await expandSkillCommand(plugin, '/self-reflection review this session');
+  assert('/self-reflection expands without project skills', reflectionExpanded?.message.includes('# Self-reflection') === true);
+  const reflection = plugin.find('self-reflection');
+  const reflectionWorkflow = reflection?.instructions ?? '';
+  assert('official Skill parsed self-reflection', reflectionWorkflow.includes('# Self-reflection'));
+  assert(
+    'reflection locates the subject trajectory before launching the child',
+    reflectionWorkflow.includes('scripts/locate-trajectory.mjs') &&
+      reflectionWorkflow.includes('run the locator **before** starting the child') &&
+      reflectionWorkflow.includes('last-user-input:'),
+  );
+  assert(
+    'reflection delegates to a managed headless worker without recursion',
+    reflectionWorkflow.includes('`start` mode') &&
+      reflectionWorkflow.includes('--yolo --context-offload') &&
+      reflectionWorkflow.includes('must not load the `developer`, `self-evolution-research`, or `self-reflection` skills'),
+  );
+  assert(
+    'reflection treats the record as read-only and states what it read',
+    reflectionWorkflow.includes('never rewrites, repairs, or appends to the record') &&
+      reflectionWorkflow.includes('unknown spend metrics stay unknown, never 0'),
+  );
+  assert(
+    'reflection writes one templated document at the exact path',
+    reflectionWorkflow.includes('docs/reflections/reflection_<UTC-date>_<session-id>.md') &&
+      reflectionWorkflow.includes('references/reflection-template.md'),
+  );
+  assert(
+    'reflection grades on the four-level rubric',
+    ['**Perfect**', '**High**', '**Medium**', '**Low**'].every((grade) => reflectionWorkflow.includes(grade)),
+  );
+  assert(
+    'reflection applies the self-evolution score formula and gate',
+    reflectionWorkflow.includes('Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk') &&
+      reflectionWorkflow.includes('MINIMUM_IMPLEMENTATION_SCORE = 6') &&
+      reflectionWorkflow.includes('zero to five new,'),
+  );
+  assert(
+    'accepted directions queue into the backlog append-only for self-evolution-research',
+    reflectionWorkflow.includes('docs/research/backlog_index.md') &&
+      reflectionWorkflow.includes('`SRF-NNN`') &&
+      reflectionWorkflow.includes('appended lines only') &&
+      reflectionWorkflow.includes('This workflow never starts implementing them itself'),
+  );
+
   // The pre-`.darwin` location is dead: a leftover root skills/ must not still be
   // advertised to the model, or a user who moved theirs would see duplicates.
   const legacyRoot = '/tmp/darwin-skills-legacy';

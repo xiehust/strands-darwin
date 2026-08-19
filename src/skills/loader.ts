@@ -20,7 +20,7 @@ export const SKILLS_DIRNAME = 'skills';
 
 /** Assets live beside this module in both `src/` and copied `dist/src/` output. */
 export const BUILTIN_SKILLS_DIR = fileURLToPath(new URL('./builtin', import.meta.url));
-export const REQUIRED_BUILTIN_SKILLS = ['developer', 'self-evolution-research'] as const;
+export const REQUIRED_BUILTIN_SKILLS = ['developer', 'self-evolution-research', 'self-reflection'] as const;
 
 /** A skill directory that could not be used, kept so the UI can surface it. */
 export interface SkillProblem {

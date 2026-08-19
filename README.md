@@ -967,6 +967,32 @@ research → developer → acceptance → next-revision cycle is Darwin's self-e
 preserving the human decision boundary. The committed `docs/research/research_template.md` defines
 the report and source-citation shape.
 
+### Built-in self-reflection
+
+`self-reflection` is the third bundled skill. Invoke `/self-reflection` to have darwin review the
+session it is running in: the Host first runs the skill's bundled locator to pin this session's
+`~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl` (verifying the printed
+`last-user-input:` preview against the live conversation before trusting it), then delegates the
+analysis to a fresh headless darwin worker under the same managed-child contract as `developer`.
+A past session of the same project can be reflected on instead by naming its id explicitly
+(the locator's `--session <id>`, with ids from `darwin sessions` or `darwin trajectory list`);
+a missing id is refused rather than silently replaced.
+
+The worker reads the record read-only — `trajectory replay` for the conversation shape, the raw
+JSONL for spend, failures, and tool calls — and writes exactly one document,
+`docs/reflections/reflection_<UTC-date>_<session-id>.md`, following the skill's bundled template:
+an evidence-cited completion grade on a four-level rubric (Perfect / High / Medium / Low),
+process observations, and improvement findings for darwin itself (system prompt, tool
+descriptions, orchestration, context management, execution time, token spend). Each suggestion
+is scored with
+the `self-evolution-research` dimensions, formula, and score gate; directions at or above the gate
+are appended to `docs/research/backlog_index.md` as `not-started` rows with stable `SRF-NNN` ids,
+where the next `self-evolution-research` run picks them up as ordinary development tasks. The
+reflection run itself never starts implementing them.
+
+Like the other bundled skills, the name is reserved: a case-insensitive project-skill collision is
+skipped and reported.
+
 ## Subagents
 
 The main agent has a `subagent` tool for delegating a self-contained task to a fresh child
