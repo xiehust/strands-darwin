@@ -28,7 +28,10 @@ export interface CliOptions {
    * is alphabet-validated here and `resolveSession` refuses one with no persisted
    * snapshot, so the old "headless only" restriction guarded nothing — and a forked
    * session, whose id exists only on stdout, would otherwise be impossible to open
-   * in the TUI. `--continue` remains headless-only; `--resume` is its TUI spelling.
+   * in the TUI. `--continue` remains headless-only; `--resume` is its TUI spelling,
+   * and `--resume <id>` names a specific session to reopen (ids come from
+   * `darwin sessions`) — equivalent to `--session <id>`, so combining the two forms
+   * is a usage error.
    */
   session: SessionSelector;
   permissionModeOverride: ApprovalMode | undefined;
@@ -38,6 +41,7 @@ export interface CliOptions {
 export function parseCliArgs(argv: readonly string[]): CliOptions {
   let prompt: string | undefined;
   let sessionId: string | undefined;
+  let resumeIdSeen = false;
   let permissionMode: ApprovalMode | undefined;
   let permissionModeSeen = false;
   let outputFormat: HeadlessOutputFormat = 'text';
@@ -111,6 +115,9 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
         compactBefore = true;
         break;
       case '--session': {
+        if (resumeIdSeen) {
+          throw new CliUsageError('--resume <id> and --session may not both name a session.');
+        }
         if (sessionId !== undefined) throw new CliUsageError('--session may be specified only once.');
         const value = argv[index + 1];
         if (value === undefined || value.startsWith('-') || value === '') {
@@ -157,9 +164,29 @@ export function parseCliArgs(argv: readonly string[]): CliOptions {
       case '--continue':
         continueRequested = true;
         break;
-      case '--resume':
+      case '--resume': {
         resumeRequested = true;
+        // `--resume <id>` names the session to reopen; bare `--resume` (end of argv,
+        // or followed by another flag) keeps its original pointer-following meaning.
+        // A leading `-` is what separates "flag" from "id" here — the session-id
+        // alphabet has no `-` prefix, so nothing valid is ever mistaken for a flag.
+        const value = argv[index + 1];
+        if (value !== undefined && !value.startsWith('-') && value !== '') {
+          if (resumeIdSeen) throw new CliUsageError('--resume <id> may be specified only once.');
+          if (sessionId !== undefined) {
+            throw new CliUsageError('--resume <id> and --session may not both name a session.');
+          }
+          if (!isValidSessionId(value)) {
+            throw new CliUsageError(
+              `Invalid session id ${JSON.stringify(value)}; use lowercase letters, numbers, hyphens, and underscores.`,
+            );
+          }
+          sessionId = value;
+          resumeIdSeen = true;
+          index += 1;
+        }
         break;
+      }
       case '--yolo':
         yolo = true;
         break;

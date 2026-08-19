@@ -111,6 +111,8 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | A diagnostic line is offered after `runtime.shutdown()` closed the log | Silently ignored; the stderr record is still written | The append chain is no longer awaited, so such a line might or might not reach the disk. Refusing it makes the file's last line mean "the session ended here" instead of a race |
 | First `MaxTokensError` in an invocation | Retain its exact `partialMessage`, add an internal no-repeat continuation instruction, and retry the SDK model call once | The provider produced useful output; the supported `AfterModelCallEvent.retry` path preserves the SDK loop and configured thinking effort |
 | Any later `MaxTokensError` in the same invocation | Retain that partial too, do not retry, propagate `MaxTokensError`; invocation snapshot persists all partials | Tool-loop model cycles reset `attemptCount`, so only invocation-scoped state can enforce one bounded continuation without false success |
+| `--resume <id>` / `--session <id>` names a session with no restorable snapshot (typo, other project, deleted) | `SessionNotFoundError`, caught in `cli.ts` beside `ConfigError`: one plain line pointing at `darwin sessions`, exit 1 | The caller asked for one specific conversation — a stack trace hides the fix, and falling back to the pointer's session would silently open the wrong one |
+| `darwin sessions` finds a session directory whose snapshot is missing/unreadable, or a trajectory that is absent/damaged | Skip the row and state the count (snapshot), or print `(not recorded)` (trajectory); exit 0, store untouched | The listing is a read-only projection of what `--resume <id>` can actually reopen; absence is an answer, never an error |
 
 
 ## Common Mistakes

@@ -153,6 +153,21 @@ export function isValidSessionId(value: string): boolean {
 }
 
 /**
+ * An explicitly named session with no restorable snapshot in this project.
+ *
+ * Named so `cli.ts` can refuse it the way it refuses a `ConfigError` — one plain
+ * line, exit code 1 — instead of letting a typo'd `--resume <id>` / `--session <id>`
+ * crash the TUI branch with a stack trace. It is never a fallback: the caller asked
+ * for one specific conversation, so darwin must not silently open another.
+ */
+export class SessionNotFoundError extends Error {
+  constructor(readonly sessionId: string) {
+    super(`Session ${JSON.stringify(sessionId)} does not exist in this project.`);
+    this.name = 'SessionNotFoundError';
+  }
+}
+
+/**
  * Picks the session id for this run. `continue` retains the TUI's forgiving
  * behavior and starts fresh when there is no pointer. An explicit id is strict:
  * it means "continue this persisted conversation", so a typo must not silently
@@ -179,7 +194,7 @@ export async function resolveSession(
       throw new Error(`Invalid session id ${JSON.stringify(selector.sessionId)}.`);
     }
     if (!(await snapshotExists(paths, selector.sessionId, agentId))) {
-      throw new Error(`Session ${JSON.stringify(selector.sessionId)} does not exist in this project.`);
+      throw new SessionNotFoundError(selector.sessionId);
     }
     return { sessionId: selector.sessionId, restoreRequested: true };
   }
@@ -263,6 +278,16 @@ async function readPointer(pointerFile: string): Promise<string | undefined> {
 
 function isMissing(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'ENOENT';
+}
+
+/**
+ * The session id bare `--resume` would reopen right now, or `undefined`.
+ *
+ * A read-only projection of `last-session.json` for `darwin sessions`: an absent or
+ * unreadable pointer is the ordinary "nothing to resume" answer, never an error.
+ */
+export async function readLastSessionId(projectRoot: string): Promise<string | undefined> {
+  return readPointer(sessionPaths(projectRoot).pointerFile);
 }
 
 /** Records `sessionId` as the session a later `--resume` should pick up. */

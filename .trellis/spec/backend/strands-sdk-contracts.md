@@ -1035,6 +1035,27 @@ tool call is silently denied with no prompt shown.
   `cli-args.ts` and `resolveSession` still refuses an id with no persisted snapshot, so the old
   headless-only restriction protected nothing — and a fork, whose id exists only on stdout,
   would otherwise be impossible to open in the TUI. `--continue` remains headless-only.
+- `--resume <id>` names the session to reopen (same strict `{ kind: 'id' }` path as
+  `--session`); bare `--resume` — end of argv, or followed by another flag — keeps its original
+  pointer-following meaning, so every pre-existing invocation parses unchanged. Combining an
+  id-carrying `--resume` with `--session` is a usage error (two id sources). A named session
+  with no restorable snapshot raises `SessionNotFoundError` (`src/agent/session.ts`), which
+  `cli.ts` catches beside `ConfigError`: one plain line, exit 1, never a stack trace and never
+  a fallback to the pointer's session.
+- **Pointer semantics after resuming a named session are the unchanged `markResumable()` rule**:
+  the pointer is written only after a turn completes, whatever selector opened the session. So
+  once a `--resume <id>` (or `--session <id>`) session finishes a turn, `last-session.json`
+  points at *that* session — it becomes the one bare `--resume` reopens. Opening a session and
+  quitting without completing a turn moves nothing.
+- `darwin sessions` (`src/cli-sessions.ts`, routed in `cli.ts` before argument parsing like
+  `trajectory`) lists this project's resumable sessions, newest first *by snapshot mtime*: id,
+  humanized age, first recorded `userInput` (via `readTrajectory`; `(not recorded)` where the
+  trajectory is absent or damaged — absence is an answer), and `(last)` on the pointer's target.
+  It is a read-only projection: no model, no network, no SDK import, no write API in the module
+  at all — the store is byte-identical after a listing. Session directories without a
+  restorable snapshot are skipped and the skip is stated with a count (they remain visible in
+  `darwin trajectory list`). Verified in `spike/verify-sessions-command.ts` (free, in
+  `pnpm test`), including a byte-level before/after hash of the store.
 
 ### Contract: restoring a session replays system prompt and official skill state
 
@@ -1069,10 +1090,11 @@ stdout is an atomic result channel, and stderr is bounded progress/diagnostics.
 ```text
 darwin -p|--print <message>
   [--output-format text|json|stream-json]
-  [--continue|--resume|--session <id>]
+  [--continue|--resume [<id>]|--session <id>]
   [--permission-mode default|auto|plan|yolo|--yolo]
   [--max-model-calls <positive integer>] [--context-offload] [--compact-before]
 
+darwin sessions                                  (no model call, no network, no writes)
 darwin trajectory <list|search|replay|fork> …    (no model call, no network)
 
 stderr: ^session: ([a-z0-9_-]+)$
@@ -1082,11 +1104,13 @@ exit: 0 success; 1 runtime/turn/persistence/cleanup/interruption; 2 CLI usage
 ```
 
 `--session` is strict and names an existing project-local snapshot. It takes precedence over
-`--continue`/`--resume`; `--continue` follows `.darwin/last-session.json` and retains the existing
-fresh-session fallback when no usable pointer exists.
+`--continue`/bare `--resume`; `--resume <id>` is the same strict path under the resume flag
+(combining it with `--session` is a usage error); `--continue` follows `.darwin/last-session.json`
+and retains the existing fresh-session fallback when no usable pointer exists.
 
-The `trajectory` subcommand is routed on `argv[0]` before `parseCliArgs` runs and has its own
-parser (`src/cli-trajectory.ts`), so `CliOptions` keeps exactly the shape every existing
+The `sessions` and `trajectory` subcommands are routed on `argv[0]` before `parseCliArgs` runs
+and have their own parsers (`src/cli-sessions.ts`, `src/cli-trajectory.ts`), so `CliOptions`
+keeps exactly the shape every existing
 assertion in `spike/verify-headless.ts` deep-equals. Its exit codes follow the same convention:
 0 for a completed operation — including a search that legitimately found nothing — 1 for a
 missing or unreadable record, 2 for usage.

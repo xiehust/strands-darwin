@@ -46,6 +46,7 @@ const suites = [
   'verify-compact.ts',
   'verify-trajectory.ts',
   'verify-export-command.ts',
+  'verify-sessions-command.ts',
   'verify-clear-session.ts',
   'verify-diagnostics.ts',
   'verify-max-tokens-recovery.ts',

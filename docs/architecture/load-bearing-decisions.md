@@ -132,6 +132,31 @@ fourteenth built-in grew `MAX_COMPLETIONS` again; the free checks are
 `spike/verify-export-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`.
 
 
+## `darwin sessions` and `--resume <id>` — resume by choice
+
+**The listing is a read-only projection of the snapshot store, and a named resume is a refusal
+before it is ever a fallback** (`src/cli-sessions.ts`, `src/agent/session.ts`, spec:
+`backend/strands-sdk-contracts.md` § Sessions). `darwin sessions` shows only what
+`--resume <id>` can actually reopen: each row is a session with a restorable snapshot — id, age
+from the snapshot's mtime (activity, so a hand-named `--session my-experiment` sorts in its real
+place), the first recorded `userInput` where the trajectory has one, and `(last)` on the
+pointer's target. It runs before argument parsing on the `trajectory` routing precedent, makes no
+model call and no network access, imports nothing from the SDK, and contains no write API at all —
+the store is proved byte-identical by hashing every file before and after. Absence is an answer on
+prompt recall's terms: recording off reads `(not recorded)`, an empty project is a notice with
+exit 0, and directories without a restorable snapshot are skipped with the skip stated (they stay
+visible in `darwin trajectory list`). The `--resume <id>` grammar is additive: a plain token after
+`--resume` is an id (validated against the session-id alphabet, resolved through the same strict
+`{ kind: 'id' }` path as `--session`, combining the two is a usage error), while bare `--resume` —
+end of argv or followed by another flag — keeps its exact pointer-following meaning, so every
+pre-existing invocation parses unchanged. A bogus or other-project id raises
+`SessionNotFoundError`, which `cli.ts` catches beside `ConfigError`: one plain line, exit 1, never
+a stack trace and never the pointer's session instead. Pointer semantics stay the unchanged
+`markResumable()` rule — after the resumed session finishes a turn, `last-session.json` points at
+it; quitting without a turn moves nothing. Free check: `spike/verify-sessions-command.ts` (in
+`pnpm test`).
+
+
 ## Skills
 
 **Skills** (`src/skills/`): Darwin uses the official SDK `AgentSkills`/`Skill` core. A thin

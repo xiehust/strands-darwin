@@ -190,6 +190,7 @@ if you add native dependencies of your own you will need to extend that list.
 ```bash
 pnpm start                          # new session
 pnpm start --resume                 # continue where you left off
+pnpm start --resume <id>            # reopen a specific session (ids: darwin sessions)
 pnpm start --session <id>           # open one conversation by id (e.g. a fork)
 ```
 
@@ -214,9 +215,10 @@ session: session-20260814-160833123
 Capture that id to select the same persisted conversation later with `--session <id>`, in
 headless runs or in the TUI. `--session` is strict: the id must use lowercase letters, numbers,
 hyphens, or underscores and must already have a persisted snapshot in this project. It takes
-precedence over `--continue` or the compatible `--resume` alias. `--continue` follows
+precedence over `--continue` or the compatible bare `--resume` alias. `--continue` follows
 `.darwin/last-session.json` (or starts a new conversation when no pointer exists) and is
-headless-only; `--resume` is its TUI spelling.
+headless-only; `--resume` is its TUI spelling, and `--resume <id>` names a specific session —
+the same strict path as `--session <id>`, so combining the two is a usage error.
 
 Headless mode cannot ask for approval, so its default permission bridge immediately denies any
 call that reaches it. Static-safe calls and persisted allow-rules still run; use
@@ -1058,6 +1060,22 @@ repository — that scopes `--resume` per project for free. Both paths belong in
 
 `pnpm start --resume` reopens the last session and restores its history. If there is
 nothing to resume it quietly starts fresh.
+
+To pick a session by choice instead of taking the last one, list what this project can
+actually reopen and name it:
+
+```bash
+darwin sessions            # id, age, first user prompt — read-only, no model call
+darwin --resume <id>       # reopen that session
+```
+
+Each row of `darwin sessions` is a session with a restorable snapshot, newest first by
+activity: the first recorded user prompt where the session kept a trajectory, `(not
+recorded)` where it did not, and `(last)` marking what bare `--resume` would reopen.
+Listing changes nothing — no pointer moves, no file rewrites. A bogus or other-project id
+given to `--resume <id>` is refused with a clear message rather than falling back to the
+last session; once the resumed session finishes a turn, it becomes the one bare
+`--resume` reopens.
 
 Note that the snapshot path includes the agent id, so changing `AGENT_ID` in
 `src/agent/runtime.ts` orphans existing sessions.

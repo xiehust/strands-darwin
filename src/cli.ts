@@ -2,16 +2,23 @@
 /**
  * `darwin` entry point.
  *
- * Usage: darwin [--resume|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]
+ * Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]
  *        darwin -p <message> [--output-format text|json|stream-json]
- *          [--continue|--resume|--session <id>] [permission flags]
+ *          [--continue|--resume [<id>]|--session <id>] [permission flags]
  *          [--max-model-calls <n>] [--context-offload] [--compact-before]
+ *        darwin sessions
  *        darwin trajectory <list|search|replay|fork> …
  */
 import process from 'node:process';
 
 import { AgentRuntime } from './agent/runtime.js';
+import { SessionNotFoundError } from './agent/session.js';
 import { CliUsageError, parseCliArgs, type CliOptions } from './cli-args.js';
+import {
+  isSessionsInvocation,
+  parseSessionsArgs,
+  runSessionsCommand,
+} from './cli-sessions.js';
 import {
   isTrajectoryInvocation,
   parseTrajectoryArgs,
@@ -33,6 +40,13 @@ async function main(): Promise<void> {
     await runTrajectory(argv.slice(1));
     return;
   }
+  // Same routing rule as `trajectory`: `sessions` is a local read of the snapshot
+  // store — no model, no network, no writes — so it must resolve before any
+  // runtime, model or Ink import can happen.
+  if (isSessionsInvocation(argv)) {
+    await runSessions(argv.slice(1));
+    return;
+  }
 
   let options: CliOptions;
   try {
@@ -51,6 +65,25 @@ async function main(): Promise<void> {
     return;
   }
   await runInteractive(options);
+}
+
+async function runSessions(argv: readonly string[]): Promise<void> {
+  try {
+    parseSessionsArgs(argv);
+    process.exitCode = await runSessionsCommand({
+      projectRoot: process.cwd(),
+      out: (text) => process.stdout.write(text),
+      err: (text) => process.stderr.write(text),
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      process.stderr.write(`error: ${error.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
+    process.stderr.write(`error: ${errorMessage(error)}\n`);
+    process.exitCode = 1;
+  }
 }
 
 async function runTrajectory(argv: readonly string[]): Promise<void> {
@@ -105,6 +138,13 @@ async function runInteractive(options: CliOptions): Promise<void> {
   } catch (error) {
     if (error instanceof ConfigError) {
       process.stderr.write(`\nConfiguration problem:\n  ${error.message}\n\n`);
+      process.exitCode = 1;
+      return;
+    }
+    // A typo'd or other-project `--resume <id>` / `--session <id>` is a clear
+    // refusal, not a crash — and never a fallback to some other session.
+    if (error instanceof SessionNotFoundError) {
+      process.stderr.write(`error: ${error.message} Run \`darwin sessions\` to list resumable ones.\n`);
       process.exitCode = 1;
       return;
     }

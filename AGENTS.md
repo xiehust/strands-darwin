@@ -25,8 +25,9 @@ baseline exists so there is always a fixed point to measure that evolution again
 ```bash
 pnpm typecheck        # tsc --noEmit — the quality gate (no lint is configured)
 pnpm test             # fast suites only, no model calls, no network
-pnpm start            # run the TUI here; --resume reopens the last session, --session <id> names one
+pnpm start            # run the TUI here; --resume reopens the last session, --resume <id>/--session <id> a named one
 pnpm dev-repl         # readline fallback driver for debugging without Ink
+pnpm tsx src/cli.ts sessions             # resumable sessions: id, age, first prompt; read-only, no model call
 pnpm tsx src/cli.ts trajectory list      # recorded sessions; search|replay|fork read them, no model call
 ```
 
@@ -80,6 +81,7 @@ in `pnpm test`. All checks listed here are free (no model call) unless marked *l
 | Wildcard allow-rules and `/permissions` | Rules sit after `safe`, before the `auto` classifier; a bash pattern must match every chained segment, never redirection/substitution; no rule may cover `~/.darwin/config.json` or `.env*`; `/permissions` only narrows — revoke is synchronous, additions stay with the prompt | `src/agent/permission-rules.ts` | `verify-permissions-command.ts`†, `tui completion` |
 | `/mcp` — a read-only projection | Never calls `listTools()` (names come from `_registeredToolNames`, degrade to "unavailable"); no reconnect verb; names, counts, states and paths only — never a second path for tool output into context | `src/mcp/registry.ts`, `src/tui/mcp-format.ts` | `verify-mcp-command.ts`†, `tui mcp` |
 | `/export` — the replay projection | Body is `formatReplay(replayRead(...))` byte for byte, never a second formatter; observer rules (no repair, no pointer moves); refuses existing targets (`wx`) and `~/.darwin/sessions/`; nothing-to-export is a notice, never an error | `src/trajectory/export.ts` | `verify-export-command.ts`†, `tui completion` |
+| `darwin sessions` and `--resume <id>` — resume by choice | Listing is a read-only projection of the snapshot store (no SDK import, no write API, store byte-identical); rows are only what `--resume <id>` can reopen — absence reads `(not recorded)`, skips are stated; a bogus/other-project id is a refusal, never a fallback; bare `--resume` grammar unchanged | `src/cli-sessions.ts`, `src/agent/session.ts` | `backend/strands-sdk-contracts.md` § Sessions; `verify-sessions-command.ts`† |
 | Skills | Official `AgentSkills` core + thin policy adapter; the native `skills()` tool stays private (one way to load a capability); symlink/outside-root/200-entry preflight before official activation | `src/skills/` | doc § |
 | System prompt composition | Fixed order: base → `<project-instructions>` → `<available_skills>` → `<working-context>` → cache point; catalogue reordered and never duplicated; working context re-derived every run — a resumed run never states a stale date | `src/agent/system-prompt.ts`, `src/agent/working-context.ts` | doc § |
 | Prompt caching | On by default, Claude only (the gate avoids SDK `console.warn` into the Ink frame); stated on the model line, never a header line of its own | `src/agent/prompt-cache.ts` | `tui approve` (*live*) |
