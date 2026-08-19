@@ -16,6 +16,23 @@ manager. If a change seems to require intercepting the loop itself, check
 `.trellis/spec/backend/strands-sdk-contracts.md` first — every non-obvious SDK behavior this
 project relies on (and the runnable script that proves it) is recorded there.
 
+## Stream interruption — one driver-owned continuation
+
+**A retryable broken provider stream becomes one visible successor turn, never an SDK-loop retry.**
+`AgentRuntime.send` still exposes the original `ModelError` unchanged through `recordStream`, which
+closes and appends the failed trajectory turn. The TUI and headless drivers compose
+`runWithStreamResumption` around their ordinary one-turn consumers; only the exact measured
+`Stream ended without completing a message` `ModelError` qualifies, and the helper can invoke one
+bounded anti-repeat continuation prompt once. Because the original user request is not resent, a
+model is directed to inspect retained conversation and work before acting, reducing duplicate side
+effects. The busy/queue owner spans both attempts, while every attempt still gets ordinary SDK,
+permission, usage, cancellation, and trajectory semantics. Headless protocols disclose that recovery
+occurred without exposing the private control prompt. Authoritative contracts:
+`backend/strands-sdk-contracts.md`, `backend/session-trajectory.md`, and
+`backend/structured-headless-output.md`. Required checks: `spike/verify-stream-resumption.ts` and
+`spike/verify-headless-structured.ts` (both in `pnpm test`).
+
+
 ## `/clear` — a successor runtime, never a reset
 
 **A session's identity is fixed at `Agent` construction, so `/clear` builds a successor rather

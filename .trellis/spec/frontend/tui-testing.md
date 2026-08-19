@@ -542,3 +542,12 @@ Model-driven turns choose their own tool order, so scripted prompt sequences are
 `acceptance-e2e.ts` uses a generic approve-until-idle loop instead, and asserts on the
 *set* of gated kinds (`write` present, `execute` present), the on-disk outcome, and an
 independent re-run of the proof command — not on the exact order of prompts.
+
+## SRF-001 focused coverage
+
+Stream-interruption recovery is policy/orchestration, so its primary deterministic coverage is
+`spike/verify-stream-resumption.ts` (real SDK Agent and trajectory) plus
+`spike/verify-headless-structured.ts` (all automation protocols). TUI regression coverage must also
+run `spike/verify-prompt-queue.ts`: one `runTurn` owns both attempts, and only a final failure or user
+cancel may return queued entries unsent. A test double must never call `AgentRuntime.send` recursively
+or replace the SDK error object merely to make this scenario easier to drive.

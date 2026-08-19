@@ -77,6 +77,8 @@ export async function runHeadlessProcess(
   let cancelled = false;
   let failed = false;
   let turnStarted = false;
+  let continued = false;
+
   let turnFailure: unknown;
   const errors: StructuredFailure[] = [];
   const warnings: StructuredWarning[] = [];
@@ -156,13 +158,13 @@ export async function runHeadlessProcess(
     turnStarted = true;
 
     if (structured) {
-      protocol?.turnStarted();
       const turn = await runStructuredHeadlessTurn(
         runtime,
         options.prompt,
         protocol!,
         (name, input) => classify(name, input).summary,
       );
+      continued = turn.continued === true;
       if (turn.outcome === 'cancelled') cancelled = true;
       else reply = turn.reply;
     } else {
@@ -264,6 +266,7 @@ export async function runHeadlessProcess(
         ...(usage === undefined ? {} : { usage }),
         ...(errors.length === 0 ? {} : { errors }),
         ...(warnings.length === 0 ? {} : { warnings }),
+        ...(continued ? { continued: true } : {}),
       });
     }
 

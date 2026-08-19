@@ -595,3 +595,15 @@ change surviving the switch while a rewritten config file does not take effect; 
 by the switch and claimed by `markResumable()`; an inherited background job still listed and running,
 its log still under the previous session; a fresh shell for the successor; and one `shutdown()`
 stopping the inherited job. The UI half is `spike/verify-tui.ts clear`.
+
+## 12. Automatic stream continuation remains two ordinary turns
+
+SRF-001 does not repair, merge, or relabel a failed record. A recognized stream interruption closes
+turn N with its original `failure`, then the driver starts turn N+1 with the bounded internal
+continuation prompt through the same `AgentRuntime.send`/`recordStream` path. Existing bytes through
+turn N remain byte-identical. The continuation is intentionally a `userInput` trajectory record even
+though it is Darwin-authored: that is the honest input the model received, and replay must show why a
+second turn exists. Public headless/TUI projections do not print that private control prompt.
+
+`spike/verify-stream-resumption.ts` asserts the distinct turn numbers, failed/clean outcomes, prompt
+bounds, original-text absence, and append order against a real SDK Agent and scripted Model.

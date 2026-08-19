@@ -1,6 +1,7 @@
 import { MaxTokensError, type AgentStreamEvent, type Message } from '@strands-agents/sdk';
 
 import type { ApprovalMode, AssessedPermissionRequest, PermissionSource } from './agent/permission.js';
+import { runWithStreamResumption } from './agent/stream-resumption.js';
 import type { HeadlessRuntime } from './headless.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import type { AppConfig } from './config.js';
@@ -52,11 +53,13 @@ export interface StructuredTerminalInput {
   usage?: StructuredUsage;
   errors?: readonly StructuredFailure[];
   warnings?: readonly StructuredWarning[];
+  continued?: true;
 }
 
 export interface StructuredTurnResult {
   outcome: 'success' | 'cancelled';
   reply?: string;
+  continued?: true;
 }
 
 interface Bounded {
@@ -105,6 +108,18 @@ export class StructuredHeadlessWriter {
 
   turnStarted(): void {
     this.event({ type: 'turn.started' });
+  }
+
+  turnFailed(error: unknown): void {
+    this.event({ type: 'turn.failed', error: structuredFailure('turn', error) });
+  }
+
+  turnContinuing(): void {
+    this.event({
+      type: 'turn.continuing',
+      reason: 'model_stream_interrupted',
+      message: 'Continuing once from retained conversation without repeating completed work.',
+    });
   }
 
   assistantMessage(messageIndex: number, text: string): void {
@@ -177,6 +192,7 @@ export class StructuredHeadlessWriter {
       ...(input.usage === undefined ? {} : { usage: input.usage }),
       ...(input.errors === undefined || input.errors.length === 0 ? {} : { errors: [...input.errors] }),
       ...(input.warnings === undefined || input.warnings.length === 0 ? {} : { warnings: [...input.warnings] }),
+      ...(input.continued === true ? { continued: true } : {}),
     };
     this.writeRecord(record);
   }
@@ -253,6 +269,29 @@ export async function runStructuredHeadlessTurn(
 ): Promise<StructuredTurnResult> {
   const expanded = await runtime.expandSlashCommand(prompt);
   const input = expanded?.message ?? prompt;
+  let continued = false;
+  const result = await runWithStreamResumption(
+    input,
+    async (turnInput) => {
+      writer.turnStarted();
+      return runOneStructuredHeadlessTurn(runtime, turnInput, writer, onToolStart);
+    },
+    (error) => {
+      continued = true;
+      writer.turnFailed(error);
+      writer.turnContinuing();
+    },
+  );
+  return continued ? { ...result, continued: true } : result;
+}
+
+/** One ordinary structured turn. Failed-attempt text never enters the next result. */
+async function runOneStructuredHeadlessTurn(
+  runtime: HeadlessRuntime,
+  input: string,
+  writer: StructuredHeadlessWriter,
+  onToolStart: (name: string, input: unknown) => string,
+): Promise<StructuredTurnResult> {
   const answer: string[] = [];
   let completed = false;
   let cancelled = false;

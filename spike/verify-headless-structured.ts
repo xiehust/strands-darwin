@@ -141,6 +141,53 @@ async function parserAndTextCompatibility(): Promise<void> {
   assert('text success/failure/interrupt stdout and stderr order are exact', true);
 }
 
+async function automaticContinuationProtocols(): Promise<void> {
+  header('structured headless — one visible private continuation in every protocol');
+  const traceFile = path.join(os.tmpdir(), `darwin-headless-continuation-${process.pid}.jsonl`);
+  rmSync(traceFile, { force: true });
+  const text = await cli('stream-interruption', 'text', { traceFile });
+  nodeAssert.equal(text.code, 0);
+  nodeAssert.equal(text.stdout, 'fixture answer\n');
+  nodeAssert.match(text.stderr, /notice: model stream interrupted; continuing once from retained conversation/u);
+  nodeAssert.doesNotMatch(text.stdout + text.stderr, /Darwin automatic continuation/u);
+
+  const traced = (await readFile(traceFile, 'utf8')).trim().split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const sends = traced.filter((record) => record.type === 'send');
+  nodeAssert.equal(sends.length, 2);
+  nodeAssert.equal(sends[0]?.input, 'fixture prompt');
+  nodeAssert.match(String(sends[1]?.input), /Do not repeat completed work/u);
+  nodeAssert.doesNotMatch(String(sends[1]?.input), /fixture prompt/u);
+
+  const json = await cli('stream-interruption', 'json');
+  const jsonRecords = lines(json.stdout);
+  nodeAssert.equal(json.code, 0);
+  nodeAssert.equal(jsonRecords.length, 1);
+  nodeAssert.equal(jsonRecords[0]?.outcome, 'success');
+  nodeAssert.equal(jsonRecords[0]?.continued, true);
+  nodeAssert.equal(jsonRecords[0]?.result, 'fixture answer');
+  nodeAssert.doesNotMatch(json.stdout, /Darwin automatic continuation/u);
+
+  const stream = await cli('stream-interruption', 'stream-json');
+  const records = lines(stream.stdout);
+  nodeAssert.equal(stream.code, 0);
+  nodeAssert.deepEqual(records.filter((record) => record.type === 'turn.started').length, 2);
+  nodeAssert.deepEqual(records.filter((record) => record.type === 'turn.failed').length, 1);
+  nodeAssert.deepEqual(records.filter((record) => record.type === 'turn.continuing').length, 1);
+  nodeAssert.equal(records.at(-1)?.outcome, 'success');
+  nodeAssert.equal(records.at(-1)?.continued, true);
+  nodeAssert.doesNotMatch(stream.stdout, /Darwin automatic continuation|fixture prompt/u);
+
+  const twice = await cli('stream-interruption-twice', 'stream-json');
+  const twiceRecords = lines(twice.stdout);
+  nodeAssert.equal(twice.code, 1);
+  nodeAssert.equal(twiceRecords.filter((record) => record.type === 'turn.started').length, 2);
+  nodeAssert.equal(twiceRecords.filter((record) => record.type === 'turn.continuing').length, 1);
+  nodeAssert.equal(twiceRecords.at(-1)?.outcome, 'failure');
+  assert('text, JSON and JSONL continuation semantics are visible, bounded and privacy-safe', true);
+}
+
+
 async function phaseControls(): Promise<void> {
   header('structured headless — phase controls precede the requested turn');
   const traceFile = path.join(os.tmpdir(), `darwin-headless-phase-${process.pid}.jsonl`);
@@ -287,7 +334,6 @@ async function sdkProjectionPrivacy(): Promise<void> {
   const writer = new StructuredHeadlessWriter('stream-json', (text) => output.push(text));
   writer.sessionResolved('session-adversarial');
   writer.runStarted({ permissionMode: 'default', resumed: false });
-  writer.turnStarted();
   const result = await runStructuredHeadlessTurn({
     send: (input) => agent.stream(input),
     expandSlashCommand: async () => null,
@@ -353,6 +399,7 @@ function boundsAndEscaping(): void {
 }
 
 await parserAndTextCompatibility();
+await automaticContinuationProtocols();
 await phaseControls();
 await terminalLifecycle();
 await sdkProjectionPrivacy();

@@ -223,6 +223,74 @@ stream de-duplication, invoke-only projection, and `SubagentTool` child coverage
 with `pnpm typecheck`, `pnpm test`, and `git diff --check`.
 
 ---
+## Scenario: bounded stream-interruption continuation (SRF-001)
+
+### 1. Scope / Trigger
+
+Use this contract when a completed Darwin orchestration attempt receives the exact SDK `ModelError`
+for `Stream ended without completing a message`. This is driver recovery after the SDK stream has
+thrown, not an SDK-loop retry and not max-token recovery.
+
+### 2. Signatures
+
+```typescript
+isRetryableStreamInterruption(error: unknown): error is ModelError
+runWithStreamResumption<T>(
+  input: string,
+  runOrdinaryTurn: (turnInput: string) => Promise<T>,
+  onContinuing: (error: ModelError) => void,
+): Promise<T>
+```
+
+### 3. Contracts
+
+- `AgentRuntime.send` and `recordStream` remain unchanged: the first attempt's error reaches the
+  driver as the identical object and its failed `turnEnded` record is flushed append-only.
+- A retryable failure is an exported SDK `ModelError` whose trimmed message exactly matches
+  `Stream ended without completing a message`, allowing terminal `.`/`!` only. Class alone is never
+  sufficient.
+- The helper invokes the supplied ordinary-turn callback at most twice: original input, then one
+  bounded internal continuation prompt. The second failure is never classified again.
+- The continuation prompt contains no original user text. It orders the model to inspect retained
+  conversation/work, verify state, continue from the interruption, and avoid replaying completed
+  work or tool calls.
+- TUI and headless drivers own visibility and lifecycle. Runtime owns neither retry policy nor a
+  second stream loop.
+
+### 4. Validation & Error Matrix
+
+| Outcome | Continue? | Required behavior |
+| --- | --- | --- |
+| exact stream-interruption `ModelError` on original attempt | once | visible boundary, distinct ordinary turn |
+| same error on continuation | no | throw second object unchanged |
+| auth/authorization/validation/generic `ModelError` | no | throw unchanged |
+| `MaxTokensError` / `ContextWindowOverflowError` | no | existing specialized/error path |
+| cancellation (`agentResultEvent: cancelled`) | no | ordinary cancelled outcome |
+| tool/application/non-`ModelError` failure | no | throw unchanged |
+
+### 5. Good / Base / Bad Cases
+
+- Good: failed turn 1 remains in trajectory; turn 2 uses the private anti-repeat prompt and succeeds.
+- Base: an ordinary successful turn invokes no continuation hook and has unchanged behavior.
+- Bad: resending the original request, retrying all `ModelError`s, or catching inside
+  `AgentRuntime.send` can duplicate side effects and falsify the failed-turn record.
+
+### 6. Tests Required
+
+`spike/verify-stream-resumption.ts` must use a real SDK `Agent` and scripted model to prove error
+identity, two distinct trajectory turns, one-at-most continuation, prompt bounds/privacy, and the
+exclusion matrix. Run `spike/verify-headless-structured.ts` for text/JSON/JSONL visibility.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: retry in AgentRuntime.send(error) or call runtime.send(originalInput) again.
+// CORRECT: driver calls runWithStreamResumption(input, ordinaryTurn, visibleBoundary).
+```
+
+---
+
+
 
 
 ## Permission Gating (interventions)

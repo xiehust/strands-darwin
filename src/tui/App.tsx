@@ -25,6 +25,8 @@ import {
 } from '../agent/permission.js';
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import { formatUsageValue, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
+import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from '../agent/stream-resumption.js';
+
 import { routeSdkLogs } from '../agent/sdk-logging.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
 import {
@@ -510,9 +512,25 @@ export function App({
       turnAborted.current = false;
       setStatus('streaming');
       try {
-        for await (const event of runtime.send(text)) {
-          dispatch({ type: 'streamEvent', event });
-        }
+        await runWithStreamResumption(
+          text,
+          async (turnInput) => {
+            for await (const event of runtime.send(turnInput)) {
+              dispatch({ type: 'streamEvent', event });
+            }
+          },
+          (error) => {
+            // The failed attempt is a complete transcript/trajectory fact before the
+            // next ordinary turn starts. Keep the busy owner and queued work intact.
+            dispatch({ type: 'turnEnded' });
+            dispatch({
+              type: 'notice',
+              text: `turn failed: ${error.message}`,
+              severity: 'error',
+            });
+            dispatch({ type: 'notice', text: STREAM_CONTINUATION_NOTICE, severity: 'warn' });
+          },
+        );
         await runtime.markResumable();
       } catch (error) {
         // A failed turn must not kill the session; the user may want to retry.

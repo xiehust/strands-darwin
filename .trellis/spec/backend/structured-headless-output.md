@@ -186,3 +186,20 @@ await runtime.shutdown({ throwOnError: true });
 await runtime.markResumable();
 writer.terminal({ outcome: 'success', result: reply });
 ```
+
+## Scenario: SRF-001 continuation protocol
+
+A recognized stream interruption is two ordinary turns inside one headless process lifecycle.
+Legacy text writes one bounded stderr line beginning `notice: model stream interrupted`, emits only
+the successful continuation reply on stdout, and otherwise keeps the established ordering. Final
+JSON stays one terminal document and sets `continued: true`; it never emits the internal prompt or
+the original prompt as continuation metadata. Stream JSON emits, in order, the first `turn.started`,
+`turn.failed` with a bounded structured failure, `turn.continuing` with reason
+`model_stream_interrupted`, and the second `turn.started`; terminal `result` is authoritative and
+sets `continued: true` after successful recovery. A second interruption ends in ordinary failure and
+never emits another `turn.continuing`.
+
+Privacy rule: `turn.continuing`, terminal JSON, stderr, and assistant output contain no internal
+continuation prompt, raw original request, stack, SDK Agent, invocation state, or partial failed
+assistant text. `spike/verify-headless-structured.ts` drives all three protocols and asserts success,
+second-failure bounds, ordering, parseability, and absence of private prompt text.

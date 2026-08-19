@@ -1,6 +1,7 @@
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { classify, type ApprovalMode, type PermissionBridge } from './agent/permission.js';
+import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/stream-resumption.js';
 import type { AgentRuntime } from './agent/runtime.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import type { AppConfig } from './config.js';
@@ -91,6 +92,19 @@ export async function runHeadlessTurn(
 ): Promise<string> {
   const expanded = await runtime.expandSlashCommand(prompt);
   const input = expanded?.message ?? prompt;
+  return runWithStreamResumption(
+    input,
+    (turnInput) => runOneHeadlessTurn(runtime, turnInput, writeStderr),
+    () => writeStderr(`notice: ${STREAM_CONTINUATION_NOTICE}\n`),
+  );
+}
+
+/** One ordinary recorded SDK turn; resumption deliberately composes above this seam. */
+async function runOneHeadlessTurn(
+  runtime: HeadlessRuntime,
+  input: string,
+  writeStderr: (text: string) => void,
+): Promise<string> {
   const answer: string[] = [];
   let completed = false;
   let cancelled = false;

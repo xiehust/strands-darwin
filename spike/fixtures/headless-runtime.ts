@@ -1,6 +1,6 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 
-import type { AgentStreamEvent } from '@strands-agents/sdk';
+import { ModelError, type AgentStreamEvent } from '@strands-agents/sdk';
 
 import { NEVER_WITHDRAWN } from '../../src/agent/permission.js';
 import type { AgentRuntime, RuntimeOptions } from '../../src/agent/runtime.js';
@@ -46,6 +46,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
   const sessionId = options.session.kind === 'id' ? options.session.sessionId : 'session-fixture';
   options.onSessionResolved?.(sessionId);
   let cancelled = false;
+  let sends = 0;
+
 
   const readyFile = process.env['DARWIN_HEADLESS_FIXTURE_READY'];
   if (readyFile !== undefined) writeFileSync(readyFile, 'ready\n');
@@ -82,8 +84,11 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
     cancel() {
       cancelled = true;
     },
-    async *send(): AsyncIterable<AgentStreamEvent> {
-      if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'send' })}\n`);
+    async *send(input: string): AsyncIterable<AgentStreamEvent> {
+      sends += 1;
+      if (traceFile !== undefined) {
+        appendFileSync(traceFile, `${JSON.stringify({ type: 'send', input, attempt: sends })}\n`);
+      }
       yield event({
         type: 'beforeToolCallEvent',
         toolUse: {
@@ -111,6 +116,13 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
           withdrawn: NEVER_WITHDRAWN,
         });
         if (decision.allowed) throw new Error('fixture permission unexpectedly allowed');
+      }
+
+      if (mode === 'stream-interruption' && sends === 1) {
+        throw new ModelError('Stream ended without completing a message');
+      }
+      if (mode === 'stream-interruption-twice') {
+        throw new ModelError('Stream ended without completing a message');
       }
 
       if (mode === 'interrupt' || mode === 'interrupt-cleanup') {
