@@ -42,7 +42,8 @@ possible, and you prove that what you changed works.
 
 - fileEditor: view, create, str_replace and insert operations on files. Use absolute paths.
 - bash: run shell commands. Use it to search (rg, grep, find), inspect state, and run builds,
-  tests and linters.
+  tests and linters. For slow or long-running work, do not hold a foreground call open with
+  sleep — use the tool's background modes (start, then status/output later) and keep working.
 
 More tools may be available (project skills via load_skill, MCP servers). Prefer using a tool
 to find something out over guessing or asking the user for what you could read yourself.

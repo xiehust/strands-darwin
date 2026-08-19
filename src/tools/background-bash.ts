@@ -520,7 +520,9 @@ export function createBackgroundBashTool(
     name: 'bash',
     description:
       'Runs foreground commands in a persistent shell and session-owned background commands. ' +
-      'Modes: execute, restart, start, list, status, output, and stop.',
+      'Modes: execute, restart, start, list, status, output, and stop. ' +
+      'Never block execute mode with sleep to wait for something slow: ' +
+      'start the command in the background, do other work, then poll it with status/output.',
     inputSchema,
     callback: (input, context?: ToolContext) => {
       switch (input.mode) {
