@@ -1,6 +1,6 @@
 import { formatTaskId, summarizeTaskCommand } from './task-format.js';
 
-export const BACKGROUND_BASH_MODES = ['start', 'list', 'status', 'output', 'stop'] as const;
+export const BACKGROUND_BASH_MODES = ['start', 'list', 'status', 'output', 'wait', 'stop'] as const;
 export type BackgroundBashMode = (typeof BACKGROUND_BASH_MODES)[number];
 
 export type CompactBackgroundResult =
@@ -16,6 +16,8 @@ const SNAPSHOT_KEYS = [
   'exitCode', 'signal', 'outputPath', 'outputBytes',
 ] as const;
 const OUTPUT_KEYS = ['taskId', 'output', 'startOffset', 'endOffset', 'hasMore', 'outputPath'] as const;
+const WAIT_KEYS = ['reason', 'status', 'output'] as const;
+const WAIT_REASONS = ['output', 'changed', 'terminal', 'timeout', 'cancelled', 'shutdown'] as const;
 
 /** Recognizes only manager-owned bash lifecycle calls; foreground bash stays unchanged. */
 export function backgroundBashMode(toolName: string, input: unknown): BackgroundBashMode | undefined {
@@ -32,7 +34,7 @@ export function compactBackgroundCallSummary(mode: BackgroundBashMode, input: un
   if (mode === 'start' && typeof input.command === 'string') {
     return `bash start: ${summarizeTaskCommand(input.command)}`;
   }
-  if ((mode === 'status' || mode === 'output' || mode === 'stop') && typeof input.taskId === 'string') {
+  if ((mode === 'status' || mode === 'output' || mode === 'wait' || mode === 'stop') && typeof input.taskId === 'string') {
     return `bash ${mode}: ${compactTaskId(input.taskId)}`;
   }
   return `bash ${mode}`;
@@ -98,6 +100,25 @@ export function compactBackgroundResult(
       };
     }
 
+    case 'wait': {
+      if (!isWaitResult(payload) || !matchesInputTaskId(input, payload.status.taskId)) {
+        return { kind: 'fallback' };
+      }
+      if (payload.output.output !== '') {
+        return {
+          kind: 'compact',
+          summary: `bash wait: ${compactTaskId(payload.status.taskId)}`,
+          preview: payload.output.output.trimEnd(),
+        };
+      }
+      if (payload.status.state === 'running') return { kind: 'suppress' };
+      return {
+        kind: 'compact',
+        summary: `bash wait: ${compactTaskId(payload.status.taskId)} ${payload.status.state}`,
+        preview: '',
+      };
+    }
+
     case 'stop':
       if (!isFullTaskSnapshot(payload) || !matchesInputTaskId(input, payload.taskId)) {
         return { kind: 'fallback' };
@@ -144,6 +165,20 @@ function isOutputResult(value: unknown): value is {
     isNonNegativeSafeInteger(value.endOffset) &&
     value.endOffset - value.startOffset === Buffer.byteLength(value.output) &&
     typeof value.hasMore === 'boolean' && typeof value.outputPath === 'string';
+}
+
+function isWaitResult(value: unknown): value is {
+  reason: (typeof WAIT_REASONS)[number];
+  status: { taskId: string; state: string };
+  output: { taskId: string; output: string };
+} {
+  if (!isRecord(value) || !hasExactKeys(value, WAIT_KEYS) ||
+      typeof value.reason !== 'string' || !(WAIT_REASONS as readonly string[]).includes(value.reason) ||
+      !isFullTaskSnapshot(value.status) || !isOutputResult(value.output) ||
+      value.status.taskId !== value.output.taskId) return false;
+  if (value.reason === 'output') return value.output.output !== '';
+  if (value.reason === 'terminal') return value.output.output === '' && value.status.state !== 'running';
+  return value.output.output === '' && value.status.state === 'running';
 }
 
 function isFullTaskSnapshot(value: unknown): value is { taskId: string; state: string } {

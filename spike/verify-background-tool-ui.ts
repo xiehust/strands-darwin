@@ -87,13 +87,27 @@ function outputPayload(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
+function waitPayload(overrides: {
+  reason?: string;
+  status?: Record<string, unknown>;
+  output?: Record<string, unknown>;
+} = {}): Record<string, unknown> {
+  return {
+    reason: overrides.reason ?? 'timeout',
+    status: overrides.status ?? statusPayload(),
+    output: overrides.output ?? outputPayload({ output: '', endOffset: 0 }),
+  };
+}
+
 header('background tool presentation helpers');
 assert('only lifecycle bash modes are recognized',
   backgroundBashMode('bash', { mode: 'status' }) === 'status' &&
+  backgroundBashMode('bash', { mode: 'wait' }) === 'wait' &&
   backgroundBashMode('bash', { mode: 'execute' }) === undefined &&
   backgroundBashMode('fileEditor', { mode: 'status' }) === undefined);
 assert('live summaries use short ids and bounded commands',
   compactBackgroundCallSummary('status', { taskId: TASK_ID }) === 'bash status: bg-12345678' &&
+  compactBackgroundCallSummary('wait', { taskId: TASK_ID }) === 'bash wait: bg-12345678' &&
   compactBackgroundCallSummary('start', { command: 'x'.repeat(100) }).length < 90);
 const longActive = compactBackgroundCallSummary('status', { taskId: `not-a-bg-id-${'x'.repeat(500)}` });
 assert('malformed long active task ids remain bounded',
@@ -110,6 +124,34 @@ assert('empty output polls disappear and malformed payloads fall back',
     type: 'jsonBlock', json: outputPayload({ output: '', endOffset: 0 }),
   }]).kind === 'suppress' &&
   compactBackgroundResult('status', { taskId: TASK_ID }, [{ type: 'textBlock', text: 'not json' }]).kind === 'fallback');
+
+const waitOutputProjection = compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+  type: 'jsonBlock', json: waitPayload({
+    reason: 'output',
+    output: outputPayload({ output: 'incremental wait output\n', endOffset: 24 }),
+  }),
+}]);
+const terminalWaitProjection = compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+  type: 'jsonBlock', json: waitPayload({
+    reason: 'terminal',
+    status: statusPayload({
+      state: 'succeeded',
+      finishedAt: '2026-01-01T00:00:01.000Z',
+      exitCode: 0,
+    }),
+  }),
+}]);
+const emptyRunningWaitReasons = ['changed', 'timeout', 'cancelled', 'shutdown'] as const;
+assert('wait projections suppress empty running observations and retain only useful output or terminal state',
+  emptyRunningWaitReasons.every((reason) =>
+    compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+      type: 'jsonBlock', json: waitPayload({ reason }),
+    }]).kind === 'suppress') &&
+  waitOutputProjection.kind === 'compact' &&
+  waitOutputProjection.preview === 'incremental wait output' &&
+  !waitOutputProjection.preview.includes('/private') &&
+  terminalWaitProjection.kind === 'compact' &&
+  terminalWaitProjection.summary === 'bash wait: bg-12345678 succeeded');
 
 const started = compactBackgroundResult('start', { command: 'sleep 10' }, [{
   type: 'jsonBlock', json: { taskId: TASK_ID, pid: 42, outputPath: '/private/task.log' },
@@ -155,7 +197,31 @@ const driftCases = [
   compactBackgroundResult('list', {}, [{
     type: 'jsonBlock', json: [statusPayload({ pid: Number.NaN })],
   }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+    type: 'jsonBlock', json: waitPayload({ reason: 'timeout', output: outputPayload({
+      taskId: OTHER_TASK_ID, output: '', endOffset: 0,
+    }) }),
+  }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+    type: 'jsonBlock', json: waitPayload({ reason: 'terminal' }),
+  }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+    type: 'jsonBlock', json: waitPayload({ reason: 'unknown' }),
+  }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+    type: 'jsonBlock', json: waitPayload({
+      reason: 'changed',
+      output: outputPayload({ output: 'contradictory output', endOffset: 20 }),
+    }),
+  }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+    type: 'jsonBlock', json: waitPayload({
+      reason: 'output',
+      output: outputPayload({ output: '', endOffset: 0 }),
+    }),
+  }]),
 ];
+
 assert('shape, id, state, and numeric drift all use full-preview fallback',
   driftCases.every((projection) => projection.kind === 'fallback'));
 assert('valid nullable snapshot fields remain compactable',
@@ -174,6 +240,47 @@ for (const id of ['status-1', 'status-2']) {
 assert('repeated successful status polls create no static history',
   compact.history.length === 0 && compact.activeTools.length === 0);
 
+for (const [index, reason] of emptyRunningWaitReasons.entries()) {
+  const beforeWait = compact.history.length;
+  compact = reduce(compact, before(`wait-empty-${index}`, { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+  assert('active wait uses a compact short-id summary',
+    compact.activeTools[0]?.compactSummary === 'bash wait: bg-12345678');
+  compact = reduce(compact, after(`wait-empty-${index}`, waitPayload({ reason })));
+  assert('valid empty running waits create no static history', compact.history.length === beforeWait);
+}
+
+compact = reduce(compact, before('wait-output', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+compact = reduce(compact, after('wait-output', waitPayload({
+  reason: 'output',
+  output: outputPayload({ output: 'distinct wait chunk\n', endOffset: 20 }),
+})));
+const waitOutput = compact.history.at(-1);
+assert('non-empty wait output excludes nested status and cursor metadata',
+  waitOutput?.kind === 'tool' && waitOutput.preview === 'distinct wait chunk' &&
+  !waitOutput.preview.includes('sleep 10') && !waitOutput.preview.includes('/private') &&
+  !waitOutput.preview.includes('startOffset'));
+
+compact = reduce(compact, before('wait-terminal', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+compact = reduce(compact, after('wait-terminal', waitPayload({
+  reason: 'terminal',
+  status: statusPayload({ state: 'failed', finishedAt: '2026-01-01T00:00:01.000Z', exitCode: 1 }),
+})));
+const terminalWait = compact.history.at(-1);
+assert('an empty terminal wait retains one concise terminal row',
+  terminalWait?.kind === 'tool' && terminalWait.summary === 'bash wait: bg-12345678 failed' &&
+  terminalWait.preview === '');
+const beforeSecondWaitChunk = compact.history.length;
+compact = reduce(compact, before('wait-output-2', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+compact = reduce(compact, after('wait-output-2', waitPayload({
+  reason: 'output',
+  output: outputPayload({ output: 'second wait chunk\n', startOffset: 20, endOffset: 38 }),
+})));
+const secondWaitOutput = compact.history.at(-1);
+assert('distinct non-empty wait chunks remain distinct history entries',
+  compact.history.length === beforeSecondWaitChunk + 1 && waitOutput !== undefined &&
+  compact.history.includes(waitOutput) && secondWaitOutput?.kind === 'tool' &&
+  secondWaitOutput.preview === 'second wait chunk');
+
 compact = reduce(compact, before('output', { mode: 'output', taskId: TASK_ID }));
 compact = reduce(compact, after('output', outputPayload({ output: 'meaningful child output\n', endOffset: 24 })));
 const childOutput = compact.history.at(-1);
@@ -181,12 +288,19 @@ assert('non-empty child output remains as concise tool history',
   childOutput?.kind === 'tool' && childOutput.preview === 'meaningful child output' &&
   childOutput.summary.includes('bg-12345678'));
 
-compact = reduce(compact, before('fallback', { mode: 'status', taskId: TASK_ID }));
-compact = reduce(compact, after('fallback', statusPayload({ diagnostic: 'retain this diagnostic' })));
-const fallback = compact.history.at(-1);
-assert('extra successful diagnostic fields survive through bounded ordinary fallback',
-  fallback?.kind === 'tool' && fallback.preview.includes('retain this diagnostic') &&
-  fallback.summary === 'bash status: bg-12345678');
+compact = reduce(compact, before('status-fallback', { mode: 'status', taskId: TASK_ID }));
+compact = reduce(compact, after('status-fallback', statusPayload({ diagnostic: 'retain status diagnostic' })));
+const statusFallback = compact.history.at(-1);
+assert('existing malformed status payloads still use bounded ordinary fallback',
+  statusFallback?.kind === 'tool' && statusFallback.preview.includes('retain status diagnostic') &&
+  statusFallback.summary === 'bash status: bg-12345678');
+
+compact = reduce(compact, before('wait-fallback', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+compact = reduce(compact, after('wait-fallback', { ...waitPayload(), diagnostic: 'retain wait diagnostic' }));
+const waitFallback = compact.history.at(-1);
+assert('malformed successful wait payloads survive through bounded ordinary fallback',
+  waitFallback?.kind === 'tool' && waitFallback.preview.includes('retain wait diagnostic') &&
+  waitFallback.summary === 'bash wait: bg-12345678');
 
 let malformedIdFallback = initialTurnState;
 const malformedId = `bad-${'x'.repeat(500)}`;
@@ -199,13 +313,29 @@ assert('fallback result labels stay bounded for malformed long input ids',
   boundedFallback?.kind === 'tool' && [...boundedFallback.summary].length <= 40 &&
   boundedFallback.preview.includes(TASK_ID));
 
-const beforeDenied = compact.history.length;
-compact = reduce(compact, before('denied', { mode: 'status', taskId: TASK_ID }));
-compact = reduce(compact, afterText('denied', 'DENIED: task unavailable\npolicy: execute blocked'));
-const compactDenied = compact.history.at(-1);
-assert('compact denied lifecycle calls retain realistic text diagnostics',
-  compact.history.length === beforeDenied + 1 && compactDenied?.kind === 'tool' &&
-  compactDenied.status === 'denied' && compactDenied.preview.includes('policy: execute blocked'));
+const beforeStatusDenied = compact.history.length;
+compact = reduce(compact, before('status-denied', { mode: 'status', taskId: TASK_ID }));
+compact = reduce(compact, afterText('status-denied', 'DENIED: task unavailable\npolicy: execute blocked'));
+const compactStatusDenied = compact.history.at(-1);
+assert('existing compact denied lifecycle calls retain realistic text diagnostics',
+  compact.history.length === beforeStatusDenied + 1 && compactStatusDenied?.kind === 'tool' &&
+  compactStatusDenied.status === 'denied' && compactStatusDenied.preview.includes('policy: execute blocked'));
+
+const beforeWaitDenied = compact.history.length;
+compact = reduce(compact, before('wait-denied', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+compact = reduce(compact, afterText('wait-denied', 'DENIED: wait unavailable\npolicy: execute blocked'));
+const compactWaitDenied = compact.history.at(-1);
+assert('compact denied wait calls retain realistic text diagnostics',
+  compact.history.length === beforeWaitDenied + 1 && compactWaitDenied?.kind === 'tool' &&
+  compactWaitDenied.status === 'denied' && compactWaitDenied.preview.includes('policy: execute blocked'));
+
+const beforeError = compact.history.length;
+compact = reduce(compact, before('error', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+compact = reduce(compact, afterText('error', 'wait failed\nlog unavailable', 'error'));
+const compactError = compact.history.at(-1);
+assert('compact error wait calls retain realistic text diagnostics',
+  compact.history.length === beforeError + 1 && compactError?.kind === 'tool' &&
+  compactError.status === 'error' && compactError.preview.includes('log unavailable'));
 
 let toggled = reduce(initialTurnState, before('active-toggle', { mode: 'status', taskId: TASK_ID }));
 const active = toggled.activeTools[0]!;
@@ -225,12 +355,27 @@ expanded = reduce(expanded, after('expanded-status', statusPayload()));
 const expandedStatus = expanded.history.at(-1);
 assert('expanded mode retains the ordinary full successful preview',
   expandedStatus?.kind === 'tool' && expandedStatus.preview.includes('/private/task.log'));
+expanded = reduce(expanded, before('expanded-wait', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+expanded = reduce(expanded, after('expanded-wait', waitPayload()));
+const expandedWait = expanded.history.at(-1);
+assert('expanded wait retains the ordinary full successful preview and input',
+  expandedWait?.kind === 'tool' && expandedWait.preview.includes('/private/task.log') &&
+  expandedWait.preview.includes('sleep 10') && expandedWait.inputPreview.includes('waitMs'));
+
 expanded = reduce(expanded, before('expanded-denied', { mode: 'stop', taskId: TASK_ID }));
 expanded = reduce(expanded, afterText('expanded-denied', 'DENIED: stop refused\nowner: policy'));
 const expandedDenied = expanded.history.at(-1);
 assert('expanded denied lifecycle calls retain full text diagnostics',
   expandedDenied?.kind === 'tool' && expandedDenied.status === 'denied' &&
   expandedDenied.preview.includes('owner: policy'));
+expanded = reduce(expanded, before('expanded-wait-error', {
+  mode: 'wait', taskId: TASK_ID, waitMs: 1000,
+}));
+expanded = reduce(expanded, afterText('expanded-wait-error', 'wait failed\nowner: manager', 'error'));
+const expandedWaitError = expanded.history.at(-1);
+assert('expanded wait errors retain ordinary input and full text diagnostics',
+  expandedWaitError?.kind === 'tool' && expandedWaitError.status === 'error' &&
+  expandedWaitError.preview.includes('owner: manager') && expandedWaitError.inputPreview.includes('waitMs'));
 expanded = turnReducer(expanded, { type: 'toggleToolDetails' });
 toggleNotice = expanded.history.at(-1);
 assert('second toggle returns to compact with a notice',
