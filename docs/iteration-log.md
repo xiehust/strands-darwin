@@ -1257,3 +1257,29 @@ spend rather than an invented zero.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-19 | `6978780` | Continue one exact transient model-stream interruption as a visible, separately recorded successor turn |
+
+### Batch 32 — tolerate redundant bash management commands (2026-08-19)
+
+Origin: `docs/reflections/reflection_2026-08-19_session-20260819-075248263.md`. The subject
+trajectory showed one correctly targeted background `status` call rejected because it also carried
+a copied `command`; the corrected call cost another model round. SRF-002 (Score 10) was independent
+of SRF-001 but followed it in the reflection batch's persisted priority order.
+
+Child session `session-20260819-100420866`, managed task
+`bg-3349e788-4903-4e37-a0a7-7e3c555a4d48` (exit 0, no correction turn). Delivered in `bb89b53`:
+`status`, `output`, and `stop` accept but ignore a redundant `command`, continue to require and
+forward only `taskId`, and return the same manager result with or without the extra field. `list`
+still rejects `command`; forbidden timeout/taskId combinations, missing task ids, foreground
+execution, permission classification, hooks, and process lifecycle remain unchanged. The schema is
+also explicitly strict against arbitrary unknown fields.
+
+Host acceptance inspected the focused diff and independently re-ran
+`spike/verify-background-bash.ts` (72/72), `pnpm typecheck`, and `pnpm test` (51 suite summaries,
+all `0 failed`, no `FAIL`), plus `git show --check`, clean-tree verification, and AGENTS.md size
+(19,063 bytes < 32 KiB). No provider call was needed.
+
+Token spend, single managed task: `input=98 output=14,409 cacheRead=2,577,832 cacheWrite=80,093`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `bb89b53` | Bash `status`/`output`/`stop` ignore redundant `command` while remaining taskId-authoritative |
