@@ -1224,3 +1224,36 @@ Token spend, two managed tasks: `input=26 output=2,843 cacheRead=424,639 cacheWr
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-19 | `b39cd30` | Prompts and `!` commands typed while a turn runs queue visibly, drain at idle, and come back unsent on cancel |
+
+### Batch 31 — bounded continuation after a transient stream interruption (2026-08-19)
+
+Origin: `docs/reflections/reflection_2026-08-19_session-20260819-075248263.md`. The reflected
+session lost its first 678,954 ms turn after 20 model calls to `ModelError: Stream ended without
+completing a message`; a human `continue` recovered it, but headless developer workers have no
+human available. SRF-001 (Score 10) therefore required one visible successor turn for only that
+exact interruption, outside the SDK loop, while preserving the first failed trajectory turn.
+
+Child session `session-20260819-094850274`. The first launch task
+`bg-9208b779-c721-4b70-bb73-b5277a2732d2` failed deterministically before a model/session/usage
+record because the Host accidentally passed an extra `--`. The actual managed implementation task
+`bg-1d888c94-5b14-4236-81d3-142732e794f5` exited 0 with no correction turn. Delivered in
+`6978780`: a shared driver-level policy recognizes only the exact SDK `ModelError`, runs one bounded
+anti-repeat continuation prompt through the ordinary TUI/headless turn seam, leaves the original
+failed turn append-only, never retries a second failure, and exposes continuation explicitly in
+text, JSON, and JSONL without leaking original prompt text. Generic/auth/validation model errors,
+max-token/context errors, cancellation, and non-model failures retain their old behavior.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck`; `pnpm
+test` (37 suite summaries, all `0 failed`, no `FAIL`); `spike/verify-stream-resumption.ts` (16);
+`spike/verify-headless-structured.ts` (10); `spike/verify-prompt-queue.ts` (28); `git show --check`;
+clean-tree verification; and the AGENTS.md preload-size check (19,063 bytes < 32 KiB). No provider
+call was needed for acceptance. The archived Trellis task carries the child check report.
+
+Token spend: the deterministic first launch reported no usage line; the implementation task
+reported `input=310 output=37,913 cacheRead=17,999,381 cacheWrite=164,037`. Aggregate reported spend
+is therefore the implementation task's four buckets; the failed launch has unknown/unreported
+spend rather than an invented zero.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `6978780` | Continue one exact transient model-stream interruption as a visible, separately recorded successor turn |
