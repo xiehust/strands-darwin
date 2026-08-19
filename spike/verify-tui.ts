@@ -19,7 +19,7 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion |
- *                 pathCompletion | recall | recallEmpty | bang | clear | mcpStderr | mcp |
+ *                 pathCompletion | recall | recallEmpty | bang | queue | clear | mcpStderr | mcp |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
@@ -276,6 +276,14 @@ async function approvePath(): Promise<void> {
       /\+ +return n \* 2; \/\//.test(finishedTranscript));
 
     tui.send('\u0015'); // ctrl+u clears the retained permission-ownership draft
+    // Anchored, so the following /exit cannot coalesce with the ctrl+u into one
+    // pty event — normalizeDraftText strips the control, and '/exit' would then
+    // land inside the still-present draft and submit as a model prompt.
+    await tui.waitUntil(() => !tui.frame.includes(`you> ${hiddenDraft}`), {
+      timeoutMs: 10_000,
+      label: 'the cleared draft',
+      settleMs: 200,
+    });
     tui.submit('/exit');
     const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
     assert('TUI exited cleanly on /exit', code === 0);
@@ -1321,8 +1329,9 @@ async function usageReport(): Promise<void> {
  *
  * Counting to sixty is deliberate — the stream has to still be running when the
  * report is asked for, and ordering is how that is proven: the report must appear
- * BEFORE the turn's last word. An edited prompt in the same window must be retained,
- * not queued; after idle it starts only when Enter is pressed a second time.
+ * BEFORE the turn's last word. An edited prompt submitted in the same window is
+ * queued (SER-027, superseding SER-010's retained-never-queued contract): listed,
+ * counted on the busy hint, and sent by itself as the next turn when this one ends.
  */
 async function usageDuringATurn(tui: TuiSession): Promise<void> {
   const turn = tui.mark();
@@ -1358,27 +1367,33 @@ async function usageDuringATurn(tui: TuiSession): Promise<void> {
     tui.screen.slice(duringTurn).includes('not counted yet'),
   );
 
-  const retainedDraft = 'Reply with exactly SECOND_TURN_DONE. Do not use tools.';
+  const queuedPrompt = 'Reply with exactly SECOND_TURN_DONE. Do not use tools.';
   const beforeEdit = tui.mark();
   tui.send('Reply with exactly SECOND_TURN_DNE. Do not use tools.');
   // Move before "DNE" and insert the missing O: terminal-observable proof that
   // the streaming editor is active at its cursor, not merely appendable.
   tui.send('\u001b[D'.repeat(21));
   tui.send('O');
-  await tui.waitFor(`you> ${retainedDraft}`, {
+  await tui.waitFor(`you> ${queuedPrompt}`, {
     timeoutMs: 30_000,
     from: beforeEdit,
     settleMs: 400,
   });
-  assert('cursor-position editing works while streaming', tui.frame.includes(`you> ${retainedDraft}`));
+  assert('cursor-position editing works while streaming', tui.frame.includes(`you> ${queuedPrompt}`));
   assert('Ink leaves the terminal cursor visible while streaming', tui.cursorVisible === true);
 
-  // Anything needing the model waits — with a reason on screen, not silence.
-  const beforeRefused = tui.mark();
+  // SER-027 (deliberately superseding SER-010's refusal): a prompt submitted
+  // mid-turn is queued — it leaves the editor, is listed above the input box,
+  // and the busy hint counts it.
+  const beforeQueued = tui.mark();
   tui.send('\r');
-  await tui.waitFor('still working', { timeoutMs: 30_000, from: beforeRefused, settleMs: 400 });
-  assert('a prompt typed mid-turn is refused with a reason', tui.screen.slice(beforeRefused).includes('still working'));
-  assert('the refused prompt remains exact in the editor', tui.frame.includes(`you> ${retainedDraft}`));
+  await tui.waitFor(`queued · ${queuedPrompt}`, { timeoutMs: 30_000, from: beforeQueued, settleMs: 400 });
+  assert('a prompt submitted mid-turn is queued and listed', tui.frame.includes(`queued · ${queuedPrompt}`));
+  assert('the queued prompt left the editor', !tui.frame.includes(`you> ${queuedPrompt}`));
+  assert('the busy hint counts the queue', tui.frame.includes('· 1 queued'));
+  // Marked after the editor emptied, so the transcript assertion below cannot
+  // match a stale repaint of the draft row.
+  const afterQueueListed = tui.mark();
 
   await tui.waitFor(/sixty/i, { timeoutMs: 240_000, from: turn });
   const region = tui.screen.slice(duringTurn);
@@ -1386,22 +1401,17 @@ async function usageDuringATurn(tui: TuiSession): Promise<void> {
     'the report came before the turn finished',
     region.indexOf('token usage') < region.search(/sixty/i),
   );
-  await waitForIdle(tui, 240_000);
   assert('the turn survived being asked', tui.screen.slice(turn).includes('token usage'));
-  assert('the retained prompt is still exact after the original turn', tui.frame.includes(`you> ${retainedDraft}`));
 
-  // A queue would start by itself as soon as status returns to idle. Hold a quiet
-  // interval and inspect output after the mark before explicitly submitting.
-  const idleMark = tui.mark();
-  await new Promise((resolve) => setTimeout(resolve, 1200));
-  assert('the retained prompt is not automatically sent after idle', !tui.screen.slice(idleMark).includes('working…'));
-
-  const secondTurn = tui.mark();
-  tui.send('\r');
-  await tui.waitFor('working…', { timeoutMs: 60_000, from: secondTurn });
-  await tui.waitFor('SECOND_TURN_DONE', { timeoutMs: 240_000, from: secondTurn });
+  // The drain: when the first turn ends, the queued prompt is sent by itself as
+  // the next turn — no second Enter — and recorded exactly as sent, then.
+  await tui.waitFor('SECOND_TURN_DONE', { timeoutMs: 240_000, from: beforeQueued });
   await waitForIdle(tui, 240_000);
-  assert('explicit Enter starts and completes the retained second turn', tui.screen.slice(secondTurn).includes('SECOND_TURN_DONE'));
+  assert('the queued prompt was sent when the turn ended and completed its own turn',
+    tui.screen.slice(beforeQueued).includes('SECOND_TURN_DONE'));
+  assert('the sent entry is a user row in the transcript, no longer a queued one',
+    withoutWhitespace(tui.screen.slice(afterQueueListed)).includes(withoutWhitespace(`you> ${queuedPrompt}`)));
+  assert('the drained queue leaves no listing behind', !tui.frame.includes('queued · '));
 }
 
 
@@ -2474,7 +2484,8 @@ async function promptRecallWithoutRecord(): Promise<void> {
  * The `!` prefix (SER-024), free — no model call: a user-typed shell command runs
  * directly (in plan mode, deliberately: the gate's subject is model tool calls),
  * its live output reaches the panel while it runs, a submission during it is
- * retained rather than queued (SER-010), Ctrl+C kills it without costing the
+ * queued and runs when it finishes (SER-027, superseding SER-010), Ctrl+C kills
+ * it without costing the
  * session, and everything that ran is on screen and in the trajectory record —
  * as `shellCommand` records, never as `userInput` lines.
  */
@@ -2508,20 +2519,25 @@ async function bangShellCommand(): Promise<void> {
     assert('the header states the running command', running.includes('running !'));
     assert('the hint row says how to cancel', running.includes('running ! command… ctrl+c cancels it'));
 
-    // SER-010 for `!`: a submission while one runs is retained, never queued.
-    const beforeRetained = tui.mark();
-    tui.submit('retained draft');
-    await tui.waitFor('a ! command is still running', { timeoutMs: 30_000, from: beforeRetained, settleMs: 200 });
-    assert('a mid-command submission is refused with the draft retained',
-      tui.screen.slice(beforeRetained).includes('a ! command is still running') &&
-      tui.frame.includes('you> retained draft'));
+    // SER-027 (superseding SER-010): a submission while one runs is queued —
+    // listed above the input box, counted on the busy hint — and a queued `!`
+    // runs when the current one finishes, held and executed one at a time.
+    const beforeQueued = tui.mark();
+    tui.submit('!echo QUEUED_AFTER');
+    await tui.waitFor('queued · !echo QUEUED_AFTER', { timeoutMs: 30_000, from: beforeQueued, settleMs: 200 });
+    assert('a mid-command submission is queued, listed and leaves the editor',
+      tui.frame.includes('queued · !echo QUEUED_AFTER') &&
+      !tui.frame.includes('you> !echo QUEUED_AFTER'));
+    assert('the busy hint counts the queue', tui.frame.includes('· 1 queued'));
 
-    await tui.waitFor('(exit 0 in', { timeoutMs: 30_000, from: beforeSlow, settleMs: 300 });
-    const finished = tui.frame;
+    await tui.waitFor("$ sh -c 'echo LIVE_TAIL_ROW; sleep 2' (exit 0 in", { timeoutMs: 30_000, from: beforeSlow, settleMs: 300 });
     assert('the finished row states command and outcome',
-      /\$ sh -c 'echo LIVE_TAIL_ROW; sleep 2' \(exit 0 in \d+m?s\)/.test(finished));
-    assert('the retained draft survived the command', finished.includes('you> retained draft'));
-    tui.send('\u0015'); // ctrl+u clears the retained draft row
+      /\$ sh -c 'echo LIVE_TAIL_ROW; sleep 2' \(exit 0 in \d+m?s\)/.test(tui.screen.slice(beforeSlow)));
+    // The drain: the queued command runs by itself once the session is free.
+    await tui.waitFor('$ echo QUEUED_AFTER (exit 0 in', { timeoutMs: 30_000, from: beforeQueued, settleMs: 300 });
+    assert('the queued ! command ran when the running one finished',
+      tui.screen.slice(beforeQueued).includes('$ echo QUEUED_AFTER (exit 0 in'));
+    assert('the drained queue leaves no listing behind', !tui.frame.includes('queued · '));
 
     // A non-zero exit is an error row with its real code, output kept.
     const beforeFail = tui.mark();
@@ -2559,14 +2575,146 @@ async function bangShellCommand(): Promise<void> {
     const recordFile = trajectoryPath(dir, sessionDirs[0] as string);
     const lines = (await readFile(recordFile, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
     const shellRecords = lines.filter((record) => record['type'] === 'shellCommand');
-    assert('every ! command reached the trajectory record', shellRecords.length === 3);
+    assert('every ! command reached the trajectory record — the queued one included', shellRecords.length === 4);
     assert('the record carries command, outcome and bounded output',
       shellRecords.some((record) =>
         record['command'] === "sh -c 'echo LIVE_TAIL_ROW; sleep 2'" && record['exitCode'] === 0 &&
         (record['output'] as string).includes('LIVE_TAIL_ROW')) &&
       shellRecords.some((record) => record['exitCode'] === 3 && (record['output'] as string).includes('OOPS_LINE')) &&
       shellRecords.some((record) => record['command'] === 'sleep 30' && record['signal'] === 'SIGTERM'));
+    assert('the queued command was recorded at send time, exactly as sent',
+      shellRecords.some((record) => record['command'] === 'echo QUEUED_AFTER' && record['exitCode'] === 0));
     assert('no ! command was recorded as a prompt', !lines.some((record) => record['type'] === 'userInput'));
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The prompt queue's user-visible state machine (SER-027), free — no model call:
+ * a `!` command is the busy state, exactly as `bang` uses it. Entries queued
+ * while it runs are listed and counted; `Up` from the first row takes the whole
+ * queue back into the editor ahead of typed text without touching recall or
+ * cursor movement; Ctrl+C returns the queue unsent instead of draining it; the
+ * `/clear` family refuses to queue with the draft retained; and none of it ever
+ * becomes a `userInput` record, because nothing was ever sent.
+ */
+async function queueTakeback(): Promise<void> {
+  header('TUI — the prompt queue: listing, take-back, cancel return, refusal');
+
+  const dir = '/tmp/darwin-queue-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  await rm(HOME_CONFIG, { force: true });
+
+  const tui = startTui({ cwd: dir, cols: 100, rows: 30 });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    // --- Take-back: entries land one per line, ahead of typed text. ---
+    const beforeBusy = tui.mark();
+    tui.submit('!sleep 8');
+    await tui.waitFor('running ! command…', { timeoutMs: 30_000, from: beforeBusy, settleMs: 200 });
+
+    const beforeAlpha = tui.mark();
+    tui.submit('alpha entry');
+    await tui.waitFor('queued · alpha entry', { timeoutMs: 30_000, from: beforeAlpha, settleMs: 200 });
+    const beforeBeta = tui.mark();
+    tui.submit('beta entry');
+    await tui.waitFor('queued · beta entry', { timeoutMs: 30_000, from: beforeBeta, settleMs: 200 });
+    assert('both entries are listed, oldest first',
+      tui.frame.indexOf('queued · alpha entry') < tui.frame.indexOf('queued · beta entry'));
+    assert('the busy hint counts two queued', tui.frame.includes('· 2 queued'));
+
+    const beforeTyped = tui.mark();
+    tui.send('gamma typed');
+    await tui.waitFor('you> gamma typed', { timeoutMs: 30_000, from: beforeTyped, settleMs: 200 });
+
+    // Up from the first (only) visual row of the typed draft: the queue comes
+    // back ahead of the typed text, and the listing empties.
+    const beforeTakeback = tui.mark();
+    tui.send('\u001b[A');
+    await tui.waitFor('you> alpha entry', { timeoutMs: 30_000, from: beforeTakeback, settleMs: 300 });
+    const frame = tui.frame;
+    assert('take-back puts the queue ahead of the typed text, one per line',
+      frame.includes('you> alpha entry') &&
+      frame.indexOf('alpha entry') < frame.indexOf('beta entry') &&
+      frame.indexOf('beta entry') < frame.indexOf('gamma typed'));
+    assert('the taken-back queue is no longer listed', !frame.includes('queued · '));
+    assert('nothing was sent by the take-back', !tui.screen.slice(beforeTakeback).includes('working…'));
+
+    // The command is still running; cancel it. The queue is already empty, so
+    // nothing is "returned" and the draft must stay exactly as taken back.
+    tui.send('\u0003');
+    await tui.waitFor('killed by SIGTERM', { timeoutMs: 30_000, from: beforeBusy, settleMs: 300 });
+    assert('cancelling with an empty queue reports no queue return',
+      !tui.screen.slice(beforeTakeback).includes('returned to the editor'));
+    assert('the taken-back draft survives the cancel', tui.frame.includes('you> alpha entry'));
+    // Delete the three-row draft: kill each row and the newline joining it.
+    tui.send('\u0015\u007f\u0015\u007f\u0015');
+
+    // --- Cancel: a queued entry is returned unsent, never silently sent. ---
+    const beforeCancelRun = tui.mark();
+    tui.submit('!sleep 30');
+    await tui.waitFor('running ! command…', { timeoutMs: 30_000, from: beforeCancelRun, settleMs: 200 });
+    tui.submit('delta entry');
+    await tui.waitFor('queued · delta entry', { timeoutMs: 30_000, from: beforeCancelRun, settleMs: 200 });
+    tui.send('\u0003');
+    await tui.waitFor('1 queued message returned to the editor, not sent', {
+      timeoutMs: 30_000,
+      from: beforeCancelRun,
+      settleMs: 300,
+    });
+    assert('a cancel returns the queued entry to the editor and says so',
+      tui.frame.includes('you> delta entry'));
+    assert('the returned entry is no longer listed as queued', !tui.frame.includes('queued · delta entry'));
+    assert('the cancelled busy state never sent it', !tui.screen.slice(beforeCancelRun).includes('working…'));
+    tui.send('\u0015'); // clear the returned one-row draft
+
+    // --- The /clear family refuses to queue, draft retained. ---
+    const beforeRefusal = tui.mark();
+    tui.submit("!sh -c 'sleep 2'");
+    await tui.waitFor('running ! command…', { timeoutMs: 30_000, from: beforeRefusal, settleMs: 200 });
+    tui.submit('/clear');
+    await tui.waitFor('/clear does not queue — press enter again when the ! command finishes', {
+      timeoutMs: 30_000,
+      from: beforeRefusal,
+      settleMs: 200,
+    });
+    assert('/clear keeps the retention shape: draft still in the editor',
+      tui.frame.includes('you> /clear'));
+    assert('/clear was not queued', !tui.screen.slice(beforeRefusal).includes('queued · /clear'));
+    await tui.waitFor("$ sh -c 'sleep 2' (exit 0 in", { timeoutMs: 30_000, from: beforeRefusal, settleMs: 300 });
+    tui.send('\u0015'); // clear the retained /clear draft
+
+    // --- With the queue empty, Up is prompt recall again, untouched. ---
+    const beforeRecall = tui.mark();
+    tui.send('\u001b[A');
+    await tui.waitFor('history: no earlier prompts in this project', {
+      timeoutMs: 30_000,
+      from: beforeRecall,
+      settleMs: 300,
+    });
+    assert('an empty queue leaves Up to prompt recall',
+      tui.frame.includes('history: no earlier prompts in this project'));
+
+    tui.send('\u0004');
+    assert('queue scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+
+    // Trajectory honesty: nothing above was sent, so nothing is a `userInput`
+    // line — taken-back, cancel-returned and refused entries leave no record.
+    const sessionsRoot = path.dirname(path.dirname(trajectoryPath(dir, 'placeholder')));
+    const { readdir } = await import('node:fs/promises');
+    const sessionDirs = await readdir(sessionsRoot);
+    assert('the session wrote exactly one record', sessionDirs.length === 1);
+    const recordFile = trajectoryPath(dir, sessionDirs[0] as string);
+    const lines = (await readFile(recordFile, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert('no queued entry that was never sent left a userInput record',
+      !lines.some((record) => record['type'] === 'userInput'));
+    assert('the ! busy states themselves were recorded as shellCommand records',
+      lines.filter((record) => record['type'] === 'shellCommand').length === 3);
   } finally {
     tui.kill();
     await rm(dir, { recursive: true, force: true });
@@ -2711,6 +2859,7 @@ const SCENARIOS = {
   recall: promptRecall,
   recallEmpty: promptRecallWithoutRecord,
   bang: bangShellCommand,
+  queue: queueTakeback,
   clear: clearSession,
   mcpStderr: mcpStderrIsolation,
   mcp: mcpReport,

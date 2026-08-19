@@ -71,6 +71,11 @@ export interface FrameClaims {
   readonly prompt: FrameClaim;
   /** Running tool calls. */
   readonly tools: FrameClaim;
+  /**
+   * Queued mid-turn submissions, listed above the input box (SER-027). Optional
+   * because most frames have none; absent means `{ wanted: 0, floor: 0 }`.
+   */
+  readonly queued?: FrameClaim;
   /** The still-arriving answer, label and margin included. */
   readonly live: FrameClaim;
 }
@@ -78,6 +83,7 @@ export interface FrameClaims {
 export interface FrameGrants {
   readonly prompt: number;
   readonly tools: number;
+  readonly queued: number;
   readonly live: number;
   /**
    * True when someone was granted less than its floor — the terminal is smaller
@@ -88,30 +94,41 @@ export interface FrameGrants {
 }
 
 /**
- * Divides the rows below the header between prompt, tool panel and live answer.
+ * Divides the rows below the header between prompt, tool panel, queued listing
+ * and live answer.
  *
  * A grant never exceeds what is left, so darwin never *chooses* to overflow: with
  * a viewport smaller than the furniture the frame still fits and the participants
  * render their degraded form. The only overflow this cannot prevent is a header
  * taller than the terminal, which this module does not own.
+ *
+ * The queued listing (SER-027) ranks after the tool panel and before the answer:
+ * the user can act on it (`Up` takes it back), but its content is also stated as
+ * a count on the busy hint, so cutting its rows never makes it invisible — while
+ * the answer already lives in `<Static>` in full and still yields last of all.
  */
 export function frameBudget(claims: FrameClaims): FrameGrants {
   const available = Math.max(0, claims.rows - SPARE_FRAME_ROW - claims.headerRows - claims.thinkingRows);
+  const queuedClaim = claims.queued ?? { wanted: 0, floor: 0 };
 
   let remaining = available;
-  const prompt = grant(claims.prompt, remaining, claims.tools.wanted + claims.live.wanted);
+  const prompt = grant(claims.prompt, remaining, claims.tools.wanted + queuedClaim.wanted + claims.live.wanted);
   remaining -= prompt;
-  const tools = grant(claims.tools, remaining, claims.live.wanted);
+  const tools = grant(claims.tools, remaining, queuedClaim.wanted + claims.live.wanted);
   remaining -= tools;
+  const queued = grant(queuedClaim, remaining, claims.live.wanted);
+  remaining -= queued;
   const live = Math.max(0, Math.min(claims.live.wanted, remaining));
 
   return {
     prompt,
     tools,
+    queued,
     live,
     degraded:
       prompt < Math.min(claims.prompt.floor, claims.prompt.wanted) ||
       tools < Math.min(claims.tools.floor, claims.tools.wanted) ||
+      queued < Math.min(queuedClaim.floor, queuedClaim.wanted) ||
       live < Math.min(claims.live.floor, claims.live.wanted),
   };
 }
@@ -468,6 +485,41 @@ export function hiddenDetailNotice(hiddenRows: number): string {
 /** One line standing in for the calls the panel had no room for. */
 export function hiddenToolsNotice(hiddenTools: number): string {
   return `… ${hiddenTools} more tool ${hiddenTools === 1 ? 'call' : 'calls'} running`;
+}
+
+/* --------------------------------------------------------- the queued listing */
+
+/** What a bounded queued-messages listing draws (SER-027). */
+export interface QueueListPlan {
+  /** Entries drawn, oldest (next to send) first; each is one row. */
+  readonly shown: number;
+  /** Entries standing behind the `… n more queued` row. */
+  readonly hiddenEntries: number;
+}
+
+/** Rows the queued listing would draw with nothing bounding it: one per entry. */
+export function queueListWanted(entries: number): number {
+  return entries;
+}
+
+/**
+ * Fits the queued listing into `maxRows`.
+ *
+ * The head of the queue is what drains next, so when rows run out the oldest
+ * entries stay and one row states the rest — the same truncation vocabulary as
+ * the tool panel. A single granted row for several entries goes entirely to the
+ * notice: one entry shown while others hide silently would misstate the queue.
+ */
+export function planQueueList(entries: number, maxRows: number): QueueListPlan {
+  if (entries <= 0 || maxRows <= 0) return { shown: 0, hiddenEntries: entries };
+  if (entries <= maxRows) return { shown: entries, hiddenEntries: 0 };
+  const shown = Math.max(0, maxRows - 1);
+  return { shown, hiddenEntries: entries - shown };
+}
+
+/** One line standing in for the queued entries the listing had no room for. */
+export function hiddenQueuedNotice(hiddenEntries: number): string {
+  return `… ${hiddenEntries} more queued`;
 }
 
 /* --------------------------------------------------------- the permission box */

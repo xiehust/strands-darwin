@@ -79,6 +79,56 @@ Required checks: `spike/verify-busy-suffix.ts` (free, in `pnpm test`) and the li
 `verify-tui.ts usage` scenario, whose mid-turn half asserts the readout is present and that a
 second elapsed reading appears while the turn still runs.
 
+## Contract: a busy submission queues — visibly, boundedly, and unsent until idle
+
+**SER-027, 2026-08-19, deliberately supersedes SER-010's "retained, never queued" busy-submit
+contract by explicit user product decision** (`docs/research/research_2026-08-19.md`, addendum
+`02:01:06Z`). A submission while a turn streams or a `!` command runs (`status` `streaming` or
+`shell`) leaves the editor and joins a FIFO queue (`src/tui/prompt-queue.ts`, App state); when the
+session returns to idle the queue **drains one entry at a time through the ordinary `submit()`
+path** — each queued prompt its own turn, each queued `!` its own run. Next-turn-only delivery:
+nothing is ever injected into a running SDK stream.
+
+- **What queues, exactly.** Prompts, skill/command expansions and `!` commands queue. Local
+  report/control commands (`/usage`, `/effort`, `/mode`, `/permissions`, `/tasks`, `/agents`,
+  `/context`, `/trajectory`, `/export`, `/mcp`, `/status`) keep answering mid-turn immediately —
+  they sit above the busy check, as before. `/clear`, `/compact`, `/model`, `/exit` and `/quit`
+  **refuse** with a `… does not queue` notice, draft retained — the one place SER-010's retention
+  shape deliberately survives (`refusesToQueue`): a session-replacing command run minutes later,
+  unprompted, is worse than a second Enter. Compaction still owns the whole keyboard, so nothing
+  can queue during it.
+- **The listing is counted rows, bounded, above the input box.** `QueuedMessages.tsx` draws one
+  `queued · <entry>` row per entry (newlines shown as `⏎`, one `<Text wrap="truncate-end">` per
+  counted row), a sibling of the input box inside the chrome column — so `InputBox`'s
+  parent-relative metrics absorb its height and the frame-absolute cursor stays on its draft row.
+  It is a fourth `frameBudget` participant (`queued` claim, granted after tools and before the
+  live answer, floor 0); `planQueueList` keeps the head (next to send) and states the cut with
+  `… n more queued`. The **busy hint carries ` · N queued`** (`queuedCountHint`) behind the live
+  readout, ahead of the static hints, on both the `working…` and `running ! command…` rows — a
+  listing cut to zero rows is still counted, so nothing invisible accumulates.
+- **`Up` takes the queue back** — see `prompt-recall.md` for the full key-precedence chain. One
+  press returns every entry to the editor, one per line, **ahead of any typed text**, cursor at
+  the end; the queue empties and nothing is sent.
+- **A cancel or a failed turn never silently sends the queue.** Ctrl+C (streaming or shell) and a
+  turn error mark the busy state aborted; when it ends, `returnQueuedToEditor` puts the entries
+  back in the editor with a `… returned to the editor, not sent` notice. A `!` timeout is not a
+  cancel — the user asked for nothing — so the queue drains normally after it.
+- **A pending permission holds the queue untouched.** The prompt owns the keyboard (unchanged),
+  so the queue can neither grow nor drain while one is up; the listing stays rendered beside the
+  permission box. The drain effect also refuses to fire while `/clear` assembles a successor, and
+  `/clear` drops the queue with the conversation.
+- **Trajectory honesty is structural.** Enqueueing dispatches nothing and records nothing; a
+  drained entry becomes a `userInput` transcript row and trajectory line at send time, exactly as
+  sent; an entry taken back, cancel-returned or dropped by `/clear` was never sent and leaves no
+  record — so prompt recall (a reader over sent prompts) needs no change.
+
+Required checks: `spike/verify-prompt-queue.ts` (free, in `pnpm test`: the refusal set, row
+projection, take-back composition, hint segment, budget arithmetic, rendered height never above
+the grant), `spike/verify-tui.ts queue` (free pty: listing, take-back ordering with typed text,
+cancel return, `/clear` refusal, recall untouched, no `userInput` record), `bang` (free: a queued
+`!` drains and runs after the running one) and the live `usage` mid-turn half (a queued prompt
+drains into its own real turn, no second Enter).
+
 ## Contract: one semantic visual language, colour optional
 
 `src/tui/visual-language.ts` is the vocabulary shared by `App`, `MessageList`, `InputBox`,

@@ -51,6 +51,7 @@ import {
   PERMISSION_BOX_FIXED_ROWS,
   frameBudget,
   promptBoxWanted,
+  queueListWanted,
   toolDetailsVisible,
   toolInputRows,
   toolPanelWanted,
@@ -58,6 +59,7 @@ import {
 import { MessageList } from './MessageList.js';
 import { PermissionPrompt, permissionBoxClaim } from './PermissionPrompt.js';
 import { ActiveToolCalls } from './ToolCallPanel.js';
+import { QueuedMessages } from './QueuedMessages.js';
 import type { PermissionQueue } from './permission-queue.js';
 import {
   backspaceAtCursor,
@@ -87,6 +89,7 @@ import {
   type PromptRecall,
   type RecallDirection,
 } from './prompt-recall.js';
+import { queuedCountHint, refusesToQueue, takeBackDraft } from './prompt-queue.js';
 import {
   composeShellReport,
   parseShellCommand,
@@ -229,6 +232,27 @@ export function App({
    * with the conversation they were destined for.
    */
   const pendingShellReports = useRef<string[]>([]);
+  /**
+   * The prompt queue (SER-027, superseding SER-010's no-queue contract by explicit
+   * user decision): submissions made while a turn streams or a `!` command runs,
+   * oldest first. Drained one entry per idle through the ordinary submit path;
+   * taken back into the editor by `Up`; returned unsent after a cancel or a failed
+   * turn; dropped by `/clear` with the conversation. The ref is the same
+   * immediate mirror `editorRef` is: batched stdin events must read one
+   * generation of the queue.
+   */
+  const [queued, setQueuedState] = useState<readonly string[]>([]);
+  const queuedRef = useRef(queued);
+  const setQueued = useCallback((next: readonly string[]) => {
+    queuedRef.current = next;
+    setQueuedState(next);
+  }, []);
+  /** True from a user Ctrl+C (or a turn failure) until the busy state it aborted ends. */
+  const turnAborted = useRef(false);
+  /** Latch: one queue entry in flight through submit(); see the drain effect. */
+  const draining = useRef(false);
+  /** Re-arms the drain effect after an entry whose submit left every dep unchanged. */
+  const [drainCycle, setDrainCycle] = useState(0);
 
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(onChange),
@@ -350,6 +374,7 @@ export function App({
   const streamingHint = hintForStatus(
     effectiveStatus,
     busyElapsedMs === undefined ? undefined : busySuffix(busyElapsedMs, liveSpend(runtime)),
+    queued.length,
   );
   const activeToolClaims = state.activeTools.map((tool) => ({
     detailRows: toolDetailsVisible(tool.name, state.toolDetailsExpanded)
@@ -390,6 +415,10 @@ export function App({
       wanted: toolPanelWanted(activeToolClaims),
       floor: activeToolClaims.length > 0 ? 1 : 0,
     },
+    // The queued listing (SER-027): one row per entry, cut entries stated by the
+    // plan's own notice row. Floor 0 — the busy hint's count keeps a fully cut
+    // listing from going invisible.
+    queued: { wanted: queueListWanted(queued.length), floor: 0 },
     // The answer yields first: it is the one participant whose content is already
     // guaranteed to reach `<Static>` history in full.
     live: { wanted: liveTextRows === 0 ? 0 : liveTextRows + LIVE_BLOCK_CHROME_ROWS, floor: 0 },
@@ -451,9 +480,34 @@ export function App({
     [runtime],
   );
 
+  /**
+   * Puts every queued entry back into the editor, unsent — ahead of any typed
+   * text, one per line, cursor at the end — and says so. The take-back gesture
+   * and the post-abort return share this so "what a cancel does to the queue"
+   * and "what `Up` does to the queue" cannot drift apart; `withNotice` is the
+   * only difference (the gesture explains itself).
+   */
+  const returnQueuedToEditor = useCallback((withNotice: boolean): boolean => {
+    const entries = queuedRef.current;
+    if (entries.length === 0) return false;
+    const text = takeBackDraft(entries, editorRef.current.text);
+    setQueued([]);
+    setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
+    preferredColumn.current = undefined;
+    setSelectedCompletion(0);
+    if (withNotice) {
+      dispatch({
+        type: 'notice',
+        text: `${entries.length} queued ${entries.length === 1 ? 'message' : 'messages'} returned to the editor, not sent`,
+      });
+    }
+    return true;
+  }, [dispatch, setEditor, setQueued]);
+
   const runTurn = useCallback(
     async (text: string) => {
       turnStartedAt.current = Date.now();
+      turnAborted.current = false;
       setStatus('streaming');
       try {
         for await (const event of runtime.send(text)) {
@@ -462,6 +516,9 @@ export function App({
         await runtime.markResumable();
       } catch (error) {
         // A failed turn must not kill the session; the user may want to retry.
+        // It also must not send the queue: auto-resending into an error is how
+        // retry loops start, so the queue is returned to the editor below.
+        turnAborted.current = true;
         dispatch({
           type: 'notice',
           text: `turn failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -479,6 +536,14 @@ export function App({
         // short. Marked, never re-read here: the next `Up` pays for it, and a session
         // that never recalls never opens the file at all.
         historyRead.current.stale = true;
+      }
+
+      // A cancelled or failed turn never silently sends the queue (SER-027): what
+      // was queued behind it comes back to the editor, visible and unsent, and the
+      // drain effect below finds nothing to send.
+      if (turnAborted.current) {
+        turnAborted.current = false;
+        returnQueuedToEditor(true);
       }
 
       // Post-turn context-pressure check: free heuristic, idle-only, never
@@ -516,7 +581,7 @@ export function App({
         dispatch({ type: 'notice', text: `diagnostics: ${diagnosticsProblem}`, severity: 'warn' });
       }
     },
-    [runtime],
+    [returnQueuedToEditor, runtime],
   );
 
   const submit = useCallback(
@@ -751,26 +816,45 @@ export function App({
         return;
       }
 
-      // Everything below needs the agent, and the SDK runs one turn at a time. The
-      // draft is deliberately left in the box so nothing typed is lost — but it is
-      // not queued either: sending a prompt written minutes earlier, on its own,
-      // is worse than making the user press enter again.
+      // Everything below needs the agent, and the SDK runs one turn at a time.
+      // A submission while a turn streams or a `!` command runs is **queued**
+      // (SER-027 — deliberately superseding SER-010's "retained, never queued"
+      // contract, by explicit user product decision, 2026-08-19): it leaves the
+      // editor, is listed above the input box, counted on the busy hint, and is
+      // sent through this same path when the session returns to idle. Two
+      // deliberate exceptions keep the old refusal shape:
+      // - compaction owns the keyboard entirely, so this branch is a safety net;
+      // - `/clear`, `/compact`, `/model`, `/exit` and `/quit` replace the session
+      //   or the process, and running one minutes later, unprompted, is worse
+      //   than asking for a second Enter — they refuse, draft retained.
       if (status !== 'idle') {
-        dispatch({
-          type: 'notice',
-          text:
-            status === 'compacting'
-              ? 'still compacting — press enter again once it finishes'
-              : status === 'shell'
-                ? 'a ! command is still running — press enter again when it finishes (ctrl+c cancels it)'
-                : 'still working — press enter again once the turn ends (ctrl+c cancels it)',
-        });
+        if (status === 'compacting') {
+          dispatch({ type: 'notice', text: 'still compacting — press enter again once it finishes' });
+          return;
+        }
+        if (refusesToQueue(text)) {
+          dispatch({
+            type: 'notice',
+            text:
+              status === 'shell'
+                ? `${text.split(/\s/, 1)[0]} does not queue — press enter again when the ! command finishes`
+                : `${text.split(/\s/, 1)[0]} does not queue — press enter again once the turn ends`,
+          });
+          return;
+        }
+        // Nothing is dispatched and nothing is recorded here: a queued entry
+        // becomes a `userInput` only at the moment it is actually sent, and one
+        // taken back or dropped by /clear was never sent at all.
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        setQueued([...queuedRef.current, text]);
         return;
       }
 
       // A user-typed shell command (SER-024). Deliberately *below* the busy check —
-      // the SER-010 contract holds for `!` exactly as for a prompt: mid-turn it is
-      // retained in the draft, never queued, never executed. And deliberately *not*
+      // submitted mid-turn it queues like a prompt (SER-027, the Claude Code shape:
+      // shell commands are held until the turn ends and run one at a time), and a
+      // drained `!` re-enters here at idle. And deliberately *not*
       // through the permission gate: the gate's subject is model tool calls, and a
       // user running their own command needs no approval from themselves — the
       // transcript row, the trajectory record and the held report are the honesty
@@ -792,6 +876,7 @@ export function App({
         const id = `shell-${shellRunCount.current}`;
         dispatch({ type: 'shellStarted', id, command: shellCommand });
         setStatus('shell');
+        turnAborted.current = false;
         try {
           const run = runShellCommand(shellCommand, {
             cwd: runtime.info.projectRoot,
@@ -819,6 +904,14 @@ export function App({
           shellRun.current = undefined;
           setStatus('idle');
           interruptedAt.current = undefined;
+        }
+        // A user-cancelled `!` never silently sends the queue, exactly like a
+        // cancelled turn (SER-027): what was queued behind it comes back to the
+        // editor, visible and unsent. A timeout is not a cancel — the user asked
+        // for nothing there, so the queue drains normally.
+        if (turnAborted.current) {
+          turnAborted.current = false;
+          returnQueuedToEditor(true);
         }
         return;
       }
@@ -885,6 +978,9 @@ export function App({
         // Held `!` reports were destined for the conversation just set aside; the
         // successor starts empty, and the old session's record still has them.
         pendingShellReports.current = [];
+        // The queue dies with the conversation it was typed at (SER-027): nothing
+        // was sent, so nothing is recorded — the entries simply never existed.
+        setQueued([]);
         // Mirrored to the *successor's* diagnostics log: the memoized `dispatch` still
         // points at the predecessor's, which this switch has just closed.
         withNoticeDiagnostics(recordAction, next.diagnostics)({
@@ -969,8 +1065,29 @@ export function App({
 
       await runTurn(toSend);
     },
-    [dispatch, exit, recordAction, runtime, runTurn, startNewSession, status, writeToTerminal],
+    [dispatch, exit, recordAction, returnQueuedToEditor, runtime, runTurn, setEditor, setQueued, startNewSession, status, writeToTerminal],
   );
+
+  // The drain (SER-027): when the session is idle and nothing owns the keyboard,
+  // the oldest queued entry goes back through the ordinary submit path — its own
+  // turn for a prompt, its own run for a `!`, its own `userInput` recorded at
+  // this moment and not before. One entry at a time: `draining` latches while an
+  // entry is in flight (submit awaits expansion before it flips `status`, and a
+  // render in that window must not double-dequeue), and `drainCycle` re-arms the
+  // effect after an entry — a local command, say — that left every other dep
+  // unchanged. Never while a permission decision is pending (the queue is held
+  // untouched under a prompt) and never while `/clear` is assembling a successor.
+  useEffect(() => {
+    if (draining.current || status !== 'idle' || pendingPermission !== undefined || clearing.current) return;
+    const next = queuedRef.current[0];
+    if (next === undefined) return;
+    draining.current = true;
+    setQueued(queuedRef.current.slice(1));
+    void submit(next).finally(() => {
+      draining.current = false;
+      setDrainCycle((cycle) => cycle + 1);
+    });
+  }, [drainCycle, pendingPermission, queued, setQueued, status, submit]);
 
   /**
    * Answers the pending confirmation and, when the user picked an "always allow"
@@ -1051,6 +1168,26 @@ export function App({
   }, [setEditor]);
 
   /**
+   * `Up` as queue take-back (SER-027), or `false` when this keypress is not one.
+   *
+   * Consulted after the completion menu and before prompt recall, and it fires
+   * only when the queue is non-empty, no recall walk is open (an open walk keeps
+   * its own `Up` semantics — one can only open while the queue is empty, and this
+   * guard makes that structural), and the cursor sits on the **first visual row**
+   * of the draft, the empty draft included. Every other keypress falls through:
+   * below the first row `Up` is still cursor movement, and with an empty queue
+   * recall is exactly as reachable as before this feature existed. One press
+   * takes the whole queue back — entries one per line, ahead of any typed text.
+   */
+  const takeBackQueued = useCallback((): boolean => {
+    if (queuedRef.current.length === 0 || recallRef.current !== undefined) return false;
+    const value = editorRef.current;
+    const shape = layoutEditor(value.text, columns, value.cursor);
+    if (shape.cursor.row !== 0) return false;
+    return returnQueuedToEditor(false);
+  }, [columns, returnQueuedToEditor]);
+
+  /**
    * `Up`/`Down` as prompt recall, or `false` when this keypress is not recall at all.
    *
    * Returning `false` is the whole contract: the caller then falls through to
@@ -1129,8 +1266,10 @@ export function App({
     interruptedAt.current = now;
     if (status === 'shell') {
       // The user's own `!` command: TERM its group now, KILL after the grace. The
-      // completion path in submit() reports it as killed and frees the prompt, so
-      // there is nothing else to withdraw — no turn, no pending permission.
+      // completion path in submit() reports it as killed and frees the prompt —
+      // and, because this was a user cancel, returns the queue to the editor
+      // unsent (SER-027) instead of draining it.
+      turnAborted.current = true;
       shellRun.current?.kill();
       dispatch({ type: 'notice', text: 'interrupted — press ctrl+c again to exit' });
       return;
@@ -1142,7 +1281,9 @@ export function App({
 
     // Deny anything waiting so the loop is not left blocked on a prompt. Not
     // close(): the session survives a cancelled turn, so later turns must still
-    // be able to ask for approval.
+    // be able to ask for approval. The abort mark is what keeps the queue from
+    // being silently sent when the cancelled turn winds down (SER-027).
+    turnAborted.current = true;
     permissions.denyPending();
     runtime.cancel();
     dispatch({ type: 'notice', text: 'interrupted — press ctrl+c again to exit' });
@@ -1214,11 +1355,11 @@ export function App({
       return;
     }
 
-    // No guard for a streaming turn: typing during one stays allowed, and the
-    // draft is held back in submit() instead. That is what lets a local command
-    // like /usage be answered mid-turn, without ever queueing a prompt into a
-    // busy agent. (A pending confirmation is different — it took the keyboard
-    // above, because the loop is blocked until it is answered.)
+    // No guard for a streaming turn: typing during one stays allowed, and a
+    // submission during one is queued in submit() (SER-027) — local commands
+    // like /usage still answer mid-turn immediately. (A pending confirmation is
+    // different — it took the keyboard above, because the loop is blocked until
+    // it is answered, and the queue is held untouched while it is up.)
 
     if (key.return) {
       // A trailing backslash is an explicit continuation marker. Consume it so
@@ -1271,10 +1412,11 @@ export function App({
         ? beforeEnter
         : insertAtCursor(beforeEnter, normalizeDraftText(payload));
       // Mirrored into the editor *before* submitting, so a submission the busy
-      // check refuses (SER-010: retained, never queued) leaves the batched text
-      // visible in the draft instead of silently dropping it — a pty or paste can
-      // deliver `text\r` as one event, and retention must not depend on how the
-      // terminal chunked the keystrokes. An accepted submission clears it anyway.
+      // check refuses (SER-027's /clear-family exception keeps SER-010's retention
+      // shape) leaves the batched text visible in the draft instead of silently
+      // dropping it — a pty or paste can deliver `text\r` as one event, and
+      // retention must not depend on how the terminal chunked the keystrokes. An
+      // accepted or queued submission clears it anyway.
       setEditor(next);
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
@@ -1332,9 +1474,11 @@ export function App({
     }
 
     if (key.upArrow || key.downArrow) {
-      // Recall is consulted here — after the completion menu has had both keys, and
-      // before `moveVertical` — and answers `false` for every keypress that is ordinary
+      // The Up chain, in fixed precedence (SER-027 joined it): the completion
+      // menu already took both keys above; queue take-back is consulted next,
+      // then recall — each answers `false` for every keypress that is ordinary
       // cursor movement, which is what leaves a multi-line draft's rows navigable.
+      if (key.upArrow && takeBackQueued()) return;
       if (stepRecall(key.upArrow ? 'older' : 'newer')) return;
       const moved = moveVertical(layout, key.upArrow ? -1 : 1, preferredColumn.current);
       setEditor((current) => ({ ...current, cursor: moved.cursor }));
@@ -1406,6 +1550,13 @@ export function App({
           maxRows={grants.tools}
         />
 
+        {/* Queued mid-turn submissions (SER-027), above the input box like the
+            peer shape — and above the permission box too: the queue is held
+            untouched while a decision is pending, and held state must stay
+            visible. A sibling here, so InputBox's parent-relative metrics absorb
+            its height and the cursor stays on its draft row. */}
+        <QueuedMessages entries={queued} maxRows={grants.queued} />
+
         {pendingPermission !== undefined ? (
           <PermissionPrompt
             request={pendingPermission}
@@ -1433,15 +1584,16 @@ export function App({
 }
 
 /** The hint row under the draft, or nothing when the session is idle. */
-function hintForStatus(status: Status, busyReadout?: string): string | undefined {
+function hintForStatus(status: Status, busyReadout?: string, queuedCount = 0): string | undefined {
   if (status === 'streaming') {
     // The live readout rides directly behind `working…`, ahead of the static command
     // hints: the row is one truncated <Text>, so on a narrow terminal the tail is what
-    // goes missing, and the tail should be the part that never changes.
-    return `working…${busyReadout ?? ''} /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn`;
+    // goes missing, and the tail should be the part that never changes. The queue
+    // count (SER-027) rides with it: even a listing cut to nothing stays counted here.
+    return `working…${busyReadout ?? ''}${queuedCountHint(queuedCount)} /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn`;
   }
   // Elapsed lives on the command's own panel row, so this row can stay static.
-  if (status === 'shell') return 'running ! command… ctrl+c cancels it';
+  if (status === 'shell') return `running ! command…${queuedCountHint(queuedCount)} ctrl+c cancels it`;
   return status === 'compacting' ? 'compacting conversation…' : undefined;
 }
 

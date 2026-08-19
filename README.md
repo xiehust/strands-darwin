@@ -14,8 +14,10 @@ Each bullet links to the section that documents it in full.
   prompt, derived from the proposed edit itself), and a busy line that ticks elapsed time and
   token spend while a turn runs.
 - **Prompt affordances** — `/` completion over commands, skills and custom commands, `@` path
-  completion that inserts the path text (never file contents), and `↑`/`↓` recall of the
-  prompts already sent in this session.
+  completion that inserts the path text (never file contents), `↑`/`↓` recall of the
+  prompts already sent in this session, and a prompt queue: messages typed while a turn runs
+  are listed above the input box and sent, one per turn, when it ends — `↑` takes them back
+  into the editor, and cancelling a turn returns them unsent.
 - **[Sessions](#sessions-and---resume)** — snapshotted per repository after every turn;
   `--resume` and `--session <id>` reopen them, `/clear` starts fresh, and `trajectory fork`
   branches a conversation.

@@ -51,13 +51,15 @@ pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-ta
 `spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model`,
 `spike/verify-tui.ts mode`, `spike/verify-tui.ts clear`, `spike/verify-tui.ts completion`,
 `spike/verify-tui.ts pathCompletion`, `spike/verify-tui.ts recall`,
-`spike/verify-tui.ts recallEmpty`, `spike/verify-tui.ts bang` and `spike/verify-tui.ts mcp` make no
-model calls at all, so all ten are free to run;
+`spike/verify-tui.ts recallEmpty`, `spike/verify-tui.ts bang`, `spike/verify-tui.ts queue` and
+`spike/verify-tui.ts mcp` make no model calls at all, so all eleven are free to run;
 `completion` is the scenario to re-run after touching the built-in slash commands, since the menu row
 count (`MAX_COMPLETIONS`) has to keep every built-in visible, `pathCompletion` is its `@`
 counterpart, `recall` is the one that keeps `Up`/`Down` shared between the menu, the cursor and
 prompt history (its history is seeded straight into a trajectory record, which is why it costs
-nothing), `bang` proves a real `!` command runs, streams and records without the model, and `mcp`
+nothing), `bang` proves a real `!` command runs, streams and records without the model, `queue`
+proves the SER-027 prompt queue (listing, `Up` take-back, cancel return, `/clear`-family refusal)
+against a `!` busy state, and `mcp`
 proves the `/mcp` report over a real broken-plus-healthy server pair with in-repo fixtures only.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
@@ -98,8 +100,9 @@ in `pnpm test`. All checks listed here are free (no model call) unless marked *l
 | Streaming answers into `<Static>` | Complete lines committed while the turn runs; last non-blank + trailing blanks held back; the authoritative `contentBlockEvent` reconciles, divergence is stated; `AnswerPart` decides labels at push time and `formatReplay` respects the same flags | `src/tui/turn-state.ts` | doc § |
 | Markdown styling | A projection, never a rewrite: every character kept, markers dimmed in place; ANSI-stripped output *is* the committed text and `/export` stays byte-identical; fence state is one boolean decided at push time; answers only | `src/tui/markdown.ts`, `src/tui/MarkdownText.tsx` | `frontend/live-frame.md`; `verify-markdown.tsx`†, `verify-visual-language.tsx`† |
 | `@` path completion | Inserts the path text, never file content — the module opens no file (grepped for read APIs); bounded, exclusion-first, cached async scan never awaited by a keystroke; no-match draws no menu; `computeCompletions` wins when it has candidates | `src/tui/path-completion.ts` | `frontend/prompt-completion.md`; `verify-path-completion.ts`†, `tui pathCompletion` |
-| Prompt recall | A reader over the session's `userInput` trajectory lines — no history store, ever; fires only from an empty draft (or an open walk's first row), everything else falls through; only *sent* prompts, entries over 4000 code points excluded; absence is an answer | `src/trajectory/prompt-history.ts`, `src/tui/prompt-recall.ts` | `frontend/prompt-recall.md`; `verify-prompt-recall.ts`†, `tui recall` / `recallEmpty` |
-| `!` shell commands | User-authorized, never through the gate (its subject is model tool calls) — runs in every mode including plan; one-shot `bash -c` process group with TERM→KILL timeout/cancel, never the runtime's persistent shell; one bounded projection (SER-009 vocabulary, under the record's field cap) feeds transcript row, `shellCommand` record and the report prepended to the *next* prompt; mid-turn follows SER-010 (retained, never queued); live output borrows the tool panel — no new frame surface; never a `userInput` line, so recall never offers it; replay prints it via the same reducer | `src/tui/shell-command.ts` | `frontend/live-frame.md`, `backend/session-trajectory.md`; `verify-shell-command.ts`†, `tui bang` |
+| Prompt recall | A reader over the session's `userInput` trajectory lines — no history store, ever; fires only from an empty draft (or an open walk's first row), after the menu and the queue take-back (SER-027) have passed, everything else falls through; only *sent* prompts, entries over 4000 code points excluded; absence is an answer | `src/trajectory/prompt-history.ts`, `src/tui/prompt-recall.ts` | `frontend/prompt-recall.md`; `verify-prompt-recall.ts`†, `tui recall` / `recallEmpty` |
+| `!` shell commands | User-authorized, never through the gate (its subject is model tool calls) — runs in every mode including plan; one-shot `bash -c` process group with TERM→KILL timeout/cancel, never the runtime's persistent shell; one bounded projection (SER-009 vocabulary, under the record's field cap) feeds transcript row, `shellCommand` record and the report prepended to the *next* prompt; mid-turn it queues like a prompt (SER-027) and runs at drain time; live output borrows the tool panel — no new frame surface; never a `userInput` line, so recall never offers it; replay prints it via the same reducer | `src/tui/shell-command.ts` | `frontend/live-frame.md`, `backend/session-trajectory.md`; `verify-shell-command.ts`†, `tui bang` |
+| The prompt queue | Supersedes SER-010 by explicit user decision (2026-08-19): busy submissions queue — listed as counted budget rows (after tools, floor 0), counted on the busy hint; drained one entry per idle through the ordinary `submit()` path (next-turn-only, never mid-stream injection); `/clear`/`/compact`/`/model`/`/exit`/`/quit` refuse instead; `Up` from the first draft row takes the queue back (menu > take-back > recall); cancel/failure returns it unsent, permission pending holds it, `/clear` drops it; recorded only at send time | `src/tui/prompt-queue.ts`, `src/tui/QueuedMessages.tsx` | `frontend/live-frame.md`, `frontend/prompt-recall.md`; `verify-prompt-queue.ts`†, `tui queue` / `bang`, `tui usage` (*live*) |
 
 ## Project conventions worth knowing before editing
 

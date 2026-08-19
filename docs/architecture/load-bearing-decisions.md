@@ -529,10 +529,41 @@ conversation it was destined for. Execution is a **one-shot `bash -c` in its own
 not the runtime's persistent shell: a hung `!` must not block the model's serialized shell or cost
 its state, so timeout (2 min) and Ctrl+C both TERM→KILL the group and the busy state always ends —
 the stated tradeoff is that `!cd` persists nowhere. The prefix triggers only at the start of the
-trimmed draft; mid-turn submission follows SER-010 (retained, never queued — `status: 'shell'` runs
-the same check); the live command borrows the existing tool panel (spinner, elapsed, always-visible
+trimmed draft; a mid-turn `!` queues like a prompt (SER-027 — see § the prompt queue; the Claude
+Code shape: shell commands are held until the turn ends and run one at a time, each through this
+same path at drain time); the live command borrows the existing tool panel (spinner, elapsed,
+always-visible
 tail rows counted through the same `toolDetailsVisible`/`toolInputRows` the panel draws with), so no
 new frame surface exists. The record is **not** `userInput` — prompt recall never offers a `!` back —
 and replay *prints* it through the same `turnReducer` action the live session dispatched, so live
 and replayed transcripts are one projection. Free checks: `spike/verify-shell-command.ts`,
 `spike/verify-tui.ts bang`.
+
+## The prompt queue
+
+**A submission while the session is busy queues, visibly, and is sent when the turn ends**
+(`src/tui/prompt-queue.ts`, `src/tui/QueuedMessages.tsx`, App state in `src/tui/App.tsx`; contract:
+`.trellis/spec/frontend/live-frame.md` § a busy submission queues). SER-027 **deliberately
+supersedes SER-010's "retained, never queued" contract by explicit user product decision**
+(2026-08-19, `docs/research/research_2026-08-19.md` addendum `02:01:06Z`) — the peer shape is
+Claude Code's queue-while-working. Scope was decided with the reopening: **next-turn-only
+delivery**, never injection into a running SDK stream. Delivery is **sequential** — when the
+session returns to idle, a `useEffect` drains one entry at a time through the ordinary `submit()`
+path, so a queued prompt is its own turn, a queued `!` its own run, and every entry keeps exactly
+the meaning it would have had at idle; joined-as-one-prompt was rejected because a queue can hold a
+mix of prompts, `!` commands and slash expansions, which no single string preserves. What refuses
+instead of queueing is a closed set (`refusesToQueue`): `/clear`, `/compact`, `/model`, `/exit`,
+`/quit` — session-replacing commands whose delayed, unprompted execution would be worse than a
+second Enter; they keep SER-010's refusal-with-retained-draft shape, stated as the deliberate
+exception. Local report commands stay above the busy check and keep answering mid-turn. The
+listing is a fourth **frame-budget participant** (after tools, before the answer, floor 0), one
+`queued ·` row per entry with the cut stated, and the busy hint carries ` · N queued` so a fully
+cut listing still cannot accumulate invisibly. `Up` from the draft's first visual row takes the
+whole queue back into the editor ahead of typed text — the gesture joins the key chain between the
+completion menu and prompt recall (`.trellis/spec/frontend/prompt-recall.md`). A **cancel or a
+failed turn returns the queue to the editor unsent** (auto-resending into an error is how retry
+loops start), a pending permission holds it untouched, and `/clear` drops it with the conversation.
+Nothing is recorded at enqueue time: a drained entry becomes a `userInput` at send time, and an
+entry taken back or dropped was never sent — trajectory honesty by construction, which is also why
+prompt recall needed no change. Free checks: `spike/verify-prompt-queue.ts`,
+`spike/verify-tui.ts queue` / `bang`; live: the `usage` scenario's mid-turn half.

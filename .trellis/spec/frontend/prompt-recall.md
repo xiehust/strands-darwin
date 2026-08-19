@@ -85,12 +85,23 @@ already draws (never a row of its own — `live-frame.md`).
 
 ## Contract: recall takes no key that already had a meaning
 
-`Up`/`Down` already do two jobs — selecting completion rows and moving between the *visual rows* of a
-multi-line draft. Recall is third in line, and the order is enforced by where it is consulted in
-`App.tsx`'s `useInput`, not by a predicate that could drift:
+`Up`/`Down` already do three jobs — selecting completion rows, taking the prompt queue back
+(SER-027), and moving between the *visual rows* of a multi-line draft. Recall is fourth in line,
+and the order is enforced by where each is consulted in `App.tsx`'s `useInput`, not by a predicate
+that could drift:
 
 1. **A completion menu wins.** The `completions.length > 0` branches handle both keys first, so
    recall is unreachable while a `/` or `@` menu is open — by construction.
+1a. **Queue take-back is next** (`takeBackQueued`, SER-027 — contract in `live-frame.md` § a busy
+   submission queues): `Up` with a non-empty queue, no open recall walk, and the cursor on the
+   **first visual row** of the draft (the empty draft included) returns every queued entry to the
+   editor, one per line, ahead of any typed text. Every other keypress falls through. With the
+   queue non-empty and the draft empty, take-back therefore wins over recall — the entries the
+   user just queued outrank the record — and the very next `Up` reaches recall again, because a
+   take-back empties the queue. An open walk keeps its `Up` semantics untouched: a walk can only
+   open while the queue is empty (take-back would have consumed that `Up`), and the guard makes
+   that structural rather than temporal. Below the first row, `Up` is still cursor movement even
+   with a queue.
 2. **`Up` recalls only from an empty draft**, or from the first visual row of a draft that *is* an
    open walk. A non-empty draft the user typed falls through to `moveVertical` exactly as before, so
    **recall can never replace typed text**. That is why no stashed draft exists: there is nothing to
@@ -134,5 +145,6 @@ the shape read back is the shape darwin writes — and the pure walk), `spike/ve
 (the bindings coexisting, the collapse, the earlier session, byte identity) and `recallEmpty`
 (`trajectory: false` and a project with no record degrade to no history), `spike/verify-frame-budget.ts`
 (the indicator in the "never taller than its grant" matrix, and its position between draft and menu),
-plus `verify-tui.ts cursor`, `multiline`, `completion`, `pathCompletion` and `tallDraft` for the keys
-and rows recall must not have taken.
+plus `verify-tui.ts cursor`, `multiline`, `completion`, `pathCompletion`, `tallDraft` and `queue` for
+the keys and rows recall must not have taken — `queue` also proves recall is reached again the
+moment the queue empties.
