@@ -1127,3 +1127,51 @@ Token spend, single managed task: `input=192 output=49,596 cacheRead=8,869,967 c
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-19 | `33d5bb0` | `darwin sessions` lists this project's resumable sessions; `--resume <id>` reopens one by choice |
+
+### Batch 29 — `/status` answers "what is this session running as" in one block (2026-08-19)
+
+Origin: `docs/research/research_2026-08-19.md`, run `01:20:26Z` (rolled `peer`). Codex documents
+`/status` as "show current session configuration"; darwin spread the answer over the header plus
+six partial commands (`/usage`, `/context`, `/mode`, `/permissions`, `/mcp`, `/effort`). SER-026
+(Score 10) was the batch's third direction — importance honestly low (nothing was unknowable),
+which is why it ranked last.
+
+Child session `session-20260819-035915969`; first managed task `bg-d1f5f1ce` died in a transient
+`Stream ended without completing a message` during research with nothing written, retry task
+`bg-e368eec6` (same session, exit 0) carried the work to commit with no correction turn.
+Delivered in `799a072` (+ task archive `9058224`): `/status` renders one aligned transcript block
+— model/provider with the header's own cache and effort suffixes, session id with `(resumed)`,
+mode in the header's wording plus the live allow-rule count, MCP server states in `/mcp`'s
+vocabulary (a failed server stated as failed, never omitted), bounded skill names, trajectory and
+diagnostics state, process token spend through `usageBuckets` (`not reported`, never 0) with the
+resumed/in-flight caveats, and the `/context` estimate degrading to one `unavailable — <reason>`
+line. Anti-divergence by construction: `formatPromptCache`/`formatThinking` *moved* out of
+`App.tsx` into `status-format.ts` and the header now imports them, so header and `/status` cannot
+describe cache or effort differently; `/context`'s value rendering was likewise extracted and
+shared. Every `StatusFacts` field documents the pre-existing accessor it reads — the diff touches
+no `runtime.ts` line, which is the "formatter, never a new information channel" contract made
+visible. `MAX_COMPLETIONS` grew 14→15 with the new built-in, and the new spike pins
+`MAX_COMPLETIONS >= BUILTIN_COMMAND_NAMES.length`.
+
+Host acceptance independently read the full 11-file diff and re-ran: `pnpm typecheck` (exit 0);
+`pnpm test` (exit 0, 49 suite summaries, all `0 failed`, incl. the new
+`verify-status-command.ts` 40/40); free pty `completion` 47 (the `/status` menu row, a live
+render with no MCP configured, and `/status extra` degradation all asserted), `mcp` 13 (all nine
+original assertions unchanged plus the failed-server-in-`/status` ones), `pathCompletion` 18,
+`bang` 16, `recall` 20, `mode` 25; `git show --check` on both commits; Trellis archive validation
+(`✓`); AGENTS.md 17,532 B under the preload cap; protected docs untouched. Host's own
+7-assertion formatter probe passed: failed server named and stated, unknown cache buckets read
+`not reported` and never 0, nine skills bounded to six names plus `… 3 more`, context failure
+costs one line and never the report, `(resumed)` and the in-flight caveat appear exactly when
+true. One caveat carried from the child's report, verified against `runtime.ts` docs: `/status`
+awaits the same `contextEstimate()` `/context` uses, whose first native-count attempt per model
+may make one cheap non-generating CountTokens call — no model turn is ever started, and the free
+pty scenarios prove the report answers without one.
+
+Token spend, two managed tasks: `input=62 output=5,631 cacheRead=1,359,509 cacheWrite=70,064`
+(failed first attempt) + `input=172 output=51,038 cacheRead=10,505,241 cacheWrite=163,645`
+(retry to completion) = `input=234 output=56,669 cacheRead=11,864,750 cacheWrite=233,709`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-19 | `799a072` | `/status` consolidates the live session's configuration and state into one honest read-only report |
