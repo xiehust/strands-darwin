@@ -125,33 +125,46 @@ assert('empty output polls disappear and malformed payloads fall back',
   }]).kind === 'suppress' &&
   compactBackgroundResult('status', { taskId: TASK_ID }, [{ type: 'textBlock', text: 'not json' }]).kind === 'fallback');
 
+const waitOutputPayload = waitPayload({
+  reason: 'output',
+  output: outputPayload({ output: 'incremental wait output\n', endOffset: 24 }),
+});
+const providerVisibleWaitResult = JSON.stringify(waitOutputPayload);
+
 const waitOutputProjection = compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+  type: 'jsonBlock', json: waitOutputPayload,
+}]);
+assert('compact projection leaves the provider-visible wait result untouched',
+  JSON.stringify(waitOutputPayload) === providerVisibleWaitResult);
+
+const terminalStatus = statusPayload({
+  state: 'succeeded',
+  finishedAt: '2026-01-01T00:00:01.000Z',
+  exitCode: 0,
+});
+const terminalWaitProjection = compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+  type: 'jsonBlock', json: waitPayload({ reason: 'terminal', status: terminalStatus }),
+}]);
+const terminalWaitWithOutputProjection = compactBackgroundResult('wait', { taskId: TASK_ID }, [{
   type: 'jsonBlock', json: waitPayload({
     reason: 'output',
-    output: outputPayload({ output: 'incremental wait output\n', endOffset: 24 }),
-  }),
-}]);
-const terminalWaitProjection = compactBackgroundResult('wait', { taskId: TASK_ID }, [{
-  type: 'jsonBlock', json: waitPayload({
-    reason: 'terminal',
-    status: statusPayload({
-      state: 'succeeded',
-      finishedAt: '2026-01-01T00:00:01.000Z',
-      exitCode: 0,
-    }),
+    status: terminalStatus,
+    output: outputPayload({ output: 'final incremental output\n', endOffset: 25 }),
   }),
 }]);
 const emptyRunningWaitReasons = ['changed', 'timeout', 'cancelled', 'shutdown'] as const;
-assert('wait projections suppress empty running observations and retain only useful output or terminal state',
+assert('wait projections suppress every valid running result and retain only terminal state',
   emptyRunningWaitReasons.every((reason) =>
     compactBackgroundResult('wait', { taskId: TASK_ID }, [{
       type: 'jsonBlock', json: waitPayload({ reason }),
     }]).kind === 'suppress') &&
-  waitOutputProjection.kind === 'compact' &&
-  waitOutputProjection.preview === 'incremental wait output' &&
-  !waitOutputProjection.preview.includes('/private') &&
+  waitOutputProjection.kind === 'suppress' &&
   terminalWaitProjection.kind === 'compact' &&
-  terminalWaitProjection.summary === 'bash wait: bg-12345678 succeeded');
+  terminalWaitProjection.summary === 'bash wait: bg-12345678 succeeded' &&
+  terminalWaitProjection.preview === '' &&
+  terminalWaitWithOutputProjection.kind === 'compact' &&
+  terminalWaitWithOutputProjection.summary === 'bash wait: bg-12345678 succeeded' &&
+  terminalWaitWithOutputProjection.preview === '');
 
 const started = compactBackgroundResult('start', { command: 'sleep 10' }, [{
   type: 'jsonBlock', json: { taskId: TASK_ID, pid: 42, outputPath: '/private/task.log' },
@@ -249,37 +262,39 @@ for (const [index, reason] of emptyRunningWaitReasons.entries()) {
   assert('valid empty running waits create no static history', compact.history.length === beforeWait);
 }
 
+const beforeRunningWaitOutput = compact.history.length;
 compact = reduce(compact, before('wait-output', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
 compact = reduce(compact, after('wait-output', waitPayload({
   reason: 'output',
   output: outputPayload({ output: 'distinct wait chunk\n', endOffset: 20 }),
 })));
-const waitOutput = compact.history.at(-1);
-assert('non-empty wait output excludes nested status and cursor metadata',
-  waitOutput?.kind === 'tool' && waitOutput.preview === 'distinct wait chunk' &&
-  !waitOutput.preview.includes('sleep 10') && !waitOutput.preview.includes('/private') &&
-  !waitOutput.preview.includes('startOffset'));
+assert('successful running waits with non-empty output create no static history',
+  compact.history.length === beforeRunningWaitOutput && compact.activeTools.length === 0);
 
+const beforeTerminalWait = compact.history.length;
 compact = reduce(compact, before('wait-terminal', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
 compact = reduce(compact, after('wait-terminal', waitPayload({
   reason: 'terminal',
   status: statusPayload({ state: 'failed', finishedAt: '2026-01-01T00:00:01.000Z', exitCode: 1 }),
 })));
 const terminalWait = compact.history.at(-1);
-assert('an empty terminal wait retains one concise terminal row',
+assert('a terminal wait without output retains exactly one concise terminal row',
+  compact.history.length === beforeTerminalWait + 1 && compact.activeTools.length === 0 &&
   terminalWait?.kind === 'tool' && terminalWait.summary === 'bash wait: bg-12345678 failed' &&
   terminalWait.preview === '');
-const beforeSecondWaitChunk = compact.history.length;
-compact = reduce(compact, before('wait-output-2', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
-compact = reduce(compact, after('wait-output-2', waitPayload({
+const beforeTerminalWaitOutput = compact.history.length;
+compact = reduce(compact, before('wait-terminal-output', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+compact = reduce(compact, after('wait-terminal-output', waitPayload({
   reason: 'output',
-  output: outputPayload({ output: 'second wait chunk\n', startOffset: 20, endOffset: 38 }),
+  status: statusPayload({ state: 'succeeded', finishedAt: '2026-01-01T00:00:01.000Z', exitCode: 0 }),
+  output: outputPayload({ output: 'final wait chunk\n', startOffset: 20, endOffset: 37 }),
 })));
-const secondWaitOutput = compact.history.at(-1);
-assert('distinct non-empty wait chunks remain distinct history entries',
-  compact.history.length === beforeSecondWaitChunk + 1 && waitOutput !== undefined &&
-  compact.history.includes(waitOutput) && secondWaitOutput?.kind === 'tool' &&
-  secondWaitOutput.preview === 'second wait chunk');
+const terminalWaitWithOutput = compact.history.at(-1);
+assert('a terminal wait with output still retains exactly one concise terminal row',
+  compact.history.length === beforeTerminalWaitOutput + 1 && compact.activeTools.length === 0 &&
+  terminalWaitWithOutput?.kind === 'tool' &&
+  terminalWaitWithOutput.summary === 'bash wait: bg-12345678 succeeded' &&
+  terminalWaitWithOutput.preview === '');
 
 compact = reduce(compact, before('output', { mode: 'output', taskId: TASK_ID }));
 compact = reduce(compact, after('output', outputPayload({ output: 'meaningful child output\n', endOffset: 24 })));
@@ -356,11 +371,12 @@ const expandedStatus = expanded.history.at(-1);
 assert('expanded mode retains the ordinary full successful preview',
   expandedStatus?.kind === 'tool' && expandedStatus.preview.includes('/private/task.log'));
 expanded = reduce(expanded, before('expanded-wait', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
-expanded = reduce(expanded, after('expanded-wait', waitPayload()));
+expanded = reduce(expanded, after('expanded-wait', waitOutputPayload));
 const expandedWait = expanded.history.at(-1);
-assert('expanded wait retains the ordinary full successful preview and input',
+assert('expanded wait retains the ordinary full successful preview, output, and input',
   expandedWait?.kind === 'tool' && expandedWait.preview.includes('/private/task.log') &&
-  expandedWait.preview.includes('sleep 10') && expandedWait.inputPreview.includes('waitMs'));
+  expandedWait.preview.includes('sleep 10') &&
+  expandedWait.preview.includes('incremental wait output') && expandedWait.inputPreview.includes('waitMs'));
 
 expanded = reduce(expanded, before('expanded-denied', { mode: 'stop', taskId: TASK_ID }));
 expanded = reduce(expanded, afterText('expanded-denied', 'DENIED: stop refused\nowner: policy'));

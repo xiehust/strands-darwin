@@ -675,10 +675,10 @@ modes are:
 A task is `running`, `succeeded`, `failed`, or `stopped`. The local `/tasks` command lists
 all jobs in this run with concise command text and elapsed time, without sending a model
 request; it is also available while a turn streams. Background lifecycle tool calls render
-compactly by default: repeated successful status, empty output polls, and empty running waits
-do not fill scrollback; wait output appears without repeated status/command metadata, and an
-empty terminal wait becomes one concise state row. Child output and failures remain visible.
-Press `Ctrl+B` to toggle expanded lifecycle
+compactly by default: repeated successful status and empty output polls do not fill scrollback,
+and successful waits are ephemeral while a task is running even when they carry output. A
+terminal wait becomes one concise state row whether or not it also carries output. Child output
+from explicit `output` calls and failures remain visible. Press `Ctrl+B` to toggle expanded lifecycle
 results for active and subsequent calls; the current prompt draft is left untouched. Darwin
 also adds a dim transcript notice as each task succeeds, fails, or is stopped, including
 failure exit metadata when available.

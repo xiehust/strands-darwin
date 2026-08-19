@@ -104,13 +104,6 @@ export function compactBackgroundResult(
       if (!isWaitResult(payload) || !matchesInputTaskId(input, payload.status.taskId)) {
         return { kind: 'fallback' };
       }
-      if (payload.output.output !== '') {
-        return {
-          kind: 'compact',
-          summary: `bash wait: ${compactTaskId(payload.status.taskId)}`,
-          preview: payload.output.output.trimEnd(),
-        };
-      }
       if (payload.status.state === 'running') return { kind: 'suppress' };
       return {
         kind: 'compact',

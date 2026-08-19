@@ -2,7 +2,7 @@
 
 ## Goal
 
-Keep repeated background `bash wait` calls legible in the TUI by showing only the information that changed, rather than repeatedly printing the wait result's full status snapshot and background command.
+Keep background `bash wait` polling ephemeral in compact TUI mode, so successful polls do not fill scrollback while terminal state remains visible.
 
 ## Background
 
@@ -14,25 +14,23 @@ Keep repeated background `bash wait` calls legible in the TUI by showing only th
 
 - Recognize `bash` calls with `mode: 'wait'` as background lifecycle calls.
 - In compact mode, show an active wait as a bounded short-task-id row.
-- For a successful wait with non-empty incremental output, retain that output in concise tool history without status, command, path, cursor, or timeout metadata.
-- Suppress successful waits that have no incremental output while the task remains running, including timeout/change observations.
-- When a successful wait observes terminal task state with no output, retain one concise terminal-state row.
+- In compact mode, suppress every valid successful wait while the observed task state remains `running`, whether incremental output is empty or non-empty and regardless of the wait reason.
+- When a valid successful wait observes terminal task state, retain exactly one concise short-task-id/state row and suppress its output, if any.
 - Preserve the ordinary bounded diagnostic fallback for malformed successful payloads and all denied/error results.
-- Expanded mode must continue to show the ordinary bounded input and full successful result projection.
-- Do not coalesce or discard distinct non-empty output chunks; each is newly consumed output and belongs in history.
+- Expanded mode must continue to show the ordinary bounded input and full successful result projection, including wait output.
+- Keep the provider/model-visible tool result unchanged; suppression applies only to compact TUI history.
 
 ## Acceptance Criteria
 
 - [x] Compact active rows render `bash wait: <short-id>` rather than the full task UUID.
-- [x] Repeated valid running waits with empty output add no `<Static>` history entries.
-- [x] Valid non-empty wait output appears without repeated `status.command`, paths, offsets, or raw JSON wrapper.
-- [x] A terminal wait with no output produces a concise row naming the task and terminal state.
+- [x] Repeated valid running waits add no `<Static>` history entries whether output is empty or non-empty.
+- [x] A terminal wait produces exactly one concise row naming the task and terminal state whether output is empty or non-empty.
 - [x] Malformed, denied, and error wait results remain visible and diagnostic.
-- [x] Expanded mode and foreground bash rendering retain their existing behavior.
-- [x] Focused background-tool UI checks, `pnpm typecheck`, and the fast test suite pass.
+- [x] Expanded mode, foreground bash rendering, and provider/model-visible wait results retain their existing behavior.
+- [x] Focused background-tool UI checks and `pnpm typecheck` pass.
 
 ## Out of Scope
 
 - Changing wait polling, cursor consumption, timeout limits, process cleanup, or provider-visible tool results.
-- Combining separate non-empty output chunks or changing the output emitted by the background process.
+- Changing, combining, or discarding wait output in the provider/model-visible tool result.
 - Adding a new live-frame surface or altering trajectory/replay formats.
