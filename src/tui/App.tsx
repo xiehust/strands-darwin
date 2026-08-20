@@ -109,6 +109,7 @@ import {
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
 import { formatDispatchCompletion, formatDispatchesReport } from './subagent-format.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
+import { formatHelpReport } from './help-format.js';
 import { formatMcpReport } from './mcp-format.js';
 import { formatPromptCache, formatStatusReport, formatThinking } from './status-format.js';
 import { initialTurnState, turnReducer, type HistoryItem, type TurnAction } from './turn-state.js';
@@ -628,6 +629,22 @@ export function App({
     async (raw: string) => {
       const text = raw.trim();
       if (text === '') return;
+
+      // A bounded pure projection of canonical commands and fixed input controls.
+      // It owns every whitespace-separated /help form before the busy guard, so an
+      // argument is rejected locally and a valid report remains available while a
+      // turn or user `!` command is running. No runtime accessor, tool, or I/O is
+      // involved; the existing transcript notice is its only output surface.
+      if (/^\/help(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        dispatch({
+          type: 'notice',
+          text: text === '/help' ? formatHelpReport() : '/help takes no arguments',
+        });
+        return;
+      }
 
       // Answered from the SDK's meter, never sent to the model: a report on token
       // spend that costs a turn of its own would be self-defeating. Handled before

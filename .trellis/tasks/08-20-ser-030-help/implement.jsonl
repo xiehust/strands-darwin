@@ -1,0 +1,6 @@
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Real-pty input and local-report verification contracts."}
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Transcript notice versus live-frame surface and bounded rendering contract."}
+{"file":".trellis/spec/frontend/prompt-completion.md","reason":"Canonical slash inventory, completion cap, and keyboard precedence."}
+{"file":".trellis/spec/frontend/prompt-recall.md","reason":"Recall and queued-message take-back precedence."}
+{"file":"docs/research/research_2026-08-20.md","reason":"SER-030 origin and repository evidence."}
+{"file":".trellis/tasks/08-20-ser-030-help/research/repository.md","reason":"Implementation seams and test strategy discovered before coding."}

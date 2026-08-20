@@ -311,12 +311,20 @@ Keys:
 
 | Key | Effect |
 |---|---|
-| `Enter` | send |
+| `Enter` | send; with a completion open, accept the selected row |
+| `Ctrl+J`, trailing `\` + `Enter` | insert a newline; multiline paste inserts every line without sending |
+| `/` | list built-in/project commands and skills; `↑`/`↓` to pick, `Tab` or `Enter` to complete |
+| `@` | complete a workspace path into the prompt (path text only, never file content) |
+| `!<command>` | run your shell command locally; while busy, prompt submissions queue |
+| `↑` / `↓` | completion selection first; then queued-message take-back (`↑`), prompt recall, or multiline cursor movement |
+| `Home` / `End`, `Ctrl+A` / `Ctrl+E` | move to the start/end of the visible prompt row |
+| `Ctrl+K` / `Ctrl+U`, `Ctrl+W` | delete to the row end/start, or delete the previous word |
 | `y` / `n` / `Esc` | answer a permission prompt (`Esc` denies) |
-| `/` | list skills; `↑`/`↓` to pick, `Tab` or `Enter` to complete |
-| `Ctrl+B` | toggle compact/expanded background bash details |
-| `Ctrl+C` | cancel the current turn; press again within 2s to quit |
+| `Ctrl+B` | toggle compact/expanded tool details |
+| `Ctrl+C` | cancel busy work; press again within 2s to quit (while idle, quit immediately) |
 | `Ctrl+D`, `/exit`, `/quit` | quit |
+
+Run `/help` for the bounded in-session command, prompt-syntax, and keyboard reference.
 
 ## Project instructions (AGENTS.md)
 
@@ -1114,9 +1122,6 @@ Note that the snapshot path includes the agent id, so changing `AGENT_ID` in
 
 ## Known limitations
 
-- **Input is single line.** Ink delivers Enter as a keypress rather than a newline, so
-  multi-line editing would need a separate submit binding plus wrapping and cursor
-  handling. Pasted multi-line text is accepted and submitted at the first newline.
 - **Streamable HTTP MCP is configured but not live-tested.** The configuration path is
   verified; no public HTTP MCP server was available to connect to. stdio is tested
   end to end.

@@ -23,9 +23,9 @@ store would immediately disagree with the first, and the disagreement would be i
 - **What is in history is what was *sent*.** `userInput.text` is the string handed to
   `agent.stream()` (`session-trajectory.md` § the record's shape), which decides most cases for
   free and two deliberately:
-  - local commands (`/usage`, `/effort`, `/mode`, `/tasks`, `/agents`, `/trajectory`, `/model`,
-    `/compact`, `/clear`, `/exit`) never reach `AgentRuntime.send` and so are **absent** — they are
-    session controls, not prompts, and nothing filters them;
+  - local commands (`/help`, `/usage`, `/effort`, `/mode`, `/tasks`, `/agents`, `/trajectory`,
+    `/model`, `/compact`, `/clear`, `/exit`) never reach `AgentRuntime.send` and so are **absent** —
+    they are session controls, not prompts, and nothing filters them;
   - a **`!` shell command** (SER-024) is absent for the same structural reason, and deliberately so:
     it is recorded as a `shellCommand` record, never a `userInput` line, because nothing was handed
     to `agent.stream()` — recall's contract is "what the session *sent*", and rerunning a shell
@@ -146,5 +146,7 @@ the shape read back is the shape darwin writes — and the pure walk), `spike/ve
 (`trajectory: false` and a project with no record degrade to no history), `spike/verify-frame-budget.ts`
 (the indicator in the "never taller than its grant" matrix, and its position between draft and menu),
 plus `verify-tui.ts cursor`, `multiline`, `completion`, `pathCompletion`, `tallDraft` and `queue` for
-the keys and rows recall must not have taken — `queue` also proves recall is reached again the
+the keys and rows recall must not have taken. `/help` states this exact precedence — completion,
+queued-message take-back on `Up`, recall, then cursor movement — so its focused formatter check
+must fail if that discoverability contract drifts. `queue` also proves recall is reached again the
 moment the queue empties.

@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'export', 'mcp', 'mode', 'model', 'permissions', 'status', 'tasks', 'trajectory', 'usage'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'export', 'help', 'mcp', 'mode', 'model', 'permissions', 'status', 'tasks', 'trajectory', 'usage'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -30,6 +30,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // transcript is the trajectory record's replay projection, so /export and
   // `darwin trajectory replay` cannot disagree.
   export: 'write this session\u2019s transcript to a file',
+  help: 'commands, prompt syntax, and keys',
   // Configured servers with their connection state — a failed one is named as
   // failed here instead of silently contributing zero tools.
   mcp: 'MCP servers and their tools',

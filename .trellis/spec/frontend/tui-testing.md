@@ -93,6 +93,21 @@ const enter = typed.match(/^[\r\n]+/)?.[0] ?? typed.match(/[\r\n]+$/)?.[0];
 if (typed.length > 1 && enter !== undefined) handleBatchedEnter(typed, enter);
 ```
 
+## Local `/help` contract
+
+- Match `/help` with any whitespace separator before the busy guard. Exact `/help` dispatches one
+  bounded transcript notice; arguments, including tab/newline-separated arguments, dispatch only
+  `/help takes no arguments`.
+- The formatter is pure over canonical built-in constants and fixed input facts. It cannot receive a
+  runtime, tool, queue, config/session writer, filesystem client, or network client.
+- Verify idle and busy behavior through the free `completion` pty scenario. Use a running `!`
+  command for offline busy state, preserve a queued sentinel across `/help`, assert `/help` itself is
+  never listed as queued, and assert no `working…` model state. The latest frame must not contain the
+  report because the report belongs to existing Static transcript history.
+- Verify the report independently with `verify-help-command.ts`: exact canonical command rows in
+  canonical order, no duplicate/invented names, every required syntax/key fact, and finite line,
+  command, and per-line code-point bounds.
+
 ## Custom slash-command contract
 
 ### 1. Scope / trigger

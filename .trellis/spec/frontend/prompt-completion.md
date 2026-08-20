@@ -56,7 +56,10 @@ path query is consulted only then. A third owner of `Up`/`Down` joined them in `
 behind both: while a menu is open the arrows select rows, and prompt recall is only consulted after
 those branches have declined the key (`prompt-recall.md`). `computeCompletions` itself is untouched by this feature —
 including its "the input must start with `/` and contain no space" rule — and
-`verify-tui.ts completion` remains the check that every built-in is still visible.
+`verify-tui.ts completion` remains the check that every built-in is still visible. `/help`
+is a built-in row and its command section projects `BUILTIN_COMMAND_NAMES` plus
+`BUILTIN_COMMAND_DESCRIPTIONS` directly; it must never own a second name/description inventory.
+`MAX_COMPLETIONS` grows with the canonical list so adding help cannot hide the previous tail.
 
 `InputBox` therefore takes a `completionKind`: a command row is `/name — description`, a path row is
 the path itself with no description (inventing one would mean reading the file). Only the rendering

@@ -930,6 +930,64 @@ async function slashCompletion(): Promise<void> {
       statusReport.includes('cache read not reported') && !statusReport.includes('cache read 0'));
     assert('/status states the context estimate', /context\s+~/.test(statusReport) && statusReport.includes('tokens'));
 
+    // SER-030: help is a bounded transcript notice, not an agent turn. Keep these
+    // after the no-turn export check because the busy fixture below intentionally
+    // records a shell command even though help itself never calls the model.
+    const beforeHelp = tui.mark();
+    tui.submit('/help');
+    await tui.waitFor('help — local controls', { timeoutMs: 30_000, from: beforeHelp, settleMs: 400 });
+    const help = tui.screen.slice(beforeHelp);
+    assert('/help answers locally without starting a model turn',
+      help.includes('commands (16/16):') && help.includes('Ctrl+J or trailing \\ + Enter') &&
+      !help.includes('working…'));
+    assert('/help uses the existing transcript surface and leaves the live controls intact',
+      tui.frame.includes('you>'));
+
+    const beforeHelpArgument = tui.mark();
+    tui.submit('/help extra');
+    await tui.waitFor('/help takes no arguments', { timeoutMs: 30_000, from: beforeHelpArgument, settleMs: 400 });
+    assert('/help rejects space-separated arguments locally',
+      !tui.screen.slice(beforeHelpArgument).includes('working…'));
+
+    const beforeHelpTabArgument = tui.mark();
+    tui.submit('/help\textra');
+    await tui.waitFor('/help takes no arguments', { timeoutMs: 30_000, from: beforeHelpTabArgument, settleMs: 400 });
+    assert('/help rejects tab-separated arguments locally',
+      !tui.screen.slice(beforeHelpTabArgument).includes('working…'));
+
+    const beforeHelpNewlineArgument = tui.mark();
+    tui.send('\u001b[200~/help\nextra\u001b[201~');
+    await tui.waitFor('...> extra', { timeoutMs: 30_000, from: beforeHelpNewlineArgument, settleMs: 200 });
+    tui.send('\r');
+    await tui.waitFor('/help takes no arguments', { timeoutMs: 30_000, from: beforeHelpNewlineArgument, settleMs: 400 });
+    assert('/help rejects newline-separated arguments locally',
+      !tui.screen.slice(beforeHelpNewlineArgument).includes('working…'));
+
+    // Keep one queue entry across a busy /help invocation: the unchanged listing
+    // proves help neither queues itself nor drains/takes back existing work.
+    const beforeBusyHelp = tui.mark();
+    tui.submit('!sleep 30');
+    await tui.waitFor('running ! command…', { timeoutMs: 30_000, from: beforeBusyHelp, settleMs: 200 });
+    tui.submit('help queue sentinel');
+    await tui.waitFor('queued · help queue sentinel', { timeoutMs: 30_000, from: beforeBusyHelp, settleMs: 200 });
+    const beforeBusyReport = tui.mark();
+    tui.submit('/help');
+    await tui.waitFor('help — local controls', { timeoutMs: 30_000, from: beforeBusyReport, settleMs: 400 });
+    const busyHelp = tui.screen.slice(beforeBusyReport);
+    assert('/help remains local during an offline busy state',
+      !busyHelp.includes('working…') && !busyHelp.includes('queued · /help'));
+    assert('/help leaves the existing queue and busy surfaces unchanged',
+      tui.frame.includes('queued · help queue sentinel') && tui.frame.includes('running ! command…'));
+    tui.send('\u0003');
+    await tui.waitFor('1 queued message returned to the editor, not sent', {
+      timeoutMs: 30_000,
+      from: beforeBusyHelp,
+      settleMs: 300,
+    });
+    assert('busy /help did not send the queued sentinel',
+      tui.frame.includes('you> help queue sentinel') && !tui.screen.slice(beforeBusyHelp).includes('working…'));
+    tui.send('\u0015');
+
     const beforeSlash = tui.mark();
     tui.send('/');
     await tui.waitFor('commands (', { timeoutMs: 30_000, from: beforeSlash });
@@ -968,6 +1026,8 @@ async function slashCompletion(): Promise<void> {
     // Matched with its description: '  /export' is not a prefix of any other row,
     // but the description is what tells /export apart from a custom command.
     assert('the built-in /export is listed', completed.includes('  /export — write this session’s transcript to a file'));
+    assert('the built-in /help is listed with its description',
+      completed.includes('  /help — commands, prompt syntax, and keys'));
     // Matched with its description: the header's own mcp line also says 'mcp', so
     // the bare-name form could pass with the row missing.
     assert('the built-in /mcp is listed', completed.includes('  /mcp — MCP servers and their tools'));
@@ -992,7 +1052,7 @@ async function slashCompletion(): Promise<void> {
     // The full list is longer than the bounded menu. Walk below the initial window:
     // the marker must follow the selected identity, and Tab must accept that row.
     const beforeDownWindow = tui.mark();
-    tui.send('\u001b[B'.repeat(15));
+    tui.send('\u001b[B'.repeat(16));
     await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeDownWindow, settleMs: 400 });
     assert('Down windows an overflowing slash menu around the selected candidate',
       tui.frame.includes('❯ /review') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);

@@ -8,7 +8,7 @@ import type { EditorLayout } from './prompt-editor.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
 /**
- * Completion rows shown at once; sized so all twelve built-ins fit on one screen.
+ * Completion rows shown at once; sized so every built-in fits on one screen.
  *
  * Adding a built-in means growing this number, or the last one silently falls off
  * behind the "… n more" line — a command nobody can see is a command nobody uses.
@@ -19,7 +19,7 @@ import { visualColor, visualMarker } from './visual-language.js';
  * "… n more" row — a workspace has more paths than any menu could hold, so for them
  * that row is the normal case rather than the overflow one.
  */
-export const MAX_COMPLETIONS = 15;
+export const MAX_COMPLETIONS = 16;
 
 /**
  * Which source the offered rows came from.

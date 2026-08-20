@@ -189,6 +189,20 @@ those listed below, including the 120x50 live `approve` scenario for the complet
   `pathCompletion` / `recall` / `longAnswer`. Unbounding the draft turns `tallDraft`'s 8 passes into 4
   failures.
 
+## Contract: `/help` is bounded Static transcript, never frame furniture
+
+`formatHelpReport` is a pure local projection. `App` handles `/help` before the busy guard and
+dispatches the result through the existing `notice` action, so it is written once by `MessageList`
+into `<Static>` history. It adds no Header row, component, budget claim, live hint, queue row, tool
+event, or other redrawn surface. It calls no runtime accessor and performs no I/O or network work.
+
+The command rows come directly from the canonical `BUILTIN_COMMAND_NAMES` and
+`BUILTIN_COMMAND_DESCRIPTIONS`; the formatter's finite command, line, and per-line code-point caps
+bound the transcript entry, and omission must be stated if the command cap is ever reached. Any
+whitespace-separated argument is rejected by the same pre-busy local branch. Required checks:
+`verify-help-command.ts` for canonical content and explicit bounds, and free pty `verify-tui.ts
+completion` for idle/busy projection, argument rejection, queue stability, and absence from the
+latest live frame.
 
 ## Contract: resumed context is startup Static history, never frame furniture
 
