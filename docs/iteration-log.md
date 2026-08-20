@@ -1473,3 +1473,28 @@ cacheWrite=202,521`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-20 | `124bb8d` | Add bounded local `/help` from canonical command metadata and document the shipped prompt controls |
+
+### Batch 39 — terminal-focused background wait (2026-08-20)
+
+Origin: `docs/reflections/reflection_2026-08-20_session-20260820-010254692.md`. SRF-006
+(Score 13) extends SRF-003 with an opt-in wait shape for supervisors that need terminal completion
+rather than a wakeup on every output fragment.
+
+Child session `session-20260820-155011267`, managed task
+`bg-33033cd0-06d3-4072-ae21-80c85087a045` (exit 0, no correction turn). Delivered in `6350c8f`
+(+ task archive `2860cf2`): `bash wait` accepts provider-visible `wakeOnOutput: false`, retains a
+bounded contiguous UTF-8-safe output range, and returns only for terminal state, cancellation,
+shutdown, or finite timeout. Output beyond the 64 KiB cap and ranges consumed concurrently remain
+on the shared cursor without duplication; omitted/true behavior remains output-sensitive.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck`, `pnpm
+test` (all fast suites green), and `spike/verify-background-bash.ts` (116/116), plus commit/diff
+checks, Trellis archive validation, AGENTS.md size (20,158 bytes < 32 KiB), and clean-tree
+verification. No provider call was needed for acceptance.
+
+Token spend, single managed task: `input=170 output=30,426 cacheRead=7,883,618
+cacheWrite=127,572`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-20 | `6350c8f` | Add bounded terminal-focused background waiting while preserving the shared output cursor |
