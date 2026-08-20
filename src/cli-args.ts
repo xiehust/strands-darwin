@@ -37,6 +37,14 @@ export interface CliOptions {
   permissionModeOverride: ApprovalMode | undefined;
 }
 
+/**
+ * Removes the one conventional transport separator accepted at the process argv
+ * boundary. Domain parsers stay strict: a second or non-leading `--` is untouched.
+ */
+export function normalizeLeadingArgvSeparator(argv: readonly string[]): readonly string[] {
+  return argv[0] === '--' ? argv.slice(1) : argv;
+}
+
 /** Parses argv after the executable/script names. No I/O or runtime construction. */
 export function parseCliArgs(argv: readonly string[]): CliOptions {
   let prompt: string | undefined;

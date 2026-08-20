@@ -13,7 +13,12 @@ import process from 'node:process';
 
 import { AgentRuntime } from './agent/runtime.js';
 import { SessionNotFoundError, trajectoryPath } from './agent/session.js';
-import { CliUsageError, parseCliArgs, type CliOptions } from './cli-args.js';
+import {
+  CliUsageError,
+  normalizeLeadingArgvSeparator,
+  parseCliArgs,
+  type CliOptions,
+} from './cli-args.js';
 import {
   isSessionsInvocation,
   parseSessionsArgs,
@@ -35,7 +40,7 @@ async function main(): Promise<void> {
   // be able to reach a provider even by accident. (The structural half of that
   // guarantee lives in `src/trajectory/**`, which imports no `Agent` and no `Model`
   // at all; `spike/verify-trajectory.ts` asserts it over the module's import graph.)
-  const argv = process.argv.slice(2);
+  const argv = normalizeLeadingArgvSeparator(process.argv.slice(2));
   if (isTrajectoryInvocation(argv)) {
     await runTrajectory(argv.slice(1));
     return;

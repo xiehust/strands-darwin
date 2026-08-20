@@ -1302,10 +1302,13 @@ exit: 0 success; 1 runtime/turn/persistence/cleanup/interruption; 2 CLI usage
 (combining it with `--session` is a usage error); `--continue` follows `.darwin/last-session.json`
 and retains the existing fresh-session fallback when no usable pointer exists.
 
-The `sessions` and `trajectory` subcommands are routed on `argv[0]` before `parseCliArgs` runs
-and have their own parsers (`src/cli-sessions.ts`, `src/cli-trajectory.ts`), so `CliOptions`
-keeps exactly the shape every existing
-assertion in `spike/verify-headless.ts` deep-equals. Its exit codes follow the same convention:
+At the process boundary, `cli.ts` removes exactly one argv-leading standalone `--` before any
+routing or parsing. This accepts the conventional package-script transport shape without weakening
+the grammar: a second leading separator, any later separator, and a value equal to `--` still reach
+the existing strict parsers unchanged. The `sessions` and `trajectory` subcommands are then routed
+on `argv[0]` before `parseCliArgs` runs and have their own parsers (`src/cli-sessions.ts`,
+`src/cli-trajectory.ts`), so `CliOptions` keeps exactly the shape every existing assertion in
+`spike/verify-headless.ts` deep-equals. Its exit codes follow the same convention:
 0 for a completed operation — including a search that legitimately found nothing — 1 for a
 missing or unreadable record, 2 for usage.
 

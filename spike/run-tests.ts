@@ -19,6 +19,7 @@ const suites = [
   'verify-state-layers.ts',
   'verify-headless.ts',
   'verify-headless-structured.ts',
+  'verify-cli-args.ts',
   'verify-background-bash.ts',
   'verify-image-viewer.ts',
   'verify-task-format.ts',
