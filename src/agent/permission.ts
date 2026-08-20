@@ -676,7 +676,7 @@ function classifyBash(toolName: string, input: Record<string, unknown>, rawInput
   const command = str(input['command']) ?? '';
   const timeout = input['timeout'];
   const details: PermissionDetail[] = [{ label: 'Command', value: command }];
-  if (typeof timeout === 'number') {
+  if (mode !== 'start' && typeof timeout === 'number') {
     details.push({ label: 'Timeout', value: `${timeout}s` });
   }
 

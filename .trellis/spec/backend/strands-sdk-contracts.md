@@ -961,7 +961,7 @@ a durable scheduler.
 ### 2. Signatures
 
 ```typescript
-bash({ mode: 'start', command: string }): Promise<{
+bash({ mode: 'start', command: string, timeout?: number }): Promise<{
   taskId: string; pid: number; outputPath: string
 }>
 bash({ mode: 'list' }): Promise<BackgroundTaskStatus[]>
@@ -993,7 +993,10 @@ Background states are `running | succeeded | failed | stopped`.
 - `start` spawns `/bin/bash -lc <command>` at project root with inherited environment,
   `detached: true`, and combined stdout/stderr at
   `.darwin/sessions/<sessionId>/background/<taskId>.log`. It resolves after the OS `spawn`
-  event, not process completion.
+  event, not process completion. A supplied positive numeric `timeout` is preserved in the raw
+  permission/hook input but is otherwise redundant: it does not alter classification or command
+  presentation, and the wrapper still dispatches only `manager.start(command)`. It is never a
+  background process lifetime or execution timeout.
 - Task ids are runtime-unique UUIDs and map lookups are the only authority boundary; never
   derive a path from user-supplied `taskId`. Logs survive exit, but `--resume` restores
   neither registry nor cursor.
@@ -1046,6 +1049,7 @@ Background states are `running | succeeded | failed | stopped`.
 | Condition | Required behavior |
 |---|---|
 | Blank `start.command` / malformed mode payload | Zod tool error; spawn nothing |
+| Positive numeric `start.timeout` supplied | Accept but ignore after raw permission/hooks; dispatch only `manager.start(command)` and do not bound process lifetime |
 | Invalid or unknown `taskId` | Clear error; never read or signal another path/process |
 | Log deleted/unreadable | Status keeps process metadata with `outputBytes: null`; output errors with the owned path |
 | Spawn fails | Reject start, close the parent log handle, kill/register-clean any exposed group |

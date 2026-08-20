@@ -21,6 +21,7 @@ import { ToolHookGate } from '../src/hooks/tool-hooks.js';
 import {
   BackgroundBashManager,
   createBackgroundBashTool,
+  type BackgroundStartResult,
   type BackgroundTaskStatus,
   type BackgroundWaitResult,
 } from '../src/tools/background-bash.js';
@@ -45,6 +46,7 @@ function exists(pid: number): boolean {
 
 class BashStartModel extends Model<BaseModelConfig> {
   private config: BaseModelConfig = { modelId: 'fake.background-hooks', contextWindowLimit: 200_000 };
+  constructor(private readonly input: Record<string, unknown> = { mode: 'start', command: 'sleep 1000' }) { super(); }
   override updateConfig(config: BaseModelConfig): void { this.config = { ...this.config, ...config }; }
   override getConfig(): BaseModelConfig { return this.config; }
   override async *stream(messages: Message[]): AsyncIterable<ModelStreamEvent> {
@@ -52,7 +54,7 @@ class BashStartModel extends Model<BaseModelConfig> {
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     if (!hasResult) {
       yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name: 'bash', toolUseId: 'background-1' } };
-      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: '{"mode":"start","command":"sleep 1000"}' } };
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify(this.input) } };
       yield { type: 'modelContentBlockStopEvent' };
       yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' };
       return;
@@ -454,6 +456,37 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   const wrapped = createBackgroundBashTool(manager, foreground);
   assert('provider-facing bash schema has a top-level object type', wrapped.toolSpec.inputSchema?.type === 'object');
 
+  const startCommand = "printf 'dispatch-exact'";
+  const startCalls: string[] = [];
+  const startManager = {
+    start: async (command: string) => {
+      startCalls.push(command);
+      return { taskId: `bg-start-${startCalls.length}`, pid: startCalls.length, outputPath: `/owned/start-${startCalls.length}.log` };
+    },
+  } as unknown as BackgroundBashManager;
+  const startWrapped = createBackgroundBashTool(startManager, foreground);
+  await startWrapped.invoke({ mode: 'start', command: startCommand });
+  await startWrapped.invoke({ mode: 'start', command: startCommand, timeout: 0.01 });
+  assert(
+    'start accepts redundant timeout but dispatches only the identical command to manager.start',
+    startCalls.length === 2 && startCalls.every((command) => command === startCommand) && seen.length === 0,
+  );
+
+  const realManager = new BackgroundBashManager(root, 'session-tool-timeout');
+  const realWrapped = createBackgroundBashTool(realManager, foreground);
+  const realStartCommand = "sleep 0.15; printf 'timeout-ignored'";
+  const realStartBefore = Date.now();
+  const realStart = await realWrapped.invoke({ mode: 'start', command: realStartCommand, timeout: 0.01 }) as BackgroundStartResult;
+  await delay(50);
+  const realStartDuring = await realManager.status(realStart.taskId);
+  const realStartFinished = await realManager.wait(realStart.taskId, 3_000, undefined, false);
+  assert(
+    'redundant timeout neither prevents nor bounds a real background launch',
+    realStartDuring.state === 'running' && realStartFinished.status.state === 'succeeded' &&
+      realStartFinished.output.output === 'timeout-ignored' && Date.now() - realStartBefore >= 100,
+  );
+  await realManager.shutdown();
+
   const expectedTaskId = 'bg-00000000-0000-0000-0000-000000000000';
   const managementCalls: Array<{ mode: 'status' | 'output' | 'wait' | 'stop'; taskId: string; waitMs?: number; signal?: AbortSignal; wakeOnOutput?: boolean }> = [];
   const managementStatus: BackgroundTaskStatus = {
@@ -546,7 +579,7 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   assert('restart preserves the vended optional/unknown foreground input compatibility', compatibilityRestart === 'Bash session restarted');
   for (const blank of ['', '   \n']) {
     let blankError = '';
-    try { await wrapped.invoke({ mode: 'start', command: blank }); } catch (error) { blankError = String(error); }
+    try { await wrapped.invoke({ mode: 'start', command: blank, timeout: 30 }); } catch (error) { blankError = String(error); }
     assert('background start rejects blank commands', blankError.includes('command is required'));
   }
   const whitespaceExecute = await wrapped.invoke({ mode: 'execute', command: '   \n' }, context) as BashOutput;
@@ -593,8 +626,16 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   if (taskId !== undefined) await manager.stop(taskId);
   await subagents.shutdown();
 
-  const start = classify('bash', { mode: 'start', command: 'pnpm test' });
-  assert('start has normal execute permission semantics', start.kind === 'execute' && assessRisk(start, root).risk === 'dangerous');
+  const startInput = { mode: 'start', command: 'pnpm test' } as const;
+  const startInputWithTimeout = { ...startInput, timeout: 30 } as const;
+  const start = classify('bash', startInput);
+  const startWithTimeout = classify('bash', startInputWithTimeout);
+  assert(
+    'redundant start timeout does not affect permission classification or command presentation',
+    start.kind === 'execute' && assessRisk(start, root).risk === 'dangerous' &&
+      startWithTimeout.kind === start.kind && startWithTimeout.summary === start.summary &&
+      JSON.stringify(startWithTimeout.details) === JSON.stringify(start.details) && startWithTimeout.input === startInputWithTimeout,
+  );
   for (const mode of ['restart', 'list', 'status', 'output', 'wait', 'stop'] as const) {
     const request = classify('bash', mode === 'restart' || mode === 'list' ? { mode } : { mode, taskId: 'bg-x' });
     assert(`${mode} is statically safe`, request.kind === 'read' && assessRisk(request, root).risk === 'safe');
@@ -608,8 +649,13 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   assert('yolo mode allows background start without asking', permission.action.type === 'proceed' && permission.asked.length === 0);
 
   const safeClassifier: SafetyClassifier = async () => ({ safe: true, reason: 'test command is allowed' });
-  permission = await permissionAction(root, 'auto', backgroundInput, { classifier: safeClassifier });
-  assert('auto mode sends background start to its classifier and skips the prompt on safe verdict', permission.action.type === 'proceed' && permission.classified[0]?.input === backgroundInput && permission.asked.length === 0);
+  const backgroundInputWithTimeout = { ...backgroundInput, timeout: 30 } as const;
+  permission = await permissionAction(root, 'auto', backgroundInputWithTimeout, { classifier: safeClassifier });
+  assert(
+    'auto mode preserves the raw redundant timeout input for classification without changing start semantics',
+    permission.action.type === 'proceed' && permission.classified[0]?.input === backgroundInputWithTimeout &&
+      permission.classified[0]?.details.some((detail) => detail.label === 'Timeout') === false && permission.asked.length === 0,
+  );
 
   const unsafeClassifier: SafetyClassifier = async () => ({ safe: false, reason: 'needs confirmation' });
   permission = await permissionAction(root, 'auto', backgroundInput, { classifier: unsafeClassifier });
@@ -622,15 +668,23 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   assert('existing bash pattern rule allows matching background start before classifier or prompt', permission.action.type === 'proceed' && permission.action.reason?.includes('bash:pnpm test *') === true && permission.classified.length === 0 && permission.asked.length === 0);
 
   const hookFile = path.join(root, 'hooks.log');
+  const preHookInput = path.join(root, 'pre-hook-input.json');
+  const postHookInput = path.join(root, 'post-hook-input.json');
+  const hookStartInput = { mode: 'start', command: 'sleep 1000', timeout: 30 } as const;
   const gate = new PermissionGate({ mode: 'default', projectRoot: root, ask: async () => ({ allowed: true }) });
   const hookGate = new ToolHookGate(root, {
-    PreToolUse: [{ matcher: 'bash', hooks: [{ type: 'command', command: `printf '%s\n' pre >> ${hookFile}` }] }],
-    PostToolUse: [{ matcher: 'bash', hooks: [{ type: 'command', command: `printf '%s\n' post >> ${hookFile}` }] }],
+    PreToolUse: [{ matcher: 'bash', hooks: [{ type: 'command', command: `tee ${preHookInput} >/dev/null; printf '%s\n' pre >> ${hookFile}` }] }],
+    PostToolUse: [{ matcher: 'bash', hooks: [{ type: 'command', command: `tee ${postHookInput} >/dev/null; printf '%s\n' post >> ${hookFile}` }] }],
   }, gate);
-  const agent = new Agent({ model: new BashStartModel(), tools: [wrapped], interventions: [hookGate], printer: false });
+  const agent = new Agent({ model: new BashStartModel(hookStartInput), tools: [wrapped], interventions: [hookGate], printer: false });
   await agent.invoke('start it');
   const hooks = await readFile(hookFile, 'utf8');
-  assert('real Agent Pre/Post hooks wrap the immediate start call', hooks === 'pre\npost\n');
+  const expectedHookInput = `${JSON.stringify({ tool_name: 'bash', tool_input: hookStartInput })}\n`;
+  assert(
+    'real Agent Pre/Post hooks preserve redundant timeout in the raw immediate start payload',
+    hooks === 'pre\npost\n' && await readFile(preHookInput, 'utf8') === expectedHookInput &&
+      await readFile(postHookInput, 'utf8') === expectedHookInput,
+  );
   await manager.shutdown();
   await rm(root, { recursive: true, force: true });
 }

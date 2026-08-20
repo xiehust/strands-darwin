@@ -651,7 +651,7 @@ const inputSchema = z.object({
   mode: z.enum(['execute', 'restart', 'start', 'list', 'status', 'output', 'wait', 'stop'])
     .describe('Operation mode'),
   command: z.string().optional().describe('Command required by execute and start; ignored by status, output, wait, and stop'),
-  timeout: z.number().positive().optional().describe('Timeout in seconds for execute mode'),
+  timeout: z.number().positive().optional().describe('Timeout in seconds for execute mode; ignored by start'),
   taskId: z.string().optional().describe('Session-local task id required by status, output, wait, and stop'),
   waitMs: z.number().int().min(1).max(30_000).optional()
     .describe('Bounded wait in milliseconds, required only by wait mode (1-30000)'),
@@ -670,7 +670,7 @@ const inputSchema = z.object({
   if (input.mode === 'wait' && input.waitMs === undefined) {
     context.addIssue({ code: 'custom', path: ['waitMs'], message: 'waitMs is required in wait mode' });
   }
-  if (input.mode !== 'execute' && input.mode !== 'restart' && input.timeout !== undefined) {
+  if (input.mode !== 'execute' && input.mode !== 'restart' && input.mode !== 'start' && input.timeout !== undefined) {
     context.addIssue({ code: 'custom', path: ['timeout'], message: `timeout is not accepted in ${input.mode} mode` });
   }
   if (input.mode === 'list' && input.command !== undefined) {
