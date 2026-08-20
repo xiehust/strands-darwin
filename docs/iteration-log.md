@@ -1185,6 +1185,7 @@ supersession is the point: every spec, comment and suite that pinned "retained, 
 was updated to say what replaced it and why, never worked around.
 
 Child session `session-20260819-051836979`; first managed task `bg-b60fda98` died in a transient
+
 `Stream ended without completing a message` with nothing written, retry task `bg-8a19690e` (same
 session, exit 0) carried the work to commit with no correction turn. Delivered in `b39cd30`: a
 submission while a turn streams or a `!` command runs leaves the editor, joins a FIFO listed
@@ -1410,3 +1411,35 @@ cacheWrite=237,848`.
 |---|---|---|
 | 2026-08-19 | `977b2db` | Show bounded read-only last-turn context before the prompt when a TUI session resumes |
 | 2026-08-19 | `578cc04` | Remove the archive trailing-blank warning found during Host acceptance |
+
+### Batch 37 — visible completion overflow selection (2026-08-20)
+
+Origin: `docs/research/research_2026-08-20.md`, run `2026-08-20T01:05:09Z`, rolled
+`tui`. SER-029 (Score 13) fixed a repository-observed mismatch: keyboard navigation and acceptance
+used the full completion array while the bounded menu rendered only its prefix, allowing Tab or
+Enter to accept a row with no visible `❯`.
+
+Child session `session-20260820-011013386`. One deterministic pre-launch task
+`bg-2cf91b41-8050-42fe-a108-3c585b8d5fd5` failed before a session or usage record because the
+Host passed an extra `--`. The managed implementation task
+`bg-4f672d5b-2702-4c23-b13a-52fafe646a3a` exited 0 with no correction turn. Delivered in
+`91ce096` (+ task archive `18ebbcc`): the existing bounded slash/path menu now renders a contiguous
+window around the unchanged full-list selected index, keeps exactly one visible `❯`, and spends the
+existing overflow row on truthful above/below omission counts. Immediate editor/selection mirrors
+and acceptance-time candidate derivation keep batched arrows plus Tab/Enter aligned without changing
+command/path precedence, keyboard ownership, path scanning, `MAX_COMPLETIONS`, or frame grants.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck` (exit 0),
+`pnpm test` (all fast suites green), `spike/verify-frame-budget.ts` (75), and free pty
+`completion` (52), `pathCompletion` (23), `cursor` (5), `recall` (20), `recallEmpty` (4), and
+`queue` (17), plus `git show --check`, `git diff --check`, and clean-tree verification. No provider
+call was needed for acceptance.
+
+Token spend: the deterministic failed launch reported no usage line; the implementation task
+reported `input=262 output=36,717 cacheRead=12,984,949 cacheWrite=158,115`. Aggregate reported
+spend is therefore those four buckets; the failed launch has unknown/unreported spend rather than
+an invented zero.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-20 | `91ce096` | Keep overflowing slash and path completion selection visible and make acceptance match the marked row |
