@@ -1498,3 +1498,27 @@ cacheWrite=127,572`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-20 | `6350c8f` | Add bounded terminal-focused background waiting while preserving the shared output cursor |
+
+### Batch 40 — harmless background-start timeout (2026-08-20)
+
+Origin: `docs/reflections/reflection_2026-08-20_session-20260820-010254692.md`. SRF-007
+(Score 12) removes a deterministic provider-schema launch trap while preserving background process
+lifetime and the raw input observed by permission and hook policy.
+
+Child session `session-20260820-160436215`, managed task
+`bg-ce978c9e-ec41-4a1d-bb32-9ff0ff788a90` (exit 0, no correction turn). Delivered in `44d5078`
+(+ task archive `647c375`): positive numeric `start.timeout` is accepted, retained in raw permission
+and Pre/Post hook input, omitted from permission presentation, and never forwarded to
+`manager.start(command)` or interpreted as a process lifetime. Execute/restart compatibility and
+non-start lifecycle rejection remain unchanged.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck`, `pnpm
+test` (all fast suites green), and `spike/verify-background-bash.ts` (118/118), plus commit/diff,
+archive, AGENTS.md-size and clean-tree checks. No provider call was needed for acceptance.
+
+Token spend, single managed task: `input=120 output=18,932 cacheRead=3,244,652
+cacheWrite=78,868`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-20 | `44d5078` | Accept but ignore redundant timeout on background start without changing policy or lifetime |
