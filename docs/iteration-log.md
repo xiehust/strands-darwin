@@ -1443,3 +1443,33 @@ an invented zero.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-20 | `91ce096` | Keep overflowing slash and path completion selection visible and make acceptance match the marked row |
+
+### Batch 38 — bounded in-session help (2026-08-20)
+
+Origin: `docs/research/research_2026-08-20.md`, run `2026-08-20T01:05:09Z`, rolled
+`tui`. SER-030 (Score 12) followed the accepted completion-window repair and addressed a
+repository-observed discoverability gap: shipped multiline, completion, recall/queue, readline and
+tool-detail controls were mostly absent from the live reference, while README still claimed input
+was single-line and multiline paste submitted at its first newline.
+
+Child session `session-20260820-012939115`, managed task
+`bg-7003a2f0-5a99-49a1-af34-64a9f88e724b` (exit 0, no correction turn). Delivered in `124bb8d`
+(+ task archive `18b3ae5`): `/help` is a canonical, explicitly bounded projection of the existing
+built-in command metadata and fixed input controls. It uses only the existing transcript notice
+surface, remains local while idle or during an offline busy `!` command, rejects arguments locally,
+and neither calls the model nor touches the prompt queue. `MAX_COMPLETIONS` grew to 16, and README
+now states actual multiline/editor behavior instead of the stale limitation.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck` (exit 0),
+`pnpm test` (all fast suites green), `spike/verify-help-command.ts` (23),
+`spike/verify-frame-budget.ts` (75), and free pty `completion` (61), `pathCompletion` (23),
+`recall` (20), `queue` (17), `toolDetails` (6), `multiline` (9), and `cursor` (5), plus
+`git show --check`, `git diff --check`, clean-tree verification, and AGENTS.md size (20,116 bytes <
+32 KiB). No provider call was needed for acceptance.
+
+Token spend, single managed task: `input=244 output=42,378 cacheRead=16,665,342
+cacheWrite=202,521`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-20 | `124bb8d` | Add bounded local `/help` from canonical command metadata and document the shipped prompt controls |
