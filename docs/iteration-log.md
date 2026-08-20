@@ -1522,3 +1522,30 @@ cacheWrite=78,868`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-20 | `44d5078` | Accept but ignore redundant timeout on background start without changing policy or lifetime |
+
+### Batch 41 — leading CLI argument separator (2026-08-20)
+
+Origin: `docs/reflections/reflection_2026-08-20_session-20260820-010254692.md`. SRF-008
+(Score 11) fixes the deterministic `pnpm start -- --yolo…` launch failure while keeping every
+non-leading separator and unknown argument strict.
+
+Child session `session-20260820-161536842`, managed task
+`bg-21f1211c-bac3-4cc5-a40d-a665b2156d37` (exit 0, no correction turn). Delivered in `262c3f5`:
+`cli.ts` removes exactly one argv-leading standalone `--` before trajectory/sessions routing or
+ordinary TUI/headless parsing. A second or later separator remains an error, separator values keep
+their option-specific errors, unknown flags stay strict, and bare `--resume` remains pointer-based.
+The Trellis task is archived in the same commit.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck`, `pnpm
+test` (all fast suites green), and `spike/verify-cli-args.ts` (11/11), plus direct process/parser
+negative cases, task archive validation, commit/diff and clean-tree checks. A manual pnpm check
+confirmed identical Darwin stdout and exit status for `pnpm start sessions` and `pnpm start --
+sessions`; pnpm itself naturally echoes the two different wrapper command lines on stderr before
+Darwin starts. No provider call was needed for acceptance.
+
+Token spend, single managed task: `input=110 output=21,103 cacheRead=3,090,906
+cacheWrite=80,899`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-20 | `262c3f5` | Normalize one leading CLI transport separator while preserving strict argument grammar |
