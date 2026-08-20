@@ -63,6 +63,26 @@ the path itself with no description (inventing one would mean reading the file).
 differs; the *height* is identical, so `planPromptBox`/`promptBoxWanted` know nothing about the
 kind and `MAX_COMPLETIONS` caps both.
 
+## Contract: overflow follows the selected candidate
+
+Navigation and acceptance operate on the complete, source-ordered candidate array; bounding is a
+presentation concern only. `completionWindow` projects the entry grant into one contiguous window
+around that full-list index. It never sorts, copies identities into a second catalogue, or clamps
+navigation to the visible rows. `Up`/`Down` still wrap over the complete array.
+
+- Whenever at least one entry is granted, the selected candidate is inside the window and is the
+  **only** row marked `❯`. First and last selections pin the window to the corresponding edge;
+  middle selections keep source order around the marker.
+- The existing single overflow row states every omitted candidate as a total plus `N above`,
+  `N below`, or both. It is paid from the unchanged `planPromptBox` grant; no second omission row,
+  frame participant, or unbounded list is allowed.
+- Tab and Enter resolve the same full-list identity that the visible `❯` marks. Completion state
+  has an immediate ref mirror, and acceptance re-derives candidates from the immediate editor
+  mirror, because terminals may batch arrows plus acceptance before React commits another render.
+  A stale render closure must never accept a different row.
+- Command-before-path ownership and every later keyboard owner remain unchanged: completion arrows
+  precede queue take-back and recall, while permission and compaction still own the keyboard first.
+
 ## Contract: the scan is bounded, exclusion-first, and cannot escape the project root
 
 `scanWorkspacePaths(projectRoot)` is breadth-first — the shallow paths are the ones people complete,

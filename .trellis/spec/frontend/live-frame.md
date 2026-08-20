@@ -38,7 +38,9 @@ per further row with nothing streaming, and one in-flight call with details expa
   of a `<Box>` are flex items and wrap independently — that made the permission summary two rows
   and ate the `] ` after `[parent`. Pre-wrapped content is one `<Text wrap="truncate-end">` per row.
 - **What is hidden is stated**, one row each: scrolled-out answer lines, draft rows above/below,
-  cut tool input, collapsed tool calls, cut permission detail.
+  cut tool input, collapsed tool calls, cut permission detail. Completion overflow uses its existing
+  one row for a total plus truthful `above`/`below` counts; the entries are a bounded window around
+  the selected full-list candidate, so `❯` never leaves the granted rows.
 - **State that changes mid-session moves an existing row; it never adds one.** The header's model
   line carries cache and effort, and its `mode:` row is re-read live from the runtime on every render
   (`/mode`, `.trellis/spec/backend/strands-sdk-contracts.md` § switching the permission mode) —

@@ -988,6 +988,55 @@ async function slashCompletion(): Promise<void> {
     );
     assert('the list explains the keys', /to select/.test(completed));
 
+
+    // The full list is longer than the bounded menu. Walk below the initial window:
+    // the marker must follow the selected identity, and Tab must accept that row.
+    const beforeDownWindow = tui.mark();
+    tui.send('\u001b[B'.repeat(15));
+    await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeDownWindow, settleMs: 400 });
+    assert('Down windows an overflowing slash menu around the selected candidate',
+      tui.frame.includes('❯ /review') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
+    assert('the slash window states omissions above', /… \d+ more not shown \(\d+ above/.test(tui.frame));
+    const beforeTabAccept = tui.mark();
+    tui.send('\t');
+    await tui.waitUntil(() => !tui.frame.includes('commands (') && tui.frame.includes('you> /'), {
+      timeoutMs: 30_000,
+      from: beforeTabAccept,
+      settleMs: 400,
+    });
+    assert('Tab accepts exactly the visibly selected slash candidate',
+      tui.frame.includes('you> /review') && !tui.frame.includes('commands ('));
+
+    // Reopen, then wrap upward from the first full-list item to the last. Enter has
+    // the same acceptance contract as Tab and must not submit the accepted command.
+    tui.send('\u0015');
+    await tui.waitUntil(() => !tui.frame.includes('commands (') && !tui.frame.includes('you> /review'), {
+      timeoutMs: 10_000,
+      label: 'slash draft cleared before reopening completion',
+    });
+    tui.send('/');
+    await tui.waitFor('❯ /agents', { timeoutMs: 30_000, settleMs: 400 });
+    const beforeWrap = tui.mark();
+    tui.send('\u001b[A');
+    await tui.waitFor('❯ /commit-message', { timeoutMs: 30_000, from: beforeWrap, settleMs: 400 });
+    assert('Up wraps and windows the last slash candidate with one visible marker',
+      tui.frame.includes('❯ /commit-message') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
+    const beforeEnterAccept = tui.mark();
+    tui.send('\r');
+    await tui.waitFor('you> /commit-message', { timeoutMs: 30_000, from: beforeEnterAccept, settleMs: 400 });
+    assert('Enter accepts exactly the visibly selected slash candidate without submitting it',
+      tui.frame.includes('you> /commit-message') && !tui.frame.includes('commands (') &&
+      !tui.screen.slice(beforeEnterAccept).includes('working…'));
+
+    // Restore the original no-match check's starting draft.
+    tui.send('\u0015');
+    await tui.waitUntil(() => !tui.frame.includes('commands (') && !tui.frame.includes('you> /commit-message'), {
+      timeoutMs: 10_000,
+      label: 'accepted slash draft cleared before no-match check',
+    });
+    tui.send('/');
+    await tui.waitFor('❯ /agents', { timeoutMs: 30_000, settleMs: 400 });
+
     // Narrowing to a prefix that matches nothing hides the list again. Ink
     // redraws the whole frame, so the output after the mark is the new frame.
     const beforeNarrow = tui.mark();
@@ -1059,6 +1108,51 @@ async function pathCompletion(): Promise<void> {
     assert('node_modules never appears', !opened.includes('node_modules'));
     assert('dist never appears', !opened.includes('dist/'));
     assert('a symlink out of the project never appears', !opened.includes('escape'));
+
+
+    // Walk beyond the bounded prefix and accept the visibly selected path with Tab.
+    const beforePathWindow = tui.mark();
+    tui.send('\u001b[B'.repeat(10));
+    await tui.waitFor('❯ pad/p08.md', { timeoutMs: 30_000, from: beforePathWindow, settleMs: 400 });
+    assert('Down windows an overflowing path menu around the selected candidate',
+      tui.frame.includes('❯ pad/p08.md') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
+    assert('the path window states omissions above and below truthfully',
+      /… \d+ more not shown \(\d+ above, \d+ below\)/.test(tui.frame));
+    const beforePathTab = tui.mark();
+    tui.send('\t');
+    await tui.waitFor('you> pad/p08.md', { timeoutMs: 30_000, from: beforePathTab, settleMs: 400 });
+    assert('Tab accepts exactly the visibly selected path candidate',
+      tui.frame.includes('you> pad/p08.md') && !tui.frame.includes('files ('));
+
+    // Reopen and wrap upward to the final full-list path. Enter accepts the same row
+    // the marker names, without starting a turn.
+    tui.send('\u0015');
+    await tui.waitUntil(() => !tui.frame.includes('files (') && !tui.frame.includes('you> pad/p08.md'), {
+      timeoutMs: 10_000,
+      label: 'path draft cleared before reopening completion',
+    });
+    tui.send('@');
+    await tui.waitFor('❯ notes.md', { timeoutMs: 30_000, settleMs: 400 });
+    const beforePathWrap = tui.mark();
+    tui.send('\u001b[A');
+    await tui.waitFor('❯ src/tui/AppFixture.tsx', { timeoutMs: 30_000, from: beforePathWrap, settleMs: 400 });
+    assert('Up wraps and windows the last path candidate with one visible marker',
+      tui.frame.includes('❯ src/tui/AppFixture.tsx') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
+    const beforePathEnter = tui.mark();
+    tui.send('\r');
+    await tui.waitFor('you> src/tui/AppFixture.tsx', { timeoutMs: 30_000, from: beforePathEnter, settleMs: 400 });
+    assert('Enter accepts exactly the visibly selected path candidate without submitting it',
+      tui.frame.includes('you> src/tui/AppFixture.tsx') && !tui.frame.includes('files (') &&
+      !tui.screen.slice(beforePathEnter).includes('working…'));
+
+    // Restore the bare query for the existing directory/file insertion checks.
+    tui.send('\u0015');
+    await tui.waitUntil(() => !tui.frame.includes('files (') && !tui.frame.includes('you> src/tui/AppFixture.tsx'), {
+      timeoutMs: 10_000,
+      label: 'accepted path draft cleared before insertion checks',
+    });
+    tui.send('@');
+    await tui.waitFor('❯ notes.md', { timeoutMs: 30_000, settleMs: 400 });
 
     // Narrow, then accept a directory: the marker stays so the next keystroke keeps
     // completing inside it. Narrowed to `sr` rather than `src/` on purpose — accepting

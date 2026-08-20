@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Check unchanged grants, truthful omissions, and one counted Text per row."}
+{"file":".trellis/spec/frontend/prompt-completion.md","reason":"Check full-list navigation, ordering, identity, and visible-row acceptance."}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Check focused render matrix and real pty coverage."}

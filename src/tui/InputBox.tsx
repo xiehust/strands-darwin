@@ -30,6 +30,53 @@ export const MAX_COMPLETIONS = 15;
  */
 export type CompletionKind = 'command' | 'path';
 
+/** The selected full-list index, with stale state falling back to the first row. */
+export function completionSelection(selected: number, total: number): number {
+  return Number.isInteger(selected) && selected >= 0 && selected < total ? selected : 0;
+}
+
+/** Full-list navigation stays wrapping even though presentation is a bounded window. */
+export function moveCompletionSelection(selected: number, total: number, delta: number): number {
+  if (total <= 0) return 0;
+  return (completionSelection(selected, total) + delta % total + total) % total;
+}
+
+/** Which contiguous candidate rows fit around the selected full-list index. */
+export interface CompletionWindow {
+  readonly start: number;
+  readonly end: number;
+  readonly selected: number;
+  readonly hiddenAbove: number;
+  readonly hiddenBelow: number;
+}
+
+export function completionWindow(total: number, selected: number, capacity: number): CompletionWindow {
+  const boundedTotal = Math.max(0, total);
+  const boundedCapacity = Math.max(0, Math.min(boundedTotal, capacity));
+  const normalized = completionSelection(selected, boundedTotal);
+  const start = Math.max(
+    0,
+    Math.min(normalized - Math.floor(boundedCapacity / 2), boundedTotal - boundedCapacity),
+  );
+  const end = start + boundedCapacity;
+  return {
+    start,
+    end,
+    selected: normalized,
+    hiddenAbove: start,
+    hiddenBelow: boundedTotal - end,
+  };
+}
+
+/** One counted row truthfully states every candidate outside the visible window. */
+export function hiddenCompletionNotice(hiddenAbove: number, hiddenBelow: number): string {
+  const parts: string[] = [];
+  if (hiddenAbove > 0) parts.push(`${hiddenAbove} above`);
+  if (hiddenBelow > 0) parts.push(`${hiddenBelow} below`);
+  const total = hiddenAbove + hiddenBelow;
+  return `… ${total} more not shown (${parts.join(', ')})`;
+}
+
 export function InputBox({
   layout,
   completions,
@@ -83,7 +130,8 @@ export function InputBox({
   });
   const view = draftWindow(layout.rows.length, layout.cursor.row, plan.draftRows);
   const rows = layout.rows.slice(view.start, view.end);
-  const visible = completions.slice(0, plan.completionItems);
+  const menu = completionWindow(completions.length, selectedCompletion, plan.completionItems);
+  const visible = completions.slice(menu.start, menu.end);
 
   const inputRef = useRef<DOMElement>(null);
   const metrics = useBoxMetrics(inputRef);
@@ -140,7 +188,7 @@ export function InputBox({
               on this row for the same reason. */}
           <Text dimColor wrap="truncate-end">{completionTitle(completionKind, completionNote)}</Text>
           {visible.map((name, index) => {
-            const selected = index === selectedCompletion;
+            const selected = menu.start + index === menu.selected;
             // Only commands carry one: a path describes itself, and inventing a
             // description would mean reading the file, which this feature never does.
             const description = completionKind === 'command' ? builtinCommandDescription(name) : undefined;
@@ -168,7 +216,9 @@ export function InputBox({
             );
           })}
           {plan.completionMore && (
-            <Text dimColor>{`  … ${completions.length - visible.length} more`}</Text>
+            <Text dimColor wrap="truncate-end">
+              {'  '}{hiddenCompletionNotice(menu.hiddenAbove, menu.hiddenBelow)}
+            </Text>
           )}
         </Box>
       )}

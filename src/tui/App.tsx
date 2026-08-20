@@ -45,7 +45,13 @@ import {
   readPromptHistory,
   type PromptHistory,
 } from '../trajectory/prompt-history.js';
-import { InputBox, MAX_COMPLETIONS, type CompletionKind } from './InputBox.js';
+import {
+  InputBox,
+  MAX_COMPLETIONS,
+  completionSelection,
+  moveCompletionSelection,
+  type CompletionKind,
+} from './InputBox.js';
 import { busySuffix } from './busy-suffix.js';
 import { LIVE_BLOCK_CHROME_ROWS, wrapToRows } from './live-text.js';
 import { fenceOpenAfter } from './markdown.js';
@@ -218,7 +224,16 @@ export function App({
   // `useCursor` is frame-absolute, so `InputBox` needs its parent's offset.
   const chrome = useBoxMetrics(chromeRef);
 
-  const [selectedCompletion, setSelectedCompletion] = useState(0);
+  // Like the editor and recall mirrors below, completion selection must advance on
+  // each stdin event immediately. The visible marker and Tab/Enter acceptance then
+  // read the same full-list identity even when a terminal batches arrow keys.
+  const [selectedCompletion, setSelectedCompletionState] = useState(0);
+  const selectedCompletionRef = useRef(selectedCompletion);
+  const setSelectedCompletion = useCallback((next: number | ((current: number) => number)) => {
+    const value = typeof next === 'function' ? next(selectedCompletionRef.current) : next;
+    selectedCompletionRef.current = value;
+    setSelectedCompletionState(value);
+  }, []);
   const [frame, setFrame] = useState(0);
   const interruptedAt = useRef<number | undefined>(undefined);
   /** Wall-clock start of the in-flight turn; undefined whenever no turn is running. */
@@ -1157,9 +1172,28 @@ export function App({
   }, [setRecall]);
 
   const acceptCompletion = useCallback(() => {
-    const chosen = completions[selectedCompletion] ?? completions[0];
+    // Recompute from the immediate editor mirror for the same batched-input reason
+    // path splicing does below. Arrow events may have advanced the ref before React
+    // commits the render that derives `completions`; acceptance must use that row's
+    // candidate source, not a stale closure from the frame before navigation.
+    const currentCommandCompletions = computeCompletions(editorRef.current.text, [
+      ...BUILTIN_COMMAND_NAMES,
+      ...runtime.info.commandNames,
+      ...runtime.info.skillNames,
+    ]);
+    const currentPathQuery = currentCommandCompletions.length > 0
+      ? undefined
+      : pathCompletionQuery(editorRef.current.text, editorRef.current.cursor.offset);
+    const currentCompletionKind: CompletionKind = currentCommandCompletions.length > 0 ? 'command' : 'path';
+    const currentCompletions = currentCompletionKind === 'command'
+      ? currentCommandCompletions
+      : currentPathQuery === undefined
+        ? []
+        : matchWorkspacePaths(workspacePaths.paths, currentPathQuery.text);
+    const selected = completionSelection(selectedCompletionRef.current, currentCompletions.length);
+    const chosen = currentCompletions[selected];
     if (chosen === undefined) return;
-    if (completionKind === 'path') {
+    if (currentCompletionKind === 'path') {
       // Re-derived from the immediate editor mirror rather than from the render's
       // `pathQuery`: several stdin events can be batched into one React pass, and
       // splicing a path at an offset the draft has moved past would corrupt it.
@@ -1175,7 +1209,7 @@ export function App({
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
     endRecall();
-  }, [completionKind, completions, endRecall, selectedCompletion, setEditor]);
+  }, [endRecall, runtime, setEditor, setSelectedCompletion, workspacePaths]);
 
   /**
    * Puts a recalled prompt in the draft, cursor at its end.
@@ -1466,12 +1500,12 @@ export function App({
     }
 
     if (key.upArrow && completions.length > 0) {
-      setSelectedCompletion((i) => (i - 1 + completions.length) % completions.length);
+      setSelectedCompletion((i) => moveCompletionSelection(i, completions.length, -1));
       return;
     }
 
     if (key.downArrow && completions.length > 0) {
-      setSelectedCompletion((i) => (i + 1) % completions.length);
+      setSelectedCompletion((i) => moveCompletionSelection(i, completions.length, 1));
       return;
     }
 

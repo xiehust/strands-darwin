@@ -14,7 +14,12 @@ import { renderToString } from 'ink';
 import React from 'react';
 
 import { NEVER_WITHDRAWN } from '../src/agent/permission.js';
-import { InputBox } from '../src/tui/InputBox.js';
+import {
+  InputBox,
+  completionWindow,
+  hiddenCompletionNotice,
+  moveCompletionSelection,
+} from '../src/tui/InputBox.js';
 import { PermissionPrompt } from '../src/tui/PermissionPrompt.js';
 import { ActiveToolCalls } from '../src/tui/ToolCallPanel.js';
 import { layoutEditor } from '../src/tui/prompt-editor.js';
@@ -189,6 +194,33 @@ assert('a draft that fits is shown whole, with nothing hidden',
   assert('one notice counts both directions',
     hiddenDraftNotice(96, 99) === '… 195 draft rows not shown (96 above, 99 below)');
   assert('one hidden row is singular', hiddenDraftNotice(1, 0) === '… 1 draft row not shown (1 above)');
+}
+
+header('completion menu — the bounded window follows the full-list selection');
+
+{
+  const first = completionWindow(20, 0, 5);
+  const middle = completionWindow(20, 10, 5);
+  const last = completionWindow(20, 19, 5);
+  const wrappedUp = completionWindow(20, moveCompletionSelection(0, 20, -1), 5);
+  const wrappedDown = completionWindow(20, moveCompletionSelection(19, 20, 1), 5);
+
+  assert('the first selection keeps source order and states only omissions below',
+    first.start === 0 && first.end === 5 && first.selected === 0 &&
+    hiddenCompletionNotice(first.hiddenAbove, first.hiddenBelow) === '… 15 more not shown (15 below)');
+  assert('a middle selection is visible with truthful omissions on both sides',
+    middle.start === 8 && middle.end === 13 && middle.selected === 10 &&
+    hiddenCompletionNotice(middle.hiddenAbove, middle.hiddenBelow) === '… 15 more not shown (8 above, 7 below)');
+  assert('the last selection keeps the final source-ordered suffix and states only omissions above',
+    last.start === 15 && last.end === 20 && last.selected === 19 &&
+    hiddenCompletionNotice(last.hiddenAbove, last.hiddenBelow) === '… 15 more not shown (15 above)');
+  assert('navigation wraps over the full candidate list in both directions',
+    wrappedUp.selected === 19 && wrappedUp.start === 15 && wrappedDown.selected === 0 && wrappedDown.start === 0);
+  assert('a one-row grant still keeps the selected candidate visible',
+    (() => {
+      const one = completionWindow(20, 11, 1);
+      return one.start === 11 && one.end === 12 && one.selected === 11;
+    })());
 }
 
 header('prompt region — draft, completion menu, recall row and hint share one grant');
@@ -518,6 +550,41 @@ function renderedRows(element: React.ReactElement, columns: number): number {
   assert('and states its bound on that same row',
     /files \(.*\) — bounded scan: 4000 paths:/.test(noted));
   assert('path rows carry no slash prefix', noted.includes('❯ src/') && !noted.includes('❯ /src/'));
+
+  const overflowItems = Array.from({ length: 20 }, (_, index) => `item-${String(index).padStart(2, '0')}`);
+  const renderOverflow = (selectedCompletion: number): string => renderToString(
+    React.createElement(InputBox, {
+      layout: layoutEditor('/', 80, { offset: 1, affinity: 'upstream' }),
+      completions: overflowItems,
+      completionKind: 'command',
+      completionNote: undefined,
+      selectedCompletion,
+      editable: true,
+      hint: undefined,
+      recallIndicator: undefined,
+      offset: { top: 0, left: 0 },
+      maxRows: 24,
+    }),
+    { columns: 80 },
+  );
+  const renderedCases = [
+    { name: 'first', selected: 0, marker: '❯ /item-00', notice: '… 5 more not shown (5 below)' },
+    { name: 'middle', selected: 10, marker: '❯ /item-10', notice: '… 5 more not shown (3 above, 2 below)' },
+    { name: 'last', selected: 19, marker: '❯ /item-19', notice: '… 5 more not shown (5 above)' },
+    { name: 'wrapped', selected: moveCompletionSelection(0, 20, -1), marker: '❯ /item-19', notice: '… 5 more not shown (5 above)' },
+  ];
+  for (const renderedCase of renderedCases) {
+    const output = renderOverflow(renderedCase.selected);
+    assert(`${renderedCase.name} selection renders exactly one visible marker`,
+      output.match(/❯/g)?.length === 1 && output.includes(renderedCase.marker));
+    assert(`${renderedCase.name} selection states the window omissions truthfully`,
+      output.includes(renderedCase.notice));
+  }
+  const middleOutput = renderOverflow(10);
+  assert('a middle window preserves the original candidate order',
+    middleOutput.indexOf('/item-03') < middleOutput.indexOf('/item-10') &&
+    middleOutput.indexOf('/item-10') < middleOutput.indexOf('/item-17'));
+
 
   const layout = layoutEditor(draft, 80, { offset: draft.length, affinity: 'upstream' });
   const windowed = renderToString(

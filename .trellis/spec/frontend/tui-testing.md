@@ -560,3 +560,21 @@ Stream-interruption recovery is policy/orchestration, so its primary determinist
 run `spike/verify-prompt-queue.ts`: one `runTurn` owns both attempts, and only a final failure or user
 cancel may return queued entries unsent. A test double must never call `AgentRuntime.send` recursively
 or replace the SDK error object merely to make this scenario easier to drive.
+
+## Contract: completion overflow needs pure, render, and pty proof
+
+A bounded completion menu has two independently observable properties, so one test level is not
+enough:
+
+- Pure/render checks in `spike/verify-frame-budget.ts` cover first, middle, last, and wrapped
+  full-list selections. Every rendered case must contain exactly one `❯`, preserve candidate order,
+  state omitted counts above/below truthfully, and remain inside every prompt-region grant in the
+  render matrix.
+- Real pty `verify-tui.ts completion` and `pathCompletion` must drive an overflowing menu with
+  `Up`/`Down`, wait for the selected marker to settle, then prove both Tab and Enter insert exactly
+  that marked slash/path candidate. Include a wrap case and assert acceptance does not start a turn.
+- Keep arrow writes and acceptance separate behind anchored waits when the assertion is about the
+  visible row. Separately, production keeps immediate selection/editor mirrors so batched terminal
+  events cannot make the accepted identity differ from the marker.
+
+These are free checks; no provider call is required.
