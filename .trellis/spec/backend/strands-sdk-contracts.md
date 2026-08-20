@@ -970,7 +970,10 @@ bash({ mode: 'output', taskId: string, command?: string }): Promise<{
   taskId: string; output: string; startOffset: number; endOffset: number;
   hasMore: boolean; outputPath: string
 }>
-bash({ mode: 'wait', taskId: string, waitMs: number, command?: string }): Promise<{
+bash({
+  mode: 'wait'; taskId: string; waitMs: number; command?: string;
+  wakeOnOutput?: boolean
+}): Promise<{
   reason: 'output' | 'changed' | 'terminal' | 'timeout' | 'cancelled' | 'shutdown';
   status: BackgroundTaskStatus; output: BackgroundOutputResult
 }>
@@ -1006,12 +1009,20 @@ Background states are `running | succeeded | failed | stopped`.
   an incomplete suffix while the file is growing; terminal malformed bytes may decode as
   replacement characters so the cursor cannot stall.
 - `wait` requires integer `waitMs` in `[1, 30000]`. It probes at the manager's bounded 20 ms
-  interval without holding the task serialization queue, and returns `{ reason, status,
-  output }` on consumable output, a concurrent consumer changing the cursor, terminal
-  transition, timeout, caller cancellation, or manager shutdown. Its nested output is the
-  ordinary single-consumer cursor read, so concurrent `wait`/`output` calls consume disjoint
-  ordered byte ranges; a losing concurrent wait returns `changed`, not a full timeout. Cancellation only
-  releases the observer; it does not stop the task. Shutdown releases observers before
+  interval without holding the task serialization queue. With `wakeOnOutput` omitted or `true`,
+  behavior stays output-sensitive: return `{ reason, status, output }` on consumable output, a
+  concurrent consumer changing the cursor, terminal transition, timeout, caller cancellation,
+  or manager shutdown. Its nested output is the ordinary single-consumer cursor read, so
+  concurrent `wait`/`output` calls consume disjoint ordered byte ranges; a losing concurrent
+  wait returns `changed`, not a full timeout.
+- Explicit `wakeOnOutput: false` is terminal-focused. It advances the same serialized cursor
+  while polling, retains at most the ordinary 64 KiB output cap, and does not return merely for
+  output or a concurrent cursor change. It returns retained contiguous output on terminal
+  state, caller cancellation, manager shutdown, or timeout. A competing consumer may split the
+  stream: every byte still belongs to exactly one consumer, retained offsets describe only the
+  terminal-focused wait's contiguous range, and `hasMore` truthfully reports unread bytes when
+  aggregation reaches its cap or cannot continue across another consumer's range. Cancellation
+  only releases the observer; it does not stop the task. Shutdown releases observers before
   entering the unchanged process-reaping path.
 - `stop` owns the whole POSIX process group: SIGTERM, poll up to 500 ms, SIGKILL, poll up to
   500 ms. Natural leader exit performs the same descendant cleanup before terminal state.
@@ -1027,7 +1038,7 @@ Background states are `running | succeeded | failed | stopped`.
   `bash:<pattern>` rules and auto/default/yolo behavior apply. `list`, `status`, `output`,
   `wait`, `stop`, and `restart` are safe lifecycle calls. `status`, `output`, `wait`, and
   `stop` tolerate and ignore a redundant `command` field, but still require and dispatch
-  only by `taskId`; only `wait` accepts `waitMs`, and `list` remains strict. Existing Pre/Post hooks see each immediate outer `bash` call, not eventual
+  only by `taskId`; only `wait` accepts `waitMs` and `wakeOnOutput`, and `list` remains strict. Existing Pre/Post hooks see each immediate outer `bash` call, not eventual
   background completion.
 
 ### 4. Validation & Error Matrix
@@ -1040,8 +1051,11 @@ Background states are `running | succeeded | failed | stopped`.
 | Spawn fails | Reject start, close the parent log handle, kill/register-clean any exposed group |
 | Repeated/concurrent output or wait | Serialized, disjoint cursor ranges |
 | `waitMs` absent, non-integer, below 1, or above 30000 | Zod tool error; manager also rejects direct invalid calls |
-| Wait sees no output/state change | Return `reason: timeout` within its declared bound with empty incremental output |
-| Wait caller cancels / manager shuts down | Return promptly; cancellation leaves task running, shutdown continues normal reaping |
+| `wakeOnOutput` on a non-wait mode | Zod tool error; do not reinterpret the operation |
+| Default wait sees no output/state change | Return `reason: timeout` within its declared bound with empty incremental output |
+| Terminal-focused wait sees intermediate output | Retain/advance up to 64 KiB; do not return until terminal, cancellation, shutdown, or timeout |
+| Terminal-focused wait races another cursor consumer | Return only its contiguous retained range; no duplicates; truthful `hasMore` |
+| Wait caller cancels / manager shuts down | Return promptly with retained output; cancellation leaves task running, shutdown continues normal reaping |
 | Repeated/concurrent stop | Share one termination operation and stable terminal state |
 | Descendant ignores SIGTERM | Escalate to group SIGKILL within the bounded deadline |
 | Shutdown races launch setup | Launch rejects before spawn or becomes visible and is stopped |
@@ -1054,11 +1068,12 @@ Background states are `running | succeeded | failed | stopped`.
 
 ### 5. Good / Base / Bad Cases
 
-- **Good:** a child starts a dev server, the parent lists it without knowing its id, and a
-  mounted observer receives exactly one terminal snapshot before later output inspection.
-- **Base:** an empty manager lists `[]`; `execute` and `restart` flow unchanged through the SDK
-  persistent shell.
-- **Bad:** polling status in each consumer duplicates transition logic; notifying from both
+- **Good:** a child starts a dev server, the parent waits with `wakeOnOutput: false`, and one
+  bounded result returns aggregated progress when the process reaches terminal state.
+- **Base:** omitted `wakeOnOutput` still wakes promptly on the first consumable output; an empty
+  manager lists `[]`; `execute` and `restart` flow unchanged through the SDK persistent shell.
+- **Bad:** polling status in each consumer duplicates transition logic; a terminal-focused wait
+  that buffers without a cap can exhaust memory; notifying from both
   `close` and `stop` duplicates events; shell `&`, dropping the `ChildProcess`, or killing only
   the leader creates orphan descendants; persisting task metadata falsely promises resumable
   process control.
@@ -1068,7 +1083,8 @@ Background states are `running | succeeded | failed | stopped`.
 - `spike/verify-background-bash.ts`: foreground delegation/per-Agent persistence, real
   subagent sharing, permission modes/rules/hooks, empty/ordered list snapshots, exactly-once
   success/failure/stop events, unsubscribe/listener/log-snapshot failure isolation, delayed
-  combined output, split-UTF-8 reads, TERM→KILL stop, launch/shutdown races, and bounded cleanup.
+  combined output, default and terminal-focused bounded waits, shared-cursor aggregation,
+  split-UTF-8 reads, TERM→KILL stop, launch/shutdown races, and bounded cleanup.
 - `spike/probe-background-bash-exit.ts`: direct exit, normal shutdown, CLI-style forced
   exit, SIGINT, and SIGTERM with SDK bash signal handlers loaded; leader and descendant must
   both disappear within deadlines.
@@ -1078,17 +1094,16 @@ Background states are `running | succeeded | failed | stopped`.
 ### 7. Wrong vs Correct
 
 ```typescript
-// WRONG: bypasses the tool boundary and owns only the shell leader.
+// WRONG: bypasses the tool boundary, owns only the shell leader, and polls every fragment.
 spawn('/bin/bash', ['-lc', `${command} &`])
+while (running) await bash({ mode: 'output', taskId })
 child.kill('SIGTERM')
 
-// CORRECT: one wrapped bash tool, shared manager, process-group ownership and events.
+// CORRECT: one wrapped bash tool, shared manager, bounded terminal-focused wait and cleanup.
 const backgroundBash = new BackgroundBashManager(projectRoot, sessionId)
 const bash = createBackgroundBashTool(backgroundBash)
-const unsubscribe = backgroundBash.subscribe(renderTerminalTask)
-const tasks = await backgroundBash.list()
-process.kill(-tasks[0].pid, 'SIGTERM')
-unsubscribe()
+const task = await bash({ mode: 'start', command })
+const result = await bash({ mode: 'wait', taskId: task.taskId, waitMs: 30000, wakeOnOutput: false })
 await backgroundBash.shutdown()
 ```
 

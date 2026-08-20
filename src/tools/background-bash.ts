@@ -148,11 +148,18 @@ export class BackgroundBashManager {
     return this.serialize(task, () => this.readOutput(task));
   }
 
-  async wait(taskId: string, waitMs: number, signal?: AbortSignal): Promise<BackgroundWaitResult> {
+  async wait(
+    taskId: string,
+    waitMs: number,
+    signal?: AbortSignal,
+    wakeOnOutput = true,
+  ): Promise<BackgroundWaitResult> {
     const task = this.lookup(taskId);
     if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > 30_000) {
       throw new Error('Background bash waitMs must be an integer from 1 to 30000');
     }
+    if (!wakeOnOutput) return this.waitForTerminal(task, waitMs, signal);
+
     const deadline = Date.now() + waitMs;
     const initialState = task.state;
     const initialCursor = task.cursor;
@@ -186,6 +193,88 @@ export class BackgroundBashManager {
         if (final.status.state !== 'running') return { reason: 'terminal', ...final };
         return { reason: interrupted, ...final };
       }
+    }
+  }
+
+  private async waitForTerminal(
+    task: ManagedTask,
+    waitMs: number,
+    signal?: AbortSignal,
+  ): Promise<BackgroundWaitResult> {
+    const deadline = Date.now() + waitMs;
+    let output: BackgroundOutputResult | undefined;
+
+    while (true) {
+      const observed = await this.serialize(task, async () => {
+        output = await this.aggregateWaitOutput(task, output);
+        return this.snapshot(task);
+      });
+      if (observed.state !== 'running') return this.finishTerminalWait(task, 'terminal', output);
+      if (signal?.aborted === true) return this.finishTerminalWait(task, 'cancelled', output);
+      if (this.closing) return this.finishTerminalWait(task, 'shutdown', output);
+
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return this.finishTerminalWait(task, 'timeout', output);
+      const interrupted = await waitForInterruption(
+        Math.min(POLL_MS, remaining),
+        signal,
+        this.shutdownController.signal,
+      );
+      if (interrupted === 'cancelled' || interrupted === 'shutdown') {
+        return this.finishTerminalWait(task, interrupted, output);
+      }
+    }
+  }
+
+  private async finishTerminalWait(
+    task: ManagedTask,
+    reason: 'terminal' | 'timeout' | 'cancelled' | 'shutdown',
+    output: BackgroundOutputResult | undefined,
+  ): Promise<BackgroundWaitResult> {
+    const final = await this.serialize(task, async () => {
+      const aggregated = await this.aggregateWaitOutput(task, output);
+      return {
+        output: aggregated ?? await this.readOutput(task),
+        status: await this.snapshot(task),
+      };
+    });
+    return {
+      reason: final.status.state === 'running' ? reason : 'terminal',
+      ...final,
+    };
+  }
+
+  private async aggregateWaitOutput(
+    task: ManagedTask,
+    output: BackgroundOutputResult | undefined,
+  ): Promise<BackgroundOutputResult | undefined> {
+    const consumed = output === undefined ? 0 : output.endOffset - output.startOffset;
+    // Once another cursor consumer takes a range, this wait's eventual output can
+    // no longer be extended contiguously. Keep the retained prefix and leave all
+    // later bytes to the shared cursor instead of misrepresenting its offsets.
+    if (output !== undefined && (task.cursor !== output.endOffset || consumed >= OUTPUT_LIMIT)) {
+      return { ...output, hasMore: await this.hasUnreadOutput(task) };
+    }
+
+    const next = await this.readOutput(task, OUTPUT_LIMIT - consumed);
+    if (next.output === '') {
+      return output === undefined ? undefined : { ...output, hasMore: next.hasMore };
+    }
+    if (output === undefined) return next;
+    return {
+      ...output,
+      output: output.output + next.output,
+      endOffset: next.endOffset,
+      hasMore: next.hasMore,
+    };
+  }
+
+  private async hasUnreadOutput(task: ManagedTask): Promise<boolean> {
+    const handle = await this.openOwnedLog(task);
+    try {
+      return (await handle.stat()).size > task.cursor;
+    } finally {
+      await handle.close();
     }
   }
 
@@ -395,7 +484,7 @@ export class BackgroundBashManager {
     };
   }
 
-  private async readOutput(task: ManagedTask): Promise<BackgroundOutputResult> {
+  private async readOutput(task: ManagedTask, limit = OUTPUT_LIMIT): Promise<BackgroundOutputResult> {
     let handle: FileHandle | undefined;
     let size: number;
     try {
@@ -413,7 +502,7 @@ export class BackgroundBashManager {
       return { taskId: task.id, output: '', startOffset, endOffset: startOffset, hasMore: false, outputPath: task.outputPath };
     }
 
-    const bytesToRead = Math.min(available, OUTPUT_LIMIT + 3);
+    const bytesToRead = Math.min(available, limit + 3);
     const buffer = Buffer.allocUnsafe(bytesToRead);
     let bytesRead: number;
     try {
@@ -426,7 +515,7 @@ export class BackgroundBashManager {
 
     const data = buffer.subarray(0, bytesRead);
     const terminalEof = task.state !== 'running' && startOffset + bytesRead >= size;
-    const consumed = completeUtf8Boundary(data, Math.min(OUTPUT_LIMIT, bytesRead), terminalEof);
+    const consumed = completeUtf8Boundary(data, Math.min(limit, bytesRead), terminalEof);
     const output = data.subarray(0, consumed).toString('utf8');
     task.cursor += consumed;
     return {
@@ -566,6 +655,8 @@ const inputSchema = z.object({
   taskId: z.string().optional().describe('Session-local task id required by status, output, wait, and stop'),
   waitMs: z.number().int().min(1).max(30_000).optional()
     .describe('Bounded wait in milliseconds, required only by wait mode (1-30000)'),
+  wakeOnOutput: z.boolean().optional()
+    .describe('Wait mode only: false retains intermediate output and wakes only on terminal state, cancellation, shutdown, or timeout; defaults to true'),
 }).strict().superRefine((input, context) => {
   if (input.mode === 'execute' && input.command === undefined) {
     context.addIssue({ code: 'custom', path: ['command'], message: 'command is required in execute mode' });
@@ -591,6 +682,9 @@ const inputSchema = z.object({
   if (input.mode !== 'wait' && input.waitMs !== undefined) {
     context.addIssue({ code: 'custom', path: ['waitMs'], message: `waitMs is not accepted in ${input.mode} mode` });
   }
+  if (input.mode !== 'wait' && input.wakeOnOutput !== undefined) {
+    context.addIssue({ code: 'custom', path: ['wakeOnOutput'], message: `wakeOnOutput is not accepted in ${input.mode} mode` });
+  }
 });
 
 type BackgroundBashInput = z.infer<typeof inputSchema>;
@@ -608,7 +702,8 @@ export function createBackgroundBashTool(
       'Modes: execute, restart, start, list, status, output, wait, and stop. ' +
       'Never block execute mode with sleep to wait for something slow: start the command in the background, ' +
       'do other work, then use wait with taskId and waitMs (an integer from 1 to 30000). ' +
-      'Wait consumes incremental output and returns {reason, status, output} on output, another consumer changing the cursor, terminal state, timeout, cancellation, or shutdown.',
+      'Wait consumes incremental output and returns {reason, status, output}; by default it wakes on output or another consumer changing the cursor. ' +
+      'Set wakeOnOutput:false to aggregate intermediate output and wake only on terminal state, cancellation, shutdown, or timeout.',
     inputSchema,
     callback: (input, context?: ToolContext) => {
       switch (input.mode) {
@@ -624,7 +719,7 @@ export function createBackgroundBashTool(
         case 'output':
           return manager.output(input.taskId!);
         case 'wait':
-          return manager.wait(input.taskId!, input.waitMs!, context?.agent.cancelSignal);
+          return manager.wait(input.taskId!, input.waitMs!, context?.agent.cancelSignal, input.wakeOnOutput);
         case 'stop':
           return manager.stop(input.taskId!);
       }
