@@ -194,3 +194,24 @@ row that passed through the live tail was drawn once per repaint.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: Implement SER-031 explicit memory search
+
+**Date**: 2026-08-21
+**Task**: Implement SER-031 explicit memory search
+**Branch**: `main`
+
+### Summary
+
+Added bounded visible read-only search_memory over project trajectories, preserved active-session exclusion and child/permission contracts, and verified the full offline gate.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0e16f23` | (see git log) |
+
+### Status
+
+[OK] **Completed**
