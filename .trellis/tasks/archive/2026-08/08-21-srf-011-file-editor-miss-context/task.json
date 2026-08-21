@@ -1,0 +1,32 @@
+{
+  "id": "srf-011-file-editor-miss-context",
+  "name": "srf-011-file-editor-miss-context",
+  "title": "SRF-011: recover exact str_replace misses with bounded context",
+  "description": "Append deterministic bounded current context only when exact SDK fileEditor str_replace misses, without fuzzy mutation.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P1",
+  "creator": "river",
+  "assignee": "river",
+  "createdAt": "2026-08-21",
+  "completedAt": "2026-08-21",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "patches/@strands-agents__sdk@1.12.0.patch",
+    "pnpm-lock.yaml",
+    "spike/verify-file-editor.ts",
+    ".trellis/spec/backend/strands-sdk-contracts.md",
+    "AGENTS.md"
+  ],
+  "notes": "Implemented through the pinned SDK-private miss path; Host-owned backlog remains dirty and excluded.",
+  "meta": {}
+}

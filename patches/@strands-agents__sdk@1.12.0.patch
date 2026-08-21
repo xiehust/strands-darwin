@@ -233,10 +233,22 @@ index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..197045e896402c014d8e1608d3048989
  }
  /**
 diff --git a/dist/src/vended-tools/file-editor/file-editor.js b/dist/src/vended-tools/file-editor/file-editor.js
-index 044cf09a239dad3a846c156d0811bbead244535e..1a768b0df33bb940ca2aa232036c8d974fc172e2 100644
+index 044cf09a239dad3a846c156d0811bbead244535e..178240ef48642d8be9f469ca3d762d3cbe69ec21 100644
 --- a/dist/src/vended-tools/file-editor/file-editor.js
 +++ b/dist/src/vended-tools/file-editor/file-editor.js
-@@ -110,13 +110,15 @@ function applyViewRange(fileContent, viewRange) {
+@@ -7,6 +7,11 @@ import * as path from 'path';
+ const SNIPPET_LINES = 4;
+ const DEFAULT_MAX_FILE_SIZE = 1048576; // 1MB
+ const MAX_DIRECTORY_DEPTH = 2;
++const MISS_CONTEXT_LINES = 2;
++const MISS_CONTEXT_LINE_CODE_POINTS = 240;
++const MISS_QUERY_CODE_POINTS = 8192;
++const MISS_MAX_SEEDS = 64;
++const MISS_MAX_SEED_OCCURRENCES = 16;
+ /**
+  * Zod schema for file editor input validation.
+  */
+@@ -110,15 +115,139 @@ function applyViewRange(fileContent, viewRange) {
      if (start < 1 || start > nLines) {
          throw new Error(`Invalid \`view_range\`: [${start}, ${end}]. Its first element \`${start}\` should be within the range of lines of the file: [1, ${nLines}]`);
      }
@@ -254,4 +266,149 @@ index 044cf09a239dad3a846c156d0811bbead244535e..1a768b0df33bb940ca2aa232036c8d97
 +    const content = end === -1 ? lines.slice(start - 1).join('\n') : lines.slice(start - 1, effectiveEnd).join('\n');
      return { content, initLine: start };
  }
++function formatOldStrForError(oldStr) {
++    const limit = 240;
++    if (oldStr.length <= limit * 2) {
++        const codePoints = Array.from(oldStr);
++        if (codePoints.length <= limit)
++            return oldStr;
++        return `${codePoints.slice(0, limit).join('')}… [old_str truncated]`;
++    }
++    return `${Array.from(oldStr.slice(0, limit * 2)).slice(0, limit).join('')}… [old_str truncated]`;
++}
++
++function findMissContextOffset(fileContent, oldStr) {
++    if (oldStr.length === 0) {
++        return { reason: 'old_str is empty, so there is no safe useful close match to locate.' };
++    }
++    if (oldStr.length > MISS_QUERY_CODE_POINTS * 2) {
++        return { reason: `old_str exceeds the advisory search cap of ${MISS_QUERY_CODE_POINTS} Unicode code points.` };
++    }
++    const query = Array.from(oldStr);
++    if (query.length > MISS_QUERY_CODE_POINTS) {
++        return { reason: `old_str exceeds the advisory search cap of ${MISS_QUERY_CODE_POINTS} Unicode code points.` };
++    }
++    const currentOffsets = new Int32Array(Array.from(fileContent).length + 1);
++    let codePointIndex = 0;
++    let utf16Index = 0;
++    for (const codePoint of fileContent) {
++        currentOffsets[codePointIndex] = utf16Index;
++        codePointIndex += 1;
++        utf16Index += codePoint.length;
++    }
++    currentOffsets[codePointIndex] = utf16Index;
++    const seedWidth = Math.min(64, Math.max(8, Math.floor(query.length / 4)));
++    if (query.length < seedWidth) {
++        return { reason: 'No safe useful close textual match was found in the current file.' };
++    }
++    const seedCount = Math.min(MISS_MAX_SEEDS, Math.floor(query.length / seedWidth));
++    const candidates = new Map();
++    for (let seedIndex = 0; seedIndex < seedCount; seedIndex += 1) {
++        const queryOffset = seedCount === 1
++            ? 0
++            : Math.floor(seedIndex * (query.length - seedWidth) / (seedCount - 1));
++        const seed = query.slice(queryOffset, queryOffset + seedWidth).join('');
++        if (seed.trim().length === 0)
++            continue;
++        let from = 0;
++        for (let occurrence = 0; occurrence < MISS_MAX_SEED_OCCURRENCES; occurrence += 1) {
++            const utf16Offset = fileContent.indexOf(seed, from);
++            if (utf16Offset === -1)
++                break;
++            let low = 0;
++            let high = codePointIndex;
++            while (low < high) {
++                const middle = Math.floor((low + high) / 2);
++                if (currentOffsets[middle] < utf16Offset)
++                    low = middle + 1;
++                else
++                    high = middle;
++            }
++            const currentOffset = low;
++            const projectedStart = currentOffset - queryOffset;
++            if (projectedStart >= 0 && projectedStart < codePointIndex) {
++                const candidate = candidates.get(projectedStart) ?? { ranges: [], firstOffset: currentOffset };
++                candidate.ranges.push([queryOffset, queryOffset + seedWidth]);
++                candidate.firstOffset = Math.min(candidate.firstOffset, currentOffset);
++                candidates.set(projectedStart, candidate);
++            }
++            from = utf16Offset + seed.length;
++        }
++    }
++    let best;
++    for (const [projectedStart, candidate] of candidates) {
++        const ranges = candidate.ranges.sort((left, right) => left[0] - right[0]);
++        let covered = 0;
++        let rangeEnd = -1;
++        for (const [start, end] of ranges) {
++            if (end <= rangeEnd)
++                continue;
++            covered += end - Math.max(start, rangeEnd);
++            rangeEnd = end;
++        }
++        const threshold = Math.max(12, Math.min(128, Math.ceil(query.length / 3)));
++        if (covered < threshold)
++            continue;
++        const ranked = { projectedStart, offset: candidate.firstOffset, covered, seeds: ranges.length };
++        if (!best
++            || ranked.covered > best.covered
++            || (ranked.covered === best.covered && ranked.seeds > best.seeds)
++            || (ranked.covered === best.covered && ranked.seeds === best.seeds && ranked.offset < best.offset)) {
++            best = ranked;
++        }
++    }
++    return best ? { offset: best.offset } : { reason: 'No safe useful close textual match was found in the current file.' };
++}
++function formatMissContext(fileContent, oldStr) {
++    const match = findMissContextOffset(fileContent, oldStr);
++    const heading = 'Advisory context only; no fuzzy replacement was attempted.';
++    if (match.offset === undefined) {
++        return `${heading}\n${match.reason}`;
++    }
++    const beforeMatch = Array.from(fileContent).slice(0, match.offset).join('');
++    const matchLine = beforeMatch.split('\n').length - 1;
++    const lines = fileContent.split('\n');
++    const startLine = Math.max(0, matchLine - MISS_CONTEXT_LINES);
++    const endLine = Math.min(lines.length, matchLine + MISS_CONTEXT_LINES + 1);
++    const numbered = lines.slice(startLine, endLine).map((line, index) => {
++        const codePoints = Array.from(line);
++        const shown = codePoints.length > MISS_CONTEXT_LINE_CODE_POINTS
++            ? `${codePoints.slice(0, MISS_CONTEXT_LINE_CODE_POINTS).join('')}… [line truncated]`
++            : line;
++        return `${String(startLine + index + 1).padStart(6)}  ${shown}`;
++    });
++    const omissions = [];
++    if (startLine > 0)
++        omissions.push(`${startLine} earlier line${startLine === 1 ? '' : 's'} omitted`);
++    if (endLine < lines.length) {
++        const later = lines.length - endLine;
++        omissions.push(`${later} later line${later === 1 ? '' : 's'} omitted`);
++    }
++    const omissionNotice = omissions.length > 0 ? `\n[Excerpt truncated: ${omissions.join('; ')}.]` : '';
++    return `${heading}\nClosest current context (lines ${startLine + 1}-${endLine}):\n${numbered.join('\n')}${omissionNotice}`;
++}
++
  /**
+  * Performs a unique str_replace transformation on file content. Validates that
+  * `oldStr` appears exactly once. Returns the new content plus a snippet around
+@@ -128,9 +257,18 @@ function buildStrReplaceResult(originalContent, oldStr, newStr, filePath) {
+     const fileContent = originalContent.replace(/\t/g, '        ');
+     const expandedOldStr = oldStr.replace(/\t/g, '        ');
+     const expandedNewStr = newStr ? newStr.replace(/\t/g, '        ') : '';
+-    const occurrences = (fileContent.match(new RegExp(escapeRegExp(expandedOldStr), 'g')) || []).length;
++    let occurrences = 0;
++    let occurrenceOffset = fileContent.indexOf(expandedOldStr);
++    while (occurrenceOffset !== -1) {
++        occurrences += 1;
++        if (occurrences > 1)
++            break;
++        occurrenceOffset = fileContent.indexOf(expandedOldStr, occurrenceOffset + Math.max(1, expandedOldStr.length));
++    }
+     if (occurrences === 0) {
+-        throw new Error(`No replacement was performed, old_str \`${oldStr}\` did not appear verbatim in ${filePath}.`);
++        const advisory = formatMissContext(fileContent, expandedOldStr);
++        const displayedOldStr = formatOldStrForError(oldStr);
++        throw new Error(`No replacement was performed, old_str \`${displayedOldStr}\` did not appear verbatim in ${filePath}.\n\n${advisory}`);
+     }
+     if (occurrences > 1) {
+         const lines = fileContent.split('\n');

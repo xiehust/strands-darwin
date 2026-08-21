@@ -148,6 +148,57 @@ Wrong: wrap `fileEditor` in Darwin and reproduce its mixed read/write schema or 
 error string. Correct: keep runtime assembly unchanged and patch the SDK-private range helper,
 where the full content and all existing validation context already live.
 
+### Contract: exact fileEditor str_replace misses include bounded advisory context
+
+#### Scope / trigger
+
+The same version-pinned SDK patch extends only `buildStrReplaceResult()` after exact occurrence
+counting returns zero. The call remains an error and `handleStrReplace()` never reaches
+`sandbox.writeText()`. Exact unique replacement, multiple-occurrence errors, required-field/path/
+directory/read/size validation, provider schema, and all `view` behavior stay SDK-owned and
+unchanged. Never use an advisory candidate to mutate, retry, read another path, or convert the miss
+into success.
+
+#### Deterministic bounded matching and output
+
+The miss path searches current content only after the existing 1 MiB UTF-8 check. `old_str` is
+accepted for advisory matching only through 8,192 Unicode code points (with a cheap 16,384 UTF-16
+code-unit precheck). It derives at most 64 exact seed fragments, each 8–64 code points, and visits at
+most 16 current occurrences per seed. Seed occurrences project candidate starts; candidates rank by
+union of query code points covered, then seed count, then earliest current occurrence. A candidate
+must cover at least `max(12, min(128, ceil(oldLength / 3)))` query code points. This is deliberately
+not edit distance or fuzzy replacement: exact seed evidence chooses where to show current text only.
+No qualifying candidate produces an explicit `No safe useful close textual match` reason instead of
+an arbitrary excerpt.
+
+The original exact-miss sentence comes first, with `old_str` projected through a 240-code-point cap.
+A separate `Advisory context only; no fuzzy replacement was attempted` section then shows the
+selected line plus at most two current lines on either side (five numbered rows total). Each row is
+capped at 240 Unicode code points and carries `… [line truncated]`; omitted lines are counted. Every
+slice uses code-point arrays, so advisory bounds cannot split a surrogate pair. The advisory is an
+error projection only: file bytes, mtime/ctime, sandbox write count, and exact mutation semantics
+remain unchanged.
+
+#### Validation matrix
+
+| Case | Required result |
+|---|---|
+| stale mostly-identical `old_str` | Error plus line-numbered current excerpt enabling an exact retry; zero writes |
+| unrelated/short/weak text | Explicit no-safe-useful-match reason; no numbered arbitrary content |
+| equally ranked candidates | Earliest current location, deterministically |
+| `old_str` above 8,192 code points | Explicit cap reason, bounded/truncated error projection, no advisory scan |
+| long/Unicode current line | At most 240 intact code points plus honest truncation marker |
+| exact unique match | Existing success and exactly requested replacement bytes |
+| multiple/missing/path/directory/size error | Existing error path without miss advisory |
+
+Required assertions live in `spike/verify-file-editor.ts` and drive the exported singleton through
+its provider-facing `stream()` path against real files. They cover bounded recovery, absence,
+ambiguity, adversarial input, Unicode, zero writes and metadata purity, exact success, unrelated
+errors, provider schema, the 1 MiB limit, and all view contracts. On SDK upgrade, regenerate the pnpm
+patch from the pristine package, run `node --check` on installed `file-editor.js`, then run that
+focused suite before the project gates.
+
+
 ## Observing the stream (what darwin measured to record it)
 
 Darwin records an append-only trajectory of every turn. The *policy* — format, caps,
