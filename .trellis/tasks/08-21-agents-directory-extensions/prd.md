@@ -47,5 +47,3 @@ Darwin already loads skills, child-agent definitions, custom commands, and execu
 - If a `.darwin` layer has one or more `hooks/*.json`, that directory is authoritative for the layer; do not also execute legacy hooks. Surface a startup notice when an existing legacy hook input is shadowed by the directory form.
 - Change the skill safety contract to allow a skill root symlink and arbitrary nested symlinks. Resolve the root first and treat its real target as the safety root; every nested link's final target must remain inside that real root. Reject broken links, cycles, and escapes visibly, retain the 200-entry bound, and re-check containment at resource-use time.
 - Allow direct agent, command, and hook JSON files to be symlinks when their final target is a regular file; discovery remains direct-child/non-recursive. Broken/cyclic agent or command links are skipped visibly, while broken/cyclic hook links fail startup. A project-local file link may target outside the project because the link is explicit user configuration; diagnostics identify the resolved source.
-
-
