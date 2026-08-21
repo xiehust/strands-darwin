@@ -73,6 +73,8 @@ Retry at most two times after the original attempt. Drain and record every retry
 
 After the child reports completion, independently inspect the repository diff and run the named acceptance checks from the Host. This is the one Host full-gate pass in the verification pyramid; do not duplicate a green child full gate before inspecting the diff. Do not accept the child's prose or its claimed test result as evidence. If acceptance fails, send the exact failure and a focused correction to the same child session through another managed background invocation, then rerun only affected focused checks before the final full gate. Do not patch the implementation yourself merely to conceal the failure.
 
+After every accepted requirement iteration in the darwin repository, run `pnpm build` from the repository root before reporting acceptance or launching the next worker. This refreshes the `dist` CLI and copied built-in skills that the next `darwin` process actually loads; typecheck and tests do not replace it. Treat a failed build as an acceptance failure and send the exact failure to the same child session for correction.
+
 ## 6. Report
 
 Report:
