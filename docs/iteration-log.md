@@ -1605,3 +1605,31 @@ cacheWrite=111,250`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-21 | `e5f77a6` | Recommend user-controlled `/compact` through the existing bounded context-pressure notice |
+
+
+### Batch 44 — exact file-edit misses return bounded recovery context (2026-08-21)
+
+Origin: `docs/reflections/reflection_2026-08-21_session-20260821-054705633.md`. SRF-011
+(Score 10) addresses a stale exact `old_str` miss that otherwise required another read/retry round,
+without weakening exact mutation semantics.
+
+Child session `session-20260821-093212243`, managed task
+`bg-9f32138b-22dc-43fe-b9db-4b4e1d34f5af` (exit 0, no correction turn). Delivered in `3ce5e46`:
+the version-pinned SDK-private `fileEditor` miss path now selects advisory context through capped
+exact query seeds. Misses remain errors before any sandbox write; output is capped to five numbered
+lines and 240 Unicode code points per line, with explicit omission, line truncation and no-safe-match
+wording. Ambiguity is deterministic, oversized queries are refused early, and exact success plus all
+unrelated validation/view behavior remains SDK-owned and unchanged.
+
+Host acceptance inspected the SDK patch and independently re-ran `pnpm typecheck`, `pnpm test`
+(all fast suites green), `spike/verify-file-editor.ts` (63/63), `pnpm build`, installed patched-SDK
+syntax checking, Trellis archive validation, and commit/diff checks. The child's first full-gate run
+hit the existing three-second background-bash exit timeout; its unchanged rerun and the Host run
+passed. No provider call was needed for Host acceptance.
+
+Token spend, single managed task: `input=272 output=43,705 cacheRead=11,210,830
+cacheWrite=124,535`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-21 | `3ce5e46` | Return deterministic bounded current context after an exact `fileEditor str_replace` miss without fuzzy mutation |
