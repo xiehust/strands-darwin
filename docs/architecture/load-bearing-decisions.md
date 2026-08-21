@@ -173,6 +173,25 @@ the live frame gains no row; restating what the header shows is the point, becau
 header is the use case. The fifteenth built-in grew `MAX_COMPLETIONS` again; the free checks are
 `spike/verify-status-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion` / `mcp`.
 
+## Context pressure — advise once, never compact implicitly
+
+**High context pressure is a transcript advisory over the existing estimate and configurable latch,
+not another compaction mechanism** (`src/tui/context-format.ts`, `src/tui/App.tsx`; specs:
+`backend/strands-sdk-contracts.md` § `/context` counting and `frontend/live-frame.md` § context
+pressure). After a completed turn, the App asks `AgentRuntime.contextEstimate()` and checks the same
+`contextWarnRatio` that has always controlled context warnings (default `0.8`, custom values
+preserved, `0` disables). There is deliberately no SRF-010-specific second threshold: crossing emits
+one bounded `<Static>` transcript notice that recommends the user consider `/compact` before the next
+broad implementation or verification turn. Remaining above does not repeat it; only a later known
+below-threshold estimate re-arms it, and `/clear` installs a fresh latch with the successor session.
+An unknown/invalid model window or failed estimate is absence, never pressure. The notice neither
+calls `/compact` nor mutates messages, and adds no timer, channel or live-frame row. Free coverage:
+`spike/verify-context-format.ts`; unchanged gates include `verify-compact.ts`,
+`verify-status-command.ts`, `verify-frame-budget.ts`, `verify-prompt-queue.ts`,
+`verify-resume-recap.ts`, and `verify-clear-session.ts`.
+
+
+
 
 ## `darwin sessions` and `--resume <id>` — resume by choice
 

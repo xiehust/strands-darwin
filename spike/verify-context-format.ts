@@ -1,5 +1,6 @@
 /** Pure formatting contracts for the /context report. No model, no network. */
 import { createContextWarnLatch, formatContextReport, formatWindowShare } from '../src/tui/context-format.js';
+import { initialTurnState, turnReducer, type TurnState } from '../src/tui/turn-state.js';
 import { assert, header, report } from './shared.js';
 
 header('/context — window share');
@@ -25,30 +26,72 @@ assert('an empty conversation still reports honestly',
   formatContextReport({ estimatedTokens: 0, messageCount: 0, windowTokens: 200_000 }) ===
   'estimated context — ~0 tokens · 0% of 200,000 window · 0 message(s)');
 
-header('/context — warn latch');
+header('/context — pressure notice latch');
 const KNOWN_WINDOW = 1_000_000;
+const estimate = (estimatedTokens: number, windowTokens: number | undefined = KNOWN_WINDOW) => ({
+  estimatedTokens,
+  messageCount: 1,
+  windowTokens,
+});
 
 let latch = createContextWarnLatch();
-assert('fires once on first crossing of the threshold',
-  latch.check({ estimatedTokens: 850_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8) !== null);
+assert('stays silent below the deliberately high configured threshold',
+  latch.check(estimate(799_999), 0.8) === null);
+const firstNotice = latch.check(estimate(800_000), 0.8);
+assert('fires at the exact configured threshold', firstNotice !== null);
 assert('does not fire again while still above the threshold',
-  latch.check({ estimatedTokens: 900_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8) === null);
-assert('re-arms after dropping below the threshold',
-  latch.check({ estimatedTokens: 700_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8) === null);
+  latch.check(estimate(900_000), 0.8) === null);
+assert('re-arms after a known estimate drops below the threshold',
+  latch.check(estimate(700_000), 0.8) === null);
 assert('fires again after re-arming',
-  latch.check({ estimatedTokens: 850_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8) !== null);
+  latch.check(estimate(850_000), 0.8) !== null);
 
 latch = createContextWarnLatch();
 assert('disabled at warnRatio 0, no matter how large the context',
-  latch.check({ estimatedTokens: 999_999, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0) === null);
+  latch.check(estimate(999_999), 0) === null);
 
 latch = createContextWarnLatch();
-assert('never fires when the window is unknown',
-  latch.check({ estimatedTokens: 999_999, messageCount: 1, windowTokens: undefined }, 0.8) === null);
+assert('never treats an unknown or invalid estimate as pressure',
+  latch.check({ estimatedTokens: 999_999, messageCount: 1, windowTokens: undefined }, 0.8) === null &&
+  latch.check(estimate(999_999, 0), 0.8) === null &&
+  latch.check(estimate(999_999, -1), 0.8) === null &&
+  latch.check(estimate(999_999, Number.NaN), 0.8) === null &&
+  latch.check(estimate(Number.NaN), 0.8) === null &&
+  latch.check(estimate(-1), 0.8) === null);
 
 latch = createContextWarnLatch();
-const msg = latch.check({ estimatedTokens: 820_000, messageCount: 1, windowTokens: KNOWN_WINDOW }, 0.8);
-assert('notice text includes the percent and the /compact hint',
-  msg !== null && msg.includes('82%') && msg.includes('/compact'));
+assert('an unknown estimate cannot dishonestly re-arm an already crossed latch',
+  latch.check(estimate(800_000), 0.8) !== null &&
+  latch.check({ estimatedTokens: 1, messageCount: 1, windowTokens: undefined }, 0.8) === null &&
+  latch.check(estimate(900_000), 0.8) === null);
+
+latch = createContextWarnLatch();
+assert('a custom high threshold remains authoritative',
+  latch.check(estimate(850_000), 0.9) === null && latch.check(estimate(900_000), 0.9) !== null);
+assert('a fresh session latch may warn independently',
+  createContextWarnLatch().check(estimate(900_000), 0.9) !== null);
+
+assert('notice is one bounded line with the pressure, percent, /compact, and next broad-turn guidance',
+  firstNotice !== null &&
+  firstNotice.length <= 160 &&
+  !firstNotice.includes('\n') &&
+  firstNotice.includes('context pressure is high') &&
+  firstNotice.includes('80%') &&
+  firstNotice.includes('/compact') &&
+  firstNotice.includes('before the next broad implementation or verification turn'));
+
+header('/context — transcript-only integration');
+latch = createContextWarnLatch();
+let state: TurnState = initialTurnState;
+const baseline = latch.check(estimate(700_000), 0.8);
+if (baseline !== null) state = turnReducer(state, { type: 'notice', text: baseline, severity: 'warn' });
+const crossing = latch.check(estimate(800_000), 0.8);
+if (crossing !== null) state = turnReducer(state, { type: 'notice', text: crossing, severity: 'warn' });
+const repeated = latch.check(estimate(900_000), 0.8);
+if (repeated !== null) state = turnReducer(state, { type: 'notice', text: repeated, severity: 'warn' });
+assert('baseline plus repeated high-pressure checks produce exactly one transcript notice',
+  state.history.length === 1 && state.history[0]?.kind === 'notice' && state.history[0].text === crossing);
+assert('the notice does not populate any live-frame turn state',
+  state.liveText === '' && state.committedAnswer === '' && !state.thinking && state.activeTools.length === 0);
 
 report();

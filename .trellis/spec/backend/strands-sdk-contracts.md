@@ -1523,6 +1523,23 @@ estimated request size, not a billing metric.
 `spike/verify-config.ts` asserts native Bedrock counting, prefixed/unprefixed known OpenAI metadata,
 and unknown-model degradation. `spike/verify-context-format.ts` pins presentation.
 
+### Context-pressure advisory
+
+The post-turn context-pressure path consumes this same estimate; it is not another counter and must
+not infer pressure from spend/cache-read figures. `contextWarnRatio` is the single configurable
+threshold (default `0.8`, custom values preserved, `0` disabled). A known positive window crossing
+produces one bounded transcript notice recommending user-controlled `/compact` before the next broad
+implementation or verification turn. It never invokes `AgentRuntime.compact()`, mutates conversation
+state, or adds a model call. Remaining above is silent; a later known below-threshold estimate re-arms
+the session latch. Unknown/invalid windows, invalid token estimates, and estimation failures produce
+no pressure result, and `/clear` starts with a fresh latch.
+
+`spike/verify-context-format.ts` pins exact crossing, one-shot/re-arm/disabled/unknown behavior and the
+transcript-only projection. Keep `spike/verify-compact.ts`, `verify-status-command.ts`,
+`verify-clear-session.ts`, and the frontend frame/queue/resume suites green.
+
+
+
 ### 7. Wrong vs Correct
 
 ```typescript

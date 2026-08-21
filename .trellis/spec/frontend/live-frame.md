@@ -291,6 +291,31 @@ ANSI-strip equality, `formatReplay` byte-stability — force color first via `sp
 or the "styling happened" assertion passes vacuously on a pipe), the markdown section of
 `spike/verify-visual-language.tsx`, and the pty scenarios above unchanged.
 
+## Contract: high context pressure is one transcript notice, never a live-frame participant
+
+After a completed turn, `App` checks `AgentRuntime.contextEstimate()` through the existing
+`createContextWarnLatch`. The threshold has one owner: configured `contextWarnRatio` (default `0.8`;
+custom ratios remain authoritative; `0` disables it). SRF-010 does not add a second threshold or a
+second notice at the same crossing. At or above the ratio, a known positive model window emits one
+bounded single-line warning recommending that the user consider `/compact` before the next broad
+implementation or verification turn.
+
+The notice is ordinary finished `TurnState.history`, rendered once by `<Static>`. It is not a header,
+busy, prompt, queue, tool, or answer row and therefore adds no participant to `frame-budget.ts`.
+Darwin never invokes compaction from this path: `/compact` remains user-controlled and this check adds
+no conversation mutation, timer, channel, or mid-turn work. Remaining above the threshold is silent;
+a later **known** below-threshold estimate re-arms the latch (including after a successful user-run
+`/compact`). Unknown/zero/negative/non-finite windows, invalid token estimates, and estimation
+failures cannot mean pressure and cannot re-arm a latched crossing. `/clear` replaces the latch with
+fresh successor-session state under the existing per-session reset contract below.
+
+Tests required: `spike/verify-context-format.ts` pins threshold/crossing/re-arm/disabled/unknown
+behavior, bounded wording, one transcript notice, and empty live-turn state. Keep
+`verify-frame-budget.ts`, `verify-prompt-queue.ts`, `verify-resume-recap.ts`,
+`verify-clear-session.ts`, `verify-compact.ts`, and `verify-status-command.ts` green.
+
+
+
 ## Contract: the only sanctioned whole-screen clear is `/clear`, and it costs two things at once
 
 `<Static>` cannot be recalled, so "reset the transcript" means clearing the terminal — the same

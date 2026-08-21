@@ -646,7 +646,7 @@ each, made for `tail -f`:
 2026-08-16T12:00:00.123Z darwin info  — diagnostics started · session session-20260816-120000 · darwin 0.4.0 · bedrock/global.anthropic.claude-opus-5 · pid 12345 · budget 8388608 bytes
 2026-08-16T12:00:03.881Z sdk    debug — msg_idx=<3> | added cache point to last user message
 2026-08-16T12:01:44.517Z sdk    debug — throttled | error_message=<Too many requests, please wait before trying again.>
-2026-08-16T12:02:02.004Z darwin warn  — context is ~82% of the model window — /compact can shrink it
+2026-08-16T12:02:02.004Z darwin warn  — context pressure is high (~82% of the model window) — consider /compact before the next broad implementation or verification turn
 ```
 
 **Off by default on purpose.** Those lines quote provider payloads, so they can contain parts of your

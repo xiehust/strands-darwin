@@ -39,9 +39,12 @@ export function formatWindowShare(tokens: number, windowTokens: number): string 
 }
 
 /**
- * A stateful latch for the context-pressure warning: fires once when the
- * estimated share crosses `warnRatio`, re-arms only after the share drops below
- * it again (e.g. after a successful `/compact`).
+ * A stateful latch for the context-pressure notice: fires once when the
+ * estimated share crosses the existing configurable `warnRatio`, re-arms only
+ * after a known share drops below it again (e.g. after a successful user-run
+ * `/compact`). There is deliberately no second SRF-010 threshold: one pressure
+ * event gets one notice, and `contextWarnRatio: 0` remains the compatibility
+ * switch that disables it.
  *
  * Returned as a plain object so the caller (App.tsx) can hold it in a ref:
  * the latch must not reset between renders, and it must never fire when
@@ -56,7 +59,14 @@ export function createContextWarnLatch(): ContextWarnLatch {
   let aboveThreshold = false;
   return {
     check(estimate: ContextEstimate, warnRatio: number): string | null {
-      if (warnRatio <= 0 || estimate.windowTokens === undefined || estimate.windowTokens <= 0) {
+      if (
+        warnRatio <= 0 ||
+        !Number.isFinite(estimate.estimatedTokens) ||
+        estimate.estimatedTokens < 0 ||
+        estimate.windowTokens === undefined ||
+        !Number.isFinite(estimate.windowTokens) ||
+        estimate.windowTokens <= 0
+      ) {
         return null;
       }
       const share = estimate.estimatedTokens / estimate.windowTokens;
@@ -64,7 +74,10 @@ export function createContextWarnLatch(): ContextWarnLatch {
         if (aboveThreshold) return null;   // already warned; don't repeat
         aboveThreshold = true;
         const pct = Math.round(share * 100);
-        return `context is ~${pct}% of the model window — /compact can shrink it`;
+        return (
+          `context pressure is high (~${pct}% of the model window) — consider /compact before ` +
+          'the next broad implementation or verification turn'
+        );
       }
       aboveThreshold = false;              // re-arm after dropping below
       return null;

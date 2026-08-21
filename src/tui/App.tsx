@@ -587,9 +587,10 @@ export function App({
         returnQueuedToEditor(true);
       }
 
-      // Post-turn context-pressure check: free heuristic, idle-only, never
-      // blocks the session — a failed estimate is silently dropped so a warning
-      // failure cannot mask the turn result that just rendered above it.
+      // Post-turn context-pressure check: reuse the configurable warning latch
+      // and existing Static transcript notice — no second threshold or live row.
+      // Compaction remains an explicit user command. A failed estimate is silently
+      // dropped so this advisory path cannot mask the completed turn above it.
       try {
         const estimate = await runtime.contextEstimate();
         const notice = contextWarnLatch.current.check(estimate, runtime.config.contextWarnRatio);
