@@ -90,6 +90,8 @@ function staticRules(): void {
     'imageViewer permission summary remains one line',
     imageRequest.kind === 'read' && !imageRequest.summary.includes('\n'),
   );
+  assert('search_memory is safe', riskOf('search_memory', { query: 'prior decision' }).risk === 'safe');
+
   assert('subagent delegation is safe', riskOf('subagent', { task: 'inspect', agent: 'general' }).risk === 'safe');
   assert(
     'unknown / MCP tools are dangerous',

@@ -40,6 +40,10 @@ export interface SearchOutcome {
   sessions: SessionSearchResult[];
   /** Sessions that have a snapshot but no trajectory file, named rather than counted. */
   withoutRecord: string[];
+  /** Session ids deliberately left out before scanning. */
+  excludedSessionIds: string[];
+  /** Candidate sessions not scanned because `sessionLimit` bounded the read. */
+  omittedSessions: number;
   hitCount: number;
   /** True when `--limit` cut the reported hits. */
   limited: boolean;
@@ -60,6 +64,10 @@ export interface SearchOptions {
   type?: string;
   /** Maximum hits reported. */
   limit?: number;
+  /** Session omitted before scanning, used by live recall to avoid self-matches. */
+  excludeSessionId?: string;
+  /** Maximum candidate sessions read, newest first. */
+  sessionLimit?: number;
 }
 
 export async function searchTrajectories(
@@ -71,8 +79,16 @@ export async function searchTrajectories(
   const needle = query.toLowerCase();
   const limit = options.limit ?? 50;
 
-  const sessionIds =
+  const listedSessionIds =
     options.sessionId === undefined ? await listSessionIds(projectRoot) : [options.sessionId];
+  const excludedSessionIds =
+    options.excludeSessionId !== undefined && listedSessionIds.includes(options.excludeSessionId)
+      ? [options.excludeSessionId]
+      : [];
+  const candidates = listedSessionIds.filter((sessionId) => sessionId !== options.excludeSessionId);
+  const sessionIds =
+    options.sessionLimit === undefined ? candidates : candidates.slice(0, options.sessionLimit);
+  let omittedSessions = candidates.length - sessionIds.length;
 
   // A named session that has neither a record nor a snapshot is a different answer
   // from one with no matches, and the caller is told which.
@@ -125,8 +141,8 @@ export async function searchTrajectories(
       hitCount += 1;
     }
 
-    if (hits.length > 0 || read.records.length > 0) {
-      const damage = describeDamage(read);
+    const damage = describeDamage(read);
+    if (hits.length > 0 || read.records.length > 0 || damage !== undefined) {
       sessions.push({
         sessionId,
         hits,
@@ -134,10 +150,22 @@ export async function searchTrajectories(
         ...(damage === undefined ? { damage: undefined } : { damage }),
       });
     }
-    if (limited) break;
+    if (limited) {
+      const currentIndex = sessionIds.indexOf(sessionId);
+      omittedSessions += sessionIds.length - currentIndex - 1;
+      break;
+    }
   }
 
-  return { query, sessions, withoutRecord, hitCount, limited };
+  return {
+    query,
+    sessions,
+    withoutRecord,
+    excludedSessionIds,
+    omittedSessions,
+    hitCount,
+    limited,
+  };
 }
 
 /**
@@ -150,8 +178,12 @@ export async function searchTrajectories(
 function firstMatch(record: TrajectoryRecord, needle: string): string | undefined {
   for (const text of searchableText(record)) {
     const collapsed = text.replace(/\s+/gu, ' ').trim();
-    const index = collapsed.toLowerCase().indexOf(needle);
-    if (index >= 0) return excerpt(collapsed, index, needle.length);
+    const lowered = collapsed.toLowerCase();
+    const unitIndex = lowered.indexOf(needle);
+    if (unitIndex >= 0) {
+      const pointIndex = [...lowered.slice(0, unitIndex)].length;
+      return excerpt(collapsed, pointIndex, [...needle].length);
+    }
   }
   return undefined;
 }

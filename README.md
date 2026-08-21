@@ -574,6 +574,14 @@ content, bytes a cap removed, or terminal colours. `search` prints `no matches` 
 read contains nothing (exit 0) and tells you plainly when a session has no record at all
 (exit 1), rather than reporting an empty result for a file that was never written.
 
+During a model turn, Darwin can explicitly call the read-only `search_memory` tool to search prior
+sessions in the same project. It uses the same case-insensitive literal trajectory search — no
+vectors, embeddings, generated summaries, derived index, or separate memory database. The active
+session is excluded by default so the current prompt cannot retrieve itself. Results are bounded
+and source-labelled by session, turn, and record type, and state missing records, tolerated damage,
+omitted sessions, and hit/result limits. The call and result use the ordinary visible tool
+lifecycle; nothing is injected at startup or mined automatically after a turn.
+
 `fork` copies a session's snapshot — and its offloaded files, and its record as the fork's
 prefix — into a fresh id, then prints that id. The source is left byte-identical and `--resume`
 still points wherever it did, so a fork is a branch, not a move:

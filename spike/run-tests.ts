@@ -50,6 +50,7 @@ const suites = [
   'verify-usage.ts',
   'verify-compact.ts',
   'verify-trajectory.ts',
+  'verify-memory-tool.ts',
   'verify-resume-recap.ts',
   'verify-stream-resumption.ts',
 

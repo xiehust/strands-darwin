@@ -14,9 +14,11 @@ It cannot answer "what did the agent run in that session", it is rewritten on ev
 reading it tells you nothing about tool calls whose results were later compacted away.
 
 The trajectory is the complement: **append-only**, **observational**, and never authoritative. The
-snapshot remains the only thing `resume` and `fork` restore from. Nothing in darwin reads the
-trajectory to build **model** context, and the model never sees it; the resumed-TUI recap below is a
-bounded human-display projection only.
+snapshot remains the only thing `resume` and `fork` restore from. Darwin never reads trajectory
+bytes into ambient **model** context. There is one explicit disclosure path: the model may visibly
+call the bounded read-only `search_memory` tool, whose ordinary tool result projects literal matches
+from prior project sessions. The resumed-TUI recap below remains a bounded human-display projection
+only. No startup/system-prompt injection or automatic post-turn mining is permitted.
 
 ## 2. Where it lives
 
@@ -308,6 +310,31 @@ and "which session hit this provider error" is the first question a failed overn
 Honest misses are load-bearing: a session with no trajectory file says so and exits 1; an unknown
 session id says that instead; zero matches prints `no matches` and exits 0, because the search
 succeeded. "0 results" for a file that was never written is a lie.
+
+### Explicit model reader: `search_memory` (`SER-031`)
+
+`createSearchMemoryTool` (`src/trajectory/memory-tool.ts`) is the sole model-facing trajectory
+reader. It wraps `searchTrajectories`; `searchableText` remains the only definition of retrievable
+content. The call is explicit and visible through the ordinary SDK tool lifecycle.
+
+- The active session is excluded before scanning, so the current durable `userInput` cannot satisfy
+  its own query. At most 20 prior sessions and 10 hits are read/reported.
+- Queries are non-empty and at most 256 Unicode code points. Excerpts keep the shared 160-code-point
+  bound and the complete result is at most 2,000 code points; slicing never splits a surrogate pair.
+- Every hit names session, turn, record type, sequence and timestamp. No matches, tolerated damage,
+  snapshot-only missing records, sessions omitted by limits, hit cuts and result cuts are stated.
+- It is byte-zero: no trajectory, snapshot or resume pointer is written or repaired. Any runtime
+  recorder appends caused by the surrounding model turn remain the recorder's ordinary observer
+  behavior, not a search side effect. The tool constructs no model/network client and creates no
+  index, generated summary, state file or second store.
+- Parent assembly registers it before the existing eligible-child tool snapshot. Default children
+  inherit it; explicit child allowlists include it only when they name `search_memory`.
+- Permission classification is `read`, including plan mode. Unknown tools still fail closed.
+- There is no slash command or bespoke TUI surface. Existing tool rows show the call/result; no
+  startup hook, system-prompt fragment or post-turn miner invokes it automatically.
+
+Free check: `spike/verify-memory-tool.ts` (in `pnpm test`), with child availability additionally
+covered by `spike/verify-subagents.ts`.
 
 ### `fork`
 
