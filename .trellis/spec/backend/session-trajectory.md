@@ -256,10 +256,18 @@ Every truncation is recorded on the record that suffered it:
   runs of the same session, and a gap means something was really lost.
 - **Serialized appends**: all writes go through one promise chain. `O_APPEND` gives atomicity for a
   single write, not ordering between concurrent ones.
-- **Turn buffering**: records are formatted synchronously as events arrive (no I/O between events)
-  and flushed as one write at turn end, so recording adds no await to the streaming path.
-- `AgentRuntime.shutdown()` awaits the pending append chain, so a turn's records are durable before
-  the process exits.
+- **Turn buffering after input**: `beginTurn()` synchronously bounds and observes `userInput`, then
+  `AgentRuntime.send()` awaits one recorder-owned durability barrier **before it calls
+  `Agent.stream(input)`**. That opening batch makes the active request readable to a concurrent
+  offline process before provider/tool execution. Later records are still formatted synchronously
+  as events arrive (no I/O or await between events) and flushed as a second write at turn end.
+- **Bounded opening barrier**: the input barrier uses the same serialized append chain, but waits at
+  most `INPUT_DURABILITY_TIMEOUT_MS`. Success, append failure and timeout all resolve normally. A
+  failure/timeout latches the ordinary trajectory status problem and lets the Agent turn proceed;
+  timeout also detaches the stuck chain so retire/shutdown cannot wait forever.
+- `AgentRuntime.shutdown()` awaits the remaining append chain, so a turn's records are durable before
+  the process exits. The timed-out operation is the deliberate exception: it has already degraded
+  recording and cannot be allowed to hold process cleanup open.
 
 ### Contract: readers tolerate damage and report it
 
@@ -272,8 +280,9 @@ every consumer; neither is silently swallowed, and neither is ever repaired in p
 
 Recording is an observer. It may not become a second reason a turn dies.
 
-- Formatting and buffering are synchronous and cannot throw into the stream.
-- The first append failure latches a problem string, stops further writing for that session (no
+- Formatting and event buffering are synchronous and cannot throw into the stream. The one awaited
+  input-durability barrier is bounded and resolves rather than rejects.
+- The first append failure or input-barrier timeout latches a problem string, stops further writing for that session (no
   per-event error spam), and is surfaced **once**: a `warn` transcript notice in the TUI, read after
   the turn where the context-pressure check already lives; one bounded `trajectory:` stderr record in
   headless mode.
@@ -535,19 +544,23 @@ async *send(input) {
   finally { this.trajectory?.buffer({ type: 'turnSpend', input: delta.inputTokens ?? 0 }) }
 }
 
-// CORRECT: a meter injected into the turn, read synchronously while the closing record is
-// composed, with unreported metrics simply absent.
-yield* recordStream(
-  this.agent.stream(input),
-  this.trajectory?.beginTurn(input, startTurnSpend(before, () => this.usage, this.liveConfig)),
+// CORRECT: open and durably append the bounded input before invoking Agent; the same turn
+// carries a meter read synchronously while its closing record is composed.
+const recording = this.trajectory?.beginTurn(
+  input,
+  startTurnSpend(before, () => this.usage, this.liveConfig),
 )
+await recording?.inputDurable() // bounded and resolves on recorder failure/timeout
+yield* recordStream(this.agent.stream(input), recording)
 ```
 
 ## 11. Tests required
 
 `spike/verify-trajectory.ts` (network-free, owns its HOME, real SDK `Agent` + scripted `Model`, and a
-real `AgentRuntime` wherever the claim is about `send`) must cover: two-turn append with byte-identical
-prefix and continued `seq`; partial-line tolerance plus the newline guard; every cap with its recorded
+real `AgentRuntime` wherever the claim is about `send`) must cover: invocation-time offline reading
+of the current bounded `userInput`; split input/end batches with byte-identical prior prefix and
+continued `seq`; input-barrier write failure and timeout both visibly degrading while invocation and
+bounded shutdown proceed; partial-line tolerance plus the newline guard; every cap with its recorded
 truncation; an injected write failure degrading without throwing; pass-through event equality with
 recording on and off, including a mid-stream `break`; a search hit and an honest miss; fork
 byte-identity, usability and untouched pointer; replay equality against the live projection,

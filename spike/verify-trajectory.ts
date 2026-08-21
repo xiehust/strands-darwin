@@ -32,7 +32,12 @@ import {
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import { z } from 'zod';
 
-import { PermissionGate } from '../src/agent/permission.js';
+import { allowAllBridge, PermissionGate } from '../src/agent/permission.js';
+import {
+  AgentRuntime,
+  setRuntimeModelFactoryForTest,
+  setRuntimeRecorderOverridesForTest,
+} from '../src/agent/runtime.js';
 import { startTurnSpend, type UsageTotals } from '../src/agent/usage.js';
 import { withSoleChoice, type AppConfig } from '../src/config.js';
 import { CliUsageError, parseCliArgs } from '../src/cli-args.js';
@@ -152,6 +157,31 @@ function chunks(text: string): string[] {
   const out: string[] = [];
   for (let index = 0; index < text.length; index += 7) out.push(text.slice(index, index + 7));
   return out;
+}
+
+/** Reads the trajectory synchronously with model invocation to prove the barrier. */
+class InspectingModel extends ScriptedModel {
+  invoked = false;
+  seenInput = false;
+
+  constructor(
+    public file: string,
+    public expectedInput: string,
+  ) {
+    super('answer after offline inspection');
+  }
+
+  override async *stream(
+    messages: Message[],
+    options?: StreamOptions,
+  ): AsyncIterable<ModelStreamEvent> {
+    this.invoked = true;
+    const read = await readTrajectory(this.file);
+    this.seenInput = read.records.some(
+      (record) => record.type === 'userInput' && record.text === this.expectedInput,
+    );
+    yield* super.stream(messages, options);
+  }
 }
 
 const echo = tool({
@@ -1890,6 +1920,132 @@ async function childIsolation(): Promise<void> {
   );
 }
 
+async function runtimeInputBarrier(): Promise<void> {
+  header('trajectory — runtime makes current input durable before invocation');
+
+  const dir = path.join(ROOT, 'runtime-barrier');
+  await mkdir(dir, { recursive: true });
+  let sessionId = '';
+  const current = 'current input visible at invocation';
+  const model = new InspectingModel('', current);
+  setRuntimeModelFactoryForTest(async () => model);
+  let runtime: AgentRuntime | undefined;
+  try {
+    runtime = await AgentRuntime.create({
+      projectRoot: dir,
+      session: { kind: 'new' },
+      permissionBridge: allowAllBridge,
+      onSessionResolved: (resolved) => {
+        sessionId = resolved;
+      },
+    });
+    const file = trajectoryPath(dir, sessionId);
+    model.file = file;
+
+    for await (const _event of runtime.send('prior input')) {
+      // Drain the real runtime turn.
+    }
+    await runtime.shutdown();
+    runtime = undefined;
+    const prefix = await readFile(file);
+
+    model.expectedInput = current;
+    model.invoked = false;
+    model.seenInput = false;
+    runtime = await AgentRuntime.create({
+      projectRoot: dir,
+      session: { kind: 'id', sessionId },
+      permissionBridge: allowAllBridge,
+    });
+    for await (const _event of runtime.send(current)) {
+      // The model performs the concurrent offline read at invocation.
+    }
+    assert('the real AgentRuntime invokes the scripted offline model', model.invoked);
+    assert('the invocation-time offline read sees the current userInput', model.seenInput);
+    await runtime.shutdown();
+    runtime = undefined;
+
+    const complete = await readFile(file);
+    assert(
+      'the earlier trajectory prefix remains byte-identical',
+      complete.subarray(0, prefix.length).equals(prefix),
+    );
+    const read = await readTrajectory(file);
+    assert(
+      'split input/event appends retain contiguous sequence numbers',
+      read.records.every((record, index) => record.seq === index),
+    );
+    const currentTurn = read.records.find(
+      (record) => record.type === 'userInput' && record.text === current,
+    )?.turn;
+    assert(
+      'the completed current turn still has ordinary records',
+      currentTurn !== undefined &&
+        read.records.some((record) => record.turn === currentTurn && record.type === 'turnEnded'),
+    );
+  } finally {
+    await runtime?.shutdown();
+    setRuntimeModelFactoryForTest(undefined);
+    setRuntimeRecorderOverridesForTest(undefined);
+  }
+}
+
+async function runtimeInputBarrierDegradation(): Promise<void> {
+  header('trajectory — input barrier failure and timeout cannot prevent invocation');
+
+  const invokeThrough = async (
+    name: string,
+    openFileImpl: unknown,
+  ): Promise<{ invoked: boolean; problem: string | undefined; elapsed: number }> => {
+    const dir = path.join(ROOT, `runtime-${name}`);
+    await mkdir(dir, { recursive: true });
+    const model = new ScriptedModel(`answer after ${name}`);
+    setRuntimeModelFactoryForTest(async () => model);
+    setRuntimeRecorderOverridesForTest({
+      openFile: openFileImpl as never,
+      inputDurabilityTimeoutMs: 20,
+    });
+    const runtime = await AgentRuntime.create({
+      projectRoot: dir,
+      session: { kind: 'new' },
+      permissionBridge: allowAllBridge,
+    });
+    let invoked = false;
+    const original = model.stream.bind(model);
+    model.stream = async function* (...args: Parameters<ScriptedModel['stream']>) {
+      invoked = true;
+      yield* original(...args);
+    };
+    const started = Date.now();
+    try {
+      for await (const _event of runtime.send(`input for ${name}`)) {
+        // Drain the real runtime turn.
+      }
+      await runtime.shutdown();
+      return {
+        invoked,
+        problem: runtime.trajectoryStatus?.problem,
+        elapsed: Date.now() - started,
+      };
+    } finally {
+      setRuntimeModelFactoryForTest(undefined);
+      setRuntimeRecorderOverridesForTest(undefined);
+    }
+  };
+
+  const failed = await invokeThrough(
+    'write-failure',
+    () => Promise.reject(new Error('EACCES: barrier write refused')),
+  );
+  assert('a barrier write failure still allows model invocation', failed.invoked);
+  assert('the barrier write failure is visible in trajectory status', failed.problem?.includes('EACCES') === true);
+
+  const timedOut = await invokeThrough('timeout', () => new Promise(() => undefined));
+  assert('a bounded barrier timeout still allows model invocation', timedOut.invoked);
+  assert('the timeout is visible in trajectory status', timedOut.problem?.includes('timed out') === true);
+  assert('timeout also bounds runtime shutdown', timedOut.elapsed < 1000);
+}
+
 /**
  * A parent's messages with the SDK's random tracking ids removed, so two runs of
  * the same scripted conversation are comparable.
@@ -2074,6 +2230,8 @@ async function main(): Promise<void> {
   await mkdir(ROOT, { recursive: true });
   try {
     await appendOnly();
+    await runtimeInputBarrier();
+    await runtimeInputBarrierDegradation();
     await damageTolerance();
     await caps();
     await degradation();

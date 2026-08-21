@@ -55,7 +55,11 @@ import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, t
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
 import { recordStream } from '../trajectory/stream.js';
-import { TrajectoryRecorder, type TrajectoryStatus } from '../trajectory/writer.js';
+import {
+  TrajectoryRecorder,
+  type RecorderOptions,
+  type TrajectoryStatus,
+} from '../trajectory/writer.js';
 import { DARWIN_VERSION } from '../version.js';
 import {
   composeSystemPrompt,
@@ -93,6 +97,25 @@ export function setRuntimeCreateCheckpointForTest(
   callback: ((checkpoint: RuntimeCreateCheckpoint) => void) | undefined,
 ): void {
   runtimeCreateCheckpoint = callback;
+}
+
+/** Test seam for deterministic offline runtime and recorder-boundary verification. */
+let runtimeModelFactory: typeof createModelFromConfig = createModelFromConfig;
+let runtimeRecorderOverrides: Pick<
+  RecorderOptions,
+  'openFile' | 'inputDurabilityTimeoutMs'
+> | undefined;
+
+export function setRuntimeModelFactoryForTest(
+  factory: typeof createModelFromConfig | undefined,
+): void {
+  runtimeModelFactory = factory ?? createModelFromConfig;
+}
+
+export function setRuntimeRecorderOverridesForTest(
+  overrides: typeof runtimeRecorderOverrides,
+): void {
+  runtimeRecorderOverrides = overrides;
 }
 
 /**
@@ -381,7 +404,7 @@ export class AgentRuntime {
     // Keep assembly in one function so one catch owns every resource acquired
     // after the process-global diagnostics tap is installed.
     const assemble = async (): Promise<AgentRuntime> => {
-    const model = await createModelFromConfig(config);
+    const model = await runtimeModelFactory(config);
     const skills = await SkillsPlugin.load(options.projectRoot);
     const commands = await loadCustomCommands(
       options.projectRoot,
@@ -566,6 +589,7 @@ export class AgentRuntime {
               resumed: session.restoreRequested && agent.messages.length > 0,
               restoredMessages: agent.messages.length,
             },
+            ...runtimeRecorderOverrides,
           });
 
     const runtime = new AgentRuntime(
@@ -642,13 +666,12 @@ export class AgentRuntime {
    * report the delta — including cancelled turns, where the delta reflects
    * whatever model calls completed before the cancel.
    *
-   * The trajectory recorder observes from between `stream()` and the `yield`, in
-   * {@link recordStream} — a pass-through generator that records synchronously and
-   * cannot throw, so it can neither reorder, delay nor swallow an event, and a
-   * recording failure cannot become a second way for a turn to die. It lives in its
-   * own module so the property can be measured over a real `Agent.stream()`
-   * (`spike/verify-trajectory.ts`) rather than asserted about code only a live model
-   * reaches.
+   * The trajectory recorder first crosses one bounded, no-throw durability barrier
+   * for `userInput`, before `Agent.stream()` can invoke a provider or tool. Later
+   * events are observed between `stream()` and the `yield`, in {@link recordStream} —
+   * a pass-through generator that records synchronously and cannot throw, so it can
+   * neither reorder, delay nor swallow an event. Both properties are measured over a
+   * real offline `AgentRuntime` in `spike/verify-trajectory.ts`.
    *
    * The turn's spend reaches the record through a meter handed to `beginTurn`, and not
    * from this `finally`, because of when the two run: `recordStream`'s `finally` closes
@@ -664,12 +687,18 @@ export class AgentRuntime {
   async *send(input: string): AsyncIterable<AgentStreamEvent> {
     const before = this.usage;
     try {
-      // The append the recorder schedules at turn end is deliberately not awaited
-      // here; `shutdown()` is where the chain is waited for.
-      yield* recordStream(
-        this.agent.stream(input),
-        this.trajectory?.beginTurn(input, startTurnSpend(before, () => this.usage, this.liveConfig)),
+      const recording = this.trajectory?.beginTurn(
+        input,
+        startTurnSpend(before, () => this.usage, this.liveConfig),
       );
+      // The current input is the one exception to fire-and-forget recording: make it
+      // readable to offline observers before Agent.stream() can invoke a provider or
+      // tool. The recorder owns the bound and resolves on write failure/timeout, so
+      // this wait can delay a turn briefly but can never become a reason it dies.
+      await recording?.inputDurable();
+      // Later events and turn-end are still observed synchronously and appended in
+      // the background; `shutdown()` is where that append chain is waited for.
+      yield* recordStream(this.agent.stream(input), recording);
     } finally {
       this.lastTurnDelta = deltaUsage(before, this.usage);
     }

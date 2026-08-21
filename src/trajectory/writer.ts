@@ -71,12 +71,16 @@ export interface RecorderRunInfo {
   restoredMessages: number;
 }
 
+export const INPUT_DURABILITY_TIMEOUT_MS = 2000;
+
 export interface RecorderOptions {
   file: string;
   /** Written into the `runStarted` record this process appends first. */
   run: RecorderRunInfo;
   /** Injected for tests that need a failing filesystem; production uses `fs.open`. */
   openFile?: typeof open;
+  /** Injectable so the bounded timeout path can be proved without a slow suite. */
+  inputDurabilityTimeoutMs?: number;
   /**
    * Per-file byte budget; defaults to {@link MAX_FILE_BYTES}.
    *
@@ -103,8 +107,9 @@ export interface TrajectoryStatus {
 }
 
 /**
- * One turn's buffer. Records accumulate here during the stream and are appended in
- * one write at the end, so nothing between two events touches the disk.
+ * One turn's observer. The opening `userInput` is appended before invocation; later
+ * records accumulate during the stream and append together at the end, so nothing
+ * between two events touches the disk.
  */
 export class TurnRecording {
   private readonly recorded = new Map<string, number>();
@@ -127,6 +132,15 @@ export class TurnRecording {
   ) {
     const { value, trunc } = capField(input, 'text');
     this.recorder.buffer({ turn, type: 'userInput', text: value }, trunc);
+  }
+
+  /**
+   * Makes the already-observed input readable before the Agent can invoke anything.
+   * This is the only recorder operation the runtime awaits; it is bounded and
+   * resolves after recorder failure so observation can never kill the turn.
+   */
+  inputDurable(): Promise<void> {
+    return this.recorder.inputDurable();
   }
 
   /**
@@ -295,6 +309,7 @@ export class TrajectoryRecorder {
   private readonly openFile: typeof open;
   private readonly run: RecorderRunInfo;
   private readonly maxBytes: number;
+  private readonly inputDurabilityTimeoutMs: number;
   /**
    * When this process started recording.
    *
@@ -304,7 +319,7 @@ export class TrajectoryRecorder {
    */
   private readonly startedAt = new Date().toISOString();
 
-  /** Buffered-but-unwritten records, in observation order. */
+  /** Buffered-but-unwritten records, in observation order (input or turn remainder). */
   private pending: BufferedRecord[] = [];
   /** The serialized append chain: every write waits for the previous one. */
   private chain: Promise<void> = Promise.resolve();
@@ -326,6 +341,8 @@ export class TrajectoryRecorder {
     this.run = options.run;
     this.openFile = options.openFile ?? open;
     this.maxBytes = options.maxBytes ?? MAX_FILE_BYTES;
+    this.inputDurabilityTimeoutMs =
+      options.inputDurabilityTimeoutMs ?? INPUT_DURABILITY_TIMEOUT_MS;
   }
 
   /**
@@ -392,6 +409,38 @@ export class TrajectoryRecorder {
     };
   }
 
+
+  /**
+   * Flushes the turn-opening `userInput` and waits only for this bounded barrier.
+   *
+   * Unlike stream-event observation, the runtime deliberately awaits this before it
+   * calls `Agent.stream()`. Both failure paths still resolve: a recorder can explain
+   * that it stopped, but it can never become a second reason the Agent turn stops.
+   * Detaching a timed-out chain also keeps shutdown from waiting forever on the same
+   * stuck filesystem operation.
+   */
+  async inputDurable(): Promise<void> {
+    if (!this.active || this.pending.length === 0) return;
+    this.flush();
+    const barrier = this.chain;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = await Promise.race([
+      barrier.then(() => false),
+      new Promise<true>((resolve) => {
+        timer = setTimeout(() => resolve(true), this.inputDurabilityTimeoutMs);
+      }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (!timedOut) return;
+
+    this.fail(
+      new Error(
+        `trajectory input durability timed out after ${this.inputDurabilityTimeoutMs}ms`,
+      ),
+    );
+    if (this.chain === barrier) this.chain = Promise.resolve();
+  }
+
   /**
    * Buffers one record, stamping the time it was observed.
    *
@@ -423,8 +472,9 @@ export class TrajectoryRecorder {
   /**
    * Appends everything buffered so far, chained behind any previous append.
    *
-   * Returns nothing on purpose: callers on the streaming path must not be able to
-   * await this. `close()` is the one place the chain is awaited.
+   * Returns nothing on purpose: event/turn-end callers cannot await this.
+   * `inputDurable()` waits through the private chain before invocation; `close()`
+   * waits through it during cleanup.
    */
   flush(): void {
     if (this.pending.length === 0) return;
@@ -447,12 +497,16 @@ export class TrajectoryRecorder {
     if (this.problem !== undefined) return;
 
     const prefix = await this.prepare();
+    // A bounded input barrier may have timed out while prepare/open was pending.
+    // Do not let that detached operation append later after recording has stopped.
+    if (this.problem !== undefined) return;
     const lines = [...this.header(), ...batch].map((buffered) => this.encode(buffered));
     const payload = `${prefix}${lines.join('')}`;
 
     let handle: FileHandle | undefined;
     try {
       handle = await this.openFile(this.file, 'a');
+      if (this.problem !== undefined) return;
       await handle.write(payload, null, 'utf8');
       const written = Buffer.byteLength(payload, 'utf8');
       this.recordsThisRun += lines.length;

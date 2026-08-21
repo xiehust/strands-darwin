@@ -206,13 +206,20 @@ presence-only reasoning record still replays.
 ### Contract: `for await` + `yield` preserves what `yield*` gives darwin's consumers
 
 `AgentRuntime.send` no longer delegates straight to `agent.stream()`, because a delegation
-cannot be observed from inside. `recordStream` (`src/trajectory/stream.ts`) does
+cannot be observed from inside. Before constructing/iterating that SDK stream it opens the
+trajectory turn and awaits one bounded, no-throw `userInput` durability barrier. This ordering is
+load-bearing: a scripted real `AgentRuntime` model that reads the file from inside invocation must
+see the current request. A write failure or timeout latches trajectory status and then invocation
+still starts; this is recorder setup, not an interception or retry of the SDK loop.
+
+After that barrier, `recordStream` (`src/trajectory/stream.ts`) does
 `for await (… of events) { observe; yield }` and `send` delegates to *that*. Measured with a
 tee over a real `Agent.stream()`: the consumer receives the **identical event objects**, in the
 same order, with nothing added or swallowed; a consumer that `break`s early still closes the
-underlying stream and still reaches the wrapper's `finally`. Keep the observation synchronous —
+underlying stream and still reaches the wrapper's `finally`. Keep event observation synchronous —
 an `await` between receiving an event and yielding it would change turn timing, and a throw
-there would become a second way for a turn to fail.
+there would become a second way for a turn to fail. The opening durability barrier is the only
+recorder await permitted in `send`.
 
 ### Contract: a thrown turn reaches the consumer as the identical error object, after `AfterInvocationEvent`
 

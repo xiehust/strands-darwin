@@ -141,8 +141,8 @@ fifth reader): the body below a small commented header is `formatReplay(replayRe
 byte, so an export can never disagree with `darwin trajectory replay` of the same record. It is a
 reader under the trajectory's observer rules — never writes to, repairs or reorders the record,
 never moves the resume pointer, tolerates (and states) a partial trailing line mid-turn — and
-absence is an answer on prompt recall's terms: recording off, no record file yet (the recorder's
-first append is at turn end) and zero turns each earn a "nothing to export" notice, never an error
+absence is an answer on prompt recall's terms: recording off, no record file yet (no turn has
+begun) and zero turns each earn a "nothing to export" notice, never an error
 and never an empty file. Path handling is deliberate: relative targets resolve against the project
 root, an existing target is refused atomically (`flag: 'wx'`, no `--force` — name another path),
 a target inside `~/.darwin/sessions/` is refused because a transcript planted among the records
@@ -301,10 +301,13 @@ documented rather than guarded.
 `.trellis/spec/backend/session-trajectory.md`): every turn is appended to
 `~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl` — a sibling of `background/`
 and `offload/`, on by default, `trajectory: false` to switch off. The whole layer hangs off one
-seam: `recordStream` sits between `agent.stream()` and the `yield` in `AgentRuntime.send`, and
-records **synchronously, without I/O, and without being able to throw**, so a recording failure
-cannot reorder an event or fail a turn (measured over a real stream with an identity tee, not
-assumed). A turn whose stream *throws* is observed there too and its error rethrown **as the
+seam in `AgentRuntime.send`: it first waits on one bounded, no-throw append of the already-observed
+`userInput`, so concurrent offline readers see the active request before `agent.stream()` can invoke
+a provider or tool. Failure/timeout latches ordinary trajectory status and invocation still proceeds.
+After that, `recordStream` sits between `agent.stream()` and the `yield` and observes every event
+**synchronously, without I/O, and without being able to throw**, so recording cannot reorder an event
+or fail a turn (both boundaries are measured over a real offline runtime, not assumed). A turn whose
+stream *throws* is observed there too and its error rethrown **as the
 identical object**: the record gains `turnEnded.failure` (`{ name, message, cause? }`, capped) while
 the caller sees exactly what it would have with recording off, and `turnOutcome()` is the single
 reading that keeps failed, cancelled, clean and abandoned turns distinguishable from the file alone —
