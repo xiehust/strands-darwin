@@ -1578,4 +1578,3 @@ cacheWrite=122,495`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-21 | `019ac58` | Persist the current trajectory input before provider/tool invocation with a bounded fail-open barrier |
-
