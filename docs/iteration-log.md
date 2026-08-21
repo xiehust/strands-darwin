@@ -1578,3 +1578,30 @@ cacheWrite=122,495`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-21 | `019ac58` | Persist the current trajectory input before provider/tool invocation with a bounded fail-open barrier |
+
+
+### Batch 43 — bounded context-pressure guidance (2026-08-21)
+
+Origin: `docs/reflections/reflection_2026-08-21_session-20260821-054705633.md`. SRF-010
+(Score 10) turns the existing generic context warning into actionable, user-controlled guidance
+before another broad implementation or verification turn.
+
+Child session `session-20260821-091623784`, managed task
+`bg-f8cb1052-0aeb-4598-9a8b-b912fa1f81d2` (exit 0, no correction turn). Delivered in `e5f77a6`:
+the existing `contextWarnRatio`, estimate seam, session latch and transcript notice remain the only
+threshold/channel. The bounded one-line notice recommends `/compact`; custom/default/disabled
+thresholds, one-shot behavior, known-below re-arm, unknown-window silence and fresh `/clear` state
+remain intact. Compaction stays explicit and no live-frame row or timer was added.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck`, `pnpm
+test` (all fast suites green), `verify-context-format.ts` (22/22), `verify-compact.ts` (13/13),
+`verify-status-command.ts` (40/40), `verify-frame-budget.ts` (75/75),
+`verify-clear-session.ts` (37/37), `pnpm build`, Trellis archive validation and commit/diff checks.
+No provider call was needed for Host acceptance.
+
+Token spend, single managed task: `input=128 output=22,436 cacheRead=5,070,455
+cacheWrite=111,250`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-21 | `e5f77a6` | Recommend user-controlled `/compact` through the existing bounded context-pressure notice |
