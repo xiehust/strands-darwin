@@ -93,6 +93,53 @@ async function policy(): Promise<void> {
   const hooks = (await loadProjectPolicy(A)).hooks;
   assert('Pre hooks are global then project', hooks?.PreToolUse?.map((g) => g.hooks[0]?.command).join(',') === 'global-pre,project-pre');
   assert('Post hooks are project then global', hooks?.PostToolUse?.map((g) => g.hooks[0]?.command).join(',') === 'project-post,global-post');
+
+  const hookLayers = [
+    [path.join(globalDir, '..', '.agents'), 'ga'],
+    [globalDir, 'gd'],
+    [path.join(A, '.agents'), 'pa'],
+    [path.join(A, '.darwin'), 'pd'],
+  ] as const;
+  for (const [root, marker] of hookLayers) {
+    await write(path.join(root, 'hooks', '20-second.json'), JSON.stringify({
+      PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-2` }] }],
+      PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-2-post` }] }],
+    }));
+    await write(path.join(root, 'hooks', '10-first.json'), JSON.stringify({
+      PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-1` }] }],
+      PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-1-post` }] }],
+    }));
+  }
+  const globalConfigRecord = JSON.parse(await readFile(configPath(), 'utf8')) as Record<string, unknown>;
+  globalConfigRecord['hooks'] = { UnsupportedEvent: [] };
+  await write(configPath(), JSON.stringify(globalConfigRecord));
+  const configWithShadowedHooks = await loadConfig(A);
+  assert('invalid config-embedded hooks are inactive when the global directory is authoritative',
+    configWithShadowedHooks.hooks !== undefined && Object.keys(configWithShadowedHooks.hooks).length === 0);
+
+  const directoryPolicy = await loadProjectPolicy(A);
+  assert('hook directories merge lexically in global agents, global darwin, project agents, project darwin Pre order',
+    directoryPolicy.hooks?.PreToolUse?.map((g) => g.hooks[0]?.command).join(',') === 'ga-1,ga-2,gd-1,gd-2,pa-1,pa-2,pd-1,pd-2');
+  assert('Post hook ownership order is the exact reverse of Pre sources',
+    directoryPolicy.hooks?.PostToolUse?.map((g) => g.hooks[0]?.command).join(',') === 'pd-2-post,pd-1-post,pa-2-post,pa-1-post,gd-2-post,gd-1-post,ga-2-post,ga-1-post');
+  assert('directory hooks shadow existing legacy Darwin sources visibly', directoryPolicy.hookShadowNotices.length === 2);
+
+  const broken = path.join(A, '.agents', 'hooks', 'broken.json');
+  await write(broken, '{not json');
+  const hookError = await loadProjectPolicy(A).then(() => undefined, (error: unknown) => error);
+  assert('invalid active hook JSON fails closed with its exact source', hookError instanceof ConfigError && hookError.message.includes(broken));
+  await rm(broken);
+
+  const invalidLegacy = path.join(A, '.darwin', 'hooks.json');
+  await write(invalidLegacy, '{invalid legacy');
+  const shadowedLegacy = await loadProjectPolicy(A);
+  assert('invalid shadowed legacy hook input is not validated', shadowedLegacy.hookSources.some((source) => source.includes(`${path.sep}hooks${path.sep}`)));
+
+  const directoryNamedJson = path.join(B, '.agents', 'hooks', 'not-a-file.json');
+  await mkdir(directoryNamedJson, { recursive: true });
+  const nonFileHookError = await loadProjectPolicy(B).then(() => undefined, (error: unknown) => error);
+  assert('a direct hook *.json directory fails closed instead of reviving legacy fallback',
+    nonFileHookError instanceof ConfigError && nonFileHookError.message.includes(directoryNamedJson));
 }
 
 async function resources(): Promise<void> {
@@ -113,6 +160,22 @@ async function resources(): Promise<void> {
   await write(path.join(A, '.darwin', 'agents', 'layered.md'), agent('project'));
   assert('project agent overrides global name', (await loadAgentDefinitions(A, [])).definitions.find((a) => a.name === 'layered')?.description === 'project');
   assert('global agent is available in another project', (await loadAgentDefinitions(B, [])).definitions.some((a) => a.name === 'layered'));
+
+  const layers = [
+    { root: path.join(globalDir, '..', '.agents'), value: 'global-agents' },
+    { root: globalDir, value: 'global-darwin' },
+    { root: path.join(A, '.agents'), value: 'project-agents' },
+    { root: path.join(A, '.darwin'), value: 'project-darwin' },
+  ];
+  for (const { root, value } of layers) {
+    await write(path.join(root, 'skills', 'precedence', 'SKILL.md'), `---\nname: precedence\ndescription: ${value}\n---\n${value}\n`);
+    await write(path.join(root, 'commands', 'precedence.md'), value);
+    await write(path.join(root, 'agents', 'precedence.md'), `---\nname: precedence\ndescription: ${value}\ntools: []\n---\n${value}\n`);
+  }
+  assert('all named resources use project .darwin > project .agents > global .darwin > global .agents',
+    (await scanSkills(A)).skills.find((s) => s.name === 'precedence')?.description === 'project-darwin' &&
+    (await loadCustomCommands(A, [])).commands.find((c) => c.name === 'precedence')?.content === 'project-darwin' &&
+    (await loadAgentDefinitions(A, [])).definitions.find((a) => a.name === 'precedence')?.description === 'project-darwin');
 }
 
 async function mcpAndSessions(): Promise<void> {

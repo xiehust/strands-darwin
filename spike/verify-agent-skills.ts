@@ -324,10 +324,29 @@ async function resourceSafety(): Promise<void> {
     } catch (error) {
       symlinkError = error instanceof Error ? error.message : String(error);
     }
-    assert('resource symlink is refused before official traversal', symlinkError.includes('must not contain symbolic links'));
+    assert('escaping resource symlink is refused before official traversal', symlinkError.includes('outside its skill root'));
     assert('outside filenames are never returned', !symlinkError.includes('secret-name.txt'));
 
     await rm(path.join(directory, 'references'));
+    await mkdir(path.join(directory, 'resources'), { recursive: true });
+    await writeFile(path.join(directory, 'resources', 'inside.txt'), 'inside\n');
+    await symlink(path.join(directory, 'resources'), path.join(directory, 'references'));
+    const contained = await plugin.activate(plugin.find('safe-skill')!);
+
+    await rm(path.join(directory, 'references'));
+    await mkdir(path.join(directory, 'references', 'nested'), { recursive: true });
+    await symlink(path.join(directory, 'references'), path.join(directory, 'references', 'nested', 'back'));
+    let cycleError = '';
+    try {
+      await plugin.activate(plugin.find('safe-skill')!);
+    } catch (error) {
+      cycleError = error instanceof Error ? error.message : String(error);
+    }
+    assert('a contained nested symlink cycle is rejected visibly', cycleError.includes('symlink cycle'));
+
+    assert('contained nested resource symlink is allowed', contained.includes('references/inside.txt'));
+
+    await rm(path.join(directory, 'references'), { recursive: true, force: true });
     await mkdir(path.join(directory, 'references'), { recursive: true });
     await Promise.all(Array.from({ length: MAX_SKILL_RESOURCE_PREFLIGHT_ENTRIES + 1 }, (_, index) =>
       writeFile(path.join(directory, 'references', `file-${index}.md`), 'x'),
@@ -358,6 +377,26 @@ async function resourceSafety(): Promise<void> {
     assert('the deterministic TOCTOU swap happened after preflight', swapped);
     assert('use-time guard suppresses a directory swapped to a symlink', !swappedResult.includes('Available resources:'));
     assert('TOCTOU swap returns no outside filename', !swappedResult.includes('secret-name.txt'));
+
+    const linkedProject = path.join(root, 'linked-project');
+    const firstTarget = path.join(root, 'root-target-first');
+    const secondTarget = path.join(root, 'root-target-second');
+    const linkedSkill = path.join(linkedProject, '.darwin', 'skills', 'linked-root');
+    for (const [target, resource] of [[firstTarget, 'first.txt'], [secondTarget, 'second.txt']] as const) {
+      await mkdir(path.join(target, 'references'), { recursive: true });
+      await writeFile(path.join(target, 'SKILL.md'), '---\nname: linked-root\ndescription: Linked root.\n---\nLINKED BODY\n');
+      await writeFile(path.join(target, 'references', resource), `${resource}\n`);
+    }
+    await mkdir(path.dirname(linkedSkill), { recursive: true });
+    await symlink(firstTarget, linkedSkill);
+    const linkedPlugin = await SkillsPlugin.load(linkedProject);
+    const linkedAgent = new Agent({ model: new CaptureModel(), plugins: [linkedPlugin], printer: false });
+    await linkedAgent.initialize();
+    await rm(linkedSkill);
+    await symlink(secondTarget, linkedSkill);
+    const linkedResult = await linkedPlugin.activate(linkedPlugin.find('linked-root')!);
+    assert('a root symlink swap before activation uses and validates the current target',
+      linkedResult.includes('references/second.txt') && !linkedResult.includes('references/first.txt'));
   } finally {
     setResourceSafetyCheckpointForTest(undefined);
     await rm(root, { recursive: true, force: true });

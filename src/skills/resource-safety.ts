@@ -56,14 +56,13 @@ interface EntryBudget {
 async function validateResources(skillPath: string): Promise<ResourceRoot> {
   const lexical = path.resolve(skillPath);
   const skillInfo = await lstat(lexical);
-  if (skillInfo.isSymbolicLink()) {
-    throw new Error(`Skill resource root must not be a symbolic link: ${lexical}`);
-  }
   const real = await realpath(lexical);
+  const realInfo = skillInfo.isSymbolicLink() ? await lstat(real) : skillInfo;
+  if (!realInfo.isDirectory()) throw new Error(`Skill root is not a directory: ${lexical}`);
   const allowed = RESOURCE_DIRS.map((name) => path.join(lexical, name));
   const budget: EntryBudget = { seen: 0 };
   for (const directory of allowed) {
-    await validateTree(directory, real, budget, 0);
+    await validateTree(directory, real, budget, 0, new Set());
   }
   return { lexical, real, allowed };
 }
@@ -73,28 +72,34 @@ async function validateTree(
   realRoot: string,
   budget: EntryBudget,
   depth: number,
+  ancestors: ReadonlySet<string>,
 ): Promise<void> {
   let handle;
   try {
     const info = await lstat(directory);
-    if (info.isSymbolicLink()) throw symlinkError(directory);
-    if (!info.isDirectory()) return;
-    assertInside(realRoot, await realpath(directory), directory);
+    const resolved = await realpath(directory);
+    assertInside(realRoot, resolved, directory);
+    const targetInfo = info.isSymbolicLink() ? await lstat(resolved) : info;
+    if (!targetInfo.isDirectory()) return;
+    if (ancestors.has(resolved)) throw new Error(`Skill resource symlink cycle detected: ${directory}`);
     handle = await opendir(directory);
   } catch (error) {
     if (isMissing(error)) return;
     throw error;
   }
 
+  const branch = new Set(ancestors);
+  branch.add(await realpath(directory));
   try {
     for await (const entry of handle) {
       const child = path.join(directory, entry.name);
       consumeEntry(budget, child);
       const info = await lstat(child);
-      if (info.isSymbolicLink()) throw symlinkError(child);
-      assertInside(realRoot, await realpath(child), child);
+      const resolved = await realpath(child);
+      assertInside(realRoot, resolved, child);
+      const targetInfo = info.isSymbolicLink() ? await lstat(resolved) : info;
       // Official AgentSkills lists resource directories at depths 0, 1 and 2.
-      if (info.isDirectory() && depth < 2) await validateTree(child, realRoot, budget, depth + 1);
+      if (targetInfo.isDirectory() && depth < 2) await validateTree(child, realRoot, budget, depth + 1, branch);
     }
   } finally {
     await handle.close().catch(() => {});
@@ -123,9 +128,15 @@ async function listSafe(
   if (!root.allowed.some((allowed) => isInside(allowed, lexical))) {
     throw new Error(`Skill resource traversal left its resource directories: ${lexical}`);
   }
+  const rootRealNow = await realpath(root.lexical);
+  if (rootRealNow !== root.real) {
+    throw new Error(`Skill root changed after resource preflight: ${root.lexical}`);
+  }
   const directoryInfo = await lstat(lexical);
-  if (directoryInfo.isSymbolicLink()) throw symlinkError(lexical);
-  assertInside(root.real, await realpath(lexical), lexical);
+  const directoryReal = await realpath(lexical);
+  assertInside(rootRealNow, directoryReal, lexical);
+  const directoryTargetInfo = directoryInfo.isSymbolicLink() ? await lstat(directoryReal) : directoryInfo;
+  if (!directoryTargetInfo.isDirectory()) throw new Error(`Skill resource path is not a directory: ${lexical}`);
 
   const entries: FileInfo[] = [];
   const handle = await opendir(lexical);
@@ -134,9 +145,10 @@ async function listSafe(
       const child = path.join(lexical, entry.name);
       consumeEntry(budget, child);
       const info = await lstat(child);
-      if (info.isSymbolicLink()) throw symlinkError(child);
-      assertInside(root.real, await realpath(child), child);
-      entries.push({ name: entry.name, isDir: info.isDirectory(), size: info.size });
+      const resolved = await realpath(child);
+      assertInside(root.real, resolved, child);
+      const targetInfo = info.isSymbolicLink() ? await lstat(resolved) : info;
+      entries.push({ name: entry.name, isDir: targetInfo.isDirectory(), size: targetInfo.size });
     }
   } finally {
     await handle.close().catch(() => {});
@@ -162,10 +174,6 @@ function assertInside(root: string, candidate: string, source: string): void {
 function isInside(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
-}
-
-function symlinkError(file: string): Error {
-  return new Error(`Skill resources must not contain symbolic links: ${file}`);
 }
 
 function isMissing(error: unknown): boolean {

@@ -1,8 +1,8 @@
 import type { Dirent } from 'node:fs';
-import { readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import { darwinDir, userDarwinDir } from '../paths.js';
+import { extensionRoots } from '../paths.js';
 
 export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
@@ -96,10 +96,9 @@ export async function loadCustomCommands(
   root: string,
   skillNames: readonly string[],
 ): Promise<CustomCommandRegistry> {
-  const commandDirs = [
-    path.join(darwinDir(root), COMMANDS_DIRNAME),
-    path.join(userDarwinDir(), COMMANDS_DIRNAME),
-  ];
+  const commandDirs = extensionRoots(root).map(({ root: extensionRoot }) =>
+    path.join(extensionRoot, COMMANDS_DIRNAME),
+  );
   const commands: CustomCommand[] = [];
   const problems: CustomCommandProblem[] = [];
   const claimed = new Map<string, string>();
@@ -115,44 +114,50 @@ export async function loadCustomCommands(
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') continue;
+      if ((!entry.isFile() && !entry.isSymbolicLink()) || path.extname(entry.name).toLowerCase() !== '.md') continue;
 
       const file = path.join(commandsDir, entry.name);
-    const name = entry.name.slice(0, -path.extname(entry.name).length);
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      problems.push({
-        file,
-        reason: 'command name must contain only letters, numbers, hyphens and underscores',
-      });
-      continue;
-    }
+      const name = entry.name.slice(0, -path.extname(entry.name).length);
+      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        problems.push({
+          file,
+          reason: 'command name must contain only letters, numbers, hyphens and underscores',
+        });
+        continue;
+      }
 
-    const normalized = name.toLowerCase();
-    const owner = claimed.get(normalized);
-    if (owner !== undefined) {
-      problems.push({ file, reason: `command name "${name}" conflicts with ${owner}` });
-      continue;
-    }
+      const normalized = name.toLowerCase();
+      const owner = claimed.get(normalized);
+      if (owner !== undefined) {
+        problems.push({ file, reason: `command name "${name}" conflicts with ${owner}` });
+        continue;
+      }
 
-    let content: string;
-    try {
-      content = await readFile(file, 'utf8');
-    } catch (error) {
-      problems.push({
-        file,
-        reason: `could not read file: ${error instanceof Error ? error.message : String(error)}`,
-      });
-      continue;
-    }
-    if (content.trim() === '') {
-      problems.push({ file, reason: 'command file is empty' });
-      continue;
-    }
+      let content: string;
+      try {
+        if (entry.isSymbolicLink()) {
+          const target = await realpath(file);
+          if (!(await lstat(target)).isFile()) throw new Error(`symlink target is not a regular file: ${target}`);
+        }
+        // Read through the discovered path after validation. This preserves the
+        // configured source identity and does not pin execution to a stale target
+        // if the direct symlink is replaced during startup.
+        content = await readFile(file, 'utf8');
+      } catch (error) {
+        problems.push({
+          file,
+          reason: `could not read file: ${error instanceof Error ? error.message : String(error)}`,
+        });
+        continue;
+      }
+      if (content.trim() === '') {
+        problems.push({ file, reason: 'command file is empty' });
+        continue;
+      }
 
-    claimed.set(normalized, file);
-    commands.push({ name, file, content });
-  }
-
+      claimed.set(normalized, file);
+      commands.push({ name, file, content });
+    }
   }
 
   commands.sort((a, b) => a.name.localeCompare(b.name));

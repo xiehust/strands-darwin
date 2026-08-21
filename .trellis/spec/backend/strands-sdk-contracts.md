@@ -2256,3 +2256,9 @@ project-keyed user state, sessions and background logs are globally stored per c
 and hooks/resources/MCP merge global plus project layers. Project keys combine a bounded readable
 canonical-path slug with SHA-256. Legacy rules/hooks/sessions are fallback migration inputs and
 are never rewritten.
+
+### Extension directory layers
+
+Skills, child-agent definitions, commands, and hooks may come from project/global `.agents` as well as `.darwin`, without changing their schemas or SDK execution seams. Named-resource precedence is built-in reservation, project `.darwin`, project `.agents`, global `.darwin`, global `.agents`; validation precedes name claiming. Hook files are direct lexical `hooks/*.json` inputs and fail closed. Pre source order is global `.agents`, global `.darwin`, project `.agents`, project `.darwin`; Post reverses source order. A `.darwin` directory source shadows that layer's legacy `hooks.json` and embedded config hooks visibly.
+
+Skill roots may be symlinks. Resource safety resolves the root and permits nested symlinks only when final targets stay inside that real root, retaining the 200-entry preflight and use-time recheck.

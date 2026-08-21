@@ -220,6 +220,10 @@ async function main(): Promise<void> {
           `(${DARWIN_DIRNAME}/${MCP_CONFIG_FILENAME} takes precedence)`,
       );
     }
+    for (const notice of info.hookShadowNotices) {
+      console.warn(`  hooks    : ${notice.layer} ${notice.directory} shadows ${notice.shadowed.join(', ')}`);
+    }
+
     if (info.skillNames.length > 0) {
       console.log(`  skills   : ${info.skillNames.join(', ')} (use /<name> to load one)`);
     }

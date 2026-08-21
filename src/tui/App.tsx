@@ -1797,6 +1797,12 @@ export function Header({
           mcp: using {DARWIN_DIRNAME}/{MCP_CONFIG_FILENAME} — {info.mcpIgnoredConfigPath} ignored
         </Text>
       )}
+      {info.hookShadowNotices.map((notice) => (
+        <Text key={notice.directory} color={visualColor.warning} wrap="truncate-end">
+          hooks: {notice.layer} {notice.directory} shadows {notice.shadowed.join(', ')}
+        </Text>
+      ))}
+
       {info.skillProblems.map((problem) => (
         <Text key={problem.directory} color={visualColor.warning}>
           skill skipped: {problem.directory} — {problem.reason}

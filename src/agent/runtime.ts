@@ -253,8 +253,10 @@ export interface RuntimeInfo {
   /** Root `.mcp.json` left unread because `.darwin/mcp.json` took precedence. */
   /** Project-scoped user-state file where accepted allow rules persist. */
   permissionRulesPath: string;
-  /** Active global/project hook source files, in policy order. */
+  /** Active hook source files, in Pre policy order. */
   hookSources: string[];
+  /** Legacy .darwin hook inputs shadowed by authoritative hooks/*.json directories. */
+  hookShadowNotices: { layer: string; directory: string; shadowed: string[] }[];
 
   mcpIgnoredConfigPath: string | undefined;
   /** Number of MCP servers configured (some may have failed to connect). */
@@ -612,6 +614,10 @@ export class AgentRuntime {
         mcpOverriddenServerNames: mcp.overriddenServerNames,
         permissionRulesPath: permissionRulesPath(options.projectRoot),
         hookSources: policy.hookSources,
+        hookShadowNotices: policy.hookShadowNotices.map((notice) => ({
+          ...notice,
+          shadowed: [...notice.shadowed],
+        })),
         mcpIgnoredConfigPath: mcp.ignoredConfigPath,
         mcpServerCount: mcp.clients.length,
         toolNames: agent.tools.map((tool) => tool.name).sort(),

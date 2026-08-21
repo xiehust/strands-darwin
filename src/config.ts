@@ -4,7 +4,7 @@
  * Switching provider is a config-file change only — nothing else in the codebase
  * names a provider.
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 
 import path from 'node:path';
@@ -31,7 +31,7 @@ import {
   type ThinkingPlan,
 } from './agent/thinking.js';
 import type { ToolHookCommand, ToolHookGroup, ToolHooksConfig } from './hooks/tool-hooks.js';
-import { darwinDir, userDarwinDir, userProjectDir } from './paths.js';
+import { darwinDir, hookExtensionRoots, userDarwinDir, userProjectDir, type ExtensionRoot } from './paths.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
 export class ConfigError extends Error {
@@ -535,15 +535,16 @@ export async function loadConfig(projectRoot: string): Promise<AppConfig> {
     );
   }
 
-  return validate(parsed, file);
+  const embeddedHooksActive = !(await pathExists(globalHooksPath())) && !(await hookDirectoryHasJson(userDarwinDir()));
+  return validate(parsed, file, embeddedHooksActive);
 }
 
-function validate(parsed: unknown, configPath: string): AppConfig {
+function validate(parsed: unknown, configPath: string, validateEmbeddedHooks = true): AppConfig {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new ConfigError(`${configPath} must contain a JSON object.`);
   }
   const input = parsed as Record<string, unknown>;
-  const session = validateSessionFields(input, configPath);
+  const session = validateSessionFields(input, configPath, validateEmbeddedHooks);
 
   // The array form is a *file* format, not a second runtime shape: the enabled
   // entry is resolved here and the result is the same flat AppConfig the
@@ -788,7 +789,11 @@ function validateModelFields(input: Record<string, unknown>, where: string): Mod
 }
 
 /** Validates the keys that belong to the session rather than to a model. */
-function validateSessionFields(input: Record<string, unknown>, configPath: string): SessionFields {
+function validateSessionFields(
+  input: Record<string, unknown>,
+  configPath: string,
+  validateEmbeddedHooks: boolean,
+): SessionFields {
   const permissionMode = input['permissionMode'] ?? DEFAULTS.permissionMode;
   if (!isApprovalMode(permissionMode)) {
     throw new ConfigError(
@@ -856,7 +861,12 @@ function validateSessionFields(input: Record<string, unknown>, configPath: strin
   // Retained as a deprecated global fallback for ~/.darwin/hooks.json. Runtime
   // policy loading owns execution; carrying it here preserves /model semantics.
   const hooks = input['hooks'];
-  if (hooks !== undefined) fields.hooks = hooksField(hooks, configPath);
+  if (hooks !== undefined) {
+    // A shadowed embedded hook is intentionally not schema-validated, but keep a
+    // neutral placeholder in the session shape so /model cannot reactivate the
+    // unchecked payload later in this runtime.
+    fields.hooks = validateEmbeddedHooks ? hooksField(hooks, configPath) : {};
+  }
 
   // Whitespace-only would pass the non-empty check and silently leave the agent
   // with no instructions at all, which nobody configures on purpose.
@@ -975,21 +985,24 @@ export function projectHooksPath(projectRoot: string): string {
   return path.join(darwinDir(projectRoot), HOOKS_FILENAME);
 }
 
+export interface HookShadowNotice {
+  layer: string;
+  directory: string;
+  shadowed: string[];
+}
+
 export interface ProjectPolicy {
   allowRules: string[];
   hooks: ToolHooksConfig | undefined;
   hookSources: string[];
+  hookShadowNotices: HookShadowNotice[];
   legacyRules: boolean;
 }
 
-/** Loads project-scoped rules and layered global/project hooks. */
+/** Loads project-scoped rules and all executable hook extension layers. */
 export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPolicy> {
   const primaryRules = permissionRulesPath(projectRoot);
   const legacyProject = path.join(darwinDir(projectRoot), CONFIG_FILENAME);
-  const globalConfig = configPath();
-  const globalHooks = globalHooksPath();
-  const projectHooks = projectHooksPath(projectRoot);
-
   const primaryRecord = await readOptionalRecord(primaryRules);
   const legacyRecord = primaryRecord === undefined ? await readOptionalRecord(legacyProject) : undefined;
   const allowRules = primaryRecord === undefined
@@ -998,28 +1011,133 @@ export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPol
       : allowRulesField(legacyRecord['permissionRules'], legacyProject)
     : allowRulesField(primaryRecord, primaryRules);
 
-  const globalPrimary = await readOptionalRecord(globalHooks);
-  const globalLegacy = globalPrimary === undefined ? await readOptionalRecord(globalConfig) : undefined;
-  const projectPrimary = await readOptionalRecord(projectHooks);
-  const projectLegacy = projectPrimary === undefined
-    ? (legacyRecord ?? await readOptionalRecord(legacyProject))
-    : undefined;
-  const globalLayer = globalPrimary === undefined
-    ? hooksFromRecord(globalLegacy, globalConfig)
-    : hooksField(globalPrimary, globalHooks);
-  const projectLayer = projectPrimary === undefined
-    ? hooksFromRecord(projectLegacy, legacyProject)
-    : hooksField(projectPrimary, projectHooks);
-  const hooks = mergeHooks(globalLayer, projectLayer);
+  // Load in policy order. Besides making failure selection deterministic when
+  // several active files are invalid, this keeps diagnostics aligned with the
+  // exact Pre wrapper order stated to the user.
+  const loaded: LoadedHookLayer[] = [];
+  for (const layer of hookExtensionRoots(projectRoot)) {
+    loaded.push(await loadHookLayer(layer, projectRoot));
+  }
+  const active = loaded.flatMap((layer) => layer.sources);
+  const hooks = active.length === 0 ? undefined : {
+    PreToolUse: active.flatMap((source) => source.hooks.PreToolUse ?? []),
+    PostToolUse: [...active].reverse().flatMap((source) => source.hooks.PostToolUse ?? []),
+  };
   return {
     allowRules,
     hooks,
-    hookSources: [
-      globalPrimary !== undefined ? globalHooks : globalLayer === undefined ? undefined : globalConfig,
-      projectPrimary !== undefined ? projectHooks : projectLayer === undefined ? undefined : legacyProject,
-    ].filter((source): source is string => source !== undefined),
+    hookSources: active.map((source) => source.file),
+    hookShadowNotices: loaded.flatMap((layer) => layer.notice === undefined ? [] : [layer.notice]),
     legacyRules: primaryRecord === undefined && legacyRecord?.['permissionRules'] !== undefined,
   };
+}
+
+interface ActiveHookSource {
+  file: string;
+  hooks: ToolHooksConfig;
+}
+
+interface LoadedHookLayer {
+  sources: ActiveHookSource[];
+  notice?: HookShadowNotice;
+}
+
+async function loadHookLayer(layer: ExtensionRoot, projectRoot: string): Promise<LoadedHookLayer> {
+  const directory = path.join(layer.root, 'hooks');
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (!isFileNotFound(error)) throw new ConfigError(`${directory} could not be loaded: ${describe(error)}`);
+    entries = [];
+  }
+
+  const jsonEntries = entries
+    .filter((entry) => path.extname(entry.name).toLowerCase() === '.json')
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const sources: ActiveHookSource[] = [];
+  for (const entry of jsonEntries) {
+    const discovered = path.join(directory, entry.name);
+    try {
+      if (!entry.isFile() && !entry.isSymbolicLink()) {
+        throw new Error('hook JSON entry is not a regular file or a symbolic link');
+      }
+      if (entry.isSymbolicLink()) {
+        const target = await realpath(discovered);
+        if (!(await lstat(target)).isFile()) throw new Error(`symlink target is not a regular file: ${target}`);
+      }
+      // Validate and report the configured direct-child path, not only its current
+      // target. This also avoids pinning a later policy read to a stale symlink.
+      const record = await readRequiredRecord(discovered);
+      sources.push({ file: discovered, hooks: hooksField(record, discovered) });
+    } catch (error) {
+      if (error instanceof ConfigError) {
+        throw new ConfigError(`${discovered} could not be loaded: ${error.message}`);
+      }
+      throw new ConfigError(`${discovered} could not be loaded: ${describe(error)}`);
+    }
+  }
+
+  if (layer.kind === 'agents') return { sources };
+  const legacyFile = layer.scope === 'global' ? globalHooksPath() : projectHooksPath(projectRoot);
+  const configFile = layer.scope === 'global' ? configPath() : path.join(darwinDir(projectRoot), CONFIG_FILENAME);
+  const legacyFileExists = await pathExists(legacyFile);
+  if (sources.length > 0) {
+    // Shadowed legacy input is notice-only. In particular, an invalid project
+    // migration file cannot veto the authoritative directory policy. The global
+    // config has already been parsed by loadConfig(), so it is safe to inspect;
+    // the project migration file may be malformed and remains notice-only.
+    const embeddedExists = layer.scope === 'global'
+      ? (await readOptionalRecord(configFile))?.['hooks'] !== undefined
+      : await readOptionalRecord(configFile)
+        .then((record) => record?.['hooks'] !== undefined)
+        .catch(() => false);
+    const shadowed = [legacyFileExists ? legacyFile : undefined, embeddedExists ? `${configFile}: hooks` : undefined]
+      .filter((value): value is string => value !== undefined);
+    return {
+      sources,
+      ...(shadowed.length === 0 ? {} : {
+        notice: { layer: `${layer.scope} .darwin`, directory, shadowed },
+      }),
+    };
+  }
+
+  if (legacyFileExists) {
+    const record = await readRequiredRecord(legacyFile);
+    return { sources: [{ file: legacyFile, hooks: hooksField(record, legacyFile) }] };
+  }
+  const configRecord = await readOptionalRecord(configFile);
+  const embedded = hooksFromRecord(configRecord, configFile);
+  return embedded === undefined ? { sources: [] } : { sources: [{ file: configFile, hooks: embedded }] };
+}
+
+async function readRequiredRecord(file: string): Promise<Record<string, unknown>> {
+  const record = await readOptionalRecord(file);
+  if (record === undefined) throw new ConfigError(`${file} does not exist.`);
+  return record;
+}
+
+async function pathExists(file: string): Promise<boolean> {
+  try {
+    await lstat(file);
+    return true;
+  } catch (error) {
+    if (isFileNotFound(error)) return false;
+    throw new ConfigError(`${file} could not be inspected: ${describe(error)}`);
+  }
+}
+
+async function hookDirectoryHasJson(extensionRoot: string): Promise<boolean> {
+  try {
+    const entries = await readdir(path.join(extensionRoot, 'hooks'), { withFileTypes: true });
+    // Any direct *.json entry makes the directory authoritative. loadHookLayer()
+    // then validates its type/target and fails closed instead of reviving legacy
+    // policy because the malformed entry happened not to be a regular file.
+    return entries.some((entry) => path.extname(entry.name).toLowerCase() === '.json');
+  } catch (error) {
+    if (isFileNotFound(error)) return false;
+    throw new ConfigError(`${path.join(extensionRoot, 'hooks')} could not be loaded: ${describe(error)}`);
+  }
 }
 
 /** Adds one project-scoped allow rule, promoting legacy rules on first write. */
@@ -1050,14 +1168,6 @@ export async function removeAllowRules(projectRoot: string, rules: readonly stri
 
 function hooksFromRecord(record: Record<string, unknown> | undefined, file: string): ToolHooksConfig | undefined {
   return record?.['hooks'] === undefined ? undefined : hooksField(record['hooks'], file);
-}
-
-function mergeHooks(globalHooks: ToolHooksConfig | undefined, projectHooks: ToolHooksConfig | undefined): ToolHooksConfig | undefined {
-  if (globalHooks === undefined && projectHooks === undefined) return undefined;
-  return {
-    PreToolUse: [...(globalHooks?.PreToolUse ?? []), ...(projectHooks?.PreToolUse ?? [])],
-    PostToolUse: [...(projectHooks?.PostToolUse ?? []), ...(globalHooks?.PostToolUse ?? [])],
-  };
 }
 
 async function readOptionalRecord(file: string): Promise<Record<string, unknown> | undefined> {

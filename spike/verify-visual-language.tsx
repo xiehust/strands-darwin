@@ -33,7 +33,7 @@ const info: RuntimeInfo = {
   promptCache: { enabled: true, parts: ['tools', 'system prompt', 'conversation'], ttl: '5m', problem: undefined },
   thinking: { enabled: true, requested: 'high', effective: 'high', problem: undefined },
   mcpConfigPath: '/workspace/.darwin/mcp.json', mcpConfigPaths: ['/workspace/.darwin/mcp.json'],
-  mcpOverriddenServerNames: [], permissionRulesPath: '/home/test/rules.json', hookSources: [],
+  mcpOverriddenServerNames: [], permissionRulesPath: '/home/test/rules.json', hookSources: [], hookShadowNotices: [],
   mcpIgnoredConfigPath: undefined, mcpServerCount: 2,
   toolNames: ['bash', 'fileEditor', 'imageViewer'], trajectoryFile: '/tmp/trajectory.jsonl',
   diagnosticsFile: undefined,
@@ -57,6 +57,21 @@ assert('capability inventories are not dumped', !headerOutput.includes('commit-m
 // The pre-SER-016 fixture drew eight rows at 80 columns: identity, model, mode,
 // AGENTS.md, MCP, skills, wrapped help, and its margin. Compact may only shrink it.
 assert(`baseline header does not grow (${rows(headerOutput)} <= 8 rows)`, rows(headerOutput) <= 8);
+const shadowRuntime = {
+  ...runtime,
+  info: {
+    ...info,
+    hookShadowNotices: [{
+      layer: 'project .darwin',
+      directory: '/workspace/.darwin/hooks',
+      shadowed: ['/workspace/.darwin/hooks.json'],
+    }],
+  },
+} as unknown as AgentRuntime;
+const shadowHeader = plain(renderToString(<Header runtime={shadowRuntime} status="idle" />, { columns: 120 }));
+assert('hook-directory shadowing is visible in the startup header',
+  shadowHeader.includes('hooks: project .darwin /workspace/.darwin/hooks shadows /workspace/.darwin/hooks.json'));
+
 
 header('visual language — ANSI-stripped transcript hierarchy');
 const history: HistoryItem[] = [

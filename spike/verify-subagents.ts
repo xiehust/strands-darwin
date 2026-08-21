@@ -1,5 +1,5 @@
 /** Offline contracts for custom agent loading, isolation, permissions, and lifecycle. */
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -328,6 +328,10 @@ async function buildFixture(): Promise<string> {
   const unreadable = path.join(AGENTS_ROOT, 'unreadable.md');
   await writeFile(unreadable, '---\nname: unreadable\ndescription: nope\n---\nbody\n');
   await chmod(unreadable, 0o000);
+  const linkedTarget = path.join(ROOT, 'linked-agent.md');
+  await writeFile(linkedTarget, '---\nname: linked\ndescription: Linked agent.\ntools: []\n---\nlinked body\n');
+  await symlink(linkedTarget, path.join(AGENTS_ROOT, 'linked.md'));
+
   return unreadable;
 }
 
@@ -344,6 +348,8 @@ async function loader(): Promise<AgentDefinitionRegistry> {
 
   assert('the built-in general agent is always first', names[0] === 'general');
   assert('valid direct Markdown files load', names.includes('explorer') && names.includes('no-tools'));
+  assert('direct symlinked agent definitions resolve to regular files', names.includes('linked'));
+
   assert('a case-insensitive .md extension works', names.includes('no-tools'));
   assert('non-Markdown files are ignored', !names.includes('notes'));
   assert('the built-in name is reserved', reasons.some((reason) => reason.includes('built-in general')));

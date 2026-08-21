@@ -7,6 +7,9 @@
  *
  * Run: pnpm tsx spike/verify-permission-modes.ts
  */
+import os from 'node:os';
+import path from 'node:path';
+
 import type { BeforeToolCallEvent } from '@strands-agents/sdk';
 
 import {
@@ -19,6 +22,7 @@ import {
   type SafetyClassifier,
 } from '../src/agent/permission.js';
 import { isValidRule, matchesAnyRule, suggestRules } from '../src/agent/permission-rules.js';
+import { isSensitiveDarwinPath } from '../src/paths.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-permission-modes';
@@ -69,6 +73,13 @@ function staticRules(): void {
   assert('.env is dangerous', edit(`${ROOT}/.env`).risk === 'dangerous');
   assert('.env.local is dangerous', edit(`${ROOT}/.env.local`).risk === 'dangerous');
   assert('.darwin/config.json is dangerous', edit(`${ROOT}/.darwin/config.json`).risk === 'dangerous');
+  assert('.darwin hook directory writes are dangerous', edit(`${ROOT}/.darwin/hooks/policy.json`).risk === 'dangerous');
+  assert('.agents hook directory writes are dangerous', edit(`${ROOT}/.agents/hooks/policy.json`).risk === 'dangerous');
+  const home = os.homedir();
+  assert('global .darwin hook directory writes are sensitive',
+    isSensitiveDarwinPath(ROOT, path.join(home, '.darwin', 'hooks', 'policy.json')));
+  assert('global .agents hook directory writes are sensitive',
+    isSensitiveDarwinPath(ROOT, path.join(home, '.agents', 'hooks', 'policy.json')));
 
   header('static risk rules — other tools');
 
@@ -302,6 +313,9 @@ function allowRules(): void {
   );
   assert('.env is exempt', !covered(['fileEditor:**'], ...editTarget(`${ROOT}/.env`)));
   assert('.env.local is exempt', !covered(['fileEditor:**'], ...editTarget(`${ROOT}/.env.local`)));
+  assert('.darwin hook files are exempt from path globs', !covered(['fileEditor:**'], ...editTarget(`${ROOT}/.darwin/hooks/policy.json`)));
+  assert('.agents hook files are exempt from whole-tool rules', !covered(['fileEditor'], ...editTarget(`${ROOT}/.agents/hooks/policy.json`)));
+
   assert(
     'an exempt call is offered no rule at all',
     suggestRules({ toolName: 'fileEditor', input: { path: `${ROOT}/.env` } }, ROOT).length === 0,

@@ -1,4 +1,7 @@
 # Architecture — the load-bearing decisions (full rationale)
+## `.agents` extension layering
+
+Darwin keeps one execution model while widening discovery. Named skills, agents, and commands reserve built-ins first, then select the highest valid definition from project `.darwin`, project `.agents`, global `.darwin`, and global `.agents`; invalid entries claim no name. Tool hooks aggregate lexical `hooks/*.json` sources in global `.agents` → global `.darwin` → project `.agents` → project `.darwin` Pre order and reverse source order for Post. Darwin legacy hook files/config are fallback-only and shadowing is reported. Hook paths are executable policy and remain dangerous and un-ruleable.
 
 This is the long-form companion to the "Architecture — the load-bearing decisions" index table
 in `AGENTS.md`. AGENTS.md is preloaded into darwin's own system prompt on every request and is

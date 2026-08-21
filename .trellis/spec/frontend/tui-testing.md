@@ -113,10 +113,11 @@ if (typed.length > 1 && enter !== undefined) handleBatchedEnter(typed, enter);
 ### 1. Scope / trigger
 
 Changes to `.darwin/commands/` discovery, runtime slash expansion, or completion order cross filesystem → runtime → TUI boundaries and require both direct loader tests and a real-pty completion scenario.
+Discovery also scans project/global `.agents/commands` under the shared precedence contract (project `.darwin`, project `.agents`, global `.darwin`, global `.agents`). Direct symlinked Markdown files may resolve to regular files; failures are surfaced. Completion consumes only the accepted registry. Startup renders bounded `hooks:` warnings when authoritative `.darwin/hooks/*.json` sources shadow legacy inputs; dev REPL reports the same facts.
 
 ### 2. Signatures
 
-- Source: `<projectRoot>/.darwin/commands/<name>.md` (direct regular files only).
+- Sources: direct `<extension-root>/commands/<name>.md` files from project/global `.darwin` and `.agents`; a direct symlink may resolve to a regular file.
 - Invocation: `/<name> [arguments]`.
 - Placeholder: every literal `$ARGUMENTS` becomes the trimmed argument tail; no arguments means the empty string.
 - Completion order: built-ins → accepted custom commands → skills. `/quit` remains a reserved but unadvertised alias.

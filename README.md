@@ -3,6 +3,7 @@
 A terminal coding agent built on the [Strands Agents TypeScript SDK](https://www.npmjs.com/package/@strands-agents/sdk): you talk to it in a TUI, it reads and edits files and runs commands in your repository, and it asks before doing anything that changes your machine.
 
 ## Features
+Darwin discovers extension resources from both Darwin-native and portable agent directories. For skills, child agents, and custom commands, valid definitions resolve in this order: built-ins, project `.darwin/`, project `.agents/`, global `~/.darwin/`, then global `~/.agents/`. Hooks merge from direct `hooks/*.json` files (global to project for Pre, exact reverse for Post); `.darwin/hooks.json` and config-embedded hooks remain legacy fallbacks when that layer has no directory JSON.
 
 Each bullet links to the section that documents it in full.
 

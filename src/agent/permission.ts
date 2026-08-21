@@ -11,7 +11,7 @@
  */
 import path from 'node:path';
 
-import { sensitiveDarwinPaths } from '../paths.js';
+import { isSensitiveDarwinPath } from '../paths.js';
 
 import { InterventionActions, InterventionHandler } from '@strands-agents/sdk';
 import type { BeforeToolCallEvent } from '@strands-agents/sdk';
@@ -812,7 +812,7 @@ function assessWriteRisk(filePath: string, projectRoot: string): RiskAssessment 
   const resolved = path.resolve(projectRoot, filePath);
   const relative = path.relative(projectRoot, resolved);
 
-  if (sensitiveDarwinPaths(projectRoot).includes(resolved)) {
+  if (isSensitiveDarwinPath(projectRoot, resolved)) {
     return { risk: 'dangerous', riskReason: "path is darwin's own configuration" };
   }
   if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) {

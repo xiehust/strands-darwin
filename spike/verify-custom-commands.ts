@@ -4,7 +4,7 @@
  * No model calls: this covers discovery, collision, and interpolation directly.
  * Run: pnpm tsx spike/verify-custom-commands.ts
  */
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
@@ -45,6 +45,10 @@ async function buildFixture(): Promise<string> {
   const unreadable = path.join(COMMANDS_ROOT, 'unreadable.md');
   await writeFile(unreadable, 'cannot read\n', 'utf8');
   await chmod(unreadable, 0o000);
+
+  const linkedTarget = path.join(TMP_ROOT, 'linked-command.md');
+  await writeFile(linkedTarget, 'Linked command.\n');
+  await symlink(linkedTarget, path.join(COMMANDS_ROOT, 'linked.md'));
   return unreadable;
 }
 
@@ -61,6 +65,8 @@ async function discovery(): Promise<CustomCommandRegistry> {
 
   assert('discovers direct Markdown files', names.includes('review') && names.includes('plain'));
   assert('accepts a case-insensitive .md extension', names.includes('plain'));
+  assert('direct symlinked Markdown commands resolve to regular files', names.includes('linked'));
+
   assert('ignores non-Markdown files', !names.includes('notes'));
   assert('ignores nested command files', !names.includes('hidden'));
   assert('reserves built-in names', reasons.some((reason) => reason.includes('built-in command /exit')));

@@ -1,10 +1,10 @@
 import type { Dirent } from 'node:fs';
-import { readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import matter from 'gray-matter';
 
-import { darwinDir, userDarwinDir } from '../paths.js';
+import { extensionRoots } from '../paths.js';
 
 export const AGENTS_DIRNAME = 'agents';
 export const DEFAULT_AGENT_NAME = 'general';
@@ -53,10 +53,9 @@ export async function loadAgentDefinitions(
   root: string,
   availableToolNames: readonly string[],
 ): Promise<AgentDefinitionRegistry> {
-  const agentDirs = [
-    path.join(darwinDir(root), AGENTS_DIRNAME),
-    path.join(userDarwinDir(), AGENTS_DIRNAME),
-  ];
+  const agentDirs = extensionRoots(root).map(({ root: extensionRoot }) =>
+    path.join(extensionRoot, AGENTS_DIRNAME),
+  );
   const definitions: AgentDefinition[] = [DEFAULT_AGENT];
   const problems: AgentDefinitionProblem[] = [];
   const claimed = new Map<string, string>([[DEFAULT_AGENT_NAME, 'the built-in general agent']]);
@@ -71,34 +70,39 @@ export async function loadAgentDefinitions(
     }
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
-      if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') continue;
+      if ((!entry.isFile() && !entry.isSymbolicLink()) || path.extname(entry.name).toLowerCase() !== '.md') continue;
 
       const file = path.join(agentsDir, entry.name);
-    let raw: string;
-    try {
-      raw = await readFile(file, 'utf8');
-    } catch (error) {
-      problems.push({ file, reason: `could not read file: ${describe(error)}` });
-      continue;
+      let raw: string;
+      try {
+        if (entry.isSymbolicLink()) {
+          const target = await realpath(file);
+          if (!(await lstat(target)).isFile()) throw new Error(`symlink target is not a regular file: ${target}`);
+        }
+        // Read through the direct configured path after validating its current
+        // target. The accepted definition keeps that source identity too.
+        raw = await readFile(file, 'utf8');
+      } catch (error) {
+        problems.push({ file, reason: `could not read file: ${describe(error)}` });
+        continue;
+      }
+
+      const parsed = parseDefinition(raw, file, knownTools);
+      if ('reason' in parsed) {
+        problems.push({ file, reason: parsed.reason });
+        continue;
+      }
+
+      const normalized = parsed.name.toLowerCase();
+      const owner = claimed.get(normalized);
+      if (owner !== undefined) {
+        problems.push({ file, reason: `agent name ${JSON.stringify(parsed.name)} conflicts with ${owner}` });
+        continue;
+      }
+
+      claimed.set(normalized, file);
+      definitions.push(parsed);
     }
-
-    const parsed = parseDefinition(raw, file, knownTools);
-    if ('reason' in parsed) {
-      problems.push({ file, reason: parsed.reason });
-      continue;
-    }
-
-    const normalized = parsed.name.toLowerCase();
-    const owner = claimed.get(normalized);
-    if (owner !== undefined) {
-      problems.push({ file, reason: `agent name ${JSON.stringify(parsed.name)} conflicts with ${owner}` });
-      continue;
-    }
-
-    claimed.set(normalized, file);
-    definitions.push(parsed);
-  }
-
   }
 
   const custom = definitions.slice(1).sort((a, b) => a.name.localeCompare(b.name));

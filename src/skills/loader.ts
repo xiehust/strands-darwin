@@ -7,13 +7,13 @@
  * isolated for the startup UI to report.
  */
 import type { Dirent } from 'node:fs';
-import { readFile, readdir } from 'node:fs/promises';
+import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Skill } from '@strands-agents/sdk/vended-plugins/skills';
 
-import { darwinDir, userDarwinDir } from '../paths.js';
+import { extensionRoots } from '../paths.js';
 
 export const SKILL_FILENAME = 'SKILL.md';
 export const SKILLS_DIRNAME = 'skills';
@@ -48,8 +48,6 @@ export async function scanSkills(
   options: { builtinSkillsDir?: string } = {},
 ): Promise<SkillScan> {
   const builtinSkillsDir = options.builtinSkillsDir ?? BUILTIN_SKILLS_DIR;
-  const globalSkillsDir = path.join(userDarwinDir(), SKILLS_DIRNAME);
-  const projectSkillsDir = path.join(darwinDir(root), SKILLS_DIRNAME);
   const skills: Skill[] = [];
   const problems: SkillProblem[] = [];
   const seen = new Map<string, { directory: string; owner: SkillOwner }>();
@@ -64,7 +62,8 @@ export async function scanSkills(
     }
   }
 
-  for (const [directory, owner] of [[projectSkillsDir, 'project'], [globalSkillsDir, 'global']] as const) {
+  for (const layer of extensionRoots(root)) {
+    const directory = path.join(layer.root, SKILLS_DIRNAME);
     if (directory === builtinSkillsDir) continue;
     let entries: Dirent[];
     try {
@@ -73,7 +72,7 @@ export async function scanSkills(
       // Missing or unreadable optional roots carry no attributable skill entry.
       continue;
     }
-    await scanDirectory(directory, sortedDirectories(entries), owner, skills, problems, seen);
+    await scanDirectory(directory, sortedSkillEntries(entries), layer.scope, skills, problems, seen);
   }
 
   return { skills, problems };
@@ -94,6 +93,12 @@ function sortedDirectories(entries: readonly Dirent[]): Dirent[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function sortedSkillEntries(entries: readonly Dirent[]): Dirent[] {
+  return entries
+    .filter((entry) => entry.isDirectory() || entry.isSymbolicLink())
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
 async function scanDirectory(
   skillsDir: string,
   entries: readonly Dirent[],
@@ -103,9 +108,25 @@ async function scanDirectory(
   seen: Map<string, { directory: string; owner: SkillOwner }>,
 ): Promise<void> {
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
 
-    const directory = path.join(skillsDir, entry.name);
+    const discoveredDirectory = path.join(skillsDir, entry.name);
+    if (entry.isSymbolicLink()) {
+      try {
+        const target = await realpath(discoveredDirectory);
+        if (!(await lstat(target)).isDirectory()) {
+          problems.push({ directory: discoveredDirectory, reason: `skill symlink does not resolve to a directory: ${target}` });
+          continue;
+        }
+      } catch (error) {
+        problems.push({ directory: discoveredDirectory, reason: `could not resolve skill symlink: ${describe(error)}` });
+        continue;
+      }
+    }
+    // Keep the discovered symlink path as the official Skill root. Resolving it
+    // here would pin activation to the old target and defeat the use-time root
+    // recheck if the symlink is swapped after discovery.
+    const directory = discoveredDirectory;
     const skillFile = path.join(directory, SKILL_FILENAME);
 
     let raw: string;
@@ -124,7 +145,7 @@ async function scanDirectory(
       continue;
     }
 
-    const parsed = parseOfficialSkill(raw, directory, entry.name);
+    const parsed = parseOfficialSkill(raw, discoveredDirectory, entry.name);
     if ('reason' in parsed) {
       if (owner === 'built-in') {
         throw new Error(`Invalid built-in skill at ${directory}: ${parsed.reason}`);

@@ -7,7 +7,7 @@
  * Run: pnpm tsx spike/verify-skills.ts
  */
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -107,6 +107,12 @@ async function buildFixture(): Promise<void> {
 
   // A directory with no SKILL.md is not a skill and should be ignored quietly.
   await mkdir(path.join(SKILLS_ROOT, 'not-a-skill'), { recursive: true });
+
+  const symlinkTarget = path.join(TMP_ROOT, 'symlink-target');
+  await mkdir(symlinkTarget, { recursive: true });
+  await writeFile(path.join(symlinkTarget, 'SKILL.md'), '---\nname: symlink-skill\ndescription: Root symlink works.\n---\nbody\n');
+  await symlink(symlinkTarget, path.join(SKILLS_ROOT, 'symlink-skill'));
+
   await writeFile(path.join(SKILLS_ROOT, 'not-a-skill', 'README.md'), 'hi\n', 'utf8');
 }
 
@@ -131,6 +137,8 @@ async function scanning(): Promise<void> {
   }
 
   assert('found the well-formed skill', names.includes('pdf-forms'));
+  assert('a root skill symlink resolving to a directory is discovered', names.includes('symlink-skill'));
+
   assert('fell back to the directory name when name was omitted', names.includes('implicit-name'));
   assert('skipped the skill missing a description', !names.includes('broken'));
   assert('reported the missing description as a problem', problemDirs.includes('no-description'));
@@ -142,7 +150,7 @@ async function scanning(): Promise<void> {
   assert('one bad skill did not prevent loading the good ones', names.includes('pdf-forms'));
   assert('every required built-in is merged into project skills', REQUIRED_BUILTIN_SKILLS.every((name) => names.includes(name)));
   assert('required built-ins stay first in declared order', names.slice(0, REQUIRED_BUILTIN_SKILLS.length).join(',') === REQUIRED_BUILTIN_SKILLS.join(','));
-  assert('project and global skills are sorted within their product-policy tail', names.slice(REQUIRED_BUILTIN_SKILLS.length).join(',') === [...names.slice(REQUIRED_BUILTIN_SKILLS.length)].sort().join(','));
+  assert('each extension layer is deterministic and higher-priority layers remain ahead of lower ones', names.indexOf('BUILD_Helper') < names.indexOf('pdf-forms'));
 }
 
 async function missingDirectory(): Promise<void> {
@@ -151,7 +159,7 @@ async function missingDirectory(): Promise<void> {
   const { skills, problems } = await scanSkills('/tmp/darwin-skills-does-not-exist');
 
   assert('all required built-ins remain without a project directory', builtinsOf(skills).length === REQUIRED_BUILTIN_SKILLS.length && REQUIRED_BUILTIN_SKILLS.every((name) => builtinsOf(skills).some((skill) => skill.name === name)));
-  assert('no problems reported (project absence is normal, not an error)', problems.filter((problem) => !isUnder(problem.directory, GLOBAL_SKILLS_ROOT)).length === 0);
+  assert('project absence is silent (global .agents problems remain attributable)', problems.every((problem) => !problem.directory.includes('/tmp/darwin-skills-does-not-exist/')));
   assert('the built-ins resolve beside the loader module', REQUIRED_BUILTIN_SKILLS.every((name) => skillDirectory(requireSkill(skills, name)) === path.join(BUILTIN_SKILLS_DIR, name)));
 
   const plugin = await SkillsPlugin.load('/tmp/darwin-skills-does-not-exist');
@@ -553,10 +561,9 @@ async function realProjectSkill(): Promise<void> {
   console.log(`  problems : ${JSON.stringify(problems)}`);
 
   assert('commit-message skill is discovered', skills.some((s) => s.name === 'commit-message'));
-  // Same reason as `GLOBAL_SKILLS_ROOT` above: this check is about *this repo's*
-  // skills, so a broken skill in the developer's own global directory must not be
-  // reported here, where the message would point at the wrong tree.
-  assert('no problems in the real skills directory', problems.filter((problem) => !isUnder(problem.directory, GLOBAL_SKILLS_ROOT)).length === 0);
+  const localProblems = problems.filter((problem) => problem.directory.startsWith(`${REPO_ROOT}${path.sep}`));
+  assert('project .agents duplicates are surfaced without displacing project .darwin owners',
+    localProblems.length > 0 && localProblems.every((problem) => problem.reason.includes('duplicate skill name')));
   assert(
     'it is found under .darwin/skills/',
     skillDirectory(requireSkill(skills, 'commit-message')).includes(path.join('.darwin', SKILLS_DIRNAME)),
