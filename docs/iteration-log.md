@@ -1549,3 +1549,33 @@ cacheWrite=80,899`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-20 | `262c3f5` | Normalize one leading CLI transport separator while preserving strict argument grammar |
+
+
+### Batch 42 — active-turn input durable before invocation (2026-08-21)
+
+Origin: `docs/reflections/reflection_2026-08-21_session-20260821-054705633.md`. SRF-009
+(Score 13) fixes the race that left an offline reflection locator one prompt behind even though the
+current `userInput` had already been observed in memory.
+
+Child session `session-20260821-085909241`, managed task
+`bg-0b77d586-5d9a-4f94-b4d8-5757cb68dc64` (exit 0, no correction turn). Delivered in `019ac58`:
+`AgentRuntime.send` now waits through a 2-second fail-open recorder barrier after buffering the
+current input and before calling `Agent.stream()`. Ordinary stream events remain synchronous and
+non-awaitable. Write failure or timeout latches the existing trajectory problem and invocation
+continues; a timed-out append chain is detached so shutdown does not inherit an unbounded wait.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck`, `pnpm
+test` (all fast suites green), `spike/verify-trajectory.ts` (267/267),
+`spike/verify-stream-resumption.ts` (16/16), `spike/verify-clear-session.ts` (37/37), `pnpm build`,
+Trellis task validation, and commit/diff checks. The real offline `AgentRuntime` probe read the
+current input during model invocation and also proved prefix byte identity, contiguous sequence
+numbers, ordinary turn closure, fail-open write/timeout behavior and bounded shutdown. No provider
+call was needed for Host acceptance.
+
+Token spend, single managed task: `input=190 output=39,681 cacheRead=7,521,728
+cacheWrite=122,495`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-21 | `019ac58` | Persist the current trajectory input before provider/tool invocation with a bounded fail-open barrier |
+
