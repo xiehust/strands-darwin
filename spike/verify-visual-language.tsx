@@ -1,4 +1,6 @@
 /** Deterministic, network-free contracts for Darwin's composed visual language. */
+import { spawnSync } from 'node:child_process';
+
 import { renderToString } from 'ink';
 import React from 'react';
 
@@ -15,6 +17,21 @@ import { assert, header, report } from './shared.js';
 const ANSI = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 const plain = (value: string): string => value.replace(ANSI, '');
 const rows = (value: string): number => plain(value).split('\n').length;
+
+const FORCED_COLOR_FIXTURE = 'DARWIN_VISUAL_LANGUAGE_FORCED_COLOR_FIXTURE';
+if (process.env[FORCED_COLOR_FIXTURE] === '1') {
+  const history: HistoryItem[] = [
+    { kind: 'notice', id: 'ni', text: 'memory report\nsecond line', severity: 'info' },
+    { kind: 'notice', id: 'nw', text: 'cache unavailable', severity: 'warn' },
+    { kind: 'notice', id: 'ne', text: 'turn failed', severity: 'error' },
+  ];
+  process.stdout.write(renderToString(
+    <MessageList history={history} liveText="" liveCodeOpen={false} columns={80} maxLiveRows={8} staticEpoch={0} />,
+    { columns: 80 },
+  ));
+  process.exit(0);
+}
+
 
 const info: RuntimeInfo = {
   config: {
@@ -89,6 +106,22 @@ const transcript = plain(renderToString(
 for (const marker of ['you>', 'darwin>', 'tool · ✓', 'info ·', 'warn !', 'error !']) {
   assert(`transcript marker survives without colour: ${marker}`, transcript.includes(marker));
 }
+
+header('visual language — forced-color informational contrast');
+const colored = spawnSync(process.execPath, ['--import', 'tsx', import.meta.filename], {
+  env: { ...process.env, FORCE_COLOR: '3', [FORCED_COLOR_FIXTURE]: '1' },
+  encoding: 'utf8',
+});
+assert('forced-color fixture renders successfully', colored.status === 0 && colored.error === undefined);
+const coloredTranscript = colored.stdout;
+assert('informational marker has the semantic accent', coloredTranscript.includes('\u001B[36minfo ·\u001B[39m'));
+assert('informational body remains at normal intensity',
+  coloredTranscript.includes('\u001B[39m memory report\nsecond line') && !coloredTranscript.includes('\u001B[2m'));
+assert('warning and error retain distinct semantic colors',
+  coloredTranscript.includes('\u001B[33mwarn ! cache unavailable\u001B[39m')
+    && coloredTranscript.includes('\u001B[31merror ! turn failed\u001B[39m'));
+assert('ANSI stripping preserves exact informational report bytes',
+  plain(coloredTranscript).includes('info · memory report\nsecond line'));
 
 header('visual language — active composer and completion selection');
 const composer = plain(renderToString(

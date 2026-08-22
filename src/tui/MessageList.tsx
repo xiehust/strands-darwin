@@ -104,9 +104,15 @@ function HistoryEntry({ item }: { readonly item: HistoryItem }): React.JSX.Eleme
     case 'notice':
       return (
         <Box marginBottom={1}>
-          <Text color={noticeColor(item.severity)} dimColor={item.severity === 'info'}>
-            {visualMarker.notice[item.severity]} {item.text}
-          </Text>
+          {item.severity === 'info' ? (
+            <Text>
+              <Text color={noticeColor(item.severity)}>{visualMarker.notice[item.severity]}</Text> {item.text}
+            </Text>
+          ) : (
+            <Text color={noticeColor(item.severity)}>
+              {visualMarker.notice[item.severity]} {item.text}
+            </Text>
+          )}
         </Box>
       );
   }

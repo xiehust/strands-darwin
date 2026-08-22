@@ -1,0 +1,30 @@
+{
+  "id": "ser-034-info-contrast",
+  "name": "ser-034-info-contrast",
+  "title": "SER-034 informational transcript contrast",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "frontend",
+  "package": null,
+  "priority": "P2",
+  "creator": "river",
+  "assignee": "river",
+  "createdAt": "2026-08-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "source": "SER-034 research_2026-08-22T06:37:01Z",
+    "verification": "visual 53; formatters 21/33/40/23; pty completion 62, mcp 13; typecheck; full pnpm test",
+    "status": "implemented; Host backlog acceptance pending"
+  }
+}

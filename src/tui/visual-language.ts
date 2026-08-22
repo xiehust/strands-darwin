@@ -11,6 +11,7 @@ export const visualColor = {
   tool: 'blue',
   active: 'cyan',
   success: 'green',
+  information: 'cyan',
   warning: 'yellow',
   danger: 'red',
   muted: 'gray',
@@ -34,7 +35,7 @@ export const visualMarker = {
 export function noticeColor(severity: 'info' | 'warn' | 'error'): (typeof visualColor)[keyof typeof visualColor] {
   switch (severity) {
     case 'info':
-      return visualColor.muted;
+      return visualColor.information;
     case 'warn':
       return visualColor.warning;
     case 'error':

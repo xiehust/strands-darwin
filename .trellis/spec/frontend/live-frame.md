@@ -147,7 +147,9 @@ literals.
 - **Text carries critical state.** ANSI colour and emphasis reinforce the hierarchy; they never
   create it. ANSI-stripped output distinguishes `you>`, `darwin>`, `tool ·`, `info ·`, `warn !`,
   and `error !`; completion selection keeps `❯`; the permission heading and every decision remain
-  readable without colour.
+  readable without colour. The durable `info ·` prefix alone carries the shared informational
+  accent; its report body stays at normal terminal intensity with no dim SGR. This presentation is
+  owned by the common notice renderer, so command reports never select their own styling.
 - **The header is status-first and compact.** `◆ DARWIN · <state>` leads, followed by the existing
   model/session line (including cache and effort), exactly one `mode:` row, and required loader
   state. Loaded skills, commands, agents and MCP servers are summarized by count rather than dumped

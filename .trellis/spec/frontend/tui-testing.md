@@ -182,7 +182,7 @@ The report shows short id, presentation-only command summary, state, and elapsed
 
 - Handle `/tasks` before the busy-turn guard, like `/usage`. Match any whitespace separator (`/^\/tasks(?:\s|$)/`) so tab/newline arguments are rejected locally rather than reaching the model.
 - `/tasks` reads the runtime manager directly: it must not call `send`, cancel, queue, or emit a tool event. Empty state says `none in this run` because `--resume` does not restore process control.
-- Subscribe in a mounted `useEffect` and return the unsubscribe closure. Dispatch only a `notice`; never `turnEnded` or status changes. The dim `<Static>` history entry is non-modal, visible while idle, and cannot steal permission/input focus.
+- Subscribe in a mounted `useEffect` and return the unsubscribe closure. Dispatch only a `notice`; never `turnEnded` or status changes. The informational `<Static>` history entry is non-modal, visible while idle, and cannot steal permission/input focus.
 - Normalize command whitespace and bound summaries only at presentation time. Truncate by Unicode code points, not UTF-16 code units, so an emoji boundary cannot render `�`; agent-side list output keeps the full command.
 - Background lifecycle `bash` calls (`start`, `list`, `status`, `output`, `wait`, `stop`) are a presentation-only projection. Compact mode suppresses successful status and empty output polls. Successful waits are ephemeral while the observed task state is running, whether their incremental output is empty or non-empty; a terminal wait retains exactly one short-id/state row, also when its result carries output. Nested output/status/command/path/cursor metadata stays out of compact wait history. Failures remain fully diagnostic, expanded mode keeps the ordinary bounded payload, provider/model-visible results remain unchanged, and unknown or internally contradictory successful payloads fall back rather than being silently suppressed.
 - `Ctrl+B` toggles compact/expanded details for every tool after permission ownership but before editor handling. It works idle or streaming, appends an immediate `tool details:` notice, and must not alter the draft/cursor. Existing `<Static>` scrollback is immutable; only active and subsequent calls change.
@@ -195,9 +195,9 @@ The report shows short id, presentation-only command summary, state, and elapsed
 
 | Condition | Required behavior |
 |---|---|
-| No current-runtime tasks | One dim `background tasks — none in this run` report |
+| No current-runtime tasks | One informational `background tasks — none in this run` report |
 | `/tasks` plus space/tab/newline argument | `/tasks takes no arguments`; no model turn |
-| List read fails | Dim actionable notice; active turn remains untouched |
+| List read fails | Actionable informational notice; active turn remains untouched |
 | Task finishes while streaming/permission-blocked | Append notice; active turn and prompt ownership continue |
 | Task finishes while idle | React dispatch redraws immediately without keyboard input |
 | TUI unmounts before runtime shutdown stops jobs | Effect unsubscribes; no write into dead renderer |
