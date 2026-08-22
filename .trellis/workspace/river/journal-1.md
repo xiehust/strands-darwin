@@ -320,3 +320,24 @@ Added an immediate bounded Ink startup animation, atomic handoff to App, clean e
 ### Status
 
 [OK] **Completed**
+
+
+## Session 12: Fix SER-035 startup test isolation
+
+**Date**: 2026-08-22
+**Task**: Fix SER-035 startup test isolation
+**Branch**: `main`
+
+### Summary
+
+Made the startup pty suite use unique process-owned HOME/project fixtures and assert resumed recap semantics without hard-coding SDK restored-message metadata. Focused startup pty, typecheck, and full pnpm test passed.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1526090` | (see git log) |
+
+### Status
+
+[OK] **Completed**

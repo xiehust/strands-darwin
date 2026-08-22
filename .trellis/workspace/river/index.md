@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-08-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~322 | Active |
+| `journal-1.md` | ~343 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-08-22 | Fix SER-035 startup test isolation | `1526090` | `main` |
 | 11 | 2026-08-22 | Implement SER-035 animated startup | `53d806f` | `main` |
 | 10 | 2026-08-22 | SER-034 informational transcript contrast | `af84a03` | `main` |
 | 9 | 2026-08-22 | Enable project memory by default | `e343e1b` | `main` |
