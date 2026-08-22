@@ -82,6 +82,30 @@ handoff, usable input, known-error cleanup, and byte-identical resumed startup. 
 `verify-frame-budget.ts`, `verify-visual-language.tsx`, and free pty `completion`, `clear`, and
 `resume` when this boundary changes.
 
+### The ready welcome is one-shot Static scrollback, not startup or frame furniture
+
+When the interactive App first replaces `StartupScreen`, `WelcomeHeader` is the first
+presentation-only item committed through `MessageList`'s existing `<Static>`, ahead of transcript
+history. (Adjacent Ink Static owners do not commit independently, so this shared owner is required.)
+Wide terminals receive the complete five-line wordmark, medium terminals a complete three-line
+wordmark, and narrow or short terminals `◆ DARWIN`; selection happens in the pure
+`welcomeLayout(columns, rows)` helper, and no selected line may wrap or truncate. The initial
+layout value is captured once at App mount: a later terminal resize must not mutate an item already
+committed by `<Static>`. Wide and medium forms add only their muted tagline and closing margin.
+
+The welcome is once per interactive **process**, for fresh and resumed launches. It is not a
+`HistoryItem`, trajectory/replay/export content, model message, measured header row, or frame-budget
+claim. Its first-item position makes it precede resumed-session recap history. App remains mounted
+when `/clear` replaces the runtime; the remounted transcript Static omits the welcome, so it is never
+emitted again. `/clear` may still remove its earlier terminal bytes as part of
+the explicitly sanctioned screen-and-scrollback clear. Headless mode has no welcome.
+
+Required checks: responsive rows and widths in `spike/verify-startup-screen.tsx`; fresh/resumed
+ordering, settled-frame absence, local-command stability, and `/clear` non-repetition in
+`spike/verify-startup-pty.ts`. Keep `verify-frame-budget.ts` green to prove the live frame did not
+grow.
+
+
 ## Contract: the busy rows are alive, and stay exactly the rows they were
 
 While a turn streams, the `working…` hint and the `thinking…` row carry a live suffix — elapsed
@@ -173,11 +197,16 @@ and stable role/state markers must come from that module rather than accumulatin
 literals.
 
 - **Text carries critical state.** ANSI colour and emphasis reinforce the hierarchy; they never
-  create it. ANSI-stripped output distinguishes `you>`, `darwin>`, `tool ·`, `info ·`, `warn !`,
-  and `error !`; completion selection keeps `❯`; the permission heading and every decision remain
-  readable without colour. The durable `info ·` prefix alone carries the shared informational
-  accent; its report body stays at normal terminal intensity with no dim SGR. This presentation is
-  owned by the common notice renderer, so command reports never select their own styling.
+  create it. Brand identity, assistant/tool identity, active work, selection and information use one
+  cyan accent; green/yellow/red are reserved for success/warning/error and diff semantics. Muted
+  metadata uses dimmed default foreground rather than fixed gray, preserving contrast across light
+  and dark terminal themes. The composer and selected completion use stable text plus accent/bold,
+  never reverse-video background treatment. ANSI-stripped output distinguishes `you>`, `darwin>`,
+  `tool ·`, `info ·`, `warn !`, and `error !`; completion selection keeps `❯`; the permission
+  heading and every decision remain readable without colour. The durable `info ·` prefix alone
+  carries the shared informational accent; its report body stays at normal terminal intensity with
+  no dim SGR. This presentation is owned by the common notice renderer, so command reports never
+  select their own styling.
 - **The header is status-first and compact.** `◆ DARWIN · <state>` leads, followed by the existing
   model/session line (including cache and effort), exactly one `mode:` row, and required loader
   state. Loaded skills, commands, agents and MCP servers are summarized by count rather than dumped

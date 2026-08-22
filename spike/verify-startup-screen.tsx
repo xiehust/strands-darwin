@@ -8,6 +8,13 @@ import {
   startupText,
   type StartupScheduler,
 } from '../src/tui/StartupScreen.js';
+import {
+  MEDIUM_WELCOME_WORDMARK,
+  WIDE_WELCOME_WORDMARK,
+  WelcomeHeader,
+  welcomeLayout,
+} from '../src/tui/WelcomeHeader.js';
+import { cellWidth } from '../src/tui/prompt-editor.js';
 import { assert, header, report } from './shared.js';
 
 const ANSI = /\u001B\[[0-?]*[ -/]*[@-~]/g;
@@ -39,6 +46,53 @@ assert('resume work is stated only by the resume phase',
   !renderFrame(0).includes('restoring session'));
 assert('pure layout never exceeds the supplied short-terminal budget',
   startupText('runtime', 0, 20, 1).length <= 1 && startupText('runtime', 0, 80, 4).length <= 4);
+
+header('ready welcome — responsive complete wordmarks');
+const displayWidth = (value: string): number => {
+  let width = 0;
+  for (const grapheme of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(value)) {
+    width += cellWidth(grapheme.segment);
+  }
+  return width;
+};
+const wideWelcome = welcomeLayout(80, 24);
+const minimumWideWelcome = welcomeLayout(47, 18);
+const mediumWelcome = welcomeLayout(40, 12);
+const minimumMediumWelcome = welcomeLayout(38, 10);
+const belowMediumWelcome = welcomeLayout(37, 12);
+const narrowWelcome = welcomeLayout(30, 24);
+const shortWelcome = welcomeLayout(80, 9);
+assert('wide terminals select the approved five-line wordmark plus tagline',
+  wideWelcome.variant === 'wide' && wideWelcome.brandRows === 5 && wideWelcome.lines.length === 6
+    && wideWelcome.lines.slice(0, 5).join('\n') === WIDE_WELCOME_WORDMARK.join('\n'));
+assert('medium terminals select the complete three-line wordmark plus tagline',
+  mediumWelcome.variant === 'medium' && mediumWelcome.brandRows === 3 && mediumWelcome.lines.length === 4
+    && mediumWelcome.lines.slice(0, 3).join('\n') === MEDIUM_WELCOME_WORDMARK.join('\n'));
+assert('display-width breakpoints select only variants whose longest row fits',
+  minimumWideWelcome.variant === 'wide'
+    && minimumMediumWelcome.variant === 'medium'
+    && belowMediumWelcome.variant === 'compact');
+assert('narrow and short terminals use the one-line complete identity',
+  narrowWelcome.variant === 'compact' && narrowWelcome.lines.join('') === '◆ DARWIN'
+    && shortWelcome.variant === 'compact' && shortWelcome.lines.join('') === '◆ DARWIN');
+for (const [columns, layout] of [
+  [47, minimumWideWelcome],
+  [38, minimumMediumWelcome],
+  [37, belowMediumWelcome],
+  [30, narrowWelcome],
+  [80, shortWelcome],
+] as const) {
+  assert(`${layout.variant} welcome rows fit ${columns} columns without wrapping`,
+    layout.lines.every((line) => displayWidth(line) <= columns));
+  const rendered = plain(renderToString(<WelcomeHeader layout={layout} />, { columns }));
+  assert(`${layout.variant} boundary render preserves every selected row without truncation`,
+    layout.lines.every((line) => rendered.includes(line))
+      && rendered.split('\n').length === layout.lines.length + layout.marginBottom);
+}
+const renderedWelcome = plain(renderToString(<WelcomeHeader layout={wideWelcome} />, { columns: 80 }));
+assert('welcome component renders the chosen immutable rows exactly once',
+  renderedWelcome.split(WIDE_WELCOME_WORDMARK[0]).length - 1 === 1
+    && renderedWelcome.includes('coding through iteration'));
 
 header('startup screen — interval ownership and cleanup');
 let callback: (() => void) | undefined;

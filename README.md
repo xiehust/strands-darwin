@@ -138,6 +138,13 @@ supervised implementation batch. Every `/developer` run appends its child sessio
 commit, and Host-rerun checks there.
 
 ```text
+██████╗  █████╗ ██████╗ ██╗    ██╗██╗███╗   ██╗
+██╔══██╗██╔══██╗██╔══██╗██║    ██║██║████╗  ██║
+██║  ██║███████║██████╔╝██║ █╗ ██║██║██╔██╗ ██║
+██║  ██║██╔══██║██╔══██╗██║███╗██║██║██║╚██╗██║
+██████╔╝██║  ██║██║  ██║╚███╔███╔╝██║██║ ╚████║
+              coding through iteration
+
 ◆ DARWIN · ready
 bedrock/us.anthropic.claude-sonnet-4-6 · session session-20260818-062400 · cache 5m · effort high
 mode: default

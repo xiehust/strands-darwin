@@ -7,14 +7,13 @@
  */
 export const visualColor = {
   identity: 'cyan',
-  assistant: 'green',
-  tool: 'blue',
+  assistant: 'cyan',
+  tool: 'cyan',
   active: 'cyan',
   success: 'green',
   information: 'cyan',
   warning: 'yellow',
   danger: 'red',
-  muted: 'gray',
 } as const;
 
 export const visualMarker = {

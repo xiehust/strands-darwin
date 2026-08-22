@@ -164,9 +164,9 @@ export function InputBox({
       {rows.map((row, index) => (
         <Box key={`${row.start}:${index}`}>
           <Text
-            color={!editable ? visualColor.muted : row.prefix === '     ' ? visualColor.muted : visualColor.identity}
+            {...(editable && row.prefix !== '     ' ? { color: visualColor.identity } : {})}
             bold={editable && row.prefix !== '     '}
-            inverse={editable && row.prefix === 'you> '}
+            dimColor={!editable || row.prefix === '     '}
           >
             {row.prefix}
           </Text>
@@ -194,12 +194,12 @@ export function InputBox({
             const description = completionKind === 'command' ? builtinCommandDescription(name) : undefined;
             return (
               <Box key={name}>
-                {/* The selected row has a textual marker and inverse emphasis: it
-                    remains unambiguous in monochrome captures as well as colour. */}
+                {/* The textual pointer remains the durable selection; accent and
+                    weight reinforce it without imposing a terminal background. */}
                 <Text
-                  color={selected ? visualColor.active : visualColor.muted}
+                  {...(selected ? { color: visualColor.active } : {})}
                   bold={selected}
-                  inverse={selected}
+                  dimColor={!selected}
                   wrap="truncate-end"
                 >
                   {selected ? `${visualMarker.completion} ` : '  '}{completionKind === 'command' ? '/' : ''}{name}

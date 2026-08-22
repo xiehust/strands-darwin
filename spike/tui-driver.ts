@@ -81,6 +81,8 @@ export interface TuiSession {
    * idle prompt", since the prompt text is drawn while busy too.
    */
   waitUntil(predicate: (screen: string) => boolean, options?: WaitOptions): Promise<void>;
+  /** Resizes the pseudo-terminal and lets Ink recompute its responsive layout. */
+  resize(columns: number, rows: number): void;
   /** Sends literal keystrokes. */
   send(keys: string): void;
   /** Types text and presses Enter. */
@@ -242,6 +244,10 @@ export function startTui(options: TuiOptions): TuiSession {
         watchers.add(check);
         check();
       });
+    },
+
+    resize(columns, rows) {
+      child.resize(columns, rows);
     },
 
     send(keys) {

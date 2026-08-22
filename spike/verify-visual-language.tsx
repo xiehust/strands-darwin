@@ -21,6 +21,8 @@ const rows = (value: string): number => plain(value).split('\n').length;
 const FORCED_COLOR_FIXTURE = 'DARWIN_VISUAL_LANGUAGE_FORCED_COLOR_FIXTURE';
 if (process.env[FORCED_COLOR_FIXTURE] === '1') {
   const history: HistoryItem[] = [
+    { kind: 'assistant', id: 'a', text: 'answer', part: 'whole', codeOpen: false },
+    { kind: 'tool', id: 't', name: 'bash', summary: 'bash: pnpm test', status: 'ok', preview: '', inputPreview: '', expanded: false },
     { kind: 'notice', id: 'ni', text: 'memory report\nsecond line', severity: 'info' },
     { kind: 'notice', id: 'nw', text: 'cache unavailable', severity: 'warn' },
     { kind: 'notice', id: 'ne', text: 'turn failed', severity: 'error' },
@@ -29,9 +31,23 @@ if (process.env[FORCED_COLOR_FIXTURE] === '1') {
     <MessageList history={history} liveText="" liveCodeOpen={false} columns={80} maxLiveRows={8} staticEpoch={0} />,
     { columns: 80 },
   ));
+  process.stdout.write(renderToString(
+    <InputBox
+      layout={layoutEditor('/m', 80, { offset: 2, affinity: 'downstream' })}
+      completions={['model', 'mode']}
+      completionKind="command"
+      completionNote={undefined}
+      selectedCompletion={1}
+      editable
+      hint={undefined}
+      recallIndicator={undefined}
+      offset={{ top: 0, left: 0 }}
+      maxRows={8}
+    />,
+    { columns: 80 },
+  ));
   process.exit(0);
 }
-
 
 const info: RuntimeInfo = {
   config: {
@@ -89,7 +105,6 @@ const shadowHeader = plain(renderToString(<Header runtime={shadowRuntime} status
 assert('hook-directory shadowing is visible in the startup header',
   shadowHeader.includes('hooks: project .darwin /workspace/.darwin/hooks shadows /workspace/.darwin/hooks.json'));
 
-
 header('visual language — ANSI-stripped transcript hierarchy');
 const history: HistoryItem[] = [
   { kind: 'user', id: 'u', text: 'Review this change.' },
@@ -114,14 +129,32 @@ const colored = spawnSync(process.execPath, ['--import', 'tsx', import.meta.file
 });
 assert('forced-color fixture renders successfully', colored.status === 0 && colored.error === undefined);
 const coloredTranscript = colored.stdout;
-assert('informational marker has the semantic accent', coloredTranscript.includes('\u001B[36minfo ·\u001B[39m'));
+const sgrFor = (marker: string): readonly number[] => {
+  const markerAt = coloredTranscript.indexOf(marker);
+  if (markerAt < 0) return [];
+  const preceding = coloredTranscript.slice(0, markerAt);
+  const start = preceding.lastIndexOf('\u001B[');
+  if (start < 0) return [];
+  const match = /^\u001B\[([\d;]*)m/.exec(coloredTranscript.slice(start));
+  return match?.[1]?.split(';').filter(Boolean).map(Number) ?? [];
+};
+const hasSgr = (marker: string, code: number): boolean => sgrFor(marker).includes(code);
+assert('informational marker has the semantic accent', hasSgr('info ·', 36));
 assert('informational body remains at normal intensity',
-  coloredTranscript.includes('\u001B[39m memory report\nsecond line') && !coloredTranscript.includes('\u001B[2m'));
+  coloredTranscript.includes('\u001B[39m memory report\nsecond line')
+    && !coloredTranscript.includes('\u001B[2mmemory report'));
 assert('warning and error retain distinct semantic colors',
-  coloredTranscript.includes('\u001B[33mwarn ! cache unavailable\u001B[39m')
-    && coloredTranscript.includes('\u001B[31merror ! turn failed\u001B[39m'));
+  hasSgr('warn ! cache unavailable', 33) && hasSgr('error ! turn failed', 31));
 assert('ANSI stripping preserves exact informational report bytes',
   plain(coloredTranscript).includes('info · memory report\nsecond line'));
+assert('assistant, tool identity, composer and selected completion share the cyan accent',
+  ['darwin>', 'tool ·', 'you> ', '❯ /mode'].every((marker) => hasSgr(marker, 36)));
+assert('tool outcome stays success green while its identity remains cyan',
+  hasSgr('tool ·', 36) && hasSgr('✓ ', 32));
+assert('muted completion metadata uses default foreground intensity, not fixed gray',
+  hasSgr('/model', 2) && !coloredTranscript.includes('\u001B[90m'));
+assert('active composer and completion focus do not use reverse-video SGR',
+  !coloredTranscript.includes('\u001B[7m') && !coloredTranscript.includes('\u001B[27m'));
 
 header('visual language — active composer and completion selection');
 const composer = plain(renderToString(

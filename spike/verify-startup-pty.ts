@@ -25,6 +25,9 @@ const ENTRY = path.join(REPO_ROOT, 'spike/fixtures/startup-cli.ts');
 const READY = path.join(ROOT, 'runtime-ready');
 const EXIT_TIMEOUT_MS = 20_000;
 process.env['HOME'] = HOME;
+const WELCOME_ANCHOR = '██████╗  █████╗ ██████╗ ██╗    ██╗██╗███╗   ██╗';
+const occurrences = (value: string, needle: string): number => value.split(needle).length - 1;
+const operationalFrame = (value: string): string => value.slice(value.lastIndexOf('◆ DARWIN ·'));
 
 async function writeConfig(): Promise<void> {
   await mkdir(path.join(HOME, '.darwin'), { recursive: true });
@@ -82,11 +85,29 @@ async function pendingMotionAndHandoff(): Promise<void> {
     assert('handoff leaves exactly one ready identity and one prompt',
       (tui.frame.match(/◆ DARWIN · ready/g) ?? []).length === 1 &&
       (tui.frame.match(/you>/g) ?? []).length === 1);
+    assert('ready handoff commits one welcome to scrollback before the compact header',
+      occurrences(tui.screen, WELCOME_ANCHOR) === 1
+        && tui.screen.indexOf(WELCOME_ANCHOR) < tui.screen.lastIndexOf('◆ DARWIN · ready'));
+    assert('the one-shot welcome is absent from the settled operational frame',
+      !operationalFrame(tui.frame).includes(WELCOME_ANCHOR));
+
+    const beforeResize = tui.mark();
+    tui.resize(100, 30);
+    await tui.waitFor('◆ DARWIN · ready', { timeoutMs: 10_000, from: beforeResize, settleMs: 200 });
+    assert('terminal resize does not mutate or repeat the committed welcome',
+      occurrences(tui.screen, WELCOME_ANCHOR) === 1 && !tui.frame.includes(WELCOME_ANCHOR));
 
     const beforeHelp = tui.mark();
     tui.submit('/help');
     await tui.waitFor('help — local controls', { timeoutMs: 10_000, from: beforeHelp, settleMs: 200 });
     assert('the ordinary App owns usable input after handoff', tui.screen.slice(beforeHelp).includes('info ·'));
+    assert('a local command does not repeat the one-shot welcome', occurrences(tui.screen, WELCOME_ANCHOR) === 1);
+    const beforeClear = tui.mark();
+    tui.submit('/clear');
+    await tui.waitFor('cleared — new session', { timeoutMs: 20_000, from: beforeClear, settleMs: 200 });
+    assert('/clear does not remount or repeat the process welcome', occurrences(tui.screen, WELCOME_ANCHOR) === 1);
+    assert('/clear successor live frame contains no welcome', !tui.frame.includes(WELCOME_ANCHOR));
+
     tui.submit('/exit');
     assert('the handed-off App exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
   } finally {
@@ -143,7 +164,6 @@ async function missingSessionError(): Promise<void> {
   assert('missing resume creates no fallback session', JSON.stringify(after) === JSON.stringify(before));
 }
 
-
 async function seedResume(): Promise<{ sessionId: string; files: readonly string[] }> {
   const sessionId = 'session-startup-resume';
   const manager = createSessionManager(ROOT, sessionId);
@@ -195,6 +215,13 @@ async function resumedHandoff(): Promise<void> {
   try {
     await tui.waitFor('restoring session', { timeoutMs: 20_000 });
     await tui.waitFor(/resume recap · [1-9]\d* restored model message\(s\)/, { timeoutMs: 20_000, settleMs: 300 });
+    const welcomeAt = tui.screen.indexOf(WELCOME_ANCHOR);
+    const recapAt = tui.screen.indexOf('resume recap ·');
+    assert('resumed handoff commits one welcome before its read-only recap',
+      welcomeAt >= 0 && occurrences(tui.screen, WELCOME_ANCHOR) === 1 && recapAt > welcomeAt);
+    assert('resumed welcome is absent from the settled operational frame',
+      !operationalFrame(tui.frame).includes(WELCOME_ANCHOR));
+
     assert('resume recap reaches the ordinary ready prompt with the seeded turn',
       tui.screen.includes('startup resume request') &&
       tui.screen.includes('startup resume answer') &&

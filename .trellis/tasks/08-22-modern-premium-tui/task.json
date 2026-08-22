@@ -1,0 +1,28 @@
+{
+  "id": "modern-premium-tui",
+  "name": "modern-premium-tui",
+  "title": "Modern premium TUI redesign",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "src/tui/**, src/cli.ts, spike/**, .trellis/spec/frontend/**, docs/architecture/load-bearing-decisions.md, README.md, .trellis/tasks/08-22-modern-premium-tui/**",
+  "package": null,
+  "priority": "P2",
+  "creator": "river",
+  "assignee": "river",
+  "createdAt": "2026-08-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "description": "Polish Darwin’s scrollback-first Ink interface and add a responsive one-shot DARWIN welcome wordmark."
+  }
+}

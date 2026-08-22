@@ -66,6 +66,7 @@ import {
 } from './frame-budget.js';
 import { MessageList } from './MessageList.js';
 import { PermissionPrompt, permissionBoxClaim } from './PermissionPrompt.js';
+import { welcomeLayout } from './WelcomeHeader.js';
 import { ActiveToolCalls } from './ToolCallPanel.js';
 import { QueuedMessages } from './QueuedMessages.js';
 import type { PermissionQueue } from './permission-queue.js';
@@ -188,6 +189,10 @@ export function App({
     initialHistory,
     (history): typeof initialTurnState => ({ ...initialTurnState, history: [...history] }),
   );
+  // The ready welcome is process/App-scoped, not session-scoped. Capture its
+  // complete responsive variant once so a later resize cannot mutate an item
+  // that Ink's Static has already committed to scrollback.
+  const [initialWelcome] = useState(() => welcomeLayout(columns, rows));
   // Swapped whole rather than branched per call: with `diagnostics` off — the default —
   // `dispatch` *is* the reducer's own dispatch, so not one of the ~50 notice sites
   // below pays anything, and the mirror cannot be forgotten at a new one either.
@@ -1640,6 +1645,7 @@ export function App({
       </Box>
       <MessageList
         history={state.history}
+        {...(state.staticEpoch === 0 ? { welcome: initialWelcome } : {})}
         liveText={state.liveText}
         liveCodeOpen={fenceOpenAfter(state.committedAnswer)}
         columns={columns}

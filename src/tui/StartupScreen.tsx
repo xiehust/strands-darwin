@@ -67,7 +67,7 @@ export function StartupFrame({
       {lines.map((line, index) => (
         <Text
           key={index}
-          color={index === 0 ? visualColor.identity : index === 1 ? visualColor.active : visualColor.muted}
+          {...(index < 2 ? { color: index === 0 ? visualColor.identity : visualColor.active } : {})}
           bold={index === 0}
           dimColor={index === 2}
           wrap="truncate-end"

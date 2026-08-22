@@ -19,9 +19,22 @@ import { liveRowText, MarkdownAnswerText } from './MarkdownText.js';
 import { ToolCallResult } from './ToolCallPanel.js';
 import type { HistoryItem } from './turn-state.js';
 import { noticeColor, visualColor, visualMarker } from './visual-language.js';
+import { WelcomeHeader, type WelcomeLayout } from './WelcomeHeader.js';
+
+type StaticItem =
+  | { readonly type: 'welcome'; readonly key: 'darwin-welcome'; readonly layout: WelcomeLayout }
+  | { readonly type: 'history'; readonly key: string; readonly item: HistoryItem };
+
+function staticItems(history: readonly HistoryItem[], welcome: WelcomeLayout | undefined): StaticItem[] {
+  const items: StaticItem[] = history.map((item) => ({ type: 'history', key: item.id, item }));
+  return welcome === undefined
+    ? items
+    : [{ type: 'welcome', key: 'darwin-welcome', layout: welcome }, ...items];
+}
 
 export function MessageList({
   history,
+  welcome,
   liveText,
   liveCodeOpen,
   columns,
@@ -29,6 +42,8 @@ export function MessageList({
   staticEpoch,
 }: {
   readonly history: readonly HistoryItem[];
+  /** Presentation-only item that must precede any resumed transcript history. */
+  readonly welcome?: WelcomeLayout;
   readonly liveText: string;
   /**
    * Fence state at the start of `liveText` — what the already-committed pieces
@@ -57,7 +72,11 @@ export function MessageList({
 
   return (
     <Box flexDirection="column">
-      <Static key={staticEpoch} items={[...history]}>{(item) => <HistoryEntry key={item.id} item={item} />}</Static>
+      <Static key={staticEpoch} items={staticItems(history, welcome)}>
+        {(entry) => entry.type === 'welcome'
+          ? <WelcomeHeader key={entry.key} layout={entry.layout} />
+          : <HistoryEntry key={entry.key} item={entry.item} />}
+      </Static>
       {live.rows.length > 0 && (
         <Box flexDirection="column" marginBottom={1}>
           <Text color={visualColor.assistant} bold>{visualMarker.assistant}</Text>

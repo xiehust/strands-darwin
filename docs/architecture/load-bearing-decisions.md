@@ -461,6 +461,20 @@ out as flex items and wraps them independently); and `useBoxMetrics` is *parent*
 own window hides. Contract and required checks: `.trellis/spec/frontend/live-frame.md` (pty
 mechanics stay in `frontend/tui-testing.md`).
 
+The ready-state brand is deliberately outside that budget: `WelcomeHeader` is the first
+presentation-only item in `MessageList`'s existing `<Static>` owner (adjacent Static owners do not
+commit independently), written once when the interactive App takes ownership. Its
+pure responsive layout chooses a complete five-line, three-line, or compact `◆ DARWIN` identity
+before rendering and is captured once at App mount, so resize cannot mutate committed Static output;
+it is never trajectory/replay/model content or measured frame furniture. App is not remounted by
+`/clear`; the successor transcript changes epoch and omits the presentation item, so the process
+welcome cannot repeat. The semantic palette likewise has one cyan non-state accent;
+green/yellow/red remain success/warning/error meanings, muted text uses dimmed default foreground for
+light/dark terminal compatibility, and composer/completion focus uses text plus bold rather than
+inverse backgrounds. Checks: `verify-startup-screen.tsx`, `verify-startup-pty.ts`,
+`verify-visual-language.tsx`, and `verify-frame-budget.ts`.
+
+
 ## The busy rows
 
 **The busy rows are alive, and stay exactly the rows they were** (`src/tui/busy-suffix.ts`,
