@@ -299,3 +299,24 @@ Raised shared informational notice contrast with an accented durable marker, nor
 ### Status
 
 [OK] **Completed**
+
+
+## Session 11: Implement SER-035 animated startup
+
+**Date**: 2026-08-22
+**Task**: Implement SER-035 animated startup
+**Branch**: `main`
+
+### Summary
+
+Added an immediate bounded Ink startup animation, atomic handoff to App, clean error/resume lifecycle, deterministic component coverage, delayed real-pty acceptance, and frontend contracts. All focused checks, typecheck, and full pnpm test passed.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `53d806f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
