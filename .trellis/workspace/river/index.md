@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 6
-- **Last Active**: 2026-08-21
+- **Total Sessions**: 5
+- **Last Active**: 2026-08-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~217 | Active |
+| `journal-1.md` | ~190 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,7 +29,6 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
-| 6 | 2026-08-21 | Implement SER-031 explicit memory search | `0e16f23` | `main` |
 | 5 | 2026-08-17 | Make the whole live frame fit, and stream finished answer lines into scrollback | `898ad46`, `c21cd09`, `a5f4b2a`, `901283d`, `9e487a1` | `main` |
 | 4 | 2026-08-17 | Bound the live frame so a long streamed answer cannot flicker | `509de38`, `17446db` | `main` |
 | 3 | 2026-08-14 | Permission approval modes: default / auto / yolo | `67ce8b5` | `main` |

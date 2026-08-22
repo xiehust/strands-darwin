@@ -313,7 +313,7 @@ async function buildFixture(): Promise<string> {
   await mkdir(AGENTS_ROOT, { recursive: true });
   await writeFile(
     path.join(AGENTS_ROOT, 'explorer.md'),
-    '---\nname: explorer\ndescription: Explore code.\ntools: [fileEditor, search_memory]\n---\n\nExplore carefully.\n',
+    '---\nname: explorer\ndescription: Explore code.\ntools: [fileEditor]\n---\n\nExplore carefully.\n',
   );
   await writeFile(
     path.join(AGENTS_ROOT, 'no-tools.MD'),
@@ -338,7 +338,7 @@ async function buildFixture(): Promise<string> {
 async function loader(): Promise<AgentDefinitionRegistry> {
   header('subagents — definition discovery');
   const unreadable = await buildFixture();
-  const registry = await loadAgentDefinitions(ROOT, ['bash', 'fileEditor', 'dangerousProbe', 'search_memory']);
+  const registry = await loadAgentDefinitions(ROOT, ['bash', 'fileEditor', 'dangerousProbe']);
   await chmod(unreadable, 0o600);
 
   const names = registry.definitions.map((definition) => definition.name);
@@ -359,7 +359,7 @@ async function loader(): Promise<AgentDefinitionRegistry> {
   assert('bad YAML is isolated', reasons.some((reason) => reason.includes('invalid YAML')));
   assert('unreadable files are isolated', reasons.some((reason) => reason.includes('could not read file')));
   assert('an explicit empty tool list survives', registry.definitions.find((d) => d.name === 'no-tools')?.tools?.length === 0);
-  assert('a tool allowlist is preserved exactly', registry.definitions.find((d) => d.name === 'explorer')?.tools?.join(',') === 'fileEditor,search_memory');
+  assert('a tool allowlist is preserved exactly', registry.definitions.find((d) => d.name === 'explorer')?.tools?.join(',') === 'fileEditor');
   return registry;
 }
 
@@ -399,16 +399,10 @@ function runtimeTool(
     inputSchema: z.object({}),
     callback: () => 'unused',
   });
-  const searchMemory = tool({
-    name: 'search_memory',
-    description: 'Read-only project memory marker.',
-    inputSchema: z.object({ query: z.string() }),
-    callback: ({ query }) => query,
-  });
 
   return new SubagentTool({
     registry,
-    tools: [harmlessEditor, dangerousProbe, searchMemory],
+    tools: [harmlessEditor, dangerousProbe],
     intervention: gate,
     projectInstructions: undefined,
     config: fakeConfig('first'),
@@ -439,10 +433,9 @@ async function dispatchContracts(registry: AgentDefinitionRegistry): Promise<voi
   const secondText = JSON.stringify(second);
   assert('each dispatch constructs a fresh model', models.length === 4);
   assert('each child starts from one delegated user message', models.every((model) => model.calls[0]?.messages === 1));
-  assert('general receives every eligible tool including search_memory', firstText.includes('fileEditor,dangerousProbe,search_memory'));
+  assert('general receives every eligible tool', firstText.includes('fileEditor,dangerousProbe'));
   assert('repeated dispatch has no prior child history', secondText.includes('messages=1'));
-  assert('a restricted definition receives its explicit allowlist including search_memory',
-    JSON.stringify(restricted).includes('tools=fileEditor,search_memory'));
+  assert('a restricted definition receives only its allowlist', JSON.stringify(restricted).includes('tools=fileEditor'));
   assert('an empty allowlist receives no tools', JSON.stringify(noTools).includes('tools='));
   assert('an unknown name returns the accepted names', JSON.stringify(unknown).includes('Available agents'));
 

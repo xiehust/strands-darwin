@@ -1,8 +1,0 @@
-{"file":".trellis/spec/backend/index.md","reason":"Backend contract index for trajectory and SDK boundaries."}
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"Authoritative trajectory read, damage, persistence, and model-context contract."}
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Sole Agent assembly, tools, permissions, and child-agent contracts."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Required degradation and error-boundary behavior."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend contract index."}
-{"file":".trellis/spec/frontend/live-frame.md","reason":"Ordinary tool rendering and no-new-surface frame invariant."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Rendering and structural verification conventions."}
-{"file":".trellis/tasks/08-21-ser-031-memory-search/research/retrieval-seam.md","reason":"Task-local synthesis of accepted SER-031 seams and exclusions."}

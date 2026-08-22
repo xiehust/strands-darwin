@@ -1633,38 +1633,3 @@ cacheWrite=124,535`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-21 | `3ce5e46` | Return deterministic bounded current context after an exact `fileEditor str_replace` miss without fuzzy mutation |
-
-
-### Batch 45 — explicit textual long-term recall (2026-08-21)
-
-Origin: `docs/research/research_2026-08-21.md`, run `09:55:51Z`. SER-031 (Score 11)
-turns Darwin's existing project trajectory substring search into explicit long-term recall without
-vectors, generated memory, ambient context injection or a second persistent store.
-
-Child session `session-20260821-100118501`, managed task
-`bg-fbe66514-bfc6-4573-865e-a60157d01502` (succeeded, exit 0, no correction turn). Delivered in
-`0e16f23` (+ task archive `5f2a835`, journal `8fc2b84`): `search_memory` searches at most 20 prior
-project sessions for a bounded literal query, excludes the active session, returns at most 10
-source-labelled matches inside a 2,000-code-point result, and states damage, snapshot-only records,
-omitted sessions and hit/result cuts. It writes/indexes/generates nothing, enters model context only
-through its visible ordinary tool result, is read-safe in plan mode, and follows existing parent and
-child allowlist assembly.
-
-Host acceptance inspected the 24-file implementation/task/spec diff and independently re-ran `pnpm
-typecheck`, `pnpm test` (all fast suites green, exit 0), `spike/verify-memory-tool.ts` (23/23),
-`spike/verify-trajectory.ts` (267/267), `spike/verify-subagents.ts` (69/69),
-`spike/verify-permission-modes.ts` (108/108), and `pnpm build`, plus archived-task validation
-(passed with only existing large-spec injection warnings), `git diff --check`, `git show --check`
-for all three child commits, AGENTS.md size (21,746 bytes), and clean-tree verification. The offline
-real SDK-tool fixture hashed every seeded trajectory, snapshot and resume pointer byte-identically
-before/after and proved active-session exclusion, Unicode-safe case-insensitive retrieval,
-provenance, degradation/limit honesty, plan-safe classification, normal tool rendering, and absence
-of a model/network/vector/index/writer/system-prompt/startup/TUI path. No provider call was needed
-for Host acceptance.
-
-Token spend, single managed task: `input=298 output=36,476 cacheRead=15,849,954
-cacheWrite=159,701`.
-
-| Date | Commit | Milestone |
-|---|---|---|
-| 2026-08-21 | `0e16f23` | Expose bounded prior-session literal recall through one explicit visible read tool |

@@ -622,18 +622,10 @@ export function classify(toolName: string, rawInput: unknown): PermissionRequest
         details: [],
         input: rawInput,
       };
-    case 'search_memory':
-      return {
-        toolName,
-        kind: 'read',
-        summary: `search_memory: ${firstLine(str(input['query']) ?? '(missing query)')}`,
-        details: [],
-        input: rawInput,
-      };
-
-    // The context offloader's own retrieval tool reads back a result this session
-    // already produced and stored. Unknown tools fail closed as `execute`, which
-    // would make every retrieval prompt for something already approved once.
+    // The context offloader's own retrieval tool: it reads back a tool result
+    // this session already produced and stored. Unknown tools fail closed as
+    // `execute`, which would make every retrieval prompt the user for something
+    // they already approved once.
     case 'retrieve_offloaded_content':
       return {
         toolName,

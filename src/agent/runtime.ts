@@ -54,7 +54,6 @@ import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, type McpServerStatus } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
-import { createSearchMemoryTool } from '../trajectory/memory-tool.js';
 import { recordStream } from '../trajectory/stream.js';
 import {
   TrajectoryRecorder,
@@ -456,8 +455,6 @@ export class AgentRuntime {
     if (options.inherit === undefined) startupBackgroundBash = backgroundBash;
     const bash = createBackgroundBashTool(backgroundBash);
     const imageViewer = createImageViewerTool(options.projectRoot);
-    const searchMemory = createSearchMemoryTool(options.projectRoot, session.sessionId, AGENT_ID);
-
     const conversationManager = new SummarizingConversationManager({
       summaryRatio: config.summaryRatio,
       preserveRecentMessages: config.preserveRecentMessages,
@@ -501,7 +498,7 @@ export class AgentRuntime {
       systemPrompt: composeSystemPrompt(basePrompt.prompt, instructions),
       // McpClient instances act as tool sources: the SDK discovers and registers
       // their tools during initialize().
-      tools: [bash, fileEditor, imageViewer, searchMemory, ...mcp.clients],
+      tools: [bash, fileEditor, imageViewer, ...mcp.clients],
       plugins: offloader === undefined ? [skills] : [skills, offloader],
       sessionManager,
       conversationManager,

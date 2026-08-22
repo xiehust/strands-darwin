@@ -108,11 +108,6 @@ if (typed.length > 1 && enter !== undefined) handleBatchedEnter(typed, enter);
   canonical order, no duplicate/invented names, every required syntax/key fact, and finite line,
   command, and per-line code-point bounds.
 
-A backend-only model tool such as `search_memory` should not get a bespoke pty scenario merely to
-prove shared rendering. Verify that it emits ordinary SDK tool events/results and structurally assert
-that no TUI component, completion command or live-frame surface was added; existing tool lifecycle
-suites remain the rendering contract.
-
 ## Custom slash-command contract
 
 ### 1. Scope / trigger

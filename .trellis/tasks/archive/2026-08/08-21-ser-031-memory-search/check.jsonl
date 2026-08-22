@@ -1,6 +1,0 @@
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"Check trajectory read-only and explicit disclosure contracts."}
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Check assembly, permission, and child-agent invariants."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Check honest degradation and bounded failures."}
-{"file":".trellis/spec/frontend/live-frame.md","reason":"Check no bespoke UI/frame surface was added."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Check verification quality and ordinary rendering assertions."}
-{"file":".trellis/tasks/08-21-ser-031-memory-search/research/retrieval-seam.md","reason":"Check accepted scope and forbidden architecture."}

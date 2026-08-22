@@ -54,11 +54,6 @@ per further row with nothing streaming, and one in-flight call with details expa
 - A **windowed draft has no `you>` row** (it scrolled out), so `waitForIdle` and `awaitsPermission`
   cannot be used while a tall draft is up — clear the draft first.
 
-`search_memory` is not a new surface. Its explicit model call and bounded textual result use the
-same active tool panel and finished `<Static>` tool rows as every other read tool. It owns no header,
-notice row, timer, modal, completion entry or key; trajectory history is never injected outside that
-ordinary visible tool lifecycle.
-
 ## Contract: the busy rows are alive, and stay exactly the rows they were
 
 While a turn streams, the `working…` hint and the `thinking…` row carry a live suffix — elapsed
