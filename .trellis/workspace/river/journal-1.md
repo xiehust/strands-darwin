@@ -257,3 +257,24 @@ Added exact bounded worktree anchors, fail-closed validation states, a configura
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: Enable project memory by default
+
+**Date**: 2026-08-22
+**Task**: Enable project memory by default
+**Branch**: `main`
+
+### Summary
+
+Made learned project memory default-on when trajectory recording is available, preserved explicit and trajectory-based opt-outs, expanded runtime/config coverage, and refreshed configuration and architecture documentation.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e343e1b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
