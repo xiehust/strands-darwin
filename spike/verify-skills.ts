@@ -554,7 +554,7 @@ async function researchDocs(): Promise<void> {
 }
 
 async function realProjectSkill(): Promise<void> {
-  header("this repo's own .darwin/skills/ directory");
+  header("this repo's own project skills");
 
   const { skills, problems } = await scanSkills(REPO_ROOT);
   console.log(`  skills   : ${JSON.stringify(skills.map((s) => s.name))}`);
@@ -562,11 +562,15 @@ async function realProjectSkill(): Promise<void> {
 
   assert('commit-message skill is discovered', skills.some((s) => s.name === 'commit-message'));
   const localProblems = problems.filter((problem) => problem.directory.startsWith(`${REPO_ROOT}${path.sep}`));
-  assert('project .agents duplicates are surfaced without displacing project .darwin owners',
-    localProblems.length > 0 && localProblems.every((problem) => problem.reason.includes('duplicate skill name')));
+  assert('project skills have no duplicate-name problems after Trellis moved to .agents',
+    localProblems.every((problem) => !problem.reason.includes('duplicate skill name')));
   assert(
-    'it is found under .darwin/skills/',
+    'commit-message remains under .darwin/skills/',
     skillDirectory(requireSkill(skills, 'commit-message')).includes(path.join('.darwin', SKILLS_DIRNAME)),
+  );
+  assert(
+    'Trellis skills are discovered from .agents/skills/',
+    skillDirectory(requireSkill(skills, 'trellis-check')).includes(path.join('.agents', SKILLS_DIRNAME)),
   );
 
   const plugin = await SkillsPlugin.load(REPO_ROOT);
