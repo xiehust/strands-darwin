@@ -1727,3 +1727,35 @@ cacheWrite=159,384`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-22 | `64989d6` | Validate generated memory against bounded exact worktree anchors and expire it on a configurable conservative horizon |
+
+
+
+### Batch 48 — readable informational transcript reports (2026-08-22)
+
+Origin: `docs/research/research_2026-08-22.md` run `2026-08-22T06:37:01Z`, a user-directed
+`tui` self-review. SER-034 (Score 17) addressed the reproduced low-contrast `/memory` and `/mcp`
+reports: the shared notice renderer applied both gray foreground and terminal dim intensity to every
+informational marker and body.
+
+Child session `session-20260822-104129517`. The initial managed task
+`bg-d54a0aa6-48fb-4ce9-afa1-4d1f8c3c9710` exited 0 after producing the Trellis plan; the same
+session continued in managed task `bg-57f117eb-932d-409f-8d44-88d4cd88575b` (exit 0, no acceptance
+correction) and delivered `af84a03` (+ task archive `7c49cd9`, journal `4c135e5`). The shared visual
+vocabulary now gives informational notices a cyan semantic role, while `MessageList` accents only
+the durable `info ·` marker and renders exact report bodies at normal intensity. Warning/error
+styling, ANSI-stripped text, `<Static>` ownership, margins and row geometry remain unchanged.
+
+Host acceptance inspected the implementation and independently re-ran `pnpm typecheck`, full
+`pnpm test`, `spike/verify-visual-language.tsx` (53/53, including a forced-color child fixture), and
+free pty `completion` (62/62) plus `mcp` (13/13), followed by `pnpm build`. Trellis archive
+validation, `git diff --check`, `git show --check` for all three commits, clean-tree verification,
+and AGENTS.md size (22,213 bytes < 32 KiB) also passed. No provider call was needed for Host
+acceptance.
+
+Token spend: planning task `input=24 output=6,432 cacheRead=318,958 cacheWrite=44,937`;
+implementation task `input=80 output=12,459 cacheRead=2,713,677 cacheWrite=86,189`. Aggregate:
+`input=104 output=18,891 cacheRead=3,032,635 cacheWrite=131,126`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-22 | `af84a03` | Accent the durable informational marker while keeping transcript report bodies at normal readable intensity |
