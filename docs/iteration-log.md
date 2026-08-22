@@ -1759,3 +1759,38 @@ implementation task `input=80 output=12,459 cacheRead=2,713,677 cacheWrite=86,18
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-22 | `af84a03` | Accent the durable informational marker while keeping transcript report bodies at normal readable intensity |
+
+
+
+### Batch 49 — animated initialization-bound startup (2026-08-22)
+
+Origin: `docs/research/research_2026-08-22.md` run `2026-08-22T06:37:01Z`, the same
+user-directed `tui` batch as SER-034. SER-035 (Score 9) addressed the blank terminal before
+`AgentRuntime.create()` and resumed recap loading completed.
+
+Child session `session-20260822-105247940`. Managed implementation task
+`bg-8c72301c-49bb-4de2-86eb-2f973eef9835` exited 0 and delivered `53d806f` (+ task archive
+`5548a0d`, journal `dc37b9b`): one Ink instance now renders a bounded Darwin evolution motif before
+runtime creation, moves to an honest `restoring session` phase only while recap loading is pending,
+and immediately rerenders the ordinary `App` when the awaited work settles. It adds no fixed delay,
+input hook, raw terminal write, transcript item, provider call, permanent timer, or settled-frame row.
+Known startup errors unmount before stderr; recap/import failure also shuts down the acquired runtime.
+
+Host acceptance found one defect in the new verification: the focused startup pty suite expected an
+exact two restored messages, but the full runner produced a valid four-message SDK restoration and
+timed out. Focused correction task `bg-505f0da9-136a-4936-97ba-8661254e1bb8` (same child session,
+exit 0) delivered `1526090` (+ archive `7ce38dd`, journal `e9e9705`): unique suite-owned HOME/project
+storage plus semantic positive-count/request/answer assertions. The Host accepted only after
+independently re-running `pnpm typecheck`, full `pnpm test`, startup component 17/17, startup pty
+19/19, frame budget 75/75, visual language 53/53, and free pty `completion`/`clear`/`resume`
+62/19/12, followed by `pnpm build`; Trellis archive validation, commit/diff/clean-tree checks and
+AGENTS.md size (22,213 bytes < 32 KiB) also passed. No provider call was needed.
+
+Token spend: implementation task `input=196 output=32,760 cacheRead=8,820,625 cacheWrite=132,646`;
+correction task `input=60 output=7,925 cacheRead=4,501,524 cacheWrite=28,550`. Aggregate:
+`input=256 output=40,685 cacheRead=13,322,149 cacheWrite=161,196`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-22 | `53d806f` | Render bounded honest startup motion immediately and atomically hand one Ink terminal to the ready App |
+| 2026-08-22 | `1526090` | Make resumed-startup verification suite-owned and semantic rather than dependent on SDK message-count metadata |
