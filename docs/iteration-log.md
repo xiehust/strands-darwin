@@ -1633,3 +1633,97 @@ cacheWrite=124,535`.
 | Date | Commit | Milestone |
 |---|---|---|
 | 2026-08-21 | `3ce5e46` | Return deterministic bounded current context after an exact `fileEditor str_replace` miss without fuzzy mutation |
+
+
+
+### Batch 45 — distilled project memory foundation (2026-08-22)
+
+Origin: `docs/research/research_2026-08-22.md` run `2026-08-22T03:02:03Z`. SER-031
+(Score 10) replaces the explicitly rejected raw model-facing trajectory search with an opt-in,
+project-scoped derived Markdown store and a bounded ambient index.
+
+Child session `session-20260822-032546109`, managed task
+`bg-370b6138-44ac-405e-8501-0a581ed85a7e` (exit 0, no correction turn). Delivered in
+`73bc11b` (+ task archive `f955c54`, journal `a90489d`): eligible durable successful turns
+rebuild bounded provenance-bearing Markdown topics and one index under Darwin's project-keyed
+user state. Secret, instruction-like, code and tool-dump candidates are conservatively dropped;
+extraction is delayed, coalesced, timeout-bounded and fail-open. Fresh, resumed and `/clear`
+runtimes load only one labelled fallible index after official skills and before working context and
+the final cache point. No model tool, vector/embedding index, dependency or SDK-loop fork was
+added.
+
+Host acceptance inspected the implementation and independently re-ran `spike/verify-memory.ts`
+(34/34), `spike/verify-clear-session.ts` (40/40), `pnpm typecheck`, full `pnpm test`, and
+`pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check` for all three
+commits, structural no-search/vector/dependency/extra-Agent checks, and AGENTS.md size
+(21,904 bytes < 32 KiB). All passed. No provider call was needed for Host acceptance.
+
+Token spend, single managed task: `input=444 output=51,068 cacheRead=33,037,575
+cacheWrite=219,154`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-22 | `73bc11b` | Distill eligible durable trajectory turns into bounded project memory and load one fallible index through the normal runtime factory |
+
+
+
+### Batch 46 — local project-memory controls (2026-08-22)
+
+Origin: `docs/research/research_2026-08-22.md` run `2026-08-22T03:02:03Z`. SER-032
+(Score 12) adds human control over the accepted SER-031 store without creating a model-facing
+persistence path.
+
+Child session `session-20260822-040134487`, managed task
+`bg-e1396eab-d9a8-479a-bef3-695c487cb43c` (exit 0, no correction turn). Delivered in
+`06873a5` (+ task archive `b2c565f`, journal `ae00a9f`): strict local `/memory`
+list/show/remember/forget commands operate on a versioned project-bound manifest. Generated and
+user-authored entries report provenance, honest `unvalidated` freshness and heuristic sensitivity
+state. Remember is bounded and screened; generated-ID suppressions survive deterministic rebuilds;
+every successful mutation atomically updates disk and synchronously refreshes the verified live
+prompt before returning. Completion and `/help` remain canonical and bounded.
+
+Host acceptance inspected the implementation and independently re-ran
+`spike/verify-memory-command.ts` (21/21), `spike/verify-memory.ts` (34/34),
+`spike/verify-clear-session.ts` (42/42), free pty `spike/verify-tui.ts completion` (62/62),
+`pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation,
+`git diff --check`, `git show --check` for all three commits, structural no-dependency/model-tool
+checks, and AGENTS.md size (21,994 bytes < 32 KiB). All passed. No provider call was needed for
+Host acceptance.
+
+Token spend, single managed task: `input=284 output=49,161 cacheRead=16,408,131
+cacheWrite=173,166`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-22 | `06873a5` | Add bounded user-only `/memory` inspection, screened notes, durable forgetting and synchronous live-prompt narrowing |
+
+
+
+### Batch 47 — generated-memory validation and aging (2026-08-22)
+
+Origin: `docs/research/research_2026-08-22.md` run `2026-08-22T03:02:03Z`. SER-033
+(Score 10) prevents generated context from silently outliving the code evidence that made it true.
+
+Child session `session-20260822-042916698`, managed task
+`bg-574c2443-8b57-4252-9dbc-b7d18c263fb3` (exit 0, no correction turn). Delivered in
+`64989d6` (+ task archive `0b53fb4`, journal `dc9244f`): generated facts carry bounded exact
+project-relative line/hash anchors where safely derivable and are classified `valid`, `invalid`,
+`expired` or `unknown`. Only valid non-expired generated facts enter ambient context; explicit user
+notes never auto-expire. A strict top-level `memoryHorizonDays` defaults to 28, accepts integer
+0–365, and uses 0 to disable expiry only. Startup, pre-request refresh, `/clear` and `/memory` share
+one validation projection; v1 generated state migrates unknown and stays omitted.
+
+Host acceptance inspected the implementation and independently re-ran
+`spike/verify-memory-validation.ts` (15/15), `spike/verify-memory-command.ts` (21/21),
+`spike/verify-config.ts` (216/216), `spike/verify-clear-session.ts` (42/42), `pnpm typecheck`, full
+`pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`,
+`git show --check` for all three commits, structural no-vector/model-tool/dependency checks, and
+AGENTS.md size (22,058 bytes < 32 KiB). All passed. No provider call was needed for Host
+acceptance.
+
+Token spend, single managed task: `input=334 output=46,615 cacheRead=16,940,622
+cacheWrite=159,384`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-22 | `64989d6` | Validate generated memory against bounded exact worktree anchors and expire it on a configurable conservative horizon |
