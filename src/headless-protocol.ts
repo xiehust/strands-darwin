@@ -39,7 +39,7 @@ export interface StructuredFailure {
 }
 
 export interface StructuredWarning {
-  source: 'sdk' | 'trajectory' | 'diagnostics';
+  source: 'sdk' | 'trajectory' | 'diagnostics' | 'memory';
   level: 'warn' | 'error';
   message: string;
   truncated?: true;

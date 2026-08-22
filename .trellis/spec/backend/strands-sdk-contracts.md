@@ -12,7 +12,24 @@ Only `src/agent/runtime.ts` constructs the SDK `Agent`. Keep it a thin assembly;
 customization goes through SDK extension points (interventions, plugins, conversation
 manager), never by forking the agent loop.
 
+## SER-031 learned-memory contract
+
+`AgentRuntime.create` remains the only assembly boundary. With root config `memory: true`, it reads at most
+`MEMORY_INDEX_MAX_BYTES` from the stable project-scoped `index.md`, wraps it in exactly one
+`<learned-memory>` block labelled fallible context/not instructions or policy, and refreshes restored prompts
+after `Agent.initialize()`. Prompt order is base → project instructions → official skills → optional learned
+memory → current working context → final cache point. Fresh, explicit resume, and `/clear` all pass through
+this factory; topic files are never loaded into the prompt.
+
+Extraction is not an SDK invocation, intervention, plugin tool, or loop retry. The trajectory's post-durable
+callback only schedules `MemoryScheduler`; the scheduler delays, serializes/coalesces, times out, latches a
+bounded status problem, and cannot reject the completed user turn. No `search_memory`, generic persistence
+tool, vector/embedding dependency, or topic-wide injection is allowed. Default/false config installs no
+scheduler, writes no memory file, and injects no block.
+
 ### Contract: `printer: false` is mandatory
+
+
 
 The SDK's default printer writes tool banners and streamed text to stdout, which fights
 Ink for the terminal. Every `new Agent({...})` in this project must pass `printer: false`.

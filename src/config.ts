@@ -233,6 +233,8 @@ export interface SessionFields {
    * Nothing evicts it, the same as `offload/` above: delete the session directory.
    */
   diagnostics?: boolean;
+  /** Derive bounded project-scoped Markdown memory from eligible durable turns. Off by default. */
+  memory?: boolean;
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
   /** Deprecated policy fields retained on the type for migration fixtures only. */
@@ -288,6 +290,7 @@ const SESSION_KEYS = [
   'maxResultTokens',
   'trajectory',
   'diagnostics',
+  'memory',
   'systemPrompt',
 ] as const;
 
@@ -831,6 +834,15 @@ function validateSessionFields(
   // rather than defaulted away so `false` stays distinguishable from absent.
   const diagnostics = booleanField(input, 'diagnostics', configPath);
   if (diagnostics !== undefined) fields.diagnostics = diagnostics;
+
+  // Off unless explicitly asked for: this persists distilled conversation-derived
+  // context across sessions, so absence must remain privacy-equivalent to pre-feature.
+  const memory = booleanField(input, 'memory', configPath);
+  if (memory === true && trajectory === false) {
+    throw new ConfigError(`${configPath}: "memory" requires trajectory recording; remove "trajectory": false or disable memory.`);
+  }
+
+  if (memory !== undefined) fields.memory = memory;
 
   // Only meaningful with offloading on, and rejected otherwise rather than
   // ignored: a threshold the user believes is in effect but is not would look

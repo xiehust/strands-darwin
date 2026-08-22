@@ -252,6 +252,15 @@ export async function runHeadlessProcess(
       } catch {
         // Reading an observer's own status must not change the exit path.
       }
+      try {
+        const problem = runtime.memoryStatus?.problem;
+        if (problem !== undefined) {
+          if (structured) warnings.push(structuredWarning('memory', 'warn', problem));
+          else target.stderr.write(`learned memory: ${problem}\n`);
+        }
+      } catch {
+        // Derived memory is advisory and must not change the exit path.
+      }
     }
 
     if (structured) {

@@ -13,9 +13,25 @@ state** of a conversation: the messages that survived summarization, as the mode
 It cannot answer "what did the agent run in that session", it is rewritten on every turn, and
 reading it tells you nothing about tool calls whose results were later compacted away.
 
+## Derived learned-memory boundary (SER-031)
+
+Trajectory remains the immutable source record. Opt-in learned memory is a separate derived store under
+`~/.darwin/projects/<project-key>/memory/`; its reader never repairs, appends, or marks trajectory state.
+`TrajectoryRecorder` may invoke an optional synchronous/no-throw `onTurnDurable()` callback only after the
+closing turn batch append resolves. That callback may schedule work, but may not read or write synchronously
+on the stream path.
+
+Eligibility requires a clean complete file and, for one turn, `userInput`, final assistant
+`agentResultEvent`, and `turnEnded { stopReason: "endTurn" }` with no `failure`, `partialText`, or truncation.
+Active, abandoned, failed, cancelled, short, damaged, or truncated turns are ineligible. Projection reads
+only input text for naming and the final answer for facts; reasoning, tool events/results, failure payloads,
+and partial text are never extraction input. Generated provenance is source session + turn + closing seq +
+timestamp. See `src/memory/store.ts` and `spike/verify-memory.ts` for executable bounds and cases.
+
+
 The trajectory is the complement: **append-only**, **observational**, and never authoritative. The
-snapshot remains the only thing `resume` and `fork` restore from. Nothing in darwin reads the
-trajectory to build **model** context, and the model never sees it; the resumed-TUI recap below is a
+snapshot remains the only thing `resume` and `fork` restore from. Raw trajectory records never become
+model context; only the separately bounded/redacted SER-031 derived index may be loaded. The resumed-TUI recap below is a
 bounded human-display projection only.
 
 ## 2. Where it lives

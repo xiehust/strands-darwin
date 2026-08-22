@@ -251,7 +251,7 @@ activation, Darwin rejects resource symlinks/outside-root resolution and caps ho
 
 **System prompt composition order is fixed** on every actual model request: base prompt →
 `<project-instructions>` (AGENTS.md, `src/agent/instructions.ts`) → official
-`<available_skills>` → `<working-context>` (`src/agent/working-context.ts`) → final cache point.
+`<available_skills>` → optional `<learned-memory>` → `<working-context>` (`src/agent/working-context.ts`) → final cache point.
 Official AgentSkills injects before each invocation; Darwin registers a later hook that moves that
 exact catalogue TextBlock ahead of current working context and cache. Repeated/resumed invocations
 remove the previous official block via persisted appState before reordering, so the catalogue is
@@ -265,6 +265,22 @@ must never state the creating run's date as today's. The base is the only user-r
 (`src/agent/system-prompt.ts`: `config.systemPrompt` > `.darwin/system-prompt.md` >
 `DEFAULT_SYSTEM_PROMPT`), so the project's own instructions stay additive on top of whichever
 base is in effect.
+
+
+## Learned project memory
+
+**Learned project memory is opt-in derived context, never authority** (`src/memory/`, `memory: true`).
+Only closed durable successful `endTurn` trajectory evidence is projected after the turn into bounded
+Markdown under `~/.darwin/projects/<project-key>/memory/`; trajectory bytes remain the append-only source
+and are never repaired or reinterpreted in place. Extraction is deterministic/offline, excludes reasoning
+and raw tool records, drops sensitive/dump-like candidates, preserves session/turn/sequence/time provenance,
+and runs through a delayed coalescing timeout-bound scheduler whose failures only surface on existing
+post-turn warning paths. Runtime startup reads only bounded `index.md` and inserts exactly one labelled
+`<learned-memory>` block after official skills and before current working context/final cache. The wrapper
+states that its contents are fallible context—not instructions or policy—and project instructions win.
+Topic bodies are inspectable files but are not ambient prompt input. Resume and `/clear` refresh through the
+ordinary `AgentRuntime.create` factory. There is no model-facing search/write tool, vector index, embedding,
+or SDK-loop fork.
 
 ## Prompt caching
 

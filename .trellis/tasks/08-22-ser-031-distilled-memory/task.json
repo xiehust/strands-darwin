@@ -1,0 +1,30 @@
+{
+  "id": "ser-031-distilled-memory",
+  "name": "ser-031-distilled-memory",
+  "title": "SER-031 distilled project memory",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "src/memory, runtime/prompt/config integration, focused spike tests, backend specs/docs",
+  "package": null,
+  "priority": "P2",
+  "creator": "river",
+  "assignee": "river",
+  "createdAt": "2026-08-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "source": "SER-031 research_2026-08-22T03:02:03Z",
+    "verification": "focused 34, clear 40, typecheck, pnpm test green",
+    "status": "completed"
+  }
+}

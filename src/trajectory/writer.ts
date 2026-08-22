@@ -89,6 +89,8 @@ export interface RecorderOptions {
    * real writes is a behaviour nothing tests.
    */
   maxBytes?: number;
+  /** Detached derived observers run only after a turn's closing batch is durable. */
+  onTurnDurable?: () => void;
 }
 
 /** What `/trajectory` and the headless diagnostic report about this run. */
@@ -212,7 +214,7 @@ export class TurnRecording {
     } catch (error) {
       this.recorder.fail(error);
     }
-    this.recorder.flush();
+    this.recorder.flush(true);
   }
 
   /**
@@ -335,6 +337,7 @@ export class TrajectoryRecorder {
   private truncationsThisRun = 0;
   private bytesThisRun = 0;
   private fileBytes = 0;
+  private readonly onTurnDurable: (() => void) | undefined;
 
   constructor(options: RecorderOptions) {
     this.file = options.file;
@@ -343,6 +346,7 @@ export class TrajectoryRecorder {
     this.maxBytes = options.maxBytes ?? MAX_FILE_BYTES;
     this.inputDurabilityTimeoutMs =
       options.inputDurabilityTimeoutMs ?? INPUT_DURABILITY_TIMEOUT_MS;
+    this.onTurnDurable = options.onTurnDurable;
   }
 
   /**
@@ -476,12 +480,20 @@ export class TrajectoryRecorder {
    * `inputDurable()` waits through the private chain before invocation; `close()`
    * waits through it during cleanup.
    */
-  flush(): void {
+  flush(closesTurn = false): void {
     if (this.pending.length === 0) return;
     const batch = this.pending;
     this.pending = [];
     this.chain = this.chain
       .then(() => this.append(batch))
+      .then((appended) => {
+        if (!closesTurn || !appended) return;
+        try {
+          this.onTurnDurable?.();
+        } catch {
+          // A derived observer is advisory and cannot affect trajectory durability.
+        }
+      })
       .catch((error: unknown) => {
         this.fail(error);
       });
@@ -493,20 +505,20 @@ export class TrajectoryRecorder {
     await this.chain;
   }
 
-  private async append(batch: BufferedRecord[]): Promise<void> {
-    if (this.problem !== undefined) return;
+  private async append(batch: BufferedRecord[]): Promise<boolean> {
+    if (this.problem !== undefined) return false;
 
     const prefix = await this.prepare();
     // A bounded input barrier may have timed out while prepare/open was pending.
     // Do not let that detached operation append later after recording has stopped.
-    if (this.problem !== undefined) return;
+    if (this.problem !== undefined) return false;
     const lines = [...this.header(), ...batch].map((buffered) => this.encode(buffered));
     const payload = `${prefix}${lines.join('')}`;
 
     let handle: FileHandle | undefined;
     try {
       handle = await this.openFile(this.file, 'a');
-      if (this.problem !== undefined) return;
+      if (this.problem !== undefined) return false;
       await handle.write(payload, null, 'utf8');
       const written = Buffer.byteLength(payload, 'utf8');
       this.recordsThisRun += lines.length;
@@ -514,6 +526,7 @@ export class TrajectoryRecorder {
       this.fileBytes += written;
 
       if (this.fileBytes >= this.maxBytes) await this.stopForBudget(handle);
+      return true;
     } finally {
       await handle?.close().catch(() => {
         // A failed close has already had its write succeed or fail on its own.

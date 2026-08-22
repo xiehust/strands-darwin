@@ -244,6 +244,8 @@ export function App({
   const trajectoryWarned = useRef(false);
   /** Same, once, for the diagnostics log: it latches its own failure too. */
   const diagnosticsWarned = useRef(false);
+  /** One bounded learned-memory degradation notice per runtime. */
+  const memoryWarned = useRef(false);
   /** True while `/clear` is assembling the successor runtime; see the handler. */
   const clearing = useRef(false);
   /** Kill handle of the running `!` command; undefined whenever none is running. */
@@ -622,6 +624,13 @@ export function App({
         diagnosticsWarned.current = true;
         dispatch({ type: 'notice', text: `diagnostics: ${diagnosticsProblem}`, severity: 'warn' });
       }
+
+      const memoryProblem = runtime.memoryStatus?.problem;
+      if (memoryProblem !== undefined && !memoryWarned.current) {
+        memoryWarned.current = true;
+        dispatch({ type: 'notice', text: `learned memory: ${memoryProblem}`, severity: 'warn' });
+      }
+
     },
     [returnQueuedToEditor, runtime],
   );

@@ -157,6 +157,9 @@ async function renderTurn(runtime: AgentRuntime, input: string): Promise<void> {
   // after the turn, and never changes what the turn did.
   const trajectoryProblem = runtime.trajectoryStatus?.problem;
   if (trajectoryProblem !== undefined) console.warn(`  · trajectory: ${trajectoryProblem}`);
+  const memoryProblem = runtime.memoryStatus?.problem;
+  if (memoryProblem !== undefined) console.warn(`  · learned memory: ${memoryProblem}`);
+
   await runtime.markResumable();
 }
 

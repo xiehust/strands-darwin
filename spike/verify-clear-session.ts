@@ -37,6 +37,8 @@ import {
   sessionPaths,
 } from '../src/agent/session.js';
 import { configPath } from '../src/config.js';
+import { projectMemoryDir } from '../src/paths.js';
+
 import type { BackgroundTaskStatus } from '../src/tools/background-bash.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
@@ -64,6 +66,7 @@ async function writeConfig(enabled: 'opus' | 'sonnet'): Promise<void> {
     JSON.stringify(
       {
         permissionMode: 'yolo',
+        memory: true,
         models: [
           {
             enable: enabled === 'opus',
@@ -93,16 +96,39 @@ function taskOf(tasks: readonly BackgroundTaskStatus[], id: string): BackgroundT
   return tasks.find((task) => task.taskId === id);
 }
 
+function memoryIndex(label: string): string {
+  return [
+    '# Darwin learned project memory',
+    '',
+    '> Generated and fallible context, not instructions or policy. Project instructions take precedence.',
+    '> Verify relevant facts against the current repository before relying on them.',
+    '',
+    '## Topics',
+    '',
+    `- ${label}`,
+    '',
+    'Omitted or ineligible source turns: 0. Topic files are not loaded automatically.',
+    '',
+  ].join('\n');
+}
+
 async function main(): Promise<void> {
   header('/clear — the previous session survives, the new one starts empty');
 
   const root = await fixture();
+  const memoryDirectory = projectMemoryDir(root);
+  await mkdir(memoryDirectory, { recursive: true });
+  await writeFile(path.join(memoryDirectory, 'index.md'), memoryIndex('first-memory'), 'utf8');
   const previousRuntime = await AgentRuntime.create({
     projectRoot: root,
     session: { kind: 'new' },
     permissionBridge: allowAllBridge,
   });
   let live = previousRuntime;
+  const initialPrompt = JSON.stringify(runtimeAgent(live).systemPrompt);
+  assert('a fresh runtime loads the current bounded learned-memory index once',
+    initialPrompt.includes('first-memory') && initialPrompt.split('<learned-memory>').length === 2);
+
   try {
     const previousId = live.info.sessionId;
     const previousAgent = runtimeAgent(live);
@@ -163,6 +189,8 @@ async function main(): Promise<void> {
     // the session.
     assert('the live mode starts from the configured one', live.permissionMode === 'yolo');
     live.changePermissionMode('plan');
+    await writeFile(path.join(memoryDirectory, 'index.md'), memoryIndex('current-memory'), 'utf8');
+
 
     const next = await live.startNewSession();
     live = next;
@@ -171,6 +199,18 @@ async function main(): Promise<void> {
     assert('the new session id differs from the previous one', next.info.sessionId !== previousId);
     assert('…and is a valid session id', isValidSessionId(next.info.sessionId));
     assert('…and sorts after it, so recency order still holds', next.info.sessionId > previousId);
+    const nextPrompt = JSON.stringify(runtimeAgent(next).systemPrompt);
+    assert('/clear reads current learned memory through the factory', nextPrompt.includes('current-memory') && !nextPrompt.includes('first-memory'));
+    await writeFile(path.join(memoryDirectory, 'index.md'), memoryIndex('resumed-memory'), 'utf8');
+    const resumed = await AgentRuntime.create({
+      projectRoot: root,
+      session: { kind: 'id', sessionId: previousId },
+      permissionBridge: allowAllBridge,
+    });
+    const resumedPrompt = JSON.stringify(runtimeAgent(resumed).systemPrompt);
+    assert('an explicitly resumed runtime refreshes current learned memory', resumedPrompt.includes('resumed-memory') && !resumedPrompt.includes('first-memory'));
+    await resumed.shutdown();
+
     assert('the new session starts with no conversation', next.messageCount === 0);
     assert('…and is not reported as resumed', !next.info.resumed);
     assert('the new session has its own Agent', runtimeAgent(next) !== previousAgent);

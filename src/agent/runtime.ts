@@ -54,6 +54,10 @@ import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, type McpServerStatus } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
+import { applyLearnedMemory, memoryPromptFragment } from '../memory/prompt.js';
+import { MemoryScheduler } from '../memory/scheduler.js';
+import { loadMemoryIndex, type MemoryStatus } from '../memory/store.js';
+
 import { recordStream } from '../trajectory/stream.js';
 import {
   TrajectoryRecorder,
@@ -339,6 +343,8 @@ export class AgentRuntime {
     private readonly trajectory: TrajectoryRecorder | undefined,
     /** Undefined unless `diagnostics: true` asked for the log. Off is the default. */
     private readonly diagnosticsLog: DiagnosticsLog | undefined,
+    /** Undefined unless `memory: true` opted into derived project context. */
+    private readonly memoryScheduler: MemoryScheduler | undefined,
     readonly info: RuntimeInfo,
     /**
      * What this runtime was created with, so {@link startNewSession} can assemble its
@@ -359,12 +365,14 @@ export class AgentRuntime {
     diagnosticsLog: DiagnosticsLog | undefined,
     mcpClients: readonly McpClient[] = [],
     backgroundBash?: BackgroundBashManager,
+    memoryScheduler?: MemoryScheduler,
   ): Promise<void> {
     if (diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
     await Promise.allSettled([
       disconnectAll(mcpClients),
       backgroundBash?.shutdown() ?? Promise.resolve(),
       diagnosticsLog?.close() ?? Promise.resolve(),
+      memoryScheduler?.close() ?? Promise.resolve(),
     ]);
   }
 
@@ -400,6 +408,7 @@ export class AgentRuntime {
     if (diagnosticsLog !== undefined) setSdkVerboseSink(diagnosticsLog.sdkSink);
     let startupMcpClients: readonly McpClient[] = [];
     let startupBackgroundBash: BackgroundBashManager | undefined;
+    let startupMemoryScheduler: MemoryScheduler | undefined;
 
     // Keep assembly in one function so one catch owns every resource acquired
     // after the process-global diagnostics tap is installed.
@@ -413,6 +422,7 @@ export class AgentRuntime {
     const loadedInstructions = await loadProjectInstructions(options.projectRoot);
     const instructions = loadedInstructions.instructions;
     const basePrompt = await loadSystemPrompt(options.projectRoot, config.systemPrompt);
+    const memoryIndex = config.memory === true ? await loadMemoryIndex(options.projectRoot) : undefined;
     const mcp = options.inherit?.mcp ?? await loadMcpClients(options.projectRoot, {
       quietStdioStderr: options.quietMcpStderr === true,
     });
@@ -559,6 +569,9 @@ export class AgentRuntime {
     // directory listing. Applied last, it is also the only fragment a resumed
     // prompt can still be corrected by.
     const workingContext = await buildWorkingContext(options.projectRoot);
+    if (!applyLearnedMemory(agent, memoryIndex === undefined ? undefined : memoryPromptFragment(memoryIndex))) {
+      throw new Error('Could not refresh learned memory on the restored system prompt.');
+    }
     if (!applyWorkingContext(agent, workingContext.fragment)) {
       throw new Error('Could not refresh working context on the restored system prompt.');
     }
@@ -573,6 +586,8 @@ export class AgentRuntime {
     // recorded turn creates it, so a session that never runs one leaves nothing
     // behind, the same rule `markResumable()` follows for the resume pointer.
     const thinkingPlan = planThinking(config);
+    const memoryScheduler = config.memory === true ? new MemoryScheduler({ projectRoot: options.projectRoot }) : undefined;
+    startupMemoryScheduler = memoryScheduler;
     const trajectory =
       config.trajectory === false
         ? undefined
@@ -590,6 +605,7 @@ export class AgentRuntime {
               restoredMessages: agent.messages.length,
             },
             ...runtimeRecorderOverrides,
+            ...(memoryScheduler === undefined ? {} : { onTurnDurable: () => memoryScheduler.schedule() }),
           });
 
     const runtime = new AgentRuntime(
@@ -607,6 +623,7 @@ export class AgentRuntime {
       config.preserveRecentMessages,
       trajectory,
       diagnosticsLog,
+      memoryScheduler,
       {
         config,
         projectRoot: options.projectRoot,
@@ -653,7 +670,12 @@ export class AgentRuntime {
     return runtime;
     };
     return assemble().catch(async (error: unknown) => {
-      await AgentRuntime.unwindCreate(diagnosticsLog, startupMcpClients, startupBackgroundBash);
+      await AgentRuntime.unwindCreate(
+        diagnosticsLog,
+        startupMcpClients,
+        startupBackgroundBash,
+        startupMemoryScheduler,
+      );
       throw error;
     });
   }
@@ -754,6 +776,11 @@ export class AgentRuntime {
    */
   get diagnosticsStatus(): DiagnosticsStatus | undefined {
     return this.diagnosticsLog?.status;
+  }
+
+  /** Best-effort status of opt-in derived project memory. */
+  get memoryStatus(): MemoryStatus | undefined {
+    return this.memoryScheduler?.status;
   }
 
   /**
@@ -1149,6 +1176,7 @@ export class AgentRuntime {
       this.stopBashSession(),
       this.trajectory?.close() ?? Promise.resolve(),
       this.diagnosticsLog?.close() ?? Promise.resolve(),
+      this.memoryScheduler?.close() ?? Promise.resolve(),
     ]);
   }
 
@@ -1188,6 +1216,7 @@ export class AgentRuntime {
       // Same rule for the diagnostics log, and it cannot reject: its failures are
       // latched internally and reported as a problem, never thrown.
       this.diagnosticsLog?.close() ?? Promise.resolve(),
+      this.memoryScheduler?.close() ?? Promise.resolve(),
     ]);
     const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
     if (options.throwOnError === true && failures.length > 0) {

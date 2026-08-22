@@ -76,6 +76,11 @@ export function userProjectSessionsDir(projectRoot: string): string {
   return path.join(userDarwinDir(), 'sessions', projectKey(projectRoot));
 }
 
+/** Derived, project-scoped learned memory. Never part of the repository itself. */
+export function projectMemoryDir(projectRoot: string): string {
+  return path.join(userProjectDir(projectRoot), 'memory');
+}
+
 /** Files that can change Darwin's own authorization or executable policy. */
 export function sensitiveDarwinPaths(projectRoot: string): string[] {
   return [
