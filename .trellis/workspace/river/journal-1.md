@@ -215,3 +215,24 @@ Added opt-in bounded project-scoped Markdown memory derived asynchronously from 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: SER-032 local memory management
+
+**Date**: 2026-08-22
+**Task**: SER-032 local memory management
+**Branch**: `main`
+
+### Summary
+
+Added bounded local /memory list/show/remember/forget controls, strict project-scoped memory state with durable generated-entry suppression, synchronous live prompt refresh, offline verification, and architecture/spec documentation.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `06873a5` | (see git log) |
+
+### Status
+
+[OK] **Completed**
