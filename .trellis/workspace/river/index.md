@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
+- **Total Sessions**: 13
 - **Last Active**: 2026-08-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~343 | Active |
+| `journal-1.md` | ~364 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-08-22 | Modern premium TUI welcome | `0c852bc` | `main` |
 | 12 | 2026-08-22 | Fix SER-035 startup test isolation | `1526090` | `main` |
 | 11 | 2026-08-22 | Implement SER-035 animated startup | `53d806f` | `main` |
 | 10 | 2026-08-22 | SER-034 informational transcript contrast | `af84a03` | `main` |

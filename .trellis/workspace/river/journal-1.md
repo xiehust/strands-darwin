@@ -341,3 +341,24 @@ Made the startup pty suite use unique process-owned HOME/project fixtures and as
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: Modern premium TUI welcome
+
+**Date**: 2026-08-22
+**Task**: Modern premium TUI welcome
+**Branch**: `main`
+
+### Summary
+
+Added a responsive one-shot DARWIN wordmark, unified the semantic accent palette, softened composer/completion focus, and verified startup, frame-budget, PTY, typecheck, and full test contracts.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c852bc` | (see git log) |
+
+### Status
+
+[OK] **Completed**
