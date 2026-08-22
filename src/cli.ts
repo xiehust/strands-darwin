@@ -118,14 +118,21 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
 }
 
 async function runInteractive(options: CliOptions): Promise<void> {
-  const [{ render }, { default: React }, { App }, { PermissionQueue }] = await Promise.all([
+  const [{ render }, { default: React }, { PermissionQueue }, { StartupScreen }] = await Promise.all([
     import('ink'),
     import('react'),
-    import('./tui/App.js'),
     import('./tui/permission-queue.js'),
+    import('./tui/StartupScreen.js'),
   ]);
   const projectRoot = process.cwd();
   const permissions = new PermissionQueue();
+  // Ink owns the terminal before runtime/config/MCP/session setup begins. This is
+  // one renderer, not a splash followed by a second app: rerender below replaces
+  // the root atomically and lets React clean up the startup timer on handoff.
+  const instance = render(
+    React.createElement(StartupScreen, { phase: 'runtime' }),
+    { exitOnCtrlC: false },
+  );
 
   let runtime: AgentRuntime;
   try {
@@ -141,6 +148,10 @@ async function runInteractive(options: CliOptions): Promise<void> {
       }),
     });
   } catch (error) {
+    instance.unmount();
+    await instance.waitUntilExit();
+    permissions.close();
+
     if (error instanceof ConfigError) {
       process.stderr.write(`\nConfiguration problem:\n  ${error.message}\n\n`);
       process.exitCode = 1;
@@ -160,18 +171,40 @@ async function runInteractive(options: CliOptions): Promise<void> {
    * messages. Fresh sessions skip even the file read and therefore render exactly
    * as before SER-028.
    */
-  const initialHistory = runtime.info.resumed
-    ? await import('./trajectory/resume-recap.js').then(({ loadResumeRecap }) =>
-        loadResumeRecap({
-          file: trajectoryPath(projectRoot, runtime.info.sessionId),
-          restoredMessages: runtime.messageCount,
-          trajectoryEnabled: runtime.info.config.trajectory !== false,
-        }))
-    : undefined;
+  if (runtime.info.resumed) {
+    instance.rerender(React.createElement(StartupScreen, { phase: 'resume' }));
+  }
+  let initialHistory: readonly import('./tui/turn-state.js').HistoryItem[] | undefined;
+  try {
+    initialHistory = runtime.info.resumed
+      ? await import('./trajectory/resume-recap.js').then(({ loadResumeRecap }) =>
+          loadResumeRecap({
+            file: trajectoryPath(projectRoot, runtime.info.sessionId),
+            restoredMessages: runtime.messageCount,
+            trajectoryEnabled: runtime.info.config.trajectory !== false,
+          }))
+      : undefined;
+  } catch (error) {
+    instance.unmount();
+    await instance.waitUntilExit();
+    permissions.close();
+    await runtime.shutdown();
+    throw error;
+  }
+  let App: typeof import('./tui/App.js').App;
+  try {
+    ({ App } = await import('./tui/App.js'));
+  } catch (error) {
+    instance.unmount();
+    await instance.waitUntilExit();
+    permissions.close();
+    await runtime.shutdown();
+    throw error;
+  }
   /** The session that is live right now; `/clear` replaces it with a successor. */
   let current = runtime;
 
-  const instance = render(
+  instance.rerender(
     React.createElement(App, {
       runtime,
       permissions,
@@ -187,7 +220,6 @@ async function runInteractive(options: CliOptions): Promise<void> {
         return next;
       },
     }),
-    { exitOnCtrlC: false },
   );
   try {
     await instance.waitUntilExit();

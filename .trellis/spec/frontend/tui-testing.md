@@ -23,6 +23,27 @@ Hash `trajectory.jsonl`, `snapshot_latest.json`, and `last-session.json` before 
 also compare trajectory line count. Exit from the first prompt with a deliberately invalid provider
 model id, so any accidental model/network call fails the scenario rather than passing silently.
 
+
+## Startup handoff contract
+
+Startup acceptance has two layers. `verify-startup-screen.tsx` renders deterministic frame indices
+and injects a scheduler so multiple motion states, wide/short/narrow bounds, stable non-colour text,
+and interval cleanup are assertions rather than wall-clock guesses. It also structurally rejects
+raw process output and Ink input hooks in the component.
+
+`verify-startup-pty.ts` launches `spike/fixtures/startup-cli.ts` through the shared pty driver. The
+fixture replaces only runtime model construction with a delayed local `CaptureModel`; the real CLI,
+`AgentRuntime.create()`, Ink renderer, recap loader, and App handoff still run. Assert startup before
+the runtime checkpoint file, at least two accumulated motion markers while pending, and absence of
+all startup state from `tui.frame` after the ordinary ready prompt appears. Submit a local command
+to prove input ownership. The error case waits for the established configuration message and then
+asserts the post-message tail contains no startup state. The resume case seeds a real SDK snapshot
+and trajectory, exits at the first prompt, and hashes trajectory/snapshot/pointer before and after.
+No provider call is needed or authorized.
+
+The shared `startTui({ entry })` option exists only to run an alternate TypeScript fixture entry
+through the same node-pty implementation; omitting it must continue to launch `src/cli.ts`.
+
 ## Multiline input contract
 
 ### 1. Scope / trigger

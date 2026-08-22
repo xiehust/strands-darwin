@@ -54,6 +54,34 @@ per further row with nothing streaming, and one in-flight call with details expa
 - A **windowed draft has no `you>` row** (it scrolled out), so `waitForIdle` and `awaitsPermission`
   cannot be used while a tall draft is up — clear the draft first.
 
+
+## Contract: startup owns the terminal before App, then leaves completely
+
+Interactive startup renders `StartupScreen` on one Ink instance before `AgentRuntime.create()`
+begins. While runtime/config/MCP/session setup is pending it may animate only an honest
+`initializing` state; once a resumed runtime exists, the same root may say `restoring session`
+while `loadResumeRecap()` runs. The CLI then `rerender()`s that exact Ink instance with `App` as
+soon as the awaited work settles — there is no minimum display duration and no second renderer.
+
+- Startup is **pre-App**, not a new participant in `frameBudget`: after handoff no startup row,
+  interval, marker, input handler, transcript item, or ready-header motion remains.
+- `StartupScreen` uses Ink components and `useWindowSize`; it does not write terminal bytes or own
+  input. Wide/roomy mode is at most three rows, while width below 34 columns or height below five
+  rows is one row; very narrow mode uses compact `D` plus motion and `i`/`r` state markers rather
+  than truncating identity or state. Every frame keeps those semantics after ANSI stripping.
+- Motion means only “the awaited initialization has not settled”; do not invent percentages,
+  completed stages, or provider progress. One interval advances a fixed bounded sequence and React
+  cleanup clears it on handoff, failure, or unmount.
+- A runtime creation failure unmounts and awaits Ink before the existing config/session error is
+  written. A recap failure additionally closes permissions and shuts down the acquired runtime.
+  Successful ownership remains unchanged: the ordinary App exit closes permissions and runtime.
+
+Required checks: `spike/verify-startup-screen.tsx` for deterministic motion, layout, interval
+cleanup, and no side channel; `spike/verify-startup-pty.ts` for delayed-runtime ordering, complete
+handoff, usable input, known-error cleanup, and byte-identical resumed startup. Re-run
+`verify-frame-budget.ts`, `verify-visual-language.tsx`, and free pty `completion`, `clear`, and
+`resume` when this boundary changes.
+
 ## Contract: the busy rows are alive, and stay exactly the rows they were
 
 While a turn streams, the `working…` hint and the `thinking…` row carry a live suffix — elapsed
