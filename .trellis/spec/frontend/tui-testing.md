@@ -37,9 +37,11 @@ fixture replaces only runtime model construction with a delayed local `CaptureMo
 the runtime checkpoint file, at least two accumulated motion markers while pending, and absence of
 all startup state from `tui.frame` after the ordinary ready prompt appears. Submit a local command
 to prove input ownership. The error case waits for the established configuration message and then
-asserts the post-message tail contains no startup state. The resume case seeds a real SDK snapshot
-and trajectory, exits at the first prompt, and hashes trajectory/snapshot/pointer before and after.
-No provider call is needed or authorized.
+asserts the post-message tail contains no startup state. The resume case uses a unique suite-owned
+HOME and project root, seeds a real SDK snapshot and trajectory, exits at the first prompt, and
+hashes trajectory/snapshot/pointer before and after. Assert a positive restored-message count plus
+the seeded request and answer; the SDK-restored count is metadata and may vary as snapshot internals
+evolve, so it is not a fixture constant. No provider call is needed or authorized.
 
 The shared `startTui({ entry })` option exists only to run an alternate TypeScript fixture entry
 through the same node-pty implementation; omitting it must continue to launch `src/cli.ts`.

@@ -16,11 +16,11 @@ import { DEFAULT_SYSTEM_PROMPT } from '../src/agent/system-prompt.js';
 import { TrajectoryRecorder } from '../src/trajectory/writer.js';
 import { recordStream } from '../src/trajectory/stream.js';
 import { CaptureModel } from './offline-model.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
 import { REPO_ROOT, startTui } from './tui-driver.js';
 
-const HOME = '/tmp/darwin-startup-pty-home';
-const ROOT = '/tmp/darwin-startup-pty';
+const HOME = ownPrivateHome('startup-pty');
+const ROOT = path.join(HOME, 'project');
 const ENTRY = path.join(REPO_ROOT, 'spike/fixtures/startup-cli.ts');
 const READY = path.join(ROOT, 'runtime-ready');
 const EXIT_TIMEOUT_MS = 20_000;
@@ -194,9 +194,12 @@ async function resumedHandoff(): Promise<void> {
   const tui = startTui({ cwd: ROOT, entry: ENTRY, args: ['--resume', sessionId], cols: 100, rows: 30 });
   try {
     await tui.waitFor('restoring session', { timeoutMs: 20_000 });
-    await tui.waitFor('resume recap · 2 restored model message(s)', { timeoutMs: 20_000, settleMs: 300 });
-    assert('resume recap reaches the ordinary ready prompt',
-      tui.frame.includes('◆ DARWIN · ready') && tui.frame.includes('you>'));
+    await tui.waitFor(/resume recap · [1-9]\d* restored model message\(s\)/, { timeoutMs: 20_000, settleMs: 300 });
+    assert('resume recap reaches the ordinary ready prompt with the seeded turn',
+      tui.screen.includes('startup resume request') &&
+      tui.screen.includes('startup resume answer') &&
+      tui.frame.includes('◆ DARWIN · ready') &&
+      tui.frame.includes('you>'));
     assert('resume startup has disappeared at handoff', !tui.frame.includes('restoring session'));
     tui.submit('/exit');
     assert('resumed startup exits without a model turn', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
@@ -208,7 +211,6 @@ async function resumedHandoff(): Promise<void> {
     before.every((value, index) => value === after[index]));
 }
 
-await rm(HOME, { recursive: true, force: true });
 await writeConfig();
 await pendingMotionAndHandoff();
 await startupError();
