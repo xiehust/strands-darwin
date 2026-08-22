@@ -938,7 +938,7 @@ async function slashCompletion(): Promise<void> {
     await tui.waitFor('help — local controls', { timeoutMs: 30_000, from: beforeHelp, settleMs: 400 });
     const help = tui.screen.slice(beforeHelp);
     assert('/help answers locally without starting a model turn',
-      help.includes('commands (16/16):') && help.includes('Ctrl+J or trailing \\ + Enter') &&
+      help.includes('commands (17/17):') && help.includes('Ctrl+J or trailing \\ + Enter') &&
       !help.includes('working…'));
     assert('/help uses the existing transcript surface and leaves the live controls intact',
       tui.frame.includes('you>'));
@@ -1031,6 +1031,9 @@ async function slashCompletion(): Promise<void> {
     // Matched with its description: the header's own mcp line also says 'mcp', so
     // the bare-name form could pass with the row missing.
     assert('the built-in /mcp is listed', completed.includes('  /mcp — MCP servers and their tools'));
+      assert('the built-in /memory is listed',
+        completed.includes('  /memory — list, show, remember, or forget project memory'));
+
     // Matched with its description: '  /mode' alone is also a prefix of the /model
     // row, so the bare-name form would pass with /mode missing entirely.
     assert('the built-in /mode is listed', completed.includes('  /mode — set the permission mode'));
@@ -1052,7 +1055,7 @@ async function slashCompletion(): Promise<void> {
     // The full list is longer than the bounded menu. Walk below the initial window:
     // the marker must follow the selected identity, and Tab must accept that row.
     const beforeDownWindow = tui.mark();
-    tui.send('\u001b[B'.repeat(16));
+    tui.send('\u001b[B'.repeat(17));
     await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeDownWindow, settleMs: 400 });
     assert('Down windows an overflowing slash menu around the selected candidate',
       tui.frame.includes('❯ /review') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);

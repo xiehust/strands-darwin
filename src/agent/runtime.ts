@@ -54,7 +54,8 @@ import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, type McpServerStatus } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
-import { applyLearnedMemory, memoryPromptFragment } from '../memory/prompt.js';
+import { runMemoryCommand, type MemoryCommandResult } from '../memory/command.js';
+import { applyLearnedMemory, canApplyLearnedMemory, memoryPromptFragment } from '../memory/prompt.js';
 import { MemoryScheduler } from '../memory/scheduler.js';
 import { loadMemoryIndex, type MemoryStatus } from '../memory/store.js';
 
@@ -782,6 +783,31 @@ export class AgentRuntime {
   get memoryStatus(): MemoryStatus | undefined {
     return this.memoryScheduler?.status;
   }
+
+  /**
+   * Runs the user-only local `/memory` command and refreshes the verified Darwin-owned
+   * prompt block before a successful mutation returns. No Agent invocation is made.
+   */
+  async manageMemory(input: string): Promise<MemoryCommandResult> {
+    if (this.liveConfig.memory !== true) {
+      return { changed: false, text: 'project memory is off — set memory: true in ~/.darwin/config.json to enable it' };
+    }
+    // Validate the current prompt shape before any disk mutation. A malformed restored
+    // prompt must fail closed rather than narrow disk while leaving stale live context.
+    if (!canApplyLearnedMemory(this.agent, undefined)) {
+      throw new Error('Could not verify the assembled system prompt for memory refresh.');
+    }
+    const result = await runMemoryCommand(this.projectRoot, input);
+    if (result.changed) {
+      if (!applyLearnedMemory(this.agent, memoryPromptFragment(result.index))) {
+        // The shape was verified above and no await occurs between write completion and
+        // replacement, so this can only signal an internal invariant violation.
+        throw new Error('Could not refresh learned memory on the assembled system prompt.');
+      }
+    }
+    return result;
+  }
+
 
   /**
    * Replaces old conversation history with rolling summaries, keeping the recent

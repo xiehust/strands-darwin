@@ -29,6 +29,12 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | `models` array with zero or more than one `enable: true` | `ConfigError`, refuse to start | Picking one silently would bill the user for a model the file does not unambiguously name |
 | Learned-memory config `memory` is non-boolean, placed inside a model entry, or combined with `trajectory: false` | `ConfigError`, refuse to start | A privacy-affecting persistence opt-in must never be guessed or silently ignored |
 | Learned-memory source read, extraction, timeout, queue pressure, or store write fails | Completed turn remains successful; scheduler latches one bounded `memoryStatus.problem`, existing post-turn/headless surfaces warn; default-off creates nothing | Derived memory is advisory and must never become a second turn failure path |
+| `/memory` store is absent | List/show report absent; remember may create strict state; forget changes nothing | Absence is a valid local state, not corruption |
+| `/memory` state/parent/topic path is malformed, invalid UTF-8, oversized, wrong-project, forged, non-regular or symlinked | Refuse the operation and leave disk/live prompt unchanged | Management state crosses a user-file trust boundary and must fail closed |
+| `/memory remember` is empty, oversized, secret-like, boundary-bearing, control/dump/policy-like, duplicate or over count | Refuse atomically with bounded notice | Explicit notes are context, never a generic policy or secret persistence channel |
+| `/memory forget` target is malformed/unknown or suppression cap is reached | Refuse/no-op atomically; retain current prompt and state | Narrowing must be durable but cannot make an unbounded tombstone store |
+| `/memory` live prompt shape cannot be verified | Refuse before disk mutation | Disk and the current model-visible prompt must never diverge after a claimed mutation |
+
 | A model-scoped key next to `models`, or a session-scoped key inside an entry | `ConfigError` naming the key and where it belongs | With entries present there is no precedence rule to fall back on, and a key in the wrong half would silently do nothing |
 | MCP config malformed (`.darwin/mcp.json`, or root `.mcp.json` when it is the one in effect) | `ConfigError`, refuse to start | User asked for MCP and got none |
 | One MCP server fails to connect / `${VAR}` unset | Skip it, keep starting (`continueOnError: true`) | One broken server must not kill the session; count shown in header |

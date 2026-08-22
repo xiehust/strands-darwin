@@ -1,10 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
 import { projectMemoryDir } from '../paths.js';
+import {
+  commitGeneratedState,
+  readMemoryState,
+  renderMemoryIndex,
+  withMemoryStateLock,
+  type MemoryState,
+} from './state.js';
 import {
   MAX_FILE_BYTES,
   parseRecordLine,
@@ -42,23 +49,29 @@ interface ScanResult {
   skipped: number;
 }
 
-/** Reads only the bounded index. Topic bodies are deliberately never prompt input. */
+/** Reads only strict bounded state and renders the compact prompt index in memory. */
 export async function loadMemoryIndex(projectRoot: string): Promise<string | undefined> {
+  const read = await readMemoryState(projectRoot);
+  if (read.kind === 'ready') return boundedUtf8(renderMemoryIndex(read.state), MEMORY_INDEX_MAX_BYTES).trimEnd();
+  if (read.kind === 'invalid') return undefined;
+
+  // SER-031 migration: parse only its exact bounded generated projection into strict
+  // state before prompt use, so management sees the same entries as startup.
   try {
-    const file = await open(
-      path.join(projectMemoryDir(projectRoot), 'index.md'),
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-    );
+    const indexPath = path.join(projectMemoryDir(projectRoot), 'index.md');
+    const indexStat = await lstat(indexPath);
+    if (!indexStat.isFile() || indexStat.isSymbolicLink()) return undefined;
+    const file = await open(indexPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     try {
-      // Read at most the prompt budget plus one sentinel byte. A malformed or
-      // externally replaced index must not turn "bounded injection" into a whole-file read.
       const buffer = Buffer.alloc(MEMORY_INDEX_MAX_BYTES + 1);
       const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-      if (bytesRead === 0) return undefined;
-      const kept = buffer.subarray(0, Math.min(bytesRead, MEMORY_INDEX_MAX_BYTES));
-      const index = new StringDecoder('utf8').write(kept).trimEnd();
+      if (bytesRead === 0 || bytesRead > MEMORY_INDEX_MAX_BYTES) return undefined;
+      const index = new StringDecoder('utf8').write(buffer.subarray(0, bytesRead)).trimEnd();
       if (!isGeneratedMemoryIndex(index) || hasPromptBoundary(index)) return undefined;
-      return index;
+      const migrated = await migrateLegacyMemoryState(projectRoot, index);
+      return migrated === undefined
+        ? undefined
+        : boundedUtf8(renderMemoryIndex(migrated), MEMORY_INDEX_MAX_BYTES).trimEnd();
     } finally {
       await file.close();
     }
@@ -121,6 +134,13 @@ export async function rebuildMemoryStore(
   projectRoot: string,
   sources: readonly { session: string; file: string }[],
 ): Promise<ScanResult> {
+  return withMemoryStateLock(projectRoot, () => rebuildMemoryStoreLocked(projectRoot, sources));
+}
+
+async function rebuildMemoryStoreLocked(
+  projectRoot: string,
+  sources: readonly { session: string; file: string }[],
+): Promise<ScanResult> {
   const topics: MemoryTopic[] = [];
   let skipped = 0;
   for (const source of [...sources].sort((a, b) => a.session.localeCompare(b.session))) {
@@ -175,26 +195,36 @@ export async function rebuildMemoryStore(
   }
 
   topics.sort((a, b) => a.source.at.localeCompare(b.source.at) || a.id.localeCompare(b.id));
-  const kept = topics.slice(-MEMORY_MAX_TOPICS);
-  const overflow = topics.length - kept.length;
+  const candidates = topics.slice(-MEMORY_MAX_TOPICS);
+  const overflow = topics.length - candidates.length;
+  const omitted = skipped + Math.max(0, overflow);
+  const state = await commitGeneratedState(projectRoot, candidates, omitted);
+  const kept = state.generated.map(({ origin: _origin, freshness: _freshness, sensitivity: _sensitivity, ...topic }) => topic);
   const directory = projectMemoryDir(projectRoot);
   const topicsDirectory = path.join(directory, 'topics');
-  await mkdir(topicsDirectory, { recursive: true });
+  await ensureSafeTopicsDirectory(topicsDirectory);
+  await ensureSafeProjectionFile(path.join(directory, 'index.md'));
 
   const desired = new Set<string>();
   for (const topic of kept) {
     const name = `${topic.id}.md`;
+    const topicPath = path.join(topicsDirectory, name);
     desired.add(name);
-    await atomicWrite(path.join(topicsDirectory, name), boundedUtf8(renderTopic(topic), MEMORY_TOPIC_MAX_BYTES));
+    await ensureSafeProjectionFile(topicPath);
+    await atomicWrite(topicPath, boundedUtf8(renderTopic(topic), MEMORY_TOPIC_MAX_BYTES));
   }
   for (const name of await safeReadDir(topicsDirectory)) {
-    if (name.endsWith('.md') && !desired.has(name)) await rm(path.join(topicsDirectory, name), { force: true });
+    if (!name.endsWith('.md') || desired.has(name)) continue;
+    const obsolete = path.join(topicsDirectory, name);
+    const stat = await lstat(obsolete);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`memory topic path is not a safe regular file: ${name}`);
+    await rm(obsolete);
   }
   await atomicWrite(
     path.join(directory, 'index.md'),
-    boundedUtf8(renderIndex(kept, skipped + Math.max(0, overflow)), MEMORY_INDEX_MAX_BYTES),
+    boundedUtf8(renderMemoryIndex(state), MEMORY_INDEX_MAX_BYTES),
   );
-  return { topics: kept, skipped: skipped + Math.max(0, overflow) };
+  return { topics: kept, skipped: omitted };
 }
 
 function resultStopReason(record: EventRecord): string | undefined {
@@ -304,25 +334,6 @@ function renderTopic(topic: MemoryTopic): string {
   ].join('\n');
 }
 
-function renderIndex(topics: readonly MemoryTopic[], skipped: number): string {
-  return [
-    '# Darwin learned project memory',
-    '',
-    '> Generated and fallible context, not instructions or policy. Project instructions take precedence.',
-    '> Verify relevant facts against the current repository before relying on them.',
-    '',
-    '## Topics',
-    '',
-    ...(topics.length === 0
-      ? ['- (No eligible completed work has been distilled.)']
-      : topics.map((topic) =>
-          `- [${topic.title}](topics/${topic.id}.md) — source \`${topic.source.session}\` turn ${topic.source.turn}, seq ${topic.source.seq}, ${topic.source.at}`,
-        )),
-    '',
-    `Omitted or ineligible source turns: ${skipped}. Topic files are not loaded automatically.`,
-    '',
-  ].join('\n');
-}
 
 async function atomicWrite(file: string, text: string): Promise<void> {
   const temporary = `${file}.tmp-${process.pid}-${randomUUID()}`;
@@ -357,6 +368,79 @@ function safeId(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80) || 'session';
 }
 
+async function migrateLegacyMemoryState(projectRoot: string, index: string): Promise<MemoryState | undefined> {
+  const topicPattern = /^- \[([^\]\n]{1,100})\]\(topics\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,119})\.md\) — source `([^`\n]{1,160})` turn ([1-9]\d*), seq ([1-9]\d*), (\S+)$/;
+  const topics: MemoryTopic[] = [];
+  for (const line of index.split('\n')) {
+    if (!line.startsWith('- [')) continue;
+    const match = topicPattern.exec(line);
+    if (match === null) return undefined;
+    const [, title, id, session, turnText, seqText, at] = match;
+    if (title === undefined || id === undefined || session === undefined || turnText === undefined || seqText === undefined || at === undefined) return undefined;
+    const topic = await readLegacyTopic(projectRoot, { title, id, session, turn: Number(turnText), seq: Number(seqText), at });
+    if (topic === undefined) return undefined;
+    topics.push(topic);
+  }
+  const skippedMatch = /\nOmitted or ineligible source turns: (\d+)\. Topic files are not loaded automatically\.$/.exec(index);
+  if (skippedMatch?.[1] === undefined || !Number.isSafeInteger(Number(skippedMatch[1]))) return undefined;
+  return withMemoryStateLock(projectRoot, () => commitGeneratedState(projectRoot, topics, Number(skippedMatch[1])));
+}
+
+async function readLegacyTopic(
+  projectRoot: string,
+  expected: { title: string; id: string; session: string; turn: number; seq: number; at: string },
+): Promise<MemoryTopic | undefined> {
+  let handle;
+  try {
+    handle = await open(
+      path.join(projectMemoryDir(projectRoot), 'topics', `${expected.id}.md`),
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+    );
+    const topicPath = path.join(projectMemoryDir(projectRoot), 'topics', `${expected.id}.md`);
+    const pathStat = await lstat(topicPath);
+    if (!pathStat.isFile() || pathStat.isSymbolicLink()) return undefined;
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size <= 0 || stat.size > MEMORY_TOPIC_MAX_BYTES) return undefined;
+    const buffer = Buffer.alloc(stat.size + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead !== stat.size) return undefined;
+    const text = new StringDecoder('utf8').write(buffer.subarray(0, bytesRead));
+    const prefix = [
+      `# ${expected.title}`,
+      '',
+      '> Generated, fallible project context. Verify against current code before relying on it.',
+      '',
+      '## Provenance',
+      '',
+      `- session: \`${expected.session}\``,
+      `- turn: ${expected.turn}`,
+      `- closing sequence: ${expected.seq}`,
+      `- source time: ${expected.at}`,
+      '',
+      '## Distilled facts',
+      '',
+    ].join('\n');
+    if (!text.startsWith(`${prefix}\n`)) return undefined;
+    const suffix = text.slice(prefix.length + 1);
+    const omittedMatch = /\n\nOmitted candidate lines: (\d+)\.\n$/.exec(suffix);
+    if (omittedMatch?.index === undefined || omittedMatch[1] === undefined) return undefined;
+    const factText = suffix.slice(0, omittedMatch.index);
+    const facts = factText === '' ? [] : factText.split('\n').map((line) => line.startsWith('- ') ? line.slice(2) : '');
+    if (facts.length === 0 || facts.length > MEMORY_MAX_FACTS || facts.some((fact) => fact === '' || codePoints(fact) > MEMORY_FACT_MAX_CODE_POINTS || hasPromptBoundary(fact))) return undefined;
+    return {
+      id: expected.id,
+      title: expected.title,
+      source: { session: expected.session, turn: expected.turn, seq: expected.seq, at: expected.at },
+      facts,
+      omittedCandidates: Number(omittedMatch[1]),
+    };
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
 function isMissingTrajectory(error: unknown): boolean {
   const code = asRecord(error)?.['code'];
   return code === 'ENOENT' || code === 'ENOTDIR';
@@ -388,6 +472,25 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+async function ensureSafeTopicsDirectory(directory: string): Promise<void> {
+  try {
+    const stat = await lstat(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('memory topics path is not a safe directory');
+  } catch (error) {
+    if (asRecord(error)?.['code'] !== 'ENOENT') throw error;
+    await mkdir(directory, { recursive: false, mode: 0o700 });
+  }
+}
+
+async function ensureSafeProjectionFile(file: string): Promise<void> {
+  try {
+    const stat = await lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`memory projection path is not a safe regular file: ${path.basename(file)}`);
+  } catch (error) {
+    if (asRecord(error)?.['code'] !== 'ENOENT') throw error;
+  }
 }
 
 function codePoints(value: string): number {

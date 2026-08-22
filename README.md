@@ -45,8 +45,8 @@ Each bullet links to the section that documents it in full.
   switchable mid-session with `/model`; [prompt caching](#prompt-caching) on by default and
   adjustable [thinking effort](#thinking-effort) via `/effort`.
 - **Standing context** — [`AGENTS.md` preloaded](#project-instructions-agentsmd) into the
-  system prompt, an overridable [base prompt](#system-prompt), and a
-  [working context](#working-context) re-derived on every run, including resumed ones.
+  system prompt, an overridable [base prompt](#system-prompt), a [working context](#working-context)
+  re-derived on every run, and opt-in project memory managed locally with `/memory`.
 - **[Session diagnostics](#session-diagnostics)** — opt-in per-session log of the SDK's debug
   output and darwin's notices, made for `tail -f`.
 - **Tool hooks** — `PreToolUse` / `PostToolUse` shell commands from `.darwin/hooks.json` (and
@@ -64,6 +64,10 @@ The built-in slash commands (`/` lists them together with your skills and custom
 | `/exit` (alias `/quit`) | quit darwin |
 | `/export` | write this session's transcript to a file |
 | `/mcp` | configured MCP servers and their tools |
+| `/memory [list]` | list project memory with origin, provenance, unvalidated freshness, and heuristic sensitivity state |
+| `/memory show <id|number>` | inspect one bounded project-memory entry |
+| `/memory remember <note>` | add one explicit screened user-authored project note |
+| `/memory forget <id|number|all>` | durably suppress generated entries or remove user-authored notes |
 | `/mode` | set the permission mode for this session |
 | `/model` | list or switch models |
 | `/permissions` | list or revoke allow-rules |

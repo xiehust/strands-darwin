@@ -712,6 +712,32 @@ export function App({
         return;
       }
 
+      // User-only local memory management. Like permission revocation, forgetting
+      // narrows future context synchronously; remember is an explicit typed command,
+      // never a model tool. Keep it idle-only so a running request cannot race a
+      // system-prompt replacement.
+      if (/^\/memory(?:\s|$)/.test(text)) {
+        if (status !== 'idle') {
+          dispatch({ type: 'notice', text: '/memory does not queue — run it after current work finishes' });
+          return;
+        }
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        try {
+          const result = await runtime.manageMemory(text);
+          dispatch({ type: 'notice', text: result.text });
+        } catch (error) {
+          dispatch({
+            type: 'notice',
+            text: `memory command failed: ${error instanceof Error ? error.message : String(error)}`,
+            severity: 'warn',
+          });
+        }
+        return;
+      }
+
+
       // Reads the manager directly rather than entering the model/tool loop. Like
       // /usage it remains available mid-turn and cannot queue or cancel work.
       if (/^\/tasks(?:\s|$)/.test(text)) {

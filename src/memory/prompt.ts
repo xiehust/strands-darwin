@@ -12,6 +12,13 @@ export function memoryPromptFragment(index: string): string {
   ].join('\n');
 }
 
+export function canApplyLearnedMemory(
+  agent: SystemPromptHolder,
+  fragment: string | undefined,
+): boolean {
+  return refreshKnownPrompt(agent.systemPrompt, undefined, fragment ?? null) !== undefined;
+}
+
 export function applyLearnedMemory(
   agent: SystemPromptHolder,
   fragment: string | undefined,

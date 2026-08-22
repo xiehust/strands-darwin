@@ -14,8 +14,8 @@ manager), never by forking the agent loop.
 
 ## SER-031 learned-memory contract
 
-`AgentRuntime.create` remains the only assembly boundary. With root config `memory: true`, it reads at most
-`MEMORY_INDEX_MAX_BYTES` from the stable project-scoped `index.md`, wraps it in exactly one
+`AgentRuntime.create` remains the only assembly boundary. With root config `memory: true`, it strictly reads
+bounded project-scoped `state.json`, renders at most `MEMORY_INDEX_MAX_BYTES` of compact index context, and wraps it in exactly one
 `<learned-memory>` block labelled fallible context/not instructions or policy, and refreshes restored prompts
 after `Agent.initialize()`. Prompt order is base → project instructions → official skills → optional learned
 memory → current working context → final cache point. Fresh, explicit resume, and `/clear` all pass through
@@ -26,6 +26,21 @@ callback only schedules `MemoryScheduler`; the scheduler delays, serializes/coal
 bounded status problem, and cannot reject the completed user turn. No `search_memory`, generic persistence
 tool, vector/embedding dependency, or topic-wide injection is allowed. Default/false config installs no
 scheduler, writes no memory file, and injects no block.
+
+
+## SER-032 local project-memory management
+
+- `/memory` is handled only by the interactive driver. It is not an SDK tool, intervention, hook, custom command expansion, or model invocation.
+- Grammar is closed: bare/list, `show <safe-id|one-based-list-number>`, `forget <safe-id|one-based-list-number|all>`, and `remember <bounded-note>`. No path argument is ever opened.
+- `memory/state.json` under the existing project-keyed user directory is the strict versioned authority. It carries the canonical project key; reads use bounded regular-file/no-follow checks, strict UTF-8, parent-directory checks, and exact schema validation. Malformed, oversized, wrong-project, forged, or symlinked state is refused.
+- The first load of an accepted SER-031 Markdown index/topics store performs one bounded exact migration to strict state before prompt use; after that, list/show are byte-zero projections.
+
+- Generated entries state trajectory provenance, `freshness: unvalidated`, and `sensitivity: heuristic-filtered`. Explicit user entries state authored time, `freshness: unvalidated`, and `sensitivity: heuristic-screened`. These are honest pipeline labels, never claims of current-code validation or complete secret detection. SER-033 owns future validation/aging.
+- Remember is explicit user input only and rejects secret-like, boundary-tag, control, dump, oversized, and policy-like text. Generated extraction remains the only generated write path.
+- Forget records bounded generated-ID suppression and removes user entries. Rebuild preserves user notes and suppression, so forgotten generated IDs do not reappear.
+- Rebuild and management serialize. A mutation validates the Darwin-owned prompt shape before disk work, atomically commits strict state, then synchronously replaces the live learned-memory block before returning. Skills catalogue, working context, and the sole final cache point stay in order. `/clear`, fresh and resumed runtimes continue through `AgentRuntime.create` and read the current narrowed state.
+- List/show and refused/unknown mutations are byte-zero. Every operation leaves trajectory, snapshots, resume pointer, config and unrelated files untouched and uses only the existing transcript notice surface.
+
 
 ### Contract: `printer: false` is mandatory
 

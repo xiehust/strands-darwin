@@ -275,12 +275,28 @@ Markdown under `~/.darwin/projects/<project-key>/memory/`; trajectory bytes rema
 and are never repaired or reinterpreted in place. Extraction is deterministic/offline, excludes reasoning
 and raw tool records, drops sensitive/dump-like candidates, preserves session/turn/sequence/time provenance,
 and runs through a delayed coalescing timeout-bound scheduler whose failures only surface on existing
-post-turn warning paths. Runtime startup reads only bounded `index.md` and inserts exactly one labelled
+post-turn warning paths. Runtime startup reads strict bounded state, renders only its compact index, and inserts exactly one labelled
 `<learned-memory>` block after official skills and before current working context/final cache. The wrapper
 states that its contents are fallible context—not instructions or policy—and project instructions win.
 Topic bodies are inspectable files but are not ambient prompt input. Resume and `/clear` refresh through the
-ordinary `AgentRuntime.create` factory. There is no model-facing search/write tool, vector index, embedding,
-or SDK-loop fork.
+ordinary `AgentRuntime.create` factory.
+
+**`/memory` is bounded user-only local management, never a persistence tool.** A strict versioned `state.json`
+is the authority and binds itself to the canonical project key; generated entries carry trajectory
+provenance plus `freshness: unvalidated` and `sensitivity: heuristic-filtered`, while explicit
+`/memory remember <note>` entries carry authored time plus
+`freshness: unvalidated` and `sensitivity: heuristic-screened`. Those fields state pipeline status, not code
+validation or a secrecy guarantee; SER-033 aging/revalidation is not implemented. Grammar is only `list`,
+`show <safe-id|number>`, `forget <safe-id|number|all>`, and `remember <bounded-note>`. Remember screens secrets,
+prompt boundaries, controls, dumps and policy-like text. Forget stores bounded generated-ID suppressions, so
+a deterministic rebuild cannot restore a forgotten entry, and removes user notes. Mutations serialize with
+rebuilds, atomically commit strict state, and replace the verified Darwin-owned live prompt block before
+returning, preserving official skills, working context and one final cache point. Malformed/oversized/forged
+or symlinked state is refused. After one bounded exact SER-031 Markdown-to-state migration on first load,
+list/show never mutate. No operation invokes the model, network, MCP, trajectory,
+snapshot, resume pointer or config, and there is still no model-facing search/write tool, vector index,
+embedding, or SDK-loop fork. Free checks: `verify-memory-command.ts`, `verify-memory.ts`,
+`verify-clear-session.ts`, `verify-help-command.ts`, and `tui completion`.
 
 ## Prompt caching
 

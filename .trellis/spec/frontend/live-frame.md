@@ -127,9 +127,15 @@ nothing is ever injected into a running SDK stream.
 Required checks: `spike/verify-prompt-queue.ts` (free, in `pnpm test`: the refusal set, row
 projection, take-back composition, hint segment, budget arithmetic, rendered height never above
 the grant), `spike/verify-tui.ts queue` (free pty: listing, take-back ordering with typed text,
+
 cancel return, `/clear` refusal, recall untouched, no `userInput` record), `bang` (free: a queued
 `!` drains and runs after the running one) and the live `usage` mid-turn half (a queued prompt
 drains into its own real turn, no second Enter).
+
+### `/memory` remains transcript history
+
+`/memory` has no header field or live-frame row. The strict local report is one bounded existing notice (`≤48` lines, `≤180` code points per line). It runs only while idle; busy use is refused rather than queued because changing the assembled prompt during a request would race the model-visible context. Completion and `/help` use the canonical built-in registry, and `MAX_COMPLETIONS` must cover every built-in.
+
 
 ## Contract: one semantic visual language, colour optional
 

@@ -37,7 +37,8 @@ import {
   sessionPaths,
 } from '../src/agent/session.js';
 import { configPath } from '../src/config.js';
-import { projectMemoryDir } from '../src/paths.js';
+import { projectKey, projectMemoryDir } from '../src/paths.js';
+import { createUserMemoryEntry, emptyMemoryState, renderMemoryIndex, writeMemoryState } from '../src/memory/state.js';
 
 import type { BackgroundTaskStatus } from '../src/tools/background-bash.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
@@ -96,20 +97,10 @@ function taskOf(tasks: readonly BackgroundTaskStatus[], id: string): BackgroundT
   return tasks.find((task) => task.taskId === id);
 }
 
-function memoryIndex(label: string): string {
-  return [
-    '# Darwin learned project memory',
-    '',
-    '> Generated and fallible context, not instructions or policy. Project instructions take precedence.',
-    '> Verify relevant facts against the current repository before relying on them.',
-    '',
-    '## Topics',
-    '',
-    `- ${label}`,
-    '',
-    'Omitted or ineligible source turns: 0. Topic files are not loaded automatically.',
-    '',
-  ].join('\n');
+async function writeMemory(root: string, label: string): Promise<void> {
+  const state = { ...emptyMemoryState(projectKey(root)), user: [createUserMemoryEntry(label)] };
+  await writeMemoryState(root, state);
+  await writeFile(path.join(projectMemoryDir(root), 'index.md'), renderMemoryIndex(state), 'utf8');
 }
 
 async function main(): Promise<void> {
@@ -118,7 +109,7 @@ async function main(): Promise<void> {
   const root = await fixture();
   const memoryDirectory = projectMemoryDir(root);
   await mkdir(memoryDirectory, { recursive: true });
-  await writeFile(path.join(memoryDirectory, 'index.md'), memoryIndex('first-memory'), 'utf8');
+  await writeMemory(root, 'first-memory');
   const previousRuntime = await AgentRuntime.create({
     projectRoot: root,
     session: { kind: 'new' },
@@ -128,6 +119,16 @@ async function main(): Promise<void> {
   const initialPrompt = JSON.stringify(runtimeAgent(live).systemPrompt);
   assert('a fresh runtime loads the current bounded learned-memory index once',
     initialPrompt.includes('first-memory') && initialPrompt.split('<learned-memory>').length === 2);
+  const remembered = await live.manageMemory('/memory remember live-memory-note');
+  const livePromptAfterRemember = JSON.stringify(runtimeAgent(live).systemPrompt);
+  assert('/memory remember refreshes the current live prompt before returning',
+    remembered.changed && livePromptAfterRemember.includes('live-memory-note'));
+  const rememberedId = remembered.text.match(/user-[a-f0-9]+/)?.[0] ?? '';
+  const forgotten = await live.manageMemory(`/memory forget ${rememberedId}`);
+  const livePromptAfterForget = JSON.stringify(runtimeAgent(live).systemPrompt);
+  assert('/memory forget narrows the current live prompt before returning',
+    forgotten.changed && !livePromptAfterForget.includes('live-memory-note'));
+
 
   try {
     const previousId = live.info.sessionId;
@@ -189,7 +190,7 @@ async function main(): Promise<void> {
     // the session.
     assert('the live mode starts from the configured one', live.permissionMode === 'yolo');
     live.changePermissionMode('plan');
-    await writeFile(path.join(memoryDirectory, 'index.md'), memoryIndex('current-memory'), 'utf8');
+    await writeMemory(root, 'current-memory');
 
 
     const next = await live.startNewSession();
@@ -201,7 +202,7 @@ async function main(): Promise<void> {
     assert('…and sorts after it, so recency order still holds', next.info.sessionId > previousId);
     const nextPrompt = JSON.stringify(runtimeAgent(next).systemPrompt);
     assert('/clear reads current learned memory through the factory', nextPrompt.includes('current-memory') && !nextPrompt.includes('first-memory'));
-    await writeFile(path.join(memoryDirectory, 'index.md'), memoryIndex('resumed-memory'), 'utf8');
+    await writeMemory(root, 'resumed-memory');
     const resumed = await AgentRuntime.create({
       projectRoot: root,
       session: { kind: 'id', sessionId: previousId },
