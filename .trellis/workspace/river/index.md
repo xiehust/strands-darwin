@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
+- **Total Sessions**: 8
 - **Last Active**: 2026-08-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~238 | Active |
+| `journal-1.md` | ~259 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-08-22 | SER-033 generated memory validation | `64989d6` | `main` |
 | 7 | 2026-08-22 | SER-032 local memory management | `06873a5` | `main` |
 | 6 | 2026-08-22 | Implement SER-031 distilled project memory | `73bc11b` | `main` |
 | 5 | 2026-08-17 | Make the whole live frame fit, and stream finished answer lines into scrollback | `898ad46`, `c21cd09`, `a5f4b2a`, `901283d`, `9e487a1` | `main` |

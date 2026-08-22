@@ -236,3 +236,24 @@ Added bounded local /memory list/show/remember/forget controls, strict project-s
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: SER-033 generated memory validation
+
+**Date**: 2026-08-22
+**Task**: SER-033 generated memory validation
+**Branch**: `main`
+
+### Summary
+
+Added exact bounded worktree anchors, fail-closed validation states, a configurable 28-day generated-memory horizon, unified prompt eligibility, offline safety fixtures, and updated memory contracts.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `64989d6` | (see git log) |
+
+### Status
+
+[OK] **Completed**
