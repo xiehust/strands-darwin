@@ -14,6 +14,7 @@ import {
   type MemoryEntry,
   type MemoryState,
 } from './state.js';
+import { validateMemoryState, type MemoryValidationOptions } from './validation.js';
 
 export const MEMORY_REPORT_MAX_LINES = 48;
 export const MEMORY_REPORT_MAX_LINE_CODE_POINTS = 180;
@@ -21,10 +22,14 @@ export const MEMORY_REPORT_MAX_ENTRIES = 32;
 export const MEMORY_USAGE = 'usage: /memory [list] · /memory show <id|number> · /memory forget <id|number|all> · /memory remember <note>';
 
 export type MemoryCommandResult =
-  | { readonly changed: false; readonly text: string }
+  | { readonly changed: false; readonly text: string; readonly index?: string }
   | { readonly changed: true; readonly text: string; readonly index: string };
 
-export async function runMemoryCommand(projectRoot: string, input: string): Promise<MemoryCommandResult> {
+export async function runMemoryCommand(
+  projectRoot: string,
+  input: string,
+  options: MemoryValidationOptions = { horizonDays: 28 },
+): Promise<MemoryCommandResult> {
   const argument = input.slice('/memory'.length).trim();
   const separator = argument.search(/\s/);
   const verb = argument === '' ? 'list' : separator === -1 ? argument : argument.slice(0, separator);
@@ -32,36 +37,35 @@ export async function runMemoryCommand(projectRoot: string, input: string): Prom
   if ((verb === 'list' && target !== '') || !['list', 'show', 'forget', 'remember'].includes(verb)) {
     return unchanged(`${verb} is not a valid /memory form\n  ${MEMORY_USAGE}`);
   }
-  if (verb === 'list') return listMemory(projectRoot);
-  if (verb === 'show') return showMemory(projectRoot, target);
-  if (verb === 'remember') return rememberMemory(projectRoot, target);
-  return forgetMemory(projectRoot, target);
+  if (verb === 'list') return listMemory(projectRoot, options);
+  if (verb === 'show') return showMemory(projectRoot, target, options);
+  if (verb === 'remember') return rememberMemory(projectRoot, target, options);
+  return forgetMemory(projectRoot, target, options);
 }
 
-async function listMemory(projectRoot: string): Promise<MemoryCommandResult> {
-  const read = await readMemoryState(projectRoot);
-  if (read.kind === 'invalid') return unchanged(report([scopeLine(projectRoot), `state: corrupt/refused — ${read.problem}`, `  ${MEMORY_USAGE}`]));
-  if (read.kind === 'absent') return unchanged(report([scopeLine(projectRoot), 'state: absent — no managed memory store', `  ${MEMORY_USAGE}`]));
-  const entries = memoryEntries(read.state).slice(0, MEMORY_REPORT_MAX_ENTRIES);
-  const lines = [scopeLine(projectRoot), `entries: ${entries.length}/${memoryEntries(read.state).length}`];
+async function listMemory(projectRoot: string, options: MemoryValidationOptions): Promise<MemoryCommandResult> {
+  const loaded = await loadedState(projectRoot, options);
+  if ('text' in loaded) return unchanged(loaded.text);
+  const entries = memoryEntries(loaded.state).slice(0, MEMORY_REPORT_MAX_ENTRIES);
+  const lines = [scopeLine(projectRoot), `entries: ${entries.length}/${memoryEntries(loaded.state).length}`];
   if (entries.length === 0) lines.push('  (empty)');
   entries.forEach((entry, index) => lines.push(listLine(entry, index + 1)));
-  lines.push('freshness: unvalidated (SER-033 validation/aging is not implemented)');
-  lines.push(`suppressed generated ids: ${read.state.suppressedGeneratedIds.length}/${MEMORY_MAX_SUPPRESSIONS}`);
+  lines.push(`generated horizon: ${options.horizonDays === 0 ? 'disabled (source validation remains required)' : `${options.horizonDays} days`}`);
+  lines.push(`suppressed generated ids: ${loaded.state.suppressedGeneratedIds.length}/${MEMORY_MAX_SUPPRESSIONS}`);
   lines.push(`  ${MEMORY_USAGE}`);
-  return unchanged(report(lines));
+  return { changed: false, text: report(lines), index: renderMemoryIndex(await eligibleState(projectRoot, loaded.state, options)) };
 }
 
-async function showMemory(projectRoot: string, target: string): Promise<MemoryCommandResult> {
+async function showMemory(projectRoot: string, target: string, options: MemoryValidationOptions): Promise<MemoryCommandResult> {
   if (target === '') return unchanged(MEMORY_USAGE);
-  const loaded = await loadedState(projectRoot);
+  const loaded = await loadedState(projectRoot, options);
   if ('text' in loaded) return unchanged(loaded.text);
   const entry = resolveEntry(loaded.state, target);
   if (entry === undefined) return unchanged(report([scopeLine(projectRoot), `${safeTarget(target)} matches no memory entry — nothing shown`, `  ${MEMORY_USAGE}`]));
   return unchanged(report(showLines(entry)));
 }
 
-async function rememberMemory(projectRoot: string, raw: string): Promise<MemoryCommandResult> {
+async function rememberMemory(projectRoot: string, raw: string, options: MemoryValidationOptions): Promise<MemoryCommandResult> {
   const note = validateRememberedNote(raw);
   if (note === undefined) return unchanged(report(['memory note refused: expected 1–800 code points of non-sensitive project context, without prompt boundaries, policy-like instructions, controls, or dump text', `  ${MEMORY_USAGE}`]));
   return withMemoryStateLock(projectRoot, async () => {
@@ -78,11 +82,11 @@ async function rememberMemory(projectRoot: string, raw: string): Promise<MemoryC
     }
     const next: MemoryState = { ...prior, user: [...prior.user, entry] };
     await writeMemoryState(projectRoot, next);
-    return changed(`remembered project memory ${entry.id} — user-authored; freshness unvalidated; sensitivity heuristic-screened`, next);
+    return changed(`remembered project memory ${entry.id} — user-authored; explicit/unvalidated; sensitivity heuristic-screened`, await eligibleState(projectRoot, next, options));
   });
 }
 
-async function forgetMemory(projectRoot: string, target: string): Promise<MemoryCommandResult> {
+async function forgetMemory(projectRoot: string, target: string, options: MemoryValidationOptions): Promise<MemoryCommandResult> {
   if (target === '') return unchanged(MEMORY_USAGE);
   return withMemoryStateLock(projectRoot, async () => {
     const read = await readMemoryState(projectRoot);
@@ -100,7 +104,7 @@ async function forgetMemory(projectRoot: string, target: string): Promise<Memory
         suppressedGeneratedIds: [...prior.suppressedGeneratedIds, ...added],
       };
       await writeMemoryState(projectRoot, next);
-      return changed(`forgot all project memory entries (${prior.generated.length} generated suppressed, ${prior.user.length} user-authored removed)`, next);
+      return changed(`forgot all project memory entries (${prior.generated.length} generated suppressed, ${prior.user.length} user-authored removed)`, await eligibleState(projectRoot, next, options));
     }
     const entry = resolveEntry(prior, target);
     if (entry === undefined) return unchanged(`${safeTarget(target)} matches no memory entry — nothing forgotten`);
@@ -109,7 +113,7 @@ async function forgetMemory(projectRoot: string, target: string): Promise<Memory
       ? { ...prior, generated: prior.generated.filter((candidate) => candidate.id !== entry.id), suppressedGeneratedIds: [...prior.suppressedGeneratedIds, entry.id] }
       : { ...prior, user: prior.user.filter((candidate) => candidate.id !== entry.id) };
     await writeMemoryState(projectRoot, next);
-    return changed(`forgot ${entry.id} — ${entry.origin === 'generated' ? 'generated id durably suppressed' : 'user-authored note removed'}`, next);
+    return changed(`forgot ${entry.id} — ${entry.origin === 'generated' ? 'generated id durably suppressed' : 'user-authored note removed'}`, await eligibleState(projectRoot, next, options));
   });
 }
 
@@ -120,16 +124,26 @@ function resolveEntry(state: MemoryState, target: string): MemoryEntry | undefin
   return all.find((entry) => entry.id === target);
 }
 
-async function loadedState(projectRoot: string): Promise<{ state: MemoryState } | { text: string }> {
+async function loadedState(projectRoot: string, options: MemoryValidationOptions): Promise<{ state: MemoryState } | { text: string }> {
   const read = await readMemoryState(projectRoot);
-  if (read.kind === 'ready') return { state: read.state };
+  if (read.kind === 'ready') {
+    try {
+      return { state: (await validateMemoryState(projectRoot, read.state, options)).state };
+    } catch {
+      return { text: report([scopeLine(projectRoot), 'state: validation unavailable — generated entries omitted from ambient context']) };
+    }
+  }
   return { text: report([scopeLine(projectRoot), read.kind === 'absent' ? 'state: absent — no managed memory store' : `state: corrupt/refused — ${read.problem}`]) };
+}
+
+async function eligibleState(projectRoot: string, state: MemoryState, options: MemoryValidationOptions): Promise<MemoryState> {
+  return (await validateMemoryState(projectRoot, state, options)).eligible;
 }
 
 function listLine(entry: MemoryEntry, number: number): string {
   return entry.origin === 'generated'
-    ? `  ${number}. ${entry.id} · generated · ${entry.source.session} turn ${entry.source.turn} @ ${entry.source.at} · freshness ${entry.freshness} · sensitivity ${entry.sensitivity}`
-    : `  ${number}. ${entry.id} · user-authored @ ${entry.authoredAt} · freshness ${entry.freshness} · sensitivity ${entry.sensitivity}`;
+    ? `  ${number}. ${entry.id} · generated · ${entry.source.session} turn ${entry.source.turn} @ ${entry.source.at} · ${entry.validation.state}: ${entry.validation.reason}`
+    : `  ${number}. ${entry.id} · user-authored @ ${entry.authoredAt} · explicit/unvalidated · no expiry · sensitivity ${entry.sensitivity}`;
 }
 
 function showLines(entry: MemoryEntry): string[] {
@@ -137,7 +151,7 @@ function showLines(entry: MemoryEntry): string[] {
     `memory ${entry.id}`,
     'origin: user-authored project note',
     `provenance: explicit local /memory remember @ ${entry.authoredAt}`,
-    `freshness: ${entry.freshness} (not validated against current code)`,
+    'validation: explicit user context; not code-validated; does not auto-expire',
     `sensitivity: ${entry.sensitivity} (heuristic rejection passed, not a guarantee)`,
     'note:',
     ...entry.note.split('\n').map((line) => `  ${line}`),
@@ -146,11 +160,13 @@ function showLines(entry: MemoryEntry): string[] {
     `memory ${entry.id}`,
     'origin: generated from durable successful trajectory evidence',
     `provenance: ${entry.source.session} turn ${entry.source.turn}, closing seq ${entry.source.seq}, ${entry.source.at}`,
-    `freshness: ${entry.freshness} (not validated against current code)`,
+    `validation: ${entry.validation.state} — ${entry.validation.reason} @ ${entry.validation.checkedAt}`,
     `sensitivity: ${entry.sensitivity} (${entry.omittedCandidates} candidate lines omitted; heuristic, not a guarantee)`,
     `title: ${entry.title}`,
-    'facts:',
-    ...entry.facts.map((fact) => `  - ${fact}`),
+    'anchors:',
+    ...entry.anchors.map((anchor, index) => anchor === null
+      ? `  ${index + 1}. none (fact excluded from ambient context)`
+      : `  ${index + 1}. ${anchor.path}:${anchor.line} · sha256 ${anchor.hash.slice(0, 12)}… · ${anchor.codePoints} code points`),
   ];
 }
 

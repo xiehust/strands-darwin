@@ -819,8 +819,31 @@ async function contextWarnRatioField(): Promise<void> {
   );
 }
 
+async function memoryHorizonField(): Promise<void> {
+  header('config — generated memory horizon');
+  const def = await loadConfig(await writeConfig('{}'));
+  assert('generated memory expires after 28 days by default', def.memoryHorizonDays === 28);
+  const off = await loadConfig(await writeConfig('{ "memoryHorizonDays": 0 }'));
+  assert('0 deliberately disables age expiry', off.memoryHorizonDays === 0);
+  const custom = await loadConfig(await writeConfig('{ "memoryHorizonDays": 90 }'));
+  assert('a conservative whole-day override is accepted', custom.memoryHorizonDays === 90);
+  for (const value of ['-1', '366', '1.5', '"28"', 'true']) {
+    await expectConfigError(`invalid memory horizon ${value} is rejected`, async () =>
+      loadConfig(await writeConfig(`{ "memoryHorizonDays": ${value} }`)),
+    );
+  }
+  const misplaced = await expectConfigError('memory horizon is rejected inside a model entry', async () =>
+    loadConfig(await writeConfig('{ "models": [{ "model": "global.anthropic.claude-opus-5", "enable": true, "memoryHorizonDays": 7 }] }')),
+  );
+  assert('the misplaced error names the top-level key', misplaced.includes('memoryHorizonDays') && misplaced.includes('top level'));
+  const switched = withModelChoice(custom, custom.modelChoices[0]!);
+  assert('a /model switch preserves the generated memory horizon', switched.memoryHorizonDays === 90);
+}
+
+
 async function contextOffloadFields(): Promise<void> {
   header('config — context offload fields');
+
   const def = await loadConfig(await writeConfig('{}'));
   assert('contextOffload is absent (off) by default', def.contextOffload === undefined);
   assert('maxResultTokens is absent by default', def.maxResultTokens === undefined);
@@ -954,6 +977,7 @@ async function main(): Promise<void> {
   await rejections();
   await requestTimeout();
   await contextWarnRatioField();
+  await memoryHorizonField();
   await contextOffloadFields();
   await trajectoryField();
   await diagnosticsField();

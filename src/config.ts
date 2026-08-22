@@ -235,6 +235,11 @@ export interface SessionFields {
   diagnostics?: boolean;
   /** Derive bounded project-scoped Markdown memory from eligible durable turns. Off by default. */
   memory?: boolean;
+  /**
+   * Generated-memory age limit in days. Default: 28. Set to 0 to deliberately
+   * disable age expiry; current-source validation still applies.
+   */
+  memoryHorizonDays?: number;
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
   /** Deprecated policy fields retained on the type for migration fixtures only. */
@@ -291,6 +296,7 @@ const SESSION_KEYS = [
   'trajectory',
   'diagnostics',
   'memory',
+  'memoryHorizonDays',
   'systemPrompt',
 ] as const;
 
@@ -313,6 +319,7 @@ const DEFAULTS = {
   promptCache: true,
   thinkingEffort: DEFAULT_THINKING_EFFORT,
   contextWarnRatio: 0.8,
+  memoryHorizonDays: 28,
 } as const satisfies Partial<AppConfig>;
 
 /**
@@ -815,6 +822,9 @@ function validateSessionFields(
     contextWarnRatio:
       numberField(input, 'contextWarnRatio', configPath, { min: 0, max: 1 }) ??
       DEFAULTS.contextWarnRatio,
+    memoryHorizonDays:
+      integerField(input, 'memoryHorizonDays', configPath, { min: 0, max: 365 }) ??
+      DEFAULTS.memoryHorizonDays,
   };
 
   // Off unless asked for: offloading rewrites what the model sees, so it is an
@@ -1532,6 +1542,19 @@ function numberField(
   if (value < range.min || (range.max !== undefined && value > range.max)) {
     const bounds = range.max === undefined ? `at least ${range.min}` : `between ${range.min} and ${range.max}`;
     throw new ConfigError(`${configPath}: "${key}" must be ${bounds}, got ${value}.`);
+  }
+  return value;
+}
+
+function integerField(
+  input: Record<string, unknown>,
+  key: string,
+  configPath: string,
+  range: { min: number; max: number },
+): number | undefined {
+  const value = numberField(input, key, configPath, range);
+  if (value !== undefined && !Number.isSafeInteger(value)) {
+    throw new ConfigError(`${configPath}: "${key}" must be a whole number.`);
   }
   return value;
 }

@@ -282,11 +282,14 @@ Topic bodies are inspectable files but are not ambient prompt input. Resume and 
 ordinary `AgentRuntime.create` factory.
 
 **`/memory` is bounded user-only local management, never a persistence tool.** A strict versioned `state.json`
-is the authority and binds itself to the canonical project key; generated entries carry trajectory
-provenance plus `freshness: unvalidated` and `sensitivity: heuristic-filtered`, while explicit
-`/memory remember <note>` entries carry authored time plus
-`freshness: unvalidated` and `sensitivity: heuristic-screened`. Those fields state pipeline status, not code
-validation or a secrecy guarantee; SER-033 aging/revalidation is not implemented. Grammar is only `list`,
+is the authority and binds itself to the canonical project key. Generated facts carry bounded exact
+project-relative line/hash anchors only when extraction can identify safe current text evidence; before every
+model request one centralized projection validates canonical regular UTF-8 files, excludes unknown/invalid
+facts, and expires generated evidence at the strict top-level `memoryHorizonDays` horizon (28 days by default,
+0 disables age expiry only). Exact-horizon age is expired. Validation metadata remains inspectable, and restored
+source can reactivate a non-expired entry. Explicit `/memory remember <note>` entries carry authored time and
+`sensitivity: heuristic-screened`; they are visibly fallible user context, never silently code-validated or
+expired. Validation reads are bounded/no-follow and never modify worktree bytes. Grammar is only `list`,
 `show <safe-id|number>`, `forget <safe-id|number|all>`, and `remember <bounded-note>`. Remember screens secrets,
 prompt boundaries, controls, dumps and policy-like text. Forget stores bounded generated-ID suppressions, so
 a deterministic rebuild cannot restore a forgotten entry, and removes user notes. Mutations serialize with
@@ -295,7 +298,7 @@ returning, preserving official skills, working context and one final cache point
 or symlinked state is refused. After one bounded exact SER-031 Markdown-to-state migration on first load,
 list/show never mutate. No operation invokes the model, network, MCP, trajectory,
 snapshot, resume pointer or config, and there is still no model-facing search/write tool, vector index,
-embedding, or SDK-loop fork. Free checks: `verify-memory-command.ts`, `verify-memory.ts`,
+embedding, or SDK-loop fork. Free checks: `verify-memory-validation.ts`, `verify-memory-command.ts`, `verify-memory.ts`,
 `verify-clear-session.ts`, `verify-help-command.ts`, and `tui completion`.
 
 ## Prompt caching

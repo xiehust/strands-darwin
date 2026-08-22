@@ -12,6 +12,7 @@ import {
   withMemoryStateLock,
   type MemoryState,
 } from './state.js';
+import { deriveSourceAnchors, validateMemoryState, type MemoryValidationOptions } from './validation.js';
 import {
   MAX_FILE_BYTES,
   parseRecordLine,
@@ -41,6 +42,7 @@ export interface MemoryTopic {
   readonly title: string;
   readonly source: { session: string; turn: number; seq: number; at: string };
   readonly facts: readonly string[];
+  readonly anchors?: readonly (import('./state.js').MemorySourceAnchor | null)[];
   readonly omittedCandidates: number;
 }
 
@@ -49,10 +51,23 @@ interface ScanResult {
   skipped: number;
 }
 
-/** Reads only strict bounded state and renders the compact prompt index in memory. */
-export async function loadMemoryIndex(projectRoot: string): Promise<string | undefined> {
+/** Reads strict state, validates generated anchors, and renders only eligible context. */
+export async function loadMemoryIndex(
+  projectRoot: string,
+  options: MemoryValidationOptions = { horizonDays: 28 },
+): Promise<string | undefined> {
   const read = await readMemoryState(projectRoot);
-  if (read.kind === 'ready') return boundedUtf8(renderMemoryIndex(read.state), MEMORY_INDEX_MAX_BYTES).trimEnd();
+  if (read.kind === 'ready') {
+    try {
+      const validated = await validateMemoryState(projectRoot, read.state, options);
+      return boundedUtf8(validated.index, MEMORY_INDEX_MAX_BYTES).trimEnd();
+    } catch {
+      // Validation and metadata persistence degrade closed: user notes remain visible
+      // only when validation itself can complete safely; generated entries never do.
+      const userOnly = { ...read.state, generated: [] };
+      return boundedUtf8(renderMemoryIndex(userOnly), MEMORY_INDEX_MAX_BYTES).trimEnd();
+    }
+  }
   if (read.kind === 'invalid') return undefined;
 
   // SER-031 migration: parse only its exact bounded generated projection into strict
@@ -69,9 +84,9 @@ export async function loadMemoryIndex(projectRoot: string): Promise<string | und
       const index = new StringDecoder('utf8').write(buffer.subarray(0, bytesRead)).trimEnd();
       if (!isGeneratedMemoryIndex(index) || hasPromptBoundary(index)) return undefined;
       const migrated = await migrateLegacyMemoryState(projectRoot, index);
-      return migrated === undefined
-        ? undefined
-        : boundedUtf8(renderMemoryIndex(migrated), MEMORY_INDEX_MAX_BYTES).trimEnd();
+      if (migrated === undefined) return undefined;
+      const validated = await validateMemoryState(projectRoot, migrated, options);
+      return boundedUtf8(validated.index, MEMORY_INDEX_MAX_BYTES).trimEnd();
     } finally {
       await file.close();
     }
@@ -190,7 +205,7 @@ async function rebuildMemoryStoreLocked(
     for (const turn of turns) {
       const topic = projectMemoryTopic(read.records, source.session, turn);
       if (topic === undefined) skipped += 1;
-      else topics.push(topic);
+      else topics.push({ ...topic, anchors: await deriveSourceAnchors(projectRoot, topic.facts) });
     }
   }
 
@@ -199,7 +214,7 @@ async function rebuildMemoryStoreLocked(
   const overflow = topics.length - candidates.length;
   const omitted = skipped + Math.max(0, overflow);
   const state = await commitGeneratedState(projectRoot, candidates, omitted);
-  const kept = state.generated.map(({ origin: _origin, freshness: _freshness, sensitivity: _sensitivity, ...topic }) => topic);
+  const kept = state.generated.map(({ origin: _origin, freshness: _freshness, sensitivity: _sensitivity, validation: _validation, ...topic }) => topic);
   const directory = projectMemoryDir(projectRoot);
   const topicsDirectory = path.join(directory, 'topics');
   await ensureSafeTopicsDirectory(topicsDirectory);

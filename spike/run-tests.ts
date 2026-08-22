@@ -52,6 +52,7 @@ const suites = [
   'verify-trajectory.ts',
   'verify-memory.ts',
   'verify-memory-command.ts',
+  'verify-memory-validation.ts',
 
   'verify-resume-recap.ts',
   'verify-stream-resumption.ts',

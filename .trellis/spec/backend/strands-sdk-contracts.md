@@ -35,11 +35,11 @@ scheduler, writes no memory file, and injects no block.
 - `memory/state.json` under the existing project-keyed user directory is the strict versioned authority. It carries the canonical project key; reads use bounded regular-file/no-follow checks, strict UTF-8, parent-directory checks, and exact schema validation. Malformed, oversized, wrong-project, forged, or symlinked state is refused.
 - The first load of an accepted SER-031 Markdown index/topics store performs one bounded exact migration to strict state before prompt use; after that, list/show are byte-zero projections.
 
-- Generated entries state trajectory provenance, `freshness: unvalidated`, and `sensitivity: heuristic-filtered`. Explicit user entries state authored time, `freshness: unvalidated`, and `sensitivity: heuristic-screened`. These are honest pipeline labels, never claims of current-code validation or complete secret detection. SER-033 owns future validation/aging.
+- Generated entries state trajectory provenance, exact-anchor validation metadata, and `sensitivity: heuristic-filtered`. Explicit user entries state authored time, `freshness: unvalidated`, and `sensitivity: heuristic-screened`. Generated validation is exact but sensitivity remains heuristic; explicit notes are intentionally not code-validated.
 - Remember is explicit user input only and rejects secret-like, boundary-tag, control, dump, oversized, and policy-like text. Generated extraction remains the only generated write path.
 - Forget records bounded generated-ID suppression and removes user entries. Rebuild preserves user notes and suppression, so forgotten generated IDs do not reappear.
 - Rebuild and management serialize. A mutation validates the Darwin-owned prompt shape before disk work, atomically commits strict state, then synchronously replaces the live learned-memory block before returning. Skills catalogue, working context, and the sole final cache point stay in order. `/clear`, fresh and resumed runtimes continue through `AgentRuntime.create` and read the current narrowed state.
-- List/show and refused/unknown mutations are byte-zero. Every operation leaves trajectory, snapshots, resume pointer, config and unrelated files untouched and uses only the existing transcript notice surface.
+- List/show may atomically refresh only bounded validation metadata in the memory manifest; refused/unknown mutations are byte-zero. Every operation leaves source/worktree, trajectory, snapshots, resume pointer, config and unrelated files untouched and uses only the existing transcript notice surface.
 
 
 ### Contract: `printer: false` is mandatory
@@ -49,6 +49,16 @@ scheduler, writes no memory file, and injects no block.
 The SDK's default printer writes tool banners and streamed text to stdout, which fights
 Ink for the terminal. Every `new Agent({...})` in this project must pass `printer: false`.
 (Verified: `spike/bedrock-stream.ts`.)
+
+## SER-033 generated-memory validation and expiry
+
+- The strict project-bound memory manifest is v2; v1 entries migrate as unanchored/unknown. Generated facts may carry one bounded exact project-relative UTF-8 line/hash anchor. Missing or unsafe deterministic evidence is `unknown`, never guessed.
+- One eligibility projection validates generated entries before startup assembly, every `AgentRuntime.send()` model request, and `/memory` refresh. Fresh, resumed and `/clear` still use `AgentRuntime.create`; no SDK loop is forked or intercepted.
+- Validation opens only canonical-root-contained regular files read-only/no-follow, with finite file/line/code-point/entry bounds and exact hashes. Traversal, symlink escape, changed/deleted evidence, binary/oversized/unreadable files all fail closed and generated context is omitted.
+- `memoryHorizonDays` is one strict top-level session field, integer 0–365, default 28, preserved across model switches and `/clear`. Generated evidence is expired at the exact horizon boundary; 0 deliberately disables age expiry but never source validation.
+- Explicit user notes neither auto-expire nor undergo silent code validation. They remain fallible explicit context and survive rebuilds. `/memory list/show` reports exact generated state/reason and bounded anchor metadata without source text.
+- Validation metadata may be atomically persisted for audit; failure to persist does not trust generated context or refuse the runtime. Validation never rewrites source, trajectory, snapshots, pointers, config, or unrelated state and adds no watcher, polling, timer, model/network work, tool, vector, or dependency.
+
 
 ### Contract: `await agent.initialize()` before anything else
 

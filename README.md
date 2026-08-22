@@ -64,7 +64,7 @@ The built-in slash commands (`/` lists them together with your skills and custom
 | `/exit` (alias `/quit`) | quit darwin |
 | `/export` | write this session's transcript to a file |
 | `/mcp` | configured MCP servers and their tools |
-| `/memory [list]` | list project memory with origin, provenance, unvalidated freshness, and heuristic sensitivity state |
+| `/memory [list]` | list project memory with origin, provenance, exact validation/expiry state and reason |
 | `/memory show <id|number>` | inspect one bounded project-memory entry |
 | `/memory remember <note>` | add one explicit screened user-authored project note |
 | `/memory forget <id|number|all>` | durably suppress generated entries or remove user-authored notes |
@@ -447,6 +447,8 @@ leaves `region` unset on the Bedrock entries, so `AWS_REGION` still decides wher
 | `systemPrompt` | built-in prompt | replaces the base system prompt; wins over `.darwin/system-prompt.md` — see [System prompt](#system-prompt) |
 | `trajectory` | `true` | record an append-only trajectory of every turn; set `false` to write nothing — see [Session trajectory](#session-trajectory) |
 | `diagnostics` | `false` | write this session's SDK `debug`/`info` output and darwin's notices to a per-session log — see [Session diagnostics](#session-diagnostics) |
+| `memory` | `false` | derive bounded project-scoped memory from eligible durable turns and enable local `/memory` management |
+| `memoryHorizonDays` | `28` | expire generated facts at this age; whole days `0–365`, where `0` disables age expiry but not exact source validation |
 
 Switching providers is a config change only; no code names a provider.
 

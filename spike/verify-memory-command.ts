@@ -35,12 +35,12 @@ const before = { trajectory: hash(trajectory), unrelated: hash(await readFile(un
 header('/memory — generated list/show are honest and bounded');
 await rebuildMemoryStore(ROOT, [{ session: 'session-safe', file: SOURCE }]);
 const listed = await runMemoryCommand(ROOT, '/memory');
-assert('list states stable id, project scope, provenance, unvalidated freshness and sensitivity filtering',
-  !listed.changed && listed.text.includes('project memory scope:') && listed.text.includes('session-safe-turn-1-') && listed.text.includes('generated') && listed.text.includes('freshness unvalidated') && listed.text.includes('sensitivity heuristic-filtered'));
+assert('list states stable id, project scope, provenance and fail-closed validation',
+  !listed.changed && listed.text.includes('project memory scope:') && listed.text.includes('session-safe-turn-1-') && listed.text.includes('generated') && listed.text.includes('unknown:') && listed.text.includes('no safe exact source anchor'));
 const generatedId = listed.text.match(/session-safe-turn-1-[a-f0-9]+/)?.[0] ?? '';
 const shown = await runMemoryCommand(ROOT, '/memory show 1');
-assert('show by bounded index names generated provenance without claiming validation',
-  shown.text.includes(generatedId) && shown.text.includes('closing seq 3') && shown.text.includes('not validated against current code'));
+assert('show by bounded index names generated provenance and exact unknown reason',
+  shown.text.includes(generatedId) && shown.text.includes('closing seq 3') && shown.text.includes('validation: unknown') && shown.text.includes('none (fact excluded'));
 assert('reports are Unicode-safe and within hard row bounds',
   listed.text.split('\n').length <= MEMORY_REPORT_MAX_LINES && listed.text.split('\n').every((line) => [...line].length <= MEMORY_REPORT_MAX_LINE_CODE_POINTS) && !listed.text.includes('�'));
 const malformed = await runMemoryCommand(ROOT, '/memory show ../../config.json');
@@ -66,13 +66,13 @@ await writeFile(path.join(legacyMemory, 'index.md'), [
 await writeFile(path.join(legacyMemory, 'topics', `${generatedId}.md`), await readFile(path.join(projectMemoryDir(ROOT), 'topics', `${generatedId}.md`)));
 const migratedIndex = await loadMemoryIndex(LEGACY);
 const migratedList = await runMemoryCommand(LEGACY, '/memory list');
-assert('a valid SER-031 Markdown store migrates into project-scoped strict state before management',
-  migratedIndex?.includes(generatedId) === true && migratedList.text.includes(generatedId) && (await readMemoryState(LEGACY)).kind === 'ready');
+assert('a valid SER-031 Markdown store migrates as unknown and is excluded from ambient context',
+  migratedIndex?.includes(generatedId) === false && migratedList.text.includes(generatedId) && migratedList.text.includes('unknown:') && (await readMemoryState(LEGACY)).kind === 'ready');
 
 header('/memory remember — explicit screened user context survives rebuild');
 const remembered = await runMemoryCommand(ROOT, '/memory remember The release checklist requires the offline acceptance suite before packaging.');
-assert('remember writes distinguishable user-authored unvalidated screened context',
-  remembered.changed && remembered.text.includes('user-authored') && remembered.text.includes('freshness unvalidated') && remembered.text.includes('sensitivity heuristic-screened'));
+assert('remember writes distinguishable explicit user-authored screened context',
+  remembered.changed && remembered.text.includes('user-authored') && remembered.text.includes('explicit/unvalidated') && remembered.text.includes('sensitivity heuristic-screened'));
 const userId = remembered.text.match(/user-[a-f0-9]+/)?.[0] ?? '';
 const stateAfterRemember = await readMemoryState(ROOT);
 assert('remembered note enters strict bounded state',

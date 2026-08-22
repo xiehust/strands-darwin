@@ -423,7 +423,9 @@ export class AgentRuntime {
     const loadedInstructions = await loadProjectInstructions(options.projectRoot);
     const instructions = loadedInstructions.instructions;
     const basePrompt = await loadSystemPrompt(options.projectRoot, config.systemPrompt);
-    const memoryIndex = config.memory === true ? await loadMemoryIndex(options.projectRoot) : undefined;
+    const memoryIndex = config.memory === true
+      ? await loadMemoryIndex(options.projectRoot, { horizonDays: config.memoryHorizonDays ?? 28 })
+      : undefined;
     const mcp = options.inherit?.mcp ?? await loadMcpClients(options.projectRoot, {
       quietStdioStderr: options.quietMcpStderr === true,
     });
@@ -709,6 +711,15 @@ export class AgentRuntime {
    */
   async *send(input: string): AsyncIterable<AgentStreamEvent> {
     const before = this.usage;
+    if (this.liveConfig.memory === true) {
+      const memoryIndex = await loadMemoryIndex(this.projectRoot, {
+        horizonDays: this.liveConfig.memoryHorizonDays ?? 28,
+      });
+      if (!applyLearnedMemory(this.agent, memoryIndex === undefined ? undefined : memoryPromptFragment(memoryIndex))) {
+        throw new Error('Could not refresh validated learned memory before the model request.');
+      }
+    }
+
     try {
       const recording = this.trajectory?.beginTurn(
         input,
@@ -797,8 +808,10 @@ export class AgentRuntime {
     if (!canApplyLearnedMemory(this.agent, undefined)) {
       throw new Error('Could not verify the assembled system prompt for memory refresh.');
     }
-    const result = await runMemoryCommand(this.projectRoot, input);
-    if (result.changed) {
+    const result = await runMemoryCommand(this.projectRoot, input, {
+      horizonDays: this.liveConfig.memoryHorizonDays ?? 28,
+    });
+    if (result.index !== undefined) {
       if (!applyLearnedMemory(this.agent, memoryPromptFragment(result.index))) {
         // The shape was verified above and no await occurs between write completion and
         // replacement, so this can only signal an internal invariant violation.
