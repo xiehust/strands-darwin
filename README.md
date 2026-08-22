@@ -46,7 +46,8 @@ Each bullet links to the section that documents it in full.
   adjustable [thinking effort](#thinking-effort) via `/effort`.
 - **Standing context** — [`AGENTS.md` preloaded](#project-instructions-agentsmd) into the
   system prompt, an overridable [base prompt](#system-prompt), a [working context](#working-context)
-  re-derived on every run, and opt-in project memory managed locally with `/memory`.
+  re-derived on every run, and opt-in [project memory](#project-memory) managed locally with
+  `/memory`.
 - **[Session diagnostics](#session-diagnostics)** — opt-in per-session log of the SDK's debug
   output and darwin's notices, made for `tail -f`.
 - **Tool hooks** — `PreToolUse` / `PostToolUse` shell commands from `.darwin/hooks.json` (and
@@ -354,12 +355,15 @@ are always available (`fileEditor`, `bash`), and states the working rules the re
 program depends on — read a file before editing it, keep edits small, verify changes by
 running something, and never work around a tool call the permission gate denied.
 
-Every actual model request has the same four text parts followed by the final cache point:
+Every actual model request uses the following ordered text blocks, followed by the final cache
+point. The learned-memory block appears only when project memory is enabled and has eligible
+content:
 
 ```
 <base prompt>                                  ← darwin's default, or your override
 <project-instructions source="AGENTS.md">…     ← your repository's standing rules
 <available_skills>…                            ← the official SDK skills catalogue
+<learned-memory>…                              ← optional, validated project context
 <working-context>…                             ← where this session is standing
 <cache point>                                  ← final cached-prefix boundary, when supported
 ```
@@ -405,6 +409,71 @@ empty or unreadable does not stop the session: darwin falls back to the default 
 why in the header, so you never go on believing your prompt is steering the agent. A blank
 `systemPrompt` in the config is a startup error instead — leaving the agent with no
 instructions at all is never what someone meant to configure.
+
+## Project memory
+
+Project memory carries useful repository facts across sessions without turning old conversations
+into hidden instructions. It is **off by default** because it derives persistent context from the
+session trajectory. Enable it in `~/.darwin/config.json`:
+
+```json
+{
+  "memory": true,
+  "memoryHorizonDays": 28
+}
+```
+
+`memory: true` requires trajectory recording to remain enabled. Generated state is scoped to the
+canonical repository and stored outside the working tree:
+
+```text
+~/.darwin/projects/<project-key>/memory/
+├── state.json       # bounded, versioned authoritative manifest
+├── index.md         # bounded prompt projection
+└── topics/          # inspectable generated Markdown topics
+```
+
+After a successful turn is visible and its closing trajectory records are durable, darwin schedules
+a delayed, coalesced rebuild. Only closed successful turns with a substantive final answer are
+considered. Failed, cancelled, active, short, damaged or truncated turns are skipped. The extractor
+is deterministic and offline: it reads no reasoning or raw tool-event payloads, drops likely
+credentials, `.env` material, code/log dumps and instruction-like text, and records provenance for
+each generated entry.
+
+Generated facts are fail-closed before they enter a model request. Darwin derives a bounded exact
+project-relative line/hash anchor only when a fact safely identifies both a repository file and its
+source line. It then revalidates that anchor against the current worktree on startup, resume,
+`/clear`, and immediately before a request. A generated fact is included only while every anchor
+still matches and it is inside the configured age horizon. Changed or deleted evidence is marked
+`invalid`; unsafe or unverifiable evidence is `unknown`; old evidence is `expired`. All three are
+omitted from ambient context but remain visible through `/memory` for audit. No fuzzy matching,
+embeddings, filesystem watcher, background polling or model call is involved.
+
+`memoryHorizonDays` accepts a whole number from `0` to `365` and defaults to `28`. The exact
+boundary is expired. Setting it to `0` disables age expiry only—exact source validation still
+applies. Explicit user-authored notes do not auto-expire and are not silently treated as verified
+code facts.
+
+The model receives at most one bounded `<learned-memory>` index, after project instructions and the
+skills catalogue but before working context and the final cache point. It is labelled fallible
+context, never policy, and topic bodies are not injected automatically. Project instructions always
+take precedence.
+
+Manage the store locally, without a model or network call:
+
+```text
+/memory                         # list bounded entries for this project
+/memory show <id|number>        # show origin, provenance, validation and sensitivity state
+/memory remember <note>         # add one screened, bounded user-authored note
+/memory forget <id|number|all>  # remove a note or durably suppress generated entries
+```
+
+`remember` rejects likely secrets, prompt-boundary markup, dumps and oversized notes atomically.
+`forget` updates both the store and the current live prompt before returning; generated IDs are
+suppressed so the next deterministic rebuild cannot silently resurrect them. Memory I/O never
+rewrites trajectories, snapshots, resume pointers, config files or repository files. An unreadable,
+forged, wrong-project or symlink-escaped store is refused rather than trusted, while extraction or
+validation problems degrade to a bounded warning instead of failing the coding turn.
 
 ## Configuration
 
