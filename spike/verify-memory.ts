@@ -1,10 +1,22 @@
 /** Focused offline verification of SER-031 distilled project memory. */
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { TextBlock } from '@strands-agents/sdk';
+import {
+  Model,
+  TextBlock,
+  type Agent,
+  type BaseModelConfig,
+  type Message,
+  type ModelStreamEvent,
+} from '@strands-agents/sdk';
 
+import { allowAllBridge } from '../src/agent/permission.js';
+import {
+  AgentRuntime,
+  setRuntimeModelFactoryForTest,
+} from '../src/agent/runtime.js';
 import { configPath, ConfigError, loadConfig } from '../src/config.js';
 import { memoryPromptFragment } from '../src/memory/prompt.js';
 import { MemoryScheduler } from '../src/memory/scheduler.js';
@@ -17,7 +29,13 @@ import {
   projectMemoryTopic,
   rebuildMemoryStore,
 } from '../src/memory/store.js';
-import { projectMemoryDir } from '../src/paths.js';
+import { projectKey, projectMemoryDir } from '../src/paths.js';
+import {
+  createUserMemoryEntry,
+  emptyMemoryState,
+  readMemoryState,
+  writeMemoryState,
+} from '../src/memory/state.js';
 import { orderOfficialSkillsPrompt, refreshKnownPrompt } from '../src/skills/prompt.js';
 import type { TrajectoryRecord } from '../src/trajectory/record.js';
 import { TrajectoryRecorder } from '../src/trajectory/writer.js';
@@ -47,11 +65,19 @@ function closedTurn(turn: number, input: string, answer: string, stopReason = 'e
   ];
 }
 
-header('memory — config is strict and default off');
+header('memory — config is strict and default on with trajectory');
 const defaults = await loadConfig(ROOT);
-assert('missing config keeps learned memory off', defaults.memory === undefined);
+assert('missing config enables learned memory', defaults.memory === true);
+await writeFile(configPath(ROOT), JSON.stringify({}));
+assert('an omitted memory field enables learned memory', (await loadConfig(ROOT)).memory === true);
+await writeFile(configPath(ROOT), JSON.stringify({ memory: false }));
+assert('an explicit false opts out', (await loadConfig(ROOT)).memory === false);
+await writeFile(configPath(ROOT), JSON.stringify({ trajectory: false }));
+const implicitOptOut = await loadConfig(ROOT);
+assert('omitted memory follows an explicit trajectory opt-out',
+  implicitOptOut.trajectory === false && implicitOptOut.memory === false);
 await writeFile(configPath(ROOT), JSON.stringify({ memory: true }));
-assert('an explicit true opts in', (await loadConfig(ROOT)).memory === true);
+assert('an explicit true remains accepted', (await loadConfig(ROOT)).memory === true);
 await writeFile(configPath(ROOT), JSON.stringify({ memory: 'yes' }));
 let badBoolean = '';
 try { await loadConfig(ROOT); } catch (error) { badBoolean = error instanceof Error ? error.message : String(error); }
@@ -64,8 +90,116 @@ await writeFile(configPath(ROOT), JSON.stringify({ memory: true, trajectory: fal
 let incompatible = '';
 try { await loadConfig(ROOT); } catch (error) { incompatible = error instanceof ConfigError ? error.message : ''; }
 assert('memory refuses a disabled trajectory source', incompatible.includes('memory') && incompatible.includes('trajectory'));
+const startupMemory = {
+  ...emptyMemoryState(projectKey(ROOT)),
+  user: [createUserMemoryEntry('default-on-startup-memory')],
+};
+await writeMemoryState(ROOT, startupMemory);
 
+async function pathExists(file: string): Promise<boolean> {
+  try {
+    await access(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(check: () => boolean, timeoutMs = 500): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  return check();
+}
+
+class MemoryTurnModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.memory', contextWindowLimit: 200_000 };
+
+  override updateConfig(config: BaseModelConfig): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  override getConfig(): BaseModelConfig {
+    return this.config;
+  }
+
+  override async *stream(_messages: Message[]): AsyncIterable<ModelStreamEvent> {
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    yield { type: 'modelContentBlockStartEvent' };
+    yield {
+      type: 'modelContentBlockDeltaEvent',
+      delta: {
+        type: 'textDelta',
+        text: 'Implemented a durable successful change for the focused memory scheduler verification. The completed answer is intentionally long enough to remain eligible.',
+      },
+    };
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+  }
+}
+
+
+setRuntimeModelFactoryForTest(async () => new MemoryTurnModel());
+
+header('memory — runtime follows effective default and opt-outs');
+function runtimeAgent(runtime: AgentRuntime): Agent {
+  return (runtime as unknown as { agent: Agent }).agent;
+}
+
+async function runtimeFor(config: Record<string, unknown>): Promise<AgentRuntime> {
+  await writeFile(configPath(ROOT), JSON.stringify(config));
+  return AgentRuntime.create({
+    projectRoot: ROOT,
+    session: { kind: 'new' },
+    permissionBridge: allowAllBridge,
+  });
+}
+
+const defaultRuntime = await runtimeFor({});
+assert('omitted memory installs the existing scheduler', defaultRuntime.memoryStatus !== undefined);
+assert('omitted memory loads the bounded startup prompt projection',
+  JSON.stringify(runtimeAgent(defaultRuntime).systemPrompt).includes(`<${LEARNED_MEMORY_TAG}>`));
+for await (const _event of defaultRuntime.send('This successful request is long enough to become durable memory evidence')) {
+  // Consume the real runtime turn so the recorder reaches its durable close callback.
+}
+assert('a durable default-on turn schedules the existing memory rebuild',
+  await waitFor(() => defaultRuntime.memoryStatus?.pending === true));
+await defaultRuntime.shutdown();
+const rebuiltDefaultState = await readMemoryState(ROOT);
+assert('the scheduled default-on rebuild completes and distills the durable turn',
+  rebuiltDefaultState.kind === 'ready' && rebuiltDefaultState.state.generated.length === 1);
+
+const memoryDirectory = projectMemoryDir(ROOT);
+await rm(memoryDirectory, { recursive: true, force: true });
+const explicitOffRuntime = await runtimeFor({ memory: false });
+assert('explicit false installs no scheduler', explicitOffRuntime.memoryStatus === undefined);
+assert('explicit false injects no learned-memory block',
+  !JSON.stringify(runtimeAgent(explicitOffRuntime).systemPrompt).includes(`<${LEARNED_MEMORY_TAG}>`));
+const explicitOffCommand = await explicitOffRuntime.manageMemory('/memory remember must-not-write');
+assert('explicit false disables local memory mutation',
+  !explicitOffCommand.changed && explicitOffCommand.text.includes('project memory is off'));
+assert('explicit false creates no memory store', !(await pathExists(memoryDirectory)));
+await writeMemoryState(ROOT, {
+  ...emptyMemoryState(projectKey(ROOT)),
+  user: [createUserMemoryEntry('disabled-refresh-canary')],
+});
+for await (const _event of explicitOffRuntime.send('This turn must not refresh disabled project memory')) {
+  // Consume the turn to exercise the ordinary pre-request refresh boundary.
+}
+assert('explicit false disables pre-request memory refresh',
+  !JSON.stringify(runtimeAgent(explicitOffRuntime).systemPrompt).includes('disabled-refresh-canary'));
+await explicitOffRuntime.shutdown();
+
+const trajectoryOffRuntime = await runtimeFor({ trajectory: false });
+assert('implicit trajectory opt-out installs no scheduler', trajectoryOffRuntime.memoryStatus === undefined);
+assert('implicit trajectory opt-out injects no learned-memory block',
+  !JSON.stringify(runtimeAgent(trajectoryOffRuntime).systemPrompt).includes(`<${LEARNED_MEMORY_TAG}>`));
+await trajectoryOffRuntime.shutdown();
 await rm(configPath(ROOT), { force: true });
+await rm(projectMemoryDir(ROOT), { recursive: true, force: true });
+setRuntimeModelFactoryForTest(undefined);
 
 header('memory — only eligible durable successful evidence is distilled');
 const safeAnswer = [

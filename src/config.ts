@@ -233,7 +233,11 @@ export interface SessionFields {
    * Nothing evicts it, the same as `offload/` above: delete the session directory.
    */
   diagnostics?: boolean;
-  /** Derive bounded project-scoped Markdown memory from eligible durable turns. Off by default. */
+  /**
+   * Derive bounded project-scoped Markdown memory from eligible durable turns. On by
+   * default while trajectory recording is available; explicit `false`, or omitted
+   * alongside `trajectory: false`, disables it.
+   */
   memory?: boolean;
   /**
    * Generated-memory age limit in days. Default: 28. Set to 0 to deliberately
@@ -319,6 +323,7 @@ const DEFAULTS = {
   promptCache: true,
   thinkingEffort: DEFAULT_THINKING_EFFORT,
   contextWarnRatio: 0.8,
+  memory: true,
   memoryHorizonDays: 28,
 } as const satisfies Partial<AppConfig>;
 
@@ -845,14 +850,15 @@ function validateSessionFields(
   const diagnostics = booleanField(input, 'diagnostics', configPath);
   if (diagnostics !== undefined) fields.diagnostics = diagnostics;
 
-  // Off unless explicitly asked for: this persists distilled conversation-derived
-  // context across sessions, so absence must remain privacy-equivalent to pre-feature.
-  const memory = booleanField(input, 'memory', configPath);
-  if (memory === true && trajectory === false) {
+  // On while its durable source is available. An explicit trajectory opt-out also
+  // opts out of memory when `memory` is omitted, preserving previously valid private
+  // configurations; an explicit request for memory without that source is still an
+  // actionable error rather than a silent override.
+  const configuredMemory = booleanField(input, 'memory', configPath);
+  if (configuredMemory === true && trajectory === false) {
     throw new ConfigError(`${configPath}: "memory" requires trajectory recording; remove "trajectory": false or disable memory.`);
   }
-
-  if (memory !== undefined) fields.memory = memory;
+  fields.memory = configuredMemory ?? (trajectory === false ? false : DEFAULTS.memory);
 
   // Only meaningful with offloading on, and rejected otherwise rather than
   // ignored: a threshold the user believes is in effect but is not would look

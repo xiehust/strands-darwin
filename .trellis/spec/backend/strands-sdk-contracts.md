@@ -14,8 +14,11 @@ manager), never by forking the agent loop.
 
 ## SER-031 learned-memory contract
 
-`AgentRuntime.create` remains the only assembly boundary. With root config `memory: true`, it strictly reads
-bounded project-scoped `state.json`, renders at most `MEMORY_INDEX_MAX_BYTES` of compact index context, and wraps it in exactly one
+`AgentRuntime.create` remains the only assembly boundary. Learned memory is enabled by default when trajectory
+recording is available; root config `memory: false` opts out. Omitted memory with `trajectory: false` is an
+implicit opt-out, while explicit `memory: true` with `trajectory: false` is a startup `ConfigError`. When
+enabled, runtime strictly reads bounded project-scoped `state.json`, renders at most
+`MEMORY_INDEX_MAX_BYTES` of compact index context, and wraps it in exactly one
 `<learned-memory>` block labelled fallible context/not instructions or policy, and refreshes restored prompts
 after `Agent.initialize()`. Prompt order is base → project instructions → official skills → optional learned
 memory → current working context → final cache point. Fresh, explicit resume, and `/clear` all pass through
@@ -24,8 +27,8 @@ this factory; topic files are never loaded into the prompt.
 Extraction is not an SDK invocation, intervention, plugin tool, or loop retry. The trajectory's post-durable
 callback only schedules `MemoryScheduler`; the scheduler delays, serializes/coalesces, times out, latches a
 bounded status problem, and cannot reject the completed user turn. No `search_memory`, generic persistence
-tool, vector/embedding dependency, or topic-wide injection is allowed. Default/false config installs no
-scheduler, writes no memory file, and injects no block.
+tool, vector/embedding dependency, or topic-wide injection is allowed. Effective `memory: false` installs no
+scheduler, writes no memory file, enables no local `/memory` mutation, and injects no block.
 
 
 ## SER-032 local project-memory management

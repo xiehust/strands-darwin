@@ -46,7 +46,7 @@ Each bullet links to the section that documents it in full.
   adjustable [thinking effort](#thinking-effort) via `/effort`.
 - **Standing context** — [`AGENTS.md` preloaded](#project-instructions-agentsmd) into the
   system prompt, an overridable [base prompt](#system-prompt), a [working context](#working-context)
-  re-derived on every run, and opt-in [project memory](#project-memory) managed locally with
+  re-derived on every run, and default-on [project memory](#project-memory) managed locally with
   `/memory`.
 - **[Session diagnostics](#session-diagnostics)** — opt-in per-session log of the SDK's debug
   output and darwin's notices, made for `tail -f`.
@@ -288,25 +288,26 @@ Uncatchable `SIGKILL` and a broken stdout pipe (`EPIPE`) cannot guarantee a term
 before runtime construction. It does not add a server, daemon, SDK API, or checkpoint mechanism.
 
 Run it from the repository you want it to work on. The **current working directory** is
-the project root, and everything darwin reads or writes lives there:
+the project root and resolves project-scoped instructions and extensions:
 
 ```
 <your repo>/
 ├── AGENTS.md              # optional: project instructions, preloaded into the system prompt
-├── .mcp.json              # optional: MCP servers, Claude Code's file, used if .darwin/mcp.json is absent
+├── .mcp.json              # optional: MCP servers, used if .darwin/mcp.json is absent
 └── .darwin/
-    ├── config.json        # optional: provider and model
-    ├── system-prompt.md   # optional: replaces darwin's built-in system prompt
+    ├── system-prompt.md   # optional: replaces darwin's built-in base prompt
     ├── mcp.json           # optional: MCP servers (takes precedence over ../.mcp.json)
-    ├── skills/            # optional: one directory per skill
-    │   └── commit-message/
-    │       └── SKILL.md
-    ├── sessions/          # written: snapshots and background logs (gitignore this)
-    └── last-session.json  # written: what --resume reopens         (gitignore this)
+    ├── agents/            # optional: child-agent definitions
+    ├── commands/          # optional: custom slash commands
+    └── skills/            # optional: one directory per skill
+        └── commit-message/
+            └── SKILL.md
 ```
 
-Add `.darwin/sessions/` and `.darwin/last-session.json` to your `.gitignore`; the config
-and skills next to them are worth committing so the whole team gets the same setup.
+Personal configuration and generated state live outside the repository under `~/.darwin/`:
+`config.json` for the active provider/model settings, project-keyed sessions and memory, and
+project-keyed permission rules. See [Configuration](#configuration) and
+[Global and project Darwin state](#global-and-project-darwin-state).
 
 > **Upgrading from before the rename**: the old locations are not read any more. Move
 > `config.json` to `~/.darwin/config.json` and `skills/` to `.darwin/skills/`. Old
@@ -413,18 +414,19 @@ instructions at all is never what someone meant to configure.
 ## Project memory
 
 Project memory carries useful repository facts across sessions without turning old conversations
-into hidden instructions. It is **off by default** because it derives persistent context from the
-session trajectory. Enable it in `~/.darwin/config.json`:
+into hidden instructions. It is **on by default** while trajectory recording is available. To opt
+out, set `"memory": false` in `~/.darwin/config.json`:
 
 ```json
 {
-  "memory": true,
-  "memoryHorizonDays": 28
+  "memory": false
 }
 ```
 
-`memory: true` requires trajectory recording to remain enabled. Generated state is scoped to the
-canonical repository and stored outside the working tree:
+Setting `"trajectory": false` also disables memory when `memory` is omitted, preserving the intent
+of configurations that opt out of trajectory recording. Explicit `"memory": true` still requires
+trajectory recording and is a startup error when combined with `"trajectory": false`. Generated
+state is scoped to the canonical repository and stored outside the working tree:
 
 ```text
 ~/.darwin/projects/<project-key>/memory/
@@ -477,49 +479,103 @@ validation problems degrade to a bounded warning instead of failing the coding t
 
 ## Configuration
 
-`~/.darwin/config.json` in the user home directory. Every field is optional — with no file at all
-you get a working Bedrock setup: `global.anthropic.claude-opus-5`, plus a preset catalogue
-`/model` can switch between (`claude-sonnet-5`, `claude-haiku-4.5`, `claude-fable-5`,
-`claude-opus-5`, and `gpt-5.6-sol` over [Bedrock Mantle](#anthropic-and-openai)). The preset
-leaves `region` unset on the Bedrock entries, so `AWS_REGION` still decides where a run talks.
+The active configuration is the global `~/.darwin/config.json`; a repository-local
+`.darwin/config.json` is not read. With no file at all, darwin starts with
+`global.anthropic.claude-opus-5` and a built-in catalogue that `/model` can switch between:
+`claude-sonnet-5`, `claude-haiku-4.5`, `claude-fable-5`, `claude-opus-5`, and `gpt-5.6-sol`
+over [Bedrock Mantle](#anthropic-and-openai). The Bedrock entries leave `region` unset so
+`AWS_REGION` can choose where the run talks; the Mantle entry is pinned to `us-east-1`, where
+that model is served.
+
+A file can describe either one model with model fields at the root, or several models with a
+`models` array. Use the array form to keep `/model` switching available. Model-specific fields
+belong inside each entry; session-wide fields stay at the root. Exactly one entry must have
+`"enable": true`, and custom entries replace rather than extend the built-in catalogue.
 
 ```json
 {
-  "provider": "bedrock",
-  "model": "global.anthropic.claude-opus-5",
-  "region": "us-west-2",
-  "maxTokens": 64000,
+  "models": [
+    {
+      "enable": true,
+      "name": "claude-opus-5",
+      "provider": "bedrock",
+      "model": "global.anthropic.claude-opus-5",
+      "maxTokens": 64000,
+      "promptCache": true,
+      "thinkingEffort": "high"
+    },
+    {
+      "enable": false,
+      "name": "gpt-5.6-sol",
+      "provider": "openai",
+      "model": "openai.gpt-5.6-sol",
+      "region": "us-east-1",
+      "bedrockMantle": true,
+      "openaiApi": "responses",
+      "maxTokens": 64000,
+      "thinkingEffort": "high"
+    }
+  ],
+  "permissionMode": "default",
   "summaryRatio": 0.8,
   "preserveRecentMessages": 10,
-  "permissionMode": "default",
-  "promptCache": true,
-  "thinkingEffort": "high"
+  "contextWarnRatio": 0.8,
+  "trajectory": true,
+  "memory": true
 }
 ```
 
+For a single-model file, omit `models` and put fields such as `provider`, `model`, and
+`thinkingEffort` at the root. A flat file intentionally exposes only that one model to `/model`.
+Every field is optional in that form; the model defaults below fill in missing values.
+
+### Model fields
+
+These fields live at the root in the single-model form and inside each `models` entry in the
+multi-model form. `/model` persists the enabled entry, and `/effort` persists
+`thinkingEffort` on that entry.
+
 | Field | Default | Notes |
 |---|---|---|
-| `provider` | `bedrock` | `bedrock`, `anthropic` or `openai` |
+| `models` | built-in catalogue when the file is absent | optional array of model configurations; exactly one entry must set `enable: true` |
+| `enable` | — | array form only; exactly one model must be enabled |
+| `name` | the model id | short, case-insensitively unique name used by `/model` |
+| `provider` | `bedrock` | `bedrock`, `anthropic`, or `openai` |
 | `model` | `global.anthropic.claude-opus-5` | provider-specific model id |
-| `region` | `AWS_REGION`, else `AWS_DEFAULT_REGION`, else `us-west-2` | Bedrock only |
-| `apiKeyEnv` | — | name of the env var holding the API key |
-| `maxTokens` | `64000` | |
+| `region` | `AWS_REGION`, else `AWS_DEFAULT_REGION`, else `us-west-2` | Bedrock and Bedrock Mantle region |
+| `apiKeyEnv` | provider convention | environment variable containing a direct Anthropic/OpenAI API key |
+| `bedrockMantle` | `false` | `openai` only; use AWS credentials and Bedrock's OpenAI-compatible endpoint; mutually exclusive with `apiKeyEnv` |
+| `openaiApi` | `chat` | `openai` only; `chat` or `responses` |
+| `maxTokens` | `64000` | maximum output tokens |
+| `promptCache` | `true` | prompt caching, Claude only — see [Prompt caching](#prompt-caching) |
+| `promptCacheTtl` | provider default (5m on Bedrock) | `5m` or `1h`, applied to every cache point |
+| `thinkingEffort` | `high` | `low`, `medium`, `high`, `xhigh`, or `max`; changeable with `/effort` — see [Thinking effort](#thinking-effort) |
+| `classifierModel` | per provider | model id for `auto` mode's safety classifier |
+| `requestTimeoutMs` | `180000` | Bedrock only; idle timeout for one streaming request, reset whenever bytes arrive |
+
+### Session fields
+
+These fields always live at the config root and survive `/model` switches.
+
+| Field | Default | Notes |
+|---|---|---|
+| `permissionMode` | `default` | `default`, `auto`, `plan`, or `yolo` — see [Permissions](#permissions) |
 | `summaryRatio` | `0.8` | fraction of old messages summarized on context overflow |
 | `preserveRecentMessages` | `10` | messages the summarizer always keeps verbatim |
-| `permissionMode` | `default` | `default`, `auto`, `plan` or `yolo` — see [Permissions](#permissions) |
-| `permissionRules` | — | wildcard rules that pre-approve calls; written by the prompt's "always allow" — see [Remembering an answer](#remembering-an-answer) |
-| `promptCache` | `true` | prompt caching, Claude only — see [Prompt caching](#prompt-caching) |
-| `promptCacheTtl` | provider default (5m) | `5m` or `1h`, applied to every cache point |
-| `thinkingEffort` | `high` | how hard the model thinks — `low`, `medium`, `high`, `xhigh`, `max`; changeable with `/effort` — see [Thinking effort](#thinking-effort) |
-| `classifierModel` | per provider | model id for `auto` mode's safety classifier |
-| `requestTimeoutMs` | `180000` | Bedrock only — idle timeout for one streaming request; fails with "Stream timed out because of no activity" when nothing arrives for this long |
-| `systemPrompt` | built-in prompt | replaces the base system prompt; wins over `.darwin/system-prompt.md` — see [System prompt](#system-prompt) |
-| `trajectory` | `true` | record an append-only trajectory of every turn; set `false` to write nothing — see [Session trajectory](#session-trajectory) |
-| `diagnostics` | `false` | write this session's SDK `debug`/`info` output and darwin's notices to a per-session log — see [Session diagnostics](#session-diagnostics) |
-| `memory` | `false` | derive bounded project-scoped memory from eligible durable turns and enable local `/memory` management |
-| `memoryHorizonDays` | `28` | expire generated facts at this age; whole days `0–365`, where `0` disables age expiry but not exact source validation |
+| `contextWarnRatio` | `0.8` | recommend `/compact` after this fraction of a known context window; `0` disables the warning |
+| `contextOffload` | `false` | offload oversized tool results to resumable session storage instead of keeping the full result in context |
+| `maxResultTokens` | SDK default (`2500`) | offload threshold; valid only with `contextOffload: true` and must be greater than `1000` |
+| `trajectory` | `true` | append every turn to the session trajectory; `false` disables recording — see [Session trajectory](#session-trajectory) |
+| `diagnostics` | `false` | write SDK `debug`/`info` output and darwin notices to a per-session log — see [Session diagnostics](#session-diagnostics) |
+| `memory` | `true` when trajectory recording is available | derive bounded project memory from durable turns; set `false` to opt out; omitted memory follows `trajectory: false` — see [Project memory](#project-memory) |
+| `memoryHorizonDays` | `28` | generated-fact age limit; whole days `0–365`, where `0` disables age expiry but not source validation |
+| `systemPrompt` | built-in prompt | replaces the base prompt and wins over `.darwin/system-prompt.md` — see [System prompt](#system-prompt) |
+| `hooks` | — | legacy embedded hook fallback; prefer layered `hooks/*.json` files or `.darwin/hooks.json` |
 
-Switching providers is a config change only; no code names a provider.
+Permission allow-rules are deliberately **not** a field in this global file. They are scoped to the
+canonical project under `~/.darwin/projects/<project-key>/permission-rules.json`; the permission
+prompt and `/permissions` maintain that file. Putting `permissionRules` in `config.json` is a
+startup error rather than a global rule that silently applies to every repository.
 
 ### Bedrock
 
@@ -535,17 +591,17 @@ aws bedrock list-inference-profiles --region us-west-2 \
 
 ### Anthropic and OpenAI
 
-These providers need a peer dependency that is not installed by default, because a
-Bedrock-only setup should not have to carry them:
+Direct Anthropic API access requires the optional `@anthropic-ai/sdk` peer dependency; install it
+in this package before selecting `provider: "anthropic"`:
 
 ```bash
-pnpm add @anthropic-ai/sdk   # provider: "anthropic"
-pnpm add openai              # provider: "openai"
+pnpm add @anthropic-ai/sdk
 ```
 
-The agent tells you this if the package is missing. Point `apiKeyEnv` at the variable
-holding your key, or rely on each SDK's own convention (`ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`).
+OpenAI support is installed with darwin. For either direct provider, point `apiKeyEnv` at the
+environment variable holding your key or rely on the SDK convention (`ANTHROPIC_API_KEY` or
+`OPENAI_API_KEY`). With `provider: "openai"` and `bedrockMantle: true`, darwin instead uses the
+AWS credential chain, so `apiKeyEnv` must be omitted.
 
 ### Prompt caching
 
@@ -830,15 +886,14 @@ allow?  y  n  always: a=pnpm typecheck *  A=all bash  esc=deny
 ```
 
 `a` takes the narrow rule darwin derived from this very call, `A` the whole tool. Either
-one approves the call *and* appends the rule to `permissionRules.allow` in
-`~/.darwin/config.json`, so matching calls stop asking — in this session and every later one.
-The header then shows how many rules are live (`mode: default · 2 allow rule(s)`).
+one approves the call *and* appends it to the current project's
+`~/.darwin/projects/<project-key>/permission-rules.json`, so matching calls stop asking in this
+repository — in this session and every later one. The header then shows how many rules are live
+(`mode: default · 2 allow rule(s)`).
 
 ```json
 {
-  "permissionRules": {
-    "allow": ["bash:pnpm *", "fileEditor:src/**"]
-  }
+  "allow": ["bash:pnpm *", "fileEditor:src/**"]
 }
 ```
 

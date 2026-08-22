@@ -269,7 +269,10 @@ base is in effect.
 
 ## Learned project memory
 
-**Learned project memory is opt-in derived context, never authority** (`src/memory/`, `memory: true`).
+**Learned project memory is default-on derived context, never authority** (`src/memory/`).
+It is enabled when `memory` is omitted and trajectory recording is available; explicit `memory: false` opts
+out. For compatibility and privacy intent, `trajectory: false` with omitted memory also disables it, while
+explicit `memory: true` with `trajectory: false` is invalid because the requested source cannot exist.
 Only closed durable successful `endTurn` trajectory evidence is projected after the turn into bounded
 Markdown under `~/.darwin/projects/<project-key>/memory/`; trajectory bytes remain the append-only source
 and are never repaired or reinterpreted in place. Extraction is deterministic/offline, excludes reasoning

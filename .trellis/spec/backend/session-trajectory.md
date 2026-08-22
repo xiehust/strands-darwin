@@ -15,8 +15,10 @@ reading it tells you nothing about tool calls whose results were later compacted
 
 ## Derived learned-memory boundary (SER-031)
 
-Trajectory remains the immutable source record. Opt-in learned memory is a separate derived store under
-`~/.darwin/projects/<project-key>/memory/`; its reader never repairs, appends, or marks trajectory state.
+Trajectory remains the immutable source record. Default-on learned memory is a separate derived store under
+`~/.darwin/projects/<project-key>/memory/`; `memory: false` opts out. Because trajectory is the source,
+omitting memory alongside `trajectory: false` also disables memory, while explicitly combining
+`memory: true` with `trajectory: false` is invalid. Its reader never repairs, appends, or marks trajectory state.
 `TrajectoryRecorder` may invoke an optional synchronous/no-throw `onTurnDurable()` callback only after the
 closing turn batch append resolves. That callback may schedule work, but may not read or write synchronously
 on the stream path.

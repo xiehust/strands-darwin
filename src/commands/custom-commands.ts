@@ -34,7 +34,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // Configured servers with their connection state — a failed one is named as
   // failed here instead of silently contributing zero tools.
   mcp: 'MCP servers and their tools',
-  // Local inspection and explicit user management of opt-in project memory.
+  // Local inspection and explicit user management of enabled project memory.
   memory: 'list, show, remember, or forget project memory',
 
   // Session-scoped enforcement policy, not the model: /mode sits next to /model in

@@ -86,6 +86,7 @@ async function defaults(): Promise<void> {
     config.model === 'global.anthropic.claude-opus-5',
   );
   assert('a missing .darwin/config.json is not an error', true);
+  assert('learned project memory is enabled when the config file is missing', config.memory === true);
 
   // The preset is a catalogue, not a lone model: with no file at all `/model` must
   // still have something to switch between, and the entry in effect must be the
@@ -892,6 +893,43 @@ async function contextOffloadFields(): Promise<void> {
     justAbove.maxResultTokens === OFFLOAD_PREVIEW_TOKENS + 1);
 }
 
+async function memoryField(): Promise<void> {
+  header('config — learned project memory');
+
+  const defaultOn = await loadConfig(await writeConfig('{}'));
+  assert('omitting memory enables learned project memory', defaultOn.memory === true);
+
+  const off = await loadConfig(await writeConfig('{ "memory": false }'));
+  assert('explicit false opts out of learned project memory', off.memory === false);
+
+  const implicitOff = await loadConfig(await writeConfig('{ "trajectory": false }'));
+  assert('omitted memory follows an explicit trajectory opt-out',
+    implicitOff.trajectory === false && implicitOff.memory === false);
+
+  const incompatible = await expectConfigError('explicit memory requires its trajectory source', async () =>
+    loadConfig(await writeConfig('{ "memory": true, "trajectory": false }')),
+  );
+  assert('the incompatible error names both fields',
+    incompatible.includes('memory') && incompatible.includes('trajectory'));
+
+  const bad = await expectConfigError('a non-boolean memory value is refused', async () =>
+    loadConfig(await writeConfig('{ "memory": "yes" }')),
+  );
+  assert('the invalid memory error explains the boolean shape',
+    bad.includes('memory') && bad.includes('true or false'));
+
+  const misplaced = await expectConfigError('memory inside a models entry is refused', async () =>
+    loadConfig(await writeConfig(
+      '{ "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "memory": false }] }',
+    )),
+  );
+  assert('the misplaced memory error names the top-level placement',
+    misplaced.includes('memory') && misplaced.includes('top level'));
+
+  const switched = withModelChoice(defaultOn, defaultOn.modelChoices[0]!);
+  assert('a /model switch preserves default-on memory', switched.memory === true);
+}
+
 async function trajectoryField(): Promise<void> {
   header('config — session trajectory recording');
   const def = await loadConfig(await writeConfig('{}'));
@@ -979,6 +1017,7 @@ async function main(): Promise<void> {
   await contextWarnRatioField();
   await memoryHorizonField();
   await contextOffloadFields();
+  await memoryField();
   await trajectoryField();
   await diagnosticsField();
   await permissionModes();

@@ -344,7 +344,7 @@ export class AgentRuntime {
     private readonly trajectory: TrajectoryRecorder | undefined,
     /** Undefined unless `diagnostics: true` asked for the log. Off is the default. */
     private readonly diagnosticsLog: DiagnosticsLog | undefined,
-    /** Undefined unless `memory: true` opted into derived project context. */
+    /** Undefined only when effective config disables derived project context. */
     private readonly memoryScheduler: MemoryScheduler | undefined,
     readonly info: RuntimeInfo,
     /**
@@ -790,7 +790,7 @@ export class AgentRuntime {
     return this.diagnosticsLog?.status;
   }
 
-  /** Best-effort status of opt-in derived project memory. */
+  /** Best-effort status of enabled derived project memory. */
   get memoryStatus(): MemoryStatus | undefined {
     return this.memoryScheduler?.status;
   }
@@ -801,7 +801,7 @@ export class AgentRuntime {
    */
   async manageMemory(input: string): Promise<MemoryCommandResult> {
     if (this.liveConfig.memory !== true) {
-      return { changed: false, text: 'project memory is off — set memory: true in ~/.darwin/config.json to enable it' };
+      return { changed: false, text: 'project memory is off — remove memory: false if set, and enable trajectory recording in ~/.darwin/config.json' };
     }
     // Validate the current prompt shape before any disk mutation. A malformed restored
     // prompt must fail closed rather than narrow disk while leaving stale live context.
