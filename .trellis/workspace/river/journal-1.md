@@ -194,3 +194,24 @@ row that passed through the live tail was drawn once per repaint.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: Implement SER-031 distilled project memory
+
+**Date**: 2026-08-22
+**Task**: Implement SER-031 distilled project memory
+**Branch**: `main`
+
+### Summary
+
+Added opt-in bounded project-scoped Markdown memory derived asynchronously from eligible durable trajectory turns, with secret filtering, provenance, prompt integration, specs, and offline verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `73bc11b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
