@@ -278,3 +278,24 @@ Made learned project memory default-on when trajectory recording is available, p
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: SER-034 informational transcript contrast
+
+**Date**: 2026-08-22
+**Task**: SER-034 informational transcript contrast
+**Branch**: `main`
+
+### Summary
+
+Raised shared informational notice contrast with an accented durable marker, normal-intensity exact report text, forced-color regression coverage, and synchronized frontend contracts.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `af84a03` | (see git log) |
+
+### Status
+
+[OK] **Completed**
