@@ -1794,3 +1794,22 @@ correction task `input=60 output=7,925 cacheRead=4,501,524 cacheWrite=28,550`. A
 |---|---|---|
 | 2026-08-22 | `53d806f` | Render bounded honest startup motion immediately and atomically hand one Ink terminal to the ready App |
 | 2026-08-22 | `1526090` | Make resumed-startup verification suite-owned and semantic rather than dependent on SDK message-count metadata |
+
+
+
+### Batch 50 — parent structured progress checklist (2026-08-23)
+
+Origin: `docs/research/research_2026-08-23.md` run `2026-08-23T14:00:33Z`, rolled `peer` path. SER-036 (Score 11) addresses the absence of a bounded, user-visible statement of work progress during long multi-tool turns.
+
+Child session `session-20260823-140856961`. Managed implementation task `bg-20e52254-2bac-406c-b58a-2b9c53549e1b` exited 0 and delivered `1de577d` (+ task archive `20af308`, journal `6b5f0d7`): a parent-only `update_plan` tool accepts strict whole-list replacement (1–20 unique items, 200 code points/item, 2,000 total), is statically safe in every permission mode, and reaches neither child agents nor disk/config/session state. Successful ordinary tool events drive one transient row-budgeted live projection; turn end commits one bounded Static projection and clears live state. Ordinary call/result events remain the sole trajectory/replay evidence.
+
+Host inspection found one load-bearing defect before acceptance: each model-authored plan item was one logical `<Text>` but could wrap into several visual rows, exceeding its frame grant on a narrow terminal. Same-session focused correction task `bg-bb251cf6-5ccb-44c4-8e7c-a940d845b10e` exited 0 and delivered `6f9c1c7` (+ task archive `ae16f98`, journal `542462e`), applying explicit `truncate-end` to both live and final Static rows and adding adversarial 12-column long-item rendered-height checks.
+
+Host acceptance inspected both source diffs and independently re-ran `spike/verify-update-plan.tsx` (31/31), `spike/verify-frame-budget.ts` (77/77), `spike/verify-trajectory.ts` (267/267), `spike/verify-subagents.ts` (69/69), free pty `spike/verify-tui.ts updatePlan` (6/6), `pnpm typecheck`, full `pnpm test` (52 suite summaries, all green), and `pnpm build`; plus `git diff --check`, `git show --check`, clean-tree verification, and AGENTS.md size (22,816 bytes < 32 KiB). The first Host full-gate attempt hit the pre-existing high-load `verify-background-bash.ts` 3-second probe timeout; no bash implementation/test file changed, and the final complete gate passed its 118 checks. No provider call was needed for Host acceptance.
+
+Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 cacheWrite=180,190`; correction task `input=56 output=6,547 cacheRead=5,187,829 cacheWrite=201,094`. Aggregate: `input=416 output=43,711 cacheRead=25,075,766 cacheWrite=381,284`.
+
+| Date | Commit | Milestone |
+|---|---|---|
+| 2026-08-23 | `1de577d` | Add a strict parent-only progress tool with bounded live and final projections over ordinary SDK events |
+| 2026-08-23 | `6f9c1c7` | Make every checklist row structurally single-height and prove narrow-terminal row bounds |
