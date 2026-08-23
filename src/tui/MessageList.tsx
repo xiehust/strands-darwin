@@ -139,7 +139,11 @@ function HistoryEntry({ item }: { readonly item: HistoryItem }): React.JSX.Eleme
     case 'plan':
       return (
         <Box flexDirection="column" marginBottom={1}>
-          {finalPlanRows(item.plan).map((row, index) => <Text key={`${index}:${row}`}>{row}</Text>)}
+          {/* Final checklist items are bounded visual rows too: Static may scroll,
+              but a 200-code-point item must not silently multiply this block. */}
+          {finalPlanRows(item.plan).map((row, index) => (
+            <Text key={`${index}:${row}`} wrap="truncate-end">{row}</Text>
+          ))}
         </Box>
       );
   }

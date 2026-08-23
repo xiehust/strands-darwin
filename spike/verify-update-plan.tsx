@@ -127,11 +127,31 @@ try {
   const rows = planRows(longPlan, 4);
   assert('the formatter never exceeds its grant', rows.length === 4);
   assert('the bounded projection states the exact hidden count', rows.at(-1) === '… 6 more plan items');
-  const live = stripAnsi(renderToString(<PlanChecklist plan={longPlan} maxRows={4} />));
+  const live = stripAnsi(renderToString(<PlanChecklist plan={longPlan} maxRows={4} />, { columns: 80 }));
   assert('the live component renders exactly the granted rows', live.split('\n').length === 4);
   assert('ANSI-stripped markers retain completed and in-progress meaning', live.includes('[x] item 1') && live.includes('[>] item 2'));
+  const adversarialPlan = Array.from({ length: 12 }, (_, index) => ({
+    item: `${index}-${'narrow-long-'.repeat(15)}`,
+    status: 'pending' as const,
+  }));
+  const adversarialLive = stripAnsi(renderToString(
+    <PlanChecklist plan={adversarialPlan} maxRows={4} />,
+    { columns: 12 },
+  ));
+  assert('narrow long live items occupy the exact four-row grant', adversarialLive.split('\n').length === 4);
+  const adversarialState = {
+    ...state,
+    history: [{ kind: 'plan' as const, id: 'adversarial-plan', plan: adversarialPlan }],
+  };
+  const adversarialFinal = stripAnsi(renderToString(
+    <MessageList history={adversarialState.history} liveText="" liveCodeOpen={false} columns={12} maxLiveRows={0} staticEpoch={0} />,
+    { columns: 12 },
+  ));
+  assert('narrow long final items occupy twelve content rows plus the intentional history margin',
+    adversarialFinal.split('\n').length === 13);
   const final = stripAnsi(renderToString(
     <MessageList history={state.history} liveText="" liveCodeOpen={false} columns={80} maxLiveRows={0} staticEpoch={0} />,
+    { columns: 80 },
   ));
 
   header('update_plan — trajectory and replay use ordinary tool evidence only');

@@ -111,14 +111,18 @@ const withPlan = frameBudget({
   queued: { wanted: 3, floor: 0 },
   live: { wanted: 20, floor: 0 },
 });
-const renderedPlan = renderToString(React.createElement(PlanChecklist, {
-  plan: Array.from({ length: 20 }, (_, index) => ({ item: `item ${index}`, status: 'pending' as const })),
-  maxRows: withPlan.plan,
-}));
 assert('the plan grant is counted with every sibling in the shared budget',
   5 + 1 + withPlan.prompt + withPlan.tools + withPlan.plan + withPlan.queued + withPlan.live < 18);
-assert('the plan component draws no more rows than its exact grant',
-  renderedPlan === '' || renderedPlan.split('\n').length <= withPlan.plan);
+const adversarialPlanGrant = 4;
+const renderedPlan = renderToString(React.createElement(PlanChecklist, {
+  plan: Array.from({ length: 3 }, (_, index) => ({
+    item: `${index}-${'long-plan-'.repeat(18)}`,
+    status: 'pending' as const,
+  })),
+  maxRows: adversarialPlanGrant,
+}), { columns: 12 });
+assert('long plan items at narrow width draw exactly one visual row per granted row',
+  renderedPlan.split('\n').length === adversarialPlanGrant);
 
 const whileStreaming = frameBudget(streaming);
 assert('a 200-row draft is windowed rather than allowed to fill the frame',

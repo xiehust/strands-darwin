@@ -59,7 +59,10 @@ per further row with nothing streaming, and one in-flight call with details expa
 
 The latest successful `update_plan` replacement is transient `TurnState.livePlan`. It is a first-class
 frame participant after running tools and before the queue/answer: `wanted = item count + title`, floor
-1 when present. `PlanChecklist` receives only the exact grant and emits one `<Text>` per formatted row.
+1 when present. `PlanChecklist` receives only the exact grant and emits one
+`<Text wrap="truncate-end">` per formatted row, so a 200-code-point item is still one visual row at
+narrow widths. The final Static projection intentionally uses the same one-row truncation policy:
+its bounded item count is also an honest visual-row bound rather than an invitation to wrap.
 A one-row grant states `plan · N items`; a partial list spends its final granted row on
 `… N more plan items`, so hidden work is never silently cut. ASCII markers remain semantic without
 colour: `[ ]` pending, `[>]` in progress, `[x]` completed.
