@@ -383,3 +383,24 @@ Reframed the project landing page around self-iteration, self-development, and s
 ### Status
 
 [OK] **Completed**
+
+
+## Session 15: Implement SER-036 structured progress checklist
+
+**Date**: 2026-08-23
+**Task**: Implement SER-036 structured progress checklist
+**Branch**: `main`
+
+### Summary
+
+Added parent-only bounded update_plan state, shared-budget live and final Static projections, ordinary-event-only trajectory semantics, offline SDK and free pty acceptance, and synchronized architecture specs.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1de577d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
