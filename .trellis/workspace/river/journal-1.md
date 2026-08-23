@@ -362,3 +362,24 @@ Added a responsive one-shot DARWIN wordmark, unified the semantic accent palette
 ### Status
 
 [OK] **Completed**
+
+
+## Session 14: Restructure the bilingual README and user guide
+
+**Date**: 2026-08-23
+**Task**: Restructure the bilingual README and user guide
+**Branch**: `main`
+
+### Summary
+
+Reframed the project landing page around self-iteration, self-development, and self-evolution research; moved detailed usage contracts into a complete bilingual user guide; added factual repository metadata and verified links, parity, typecheck, and tests.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `101d316` | (see git log) |
+
+### Status
+
+[OK] **Completed**
