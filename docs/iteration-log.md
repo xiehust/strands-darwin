@@ -1813,3 +1813,14 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 |---|---|---|
 | 2026-08-23 | `1de577d` | Add a strict parent-only progress tool with bounded live and final projections over ordinary SDK events |
 | 2026-08-23 | `6f9c1c7` | Make every checklist row structurally single-height and prove narrow-terminal row bounds |
+
+
+## Batch 51 — SER-037 Escape prompt-UI dismissal
+
+- Child session: `session-20260823-144935764`
+- Managed task: `bg-4ec8d509-fdb8-4af6-9e02-fffb58dc46da` (succeeded, exit 0; no correction turn)
+- Child token spend: `input=330 output=53,684 cacheRead=20,828,775 cacheWrite=190,092`
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SER-037 | `635c712` implementation, `3082945` task archive, `34d0e28` journal | Host inspected the implementation and independently passed `verify-prompt-completion.ts` (11), `verify-help-command.ts` (25), `verify-frame-budget.ts` (77), free pty `completion` (66), `pathCompletion` (27), `recall` (22), `recallEmpty` (4), `compacting` (5), `permissionEscape` (3), `pnpm typecheck`, full `pnpm test`, `pnpm build`, Trellis archive validation, `git diff --check`, `git show --check` for all three commits, clean-tree verification, and AGENTS.md size (22,816 bytes < 32 KiB). |
