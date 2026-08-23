@@ -425,3 +425,24 @@ Made live and final Static checklist rows truncate at one visual row and added a
 ### Status
 
 [OK] **Completed**
+
+
+## Session 17: Implement SER-037 Escape prompt UI dismissal
+
+**Date**: 2026-08-23
+**Task**: Implement SER-037 Escape prompt UI dismissal
+**Branch**: `main`
+
+### Summary
+
+Added query-scoped Escape dismissal for slash/path completion and prompt recall while preserving permission and compaction ownership; updated bilingual references/specs and added pure plus offline real-pty coverage.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `635c712` | (see git log) |
+
+### Status
+
+[OK] **Completed**
