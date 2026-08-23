@@ -41,7 +41,11 @@ function turn(turn: number, request: string, answer: string): TrajectoryRecord[]
 }
 
 function text(history: Awaited<ReturnType<typeof loadResumeRecap>>): string {
-  return history.map((item) => item.kind === 'tool' ? `${item.summary}\n${item.preview}` : item.text).join('\n');
+  return history.map((item) => {
+    if (item.kind === 'tool') return `${item.summary}\n${item.preview}`;
+    if (item.kind === 'plan') return item.plan.map((entry) => entry.item).join('\n');
+    return item.text;
+  }).join('\n');
 }
 
 function sha256(value: Buffer): string {

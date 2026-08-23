@@ -50,6 +50,7 @@ import {
   type BackgroundTaskStatus,
 } from '../tools/background-bash.js';
 import { createImageViewerTool } from '../tools/image-viewer.js';
+import { createUpdatePlanTool } from '../tools/update-plan.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, type McpServerStatus } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
@@ -549,6 +550,9 @@ export class AgentRuntime {
       options.projectRoot,
       childTools.map((tool) => tool.name),
     );
+    // Progress belongs to the parent turn. Register only after the child catalogue
+    // and allowlists are fixed, so no child can author an unrelated checklist.
+    agent.toolRegistry.add(createUpdatePlanTool());
     const subagents = new SubagentTool({
       registry: agentDefinitions,
       tools: childTools,

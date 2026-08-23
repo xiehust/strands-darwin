@@ -642,6 +642,14 @@ export function classify(toolName: string, rawInput: unknown): PermissionRequest
         details: [{ label: 'Task', value: str(input['task']) ?? '(missing task)' }],
         input: rawInput,
       };
+    case 'update_plan':
+      return {
+        toolName,
+        kind: 'read',
+        summary: 'update_plan: replace progress checklist',
+        details: [],
+        input: rawInput,
+      };
     default:
       return {
         toolName,

@@ -15,6 +15,7 @@ import React from 'react';
 
 import { hiddenRowsNotice, liveTextView } from './live-text.js';
 import { markdownLines } from './markdown.js';
+import { finalPlanRows } from './plan-format.js';
 import { liveRowText, MarkdownAnswerText } from './MarkdownText.js';
 import { ToolCallResult } from './ToolCallPanel.js';
 import type { HistoryItem } from './turn-state.js';
@@ -132,6 +133,13 @@ function HistoryEntry({ item }: { readonly item: HistoryItem }): React.JSX.Eleme
               {visualMarker.notice[item.severity]} {item.text}
             </Text>
           )}
+        </Box>
+      );
+
+    case 'plan':
+      return (
+        <Box flexDirection="column" marginBottom={1}>
+          {finalPlanRows(item.plan).map((row, index) => <Text key={`${index}:${row}`}>{row}</Text>)}
         </Box>
       );
   }

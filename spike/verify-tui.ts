@@ -56,7 +56,7 @@ import { SKILLS_DIRNAME } from '../src/skills/loader.js';
 import { MAX_COMPLETIONS } from '../src/tui/InputBox.js';
 import { recordStream } from '../src/trajectory/stream.js';
 import { TrajectoryRecorder } from '../src/trajectory/writer.js';
-import { startTui, type TuiSession } from './tui-driver.js';
+import { REPO_ROOT, startTui, type TuiSession } from './tui-driver.js';
 import { assert, header, report } from './shared.js';
 
 /** A TUI that will not exit is a leaked-handle bug, so exits are bounded. */
@@ -2189,6 +2189,42 @@ async function planHeader(): Promise<void> {
  * A deliberately short terminal: 20 rows makes an over-tall live region certain
  * without needing a 500-line answer, and the header alone takes a third of it.
  */
+
+/** Free local-model pty proof for SER-036's live and Static checklist lifecycle. */
+async function updatePlanChecklist(): Promise<void> {
+  header('TUI — structured progress is bounded live and final in Static');
+  await resetWorkDir();
+  await writeHomeConfig({ permissionMode: 'yolo', trajectory: false });
+  const entry = path.join(REPO_ROOT, 'spike/fixtures/update-plan-cli.ts');
+  const tui = startTui({ cwd: WORK_DIR, entry, cols: 90, rows: 18 });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
+    const turn = tui.mark();
+    tui.submit('perform the fixture plan');
+    await tui.waitFor('latest item 1', { timeoutMs: 30_000, from: turn });
+    await tui.waitFor('… 4 more plan items', { timeoutMs: 30_000, from: turn, settleMs: 200 });
+    assert('the latest whole list is visible during the multi-tool turn',
+      tui.frame.includes('[x] latest item 1') && tui.frame.includes('[>] latest item 2'));
+    assert('the row-budgeted live view states its hidden item count', tui.frame.includes('… 4 more plan items'));
+    await waitForIdle(tui, 30_000);
+    const transcript = tui.screen.slice(turn);
+    assert('the final bounded list commits exactly once to Static', transcript.split('plan final · 8 items').length === 2);
+    assert('ANSI-stripped final markers retain status meaning',
+      transcript.includes('[x] latest item 1') && transcript.includes('[>] latest item 2'));
+
+    const next = tui.mark();
+    tui.submit('next turn');
+    await tui.waitFor('second turn done', { timeoutMs: 30_000, from: next });
+    await waitForIdle(tui, 30_000);
+    assert('the next live frame contains no stale checklist', !tui.frame.includes('plan · 8 items'));
+
+    tui.submit('/exit');
+    assert('updatePlan pty exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 async function longAnswer(): Promise<void> {
   header('TUI — a long streamed answer does not repaint the whole screen');
 
@@ -3175,6 +3211,7 @@ const SCENARIOS = {
   model: modelCommand,
   mode: modeCommand,
   plan: planHeader,
+  updatePlan: updatePlanChecklist,
   longAnswer,
   tallDraft,
   tallDraftStreaming,

@@ -510,6 +510,10 @@ For the records a file retains:
    snapshot.
 10. **A failed turn's stack trace, or anything else about the error beyond class, message and wrapped
     class.** The record keeps what identifies the failure, not where in darwin it surfaced.
+11. **The SER-036 final checklist projection.** `update_plan` already appears as its ordinary
+    `beforeToolCallEvent` and `afterToolCallEvent`; those are the sole durable evidence. The bounded
+    final checklist is TUI-only `<Static>` history and `formatReplay` deliberately omits it, so no
+    second record type or authoritative progress store exists.
 
 ## 9. Child isolation
 

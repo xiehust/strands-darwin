@@ -11,6 +11,7 @@
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { classify } from '../agent/permission.js';
+import { parsePlanInput, UPDATE_PLAN_TOOL_NAME, type PlanItem } from '../tools/update-plan.js';
 import {
   backgroundBashMode,
   compactBackgroundCallSummary,
@@ -62,7 +63,8 @@ export type HistoryItem =
        */
       diffStat?: { readonly added: number; readonly removed: number };
     }
-  | { kind: 'notice'; id: string; text: string; severity: NoticeSeverity };
+  | { kind: 'notice'; id: string; text: string; severity: NoticeSeverity }
+  | { kind: 'plan'; id: string; plan: readonly PlanItem[] };
 
 /**
  * Where one assistant entry sits in its answer.
@@ -120,6 +122,8 @@ export interface TurnState {
   /** True while the model is emitting reasoning rather than answer text. */
   thinking: boolean;
   activeTools: ActiveTool[];
+  /** Latest successful whole-list update in this turn; never persisted or replay-authored. */
+  livePlan: readonly PlanItem[];
   /** Session-local display preference; immutable Static history is never rewritten. */
   toolDetailsExpanded: boolean;
   /**
@@ -141,6 +145,7 @@ export const initialTurnState: TurnState = {
   committedAnswer: '',
   thinking: false,
   activeTools: [],
+  livePlan: [],
   toolDetailsExpanded: false,
   staticEpoch: 0,
 };
@@ -203,10 +208,21 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       };
     }
 
-    case 'turnEnded':
+    case 'turnEnded': {
       // Flush anything the model left unterminated (e.g. a cancelled turn) so it
-      // is not lost when the live area clears.
-      return { ...flushLiveText(state), thinking: false, activeTools: [] };
+      // is not lost when the live area clears. The final checklist is committed
+      // once, then live state is removed before any following user turn.
+      const flushed = flushLiveText(state);
+      return {
+        ...flushed,
+        thinking: false,
+        activeTools: [],
+        livePlan: [],
+        history: state.livePlan.length === 0
+          ? flushed.history
+          : [...flushed.history, { kind: 'plan', id: nextId('plan'), plan: state.livePlan }],
+      };
+    }
 
     case 'clear':
       // `/clear` starts a new session, so the transcript of the old one goes with it.
@@ -362,6 +378,10 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       const status: ToolStatus =
         event.result.status === 'error' ? (preview.startsWith('DENIED:') ? 'denied' : 'error') : 'ok';
       const activeTools = state.activeTools.filter((tool) => tool.id !== toolUseId);
+      const toolInput = active?.input ?? event.toolUse.input;
+      const plan = status === 'ok' && event.toolUse.name === UPDATE_PLAN_TOOL_NAME
+        ? parsePlanInput(toolInput)
+        : undefined;
 
       // Failures always retain the ordinary diagnostic. Compact presentation is
       // applied only after a successful manager result has been safely decoded.
@@ -397,7 +417,6 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       // the labelled projection. Only the live surfaces (active panel,
       // permission box) stay bounded, and other tools keep the bounded
       // `expandedToolInput` JSON.
-      const toolInput = active?.input ?? event.toolUse.input;
       const fullDiff = event.toolUse.name === 'fileEditor' ? fileEditorDiff(toolInput) : undefined;
       const fullProjection =
         event.toolUse.name === 'fileEditor' ? fileEditorInputProjection(toolInput) : undefined;
@@ -405,6 +424,7 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       return {
         ...state,
         activeTools,
+        livePlan: plan ?? state.livePlan,
         history: [
           ...state.history,
           {

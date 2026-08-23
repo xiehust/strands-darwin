@@ -55,6 +55,25 @@ per further row with nothing streaming, and one in-flight call with details expa
   cannot be used while a tall draft is up — clear the draft first.
 
 
+### Parent progress checklist (`SER-036`)
+
+The latest successful `update_plan` replacement is transient `TurnState.livePlan`. It is a first-class
+frame participant after running tools and before the queue/answer: `wanted = item count + title`, floor
+1 when present. `PlanChecklist` receives only the exact grant and emits one `<Text>` per formatted row.
+A one-row grant states `plan · N items`; a partial list spends its final granted row on
+`… N more plan items`, so hidden work is never silently cut. ASCII markers remain semantic without
+colour: `[ ]` pending, `[>]` in progress, `[x]` completed.
+
+`turnEnded` appends exactly one bounded `plan` history item to the existing `MessageList` `<Static>`
+owner and clears `livePlan` in the same reducer transition. Calling `turnEnded` again or starting the
+next user turn cannot duplicate or retain the live list. The final projection uses the same markers,
+shows at most 10 items plus title/hidden-count rows, and is TUI history only; replay/export retain the
+ordinary tool row and deliberately omit this UI-local final projection.
+
+Required checks: `spike/verify-frame-budget.ts`, `spike/verify-update-plan.tsx`, and free pty
+`spike/verify-tui.ts updatePlan`.
+
+
 ## Contract: startup owns the terminal before App, then leaves completely
 
 Interactive startup renders `StartupScreen` on one Ink instance before `AgentRuntime.create()`

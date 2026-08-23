@@ -28,6 +28,7 @@ const suites = [
   'verify-busy-suffix.ts',
   'verify-context-format.ts',
   'verify-background-tool-ui.ts',
+  'verify-update-plan.tsx',
   'verify-context-offload.ts',
   'verify-permission-presentation.ts',
   'verify-edit-diff.ts',

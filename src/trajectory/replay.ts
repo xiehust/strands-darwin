@@ -276,6 +276,10 @@ export function formatReplay(result: ReplayResult): string {
       case 'notice':
         lines.push(`  note ${item.text}`);
         break;
+      case 'plan':
+        // TUI-only final Static projection. Replay retains the ordinary
+        // update_plan tool call/result row as its sole durable evidence.
+        break;
     }
   }
 

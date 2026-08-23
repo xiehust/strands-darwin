@@ -113,6 +113,7 @@ import { createContextWarnLatch, formatContextReport } from './context-format.js
 import { formatHelpReport } from './help-format.js';
 import { formatMcpReport } from './mcp-format.js';
 import { formatPromptCache, formatStatusReport, formatThinking } from './status-format.js';
+import { PlanChecklist } from './PlanChecklist.js';
 import { initialTurnState, turnReducer, type HistoryItem, type TurnAction } from './turn-state.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
@@ -447,8 +448,13 @@ export function App({
       wanted: toolPanelWanted(activeToolClaims),
       floor: activeToolClaims.length > 0 ? 1 : 0,
     },
+    plan: {
+      wanted: state.livePlan.length === 0 ? 0 : state.livePlan.length + 1,
+      // One row still names the checklist and states its full item count.
+      floor: state.livePlan.length === 0 ? 0 : 1,
+    },
     // The queued listing (SER-027): one row per entry, cut entries stated by the
-    // plan's own notice row. Floor 0 — the busy hint's count keeps a fully cut
+    // queue's own notice row. Floor 0 — the busy hint's count keeps a fully cut
     // listing from going invisible.
     queued: { wanted: queueListWanted(queued.length), floor: 0 },
     // The answer yields first: it is the one participant whose content is already
@@ -1667,6 +1673,7 @@ export function App({
           columns={columns}
           maxRows={grants.tools}
         />
+        <PlanChecklist plan={state.livePlan} maxRows={grants.plan} />
 
         {/* Queued mid-turn submissions (SER-027), above the input box like the
             peer shape — and above the permission box too: the queue is held

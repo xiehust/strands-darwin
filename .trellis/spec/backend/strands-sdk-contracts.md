@@ -703,6 +703,25 @@ if (this.currentMode === 'auto') {
 }
 ```
 
+## Scenario: parent structured progress checklist (`SER-036`)
+
+- `update_plan` is a normal SDK custom tool and each call supplies the complete replacement list:
+  1–20 unique trimmed items, exact `item`/`status` keys, statuses `pending | in_progress |
+  completed`, at most 200 Unicode code points per item and 2,000 total. Its callback performs no
+  I/O and returns only a bounded acknowledgement.
+- Runtime assembly deliberately snapshots `childTools` and loads child allowlists **before** adding
+  `update_plan` to the initialized parent registry. Children never receive it, including a child
+  definition without an explicit allowlist. Only `AgentRuntime.create()` owns this split.
+- Permission classification is explicit `read`: the advisory tool does not prompt in
+  default/auto/plan/yolo, while unknown tools remain fail-closed and configured hooks still observe
+  ordinary tool calls.
+- The SDK's ordinary `beforeToolCallEvent` / `afterToolCallEvent` pair is the only cross-layer seam.
+  A successful after-event replaces transient TUI state; invalid or failed calls leave the last
+  valid list intact. There is no plan store, config key, resume state or trajectory record kind.
+- Required free checks: `spike/verify-update-plan.tsx` drives a real offline SDK Agent and the
+  assembled runtime; `spike/verify-tui.ts updatePlan` drives the real TUI with a local model fixture.
+
+
 
 ## Scenario: read-only local image inspection
 

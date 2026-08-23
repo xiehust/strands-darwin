@@ -21,6 +21,7 @@ import {
   moveCompletionSelection,
 } from '../src/tui/InputBox.js';
 import { PermissionPrompt } from '../src/tui/PermissionPrompt.js';
+import { PlanChecklist } from '../src/tui/PlanChecklist.js';
 import { ActiveToolCalls } from '../src/tui/ToolCallPanel.js';
 import { layoutEditor } from '../src/tui/prompt-editor.js';
 import { promptRecallIndicator } from '../src/tui/prompt-recall.js';
@@ -45,7 +46,7 @@ import { assert, header, report } from './shared.js';
 /** Rows the frame really draws for a set of grants. */
 function frameHeight(claims: FrameClaims): number {
   const grants = frameBudget(claims);
-  return claims.headerRows + claims.thinkingRows + grants.prompt + grants.tools + grants.live;
+  return claims.headerRows + claims.thinkingRows + grants.prompt + grants.tools + grants.plan + grants.queued + grants.live;
 }
 
 header('frame budget — the invariant, over every shape that reaches it');
@@ -99,6 +100,26 @@ const streaming: FrameClaims = {
   tools: { wanted: 0, floor: 0 },
   live: { wanted: 122, floor: 0 },
 };
+
+const withPlan = frameBudget({
+  rows: 18,
+  headerRows: 5,
+  thinkingRows: 1,
+  prompt: { wanted: 3, floor: 1 },
+  tools: { wanted: 4, floor: 1 },
+  plan: { wanted: 21, floor: 1 },
+  queued: { wanted: 3, floor: 0 },
+  live: { wanted: 20, floor: 0 },
+});
+const renderedPlan = renderToString(React.createElement(PlanChecklist, {
+  plan: Array.from({ length: 20 }, (_, index) => ({ item: `item ${index}`, status: 'pending' as const })),
+  maxRows: withPlan.plan,
+}));
+assert('the plan grant is counted with every sibling in the shared budget',
+  5 + 1 + withPlan.prompt + withPlan.tools + withPlan.plan + withPlan.queued + withPlan.live < 18);
+assert('the plan component draws no more rows than its exact grant',
+  renderedPlan === '' || renderedPlan.split('\n').length <= withPlan.plan);
+
 const whileStreaming = frameBudget(streaming);
 assert('a 200-row draft is windowed rather than allowed to fill the frame',
   whileStreaming.prompt < 200 && whileStreaming.prompt > 0);

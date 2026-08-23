@@ -71,6 +71,8 @@ export interface FrameClaims {
   readonly prompt: FrameClaim;
   /** Running tool calls. */
   readonly tools: FrameClaim;
+  /** Parent progress checklist, shown only after a successful update this turn. */
+  readonly plan?: FrameClaim;
   /**
    * Queued mid-turn submissions, listed above the input box (SER-027). Optional
    * because most frames have none; absent means `{ wanted: 0, floor: 0 }`.
@@ -83,6 +85,7 @@ export interface FrameClaims {
 export interface FrameGrants {
   readonly prompt: number;
   readonly tools: number;
+  readonly plan: number;
   readonly queued: number;
   readonly live: number;
   /**
@@ -94,28 +97,35 @@ export interface FrameGrants {
 }
 
 /**
- * Divides the rows below the header between prompt, tool panel, queued listing
- * and live answer.
+ * Divides the rows below the header between prompt, tool panel, parent plan,
+ * queued listing and live answer.
  *
  * A grant never exceeds what is left, so darwin never *chooses* to overflow: with
  * a viewport smaller than the furniture the frame still fits and the participants
  * render their degraded form. The only overflow this cannot prevent is a header
  * taller than the terminal, which this module does not own.
  *
- * The queued listing (SER-027) ranks after the tool panel and before the answer:
- * the user can act on it (`Up` takes it back), but its content is also stated as
- * a count on the busy hint, so cutting its rows never makes it invisible — while
- * the answer already lives in `<Static>` in full and still yields last of all.
+ * The parent plan ranks after the tool panel, then the queued listing (SER-027),
+ * then the answer. Plan and queue both state omitted content; the user can act on
+ * queued work (`Up` takes it back), while the answer already lives in `<Static>`
+ * in full and still yields last of all.
  */
 export function frameBudget(claims: FrameClaims): FrameGrants {
   const available = Math.max(0, claims.rows - SPARE_FRAME_ROW - claims.headerRows - claims.thinkingRows);
+  const planClaim = claims.plan ?? { wanted: 0, floor: 0 };
   const queuedClaim = claims.queued ?? { wanted: 0, floor: 0 };
 
   let remaining = available;
-  const prompt = grant(claims.prompt, remaining, claims.tools.wanted + queuedClaim.wanted + claims.live.wanted);
+  const prompt = grant(
+    claims.prompt,
+    remaining,
+    claims.tools.wanted + planClaim.wanted + queuedClaim.wanted + claims.live.wanted,
+  );
   remaining -= prompt;
-  const tools = grant(claims.tools, remaining, queuedClaim.wanted + claims.live.wanted);
+  const tools = grant(claims.tools, remaining, planClaim.wanted + queuedClaim.wanted + claims.live.wanted);
   remaining -= tools;
+  const plan = grant(planClaim, remaining, queuedClaim.wanted + claims.live.wanted);
+  remaining -= plan;
   const queued = grant(queuedClaim, remaining, claims.live.wanted);
   remaining -= queued;
   const live = Math.max(0, Math.min(claims.live.wanted, remaining));
@@ -123,11 +133,13 @@ export function frameBudget(claims: FrameClaims): FrameGrants {
   return {
     prompt,
     tools,
+    plan,
     queued,
     live,
     degraded:
       prompt < Math.min(claims.prompt.floor, claims.prompt.wanted) ||
       tools < Math.min(claims.tools.floor, claims.tools.wanted) ||
+      plan < Math.min(planClaim.floor, planClaim.wanted) ||
       queued < Math.min(queuedClaim.floor, queuedClaim.wanted) ||
       live < Math.min(claims.live.floor, claims.live.wanted),
   };
