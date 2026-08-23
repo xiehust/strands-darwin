@@ -404,3 +404,24 @@ Added parent-only bounded update_plan state, shared-budget live and final Static
 ### Status
 
 [OK] **Completed**
+
+
+## Session 16: Correct SER-036 checklist row budgeting
+
+**Date**: 2026-08-23
+**Task**: Correct SER-036 checklist row budgeting
+**Branch**: `main`
+
+### Summary
+
+Made live and final Static checklist rows truncate at one visual row and added adversarial narrow-width rendered-height coverage.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6f9c1c7` | (see git log) |
+
+### Status
+
+[OK] **Completed**

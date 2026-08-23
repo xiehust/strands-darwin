@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-08-23
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~406 | Active |
+| `journal-1.md` | ~427 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-08-23 | Correct SER-036 checklist row budgeting | `6f9c1c7` | `main` |
 | 15 | 2026-08-23 | Implement SER-036 structured progress checklist | `1de577d` | `main` |
 | 14 | 2026-08-23 | Restructure the bilingual README and user guide | `101d316` | `main` |
 | 13 | 2026-08-22 | Modern premium TUI welcome | `0c852bc` | `main` |
