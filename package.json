@@ -19,6 +19,14 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiehust/strands-darwin.git"
+  },
+  "homepage": "https://github.com/xiehust/strands-darwin#readme",
+  "bugs": {
+    "url": "https://github.com/xiehust/strands-darwin/issues"
+  },
   "dependencies": {
     "@aws/bedrock-token-generator": "^1.1.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
