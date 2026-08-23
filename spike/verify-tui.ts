@@ -18,7 +18,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | chunkedEnter | compacting | cursor | completion |
+ *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | cursor | completion |
  *                 pathCompletion | recall | recallEmpty | resume | bang | queue | clear | mcpStderr | mcp |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
@@ -743,7 +743,7 @@ async function compactingInputOwnership(): Promise<void> {
     await tui.waitFor('compacting conversation…', { timeoutMs: 60_000, from: compact, settleMs: 400 });
     assert('the compacting editor hides the terminal cursor', tui.cursorVisible === false);
 
-    tui.send('blocked-keys\u001b[D\u007f');
+    tui.send('blocked-keys\u001b\u001b[D\u007f');
     tui.send('\u001b[200~blocked-paste\u001b[201~');
     await tui.waitFor(/conversation (?:compacted|already compact)/, {
       timeoutMs: 240_000,
@@ -761,6 +761,40 @@ async function compactingInputOwnership(): Promise<void> {
     tui.kill();
   }
 }
+
+/** Permission input precedence stays above prompt-UI Escape dismissal, offline. */
+async function permissionEscape(): Promise<void> {
+  header('TUI — Escape still denies a permission prompt');
+
+  const dir = '/tmp/darwin-permission-escape-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  const tui = startTui({
+    cwd: dir,
+    entry: path.join(REPO_ROOT, 'spike', 'fixtures', 'permission-escape-cli.ts'),
+  });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const turnStart = tui.mark();
+    tui.submit('trigger the fixture permission call');
+    await tui.waitFor('allow?', { timeoutMs: 60_000, from: turnStart, settleMs: 400 });
+    const afterEscape = tui.mark();
+    tui.send('\u001b');
+    await tui.waitFor('permission escape denied', { timeoutMs: 60_000, from: afterEscape, settleMs: 400 });
+    await waitForIdle(tui, 60_000);
+    assert('permission Escape denies rather than reaching prompt dismissal',
+      tui.screen.slice(afterEscape).includes('permission escape denied'));
+    assert('the denied command never runs', !existsSync(path.join(dir, 'permission-escape-sentinel.txt')));
+
+    tui.submit('/exit');
+    assert('permission Escape scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 
 /** Keyboard cursor editing is local and makes no model call. */
 async function cursorEditing(): Promise<void> {
@@ -991,6 +1025,35 @@ async function slashCompletion(): Promise<void> {
     const beforeSlash = tui.mark();
     tui.send('/');
     await tui.waitFor('commands (', { timeoutMs: 30_000, from: beforeSlash });
+
+    // Escape dismisses only this query generation. The draft is exact, the second
+    // press is inert, and the next edit re-arms completion without a submission.
+    const beforeDismiss = tui.mark();
+    tui.send('\u001b');
+    await tui.waitUntil(() => tui.frame.includes('you> /') && !tui.frame.includes('commands ('), {
+      timeoutMs: 30_000,
+      from: beforeDismiss,
+      settleMs: 400,
+      label: 'slash completion dismissed with draft preserved',
+    });
+    assert('Escape closes slash completion without changing or submitting the draft',
+      tui.frame.includes('you> /') && !tui.screen.slice(beforeDismiss).includes('working…'));
+    const afterFirstEscape = tui.frame;
+    tui.send('\u001b');
+    await settle();
+    assert('a second Escape on the dismissed slash query is inert', tui.frame === afterFirstEscape);
+    tui.send('\t\u001b[B');
+    await settle();
+    assert('Tab and arrows do not act on a dismissed slash menu',
+      tui.frame === afterFirstEscape && !tui.screen.slice(beforeDismiss).includes('working…'));
+    const beforeRearm = tui.mark();
+    tui.send('r');
+    await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
+    assert('editing a dismissed slash query reopens completion at the unchanged cursor',
+      tui.frame.includes('you> /r') && tui.frame.includes('commands ('));
+    tui.send('\u007f');
+    await tui.waitFor('❯ /agents', { timeoutMs: 30_000, settleMs: 400 });
+
     // The six-row menu truncates the full catalogue, so narrow once for each
     // project-defined kind rather than mistaking warning/header text for a row.
     const beforeCustom = tui.mark();
@@ -1172,6 +1235,30 @@ async function pathCompletion(): Promise<void> {
     assert('dist never appears', !opened.includes('dist/'));
     assert('a symlink out of the project never appears', !opened.includes('escape'));
 
+    const beforeDismiss = tui.mark();
+    tui.send('\u001b');
+    await tui.waitUntil(() => tui.frame.includes('you> @') && !tui.frame.includes('files ('), {
+      timeoutMs: 30_000,
+      from: beforeDismiss,
+      settleMs: 400,
+      label: 'path completion dismissed with draft preserved',
+    });
+    assert('Escape closes path completion without changing or submitting the draft',
+      tui.frame.includes('you> @') && !tui.screen.slice(beforeDismiss).includes('working…'));
+    const afterFirstEscape = tui.frame;
+    tui.send('\u001b');
+    await settle();
+    assert('a second Escape on the dismissed path query is inert', tui.frame === afterFirstEscape);
+    tui.send('\t\u001b[B');
+    await settle();
+    assert('Tab and arrows do not act on a dismissed path menu', tui.frame === afterFirstEscape);
+    const beforeRearm = tui.mark();
+    tui.send('s');
+    await tui.waitFor('files (', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
+    assert('editing a dismissed path query reopens completion at the unchanged cursor',
+      tui.frame.includes('you> @s') && tui.frame.includes('files ('));
+    tui.send('\u007f');
+    await tui.waitFor('❯ notes.md', { timeoutMs: 30_000, settleMs: 400 });
 
     // Walk beyond the bounded prefix and accept the visibly selected path with Tab.
     const beforePathWindow = tui.mark();
@@ -2665,6 +2752,36 @@ async function promptRecall(): Promise<void> {
     assert('the duplicate submission collapsed, so Up reaches the previous distinct prompt',
       tui.frame.includes('you> RECALL_MIDDLE prompt') && /history 2\/3/.test(tui.frame));
 
+    const beforeRecallDismiss = tui.mark();
+    tui.send('\u001b');
+    await tui.waitUntil(
+      () => tui.frame.includes('you> RECALL_MIDDLE prompt') && !tui.frame.includes('history 2/3'),
+      {
+        timeoutMs: 30_000,
+        from: beforeRecallDismiss,
+        settleMs: 400,
+        label: 'recall walk dismissed with recalled draft preserved',
+      },
+    );
+    assert('Escape ends recall while retaining the currently recalled prompt',
+      tui.frame.includes('you> RECALL_MIDDLE prompt') && !tui.screen.slice(beforeRecallDismiss).includes('working…'));
+    const dismissedRecall = tui.frame;
+    tui.send('\u001b\u001b[B');
+    await settle();
+    assert('later arrows use ordinary cursor eligibility after recall dismissal', tui.frame === dismissedRecall);
+
+    // Clear the retained prompt and reopen the walk so the remaining navigation
+    // assertions continue from the same middle entry as before dismissal.
+    tui.send('\u0015');
+    await tui.waitUntil(() => !tui.frame.includes('RECALL_MIDDLE prompt'), {
+      timeoutMs: 10_000,
+      label: 'retained recalled draft cleared before reopening recall',
+    });
+    tui.send('\u001b[A');
+    await tui.waitFor('you> RECALL_NEWEST prompt', { timeoutMs: 30_000, settleMs: 400 });
+    tui.send('\u001b[A');
+    await tui.waitFor('you> RECALL_MIDDLE prompt', { timeoutMs: 30_000, settleMs: 400 });
+
     const beforeThird = tui.mark();
     tui.send('\u001b[A');
     await tui.waitFor('you> RECALL_OLDEST from an earlier session', { timeoutMs: 30_000, from: beforeThird, settleMs: 400 });
@@ -3191,6 +3308,7 @@ const SCENARIOS = {
   multiline: multilineInput,
   chunkedEnter,
   compacting: compactingInputOwnership,
+  permissionEscape,
   cursor: cursorEditing,
   completion: slashCompletion,
   pathCompletion,

@@ -73,6 +73,7 @@ Print-only options: `--context-offload`, positive `--max-model-calls <n>`, `--co
 | `Ctrl+J`, trailing `\` + `Enter` | newline; multiline paste keeps all lines |
 | `Tab` | accept selected completion |
 | `Up` / `Down` | menu first; then queue take-back, recall, or multiline cursor |
+| `Escape` | close current completion menu or end recall; preserve draft/cursor (permission prompt still denies) |
 | `Home` / `End`, `Ctrl+A` / `Ctrl+E` | visible-row start/end |
 | `Ctrl+K` / `Ctrl+U` | delete to row end/start |
 | `Ctrl+W` | delete previous word |

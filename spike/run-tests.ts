@@ -6,6 +6,7 @@ import path from 'node:path';
 
 const suites = [
   'verify-prompt-editor.ts',
+  'verify-prompt-completion.ts',
   'verify-live-text.ts',
   'verify-frame-budget.ts',
   'verify-startup-screen.tsx',

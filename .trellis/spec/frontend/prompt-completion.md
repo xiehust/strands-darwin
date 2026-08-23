@@ -54,11 +54,30 @@ start of the draft or whitespace.
 `computeCompletions` (slash commands) is computed first and **wins whenever it is non-empty**; the
 path query is consulted only then. A third owner of `Up`/`Down` joined them in `SER-015` and is
 behind both: while a menu is open the arrows select rows, and prompt recall is only consulted after
-those branches have declined the key (`prompt-recall.md`). `computeCompletions` itself is untouched by this feature —
-including its "the input must start with `/` and contain no space" rule — and
+those branches have declined the key (`prompt-recall.md`). `computeCompletions` moves into the pure
+`prompt-completion.ts` seam without changing its "the input must start with `/` and contain no space"
+rule, and
 `verify-tui.ts completion` remains the check that every built-in is still visible. `/help`
 is a built-in row and its command section projects `BUILTIN_COMMAND_NAMES` plus
 `BUILTIN_COMMAND_DESCRIPTIONS` directly; it must never own a second name/description inventory.
+
+## Contract: Escape dismisses one query generation
+
+`Escape` closes the completion rows currently offered by either source without editing the draft or
+cursor. The suppression key is the pure query identity from `promptCompletionState`, mirrored beside
+the editor so several stdin events in one React pass see the same answer. It is not a general
+"completion off" flag:
+
+- the same slash/path query stays closed, so a second `Escape` is inert;
+- an edit or cursor move that produces a different query identity re-arms completion immediately;
+- Tab, Enter, and arrows consult the same mirrored visibility before acting, so a dismissed menu
+  cannot be accepted or navigated from a stale render;
+- dismissal performs no submit, queue/runtime/trajectory mutation, notice, path rescan, or frame-row
+  addition. The menu simply stops claiming its existing rows.
+
+Permission ownership is earlier in `App.useInput`, so permission `Escape` still denies. Compaction's
+input-ownership return is also earlier, so editor `Escape` is ignored while compaction runs.
+
 `MAX_COMPLETIONS` grows with the canonical list so adding help cannot hide the previous tail.
 
 `InputBox` therefore takes a `completionKind`: a command row is `/name — description`, a path row is

@@ -113,9 +113,14 @@ that could drift:
    prompt moves up its rows and only then steps further back, while typing, pasting,
    backspace/delete, `Ctrl+K`/`Ctrl+U`, `Ctrl+W`, accepting a completion and submitting all hand the
    draft back to the user (`endRecall`).
-5. **The walk never wraps.** At the oldest entry `Up` holds still and the row says `(oldest)`;
+5. **`Escape` ends a walk without editing its draft.** An open completion menu owns Escape first;
+   otherwise `App` clears only the mirrored recall state. The currently recalled prompt and cursor
+   remain exact, no notice/record/submission is emitted, and later arrows use ordinary non-walk
+   recall eligibility or cursor movement.
+
+6. **The walk never wraps.** At the oldest entry `Up` holds still and the row says `(oldest)`;
    wrapping to the newest is how a walk loses the user's place.
-6. A recalled entry lands with the **cursor at its end**, which is what makes rule 2's "first visual
+7. A recalled entry lands with the **cursor at its end**, which is what makes rule 2's "first visual
    row" reachable for a one-row prompt and rule 4's row-walk natural for a multi-row one.
 
 The walk itself (`src/tui/prompt-recall.ts`) is pure and synchronous — `openPromptRecall`,

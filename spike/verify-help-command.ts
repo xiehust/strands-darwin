@@ -45,6 +45,8 @@ const facts = [
   'Ctrl+J or trailing \\ + Enter inserts a newline',
   'multiline paste never submits',
   'completion · Up queued-message take-back · prompt recall · cursor movement',
+  'Esc closes the current completion menu or ends prompt recall',
+  'draft stays unchanged',
   'Home/End or Ctrl+A/E',
   'Ctrl+K/U deletes to the row end/start',
   'Ctrl+W deletes the previous word',

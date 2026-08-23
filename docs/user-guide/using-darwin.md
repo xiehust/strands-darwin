@@ -14,6 +14,7 @@ While a turn runs, the existing `working…`/`thinking…` row shows elapsed tim
 - `@` scans the workspace asynchronously and inserts path text only. It never opens or injects the file; `.git`, `node_modules`, escaping symlinks, and large scans are bounded/excluded.
 - `Up`/`Down` first control an open menu; otherwise `Up` can take back the oldest queued message, then recall sent trajectory prompts from this project, or move in a multiline draft.
 - Recall contains sent `userInput` records only, newest first, collapses consecutive duplicates, and excludes entries over 4,000 code points. No trajectory means no history, not an error.
+- `Escape` closes the current `/` or `@` completion menu without changing the draft or cursor. Editing the query opens completion again. During recall, `Escape` ends the walk but keeps the recalled prompt in the editor.
 - `Ctrl+J` or trailing `\` + `Enter` inserts a newline. Multiline paste does not send unexpectedly.
 
 ## Queueing while busy

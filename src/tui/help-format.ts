@@ -34,6 +34,7 @@ export function formatHelpReport(): string {
     '  !<command> runs your shell command locally (not as a model tool call)',
     '  Enter sends · Ctrl+J or trailing \\ + Enter inserts a newline · multiline paste never submits',
     '  Up/Down precedence: completion · Up queued-message take-back · prompt recall · cursor movement',
+    '  Esc closes the current completion menu or ends prompt recall; the draft stays unchanged',
     'editing and session:',
     '  Home/End or Ctrl+A/E moves to the visible row edge',
     '  Ctrl+K/U deletes to the row end/start · Ctrl+W deletes the previous word',

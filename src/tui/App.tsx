@@ -85,12 +85,14 @@ import {
 import {
   NO_WORKSPACE_PATHS,
   applyPathCompletion,
-  matchWorkspacePaths,
-  pathCompletionQuery,
   scanWorkspacePaths,
   workspacePathsNote,
   type WorkspacePaths,
 } from './path-completion.js';
+import {
+  promptCompletionState,
+  visiblePromptCompletions,
+} from './prompt-completion.js';
 import {
   openPromptRecall,
   promptRecallIndicator,
@@ -202,19 +204,46 @@ export function App({
     [recordAction, runtime],
   );
   const [status, setStatus] = useState<Status>('idle');
+  const [workspacePaths, setWorkspacePaths] = useState<WorkspacePaths>(NO_WORKSPACE_PATHS);
+  const commandNames = useMemo(
+    () => [
+      ...BUILTIN_COMMAND_NAMES,
+      ...runtime.info.commandNames,
+      ...runtime.info.skillNames,
+    ],
+    [runtime],
+  );
+  // Escape suppresses one computed query generation, not the draft. Mirrors are
+  // required for the same reason as the editor/selection mirrors: a second batched
+  // key must see the first Escape before React commits its render.
+  const [dismissedCompletion, setDismissedCompletionState] = useState<string | undefined>(undefined);
+  const dismissedCompletionRef = useRef(dismissedCompletion);
+  const setDismissedCompletion = useCallback((next: string | undefined) => {
+    dismissedCompletionRef.current = next;
+    setDismissedCompletionState(next);
+  }, []);
   const [editor, setEditorState] = useState<EditorValue>({
     text: '',
     cursor: { offset: 0, affinity: 'downstream' },
   });
   // React may render after several stdin events have already arrived. Keep one
   // immediate editor mirror so batched events cannot read different generations
-  // of the draft and cursor.
+  // of the draft and cursor. A change that creates a different query generation
+  // re-arms completion immediately; Escape itself never calls this setter.
   const editorRef = useRef(editor);
   const setEditor = useCallback((next: EditorValue | ((current: EditorValue) => EditorValue)) => {
-    const value = typeof next === 'function' ? next(editorRef.current) : next;
+    const current = editorRef.current;
+    const value = typeof next === 'function' ? next(current) : next;
     editorRef.current = value;
+    if (dismissedCompletionRef.current !== undefined && (
+      value.text !== current.text || value.cursor.offset !== current.cursor.offset ||
+      value.cursor.affinity !== current.cursor.affinity
+    )) {
+      const changedCompletion = promptCompletionState(value, commandNames, workspacePaths);
+      if (changedCompletion.identity !== dismissedCompletionRef.current) setDismissedCompletion(undefined);
+    }
     setEditorState(value);
-  }, []);
+  }, [commandNames, setDismissedCompletion, workspacePaths]);
   const draft = editor.text;
   const layout = layoutEditor(draft, columns, editor.cursor);
   const preferredColumn = useRef<number | undefined>(undefined);
@@ -297,20 +326,11 @@ export function App({
   const effectiveStatus: Status = pendingPermission !== undefined ? 'awaiting-permission' : status;
 
   // Built-ins stay first, then project commands, then skills. Collision filtering
-  // happens in the command loader so every row here is actually invokable.
-  const commandCompletions = computeCompletions(draft, [
-    ...BUILTIN_COMMAND_NAMES,
-    ...runtime.info.commandNames,
-    ...runtime.info.skillNames,
-  ]);
-
-  // The second source, consulted only when the first has nothing: a `/prefix` and an
-  // `@` mention cannot both be under the cursor, but deciding it in one place keeps
-  // "which menu is this" a fact rather than a coincidence of two predicates.
-  const pathQuery = commandCompletions.length > 0
-    ? undefined
-    : pathCompletionQuery(draft, editor.cursor.offset);
-  const [workspacePaths, setWorkspacePaths] = useState<WorkspacePaths>(NO_WORKSPACE_PATHS);
+  // happens in the command loader so every row here is actually invokable. Both
+  // candidate sources share one query identity so Escape can suppress only this
+  // generation without mutating the editor.
+  const completionState = promptCompletionState(editor, commandNames, workspacePaths);
+  const pathQuery = completionState.pathQuery;
   // Scan bookkeeping lives in a ref so a finished scan cannot re-trigger the effect
   // that started it. Keyed on the project root: `/clear` hands over a new runtime
   // for the same tree, and re-reading it for that would be work for nothing.
@@ -341,11 +361,6 @@ export function App({
         state.scannedAt = Date.now();
       });
   }, [pathMenuOpen, runtime]);
-
-  const pathCompletions = useMemo(
-    () => (pathQueryText === undefined ? [] : matchWorkspacePaths(workspacePaths.paths, pathQueryText)),
-    [pathQueryText, workspacePaths],
-  );
 
   // Prompt recall. `undefined` history means "not read yet", which is a different
   // answer from an empty reading and is stated as such on the indicator row: claiming
@@ -383,8 +398,8 @@ export function App({
       });
   }, [runtime]);
 
-  const completionKind: CompletionKind = commandCompletions.length > 0 ? 'command' : 'path';
-  const completions = completionKind === 'command' ? commandCompletions : pathCompletions;
+  const completionKind: CompletionKind = completionState.kind;
+  const completions = visiblePromptCompletions(completionState, dismissedCompletion);
   const completionNote =
     completionKind === 'path' && completions.length > 0 ? workspacePathsNote(workspacePaths) : undefined;
   // One row while a walk is open, composed where the walk lives so the budget below and
@@ -1235,33 +1250,28 @@ export function App({
     if (recallRef.current !== undefined) setRecall(undefined);
   }, [setRecall]);
 
+  const currentPromptCompletions = useCallback(() => {
+    const completion = promptCompletionState(editorRef.current, commandNames, workspacePaths);
+    return {
+      completion,
+      candidates: visiblePromptCompletions(completion, dismissedCompletionRef.current),
+    };
+  }, [commandNames, workspacePaths]);
+
   const acceptCompletion = useCallback(() => {
-    // Recompute from the immediate editor mirror for the same batched-input reason
-    // path splicing does below. Arrow events may have advanced the ref before React
-    // commits the render that derives `completions`; acceptance must use that row's
-    // candidate source, not a stale closure from the frame before navigation.
-    const currentCommandCompletions = computeCompletions(editorRef.current.text, [
-      ...BUILTIN_COMMAND_NAMES,
-      ...runtime.info.commandNames,
-      ...runtime.info.skillNames,
-    ]);
-    const currentPathQuery = currentCommandCompletions.length > 0
-      ? undefined
-      : pathCompletionQuery(editorRef.current.text, editorRef.current.cursor.offset);
-    const currentCompletionKind: CompletionKind = currentCommandCompletions.length > 0 ? 'command' : 'path';
-    const currentCompletions = currentCompletionKind === 'command'
-      ? currentCommandCompletions
-      : currentPathQuery === undefined
-        ? []
-        : matchWorkspacePaths(workspacePaths.paths, currentPathQuery.text);
+    // Recompute from the immediate editor and dismissal mirrors for the same
+    // batched-input reason path splicing does below. Arrow events or Escape may
+    // have advanced those refs before React commits the render that derives
+    // `completions`; acceptance must not act on that stale frame.
+    const { completion: currentCompletion, candidates: currentCompletions } = currentPromptCompletions();
     const selected = completionSelection(selectedCompletionRef.current, currentCompletions.length);
     const chosen = currentCompletions[selected];
     if (chosen === undefined) return;
-    if (currentCompletionKind === 'path') {
+    if (currentCompletion.kind === 'path') {
       // Re-derived from the immediate editor mirror rather than from the render's
       // `pathQuery`: several stdin events can be batched into one React pass, and
       // splicing a path at an offset the draft has moved past would corrupt it.
-      const query = pathCompletionQuery(editorRef.current.text, editorRef.current.cursor.offset);
+      const query = currentCompletion.pathQuery;
       if (query === undefined) return;
       // Text, and only text. Nothing about the chosen path is opened, stat-ed for
       // content or sent anywhere — the whole point of the Codex shape over
@@ -1273,7 +1283,7 @@ export function App({
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
     endRecall();
-  }, [endRecall, runtime, setEditor, setSelectedCompletion, workspacePaths]);
+  }, [currentPromptCompletions, endRecall, setEditor, setSelectedCompletion]);
 
   /**
    * Puts a recalled prompt in the draft, cursor at its end.
@@ -1449,6 +1459,21 @@ export function App({
     // display-only controls above still work; no draft operation below does.
     if (status === 'compacting') return;
 
+    // Escape belongs to the highest transient prompt UI currently shown. A menu
+    // wins over recall just as it wins the arrow keys; neither branch touches the
+    // editor, submits, dispatches, or changes the queue/runtime. The dismissed query
+    // is read from the immediate editor mirror so batched Escape/text is coherent.
+    if (key.escape) {
+      const { completion: currentCompletion, candidates: visible } = currentPromptCompletions();
+      if (visible.length > 0 && currentCompletion.identity !== undefined) {
+        setDismissedCompletion(currentCompletion.identity);
+        setSelectedCompletion(0);
+      } else {
+        endRecall();
+      }
+      return;
+    }
+
     // Readline-style editing chords. After permission ownership (a pending
     // prompt still owns 'a'/'e'), before the generic ctrl/meta ignore below.
     if (key.ctrl && (typed === 'a' || typed === 'e')) {
@@ -1497,8 +1522,9 @@ export function App({
       }
 
       // With a completion highlighted, Enter accepts it rather than submitting a
-      // half-typed skill name.
-      if (completions.length > 0) {
+      // half-typed skill name. Consult the immediate mirrors: Escape and Enter can
+      // arrive in one stdin batch before `completions` re-renders as empty.
+      if (currentPromptCompletions().candidates.length > 0) {
         acceptCompletion();
         return;
       }
@@ -1558,18 +1584,19 @@ export function App({
       return;
     }
 
-    if (key.tab && completions.length > 0) {
+    const immediateCompletionCount = currentPromptCompletions().candidates.length;
+    if (key.tab && immediateCompletionCount > 0) {
       acceptCompletion();
       return;
     }
 
-    if (key.upArrow && completions.length > 0) {
-      setSelectedCompletion((i) => moveCompletionSelection(i, completions.length, -1));
+    if (key.upArrow && immediateCompletionCount > 0) {
+      setSelectedCompletion((i) => moveCompletionSelection(i, immediateCompletionCount, -1));
       return;
     }
 
-    if (key.downArrow && completions.length > 0) {
-      setSelectedCompletion((i) => moveCompletionSelection(i, completions.length, 1));
+    if (key.downArrow && immediateCompletionCount > 0) {
+      setSelectedCompletion((i) => moveCompletionSelection(i, immediateCompletionCount, 1));
       return;
     }
 
@@ -2436,14 +2463,4 @@ export function resolveModelChoice(
   );
   if (partial.length === 1) return partial[0];
   return partial.length > 1 ? 'ambiguous' : undefined;
-}
-
-/** Command names matching a `/prefix`, or none when the input is not a bare command. */
-export function computeCompletions(input: string, commandNames: readonly string[]): string[] {
-  if (!input.startsWith('/')) return [];
-  // Once there is a space the command is complete and arguments are being typed.
-  if (input.includes(' ')) return [];
-
-  const prefix = input.slice(1).toLowerCase();
-  return commandNames.filter((name) => name.toLowerCase().startsWith(prefix));
 }
