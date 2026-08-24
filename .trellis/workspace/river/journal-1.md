@@ -446,3 +446,24 @@ Added query-scoped Escape dismissal for slash/path completion and prompt recall 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 18: SRF-013 bounded completion guard
+
+**Date**: 2026-08-24
+**Task**: SRF-013 bounded completion guard
+**Branch**: `main`
+
+### Summary
+
+Added one bounded driver-owned continuation for successful turns that end on internal working notes; suppressed note text across TUI, headless, structured output, trajectory and replay; added offline acceptance coverage and synchronized architecture contracts.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `989e36c` | (see git log) |
+
+### Status
+
+[OK] **Completed**
