@@ -542,3 +542,24 @@ Kept text-mode subagent heartbeats on transient stderr only rather than duplicat
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: SRF-015 full-check fixture correction
+
+**Date**: 2026-08-24
+**Task**: SRF-015 full-check fixture correction
+**Branch**: `main`
+
+### Summary
+
+Restored the structured-headless fixture's no-op subagent-progress observer after the full focused check exposed the missing runtime seam; reran focused checks, typecheck, the complete offline suite, and build.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0363101` | (see git log) |
+
+### Status
+
+[OK] **Completed**
