@@ -13,7 +13,6 @@ import { PermissionQueue } from '../src/tui/permission-queue.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-lifecycle-hooks-test';
-const LOG = path.join(ROOT, 'events.jsonl');
 
 function command(value: string) {
   return { type: 'command', command: value } as const;
@@ -52,30 +51,45 @@ async function main(): Promise<void> {
   await mkdir(ROOT, { recursive: true });
 
   header('lifecycle hooks — bounded JSON, order, match and non-blocking publication');
-  const append = `node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>require("fs").appendFileSync(${JSON.stringify(LOG)},s))'`;
+  const turnOneLog = path.join(ROOT, 'turn-one.jsonl');
+  const turnTwoLog = path.join(ROOT, 'turn-two.jsonl');
+  const permissionLog = path.join(ROOT, 'permission.jsonl');
+  const unmatchedTurnLog = path.join(ROOT, 'unmatched-turn.jsonl');
+  const unmatchedPermissionLog = path.join(ROOT, 'unmatched-permission.jsonl');
+  const capture = (target: string, delaySeconds = 0): string =>
+    `sleep ${delaySeconds}; node -e 'let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>require("fs").appendFileSync(${JSON.stringify(target)},s))'`;
   assert('absent lifecycle config constructs no runner input', lifecycleHooksFromConfig(undefined) === undefined);
   assert('tool-only config constructs no lifecycle runner input', lifecycleHooksFromConfig({
-    PreToolUse: [group('*', append)],
+    PreToolUse: [group('*', capture(path.join(ROOT, 'absent.json')))],
   }) === undefined);
 
   const runner = new LifecycleHookRunner(ROOT, {
-    TurnComplete: [group('interactive', append, append), group('headless', append)],
-    PermissionRequest: [group('reader#*', append), group('parent', append)],
+    TurnComplete: [
+      group('interactive', capture(turnOneLog, 0.25), capture(turnTwoLog)),
+      group('headless', capture(unmatchedTurnLog)),
+    ],
+    PermissionRequest: [
+      group('reader#*', capture(permissionLog)),
+      group('parent', capture(unmatchedPermissionLog)),
+    ],
   });
   const started = Date.now();
   runner.publish({ event: 'TurnComplete', outcome: 'success', source: 'interactive' });
   assert('publication does not await command completion', Date.now() - started < 100);
   runner.publish({ event: 'PermissionRequest', source: 'reader#dispatch-1' });
-  assert('all launched observers receive their payload', await waitFor(async () => {
-    try { return (await readFile(LOG, 'utf8')).trim().split('\n').length === 3; } catch { return false; }
-  }));
+  assert('all launched observers receive their payload', await waitFor(async () =>
+    Promise.all([turnOneLog, turnTwoLog, permissionLog].map(async (target) =>
+      readFile(target, 'utf8').then(() => true, () => false))).then((found) => found.every(Boolean))));
   await runner.close();
-  const events = (await readFile(LOG, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-  assert('each matching command receives exactly one object', events.length === 3);
-  assert('turn payload is closed and structured', events.slice(0, 2).every((event) =>
-    JSON.stringify(event) === '{"event":"TurnComplete","outcome":"success","source":"interactive"}'));
+  const payloads = await Promise.all([turnOneLog, turnTwoLog, permissionLog].map((target) => readFile(target, 'utf8')));
+  assert('each matching command receives exactly one object', payloads.every((payload) =>
+    payload.endsWith('\n') && payload.trim().split('\n').length === 1));
+  assert('unmatched commands are not launched', await Promise.all([unmatchedTurnLog, unmatchedPermissionLog]
+    .map((target) => readFile(target, 'utf8').then(() => false, () => true))).then((missing) => missing.every(Boolean)));
+  assert('turn payload is closed and structured', payloads.slice(0, 2).every((payload) =>
+    payload === '{"event":"TurnComplete","outcome":"success","source":"interactive"}\n'));
   assert('permission payload contains only its bounded source label',
-    JSON.stringify(events[2]) === '{"event":"PermissionRequest","source":"reader#dispatch-1"}');
+    payloads[2] === '{"event":"PermissionRequest","source":"reader#dispatch-1"}\n');
   assert('one serialized object is bounded and newline terminated',
     Buffer.byteLength(serializeLifecycleHookEvent({ event: 'TurnComplete', outcome: 'failure', source: 'headless' })!, 'utf8') <= LIFECYCLE_HOOK_PAYLOAD_MAX_BYTES);
   assert('an over-cap source is dropped instead of making invalid JSON',
