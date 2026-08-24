@@ -131,6 +131,22 @@ async function defaults(): Promise<void> {
     const built = await createModelFromConfig(withModelChoice(config, choice));
     assert(`preset entry "${choice.name}" builds a model`, built !== undefined);
   }
+
+  // The first /model switch in a new installation must materialize the preset
+  // catalogue rather than treating the still-missing file as an explicit flat config.
+  await saveEnabledModel(ROOT, 4);
+  const savedDefaults = JSON.parse(await readFile(configPath(ROOT), 'utf8')) as {
+    models: { name?: string; model?: string; enable?: boolean }[];
+  };
+  assert('the first preset switch creates the full models array', savedDefaults.models.length === 5);
+  assert('the selected preset is enabled in the new file', savedDefaults.models[4]?.enable === true);
+  assert(
+    'every other preset is explicitly disabled in the new file',
+    savedDefaults.models.slice(0, 4).every((entry) => entry.enable === false),
+  );
+  const savedDefaultReload = await loadConfig(ROOT);
+  assert('the first preset switch survives a reload', savedDefaultReload.model === 'openai.gpt-5.6-sol');
+
 }
 
 async function regionFallback(): Promise<void> {

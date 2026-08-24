@@ -1257,7 +1257,7 @@ export async function saveThinkingEffort(projectRoot: string, effort: ThinkingEf
   }
 
   const file = configPath(projectRoot);
-  const record = await readConfigRecord(file);
+  const { record } = await readConfigRecord(file);
   // Reuses the loader's own selection so the level cannot land on a different
   // entry than the session is running: one rule for "which model is enabled".
   const entries = record['models'] === undefined ? undefined : modelEntries(record, file);
@@ -1275,19 +1275,29 @@ export async function saveThinkingEffort(projectRoot: string, effort: ThinkingEf
  * where the off entries simply lack the key reads as if they were never
  * considered.
  *
+ * With no config file, `/model` is switching the built-in catalogue, so the first
+ * switch materializes that catalogue as a `models` array. A present flat or empty
+ * file remains explicit user configuration and is never converted implicitly.
+ *
  * Raw-JSON merge and throw-don't-swallow for the same reasons as
  * {@link saveThinkingEffort}: the caller has already switched the live model, so a
  * failed write costs only the memory of the choice.
  */
 export async function saveEnabledModel(projectRoot: string, index: number): Promise<void> {
   const file = configPath(projectRoot);
-  const record = await readConfigRecord(file);
+  const { record, existed } = await readConfigRecord(file);
 
   if (record['models'] === undefined) {
-    throw new ConfigError(
-      `${file} configures a single model, so there is nothing to switch between. ` +
-        `Move it into a "models" array to keep more than one configuration.`,
-    );
+    if (existed) {
+      throw new ConfigError(
+        `${file} configures a single model, so there is nothing to switch between. ` +
+          `Move it into a "models" array to keep more than one configuration.`,
+      );
+    }
+    record['models'] = DEFAULT_MODELS.map((fields, choiceIndex) => ({
+      ...fields,
+      enable: choiceIndex === index,
+    }));
   }
 
   const entries = modelEntries(record, file);
@@ -1306,17 +1316,19 @@ async function writeConfigRecord(file: string, record: Record<string, unknown>):
   await writeFile(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
 }
 
-/** The config file as a plain object. A missing or empty file reads as `{}`. */
-async function readConfigRecord(file: string): Promise<Record<string, unknown>> {
+/** The config file as a plain object, plus whether a user-owned file existed. */
+async function readConfigRecord(
+  file: string,
+): Promise<{ record: Record<string, unknown>; existed: boolean }> {
   let raw: string;
   try {
     raw = await readFile(file, 'utf8');
   } catch (error) {
-    if (isFileNotFound(error)) return {};
+    if (isFileNotFound(error)) return { record: {}, existed: false };
     throw new ConfigError(`Could not read ${file}: ${describe(error)}`);
   }
 
-  if (raw.trim() === '') return {};
+  if (raw.trim() === '') return { record: {}, existed: true };
 
   let parsed: unknown;
   try {
@@ -1327,7 +1339,7 @@ async function readConfigRecord(file: string): Promise<Record<string, unknown>> 
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new ConfigError(`${file} must contain a JSON object.`);
   }
-  return parsed as Record<string, unknown>;
+  return { record: parsed as Record<string, unknown>, existed: true };
 }
 
 /**

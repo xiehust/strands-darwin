@@ -2372,6 +2372,13 @@ Effort clamping is per-model and caching is per-provider, so both plans are reco
 and reported in the `/model` notice. The header reads `runtime.config` / `runtime.promptCache`
 rather than the `RuntimeInfo` snapshot, which is fixed at startup.
 
+### Contract: the first built-in-catalogue switch materializes configuration
+
+With no `~/.darwin/config.json`, `/model` offers `DEFAULT_MODELS`; persisting the first switch
+writes that exact catalogue as a `models` array with one explicit `enable: true`, so a new
+installation keeps its selection after restart. A present flat or empty config remains explicit
+user input and is refused rather than silently converted into a different configuration shape.
+
 ### Contract: an all-digits `/model` argument is only ever a position
 
 `resolveModelChoice` accepts a 1-based position, an exact name, or a unique substring of the name
