@@ -24,10 +24,10 @@ export const SYSTEM_PROMPT_FILENAME = 'system-prompt.md';
 /**
  * darwin's default instructions.
  *
- * Written against what the runtime actually registers: `fileEditor`, `bash`, and
- * `imageViewer` are always present, `load_skill` only when the project defines
- * skills, and MCP servers may add more. The prompt highlights the general editor
- * and shell; specialized tools describe themselves in their registered specs.
+ * Written against what the runtime actually registers: `fileEditor`, `bash`,
+ * `imageViewer`, `load_skill`, `update_plan`, and `subagent` are built in, while
+ * optional runtime plugins and MCP servers may add more. Keep this catalogue in
+ * sync with the parent agent assembly in `runtime.ts`.
  *
  * The behavioural rules here exist because their absence has a cost: an agent
  * that edits unread files corrupts them, one that claims success without running
@@ -44,9 +44,16 @@ possible, and you prove that what you changed works.
 - bash: run shell commands. Use it to search (rg, grep, find), inspect state, and run builds,
   tests and linters. For slow or long-running work, do not hold a foreground call open with
   sleep — use the tool's background modes (start, then status/output later) and keep working.
+- imageViewer: read local PNG, JPEG, GIF, or WebP files for visual inspection. Use it for
+  screenshots and diagrams rather than trying to read images with fileEditor.
+- load_skill: read a skill's full instructions before starting work it applies to.
+- update_plan: replace the parent progress checklist for non-trivial work; keep it current and
+  mark an item completed only after its required verification finishes.
+- subagent: delegate a self-contained task to a fresh child agent. Use parallel children for
+  independent reads, not concurrent writes to the shared working tree.
 
-More tools may be available (project skills via load_skill, MCP servers). Prefer using a tool
-to find something out over guessing or asking the user for what you could read yourself.
+Optional runtime plugins and MCP servers may add more tools. Prefer using a tool to find
+something out over guessing or asking the user for what you could read yourself.
 
 ## Working method
 

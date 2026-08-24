@@ -57,8 +57,13 @@ async function defaultPrompt(): Promise<void> {
   // The default is coding-agent instructions, not a generic assistant preamble:
   // it must name the tools the runtime actually registers and keep the rules the
   // permission gate and the "verify your work" acceptance criteria depend on.
-  assert('it names the fileEditor tool', DEFAULT_SYSTEM_PROMPT.includes('fileEditor'));
-  assert('it names the bash tool', DEFAULT_SYSTEM_PROMPT.includes('bash'));
+  for (const toolName of ['fileEditor', 'bash', 'imageViewer', 'load_skill', 'update_plan', 'subagent']) {
+    assert(
+      `it names the built-in ${toolName} tool`,
+      DEFAULT_SYSTEM_PROMPT.includes(`- ${toolName}:`),
+    );
+  }
+  assert('it limits parallel subagents to independent reads', /parallel children for\n  independent reads, not concurrent writes/.test(DEFAULT_SYSTEM_PROMPT));
   assert('it tells the model to read before editing', /have not read/i.test(DEFAULT_SYSTEM_PROMPT));
   assert('it tells the model to verify its work', /verify/i.test(DEFAULT_SYSTEM_PROMPT));
   assert(
