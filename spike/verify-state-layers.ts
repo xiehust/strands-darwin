@@ -104,10 +104,14 @@ async function policy(): Promise<void> {
     await write(path.join(root, 'hooks', '20-second.json'), JSON.stringify({
       PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-2` }] }],
       PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-2-post` }] }],
+      TurnComplete: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-2-turn` }] }],
+      PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-2-permission` }] }],
     }));
     await write(path.join(root, 'hooks', '10-first.json'), JSON.stringify({
       PreToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-1` }] }],
       PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-1-post` }] }],
+      TurnComplete: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-1-turn` }] }],
+      PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: `${marker}-1-permission` }] }],
     }));
   }
   const globalConfigRecord = JSON.parse(await readFile(configPath(), 'utf8')) as Record<string, unknown>;
@@ -123,6 +127,11 @@ async function policy(): Promise<void> {
   assert('Post hook ownership order is the exact reverse of Pre sources',
     directoryPolicy.hooks?.PostToolUse?.map((g) => g.hooks[0]?.command).join(',') === 'pd-2-post,pd-1-post,pa-2-post,pa-1-post,gd-2-post,gd-1-post,ga-2-post,ga-1-post');
   assert('directory hooks shadow existing legacy Darwin sources visibly', directoryPolicy.hookShadowNotices.length === 2);
+  assert('TurnComplete hooks keep the exact Pre source order rather than Post wrapper order',
+    directoryPolicy.hooks?.TurnComplete?.map((g) => g.hooks[0]?.command).join(',') === 'ga-1-turn,ga-2-turn,gd-1-turn,gd-2-turn,pa-1-turn,pa-2-turn,pd-1-turn,pd-2-turn');
+  assert('PermissionRequest hooks keep the exact Pre source order',
+    directoryPolicy.hooks?.PermissionRequest?.map((g) => g.hooks[0]?.command).join(',') === 'ga-1-permission,ga-2-permission,gd-1-permission,gd-2-permission,pa-1-permission,pa-2-permission,pd-1-permission,pd-2-permission');
+
 
   const broken = path.join(A, '.agents', 'hooks', 'broken.json');
   await write(broken, '{not json');

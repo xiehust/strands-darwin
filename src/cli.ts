@@ -166,6 +166,8 @@ async function runInteractive(options: CliOptions): Promise<void> {
     }
     throw error;
   }
+  permissions.setObserver((source) => runtime.observePermissionRequest(source));
+
   /**
    * Human context is restored from the exact session trajectory, never from Agent
    * messages. Fresh sessions skip even the file read and therefore render exactly
@@ -217,6 +219,7 @@ async function runInteractive(options: CliOptions): Promise<void> {
       startNewSession: async () => {
         const next = await current.startNewSession();
         current = next;
+        permissions.setObserver((source) => current.observePermissionRequest(source));
         return next;
       },
     }),

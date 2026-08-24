@@ -13,7 +13,7 @@ Named skills, agents, and commands resolve after built-in reservations in this o
 
 The first valid case-insensitive name wins; project resources override global ones, while required built-in names remain reserved. Invalid optional resources are skipped and reported rather than stopping valid siblings.
 
-Direct hook files merge as wrappers: global `.agents`, global `.darwin`, project `.agents`, project `.darwin` for Pre; exact reverse for Post. Legacy `.darwin/hooks.json` and config-embedded hooks are fallbacks only when a layer has no direct hook JSON directory.
+Direct hook files merge as wrappers: global `.agents`, global `.darwin`, project `.agents`, project `.darwin` for Pre and observation-only lifecycle events; exact reverse for Post. Legacy `.darwin/hooks.json` and config-embedded hooks are fallbacks only when a layer has no direct hook JSON directory.
 
 ## MCP servers
 
@@ -119,6 +119,17 @@ Multiple subagent calls in one assistant message run concurrently. Permission pr
 
 Place Markdown under `.darwin/commands/` or global/portable counterparts. `/name arguments` sends the file body as the message, replacing `$ARGUMENTS` with text after the command. Built-ins remain reserved; command discovery follows the common precedence.
 
-## Tool hooks
+## Command hooks
 
-`PreToolUse` and `PostToolUse` shell commands wrap model tool calls. Hook order is global Pre → project Pre → permission/tool → project Post → global Post. Active hook files/directories are sensitive and cannot be covered by allow rules. In `plan`, denied writes/executes stop before Pre hooks. Keep secrets out of committed hook config and prefer direct layered `hooks/*.json`; legacy files remain compatibility fallbacks.
+Hook files accept exactly four event keys. `PreToolUse` and `PostToolUse` shell commands wrap model tool calls. Their order is global Pre → project Pre → permission/tool → project Post → global Post. In `plan`, denied writes/executes stop before Pre hooks.
+
+`TurnComplete` and `PermissionRequest` are observation-only lifecycle commands. They run global `.agents` → global `.darwin` → project `.agents` → project `.darwin`, with files lexical inside each layer. Their group `matcher` is matched case-sensitively against the event source (`interactive` or `headless` for `TurnComplete`; `parent` or the bounded `<agent>#<dispatchId>` label for `PermissionRequest`). A matching command receives exactly one newline-terminated JSON object on stdin:
+
+```json
+{"event":"TurnComplete","outcome":"success","source":"interactive"}
+{"event":"PermissionRequest","source":"parent"}
+```
+
+`TurnComplete.outcome` is `success`, `failure`, or `cancelled`. `PermissionRequest` fires once when a logical prompt actually becomes current; queued prompts wait and prompts withdrawn before display do not fire. Lifecycle commands start without blocking the turn or permission decision. Darwin discards their stdout, stderr, launch errors, and exit status; they cannot write into Ink, model context, permission decisions, tool events, or trajectory records. Cancel, `/clear`, and shutdown terminate their process groups with bounded TERM→KILL cleanup.
+
+Active hook files/directories are executable policy and cannot be covered by allow rules. Keep secrets out of committed hook config and prefer direct layered `hooks/*.json`; legacy files remain compatibility fallbacks.

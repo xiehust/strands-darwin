@@ -22,6 +22,8 @@ export interface ToolHookGroup {
 export interface ToolHooksConfig {
   readonly PreToolUse?: readonly ToolHookGroup[];
   readonly PostToolUse?: readonly ToolHookGroup[];
+  readonly TurnComplete?: readonly ToolHookGroup[];
+  readonly PermissionRequest?: readonly ToolHookGroup[];
 }
 
 export interface ToolHookResult {

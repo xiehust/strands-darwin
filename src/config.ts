@@ -909,18 +909,29 @@ function validateSessionFields(
   return fields;
 }
 
+const HOOK_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'TurnComplete',
+  'PermissionRequest',
+] as const;
+
+type HookEvent = (typeof HOOK_EVENTS)[number];
+
 function hooksField(value: unknown, configPath: string): ToolHooksConfig {
   const where = `${configPath}: "hooks"`;
   if (!isRecord(value)) throw new ConfigError(`${where} must be an object.`);
 
   for (const key of Object.keys(value)) {
-    if (key !== 'PreToolUse' && key !== 'PostToolUse') {
-      throw new ConfigError(`${where}.${key} is not supported. Expected PreToolUse or PostToolUse.`);
+    if (!HOOK_EVENTS.includes(key as HookEvent)) {
+      throw new ConfigError(
+        `${where}.${key} is not supported. Expected ${HOOK_EVENTS.join(', ')}.`,
+      );
     }
   }
 
-  const result: { PreToolUse?: ToolHookGroup[]; PostToolUse?: ToolHookGroup[] } = {};
-  for (const event of ['PreToolUse', 'PostToolUse'] as const) {
+  const result: Partial<Record<HookEvent, ToolHookGroup[]>> = {};
+  for (const event of HOOK_EVENTS) {
     const groups = value[event];
     if (groups === undefined) continue;
     if (!Array.isArray(groups)) {
@@ -935,6 +946,11 @@ function hooksField(value: unknown, configPath: string): ToolHooksConfig {
 
 function hookGroupField(value: unknown, where: string): ToolHookGroup {
   if (!isRecord(value)) throw new ConfigError(`${where} must be an object.`);
+  for (const key of Object.keys(value)) {
+    if (key !== 'matcher' && key !== 'hooks') {
+      throw new ConfigError(`${where}.${key} is not supported. Expected matcher or hooks.`);
+    }
+  }
 
   const matcher = value['matcher'];
   if (typeof matcher !== 'string' || matcher.trim() === '') {
@@ -954,6 +970,11 @@ function hookGroupField(value: unknown, where: string): ToolHookGroup {
 
 function hookCommandField(value: unknown, where: string): ToolHookCommand {
   if (!isRecord(value)) throw new ConfigError(`${where} must be an object.`);
+  for (const key of Object.keys(value)) {
+    if (key !== 'type' && key !== 'command') {
+      throw new ConfigError(`${where}.${key} is not supported. Expected type or command.`);
+    }
+  }
   if (value['type'] !== 'command') {
     throw new ConfigError(`${where}.type must be "command".`);
   }
@@ -1047,9 +1068,15 @@ export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPol
     loaded.push(await loadHookLayer(layer, projectRoot));
   }
   const active = loaded.flatMap((layer) => layer.sources);
+  const preToolUse = active.flatMap((source) => source.hooks.PreToolUse ?? []);
+  const postToolUse = [...active].reverse().flatMap((source) => source.hooks.PostToolUse ?? []);
+  const turnComplete = active.flatMap((source) => source.hooks.TurnComplete ?? []);
+  const permissionRequest = active.flatMap((source) => source.hooks.PermissionRequest ?? []);
   const hooks = active.length === 0 ? undefined : {
-    PreToolUse: active.flatMap((source) => source.hooks.PreToolUse ?? []),
-    PostToolUse: [...active].reverse().flatMap((source) => source.hooks.PostToolUse ?? []),
+    ...(preToolUse.length === 0 ? {} : { PreToolUse: preToolUse }),
+    ...(postToolUse.length === 0 ? {} : { PostToolUse: postToolUse }),
+    ...(turnComplete.length === 0 ? {} : { TurnComplete: turnComplete }),
+    ...(permissionRequest.length === 0 ? {} : { PermissionRequest: permissionRequest }),
   };
   return {
     allowRules,

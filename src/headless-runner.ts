@@ -128,11 +128,15 @@ export async function runHeadlessProcess(
       quietMcpStderr: true,
       permissionBridge: structured
         ? async (request) => {
+            runtime?.observePermissionRequest(request.source.label);
             protocol?.permissionDenied(request);
             note(`permission denied — ${headlessField(request.summary)}\n`, 'warn');
             return { allowed: false };
           }
-        : createHeadlessPermissionBridge((text) => note(text, 'warn')),
+        : async (request) => {
+            runtime?.observePermissionRequest(request.source.label);
+            return createHeadlessPermissionBridge((text) => note(text, 'warn'))(request);
+          },
       ...(options.permissionModeOverride !== undefined && {
         permissionModeOverride: options.permissionModeOverride,
       }),
@@ -187,6 +191,12 @@ export async function runHeadlessProcess(
       }
     }
   } finally {
+    if (runtime !== undefined && turnStarted) {
+      runtime.observeTurnComplete(
+        interrupted || cancelled ? 'cancelled' : failed ? 'failure' : 'success',
+        'headless',
+      );
+    }
     if (runtime !== undefined) {
       // The existing text driver writes the turn error immediately. Structured mode
       // keeps stderr clean, but the diagnostics log must retain the same evidence

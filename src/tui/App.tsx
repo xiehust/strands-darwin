@@ -561,6 +561,7 @@ export function App({
     async (text: string) => {
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
+      let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
       setStatus('streaming');
       try {
         await runWithStreamResumption(
@@ -587,6 +588,7 @@ export function App({
         // A failed turn must not kill the session; the user may want to retry.
         // It also must not send the queue: auto-resending into an error is how
         // retry loops start, so the queue is returned to the editor below.
+        lifecycleOutcome = turnAborted.current ? 'cancelled' : 'failure';
         turnAborted.current = true;
         dispatch({
           type: 'notice',
@@ -594,6 +596,8 @@ export function App({
           severity: 'error',
         });
       } finally {
+        if (turnAborted.current && lifecycleOutcome === 'success') lifecycleOutcome = 'cancelled';
+        runtime.observeTurnComplete(lifecycleOutcome, 'interactive');
         dispatch({ type: 'turnEnded' });
         setStatus('idle');
         // Cleared with the status, so a cancelled or failed turn stops the busy

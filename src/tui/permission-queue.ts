@@ -24,9 +24,20 @@ interface QueueEntry {
   resolve: (decision: PermissionDecision) => void;
   /** Stops listening for withdrawal once this entry has left the queue. */
   release: () => void;
+  observed: boolean;
 }
 
 export class PermissionQueue {
+  private observedIdentities = new WeakSet<object>();
+
+  constructor(private observe?: (source: string) => void) {}
+
+  /** Installs a session-owned observer; `/clear` starts a fresh identity scope. */
+  setObserver(observe: ((source: string) => void) | undefined): void {
+    this.observe = observe;
+    this.observedIdentities = new WeakSet<object>();
+    this.observeCurrent();
+  }
   private readonly entries: QueueEntry[] = [];
   private readonly listeners = new Set<() => void>();
   /** Set once the session is over, so late requests deny instead of hanging. */
@@ -39,7 +50,7 @@ export class PermissionQueue {
         resolve({ allowed: false });
         return;
       }
-      const entry: QueueEntry = { request, resolve, release: () => undefined };
+      const entry: QueueEntry = { request, resolve, release: () => undefined, observed: false };
       // A mode change withdraws the question itself: the gate has stopped waiting
       // and will re-decide the call under the new mode, so the prompt has to leave
       // the screen. Resolving it is bookkeeping — the gate discards this answer.
@@ -51,6 +62,7 @@ export class PermissionQueue {
         request.withdrawn.removeEventListener('abort', onWithdraw);
       };
       this.entries.push(entry);
+      this.observeCurrent();
       this.emit();
     });
 
@@ -70,6 +82,7 @@ export class PermissionQueue {
     if (entry === undefined) return;
     entry.release();
     entry.resolve(decision);
+    this.observeCurrent();
     this.emit();
   }
 
@@ -112,6 +125,7 @@ export class PermissionQueue {
     this.entries.splice(index, 1);
     entry.release();
     entry.resolve({ allowed: false });
+    this.observeCurrent();
     this.emit();
   }
 
@@ -124,6 +138,22 @@ export class PermissionQueue {
 
   /** Identity changes whenever the queue changes, for useSyncExternalStore. */
   getSnapshot = (): AssessedPermissionRequest | undefined => this.current;
+
+  private observeCurrent(): void {
+    const entry = this.entries[0];
+    if (entry === undefined || entry.observed || this.closed) return;
+    entry.observed = true;
+    const identity = entry.request.promptIdentity;
+    if (identity !== undefined) {
+      if (this.observedIdentities.has(identity)) return;
+      this.observedIdentities.add(identity);
+    }
+    try {
+      this.observe?.(entry.request.source.label);
+    } catch {
+      // Observation can never alter or strand the permission decision.
+    }
+  }
 
   private emit(): void {
     for (const listener of this.listeners) listener();

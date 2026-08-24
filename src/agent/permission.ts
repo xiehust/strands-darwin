@@ -158,6 +158,8 @@ export type DispatchSourceResolver = (
 export interface AssessedPermissionRequest extends PermissionRequest, RiskAssessment {
   /** Which agent this call belongs to. Always present, parent calls included. */
   source: PermissionSource;
+  /** Stable across mode-change re-decisions of this one logical tool call. */
+  promptIdentity?: object;
   /**
    * Wildcard rules the user may accept alongside this one call, most specific
    * first. Empty when no rule could ever cover the call.
@@ -414,12 +416,13 @@ export class PermissionGate extends InterventionHandler {
    * by whatever mode is in force now.
    */
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<InterventionAction> {
+    const promptIdentity = {};
     for (let attempt = 1; ; attempt += 1) {
       const withdrawal = new AbortController();
       this.waiting.add(withdrawal);
       let action: InterventionAction | typeof WITHDRAWN;
       try {
-        action = await this.decideOnce(event, withdrawal.signal);
+        action = await this.decideOnce(event, withdrawal.signal, promptIdentity);
       } finally {
         this.waiting.delete(withdrawal);
       }
@@ -445,6 +448,7 @@ export class PermissionGate extends InterventionHandler {
   private async decideOnce(
     event: BeforeToolCallEvent,
     withdrawn: AbortSignal,
+    promptIdentity: object,
   ): Promise<InterventionAction | typeof WITHDRAWN> {
     const guarded = this.planGuard(event.toolUse.name, event.toolUse.input);
     if (guarded !== undefined) return guarded;
@@ -457,6 +461,7 @@ export class PermissionGate extends InterventionHandler {
       // bridge that wants to know whose work it is judging should not have to
       // reconstruct it from the tool input.
       source: this.sourceOf(event.agent.id),
+      promptIdentity,
       suggestions: suggestRules(base, this.options.projectRoot),
       withdrawn,
     };

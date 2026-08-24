@@ -534,6 +534,8 @@ async function toolHooks(): Promise<void> {
   const hooks = {
     PreToolUse: [{ matcher: 'file*', hooks: [{ type: 'command', command: './check.sh' }] }],
     PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: './audit.sh' }] }],
+    TurnComplete: [{ matcher: 'interactive', hooks: [{ type: 'command', command: './done.sh' }] }],
+    PermissionRequest: [{ matcher: 'parent', hooks: [{ type: 'command', command: './notify.sh' }] }],
   };
   const loaded = await loadConfig(await writeConfig(JSON.stringify({ hooks })));
   assert('single-model config preserves validated hook order', JSON.stringify(loaded.hooks) === JSON.stringify(hooks));
@@ -558,6 +560,8 @@ async function toolHooks(): Promise<void> {
     ['empty command hooks', { PreToolUse: [{ matcher: '*', hooks: [] }] }, '.hooks'],
     ['unsupported hook type', { PreToolUse: [{ matcher: '*', hooks: [{ type: 'prompt', command: 'x' }] }] }, '.type'],
     ['blank hook command', { PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: '' }] }] }, '.command'],
+    ['unknown group field', { TurnComplete: [{ matcher: '*', extra: true, hooks: [{ type: 'command', command: 'true' }] }] }, '.extra'],
+    ['unknown command field', { PermissionRequest: [{ matcher: '*', hooks: [{ type: 'command', command: 'true', extra: true }] }] }, '.extra'],
   ];
   for (const [label, value, field] of cases) {
     const error = await expectConfigError(`${label} is rejected`, async () =>

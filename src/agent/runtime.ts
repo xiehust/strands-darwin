@@ -51,6 +51,12 @@ import {
 } from '../tools/background-bash.js';
 import { createImageViewerTool } from '../tools/image-viewer.js';
 import { createUpdatePlanTool } from '../tools/update-plan.js';
+import {
+  LifecycleHookRunner,
+  lifecycleHooksFromConfig,
+  type TurnCompleteOutcome,
+  type TurnCompleteSource,
+} from '../hooks/lifecycle-hooks.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, type McpServerStatus } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
@@ -339,6 +345,8 @@ export class AgentRuntime {
     private readonly subagentDispatches: SubagentDispatchRegistry,
     private readonly backgroundBash: BackgroundBashManager,
     private readonly gate: PermissionGate,
+    /** Undefined when neither lifecycle event is configured: absent config spawns nothing. */
+    private readonly lifecycleHooks: LifecycleHookRunner | undefined,
     private readonly compactionManager: SummarizingConversationManager,
     private readonly preserveRecentMessages: number,
     /** Undefined when `trajectory: false` switched recording off for this run. */
@@ -368,6 +376,7 @@ export class AgentRuntime {
     mcpClients: readonly McpClient[] = [],
     backgroundBash?: BackgroundBashManager,
     memoryScheduler?: MemoryScheduler,
+    lifecycleHooks?: LifecycleHookRunner,
   ): Promise<void> {
     if (diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
     await Promise.allSettled([
@@ -375,6 +384,7 @@ export class AgentRuntime {
       backgroundBash?.shutdown() ?? Promise.resolve(),
       diagnosticsLog?.close() ?? Promise.resolve(),
       memoryScheduler?.close() ?? Promise.resolve(),
+      lifecycleHooks?.close() ?? Promise.resolve(),
     ]);
   }
 
@@ -411,6 +421,7 @@ export class AgentRuntime {
     let startupMcpClients: readonly McpClient[] = [];
     let startupBackgroundBash: BackgroundBashManager | undefined;
     let startupMemoryScheduler: MemoryScheduler | undefined;
+    let startupLifecycleHooks: LifecycleHookRunner | undefined;
 
     // Keep assembly in one function so one catch owns every resource acquired
     // after the process-global diagnostics tap is installed.
@@ -451,12 +462,18 @@ export class AgentRuntime {
       classifier: createModelClassifier(config, options.projectRoot),
     });
 
-    // No configured hooks means the exact pre-existing handler is registered and
-    // no shell process can be spawned. Otherwise one composed handler preserves
-    // Pre → permission → tool → Post ordering for both parent and child agents.
-    const intervention: InterventionHandler = policy.hooks === undefined
+    // No configured tool hooks means the exact pre-existing handler is registered
+    // and no tool-hook shell process can be spawned. Lifecycle hooks are separate
+    // observers below: they never become SDK interventions.
+    const hasToolHooks = policy.hooks?.PreToolUse !== undefined || policy.hooks?.PostToolUse !== undefined;
+    const intervention: InterventionHandler = !hasToolHooks
       ? gate
-      : new ToolHookGate(options.projectRoot, policy.hooks, gate);
+      : new ToolHookGate(options.projectRoot, policy.hooks!, gate);
+    const lifecycleConfig = lifecycleHooksFromConfig(policy.hooks);
+    const lifecycleHooks = lifecycleConfig === undefined
+      ? undefined
+      : new LifecycleHookRunner(options.projectRoot, lifecycleConfig);
+    startupLifecycleHooks = lifecycleHooks;
 
     const sessionManager = createSessionManager(options.projectRoot, session.sessionId);
     // One manager and wrapper are shared by the main Agent and every child tool
@@ -626,6 +643,7 @@ export class AgentRuntime {
       subagentDispatches,
       backgroundBash,
       gate,
+      lifecycleHooks,
       compactionManager,
       config.preserveRecentMessages,
       trajectory,
@@ -682,6 +700,7 @@ export class AgentRuntime {
         startupMcpClients,
         startupBackgroundBash,
         startupMemoryScheduler,
+        startupLifecycleHooks,
       );
       throw error;
     });
@@ -1131,8 +1150,19 @@ export class AgentRuntime {
    * ends with `stopReason: 'cancelled'` rather than throwing.
    */
   cancel(): void {
+    this.lifecycleHooks?.cancel();
     this.subagents.cancelActive();
     this.agent.cancel();
+  }
+
+  /** Publishes a bounded driver-owned turn outcome; command results are unobservable. */
+  observeTurnComplete(outcome: TurnCompleteOutcome, source: TurnCompleteSource): void {
+    this.lifecycleHooks?.publish({ event: 'TurnComplete', outcome, source });
+  }
+
+  /** Publishes the source label only when a permission prompt becomes visible. */
+  observePermissionRequest(source: string): void {
+    this.lifecycleHooks?.publish({ event: 'PermissionRequest', source });
   }
 
   /**
@@ -1217,6 +1247,7 @@ export class AgentRuntime {
     await Promise.allSettled([
       this.subagents.shutdown(),
       this.stopBashSession(),
+      this.lifecycleHooks?.close() ?? Promise.resolve(),
       this.trajectory?.close() ?? Promise.resolve(),
       this.diagnosticsLog?.close() ?? Promise.resolve(),
       this.memoryScheduler?.close() ?? Promise.resolve(),
@@ -1251,6 +1282,7 @@ export class AgentRuntime {
       this.subagents.shutdown(),
       this.backgroundBash.shutdown(),
       this.stopBashSession(options.throwOnError === true),
+      this.lifecycleHooks?.close() ?? Promise.resolve(),
       disconnectAll(this.mcp.clients, { throwOnError: options.throwOnError === true }),
       // The one place the append chain is awaited, so the last turn's records are
       // durable before the process exits. Settled alongside the rest: a record that

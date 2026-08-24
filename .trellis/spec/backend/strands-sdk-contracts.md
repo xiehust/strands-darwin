@@ -896,6 +896,51 @@ new Agent({ interventions: [intervention] })
 
 ---
 
+## Scenario: observation-only lifecycle command hooks
+
+### 1. Scope / Trigger
+
+Use this contract only for configured `TurnComplete` and `PermissionRequest` commands. These are driver/visible-prompt observations, not SDK hooks, interventions, tools, messages, or trajectory facts. `AgentRuntime.create` remains the sole `Agent` assembly boundary and no lifecycle publication may intercept or fork the SDK loop.
+
+### 2. Signatures and payloads
+
+`ToolHooksConfig` additionally permits exactly `TurnComplete` and `PermissionRequest`, with the same strict matcher-group/command schema. Lifecycle matchers consume `event.source` using the existing complete case-sensitive `*`/`?` glob.
+
+Each matching command receives exactly one newline-terminated JSON object no larger than `LIFECYCLE_HOOK_PAYLOAD_MAX_BYTES`:
+
+```typescript
+type LifecycleHookEvent =
+  | { event: 'TurnComplete'; outcome: 'success' | 'failure' | 'cancelled'; source: 'interactive' | 'headless' }
+  | { event: 'PermissionRequest'; source: string }
+```
+
+The permission source is the already-bounded `PermissionSource.label`: `parent` or `<agent>#<dispatchId>`. No prompt, answer, tool name/input/result, risk reason, path, session id, or error text enters either payload. An over-cap serialization is dropped whole; JSON is never truncated.
+
+### 3. Ordering and publication
+
+- Aggregate lifecycle groups in the same source order as Pre: global `.agents` → global `.darwin` → project `.agents` → project `.darwin`, lexical files inside each source. Never reverse them with Post wrappers.
+- `PermissionGate.beforeToolCall` assigns one private `promptIdentity` object before its bounded mode-change restart loop. `PermissionQueue` weakly remembers that identity and publishes once when the logical request first becomes the visible current prompt. Queued requests publish on promotion; a request withdrawn before promotion never publishes; a gate re-decision never republishes it; closure publishes nothing. Replacing the observer for `/clear` resets the weak identity set because the successor lifecycle runner has a new session owner.
+- The interactive driver's ordinary `runTurn` boundary publishes one final outcome with source `interactive`. The headless process boundary publishes one with source `headless`. Cancellation wins over failure when an interrupt caused termination. Stream continuation remains the driver's existing ordinary successor turn policy; lifecycle code does not retry or wrap `runtime.send`.
+- Headless permission bridges publish the assessed source immediately before their existing local denial. No protocol event, stderr line, or model message is added.
+
+### 4. Execution and ownership
+
+- Lifecycle `publish()` is synchronous fire-and-observe: spawn matching `/bin/sh -c` commands and return without awaiting command completion.
+- cwd is the project root; environment is inherited; stdin is the bounded payload; stdout/stderr are drained/discarded. Sync launch throws, async launch errors, nonzero exits, and command output are unobservable to the turn/permission/TUI/headless/trajectory owners.
+- Every command is a detached process group owned by the session runner. Turn cancel calls TERM immediately; `/clear` retirement, startup unwind, and shutdown close the runner; after 500 ms, surviving groups receive KILL and cleanup waits only for bounded group disappearance.
+- If neither lifecycle key is configured, construct no lifecycle runner and spawn nothing. Lifecycle-only config still registers the plain `PermissionGate`, not `ToolHookGate`.
+
+### 5. Forbidden channels
+
+Lifecycle commands cannot decide permissions, replace or deny tools, synthesize SDK tool events, append trajectory records, write terminal output, add model context, or transform driver outcomes. Do not expose command results, add an SDK callback, or generalize the event set beyond these two names.
+
+### 6. Verification
+
+`spike/verify-lifecycle-hooks.ts` covers bounded one-object payloads, matcher behavior, non-blocking publication, failure/output isolation, TERM→KILL, and permission current/queued/withdrawn exactly-once semantics. `verify-state-layers.ts`, `verify-config.ts`, `verify-clear-session.ts`, and `verify-headless-structured.ts` cover four-layer order, strict source errors, `/clear` ownership, and offline interactive/headless outcomes without provider calls.
+
+
+---
+
 ## Scenario: isolated subagents as a tool
 
 ### 1. Scope / Trigger

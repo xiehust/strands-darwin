@@ -141,6 +141,44 @@ async function parserAndTextCompatibility(): Promise<void> {
   assert('text success/failure/interrupt stdout and stderr order are exact', true);
 }
 
+
+async function lifecycleObservations(): Promise<void> {
+  header('structured headless — lifecycle observations are outside every output protocol');
+  const cases = [
+    ['success', 'success'],
+    ['turn-failure', 'failure'],
+    ['interrupt', 'cancelled'],
+  ] as const;
+  for (const [mode, outcome] of cases) {
+    const traceFile = path.join(os.tmpdir(), `darwin-headless-lifecycle-${mode}-${process.pid}.jsonl`);
+    rmSync(traceFile, { force: true });
+    const result = await cli(mode, 'json', {
+      traceFile,
+      ...(mode === 'interrupt' ? { signal: 'SIGINT' as const } : {}),
+    });
+    const trace = (await readFile(traceFile, 'utf8')).trim().split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    nodeAssert.deepEqual(
+      trace.filter((record) => record.type === 'turnComplete'),
+      [{ type: 'turnComplete', outcome, source: 'headless' }],
+    );
+    nodeAssert.equal(lines(result.stdout).at(-1)?.outcome, outcome);
+    nodeAssert.doesNotMatch(result.stdout + result.stderr, /turnComplete|permissionRequest/u);
+  }
+
+  const traceFile = path.join(os.tmpdir(), `darwin-headless-lifecycle-permission-${process.pid}.jsonl`);
+  rmSync(traceFile, { force: true });
+  const permission = await cli('permission', 'json', { traceFile });
+  const trace = (await readFile(traceFile, 'utf8')).trim().split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  nodeAssert.deepEqual(
+    trace.filter((record) => record.type === 'permissionRequest'),
+    [{ type: 'permissionRequest', source: 'parent' }],
+  );
+  nodeAssert.doesNotMatch(permission.stdout + permission.stderr, /permissionRequest/u);
+  assert('success/failure/cancelled and permission source publish exactly once without protocol output', true);
+}
+
 async function automaticContinuationProtocols(): Promise<void> {
   header('structured headless — one visible private continuation in every protocol');
   const traceFile = path.join(os.tmpdir(), `darwin-headless-continuation-${process.pid}.jsonl`);
@@ -198,7 +236,7 @@ async function phaseControls(): Promise<void> {
   });
   const traced = (await readFile(traceFile, 'utf8'))
     .trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
-  nodeAssert.deepEqual(traced.map((record) => record.type), ['create', 'compact', 'send']);
+  nodeAssert.deepEqual(traced.map((record) => record.type), ['create', 'compact', 'send', 'turnComplete']);
   nodeAssert.equal(traced[0]?.maxModelCalls, 20);
   nodeAssert.equal(traced[0]?.contextOffloadOverride, true);
   nodeAssert.deepEqual(lines(tuned.stdout).slice(0, 3).map((record) => record.type), [
@@ -399,6 +437,7 @@ function boundsAndEscaping(): void {
 }
 
 await parserAndTextCompatibility();
+await lifecycleObservations();
 await automaticContinuationProtocols();
 await phaseControls();
 await terminalLifecycle();

@@ -103,10 +103,40 @@ async function writeMemory(root: string, label: string): Promise<void> {
   await writeFile(path.join(projectMemoryDir(root), 'index.md'), renderMemoryIndex(state), 'utf8');
 }
 
+async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 3000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return false;
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+
 async function main(): Promise<void> {
   header('/clear — the previous session survives, the new one starts empty');
 
   const root = await fixture();
+  const lifecyclePidFile = path.join(root, 'lifecycle.pid');
+  await writeFile(path.join(root, '.darwin', 'hooks.json'), JSON.stringify({
+    TurnComplete: [{
+      matcher: 'interactive',
+      hooks: [{
+        type: 'command',
+        command: `trap '' TERM; sleep 30 & echo $! > ${lifecyclePidFile}; wait`,
+      }],
+    }],
+  }));
+
   const memoryDirectory = projectMemoryDir(root);
   await mkdir(memoryDirectory, { recursive: true });
   await writeMemory(root, 'first-memory');
@@ -179,6 +209,12 @@ async function main(): Promise<void> {
       { recordDirectToolCall: false },
     );
     assert('the previous session has a persistent shell holding its state', JSON.stringify(previousShell).includes('marker=alpha'));
+    previousRuntime.observeTurnComplete('success', 'interactive');
+    assert('a previous-session lifecycle command starts', await waitFor(async () => {
+      try { return (await readFile(lifecyclePidFile, 'utf8')).trim() !== ''; } catch { return false; }
+    }));
+    const lifecyclePid = Number((await readFile(lifecyclePidFile, 'utf8')).trim());
+
 
     // The file on disk now names a *different* model from the live one. A successor
     // that re-read it would silently move the session to another model.
@@ -197,6 +233,8 @@ async function main(): Promise<void> {
     live = next;
 
     // ---- the new session ------------------------------------------------------
+    assert('/clear retirement reaps the previous session lifecycle command tree', !processExists(lifecyclePid));
+
     assert('the new session id differs from the previous one', next.info.sessionId !== previousId);
     assert('…and is a valid session id', isValidSessionId(next.info.sessionId));
     assert('…and sorts after it, so recency order still holds', next.info.sessionId > previousId);
