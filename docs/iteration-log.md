@@ -1874,3 +1874,15 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SRF-014 | `3f4c27a` implementation, `aad5ac8` task archive, `f5b4704` journal | Host inspected the source/pinned-patch/spec/test diff and independently passed `verify-background-bash.ts` (134/134), `verify-clear-session.ts` (44/44), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, restricted `process.cwd()` grep, and AGENTS.md size below 32 KiB. Foreground execute/restart now reports effective cwd and conservatively refuses only simple relative paths absent under cwd but present under project root before launch. |
+
+
+## Batch 56 — SRF-015 subagent heartbeats and targeted cancellation
+
+- Origin: `docs/reflections/reflection_2026-08-24_session-20260824-111655828.md`.
+- Child session: `session-20260824-150312114`.
+- Managed tasks: `bg-fce09961-82f3-436c-af02-cd647dd17b30` and `bg-74634550-c667-4220-a0a2-51b16a13ace5` (both ended without final prose after committing the requested implementation/corrections).
+- Child token spend: first task `input=308 output=48,397 cacheRead=15,823,870 cacheWrite=156,195`; second task `input=90 output=6,693 cacheRead=1,635,254 cacheWrite=51,973`; aggregate `input=398 output=55,090 cacheRead=17,459,124 cacheWrite=208,168`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SRF-015 | `e6ae0f2` implementation, `e3ac4db` transient-heartbeat correction, `0363101` headless fixture correction, `4b88b29` task archive | Host inspected the source/spec/test diff and independently passed `verify-subagent-heartbeats.ts` (21/21), `verify-subagents.ts` (69/69), `verify-frame-budget.ts` (77/77), `verify-trajectory.ts` (267/267), `verify-headless-structured.ts` (11/11), `verify-completion-guard.ts` (24/24), free pty `completion` (66/66), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, and AGENTS.md size below 32 KiB. Heartbeats reuse existing TUI/headless surfaces, carry only closed bounded metadata, clear before settlement, and `/agents cancel <id>` remains user-only and child-specific. |
