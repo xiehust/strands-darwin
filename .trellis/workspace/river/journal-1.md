@@ -500,3 +500,24 @@ Reported effective persistent-shell cwd and conservatively refused evidenced wro
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: SRF-015 subagent heartbeats and targeted cancellation
+
+**Date**: 2026-08-24
+**Task**: SRF-015 subagent heartbeats and targeted cancellation
+**Branch**: `main`
+
+### Summary
+
+Added bounded 30-second subagent progress, safe phase projection, user-only per-dispatch cancellation, TUI/headless visibility, offline acceptance coverage, and synchronized architecture/spec contracts. Verified focused suites, typecheck, full pnpm test, and build.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e6ae0f2` | (see git log) |
+
+### Status
+
+[OK] **Completed**
