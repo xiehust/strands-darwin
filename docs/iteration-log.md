@@ -1862,3 +1862,15 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SRF-013 | `989e36c` implementation, `41571a3` task archive, `78b01ba` journal | Host inspected the source/spec/test diff and independently passed `verify-completion-guard.ts` (24/24), `verify-stream-resumption.ts` (16/16), `verify-max-tokens-recovery.ts` (20/20), `verify-headless-structured.ts` (11/11), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, and AGENTS.md size below 32 KiB. Matched successful internal notes are withheld from TUI/text/JSON/JSONL and trajectory/replay payloads, while tool-bearing candidates fail open and a second match, failure, or cancellation never loops. |
+
+
+## Batch 55 — SRF-014 persistent foreground cwd preflight
+
+- Origin: `docs/reflections/reflection_2026-08-24_session-20260824-111655828.md`.
+- Child session: `session-20260824-143558666`.
+- Managed tasks: `bg-c1dfd213-fcad-4835-bad4-b40d3cf0dcd9` and `bg-de388247-4298-4251-a6e7-29e41e30b0ec` (both completed the requested implementation/check work but the completion guard ended each process without a final result).
+- Child token spend: first task `input=290 output=51,870 cacheRead=14,375,319 cacheWrite=149,320`; second task `input=44 output=3,975 cacheRead=736,855 cacheWrite=45,421`; aggregate `input=334 output=55,845 cacheRead=15,112,174 cacheWrite=194,741`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SRF-014 | `3f4c27a` implementation, `aad5ac8` task archive, `f5b4704` journal | Host inspected the source/pinned-patch/spec/test diff and independently passed `verify-background-bash.ts` (134/134), `verify-clear-session.ts` (44/44), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, restricted `process.cwd()` grep, and AGENTS.md size below 32 KiB. Foreground execute/restart now reports effective cwd and conservatively refuses only simple relative paths absent under cwd but present under project root before launch. |
