@@ -114,7 +114,12 @@ import { formatDispatchCompletion, formatDispatchesReport } from './subagent-for
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
 import { formatHelpReport } from './help-format.js';
 import { formatMcpReport } from './mcp-format.js';
-import { formatPromptCache, formatStatusReport, formatThinking } from './status-format.js';
+import {
+  formatPromptCache,
+  formatPromptCacheState,
+  formatStatusReport,
+  formatThinking,
+} from './status-format.js';
 import { PlanChecklist } from './PlanChecklist.js';
 import { initialTurnState, turnReducer, type HistoryItem, type TurnAction } from './turn-state.js';
 import { visualColor, visualMarker } from './visual-language.js';
@@ -2394,7 +2399,7 @@ async function applyModelCommand(
   const applied =
     `model: ${describeChoice(result.choice)}\n` +
     `  thinking effort: ${describeThinking(result.thinking)}\n` +
-    `  prompt cache: ${result.promptCache.problem ?? (result.promptCache.enabled ? result.promptCache.parts.join(', ') : 'off')}`;
+    `  prompt cache: ${formatPromptCacheState(result.promptCache)}`;
 
   result.saved.then(
     () => {

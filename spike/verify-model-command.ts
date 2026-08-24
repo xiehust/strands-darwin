@@ -217,6 +217,7 @@ async function liveSwitch(): Promise<void> {
     assert('the catalogue marks the new entry live', result.choice.enabled);
     assert('…and only it', runtime.modelChoices.filter((c) => c.enabled).length === 1);
     assert('darwin-managed caching is off on the new provider', !runtime.promptCache.enabled);
+    assert('the new provider reports its automatic cache', runtime.promptCache.automatic);
     assert(
       'provider-managed automatic caching is not reported as a problem',
       runtime.promptCache.problem === undefined,

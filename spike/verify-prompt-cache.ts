@@ -118,6 +118,7 @@ function decisionTable(): void {
 
   const openai = planPromptCache({ ...CLAUDE_CONFIG, provider: 'openai', model: 'gpt-4o' });
   assert('darwin places no explicit cache points for openai', !openai.enabled);
+  assert('openai caching is identified as provider-managed automatic', openai.automatic);
   assert('provider-managed automatic caching is not reported as a problem', openai.problem === undefined);
 }
 

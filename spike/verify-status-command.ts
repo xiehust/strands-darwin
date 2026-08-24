@@ -27,6 +27,7 @@ import { MAX_COMPLETIONS } from '../src/tui/InputBox.js';
 import {
   MAX_STATUS_NAMES,
   formatPromptCache,
+  formatPromptCacheState,
   formatStatusReport,
   formatThinking,
   type StatusFacts,
@@ -45,8 +46,27 @@ const BEDROCK: AppConfig = withSoleChoice({
   thinkingEffort: 'high',
 });
 
-const CACHE_ON: PromptCachePlan = { enabled: true, parts: ['system prompt', 'tools'], ttl: '5m', problem: undefined };
-const CACHE_OFF: PromptCachePlan = { enabled: false, parts: [], ttl: undefined, problem: undefined };
+const CACHE_ON: PromptCachePlan = {
+  enabled: true,
+  automatic: false,
+  parts: ['system prompt', 'tools'],
+  ttl: '5m',
+  problem: undefined,
+};
+const CACHE_AUTO: PromptCachePlan = {
+  enabled: false,
+  automatic: true,
+  parts: [],
+  ttl: undefined,
+  problem: undefined,
+};
+const CACHE_OFF: PromptCachePlan = {
+  enabled: false,
+  automatic: false,
+  parts: [],
+  ttl: undefined,
+  problem: undefined,
+};
 const THINKING_HIGH: ThinkingPlan = { enabled: true, requested: 'high', effective: 'high', problem: undefined };
 
 const RECORDING: TrajectoryStatus = {
@@ -129,7 +149,10 @@ function testEveryFactPresent(): void {
 
   // The model-line suffixes are the header's own renderers, exported from one place.
   assert('cache suffix formatter matches the header vocabulary', formatPromptCache(CACHE_ON) === ' · cache 5m');
+  assert('provider-managed caching is shown as automatic', formatPromptCache(CACHE_AUTO) === ' · cache auto');
+  assert('the model-switch cache row calls provider-managed caching auto', formatPromptCacheState(CACHE_AUTO) === 'auto');
   assert('a disabled cache adds nothing to the model line', formatPromptCache(CACHE_OFF) === '');
+  assert('the model-switch cache row still calls a disabled cache off', formatPromptCacheState(CACHE_OFF) === 'off');
   assert('thinking suffix formatter matches the header vocabulary', formatThinking(THINKING_HIGH) === ' · effort high');
 }
 

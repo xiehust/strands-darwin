@@ -2044,7 +2044,8 @@ Bedrock: `spike/verify-prompt-cache-live.ts` — 11,737 tokens written on turn o
 
 `AnthropicModelConfig` has **no** `cacheConfig`, so the `anthropic` provider gets the system
 prompt cache point only. Darwin adds no cache points for OpenAI because OpenAI prompt caching
-is provider-managed and automatic; this is not reported as an unsupported-provider warning.
+is provider-managed and automatic; the cache plan records that automatic state so the header,
+`/status`, and `/model` say `auto` rather than `off`, without reporting an unsupported-provider warning.
 
 ### Contract: the final system cache point is prepared after initialize and repaired per invocation
 

@@ -29,6 +29,7 @@ ownPrivateHome('agent-skills');
 
 const CACHE_PLAN: PromptCachePlan = {
   enabled: true,
+  automatic: false,
   parts: ['system prompt'],
   ttl: '5m',
   problem: undefined,

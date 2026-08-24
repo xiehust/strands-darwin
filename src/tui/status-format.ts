@@ -190,12 +190,20 @@ function describeTokens(facts: StatusFacts): string {
   return `${counters} — ${scope}${inFlight}`;
 }
 
+/** Plain cache state for notices that give prompt caching its own labelled row. */
+export function formatPromptCacheState(plan: PromptCachePlan): string {
+  if (plan.problem !== undefined) return plan.problem;
+  if (plan.automatic) return 'auto';
+  return plan.enabled ? plan.parts.join(', ') : 'off';
+}
+
 /**
  * Cache state as a suffix on the model line rather than a line of its own — see the
- * comment in `Header`. Empty when nothing is cached: the off case is either the
- * user's own choice (silent) or reported there as a warning.
+ * comment in `Header`. Provider-managed caching is stated as automatic; truly off
+ * remains empty because it is either the user's choice or reported as a warning.
  */
 export function formatPromptCache(plan: PromptCachePlan): string {
+  if (plan.automatic) return ' · cache auto';
   if (!plan.enabled) return '';
   const ttl = plan.ttl ?? 'on';
   // Only the anthropic provider ends up with a single part, and "cache on" there

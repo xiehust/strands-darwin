@@ -42,9 +42,11 @@ export type PromptCacheTtl = (typeof PROMPT_CACHE_TTLS)[number];
 export type PromptCachePart = 'tools' | 'system prompt' | 'conversation';
 
 export interface PromptCachePlan {
-  /** True when at least one cache point will be placed. */
+  /** True when at least one Darwin-managed cache point will be placed. */
   enabled: boolean;
-  /** Which parts carry a cache point. Empty when disabled. */
+  /** True when caching is automatic and entirely provider-managed. */
+  automatic: boolean;
+  /** Which parts carry a Darwin-managed cache point. Empty when disabled or automatic. */
   parts: readonly PromptCachePart[];
   /** TTL to stamp on every cache point, or undefined for the provider default. */
   ttl: PromptCacheTtl | undefined;
@@ -63,7 +65,14 @@ export interface PromptCachePlan {
  */
 const CLAUDE_MODEL_MARKERS = ['anthropic', 'claude'];
 
-const DISABLED: PromptCachePlan = { enabled: false, parts: [], ttl: undefined, problem: undefined };
+const DISABLED: PromptCachePlan = {
+  enabled: false,
+  automatic: false,
+  parts: [],
+  ttl: undefined,
+  problem: undefined,
+};
+const AUTOMATIC: PromptCachePlan = { ...DISABLED, automatic: true };
 
 /**
  * Decides what this run can cache.
@@ -81,15 +90,21 @@ export function planPromptCache(config: AppConfig): PromptCachePlan {
       if (!isClaudeModel(config.model)) {
         return { ...DISABLED, problem: unsupportedModel(config.model) };
       }
-      return { enabled: true, parts: ['tools', 'system prompt', 'conversation'], ttl, problem: undefined };
+      return {
+        enabled: true,
+        automatic: false,
+        parts: ['tools', 'system prompt', 'conversation'],
+        ttl,
+        problem: undefined,
+      };
     case 'anthropic':
       // `AnthropicModelConfig` has no `cacheConfig`, so the SDK places no cache
       // points of its own for this provider; only the one we place by hand works.
-      return { enabled: true, parts: ['system prompt'], ttl, problem: undefined };
+      return { enabled: true, automatic: false, parts: ['system prompt'], ttl, problem: undefined };
     case 'openai':
       // OpenAI caching is automatic and provider-managed; darwin has no cache
-      // points to configure, but that is not an unsupported state to warn about.
-      return DISABLED;
+      // points to configure, but the visible plan must distinguish that from off.
+      return AUTOMATIC;
   }
 }
 
