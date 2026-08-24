@@ -521,3 +521,24 @@ Added bounded 30-second subagent progress, safe phase projection, user-only per-
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: SRF-015 transient headless heartbeat correction
+
+**Date**: 2026-08-24
+**Task**: SRF-015 transient headless heartbeat correction
+**Branch**: `main`
+
+### Summary
+
+Kept text-mode subagent heartbeats on transient stderr only rather than duplicating them into persistent diagnostics; re-ran typecheck and the focused offline suite.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e3ac4db` | (see git log) |
+
+### Status
+
+[OK] **Completed**

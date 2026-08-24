@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-08-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~523 | Active |
+| `journal-1.md` | ~544 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-08-24 | SRF-015 transient headless heartbeat correction | `e3ac4db` | `main` |
 | 20 | 2026-08-24 | SRF-015 subagent heartbeats and targeted cancellation | `e6ae0f2` | `main` |
 | 19 | 2026-08-24 | Implement SRF-014 shell cwd preflight | `3f4c27a` | `main` |
 | 18 | 2026-08-24 | SRF-013 bounded completion guard | `989e36c` | `main` |
