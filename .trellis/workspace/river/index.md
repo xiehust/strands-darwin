@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-08-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~469 | Active |
+| `journal-1.md` | ~502 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-08-24 | Implement SRF-014 shell cwd preflight | `3f4c27a` | `main` |
 | 18 | 2026-08-24 | SRF-013 bounded completion guard | `989e36c` | `main` |
 | 17 | 2026-08-23 | Implement SER-037 Escape prompt UI dismissal | `635c712` | `main` |
 | 16 | 2026-08-23 | Correct SER-036 checklist row budgeting | `6f9c1c7` | `main` |

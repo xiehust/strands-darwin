@@ -467,3 +467,36 @@ Added one bounded driver-owned continuation for successful turns that end on int
 ### Status
 
 [OK] **Completed**
+
+
+## Session 19: Implement SRF-014 shell cwd preflight
+
+**Date**: 2026-08-24
+**Task**: Implement SRF-014 shell cwd preflight
+**Branch**: `main`
+
+### Summary
+
+Reported effective persistent-shell cwd and conservatively refused evidenced wrong-root relative paths before launch.
+
+### Main Changes
+
+- Configured the vended foreground bash tool from AgentRuntime's verified project root.
+- Added narrow no-launch wrong-root diagnostics while preserving shell and background lifecycle semantics.
+- Documented the invariant in SDK/error contracts and the architecture index.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3f4c27a` | (see git log) |
+
+### Testing
+
+- [OK] pnpm tsx spike/verify-background-bash.ts — 134 passed
+- [OK] pnpm tsx spike/verify-clear-session.ts — 44 passed
+- [OK] pnpm typecheck; pnpm test; pnpm build — passed
+
+### Status
+
+[OK] **Completed**
