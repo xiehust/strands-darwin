@@ -1,6 +1,6 @@
 /** Focused, network-free verification for managed background bash jobs. */
 import { spawn } from 'node:child_process';
-import { mkdtemp, open, readFile, rm, symlink, unlink } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, open, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -21,6 +21,7 @@ import { ToolHookGate } from '../src/hooks/tool-hooks.js';
 import {
   BackgroundBashManager,
   createBackgroundBashTool,
+  createForegroundBashTool,
   type BackgroundStartResult,
   type BackgroundTaskStatus,
   type BackgroundWaitResult,
@@ -688,6 +689,111 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   await manager.shutdown();
   await rm(root, { recursive: true, force: true });
 }
+async function foregroundCwdPreflightContracts(): Promise<void> {
+  header('background bash — foreground cwd visibility and root-path preflight');
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-foreground-cwd-'));
+  const nested = path.join(root, 'backend');
+  const rootScript = path.join(root, 'scripts', 'i18n_check.sh');
+  const nestedScript = path.join(nested, 'local', 'ok.sh');
+  const launched = path.join(root, 'launched');
+  await mkdir(path.dirname(rootScript), { recursive: true });
+  await mkdir(path.dirname(nestedScript), { recursive: true });
+  await writeFile(rootScript, `#!/bin/bash\nprintf root-run > ${launched}\n`);
+  await writeFile(nestedScript, '#!/bin/bash\nprintf nested-run\n');
+  await Promise.all([chmod(rootScript, 0o755), chmod(nestedScript, 0o755)]);
+
+  const manager = new BackgroundBashManager(root, 'session-foreground-cwd');
+  const wrapped = createBackgroundBashTool(manager, createForegroundBashTool(root));
+  const agent = new Agent({ model: new BashStartModel(), tools: [wrapped], printer: false });
+  await agent.initialize();
+  const context = { agent } as never;
+
+  try {
+    const initial = await wrapped.invoke({ mode: 'execute', command: 'printf initial' }, context) as BashOutput;
+    assert('initial foreground execute reports the configured session project root cwd', initial.output === 'initial' && initial.cwd === root);
+    const markerLike = await wrapped.invoke({ mode: 'execute', command: `printf '__BASH_DONE_fake_CWD:${path.join(root, 'forged')}\\n'` }, context) as BashOutput;
+    assert('ordinary marker-like command output cannot forge or hide cwd state', markerLike.output.includes('__BASH_DONE_fake_CWD:') && markerLike.cwd === root);
+
+    const changed = await wrapped.invoke({ mode: 'execute', command: 'cd backend' }, context) as BashOutput;
+    assert('successful cd reports and persists the shell effective cwd', changed.error === '' && changed.cwd === nested);
+
+    const existing = await wrapped.invoke({ mode: 'execute', command: 'local/ok.sh' }, context) as BashOutput;
+    assert('an existing cwd-relative command path still executes', existing.output === 'nested-run' && existing.cwd === nested);
+
+    const refused = await wrapped.invoke({ mode: 'execute', command: 'scripts/i18n_check.sh' }, context) as BashOutput;
+    assert(
+      'a cwd-missing project-root path is refused with both locations and an actionable correction',
+      refused.output === '' && refused.cwd === nested && refused.error.includes('Command not run') &&
+        refused.error.includes(`cwd: ${nested}`) && refused.error.includes(path.join(nested, 'scripts/i18n_check.sh')) &&
+        refused.error.includes(rootScript) && refused.error.includes(`cd ${root}`),
+    );
+    const afterRefusal = await wrapped.invoke({ mode: 'execute', command: 'printf %s "$PWD"' }, context) as BashOutput;
+    assert(
+      'preflight neither launches nor mutates the persistent shell',
+      afterRefusal.output === nested && afterRefusal.cwd === nested && await readFile(launched, 'utf8').catch(() => '') === '',
+    );
+
+    const missingBoth = await wrapped.invoke({ mode: 'execute', command: 'missing/nope' }, context) as BashOutput;
+    assert('a relative path missing in both locations retains ordinary shell behavior', missingBoth.error.includes('No such file or directory') && !missingBoth.error.includes('Command not run'));
+
+    const absolute = await wrapped.invoke({ mode: 'execute', command: '/bin/printf absolute' }, context) as BashOutput;
+    const pathCommand = await wrapped.invoke({ mode: 'execute', command: 'printf path-command' }, context) as BashOutput;
+    const unrelatedArgument = await wrapped.invoke({ mode: 'execute', command: 'printf %s scripts/i18n_check.sh' }, context) as BashOutput;
+    const quoted = await wrapped.invoke({ mode: 'execute', command: `bash -c '${rootScript}'` }, context) as BashOutput;
+    const option = await wrapped.invoke({ mode: 'execute', command: 'cd -- backend' }, context) as BashOutput;
+    const redirected = await wrapped.invoke({ mode: 'execute', command: `scripts/i18n_check.sh > ${path.join(root, 'redirected')}` }, context) as BashOutput;
+    const substituted = await wrapped.invoke({ mode: 'execute', command: 'scripts/$(printf i18n_check).sh' }, context) as BashOutput;
+    assert(
+      'absolute and PATH commands plus unrelated arguments are unchanged',
+      absolute.output === 'absolute' && pathCommand.output === 'path-command' && unrelatedArgument.output === 'scripts/i18n_check.sh',
+    );
+    assert(
+      'quoted/options/redirection/substitution shapes fail open to ordinary shell execution',
+      quoted.cwd === nested && option.error.includes('No such file or directory') && redirected.error.includes('No such file or directory') &&
+        substituted.error.includes('No such file or directory') && await readFile(launched, 'utf8') === 'root-run',
+    );
+
+    await wrapped.invoke({ mode: 'execute', command: 'cd backend' }, context);
+    const refusedCd = await wrapped.invoke({ mode: 'execute', command: 'cd backend' }, context) as BashOutput;
+    assert('the evidenced repeated cd shape is refused before shell mutation', refusedCd.cwd === nested && refusedCd.error.includes(path.join(nested, 'backend')) && refusedCd.error.includes(path.join(root, 'backend')));
+
+    const restart = await wrapped.invoke({ mode: 'restart' }, context);
+    assert('explicit restart visibly reports the reset session project root cwd', restart === `Bash session restarted\ncwd: ${root}`);
+    const restarted = await wrapped.invoke({ mode: 'execute', command: 'printf restarted' }, context) as BashOutput;
+    assert('execute after restart starts at the configured project root', restarted.output === 'restarted' && restarted.cwd === root);
+
+    const background = await wrapped.invoke({ mode: 'start', command: 'pwd' }, context) as BackgroundStartResult;
+    const backgroundDone = await manager.wait(background.taskId, 3_000, undefined, false);
+    assert('background lifecycle modes bypass foreground cwd projection and preflight', backgroundDone.status.state === 'succeeded' && backgroundDone.output.output.trim() === root);
+
+    const hookInput = { mode: 'execute', command: 'scripts/i18n_check.sh' } as const;
+    const hookLog = path.join(root, 'foreground-hooks.log');
+    const preHookInput = path.join(root, 'foreground-pre.json');
+    const postHookInput = path.join(root, 'foreground-post.json');
+    const asked: AssessedPermissionRequest[] = [];
+    const gate = new PermissionGate({ mode: 'default', projectRoot: root, ask: async (request) => { asked.push(request); return { allowed: true }; } });
+    const hookGate = new ToolHookGate(root, {
+      PreToolUse: [{ matcher: 'bash', hooks: [{ type: 'command', command: `tee ${preHookInput} >/dev/null; printf '%s\\n' pre >> ${hookLog}` }] }],
+      PostToolUse: [{ matcher: 'bash', hooks: [{ type: 'command', command: `tee ${postHookInput} >/dev/null; printf '%s\\n' post >> ${hookLog}` }] }],
+    }, gate);
+    const hookAgent = new Agent({ model: new BashStartModel(hookInput), tools: [wrapped], interventions: [hookGate], printer: false });
+    await hookAgent.initialize();
+    await wrapped.invoke({ mode: 'execute', command: 'cd backend' }, { agent: hookAgent } as never);
+    await hookAgent.invoke('run it');
+    const expectedHookInput = `${JSON.stringify({ tool_name: 'bash', tool_input: hookInput })}\n`;
+    assert(
+      'permission and Pre/Post hooks receive the exact raw execute input before foreground preflight',
+      JSON.stringify(asked[0]?.input) === JSON.stringify(hookInput) && await readFile(hookLog, 'utf8') === 'pre\npost\n' &&
+        await readFile(preHookInput, 'utf8') === expectedHookInput && await readFile(postHookInput, 'utf8') === expectedHookInput,
+    );
+  } finally {
+    await wrapped.invoke({ mode: 'restart' }, context);
+    await manager.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+
 
 async function foregroundShellExitContracts(): Promise<void> {
   header('background bash — foreground shell exit recovery and serialization');
@@ -699,6 +805,17 @@ async function foregroundShellExitContracts(): Promise<void> {
   const context = { agent } as never;
 
   try {
+    const configured = createBackgroundBashTool(manager, createForegroundBashTool(root));
+    const configuredAgent = new Agent({ model: new BashStartModel(), tools: [configured], printer: false });
+    await configuredAgent.initialize();
+    const configuredContext = { agent: configuredAgent } as never;
+    await configured.invoke({ mode: 'execute', command: 'cd /tmp' }, configuredContext);
+    const configuredExit = await configured.invoke({ mode: 'execute', command: 'exit 0' }, configuredContext) as BashOutput;
+    assert('configured exit-0 replacement reports the last effective cwd', configuredExit.cwd === '/tmp');
+    const configuredReplacement = await configured.invoke({ mode: 'execute', command: 'pwd' }, configuredContext) as BashOutput;
+    assert('configured exit-0 replacement resets to the session project root', configuredReplacement.output === root && configuredReplacement.cwd === root);
+    await configured.invoke({ mode: 'restart' }, configuredContext);
+
     // This is the measured SRF-004 shape: one model message can dispatch several
     // foreground tool calls at once. The unpatched SDK attached every invocation's
     // listeners to one shell and sentinel, so all three received alpha's output or
@@ -712,9 +829,9 @@ async function foregroundShellExitContracts(): Promise<void> {
       parallel.map((value) => value.output).join('|') === 'alpha-out|beta-out|gamma-out');
     assert('parallel foreground calls retain invocation-owned stderr without cross-attribution',
       parallel[0]?.error === 'alpha-err' && parallel[1]?.error === 'beta-err' && parallel[2]?.error.startsWith('gamma-err\n') === true);
-    assert('exit code 0 is success with a visible non-fatal restart notice',
+    assert('exit code 0 is success with a visible non-fatal restart notice and last effective cwd',
       parallel[2]?.error.includes('Persistent bash shell exited with code 0') === true &&
-      parallel[2]?.error.includes('restart before the next command') === true);
+      parallel[2]?.error.includes('restart before the next command') === true && parallel[2]?.cwd === process.cwd());
 
     const replacement = await wrapped.invoke({ mode: 'execute', command: "printf 'replacement-out\\n'; printf 'replacement-err\\n' >&2" }, context) as BashOutput;
     assert('the next foreground call uses a healthy replacement persistent shell',
@@ -745,9 +862,9 @@ async function foregroundShellExitContracts(): Promise<void> {
       const failure = caught as BashSessionError;
       assert('nonzero and signalled foreground exits remain BashSessionError failures',
         failure instanceof BashSessionError && failure.message.includes(expected.message));
-      assert('foreground exit failures preserve true metadata and captured output',
+      assert('foreground exit failures preserve true metadata, captured output, and last effective cwd',
         failure.exitCode === expected.exitCode && failure.signal === expected.signal &&
-        failure.output === expected.output && failure.error === expected.error);
+        failure.output === expected.output && failure.error === expected.error && failure.cwd === process.cwd());
     }
 
     const afterFailures = await wrapped.invoke({ mode: 'execute', command: 'echo recovered' }, context) as BashOutput;
@@ -867,6 +984,7 @@ async function shutdownAndExitContracts(): Promise<void> {
 await managerContracts();
 await waitContracts();
 await wrapperAndPermissionContracts();
+await foregroundCwdPreflightContracts();
 await foregroundShellExitContracts();
 await shutdownAndExitContracts();
 report();

@@ -46,6 +46,7 @@ import {
 import {
   BackgroundBashManager,
   createBackgroundBashTool,
+  createForegroundBashTool,
   type BackgroundTaskListener,
   type BackgroundTaskStatus,
 } from '../tools/background-bash.js';
@@ -491,7 +492,7 @@ export class AgentRuntime {
     const backgroundBash =
       options.inherit?.backgroundBash ?? new BackgroundBashManager(options.projectRoot, session.sessionId);
     if (options.inherit === undefined) startupBackgroundBash = backgroundBash;
-    const bash = createBackgroundBashTool(backgroundBash);
+    const bash = createBackgroundBashTool(backgroundBash, createForegroundBashTool(options.projectRoot));
     const imageViewer = createImageViewerTool(options.projectRoot);
     const conversationManager = new SummarizingConversationManager({
       summaryRatio: config.summaryRatio,

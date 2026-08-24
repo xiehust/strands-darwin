@@ -6,7 +6,7 @@ import { mkdir, open, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 
 import { tool, type InvokableTool, type ToolContext } from '@strands-agents/sdk';
-import { bash as sdkBash } from '@strands-agents/sdk/vended-tools/bash';
+import { bash as sdkBash, createBash } from '@strands-agents/sdk/vended-tools/bash';
 import type { BashInput, BashOutput } from '@strands-agents/sdk/vended-tools/bash';
 import { z } from 'zod';
 
@@ -688,12 +688,16 @@ const inputSchema = z.object({
 });
 
 type BackgroundBashInput = z.infer<typeof inputSchema>;
-type BackgroundBashOutput = BashOutput | 'Bash session restarted' | BackgroundStartResult | BackgroundTaskStatus | BackgroundTaskStatus[] | BackgroundOutputResult | BackgroundWaitResult;
+type BackgroundBashOutput = BashOutput | string | BackgroundStartResult | BackgroundTaskStatus | BackgroundTaskStatus[] | BackgroundOutputResult | BackgroundWaitResult;
 
-/** Wraps the pinned SDK foreground tool while preserving its per-Agent shell lifecycle. */
+/** Configures the pinned SDK foreground tool from Darwin's verified project root. */
+export function createForegroundBashTool(projectRoot: string): InvokableTool<BashInput, BashOutput | string> {
+  return createBash({ cwd: projectRoot, projectRoot });
+}
+
 export function createBackgroundBashTool(
   manager: BackgroundBashManager,
-  foreground: InvokableTool<BashInput, BashOutput | 'Bash session restarted'> = sdkBash,
+  foreground: InvokableTool<BashInput, BashOutput | string> = sdkBash,
 ): InvokableTool<BackgroundBashInput, BackgroundBashOutput> {
   return tool<typeof inputSchema, BackgroundBashOutput>({
     name: 'bash',

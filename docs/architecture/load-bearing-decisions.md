@@ -442,8 +442,13 @@ stdout/stderr plus a restart notice and the next call starts a replacement shell
 signalled exits remain metadata-bearing failures. Serialization is also what keeps parallel
 foreground calls from sharing listeners and attributing one command's output to another.
 Session-owned background bash jobs are reaped as whole process groups with bounded TERM→KILL
-cleanup plus a synchronous `exit` fallback. A redundant provider `timeout` on `start` is
-ignored after policy observation and never becomes a background lifetime. Their provider-facing
+cleanup plus a synchronous `exit` fallback. Darwin configures the foreground tool from the
+runtime's verified project root; every execute projects the serialized shell's effective cwd.
+Before a shell write, only a plain whole-command `cd <relative>` or slash-containing relative
+command path may be refused when absent under cwd but present under project root; complex shell
+syntax fails open, and the diagnostic is non-mutating and names both locations. A redundant
+provider `timeout` on `start` is ignored after policy observation and never becomes a background
+lifetime. Their provider-facing
 `wait` is also bounded (1–30000 ms), observes cancellation and shutdown, and consumes output
 only through the existing serialized byte cursor. Output-sensitive wakeup stays the compatibility
 default; explicit `wakeOnOutput: false` advances and retains up to the ordinary output cap while

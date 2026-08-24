@@ -123,14 +123,29 @@ next queued call starts a replacement shell. Nonzero or signalled closes remain
 sentinel keeps normal completion open until both streams have crossed the command boundary, so
 stderr cannot leak into the next invocation.
 
+Darwin constructs the foreground tool with the already-verified `RuntimeOptions.projectRoot` as
+both initial cwd and session project root. Each serialized execute appends a private `pwd -P`
+probe in the same shell write, strips that marker, and returns `cwd`; configured restart returns
+the reset cwd. Thus cwd cannot race another foreground invocation and no Darwin module reaches
+for ambient `process.cwd()`. Before writing a command, the session may return a non-mutating
+wrong-root diagnostic, but only for the SRF-014 evidence shapes: a whole simple `cd <relative>`
+or a plain command-position relative path containing `/`. Quotes, escapes, newlines, operators,
+redirection, substitution, glob syntax, options, absolute paths, bare PATH commands, and unrelated
+arguments all fail open to bash. A candidate is refused only when absent under effective cwd and
+present under the session project root; the diagnostic names cwd, both resolved locations, and a
+root correction. Existing cwd-relative paths and paths missing in both locations execute normally.
+
 #### Validation & error matrix
 
 | Persistent foreground outcome | Required result |
 |---|---|
-| Sentinel appears on stdout and stderr | Return the ordinary `{ output, error }` with no notice |
-| Shell closes with `code === 0`, `signal === null` | Return captured buffers; append the restart notice to `error`; next queued call starts a shell |
-| Shell closes nonzero | Throw `BashSessionError` with exact `exitCode`, `signal: null`, `output`, and `error` |
-| Shell closes by signal | Throw `BashSessionError` with `exitCode: null`, exact `signal`, `output`, and `error` |
+| Sentinel appears on stdout and stderr | Return `{ output, error, cwd }` with no notice |
+| Configured explicit restart | Return the restart message plus reset project-root cwd; replacement remains lazy |
+| Eligible path absent under cwd but present under project root | Return `{ output: '', error: <diagnostic>, cwd }` before shell write; launch/mutate nothing |
+| Eligible path exists under cwd or is absent in both places | Run unchanged and return ordinary shell output/error/cwd |
+| Shell closes with `code === 0`, `signal === null` | Return captured buffers and last effective cwd; append the restart notice to `error`; next queued call starts a shell |
+| Shell closes nonzero | Throw `BashSessionError` with exact `exitCode`, `signal: null`, `output`, `error`, and last effective `cwd` |
+| Shell closes by signal | Throw `BashSessionError` with `exitCode: null`, exact `signal`, `output`, `error`, and last effective `cwd` |
 | Parallel executes on one Agent | Settle in invocation order with disjoint captured buffers |
 | Execute/restart on different Agents | Remain independent; do not share a queue or shell |
 
@@ -140,10 +155,12 @@ commands preserve cwd/exported state and explicit restart clears it. Bad: matchi
 message in Darwin cannot recover captured buffers or signal metadata and leaves the listener
 race intact.
 
-Required assertions live in `spike/verify-background-bash.ts`: real parallel invocations,
-stdout/stderr ownership, visible exit-0 notice, replacement health, nonzero/signal metadata,
-queue recovery, normal persistence, explicit restart, per-Agent isolation, and all background
-TERM→KILL/exit cleanup cases. Also run `probe-cancel-exit.ts`, `verify-clear-session.ts`, and the
+Required assertions live in `spike/verify-background-bash.ts`: real initial/persisted/restarted
+cwd, conservative refusal and pass-through shapes, no-launch/no-mutation evidence, real parallel
+invocations, stdout/stderr ownership, visible exit-0 notice, replacement health, nonzero/signal
+metadata, queue recovery, normal persistence, raw permission/hook input, per-Agent isolation, and
+all background TERM→KILL/exit cleanup cases. Also run `probe-cancel-exit.ts`,
+`verify-clear-session.ts`, and the
 `bashExit` / `cancelThenContinue` TUI scenarios after changing the patch.
 
 ### Contract: fileEditor clamps only oversized positive view ends

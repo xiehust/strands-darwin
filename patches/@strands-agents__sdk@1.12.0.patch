@@ -29,31 +29,144 @@ index 23b1dad5bf6ca0dc60ec22d70bf195c1556ba29a..455fc41794c2b6bbe0cc5c86d428cf8c
      return mapped;
  }
  function createResponsesStreamError(message, code) {
+diff --git a/dist/src/vended-tools/bash/bash.d.ts b/dist/src/vended-tools/bash/bash.d.ts
+index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..8907d109ce2866e376df312ebc0bae1a68acec3d 100644
+--- a/dist/src/vended-tools/bash/bash.d.ts
++++ b/dist/src/vended-tools/bash/bash.d.ts
+@@ -1,12 +1,19 @@
+-import type { BashOutput } from './types.js';
++import type { InvokableTool } from '../../index.js';
++import type { BashInput, BashOutput } from './types.js';
++export interface CreateBashOptions {
++    /** Initial cwd for every new persistent shell owned by this tool. */
++    cwd?: string;
++    /** Session project root used only for conservative wrong-root path preflight. */
++    projectRoot?: string;
++}
++/**
++ * Create a host-only bash tool with configured persistent-shell path context.
++ */
++export declare function createBash(options?: CreateBashOptions): InvokableTool<BashInput, BashOutput | string>;
+ /**
+  * Host-only bash tool with a persistent session across calls.
+  * State (variables, working directory) persists within the session.
+  * Node.js only.
+  */
+-export declare const bash: import("../../index.js").InvokableTool<{
+-    mode: "execute" | "restart";
+-    command?: string | undefined;
+-    timeout?: number | undefined;
+-}, BashOutput | "Bash session restarted">;
++export declare const bash: InvokableTool<BashInput, BashOutput | string>;
+ //# sourceMappingURL=bash.d.ts.map
+\ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/bash.js b/dist/src/vended-tools/bash/bash.js
-index 44fb775853169dab0fde7aee5e7cc275a060de9c..1dabf08b1c100a3b6794fb664c3bcbc9cd5bd7f0 100644
+index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b978b0ade 100644
 --- a/dist/src/vended-tools/bash/bash.js
 +++ b/dist/src/vended-tools/bash/bash.js
-@@ -3,6 +3,7 @@ import { z } from 'zod';
+@@ -1,8 +1,13 @@
+ import { tool } from '../../tools/tool-factory.js';
+ import { z } from 'zod';
  import { spawn } from 'child_process';
++import { existsSync, statSync } from 'fs';
++import path from 'path';
  import { Buffer } from 'buffer';
  import { BashTimeoutError, BashSessionError } from './types.js';
 +const SHELL_RESTART_NOTICE = 'Notice: Persistent bash shell exited with code 0; it will restart before the next command.';
++const UNSAFE_PREFLIGHT_SYNTAX = /[\n\r'"\\;&|<>$`(){}\[\]*?!]/;
++const PLAIN_RELATIVE_PATH = /^(?:\.\/)?[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+\/?$/;
  const bashInputSchema = z.object({
      mode: z
          .enum(['execute', 'restart'])
-@@ -18,9 +19,11 @@ class BashSession {
+@@ -10,6 +15,57 @@ const bashInputSchema = z.object({
+     command: z.string().optional().describe('The bash command to execute (required when mode is "execute")'),
+     timeout: z.number().positive().optional().describe('Timeout in seconds (default: 120, applies only to execute mode)'),
+ });
++/**
++ * Recognize only the simple path shapes observed in SRF-014. General shell
++ * syntax deliberately fails open rather than being tokenized or rewritten.
++ */
++function preflightPath(command) {
++    const trimmed = command.trim();
++    if (!trimmed || UNSAFE_PREFLIGHT_SYNTAX.test(trimmed)) {
++        return null;
++    }
++    const words = trimmed.split(/[ \t]+/);
++    if (words[0] === 'cd') {
++        if (words.length !== 2 || words[1].startsWith('-') || path.isAbsolute(words[1])) {
++            return null;
++        }
++        return { value: words[1], requireDirectory: true };
++    }
++    const candidate = words[0];
++    if (!PLAIN_RELATIVE_PATH.test(candidate) || candidate.startsWith('-') || path.isAbsolute(candidate)) {
++        return null;
++    }
++    return { value: candidate, requireDirectory: false };
++}
++function pathExists(candidate, requireDirectory) {
++    try {
++        return existsSync(candidate) && (!requireDirectory || statSync(candidate).isDirectory());
++    }
++    catch {
++        return false;
++    }
++}
++function wrongRootDiagnostic(command, cwd, projectRoot) {
++    const candidate = preflightPath(command);
++    if (candidate === null) {
++        return null;
++    }
++    const cwdPath = path.resolve(cwd, candidate.value);
++    const projectPath = path.resolve(projectRoot, candidate.value);
++    if (cwdPath === projectPath || pathExists(cwdPath, candidate.requireDirectory) || !pathExists(projectPath, candidate.requireDirectory)) {
++        return null;
++    }
++    return {
++        output: '',
++        error: `Command not run: relative path "${candidate.value}" does not exist from the persistent shell cwd, but it does exist from the session project root.\n` +
++            `cwd: ${cwd}\n` +
++            `cwd path: ${cwdPath}\n` +
++            `project-root path: ${projectPath}\n` +
++            `Return to the project root with "cd ${projectRoot}" or use "${projectPath}".`,
++        cwd,
++    };
++}
++
+ /**
+  * Internal class for managing a bash session.
+  */
+@@ -18,9 +74,19 @@ class BashSession {
      _started = false;
      _timeout;
      _sentinel;
+-    constructor(timeout = 120) {
 +    _stderrSentinel;
-     constructor(timeout = 120) {
++    _cwdSentinel;
++    _initialCwd;
++    _projectRoot;
++    _cwd;
++    constructor(timeout = 120, initialCwd = process.cwd(), projectRoot = null) {
          this._timeout = timeout;
          this._sentinel = `__BASH_DONE_${Date.now()}_${Math.random().toString(36).slice(2)}__`;
 +        this._stderrSentinel = `${this._sentinel}_STDERR`;
++        this._cwdSentinel = `${this._sentinel}_CWD`;
++        this._initialCwd = path.resolve(initialCwd);
++        this._projectRoot = projectRoot === null ? null : path.resolve(projectRoot);
++        this._cwd = this._initialCwd;
      }
      /**
       * Starts the bash process if not already started.
-@@ -61,7 +64,8 @@ class BashSession {
+@@ -31,7 +97,7 @@ class BashSession {
+         }
+         try {
+             this._process = spawn('bash', [], {
+-                cwd: process.cwd(),
++                cwd: this._initialCwd,
+                 env: { ...process.env, PS1: '', PS2: '' },
+             });
+             if (!this._process.stdin || !this._process.stdout || !this._process.stderr) {
+@@ -61,9 +127,14 @@ class BashSession {
          activeSessions.delete(this);
      }
      /**
@@ -62,8 +175,14 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..1dabf08b1c100a3b6794fb664c3bcbc9
 +     * this method has exclusive ownership of the persistent process and streams.
       */
      async run(command, timeout) {
++        const diagnostic = this._projectRoot === null ? null : wrongRootDiagnostic(command, this._cwd, this._projectRoot);
++        if (diagnostic !== null) {
++            return diagnostic;
++        }
          this.start();
-@@ -73,32 +77,63 @@ class BashSession {
+         if (!this._process || !this._process.stdin || !this._process.stdout || !this._process.stderr) {
+             throw new BashSessionError('Bash session not properly initialized');
+@@ -73,32 +144,75 @@ class BashSession {
          let stderrData = '';
          let timeoutHandle = null;
          let isTimedOut = false;
@@ -79,10 +198,20 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..1dabf08b1c100a3b6794fb664c3bcbc9
 +                    return;
 +                }
 +                cleanup();
-+                // Remove sentinel from output
-+                const output = stdoutData.replace(this._sentinel, '').trim();
++                const cwdStart = stdoutData.lastIndexOf(this._cwdSentinel);
++                const cwdEnd = cwdStart < 0 ? -1 : stdoutData.indexOf('\0', cwdStart);
++                if (cwdStart < 0 || cwdEnd < 0) {
++                    reject(new BashSessionError('Bash session did not report its effective cwd'));
++                    return;
++                }
++                const reportedCwd = stdoutData.slice(cwdStart + this._cwdSentinel.length, cwdEnd).replace(/\n$/, '');
++                if (path.isAbsolute(reportedCwd)) {
++                    this._cwd = reportedCwd;
++                }
++                const afterCwd = stdoutData[cwdEnd + 1] === '\n' ? cwdEnd + 2 : cwdEnd + 1;
++                const output = `${stdoutData.slice(0, cwdStart)}${stdoutData.slice(afterCwd)}`.replace(this._sentinel, '').trim();
 +                const error = stderrData.replace(this._stderrSentinel, '').trim();
-+                resolve({ output, error });
++                resolve({ output, error, cwd: this._cwd });
 +            };
              const onStdoutData = (chunk) => {
                  const data = Buffer.from(chunk).toString('utf-8');
@@ -120,6 +249,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..1dabf08b1c100a3b6794fb664c3bcbc9
 +                        resolve({
 +                            output,
 +                            error: error ? `${error}\n${SHELL_RESTART_NOTICE}` : SHELL_RESTART_NOTICE,
++                            cwd: this._cwd,
 +                        });
 +                        return;
 +                    }
@@ -131,20 +261,21 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..1dabf08b1c100a3b6794fb664c3bcbc9
 +                    failure.signal = signal;
 +                    failure.output = output;
 +                    failure.error = error;
++                    failure.cwd = this._cwd;
 +                    reject(failure);
                  }
              };
              // Handler for process errors
-@@ -136,7 +171,7 @@ class BashSession {
+@@ -136,7 +250,7 @@ class BashSession {
              this._process.on('error', onError);
              // Send command with sentinel
              try {
 -                stdin.write(`${command}\necho "${this._sentinel}"\n`);
-+                stdin.write(`${command}\necho "${this._sentinel}"\necho "${this._stderrSentinel}" >&2\n`);
++                stdin.write(`${command}\ncommand printf '${this._cwdSentinel}%s\\0\\n' "$(command pwd -P)"\necho "${this._sentinel}"\necho "${this._stderrSentinel}" >&2\n`);
              }
              catch (err) {
                  cleanup();
-@@ -151,6 +186,16 @@ class BashSession {
+@@ -151,6 +265,16 @@ class BashSession {
   */
  // eslint-disable-next-line @typescript-eslint/no-explicit-any
  const sessions = new WeakMap();
@@ -161,29 +292,40 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..1dabf08b1c100a3b6794fb664c3bcbc9
  /**
   * Track all active sessions for cleanup on process exit.
   */
-@@ -234,29 +279,31 @@ export const bash = tool({
-         if (input.mode === 'execute' && !input.command) {
-             throw new Error('command is required when mode is "execute"');
-         }
+@@ -221,42 +345,50 @@ const DEFAULT_DESCRIPTION = 'Executes bash shell commands in a persistent sessio
+  * State (variables, working directory) persists within the session.
+  * Node.js only.
+  */
+-export const bash = tool({
+-    name: 'bash',
+-    description: DEFAULT_DESCRIPTION,
+-    inputSchema: bashInputSchema,
+-    callback: async (input, context) => {
+-        if (!context) {
+-            throw new Error('Tool context is required for bash operations');
+-        }
+-        const agent = context.agent;
+-        // Validate execute mode has command
+-        if (input.mode === 'execute' && !input.command) {
+-            throw new Error('command is required when mode is "execute"');
+-        }
 -        // Handle restart mode
 -        if (input.mode === 'restart') {
 -            const existingSession = sessions.get(agent);
 -            if (existingSession) {
 -                existingSession.stop();
 -                sessions.delete(agent);
-+        return enqueueForeground(agent, async () => {
-+            // Handle restart mode
-+            if (input.mode === 'restart') {
-+                const existingSession = sessions.get(agent);
-+                if (existingSession) {
-+                    existingSession.stop();
-+                    sessions.delete(agent);
-+                }
-+                // Create new session (will be added to activeSessions when started)
-+                const newSession = new BashSession(120);
-+                sessions.set(agent, newSession);
-+                sessionFinalizer.register(agent, newSession);
-+                return 'Bash session restarted';
++export function createBash(options = {}) {
++    const initialCwd = path.resolve(options.cwd ?? process.cwd());
++    const projectRoot = options.projectRoot === undefined ? null : path.resolve(options.projectRoot);
++    const reportRestartCwd = options.cwd !== undefined || options.projectRoot !== undefined;
++    return tool({
++        name: 'bash',
++        description: DEFAULT_DESCRIPTION,
++        inputSchema: bashInputSchema,
++        callback: async (input, context) => {
++            if (!context) {
++                throw new Error('Tool context is required for bash operations');
              }
 -            // Create new session (will be added to activeSessions when started)
 -            const newSession = new BashSession(120);
@@ -201,26 +343,87 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..1dabf08b1c100a3b6794fb664c3bcbc9
 -        }
 -        // Execute command
 -        return session.run(input.command, input.timeout);
-+            // Handle execute mode
-+            // Get or create session
-+            let session = sessions.get(agent);
-+            if (!session) {
-+                session = new BashSession(input.timeout ?? 120);
-+                sessions.set(agent, session);
-+                sessionFinalizer.register(agent, session);
+-    },
+-});
++            const agent = context.agent;
++            // Validate execute mode has command
++            if (input.mode === 'execute' && !input.command) {
++                throw new Error('command is required when mode is "execute"');
 +            }
-+            // Execute command
-+            return session.run(input.command, input.timeout);
-+        });
-     },
- });
++            return enqueueForeground(agent, async () => {
++                // Handle restart mode
++                if (input.mode === 'restart') {
++                    const existingSession = sessions.get(agent);
++                    if (existingSession) {
++                        existingSession.stop();
++                        sessions.delete(agent);
++                    }
++                    // Create new session (will be added to activeSessions when started)
++                    const newSession = new BashSession(120, initialCwd, projectRoot);
++                    sessions.set(agent, newSession);
++                    sessionFinalizer.register(agent, newSession);
++                    return reportRestartCwd ? `Bash session restarted\ncwd: ${initialCwd}` : 'Bash session restarted';
++                }
++                // Handle execute mode
++                // Get or create session
++                let session = sessions.get(agent);
++                if (!session) {
++                    session = new BashSession(input.timeout ?? 120, initialCwd, projectRoot);
++                    sessions.set(agent, session);
++                    sessionFinalizer.register(agent, session);
++                }
++                // Execute command
++                return session.run(input.command, input.timeout);
++            });
++        },
++    });
++}
++export const bash = createBash();
  //# sourceMappingURL=bash.js.map
 \ No newline at end of file
+diff --git a/dist/src/vended-tools/bash/index.d.ts b/dist/src/vended-tools/bash/index.d.ts
+index 74f8db2f387fa4374920935939b9229f94187aba..9ce7b8ab45e820e7b0561b76d30f88f4a1c8c0b4 100644
+--- a/dist/src/vended-tools/bash/index.d.ts
++++ b/dist/src/vended-tools/bash/index.d.ts
+@@ -5,7 +5,7 @@
+  * stateless tool that routes commands through a sandbox, which runs whichever
+  * shell that sandbox provides.
+  */
+-export { bash } from './bash.js';
++export { bash, createBash } from './bash.js';
+ export { makeShell, makeBash } from './make-shell.js';
+ export type { MakeShellOptions, MakeBashOptions } from './make-shell.js';
+ export { SANDBOX_SHELL_DESCRIPTION, SANDBOX_BASH_DESCRIPTION, BashTimeoutError, BashSessionError, ShellTimeoutError, ShellExecutionError, } from './types.js';
+diff --git a/dist/src/vended-tools/bash/index.js b/dist/src/vended-tools/bash/index.js
+index 19409ad6160e57325f377097c83795579cc31cf0..606a301fb63090684f4d928011552140fcca4087 100644
+--- a/dist/src/vended-tools/bash/index.js
++++ b/dist/src/vended-tools/bash/index.js
+@@ -5,7 +5,7 @@
+  * stateless tool that routes commands through a sandbox, which runs whichever
+  * shell that sandbox provides.
+  */
+-export { bash } from './bash.js';
++export { bash, createBash } from './bash.js';
+ export { makeShell, makeBash } from './make-shell.js';
+ export { SANDBOX_SHELL_DESCRIPTION, SANDBOX_BASH_DESCRIPTION, BashTimeoutError, BashSessionError, ShellTimeoutError, ShellExecutionError, } from './types.js';
+ //# sourceMappingURL=index.js.map
+\ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/types.d.ts b/dist/src/vended-tools/bash/types.d.ts
-index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..197045e896402c014d8e1608d30489892fa18d37 100644
+index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..b96c005ce8c1916bd8e07234b33052a90ad3c9fe 100644
 --- a/dist/src/vended-tools/bash/types.d.ts
 +++ b/dist/src/vended-tools/bash/types.d.ts
-@@ -65,6 +65,11 @@ export declare class BashTimeoutError extends Error {
+@@ -50,6 +50,10 @@ export interface BashOutput {
+      * Empty string if no errors occurred.
+      */
+     error: string;
++    /**
++     * Effective persistent-shell cwd after the command.
++     */
++    cwd: string;
+     /**
+      * Allow indexing with string keys for JSONValue compatibility.
+      */
+@@ -65,6 +69,12 @@ export declare class BashTimeoutError extends Error {
   * Error thrown when a bash session encounters an error.
   */
  export declare class BashSessionError extends Error {
@@ -229,6 +432,7 @@ index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..197045e896402c014d8e1608d3048989
 +    signal?: NodeJS.Signals | null;
 +    output?: string;
 +    error?: string;
++    cwd?: string;
      constructor(message: string);
  }
  /**
