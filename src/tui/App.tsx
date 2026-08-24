@@ -13,6 +13,12 @@
  */
 import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize, type DOMElement } from 'ink';
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
+import type { AgentStreamEvent } from '@strands-agents/sdk';
+
+import {
+  collectCompletionCandidate,
+  runWithCompletionGuard,
+} from '../agent/completion-guard.js';
 
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
 import type { DiagnosticsLog } from '../agent/diagnostics.js';
@@ -569,25 +575,33 @@ export function App({
       let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
       setStatus('streaming');
       try {
-        await runWithStreamResumption(
+        const publish = (events: readonly AgentStreamEvent[]): void => {
+          for (const event of events) dispatch({ type: 'streamEvent', event });
+        };
+        await runWithCompletionGuard(
           text,
-          async (turnInput) => {
-            for await (const event of runtime.send(turnInput)) {
-              dispatch({ type: 'streamEvent', event });
-            }
-          },
-          (error) => {
-            // The failed attempt is a complete transcript/trajectory fact before the
-            // next ordinary turn starts. Keep the busy owner and queued work intact.
-            dispatch({ type: 'turnEnded' });
-            dispatch({
-              type: 'notice',
-              text: `turn failed: ${error.message}`,
-              severity: 'error',
-            });
-            dispatch({ type: 'notice', text: STREAM_CONTINUATION_NOTICE, severity: 'warn' });
-          },
-        );
+          (candidateInput) => runWithStreamResumption(
+            candidateInput,
+            (turnInput) => collectCompletionCandidate(
+              runtime,
+              turnInput,
+              (events) => publish(events.filter((event) =>
+                event.type === 'beforeToolCallEvent' || event.type === 'afterToolCallEvent',
+              )),
+            ),
+            (error) => {
+              // The failed attempt is a complete transcript/trajectory fact before the
+              // next ordinary turn starts. Keep the busy owner and queued work intact.
+              dispatch({ type: 'turnEnded' });
+              dispatch({
+                type: 'notice',
+                text: `turn failed: ${error.message}`,
+                severity: 'error',
+              });
+              dispatch({ type: 'notice', text: STREAM_CONTINUATION_NOTICE, severity: 'warn' });
+            },
+          ),
+        ).then(publish);
         await runtime.markResumable();
       } catch (error) {
         // A failed turn must not kill the session; the user may want to retry.

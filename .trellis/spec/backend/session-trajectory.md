@@ -678,3 +678,16 @@ second turn exists. Public headless/TUI projections do not print that private co
 
 `spike/verify-stream-resumption.ts` asserts the distinct turn numbers, failed/clean outcomes, prompt
 bounds, original-text absence, and append order against a real SDK Agent and scripted Model.
+
+
+## SRF-013 completion-guard transaction
+
+A guarded candidate keeps the existing bounded `userInput` durability barrier, then defers only
+provider-controlled event records until the parent driver decides. Acceptance writes the original
+projections unchanged. Suppression discards all candidate payloads and partial text, writes an honest
+`turnEnded` with `completionGuardSuppressed: true`, stop reason/counters/spend, and never writes the
+fixed private continuation prompt as `userInput`. The accepted continuation is a separate ordinary
+turn. A second matched continuation is also represented only by its suppression terminal before the
+bounded `CompletionGuardError`; failure/cancellation records retain their existing meanings. Replay
+therefore cannot expose suppressed prose but can prove that the guard intervened. Required coverage:
+`spike/verify-completion-guard.ts` plus the ordinary trajectory suite.

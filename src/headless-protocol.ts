@@ -1,5 +1,10 @@
 import { MaxTokensError, type AgentStreamEvent, type Message } from '@strands-agents/sdk';
 
+import {
+  collectCompletionCandidate,
+  runWithCompletionGuard,
+} from './agent/completion-guard.js';
+
 import type { ApprovalMode, AssessedPermissionRequest, PermissionSource } from './agent/permission.js';
 import { runWithStreamResumption } from './agent/stream-resumption.js';
 import type { HeadlessRuntime } from './headless.js';
@@ -270,34 +275,40 @@ export async function runStructuredHeadlessTurn(
   const expanded = await runtime.expandSlashCommand(prompt);
   const input = expanded?.message ?? prompt;
   let continued = false;
-  const result = await runWithStreamResumption(
+  const events = await runWithCompletionGuard(
     input,
-    async (turnInput) => {
-      writer.turnStarted();
-      return runOneStructuredHeadlessTurn(runtime, turnInput, writer, onToolStart);
-    },
-    (error) => {
-      continued = true;
-      writer.turnFailed(error);
-      writer.turnContinuing();
-    },
+    (candidateInput) => runWithStreamResumption(
+      candidateInput,
+      async (turnInput) => {
+        writer.turnStarted();
+        return collectCompletionCandidate(
+          runtime,
+          turnInput,
+          (events) => consumeStructuredToolEvents(events, writer, onToolStart),
+        );
+      },
+      (error) => {
+        continued = true;
+        writer.turnFailed(error);
+        writer.turnContinuing();
+      },
+    ),
   );
+  const result = consumeStructuredEvents(events, writer, onToolStart);
   return continued ? { ...result, continued: true } : result;
 }
 
-/** One ordinary structured turn. Failed-attempt text never enters the next result. */
-async function runOneStructuredHeadlessTurn(
-  runtime: HeadlessRuntime,
-  input: string,
+function consumeStructuredEvents(
+  events: readonly AgentStreamEvent[],
   writer: StructuredHeadlessWriter,
   onToolStart: (name: string, input: unknown) => string,
-): Promise<StructuredTurnResult> {
+): StructuredTurnResult {
   const answer: string[] = [];
   let completed = false;
   let cancelled = false;
   let messageIndex = 0;
 
-  for await (const event of runtime.send(input)) {
+  for (const event of events) {
     switch (event.type) {
       case 'modelMessageEvent':
         appendSafeMessage(event.message, answer, writer, () => ++messageIndex);
@@ -359,6 +370,28 @@ function toolStatus(event: Extract<AgentStreamEvent, { type: 'afterToolCallEvent
     .join('\n')
     .trim();
   return text.startsWith('DENIED:') ? 'denied' : 'failure';
+}
+
+function consumeStructuredToolEvents(
+  events: readonly AgentStreamEvent[],
+  writer: StructuredHeadlessWriter,
+  onToolStart: (name: string, input: unknown) => string,
+): void {
+  for (const event of events) {
+    if (event.type === 'beforeToolCallEvent') {
+      writer.toolStarted({
+        toolUseId: event.toolUse.toolUseId,
+        name: event.toolUse.name,
+        summary: onToolStart(event.toolUse.name, event.toolUse.input),
+      });
+    } else if (event.type === 'afterToolCallEvent') {
+      writer.toolCompleted({
+        toolUseId: event.toolUse.toolUseId,
+        name: event.toolUse.name,
+        status: toolStatus(event),
+      });
+    }
+  }
 }
 
 function projectPermissionSource(source: PermissionSource): {

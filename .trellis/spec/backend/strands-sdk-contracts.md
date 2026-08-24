@@ -462,6 +462,27 @@ runWithStreamResumption<T>(
 identity, two distinct trajectory turns, one-at-most continuation, prompt bounds/privacy, and the
 exclusion matrix. Run `spike/verify-headless-structured.ts` for text/JSON/JSONL visibility.
 
+
+## Scenario: bounded successful-turn completion guard (SRF-013)
+
+- The completion guard is parent-driver orchestration, not an SDK hook, intervention, or loop retry.
+  Each candidate still uses an ordinary `Agent.stream()` and composes the exact SRF-001 stream
+  continuation and invocation-scoped max-token recovery unchanged.
+- Inspect only a bounded successful `endTurn` final assistant message. Classification is conservative;
+  long/user-facing text and every tool-bearing candidate fail open. Never hide a tool side effect.
+- Candidate events are withheld from TUI/headless projections and trajectory event records until the
+  decision. A match leaves one `turnEnded.completionGuardSuppressed: true` record with no candidate
+  text/payload, then runs one ordinary continuation. The fixed bounded private input contains neither
+  original nor suppressed text and is not a trajectory `userInput`.
+- The continuation must perform the pending tool action or return concise user-facing prose. A second
+  match is suppressed and throws `CompletionGuardError`; continuation failure or cancellation
+  propagates with no third turn. No completion-recovery notice exposes the note or private input.
+- `spike/verify-completion-guard.ts` proves classification, one-shot bounds, tool/answer outcomes,
+  TUI/text/JSON/JSONL/trajectory/replay privacy, failure and cancellation offline. Existing
+  `verify-stream-resumption.ts`, `verify-max-tokens-recovery.ts`, and
+  `verify-headless-structured.ts` are mandatory regressions.
+
+
 ### 7. Wrong vs Correct
 
 ```typescript

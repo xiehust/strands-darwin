@@ -37,6 +37,22 @@ occurred without exposing the private control prompt. Authoritative contracts:
 `backend/structured-headless-output.md`. Required checks: `spike/verify-stream-resumption.ts` and
 `spike/verify-headless-structured.ts` (both in `pnpm test`).
 
+## Completion guard — one private driver-owned continuation
+
+**A successful parent `endTurn` that ends on a short internal action note is withheld before every
+public projection and receives at most one ordinary continuation.** `src/agent/completion-guard.ts`
+uses a bounded conservative classifier over the authoritative final assistant message. TUI and
+headless drivers collect a candidate before feeding existing reducers/writers; tool-bearing turns
+fail open because hidden side effects are forbidden. `AgentRuntime.beginCompletionGuardTurn` is a
+narrow recording transaction around the unchanged SDK stream: original user input is durable before
+invocation, candidate event records are accepted unchanged or discarded, and an honest
+`completionGuardSuppressed` `turnEnded` remains without note text. The fixed continuation input is
+bounded, contains neither original nor suppressed text, is not recorded, and asks for the real tool
+action or a concise direct answer. A second match is one terminal `CompletionGuardError`; failure or
+cancellation is never continued again. Exact stream interruption and SDK max-token recovery still
+compose within each ordinary candidate. Required check: `spike/verify-completion-guard.ts` (in
+`pnpm test`), plus existing stream-resumption, max-token, and structured-headless suites.
+
 
 ## `/clear` — a successor runtime, never a reset
 

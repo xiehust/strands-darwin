@@ -203,3 +203,15 @@ Privacy rule: `turn.continuing`, terminal JSON, stderr, and assistant output con
 continuation prompt, raw original request, stack, SDK Agent, invocation state, or partial failed
 assistant text. `spike/verify-headless-structured.ts` drives all three protocols and asserts success,
 second-failure bounds, ordering, parseability, and absence of private prompt text.
+
+## Scenario: SRF-013 completion privacy
+
+Both structured modes collect a guarded candidate before calling any public writer method for its
+assistant message. A matched internal note produces no `assistant.message`, terminal `result`,
+warning, failure text, or continuation metadata containing either the note or fixed control input.
+The ordinary continuation's accepted tool lifecycle and post-aggregation assistant message remain
+possible. Legacy text follows the same rule. If the candidate stream fails, already-observed tool
+progress remains public as before; assistant candidate text remains withheld. A second match becomes
+one bounded turn failure, cancellation remains cancellation, and neither starts a third turn.
+`spike/verify-completion-guard.ts` covers text, JSON, and stream JSON offline; the full structured
+suite remains the protocol regression.

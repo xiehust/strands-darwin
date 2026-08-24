@@ -431,3 +431,15 @@ to the user, not to the conversation.
 
 Tests required: `spike/verify-tui.ts clear` (free — no model call) for the single clear, the gone
 transcript and the usable prompt; `spike/verify-clear-session.ts` for what the switch does off-screen.
+
+## Contract: SRF-013 candidate text is transactional
+
+The completion guard buffers one candidate turn before dispatching it through `turnReducer`; this is
+the only exception to line-by-line `<Static>` commitment. The exception is required because terminal
+bytes cannot be erased, and a matched internal note must never enter terminal text. Accepted events
+still pass through the unchanged reducer in original order, preserving answer parts, Markdown,
+tool rows, cancellation, and frame accounting. Tool-bearing candidates fail open rather than hiding
+side effects. The busy owner and SER-027 queue span the one private continuation exactly as they span
+SRF-001 recovery; failure/cancellation returns queued work under existing rules. The guard adds no
+row, notice, tick, or frame surface. `spike/verify-completion-guard.ts` proves the TUI projection has
+accepted text and no suppressed text; existing visual/static and queue suites remain required.

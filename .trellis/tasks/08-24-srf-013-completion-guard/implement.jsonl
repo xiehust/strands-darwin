@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"SDK loop, driver continuation, cancellation, and max-token contracts"}
+{"file":".trellis/spec/backend/session-trajectory.md","reason":"durable input, observer honesty, and replay visibility"}
+{"file":".trellis/spec/backend/structured-headless-output.md","reason":"JSON and JSONL publication protocol"}
+{"file":".trellis/spec/frontend/live-frame.md","reason":"TUI streaming and Static transcript contract"}
+{"file":"docs/architecture/load-bearing-decisions.md","reason":"rationale for driver-owned completion recovery"}
+{"file":"docs/reflections/reflection_2026-08-24_session-20260824-111655828.md","reason":"SRF-013 source evidence and accepted direction"}
