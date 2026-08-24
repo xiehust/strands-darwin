@@ -52,16 +52,23 @@ darwin 不会另写一套代理循环。它沿用 Strands SDK 的循环，只负
 git clone https://github.com/xiehust/strands-darwin.git
 cd strands-darwin
 pnpm install
-pnpm start
+pnpm build
+pnpm add --global .
 ```
 
-请在目标仓库中启动 darwin；当前工作目录会被视为项目根目录。恢复或指定会话可使用：
+构建产物会写入 `dist/`；全局安装会根据 `package.json` 注册 `darwin` 命令。请确保 pnpm 的全局可执行文件目录已加入 `PATH`；如果 pnpm 提示尚未配置，请运行 `pnpm setup`。全局安装会链接到当前源码目录，因此安装后请保留克隆下来的目录。
+
+此后可以在任意目标仓库中直接运行 darwin；当前工作目录会被视为项目根目录：
 
 ```bash
-pnpm start --resume
-pnpm start --resume <id>        # 查看 id：pnpm tsx src/cli.ts sessions
-pnpm start --session <id>
+cd /path/to/your-project
+darwin
+darwin --resume
+darwin --resume <id>        # 查看 id：darwin sessions
+darwin --session <id>
 ```
+
+开发 darwin 本身时，仍可使用 `pnpm start` 直接运行 TypeScript 源码，无需全局安装。
 
 TUI 测试使用的 `node-pty` 是原生开发依赖，已列入 `pnpm-workspace.yaml` 的构建白名单。若添加新的原生依赖，也要更新这份白名单。
 

@@ -52,16 +52,23 @@ Requirements: Node.js 20.3+, pnpm, and credentials for your configured provider 
 git clone https://github.com/xiehust/strands-darwin.git
 cd strands-darwin
 pnpm install
-pnpm start
+pnpm build
+pnpm add --global .
 ```
 
-Run darwin from the repository you want it to work on; its current working directory is the project root. To resume or select a session:
+The build emits the CLI to `dist/`; the global install registers the `darwin` executable from `package.json`. Ensure pnpm's global bin directory is on `PATH` (run `pnpm setup` if pnpm reports otherwise). Keep the cloned directory after installation because the global package is linked to it.
+
+You can now run darwin directly from any repository; its current working directory becomes the project root:
 
 ```bash
-pnpm start --resume
-pnpm start --resume <id>        # ids: pnpm tsx src/cli.ts sessions
-pnpm start --session <id>
+cd /path/to/your-project
+darwin
+darwin --resume
+darwin --resume <id>        # ids: darwin sessions
+darwin --session <id>
 ```
+
+When developing darwin itself, `pnpm start` still runs the TypeScript source without a global installation.
 
 `node-pty`, used by the TUI tests, is a native dev dependency already allow-listed in `pnpm-workspace.yaml`. Add any new native dependencies to that allow-list.
 
