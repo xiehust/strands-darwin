@@ -1837,3 +1837,15 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SER-038 | `8ae7855` implementation, `b673cd5` verification correction, `1ac2894` task archive | Host inspected the source/docs/test diff and found the initial focused lifecycle assertion was completion-order-dependent: 17/19 passed. The same child session corrected only that assertion to use per-command sinks; Host then independently passed `verify-lifecycle-hooks.ts` (20/20), `verify-config.ts` (231/231), `verify-state-layers.ts` (37/37), `verify-tool-hooks.ts` (44/44), `verify-permission-mode-switch.ts` (100/100), `verify-subagents.ts` (69/69), `verify-headless.ts` (80/80), `verify-headless-structured.ts` (11/11), `verify-clear-session.ts` (44/44), `verify-trajectory.ts` (267/267), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, clean-tree verification, and AGENTS.md size (23,321 bytes < 32 KiB). No provider call was needed for Host acceptance. |
+
+
+## Batch 53 — SRF-012 closed reflection cutoff
+
+- Origin: `docs/reflections/reflection_2026-08-24_session-20260824-105238516.md`.
+- Child session: `session-20260824-110019745`.
+- Managed task: `bg-c273c723-f9f6-4d51-83e2-f39e70cbddfb` (succeeded, exit 0; no correction turn).
+- Child token spend: `input=144 output=25,502 cacheRead=5,157,670 cacheWrite=107,218`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SRF-012 | `e527320` | Host inspected the implementation and independently passed `spike/verify-self-reflection.ts` (12/12), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis task validation, source/dist asset identity, `git diff --check`, `git show --check`, clean-tree verification, and AGENTS.md size below 32 KiB. The locator now hands reflection workers an inclusive latest-`turnEnded` cutoff and refuses current or named records with no closed turn without falling back or mutating session state. |
