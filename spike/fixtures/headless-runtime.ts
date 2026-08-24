@@ -69,6 +69,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
     diagnosticsStatus: undefined,
     diagnostics: undefined,
     expandSlashCommand: async () => null,
+    subscribeToSubagentProgress: () => () => undefined,
     async compact() {
       if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'compact' })}\n`);
       if (mode === 'compact-failure') throw new Error('fixture compact failed');
