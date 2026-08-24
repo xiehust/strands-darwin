@@ -7,6 +7,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { projectMemoryDir } from '../paths.js';
 import {
   commitGeneratedState,
+  MEMORY_TITLE_MAX_CODE_POINTS,
   readMemoryState,
   renderMemoryIndex,
   withMemoryStateLock,
@@ -324,7 +325,9 @@ function isInstructionLike(value: string): boolean {
 function topicTitle(input: string): string {
   const first = input.split(/\r?\n/, 1)[0]?.replace(/\s+/g, ' ').trim() ?? 'completed work';
   const points = [...first];
-  return points.slice(0, 100).join('') + (points.length > 100 ? '…' : '');
+  return points.length > MEMORY_TITLE_MAX_CODE_POINTS
+    ? `${points.slice(0, MEMORY_TITLE_MAX_CODE_POINTS - 1).join('')}…`
+    : first;
 }
 
 function renderTopic(topic: MemoryTopic): string {

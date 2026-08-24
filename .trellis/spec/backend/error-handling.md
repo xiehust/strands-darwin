@@ -153,6 +153,15 @@ line exceeds the budget.
 **Fix**: `new StringDecoder('utf8').write(slice)` — it withholds incomplete trailing bytes
 instead of replacing them (`src/agent/instructions.ts`; regression in `verify-agents-md.ts`).
 
+### Common Mistake: appending a marker after applying a strict field cap
+
+**Symptom**: a producer emits apparently bounded derived data, but the strict state writer repeatedly
+refuses it because truncation made the final value one code point too long.
+**Cause**: retaining the full consumer limit and then appending `…` treats the marker as free space.
+**Fix**: define one shared code-point limit for producer and consumer; when a marker is needed, reserve
+its code points inside that limit. Test the exact boundary, an over-bound Unicode value, and the real
+strict write/read round trip.
+
 ### Common Mistake: cleanup that only works when nothing went wrong
 
 **Symptom**: `/exit` hangs forever, but only in sessions that used bash or cancelled a turn.

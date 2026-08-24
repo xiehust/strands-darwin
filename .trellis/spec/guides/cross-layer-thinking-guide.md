@@ -49,6 +49,11 @@ For each boundary:
 - What is the exact output format?
 - What errors can occur?
 
+For bounded transformed fields, define whether decoration is included in the bound. Truncation
+markers, prefixes, suffixes, quoting, and escaping all consume producer output and therefore must
+fit inside the strict consumer's limit. Prefer one shared limit and verify the final serialized value,
+not only the retained source slice.
+
 ---
 
 ## Common Cross-Layer Mistakes

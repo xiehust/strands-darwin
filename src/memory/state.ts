@@ -9,6 +9,7 @@ import type { MemoryTopic } from './store.js';
 
 export const MEMORY_STATE_VERSION = 2;
 export const MEMORY_STATE_MAX_BYTES = 64 * 1024;
+export const MEMORY_TITLE_MAX_CODE_POINTS = 100;
 export const MEMORY_ANCHOR_PATH_MAX_CODE_POINTS = 240;
 export const MEMORY_ANCHOR_HASH_PATTERN = /^[a-f0-9]{64}$/;
 export const MEMORY_VALIDATION_STATES = ['valid', 'invalid', 'expired', 'unknown'] as const;
@@ -287,7 +288,7 @@ function parseGenerated(value: unknown, legacy: boolean): GeneratedMemoryEntry |
   const record = exactRecord(value, legacy ? keys : [...keys, 'anchors', 'validation']);
   const source = exactRecord(record?.['source'], ['session', 'turn', 'seq', 'at']);
   if (record === undefined || source === undefined || record['origin'] !== 'generated' || record['freshness'] !== MEMORY_FRESHNESS || record['sensitivity'] !== GENERATED_SENSITIVITY) return undefined;
-  if (typeof record['id'] !== 'string' || !isSafeMemoryId(record['id']) || !boundedString(record['title'], 100)) return undefined;
+  if (typeof record['id'] !== 'string' || !isSafeMemoryId(record['id']) || !boundedString(record['title'], MEMORY_TITLE_MAX_CODE_POINTS)) return undefined;
   if (!boundedString(source['session'], 160) || !positiveInteger(source['turn']) || !positiveInteger(source['seq']) || !isoTime(source['at'])) return undefined;
   if (!Array.isArray(record['facts']) || record['facts'].length > 8 || !record['facts'].every((fact) => boundedString(fact, 500) && !hasPromptBoundary(fact))) return undefined;
   if (!Number.isSafeInteger(record['omittedCandidates']) || (record['omittedCandidates'] as number) < 0) return undefined;
