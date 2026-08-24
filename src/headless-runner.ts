@@ -177,7 +177,8 @@ export async function runHeadlessProcess(
         const phase = progress.phase.kind === 'tool'
           ? `tool ${progress.phase.toolName}`
           : progress.phase.kind;
-        note(`subagent ${dispatchLabel(progress)} running ${Math.floor(progress.elapsedMs / 1000)}s · ${phase}\n`);
+        // Heartbeats are transient user visibility, not diagnostics persistence.
+        target.stderr.write(`subagent ${dispatchLabel(progress)} running ${Math.floor(progress.elapsedMs / 1000)}s · ${phase}\n`);
       }
     });
 
