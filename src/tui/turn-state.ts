@@ -26,6 +26,7 @@ import {
   shellOutcomeSummary,
   type ShellOutcome,
 } from './shell-command.js';
+import { shortDispatchId, type SubagentDispatchProgress } from '../agents/dispatch-registry.js';
 import { subagentCallSummary } from './subagent-format.js';
 import { compactEditDiff, expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 
@@ -101,6 +102,8 @@ export interface ActiveTool {
   compactSummary?: string;
   /** Raw only while active; the renderer bounds it before drawing. */
   input: unknown;
+  /** Safe registry-only progress for an active delegation row. */
+  subagentProgress?: SubagentDispatchProgress;
   backgroundMode?: BackgroundBashMode;
 }
 
@@ -160,6 +163,7 @@ export type TurnAction =
   | { type: 'userInput'; text: string }
   | { type: 'notice'; text: string; severity?: NoticeSeverity }
   | { type: 'toggleToolDetails' }
+  | { type: 'subagentProgress'; progress: SubagentDispatchProgress }
   | { type: 'streamEvent'; event: AgentStreamEvent }
   | { type: 'turnEnded' }
   | { type: 'clear' }
@@ -207,6 +211,17 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         ],
       };
     }
+
+
+    case 'subagentProgress':
+      return {
+        ...state,
+        activeTools: state.activeTools.map((tool) =>
+          tool.name === 'subagent' && shortDispatchId(tool.id) === action.progress.dispatchId
+            ? { ...tool, subagentProgress: action.progress }
+            : tool,
+        ),
+      };
 
     case 'turnEnded': {
       // Flush anything the model left unterminated (e.g. a cancelled turn) so it

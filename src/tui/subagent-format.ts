@@ -14,6 +14,8 @@ import { SUBAGENT_TOOL_NAME } from '../agents/subagent-tool.js';
 import {
   dispatchLabel,
   shortDispatchId,
+  type SubagentCancelResult,
+  type SubagentDispatchPhase,
   type SubagentDispatchStatus,
 } from '../agents/dispatch-registry.js';
 import { formatTaskDuration, summarizeTaskCommand } from './task-format.js';
@@ -68,6 +70,28 @@ export function formatDispatchCompletion(dispatch: SubagentDispatchStatus): stri
     `${formatTaskDuration(dispatchElapsedMs(dispatch))} — ` +
     `${summarizeTaskCommand(dispatch.task, TASK_SUMMARY_LIMIT)}`
   );
+}
+
+
+/** Closed phase text shared by live rows and headless heartbeat projections. */
+export function formatDispatchPhase(phase: SubagentDispatchPhase): string {
+  return phase.kind === 'tool' ? `tool ${phase.toolName}` : phase.kind;
+}
+
+/** Bounded local response for `/agents cancel <id>`. */
+export function formatDispatchCancellation(dispatchId: string, result: SubagentCancelResult): string {
+  switch (result.outcome) {
+    case 'cancelled':
+      return `cancelling subagent ${dispatchLabel(result.dispatch)}`;
+    case 'ambiguous':
+      return `subagent dispatch id ${dispatchId} is ambiguous — no dispatch cancelled`;
+    case 'terminal':
+      return `subagent dispatch ${dispatchId} is already finished`;
+    case 'already-requested':
+      return `subagent dispatch ${dispatchId} cancellation was already requested`;
+    case 'not-found':
+      return `no subagent dispatch ${dispatchId}`;
+  }
 }
 
 /** `<agent>#<dispatchId>`, the identity every surface shows for one dispatch. */

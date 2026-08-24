@@ -4,6 +4,7 @@ import type { DiagnosticLevel } from './agent/diagnostics.js';
 import type { RuntimeOptions } from './agent/runtime.js';
 import { AgentRuntime } from './agent/runtime.js';
 import { classify } from './agent/permission.js';
+import { dispatchLabel } from './agents/dispatch-registry.js';
 import { routeSdkLogs, type SdkLogEntry } from './agent/sdk-logging.js';
 import type { CliOptions } from './cli-args.js';
 import {
@@ -78,6 +79,7 @@ export async function runHeadlessProcess(
   let failed = false;
   let turnStarted = false;
   let continued = false;
+  let unsubscribeSubagentProgress: (() => void) | undefined;
 
   let turnFailure: unknown;
   const errors: StructuredFailure[] = [];
@@ -161,6 +163,25 @@ export async function runHeadlessProcess(
     if (options.compactBefore) await runtime.compact();
     turnStarted = true;
 
+    unsubscribeSubagentProgress = runtime.subscribeToSubagentProgress((progress) => {
+      if (!progress.heartbeat) return;
+      if (structured) {
+        protocol?.subagentProgress({
+          dispatchId: progress.dispatchId,
+          agentName: progress.agentName,
+          elapsedMs: progress.elapsedMs,
+          phase: progress.phase.kind,
+          ...(progress.phase.kind === 'tool' ? { toolName: progress.phase.toolName } : {}),
+        });
+      } else {
+        const phase = progress.phase.kind === 'tool'
+          ? `tool ${progress.phase.toolName}`
+          : progress.phase.kind;
+        note(`subagent ${dispatchLabel(progress)} running ${Math.floor(progress.elapsedMs / 1000)}s · ${phase}\n`);
+      }
+    });
+
+
     if (structured) {
       const turn = await runStructuredHeadlessTurn(
         runtime,
@@ -191,6 +212,8 @@ export async function runHeadlessProcess(
       }
     }
   } finally {
+    unsubscribeSubagentProgress?.();
+    unsubscribeSubagentProgress = undefined;
     if (runtime !== undefined && turnStarted) {
       runtime.observeTurnComplete(
         interrupted || cancelled ? 'cancelled' : failed ? 'failure' : 'success',

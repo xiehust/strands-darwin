@@ -41,6 +41,14 @@ per further row with nothing streaming, and one in-flight call with details expa
   cut tool input, collapsed tool calls, cut permission detail. Completion overflow uses its existing
   one row for a total plus truthful `above`/`below` counts; the entries are a bounded window around
   the selected full-list candidate, so `❯` never leaves the granted rows.
+- **Long subagent progress moves the existing tool row.** `SRF-015` safe phase updates and ≤30 s
+  heartbeats attach to the active parent `subagent` call by its stable dispatch id; the one row
+  shows elapsed plus only `starting`, `model`, or a bounded tool name. It adds no participant,
+  claim, transcript notice, or timer in React. Parallel children remain one row each, and
+  `planToolPanel` keeps the existing `… N more tool calls running` omission row when the grant
+  cannot show them all. `/agents cancel <id>` is handled above busy queueing as a user-only local
+  control; it does not enter the prompt queue or model context. Required check:
+  `spike/verify-subagent-heartbeats.ts`.
 - **State that changes mid-session moves an existing row; it never adds one.** The header's model
   line carries cache and effort, and its `mode:` row is re-read live from the runtime on every render
   (`/mode`, `.trellis/spec/backend/strands-sdk-contracts.md` § switching the permission mode) —

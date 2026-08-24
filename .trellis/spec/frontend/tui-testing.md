@@ -22,6 +22,12 @@ answer ordering before it, the latest-frame row bound, and state-exclusive fresh
 Hash `trajectory.jsonl`, `snapshot_latest.json`, and `last-session.json` before and after startup;
 also compare trajectory line count. Exit from the first prompt with a deliberately invalid provider
 model id, so any accidental model/network call fails the scenario rather than passing silently.
+- Long-running subagent tests use the registry's injected short heartbeat interval, never a real
+  30-second sleep. Assert no event before the interval, stable id/increasing elapsed after it,
+  canary absence from progress JSON/rendering, independent cancellation of parallel children,
+  and no events after settlement. Render `ActiveToolCalls` at a one-row grant to prove the existing
+  omission row states hidden parallel dispatches (`spike/verify-subagent-heartbeats.ts`).
+
 
 
 ## Startup handoff contract

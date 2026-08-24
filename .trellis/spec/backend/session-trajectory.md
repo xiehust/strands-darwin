@@ -30,6 +30,12 @@ only input text for naming and the final answer for facts; reasoning, tool event
 and partial text are never extraction input. Generated provenance is source session + turn + closing seq +
 timestamp. See `src/memory/store.ts` and `spike/verify-memory.ts` for executable bounds and cases.
 
+Subagent heartbeats and targeted-cancellation controls are deliberately absent from the record.
+They are driver-visible transient dispatch observations, not model or turn events. The existing
+parent `beforeToolCallEvent`/`afterToolCallEvent` and final tool result remain the sole trajectory
+evidence; child transcript, phases, heartbeat timestamps, and cancellation commands add no new
+record type (`SRF-015`, `spike/verify-subagent-heartbeats.ts`).
+
 
 The trajectory is the complement: **append-only**, **observational**, and never authoritative. The
 snapshot remains the only thing `resume` and `fork` restore from. Raw trajectory records never become

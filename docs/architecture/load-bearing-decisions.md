@@ -364,11 +364,24 @@ reason), and the prompt renders `[parent]` or `[<agent>#<dispatch>]` on the exis
 line — a label of its own would cost the frame row the header contract forbids. Per-dispatch
 state follows the accepted background-task shape (runtime-exposed manager, observer-only
 subscription, bounded presentation-time projection): `listSubagentDispatches`,
-`subscribeToSubagentDispatches`, `/agents`. Records hold name, task, state and timestamps only —
-observability must never become a second path for child transcript into parent context. And the
+`subscribeToSubagentDispatches`, `/agents`. Records hold name, task, closed phase, state and
+timestamps only — observability must never become a second path for child transcript or payloads
+into parent context. And the
 parallelism is scoped to **reads**: concurrent children share one working tree with no isolation
 or conflict detection, so concurrent write delegation is *not* made safe, deliberately and
 documented rather than guarded.
+
+
+Long-running dispatch visibility stays inside that same observer boundary. The registry owns one
+unref'd ≤30-second heartbeat per running child and publishes only stable id, bounded agent name,
+elapsed time, and the closed phase `starting` / `model` / bounded tool name learned from SDK hooks.
+It never reads child messages, reasoning, prompt, tool payload/result, final report, or transcript.
+The TUI updates the existing granted live subagent row; text headless writes stderr and stream JSON
+uses bounded `subagent.progress`; trajectory, lifecycle hooks, permissions, model context and final
+JSON are unchanged. `/agents cancel <id>` is a user-only direct registry control: exact running ids
+cancel one child, collision/unknown/terminal ids refuse locally, siblings and the parent turn remain
+alive. Ctrl+C still cancels every child plus the parent. Settlement clears timers/cancellers before
+completion publication. Required check: `spike/verify-subagent-heartbeats.ts` (in `pnpm test`).
 
 ## Session trajectory
 

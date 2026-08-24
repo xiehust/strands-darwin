@@ -22,6 +22,7 @@ function dispatched(overrides: Partial<SubagentDispatchStatus> = {}): SubagentDi
     agentName: 'explorer',
     task: 'find every call site of classify',
     state: 'running',
+    phase: { kind: 'starting' },
     startedAt: '2026-08-15T10:00:00.000Z',
     finishedAt: null,
     ...overrides,

@@ -19,7 +19,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   Record<(typeof BUILTIN_COMMAND_NAMES)[number], string>
 > = {
   // Dispatch *runs*, not the catalogue of definitions the header lists.
-  agents: 'list subagent dispatches',
+  agents: 'list or cancel subagent dispatches',
   // Starts a new session; the one being left stays on disk and resumable.
   clear: 'start a new session',
   compact: 'summarize older conversation',

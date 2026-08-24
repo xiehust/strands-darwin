@@ -996,8 +996,11 @@ new SubagentDispatchRegistry()
 registry.begin({ agentName, task, toolUseId? }): SubagentDispatchHandle  // attachAgent / finish
 registry.list(): SubagentDispatchStatus[]          // start order, running and finished
 registry.subscribe(listener): () => void           // one snapshot per terminal transition
+registry.subscribeProgress(listener): () => void   // safe phase updates + ≤30 s heartbeats
+registry.cancel(dispatchId): SubagentCancelResult  // exact-id, one child only
 registry.sourceFor(agentId): SubagentDispatchSource | undefined
 runtime.listSubagentDispatches() / runtime.subscribeToSubagentDispatches(listener)
+runtime.subscribeToSubagentProgress(listener) / runtime.cancelSubagentDispatch(dispatchId)
 shortDispatchId(toolUseId: string | undefined): string   // pure, id shown everywhere
 ```
 
@@ -1071,9 +1074,9 @@ Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:
   dispatched anything and must not appear as a failed run. Terminal state is published exactly
   once (`succeeded` / `failed` / `cancelled`, first call wins), listener failures are isolated,
   and a cancelled child settles as `cancelled` rather than `failed` or a permanent `running`.
-- Records hold agent name, task text, state and timestamps only. Observability must never become
-  a second path for child transcript to reach the parent — bound the task at presentation time,
-  never store anything the child produced.
+- Records hold agent name, task text, closed phase, state and timestamps only. Observability must
+  never become a second path for child transcript or payloads to reach the parent — bound the task
+  at presentation time, and never store anything the child produced.
 
 ### 4. Validation & Error Matrix
 
@@ -1089,6 +1092,35 @@ Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:
 | Child invoke throws | Tool reports an error through SDK; dispatch settles `failed`; child bash cleanup still runs |
 | Two dispatches in one assistant message | Both run concurrently; both dispatches observable while running |
 | Two children ask for permission at once | Prompts queue one at a time, each labelled with its own dispatch |
+
+#### Long-dispatch progress and targeted cancellation (`SRF-015`)
+
+- Each running dispatch owns one unref'd heartbeat interval. Production heartbeats begin only
+  after 30 seconds and recur no slower than every 30 seconds; the injectable shorter interval is
+  test-only. Every terminal path clears the interval and drops the child canceller before
+  publishing completion, so no success/failure/cancel heartbeat can arrive later.
+- Progress is a closed privacy projection: bounded dispatch id and agent name, increasing elapsed
+  milliseconds, and only `starting`, `model`, or `tool <bounded public tool name>`. SDK model/tool
+  hooks supply those boundaries without reading child reasoning, messages, prompt, tool input/result,
+  final report, or transcript. Progress is user visibility only: never a model message, trajectory
+  event, permission decision, lifecycle-hook payload, or transcript notice.
+- The TUI consumes every safe phase update into the existing active `subagent` tool row; periodic
+  heartbeats keep that row current. Headless text emits heartbeat lines on stderr, stream JSON emits
+  bounded `subagent.progress`, and final JSON remains one terminal object.
+- `/agents cancel <dispatch-id>` is the only targeted control seam. It is parsed above busy queueing
+  in the user input driver and calls the runtime registry directly; no model-callable tool exists.
+  Exact running ids latch and invoke only that child's `Agent.cancel()`. Unknown, ambiguous,
+  already-requested, and terminal ids refuse locally without changing the parent or siblings.
+  Cancellation during model construction latches and prevents child startup when construction
+  returns. The affected SDK tool call still returns its ordinary single cancellation result, so
+  concurrent sibling calls and the parent turn can complete normally.
+- Ctrl+C/full turn cancellation remains broader: `SubagentTool.cancelActive()` plus parent
+  `Agent.cancel()` stops every active child exactly as before. Never set `toolExecutor`.
+
+Required offline check: `spike/verify-subagent-heartbeats.ts` (real parent Agent/SubagentTool,
+interval privacy and cleanup, parallel targeted/full cancellation, TUI grant projection, and
+structured-protocol compatibility), plus `verify-subagents.ts`.
+
 | Terminal dispatch listener throws | Other listeners still receive the snapshot; dispatch result unaffected |
 | `finish()` called twice | First terminal state wins; one event only |
 | Concurrent write delegation | Not made safe; documented limitation, no new denial path |

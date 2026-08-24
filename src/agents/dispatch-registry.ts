@@ -5,8 +5,8 @@
  * Shaped after {@link BackgroundBashManager}: the runtime owns one registry,
  * consumers observe it (a snapshot list plus a terminal-transition subscription),
  * and everything user-facing is bounded at presentation time. Nothing here reads
- * a child's messages, tools or reasoning — a dispatch record is name, task text,
- * state and timestamps, so making delegation observable cannot become a way for
+ * a child's messages, tool payloads or reasoning — a dispatch record is name, task
+ * text, closed phase, state and timestamps, so observability cannot become a way for
  * child transcript to reach the parent conversation.
  *
  * Read-heavy first, deliberately: concurrent dispatches share one working tree
@@ -16,10 +16,15 @@
  */
 import { randomUUID } from 'node:crypto';
 
+export const SUBAGENT_HEARTBEAT_INTERVAL_MS = 30_000;
+
 /** `running` until the dispatch settles; terminal states are published once. */
 export type SubagentDispatchState = 'running' | 'succeeded' | 'failed' | 'cancelled';
-
 export type TerminalSubagentDispatchState = Exclude<SubagentDispatchState, 'running'>;
+export type SubagentDispatchPhase =
+  | { readonly kind: 'starting' }
+  | { readonly kind: 'model' }
+  | { readonly kind: 'tool'; readonly toolName: string };
 
 export interface SubagentDispatchStatus {
   /**
@@ -33,8 +38,18 @@ export interface SubagentDispatchStatus {
   /** Full delegated task text. Bounded only when rendered. */
   readonly task: string;
   readonly state: SubagentDispatchState;
+  readonly phase: SubagentDispatchPhase;
   readonly startedAt: string;
   readonly finishedAt: string | null;
+}
+
+export interface SubagentDispatchProgress {
+  readonly dispatchId: string;
+  readonly agentName: string;
+  readonly phase: SubagentDispatchPhase;
+  readonly elapsedMs: number;
+  /** False for immediate safe phase updates; true for periodic user-visible heartbeats. */
+  readonly heartbeat: boolean;
 }
 
 /** What the permission gate carries on a request: who asked, in what dispatch. */
@@ -48,6 +63,11 @@ export interface SubagentDispatchSource {
 
 /** Receives one immutable snapshot when a dispatch first reaches a terminal state. */
 export type SubagentDispatchListener = (dispatch: Readonly<SubagentDispatchStatus>) => void;
+export type SubagentDispatchProgressListener = (progress: Readonly<SubagentDispatchProgress>) => void;
+
+export type SubagentCancelResult =
+  | { readonly outcome: 'cancelled'; readonly dispatch: SubagentDispatchStatus }
+  | { readonly outcome: 'not-found' | 'ambiguous' | 'terminal' | 'already-requested' };
 
 /**
  * The writer's half of one dispatch. Handed to the caller that started it so no
@@ -57,6 +77,12 @@ export interface SubagentDispatchHandle {
   readonly dispatchId: string;
   /** Binds the child `Agent.id`, which only exists after the child is built. */
   attachAgent(agentId: string): void;
+  /** Installs the only operation targeted cancellation may perform. */
+  attachCancel(cancel: () => void): void;
+  /** True even if cancellation arrived before child construction completed. */
+  cancellationRequested(): boolean;
+  /** Publishes only closed, reasoning-safe phase metadata. */
+  setPhase(phase: SubagentDispatchPhase): void;
   /** First call wins; later calls are ignored, as are calls after one another. */
   finish(state: TerminalSubagentDispatchState): void;
 }
@@ -69,8 +95,19 @@ interface DispatchRecord {
   readonly agentName: string;
   readonly task: string;
   state: SubagentDispatchState;
+  phase: SubagentDispatchPhase;
   readonly startedAt: string;
+  readonly startedAtMs: number;
   finishedAt: string | null;
+  cancellationRequested: boolean;
+  cancel: (() => void) | undefined;
+  heartbeat: ReturnType<typeof setInterval> | undefined;
+}
+
+export interface SubagentDispatchRegistryOptions {
+  /** Narrow deterministic test seam; production is fixed at no more than 30 seconds. */
+  readonly heartbeatIntervalMs?: number;
+  readonly now?: () => number;
 }
 
 export class SubagentDispatchRegistry {
@@ -79,39 +116,82 @@ export class SubagentDispatchRegistry {
   /** Child `Agent.id` → private record key, for permission provenance. */
   private readonly byAgentId = new Map<string, string>();
   private readonly listeners = new Set<SubagentDispatchListener>();
+  private readonly progressListeners = new Set<SubagentDispatchProgressListener>();
+  private readonly heartbeatIntervalMs: number;
+  private readonly now: () => number;
+
+  constructor(options: SubagentDispatchRegistryOptions = {}) {
+    this.heartbeatIntervalMs = Math.max(1, Math.min(
+      SUBAGENT_HEARTBEAT_INTERVAL_MS,
+      options.heartbeatIntervalMs ?? SUBAGENT_HEARTBEAT_INTERVAL_MS,
+    ));
+    this.now = options.now ?? Date.now;
+  }
 
   begin(dispatch: { agentName: string; task: string; toolUseId?: string | undefined }): SubagentDispatchHandle {
     const key = randomUUID();
+    const startedAtMs = this.now();
     const record: DispatchRecord = {
       dispatchId: shortDispatchId(dispatch.toolUseId),
       agentName: dispatch.agentName,
       task: dispatch.task,
       state: 'running',
-      startedAt: new Date().toISOString(),
+      phase: { kind: 'starting' },
+      startedAt: new Date(startedAtMs).toISOString(),
+      startedAtMs,
       finishedAt: null,
+      cancellationRequested: false,
+      cancel: undefined,
+      heartbeat: undefined,
     };
     this.records.set(key, record);
+    record.heartbeat = setInterval(() => this.publishProgress(record, true), this.heartbeatIntervalMs);
+    record.heartbeat.unref?.();
 
     return {
       dispatchId: record.dispatchId,
       attachAgent: (agentId) => {
-        this.byAgentId.set(agentId, key);
+        if (record.state === 'running') this.byAgentId.set(agentId, key);
       },
+      attachCancel: (cancel) => {
+        if (record.state !== 'running') return;
+        record.cancel = cancel;
+        if (record.cancellationRequested) this.invokeCancel(record);
+      },
+      cancellationRequested: () => record.cancellationRequested,
+      setPhase: (phase) => this.setPhase(record, phase),
       finish: (state) => this.finish(key, state),
     };
   }
 
   /** Snapshots every dispatch of this run in start order, finished ones included. */
   list(): SubagentDispatchStatus[] {
-    return [...this.records.values()].map((record) => ({ ...record }));
+    return [...this.records.values()].map(snapshot);
   }
 
   /** Subscribes to future terminal transitions; finished dispatches are not replayed. */
   subscribe(listener: SubagentDispatchListener): () => void {
     this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
+    return () => this.listeners.delete(listener);
+  }
+
+  /** Safe phase changes and periodic heartbeats; neither is persisted or model-visible. */
+  subscribeProgress(listener: SubagentDispatchProgressListener): () => void {
+    this.progressListeners.add(listener);
+    return () => this.progressListeners.delete(listener);
+  }
+
+  /** User-only exact-id cancellation. Collisions fail closed rather than cancelling several children. */
+  cancel(dispatchId: string): SubagentCancelResult {
+    const matches = [...this.records.values()].filter((record) => record.dispatchId === dispatchId);
+    if (matches.length === 0) return { outcome: 'not-found' };
+    if (matches.length > 1) return { outcome: 'ambiguous' };
+    const record = matches[0]!;
+    if (record.state !== 'running') return { outcome: 'terminal' };
+    if (record.cancellationRequested) return { outcome: 'already-requested' };
+    record.cancellationRequested = true;
+    this.invokeCancel(record);
+    return { outcome: 'cancelled', dispatch: snapshot(record) };
   }
 
   /**
@@ -130,26 +210,71 @@ export class SubagentDispatchRegistry {
     };
   }
 
-  /**
-   * One terminal transition per dispatch, published to every listener. A listener
-   * that throws must not lose the event for the others, and must not take down
-   * the dispatch that was merely reporting itself finished.
-   */
+  private invokeCancel(record: DispatchRecord): void {
+    try {
+      record.cancel?.();
+    } catch {
+      // Cancellation is best-effort and cannot corrupt the parent turn.
+    }
+  }
+
+  private setPhase(record: DispatchRecord, phase: SubagentDispatchPhase): void {
+    if (record.state !== 'running') return;
+    record.phase = phase.kind === 'tool'
+      ? { kind: 'tool', toolName: boundedToolName(phase.toolName) }
+      : phase;
+    this.publishProgress(record, false);
+  }
+
+  private publishProgress(record: DispatchRecord, heartbeat: boolean): void {
+    if (record.state !== 'running') return;
+    const progress: SubagentDispatchProgress = {
+      dispatchId: record.dispatchId,
+      agentName: boundedAgentName(record.agentName),
+      phase: record.phase,
+      elapsedMs: Math.max(0, Math.floor(this.now() - record.startedAtMs)),
+      heartbeat,
+    };
+    for (const listener of this.progressListeners) {
+      try {
+        listener(progress);
+      } catch {
+        // Progress is advisory; observers cannot affect child execution.
+      }
+    }
+  }
+
+  /** One terminal transition per dispatch; it also tears down the private timer/canceller. */
   private finish(key: string, state: TerminalSubagentDispatchState): void {
     const record = this.records.get(key);
     if (record === undefined || record.state !== 'running') return;
     record.state = state;
-    record.finishedAt = new Date().toISOString();
+    record.finishedAt = new Date(this.now()).toISOString();
+    if (record.heartbeat !== undefined) clearInterval(record.heartbeat);
+    record.heartbeat = undefined;
+    record.cancel = undefined;
 
-    const snapshot: SubagentDispatchStatus = { ...record };
+    const completed = snapshot(record);
     for (const listener of this.listeners) {
       try {
-        listener(snapshot);
+        listener(completed);
       } catch {
         // Observers are advisory; the dispatch result is what matters.
       }
     }
   }
+}
+
+function snapshot(record: DispatchRecord): SubagentDispatchStatus {
+  return {
+    dispatchId: record.dispatchId,
+    agentName: record.agentName,
+    task: record.task,
+    state: record.state,
+    phase: record.phase,
+    startedAt: record.startedAt,
+    finishedAt: record.finishedAt,
+  };
 }
 
 /**
@@ -179,4 +304,10 @@ export function dispatchLabel(dispatch: { agentName: string; dispatchId: string 
 /** Keeps a 64-character agent name from stretching a permission-prompt line. */
 function boundedAgentName(name: string): string {
   return name.length <= AGENT_NAME_LABEL_LIMIT ? name : `${name.slice(0, AGENT_NAME_LABEL_LIMIT - 1)}…`;
+}
+
+/** Closed, bounded child tool metadata for progress. */
+function boundedToolName(name: string): string {
+  const normalized = name.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 64);
+  return normalized === '' ? 'tool' : normalized;
 }

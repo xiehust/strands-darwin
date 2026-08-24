@@ -19,7 +19,9 @@ import { installModelCallBudget } from './model-call-budget.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
 import {
   SubagentDispatchRegistry,
+  type SubagentCancelResult,
   type SubagentDispatchListener,
+  type SubagentDispatchProgressListener,
   type SubagentDispatchStatus,
 } from '../agents/dispatch-registry.js';
 import { SubagentTool } from '../agents/subagent-tool.js';
@@ -1203,8 +1205,8 @@ export class AgentRuntime {
    *
    * These are *runs*, not the catalogue: `info.agentNames` lists the definitions
    * that may be dispatched, which is a different question answered by a different
-   * path. Records carry name, task text, state and timestamps only — never any
-   * part of a child's transcript.
+   * path. Records carry name, task text, closed phase, state and timestamps only —
+   * never any part of a child's transcript or tool payload.
    */
   listSubagentDispatches(): SubagentDispatchStatus[] {
     return this.subagentDispatches.list();
@@ -1213,6 +1215,16 @@ export class AgentRuntime {
   /** Publishes future terminal dispatch snapshots until the returned closure is called. */
   subscribeToSubagentDispatches(listener: SubagentDispatchListener): () => void {
     return this.subagentDispatches.subscribe(listener);
+  }
+
+  /** User-visible safe phase updates and periodic heartbeats; never model/trajectory input. */
+  subscribeToSubagentProgress(listener: SubagentDispatchProgressListener): () => void {
+    return this.subagentDispatches.subscribeProgress(listener);
+  }
+
+  /** User-only exact-id cancellation; no agent tool exposes this operation. */
+  cancelSubagentDispatch(dispatchId: string): SubagentCancelResult {
+    return this.subagentDispatches.cancel(dispatchId);
   }
 
   /**

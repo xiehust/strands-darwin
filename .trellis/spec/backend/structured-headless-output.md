@@ -96,7 +96,9 @@ and remain nonfatal, matching their existing domain contract.
 | `tool.started` | bounded `toolUseId`, `name`, classification `summary` | A tool call began; raw input is absent |
 | `tool.completed` | bounded `toolUseId`, `name`, `status` | `success`, `failure`, or `denied`; raw result is absent |
 | `diagnostic` | source, level, bounded message | SDK warning/error observed live |
+| `subagent.progress` | bounded `dispatchId`, `agentName`, integer `elapsedMs`, closed `phase`, optional bounded `toolName` | Stream-JSON only; periodic long-dispatch heartbeat, never task/prompt/reasoning/tool payload/result/transcript |
 | `result` | terminal contract above | Exactly one authoritative terminal record |
+
 
 Session/run/turn lifecycle ensures a stream is live before a normal turn completes.
 

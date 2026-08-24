@@ -18,6 +18,7 @@ import {
   toolDetailsVisible,
   toolInputRows,
 } from './frame-budget.js';
+import { formatDispatchPhase } from './subagent-format.js';
 import { formatTaskDuration } from './task-format.js';
 import { SHELL_TOOL_NAME } from './shell-command.js';
 import { expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
@@ -78,7 +79,9 @@ export function ActiveToolCalls({
               {activeToolCallSummary(tool.summary, tool.compactSummary, toolDetailsExpanded)}
               {/* Elapsed suffix, never prefix: pty assertions match the summary as a
                   substring, and the existing spinner tick already redraws each frame. */}
-              {` (${formatTaskDuration(Date.now() - tool.startedAt)})`}
+              {tool.subagentProgress === undefined
+                ? ` (${formatTaskDuration(Date.now() - tool.startedAt)})`
+                : ` (${formatTaskDuration(tool.subagentProgress.elapsedMs)} · ${formatDispatchPhase(tool.subagentProgress.phase)})`}
             </Text>
             {rows.map((row, index) => (
               // Diff-toned rows trade the dim input styling for their tone

@@ -116,7 +116,11 @@ import {
 } from './shell-command.js';
 
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
-import { formatDispatchCompletion, formatDispatchesReport } from './subagent-format.js';
+import {
+  formatDispatchCancellation,
+  formatDispatchCompletion,
+  formatDispatchesReport,
+} from './subagent-format.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
 import { formatHelpReport } from './help-format.js';
 import { formatMcpReport } from './mcp-format.js';
@@ -544,6 +548,15 @@ export function App({
     [runtime],
   );
 
+  // Safe phase changes and periodic heartbeats update only the existing live tool
+  // row. They never append transcript history or enter the model/trajectory.
+  useEffect(
+    () => runtime.subscribeToSubagentProgress((progress) => {
+      dispatch({ type: 'subagentProgress', progress });
+    }),
+    [runtime],
+  );
+
   /**
    * Puts every queued entry back into the editor, unsent — ahead of any typed
    * text, one per line, cursor at the end — and says so. The take-back gesture
@@ -809,18 +822,28 @@ export function App({
         return;
       }
 
-      // Reads the dispatch registry directly, exactly like /tasks reads the task
-      // manager: no model call, no tool event, and available mid-turn — the moment
-      // several children are working is when "who is running what" gets asked.
+      // Reads or narrows the dispatch registry directly: no model call/tool event,
+      // and deliberately above busy queueing because mid-turn is when a specific
+      // long-running child must be stopped. Cancellation is user-only; no agent
+      // tool reaches this runtime method.
       if (/^\/agents(?:\s|$)/.test(text)) {
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
-        if (text !== '/agents') {
-          dispatch({ type: 'notice', text: '/agents takes no arguments' });
+        if (text === '/agents') {
+          dispatch({ type: 'notice', text: formatDispatchesReport(runtime.listSubagentDispatches()) });
           return;
         }
-        dispatch({ type: 'notice', text: formatDispatchesReport(runtime.listSubagentDispatches()) });
+        const match = /^\/agents\s+cancel\s+([a-zA-Z0-9]{1,8})$/.exec(text);
+        if (match === null) {
+          dispatch({ type: 'notice', text: 'usage: /agents cancel <dispatch-id>' });
+          return;
+        }
+        const dispatchId = match[1]!;
+        dispatch({
+          type: 'notice',
+          text: formatDispatchCancellation(dispatchId, runtime.cancelSubagentDispatch(dispatchId)),
+        });
         return;
       }
 

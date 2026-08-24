@@ -183,6 +183,30 @@ export class StructuredHeadlessWriter {
     });
   }
 
+  /** Live-only bounded visibility for a long blocking child; final JSON stays one document. */
+  subagentProgress(input: {
+    dispatchId: string;
+    agentName: string;
+    elapsedMs: number;
+    phase: 'starting' | 'model' | 'tool';
+    toolName?: string;
+  }): void {
+    if (this.format !== 'stream-json') return;
+    const dispatchId = bound(input.dispatchId, TOOL_FIELD_LIMIT);
+    const agentName = bound(input.agentName, TOOL_FIELD_LIMIT);
+    const toolName = input.toolName === undefined ? undefined : bound(input.toolName, TOOL_FIELD_LIMIT);
+    this.event({
+      type: 'subagent.progress',
+      dispatchId: dispatchId.value,
+      agentName: agentName.value,
+      elapsedMs: Math.max(0, Math.floor(input.elapsedMs)),
+      phase: input.phase,
+      ...(toolName === undefined ? {} : { toolName: toolName.value }),
+      ...(dispatchId.truncated || agentName.truncated || toolName?.truncated === true ? { truncated: true } : {}),
+    });
+  }
+
+
   diagnostic(warning: StructuredWarning): void {
     this.event({ type: 'diagnostic', ...warning });
   }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Agent, tool } from '@strands-agents/sdk';
+import { AfterModelCallEvent, AfterToolCallEvent, Agent, BeforeModelCallEvent, BeforeToolCallEvent, tool } from '@strands-agents/sdk';
 import type { InterventionHandler, Model, Tool, ToolContext } from '@strands-agents/sdk';
 import { z } from 'zod';
 
@@ -137,9 +137,9 @@ export class SubagentTool {
     const config = this.config;
     const model = await this.options.createModel(config);
     // Cancellation can land while a provider module/model is being constructed,
-    // before there is a child Agent to cancel. Do not start one after its parent
-    // invocation has already been abandoned.
-    if (context?.agent.cancelSignal.aborted === true) {
+    // before there is a child Agent to cancel. Targeted cancellation uses the same
+    // latch, without cancelling the parent or a sibling dispatch.
+    if (context?.agent.cancelSignal.aborted === true || dispatch?.cancellationRequested() === true) {
       dispatch?.finish('cancelled');
       return 'Subagent task cancelled.';
     }
@@ -155,9 +155,18 @@ export class SubagentTool {
       printer: false,
     });
     installMaxTokensRecovery(child);
-    // Before initialize(), so the very first gated call this child makes already
-    // resolves to its dispatch rather than to the parent.
+    // Hooks expose only operation boundaries. Never inspect model messages, tool
+    // input/results, reasoning, or child transcript for progress.
+    child.addHook(BeforeModelCallEvent, () => dispatch?.setPhase({ kind: 'model' }));
+    child.addHook(AfterModelCallEvent, () => dispatch?.setPhase({ kind: 'starting' }));
+    child.addHook(BeforeToolCallEvent, (event) => {
+      dispatch?.setPhase({ kind: 'tool', toolName: event.toolUse.name });
+    });
+    child.addHook(AfterToolCallEvent, () => dispatch?.setPhase({ kind: 'starting' }));
+    // Before initialize(), so the first gated call resolves to its dispatch and a
+    // targeted cancellation can stop only this child.
     dispatch?.attachAgent(child.id);
+    dispatch?.attachCancel(() => child.cancel());
 
     this.activeAgents.add(child);
     const cancelChild = () => child.cancel();

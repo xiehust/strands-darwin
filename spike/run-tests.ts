@@ -48,6 +48,7 @@ const suites = [
   'verify-agent-skills.ts',
   'verify-custom-commands.ts',
   'verify-subagents.ts',
+  'verify-subagent-heartbeats.ts',
   'verify-subagent-format.ts',
   'verify-agents-md.ts',
   'verify-system-prompt.ts',
