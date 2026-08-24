@@ -625,6 +625,7 @@ direction of the `peer`-path batch in
 Claude Code, Codex and OpenCode all offer `@` in the composer and disagree about what follows:
 Codex inserts the path, OpenCode inlines the file's bytes. Darwin takes the Codex shape
 deliberately, and that is the whole product argument of this direction — inserting *text* keeps
+
 every byte of file content flowing through the gated, classified, trajectory-recorded `fileEditor`
 read, while inlining would be a second ungated route into the model's context. So `src/tui/path-completion.ts`
 opens no file at all: it reads directory entries (`opendir`/dirent/`realpath`) and nothing else.
@@ -1849,3 +1850,15 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SRF-012 | `e527320` | Host inspected the implementation and independently passed `spike/verify-self-reflection.ts` (12/12), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis task validation, source/dist asset identity, `git diff --check`, `git show --check`, clean-tree verification, and AGENTS.md size below 32 KiB. The locator now hands reflection workers an inclusive latest-`turnEnded` cutoff and refuses current or named records with no closed turn without falling back or mutating session state. |
+
+
+## Batch 54 — SRF-013 bounded completion guard
+
+- Origin: `docs/reflections/reflection_2026-08-24_session-20260824-111655828.md`.
+- Child session: `session-20260824-135926608`.
+- Managed task: `bg-5fbc46bf-e0fe-4a32-8505-1cc83160fa18` (succeeded, exit 0; no correction turn).
+- Child token spend: `input=348 output=81,150 cacheRead=16,555,590 cacheWrite=147,905`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SRF-013 | `989e36c` implementation, `41571a3` task archive, `78b01ba` journal | Host inspected the source/spec/test diff and independently passed `verify-completion-guard.ts` (24/24), `verify-stream-resumption.ts` (16/16), `verify-max-tokens-recovery.ts` (20/20), `verify-headless-structured.ts` (11/11), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, and AGENTS.md size below 32 KiB. Matched successful internal notes are withheld from TUI/text/JSON/JSONL and trajectory/replay payloads, while tool-bearing candidates fail open and a second match, failure, or cancellation never loops. |
