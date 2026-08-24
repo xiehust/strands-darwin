@@ -44,6 +44,7 @@ const suites = [
   'verify-status-command.ts',
   'verify-help-command.ts',
   'verify-skills.ts',
+  'verify-self-reflection.ts',
   'verify-agent-skills.ts',
   'verify-custom-commands.ts',
   'verify-subagents.ts',

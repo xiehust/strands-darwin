@@ -275,7 +275,9 @@ async function missingDirectory(): Promise<void> {
     'reflection locates the subject trajectory before launching the child',
     reflectionWorkflow.includes('scripts/locate-trajectory.mjs') &&
       reflectionWorkflow.includes('run the locator **before** starting the child') &&
-      reflectionWorkflow.includes('last-user-input:'),
+      reflectionWorkflow.includes('last-user-input:') &&
+      reflectionWorkflow.includes('closed-through-turn:') &&
+      reflectionWorkflow.includes('closed-through-seq:'),
   );
   assert(
     'reflection delegates to a managed headless worker without recursion',
@@ -287,6 +289,13 @@ async function missingDirectory(): Promise<void> {
     'reflection treats the record as read-only and states what it read',
     reflectionWorkflow.includes('never rewrites, repairs, or appends to the record') &&
       reflectionWorkflow.includes('unknown spend metrics stay unknown, never 0'),
+  );
+  assert(
+    'reflection hands off and enforces only the latest closed subject range',
+    reflectionWorkflow.includes('read and grade only records with `seq <= <seq>`') &&
+      reflectionWorkflow.includes('Replay may show the open tail') &&
+      reflectionWorkflow.includes('no `turnEnded` also exits') &&
+      reflectionWorkflow.includes('must never be graded as unfinished'),
   );
   assert(
     'reflection writes one templated document at the exact path',

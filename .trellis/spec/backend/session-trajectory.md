@@ -343,6 +343,21 @@ succeeded. "0 results" for a file that was never written is a lie.
 The source directory is opened read-only. `fork` never mutates its source, and that is asserted by
 hashing the source snapshot and trajectory before and after.
 
+### A reflection reader: closed subject cutoff (`SRF-012`)
+
+The bundled self-reflection locator reads the selected current or explicitly named trajectory once,
+without importing the writer or moving the resume pointer. Its subject is the inclusive prefix ending
+at the latest valid `turnEnded`: it prints that record's `turn` and `seq` as
+`closed-through-turn:` / `closed-through-seq:` and the reflection child may inspect, cite, aggregate
+or grade only records through that seq. A later `userInput` remains useful as the default-selection
+identity preview, but is an open tail, not evidence that a request failed.
+
+The cutoff belongs to the selected record. `--session <id>` remains authoritative and never falls
+back; a missing id, no trajectory, or a selected record with no closed turn exits nonzero and creates
+no reflection subject. All success and refusal paths are byte-zero observers: no repair, append,
+metadata file, or pointer mutation. `spike/verify-self-reflection.ts` proves current open-tail,
+explicit past-session, no-closed-turn, missing-id, and nonmutation behavior.
+
 ### A fourth reader: prompt history (`SER-015`)
 
 `readPromptHistory` (`src/trajectory/prompt-history.ts`) reads this project's `userInput` lines so the

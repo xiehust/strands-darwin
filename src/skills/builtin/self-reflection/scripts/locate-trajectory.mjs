@@ -8,7 +8,9 @@
  * because the Host's own prompt was appended to its record synchronously at send
  * time — run this BEFORE launching any child, and the newest record is the Host's.
  * The printed `last-user-input:` preview exists so the caller can verify that
- * instead of trusting the heuristic.
+ * instead of trusting the heuristic. The latest valid `turnEnded` in the same
+ * read is the inclusive subject cutoff, so a later open reflection turn is never
+ * handed to the child.
  *
  * Usage:
  *   node locate-trajectory.mjs [--project <root>] [--session <id>]
@@ -57,29 +59,55 @@ function parseArgs(argv) {
   return args;
 }
 
-/** The last `userInput` record's text, truncated for a one-line preview. */
-function lastUserInputPreview(trajectoryFile) {
+/** Read-only subject facts from complete, valid JSONL records. */
+function inspectTrajectory(trajectoryFile) {
   let raw;
   try {
     raw = readFileSync(trajectoryFile, 'utf8');
   } catch {
     return undefined;
   }
-  for (const line of raw.split('\n').reverse()) {
-    if (!line.includes('"userInput"')) continue;
+
+  let lastUserInput;
+  let closedThrough;
+  for (const line of raw.split('\n')) {
+    let record;
     try {
-      const record = JSON.parse(line);
-      if (record.type !== 'userInput' || typeof record.text !== 'string') continue;
-      const flat = record.text.replace(/\s+/g, ' ').trim();
-      const points = [...flat];
-      return points.length > PREVIEW_CODE_POINTS
-        ? `${points.slice(0, PREVIEW_CODE_POINTS).join('')}…`
-        : flat;
+      record = JSON.parse(line);
     } catch {
       // A half-written or corrupt line is tolerated, never repaired.
+      continue;
+    }
+    if (record === null || typeof record !== 'object' || Array.isArray(record)) continue;
+    if (
+      record.type === 'userInput' &&
+      typeof record.text === 'string' &&
+      Number.isInteger(record.seq) &&
+      Number.isInteger(record.turn)
+    ) {
+      lastUserInput = record;
+    }
+    if (
+      record.type === 'turnEnded' &&
+      Number.isInteger(record.seq) &&
+      record.seq >= 0 &&
+      Number.isInteger(record.turn) &&
+      record.turn >= 1 &&
+      (closedThrough === undefined || record.seq > closedThrough.seq)
+    ) {
+      closedThrough = { seq: record.seq, turn: record.turn };
     }
   }
-  return undefined;
+
+  let preview;
+  if (lastUserInput !== undefined) {
+    const flat = lastUserInput.text.replace(/\s+/g, ' ').trim();
+    const points = [...flat];
+    preview = points.length > PREVIEW_CODE_POINTS
+      ? `${points.slice(0, PREVIEW_CODE_POINTS).join('')}…`
+      : flat;
+  }
+  return { preview, closedThrough };
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -123,14 +151,23 @@ if (args.session !== undefined) {
   selectedBy = 'newest trajectory mtime';
 }
 
-const preview = lastUserInputPreview(selected.trajectoryFile);
+const inspection = inspectTrajectory(selected.trajectoryFile);
+if (inspection === undefined) {
+  fail(`cannot read selected trajectory ${selected.trajectoryFile}`);
+}
+if (inspection.closedThrough === undefined) {
+  fail(`session ${JSON.stringify(selected.session)} has no closed turn — nothing to reflect on`);
+}
+
 console.log(`project-root: ${args.project}`);
 console.log(`sessions-dir: ${sessionsDir}`);
 console.log(`session: ${selected.session}`);
 console.log(`trajectory: ${selected.trajectoryFile}`);
 console.log(`selected-by: ${selectedBy}`);
 console.log(`trajectory-mtime: ${selected.mtime.toISOString()}`);
-console.log(`last-user-input: ${preview ?? '(none recorded)'}`);
+console.log(`last-user-input: ${inspection.preview ?? '(none recorded)'}`);
+console.log(`closed-through-turn: ${inspection.closedThrough.turn}`);
+console.log(`closed-through-seq: ${inspection.closedThrough.seq}`);
 const others = candidates.filter((candidate) => candidate !== selected).slice(0, 5);
 console.log(`other-recent-sessions: ${others.length === 0 ? '(none)' : ''}`);
 for (const other of others) {

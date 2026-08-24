@@ -22,7 +22,10 @@ node <skill-directory>/scripts/locate-trajectory.mjs
 It resolves `~/.darwin/sessions/<project-key>/` for the current working directory and selects
 the trajectory file appended to most recently — at this moment that is the Host's own session,
 because the prompt that invoked this skill was already recorded as a `userInput` line. The
-script prints a `session:` / `trajectory:` / `last-user-input:` block and mutates nothing.
+script prints a `session:` / `trajectory:` / `last-user-input:` block plus explicit
+`closed-through-turn:` and `closed-through-seq:` fields, and mutates nothing. Those two fields
+name the latest recorded `turnEnded` and form the inclusive reflection cutoff: the later open
+`userInput` identifies this Host session but is not part of the subject being graded.
 
 Two checks are mandatory before the selected id is trusted:
 
@@ -39,9 +42,11 @@ is then the authority — the preview no longer has to match this conversation; 
 the user can confirm the subject is the session they meant. The script refuses a missing id
 rather than falling back to another session. When the project records no trajectory at all,
 the locator says so and exits non-zero; there is nothing to reflect on — report that instead
-of inventing a subject.
+of inventing a subject. A selected current or named record with no `turnEnded` also exits
+non-zero: an open request is not a reflection subject and must never be graded as unfinished.
 
-Keep the exact `session:` and `trajectory:` values; both go into the child prompt verbatim.
+Keep the exact `session:`, `trajectory:`, `closed-through-turn:` and `closed-through-seq:`
+values; all four go into the child prompt verbatim.
 
 ## 2. Launch the reflection worker
 
@@ -58,13 +63,18 @@ The first prompt must hand the child:
 
 - the reflected session id and absolute trajectory path from section 1, stated read-only: the
   child never rewrites, repairs, or appends to the record;
+- the exact inclusive subject boundary from section 1: `closed-through-turn: <turn>` and
+  `closed-through-seq: <seq>`. The child must verify that exact seq is a `turnEnded` for that
+  exact turn, then read and grade only records with `seq <= <seq>`; no later record may affect
+  the goal summary, grade, findings, spend, timing, or citations;
 - how to read it: `pnpm tsx src/cli.ts trajectory replay <session-id>` (read-only, no model
-  call) for the conversation shape, plus the raw `trajectory.jsonl` lines for what replay does
-  not print — `turnEnded` spend and failure fields, tool-call inputs, timestamps and `seq`
-  ranges;
-- the honesty bound: the record ends mid-turn, because the reflection turn itself is still
-  open when the child reads. The child states the `seq`/turn range it actually read instead of
-  pretending completeness, and unknown spend metrics stay unknown, never 0;
+  call) for orientation only, plus the raw `trajectory.jsonl` lines for the authoritative
+  bounded range and what replay does not print — `turnEnded` spend and failure fields,
+  tool-call inputs, timestamps and `seq` ranges. Replay may show the open tail, so the child
+  must discard everything after the passed cutoff;
+- the honesty bound: state the actual first and last `seq` and turn values among records in the
+  passed closed range. The last value must be the passed `closed-through-seq` / turn, never the
+  file's later open tail; unknown spend metrics stay unknown, never 0;
 - the output contract: exactly one new file,
   `docs/reflections/reflection_<UTC-date>_<session-id>.md` (date as `YYYY-MM-DD`), creating
   `docs/reflections/` when missing and refusing to overwrite an existing file;

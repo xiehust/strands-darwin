@@ -10,8 +10,8 @@ written as `unknown`, never `0`.
 - **date (UTC):** <YYYY-MM-DD>
 - **project:** <absolute project root>
 - **trajectory:** <absolute trajectory.jsonl path>
-- **record read:** seq <first>–<last>, turns <first>–<last> (the record ends mid-turn: the
-  reflection turn itself was still open when this was read)
+- **record read:** seq <first>–<closed-through-seq>, turns <first>–<closed-through-turn>
+  (inclusive closed subject range; records after this `turnEnded` cutoff were not graded)
 - **model / provider:** <from runStarted>
 - **session spend:** input=<n|unknown> output=<n|unknown> cacheRead=<n|unknown>
   cacheWrite=<n|unknown> (summed over recorded `turnEnded.spend`; absent fields stay unknown)

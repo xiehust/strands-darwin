@@ -381,7 +381,11 @@ repaired. `darwin trajectory list|search|replay|fork` reads it with **no model c
 network** — `src/trajectory/**` constructs no `Agent` and no `Model` at all — and replay reuses
 `turnReducer` so live rendering and replay cannot drift into two projections. `fork` copies bytes
 (snapshot + `offload/` + the record as the fork's prefix) and never touches its source or the
-resume pointer. No subagent event is recorded anywhere; child streams never pass through `send`.
+resume pointer. Self-reflection is another strict reader: its locator runs before the managed child,
+selects current-or-named without fallback, and hands off the inclusive turn/seq of the latest valid
+`turnEnded`; a later open `userInput` may identify the Host but is never graded, and no closed turn is
+a refusal. The locator and child never repair, append, or move session state. No subagent event is
+recorded anywhere; child streams never pass through `send`.
 
 ## Session diagnostics
 

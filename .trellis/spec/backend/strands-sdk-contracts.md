@@ -1976,17 +1976,17 @@ read backlog -> select in-progress/not-started (no research) -> load developer -
 ```text
 /self-reflection [request]
 locate:  node <skill-dir>/scripts/locate-trajectory.mjs [--project <root>] [--session <id>]
-         -> project-root/sessions-dir/session/trajectory/selected-by/trajectory-mtime/last-user-input/other-recent-sessions
-subject: ~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl (read-only)
+         -> project-root/sessions-dir/session/trajectory/selected-by/trajectory-mtime/last-user-input/closed-through-turn/closed-through-seq/other-recent-sessions
+subject: ~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl through the printed closed seq (read-only)
 output:  docs/reflections/reflection_<YYYY-MM-DD>_<session-id>.md (template: <skill-dir>/references/reflection-template.md)
 backlog: docs/research/backlog_index.md (append-only `SRF-NNN` rows, status not-started)
 ```
 
 ### 3. Contracts
 
-- The locator runs **before** the child is launched (the child is itself a session in the same project and would otherwise be selected), mutates nothing, and its `last-user-input:` preview must be recognizably this conversation before the id is trusted. `--session` is strict: a missing id is a refusal, never a fallback. No trajectory at all exits non-zero — there is nothing to reflect on.
+- The locator runs **before** the child is launched (the child is itself a session in the same project and would otherwise be selected), mutates nothing, and its `last-user-input:` preview must be recognizably this conversation before the id is trusted. It prints the latest valid `turnEnded` as the inclusive `closed-through-turn:` / `closed-through-seq:` cutoff. `--session` is strict: a missing id is a refusal, never a fallback. No trajectory or no closed turn exits non-zero — there is nothing complete to reflect on.
 - The child follows the `developer` managed-child contract unchanged (`bash` `start` mode, `--yolo --context-offload`, drained output, `session:`/`usage:` stderr capture, `-` stays unknown) and must not load `developer`, `self-evolution-research`, or `self-reflection`, start another darwin, or delegate again.
-- The record is evidence, never a participant: the child never rewrites, repairs, or appends to the trajectory, states the `seq`/turn range it actually read (the reflection turn is still open), and keeps unknown spend metrics unknown, never 0.
+- The record is evidence, never a participant: the child never rewrites, repairs, or appends to the trajectory. The prompt carries the exact closed turn/seq; the child verifies that boundary is the matching `turnEnded`, discards every later record even when replay prints it, and limits summaries, grading, citations, timing and spend to `seq <= closed-through-seq`. The document states the actual inclusive bounded `seq`/turn range and keeps unknown spend metrics unknown, never 0.
 - The reflection document follows the bundled template exactly: one grade from the four-level rubric (Perfect/High/Medium/Low) justified by turn/`seq` citations, process observations, findings each with evidence and a concrete darwin-side suggestion, and the `self-evolution-research` scoring (`Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk`, gate 6) applied to every suggestion.
 - Backlog integration is append-only: accepted directions become `not-started` rows with fresh `SRF-NNN` ids and the reflection document as origin report; rejected/duplicate directions stay in the document with their scores; existing rows are never edited. The next `self-evolution-research` run selects `SRF` rows through its normal batch rules — the reflection run never implements them.
 - Mutation scope is exactly the one reflection file plus appended backlog rows; no commit without explicit user authorization.
@@ -1998,6 +1998,8 @@ backlog: docs/research/backlog_index.md (append-only `SRF-NNN` rows, status not-
 | Default-selection preview does not match this conversation | Stop and ask; never reflect on another session |
 | User names a past session with `--session <id>` | That session is the subject; preview echoed for confirmation, not matched against this conversation |
 | `--session <id>` names a session with no trajectory | Refuse with the exact id; never fall back to newest |
+| Selected current or named trajectory has no `turnEnded` | Locator exits non-zero with no subject block; never grade the open request or fall back |
+| Selected trajectory has records after its latest `turnEnded` | Print that latest closed turn/seq and exclude the later open tail from every child judgement |
 | Project has no trajectory at all (`trajectory: false`) | Locator exits non-zero; report "nothing to reflect on" |
 | Output file already exists | Refuse to overwrite |
 | A suggestion scores below the gate | Recorded in the document as rejected with its score; not added to the backlog |
@@ -2013,7 +2015,8 @@ backlog: docs/research/backlog_index.md (append-only `SRF-NNN` rows, status not-
 
 ### 6. Tests Required
 
-- `spike/verify-skills.ts`: `/self-reflection` expansion, the locate-before-launch rule, the managed-child and no-recursion language, read-only record handling, the exact output path and template reference, the four-level rubric, the score formula and gate, and the append-only `SRF` backlog contract.
+- `spike/verify-skills.ts`: `/self-reflection` expansion, locate-before-launch and closed-cutoff handoff language, the managed-child and no-recursion language, read-only record handling, the exact output path and template reference, the four-level rubric, the score formula and gate, and the append-only `SRF` backlog contract.
+- `spike/verify-self-reflection.ts`: normal current-session open-tail selection, authoritative explicit past selection, no-closed-turn and missing-id refusals, exact turn/seq cutoff output, and byte-zero trajectory/session-state behavior.
 - `pnpm typecheck`, `pnpm test`, and `pnpm build`; inspect `dist/src/skills/builtin/self-reflection/` (SKILL.md, `scripts/locate-trajectory.mjs`, `references/reflection-template.md`) after build.
 - `spike/verify-tui.ts completion` (free): the loaded-skills count includes the third built-in.
 
@@ -2023,8 +2026,8 @@ backlog: docs/research/backlog_index.md (append-only `SRF-NNN` rows, status not-
 # WRONG: reflect on whatever session is newest, in the Host, and edit the backlog in place
 launch child -> locate (selects the child) -> Host writes the reflection -> rewrite backlog rows
 
-# CORRECT: locate first, verify the preview, delegate, accept append-only artifacts
-locate + verify preview -> bash start darwin --yolo --context-offload -> child writes doc + appends SRF rows -> Host verifies path/template/scores/diff
+# CORRECT: locate first, verify the preview and closed cutoff, delegate, accept append-only artifacts
+locate + verify preview/cutoff -> pass closed turn/seq to bash-started child -> child writes doc + appends SRF rows -> Host verifies path/template/scores/diff
 ```
 
 ## Prompt Caching
