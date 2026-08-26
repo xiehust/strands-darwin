@@ -6,7 +6,7 @@ import React from 'react';
 
 import type { AgentRuntime, RuntimeInfo } from '../src/agent/runtime.js';
 import { NEVER_WITHDRAWN } from '../src/agent/permission.js';
-import { Header } from '../src/tui/App.js';
+import { Header, workingStatusIndex } from '../src/tui/App.js';
 import { InputBox } from '../src/tui/InputBox.js';
 import { MessageList } from '../src/tui/MessageList.js';
 import { PermissionPrompt } from '../src/tui/PermissionPrompt.js';
@@ -96,6 +96,21 @@ assert('capability inventories are not dumped', !headerOutput.includes('commit-m
 // The pre-SER-016 fixture drew eight rows at 80 columns: identity, model, mode,
 // AGENTS.md, MCP, skills, wrapped help, and its margin. Compact may only shrink it.
 assert(`baseline header does not grow (${rows(headerOutput)} <= 8 rows)`, rows(headerOutput) <= 8);
+const workingFrameA = renderToString(<Header runtime={runtime} status="streaming" frame={0} />, { columns: 80 });
+const workingFrameB = renderToString(<Header runtime={runtime} status="streaming" frame={1} />, { columns: 80 });
+const workingHeaderA = plain(workingFrameA);
+const workingHeaderB = plain(workingFrameB);
+assert('working animation advances while preserving the exact status text and row count',
+  workingStatusIndex(0) !== workingStatusIndex(1) &&
+  workingHeaderA.startsWith('◆ DARWIN · working') &&
+  workingHeaderB.startsWith('◆ DARWIN · working') &&
+  rows(workingHeaderA) === rows(workingHeaderB));
+for (const columns of [14, 16, 20, 40, 80]) {
+  const first = plain(renderToString(<Header runtime={runtime} status="streaming" frame={0} />, { columns }));
+  const next = plain(renderToString(<Header runtime={runtime} status="streaming" frame={6} />, { columns }));
+  assert(`working animation stays height-stable at ${columns} columns`, rows(first) === rows(next));
+}
+
 const shadowRuntime = {
   ...runtime,
   info: {
