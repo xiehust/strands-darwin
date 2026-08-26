@@ -644,3 +644,35 @@ Added a runtime-scoped read-only CodeGraph index preflight for semantic MCP read
 ### Status
 
 [OK] **Completed**
+
+
+## Session 26: SRF-018 successful empty web search results
+
+**Date**: 2026-08-26
+**Task**: SRF-018 successful empty web search results
+**Branch**: `main`
+
+### Summary
+
+Verified Darwin's post-registration MCP ownership seam, normalized only the external web-search provider's exact zero-hit signature, preserved true errors and non-empty payloads, and added parent/child real-MCP coverage.
+
+### Main Changes
+
+- Added exact web-search zero-hit normalization at the shared registered catalogue seam.
+- Documented provider ownership and the load-bearing parent/child refresh invariant.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7dda590` | (see git log) |
+
+### Testing
+
+- [OK] Focused real-MCP suite: 8 passed.
+- [OK] Affected retry-guard, tool-hooks, subagent, CodeGraph, and MCP command suites passed.
+- [OK] pnpm typecheck, one full pnpm test, and pnpm build passed.
+
+### Status
+
+[OK] **Completed**
