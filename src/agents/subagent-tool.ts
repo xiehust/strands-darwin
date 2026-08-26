@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
-import { AfterModelCallEvent, AfterToolCallEvent, Agent, BeforeModelCallEvent, BeforeToolCallEvent, tool } from '@strands-agents/sdk';
+import {
+  AfterModelCallEvent,
+  AfterToolCallEvent,
+  Agent,
+  BeforeModelCallEvent,
+  BeforeToolCallEvent,
+  SummarizingConversationManager,
+  tool,
+} from '@strands-agents/sdk';
 import type { InterventionHandler, Model, Tool, ToolContext } from '@strands-agents/sdk';
 import { z } from 'zod';
 
@@ -151,6 +159,10 @@ export class SubagentTool {
       model,
       systemPrompt: composeSystemPrompt(definition.systemPrompt, this.options.projectInstructions),
       tools: this.toolsFor(definition),
+      conversationManager: new SummarizingConversationManager({
+        summaryRatio: config.summaryRatio,
+        preserveRecentMessages: config.preserveRecentMessages,
+      }),
       interventions: [this.options.intervention],
       printer: false,
     });

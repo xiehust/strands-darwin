@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   Agent,
   Model,
+  SummarizingConversationManager,
   tool,
   type BaseModelConfig,
   type Message,
@@ -579,6 +580,7 @@ async function planPermissionContract(registry: AgentDefinitionRegistry): Promis
 async function modelSnapshot(registry: AgentDefinitionRegistry): Promise<void> {
   header('subagents — later dispatches use updated config');
   const seen: string[] = [];
+  const childManagers: SummarizingConversationManager[] = [];
   const subagents = new SubagentTool({
     registry,
     tools: [],
@@ -589,13 +591,24 @@ async function modelSnapshot(registry: AgentDefinitionRegistry): Promise<void> {
       seen.push(config.model);
       return new ScriptedChildModel();
     },
+    onChildInitialized: (child) => {
+      childManagers.push((child as unknown as { _conversationManager: SummarizingConversationManager })._conversationManager);
+    },
   });
   const parent = new Agent({ tools: [subagents.tool], model: new ScriptedChildModel(), printer: false });
   await parent.initialize();
   await parent.tool.subagent?.invoke({ task: 'one' });
-  subagents.updateConfig(fakeConfig('second'));
+  subagents.updateConfig({ ...fakeConfig('second'), summaryRatio: 0.4, preserveRecentMessages: 7 });
   await parent.tool.subagent?.invoke({ task: 'two' });
   assert('config changes apply only to later model construction', seen.join(',') === 'first,second');
+  assert('every child uses a summarizing conversation manager', childManagers.every((manager) => manager instanceof SummarizingConversationManager));
+  assert(
+    'each child snapshots the configured summary ratio and recent-message window',
+    JSON.stringify(childManagers.map((manager) => [
+      (manager as unknown as { _summaryRatio: number })._summaryRatio,
+      (manager as unknown as { _preserveRecentMessages: number })._preserveRecentMessages,
+    ])) === JSON.stringify([[0.8, 4], [0.4, 7]]),
+  );
   await subagents.shutdown();
 }
 
