@@ -115,6 +115,28 @@ property, not a listener list: the **last** `Agent` initialized owns tool-change
 only correct if the predecessor is retired straight away — which is what `startNewSession()` does,
 and why `retire()` must *not* call `disconnectAll`.
 
+### Contract: CodeGraph semantic MCP reads preflight an existing index
+
+After `Agent.initialize()` discovers MCP tools, a runtime configured with the exact server name
+`codegraph` replaces only its `search`, `explore`, `node`, `callers`, `callees`, `impact`, and
+`files` tools before capturing the child catalogue. The parent and every child therefore share the
+same wrapped tool objects; `status`, unknown CodeGraph tools, and every other MCP client remain
+unchanged. The SDK's existing `tools/list_changed` callback is decorated, not replaced, so refreshed
+semantic tools are wrapped while its ordinary old-name removal and registration lifecycle stays intact.
+
+The runtime primes its project root once and caches each bounded explicit absolute `projectPath`
+independently. Relative, traversal-bearing, non-string, NUL-bearing, and oversized explicit paths
+are rejected before filesystem inspection. A target is usable only when it and its
+`.codegraph/codegraph.db` route are non-symlink directories/files, the database is a readable
+regular file, and a bounded read-only database-file inspection finds the SQLite header plus
+CodeGraph's `files`, `nodes`, `edges`, and `schema_versions` schema records. Missing, unreadable,
+malformed, symlinked, or structurally invalid state returns
+one bounded successful result directing the agent to `bash` / `fileEditor`; the MCP body is not
+called. A usable target delegates the original generator unchanged, preserving its events and final
+result. This policy never initializes an index, writes project state, calls a model, or changes MCP
+startup, disconnect, permissions, interventions, or `/mcp`. Verified network/model-free by
+`spike/verify-codegraph-preflight.ts` in `pnpm test`.
+
 ### Contract: the vended bash tool keys and serializes its persistent shell per `Agent` instance
 
 `vended-tools/bash` holds `sessions: WeakMap<Agent, BashSession>` off `context.agent`. Two

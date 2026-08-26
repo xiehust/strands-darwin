@@ -61,6 +61,7 @@ import {
   type TurnCompleteSource,
 } from '../hooks/lifecycle-hooks.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
+import { CodeGraphPreflight } from '../mcp/codegraph-preflight.js';
 import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, type McpServerStatus } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
@@ -556,6 +557,15 @@ export class AgentRuntime {
     // discovered here, and plugins inject their system prompt fragments — so
     // without this the resumed history and MCP tools would not exist yet.
     await agent.initialize();
+
+    // CodeGraph semantic reads are useful only when their target already has a
+    // structurally usable index. Prime the current target once, then replace the
+    // discovered server tools before the same catalogue is handed to children.
+    if (mcp.clients.some((client) => client.clientName === 'codegraph')) {
+      const codegraphPreflight = new CodeGraphPreflight(options.projectRoot);
+      await codegraphPreflight.primeCurrent();
+      codegraphPreflight.apply(agent, mcp.clients);
+    }
 
     // Official AgentSkills injects its catalogue on BeforeInvocationEvent. This
     // callback is registered afterwards, so it moves that official TextBlock

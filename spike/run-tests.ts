@@ -41,6 +41,7 @@ const suites = [
   'verify-retry-guard.ts',
   'verify-lifecycle-hooks.ts',
   'verify-mcp-config.ts',
+  'verify-codegraph-preflight.ts',
   'verify-mcp-command.ts',
   'verify-status-command.ts',
   'verify-help-command.ts',

@@ -158,6 +158,22 @@ second path for tool results or server output into parent context. The thirteent
 `MAX_COMPLETIONS` again; the free checks are `spike/verify-mcp-command.ts` (in `pnpm test`) and
 `spike/verify-tui.ts mcp` / `completion`.
 
+
+## CodeGraph MCP preflight — existing indexes only
+
+CodeGraph's semantic readers fail predictably when a target has no usable `.codegraph/codegraph.db`,
+so Darwin narrows that known local failure before the remote body rather than teaching the agent to
+retry it. `src/mcp/codegraph-preflight.ts` wraps only known semantic tools owned by the exact
+configured `codegraph` client, after SDK discovery and before child-catalogue capture. It validates
+the current root once and each safe explicit absolute target once, requiring a non-symlink regular
+SQLite database whose bounded read-only bytes contain the SQLite header and CodeGraph schema
+records. Unavailable targets return one bounded successful instruction to use ordinary shell/file
+inspection; usable targets `yield*` the original tool unchanged. The existing SDK refresh callback is
+decorated so later tool-list changes receive the same wrapping without replacing old-name removal.
+This is neither an intervention nor an alternate MCP lifecycle: all
+other clients/tools, permissions, startup/disconnect, `/mcp`, and parent/child policy remain as they
+were. Required check: `spike/verify-codegraph-preflight.ts` (in `pnpm test`).
+
 ## `/export` — the replay projection
 
 **`/export <path>` writes this session's transcript, and the transcript is the replay projection —
