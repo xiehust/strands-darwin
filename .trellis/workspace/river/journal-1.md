@@ -594,3 +594,32 @@ Added a bounded per-Agent/per-invocation repeated-failure intervention guard, ex
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: Correct SRF-016 threshold denial
+
+**Date**: 2026-08-26
+**Task**: Correct SRF-016 threshold denial
+**Branch**: `main`
+
+### Summary
+
+Removed an input-specific exemption so every further call to the affected tool is denied once a failure signature reaches the three-outcome cap.
+
+### Main Changes
+
+- Kept the conservative pre-execution threshold aligned with the required bounded-loop invariant.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7511778` | (see git log) |
+
+### Testing
+
+- [OK] pnpm typecheck, focused retry-guard suite (15 passed), and pnpm build passed after the correction.
+
+### Status
+
+[OK] **Completed**
