@@ -9,8 +9,6 @@ import {
 
 const MAX_TOOLS = 16;
 const MAX_FAILURES_PER_TOOL = 8;
-const MAX_INPUT_CODE_POINTS = 480;
-
 export const RETRY_GUARD_SIGNATURE_CODE_POINTS = 320;
 export const RETRY_GUARD_MESSAGE_CODE_POINTS = 900;
 export const REPEATED_FAILURE_LIMIT = 3;
@@ -31,7 +29,6 @@ interface FailureProjection {
 
 interface FailureEntry {
   readonly failure: FailureProjection;
-  readonly attemptInputs: string[];
   count: number;
 }
 
@@ -78,10 +75,7 @@ export class RepeatedFailureGuard extends InterventionHandler {
 
     const tool = state.tools.get(event.toolUse.name);
     if (tool === undefined) return InterventionActions.proceed();
-    const blocked = [...tool.entries.values()].find(
-      (entry) => entry.count >= REPEATED_FAILURE_LIMIT &&
-        entry.attemptInputs.every((prior) => !materiallySameInput(prior, event.toolUse.input)),
-    );
+    const blocked = [...tool.entries.values()].find((entry) => entry.count >= REPEATED_FAILURE_LIMIT);
     if (blocked === undefined) return InterventionActions.proceed();
 
     return InterventionActions.deny(stopMessage(event.toolUse.name, blocked.failure));
@@ -101,10 +95,9 @@ export class RepeatedFailureGuard extends InterventionHandler {
     const entry = getOrInsertBounded(
       tool.entries,
       failure.key,
-      () => ({ failure, attemptInputs: [], count: 0 }),
+      () => ({ failure, count: 0 }),
       MAX_FAILURES_PER_TOOL,
     );
-    entry.attemptInputs.push(boundedInput(event.toolUse.input));
     entry.count += 1;
 
     if (entry.count === 2) {
@@ -190,35 +183,6 @@ function resultText(event: AfterToolCallEvent): string {
   }
   return parts.join(' ') || '(no error text)';
 }
-
-function materiallySameInput(prior: string, input: unknown): boolean {
-  // Pre-execution equivalence is intentionally exact after bounded canonical JSON.
-  // A changed input may still yield the same signature and is the attempt the cap
-  // can safely stop; an exact rerun cannot be predicted to fail before it executes.
-  return prior === boundedInput(input);
-}
-
-function boundedInput(input: unknown): string {
-  return sliceCodePoints(stableInput(input, 0), MAX_INPUT_CODE_POINTS);
-}
-
-function stableInput(value: unknown, depth: number): string {
-  if (depth >= 4) return '<depth>';
-  if (value === null) return 'null';
-  if (typeof value === 'string') return JSON.stringify(sliceCodePoints(value.normalize('NFKC'), 160));
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '<non-finite>';
-  if (typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) {
-    return `[${value.slice(0, 8).map((item) => stableInput(item, depth + 1)).join(',')}${value.length > 8 ? ',…' : ''}]`;
-  }
-  if (!isRecord(value)) return `<${typeof value}>`;
-  const keys = Object.keys(value).sort();
-  const shown = keys.slice(0, 16).map(
-    (key) => `${JSON.stringify(sliceCodePoints(key, 64))}:${stableInput(value[key], depth + 1)}`,
-  );
-  return `{${shown.join(',')}${keys.length > 16 ? ',…' : ''}}`;
-}
-
 
 function hypothesisMessage(toolName: string, failure: FailureProjection): string {
   return boundedMessage(

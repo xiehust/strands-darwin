@@ -126,17 +126,6 @@ async function equivalentFailureLimit(): Promise<void> {
     results[3]?.includes('Stop retrying in this turn') === true &&
     results[3]?.includes('Report this blocker') === true && results[3]?.includes('ask the user') === true);
 
-  header('retry guard — the further equivalent attempt is denied, not the same attempt');
-  let sameBodies = 0;
-  const sameAgent = new Agent({
-    model: new PlannedToolModel([1, 1, 1, 1, 2].map((variant) => ({ toolName: 'probe', input: { variant: String(variant) } }))),
-    tools: [makeTool('probe', () => { sameBodies += 1; throw new Error(FIRST_ERROR); })],
-    interventions: [makeGate()],
-    printer: false,
-  });
-  await sameAgent.invoke('repeat exact attempt, then variant');
-  assert('an exact rerun is not pre-judged, but the next materially different variant is denied', sameBodies === 4);
-
   assert('the model receives materially-new hypothesis guidance after the repeated signature',
     modelText.includes('materially new evidence-backed hypothesis') && modelText.includes('evidence that distinguishes'));
   assert('the invocation completes through the ordinary SDK loop', result.stopReason === 'endTurn');
