@@ -1922,3 +1922,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SRF-018 | `7dda590` implementation, `7c7c718` task archive, `d1dddfd` journal | Host inspected the source/spec/test diff and independently passed `verify-web-search-empty-results.ts` (8/8), `verify-retry-guard.ts` (15/15), `verify-tool-hooks.ts` (44/44), `verify-subagents.ts` (71/71), `verify-codegraph-preflight.ts` (14/14), `verify-mcp-command.ts` (33/33), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, commit/diff checks and AGENTS.md size (25,730 bytes < 32 KiB). Only the exact external provider's verified MCP no-results signature becomes successful query-preserving empty JSON; non-empty results and true failures remain unchanged. |
+
+
+
+## Batch 60 — SER-039 bounded reverse prompt-history search
+
+- Origin: `docs/research/research_2026-08-26.md`, run `2026-08-26T11:43:24Z` (rolled `peer` path).
+- Child session: `session-20260826-115313304`.
+- Managed task: `bg-7136ab3f-6aeb-4861-a88c-59870aafa8e0` (succeeded, exit 0; no correction turn).
+- Child token spend: `input=310 output=39,330 cacheRead=16,770,648 cacheWrite=163,026`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SER-039 | `9cdbffc` | Host inspected the 24-file source/spec/test/task diff and independently passed `verify-prompt-history-search.ts` (19/19), `verify-frame-budget.ts` (80/80), `verify-help-command.ts` (26/26), `verify-prompt-recall.ts` (61/61), free pty `historySearch` (11/11), `compacting` (5/5), `cursor` (5/5), `completion` (66/66), `pathCompletion` (27/27), `recall` (22/22), `recallEmpty` (4/4), and `permissionEscape` (3/3), plus `pnpm typecheck`, full `pnpm test`, `pnpm build`, Trellis archive validation, structural no-I/O/model/network grep, `git diff --check`, `git show --check`, clean-tree verification, and AGENTS.md size (25,897 bytes < 32 KiB). The free pty `queue` scenario timed out twice after its unchanged batched multi-row draft-clear chord left `!sleep 30` to enter the model path; the same scenario exited 1 at pre-change parent `315cb71`, so this was recorded as pre-existing PTY fixture nondeterminism rather than repaired outside SER-039. Search remains a project-only in-memory projection over the existing bounded trajectory reader, with exact Escape restoration and counted live-frame rows. |
