@@ -1899,3 +1899,28 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 |---|---|---|
 | SRF-016 | `b5133d3` implementation, `7511778` correction, `7c8e3c8` task archive, `3762301` and `919d5be` journals | Host inspected the source, pinned-SDK patch, specs and focused real-Agent verification, then independently passed `spike/verify-retry-guard.ts` (15/15), `spike/verify-background-bash.ts` (135/135), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, clean-tree-shape verification and AGENTS.md size (24,927 bytes < 32 KiB). The guard preserves the first three original same-signature failures, injects bounded hypothesis/stop guidance, denies later calls before hooks/permission/body, resets per invocation, isolates Agents, and covers structured bash failures without touching user `!` commands. |
 
+
+## Batch 58 — SRF-017 CodeGraph availability preflight
+
+- Origin: `docs/reflections/reflection_2026-08-25_session-20260825-023511752.md`.
+- Child session: `session-20260826-051104786`.
+- Managed task: `bg-ff49fca8-ebcd-4b2f-8b93-2a0b0cf59128` (succeeded, exit 0; no correction turn).
+- Child token spend: `input=248 output=38,461 cacheRead=11,727,867 cacheWrite=139,810`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SRF-017 | `117103e` implementation, `d01d041` task archive, `8647a20` journal | Host inspected the source/spec/test diff and independently passed `verify-codegraph-preflight.ts` (14/14), `verify-mcp-command.ts` (33/33), `verify-subagents.ts` (71/71), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, commit/diff checks, clean-tree verification, and AGENTS.md size (25,333 bytes < 32 KiB). Unavailable or unsafe targets now return one bounded successful shell/file fallback without invoking CodeGraph, while initialized targets delegate unchanged and parent/child catalogues share the policy. |
+
+
+## Batch 59 — SRF-018 successful empty web-search results
+
+- Origin: `docs/reflections/reflection_2026-08-25_session-20260825-023511752.md`.
+- Child session: `session-20260826-070659337`.
+- Managed task: `bg-08473b8f-5249-4951-9d9d-20d553d3e190` (succeeded, exit 0; no correction turn).
+- Child token spend: `input=166 output=23,943 cacheRead=6,192,451 cacheWrite=117,896`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SRF-018 | `7dda590` implementation, `7c7c718` task archive, `d1dddfd` journal | Host inspected the source/spec/test diff and independently passed `verify-web-search-empty-results.ts` (8/8), `verify-retry-guard.ts` (15/15), `verify-tool-hooks.ts` (44/44), `verify-subagents.ts` (71/71), `verify-codegraph-preflight.ts` (14/14), `verify-mcp-command.ts` (33/33), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, commit/diff checks and AGENTS.md size (25,730 bytes < 32 KiB). Only the exact external provider's verified MCP no-results signature becomes successful query-preserving empty JSON; non-empty results and true failures remain unchanged. |
+
+
