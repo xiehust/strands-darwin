@@ -1886,3 +1886,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SRF-015 | `e6ae0f2` implementation, `e3ac4db` transient-heartbeat correction, `0363101` headless fixture correction, `4b88b29` task archive | Host inspected the source/spec/test diff and independently passed `verify-subagent-heartbeats.ts` (21/21), `verify-subagents.ts` (69/69), `verify-frame-budget.ts` (77/77), `verify-trajectory.ts` (267/267), `verify-headless-structured.ts` (11/11), `verify-completion-guard.ts` (24/24), free pty `completion` (66/66), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, and AGENTS.md size below 32 KiB. Heartbeats reuse existing TUI/headless surfaces, carry only closed bounded metadata, clear before settlement, and `/agents cancel <id>` remains user-only and child-specific. |
+
+
+## Batch 57 — SRF-016 bounded repeated-failure guard
+
+- Origin: `docs/reflections/reflection_2026-08-25_session-20260825-023511752.md`.
+- Child session: `session-20260826-043541334`.
+- Managed tasks: `bg-cf9b6d41-1e2e-486d-b789-04bdacec30d4` (implemented and committed, then exited 1 without final prose) and same-session completion/correction `bg-f4462f87-296a-456d-8402-b75e182b42e1` (succeeded, exit 0).
+- Token spend: first task `input=396 output=77,598 cacheRead=23,317,316 cacheWrite=183,707`; second task `input=24 output=2,419 cacheRead=2,260,393 cacheWrite=9,648`; aggregate `input=420 output=80,017 cacheRead=25,577,709 cacheWrite=193,355`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SRF-016 | `b5133d3` implementation, `7511778` correction, `7c8e3c8` task archive, `3762301` and `919d5be` journals | Host inspected the source, pinned-SDK patch, specs and focused real-Agent verification, then independently passed `spike/verify-retry-guard.ts` (15/15), `spike/verify-background-bash.ts` (135/135), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, clean-tree-shape verification and AGENTS.md size (24,927 bytes < 32 KiB). The guard preserves the first three original same-signature failures, injects bounded hypothesis/stop guidance, denies later calls before hooks/permission/body, resets per invocation, isolates Agents, and covers structured bash failures without touching user `!` commands. |
+
