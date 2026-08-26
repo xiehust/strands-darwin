@@ -165,6 +165,8 @@ export type TurnAction =
   | { type: 'toggleToolDetails' }
   | { type: 'subagentProgress'; progress: SubagentDispatchProgress }
   | { type: 'streamEvent'; event: AgentStreamEvent }
+  /** Accepted buffered candidate plus its terminal projection, committed atomically to Static. */
+  | { type: 'turnCompleted'; events: readonly AgentStreamEvent[] }
   | { type: 'turnEnded' }
   | { type: 'clear' }
   /** A `!` command started: one pseudo-tool row in the live panel (live only, never replayed). */
@@ -223,20 +225,14 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         ),
       };
 
+    case 'turnCompleted':
+      return finishTurn(action.events.reduce(
+        (current, event) => applyStreamEvent(current, event),
+        state,
+      ));
+
     case 'turnEnded': {
-      // Flush anything the model left unterminated (e.g. a cancelled turn) so it
-      // is not lost when the live area clears. The final checklist is committed
-      // once, then live state is removed before any following user turn.
-      const flushed = flushLiveText(state);
-      return {
-        ...flushed,
-        thinking: false,
-        activeTools: [],
-        livePlan: [],
-        history: state.livePlan.length === 0
-          ? flushed.history
-          : [...flushed.history, { kind: 'plan', id: nextId('plan'), plan: state.livePlan }],
-      };
+      return finishTurn(state);
     }
 
     case 'clear':
@@ -585,6 +581,48 @@ function closeAnswer(state: TurnState, authoritative: string): TurnState {
 
 function answerEntry(text: string, part: AnswerPart, codeOpen: boolean): HistoryItem {
   return { kind: 'assistant', id: nextId('assistant'), text, part, codeOpen };
+}
+
+/** Commits terminal-only turn projections once, with the closing answer last. */
+function finishTurn(state: TurnState): TurnState {
+  // Flush anything the model left unterminated (e.g. a cancelled turn) so it is
+  // not lost when the live area clears. The final checklist is presentation-only;
+  // placing it before the answer prevents it from hiding the turn's actual reply.
+  const flushed = flushLiveText(state);
+  return {
+    ...flushed,
+    thinking: false,
+    activeTools: [],
+    livePlan: [],
+    history: state.livePlan.length === 0
+      ? flushed.history
+      : insertFinalPlanBeforeAnswer(flushed.history, state.livePlan),
+  };
+}
+
+/** Keeps this turn's closing assistant answer as its last visible fact. */
+function insertFinalPlanBeforeAnswer(
+  history: readonly HistoryItem[],
+  plan: readonly PlanItem[],
+): HistoryItem[] {
+  const turnStart = history.findLastIndex((item) => item.kind === 'user');
+  const last = history.at(-1);
+  // Only a contiguous assistant suffix is a closing answer. If the turn ended on
+  // a tool/notice instead, the checklist remains the terminal projection.
+  let at = last?.kind === 'assistant' && (last.part === 'whole' || last.part === 'last')
+    ? history.length - 1
+    : history.length;
+  // One closing answer can be several adjacent Static items: progressive pieces or
+  // multiple authoritative text blocks. Keep the checklist outside the whole suffix.
+  while (at > turnStart + 1 && at < history.length) {
+    if (history[at - 1]?.kind !== 'assistant') break;
+    at -= 1;
+  }
+  return [
+    ...history.slice(0, at),
+    { kind: 'plan', id: nextId('plan'), plan },
+    ...history.slice(at),
+  ];
 }
 
 /**

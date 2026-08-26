@@ -13,14 +13,19 @@ class UpdatePlanPtyModel extends Model<BaseModelConfig> {
   override async *stream(_messages: Message[]): AsyncIterable<ModelStreamEvent> {
     this.calls += 1;
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
-    if (this.calls <= 2) {
+    if (this.calls <= 2 || this.calls === 4) {
       const plan = this.calls === 1
         ? Array.from({ length: 8 }, (_, index) => ({ item: `initial item ${index + 1}`, status: index === 0 ? 'in_progress' : 'pending' }))
-        : Array.from({ length: 8 }, (_, index) => ({ item: `latest item ${index + 1}`, status: index === 0 ? 'completed' : index === 1 ? 'in_progress' : 'pending' }));
-      for (const [name, id, input] of [
-        ['update_plan', `plan-${this.calls}`, { plan }],
-        ['bash', `bash-${this.calls}`, { mode: 'execute', command: 'sleep 0.8; printf done' }],
-      ] as const) {
+        : this.calls === 2
+          ? Array.from({ length: 8 }, (_, index) => ({ item: `latest item ${index + 1}`, status: index === 0 ? 'completed' : index === 1 ? 'in_progress' : 'pending' }))
+          : Array.from({ length: 8 }, (_, index) => ({ item: `latest item ${index + 1}`, status: 'completed' }));
+      const calls = this.calls === 4
+        ? [['update_plan', 'plan-complete', { plan }]] as const
+        : [
+            ['update_plan', `plan-${this.calls}`, { plan }],
+            ['bash', `bash-${this.calls}`, { mode: 'execute', command: 'sleep 0.8; printf done' }],
+          ] as const;
+      for (const [name, id, input] of calls) {
         yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name, toolUseId: id } };
         yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify(input) } };
         yield { type: 'modelContentBlockStopEvent' };
@@ -29,7 +34,17 @@ class UpdatePlanPtyModel extends Model<BaseModelConfig> {
       return;
     }
     yield { type: 'modelContentBlockStartEvent' };
-    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: this.calls === 3 ? 'first turn done' : 'second turn done' } };
+    yield {
+      type: 'modelContentBlockDeltaEvent',
+      delta: {
+        type: 'textDelta',
+        text: this.calls === 3
+          ? 'premature summary with unfinished checklist'
+          : this.calls === 5
+            ? 'first turn done — automatic continuation completed the checklist'
+            : 'second turn done',
+      },
+    };
     yield { type: 'modelContentBlockStopEvent' };
     yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
   }

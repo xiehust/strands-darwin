@@ -16,9 +16,14 @@ import {
 import {
   COMPLETION_GUARD_PROMPT,
   CompletionGuardError,
+  MAX_COMPLETION_GUARD_EVENTS,
+  UNFINISHED_PLAN_PROMPT,
   collectCompletionCandidate,
+  finalAssistantText,
   isInternalCompletionNote,
   runWithCompletionGuard,
+  statesUserBlocker,
+  unfinishedPlanAtEnd,
   type CompletionGuardRuntime,
 } from '../src/agent/completion-guard.js';
 import { runHeadlessTurn } from '../src/headless.js';
@@ -47,23 +52,65 @@ function events(text: string, stopReason: 'endTurn' | 'cancelled' = 'endTurn'): 
   ];
 }
 
+function planToolEvents(
+  plan: readonly { item: string; status: 'pending' | 'in_progress' | 'completed' }[],
+  options: { toolStatus?: 'success' | 'error' } = {},
+): AgentStreamEvent[] {
+  const input = { plan };
+  const id = `plan-${plan.map((item) => item.status[0]).join('')}`;
+  return [
+    {
+      type: 'beforeToolCallEvent',
+      toolUse: { name: 'update_plan', toolUseId: id, input },
+    } as unknown as AgentStreamEvent,
+    {
+      type: 'afterToolCallEvent',
+      toolUse: { name: 'update_plan', toolUseId: id, input },
+      result: {
+        status: options.toolStatus ?? 'success',
+        content: [{ type: 'textBlock', text: 'Plan updated' }],
+      },
+    } as unknown as AgentStreamEvent,
+  ];
+}
+
+function planEvents(
+  plan: readonly { item: string; status: 'pending' | 'in_progress' | 'completed' }[],
+  text: string,
+  options: { toolStatus?: 'success' | 'error'; stopReason?: 'endTurn' | 'cancelled' } = {},
+): AgentStreamEvent[] {
+  return [
+    ...planToolEvents(plan, options),
+    ...events(text, options.stopReason),
+  ];
+}
+
+function rawDelta(text: string): AgentStreamEvent {
+  return {
+    type: 'modelStreamUpdateEvent',
+    event: { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text } },
+  } as AgentStreamEvent;
+}
+
 class ScriptedRuntime implements CompletionGuardRuntime {
   readonly inputs: string[] = [];
+  readonly privateInputs: boolean[] = [];
   readonly accepted: AgentStreamEvent[][] = [];
   readonly suppressed: AgentStreamEvent[][] = [];
 
   constructor(private readonly scripts: Array<AgentStreamEvent[] | Error>) {}
 
   send(input: string): AsyncIterable<AgentStreamEvent> {
-    return this.open(input).events;
+    return this.open(input, false).events;
   }
 
-  async beginCompletionGuardTurn(input: string) {
-    return this.open(input);
+  async beginCompletionGuardTurn(input: string, privateInput = false) {
+    return this.open(input, privateInput);
   }
 
-  private open(input: string) {
+  private open(input: string, privateInput: boolean) {
     this.inputs.push(input);
+    this.privateInputs.push(privateInput);
     const script = this.scripts.shift() ?? new Error('unexpected extra continuation');
     const buffered: AgentStreamEvent[] = [];
     const iterable = async function* () {
@@ -123,7 +170,73 @@ async function classifierAndOneShot(): Promise<void> {
   const cancelled = new ScriptedRuntime([events(LEAK), events('', 'cancelled')]);
   const cancelledEvents = await runWithCompletionGuard('question', (input) => collectCompletionCandidate(cancelled, input));
   assert('cancellation is accepted honestly with no loop',
-    cancelled.inputs.length === 2 && cancelledEvents.some((event) => event.type === 'agentResultEvent' && event.result.stopReason === 'cancelled'));
+    cancelled.inputs.length === 2 && cancelledEvents.some((event) =>
+      event.type === 'agentResultEvent' && event.result.stopReason === 'cancelled'));
+}
+
+async function unfinishedPlanContinuation(): Promise<void> {
+  header('completion guard — unfinished parent plan gets one retained continuation');
+  const incomplete = [
+    { item: 'inspect', status: 'completed' as const },
+    { item: 'verify', status: 'in_progress' as const },
+  ];
+  const complete = incomplete.map((item) => ({ ...item, status: 'completed' as const }));
+
+  const runtime = new ScriptedRuntime([
+    planEvents(incomplete, 'Inspection finished; verification remains.'),
+    planEvents(complete, 'Verification passed. Work is complete.'),
+  ]);
+  const retained = await runWithCompletionGuard('do the work', (input) => collectCompletionCandidate(runtime, input));
+  assert('an unfinished plan starts exactly one private continuation',
+    runtime.inputs.length === 2 && runtime.inputs[1] === UNFINISHED_PLAN_PROMPT &&
+    runtime.privateInputs.join(',') === 'false,true');
+  assert('completed first-turn tools are accepted rather than hidden or replayed',
+    runtime.accepted.length === 2 && runtime.suppressed.length === 0 &&
+    retained.filter((event) => event.type === 'afterToolCallEvent').length === 2);
+  assert('the continuation completion is retained after the unfinished plan',
+    finalAssistantText(retained).includes('Work is complete') && !unfinishedPlanAtEnd(retained));
+
+  const oneShot = new ScriptedRuntime([
+    planEvents(incomplete, 'Still working.'),
+    planEvents(incomplete, 'Still unfinished after one continuation.'),
+  ]);
+  const oneShotEvents = await runWithCompletionGuard('do the work', (input) => collectCompletionCandidate(oneShot, input));
+  assert('an unfinished plan never loops beyond its one continuation',
+    oneShot.inputs.length === 2 && unfinishedPlanAtEnd(oneShotEvents));
+
+  for (const [name, first] of [
+    ['completed plan', planEvents(complete, 'All done.')],
+    ['cancelled turn', planEvents(incomplete, '', { stopReason: 'cancelled' })],
+    ['failed tool', planEvents(incomplete, 'Could not verify.', { toolStatus: 'error' })],
+    ['user blocker', planEvents(incomplete, 'Please provide the deployment target?')],
+  ] as const) {
+    const guarded = new ScriptedRuntime([first]);
+    const output = await runWithCompletionGuard('do the work', (input) => collectCompletionCandidate(guarded, input));
+    assert(`${name} does not auto-continue`, guarded.inputs.length === 1 && output.length > 0);
+  }
+  assert('blocker wording is recognized conservatively',
+    statesUserBlocker('Please provide the deployment target?') &&
+    statesUserBlocker('需要您确认目标环境') &&
+    !statesUserBlocker('Verification is still running.'));
+}
+
+async function eventFloodKeepsTerminalFacts(): Promise<void> {
+  header('completion guard — raw event flood cannot evict final public facts');
+  const complete = [{ item: 'verify', status: 'completed' as const }];
+  const script = [
+    ...Array.from({ length: MAX_COMPLETION_GUARD_EVENTS + 100 }, (_, index) => rawDelta(String(index % 10))),
+    ...planEvents(complete, 'FINAL-SUMMARY-SURVIVES'),
+  ];
+  const runtime = new ScriptedRuntime([script]);
+  const candidate = await collectCompletionCandidate(runtime, 'long task');
+  candidate.accept();
+  assert('high-frequency deltas collapse to one reducer-compatible aggregate event',
+    candidate.value.filter((event) => event.type === 'modelStreamUpdateEvent').length === 1);
+  assert('the final plan and answer survive beyond the former raw-event cap',
+    candidate.finalText === 'FINAL-SUMMARY-SURVIVES' &&
+    candidate.value.some((event) => event.type === 'afterToolCallEvent') &&
+    candidate.value.some((event) => event.type === 'agentResultEvent') &&
+    !candidate.unfinishedPlan);
 }
 
 async function publicOutputs(): Promise<void> {
@@ -205,6 +318,8 @@ async function trajectoryHonesty(): Promise<void> {
 }
 
 await classifierAndOneShot();
+await unfinishedPlanContinuation();
+await eventFloodKeepsTerminalFacts();
 await publicOutputs();
 await trajectoryHonesty();
 report();

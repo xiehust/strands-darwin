@@ -2288,16 +2288,25 @@ async function updatePlanChecklist(): Promise<void> {
     await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
     const turn = tui.mark();
     tui.submit('perform the fixture plan');
-    await tui.waitFor('latest item 1', { timeoutMs: 30_000, from: turn });
-    await tui.waitFor('… 4 more plan items', { timeoutMs: 30_000, from: turn, settleMs: 200 });
-    assert('the latest whole list is visible during the multi-tool turn',
-      tui.frame.includes('[x] latest item 1') && tui.frame.includes('[>] latest item 2'));
-    assert('the row-budgeted live view states its hidden item count', tui.frame.includes('… 4 more plan items'));
+    // Completion-guard candidates are transactional: tool rows, checklist and answer
+    // become public only after the successful candidate is accepted. Pure reducer and
+    // frame-budget suites cover the bounded live checklist projection.
+    await tui.waitFor('first turn done — automatic continuation completed the checklist', {
+      timeoutMs: 30_000,
+      from: turn,
+    });
     await waitForIdle(tui, 30_000);
     const transcript = tui.screen.slice(turn);
     assert('the final bounded list commits exactly once to Static', transcript.split('plan final · 8 items').length === 2);
-    assert('ANSI-stripped final markers retain status meaning',
-      transcript.includes('[x] latest item 1') && transcript.includes('[>] latest item 2'));
+    assert('the automatic continuation completes every final checklist item',
+      transcript.includes('[x] latest item 1') && transcript.includes('[x] latest item 8') &&
+      !transcript.includes('[>] latest item 2'));
+    assert('the closing summary is committed after the completed final checklist',
+      transcript.lastIndexOf('first turn done — automatic continuation completed the checklist') >
+      transcript.lastIndexOf('[x] latest item 8'));
+    assert('the unfinished-plan guard ran once and retained the first candidate',
+      transcript.includes('premature summary with unfinished checklist') &&
+      transcript.split('automatic continuation completed the checklist').length === 2);
 
     const next = tui.mark();
     tui.submit('next turn');

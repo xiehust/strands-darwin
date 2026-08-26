@@ -77,11 +77,15 @@ A one-row grant states `plan · N items`; a partial list spends its final grante
 `… N more plan items`, so hidden work is never silently cut. ASCII markers remain semantic without
 colour: `[ ]` pending, `[>]` in progress, `[x]` completed.
 
-`turnEnded` appends exactly one bounded `plan` history item to the existing `MessageList` `<Static>`
-owner and clears `livePlan` in the same reducer transition. Calling `turnEnded` again or starting the
-next user turn cannot duplicate or retain the live list. The final projection uses the same markers,
-shows at most 10 items plus title/hidden-count rows, and is TUI history only; replay/export retain the
-ordinary tool row and deliberately omit this UI-local final projection.
+Accepted completion-guard events and their terminal projection enter the reducer atomically:
+`turnCompleted` reduces the original event order, inserts exactly one bounded `plan` item immediately
+before a contiguous closing assistant-answer suffix, and clears `livePlan`. The assistant answer is
+therefore the turn's last visible fact instead of being pushed above a tall checklist. If a turn ends
+on a tool or notice rather than an answer, the checklist remains appended after that terminal fact.
+Failure/cancellation paths use the same terminal projection through `turnEnded`. Repeating the terminal
+action or starting the next user turn cannot duplicate or retain the live list. The final projection
+uses the same markers, shows at most 10 items plus title/hidden-count rows, and is TUI history only;
+replay/export retain the ordinary tool row and deliberately omit this UI-local final projection.
 
 Required checks: `spike/verify-frame-budget.ts`, `spike/verify-update-plan.tsx`, and free pty
 `spike/verify-tui.ts updatePlan`.

@@ -118,6 +118,62 @@ try {
   assert('a repeated end cannot commit the final list twice', endedAgain.history.length === state.history.length);
   const next = turnReducer(state, { type: 'userInput', text: 'next turn' });
   assert('live plan remains absent before the next turn', next.livePlan.length === 0);
+  const closingText = 'final user-facing summary';
+  let closing = turnReducer(initialTurnState, { type: 'userInput', text: 'work' });
+  closing = stream(closing, before('closing-plan', latest));
+  closing = stream(closing, after('closing-plan', latest));
+  closing = stream(closing, {
+    type: 'contentBlockEvent',
+    contentBlock: { type: 'textBlock', text: closingText },
+  } as never);
+  closing = turnReducer(closing, { type: 'turnEnded' });
+  const finalPlanAt = closing.history.findIndex((item) => item.kind === 'plan');
+  const closingAnswerAt = closing.history.findIndex(
+    (item) => item.kind === 'assistant' && item.text === closingText,
+  );
+  assert('the final checklist precedes the closing answer so progress cannot hide the summary',
+    finalPlanAt >= 0 && closingAnswerAt === finalPlanAt + 1 && closing.history.at(-1)?.kind === 'assistant');
+  let chunked = turnReducer(initialTurnState, { type: 'userInput', text: 'chunked work' });
+  chunked = stream(chunked, before('chunked-plan', latest));
+  chunked = stream(chunked, after('chunked-plan', latest));
+  chunked = {
+    ...chunked,
+    history: [
+      ...chunked.history,
+      { kind: 'assistant', id: 'chunk-first', text: 'summary line 1\n', part: 'first', codeOpen: false },
+      { kind: 'assistant', id: 'chunk-middle', text: 'summary line 2\n', part: 'middle', codeOpen: false },
+      { kind: 'assistant', id: 'chunk-last', text: 'summary line 3', part: 'last', codeOpen: false },
+    ],
+  };
+  chunked = turnReducer(chunked, { type: 'turnEnded' });
+  const chunkPlanAt = chunked.history.findIndex((item) => item.kind === 'plan');
+  assert('the final checklist never splits a progressively committed closing answer',
+    chunkPlanAt >= 0 && chunked.history.slice(chunkPlanAt + 1).map((item) => item.kind).join(',') === 'assistant,assistant,assistant');
+  let atomic = turnReducer(initialTurnState, { type: 'userInput', text: 'atomic work' });
+  atomic = turnReducer(atomic, {
+    type: 'turnCompleted',
+    events: [
+      before('atomic-plan', latest),
+      after('atomic-plan', latest),
+      { type: 'contentBlockEvent', contentBlock: { type: 'textBlock', text: closingText } } as never,
+    ],
+  });
+  const atomicLast = atomic.history.at(-1);
+  assert('an accepted buffered candidate commits plan then summary atomically',
+    atomic.livePlan.length === 0 &&
+    atomic.history.at(-2)?.kind === 'plan' &&
+    atomicLast?.kind === 'assistant' &&
+    atomicLast.text === closingText);
+  let toolEnded = turnReducer(initialTurnState, { type: 'userInput', text: 'tool-ended work' });
+  toolEnded = stream(toolEnded, {
+    type: 'contentBlockEvent',
+    contentBlock: { type: 'textBlock', text: 'preamble before tools' },
+  } as never);
+  toolEnded = stream(toolEnded, before('tool-ended-plan', latest));
+  toolEnded = stream(toolEnded, after('tool-ended-plan', latest));
+  toolEnded = turnReducer(toolEnded, { type: 'turnEnded' });
+  assert('a tool-ending turn keeps its final checklist after the tool that produced it',
+    toolEnded.history.at(-2)?.kind === 'tool' && toolEnded.history.at(-1)?.kind === 'plan');
 
   header('update_plan — bounded rows and ANSI-stable status markers');
   const longPlan = Array.from({ length: 8 }, (_, index) => ({

@@ -39,19 +39,22 @@ occurred without exposing the private control prompt. Authoritative contracts:
 
 ## Completion guard — one private driver-owned continuation
 
-**A successful parent `endTurn` that ends on a short internal action note is withheld before every
-public projection and receives at most one ordinary continuation.** `src/agent/completion-guard.ts`
-uses a bounded conservative classifier over the authoritative final assistant message. TUI and
-headless drivers collect a candidate before feeding existing reducers/writers; tool-bearing turns
-fail open because hidden side effects are forbidden. `AgentRuntime.beginCompletionGuardTurn` is a
-narrow recording transaction around the unchanged SDK stream: original user input is durable before
-invocation, candidate event records are accepted unchanged or discarded, and an honest
-`completionGuardSuppressed` `turnEnded` remains without note text. The fixed continuation input is
-bounded, contains neither original nor suppressed text, is not recorded, and asks for the real tool
-action or a concise direct answer. A second match is one terminal `CompletionGuardError`; failure or
-cancellation is never continued again. Exact stream interruption and SDK max-token recovery still
-compose within each ordinary candidate. Required check: `spike/verify-completion-guard.ts` (in
-`pnpm test`), plus existing stream-resumption, max-token, and structured-headless suites.
+**A successful parent `endTurn` with either a short internal action note or a latest successful,
+unfinished parent `update_plan` receives at most one ordinary continuation.**
+`src/agent/completion-guard.ts` uses bounded conservative classifiers over the accepted candidate.
+For an internal note, TUI and headless drivers withhold the candidate before existing
+reducers/writers; tool-bearing note candidates still fail open because hidden side effects are
+forbidden. For an unfinished checklist, the driver accepts and retains every first-turn event and
+side effect, then appends one private continuation candidate; a direct user blocker, failed tool,
+cancellation, overflow, or completed latest checklist does not continue.
+`AgentRuntime.beginCompletionGuardTurn` remains a narrow recording transaction around the unchanged
+SDK stream: original user input is durable before invocation, accepted event records stay unchanged,
+and only a suppressed internal note leaves the honest `completionGuardSuppressed` terminal without
+note text. Both fixed continuation inputs are bounded and unrecorded. A second completion gap,
+continuation failure, or cancellation never creates a third turn. Exact stream interruption and SDK
+max-token recovery still compose within each ordinary candidate. Required check:
+`spike/verify-completion-guard.ts` (in `pnpm test`), plus existing stream-resumption, max-token,
+update-plan, and structured-headless suites.
 
 
 ## `/clear` — a successor runtime, never a reset

@@ -586,6 +586,7 @@ export function App({
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
       let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
+      let turnCommitted = false;
       setStatus('streaming');
       try {
         const publish = (events: readonly AgentStreamEvent[]): void => {
@@ -614,7 +615,13 @@ export function App({
               dispatch({ type: 'notice', text: STREAM_CONTINUATION_NOTICE, severity: 'warn' });
             },
           ),
-        ).then(publish);
+        ).then((events) => {
+          // Candidate events were withheld for the completion guard. Commit the
+          // accepted stream and its terminal-only projections in one reducer pass,
+          // so Ink's Static writes the final checklist before the closing answer.
+          dispatch({ type: 'turnCompleted', events });
+          turnCommitted = true;
+        });
         await runtime.markResumable();
       } catch (error) {
         // A failed turn must not kill the session; the user may want to retry.
@@ -630,7 +637,7 @@ export function App({
       } finally {
         if (turnAborted.current && lifecycleOutcome === 'success') lifecycleOutcome = 'cancelled';
         runtime.observeTurnComplete(lifecycleOutcome, 'interactive');
-        dispatch({ type: 'turnEnded' });
+        if (!turnCommitted) dispatch({ type: 'turnEnded' });
         setStatus('idle');
         // Cleared with the status, so a cancelled or failed turn stops the busy
         // readout in the same breath as the tick that was redrawing it.
@@ -1720,7 +1727,7 @@ export function App({
   return (
     <Box flexDirection="column">
       <Box ref={headerRef} flexDirection="column">
-        <Header runtime={runtime} status={effectiveStatus} />
+        <Header runtime={runtime} status={effectiveStatus} frame={frame} />
       </Box>
       <MessageList
         history={state.history}
@@ -1812,9 +1819,12 @@ function liveSpend(runtime: AgentRuntime): UsageBuckets | undefined {
 export function Header({
   runtime,
   status = 'idle',
+  frame = 0,
 }: {
   readonly runtime: AgentRuntime;
   readonly status?: Status;
+  /** Existing App spinner tick; the header never owns a timer. */
+  readonly frame?: number;
 }): React.JSX.Element {
   const info = runtime.info;
   const instructions = info.projectInstructions;
@@ -1827,7 +1837,9 @@ export function Header({
     <Box flexDirection="column" marginBottom={1}>
       <Text>
         <Text color={visualColor.identity} bold>{visualMarker.identity} DARWIN</Text>
-        <Text dimColor> · {headerStatus(status)}</Text>
+        <Text dimColor>
+          {' · '}{status === 'streaming' ? <WorkingStatus frame={frame} /> : headerStatus(status)}
+        </Text>
       </Text>
       <Text dimColor>
         {/* Live, not info.config: /model changes both mid-session, and a header
@@ -1950,12 +1962,30 @@ export function Header({
   );
 }
 
-function headerStatus(status: Status): string {
+const WORKING_LABEL = 'working';
+
+/** Highlights one letter in place, preserving the header's exact width and row count. */
+export function workingStatusIndex(frame: number): number {
+  return frame % WORKING_LABEL.length;
+}
+
+function WorkingStatus({ frame }: { readonly frame: number }): React.JSX.Element {
+  const active = workingStatusIndex(frame);
+  return (
+    <>
+      {[...WORKING_LABEL].map((letter, index) => (
+        <Text key={index} {...(index === active ? { color: visualColor.active, bold: true } : {})}>
+          {letter}
+        </Text>
+      ))}
+    </>
+  );
+}
+
+function headerStatus(status: Exclude<Status, 'streaming'>): string {
   switch (status) {
     case 'idle':
       return 'ready';
-    case 'streaming':
-      return 'working';
     case 'shell':
       return 'running !';
     case 'compacting':
