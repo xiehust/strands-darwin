@@ -623,3 +623,24 @@ Removed an input-specific exemption so every further call to the affected tool i
 ### Status
 
 [OK] **Completed**
+
+
+## Session 25: SRF-017 CodeGraph preflight
+
+**Date**: 2026-08-26
+**Task**: SRF-017 CodeGraph preflight
+**Branch**: `main`
+
+### Summary
+
+Added a runtime-scoped read-only CodeGraph index preflight for semantic MCP readers, transparent initialized-target pass-through, parent/child and tool-refresh coverage, and backend architecture contracts. Focused MCP/subagent checks, typecheck, full test, and build passed.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `117103e` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
+- **Total Sessions**: 25
 - **Last Active**: 2026-08-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~625 | Active |
+| `journal-1.md` | ~646 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-08-26 | SRF-017 CodeGraph preflight | `117103e` | `main` |
 | 24 | 2026-08-26 | Correct SRF-016 threshold denial | `7511778` | `main` |
 | 23 | 2026-08-26 | Implement SRF-016 retry guard | `b5133d3` | `main` |
 | 22 | 2026-08-24 | SRF-015 full-check fixture correction | `0363101` | `main` |
