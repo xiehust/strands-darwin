@@ -676,3 +676,24 @@ Verified Darwin's post-registration MCP ownership seam, normalized only the exte
 ### Status
 
 [OK] **Completed**
+
+
+## Session 27: Restore assistant text after tool-heavy turns
+
+**Date**: 2026-08-26
+**Task**: Restore assistant text after tool-heavy turns
+**Branch**: `main`
+
+### Summary
+
+Kept completion-guard overflow bounded while retaining terminal assistant text and results, added tool-flood/multi-block/cancellation regressions, and updated the SDK contract.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c3e1e3b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
