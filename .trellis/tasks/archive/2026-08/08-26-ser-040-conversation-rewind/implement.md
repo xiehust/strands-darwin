@@ -24,3 +24,7 @@
 - Final project gate: `pnpm typecheck`, full `pnpm test`, and `pnpm build` passed without provider calls.
 - Repository checks: Trellis manifests valid, `git diff --check` clean, `AGENTS.md` 26,530 bytes, and `f3b3003` remains an ancestor.
 - This is implementation evidence only; separate Host acceptance is not claimed.
+
+## Host-review correction
+
+Host review rejected `db57a87` because only catalogue rows were bounded; failed/cancelled and post-capacity turns could grow SDK `immutable_history` without limit. Correction `9ef6cc0` enforces a hard 100-snapshot rewind capacity using only bounded public `SessionManager.listSnapshotIds` calls plus a serialized final-slot critical section. Failed/cancelled captures consume capacity; at capacity no immutable checkpoint is saved, ordinary turns and mutable latest snapshots continue, and existing catalogued points remain usable with an explicit `/rewind` warning. Runtime 20/20, chooser 7/7, free pty `rewind` 7/7 and typecheck passed. Host acceptance remains pending.
