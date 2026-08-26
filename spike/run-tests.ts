@@ -42,6 +42,7 @@ const suites = [
   'verify-lifecycle-hooks.ts',
   'verify-mcp-config.ts',
   'verify-codegraph-preflight.ts',
+  'verify-web-search-empty-results.ts',
   'verify-mcp-command.ts',
   'verify-status-command.ts',
   'verify-help-command.ts',

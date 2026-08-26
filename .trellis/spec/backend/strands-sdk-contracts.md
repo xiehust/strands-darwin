@@ -137,6 +137,24 @@ result. This policy never initializes an index, writes project state, calls a mo
 startup, disconnect, permissions, interventions, or `/mcp`. Verified network/model-free by
 `spike/verify-codegraph-preflight.ts` in `pnpm test`.
 
+### Contract: web-search zero hits are successful empty results
+
+`web-search` is an external MCP provider, but Darwin owns the registered catalogue after
+`Agent.initialize()`. For the exact configured client name `web-search`, Darwin replaces only the
+server-side `search` tool before capturing the child catalogue and decorates the SDK's existing
+`tools/list_changed` callback so refreshes retain the same policy. Parent and child agents therefore
+share the same wrapped tool object without a second search implementation or MCP lifecycle.
+
+The wrapper delegates first and normalizes only the verified provider no-hit result: an error-status
+result with no attached thrown error and exactly the recorded MCP `-32602` / `Tool returned no
+results` text. That outcome becomes compact successful JSON containing the original string `query`,
+`results: []`, and `totalResults: 0`, so absence neither enters repeated-failure accounting nor asks
+for recovery. Non-empty successes, yielded events, malformed inputs, transport/authentication/
+timeout failures, and every other provider error pass through unchanged. Permissions, hooks,
+trajectory and output protocols continue to observe the ordinary wrapped tool call. Verified by the
+network/model-free real-MCP suite `spike/verify-web-search-empty-results.ts`; retry/hook/subagent
+suites retain adjacent contracts.
+
 ### Contract: the vended bash tool keys and serializes its persistent shell per `Agent` instance
 
 `vended-tools/bash` holds `sessions: WeakMap<Agent, BashSession>` off `context.agent`. Two

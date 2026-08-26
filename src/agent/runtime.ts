@@ -63,6 +63,7 @@ import {
 import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { CodeGraphPreflight } from '../mcp/codegraph-preflight.js';
 import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, type McpServerStatus } from '../mcp/registry.js';
+import { WebSearchEmptyResults } from '../mcp/web-search-empty-results.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
 import { runMemoryCommand, type MemoryCommandResult } from '../memory/command.js';
@@ -566,6 +567,7 @@ export class AgentRuntime {
       await codegraphPreflight.primeCurrent();
       codegraphPreflight.apply(agent, mcp.clients);
     }
+    new WebSearchEmptyResults().apply(agent, mcp.clients);
 
     // Official AgentSkills injects its catalogue on BeforeInvocationEvent. This
     // callback is registered afterwards, so it moves that official TextBlock

@@ -174,6 +174,21 @@ This is neither an intervention nor an alternate MCP lifecycle: all
 other clients/tools, permissions, startup/disconnect, `/mcp`, and parent/child policy remain as they
 were. Required check: `spike/verify-codegraph-preflight.ts` (in `pnpm test`).
 
+## Web-search zero hits — normalize only the verified provider signature
+
+The externally supplied `web-search` MCP provider reports a completed search with no hits as an
+MCP `-32602` error, making ordinary absence look like a recoverable tool failure. Darwin does not
+own or replace that search service; `src/mcp/web-search-empty-results.ts` uses the runtime-owned
+post-registration seam instead. It wraps only server tool `search` from the exact configured client
+`web-search`, delegates first, and changes only the recorded no-results signature into successful
+compact JSON preserving the query with an empty result list and zero total. Everything else —
+non-empty bytes, stream events, malformed input, transport/auth/timeout and other provider errors —
+passes through unchanged. Applying before child-catalogue capture and decorating the SDK refresh
+callback gives parent and child agents one policy without changing permissions, hooks, retry logic,
+trajectory, output, or MCP lifecycle. Required check: `spike/verify-web-search-empty-results.ts`
+(in `pnpm test`).
+
+
 ## `/export` — the replay projection
 
 **`/export <path>` writes this session's transcript, and the transcript is the replay projection —
