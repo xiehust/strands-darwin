@@ -47,7 +47,7 @@ import {
   trajectoryPath,
   writePointer,
 } from '../src/agent/session.js';
-import { appendRewindCheckpoint } from '../src/agent/rewind.js';
+import { MAX_REWIND_CHECKPOINTS, appendRewindCheckpoint } from '../src/agent/rewind.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../src/agent/system-prompt.js';
 import { darwinDir, DARWIN_DIRNAME } from '../src/paths.js';
 import { CONFIG_FILENAME, permissionRulesPath } from '../src/config.js';
@@ -2697,9 +2697,15 @@ async function rewindSession(): Promise<void> {
   });
   await agent.initialize();
   await manager.saveSnapshot({ target: agent, isLatest: false });
-  const ids = await manager.listSnapshotIds({ target: agent });
+  const ids = await manager.listSnapshotIds({ target: agent, limit: 1 });
   const snapshotId = ids.at(-1);
   if (snapshotId === undefined) throw new Error('fixture immutable snapshot missing');
+  // Capacity can be consumed by failed/cancelled turns without adding catalogue
+  // rows. Seed that shape so the pty proves existing rows stay usable and the
+  // omission warning is visible when no later checkpoint can be captured.
+  for (let index = 1; index < MAX_REWIND_CHECKPOINTS; index += 1) {
+    await manager.saveSnapshot({ target: agent, isLatest: false });
+  }
   await manager.saveSnapshot({ target: agent, isLatest: true });
   await appendRewindCheckpoint(WORK_DIR, sourceId, {
     snapshotId,
@@ -2715,7 +2721,9 @@ async function rewindSession(): Promise<void> {
     const before = tui.mark();
     tui.submit('/rewind');
     await tui.waitFor('rewind prompts', { timeoutMs: 30_000, from: before, settleMs: 300 });
-    assert('chooser exposes the catalogued completed prompt', tui.frame.includes('selected prompt returns here'));
+    assert('full capacity is stated while existing catalogued prompts remain usable',
+      tui.screen.slice(before).includes('rewind checkpoint capacity reached') &&
+      tui.frame.includes('selected prompt returns here'));
     tui.send('\r');
     await tui.waitFor('Workspace unchanged:', { timeoutMs: 60_000, from: before, settleMs: 500 });
     const successor = headerSessionId(tui.frame);

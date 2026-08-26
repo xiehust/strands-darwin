@@ -44,7 +44,7 @@ bounded human-display projection only.
 
 ### SER-040 rewind authority boundary
 
-Conversation rewind does not change this contract. The authoritative historical state is a Strands SDK immutable snapshot created before an invocation. Darwin's bounded `rewind-checkpoints.json` maps an opaque SDK snapshot id to editor prompt text only after that prompt completes successfully; it is neither trajectory nor model context. `/rewind` must work when `trajectory: false`, never scans trajectory to invent a checkpoint, and never truncates or copies the source trajectory. Resumed sessions honestly expose only boundaries with existing catalogue metadata; historical SDK snapshots without that mapping remain unavailable rather than guessed.
+Conversation rewind does not change this contract. The authoritative historical state is a Strands SDK immutable snapshot created before an invocation, within Darwin's hard 100-snapshot per-session rewind capacity. Capacity is checked only through bounded public `SessionManager.listSnapshotIds` calls; failed/cancelled captures count, and reaching the cap omits later captures without blocking ordinary turns or deleting existing snapshots. Darwin's bounded `rewind-checkpoints.json` maps an opaque SDK snapshot id to editor prompt text only after that prompt completes successfully; it is neither trajectory nor model context. `/rewind` must work when `trajectory: false`, never scans trajectory to invent a checkpoint, and never truncates or copies the source trajectory. Resumed sessions honestly expose only boundaries with existing catalogue metadata; historical SDK snapshots without that mapping remain unavailable rather than guessed.
 
 
 ## 2. Where it lives

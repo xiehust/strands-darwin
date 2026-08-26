@@ -26,7 +26,10 @@ export interface RewindCheckpoint {
 export interface RewindCatalogue {
   readonly checkpoints: readonly RewindCheckpoint[];
   readonly problem?: string | undefined;
+  /** The catalogue itself has reached its entry bound. */
   readonly capped: boolean;
+  /** Runtime projection: no further rewind-owned immutable snapshot may be created. */
+  readonly captureCapacityReached?: boolean | undefined;
 }
 
 interface RewindCatalogueFile {

@@ -16,19 +16,20 @@ Explicitly not included: any filesystem snapshot, Git operation, workspace mutat
 
 ## Boundary model
 
-For prompt `P[n]`, the authoritative branch point is the Agent state immediately before invoking `P[n]`. `AgentRuntime.send()` manually asks the SDK `SessionManager` to write one immutable snapshot before `Agent.stream(P[n])`. A Darwin storage wrapper observes the immutable write and records only its opaque SDK snapshot id. The prompt text is held in bounded process memory while the turn runs.
+For prompt `P[n]`, the authoritative branch point is the Agent state immediately before invoking `P[n]`. `AgentRuntime.send()` first uses public `SessionManager.listSnapshotIds({ limit: 100 })`; while room remains it writes one immutable snapshot before `Agent.stream(P[n])` and identifies the new opaque SDK id with a one-row cursor listing. At capacity it skips capture but still runs `P[n]`. The prompt text is held in bounded process memory while the turn runs.
 
-Only a normal `agentResultEvent` with `stopReason: endTurn` promotes that pending `(snapshotId, prompt)` into the bounded per-session catalogue. Failed, cancelled, abandoned and consumer-interrupted turns leave an immutable SDK snapshot but no selectable catalogue row. This keeps model-state authority in the SDK while making selection eligibility honest.
+Only a normal `agentResultEvent` with `stopReason: endTurn` promotes that pending `(snapshotId, prompt)` into the bounded per-session catalogue. Failed, cancelled, abandoned and consumer-interrupted turns leave an immutable SDK snapshot but no selectable catalogue row, and therefore consume the same hard snapshot capacity. This keeps model-state authority in the SDK while making selection eligibility honest.
 
 The first prompt in a fresh session therefore gets an empty-conversation checkpoint. A resumed runtime may create future checkpoints, but historical prompts from older processes are not invented: immutable snapshots lacking catalogue metadata remain unmapped and unavailable.
 
 ## Bounds and persistence
 
-- Retain the newest 100 catalogue rows, matching the source UX research and existing prompt-history bound.
+- Create at most 100 rewind-owned immutable snapshots per session. The capacity probe and post-save identification use public bounded listings only; no unbounded history listing is allowed.
+- Retain at most 100 catalogue rows. Failed/cancelled captures can make the catalogue shorter than snapshot capacity because eligibility and retention are separate.
 - Prompt text is accepted only when it is no more than 4,000 Unicode code points; oversized prompts still run but are not selectable.
 - Catalogue parsing is strict and bounded by file bytes, entry count and field lengths; damage degrades to an honest local refusal.
-- Immutable snapshot files are append-only SDK artifacts. The catalogue is Darwin metadata only and never model input.
-- The source catalogue is not pruned or rewritten during branch selection. Retention is applied when appending a newly completed source turn.
+- Immutable snapshot files are SDK-owned and never deleted or rewritten. At capacity, later ordinary turns continue and update `snapshot_latest`, but create no immutable checkpoint or catalogue row; `/rewind` warns while keeping existing rows usable.
+- The catalogue is Darwin metadata only and never model input. The source catalogue is not pruned or rewritten during branch selection.
 
 ## Fresh successor restore
 

@@ -142,7 +142,93 @@ async function main(): Promise<void> {
     assert('a failed turn creates no selectable completed boundary',
       failed && afterFailure.checkpoints.map((entry) => entry.prompt).join('|') === 'second|first');
 
-    const selected = afterFailure.checkpoints.find((entry) => entry.prompt === 'second');
+    // Seed one session to 99 SDK snapshots, then race two public send() consumers.
+    // The capture critical section must grant one final slot and deny the other.
+    const concurrentRoot = await mkdtemp(path.join(os.tmpdir(), 'darwin-rewind-concurrent-'));
+    await mkdir(path.join(concurrentRoot, '.darwin'), { recursive: true });
+    const concurrent = await AgentRuntime.create({
+      projectRoot: concurrentRoot,
+      session: { kind: 'new' },
+      permissionBridge: allowAllBridge,
+    });
+    try {
+      const concurrentInternals = concurrent as unknown as {
+        agent: unknown;
+        sessionManager: {
+          saveSnapshot(params: { target: unknown; isLatest: boolean }): Promise<void>;
+          listSnapshotIds(params: { target: unknown; limit?: number }): Promise<string[]>;
+        };
+      };
+      for (let index = 0; index < MAX_REWIND_CHECKPOINTS - 1; index += 1) {
+        await concurrentInternals.sessionManager.saveSnapshot({
+          target: concurrentInternals.agent,
+          isLatest: false,
+        });
+      }
+      await Promise.allSettled([consume(concurrent, 'fail'), consume(concurrent, 'fail')]);
+      const concurrentIds = await concurrentInternals.sessionManager.listSnapshotIds({
+        target: concurrentInternals.agent,
+        limit: MAX_REWIND_CHECKPOINTS + 1,
+      });
+      assert('concurrent capture at the final slot cannot create snapshot 101',
+        concurrentIds.length === MAX_REWIND_CHECKPOINTS);
+    } finally {
+      await concurrent.shutdown();
+    }
+
+    // The first two successes and first failure own three immutable snapshots. Fill
+    // the remaining capacity with failures: eligibility and the hard disk bound are
+    // separate, so none becomes selectable and no 101st snapshot may be created.
+    for (let index = 3; index < MAX_REWIND_CHECKPOINTS; index += 1) {
+      try { await consume(source, 'fail'); } catch { /* expected */ }
+    }
+    const internals = source as unknown as {
+      agent: unknown;
+      sessionManager: {
+        listSnapshotIds(params: { target: unknown; limit?: number; startAfter?: string }): Promise<string[]>;
+      };
+    };
+    const listSnapshotIds = internals.sessionManager.listSnapshotIds.bind(internals.sessionManager);
+    const runtimeListLimits: Array<number | undefined> = [];
+    internals.sessionManager.listSnapshotIds = async (params) => {
+      runtimeListLimits.push(params.limit);
+      return listSnapshotIds(params);
+    };
+    const atCapacity = await listSnapshotIds({
+      target: internals.agent,
+      limit: MAX_REWIND_CHECKPOINTS + 1,
+    });
+    let overflowFailed = false;
+    try { await consume(source, 'fail'); } catch { overflowFailed = true; }
+    const afterOverflowFailure = await listSnapshotIds({
+      target: internals.agent,
+      limit: MAX_REWIND_CHECKPOINTS + 1,
+    });
+    assert('repeated failed turns consume but never exceed the immutable snapshot capacity',
+      overflowFailed && atCapacity.length === MAX_REWIND_CHECKPOINTS &&
+      afterOverflowFailure.length === MAX_REWIND_CHECKPOINTS);
+    assert('runtime capacity checks use only bounded public snapshot listings',
+      runtimeListLimits.length > 0 && runtimeListLimits.every((limit) =>
+        limit !== undefined && limit <= MAX_REWIND_CHECKPOINTS));
+
+    runtimeListLimits.length = 0;
+    await consume(source, 'after-capacity');
+    const afterCapacitySuccess = await source.listRewindCheckpoints();
+    const afterOrdinaryTurn = await listSnapshotIds({
+      target: internals.agent,
+      limit: MAX_REWIND_CHECKPOINTS + 1,
+    });
+    const latestAfterCapacity = await readFile(snapshotPath(root, sourceId, AGENT_ID), 'utf8');
+    assert('full rewind capacity preserves an ordinary successful invocation and latest snapshot',
+      afterOrdinaryTurn.length === MAX_REWIND_CHECKPOINTS &&
+      afterCapacitySuccess.captureCapacityReached === true &&
+      afterCapacitySuccess.checkpoints.map((entry) => entry.prompt).join('|') === 'second|first' &&
+      latestAfterCapacity.includes('after-capacity'));
+    assert('full-capacity success also uses only bounded public snapshot listings',
+      runtimeListLimits.length > 0 && runtimeListLimits.every((limit) =>
+        limit !== undefined && limit <= MAX_REWIND_CHECKPOINTS));
+
+    const selected = afterCapacitySuccess.checkpoints.find((entry) => entry.prompt === 'second');
     if (selected === undefined) throw new Error('missing selected fixture');
     await source.markResumable();
     const pointerBefore = await readFile(sessionPaths(root).pointerFile);

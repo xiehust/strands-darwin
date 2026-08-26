@@ -1182,6 +1182,13 @@ export function App({
           });
           return;
         }
+        if (catalogue.captureCapacityReached) {
+          dispatch({
+            type: 'notice',
+            text: 'rewind checkpoint capacity reached — existing completed boundaries remain available; later turns are not added',
+            severity: 'warn',
+          });
+        }
         const opening = editorRef.current;
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setRecall(undefined);

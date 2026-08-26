@@ -6,8 +6,8 @@ Add `/rewind` as an in-session, conversation-only branch from an earlier complet
 
 ## Requirements
 
-- Before an eligible invocation, create a Strands SDK immutable snapshot of the authoritative Agent state and, only after that prompt completes successfully, catalogue the snapshot with bounded prompt metadata.
-- Bound checkpoint creation and catalogue reads. Do not reconstruct model state from trajectory; rewind must work with `trajectory: false`.
+- Before an eligible invocation and only while rewind capacity remains, create a Strands SDK immutable snapshot of the authoritative Agent state and, only after that prompt completes successfully, catalogue the snapshot with bounded prompt metadata.
+- Bound total rewind-owned immutable snapshot creation and catalogue reads at 100 per session. Failed/cancelled captures count; at capacity ordinary turns continue without a new rewind checkpoint. Use only bounded public SDK listings, never trajectory reconstruction.
 - `/rewind` lists only completed prompts from the live source session. Failed, cancelled, in-progress, over-bound, unmapped, stale and unavailable boundaries are excluded or refused with an honest local explanation.
 - Restoring creates a fresh session through the existing `AgentRuntime.create()` assembly. Restore the selected SDK snapshot into that successor, then re-apply current learned-memory, working-context and prompt-cache placement contracts.
 - Inherit the predecessor's live permission mode, MCP clients and background-task process ownership exactly as `/clear` does. Retire the predecessor only after successful successor assembly and restore.
@@ -19,7 +19,7 @@ Add `/rewind` as an in-session, conversation-only branch from an earlier complet
 
 ## Acceptance Criteria
 
-- [ ] Offline tests prove immutable snapshots are captured at the initial/pre-invocation completed-prompt boundary, capped and catalogued only for successful completed prompts.
+- [ ] Offline tests prove immutable snapshots are captured at the initial/pre-invocation boundary, never exceed 100 across successes/failures/cancellation, and are catalogued only for successful completed prompts; the 101st eligible ordinary turn still runs and updates latest state.
 - [ ] `trajectory: false` supports rewind; failed turns and resumed sessions report only real eligible checkpoints.
 - [ ] Branching leaves source latest/immutable snapshots, catalogue, trajectory, workspace and resume pointer byte-identical.
 - [ ] The selected SDK checkpoint is restored into a fresh session and the selected prompt returns to the editor unsent; source remains resumable.

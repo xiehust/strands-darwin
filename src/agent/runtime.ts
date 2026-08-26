@@ -105,6 +105,7 @@ import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { applyWorkingContext, buildWorkingContext } from './working-context.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
 import {
+  MAX_REWIND_CHECKPOINTS,
   appendRewindCheckpoint,
   newestRewindCheckpoints,
   readRewindCatalogue,
@@ -348,6 +349,9 @@ export class AgentRuntime {
   private promptCachePlan: PromptCachePlan;
 
   private lastTurnDelta: UsageTotals | undefined = undefined;
+
+  /** Serializes the bounded list/save/list critical section across concurrent callers. */
+  private rewindCaptureTail: Promise<void> = Promise.resolve();
 
   private constructor(
     private readonly agent: Agent,
@@ -794,11 +798,7 @@ export class AgentRuntime {
 
     let checkpointId: string | undefined;
     if (rewindPromptEligible(input)) {
-      const beforeIds = await this.sessionManager.listSnapshotIds({ target: this.agent });
-      await this.sessionManager.saveSnapshot({ target: this.agent, isLatest: false });
-      const afterIds = await this.sessionManager.listSnapshotIds({ target: this.agent });
-      if (afterIds.length === beforeIds.length + 1) checkpointId = afterIds.at(-1);
-      else throw new Error('Could not identify the immutable rewind checkpoint created for this prompt.');
+      checkpointId = await this.captureRewindCheckpoint();
     }
 
     let completed = false;
@@ -1250,7 +1250,15 @@ export class AgentRuntime {
   /** Completed prompt boundaries available for an in-session conversation branch. */
   async listRewindCheckpoints(): Promise<RewindCatalogue> {
     const catalogue = await readRewindCatalogue(this.projectRoot, this.info.sessionId);
-    return { ...catalogue, checkpoints: newestRewindCheckpoints(catalogue) };
+    const snapshotIds = await this.sessionManager.listSnapshotIds({
+      target: this.agent,
+      limit: MAX_REWIND_CHECKPOINTS,
+    });
+    return {
+      ...catalogue,
+      checkpoints: newestRewindCheckpoints(catalogue),
+      captureCapacityReached: snapshotIds.length >= MAX_REWIND_CHECKPOINTS,
+    };
   }
 
   /**
@@ -1380,6 +1388,43 @@ export class AgentRuntime {
       this.diagnosticsLog?.close() ?? Promise.resolve(),
       this.memoryScheduler?.close() ?? Promise.resolve(),
     ]);
+  }
+
+  /**
+   * Creates one bounded rewind snapshot, serialized so concurrent callers cannot
+   * both observe the final free slot. The tail is repaired after rejection so one
+   * storage failure does not permanently block later ordinary turns.
+   */
+  private captureRewindCheckpoint(): Promise<string | undefined> {
+    const capture = this.rewindCaptureTail.then(async () => {
+      // Probe only as far as Darwin can own. Failed/cancelled turns consume capacity
+      // too, because their immutable SDK snapshots cannot be deleted or reused. At
+      // capacity, rewind capture degrades open: the ordinary invocation and latest
+      // resumable snapshot still proceed, but no 101st immutable snapshot is created.
+      const existingIds = await this.sessionManager.listSnapshotIds({
+        target: this.agent,
+        limit: MAX_REWIND_CHECKPOINTS,
+      });
+      if (existingIds.length >= MAX_REWIND_CHECKPOINTS) {
+        this.diagnosticsLog?.notice(
+          `rewind checkpoint omitted: immutable snapshot capacity ${MAX_REWIND_CHECKPOINTS} reached`,
+          'warn',
+        );
+        return undefined;
+      }
+
+      const previousId = existingIds.at(-1);
+      await this.sessionManager.saveSnapshot({ target: this.agent, isLatest: false });
+      const createdIds = await this.sessionManager.listSnapshotIds({
+        target: this.agent,
+        limit: 1,
+        ...(previousId === undefined ? {} : { startAfter: previousId }),
+      });
+      if (createdIds.length === 1) return createdIds[0];
+      throw new Error('Could not identify the immutable rewind checkpoint created for this prompt.');
+    });
+    this.rewindCaptureTail = capture.then(() => undefined, () => undefined);
+    return capture;
   }
 
   /**
