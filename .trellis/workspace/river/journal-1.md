@@ -719,3 +719,24 @@ Added project-only `Ctrl+R` reverse search over the existing bounded trajectory 
 ### Status
 
 [OK] **Completed; awaiting commit/archive**
+
+
+## Session 28: Paginate self-evolution backlog
+
+**Date**: 2026-08-26
+**Task**: Paginate self-evolution backlog
+**Branch**: `main`
+
+### Summary
+
+Split the 96 KB backlog into a thin router plus stable 20-priority pages, updated self-evolution/reflection contracts, and added exercised structural validation with lossless migration proof.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0135f4b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
