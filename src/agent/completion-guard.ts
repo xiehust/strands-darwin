@@ -122,6 +122,10 @@ export async function collectCompletionCandidate(
     ? { events: runtime.send(input), accept: () => {}, suppress: () => {} }
     : await runtime.beginCompletionGuardTurn(input, privateInput);
   const events: AgentStreamEvent[] = [];
+  const overflowTerminalEvents = new Map<OverflowTerminalEventKind, RetainedTerminalEvent>();
+  let eventOrder = 0;
+  let retainedTextBlocksInMessage = 0;
+  let overflowTextBlocksInMessage = 0;
   let overflowed = false;
   let pendingText = '';
   let pendingTextEvent: AgentStreamEvent | undefined;
@@ -154,23 +158,47 @@ export async function collectCompletionCandidate(
       // deltas and hook events have authoritative aggregate events later; counting
       // them used to exhaust this cap and silently drop the final answer/plan.
       if (!isPublicCandidateEvent(event)) continue;
-      if (events.length < MAX_COMPLETION_GUARD_EVENTS) events.push(event);
-      else overflowed = true;
+      const order = eventOrder;
+      eventOrder += 1;
+      if (events.length < MAX_COMPLETION_GUARD_EVENTS) {
+        events.push(event);
+        if (event.type === 'contentBlockEvent' && event.contentBlock.type === 'textBlock') {
+          retainedTextBlocksInMessage += 1;
+        }
+      } else {
+        overflowed = true;
+        if (event.type === 'contentBlockEvent' && event.contentBlock.type === 'textBlock') {
+          overflowTextBlocksInMessage += 1;
+        }
+        retainOverflowTerminalEvent(
+          overflowTerminalEvents,
+          event,
+          order,
+          retainedTextBlocksInMessage,
+          overflowTextBlocksInMessage,
+        );
+      }
+      if (event.type === 'modelMessageEvent') {
+        retainedTextBlocksInMessage = 0;
+        overflowTextBlocksInMessage = 0;
+      }
     }
   } catch (error) {
     turn.accept();
+    const retainedEvents = withOverflowTerminalEvents(events, overflowTerminalEvents);
     const failedEvents = pendingTextEvent === undefined
-      ? events
-      : [...events, retainedTextDelta(pendingTextEvent, pendingText)];
+      ? retainedEvents
+      : [...retainedEvents, retainedTextDelta(pendingTextEvent, pendingText)];
     onFailed?.(failedEvents);
     throw error;
   }
-  if (pendingTextEvent !== undefined) events.push(retainedTextDelta(pendingTextEvent, pendingText));
+  const retainedEvents = withOverflowTerminalEvents(events, overflowTerminalEvents);
+  if (pendingTextEvent !== undefined) retainedEvents.push(retainedTextDelta(pendingTextEvent, pendingText));
   return {
-    value: events,
-    finalText: finalAssistantText(events),
-    eligible: completionCandidateEligible(events, overflowed),
-    unfinishedPlan: unfinishedPlanAtEnd(events, overflowed),
+    value: retainedEvents,
+    finalText: finalAssistantText(retainedEvents),
+    eligible: completionCandidateEligible(retainedEvents, overflowed),
+    unfinishedPlan: unfinishedPlanAtEnd(retainedEvents, overflowed),
     accept: turn.accept,
     suppress: turn.suppress,
   };
@@ -215,6 +243,95 @@ function isPublicCandidateEvent(event: AgentStreamEvent): boolean {
     default:
       return false;
   }
+}
+
+type OverflowTerminalEventKind = 'contentBlockEvent' | 'modelMessageEvent' | 'agentResultEvent';
+interface RetainedTerminalEvent {
+  event: AgentStreamEvent;
+  order: number;
+}
+
+/**
+ * Once the public-event prefix is full, keep only the latest bounded closing facts.
+ * Tool events remain untouched in the prefix; overflow already makes the candidate
+ * fail open, while these terminal events let every public consumer finish the reply.
+ */
+function retainOverflowTerminalEvent(
+  retained: Map<OverflowTerminalEventKind, RetainedTerminalEvent>,
+  event: AgentStreamEvent,
+  order: number,
+  retainedTextBlocksInMessage: number,
+  overflowTextBlocksInMessage: number,
+): void {
+  switch (event.type) {
+    case 'contentBlockEvent':
+      if (event.contentBlock.type === 'textBlock') {
+        // The post-aggregation message below restores every text block. Until it
+        // arrives, keep only the latest authoritative block rather than growing a
+        // second unbounded copy of a multi-block reply.
+        retained.set('contentBlockEvent', { event, order });
+      }
+      return;
+    case 'modelMessageEvent':
+      normalizeRetainedTextBlock(
+        retained,
+        event.message.content,
+        retainedTextBlocksInMessage,
+        overflowTextBlocksInMessage,
+      );
+      retained.set(event.type, { event, order });
+      return;
+    case 'agentResultEvent':
+      // Defensive fallback for a stream that has a terminal result but omitted the
+      // model-message event. The result's last message is equally post-aggregation.
+      if (event.result.lastMessage !== undefined) {
+        normalizeRetainedTextBlock(
+          retained,
+          event.result.lastMessage.content,
+          retainedTextBlocksInMessage,
+          overflowTextBlocksInMessage,
+        );
+      }
+      retained.set(event.type, { event, order });
+      return;
+    default:
+      return;
+  }
+}
+
+function normalizeRetainedTextBlock(
+  retained: Map<OverflowTerminalEventKind, RetainedTerminalEvent>,
+  content: Extract<AgentStreamEvent, { type: 'modelMessageEvent' }>['message']['content'],
+  retainedTextBlocksInMessage: number,
+  overflowTextBlocksInMessage: number,
+): void {
+  const block = retained.get('contentBlockEvent');
+  const text = content
+    .filter((item): item is Extract<typeof item, { type: 'textBlock' }> => item.type === 'textBlock')
+    .slice(retainedTextBlocksInMessage, retainedTextBlocksInMessage + overflowTextBlocksInMessage)
+    .map((item) => item.text)
+    .join('');
+  if (block?.event.type !== 'contentBlockEvent' ||
+    block.event.contentBlock.type !== 'textBlock' || text === '') return;
+  retained.set('contentBlockEvent', {
+    event: {
+      ...block.event,
+      contentBlock: { ...block.event.contentBlock, text },
+    } as AgentStreamEvent,
+    order: block.order,
+  });
+}
+
+function withOverflowTerminalEvents(
+  events: readonly AgentStreamEvent[],
+  retained: ReadonlyMap<OverflowTerminalEventKind, RetainedTerminalEvent>,
+): AgentStreamEvent[] {
+  return [
+    ...events,
+    ...[...retained.values()]
+      .sort((left, right) => left.order - right.order)
+      .map(({ event }) => event),
+  ];
 }
 
 const MAX_PENDING_TEXT_CODE_POINTS = 8_000;

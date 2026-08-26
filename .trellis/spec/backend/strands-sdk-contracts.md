@@ -570,7 +570,11 @@ statesUserBlocker(text: string): boolean
   recording, and are not trajectory `userInput` records.
 - Candidate buffering collapses raw text deltas into bounded reducer-compatible aggregate deltas and
   retains authoritative public events. Provider chunk frequency cannot evict the final answer,
-  checklist, tool result, max-token signal, or terminal result.
+  checklist, tool result, max-token signal, or terminal result. If retained public events overflow
+  the prefix cap, the candidate fails open and adds only a bounded ordered terminal tail: all prefix
+  evidence stays untouched, while overflow text blocks are rebuilt once from the aggregate message
+  without duplicating text blocks that already fit before the boundary, followed by the model message
+  and terminal result.
 - For an internal-note continuation, a second note is suppressed and throws
   `CompletionGuardError`. For an unfinished-plan continuation, a second unfinished plan is accepted
   as the one-shot terminal result; a second internal note is suppressed while the already accepted
@@ -585,7 +589,7 @@ statesUserBlocker(text: string): boolean
 | internal-note-shaped text with any tool | no | accept unchanged; tool-bearing note fails open |
 | latest successful parent plan unfinished | once | accept first events; use unfinished-plan prompt |
 | unfinished plan plus direct user blocker/question | no | accept blocker unchanged |
-| completed/no/malformed plan, failed tool, overflow, or cancellation | no | accept/propagate ordinary outcome |
+| completed/no/malformed plan, failed tool, overflow, or cancellation | no | accept/propagate ordinary outcome; overflow keeps the capped prefix plus bounded terminal tail |
 | second internal note after internal-note trigger | no | suppress and throw `CompletionGuardError` |
 | second unfinished plan after plan trigger | no | accept both candidates; return still-unfinished state |
 | continuation failure or cancellation | no | preserve accepted work; propagate, never start a third turn |
@@ -603,7 +607,8 @@ statesUserBlocker(text: string): boolean
 
 `spike/verify-completion-guard.ts` proves both classifiers, event bounds, one-shot behavior, retained
 side effects, blocker/error/cancellation exclusions, TUI/text/JSON/JSONL/trajectory/replay privacy,
-and event-flood terminal retention. Also run `spike/verify-update-plan.tsx`, free pty
+and raw/retained-event flood terminal retention, including multi-block text split across the cap.
+Also run `spike/verify-update-plan.tsx`, free pty
 `spike/verify-tui.ts updatePlan`, `spike/verify-stream-resumption.ts`,
 `spike/verify-max-tokens-recovery.ts`, and `spike/verify-headless-structured.ts`.
 

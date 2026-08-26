@@ -92,6 +92,28 @@ function rawDelta(text: string): AgentStreamEvent {
   } as AgentStreamEvent;
 }
 
+function multiBlockEvents(
+  texts: readonly string[],
+  stopReason: 'endTurn' | 'cancelled' = 'endTurn',
+): AgentStreamEvent[] {
+  const blocks = texts.map((text) => new TextBlock(text));
+  const message = new Message({ role: 'assistant', content: blocks });
+  const state = {};
+  return [
+    ...blocks.map((contentBlock) => new ContentBlockEvent({
+      agent: fakeAgent,
+      contentBlock,
+      invocationState: state,
+    })),
+    new ModelMessageEvent({ agent: fakeAgent, message, stopReason, invocationState: state }),
+    new AgentResultEvent({
+      agent: fakeAgent,
+      result: new AgentResult({ stopReason, lastMessage: message, invocationState: state }),
+      invocationState: state,
+    }),
+  ];
+}
+
 class ScriptedRuntime implements CompletionGuardRuntime {
   readonly inputs: string[] = [];
   readonly privateInputs: boolean[] = [];
@@ -239,6 +261,83 @@ async function eventFloodKeepsTerminalFacts(): Promise<void> {
     !candidate.unfinishedPlan);
 }
 
+async function retainedToolFloodKeepsTerminalFacts(): Promise<void> {
+  header('completion guard — retained tool overflow keeps terminal assistant facts');
+  const toolEvents = Array.from({ length: MAX_COMPLETION_GUARD_EVENTS + 1 }, (_, index) => ({
+    type: 'afterToolCallEvent',
+    toolUse: { name: 'bash', toolUseId: `tool-${index}`, input: { command: `printf ${index}` } },
+    result: { status: 'success', content: [{ type: 'textBlock', text: `result ${index}` }] },
+  } as unknown as AgentStreamEvent));
+  const finalBlocks = ['FINAL-TOOL-HEAVY-', 'ANSWER'];
+  const runtime = new ScriptedRuntime([[
+    ...toolEvents,
+    ...multiBlockEvents(finalBlocks),
+  ]]);
+  const candidates: Awaited<ReturnType<typeof collectCompletionCandidate>>[] = [];
+  const acceptedEvents = await runWithCompletionGuard('tool-heavy task', async (input) => {
+    const candidate = await collectCompletionCandidate(runtime, input);
+    candidates.push(candidate);
+    return candidate;
+  });
+  const candidate = candidates[0]!;
+
+  const retainedToolIds = acceptedEvents.flatMap((event) =>
+    event.type === 'afterToolCallEvent' ? [event.toolUse.toolUseId] : []);
+  assert('overflow does not evict or reorder the retained tool prefix',
+    JSON.stringify(retainedToolIds) === JSON.stringify(
+      toolEvents.slice(0, MAX_COMPLETION_GUARD_EVENTS).map((event) =>
+        event.type === 'afterToolCallEvent' ? event.toolUse.toolUseId : ''),
+    ));
+  assert('overflowed tool candidate fails open without a continuation',
+    !candidate.eligible && !candidate.unfinishedPlan && runtime.inputs.length === 1);
+  const retainedBlock = acceptedEvents.at(-3);
+  assert('bounded terminal tail retains all authoritative text blocks and result after the cap',
+    acceptedEvents.length === MAX_COMPLETION_GUARD_EVENTS + 3 &&
+    candidate.finalText === finalBlocks.join('') &&
+    retainedBlock?.type === 'contentBlockEvent' &&
+    retainedBlock.contentBlock.type === 'textBlock' &&
+    retainedBlock.contentBlock.text === finalBlocks.join('') &&
+    acceptedEvents.at(-1)?.type === 'agentResultEvent');
+
+  const tuiState = turnReducer(initialTurnState, { type: 'turnCompleted', events: acceptedEvents });
+  const assistant = tuiState.history.filter((item) => item.kind === 'assistant');
+  assert('turnReducer receives the complete final assistant history item after retained tool overflow',
+    assistant.some((item) => item.text === finalBlocks.join('')));
+  assert('acceptance retains the complete ordinary stream for trajectory recording',
+    runtime.accepted[0]?.length === toolEvents.length + finalBlocks.length + 2);
+
+  const splitBlocks = ['PREFIX-BLOCK-', 'OVERFLOW-BLOCK-', 'FINAL-BLOCK'];
+  const splitRuntime = new ScriptedRuntime([[
+    ...toolEvents.slice(0, MAX_COMPLETION_GUARD_EVENTS - 1),
+    ...multiBlockEvents(splitBlocks),
+  ]]);
+  const splitEvents = await runWithCompletionGuard(
+    'split text at overflow boundary',
+    (input) => collectCompletionCandidate(splitRuntime, input),
+  );
+  const splitState = turnReducer(initialTurnState, { type: 'turnCompleted', events: splitEvents });
+  const splitAnswer = splitState.history
+    .filter((item) => item.kind === 'assistant')
+    .map((item) => item.text)
+    .join('');
+  assert('text blocks split across the cap are neither duplicated nor lost',
+    splitAnswer === splitBlocks.join(''));
+
+  const cancelledRuntime = new ScriptedRuntime([[
+    ...toolEvents,
+    ...events('', 'cancelled'),
+  ]]);
+  const cancelledEvents = await runWithCompletionGuard(
+    'cancel tool-heavy task',
+    (input) => collectCompletionCandidate(cancelledRuntime, input),
+  );
+  const cancelledResult = cancelledEvents.at(-1);
+  assert('overflowed cancellation retains its terminal result and never continues',
+    cancelledRuntime.inputs.length === 1 &&
+    cancelledResult?.type === 'agentResultEvent' &&
+    cancelledResult.result.stopReason === 'cancelled');
+}
+
 async function publicOutputs(): Promise<void> {
   header('completion guard — text, JSON, and JSONL never publish suppressed note');
   const textRuntime = new ScriptedRuntime([events(LEAK), events('Done for the user.')]);
@@ -320,6 +419,7 @@ async function trajectoryHonesty(): Promise<void> {
 await classifierAndOneShot();
 await unfinishedPlanContinuation();
 await eventFloodKeepsTerminalFacts();
+await retainedToolFloodKeepsTerminalFacts();
 await publicOutputs();
 await trajectoryHonesty();
 report();
