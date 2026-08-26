@@ -179,7 +179,7 @@ Discovery also scans project/global `.agents/commands` under the shared preceden
 ### 6. Tests required
 
 - `pnpm tsx spike/verify-custom-commands.ts`: discovery, all-placeholder replacement, case folding, reserved names, skill/duplicate collisions, unreadable/empty entries, unknown input.
-- `pnpm tsx spike/verify-tui.ts completion`: use a temporary project, assert the collision warning, narrow prefixes to prove custom and skill rows, then restore `/` and assert built-ins lead. The menu shows six rows, so do not assume every command is simultaneously visible.
+- `pnpm tsx spike/verify-tui.ts completion`: use a temporary project, assert the collision warning, narrow prefixes to prove custom and skill rows, then restore `/` and assert built-ins lead. The menu shows six rows, so do not assume every command is simultaneously visible. Prefix assertions must follow canonical built-in-first order when a new built-in collides with a fixture prefix; move explicitly to the custom row instead of assuming it stays selected. For key-by-key window walks, wait on `tui.frame` after each write — accumulated `screen` scrollback can still contain an earlier selected marker and falsely synchronize the next key.
 - Run `pnpm typecheck` and `pnpm test` after runtime contract changes.
 
 ### 7. Wrong vs correct

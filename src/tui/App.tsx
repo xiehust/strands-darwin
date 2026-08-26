@@ -111,6 +111,17 @@ import {
   resolvePromptHistorySearch,
   type PromptHistorySearch,
 } from './prompt-history-search.js';
+import {
+  acceptRewindSearch,
+  appendRewindSearchQuery,
+  backspaceRewindSearchQuery,
+  cancelRewindSearch,
+  clearRewindSearchQuery,
+  moveRewindSearchSelection,
+  openRewindSearch,
+  rewindSearchView,
+  type RewindSearch,
+} from './rewind-search.js';
 import { queuedCountHint, refusesToQueue, takeBackDraft } from './prompt-queue.js';
 import {
   composeShellReport,
@@ -187,6 +198,7 @@ export function App({
   permissions,
   initialHistory = [],
   startNewSession,
+  startRewind,
 }: {
   readonly runtime: AgentRuntime;
   readonly permissions: PermissionQueue;
@@ -198,6 +210,8 @@ export function App({
    * could not shut the successor down) simply does not offer the command.
    */
   readonly startNewSession?: () => Promise<AgentRuntime>;
+  /** Fresh source-preserving conversation branch; the selected prompt is not sent. */
+  readonly startRewind?: (checkpoint: import('../agent/rewind.js').RewindCheckpoint) => Promise<AgentRuntime>;
 }): React.JSX.Element {
   const { exit } = useApp();
   const { columns, rows } = useWindowSize();
@@ -411,6 +425,18 @@ export function App({
     },
     [setHistorySearch],
   );
+  // `/rewind` owns the same bounded search rows as Ctrl+R, but its entries carry
+  // SDK snapshot identities and acceptance replaces the runtime rather than only text.
+  const [rewindSearch, setRewindSearchState] = useState<RewindSearch | undefined>(undefined);
+  const rewindSearchRef = useRef(rewindSearch);
+  const setRewindSearch = useCallback((next: RewindSearch | undefined) => {
+    rewindSearchRef.current = next;
+    setRewindSearchState(next);
+  }, []);
+  const updateRewindSearch = useCallback((update: (current: RewindSearch) => RewindSearch) => {
+    const current = rewindSearchRef.current;
+    if (current !== undefined) setRewindSearch(update(current));
+  }, [setRewindSearch]);
   const historySearchRequest = useRef(0);
 
   // Read bookkeeping, in a ref for the same reason the path scan's is: a landed read
@@ -453,12 +479,15 @@ export function App({
     completionKind === 'path' && completions.length > 0 ? workspacePathsNote(workspacePaths) : undefined;
   // One row while a walk is open, composed where the walk lives so the budget below and
   // the box that draws it are counting the same thing.
-  const recallIndicator = recall === undefined || historySearch !== undefined
+  const recallIndicator = recall === undefined || historySearch !== undefined || rewindSearch !== undefined
     ? undefined
     : promptRecallIndicator(recall);
   const historySearchProjection = historySearch === undefined
     ? undefined
     : promptHistorySearchView(historySearch);
+  const rewindSearchProjection = rewindSearch === undefined
+    ? undefined
+    : rewindSearchView(rewindSearch);
 
   // Every participant of the redrawn frame states what it wants; the header is the
   // only one measured. The grants are what each box is then allowed to draw, and
@@ -500,10 +529,11 @@ export function App({
               moreCompletions: completions.length > offeredCompletions,
               hasHint: streamingHint !== undefined,
               hasRecall: recallIndicator !== undefined,
-              ...(historySearchProjection === undefined ? {} : {
-                searchMatches: historySearchProjection.matches.length,
+              ...((rewindSearchProjection ?? historySearchProjection) === undefined ? {} : {
+                searchMatches: (rewindSearchProjection ?? historySearchProjection)?.matches.length ?? 0,
                 moreSearchMatches:
-                  historySearchProjection.hiddenAbove + historySearchProjection.hiddenBelow > 0,
+                  ((rewindSearchProjection ?? historySearchProjection)?.hiddenAbove ?? 0) +
+                  ((rewindSearchProjection ?? historySearchProjection)?.hiddenBelow ?? 0) > 0,
               }),
             }),
             // The row the cursor is on. Everything else in the region can go.
@@ -1123,6 +1153,43 @@ export function App({
       }
 
       // Deliberately *below* the busy check, with /compact and /model rather than with
+
+      // Conversation-only branch selection. Opening is local/read-only; acceptance
+      // revalidates the selected SDK checkpoint before runtime ownership changes.
+      if (/^\/rewind(?:\s|$)/.test(text)) {
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/rewind') {
+          dispatch({ type: 'notice', text: '/rewind takes no arguments' });
+          return;
+        }
+        if (startRewind === undefined) {
+          dispatch({ type: 'notice', text: '/rewind is not available in this driver', severity: 'warn' });
+          return;
+        }
+        const catalogue = await runtime.listRewindCheckpoints();
+        if (catalogue.problem !== undefined) {
+          dispatch({ type: 'notice', text: `rewind unavailable: ${catalogue.problem}`, severity: 'warn' });
+          return;
+        }
+        if (catalogue.checkpoints.length === 0) {
+          dispatch({
+            type: 'notice',
+            text: runtime.info.resumed
+              ? 'rewind unavailable — this resumed session has no catalogued completed prompt boundary; unmapped historical SDK snapshots are not guessed'
+              : 'rewind unavailable — no completed prompt checkpoint is catalogued yet',
+            severity: 'warn',
+          });
+          return;
+        }
+        const opening = editorRef.current;
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setRecall(undefined);
+        setHistorySearch(undefined);
+        setRewindSearch(openRewindSearch(opening, runtime.info.sessionId, catalogue.checkpoints));
+        return;
+      }
+
       // the local reports above it: this replaces the conversation the running turn is
       // streaming into, and the SDK's session snapshot is written when that turn ends —
       // so a mid-turn switch would hand the old session's manager a conversation it no
@@ -1135,6 +1202,7 @@ export function App({
           dispatch({ type: 'notice', text: '/clear takes no arguments' });
           return;
         }
+
         if (startNewSession === undefined) {
           dispatch({ type: 'notice', text: '/clear is not available in this driver', severity: 'warn' });
           return;
@@ -1505,6 +1573,7 @@ export function App({
     if ((key.ctrl && typed === 'r') || key.upArrow || key.downArrow) {
       const delta = key.downArrow ? -1 : 1;
       updateHistorySearch((value) => movePromptHistorySearchSelection(value, delta));
+
       return true;
     }
     if (key.backspace || key.delete) {
@@ -1522,6 +1591,86 @@ export function App({
     return true;
   }, [setEditor, setHistorySearch, setSelectedCompletion, updateHistorySearch]);
 
+  const acceptRewind = useCallback(async () => {
+    const search = rewindSearchRef.current;
+    const selected = search === undefined ? undefined : acceptRewindSearch(search);
+    if (search === undefined || selected === undefined || startRewind === undefined) return;
+    if (clearing.current) return;
+    if (runtime.info.sessionId !== search.sourceSessionId) {
+      setRewindSearch(undefined);
+      dispatch({ type: 'notice', text: 'rewind selection is stale — the live session changed', severity: 'warn' });
+      return;
+    }
+    clearing.current = true;
+    let next: AgentRuntime;
+    try {
+      next = await startRewind(selected);
+    } catch (error) {
+      dispatch({
+        type: 'notice',
+        text: `could not rewind; still in ${search.sourceSessionId}: ${error instanceof Error ? error.message : String(error)}`,
+        severity: 'error',
+      });
+      return;
+    } finally {
+      clearing.current = false;
+    }
+    writeToTerminal(CLEAR_TERMINAL);
+    recordAction({ type: 'clear' });
+    setRuntime(next);
+    setRewindSearch(undefined);
+    setEditor({ text: selected.prompt, cursor: { offset: selected.prompt.length, affinity: 'upstream' } });
+    setSelectedCompletion(0);
+    contextWarnLatch.current = createContextWarnLatch();
+    trajectoryWarned.current = false;
+    diagnosticsWarned.current = false;
+    pendingShellReports.current = [];
+    setQueued([]);
+    withNoticeDiagnostics(recordAction, next.diagnostics)({
+      type: 'notice',
+      severity: 'warn',
+      text:
+        `rewound conversation into new session ${next.info.sessionId}; source ${search.sourceSessionId} remains saved and resumable. ` +
+        'Workspace unchanged: workspace files, shell and ! effects, hooks, MCP writes, subagents, background jobs, and learned-memory files were not rewound.',
+    });
+  }, [dispatch, recordAction, runtime, setEditor, setQueued, setRewindSearch, startRewind, writeToTerminal]);
+
+  const handleRewindSearchKey = useCallback((typed: string, key: {
+    readonly ctrl: boolean;
+    readonly return: boolean;
+    readonly tab: boolean;
+    readonly escape: boolean;
+    readonly upArrow: boolean;
+    readonly downArrow: boolean;
+    readonly backspace: boolean;
+    readonly delete: boolean;
+  }): boolean => {
+    const current = rewindSearchRef.current;
+    if (current === undefined) return false;
+    if (key.escape) {
+      setEditor(cancelRewindSearch(current));
+      setRewindSearch(undefined);
+      return true;
+    }
+    if (key.return || key.tab) {
+      void acceptRewind();
+      return true;
+    }
+    if (key.upArrow || key.downArrow) {
+      updateRewindSearch((value) => moveRewindSearchSelection(value, key.downArrow ? 1 : -1));
+      return true;
+    }
+    if (key.backspace || key.delete) {
+      updateRewindSearch(backspaceRewindSearchQuery);
+      return true;
+    }
+    if (key.ctrl && typed === 'u') {
+      updateRewindSearch(clearRewindSearchQuery);
+      return true;
+    }
+    if (!key.ctrl && typed !== '') updateRewindSearch((value) => appendRewindSearchQuery(value, normalizeDraftText(typed)));
+    return true;
+  }, [acceptRewind, setEditor, setRewindSearch, updateRewindSearch]);
 
   // A walk opened before the read landed is finished here, once, and only while the
   // draft is still the empty one it was opened on — a read that lands after the user
@@ -1612,8 +1761,10 @@ export function App({
     // display-only controls above still work; no draft operation below does.
     if (status === 'compacting') return;
 
-    // Reverse search is an explicit editor mode. Permission and compaction ownership
-    // above remain absolute; once open, search owns its query/navigation/accept keys.
+    // Search modes own query/navigation/accept keys after permission/compaction.
+    if (rewindSearchRef.current !== undefined) {
+      if (handleRewindSearchKey(typed, key)) return;
+    }
     if (historySearchRef.current !== undefined) {
       if (handleHistorySearchKey(typed, key)) return;
     }
@@ -1892,6 +2043,7 @@ export function App({
             hint={streamingHint}
             recallIndicator={recallIndicator}
             historySearch={historySearchProjection}
+            rewindSearch={rewindSearchProjection}
           />
         )}
       </Box>

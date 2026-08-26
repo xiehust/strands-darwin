@@ -42,6 +42,11 @@ snapshot remains the only thing `resume` and `fork` restore from. Raw trajectory
 model context; only the separately bounded/redacted SER-031 derived index may be loaded. The resumed-TUI recap below is a
 bounded human-display projection only.
 
+### SER-040 rewind authority boundary
+
+Conversation rewind does not change this contract. The authoritative historical state is a Strands SDK immutable snapshot created before an invocation. Darwin's bounded `rewind-checkpoints.json` maps an opaque SDK snapshot id to editor prompt text only after that prompt completes successfully; it is neither trajectory nor model context. `/rewind` must work when `trajectory: false`, never scans trajectory to invent a checkpoint, and never truncates or copies the source trajectory. Resumed sessions honestly expose only boundaries with existing catalogue metadata; historical SDK snapshots without that mapping remain unavailable rather than guessed.
+
+
 ## 2. Where it lives
 
 ```

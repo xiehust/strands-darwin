@@ -47,11 +47,12 @@ import {
   trajectoryPath,
   writePointer,
 } from '../src/agent/session.js';
+import { appendRewindCheckpoint } from '../src/agent/rewind.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../src/agent/system-prompt.js';
 import { darwinDir, DARWIN_DIRNAME } from '../src/paths.js';
 import { CONFIG_FILENAME, permissionRulesPath } from '../src/config.js';
 import { AGENTS_DIRNAME } from '../src/agents/loader.js';
-import { COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
+import { BUILTIN_COMMAND_NAMES, COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
 import { SKILLS_DIRNAME } from '../src/skills/loader.js';
 import { MAX_COMPLETIONS } from '../src/tui/InputBox.js';
 import { recordStream } from '../src/trajectory/stream.js';
@@ -972,7 +973,7 @@ async function slashCompletion(): Promise<void> {
     await tui.waitFor('help — local controls', { timeoutMs: 30_000, from: beforeHelp, settleMs: 400 });
     const help = tui.screen.slice(beforeHelp);
     assert('/help answers locally without starting a model turn',
-      help.includes('commands (17/17):') && help.includes('Ctrl+J or trailing \\ + Enter') &&
+      help.includes('commands (18/18):') && help.includes('Ctrl+J or trailing \\ + Enter') &&
       !help.includes('working…'));
     assert('/help uses the existing transcript surface and leaves the live controls intact',
       tui.frame.includes('you>'));
@@ -1042,13 +1043,16 @@ async function slashCompletion(): Promise<void> {
     tui.send('\u001b');
     await settle();
     assert('a second Escape on the dismissed slash query is inert', tui.frame === afterFirstEscape);
-    tui.send('\t\u001b[B');
+    tui.send('\t');
     await settle();
-    assert('Tab and arrows do not act on a dismissed slash menu',
+    assert('Tab does not act on a dismissed slash menu', tui.frame === afterFirstEscape);
+    tui.send('\u001b[B');
+    await settle();
+    assert('arrows do not act on a dismissed slash menu',
       tui.frame === afterFirstEscape && !tui.screen.slice(beforeDismiss).includes('working…'));
     const beforeRearm = tui.mark();
     tui.send('r');
-    await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
+    await tui.waitFor('❯ /rewind', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
     assert('editing a dismissed slash query reopens completion at the unchanged cursor',
       tui.frame.includes('you> /r') && tui.frame.includes('commands ('));
     tui.send('\u007f');
@@ -1058,6 +1062,8 @@ async function slashCompletion(): Promise<void> {
     // project-defined kind rather than mistaking warning/header text for a row.
     const beforeCustom = tui.mark();
     tui.send('r');
+    await tui.waitFor('❯ /rewind', { timeoutMs: 30_000, from: beforeCustom, settleMs: 200 });
+    tui.send('\u001b[B');
     await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeCustom, settleMs: 400 });
     assert('the custom command is listed', tui.screen.slice(beforeCustom).includes('❯ /review'));
 
@@ -1118,8 +1124,20 @@ async function slashCompletion(): Promise<void> {
     // The full list is longer than the bounded menu. Walk below the initial window:
     // the marker must follow the selected identity, and Tab must accept that row.
     const beforeDownWindow = tui.mark();
-    tui.send('\u001b[B'.repeat(17));
-    await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeDownWindow, settleMs: 400 });
+    for (const name of BUILTIN_COMMAND_NAMES.slice(1)) {
+      tui.send('\u001b[B');
+      await tui.waitUntil(() => tui.frame.includes(`❯ /${name}`), {
+        timeoutMs: 30_000,
+        settleMs: 20,
+        label: `/${name} selected in slash completion`,
+      });
+    }
+    tui.send('\u001b[B');
+    await tui.waitUntil(() => tui.frame.includes('❯ /review'), {
+      timeoutMs: 30_000,
+      settleMs: 400,
+      label: '/review selected after the built-ins',
+    });
     assert('Down windows an overflowing slash menu around the selected candidate',
       tui.frame.includes('❯ /review') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
     assert('the slash window states omissions above', /… \d+ more not shown \(\d+ above/.test(tui.frame));
@@ -2486,7 +2504,6 @@ async function tallDraft(): Promise<void> {
   }
 }
 
-
 /**
  * The combination, in one frame: a streaming answer, a running-tool-free turn, and
  * a draft taller than the terminal typed while the answer arrives.
@@ -2660,6 +2677,64 @@ async function clearSession(): Promise<void> {
 
     tui.submit('/exit');
     assert('TUI exits cleanly after a session switch', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+/** Free pty `/rewind`: pre-seeded SDK snapshot + catalogue, no provider call. */
+async function rewindSession(): Promise<void> {
+  header('TUI — /rewind branches conversation and restores the selected prompt');
+  await resetWorkDir();
+  const sourceId = 'session-rewind-source';
+  const manager = createSessionManager(WORK_DIR, sourceId);
+  const agent = new Agent({
+    id: 'darwin',
+    model: new ResumeFixtureModel(),
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    sessionManager: manager,
+    printer: false,
+  });
+  await agent.initialize();
+  await manager.saveSnapshot({ target: agent, isLatest: false });
+  const ids = await manager.listSnapshotIds({ target: agent });
+  const snapshotId = ids.at(-1);
+  if (snapshotId === undefined) throw new Error('fixture immutable snapshot missing');
+  await manager.saveSnapshot({ target: agent, isLatest: true });
+  await appendRewindCheckpoint(WORK_DIR, sourceId, {
+    snapshotId,
+    prompt: 'selected prompt returns here',
+    completedAt: new Date().toISOString(),
+  });
+  await writePointer(WORK_DIR, sourceId);
+
+  const tui = startTui({ cwd: WORK_DIR, entry: path.join(REPO_ROOT, 'spike/rewind-tui-fixture.ts') });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('fixture resumes the source session', headerSessionId(tui.frame) === sourceId);
+    const before = tui.mark();
+    tui.submit('/rewind');
+    await tui.waitFor('rewind prompts', { timeoutMs: 30_000, from: before, settleMs: 300 });
+    assert('chooser exposes the catalogued completed prompt', tui.frame.includes('selected prompt returns here'));
+    tui.send('\r');
+    await tui.waitFor('Workspace unchanged:', { timeoutMs: 60_000, from: before, settleMs: 500 });
+    const successor = headerSessionId(tui.frame);
+    assert('acceptance moves the header to a fresh session', successor !== '' && successor !== sourceId);
+    assert('the selected prompt returns to the editor unsent',
+      tui.frame.includes('you> selected prompt returns here') && !tui.screen.slice(before).includes('working…'));
+    const notice = tui.screen.slice(before);
+    const compactNotice = withoutWhitespace(notice);
+    assert('notice preserves the source and states workspace unchanged',
+      compactNotice.includes(withoutWhitespace(`source ${sourceId} remains saved and resumable`)) &&
+      compactNotice.includes(withoutWhitespace('Workspace unchanged')));
+    assert('notice names all omitted side-effect domains',
+      ['workspace files', 'shell and ! effects', 'hooks', 'MCP writes', 'subagents', 'background jobs', 'learned-memory files']
+        .every((part) => notice.includes(part)));
+    const beforeClearDraft = tui.mark();
+    tui.send('\u0015');
+    await tui.waitFor('you> ', { timeoutMs: 30_000, from: beforeClearDraft, settleMs: 300 });
+    tui.submit('/exit');
+    assert('rewind scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
   } finally {
     tui.kill();
   }
@@ -3489,6 +3564,7 @@ const SCENARIOS = {
   bang: bangShellCommand,
   queue: queueTakeback,
   clear: clearSession,
+  rewind: rewindSession,
   mcpStderr: mcpStderrIsolation,
   mcp: mcpReport,
   toolDetails: toolDetailsToggle,

@@ -5,6 +5,7 @@ import React, { useRef } from 'react';
 import { builtinCommandDescription } from '../commands/custom-commands.js';
 import { draftWindow, hiddenDraftNotice, planPromptBox } from './frame-budget.js';
 import type { PromptHistorySearchView } from './prompt-history-search.js';
+import type { RewindSearchView } from './rewind-search.js';
 import type { EditorLayout } from './prompt-editor.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
@@ -20,7 +21,7 @@ import { visualColor, visualMarker } from './visual-language.js';
  * "… n more" row — a workspace has more paths than any menu could hold, so for them
  * that row is the normal case rather than the overflow one.
  */
-export const MAX_COMPLETIONS = 17;
+export const MAX_COMPLETIONS = 19;
 
 /**
  * Which source the offered rows came from.
@@ -95,6 +96,7 @@ export function InputBox({
   hint,
   recallIndicator,
   historySearch,
+  rewindSearch,
   offset,
   maxRows,
 }: {
@@ -119,6 +121,8 @@ export function InputBox({
   readonly recallIndicator: string | undefined;
   /** Bounded reverse-search title and newest-first matches; absent outside search mode. */
   readonly historySearch?: PromptHistorySearchView | undefined;
+  /** Bounded `/rewind` checkpoint chooser; mutually exclusive with history search. */
+  readonly rewindSearch?: RewindSearchView | undefined;
   /** Position of this box's parent within the live frame; see below. */
   readonly offset: { readonly top: number; readonly left: number };
   /**
@@ -130,6 +134,7 @@ export function InputBox({
    */
   readonly maxRows: number;
 }): React.JSX.Element {
+  const activeSearch = rewindSearch ?? historySearch;
   const offered = Math.min(completions.length, MAX_COMPLETIONS);
   const plan = planPromptBox({
     maxRows,
@@ -138,17 +143,17 @@ export function InputBox({
     moreCompletions: completions.length > offered,
     hasHint: hint !== undefined,
     hasRecall: recallIndicator !== undefined,
-    ...(historySearch === undefined ? {} : {
-      searchMatches: historySearch.matches.length,
-      moreSearchMatches: historySearch.hiddenAbove + historySearch.hiddenBelow > 0,
+    ...(activeSearch === undefined ? {} : {
+      searchMatches: activeSearch.matches.length,
+      moreSearchMatches: activeSearch.hiddenAbove + activeSearch.hiddenBelow > 0,
     }),
   });
-  const searchWindow = historySearch === undefined
+  const searchWindow = activeSearch === undefined
     ? undefined
-    : completionWindow(historySearch.matches.length, historySearch.selected, plan.searchItems);
+    : completionWindow(activeSearch.matches.length, activeSearch.selected, plan.searchItems);
   const visibleSearchMatches = searchWindow === undefined
     ? []
-    : historySearch?.matches.slice(searchWindow.start, searchWindow.end) ?? [];
+    : activeSearch?.matches.slice(searchWindow.start, searchWindow.end) ?? [];
   const view = draftWindow(layout.rows.length, layout.cursor.row, plan.draftRows);
   const rows = layout.rows.slice(view.start, view.end);
   const menu = completionWindow(completions.length, selectedCompletion, plan.completionItems);
@@ -199,9 +204,9 @@ export function InputBox({
           the draft window is unaffected — `useCursor` counts rows from the top of the
           frame, and a row inserted above the draft would move the cursor off it. */}
 
-      {historySearch !== undefined && plan.search && (
+      {activeSearch !== undefined && plan.search && (
         <Box flexDirection="column">
-          <Text dimColor wrap="truncate-end">{historySearch.title}</Text>
+          <Text dimColor wrap="truncate-end">{activeSearch.title}</Text>
           {visibleSearchMatches.map((match, index) => {
             const selected = searchWindow !== undefined && index === searchWindow.selected - searchWindow.start;
             return (
@@ -219,8 +224,8 @@ export function InputBox({
           {plan.searchMore && (
             <Text dimColor wrap="truncate-end">
               {'  '}{hiddenSearchNotice(
-                historySearch.hiddenAbove + (searchWindow?.hiddenAbove ?? 0),
-                historySearch.hiddenBelow + (searchWindow?.hiddenBelow ?? 0),
+                activeSearch.hiddenAbove + (searchWindow?.hiddenAbove ?? 0),
+                activeSearch.hiddenBelow + (searchWindow?.hiddenBelow ?? 0),
               )}
             </Text>
           )}

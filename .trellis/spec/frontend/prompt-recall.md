@@ -7,6 +7,13 @@
 Established 2026-08-18 (backlog direction `SER-015`). Asserted by `spike/verify-prompt-recall.ts`
 (free) and `spike/verify-tui.ts recall` / `recallEmpty` (free — no model call at all).
 
+
+## `/rewind` checkpoint chooser (SER-040)
+
+`/rewind` reuses the bounded search-row presentation but not prompt-history data. Its runtime supplies newest-first completed checkpoints carrying opaque SDK snapshot ids; trajectory is never read. While open, the chooser owns printable query text, Backspace/Ctrl+U, Up/Down, Enter/Tab and Escape. Escape restores the exact opening editor value. Enter/Tab revalidates the selected source checkpoint, creates a fresh successor runtime and returns the selected prompt to the editor unsent. Permission and compaction remain higher-priority owners, and `/rewind` is in the busy command refusal set rather than the prompt queue.
+
+The chooser shows at most five matches plus one title/omission row through the existing frame-budget search claim. A stale source session, stale/unmapped id, concurrent branch assembly, damaged catalogue or empty catalogue refuses locally and does not alter runtime/editor ownership. Pure check: `spike/verify-rewind-search.ts`; pty check: `spike/verify-tui.ts rewind`.
+
 ## Contract: history is the trajectory record, and nothing else
 
 Darwin stores no prompt history. Every prompt a session sent is already a `userInput` line in

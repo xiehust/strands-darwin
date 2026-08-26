@@ -33,7 +33,7 @@ export const QUEUED_MARKER = 'queued ·';
  * unprompted, is worse than asking for a second Enter. Matched against the
  * trimmed submission's first word.
  */
-const BUSY_REFUSED_COMMANDS = new Set(['/clear', '/compact', '/model', '/exit', '/quit']);
+const BUSY_REFUSED_COMMANDS = new Set(['/clear', '/compact', '/model', '/rewind', '/exit', '/quit']);
 
 /** True when a busy submission must be refused (draft retained) rather than queued. */
 export function refusesToQueue(text: string): boolean {

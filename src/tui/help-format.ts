@@ -39,6 +39,7 @@ export function formatHelpReport(): string {
     'editing and session:',
     '  Home/End or Ctrl+A/E moves to the visible row edge',
     '  Ctrl+K/U deletes to the row end/start · Ctrl+W deletes the previous word',
+    '  /rewind branches conversation only; it never rolls back workspace files or side effects',
     '  Ctrl+B toggles compact/expanded tool details',
     '  Ctrl+C cancels busy work; press again within 2s to exit (while idle, it exits)',
     '  Ctrl+D or /exit or /quit exits',

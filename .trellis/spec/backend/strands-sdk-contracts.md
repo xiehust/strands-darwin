@@ -8,6 +8,15 @@
 
 ## Agent Assembly
 
+## SER-040 conversation-only rewind
+
+`/rewind` is an SDK-snapshot branch, never an Agent-loop fork or trajectory replay. Before every editor-eligible invocation (`<= 4000` Unicode code points), `AgentRuntime.send()` asks the installed `SessionManager` to create one immutable snapshot and identifies its SDK-vended opaque id. Only a normal `agentResultEvent { stopReason: "endTurn" }` promotes that id plus bounded prompt text into `<session-state>/rewind-checkpoints.json`; failed, cancelled, abandoned, oversized and in-progress prompts are not selectable. Catalogue reads are strict and bounded at 100 entries / 512 KiB. Immutable snapshots remain append-only even when a turn is ineligible.
+
+Acceptance re-reads the current source catalogue, then creates a fresh Agent through `AgentRuntime.create()`. After `initialize()` has established the new session, a source `SessionManager.restoreSnapshot({ snapshotId })` loads the authoritative checkpoint; Darwin then refreshes current learned-memory projection, working context and final system-prompt cache point in the ordinary restore order before writing the successor's own `snapshot_latest`. The source latest/immutable snapshots, catalogue, trajectory and resume pointer are never copied, truncated or rewritten. The pointer still moves only through `markResumable()` after the successor completes a turn.
+
+The predecessor transfers live permission mode, MCP clients and the process-owned background-task manager exactly as `/clear`, and retires only after successful successor assembly. On failure it stays live. The selected prompt returns to the editor unsent. The visible notice is required to state that the workspace is unchanged and that workspace files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned-memory files were not rewound. Checks: `spike/verify-rewind.ts`, `spike/verify-rewind-search.ts`, and free `spike/verify-tui.ts rewind`.
+
+
 Only `src/agent/runtime.ts` constructs the SDK `Agent`. Keep it a thin assembly; all
 customization goes through SDK extension points (interventions, plugins, conversation
 manager), never by forking the agent loop.

@@ -6,7 +6,7 @@
  * later) decide how to render.
  */
 import { Agent, BeforeInvocationEvent, SummarizingConversationManager } from '@strands-agents/sdk';
-import type { AgentStreamEvent, InterventionHandler, McpClient, Model } from '@strands-agents/sdk';
+import type { AgentStreamEvent, InterventionHandler, McpClient, Model, SessionManager } from '@strands-agents/sdk';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
@@ -104,6 +104,14 @@ import { setSdkVerboseSink } from './sdk-logging.js';
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { applyWorkingContext, buildWorkingContext } from './working-context.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
+import {
+  appendRewindCheckpoint,
+  newestRewindCheckpoints,
+  readRewindCatalogue,
+  rewindPromptEligible,
+  type RewindCatalogue,
+  type RewindCheckpoint,
+} from './rewind.js';
 import { deltaUsage, startTurnSpend, type UsageTotals } from './usage.js';
 
 /** Test seam for proving startup unwind after resources have been acquired. */
@@ -158,8 +166,13 @@ export interface RuntimeOptions {
   contextOffloadOverride?: true;
   /** Refuses the next parent-Agent SDK model call after this many in the process. */
   maxModelCalls?: number;
+  /** Internal source checkpoint used only by a fresh `/rewind` successor. */
+  rewindRestore?: {
+    readonly sourceSessionId: string;
+    readonly snapshotId: string;
+  };
   /**
-   * Resources a predecessor runtime hands to its successor across `/clear`.
+   * Resources a predecessor runtime hands to its successor across `/clear` or `/rewind`.
    *
    * Set only by {@link AgentRuntime.startNewSession}. Everything here belongs to the
    * *process* rather than to the conversation, so duplicating it would spawn a second
@@ -352,6 +365,7 @@ export class AgentRuntime {
     private readonly gate: PermissionGate,
     /** Undefined when neither lifecycle event is configured: absent config spawns nothing. */
     private readonly lifecycleHooks: LifecycleHookRunner | undefined,
+    private readonly sessionManager: SessionManager,
     private readonly compactionManager: SummarizingConversationManager,
     private readonly preserveRecentMessages: number,
     /** Undefined when `trajectory: false` switched recording off for this run. */
@@ -552,6 +566,19 @@ export class AgentRuntime {
     // without this the resumed history and MCP tools would not exist yet.
     await agent.initialize();
 
+    // A rewind successor is always fresh, so initialization cannot accidentally
+    // load its own latest snapshot. Restore the selected *source* immutable snapshot
+    // explicitly, before Darwin refreshes current prompt fragments below. The source
+    // manager is read-only here; the successor manager owns all future writes.
+    if (options.rewindRestore !== undefined) {
+      const sourceManager = createSessionManager(options.projectRoot, options.rewindRestore.sourceSessionId);
+      const restored = await sourceManager.restoreSnapshot({
+        target: agent,
+        snapshotId: options.rewindRestore.snapshotId,
+      });
+      if (!restored) throw new Error('The selected rewind checkpoint no longer exists.');
+    }
+
     // CodeGraph semantic reads are useful only when their target already has a
     // structurally usable index. Prime the current target once, then replace the
     // discovered server tools before the same catalogue is handed to children.
@@ -619,6 +646,11 @@ export class AgentRuntime {
     if (promptCache.parts.includes('system prompt') && !applySystemPromptCachePoint(agent, promptCache)) {
       throw new Error('Could not place the final cache point on the assembled system prompt.');
     }
+    // Persist the fully refreshed branch state under the successor id. This never
+    // moves the resume pointer; the ordinary completed-turn path remains its owner.
+    if (options.rewindRestore !== undefined) {
+      await sessionManager.saveSnapshot({ target: agent, isLatest: true });
+    }
     runtimeCreateCheckpoint?.('after-initialize');
 
     // Built last and given nothing but facts: the recorder is an observer, so it
@@ -660,6 +692,7 @@ export class AgentRuntime {
       backgroundBash,
       gate,
       lifecycleHooks,
+      sessionManager,
       compactionManager,
       config.preserveRecentMessages,
       trajectory,
@@ -759,6 +792,16 @@ export class AgentRuntime {
       }
     }
 
+    let checkpointId: string | undefined;
+    if (rewindPromptEligible(input)) {
+      const beforeIds = await this.sessionManager.listSnapshotIds({ target: this.agent });
+      await this.sessionManager.saveSnapshot({ target: this.agent, isLatest: false });
+      const afterIds = await this.sessionManager.listSnapshotIds({ target: this.agent });
+      if (afterIds.length === beforeIds.length + 1) checkpointId = afterIds.at(-1);
+      else throw new Error('Could not identify the immutable rewind checkpoint created for this prompt.');
+    }
+
+    let completed = false;
     try {
       const recording = this.trajectory?.beginTurn(
         input,
@@ -771,7 +814,20 @@ export class AgentRuntime {
       await recording?.inputDurable();
       // Later events and turn-end are still observed synchronously and appended in
       // the background; `shutdown()` is where that append chain is waited for.
-      yield* recordStream(this.agent.stream(input), recording);
+      for await (const event of recordStream(this.agent.stream(input), recording)) {
+        if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
+        yield event;
+      }
+      if (completed && checkpointId !== undefined) {
+        const catalogue = await appendRewindCheckpoint(this.projectRoot, this.info.sessionId, {
+          snapshotId: checkpointId,
+          prompt: input,
+          completedAt: new Date().toISOString(),
+        });
+        if (catalogue.problem !== undefined) {
+          this.diagnosticsLog?.notice(`rewind checkpoint not catalogued: ${catalogue.problem}`, 'warn');
+        }
+      }
     } finally {
       this.lastTurnDelta = deltaUsage(before, this.usage);
     }
@@ -1190,6 +1246,52 @@ export class AgentRuntime {
   observePermissionRequest(source: string): void {
     this.lifecycleHooks?.publish({ event: 'PermissionRequest', source });
   }
+
+  /** Completed prompt boundaries available for an in-session conversation branch. */
+  async listRewindCheckpoints(): Promise<RewindCatalogue> {
+    const catalogue = await readRewindCatalogue(this.projectRoot, this.info.sessionId);
+    return { ...catalogue, checkpoints: newestRewindCheckpoints(catalogue) };
+  }
+
+  /**
+   * Branches from one catalogued source boundary into a fresh runtime.
+   *
+   * Selection is re-read immediately before assembly, so a stale UI row cannot name
+   * an arbitrary SDK snapshot. Source files remain read-only throughout; only the
+   * fresh successor id receives a latest snapshot.
+   */
+  async startRewind(checkpoint: RewindCheckpoint): Promise<AgentRuntime> {
+    const catalogue = await readRewindCatalogue(this.projectRoot, this.info.sessionId);
+    if (catalogue.problem !== undefined) throw new Error(catalogue.problem);
+    const current = catalogue.checkpoints.find((entry) => entry.snapshotId === checkpoint.snapshotId);
+    if (current === undefined || current.prompt !== checkpoint.prompt || current.completedAt !== checkpoint.completedAt) {
+      throw new Error('The selected rewind checkpoint is stale or unmapped.');
+    }
+
+    let successor: AgentRuntime;
+    try {
+      successor = await AgentRuntime.create({
+        ...this.createOptions,
+        session: { kind: 'new' },
+        rewindRestore: {
+          sourceSessionId: this.info.sessionId,
+          snapshotId: current.snapshotId,
+        },
+        permissionModeOverride: this.gate.mode,
+        inherit: {
+          config: this.liveConfig,
+          mcp: this.mcp,
+          backgroundBash: this.backgroundBash,
+        },
+      });
+    } catch (error) {
+      if (this.diagnosticsLog !== undefined) setSdkVerboseSink(this.diagnosticsLog.sdkSink);
+      throw error;
+    }
+    await this.retire();
+    return successor;
+  }
+
 
   /**
    * Records this session as the one `--resume` should reopen. Called after a turn

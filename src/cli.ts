@@ -222,6 +222,12 @@ async function runInteractive(options: CliOptions): Promise<void> {
         permissions.setObserver((source) => current.observePermissionRequest(source));
         return next;
       },
+      startRewind: async (checkpoint) => {
+        const next = await current.startRewind(checkpoint);
+        current = next;
+        permissions.setObserver((source) => current.observePermissionRequest(source));
+        return next;
+      },
     }),
   );
   try {

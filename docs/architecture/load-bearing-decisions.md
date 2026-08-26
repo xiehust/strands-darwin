@@ -76,6 +76,12 @@ aside until the new one has finished a turn. `cli.ts` still owns lifecycle — i
 runtime so exit reaps exactly one. Required checks: `spike/verify-clear-session.ts` (in `pnpm
 test`) and `spike/verify-tui.ts clear`, both free.
 
+## `/rewind` — an SDK checkpoint branch, never workspace rollback
+
+**A rewind branches authoritative conversation state into a fresh Agent; it never rewrites the source or compensates external effects.** Before editor-eligible invocations, the runtime creates a Strands immutable snapshot. A bounded catalogue makes only successfully completed prompt boundaries selectable. Acceptance revalidates the source row, creates a successor through the one `AgentRuntime.create()` factory, restores the source snapshot before current learned-memory/working-context/cache refresh, and retires the predecessor only after success. The selected prompt returns to the editor unsent, and the resume pointer stays on the source until the successor completes a turn.
+
+Trajectory remains optional observation and is never used to reconstruct messages. Source latest/immutable snapshots, catalogue and trajectory stay byte-identical. Process-owned live permission mode, MCP clients and background jobs transfer like `/clear`; workspace files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned-memory files are explicitly *not* rewound. This omission is part of the notice, not documentation fine print. Checks: `verify-rewind.ts`, `verify-rewind-search.ts`, and free `tui rewind`.
+
 ## Permissions — the gate
 
 **Permissions** (`src/agent/permission.ts`): a `PermissionGate extends InterventionHandler`
