@@ -12,6 +12,16 @@ Only `src/agent/runtime.ts` constructs the SDK `Agent`. Keep it a thin assembly;
 customization goes through SDK extension points (interventions, plugins, conversation
 manager), never by forking the agent loop.
 
+## SRF-016 repeated-failure retry guard
+
+- The guard is an SDK intervention composed with project hooks and permission, never an SDK-loop fork or driver retry. Within one invocation the order is plan guard → repeated-failure guard → `PreToolUse` → permission → tool body → `PostToolUse` → failure observation. A guard denial therefore executes none of Pre, permission, body, or Post; ordinary unknown-tool and child permission behavior is unchanged.
+- Failure keys are tool name plus bounded deterministic Unicode-normalized failure class/signature. Retained tools/signatures, normalized text, and visible messages are capped. The first three outcomes for one signature remain original and visible; after the second, bounded pre-model guidance requires a materially new evidence-backed hypothesis. After the third, guidance and any later denial say to stop, report the blocker/artifacts, and ask the user before continuing.
+- A different signature proceeds. A successful result clears that tool's retained failures. `BeforeInvocationEvent` replaces state even if a caller reuses its `invocationState`; the shared parent/child intervention additionally keys state by Agent, so concurrent children are isolated.
+- `ToolResultBlock.status: error` is a failure. Bash also has explicit structured failure status: foreground execute carries the command's numeric `exitCode` from the pinned SDK patch, and background status/wait carries `state: failed`; arbitrary stderr on an exit-0 command is not reinterpreted. User-authored `!` commands do not use the Agent tool intervention and are outside the guard.
+- Allowed tool results are never transformed, hidden, or replaced, and trajectory/output protocols remain observers of the ordinary SDK events. Default system guidance mirrors the runtime rule; inline/file system-prompt replacement remains exact.
+- Contract check: `spike/verify-retry-guard.ts` is a network-free real-Agent suite in `pnpm test`; `spike/verify-tool-hooks.ts` and `spike/verify-background-bash.ts` retain the adjacent ordering and shell contracts.
+
+
 ## SER-031 learned-memory contract
 
 `AgentRuntime.create` remains the only assembly boundary. Learned memory is enabled by default when trajectory

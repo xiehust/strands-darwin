@@ -472,13 +472,14 @@ export class AgentRuntime {
       classifier: createModelClassifier(config, options.projectRoot),
     });
 
-    // No configured tool hooks means the exact pre-existing handler is registered
-    // and no tool-hook shell process can be spawned. Lifecycle hooks are separate
-    // observers below: they never become SDK interventions.
-    const hasToolHooks = policy.hooks?.PreToolUse !== undefined || policy.hooks?.PostToolUse !== undefined;
-    const intervention: InterventionHandler = !hasToolHooks
-      ? gate
-      : new ToolHookGate(options.projectRoot, policy.hooks!, gate);
+    // One composed intervention owns retry → Pre → permission → body → Post
+    // ordering. An empty hook config spawns no shell process; lifecycle hooks stay
+    // separate observers and never become SDK interventions.
+    const intervention: InterventionHandler = new ToolHookGate(
+      options.projectRoot,
+      policy.hooks ?? {},
+      gate,
+    );
     const lifecycleConfig = lifecycleHooksFromConfig(policy.hooks);
     const lifecycleHooks = lifecycleConfig === undefined
       ? undefined

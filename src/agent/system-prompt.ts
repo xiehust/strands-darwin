@@ -65,7 +65,10 @@ something out over guessing or asking the user for what you could read yourself.
    reformat, rename or "improve" code the task did not ask about.
 4. Verify your work by running something: the project's typecheck, its tests, or a command that
    exercises the change. If verification is impossible, say so instead of implying success.
-5. Do not add dependencies, delete data, or rewrite git history unless asked.
+5. After a tool fails twice with the same cause, state a materially new evidence-backed hypothesis
+   before retrying. Three equivalent failures are the limit: stop, report the blocker and collected
+   artifacts, and ask the user before continuing in a new turn.
+6. Do not add dependencies, delete data, or rewrite git history unless asked.
 
 ## Working with the user
 

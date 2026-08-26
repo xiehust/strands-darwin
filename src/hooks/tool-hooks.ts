@@ -4,10 +4,13 @@ import {
   InterventionActions,
   InterventionHandler,
   type AfterToolCallEvent,
+  type BeforeInvocationEvent,
+  type BeforeModelCallEvent,
   type BeforeToolCallEvent,
 } from '@strands-agents/sdk';
 
 import type { PermissionGate } from '../agent/permission.js';
+import { RepeatedFailureGuard } from '../agent/retry-guard.js';
 
 export interface ToolHookCommand {
   readonly type: 'command';
@@ -33,8 +36,10 @@ export interface ToolHookResult {
   readonly error?: Error;
 }
 
+type InvocationAction = Awaited<ReturnType<InterventionHandler['beforeInvocation']>>;
 type BeforeAction = Awaited<ReturnType<InterventionHandler['beforeToolCall']>>;
 type AfterAction = Awaited<ReturnType<InterventionHandler['afterToolCall']>>;
+type ModelAction = Awaited<ReturnType<InterventionHandler['beforeModelCall']>>;
 
 /** Matches a complete, case-sensitive tool name using only `*` and `?` as wildcards. */
 export function matchesToolGlob(pattern: string, toolName: string): boolean {
@@ -143,12 +148,12 @@ export function runToolHookCommand(
 }
 
 /**
- * Composes deterministic project hooks around the interactive permission policy.
+ * Composes the retry guard and deterministic project hooks around permission.
  *
- * Keeping both policies in one SDK intervention is intentional: After callbacks
- * run in reverse handler order, and the SDK emits AfterToolCall even when Before
- * denied a call. Only calls that passed both Pre hooks and permission are marked
- * eligible for Post hooks.
+ * One intervention is intentional: After callbacks run in reverse handler order,
+ * and the SDK emits AfterToolCall even when Before denied a call. Only calls that
+ * passed the retry guard, Pre hooks and permission are eligible for Post hooks or
+ * repeated-failure observation.
  */
 export class ToolHookGate extends InterventionHandler {
   readonly name = 'darwin:tool-hooks';
@@ -158,8 +163,13 @@ export class ToolHookGate extends InterventionHandler {
     private readonly projectRoot: string,
     private readonly hooks: ToolHooksConfig,
     private readonly permissionGate: PermissionGate,
+    private readonly retryGuard = new RepeatedFailureGuard(),
   ) {
     super();
+  }
+
+  override beforeInvocation(event: BeforeInvocationEvent): InvocationAction {
+    return this.retryGuard.beforeInvocation(event);
   }
 
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<BeforeAction> {
@@ -168,6 +178,9 @@ export class ToolHookGate extends InterventionHandler {
     // gate still runs after Pre for every call this narrow guard does not deny.
     const guarded = this.permissionGate.planGuard(event.toolUse.name, event.toolUse.input);
     if (guarded !== undefined) return guarded;
+
+    const repeated = await this.retryGuard.beforeToolCall(event);
+    if (repeated.type !== 'proceed') return repeated;
 
     for (const hook of matchingCommands(this.hooks.PreToolUse, event.toolUse.name)) {
       const result = await runToolHookCommand(
@@ -211,7 +224,11 @@ export class ToolHookGate extends InterventionHandler {
         event.agent.cancelSignal,
       );
     }
-    return InterventionActions.proceed();
+    return this.retryGuard.afterToolCall(event);
+  }
+
+  override beforeModelCall(event: BeforeModelCallEvent): ModelAction {
+    return this.retryGuard.beforeModelCall(event);
   }
 
   private markEligible(event: BeforeToolCallEvent): void {

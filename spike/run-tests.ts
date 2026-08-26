@@ -38,6 +38,7 @@ const suites = [
   'verify-permission-mode-switch.ts',
   'verify-permissions-command.ts',
   'verify-tool-hooks.ts',
+  'verify-retry-guard.ts',
   'verify-lifecycle-hooks.ts',
   'verify-mcp-config.ts',
   'verify-mcp-command.ts',

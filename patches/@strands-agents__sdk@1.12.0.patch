@@ -61,7 +61,7 @@ index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..8907d109ce2866e376df312ebc0bae1a
  //# sourceMappingURL=bash.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/bash.js b/dist/src/vended-tools/bash/bash.js
-index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b978b0ade 100644
+index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb336770d5c 100644
 --- a/dist/src/vended-tools/bash/bash.js
 +++ b/dist/src/vended-tools/bash/bash.js
 @@ -1,8 +1,13 @@
@@ -136,12 +136,13 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b
  /**
   * Internal class for managing a bash session.
   */
-@@ -18,9 +74,19 @@ class BashSession {
+@@ -18,9 +74,21 @@ class BashSession {
      _started = false;
      _timeout;
      _sentinel;
 -    constructor(timeout = 120) {
 +    _stderrSentinel;
++    _exitCodeSentinel;
 +    _cwdSentinel;
 +    _initialCwd;
 +    _projectRoot;
@@ -150,6 +151,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b
          this._timeout = timeout;
          this._sentinel = `__BASH_DONE_${Date.now()}_${Math.random().toString(36).slice(2)}__`;
 +        this._stderrSentinel = `${this._sentinel}_STDERR`;
++        this._exitCodeSentinel = `${this._sentinel}_EXIT`;
 +        this._cwdSentinel = `${this._sentinel}_CWD`;
 +        this._initialCwd = path.resolve(initialCwd);
 +        this._projectRoot = projectRoot === null ? null : path.resolve(projectRoot);
@@ -157,7 +159,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b
      }
      /**
       * Starts the bash process if not already started.
-@@ -31,7 +97,7 @@ class BashSession {
+@@ -31,7 +99,7 @@ class BashSession {
          }
          try {
              this._process = spawn('bash', [], {
@@ -166,7 +168,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b
                  env: { ...process.env, PS1: '', PS2: '' },
              });
              if (!this._process.stdin || !this._process.stdout || !this._process.stderr) {
-@@ -61,9 +127,14 @@ class BashSession {
+@@ -61,9 +129,14 @@ class BashSession {
          activeSessions.delete(this);
      }
      /**
@@ -182,7 +184,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b
          this.start();
          if (!this._process || !this._process.stdin || !this._process.stdout || !this._process.stderr) {
              throw new BashSessionError('Bash session not properly initialized');
-@@ -73,32 +144,75 @@ class BashSession {
+@@ -73,32 +146,87 @@ class BashSession {
          let stderrData = '';
          let timeoutHandle = null;
          let isTimedOut = false;
@@ -209,9 +211,21 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b
 +                    this._cwd = reportedCwd;
 +                }
 +                const afterCwd = stdoutData[cwdEnd + 1] === '\n' ? cwdEnd + 2 : cwdEnd + 1;
-+                const output = `${stdoutData.slice(0, cwdStart)}${stdoutData.slice(afterCwd)}`.replace(this._sentinel, '').trim();
++                const withoutCwd = `${stdoutData.slice(0, cwdStart)}${stdoutData.slice(afterCwd)}`;
++                const exitStart = withoutCwd.lastIndexOf(this._exitCodeSentinel);
++                const exitEnd = exitStart < 0 ? -1 : withoutCwd.indexOf('\n', exitStart);
++                if (exitStart < 0 || exitEnd < 0) {
++                    reject(new BashSessionError('Bash session did not report the command exit code'));
++                    return;
++                }
++                const exitCode = Number(withoutCwd.slice(exitStart + this._exitCodeSentinel.length, exitEnd));
++                if (!Number.isInteger(exitCode)) {
++                    reject(new BashSessionError('Bash session reported an invalid command exit code'));
++                    return;
++                }
++                const output = `${withoutCwd.slice(0, exitStart)}${withoutCwd.slice(exitEnd + 1)}`.replace(this._sentinel, '').trim();
 +                const error = stderrData.replace(this._stderrSentinel, '').trim();
-+                resolve({ output, error, cwd: this._cwd });
++                resolve({ output, error, cwd: this._cwd, exitCode });
 +            };
              const onStdoutData = (chunk) => {
                  const data = Buffer.from(chunk).toString('utf-8');
@@ -266,16 +280,16 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b
                  }
              };
              // Handler for process errors
-@@ -136,7 +250,7 @@ class BashSession {
+@@ -136,7 +264,7 @@ class BashSession {
              this._process.on('error', onError);
              // Send command with sentinel
              try {
 -                stdin.write(`${command}\necho "${this._sentinel}"\n`);
-+                stdin.write(`${command}\ncommand printf '${this._cwdSentinel}%s\\0\\n' "$(command pwd -P)"\necho "${this._sentinel}"\necho "${this._stderrSentinel}" >&2\n`);
++                stdin.write(`${command}\n__darwin_exit_code=$?\ncommand printf '${this._exitCodeSentinel}%s\\n' "$__darwin_exit_code"\ncommand printf '${this._cwdSentinel}%s\\0\\n' "$(command pwd -P)"\necho "${this._sentinel}"\necho "${this._stderrSentinel}" >&2\n`);
              }
              catch (err) {
                  cleanup();
-@@ -151,6 +265,16 @@ class BashSession {
+@@ -151,6 +279,16 @@ class BashSession {
   */
  // eslint-disable-next-line @typescript-eslint/no-explicit-any
  const sessions = new WeakMap();
@@ -292,7 +306,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..54d7b729b03fdce3129f5061fe290d0b
  /**
   * Track all active sessions for cleanup on process exit.
   */
-@@ -221,42 +345,50 @@ const DEFAULT_DESCRIPTION = 'Executes bash shell commands in a persistent sessio
+@@ -221,42 +359,50 @@ const DEFAULT_DESCRIPTION = 'Executes bash shell commands in a persistent sessio
   * State (variables, working directory) persists within the session.
   * Node.js only.
   */
@@ -409,10 +423,10 @@ index 19409ad6160e57325f377097c83795579cc31cf0..606a301fb63090684f4d928011552140
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/types.d.ts b/dist/src/vended-tools/bash/types.d.ts
-index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..b96c005ce8c1916bd8e07234b33052a90ad3c9fe 100644
+index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..0e8a97cca8e72363de51ec9ad86a4e4824460da3 100644
 --- a/dist/src/vended-tools/bash/types.d.ts
 +++ b/dist/src/vended-tools/bash/types.d.ts
-@@ -50,6 +50,10 @@ export interface BashOutput {
+@@ -50,10 +50,16 @@ export interface BashOutput {
       * Empty string if no errors occurred.
       */
      error: string;
@@ -420,10 +434,17 @@ index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..b96c005ce8c1916bd8e07234b33052a9
 +     * Effective persistent-shell cwd after the command.
 +     */
 +    cwd: string;
++    /** Exit status of the foreground command, before Darwin's shell sentinels. */
++    exitCode: number;
      /**
       * Allow indexing with string keys for JSONValue compatibility.
       */
-@@ -65,6 +69,12 @@ export declare class BashTimeoutError extends Error {
+-    [key: string]: string;
++    [key: string]: string | number;
+ }
+ /**
+  * Error thrown when a bash command exceeds its timeout.
+@@ -65,6 +71,12 @@ export declare class BashTimeoutError extends Error {
   * Error thrown when a bash session encounters an error.
   */
  export declare class BashSessionError extends Error {

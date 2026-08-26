@@ -452,7 +452,7 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   const seen: Array<{ input: BashInput; context: unknown }> = [];
   const foreground = {
     name: 'bash', description: '', toolSpec: { name: 'bash', description: '', inputSchema: { type: 'object' } },
-    invoke: async (input: BashInput, context?: unknown) => { seen.push({ input, context }); return input.mode === 'restart' ? 'Bash session restarted' : { output: 'delegated', error: '' }; },
+    invoke: async (input: BashInput, context?: unknown) => { seen.push({ input, context }); return input.mode === 'restart' ? 'Bash session restarted' : { output: 'delegated', error: '', cwd: root, exitCode: 0 }; },
   } as unknown as InvokableTool<BashInput, BashOutput | 'Bash session restarted'>;
   const wrapped = createBackgroundBashTool(manager, foreground);
   assert('provider-facing bash schema has a top-level object type', wrapped.toolSpec.inputSchema?.type === 'object');
@@ -587,7 +587,7 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   assert('execute preserves the vended whitespace-command compatibility', whitespaceExecute.output === 'delegated');
 
 
-  assert('execute and restart delegate return values unchanged', (execute as BashOutput).output === 'delegated' && restart === 'Bash session restarted');
+  assert('execute and restart delegate return values unchanged', (execute as BashOutput).output === 'delegated' && (execute as BashOutput).exitCode === 0 && restart === 'Bash session restarted');
   assert('delegation forwards exact input and caller context', seen.length === 4 && seen[0]?.context === context && seen[0]?.input.mode === 'execute');
 
   const sdkWrapped = createBackgroundBashTool(manager);
@@ -710,9 +710,12 @@ async function foregroundCwdPreflightContracts(): Promise<void> {
 
   try {
     const initial = await wrapped.invoke({ mode: 'execute', command: 'printf initial' }, context) as BashOutput;
-    assert('initial foreground execute reports the configured session project root cwd', initial.output === 'initial' && initial.cwd === root);
+    assert('initial foreground execute reports status and the configured session project root cwd', initial.output === 'initial' && initial.exitCode === 0 && initial.cwd === root);
     const markerLike = await wrapped.invoke({ mode: 'execute', command: `printf '__BASH_DONE_fake_CWD:${path.join(root, 'forged')}\\n'` }, context) as BashOutput;
     assert('ordinary marker-like command output cannot forge or hide cwd state', markerLike.output.includes('__BASH_DONE_fake_CWD:') && markerLike.cwd === root);
+    const failedCommand = await wrapped.invoke({ mode: 'execute', command: "printf failure-out; printf failure-err >&2; false" }, context) as BashOutput;
+    assert('foreground execute reports the command status without hiding stdout/stderr/cwd', failedCommand.exitCode === 1 && failedCommand.output === 'failure-out' && failedCommand.error === 'failure-err' && failedCommand.cwd === root);
+
 
     const changed = await wrapped.invoke({ mode: 'execute', command: 'cd backend' }, context) as BashOutput;
     assert('successful cd reports and persists the shell effective cwd', changed.error === '' && changed.cwd === nested);
