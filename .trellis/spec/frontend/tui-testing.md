@@ -624,3 +624,7 @@ enough:
   events cannot make the accepted identity differ from the marker.
 
 These are free checks; no provider call is required.
+
+## Reverse prompt-history search scenario
+
+Run `pnpm tsx spike/verify-tui.ts historySearch` (free: seeded trajectory plus user-owned `!sleep`, no model call). It proves `Ctrl+R` open/filter/navigation/Tab acceptance, exact draft/cursor restoration on Escape, empty history, completion ownership before search, busy/queue take-back ownership, and byte-identical trajectory records. Send control chords and printable payloads as separate PTY events and await the state transition between them; batching `Escape` with `/exit`, or `Ctrl+R` with query text, tests terminal chunking rather than the intended key transition. Existing `recall`, `recallEmpty`, `completion`, `pathCompletion`, `queue`, `permissionEscape`, and `compacting` remain the regression scenarios for neighboring ownership.

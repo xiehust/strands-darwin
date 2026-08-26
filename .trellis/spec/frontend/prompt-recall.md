@@ -155,3 +155,11 @@ the keys and rows recall must not have taken. `/help` states this exact preceden
 queued-message take-back on `Up`, recall, then cursor movement — so its focused formatter check
 must fail if that discoverability contract drifts. `queue` also proves recall is reached again the
 moment the queue empties.
+
+## Ctrl+R reverse search (SER-039)
+
+`Ctrl+R` is a second, explicit editor mode over the same `readPromptHistory(projectRoot)` reading; it is not another history source. `src/tui/prompt-history-search.ts` is pure: it snapshots the exact opening `EditorValue`, the reader's newest-first duplicate-collapsed entries and degradation note, then performs bounded case-insensitive filtering and selection. Query input is capped at 256 Unicode code points. The reader remains sole authority for project scope, damage handling, and session/stat/tail/entry/byte/overlong-prompt bounds.
+
+While search is open, printable input filters, `Ctrl+R`/`Up` selects an older match, `Down` a newer match, and `Enter`/`Tab` accepts the selected text into the editor with the cursor at its end. `Escape` restores the exact opening text, cursor offset and affinity. Async read results carry a search request identity; a cancelled or reopened generation cannot accept a stale landing, and immediate refs make batched query/navigation/accept keys coherent.
+
+Keyboard ownership remains outer-to-inner: permission modal, global interrupt/exit, display-only controls, compaction, then reverse search. Search opens only while idle. Outside search, completion keeps both arrows, `Up` queue take-back remains ahead of sequential recall, and sequential recall/cursor movement retain the rules above. Search creates no record, model message, network call or store.

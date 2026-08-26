@@ -697,3 +697,25 @@ Kept completion-guard overflow bounded while retaining terminal assistant text a
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: SER-039 bounded reverse prompt-history search
+
+**Date**: 2026-08-26
+**Task**: `.trellis/tasks/08-26-ser-039-prompt-history-search`
+**Branch**: `main`
+
+### Summary
+
+Added project-only `Ctrl+R` reverse search over the existing bounded trajectory prompt reader. Search filters newest-first duplicate-collapsed entries, navigates and accepts locally, restores the exact opening draft/cursor on Escape, and renders through counted prompt rows without adding persistence or model-visible state.
+
+### Verification
+
+- [OK] Pure search, prompt reader/recall, frame-budget and help suites passed.
+- [OK] Free PTY `historySearch` plus completion, pathCompletion, recall, recallEmpty, queue, and permissionEscape scenarios passed.
+- [OK] `pnpm typecheck`, one complete `pnpm test`, and `pnpm build` passed.
+- [OK] Task validation, `git diff --check`, and AGENTS.md 32 KiB bound passed.
+
+### Status
+
+[OK] **Completed; awaiting commit/archive**

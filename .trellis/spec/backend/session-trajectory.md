@@ -694,3 +694,7 @@ then writes the one closing `turnEnded` batch. Internal notes and unfinished pla
 any other successful output; no fixed successful-turn continuation input exists. Historical schema-v1
 lines may contain unknown extra fields such as `completionGuardSuppressed`; readers continue to
 ignore unknown JSON properties and never migrate or rewrite those bytes.
+
+## Reverse prompt-history search is another projection (SER-039)
+
+Interactive `Ctrl+R` search consumes only `readPromptHistory(projectRoot)`, the bounded project-only projection already used by sequential recall. Filtering and navigation occur over that in-memory snapshot. Search must not enumerate a different scope, add a store or index, write/repair a trajectory, move the resume pointer, emit a synthetic `userInput`, call a model/tool/network service, or loosen any reader bound. Acceptance changes only the local prompt editor; cancellation restores its pre-search snapshot.

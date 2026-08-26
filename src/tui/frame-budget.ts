@@ -277,9 +277,16 @@ export function promptBoxWanted(input: {
   readonly hasHint: boolean;
   /** The prompt-recall indicator row; absent when no recall walk is open. */
   readonly hasRecall?: boolean;
+  /** Search title plus these bounded match rows (and, when needed, one omission row). */
+  readonly searchMatches?: number;
+  readonly moreSearchMatches?: boolean;
 }): number {
   const menu = input.completions > 0 ? 2 + input.completions + (input.moreCompletions ? 1 : 0) : 0;
-  return input.draftRows + menu + (input.hasRecall === true ? RECALL_INDICATOR_ROWS : 0) + (input.hasHint ? 2 : 0);
+  const search = input.searchMatches === undefined
+    ? 0
+    : 1 + input.searchMatches + (input.moreSearchMatches === true ? 1 : 0);
+  return input.draftRows + menu + search +
+    (input.hasRecall === true ? RECALL_INDICATOR_ROWS : 0) + (input.hasHint ? 2 : 0);
 }
 
 /**
@@ -363,6 +370,12 @@ export interface PromptBoxPlan {
   readonly completionItems: number;
   /** Draw the `… n more` line under the entries. */
   readonly completionMore: boolean;
+  /** Draw the search title row. */
+  readonly search: boolean;
+  /** Prompt-history search match rows to draw under its title row. */
+  readonly searchItems: number;
+  /** Draw the search omission row after visible matches. */
+  readonly searchMore: boolean;
   /** Draw the prompt-recall indicator row. */
   readonly recall: boolean;
   /** Draw the status hint. */
@@ -392,13 +405,35 @@ export function planPromptBox(input: {
   readonly hasHint: boolean;
   /** A recall walk is open, so the indicator wants its one row. */
   readonly hasRecall?: boolean;
+  /** Search title plus a bounded result list; absent when search is closed. */
+  readonly searchMatches?: number;
+  readonly moreSearchMatches?: boolean;
 }): PromptBoxPlan {
   const maxRows = Math.max(0, input.maxRows);
   const draftFloor = Math.min(maxRows, input.draftRows <= 1 ? 1 : 2);
   let spare = maxRows - draftFloor;
 
+  // Search is modal within the editor: while open it replaces completion/recall chrome.
+  // Its title is useful even for loading, empty and no-match states. A partly granted
+  // result list spends its last row saying what was hidden.
+  let search = false;
+  let searchItems = 0;
+  let searchMore = false;
+  if (input.searchMatches !== undefined && spare >= 1) {
+    search = true;
+    const matches = Math.max(0, input.searchMatches);
+    const matchRows = Math.max(0, spare - 1);
+    searchMore = input.moreSearchMatches === true || matchRows < matches;
+    const omissionRows = searchMore && matchRows > 0 ? 1 : 0;
+    searchItems = Math.min(matches, Math.max(0, matchRows - omissionRows));
+    searchMore = searchMore && matchRows > 0;
+    spare -= 1 + searchItems + (searchMore ? 1 : 0);
+  }
+
   // marginTop + the "commands (…)" title + one row per entry + the overflow line.
-  const menuWanted = input.completions > 0 ? 2 + input.completions + (input.moreCompletions ? 1 : 0) : 0;
+  const menuWanted = input.searchMatches === undefined && input.completions > 0
+    ? 2 + input.completions + (input.moreCompletions ? 1 : 0)
+    : 0;
   const menuRows = Math.min(menuWanted, Math.max(0, spare));
   // A partly granted menu pays for its own "… n more" row out of the grant, so the
   // entries it drops are not dropped silently.
@@ -421,6 +456,9 @@ export function planPromptBox(input: {
     draftRows: draftFloor + Math.max(0, spare),
     completionItems,
     completionMore: completionItems > 0 && moreRow === 1,
+    search,
+    searchItems,
+    searchMore,
     recall: recallRows > 0,
     hint: hintRows > 0,
   };

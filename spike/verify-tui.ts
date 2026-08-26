@@ -19,7 +19,7 @@
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | cursor | completion |
- *                 pathCompletion | recall | recallEmpty | resume | bang | queue | clear | mcpStderr | mcp |
+ *                 pathCompletion | historySearch | recall | recallEmpty | resume | bang | queue | clear | mcpStderr | mcp |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
@@ -2727,7 +2727,145 @@ function settle(ms = 600): Promise<void> {
  * multi-row draft, and is taken by the completion menu whenever one is open — and that
  * the records are byte-identical afterwards.
  */
+/** Bounded Ctrl+R search over seeded project history; every action is local/offline. */
+async function promptHistorySearch(): Promise<void> {
+  header('TUI — Ctrl+R filters, navigates, accepts and cancels project prompt history');
+
+  const dir = '/tmp/darwin-history-search-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  const recordFile = trajectoryPath(dir, 'session-20260103-000001');
+  await mkdir(path.dirname(recordFile), { recursive: true });
+  const record = (seq: number, text: string): string => `${JSON.stringify({
+    v: 1,
+    seq,
+    t: `2026-01-03T00:00:0${seq}.000Z`,
+    turn: seq,
+    type: 'userInput',
+    text,
+  })}\n`;
+  await writeFile(
+    recordFile,
+    record(1, 'SEARCH_OLDER fix tests') +
+      record(2, 'SEARCH_MIDDLE document behavior') +
+      record(3, 'SEARCH_NEWEST fix login') +
+      record(4, 'SEARCH_NEWEST fix login'),
+    'utf8',
+  );
+  const before = createHash('sha256').update(await readFile(recordFile)).digest('hex');
+  const tui = startTui({ cwd: dir, cols: 100, rows: 24 });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    // Completion owns arrows until explicitly dismissed; opening search is a separate
+    // Ctrl+R transition, not a change to completion's Up/Down precedence.
+    tui.send('/');
+    await tui.waitFor('commands (', { timeoutMs: 30_000, settleMs: 300 });
+    tui.send('\u001b[B');
+    await settle();
+    assert('completion still owns Down before reverse search opens', tui.frame.includes('commands ('));
+    tui.send('\u001b\u0015');
+
+    const openedAt = tui.mark();
+    tui.send('\u0012');
+    await tui.waitFor('reverse search:', { timeoutMs: 30_000, from: openedAt, settleMs: 300 });
+    assert('Ctrl+R opens project history without starting a turn',
+      tui.frame.includes('SEARCH_NEWEST fix login') && !tui.screen.slice(openedAt).includes('working…'));
+    tui.send('FiX');
+    await tui.waitFor('reverse search: FiX', { timeoutMs: 30_000, settleMs: 300 });
+    assert('typing filters case-insensitively in newest-first duplicate-collapsed order',
+      tui.frame.indexOf('SEARCH_NEWEST fix login') < tui.frame.indexOf('SEARCH_OLDER fix tests') &&
+        !tui.frame.includes('SEARCH_MIDDLE document behavior'));
+    tui.send('\u0012');
+    await tui.waitFor('2/2', { timeoutMs: 30_000, settleMs: 300 });
+    tui.send('\t');
+    await tui.waitFor('you> SEARCH_OLDER fix tests', { timeoutMs: 30_000, settleMs: 300 });
+    assert('Ctrl+R navigates older matches and Tab accepts into the editor',
+      tui.frame.includes('you> SEARCH_OLDER fix tests') && !tui.frame.includes('reverse search:'));
+
+    // Cursor restoration is observable: ABC with its cursor after A becomes AXBC only
+    // if Escape restores the exact opening offset, not merely the opening text.
+    tui.send('\u0015');
+    await tui.waitUntil(() => /you>\s*(?:\r?\n|$)/.test(tui.frame), {
+      timeoutMs: 10_000,
+      label: 'accepted search draft cleared',
+    });
+    tui.send('ABC');
+    await tui.waitFor('you> ABC', { timeoutMs: 10_000, settleMs: 200 });
+    tui.send('\u001b[D\u001b[D');
+    await settle();
+    tui.send('\u0012');
+    await tui.waitFor('reverse search:', { timeoutMs: 30_000, settleMs: 200 });
+    tui.send('doc');
+    await tui.waitFor('reverse search: doc', { timeoutMs: 30_000, settleMs: 300 });
+    tui.send('\u001b');
+    await tui.waitFor('you> ABC', { timeoutMs: 30_000, settleMs: 200 });
+    tui.send('X');
+    await tui.waitFor('you> AXBC', { timeoutMs: 30_000, settleMs: 300 });
+    assert('Escape cancels search and restores the exact draft cursor',
+      tui.frame.includes('you> AXBC') && !tui.frame.includes('reverse search:'));
+
+    // A user-owned shell command supplies a free busy state. Ctrl+R cannot steal it;
+    // queued submission and Up take-back keep their established ownership.
+    tui.send('\u0001');
+    await settle(100);
+    tui.send('\u000b');
+    await tui.waitUntil(() => /you>\s*(?:\r?\n|$)/.test(tui.frame), {
+      timeoutMs: 10_000,
+      label: 'cancelled-search draft cleared before busy ownership check',
+    });
+    tui.submit('!sleep 30');
+    await tui.waitFor('running ! command…', { timeoutMs: 30_000, settleMs: 200 });
+    tui.send('\u0012');
+    await settle(200);
+    assert('busy input ownership prevents reverse search from opening', !tui.frame.includes('reverse search:'));
+    const queuedAt = tui.mark();
+    tui.submit('SEARCH_QUEUED');
+    await tui.waitFor('queued · SEARCH_QUEUED', { timeoutMs: 10_000, from: queuedAt, settleMs: 200 });
+    tui.send('\u001b[A');
+    await tui.waitFor('you> SEARCH_QUEUED', { timeoutMs: 30_000, settleMs: 300 });
+    assert('Up still takes queued text back before sequential recall', tui.frame.includes('you> SEARCH_QUEUED'));
+    tui.send('\u0003');
+    await tui.waitFor('killed by SIGTERM', { timeoutMs: 30_000, settleMs: 300 });
+    await waitForIdle(tui, 30_000);
+
+    const after = createHash('sha256').update(await readFile(recordFile)).digest('hex');
+    assert('search leaves the project trajectory byte-identical', after === before);
+    tui.send('\u0015');
+    tui.submit('/exit');
+    assert('history-search scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+  }
+
+  const emptyDir = '/tmp/darwin-history-search-empty-tui';
+  await rm(emptyDir, { recursive: true, force: true });
+  await mkdir(emptyDir, { recursive: true });
+  const empty = startTui({ cwd: emptyDir, cols: 100, rows: 24 });
+  try {
+    await empty.waitFor('you>', { timeoutMs: 60_000, settleMs: 500 });
+    empty.send('\u0012');
+    await empty.waitFor('no earlier prompts', { timeoutMs: 30_000, settleMs: 300 });
+    assert('an empty project history is a bounded search answer', empty.frame.includes('no earlier prompts'));
+    empty.send('\u001b');
+    await empty.waitUntil(() => !empty.frame.includes('reverse search:'), {
+      timeoutMs: 10_000,
+      settleMs: 200,
+      label: 'empty reverse search cancelled',
+    });
+    empty.submit('/exit');
+    assert('empty history-search scenario exits cleanly', (await empty.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    empty.kill();
+    await rm(emptyDir, { recursive: true, force: true });
+  }
+}
+
+
 async function promptRecall(): Promise<void> {
+
   header('TUI — Up recalls previous prompts without taking the cursor or the menu keys');
 
   const dir = '/tmp/darwin-recall-tui';
@@ -3344,6 +3482,7 @@ const SCENARIOS = {
   cursor: cursorEditing,
   completion: slashCompletion,
   pathCompletion,
+  historySearch: promptHistorySearch,
   recall: promptRecall,
   recallEmpty: promptRecallWithoutRecord,
   resume: resumedHumanContext,

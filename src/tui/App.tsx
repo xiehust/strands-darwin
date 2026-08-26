@@ -99,6 +99,18 @@ import {
   type PromptRecall,
   type RecallDirection,
 } from './prompt-recall.js';
+import {
+  acceptPromptHistorySearch,
+  appendPromptHistorySearchQuery,
+  backspacePromptHistorySearchQuery,
+  cancelPromptHistorySearch,
+  clearPromptHistorySearchQuery,
+  movePromptHistorySearchSelection,
+  openPromptHistorySearch,
+  promptHistorySearchView,
+  resolvePromptHistorySearch,
+  type PromptHistorySearch,
+} from './prompt-history-search.js';
 import { queuedCountHint, refusesToQueue, takeBackDraft } from './prompt-queue.js';
 import {
   composeShellReport,
@@ -383,27 +395,56 @@ export function App({
     recallRef.current = next;
     setRecallState(next);
   }, []);
+  // Reverse search is an editor-local mode over the same bounded project reader.
+  // Its immediate mirror makes batched query/navigation/accept keys observe one
+  // generation, just like editor, completion and sequential recall state above.
+  const [historySearch, setHistorySearchState] = useState<PromptHistorySearch | undefined>(undefined);
+  const historySearchRef = useRef(historySearch);
+  const setHistorySearch = useCallback((next: PromptHistorySearch | undefined) => {
+    historySearchRef.current = next;
+    setHistorySearchState(next);
+  }, []);
+  const updateHistorySearch = useCallback(
+    (update: (current: PromptHistorySearch) => PromptHistorySearch) => {
+      const current = historySearchRef.current;
+      if (current !== undefined) setHistorySearch(update(current));
+    },
+    [setHistorySearch],
+  );
+  const historySearchRequest = useRef(0);
+
   // Read bookkeeping, in a ref for the same reason the path scan's is: a landed read
   // must not re-trigger the thing that started it. `stale` is set when a turn ends —
   // that is when the turn's own `userInput` line reaches the file (one append per turn),
   // so the next Up re-reads instead of offering a history that stops one prompt short.
-  const historyRead = useRef({ root: '', inFlight: false, stale: true });
-  const requestHistory = useCallback(() => {
+  const historyRead = useRef<{
+    root: string;
+    inFlight: boolean;
+    stale: boolean;
+    promise: Promise<PromptHistory> | undefined;
+  }>({ root: '', inFlight: false, stale: true, promise: undefined });
+  const requestHistory = useCallback((): Promise<PromptHistory> | undefined => {
     const root = runtime.info.projectRoot;
     const state = historyRead.current;
-    if (state.inFlight) return;
-    if (state.root === root && !state.stale) return;
+    if (state.inFlight) return state.promise;
+    if (state.root === root && !state.stale) return undefined;
     state.root = root;
     state.inFlight = true;
     state.stale = false;
     // Never awaited by a keystroke, exactly like the workspace scan: the editor renders
     // from whatever the last reading produced (nothing, on the very first Up) and
     // re-renders when one lands. `readPromptHistory` cannot reject.
-    void readPromptHistory(root)
+    const promise = readPromptHistory(root);
+    state.promise = promise;
+    void promise
       .then(setHistory)
       .finally(() => {
-        state.inFlight = false;
+        if (state.promise === promise) {
+          state.inFlight = false;
+          state.promise = undefined;
+        }
       });
+    return promise;
   }, [runtime]);
 
   const completionKind: CompletionKind = completionState.kind;
@@ -412,7 +453,12 @@ export function App({
     completionKind === 'path' && completions.length > 0 ? workspacePathsNote(workspacePaths) : undefined;
   // One row while a walk is open, composed where the walk lives so the budget below and
   // the box that draws it are counting the same thing.
-  const recallIndicator = recall === undefined ? undefined : promptRecallIndicator(recall);
+  const recallIndicator = recall === undefined || historySearch !== undefined
+    ? undefined
+    : promptRecallIndicator(recall);
+  const historySearchProjection = historySearch === undefined
+    ? undefined
+    : promptHistorySearchView(historySearch);
 
   // Every participant of the redrawn frame states what it wants; the header is the
   // only one measured. The grants are what each box is then allowed to draw, and
@@ -454,6 +500,11 @@ export function App({
               moreCompletions: completions.length > offeredCompletions,
               hasHint: streamingHint !== undefined,
               hasRecall: recallIndicator !== undefined,
+              ...(historySearchProjection === undefined ? {} : {
+                searchMatches: historySearchProjection.matches.length,
+                moreSearchMatches:
+                  historySearchProjection.hiddenAbove + historySearchProjection.hiddenBelow > 0,
+              }),
             }),
             // The row the cursor is on. Everything else in the region can go.
             floor: 1,
@@ -1401,6 +1452,77 @@ export function App({
     return true;
   }, [applyRecalled, columns, history, requestHistory, setRecall]);
 
+  const openHistorySearch = useCallback(() => {
+    const requestId = ++historySearchRequest.current;
+    const known = historyRead.current.stale || historyRead.current.inFlight ? undefined : history;
+    const opened = openPromptHistorySearch(editorRef.current, requestId, known);
+    setHistorySearch(opened);
+    setRecall(undefined);
+    setDismissedCompletion(promptCompletionState(editorRef.current, commandNames, workspacePaths).identity);
+    const pending = requestHistory();
+    // Attach this opening to the reader's single in-flight promise without making the
+    // key await it. Request identity prevents a cancelled/reopened search from accepting
+    // an older landing; sequential recall shares the same cached reading.
+    if (known === undefined && pending !== undefined) {
+      void pending.then((reading) => {
+        const current = historySearchRef.current;
+        if (current !== undefined) {
+          setHistorySearch(resolvePromptHistorySearch(current, requestId, reading));
+        }
+      });
+    }
+  }, [commandNames, history, requestHistory, setDismissedCompletion, setHistorySearch, setRecall, workspacePaths]);
+
+
+  const handleHistorySearchKey = useCallback((typed: string, key: {
+    readonly ctrl: boolean;
+    readonly return: boolean;
+    readonly tab: boolean;
+    readonly escape: boolean;
+    readonly upArrow: boolean;
+    readonly downArrow: boolean;
+    readonly backspace: boolean;
+    readonly delete: boolean;
+  }): boolean => {
+    const current = historySearchRef.current;
+    if (current === undefined) return false;
+    if (key.escape) {
+      setEditor(cancelPromptHistorySearch(current));
+      setHistorySearch(undefined);
+      preferredColumn.current = undefined;
+      return true;
+    }
+    if (key.return || key.tab) {
+      const accepted = acceptPromptHistorySearch(current);
+      if (accepted !== undefined) {
+        setEditor(accepted);
+        setSelectedCompletion(0);
+        preferredColumn.current = undefined;
+        setHistorySearch(undefined);
+      }
+      return true;
+    }
+    if ((key.ctrl && typed === 'r') || key.upArrow || key.downArrow) {
+      const delta = key.downArrow ? -1 : 1;
+      updateHistorySearch((value) => movePromptHistorySearchSelection(value, delta));
+      return true;
+    }
+    if (key.backspace || key.delete) {
+      updateHistorySearch(backspacePromptHistorySearchQuery);
+      return true;
+    }
+    if (key.ctrl && typed === 'u') {
+      updateHistorySearch(clearPromptHistorySearchQuery);
+      return true;
+    }
+    if (!key.ctrl && typed !== '') {
+      updateHistorySearch((value) => appendPromptHistorySearchQuery(value, normalizeDraftText(typed)));
+      return true;
+    }
+    return true;
+  }, [setEditor, setHistorySearch, setSelectedCompletion, updateHistorySearch]);
+
+
   // A walk opened before the read landed is finished here, once, and only while the
   // draft is still the empty one it was opened on — a read that lands after the user
   // started typing must not overwrite what they typed.
@@ -1489,6 +1611,16 @@ export function App({
     // editor until that atomic operation finishes. Global, permission, and
     // display-only controls above still work; no draft operation below does.
     if (status === 'compacting') return;
+
+    // Reverse search is an explicit editor mode. Permission and compaction ownership
+    // above remain absolute; once open, search owns its query/navigation/accept keys.
+    if (historySearchRef.current !== undefined) {
+      if (handleHistorySearchKey(typed, key)) return;
+    }
+    if (key.ctrl && typed === 'r' && status === 'idle') {
+      openHistorySearch();
+      return;
+    }
 
     // Escape belongs to the highest transient prompt UI currently shown. A menu
     // wins over recall just as it wins the arrow keys; neither branch touches the
@@ -1759,6 +1891,7 @@ export function App({
             maxRows={grants.prompt}
             hint={streamingHint}
             recallIndicator={recallIndicator}
+            historySearch={historySearchProjection}
           />
         )}
       </Box>

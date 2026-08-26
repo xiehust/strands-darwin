@@ -100,7 +100,7 @@ For multiple switchable models, provider-specific fields, Bedrock Mantle, cachin
 /help                   local command, prompt, and key reference
 ```
 
-Use `Ctrl+C` to cancel busy work, `Ctrl+B` to expand or compact tool details, and `/exit` or `Ctrl+D` to quit. Model tool calls still pass through the active permission mode; `!` commands are commands you authorize by typing them yourself.
+Use `Ctrl+R` to search this project's prompt history (type to filter, `Ctrl+R`/`Up`/`Down` to navigate, `Enter`/`Tab` to accept, `Escape` to cancel), `Ctrl+C` to cancel busy work, `Ctrl+B` to expand or compact tool details, and `/exit` or `Ctrl+D` to quit. Model tool calls still pass through the active permission mode; `!` commands are commands you authorize by typing them yourself.
 
 For non-interactive use:
 

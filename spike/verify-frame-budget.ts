@@ -318,6 +318,43 @@ assert('and an open walk wants exactly one row more',
   promptBoxWanted({ draftRows: 2, completions: 3, moreCompletions: true, hasHint: true, hasRecall: true }) -
     promptBoxWanted({ draftRows: 2, completions: 3, moreCompletions: true, hasHint: true }) === RECALL_INDICATOR_ROWS);
 
+
+const searchWanted = promptBoxWanted({
+  draftRows: 1,
+  completions: 0,
+  moreCompletions: false,
+  hasHint: false,
+  searchMatches: 5,
+  moreSearchMatches: true,
+});
+assert('reverse search title, matches and omission row are all counted', searchWanted === 8);
+assert('a roomy reverse search receives its bounded matches and omission row', (() => {
+  const plan = planPromptBox({
+    maxRows: 8,
+    draftRows: 1,
+    completions: 0,
+    moreCompletions: false,
+    hasHint: false,
+    searchMatches: 5,
+    moreSearchMatches: true,
+  });
+  return plan.search && plan.searchItems === 5 && plan.searchMore &&
+    plan.draftRows + 1 + plan.searchItems + 1 === 8;
+})());
+assert('a short reverse-search frame keeps the draft and title, then states omissions', (() => {
+  const plan = planPromptBox({
+    maxRows: 3,
+    draftRows: 1,
+    completions: 9,
+    moreCompletions: true,
+    hasHint: true,
+    hasRecall: true,
+    searchMatches: 5,
+  });
+  return plan.search && plan.searchItems === 0 && plan.searchMore &&
+    plan.completionItems === 0 && !plan.recall && !plan.hint && plan.draftRows === 1;
+})());
+
 header('tool panel — summaries before detail');
 
 {

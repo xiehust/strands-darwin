@@ -454,3 +454,7 @@ finalizes transient state; it must not replay already-consumed events or start a
 The busy owner and SER-027 queue still span SRF-001 stream-interruption recovery exactly as before.
 Required checks: `spike/verify-stream-into-static.ts`, `spike/verify-update-plan.tsx`, and free pty
 `spike/verify-tui.ts updatePlan` with a deliberately delayed terminal event.
+
+## Reverse prompt-history search rows (SER-039)
+
+The `Ctrl+R` surface lives inside the existing prompt-region claim; it adds no header or permanent frame row. `promptBoxWanted` and `planPromptBox` count one truncated title row, at most five truncated match rows, and one truncated omission row. The title carries loading/empty/no-match state plus reader degradation; the omission row counts hidden newer/older matches. A short grant keeps the editor cursor row and search title, states omissions when one row remains for that purpose, and never draws a partially granted row. While search is open it replaces completion/recall chrome rather than stacking another uncounted surface.

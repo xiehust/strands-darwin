@@ -4,6 +4,7 @@ import React, { useRef } from 'react';
 
 import { builtinCommandDescription } from '../commands/custom-commands.js';
 import { draftWindow, hiddenDraftNotice, planPromptBox } from './frame-budget.js';
+import type { PromptHistorySearchView } from './prompt-history-search.js';
 import type { EditorLayout } from './prompt-editor.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
@@ -77,6 +78,13 @@ export function hiddenCompletionNotice(hiddenAbove: number, hiddenBelow: number)
   return `… ${total} more not shown (${parts.join(', ')})`;
 }
 
+function hiddenSearchNotice(hiddenAbove: number, hiddenBelow: number): string {
+  const parts: string[] = [];
+  if (hiddenAbove > 0) parts.push(`${hiddenAbove} newer`);
+  if (hiddenBelow > 0) parts.push(`${hiddenBelow} older`);
+  return `… ${hiddenAbove + hiddenBelow} matches not shown (${parts.join(', ')})`;
+}
+
 export function InputBox({
   layout,
   completions,
@@ -86,6 +94,7 @@ export function InputBox({
   editable,
   hint,
   recallIndicator,
+  historySearch,
   offset,
   maxRows,
 }: {
@@ -108,6 +117,8 @@ export function InputBox({
    * reading is not showing is a suffix of this row, never a row of its own.
    */
   readonly recallIndicator: string | undefined;
+  /** Bounded reverse-search title and newest-first matches; absent outside search mode. */
+  readonly historySearch?: PromptHistorySearchView | undefined;
   /** Position of this box's parent within the live frame; see below. */
   readonly offset: { readonly top: number; readonly left: number };
   /**
@@ -127,7 +138,17 @@ export function InputBox({
     moreCompletions: completions.length > offered,
     hasHint: hint !== undefined,
     hasRecall: recallIndicator !== undefined,
+    ...(historySearch === undefined ? {} : {
+      searchMatches: historySearch.matches.length,
+      moreSearchMatches: historySearch.hiddenAbove + historySearch.hiddenBelow > 0,
+    }),
   });
+  const searchWindow = historySearch === undefined
+    ? undefined
+    : completionWindow(historySearch.matches.length, historySearch.selected, plan.searchItems);
+  const visibleSearchMatches = searchWindow === undefined
+    ? []
+    : historySearch?.matches.slice(searchWindow.start, searchWindow.end) ?? [];
   const view = draftWindow(layout.rows.length, layout.cursor.row, plan.draftRows);
   const rows = layout.rows.slice(view.start, view.end);
   const menu = completionWindow(completions.length, selectedCompletion, plan.completionItems);
@@ -177,6 +198,35 @@ export function InputBox({
       {/* Under the draft it describes and above the menu, so the cursor's row inside
           the draft window is unaffected — `useCursor` counts rows from the top of the
           frame, and a row inserted above the draft would move the cursor off it. */}
+
+      {historySearch !== undefined && plan.search && (
+        <Box flexDirection="column">
+          <Text dimColor wrap="truncate-end">{historySearch.title}</Text>
+          {visibleSearchMatches.map((match, index) => {
+            const selected = searchWindow !== undefined && index === searchWindow.selected - searchWindow.start;
+            return (
+              <Text
+                key={`${index}:${match}`}
+                {...(selected ? { color: visualColor.active } : {})}
+                bold={selected}
+                dimColor={!selected}
+                wrap="truncate-end"
+              >
+                {selected ? `${visualMarker.completion} ` : '  '}{match}
+              </Text>
+            );
+          })}
+          {plan.searchMore && (
+            <Text dimColor wrap="truncate-end">
+              {'  '}{hiddenSearchNotice(
+                historySearch.hiddenAbove + (searchWindow?.hiddenAbove ?? 0),
+                historySearch.hiddenBelow + (searchWindow?.hiddenBelow ?? 0),
+              )}
+            </Text>
+          )}
+        </Box>
+      )}
+
       {recallIndicator !== undefined && plan.recall && (
         <Text dimColor wrap="truncate-end">{recallIndicator}</Text>
       )}
