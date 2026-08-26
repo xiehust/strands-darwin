@@ -13,13 +13,6 @@
  */
 import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize, type DOMElement } from 'ink';
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
-import type { AgentStreamEvent } from '@strands-agents/sdk';
-
-import {
-  collectCompletionCandidate,
-  runWithCompletionGuard,
-} from '../agent/completion-guard.js';
-
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
 import type { DiagnosticsLog } from '../agent/diagnostics.js';
 import {
@@ -586,42 +579,27 @@ export function App({
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
       let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
-      let turnCommitted = false;
       setStatus('streaming');
       try {
-        const publish = (events: readonly AgentStreamEvent[]): void => {
-          for (const event of events) dispatch({ type: 'streamEvent', event });
-        };
-        await runWithCompletionGuard(
+        await runWithStreamResumption(
           text,
-          (candidateInput) => runWithStreamResumption(
-            candidateInput,
-            (turnInput) => collectCompletionCandidate(
-              runtime,
-              turnInput,
-              (events) => publish(events.filter((event) =>
-                event.type === 'beforeToolCallEvent' || event.type === 'afterToolCallEvent',
-              )),
-            ),
-            (error) => {
-              // The failed attempt is a complete transcript/trajectory fact before the
-              // next ordinary turn starts. Keep the busy owner and queued work intact.
-              dispatch({ type: 'turnEnded' });
-              dispatch({
-                type: 'notice',
-                text: `turn failed: ${error.message}`,
-                severity: 'error',
-              });
-              dispatch({ type: 'notice', text: STREAM_CONTINUATION_NOTICE, severity: 'warn' });
-            },
-          ),
-        ).then((events) => {
-          // Candidate events were withheld for the completion guard. Commit the
-          // accepted stream and its terminal-only projections in one reducer pass,
-          // so Ink's Static writes the final checklist before the closing answer.
-          dispatch({ type: 'turnCompleted', events });
-          turnCommitted = true;
-        });
+          async (turnInput) => {
+            for await (const event of runtime.send(turnInput)) {
+              dispatch({ type: 'streamEvent', event });
+            }
+          },
+          (error) => {
+            // The failed attempt is a complete transcript/trajectory fact before the
+            // next ordinary turn starts. Keep the busy owner and queued work intact.
+            dispatch({ type: 'turnEnded' });
+            dispatch({
+              type: 'notice',
+              text: `turn failed: ${error.message}`,
+              severity: 'error',
+            });
+            dispatch({ type: 'notice', text: STREAM_CONTINUATION_NOTICE, severity: 'warn' });
+          },
+        );
         await runtime.markResumable();
       } catch (error) {
         // A failed turn must not kill the session; the user may want to retry.
@@ -637,7 +615,7 @@ export function App({
       } finally {
         if (turnAborted.current && lifecycleOutcome === 'success') lifecycleOutcome = 'cancelled';
         runtime.observeTurnComplete(lifecycleOutcome, 'interactive');
-        if (!turnCommitted) dispatch({ type: 'turnEnded' });
+        dispatch({ type: 'turnEnded' });
         setStatus('idle');
         // Cleared with the status, so a cancelled or failed turn stops the busy
         // readout in the same breath as the tick that was redrawing it.

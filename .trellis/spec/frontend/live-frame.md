@@ -77,15 +77,16 @@ A one-row grant states `plan · N items`; a partial list spends its final grante
 `… N more plan items`, so hidden work is never silently cut. ASCII markers remain semantic without
 colour: `[ ]` pending, `[>]` in progress, `[x]` completed.
 
-Accepted completion-guard events and their terminal projection enter the reducer atomically:
-`turnCompleted` reduces the original event order, inserts exactly one bounded `plan` item immediately
-before a contiguous closing assistant-answer suffix, and clears `livePlan`. The assistant answer is
+Successful `update_plan` events enter the reducer immediately through `streamEvent`, replacing
+`livePlan` while the turn is still open. `turnEnded` inserts exactly one bounded `plan` item immediately
+before a contiguous closing assistant-answer suffix, then clears `livePlan`. The assistant answer is
 therefore the turn's last visible fact instead of being pushed above a tall checklist. If a turn ends
 on a tool or notice rather than an answer, the checklist remains appended after that terminal fact.
-Failure/cancellation paths use the same terminal projection through `turnEnded`. Repeating the terminal
-action or starting the next user turn cannot duplicate or retain the live list. The final projection
-uses the same markers, shows at most 10 items plus title/hidden-count rows, and is TUI history only;
-replay/export retain the ordinary tool row and deliberately omit this UI-local final projection.
+Failure/cancellation paths use the same terminal projection. Repeating the terminal action or starting
+the next user turn cannot duplicate or retain the live list. An unfinished list is advisory and never
+starts another model turn. The final projection uses the same markers, shows at most 10 items plus
+title/hidden-count rows, and is TUI history only; replay/export retain the ordinary tool row and
+deliberately omit this UI-local final projection.
 
 Required checks: `spike/verify-frame-budget.ts`, `spike/verify-update-plan.tsx`, and free pty
 `spike/verify-tui.ts updatePlan`.
@@ -444,14 +445,12 @@ to the user, not to the conversation.
 Tests required: `spike/verify-tui.ts clear` (free — no model call) for the single clear, the gone
 transcript and the usable prompt; `spike/verify-clear-session.ts` for what the switch does off-screen.
 
-## Contract: SRF-013 candidate text is transactional
+## Contract: successful turns stream directly
 
-The completion guard buffers one candidate turn before dispatching it through `turnReducer`; this is
-the only exception to line-by-line `<Static>` commitment. The exception is required because terminal
-bytes cannot be erased, and a matched internal note must never enter terminal text. Accepted events
-still pass through the unchanged reducer in original order, preserving answer parts, Markdown,
-tool rows, cancellation, and frame accounting. Tool-bearing candidates fail open rather than hiding
-side effects. The busy owner and SER-027 queue span the one private continuation exactly as they span
-SRF-001 recovery; failure/cancellation returns queued work under existing rules. The guard adds no
-row, notice, tick, or frame surface. `spike/verify-completion-guard.ts` proves the TUI projection has
-accepted text and no suppressed text; existing visual/static and queue suites remain required.
+There is no successful-turn exception to line-by-line `<Static>` commitment. `App.runTurn` dispatches
+ordinary SDK events as they arrive, so finished tool rows, live checklists, and complete assistant
+lines can be visible before the terminal event. `turnEnded` only flushes the remaining tail and
+finalizes transient state; it must not replay already-consumed events or start another model turn.
+The busy owner and SER-027 queue still span SRF-001 stream-interruption recovery exactly as before.
+Required checks: `spike/verify-stream-into-static.ts`, `spike/verify-update-plan.tsx`, and free pty
+`spike/verify-tui.ts updatePlan` with a deliberately delayed terminal event.

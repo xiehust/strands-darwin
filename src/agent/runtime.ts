@@ -76,7 +76,6 @@ import {
   TrajectoryRecorder,
   type RecorderOptions,
   type TrajectoryStatus,
-  type TurnRecording,
 } from '../trajectory/writer.js';
 import { DARWIN_VERSION } from '../version.js';
 import {
@@ -317,12 +316,6 @@ export interface RuntimeInfo {
    * contract forbids spending a frame row on it.
    */
   diagnosticsFile: string | undefined;
-}
-
-export interface CompletionGuardTurn {
-  events: AsyncIterable<AgentStreamEvent>;
-  accept(): void;
-  suppress(): void;
 }
 
 export class AgentRuntime {
@@ -782,68 +775,6 @@ export class AgentRuntime {
     } finally {
       this.lastTurnDelta = deltaUsage(before, this.usage);
     }
-  }
-
-  /**
-   * Opens one ordinary SDK turn whose provider-controlled output is held until the
-   * driver accepts or suppresses it. This is the sole pre-publication seam used by
-   * the completion guard; it does not alter or retry the SDK loop.
-   */
-  async beginCompletionGuardTurn(input: string, privateInput = false): Promise<CompletionGuardTurn> {
-    const before = this.usage;
-    if (this.liveConfig.memory === true) {
-      const memoryIndex = await loadMemoryIndex(this.projectRoot, {
-        horizonDays: this.liveConfig.memoryHorizonDays ?? 28,
-      });
-      if (!applyLearnedMemory(this.agent, memoryIndex === undefined ? undefined : memoryPromptFragment(memoryIndex))) {
-        throw new Error('Could not refresh validated learned memory before the model request.');
-      }
-    }
-
-    const spend = startTurnSpend(before, () => this.usage, this.liveConfig);
-    const recording = privateInput
-      ? this.trajectory?.beginPrivateTurn(spend)
-      : this.trajectory?.beginTurn(input, spend);
-    recording?.deferCompletionGuard();
-    await recording?.inputDurable();
-
-    let completed = false;
-    let decided = false;
-    const finish = (decision: 'accept' | 'suppress'): void => {
-      if (decided) return;
-      decided = true;
-      if (decision === 'suppress') recording?.suppressCompletionGuard();
-      else recording?.acceptCompletionGuard();
-      recording?.end();
-    };
-
-    const events = async function* (
-      runtime: AgentRuntime,
-      turn: TurnRecording | undefined,
-    ): AsyncIterable<AgentStreamEvent> {
-      try {
-        for await (const event of runtime.agent.stream(input)) {
-          turn?.record(event);
-          yield event;
-        }
-        completed = true;
-      } catch (error) {
-        turn?.failed(error);
-        finish('accept');
-        throw error;
-      } finally {
-        // A consumer that leaves early is cancellation/abandonment, never a guard
-        // match. Preserve the ordinary record rather than suppressing by accident.
-        if (!completed) finish('accept');
-        runtime.lastTurnDelta = deltaUsage(before, runtime.usage);
-      }
-    }(this, recording);
-
-    return {
-      events,
-      accept: () => finish('accept'),
-      suppress: () => finish('suppress'),
-    };
   }
 
   /**

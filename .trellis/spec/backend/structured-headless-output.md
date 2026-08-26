@@ -206,14 +206,12 @@ continuation prompt, raw original request, stack, SDK Agent, invocation state, o
 assistant text. `spike/verify-headless-structured.ts` drives all three protocols and asserts success,
 second-failure bounds, ordering, parseability, and absence of private prompt text.
 
-## Scenario: SRF-013 completion privacy
+## Scenario: direct successful-turn streaming
 
-Both structured modes collect a guarded candidate before calling any public writer method for its
-assistant message. A matched internal note produces no `assistant.message`, terminal `result`,
-warning, failure text, or continuation metadata containing either the note or fixed control input.
-The ordinary continuation's accepted tool lifecycle and post-aggregation assistant message remain
-possible. Legacy text follows the same rule. If the candidate stream fails, already-observed tool
-progress remains public as before; assistant candidate text remains withheld. A second match becomes
-one bounded turn failure, cancellation remains cancellation, and neither starts a third turn.
-`spike/verify-completion-guard.ts` covers text, JSON, and stream JSON offline; the full structured
-suite remains the protocol regression.
+Text and structured headless drivers consume ordinary `runtime.send()` events while the turn is
+open. Text mode reports tool progress as observed. Stream JSON emits tool lifecycle events as
+observed and safe assistant messages only from post-aggregation `modelMessageEvent`, preserving the
+redaction boundary; final JSON remains atomic at process durability. There is no successful-turn
+candidate suppression or unfinished-plan continuation. Exact SRF-001 stream interruption and
+max-token partial handling remain unchanged. `spike/verify-headless-structured.ts` covers all three
+protocols offline.

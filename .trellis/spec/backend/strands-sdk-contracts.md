@@ -530,98 +530,40 @@ identity, two distinct trajectory turns, one-at-most continuation, prompt bounds
 exclusion matrix. Run `spike/verify-headless-structured.ts` for text/JSON/JSONL visibility.
 
 
-## Scenario: bounded successful-turn completion guard (SRF-013)
+## Scenario: direct successful-turn streaming
 
 ### 1. Scope / Trigger
 
-Use this parent-driver orchestration for two successful `endTurn` completion gaps: a bounded final
-assistant message classified as an internal action note, or a latest successful parent
-`update_plan` result whose checklist still has pending/in-progress items. It is not an SDK hook,
-intervention, loop retry, or subagent policy.
+Use ordinary driver consumption for every successful parent turn. There is no successful-turn
+classifier, candidate buffer, internal-note suppression, or unfinished-plan continuation.
 
-### 2. Signatures
+### 2. Contracts
 
-```typescript
-runWithCompletionGuard(
-  input: string,
-  runOrdinaryCandidate: (
-    turnInput: string,
-  ) => Promise<CompletionCandidate<readonly AgentStreamEvent[]>>,
-): Promise<readonly AgentStreamEvent[]>
+- `AgentRuntime.send()` remains the only ordinary stream seam. Interactive, text-headless, and
+  structured-headless drivers consume it as events arrive.
+- The TUI dispatches each event through `streamEvent`; completed tools, successful `update_plan`
+  replacements, and complete assistant lines may become public before `agentResultEvent`.
+- `turnEnded` is the sole terminal reducer action. It flushes remaining text, writes one bounded
+  final checklist projection, and clears transient tool/plan state. An unfinished checklist ends
+  normally and never starts another model call.
+- Text headless reports tool progress while consuming the stream. Structured headless emits
+  assistant text only from post-aggregation `modelMessageEvent`, preserving output-redaction privacy.
+- Exact stream-interruption continuation and invocation-scoped max-token recovery compose unchanged.
+  Do not add a second successful-turn retry or resend the original request.
+- Internal TODO/future-action prose is handled by system-prompt guidance only. If it reaches a
+  successful stream, it is ordinary public assistant output and honest trajectory evidence.
 
-unfinishedPlanAtEnd(events: readonly AgentStreamEvent[], overflowed?: boolean): boolean
-statesUserBlocker(text: string): boolean
-```
+### 3. Tests Required
 
-### 3. Contracts
-
-- Each candidate uses ordinary `Agent.stream()` and composes SRF-001 stream continuation plus
-  invocation-scoped max-token recovery unchanged. The driver runs at most one continuation.
-- Internal-note classification stays conservative: inspect only bounded successful final assistant
-  text; long/user-facing text and every tool-bearing *note candidate* fail open. A match suppresses
-  all candidate public/trajectory payloads and leaves one honest
-  `turnEnded.completionGuardSuppressed: true` terminal.
-- Unfinished-plan classification reads only the latest successful parent `update_plan` result on a
-  clean bounded `endTurn`. It fails open on event overflow, any failed tool, cancellation, a completed
-  latest plan, no plan, or a direct user question/blocker. A match accepts every first-candidate event
-  and side effect unchanged, then returns those events followed by the accepted continuation events.
-  It never hides or replays completed work.
-- Both fixed continuation inputs are bounded, contain no original user text, are private to runtime
-  recording, and are not trajectory `userInput` records.
-- Candidate buffering collapses raw text deltas into bounded reducer-compatible aggregate deltas and
-  retains authoritative public events. Provider chunk frequency cannot evict the final answer,
-  checklist, tool result, max-token signal, or terminal result. If retained public events overflow
-  the prefix cap, the candidate fails open and adds only a bounded ordered terminal tail: all prefix
-  evidence stays untouched, while overflow text blocks are rebuilt once from the aggregate message
-  without duplicating text blocks that already fit before the boundary, followed by the model message
-  and terminal result.
-- For an internal-note continuation, a second note is suppressed and throws
-  `CompletionGuardError`. For an unfinished-plan continuation, a second unfinished plan is accepted
-  as the one-shot terminal result; a second internal note is suppressed while the already accepted
-  first candidate remains public. Continuation failure/cancellation propagates honestly. No path
-  creates a third candidate.
-
-### 4. Validation & Error Matrix
-
-| First candidate outcome | Continue? | Required behavior |
-| --- | --- | --- |
-| bounded internal note, no tools | once | suppress note candidate; use internal-note prompt |
-| internal-note-shaped text with any tool | no | accept unchanged; tool-bearing note fails open |
-| latest successful parent plan unfinished | once | accept first events; use unfinished-plan prompt |
-| unfinished plan plus direct user blocker/question | no | accept blocker unchanged |
-| completed/no/malformed plan, failed tool, overflow, or cancellation | no | accept/propagate ordinary outcome; overflow keeps the capped prefix plus bounded terminal tail |
-| second internal note after internal-note trigger | no | suppress and throw `CompletionGuardError` |
-| second unfinished plan after plan trigger | no | accept both candidates; return still-unfinished state |
-| continuation failure or cancellation | no | preserve accepted work; propagate, never start a third turn |
-
-### 5. Good / Base / Bad Cases
-
-- Good: verified tool work is retained, its unfinished latest checklist causes one private
-  continuation, and the combined projection ends with a completed plan and concise answer.
-- Base: an ordinary successful answer, completed plan, or explicit request for user input invokes no
-  continuation and is byte-for-byte ordinary at the driver boundary.
-- Bad: suppressing a tool-bearing candidate, replaying the original request, recursively continuing
-  until a plan becomes complete, or treating a child agent's private checklist as parent control.
-
-### 6. Tests Required
-
-`spike/verify-completion-guard.ts` proves both classifiers, event bounds, one-shot behavior, retained
-side effects, blocker/error/cancellation exclusions, TUI/text/JSON/JSONL/trajectory/replay privacy,
-and raw/retained-event flood terminal retention, including multi-block text split across the cap.
-Also run `spike/verify-update-plan.tsx`, free pty
-`spike/verify-tui.ts updatePlan`, `spike/verify-stream-resumption.ts`,
-`spike/verify-max-tokens-recovery.ts`, and `spike/verify-headless-structured.ts`.
-
-### 7. Wrong vs Correct
-
-```typescript
-// WRONG: suppress a tool-bearing unfinished-plan candidate or keep retrying until all items complete.
-// CORRECT: accept its events once, append one private continuation, and stop after that candidate.
-```
+Run `spike/verify-update-plan.tsx`, free pty `spike/verify-tui.ts updatePlan`,
+`spike/verify-stream-into-static.ts`, `spike/verify-stream-resumption.ts`,
+`spike/verify-max-tokens-recovery.ts`, `spike/verify-headless-structured.ts`, and
+`spike/verify-trajectory.ts`. The pty fixture must deliberately hold the model stream open after
+publishing tool/checklist/text facts, prove those facts are visible while still busy, then release
+the terminal event and prove the final transcript has no duplicate text or tool result and no extra
+model invocation.
 
 ---
-
-
 
 
 ## Permission Gating (interventions)

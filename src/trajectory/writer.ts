@@ -117,28 +117,23 @@ export class TurnRecording {
   private readonly recorded = new Map<string, number>();
   private readonly dropped = new Map<string, number>();
   private readonly startedAt = Date.now();
-  private readonly deferredEvents: Array<{ data: Record<string, unknown>; trunc: Truncation[] }> = [];
   private partialText = '';
   private stopReason: string | undefined;
   private failure: TurnFailure | undefined;
   private ended = false;
-  private deferred = false;
-  private suppressed = false;
 
   constructor(
     private readonly recorder: TrajectoryRecorder,
     readonly turn: number,
-    input: string | undefined,
+    input: string,
     /**
      * Reads the turn's spend when the turn closes. Undefined when nothing is metering —
      * which the record says by omitting the field, never by writing zeros.
      */
     private readonly spend?: TurnSpendMeter,
   ) {
-    if (input !== undefined) {
-      const { value, trunc } = capField(input, 'text');
-      this.recorder.buffer({ turn, type: 'userInput', text: value }, trunc);
-    }
+    const { value, trunc } = capField(input, 'text');
+    this.recorder.buffer({ turn, type: 'userInput', text: value }, trunc);
   }
 
   /**
@@ -148,40 +143,6 @@ export class TurnRecording {
    */
   inputDurable(): Promise<void> {
     return this.recorder.inputDurable();
-  }
-
-  /**
-   * Defers event records until the completion guard accepts or suppresses this turn.
-   * The opening input remains durable before invocation; only provider-controlled
-   * output is transactional.
-   */
-  deferCompletionGuard(): void {
-    if (!this.ended) this.deferred = true;
-  }
-
-  /** Accepts a deferred candidate and buffers its original event projections. */
-  acceptCompletionGuard(): void {
-    if (!this.deferred || this.suppressed) return;
-    this.deferred = false;
-    for (const { data, trunc } of this.deferredEvents) {
-      const type = data['type'];
-      if (typeof type === 'string' && isRecordedEventType(type)) {
-        this.recorder.buffer({ turn: this.turn, type, data }, trunc);
-      }
-    }
-    this.deferredEvents.length = 0;
-  }
-
-  /**
-   * Suppresses a matched note without retaining its text or payload. The closing
-   * record remains as honest evidence that an ordinary provider turn happened.
-   */
-  suppressCompletionGuard(): void {
-    if (!this.deferred) return;
-    this.suppressed = true;
-    this.deferred = false;
-    this.deferredEvents.length = 0;
-    this.partialText = '';
   }
 
   /**
@@ -195,8 +156,7 @@ export class TurnRecording {
       this.tally(event);
       if (!isRecordedEventType(event.type)) return;
       const { data, trunc } = projectEvent(event);
-      if (this.deferred) this.deferredEvents.push({ data, trunc });
-      else this.recorder.buffer({ turn: this.turn, type: event.type, data }, trunc);
+      this.recorder.buffer({ turn: this.turn, type: event.type, data }, trunc);
     } catch (error) {
       this.recorder.fail(error);
     }
@@ -221,7 +181,6 @@ export class TurnRecording {
   /** Closes the turn and schedules the append. Never awaited by the stream. */
   end(): void {
     if (this.ended) return;
-    if (this.deferred) this.acceptCompletionGuard();
     this.ended = true;
     // Read before the record is composed, and outside the composition's own try: a
     // meter that throws must cost the *spend field only*, not the whole closing record,
@@ -247,7 +206,6 @@ export class TurnRecording {
           recorded: Object.fromEntries(this.recorded),
           dropped: Object.fromEntries(this.dropped),
           ...(value === '' ? {} : { partialText: value }),
-          ...(this.suppressed ? { completionGuardSuppressed: true as const } : {}),
           ...(failure === undefined ? {} : { failure: failure.value }),
           ...(capped === undefined ? {} : { spend: capped.value }),
         },
@@ -400,15 +358,6 @@ export class TrajectoryRecorder {
    * be two different readings of one turn.
    */
   beginTurn(input: string, spend?: TurnSpendMeter): TurnRecording | undefined {
-    return this.openTurn(input, spend);
-  }
-
-  /** Opens a guard continuation without persisting its fixed private control input. */
-  beginPrivateTurn(spend?: TurnSpendMeter): TurnRecording | undefined {
-    return this.openTurn(undefined, spend);
-  }
-
-  private openTurn(input: string | undefined, spend?: TurnSpendMeter): TurnRecording | undefined {
     if (!this.active) return undefined;
     this.turns += 1;
     return new TurnRecording(this, this.turns, input, spend);

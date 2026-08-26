@@ -41,25 +41,20 @@ occurred without exposing the private control prompt. Authoritative contracts:
 `backend/structured-headless-output.md`. Required checks: `spike/verify-stream-resumption.ts` and
 `spike/verify-headless-structured.ts` (both in `pnpm test`).
 
-## Completion guard — one private driver-owned continuation
+## Direct driver streaming
 
-**A successful parent `endTurn` with either a short internal action note or a latest successful,
-unfinished parent `update_plan` receives at most one ordinary continuation.**
-`src/agent/completion-guard.ts` uses bounded conservative classifiers over the accepted candidate.
-For an internal note, TUI and headless drivers withhold the candidate before existing
-reducers/writers; tool-bearing note candidates still fail open because hidden side effects are
-forbidden. For an unfinished checklist, the driver accepts and retains every first-turn event and
-side effect, then appends one private continuation candidate; a direct user blocker, failed tool,
-cancellation, overflow, or completed latest checklist does not continue.
-`AgentRuntime.beginCompletionGuardTurn` remains a narrow recording transaction around the unchanged
-SDK stream: original user input is durable before invocation, accepted event records stay unchanged,
-and only a suppressed internal note leaves the honest `completionGuardSuppressed` terminal without
-note text. Both fixed continuation inputs are bounded and unrecorded. A second completion gap,
-continuation failure, or cancellation never creates a third turn. Exact stream interruption and SDK
-max-token recovery still compose within each ordinary candidate. Required check:
-`spike/verify-completion-guard.ts` (in `pnpm test`), plus existing stream-resumption, max-token,
-update-plan, and structured-headless suites.
-
+**Successful turns are public as their ordinary SDK events arrive; there is no whole-turn output
+transaction.** The TUI dispatches each `AgentRuntime.send()` event directly through `streamEvent`,
+so completed tools, successful `update_plan` replacements, and assistant deltas can render before
+the terminal result. Text headless consumes the same stream directly, and structured headless emits
+only completed post-aggregation `modelMessageEvent` text so output guardrail redaction remains the
+privacy boundary. `turnEnded` alone finalizes the TUI-only checklist and clears live state. An
+unfinished checklist is advisory state, not permission to start another model invocation. Exact
+stream interruption remains the one bounded driver-owned continuation; max-token recovery remains
+invocation-scoped. Authoritative contracts: `backend/strands-sdk-contracts.md`,
+`backend/structured-headless-output.md`, and `frontend/live-frame.md`. Required checks:
+`spike/verify-stream-resumption.ts`, `spike/verify-headless-structured.ts`,
+`spike/verify-update-plan.tsx`, and free pty `spike/verify-tui.ts updatePlan`.
 
 ## `/clear` — a successor runtime, never a reset
 

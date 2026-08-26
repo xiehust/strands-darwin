@@ -63,8 +63,6 @@ const suites = [
   'verify-memory.ts',
   'verify-memory-command.ts',
   'verify-memory-validation.ts',
-  'verify-completion-guard.ts',
-
   'verify-resume-recap.ts',
   'verify-stream-resumption.ts',
 

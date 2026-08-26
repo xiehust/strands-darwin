@@ -1004,6 +1004,13 @@ async function failedTurn(): Promise<void> {
     '"stopReason":"endTurn","ms":12,"recorded":{},"dropped":{}}';
   const legacy = parseRecordLine(legacyLine) as TurnEndedRecord | undefined;
   assert('a v:1 record without the field still parses', legacy?.type === 'turnEnded');
+  const historicalGuardLine = legacyLine.replace(
+    '"ms":12',
+    '"completionGuardSuppressed":true,"ms":12',
+  );
+  const historicalGuard = parseRecordLine(historicalGuardLine) as TurnEndedRecord | undefined;
+  assert('a historical v:1 completion-guard field is tolerated as unknown extra data',
+    historicalGuard?.type === 'turnEnded' && turnOutcome(historicalGuard) === 'clean');
   assert('and reads as a clean turn', legacy !== undefined && turnOutcome(legacy) === 'clean');
   assert('with no failure to report', legacy !== undefined && turnFailureOf(legacy) === undefined);
   assert(

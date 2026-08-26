@@ -1,10 +1,5 @@
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
-import {
-  collectCompletionCandidate,
-  runWithCompletionGuard,
-} from './agent/completion-guard.js';
-
 import { classify, type ApprovalMode, type PermissionBridge } from './agent/permission.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/stream-resumption.js';
 import type { AgentRuntime } from './agent/runtime.js';
@@ -13,8 +8,7 @@ import type { AppConfig } from './config.js';
 
 const FIELD_LIMIT = 240;
 
-export type HeadlessRuntime = Pick<AgentRuntime, 'send' | 'expandSlashCommand'> &
-  Partial<Pick<AgentRuntime, 'beginCompletionGuardTurn'>>;
+export type HeadlessRuntime = Pick<AgentRuntime, 'send' | 'expandSlashCommand'>;
 
 /** Stable startup diagnostic for the effective post-override permission mode. */
 export function formatHeadlessPermissionMode(mode: ApprovalMode): string {
@@ -98,42 +92,24 @@ export async function runHeadlessTurn(
 ): Promise<string> {
   const expanded = await runtime.expandSlashCommand(prompt);
   const input = expanded?.message ?? prompt;
-  const events = await runWithCompletionGuard(
+  return runWithStreamResumption(
     input,
-    (candidateInput) => runWithStreamResumption(
-      candidateInput,
-      (turnInput) => collectCompletionCandidate(
-        runtime,
-        turnInput,
-        (events) => consumeHeadlessToolEvents(events, writeStderr),
-      ),
-      () => writeStderr(`notice: ${STREAM_CONTINUATION_NOTICE}\n`),
-    ),
+    (turnInput) => runOneHeadlessTurn(runtime, turnInput, writeStderr),
+    () => writeStderr(`notice: ${STREAM_CONTINUATION_NOTICE}\n`),
   );
-  return consumeHeadlessEvents(events, writeStderr);
 }
 
-
-function consumeHeadlessToolEvents(
-  events: readonly AgentStreamEvent[],
+/** One ordinary recorded SDK turn; resumption deliberately composes above this seam. */
+async function runOneHeadlessTurn(
+  runtime: HeadlessRuntime,
+  input: string,
   writeStderr: (text: string) => void,
-): void {
-  for (const event of events) {
-    if (event.type === 'beforeToolCallEvent' || event.type === 'afterToolCallEvent') {
-      consumeEvent(event, [], writeStderr);
-    }
-  }
-}
-
-function consumeHeadlessEvents(
-  events: readonly AgentStreamEvent[],
-  writeStderr: (text: string) => void,
-): string {
+): Promise<string> {
   const answer: string[] = [];
   let completed = false;
   let cancelled = false;
 
-  for (const event of events) {
+  for await (const event of runtime.send(input)) {
     consumeEvent(event, answer, writeStderr);
     if (event.type === 'agentResultEvent') {
       completed = true;

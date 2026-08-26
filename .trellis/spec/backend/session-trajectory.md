@@ -686,14 +686,11 @@ second turn exists. Public headless/TUI projections do not print that private co
 bounds, original-text absence, and append order against a real SDK Agent and scripted Model.
 
 
-## SRF-013 completion-guard transaction
+## Direct-stream recording
 
-A guarded candidate keeps the existing bounded `userInput` durability barrier, then defers only
-provider-controlled event records until the parent driver decides. Acceptance writes the original
-projections unchanged. Suppression discards all candidate payloads and partial text, writes an honest
-`turnEnded` with `completionGuardSuppressed: true`, stop reason/counters/spend, and never writes the
-fixed private continuation prompt as `userInput`. The accepted continuation is a separate ordinary
-turn. A second matched continuation is also represented only by its suppression terminal before the
-bounded `CompletionGuardError`; failure/cancellation records retain their existing meanings. Replay
-therefore cannot expose suppressed prose but can prove that the guard intervened. Required coverage:
-`spike/verify-completion-guard.ts` plus the ordinary trajectory suite.
+Successful turns have no deferred or suppressed recording mode. After the bounded durable
+`userInput` barrier, `recordStream` observes each ordinary SDK event synchronously and unchanged,
+then writes the one closing `turnEnded` batch. Internal notes and unfinished plans are recorded like
+any other successful output; no fixed successful-turn continuation input exists. Historical schema-v1
+lines may contain unknown extra fields such as `completionGuardSuppressed`; readers continue to
+ignore unknown JSON properties and never migrate or rewrite those bytes.

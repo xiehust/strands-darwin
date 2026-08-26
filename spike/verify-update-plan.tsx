@@ -149,21 +149,6 @@ try {
   const chunkPlanAt = chunked.history.findIndex((item) => item.kind === 'plan');
   assert('the final checklist never splits a progressively committed closing answer',
     chunkPlanAt >= 0 && chunked.history.slice(chunkPlanAt + 1).map((item) => item.kind).join(',') === 'assistant,assistant,assistant');
-  let atomic = turnReducer(initialTurnState, { type: 'userInput', text: 'atomic work' });
-  atomic = turnReducer(atomic, {
-    type: 'turnCompleted',
-    events: [
-      before('atomic-plan', latest),
-      after('atomic-plan', latest),
-      { type: 'contentBlockEvent', contentBlock: { type: 'textBlock', text: closingText } } as never,
-    ],
-  });
-  const atomicLast = atomic.history.at(-1);
-  assert('an accepted buffered candidate commits plan then summary atomically',
-    atomic.livePlan.length === 0 &&
-    atomic.history.at(-2)?.kind === 'plan' &&
-    atomicLast?.kind === 'assistant' &&
-    atomicLast.text === closingText);
   let toolEnded = turnReducer(initialTurnState, { type: 'userInput', text: 'tool-ended work' });
   toolEnded = stream(toolEnded, {
     type: 'contentBlockEvent',

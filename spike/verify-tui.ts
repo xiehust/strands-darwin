@@ -2277,41 +2277,64 @@ async function planHeader(): Promise<void> {
  * without needing a 500-line answer, and the header alone takes a third of it.
  */
 
-/** Free local-model pty proof for SER-036's live and Static checklist lifecycle. */
+/** Free local-model pty proof for ordinary streaming and SER-036 finalization. */
 async function updatePlanChecklist(): Promise<void> {
-  header('TUI — structured progress is bounded live and final in Static');
+  header('TUI — tool, plan, and answer stream before the terminal event');
   await resetWorkDir();
-  await writeHomeConfig({ permissionMode: 'yolo', trajectory: false });
+  await writeHomeConfig({ permissionMode: 'yolo', trajectory: true });
   const entry = path.join(REPO_ROOT, 'spike/fixtures/update-plan-cli.ts');
-  const tui = startTui({ cwd: WORK_DIR, entry, cols: 90, rows: 18 });
+  const checkpoint = path.join(WORK_DIR, 'update-plan-terminal-blocked');
+  const release = path.join(WORK_DIR, 'update-plan-release-terminal');
+  const calls = path.join(WORK_DIR, 'update-plan-model-calls');
+  const tui = startTui({ cwd: WORK_DIR, entry, cols: 90, rows: 30 });
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
     const turn = tui.mark();
     tui.submit('perform the fixture plan');
-    // Completion-guard candidates are transactional: tool rows, checklist and answer
-    // become public only after the successful candidate is accepted. Pure reducer and
-    // frame-budget suites cover the bounded live checklist projection.
-    await tui.waitFor('first turn done — automatic continuation completed the checklist', {
+    await tui.waitFor('tool-result-visible-before-terminal', { timeoutMs: 30_000, from: turn });
+    await tui.waitFor('assistant line visible before terminal', { timeoutMs: 30_000, from: turn });
+    await tui.waitUntil(() => existsSync(checkpoint), {
       timeoutMs: 30_000,
-      from: turn,
+      label: 'the fixture terminal-event checkpoint',
     });
+    await tui.waitFor('working…', { timeoutMs: 30_000, from: turn, settleMs: 100 });
+
+    const whileBlocked = tui.screen.slice(turn);
+    assert('the successful tool result is public while the model stream is still open',
+      whileBlocked.includes('tool-result-visible-before-terminal'));
+    assert('the latest unfinished checklist is live while the model stream is still open',
+      tui.frame.includes('[x] latest item 1') && tui.frame.includes('[>] latest item 2'));
+    assert('a complete assistant line commits before content-stop and agent-result events',
+      whileBlocked.includes('assistant line visible before terminal'));
+    assert('the turn remains busy at the deliberate pre-terminal checkpoint',
+      tui.frame.includes('working…') && !existsSync(release));
+    assert('only the ordinary tool cycle and answer model calls have happened',
+      (await readFile(calls, 'utf8')).trim() === '2');
+
+    await writeFile(release, 'release\n');
     await waitForIdle(tui, 30_000);
     const transcript = tui.screen.slice(turn);
-    assert('the final bounded list commits exactly once to Static', transcript.split('plan final · 8 items').length === 2);
-    assert('the automatic continuation completes every final checklist item',
-      transcript.includes('[x] latest item 1') && transcript.includes('[x] latest item 8') &&
-      !transcript.includes('[>] latest item 2'));
-    assert('the closing summary is committed after the completed final checklist',
-      transcript.lastIndexOf('first turn done — automatic continuation completed the checklist') >
-      transcript.lastIndexOf('[x] latest item 8'));
-    assert('the unfinished-plan guard ran once and retained the first candidate',
-      transcript.includes('premature summary with unfinished checklist') &&
-      transcript.split('automatic continuation completed the checklist').length === 2);
+    assert('the unfinished plan ends normally without an extra continuation',
+      (await readFile(calls, 'utf8')).trim() === '2');
+    assert('the final checklist preserves the unfinished statuses',
+      transcript.includes('[x] latest item 1') && transcript.includes('[>] latest item 2'));
+
+    const exported = path.join(WORK_DIR, 'update-plan-first-turn.md');
+    const exportMark = tui.mark();
+    tui.submit('/export update-plan-first-turn.md');
+    await tui.waitFor('exported 1 turn(s)', { timeoutMs: 30_000, from: exportMark });
+    const replay = await readFile(exported, 'utf8');
+    assert('the completed tool output appears once in the final replay projection',
+      replay.split('tool-result-visible-before-terminal').length === 2);
+    assert('the progressively committed assistant line appears once in the final replay projection',
+      replay.split('assistant line visible before terminal').length === 2);
 
     const next = tui.mark();
     tui.submit('next turn');
-    await tui.waitFor('second turn done', { timeoutMs: 30_000, from: next });
+    await tui.waitFor('ordinary no-tool answer', { timeoutMs: 30_000, from: next });
     await waitForIdle(tui, 30_000);
+    assert('an ordinary no-tool answer streams and finishes normally',
+      tui.screen.slice(next).includes('ordinary no-tool answer'));
     assert('the next live frame contains no stale checklist', !tui.frame.includes('plan · 8 items'));
 
     tui.submit('/exit');

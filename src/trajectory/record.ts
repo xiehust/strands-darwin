@@ -210,11 +210,6 @@ export interface TurnEndedRecord extends RecordEnvelope {
   /** Assistant text that never reached an assembled block (a cancelled turn). */
   partialText?: string;
   /**
-   * The successful candidate ended on an internal working note which the completion
-   * guard suppressed. Its text and event payloads are intentionally absent.
-   */
-  completionGuardSuppressed?: true;
-  /**
    * Present only when the turn's stream threw: what reached the caller of
    * `AgentRuntime.send`.
    *

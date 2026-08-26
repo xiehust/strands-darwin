@@ -165,8 +165,6 @@ export type TurnAction =
   | { type: 'toggleToolDetails' }
   | { type: 'subagentProgress'; progress: SubagentDispatchProgress }
   | { type: 'streamEvent'; event: AgentStreamEvent }
-  /** Accepted buffered candidate plus its terminal projection, committed atomically to Static. */
-  | { type: 'turnCompleted'; events: readonly AgentStreamEvent[] }
   | { type: 'turnEnded' }
   | { type: 'clear' }
   /** A `!` command started: one pseudo-tool row in the live panel (live only, never replayed). */
@@ -224,12 +222,6 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
             : tool,
         ),
       };
-
-    case 'turnCompleted':
-      return finishTurn(action.events.reduce(
-        (current, event) => applyStreamEvent(current, event),
-        state,
-      ));
 
     case 'turnEnded': {
       return finishTurn(state);
