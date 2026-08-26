@@ -1922,5 +1922,3 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SRF-018 | `7dda590` implementation, `7c7c718` task archive, `d1dddfd` journal | Host inspected the source/spec/test diff and independently passed `verify-web-search-empty-results.ts` (8/8), `verify-retry-guard.ts` (15/15), `verify-tool-hooks.ts` (44/44), `verify-subagents.ts` (71/71), `verify-codegraph-preflight.ts` (14/14), `verify-mcp-command.ts` (33/33), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, commit/diff checks and AGENTS.md size (25,730 bytes < 32 KiB). Only the exact external provider's verified MCP no-results signature becomes successful query-preserving empty JSON; non-empty results and true failures remain unchanged. |
-
-
