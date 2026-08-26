@@ -6,11 +6,12 @@ Copy this structure to `research_<YYYY-MM-DD>.md`, using the UTC date. A daily f
 
 ### Backlog-first decision
 
-- Backlog inspected first: `docs/research/backlog_index.md`
+- Backlog router inspected first: `docs/research/backlog_index.md`
+- Metadata searched across routed priority pages: `<page paths>`
 - Unfinished directions found: none | IDs
 - Decision: fresh research | resume/start `<ID>` without fresh research
 
-> If any `in-progress` or `not-started` row exists, stop product research and use the existing backlog path. A research section below is valid only when no unfinished row existed at invocation start.
+> If any `in-progress` or `not-started` record exists, stop product research and use the existing backlog path. A research section below is valid only when no unfinished record existed at invocation start.
 
 ### Research path
 
@@ -66,7 +67,7 @@ Propose at most five new directions, excluding duplicates already in the backlog
 
 `Score = 2 × Importance + Architecture fit + Evidence confidence − Implementation difficulty − Implementation risk`
 
-Only directions scoring at or above `MINIMUM_IMPLEMENTATION_SCORE = 6` enter the backlog as `not-started`; they form this run's batch, ordered so dependencies come first.
+Only directions scoring at or above `MINIMUM_IMPLEMENTATION_SCORE = 6` enter the backlog as complete `not-started` sections appended to the current routed priority page; they form this run's batch, ordered so dependencies come first. If the next Priority is outside that page's 20-priority range, create the next zero-padded page and append its one route to `backlog_index.md`; never rebalance closed pages or add mutable status to the index.
 
 | Rank | Proposed ID | Direction | Importance | Architecture fit | Evidence confidence | Implementation difficulty | Implementation risk | Score | Evidence and rationale |
 |---:|---|---|---:|---:|---:|---:|---:|---:|---|
@@ -86,7 +87,7 @@ Directions considered but not queued because they fell below the score gate. Rec
 - Start with: `<one ID, or none>`
 - Why this order: `<dependencies, safety, qualitative rationale; note any score override>`
 - Independently observable acceptance: `<checks for the developer workflow, per direction>`
-- Backlog updates: `<IDs added as not-started; IDs set abandoned by the gate; the first ID changed to in-progress only immediately before developer handoff>`
+- Backlog updates: `<routed page + IDs appended as not-started; IDs set abandoned by the gate; the first selected section changed to in-progress only immediately before developer handoff; any rollover page + index route>`
 
 ### Batch iteration outcome
 

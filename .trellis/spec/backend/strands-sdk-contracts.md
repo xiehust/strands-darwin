@@ -2041,8 +2041,9 @@ bash start -> darwin -p "fix this exact finding" --session session-123 --yolo --
 
 ```text
 /self-evolution-research [request]
-backlog: docs/research/backlog_index.md
-report:  docs/research/research_<YYYY-MM-DD>.md
+backlog router: docs/research/backlog_index.md
+backlog pages:  docs/research/backlog/directions-NNN-NNN.md (stable ranges of 20 priorities)
+report:         docs/research/research_<YYYY-MM-DD>.md
 roll:    node <skill-dir>/scripts/roll-research-path.mjs [--path <id>]
          -> research-path/focus/share/draw/path-source/rolled-at/weights
 handoff: load_skill({ name: "developer" })
@@ -2050,14 +2051,14 @@ handoff: load_skill({ name: "developer" })
 
 ### 3. Contracts
 
-- Read `docs/research/backlog_index.md` before consulting any product-research source.
-- Valid states are exactly `not-started`, `in-progress`, `done`, and `abandoned`. Select the highest-priority `in-progress` row first, otherwise `not-started`; while either exists, perform no fresh product research.
+- Read `docs/research/backlog_index.md` before consulting any product-research source. It is a thin policy/router with no direction records or mutable status mirror. Its routes name stable 20-priority pages under `docs/research/backlog/`; closed pages are never rebalanced.
+- Search routed pages for heading plus exact Status/Priority/Origin metadata before reading record bodies. Valid states are exactly `not-started`, `in-progress`, `done`, and `abandoned`. Select the highest-priority `in-progress` record first, otherwise `not-started`; while either exists, perform no fresh product research. Read only the selected section and unfinished sections sharing its newest origin report.
 - Fresh runs roll the path exactly once, before reading any source, on weights `tui=2 observability=0.5 sdk=1 open=1.5 peer=5` (20% tui, 15% open, 10% sdk, 5% observability, 50% peer). The script's verbatim output is recorded in the report; a re-roll is forbidden and `--path` is user-directed only, printing `path-source: override (user-directed)` so a directed run can never read as chance. The draw runs over half-units (`DRAW_UNITS_PER_WEIGHT = 2`, `TOTAL_DRAW_UNITS = 20`) rather than over the weights, so a half weight becomes a proportional integer range instead of a rounded one — the documented share is the implemented share, a weight that is not a whole half throws at load, and an out-of-range draw throws rather than clamping onto the first or last path.
 - Every path inspects current Darwin source/architecture first. The `peer` path additionally needs sourced evidence for Claude Code, Codex, DeepSeek harness, PenguinHarness, and at least one further relevant product; a self-review path cites repository paths and symbols instead and states that no peer product was consulted. Missing source access is recorded as a limitation, never filled from model memory, and a peer table is never padded with a product the run did not open.
 - A path whose scope turns out to be in good shape is a valid outcome: record it and propose nothing. The roll changes where evidence comes from, never the 1–5 ratings, the score gate, the report file, or the `developer` handoff.
 - Append each run to `docs/research/research_<YYYY-MM-DD>.md` under a unique UTC timestamp. Read an existing same-day file first and never overwrite prior runs.
-- Propose at most five non-duplicate directions. Rank 1–5 importance, architecture fit, evidence confidence, implementation difficulty, and implementation risk using `2 × importance + fit + confidence − difficulty − risk`, plus qualitative rationale.
-- Change one selected row to `in-progress`, load `developer`, and implement exactly that direction. Set `done` only after the Host's independent acceptance; otherwise retain `in-progress` with blockers. `abandoned` requires an explicit recorded reason.
+- Propose at most five non-duplicate directions. Rank 1–5 importance, architecture fit, evidence confidence, implementation difficulty, and implementation risk using `2 × importance + fit + confidence − difficulty − risk`, plus qualitative rationale. Append accepted complete sections to the current page; if the next Priority leaves its range, create the next zero-padded 20-priority page and add exactly one index route.
+- Change one selected section in its routed page to `in-progress`, load `developer`, and implement exactly that direction. Set `done` only after the Host's independent acceptance; otherwise retain `in-progress` with blockers. `abandoned` requires an explicit recorded reason. Do not edit another record or create an index status summary.
 - `REQUIRED_BUILTIN_SKILLS` in `src/skills/loader.ts` is the single required-name list. All bundled built-ins use ordinary progressive disclosure, slash expansion, collision reservation, and the existing recursive `src/skills/builtin` build copy.
 
 ### 4. Validation & Error Matrix
@@ -2066,8 +2067,9 @@ handoff: load_skill({ name: "developer" })
 |---|---|
 | Required built-in asset missing/invalid | Fail startup with its name/path; do not silently remove product capability |
 | Optional project/global skill missing/invalid | Preserve existing skip-and-surface behavior |
-| Any `in-progress` backlog row | Select by priority; no fresh peer research |
-| No `in-progress`, but a `not-started` row | Select by priority; no fresh peer research |
+| Index route missing/broken, page over capacity, record misplaced/incomplete, duplicate ID/Priority, invalid status/score, or broken local origin link | Validation failure; repair the Markdown contract before selection. The sole grandfathered score anomaly is the exact persisted `SER-023` signature (`13:4:5:4:3:3`), preserved losslessly by the pagination migration; changing any field removes the exception. |
+| Any `in-progress` backlog record | Select by priority through metadata search; no fresh peer research |
+| No `in-progress`, but a `not-started` record | Select by priority through metadata search; no fresh peer research |
 | Named product source unavailable | Record limitation and make no unsupported claim |
 | Fresh research with no recorded roll | Unauditable: the report must carry the script's verbatim output before any finding |
 | Roll produces an unappealing path | Binding; record every output and use the first, never re-roll |
@@ -2079,9 +2081,9 @@ handoff: load_skill({ name: "developer" })
 
 ### 5. Good / Base / Bad Cases
 
-- **Good:** an empty backlog permits fresh research, which rolls its path first, records the roll verbatim, adds no more than five ranked rows, selects one, loads `developer`, and records `done` only after independent checks.
-- **Base:** an existing `not-started` row suppresses all fresh peer research and is handed to `developer` alone.
-- **Bad:** researching before reading the backlog, choosing a research path instead of rolling it (or re-rolling one that was inconvenient), inventing unavailable product claims, overwriting a same-day report, implementing several rows, or trusting the child report as acceptance violates the persistence contract.
+- **Good:** an empty backlog permits fresh research, which rolls its path first, records the roll verbatim, adds no more than five ranked sections, selects one, loads `developer`, and records `done` only after independent checks.
+- **Base:** an existing `not-started` record suppresses all fresh peer research and is handed to `developer` alone.
+- **Bad:** researching before reading the backlog, choosing a research path instead of rolling it (or re-rolling one that was inconvenient), inventing unavailable product claims, overwriting a same-day report, implementing several records, or trusting the child report as acceptance violates the persistence contract.
 
 ### 6. Tests Required
 
@@ -2104,7 +2106,7 @@ read backlog -> select in-progress/not-started (no research) -> load developer -
 
 ### 1. Scope / Trigger
 
-`/self-reflection` loads a product-bundled Markdown workflow that reviews the session it runs in. The Host locates the current session's trajectory with the skill's bundled locator, delegates the analysis to one headless darwin worker under the `developer` managed-child contract, and independently accepts one reflection document plus append-only backlog rows. It adds no recorder change, no new CLI verb, and no alternate agent loop.
+`/self-reflection` loads a product-bundled Markdown workflow that reviews the session it runs in. The Host locates the current session's trajectory with the skill's bundled locator, delegates the analysis to one headless darwin worker under the `developer` managed-child contract, and independently accepts one reflection document plus append-only backlog sections. It adds no recorder change, no new CLI verb, and no alternate agent loop.
 
 ### 2. Signatures
 
@@ -2114,7 +2116,8 @@ locate:  node <skill-dir>/scripts/locate-trajectory.mjs [--project <root>] [--se
          -> project-root/sessions-dir/session/trajectory/selected-by/trajectory-mtime/last-user-input/closed-through-turn/closed-through-seq/other-recent-sessions
 subject: ~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl through the printed closed seq (read-only)
 output:  docs/reflections/reflection_<YYYY-MM-DD>_<session-id>.md (template: <skill-dir>/references/reflection-template.md)
-backlog: docs/research/backlog_index.md (append-only `SRF-NNN` rows, status not-started)
+backlog: docs/research/backlog_index.md -> docs/research/backlog/directions-NNN-NNN.md
+         (append-only `SRF-NNN` sections, status not-started; index route only on rollover)
 ```
 
 ### 3. Contracts
@@ -2123,8 +2126,8 @@ backlog: docs/research/backlog_index.md (append-only `SRF-NNN` rows, status not-
 - The child follows the `developer` managed-child contract unchanged (`bash` `start` mode, `--yolo --context-offload`, drained output, `session:`/`usage:` stderr capture, `-` stays unknown) and must not load `developer`, `self-evolution-research`, or `self-reflection`, start another darwin, or delegate again.
 - The record is evidence, never a participant: the child never rewrites, repairs, or appends to the trajectory. The prompt carries the exact closed turn/seq; the child verifies that boundary is the matching `turnEnded`, discards every later record even when replay prints it, and limits summaries, grading, citations, timing and spend to `seq <= closed-through-seq`. The document states the actual inclusive bounded `seq`/turn range and keeps unknown spend metrics unknown, never 0.
 - The reflection document follows the bundled template exactly: one grade from the four-level rubric (Perfect/High/Medium/Low) justified by turn/`seq` citations, process observations, findings each with evidence and a concrete darwin-side suggestion, and the `self-evolution-research` scoring (`Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk`, gate 6) applied to every suggestion.
-- Backlog integration is append-only: accepted directions become `not-started` rows with fresh `SRF-NNN` ids and the reflection document as origin report; rejected/duplicate directions stay in the document with their scores; existing rows are never edited. The next `self-evolution-research` run selects `SRF` rows through its normal batch rules — the reflection run never implements them.
-- Mutation scope is exactly the one reflection file plus appended backlog rows; no commit without explicit user authorization.
+- Backlog integration is append-only: after reading the thin index and searching routed metadata for duplicates/next IDs/priorities, accepted directions become complete `not-started` sections with fresh `SRF-NNN` ids and the reflection document as origin report. Rejected/duplicate directions stay in the document with their scores; existing sections are never edited. A full page rolls to the next zero-padded 20-priority page and appends exactly one index route. The next `self-evolution-research` run selects `SRF` sections through its normal batch rules — the reflection run never implements them.
+- Mutation scope is exactly the one reflection file plus appended sections in the current/new backlog page and, only on rollover, one appended index route; no commit without explicit user authorization.
 
 ### 4. Validation & Error Matrix
 
@@ -2138,15 +2141,15 @@ backlog: docs/research/backlog_index.md (append-only `SRF-NNN` rows, status not-
 | Project has no trajectory at all (`trajectory: false`) | Locator exits non-zero; report "nothing to reflect on" |
 | Output file already exists | Refuse to overwrite |
 | A suggestion scores below the gate | Recorded in the document as rejected with its score; not added to the backlog |
-| A suggestion duplicates an existing backlog row (any status) | Not re-proposed; noted as a duplicate |
-| Backlog diff shows edited or reordered existing rows | Acceptance failure — send a focused correction to the same child session |
+| A suggestion duplicates an existing backlog record (any status) | Not re-proposed; noted as a duplicate |
+| Backlog diff edits/reorders existing sections, changes the index except for one rollover route, or exceeds a page range/capacity | Acceptance failure — send a focused correction to the same child session |
 | Unknown spend metric | Stays `unknown`, never 0 |
 
 ### 5. Good / Base / Bad Cases
 
-- **Good:** locator pins this session and the preview matches; one child writes the templated document, appends two above-gate `SRF` rows, and the Host verifies path, sections, score arithmetic, and append-only diff before reporting.
+- **Good:** locator pins this session and the preview matches; one child writes the templated document, appends two above-gate `SRF` sections, and the Host verifies path, sections, score arithmetic, and append-only diff before reporting.
 - **Base:** a smooth session yields the grade with citations and zero new directions — "nothing to improve" is a valid, recorded outcome.
-- **Bad:** analysing the trajectory in the Host, reflecting on the newest-by-mtime session without checking the preview, rewriting the record, editing existing backlog rows, or letting the reflection run start implementing its own suggestions.
+- **Bad:** analysing the trajectory in the Host, reflecting on the newest-by-mtime session without checking the preview, rewriting the record, editing existing backlog sections, or letting the reflection run start implementing its own suggestions.
 
 ### 6. Tests Required
 
@@ -2159,10 +2162,10 @@ backlog: docs/research/backlog_index.md (append-only `SRF-NNN` rows, status not-
 
 ```text
 # WRONG: reflect on whatever session is newest, in the Host, and edit the backlog in place
-launch child -> locate (selects the child) -> Host writes the reflection -> rewrite backlog rows
+launch child -> locate (selects the child) -> Host writes the reflection -> rewrite backlog sections
 
 # CORRECT: locate first, verify the preview and closed cutoff, delegate, accept append-only artifacts
-locate + verify preview/cutoff -> pass closed turn/seq to bash-started child -> child writes doc + appends SRF rows -> Host verifies path/template/scores/diff
+locate + verify preview/cutoff -> pass closed turn/seq to bash-started child -> child writes doc + appends SRF sections -> Host verifies path/template/scores/diff
 ```
 
 ## Prompt Caching

@@ -7,7 +7,7 @@
  * Run: pnpm tsx spike/verify-skills.ts
  */
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -229,6 +229,8 @@ async function missingDirectory(): Promise<void> {
   );
   assert('the roll is bundled with the skill and advertised to the model', researchExpanded?.message.includes('scripts/roll-research-path.mjs') === true);
   assert('research prioritizes in-progress then not-started work and suppresses fresh research', researchWorkflow.indexOf('`in-progress` direction') < researchWorkflow.indexOf('`not-started` direction') && researchWorkflow.includes('do **not** perform fresh product research'));
+  assert('research searches paged metadata before selective section reads', researchWorkflow.includes('metadata-only search across the routed pages') && researchWorkflow.includes('Read only the selected direction section') && researchWorkflow.includes('Do not read completed directions\' evidence or notes'));
+  assert('research appends to stable pages and rolls over without a status mirror', researchWorkflow.includes('current priority-range page') && researchWorkflow.includes('next zero-padded `directions-NNN-NNN.md` page') && researchWorkflow.includes('never rebalance a closed page') && researchWorkflow.includes('do not create an index status summary'));
   assert('research has the exact four-state vocabulary', ['`not-started`', '`in-progress`', '`done`', '`abandoned`'].every((status) => researchWorkflow.includes(status)));
   assert('fresh research covers named and additional products', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', 'at least one additional relevant'].every((term) => researchWorkflow.includes(term)));
   assert('research refuses fabricated claims without source access', researchWorkflow.includes('source access is unavailable') && researchWorkflow.includes('never fabricate'));
@@ -256,7 +258,7 @@ async function missingDirectory(): Promise<void> {
     'a low score is gated out rather than implemented',
     researchWorkflow.includes('MINIMUM_IMPLEMENTATION_SCORE = 6') &&
       researchWorkflow.includes('below score gate (Score = <n> < 6)') &&
-      researchWorkflow.includes('a gated row never halts the batch'),
+      researchWorkflow.includes('a gated record never halts the batch'),
   );
   assert(
     'the batch halts only for an enumerated reason',
@@ -316,7 +318,8 @@ async function missingDirectory(): Promise<void> {
     'accepted directions queue into the backlog append-only for self-evolution-research',
     reflectionWorkflow.includes('docs/research/backlog_index.md') &&
       reflectionWorkflow.includes('`SRF-NNN`') &&
-      reflectionWorkflow.includes('appended lines only') &&
+      reflectionWorkflow.includes('appended sections only') &&
+      reflectionWorkflow.includes('exactly one route') &&
       reflectionWorkflow.includes('This workflow never starts implementing them itself'),
   );
 
@@ -530,19 +533,267 @@ async function researchPathRoll(): Promise<void> {
   assert('--help lists every path with its share', help.status === 0 && ['tui', 'observability', 'sdk', 'open', 'peer', '20%', '15%', '10%', '5%', '50%'].every((term) => help.stdout.includes(term)));
 }
 
+
+type BacklogRecord = {
+  id: string;
+  direction: string;
+  status: string;
+  priority: number;
+  score: number;
+  importance: number;
+  architectureFit: number;
+  evidenceConfidence: number;
+  difficulty: number;
+  risk: number;
+  originTarget: string;
+  evidence: string;
+  notes: string;
+  page: string;
+};
+
+type BacklogPage = {
+  fileName: string;
+  content: string;
+};
+
+const BACKLOG_ROUTE_LINE_PATTERN = /^- \[Priorities (\d{3})–(\d{3})\]\(\.\/backlog\/(directions-(\d{3})-(\d{3})\.md)\)(?:[ \t]+.*)?$/gm;
+const BACKLOG_ROUTE_CANDIDATE_PATTERN = /^- \[[^\]]+\]\((\.\/backlog\/[^)]+)\)(?:[ \t]+.*)?$/gm;
+const BACKLOG_SECTION_PATTERN = /^## ((?:SER|SRF)-\d{3}) — (.+)\n\n([\s\S]*?)(?=^## (?:SER|SRF)-\d{3} — |(?![\s\S]))/gm;
+const BACKLOG_DIRECTION_HEADING_PATTERN = /^## (?:SER|SRF)-/gm;
+const BACKLOG_INDEX_DIRECTION_PATTERN = /^## (?:SER|SRF)-/m;
+const BACKLOG_METADATA = [
+  ['status', 'Status', false],
+  ['priority', 'Priority', true],
+  ['score', 'Score', true],
+  ['importance', 'Importance', true],
+  ['architectureFit', 'Architecture fit', true],
+  ['evidenceConfidence', 'Evidence confidence', true],
+  ['difficulty', 'Difficulty', true],
+  ['risk', 'Risk', true],
+  ['originTarget', 'Origin report', false],
+] as const;
+const BACKLOG_STATUSES = new Set(['not-started', 'in-progress', 'done', 'abandoned']);
+
+function parseBacklogRecord(id: string, direction: string, body: string, page: string): BacklogRecord {
+  const values: Record<string, string | number> = {};
+  for (const [key, label, numeric] of BACKLOG_METADATA) {
+    const matches = [...body.matchAll(new RegExp(`^- ${label}: (.+)$`, 'gm'))];
+    if (matches.length !== 1 || matches[0]?.[1] === undefined) {
+      throw new Error(`${page} ${id}: expected exactly one ${label} field`);
+    }
+    const raw = matches[0][1];
+    if (numeric) {
+      if (!/^\d+$/.test(raw)) throw new Error(`${page} ${id}: ${label} must be an integer`);
+      values[key] = Number(raw);
+    } else {
+      values[key] = raw;
+    }
+  }
+
+  const evidenceMatch = body.match(/### Implementation \/ acceptance evidence\n\n([\s\S]*?)\n\n### Notes \/ blockers \/ abandonment reason\n\n([\s\S]+?)\s*$/);
+  if (evidenceMatch?.[1] === undefined || evidenceMatch[2] === undefined) {
+    throw new Error(`${page} ${id}: missing evidence or notes subsection`);
+  }
+  const statusRaw = String(values.status);
+  const statusMatch = statusRaw.match(/^`([^`]+)`$/);
+  const originMatch = String(values.originTarget).match(/^\[[^\]]+\]\(([^)]+)\)/);
+  if (statusMatch?.[1] === undefined) throw new Error(`${page} ${id}: Status must be code-formatted`);
+  if (originMatch?.[1] === undefined) throw new Error(`${page} ${id}: Origin report must start with a Markdown link`);
+
+  return {
+    id,
+    direction,
+    status: statusMatch[1],
+    priority: Number(values.priority),
+    score: Number(values.score),
+    importance: Number(values.importance),
+    architectureFit: Number(values.architectureFit),
+    evidenceConfidence: Number(values.evidenceConfidence),
+    difficulty: Number(values.difficulty),
+    risk: Number(values.risk),
+    originTarget: originMatch[1],
+    evidence: evidenceMatch[1].trim(),
+    notes: evidenceMatch[2].trim(),
+    page,
+  };
+}
+
+async function validateBacklog(
+  index: string,
+  pages: readonly BacklogPage[],
+  root: string,
+  allowedLegacyScoreMismatches: ReadonlyMap<string, string> = new Map(),
+): Promise<string[]> {
+  const errors: string[] = [];
+  const routeCandidates = [...index.matchAll(BACKLOG_ROUTE_CANDIDATE_PATTERN)];
+  const routes = [...index.matchAll(BACKLOG_ROUTE_LINE_PATTERN)].map((match) => ({
+    labelStart: Number(match[1]),
+    labelEnd: Number(match[2]),
+    fileName: match[3]!,
+    start: Number(match[4]),
+    end: Number(match[5]),
+  }));
+  if (routeCandidates.length !== routes.length) errors.push('malformed backlog page route');
+  if (BACKLOG_INDEX_DIRECTION_PATTERN.test(index)) errors.push('index contains a direction record');
+
+  const pageNames = new Set<string>();
+  for (const page of pages) {
+    if (pageNames.has(page.fileName)) errors.push(`duplicate page input ${page.fileName}`);
+    pageNames.add(page.fileName);
+  }
+  const routedNames = new Set<string>();
+  let previousEnd = 0;
+  for (const route of routes) {
+    if (routedNames.has(route.fileName)) errors.push(`duplicate route ${route.fileName}`);
+    routedNames.add(route.fileName);
+    if (route.labelStart !== route.start || route.labelEnd !== route.end) errors.push(`route label does not match ${route.fileName}`);
+    if (route.start <= previousEnd) errors.push(`overlapping or unordered range ${route.fileName}`);
+    previousEnd = Math.max(previousEnd, route.end);
+    if (!pageNames.has(route.fileName)) errors.push(`missing routed page ${route.fileName}`);
+  }
+  for (const page of pages) if (!routedNames.has(page.fileName)) errors.push(`unlisted page ${page.fileName}`);
+
+  const records: BacklogRecord[] = [];
+  for (const route of routes) {
+    if (route.end - route.start !== 19 || (route.start - 1) % 20 !== 0) {
+      errors.push(`invalid 20-priority range ${route.fileName}`);
+    }
+    const page = pages.find((candidate) => candidate.fileName === route.fileName);
+    if (page === undefined) continue;
+    const pageRecords: BacklogRecord[] = [];
+    const directionHeadingCount = [...page.content.matchAll(BACKLOG_DIRECTION_HEADING_PATTERN)].length;
+    for (const match of page.content.matchAll(BACKLOG_SECTION_PATTERN)) {
+      try {
+        pageRecords.push(parseBacklogRecord(match[1]!, match[2]!, match[3]!, page.fileName));
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (pageRecords.length !== directionHeadingCount) {
+      errors.push(`${page.fileName} contains ${directionHeadingCount - pageRecords.length} malformed direction heading(s)`);
+    }
+    if (pageRecords.length > 20) errors.push(`${page.fileName} exceeds 20 records`);
+    for (const record of pageRecords) {
+      if (record.priority < route.start || record.priority > route.end) {
+        errors.push(`${record.id} priority ${record.priority} is outside ${route.start}-${route.end}`);
+      }
+      records.push(record);
+    }
+    const priorities = pageRecords.map((record) => record.priority);
+    if (priorities.some((priority, index) => index > 0 && priority <= priorities[index - 1]!)) {
+      errors.push(`${page.fileName} records are not ordered by Priority`);
+    }
+  }
+
+  const ids = new Set<string>();
+  const priorities = new Set<number>();
+  for (const record of records) {
+    if (ids.has(record.id)) errors.push(`duplicate ID ${record.id}`);
+    ids.add(record.id);
+    if (priorities.has(record.priority)) errors.push(`duplicate Priority ${record.priority}`);
+    priorities.add(record.priority);
+    if (!BACKLOG_STATUSES.has(record.status)) errors.push(`${record.id} invalid Status ${record.status}`);
+    for (const [label, rating] of [
+      ['Importance', record.importance],
+      ['Architecture fit', record.architectureFit],
+      ['Evidence confidence', record.evidenceConfidence],
+      ['Difficulty', record.difficulty],
+      ['Risk', record.risk],
+    ] as const) {
+      if (rating < 1 || rating > 5) errors.push(`${record.id} ${label} must be 1-5`);
+    }
+    const expectedScore = 2 * record.importance + record.architectureFit + record.evidenceConfidence - record.difficulty - record.risk;
+    if (record.score !== expectedScore) {
+      const expectedLegacySignature = allowedLegacyScoreMismatches.get(record.id);
+      const actualSignature = `${record.score}:${record.importance}:${record.architectureFit}:${record.evidenceConfidence}:${record.difficulty}:${record.risk}`;
+      if (actualSignature !== expectedLegacySignature) {
+        errors.push(`${record.id} Score ${record.score} does not equal ${expectedScore}`);
+      }
+    }
+    const origin = path.resolve(root, 'docs', 'research', 'backlog', record.originTarget);
+    const relativeOrigin = path.relative(root, origin);
+    if (relativeOrigin === '' || relativeOrigin.startsWith(`..${path.sep}`) || path.isAbsolute(relativeOrigin)) {
+      errors.push(`${record.id} Origin report escapes the repository`);
+    } else {
+      try {
+        const [originStat, resolvedRoot, resolvedOrigin] = await Promise.all([
+          lstat(origin),
+          realpath(root),
+          realpath(origin),
+        ]);
+        const relativeResolvedOrigin = path.relative(resolvedRoot, resolvedOrigin);
+        if (originStat.isSymbolicLink() || !originStat.isFile() || relativeResolvedOrigin.startsWith(`..${path.sep}`) || path.isAbsolute(relativeResolvedOrigin)) {
+          errors.push(`${record.id} unsafe Origin report ${record.originTarget}`);
+        }
+      } catch {
+        errors.push(`${record.id} broken Origin report ${record.originTarget}`);
+      }
+    }
+  }
+  return errors;
+}
+
+function fixtureRecord(overrides: Partial<BacklogRecord> = {}): string {
+  const record: BacklogRecord = {
+    id: 'SER-001', direction: 'Fixture direction', status: 'not-started', priority: 1,
+    score: 6, importance: 3, architectureFit: 3, evidenceConfidence: 3, difficulty: 3,
+    risk: 3, originTarget: '../research_2026-08-15.md', evidence: 'Evidence.', notes: 'Notes.',
+    page: 'directions-001-020.md', ...overrides,
+  };
+  return `## ${record.id} — ${record.direction}\n\n- Status: \`${record.status}\`\n- Priority: ${record.priority}\n- Score: ${record.score}\n- Importance: ${record.importance}\n- Architecture fit: ${record.architectureFit}\n- Evidence confidence: ${record.evidenceConfidence}\n- Difficulty: ${record.difficulty}\n- Risk: ${record.risk}\n- Origin report: [\`research_2026-08-15.md\`](${record.originTarget})\n\n### Implementation / acceptance evidence\n\n${record.evidence}\n\n### Notes / blockers / abandonment reason\n\n${record.notes}\n`;
+}
+
+
 async function researchDocs(): Promise<void> {
   header('self-evolution research — persistent document contracts');
 
   const backlog = await readFile(path.join(REPO_ROOT, 'docs', 'research', 'backlog_index.md'), 'utf8');
+  const backlogDir = path.join(REPO_ROOT, 'docs', 'research', 'backlog');
+  const pageNames = (await readdir(backlogDir)).filter((name) => name.endsWith('.md')).sort();
+  const pages = await Promise.all(pageNames.map(async (fileName) => ({ fileName, content: await readFile(path.join(backlogDir, fileName), 'utf8') })));
   const template = await readFile(path.join(REPO_ROOT, 'docs', 'research', 'research_template.md'), 'utf8');
+  const routedPageNames = [...backlog.matchAll(BACKLOG_ROUTE_LINE_PATTERN)].map((match) => match[3]!);
 
+  assert('backlog index is a thin router with no direction records', Buffer.byteLength(backlog) < 8_000 && !/^## (?:SER|SRF)-\d{3} — /m.test(backlog));
+  assert('backlog routes every and only existing priority page', routedPageNames.join(',') === pageNames.join(','));
+  assert(
+    'backlog retains every initial migration page while allowing later rollover pages',
+    ['directions-001-020.md', 'directions-021-040.md', 'directions-041-060.md'].every((name) => pageNames.includes(name)),
+  );
   assert('backlog declares the exact status vocabulary', ['`not-started`', '`in-progress`', '`done`', '`abandoned`'].every((status) => backlog.includes(status)));
   assert('backlog prioritizes unfinished work before research', backlog.includes('Selection order is `in-progress` first, then `not-started`') && backlog.includes('do not perform fresh product research'));
-  assert('backlog records ranking and acceptance fields', ['Importance', 'Architecture fit', 'Evidence confidence', 'Difficulty', 'Risk', 'Implementation / acceptance evidence'].every((heading) => backlog.includes(heading)));
+  assert('backlog records ranking and acceptance fields', ['Importance', 'Architecture fit', 'Evidence confidence', 'Difficulty', 'Risk', 'Implementation / acceptance evidence'].every((heading) => backlog.includes(heading) || pages.some((page) => page.content.includes(heading))));
   assert('backlog documents the score formula', backlog.includes('Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk'));
-  assert('backlog works a whole batch one direction at a time', backlog.includes('Exactly one row is `in-progress` at a time') && backlog.includes('advancing to the next direction after each one is accepted and closed'));
+  assert('backlog works a whole batch one direction at a time', backlog.includes('Exactly one direction is `in-progress` at a time') && backlog.includes('advancing after each accepted closure'));
   assert('backlog gates low-scoring directions out', backlog.includes('MINIMUM_IMPLEMENTATION_SCORE = 6') && backlog.includes('below score gate (Score = <n> < 6)'));
   assert('backlog forbids re-rating a direction across the gate', backlog.includes('never restated to move a direction across the gate'));
+  // SER-023's persisted score predates this validator and intentionally remains lossless in
+  // this migration. New/edited fixture records receive no exception.
+  const productionBacklogErrors = await validateBacklog(backlog, pages, REPO_ROOT, new Map([['SER-023', '13:4:5:4:3:3']]));
+  if (productionBacklogErrors.length > 0) console.log(`  backlog errors: ${JSON.stringify(productionBacklogErrors)}`);
+  assert('all 58 production records pass paged-backlog validation', productionBacklogErrors.length === 0 && pages.reduce((count, page) => count + [...page.content.matchAll(BACKLOG_SECTION_PATTERN)].length, 0) === 58);
+
+  const fixtureIndex = '- [Priorities 001–020](./backlog/directions-001-020.md)\n';
+  const fixturePage = (content: string, fileName = 'directions-001-020.md'): BacklogPage => ({ fileName, content });
+  const fixtureErrors = async (index: string, fixtures: readonly BacklogPage[]) => validateBacklog(index, fixtures, REPO_ROOT);
+  assert('validator accepts a complete valid fixture', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord())])).length === 0);
+  assert('validator rejects a missing routed page', (await fixtureErrors(fixtureIndex, [])).some((error) => error.includes('missing routed page')));
+  assert('validator rejects an unlisted page', (await fixtureErrors('', [fixturePage(fixtureRecord())])).some((error) => error.includes('unlisted page')));
+  assert('validator rejects malformed route names instead of ignoring them', (await fixtureErrors('- [Priorities 001–020](./backlog/directions-1-20.md)\n', [fixturePage(fixtureRecord())])).some((error) => error.includes('malformed backlog page route')));
+  assert('validator rejects a route label that disagrees with its filename range', (await fixtureErrors('- [Priorities 002–021](./backlog/directions-001-020.md)\n', [fixturePage(fixtureRecord())])).some((error) => error.includes('route label does not match')));
+  assert('validator rejects direction records duplicated into the index', (await fixtureErrors(`${fixtureIndex}${fixtureRecord()}`, [fixturePage(fixtureRecord())])).some((error) => error.includes('index contains a direction record')));
+  assert('validator rejects overlapping routes', (await fixtureErrors(`${fixtureIndex}- [Priorities 011–030](./backlog/directions-011-030.md)\n`, [fixturePage(fixtureRecord()), fixturePage('', 'directions-011-030.md')])).some((error) => error.includes('overlapping or unordered range')));
+  assert('validator rejects invalid statuses', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord({ status: 'finished' }))])).some((error) => error.includes('invalid Status')));
+  assert('validator rejects duplicate IDs', (await fixtureErrors(fixtureIndex, [fixturePage(`${fixtureRecord()}\n${fixtureRecord({ priority: 2 })}`)])).some((error) => error.includes('duplicate ID')));
+  assert('validator rejects duplicate priorities', (await fixtureErrors(fixtureIndex, [fixturePage(`${fixtureRecord()}\n${fixtureRecord({ id: 'SRF-001' })}`)])).some((error) => error.includes('duplicate Priority')));
+  assert('validator rejects score arithmetic errors', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord({ score: 7 }))])).some((error) => error.includes('does not equal')));
+  assert('validator rejects out-of-range ratings', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord({ importance: 6, score: 12 }))])).some((error) => error.includes('Importance must be 1-5')));
+  assert('validator rejects misplaced records', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord({ priority: 21 }))])).some((error) => error.includes('outside 1-20')));
+  assert('validator rejects over-capacity pages', (await fixtureErrors(fixtureIndex, [fixturePage(Array.from({ length: 21 }, (_, index) => fixtureRecord({ id: `SER-${String(index + 1).padStart(3, '0')}`, priority: index + 1 })).join('\n'))])).some((error) => error.includes('exceeds 20 records')));
+  assert('validator rejects incomplete fields', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord().replace('- Risk: 3\n', ''))])).some((error) => error.includes('Risk field')));
+  assert('validator continues after one malformed record and catches a later duplicate ID', (await fixtureErrors(fixtureIndex, [fixturePage(`${fixtureRecord().replace('- Risk: 3\n', '')}\n${fixtureRecord({ priority: 2 })}\n${fixtureRecord({ priority: 3 })}`)])).some((error) => error.includes('duplicate ID')));
+  assert('validator rejects malformed direction headings instead of silently dropping them', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord().replace('## SER-001 —', '## SER-001 -'))])).some((error) => error.includes('malformed direction heading')));
+  assert('validator rejects broken local origin links', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord({ originTarget: '../missing-report.md' }))])).some((error) => error.includes('broken Origin report')));
   assert('research template targets dated append-only reports', template.includes('research_<YYYY-MM-DD>.md') && template.includes('append another timestamped `## Run` section') && template.includes('Never overwrite an earlier run'));
   assert(
     'research template records the rolled path verbatim, roll or override',

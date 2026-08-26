@@ -68,21 +68,23 @@ A run with nothing to improve says so here instead of inventing findings.
 
 The `self-evolution-research` ranking applied to each section 4 suggestion. Dimensions are
 1–5; `Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk`;
-`MINIMUM_IMPLEMENTATION_SCORE = 6`. Check `docs/research/backlog_index.md` first and propose
-only non-duplicates (zero to five in total). The formula never overrides a documented safety
+`MINIMUM_IMPLEMENTATION_SCORE = 6`. Check `docs/research/backlog_index.md` first, search its
+routed pages' heading/ID/Priority metadata, and propose only non-duplicates (zero to five in
+total). The formula never overrides a documented safety
 or dependency concern — say so in Rationale when that applies.
 
 | ID | Direction | Importance | Architecture fit | Evidence confidence | Difficulty | Risk | Score | Verdict |
 |---|---|---:|---:|---:|---:|---:|---:|---|
 | SRF-<NNN> | <direction> | <1–5> | <1–5> | <1–5> | <1–5> | <1–5> | <n> | accepted / rejected (below gate) / duplicate of <ID> |
 
-Rationale per direction: why these ratings, and the dependency order among accepted rows.
+Rationale per direction: why these ratings, and the dependency order among accepted directions.
 Rejected and duplicate directions stay in this table with their scores; they are not added to
 the backlog.
 
 ## 6. Backlog updates
 
-The exact rows appended to `docs/research/backlog_index.md` (status `not-started`, origin
-report pointing at this document), in dependency order — or `none` when nothing passed the
-gate.
+The exact complete direction sections appended to the current routed page (status
+`not-started`, origin report pointing at this document), in dependency order — or `none` when
+nothing passed the gate. If rollover created the next 20-priority page, also record that page
+and the one route appended to `docs/research/backlog_index.md`.
 ```

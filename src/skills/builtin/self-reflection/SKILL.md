@@ -82,9 +82,10 @@ The first prompt must hand the child:
   present, in order, none renamed;
 - the scoring contract of section 3, verbatim;
 - the backlog contract of section 4, verbatim; and
-- the mutation scope: exactly the one reflection file plus appended rows in
-  `docs/research/backlog_index.md`. No source edits, and no commit unless the user explicitly
-  authorized one in this conversation.
+- the mutation scope: exactly the one reflection file plus appended direction sections in the
+  current routed page under `docs/research/backlog/`; rollover may also create the next page and
+  add its one route to `docs/research/backlog_index.md`. No source edits, and no commit unless
+  the user explicitly authorized one in this conversation.
 
 ## 3. What the reflection must contain
 
@@ -110,22 +111,28 @@ suggestion: rate **Importance**, **Architecture fit**, **Evidence confidence**,
 **Implementation difficulty** and **Implementation risk** on 1–5 scales, compute
 `Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk`, and
 apply the same gate, `MINIMUM_IMPLEMENTATION_SCORE = 6`. Propose zero to five new,
-non-duplicate directions; read `docs/research/backlog_index.md` first and never re-propose a
-row that already exists in any status. Qualitative rationale rides along, and the formula
+non-duplicate directions; read `docs/research/backlog_index.md` first, search the routed pages'
+headings and ID/Priority metadata, and never re-propose a direction that already exists in any
+status. Qualitative rationale rides along, and the formula
 never overrides a documented safety or dependency concern. Directions below the gate stay in
 the reflection document as rejected, with their scores.
 
 ## 4. Queue accepted directions into the backlog
 
-Every direction at or above the gate is appended to `docs/research/backlog_index.md` as a
-`not-started` row under the existing table contract: a stable `SRF-NNN` id (the next unused
-number; never renumber anything), a Priority continuing after the highest existing row, all
-five dimensions plus the Score, the Origin report column linking to the new reflection
-document, and Notes carrying the evidence summary. Order accepted rows so dependencies come
-first — that order is their implementation sequence. Existing rows are never edited, reordered
-or restated; the diff on that file must show appended lines only.
+Every direction at or above the gate is appended to the current routed priority page as one
+complete `not-started` section: a stable `SRF-NNN` id (the next unused number; never renumber
+anything), a Priority continuing after the highest existing record, all five dimensions plus
+the Score, an Origin report link to the new reflection document, explicit implementation /
+acceptance evidence, and Notes carrying the evidence summary. Order accepted sections so
+dependencies come first — that order is their implementation sequence. Existing sections are
+never edited, reordered, or restated; the page diff must show appended sections only.
 
-Accepted `SRF` rows are ordinary backlog work: the next `self-evolution-research` run selects
+A page holds at most 20 priorities. If the next Priority falls outside the current range,
+create the next zero-padded `directions-NNN-NNN.md` page under `docs/research/backlog/` and add
+exactly one route to `backlog_index.md`. Creating that route is the only permitted index edit;
+never add mutable status there or rebalance a closed page.
+
+Accepted `SRF` sections are ordinary backlog work: the next `self-evolution-research` run selects
 them as its development tasks through its normal batch rules.
 This workflow never starts implementing them itself.
 
@@ -137,8 +144,9 @@ After the child reports completion, verify from the Host without trusting its pr
   its grade is one of the four levels with cited trajectory evidence;
 - every accepted direction's Score arithmetic is correct and at or above 6, and every `SRF` id
   is new;
-- `git status` / `git diff`: nothing changed outside the reflection file and
-  `docs/research/backlog_index.md`, and the backlog change is append-only.
+- `git status` / `git diff`: nothing changed outside the reflection file, the current/new
+  routed page, and an index route on rollover; backlog sections are append-only and any index
+  diff adds only that one route.
 
 On a concrete failure, send the exact failure back to the same child session as a focused
 correction — another `bash start` task with `--session <captured-id> --yolo
