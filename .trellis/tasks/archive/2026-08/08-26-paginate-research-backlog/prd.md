@@ -24,13 +24,13 @@ Keep the self-evolution backlog authoritative and auditable while making routine
 
 ## Acceptance Criteria
 
-- [ ] `backlog_index.md` is a small routing/contract document with links for all existing priority pages and contains no direction-record sections or second mutable status catalogue.
-- [ ] Pages `001-020`, `021-040`, and `041-060` contain exactly the existing 58 directions in ascending priority, at most 20 per page, with one complete section per direction.
-- [ ] A migration comparison against the pre-change table confirms every existing field is preserved after normalizing the intentional layout and relative-link changes.
-- [ ] The built-in research workflow can find `in-progress` before `not-started`, identify the newest-origin unfinished batch, update one record, append new records, and roll over a full page without reading every completed record into context.
-- [ ] The built-in reflection workflow appends accepted `SRF` records to the current page without editing existing records, except that creating a new page also adds one route in the index.
-- [ ] `spike/verify-skills.ts` rejects invalid statuses, duplicate IDs/priorities, wrong score arithmetic, misplaced/over-capacity records, missing routed pages, incomplete fields, and broken local origin links through non-vacuous fixture checks or equivalent exercised validation paths.
-- [ ] `pnpm tsx spike/verify-skills.ts`, `pnpm typecheck`, `pnpm test`, `pnpm build`, Trellis task validation, and `git diff --check` pass; the built skill copies in `dist/` reflect the new contract after build inspection.
+- [x] `backlog_index.md` is a small routing/contract document with links for all existing priority pages and contains no direction-record sections or second mutable status catalogue.
+- [x] Pages `001-020`, `021-040`, and `041-060` contain exactly the existing 58 directions in ascending priority, at most 20 per page, with one complete section per direction.
+- [x] A migration comparison against the pre-change table confirms every existing field is preserved after normalizing the intentional layout and relative-link changes.
+- [x] The built-in research workflow can find `in-progress` before `not-started`, identify the newest-origin unfinished batch, update one record, append new records, and roll over a full page without reading every completed record into context.
+- [x] The built-in reflection workflow appends accepted `SRF` records to the current page without editing existing records, except that creating a new page also adds one route in the index.
+- [x] `spike/verify-skills.ts` rejects invalid statuses, duplicate IDs/priorities, wrong score arithmetic, misplaced/over-capacity records, missing routed pages, incomplete fields, and broken local origin links through non-vacuous fixture checks or equivalent exercised validation paths.
+- [x] `pnpm tsx spike/verify-skills.ts`, `pnpm typecheck`, `pnpm test`, `pnpm build`, Trellis task validation, and `git diff --check` pass; the built skill copies in `dist/` reflect the new contract after build inspection.
 
 ## Out of Scope
 
