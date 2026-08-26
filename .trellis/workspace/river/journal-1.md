@@ -563,3 +563,34 @@ Restored the structured-headless fixture's no-op subagent-progress observer afte
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: Implement SRF-016 retry guard
+
+**Date**: 2026-08-26
+**Task**: Implement SRF-016 retry guard
+**Branch**: `main`
+
+### Summary
+
+Added a bounded per-Agent/per-invocation repeated-failure intervention guard, explicit foreground bash exit status, default guidance, focused real-Agent coverage, and architecture/spec contracts.
+
+### Main Changes
+
+- Blocked a materially new tool attempt after three normalized same-signature failures while preserving original results and resetting on a new invocation.
+- Kept plan, PreToolUse, permission, body, PostToolUse, child isolation, and custom system-prompt replacement semantics intact.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b5133d3` | (see git log) |
+
+### Testing
+
+- [OK] Focused retry guard: 16 passed; tool hooks and foreground/background bash focused suites passed.
+- [OK] pnpm typecheck, full pnpm test, and pnpm build passed.
+
+### Status
+
+[OK] **Completed**
