@@ -1935,3 +1935,15 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SER-039 | `9cdbffc` | Host inspected the 24-file source/spec/test/task diff and independently passed `verify-prompt-history-search.ts` (19/19), `verify-frame-budget.ts` (80/80), `verify-help-command.ts` (26/26), `verify-prompt-recall.ts` (61/61), free pty `historySearch` (11/11), `compacting` (5/5), `cursor` (5/5), `completion` (66/66), `pathCompletion` (27/27), `recall` (22/22), `recallEmpty` (4/4), and `permissionEscape` (3/3), plus `pnpm typecheck`, full `pnpm test`, `pnpm build`, Trellis archive validation, structural no-I/O/model/network grep, `git diff --check`, `git show --check`, clean-tree verification, and AGENTS.md size (25,897 bytes < 32 KiB). The free pty `queue` scenario timed out twice after its unchanged batched multi-row draft-clear chord left `!sleep 30` to enter the model path; the same scenario exited 1 at pre-change parent `315cb71`, so this was recorded as pre-existing PTY fixture nondeterminism rather than repaired outside SER-039. Search remains a project-only in-memory projection over the existing bounded trajectory reader, with exact Escape restoration and counted live-frame rows. |
+
+
+## Batch 61 — SER-040 conversation-only rewind
+
+- Origin: `docs/research/research_2026-08-26.md`, run `2026-08-26T12:29:54Z` (rolled `peer` path).
+- Child session: `session-20260826-123525049`.
+- Managed tasks: `bg-f64d9202-996c-4274-bac3-980df3cc0f9d`, `bg-5d688c44-6ec3-4061-ac2f-9c0ccb51c85c`, and Host-focused correction `bg-4b27036a-3d7d-4770-84be-9f8099a557e9` (all succeeded, exit 0).
+- Token spend: first task `input=410 output=85,350 cacheRead=29,296,248 cacheWrite=218,454`; continuation `input=246 output=33,173 cacheRead=11,249,010 cacheWrite=151,164`; retention correction `input=158 output=26,395 cacheRead=14,611,386 cacheWrite=214,799`; aggregate `input=814 output=144,918 cacheRead=55,156,644 cacheWrite=584,417`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SER-040 | `db57a87` implementation, `a27b3cd` research/task record, Host-found correction `9ef6cc0`, correction record `8121110` | Host inspected the source/spec/test diff and rejected the initial implementation because failed/cancelled turns and a full catalogue could grow SDK immutable history without bound. Acceptance followed only after a serialized hard 100-snapshot cap using bounded public SDK listings. Host independently passed `verify-rewind.ts` (20/20), `verify-rewind-search.ts` (7/7), free pty `rewind` (7/7), `completion` (67/67), `verify-frame-budget.ts` (80/80), `verify-help-command.ts` (26/26), `verify-prompt-queue.ts` (28/28), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, clean-tree verification, and AGENTS.md size (26,616 bytes < 32 KiB). `/rewind` branches authoritative SDK conversation state into a fresh successor, leaves the source/pointer/workspace unchanged, returns the selected prompt unsent, and explicitly disclaims workspace and side-effect rollback. |
