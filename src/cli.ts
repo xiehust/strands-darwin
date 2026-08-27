@@ -33,6 +33,7 @@ import {
 } from './cli-trajectory.js';
 import { ConfigError } from './config.js';
 import { productionHeadlessDependencies, runHeadlessProcess } from './headless-runner.js';
+import { withProductionReactImports } from './tui/react-environment.js';
 
 const FORCE_EXIT_AFTER_MS = 500;
 
@@ -120,12 +121,13 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
 }
 
 async function runInteractive(options: CliOptions): Promise<void> {
-  const [{ render }, { default: React }, { PermissionQueue }, { StartupScreen }] = await Promise.all([
-    import('ink'),
-    import('react'),
-    import('./tui/permission-queue.js'),
-    import('./tui/StartupScreen.js'),
-  ]);
+  const [{ render }, { default: React }, { PermissionQueue }, { StartupScreen }] =
+    await withProductionReactImports(() => Promise.all([
+      import('ink'),
+      import('react'),
+      import('./tui/permission-queue.js'),
+      import('./tui/StartupScreen.js'),
+    ]));
   const projectRoot = process.cwd();
   const permissions = new PermissionQueue();
   // Ink owns the terminal before runtime/config/MCP/session setup begins. This is
