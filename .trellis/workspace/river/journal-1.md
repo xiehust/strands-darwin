@@ -861,3 +861,35 @@ Added bounded Ctrl+O clipboard image attachment using the shared image decoder a
 ### Status
 
 [OK] **Completed**
+
+
+## Session 33: Vend SDK HTTP request tool
+
+**Date**: 2026-08-27
+**Task**: Vend SDK HTTP request tool
+**Branch**: `main`
+
+### Summary
+
+Registered the SDK HTTP request singleton on the parent runtime, proved fail-closed and plan-mode gating offline, and documented the parent-only contract.
+
+### Main Changes
+
+- Added the SDK http_request vended tool to the ordinary parent Agent tools list.
+- Added offline registration and permission-gating regression coverage.
+- Recorded the parent-only HTTP tool architecture and SDK contract.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ce68299` | (see git log) |
+
+### Testing
+
+- [OK] pnpm tsx spike/verify-http-request-tool.ts (7 passed)
+- [OK] pnpm test && pnpm typecheck && pnpm build (passed)
+
+### Status
+
+[OK] **Completed**
