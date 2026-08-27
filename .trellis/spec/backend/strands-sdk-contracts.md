@@ -245,6 +245,60 @@ all background TERM→KILL/exit cleanup cases. Also run `probe-cancel-exit.ts`,
 `verify-clear-session.ts`, and the
 `bashExit` / `cancelThenContinue` TUI scenarios after changing the patch.
 
+### Contract: SDK HTTP request is a parent-only ordinary gated tool
+
+#### Scope / trigger
+
+When exposing the installed SDK HTTP request vended tool, import `httpRequest` from
+`@strands-agents/sdk/vended-tools/http-request` and register that singleton directly in the parent
+`AgentRuntime` tools list. Do not wrap its callback, add a second network path, construct another
+Agent, or add it to child tool catalogues.
+
+#### Signatures
+
+The SDK-owned export is `httpRequest`; its provider tool name is `http_request`. Its request schema
+accepts `method: 'GET'|'POST'|'PUT'|'DELETE'|'PATCH'|'HEAD'|'OPTIONS'`, `url: string`, and optional
+`headers: Record<string, string>`, `body: string`, and positive `timeout: number`. Darwin does not
+copy or redefine this schema.
+
+#### Contracts
+
+The parent assembly passes the exact SDK singleton in `Agent({ tools: [...] })`. Consequently every
+model-generated call traverses Darwin's existing composed intervention in retry → Pre hook →
+permission → SDK callback → Post hook order. `classify('http_request', input)` intentionally uses
+the unknown-tool fallback and returns `kind: 'execute'`; default/auto modes therefore cannot run it
+without their ordinary decision, and plan mode denies it before prompting or calling `fetch`.
+Children remain unchanged and do not receive the tool.
+
+#### Validation & error matrix
+
+| Case | Required behavior |
+|---|---|
+| Fresh parent runtime | Exactly one registered tool named `http_request`, identical to the SDK export |
+| Default mode, user denies | Permission bridge sees parent `execute`; callback/network never runs |
+| Plan mode | Denied before permission bridge and callback/network |
+| Child catalogue | No `http_request` tool |
+| Approved/yolo parent call | SDK owns input validation, cancellation, timeout, request, and result/error shape |
+
+#### Good / base / bad cases
+
+Good: add the imported SDK singleton to the existing parent tools array and let the composed
+intervention gate it. Base: no model asks for HTTP, so startup only registers metadata and performs
+no request. Bad: directly call `httpRequest.invoke()`, special-case it as `read`/safe, wrap `fetch`,
+or append it in `SubagentTool.toolsFor()`.
+
+#### Tests required
+
+`spike/verify-http-request-tool.ts` must use a fake model and poisoned `globalThis.fetch` to prove
+actual-name/identity registration, default denial classification/source, plan pre-prompt denial,
+and zero fetch calls. It belongs in `pnpm test` and must make no real model or network call.
+
+#### Wrong vs correct
+
+Wrong: `tools: [...]; void httpRequest.invoke(input)` from a driver or helper, which bypasses the
+Agent intervention. Correct: `tools: [..., httpRequest, ...mcp.clients]` only in the parent assembly,
+with `http_request` left to the fail-closed permission fallback.
+
 ### Contract: fileEditor clamps only oversized positive view ends
 
 #### Scope / trigger

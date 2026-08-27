@@ -8,6 +8,7 @@
 import { Agent, BeforeInvocationEvent, SummarizingConversationManager, TextBlock } from '@strands-agents/sdk';
 import type { AgentStreamEvent, ImageBlock, InterventionHandler, McpClient, Model, SessionManager } from '@strands-agents/sdk';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
+import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request';
 import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import path from 'node:path';
@@ -554,7 +555,7 @@ export class AgentRuntime {
       systemPrompt: composeSystemPrompt(basePrompt.prompt, instructions),
       // McpClient instances act as tool sources: the SDK discovers and registers
       // their tools during initialize().
-      tools: [bash, fileEditor, imageViewer, ...mcp.clients],
+      tools: [bash, fileEditor, imageViewer, httpRequest, ...mcp.clients],
       plugins: offloader === undefined ? [skills] : [skills, offloader],
       sessionManager,
       conversationManager,

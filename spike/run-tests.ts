@@ -30,6 +30,7 @@ const suites = [
   'verify-image-viewer.ts',
   'verify-clipboard-image.ts',
   'verify-runtime-image-input.ts',
+  'verify-http-request-tool.ts',
   'verify-task-format.ts',
   'verify-busy-suffix.ts',
   'verify-context-format.ts',

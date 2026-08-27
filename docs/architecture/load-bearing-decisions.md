@@ -21,6 +21,18 @@ manager. If a change seems to require intercepting the loop itself, check
 `.trellis/spec/backend/strands-sdk-contracts.md` first — every non-obvious SDK behavior this
 project relies on (and the runnable script that proves it) is recorded there.
 
+## SDK HTTP request — parent-only ordinary gated tool
+
+**HTTP access is an ordinary parent tool, not a side channel.** The parent runtime directly adds
+the installed SDK `httpRequest` singleton (`http_request`) to the same `Agent.tools` list as its
+other vended tools. The existing composed intervention therefore runs retry policy, configured
+Pre hooks, permission classification, the SDK callback, and Post hooks in their established
+order. `http_request` deliberately has no safe classifier special case: unknown tools fail closed
+as `execute`, so default/auto modes require the ordinary decision and plan mode denies before the
+callback. Child catalogues do not include it; widening their capabilities requires a separate
+design decision. Authoritative contract: `.trellis/spec/backend/strands-sdk-contracts.md`.
+Required offline check: `spike/verify-http-request-tool.ts` (in `pnpm test`).
+
 ## Repeated tool failures — bounded intervention guard
 
 **One model invocation may execute three materially equivalent failed tool variants, not an unbounded sequence.** The composed SDK intervention observes original `ToolResultBlock`s after configured Post hooks without rewriting them, normalizes a bounded failure class/signature, and denies a later call to that tool before Pre hooks, permission, or body once one signature reaches the limit. A second failure injects bounded evidence-backed-hypothesis guidance before the next model call; the third says to stop, report the blocker and collected artifacts, and ask the user. A new SDK invocation replaces the state. One shared guard remains isolated by Agent, so concurrent children cannot poison each other. Explicit numeric/failed bash status is covered; user-authored `!` commands never enter this model-tool intervention. The pinned foreground bash result exposes its real command `exitCode` for this purpose without changing shell execution or output. Authoritative contract: `.trellis/spec/backend/strands-sdk-contracts.md`. Required check: `spike/verify-retry-guard.ts` (in `pnpm test`).
