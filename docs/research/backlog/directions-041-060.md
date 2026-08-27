@@ -365,7 +365,7 @@ Claude Code and Codex establish prompt-bound rewind/branch UX; the current Stran
 
 ## SER-041 — Attach a clipboard image to the next interactive prompt as a bounded visible chip, using the existing image decoder and SDK `ImageBlock` input while keeping trajectory/recall text-only and truthful
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 59
 - Score: 14
 - Importance: 5
