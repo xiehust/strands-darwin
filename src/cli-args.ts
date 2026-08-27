@@ -19,7 +19,7 @@ export interface CliOptions {
   outputFormat: HeadlessOutputFormat;
   /** Optional per-process ceiling enforced before each SDK model call. */
   maxModelCalls: number | undefined;
-  /** Process-only context-offload opt-in; never persisted to config. */
+  /** Process-only context-offload force-on override; never persisted to config. */
   contextOffloadOverride: true | undefined;
   /** Summarize restored history before the requested one-shot turn. */
   compactBefore: boolean;

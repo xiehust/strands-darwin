@@ -8,6 +8,8 @@
  *          [--max-model-calls <n>] [--context-offload] [--compact-before]
  *        darwin sessions
  *        darwin trajectory <list|search|replay|fork> …
+ *
+ * `--context-offload` force-enables the default-on offloader for this process; it never persists.
  */
 import process from 'node:process';
 

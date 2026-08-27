@@ -1,6 +1,6 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 
-import { ModelError, type AgentStreamEvent } from '@strands-agents/sdk';
+import { ContextWindowOverflowError, ModelError, type AgentStreamEvent } from '@strands-agents/sdk';
 
 import { NEVER_WITHDRAWN } from '../../src/agent/permission.js';
 import type { AgentRuntime, RuntimeOptions } from '../../src/agent/runtime.js';
@@ -16,6 +16,7 @@ const config: AppConfig = {
   thinkingEffort: 'low',
   summaryRatio: 0.8,
   contextWarnRatio: 0.8,
+  contextOffload: true,
   preserveRecentMessages: 4,
   openaiApi: 'chat',
   modelChoices: [],
@@ -130,6 +131,11 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
       }
       if (mode === 'stream-interruption-twice') {
         throw new ModelError('Stream ended without completing a message');
+      }
+      if (mode === 'context-overflow') {
+        throw new ContextWindowOverflowError(
+          'prompt tokens (1416135) exceed model maximum (1050000) for openai.gpt-5.6-sol',
+        );
       }
 
       if (mode === 'interrupt' || mode === 'interrupt-cleanup') {

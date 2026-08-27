@@ -87,6 +87,7 @@ async function defaults(): Promise<void> {
   );
   assert('a missing .darwin/config.json is not an error', true);
   assert('learned project memory is enabled when the config file is missing', config.memory === true);
+  assert('durable context offload is enabled when the config file is missing', config.contextOffload === true);
 
   // The preset is a catalogue, not a lone model: with no file at all `/model` must
   // still have something to switch between, and the entry in effect must be the
@@ -866,23 +867,32 @@ async function contextOffloadFields(): Promise<void> {
   header('config — context offload fields');
 
   const def = await loadConfig(await writeConfig('{}'));
-  assert('contextOffload is absent (off) by default', def.contextOffload === undefined);
+  assert('contextOffload is on by default', def.contextOffload === true);
   assert('maxResultTokens is absent by default', def.maxResultTokens === undefined);
 
   const on = await loadConfig(await writeConfig('{ "contextOffload": true }'));
   assert('the flag is accepted', on.contextOffload === true);
 
-  const sized = await loadConfig(
+  const off = await loadConfig(await writeConfig('{ "contextOffload": false }'));
+  assert('explicit false persistently opts out', off.contextOffload === false);
+
+  const switchedOff = withModelChoice(off, off.modelChoices[0]!);
+  assert('a /model switch preserves the persistent opt-out', switchedOff.contextOffload === false);
+
+  const sizedByDefault = await loadConfig(await writeConfig('{ "maxResultTokens": 4000 }'));
+  assert('a threshold is accepted with default-on offload', sizedByDefault.maxResultTokens === 4000);
+
+  const sizedExplicitly = await loadConfig(
     await writeConfig('{ "contextOffload": true, "maxResultTokens": 4000 }'),
   );
-  assert('a threshold alongside the flag is accepted', sized.maxResultTokens === 4000);
+  assert('a threshold alongside explicit true is accepted', sizedExplicitly.maxResultTokens === 4000);
 
-  // Rejected rather than ignored: a threshold the user believes is in effect but
-  // is not looks exactly like the bloat it was written to bound.
-  const orphan = await expectConfigError('a threshold without the flag is refused', async () =>
-    loadConfig(await writeConfig('{ "maxResultTokens": 4000 }')),
+  // Rejected rather than ignored only for an explicit opt-out: a threshold the
+  // user believes is in effect must never silently coexist with disabled offload.
+  const incompatible = await expectConfigError('a threshold with explicit false is refused', async () =>
+    loadConfig(await writeConfig('{ "contextOffload": false, "maxResultTokens": 4000 }')),
   );
-  assert('…and the error names the flag it needs', orphan.includes('contextOffload'));
+  assert('…and the error names the conflicting flag', incompatible.includes('contextOffload'));
   await expectConfigError('a zero threshold is refused', async () =>
     loadConfig(await writeConfig('{ "contextOffload": true, "maxResultTokens": 0 }')),
   );

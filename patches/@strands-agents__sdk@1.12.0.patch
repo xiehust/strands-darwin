@@ -1,3 +1,15 @@
+diff --git a/dist/src/models/openai/errors.js b/dist/src/models/openai/errors.js
+index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279e2355066 100644
+--- a/dist/src/models/openai/errors.js
++++ b/dist/src/models/openai/errors.js
+@@ -20,6 +20,7 @@ const CONTEXT_WINDOW_OVERFLOW_PATTERNS = [
+     'input length and `max_tokens` exceed context limit',
+     'too many total text bytes',
+     'exceed customer model maximum',
++    'exceed model maximum',
+ ];
+ /**
+  * Error patterns that indicate rate limiting.
 diff --git a/dist/src/models/openai/responses-adapter.d.ts b/dist/src/models/openai/responses-adapter.d.ts
 index e17f00ac284c1e3357d55205c57b431061141b55..a7b4edd12a5ac33277a5ad2c4bcea4c4d8c1ea7d 100644
 --- a/dist/src/models/openai/responses-adapter.d.ts
@@ -29,18 +41,312 @@ index 23b1dad5bf6ca0dc60ec22d70bf195c1556ba29a..455fc41794c2b6bbe0cc5c86d428cf8c
      return mapped;
  }
  function createResponsesStreamError(message, code) {
-diff --git a/dist/src/models/openai/errors.js b/dist/src/models/openai/errors.js
-index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279e2355066 100644
---- a/dist/src/models/openai/errors.js
-+++ b/dist/src/models/openai/errors.js
-@@ -20,6 +20,7 @@ const CONTEXT_WINDOW_OVERFLOW_PATTERNS = [
-     'input length and `max_tokens` exceed context limit',
-     'too many total text bytes',
-     'exceed customer model maximum',
-+    'exceed model maximum',
- ];
- /**
-  * Error patterns that indicate rate limiting.
+diff --git a/dist/src/vended-plugins/context-offloader/plugin.d.ts b/dist/src/vended-plugins/context-offloader/plugin.d.ts
+index b0223555c1f0410441546be860dbae824ac9857c..0cefd600f9b2324d23033f07c7b44f74fceb123f 100644
+--- a/dist/src/vended-plugins/context-offloader/plugin.d.ts
++++ b/dist/src/vended-plugins/context-offloader/plugin.d.ts
+@@ -70,6 +70,7 @@ export declare class ContextOffloader implements Plugin {
+     private readonly _includeRetrievalTool;
+     private readonly _evictAfterCycles;
+     private readonly _storageByAgent;
++    private readonly _scannedAgents;
+     private readonly _keyStoredAt;
+     private _retrievalTool;
+     constructor(config: ContextOffloaderConfig);
+@@ -82,6 +83,9 @@ export declare class ContextOffloader implements Plugin {
+     private _createRetrievalTool;
+     private _storeBlock;
+     private _buildPreviewText;
++    private _isStoredOffloadPlaceholder;
++    private _repairRestoredToolResults;
++    private _offloadToolResult;
+     private _handleToolResult;
+ }
+ //# sourceMappingURL=plugin.d.ts.map
+\ No newline at end of file
+diff --git a/dist/src/vended-plugins/context-offloader/plugin.js b/dist/src/vended-plugins/context-offloader/plugin.js
+index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..8bca8edc14f7ccb9c2d10e48c7901345098a7837 100644
+--- a/dist/src/vended-plugins/context-offloader/plugin.js
++++ b/dist/src/vended-plugins/context-offloader/plugin.js
+@@ -1,5 +1,5 @@
+ import { AfterToolCallEvent, BeforeModelCallEvent } from '../../hooks/events.js';
+-import { TextBlock, JsonBlock, ToolResultBlock, Message } from '../../types/messages.js';
++import { TextBlock, JsonBlock, ToolUseBlock, ToolResultBlock, Message } from '../../types/messages.js';
+ import { ImageBlock, VideoBlock, DocumentBlock } from '../../types/media.js';
+ import { tool } from '../../tools/tool-factory.js';
+ import { z } from 'zod';
+@@ -48,6 +48,21 @@ const CHARS_PER_TOKEN = 4;
+ const DEFAULT_MAX_RESULT_TOKENS = 2_500;
+ const DEFAULT_PREVIEW_TOKENS = 1_000;
+ const RETRIEVAL_TOOL_NAME = 'retrieve_offloaded_content';
++function offloadGuidance(includeRetrievalTool) {
++    let guidance = 'Tool result was offloaded to external storage due to size.\n' +
++        'Use the preview below if it answers your question.\n';
++    if (includeRetrievalTool) {
++        guidance +=
++            'If you need more detail, use retrieve_offloaded_content with a reference and:\n' +
++                '  - pattern: regex or keyword to find matching lines with context\n' +
++                '  - line_range: { start, end } to read a specific span of lines\n' +
++                'Retrieve full content (omit pattern/line_range) as a last resort.';
++    }
++    else {
++        guidance += 'If you need more detail, use your available tools to access specific data.';
++    }
++    return guidance;
++}
+ const retrievalInputSchema = z.object({
+     reference: z.string().describe('The reference string from the offload placeholder (e.g. "mem_1_tool-123_0").'),
+     pattern: z
+@@ -164,6 +179,7 @@ export class ContextOffloader {
+     _includeRetrievalTool;
+     _evictAfterCycles;
+     _storageByAgent = new WeakMap();
++    _scannedAgents = new WeakSet();
+     _keyStoredAt = new Map();
+     _retrievalTool;
+     constructor(config) {
+@@ -214,7 +230,8 @@ export class ContextOffloader {
+         }
+         this._storageForAgent(agent);
+         agent.addHook(AfterToolCallEvent, (event) => this._handleToolResult(event));
+-        agent.addHook(BeforeModelCallEvent, () => {
++        agent.addHook(BeforeModelCallEvent, async (event) => {
++            await this._repairRestoredToolResults(event.agent);
+             const cycleCount = agent.metrics.cycleCount;
+             if (this._storage instanceof LegacyInMemoryStorage) {
+                 this._storage._evict(cycleCount);
+@@ -345,40 +362,130 @@ export class ContextOffloader {
+             .filter((r) => r.ref)
+             .map((r) => `  ${r.ref} (${r.description})`)
+             .join('\n');
+-        let guidance = 'Tool result was offloaded to external storage due to size.\n' +
+-            'Use the preview below if it answers your question.\n';
+-        if (this._includeRetrievalTool) {
+-            guidance +=
+-                'If you need more detail, use retrieve_offloaded_content with a reference and:\n' +
+-                    '  - pattern: regex or keyword to find matching lines with context\n' +
+-                    '  - line_range: { start, end } to read a specific span of lines\n' +
+-                    'Retrieve full content (omit pattern/line_range) as a last resort.';
+-        }
+-        else {
+-            guidance += 'If you need more detail, use your available tools to access specific data.';
+-        }
++        const guidance = offloadGuidance(this._includeRetrievalTool);
+         return (`[Offloaded: ${content.length} blocks, ~${tokenCount.toLocaleString()} tokens]\n` +
+             `${guidance}\n\n` +
+             `${preview}\n\n` +
+             `[Stored references:]\n${refLines}`);
+     }
+-    async _handleToolResult(event) {
+-        if (event.result.status === 'error')
+-            return;
+-        // Skip delegation tool results — their content is the final delegated answer
+-        // and must not be truncated/offloaded. The delegation plugin transforms this
+-        // result into the AgentResult.lastMessage, so offloading would replace the
+-        // final answer with an unrecoverable placeholder.
+-        if (event.tool instanceof AgentAsTool && event.tool.delegate)
+-            return;
+-        // Skip results from the retrieval tool to prevent circular offloading
+-        if (this._includeRetrievalTool && event.toolUse.name === RETRIEVAL_TOOL_NAME)
++    async _isStoredOffloadPlaceholder(agent, result) {
++        const first = result.content[0];
++        if (!(first instanceof TextBlock))
++            return false;
++        const marker = first.text.match(/^\[Offloaded: (\d+) blocks, ~[\d,]+ tokens\]\n/);
++        if (!marker)
++            return false;
++        const guidancePrefix = `${marker[0]}${offloadGuidance(this._includeRetrievalTool)}\n\n`;
++        const referencesMarker = '\n\n[Stored references:]\n';
++        const referencesAt = first.text.lastIndexOf(referencesMarker);
++        if (!first.text.startsWith(guidancePrefix) || referencesAt < guidancePrefix.length)
++            return false;
++        // A tool can return marker-like text. Even when it names a real stored key,
++        // never trust a purported preview larger than this plugin could have built: a
++        // forged oversized preview would otherwise bypass restored-history repair.
++        const preview = first.text.slice(guidancePrefix.length, referencesAt);
++        if (preview.length > this._previewTokens * CHARS_PER_TOKEN)
++            return false;
++        const referencesText = first.text.slice(referencesAt + referencesMarker.length);
++        if (referencesText === '' || referencesText.endsWith('\n'))
++            return false;
++        const referenceLines = referencesText.split('\n');
++        const parsedReferences = referenceLines.map((line) => line.match(/^  (\S+) \([^\r\n]+\)$/));
++        if (parsedReferences.some((match) => match === null))
++            return false;
++        const originalBlockCount = Number(marker[1]);
++        const references = parsedReferences.map((match) => match[1]);
++        const supplementalReferences = [];
++        for (const supplemental of result.content.slice(1)) {
++            if (!(supplemental instanceof TextBlock))
++                return false;
++            const media = supplemental.text.match(/^\[(?:image|video|document): .+, \d+ bytes(?: \| ref: (\S+))?\]$/);
++            if (!media)
++                return false;
++            if (media[1])
++                supplementalReferences.push(media[1]);
++        }
++        if (supplementalReferences.some((reference) => !references.includes(reference)))
++            return false;
++        const referenceIndexes = references.map((reference) => {
++            const directPrefix = `${result.toolUseId}_`;
++            const nestedPrefix = `_${directPrefix}`;
++            const suffix = reference.startsWith(directPrefix)
++                ? reference.slice(directPrefix.length)
++                : reference.includes(nestedPrefix)
++                    ? reference.slice(reference.lastIndexOf(nestedPrefix) + nestedPrefix.length)
++                    : '';
++            return /^\d+$/.test(suffix) ? Number(suffix) : -1;
++        });
++        const uniqueIndexes = new Set(referenceIndexes);
++        if (originalBlockCount < 1 || references.length > originalBlockCount ||
++            referenceIndexes.some((index) => index < 0 || index >= originalBlockCount) ||
++            uniqueIndexes.size !== referenceIndexes.length)
++            return false;
++        try {
++            const storage = this._storageForAgent(agent);
++            for (const reference of references) {
++                const stored = await retrieveContent(storage, reference);
++                if (stored.content.length === 0 || stored.contentType === '')
++                    return false;
++            }
++            return true;
++        }
++        catch {
++            return false;
++        }
++    }
++
++    async _repairRestoredToolResults(agent) {
++        if (this._scannedAgents.has(agent))
+             return;
+-        const content = event.result.content;
+-        const toolUseId = event.result.toolUseId;
+-        const tokenCount = await event.agent.model.countTokens([new Message({ role: 'user', content: [event.result] })]);
++        // Mark before awaiting count/storage so a failure cannot turn the scan into a
++        // per-cycle retry loop. Session restore has already run during initialize(),
++        // while request assembly clones messages only after this hook completes.
++        this._scannedAgents.add(agent);
++        const delegationToolUseIds = new Set();
++        const retrievalToolUseIds = new Set();
++        for (const message of agent.messages) {
++            for (const block of message.content) {
++                if (!(block instanceof ToolUseBlock))
++                    continue;
++                const tool = agent.toolRegistry.get(block.name);
++                if (tool instanceof AgentAsTool && tool.delegate) {
++                    delegationToolUseIds.add(block.toolUseId);
++                }
++                if (this._includeRetrievalTool && block.name === RETRIEVAL_TOOL_NAME) {
++                    retrievalToolUseIds.add(block.toolUseId);
++                }
++            }
++        }
++        for (const message of agent.messages) {
++            for (let index = 0; index < message.content.length; index += 1) {
++                const block = message.content[index];
++                if (!(block instanceof ToolResultBlock) || block.status !== 'success' ||
++                    delegationToolUseIds.has(block.toolUseId) || retrievalToolUseIds.has(block.toolUseId))
++                    continue;
++                try {
++                    if (await this._isStoredOffloadPlaceholder(agent, block))
++                        continue;
++                    const replacement = await this._offloadToolResult(agent, block);
++                    if (replacement) {
++                        // Replace only the content block. The Message object (and therefore
++                        // its trackingId/metadata/position) and the matching toolUseId stay intact.
++                        message.content[index] = replacement;
++                    }
++                }
++                catch (err) {
++                    logger.warn(`tool_use_id=<${block.toolUseId}> | failed to inspect restored tool result, keeping original`, err);
++                }
++            }
++        }
++    }
++    async _offloadToolResult(agent, result) {
++        const content = result.content;
++        const toolUseId = result.toolUseId;
++        const tokenCount = await agent.model.countTokens([new Message({ role: 'user', content: [result] })]);
+         if (tokenCount <= this._maxResultTokens)
+-            return;
++            return undefined;
+         // Extract text preview from text/JSON blocks
+         const textParts = [];
+         for (const block of content) {
+@@ -388,22 +489,28 @@ export class ContextOffloader {
+                 textParts.push(JSON.stringify(block.json, null, 2));
+         }
+         const fullText = textParts.join('\n');
+-        // Store each content block to the storage backend
++        // Store each content block to the storage backend. Only publish references
++        // after every write succeeds; a failure leaves the caller's result untouched.
+         let references;
+-        try {
+-            const storage = this._storageForAgent(event.agent);
+-            references = await Promise.all(content.map((block, i) => this._storeBlock(storage, block, `${toolUseId}_${i}`)));
++        const storage = this._storageForAgent(agent);
++        const settled = await Promise.allSettled(content.map((block, i) => this._storeBlock(storage, block, `${toolUseId}_${i}`)));
++        const failed = settled.find((entry) => entry.status === 'rejected');
++        if (failed) {
+             if (!isOffloaderStorage(storage)) {
+-                const storedAt = event.agent.metrics.cycleCount;
+-                for (const entry of references) {
+-                    if (entry.ref)
+-                        this._keyStoredAt.set(entry.ref, storedAt);
+-                }
++                await Promise.allSettled(settled.flatMap((entry) => entry.status === 'fulfilled' && entry.value.ref
++                    ? [storage.delete(entry.value.ref)]
++                    : []));
+             }
++            logger.warn(`tool_use_id=<${toolUseId}> | failed to offload tool result, keeping original`, failed.reason);
++            return undefined;
+         }
+-        catch (err) {
+-            logger.warn(`tool_use_id=<${toolUseId}> | failed to offload tool result, keeping original`, err);
+-            return;
++        references = settled.map((entry) => entry.value);
++        if (!isOffloaderStorage(storage)) {
++            const storedAt = agent.metrics.cycleCount;
++            for (const entry of references) {
++                if (entry.ref)
++                    this._keyStoredAt.set(entry.ref, storedAt);
++            }
+         }
+         logger.debug(`tool_use_id=<${toolUseId}>, blocks=<${references.length}>, tokens=<${tokenCount}> | tool result offloaded`);
+         // Build replacement content: preview text + media placeholders
+@@ -428,11 +535,28 @@ export class ContextOffloader {
+                 newContent.push(new TextBlock(`[${label}, ${size} bytes${ref ? ` | ref: ${ref}` : ''}]`));
+             }
+         }
+-        event.result = new ToolResultBlock({
+-            toolUseId: event.result.toolUseId,
+-            status: event.result.status,
++        return new ToolResultBlock({
++            toolUseId: result.toolUseId,
++            status: result.status,
+             content: newContent,
+         });
+     }
++    async _handleToolResult(event) {
++        if (event.result.status === 'error')
++            return;
++        // Skip delegation tool results — their content is the final delegated answer
++        // and must not be truncated/offloaded. The delegation plugin transforms this
++        // result into the AgentResult.lastMessage, so offloading would replace the
++        // final answer with an unrecoverable placeholder.
++        if (event.tool instanceof AgentAsTool && event.tool.delegate)
++            return;
++        // Skip results from the retrieval tool to prevent circular offloading
++        if (this._includeRetrievalTool && event.toolUse.name === RETRIEVAL_TOOL_NAME)
++            return;
++        const replacement = await this._offloadToolResult(event.agent, event.result);
++        if (replacement)
++            event.result = replacement;
++    }
++
+ }
+ //# sourceMappingURL=plugin.js.map
+\ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/bash.d.ts b/dist/src/vended-tools/bash/bash.d.ts
 index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..8907d109ce2866e376df312ebc0bae1a68acec3d 100644
 --- a/dist/src/vended-tools/bash/bash.d.ts

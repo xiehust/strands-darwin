@@ -340,6 +340,7 @@ async function childCoverage(): Promise<void> {
       provider: 'bedrock', model: 'fake', region: 'us-west-2', maxTokens: 64_000,
       permissionMode: 'yolo', promptCache: false, thinkingEffort: 'high',
       summaryRatio: 0.8, preserveRecentMessages: 4, contextWarnRatio: 0.8, modelChoices: [],
+      contextOffload: true,
     },
     createModel: async () => childModel,
   });

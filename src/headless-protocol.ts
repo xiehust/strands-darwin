@@ -5,6 +5,7 @@ import { runWithStreamResumption } from './agent/stream-resumption.js';
 import type { HeadlessRuntime } from './headless.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import type { AppConfig } from './config.js';
+import { contextOverflowErrorMessage } from './context-overflow-error.js';
 import { failureFromError } from './trajectory/record.js';
 
 export const HEADLESS_SCHEMA_VERSION = 1 as const;
@@ -244,7 +245,7 @@ export class StructuredHeadlessWriter {
 export function structuredFailure(stage: StructuredFailureStage, error: unknown): StructuredFailure {
   const failure = failureFromError(error);
   const name = bound(failure.name, STRUCTURED_FIELD_LIMIT);
-  const message = bound(failure.message, STRUCTURED_FIELD_LIMIT);
+  const message = bound(contextOverflowErrorMessage(error), STRUCTURED_FIELD_LIMIT);
   const cause = failure.cause === undefined ? undefined : bound(failure.cause, STRUCTURED_FIELD_LIMIT);
   return {
     stage,

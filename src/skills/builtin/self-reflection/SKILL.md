@@ -51,8 +51,9 @@ values; all four go into the child prompt verbatim.
 ## 2. Launch the reflection worker
 
 Construct a shell-safe darwin command for the repository root and launch it with the `bash`
-tool in **`start` mode** with `--yolo --context-offload`; never run the child with foreground
-`execute`. The managed-child contract is the `developer` skill's, applied unchanged: monitor
+tool in **`start` mode** with `--yolo --context-offload`; offload is already default-on, and
+this retained process-only flag force-enables it if persistent config opted out. Never run the
+child with foreground `execute`. The managed-child contract is the `developer` skill's, applied unchanged: monitor
 with `bash status`, drain with incremental `bash output` until `hasMore: false`, capture the
 child's `^session: ([a-z0-9_-]+)$` and `^usage: input=(\d+|-) output=(\d+|-) cacheRead=(\d+|-)
 cacheWrite=(\d+|-)$` stderr records, and treat `-` as unknown, never zero. The child

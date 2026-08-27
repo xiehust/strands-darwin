@@ -99,6 +99,7 @@ function fakeConfig() {
     promptCache: false,
     thinkingEffort: 'high',
     summaryRatio: 0.8, contextWarnRatio: 0.8,
+    contextOffload: true,
     preserveRecentMessages: 4,
     modelChoices: [],
   } as const;

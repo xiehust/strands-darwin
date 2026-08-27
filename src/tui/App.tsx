@@ -25,6 +25,7 @@ import {
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import { formatUsageValue, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from '../agent/stream-resumption.js';
+import { contextOverflowErrorMessage } from '../context-overflow-error.js';
 
 import { routeSdkLogs } from '../agent/sdk-logging.js';
 import { SYSTEM_PROMPT_FILENAME } from '../agent/system-prompt.js';
@@ -690,7 +691,7 @@ export function App({
         turnAborted.current = true;
         dispatch({
           type: 'notice',
-          text: `turn failed: ${error instanceof Error ? error.message : String(error)}`,
+          text: `turn failed: ${contextOverflowErrorMessage(error)}`,
           severity: 'error',
         });
       } finally {

@@ -226,6 +226,36 @@ async function automaticContinuationProtocols(): Promise<void> {
 }
 
 
+async function contextOverflowGuidance(): Promise<void> {
+  header('structured headless — one bounded context-overflow projection in every failure path');
+  const text = await cli('context-overflow', 'text');
+  nodeAssert.equal(text.code, 1);
+  nodeAssert.equal(text.stdout, '');
+  nodeAssert.match(text.stderr, /error: prompt tokens .*\/compact.*narrower request.*\/clear/u);
+
+  const json = await cli('context-overflow', 'json');
+  const terminal = lines(json.stdout)[0]!;
+  nodeAssert.equal(terminal.schemaVersion, 1);
+  nodeAssert.equal(terminal.outcome, 'failure');
+  const jsonError = (terminal.errors as { message: string; name: string }[])[0]!;
+  nodeAssert.equal(jsonError.name, 'ContextWindowOverflowError');
+  nodeAssert.match(jsonError.message, /\/compact.*narrower request.*\/clear/u);
+
+  const stream = await cli('context-overflow', 'stream-json');
+  const records = lines(stream.stdout);
+  nodeAssert.equal(records.at(-1)?.outcome, 'failure');
+  nodeAssert.equal(records.filter((record) => record.type === 'turn.continuing').length, 0);
+  nodeAssert.equal(records.filter((record) => record.type === 'turn.started').length, 1);
+  const streamError = (records.at(-1)?.errors as { message: string }[])[0]!;
+  nodeAssert.equal(streamError.message, jsonError.message);
+
+  const ordinary = await cli('turn-failure', 'json');
+  const ordinaryMessage = ((lines(ordinary.stdout)[0]?.errors as { message: string }[])[0]?.message);
+  nodeAssert.equal(ordinaryMessage, 'fixture turn failed');
+  assert('text and schema-v1 structured failures share guidance while ordinary errors and no-loop ordering stay unchanged', true);
+}
+
+
 async function phaseControls(): Promise<void> {
   header('structured headless — phase controls precede the requested turn');
   const traceFile = path.join(os.tmpdir(), `darwin-headless-phase-${process.pid}.jsonl`);
@@ -410,6 +440,7 @@ function usageContract(): void {
     provider: 'openai', model: 'fake', region: 'us-east-1', maxTokens: 100,
     permissionMode: 'default', promptCache: false, thinkingEffort: 'low',
     summaryRatio: 0.8, contextWarnRatio: 0.8, preserveRecentMessages: 4,
+    contextOffload: true,
     openaiApi: 'responses', modelChoices: [],
   };
   nodeAssert.deepEqual(
@@ -439,6 +470,7 @@ function boundsAndEscaping(): void {
 await parserAndTextCompatibility();
 await lifecycleObservations();
 await automaticContinuationProtocols();
+await contextOverflowGuidance();
 await phaseControls();
 await terminalLifecycle();
 await sdkProjectionPrivacy();

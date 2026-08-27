@@ -176,7 +176,10 @@ async function missingDirectory(): Promise<void> {
   assert('developer launches one complete worker rather than a planning-only child', workflow.includes('Launch the complete child worker') && workflow.includes('Do not set `DARWIN_PLANNING_ONLY`') && workflow.includes('one turn owns the complete repository workflow'));
   assert('developer lets the child own configured skills and repository lifecycle', workflow.includes('load any relevant non-developer skills') && workflow.includes('create or maintain task/planning/research artifacts') && workflow.includes('update specs, and commit'));
   assert('developer makes model-call budgets explicit opt-in only', workflow.includes('Model-call budgets are opt-in') && workflow.includes('Do not add `--max-model-calls`') && workflow.includes('explicit user/Host ceiling'));
-  assert('developer defaults to yolo plus process-only offload', workflow.includes('Run the first worker with `--yolo --context-offload`'));
+  assert('developer keeps the process force-on override while stating ordinary default safety',
+    workflow.includes('Run the first worker with `--yolo --context-offload`') &&
+    workflow.includes('offload is already default-on for ordinary runs') &&
+    workflow.includes('force-enables it even if persistent config opted out'));
   assert('developer does not compact a fresh direct worker', workflow.includes('do not use `--compact-before` on a fresh child'));
   assert('developer compacts only broad corrections and keeps budgets opt-in', workflow.includes('prior worker turn left a broad implementation/check transcript') && workflow.includes('narrow correction') && workflow.includes('Add `--max-model-calls <n>` only'));
   assert('developer batches independent tools but serializes dependent writes', workflow.includes('batch mutually independent read-only work') && workflow.includes('Writes, commits, and commands whose inputs depend on an earlier result stay serial'));
@@ -285,6 +288,8 @@ async function missingDirectory(): Promise<void> {
     'reflection delegates to a managed headless worker without recursion',
     reflectionWorkflow.includes('`start` mode') &&
       reflectionWorkflow.includes('--yolo --context-offload') &&
+      reflectionWorkflow.includes('offload is already default-on') &&
+      reflectionWorkflow.includes('force-enables it if persistent config opted out') &&
       reflectionWorkflow.includes('must not load the `developer`, `self-evolution-research`, or `self-reflection` skills'),
   );
   assert(

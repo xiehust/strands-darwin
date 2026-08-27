@@ -163,7 +163,7 @@ export interface RuntimeOptions {
   permissionBridge: PermissionBridge;
   /** Overrides the config's `permissionMode` (CLI flags win over the file). */
   permissionModeOverride?: ApprovalMode;
-  /** Process-local opt-in for the existing ContextOffloader; never persisted. */
+  /** Process-local force-on override for ContextOffloader; never persisted. */
   contextOffloadOverride?: true;
   /** Refuses the next parent-Agent SDK model call after this many in the process. */
   maxModelCalls?: number;
@@ -522,17 +522,19 @@ export class AgentRuntime {
       summaryRatio: 0.8,
       preserveRecentMessages: config.preserveRecentMessages,
     });
-    // Off by default. Storage is session-scoped and on disk, next to the
-    // background-task logs, so a reference the model holds still resolves after
-    // `--resume`; `evictAfterCycles: null` disables eviction for the same reason
-    // — a resumed conversation can cite a reference from many cycles ago. The
+    // On by default for every main runtime; explicit config false opts out and the
+    // headless CLI override can force it back on for one process. Storage is
+    // session-scoped and on disk, next to the background-task logs, so a reference
+    // the model holds still resolves after `--resume`; `evictAfterCycles: null`
+    // disables eviction for the same reason — a resumed conversation can cite a
+    // reference from many cycles ago. The
     // corollary is that offload files accumulate unbounded: nothing in darwin
     // deletes session state today (there is no session GC to align with), so the
     // bound is manual — delete a finished session's directories, as documented
     // on `contextOffload` in config.ts. Do not add per-session cleanup here: a
     // fresh session id is timestamp-unique, so its offload dir never pre-exists,
     // and any other session's dir may still be resumed.
-    const contextOffload = options.contextOffloadOverride === true || config.contextOffload === true;
+    const contextOffload = options.contextOffloadOverride === true || config.contextOffload;
     const offloader =
       contextOffload
         ? new ContextOffloader({
@@ -608,8 +610,10 @@ export class AgentRuntime {
 
     // Child tool allowlists can include MCP and plugin tools, whose final names do
     // not exist until initialization. Capture that catalogue before registering
-    // `subagent` so children can never recursively delegate.
-    const childTools = agent.tools;
+    // `subagent` so children can never recursively delegate. The offloader's
+    // retrieval capability is parent-session state: children have no matching
+    // plugin/storage contract, so never hand them a dangling retrieval tool.
+    const childTools = agent.tools.filter((tool) => tool.name !== 'retrieve_offloaded_content');
     const agentDefinitions = await loadAgentDefinitions(
       options.projectRoot,
       childTools.map((tool) => tool.name),

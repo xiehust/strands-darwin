@@ -37,6 +37,7 @@ const CONFIG: AppConfig = withSoleChoice({
   // output, so a tight budget would truncate the turn rather than the thought.
   maxTokens: 4096,
   summaryRatio: 0.3, contextWarnRatio: 0.8,
+  contextOffload: true,
   preserveRecentMessages: 10,
   permissionMode: 'default',
   // Off: a single sub-1k-token request can never clear the minimum cacheable

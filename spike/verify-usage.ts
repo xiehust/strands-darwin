@@ -19,6 +19,7 @@ function config(provider: 'bedrock' | 'anthropic' | 'openai', openaiApi?: 'chat'
     promptCacheTtl: '5m',
     thinkingEffort: 'high',
     summaryRatio: 0.8, contextWarnRatio: 0.8,
+    contextOffload: true,
     preserveRecentMessages: 4,
     ...(openaiApi !== undefined && { openaiApi }),
     modelChoices: [],

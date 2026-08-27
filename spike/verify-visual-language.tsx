@@ -54,6 +54,7 @@ const info: RuntimeInfo = {
     provider: 'bedrock', model: 'us.anthropic.claude-sonnet-4-6', region: 'us-west-2',
     modelChoices: [], maxTokens: 64_000, summaryRatio: 0.8, preserveRecentMessages: 10,
     contextWarnRatio: 0.8, permissionMode: 'default', promptCache: true,
+    contextOffload: true,
     promptCacheTtl: '5m', thinkingEffort: 'high', trajectory: true, diagnostics: false,
   },
   projectRoot: '/workspace', permissionMode: 'default', sessionId: 'session-visual', resumed: false,

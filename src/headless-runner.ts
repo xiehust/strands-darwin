@@ -7,6 +7,7 @@ import { classify } from './agent/permission.js';
 import { dispatchLabel } from './agents/dispatch-registry.js';
 import { routeSdkLogs, type SdkLogEntry } from './agent/sdk-logging.js';
 import type { CliOptions } from './cli-args.js';
+import { contextOverflowErrorMessage } from './context-overflow-error.js';
 import {
   createHeadlessPermissionBridge,
   formatHeadlessDiagnosticsProblem,
@@ -327,5 +328,5 @@ function isInterruptedError(error: unknown): boolean {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return contextOverflowErrorMessage(error);
 }

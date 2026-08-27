@@ -5,28 +5,64 @@
  * is deliberately larger than the offload threshold, and the assertions are on
  * what ends up in the conversation and in the tool catalogue.
  */
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   Agent,
+  ContextWindowOverflowError,
+  Message,
   Model,
+  TextBlock,
+  ToolResultBlock,
+  ToolUseBlock,
   tool,
   type BaseModelConfig,
-  type Message,
   type ModelStreamEvent,
 } from '@strands-agents/sdk';
 import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import { z } from 'zod';
 
-import { AgentRuntime } from '../src/agent/runtime.js';
+import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { classify } from '../src/agent/permission.js';
+import { configPath } from '../src/config.js';
+import { darwinDir } from '../src/paths.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-context-offload-test';
 const HUGE = 'x'.repeat(40_000);
 ownPrivateHome('context-offload-runtime');
+
+class RuntimeOverflowModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.runtime-overflow', contextWindowLimit: 200_000 };
+  calls = 0;
+  seen: Message[] = [];
+
+  override updateConfig(config: BaseModelConfig): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  override getConfig(): BaseModelConfig {
+    return this.config;
+  }
+
+  override async *stream(messages: Message[]): AsyncIterable<ModelStreamEvent> {
+    this.calls += 1;
+    this.seen = messages.map((message) => message.clone());
+    const resultText = messages.flatMap((message) => message.content.flatMap((block) =>
+      block.type === 'toolResultBlock'
+        ? block.content.flatMap((content) => content.type === 'textBlock' ? [content.text] : [])
+        : [],
+    )).join('');
+    if (resultText.length > 10_000) throw new ContextWindowOverflowError('fixture runtime overflow');
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    yield { type: 'modelContentBlockStartEvent' };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'bounded runtime resume' } };
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+  }
+}
 
 class OneToolCallModel extends Model<BaseModelConfig> {
   private config: BaseModelConfig = { modelId: 'fake.offload', contextWindowLimit: 200_000 };
@@ -148,6 +184,65 @@ const retrievedText = (retrieved.content as readonly { text?: string }[])
 assert('the stored reference resolves to the full offloaded content',
   retrieved.status !== 'error' && retrievedText.includes(HUGE));
 
+header('context offload — default main runtime repairs a resumable legacy snapshot');
+const resumeRoot = path.join(ROOT, 'runtime-resume-project');
+await mkdir(resumeRoot, { recursive: true });
+const legacyRuntimeModel = new RuntimeOverflowModel();
+setRuntimeModelFactoryForTest(async () => legacyRuntimeModel);
+let seededRuntime: AgentRuntime | undefined;
+let resumedRuntime: AgentRuntime | undefined;
+try {
+  seededRuntime = await AgentRuntime.create({
+    projectRoot: resumeRoot,
+    session: { kind: 'new' },
+    permissionBridge: async () => ({ allowed: false }),
+  });
+  const sessionId = seededRuntime.info.sessionId;
+  const agent = (seededRuntime as unknown as { agent: Agent }).agent;
+  const toolUseId = 'runtime-legacy-tool-use';
+  agent.messages.push(
+    new Message({
+      role: 'user',
+      content: [new TextBlock('retain runtime legacy prompt')],
+    }),
+    new Message({
+      role: 'assistant',
+      content: [new ToolUseBlock({ name: 'legacyTool', toolUseId, input: {} })],
+    }),
+    new Message({
+      role: 'user',
+      content: [new ToolResultBlock({
+        toolUseId,
+        status: 'success',
+        content: [new TextBlock(HUGE)],
+      })],
+    }),
+  );
+  await agent.sessionManager!.saveSnapshot({ target: agent, isLatest: true });
+  await seededRuntime.shutdown();
+  seededRuntime = undefined;
+
+  resumedRuntime = await AgentRuntime.create({
+    projectRoot: resumeRoot,
+    session: { kind: 'id', sessionId },
+    permissionBridge: async () => ({ allowed: false }),
+  });
+  for await (const _event of resumedRuntime.send('resume through the real runtime')) {
+    // Consume the ordinary runtime stream so invocation autosave completes.
+  }
+  const seenText = legacyRuntimeModel.seen.flatMap((message) => message.content.flatMap((block) =>
+    block instanceof ToolResultBlock
+      ? block.content.flatMap((content) => content instanceof TextBlock ? [content.text] : [])
+      : [],
+  )).join('');
+  assert('the real resumed runtime repairs legacy history before its first provider request',
+    legacyRuntimeModel.calls === 1 && seenText.includes('[Stored references:]') && !seenText.includes(HUGE));
+} finally {
+  await seededRuntime?.shutdown();
+  await resumedRuntime?.shutdown();
+  setRuntimeModelFactoryForTest(undefined);
+}
+
 header('context offload — permission classification');
 const retrieval = classify('retrieve_offloaded_content', { reference: 'offloader/abc' });
 assert('the retrieval tool is classified read, so it is statically safe',
@@ -160,20 +255,56 @@ assert('a missing reference still classifies as read rather than falling through
 const unknownTool = classify('some_unregistered_tool', {});
 assert('unrelated unknown tools still fail closed as execute', unknownTool.kind === 'execute');
 
-header('context offload — process override uses runtime plugin without config persistence');
+header('context offload — main runtime default, opt-out, and process override');
 const runtimeRoot = path.join(ROOT, 'runtime-project');
-await mkdir(runtimeRoot, { recursive: true });
-const runtime = await AgentRuntime.create({
+await mkdir(path.join(darwinDir(runtimeRoot), 'agents'), { recursive: true });
+await writeFile(
+  path.join(darwinDir(runtimeRoot), 'agents', 'retrieval-child.md'),
+  '---\nname: retrieval-child\ndescription: Probe parent-only offload retrieval.\ntools: [retrieve_offloaded_content]\n---\n\nReport your tool catalogue.\n',
+);
+
+const defaultRuntime = await AgentRuntime.create({
+  projectRoot: runtimeRoot,
+  session: { kind: 'new' },
+  permissionBridge: async () => ({ allowed: false }),
+});
+try {
+  assert('a default main runtime registers the retrieval tool',
+    defaultRuntime.info.toolNames.includes('retrieve_offloaded_content'));
+  assert('the effective default is visible in loaded config', defaultRuntime.config.contextOffload === true);
+  assert('child definitions cannot request the parent session retrieval capability',
+    defaultRuntime.info.agentProblems.some((problem) =>
+      problem.file.endsWith('retrieval-child.md') && problem.reason.includes('unknown tool')));
+} finally {
+  await defaultRuntime.shutdown();
+}
+
+await writeFile(configPath(runtimeRoot), JSON.stringify({ contextOffload: false }));
+const optedOut = await AgentRuntime.create({
+  projectRoot: runtimeRoot,
+  session: { kind: 'new' },
+  permissionBridge: async () => ({ allowed: false }),
+});
+try {
+  assert('explicit false omits the retrieval tool',
+    !optedOut.info.toolNames.includes('retrieve_offloaded_content'));
+  assert('the persistent opt-out remains visible in loaded config', optedOut.config.contextOffload === false);
+} finally {
+  await optedOut.shutdown();
+}
+
+const forcedOn = await AgentRuntime.create({
   projectRoot: runtimeRoot,
   session: { kind: 'new' },
   permissionBridge: async () => ({ allowed: false }),
   contextOffloadOverride: true,
 });
 try {
-  assert('the process override registers the retrieval tool', runtime.info.toolNames.includes('retrieve_offloaded_content'));
-  assert('the loaded config remains unchanged', runtime.config.contextOffload === undefined);
+  assert('the process override forces the retrieval tool back on',
+    forcedOn.info.toolNames.includes('retrieve_offloaded_content'));
+  assert('the process override does not mutate loaded config', forcedOn.config.contextOffload === false);
 } finally {
-  await runtime.shutdown();
+  await forcedOn.shutdown();
 }
 
 await rm(ROOT, { recursive: true, force: true });

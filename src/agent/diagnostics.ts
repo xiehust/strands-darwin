@@ -9,7 +9,7 @@
  * `warn`/`error` are written here too even though they already reach the renderer,
  * so one file holds the whole story rather than half of it.
  *
- * Off unless asked for, like `contextOffload` and for the same reason: these lines
+ * Off unless asked for: unlike default-on context offload, these lines
  * interpolate provider payloads and can therefore carry conversation-derived
  * material. With the feature off nothing here runs at all — `sdk-logging.ts`
  * installs literal no-ops and `AgentRuntime` builds no log — so a default run is

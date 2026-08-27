@@ -185,7 +185,8 @@ export interface SessionFields {
   contextWarnRatio: number;
   /**
    * Offload oversized tool results to session-scoped storage, keeping a preview
-   * plus a reference in context. Off by default. See `maxResultTokens`.
+   * plus a reference in context. On by default; explicit `false` opts out.
+   * See `maxResultTokens`.
    *
    * Storage accumulates by design: offloaded files live under the session's own
    * directory (`~/.darwin/sessions/<project-key>/<session-id>/offload/`) and are
@@ -196,7 +197,7 @@ export interface SessionFields {
    * `~/.darwin/sessions/<project-key>/`: `<session-id>/` (background logs and
    * offload files) and `session/<session-id>/` (conversation snapshots).
    */
-  contextOffload?: boolean;
+  contextOffload: boolean;
   /** Token threshold above which a tool result is offloaded. SDK default: 2500. */
   maxResultTokens?: number;
   /**
@@ -204,10 +205,10 @@ export interface SessionFields {
    * `~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl`, powering
    * `darwin trajectory search|replay|fork` and `/trajectory`. On by default.
    *
-   * On by default where `contextOffload` is off by default for a reason worth
-   * stating: offloading changes what the model sees, while recording changes
-   * nothing at all about a turn — it is an observer whose failures degrade to a
-   * notice. Snapshots and background logs are likewise written unconditionally.
+   * Like context offload, recording is on unless explicitly switched off.
+   * Recording changes nothing the model sees: it is an observer whose failures
+   * degrade to a notice. Snapshots and background logs are likewise written
+   * unconditionally.
    * Set `false` to write nothing; the caps are in `src/trajectory/record.ts`.
    */
   trajectory?: boolean;
@@ -221,8 +222,8 @@ export interface SessionFields {
    * it placed its cache points, that native token counting fell back to estimation —
    * so without this a session that was slow because the provider throttled it leaves
    * no evidence at all. Those same lines interpolate provider payloads, which is why
-   * it defaults off exactly like `contextOffload`: whoever turns it on is debugging
-   * and has decided that is acceptable.
+   * diagnostics remains an explicit opt-in even though oversized-result offload is
+   * default-on.
    *
    * A boolean rather than a level: every fact worth turning this on for is at `debug`,
    * so an `info` setting would produce a file that exists and is silent about the
@@ -323,6 +324,7 @@ const DEFAULTS = {
   promptCache: true,
   thinkingEffort: DEFAULT_THINKING_EFFORT,
   contextWarnRatio: 0.8,
+  contextOffload: true,
   memory: true,
   memoryHorizonDays: 28,
 } as const satisfies Partial<AppConfig>;
@@ -827,24 +829,21 @@ function validateSessionFields(
     contextWarnRatio:
       numberField(input, 'contextWarnRatio', configPath, { min: 0, max: 1 }) ??
       DEFAULTS.contextWarnRatio,
+    contextOffload:
+      booleanField(input, 'contextOffload', configPath) ?? DEFAULTS.contextOffload,
     memoryHorizonDays:
       integerField(input, 'memoryHorizonDays', configPath, { min: 0, max: 365 }) ??
       DEFAULTS.memoryHorizonDays,
   };
 
-  // Off unless asked for: offloading rewrites what the model sees, so it is an
-  // opt-in until it has been exercised against a live provider.
-  const contextOffload = booleanField(input, 'contextOffload', configPath);
-  if (contextOffload !== undefined) fields.contextOffload = contextOffload;
-
-  // On unless switched off, unlike offloading above: recording changes nothing the
-  // model sees. Stored rather than defaulted away so `false` stays distinguishable
-  // from absent for anything that reports what a run is doing.
+  // On unless switched off. Recording changes nothing the model sees. Stored rather
+  // than defaulted away so `false` stays distinguishable from absent for anything
+  // that reports what a run is doing.
   const trajectory = booleanField(input, 'trajectory', configPath);
   if (trajectory !== undefined) fields.trajectory = trajectory;
 
-  // Off unless asked for, like `contextOffload` and for the same kind of reason: the
-  // SDK's debug output interpolates provider payloads, so a log the user did not ask
+  // Off unless asked for: unlike default-on oversized-result offload, the SDK's
+  // debug output interpolates provider payloads, so a log the user did not ask
   // for could hold conversation-derived material they did not expect on disk. Stored
   // rather than defaulted away so `false` stays distinguishable from absent.
   const diagnostics = booleanField(input, 'diagnostics', configPath);
@@ -865,7 +864,7 @@ function validateSessionFields(
   // exactly like the context bloat it was written to bound.
   const maxResultTokens = numberField(input, 'maxResultTokens', configPath, { min: 1 });
   if (maxResultTokens !== undefined) {
-    if (contextOffload !== true) {
+    if (!fields.contextOffload) {
       throw new ConfigError(
         `${configPath}: "maxResultTokens" only applies when "contextOffload" is true.`,
       );

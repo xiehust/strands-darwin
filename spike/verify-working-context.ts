@@ -46,6 +46,7 @@ const CLAUDE_CONFIG: AppConfig = withSoleChoice({
   maxTokens: 8192,
   summaryRatio: 0.3,
   contextWarnRatio: 0.8,
+  contextOffload: true,
   preserveRecentMessages: 10,
   permissionMode: 'default',
   promptCache: true,

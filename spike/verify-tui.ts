@@ -18,7 +18,7 @@
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
- *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | cursor | completion |
+ *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | contextOverflow | cursor | completion |
  *                 pathCompletion | historySearch | recall | recallEmpty | resume | bang | queue | clear | mcpStderr | mcp |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
@@ -798,6 +798,44 @@ async function permissionEscape(): Promise<void> {
 
 
 /** Keyboard cursor editing is local and makes no model call. */
+
+/** Unrecovered overflow uses the same bounded actionable projection as headless. */
+async function contextOverflowFailure(): Promise<void> {
+  header('TUI — context overflow stays usable with actionable guidance');
+
+  const dir = '/tmp/darwin-context-overflow-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  const tui = startTui({
+    cwd: dir,
+    entry: path.join(REPO_ROOT, 'spike', 'fixtures', 'context-overflow-tui-cli.ts'),
+  });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const turn = tui.mark();
+    tui.submit('trigger fixture overflow');
+    await tui.waitFor('turn failed: prompt tokens', { timeoutMs: 60_000, from: turn });
+    await tui.waitFor('/compact', { timeoutMs: 60_000, from: turn });
+    await tui.waitFor('narrower request', { timeoutMs: 60_000, from: turn });
+    await tui.waitFor('/clear', { timeoutMs: 60_000, from: turn, settleMs: 300 });
+    await waitForIdle(tui, 60_000);
+    const failure = tui.screen.slice(turn);
+    assert('the interactive failure names every shared recovery action',
+      failure.includes('/compact') && failure.includes('narrower request') && failure.includes('/clear'));
+    assert('the failed TUI turn does not start an automatic continuation',
+      !failure.includes('model stream interrupted; continuing once'));
+
+    tui.submit('/exit');
+    assert('the session remains usable and exits after overflow',
+      (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+
 async function cursorEditing(): Promise<void> {
   header('TUI — keyboard cursor editing');
 
@@ -3562,6 +3600,7 @@ const SCENARIOS = {
   chunkedEnter,
   compacting: compactingInputOwnership,
   permissionEscape,
+  contextOverflow: contextOverflowFailure,
   cursor: cursorEditing,
   completion: slashCompletion,
   pathCompletion,

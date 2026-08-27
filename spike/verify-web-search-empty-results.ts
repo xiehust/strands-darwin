@@ -239,6 +239,7 @@ async function contract(root: string): Promise<void> {
         provider: 'bedrock', model: 'fake.child', region: 'us-west-2', maxTokens: 1000,
         permissionMode: 'yolo', promptCache: false, thinkingEffort: 'high', summaryRatio: 0.8,
         contextWarnRatio: 0.8, preserveRecentMessages: 4, modelChoices: [],
+        contextOffload: true,
       },
       createModel: async () => new EmptySearchChildModel(),
       onChildInitialized: (initialized) => { child = initialized; },
