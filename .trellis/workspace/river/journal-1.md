@@ -778,3 +778,24 @@ Classified Mantle overflow errors, made durable tool-result offload default-on, 
 ### Next Steps
 
 - Resume 08-27-llm-memory-extraction only when overflow work is no longer the priority.
+
+
+## Session 30: Agent-managed project memory tools
+
+**Date**: 2026-08-27
+**Task**: Agent-managed project memory tools
+**Branch**: `main`
+
+### Summary
+
+Replaced heuristic ambient memory extraction with parent-only memory_recall and staged memory_save tools, exact evidence validation, durable successful-turn commit, strict v3 migration, permission/lifecycle coverage, and synchronized architecture and user documentation. Typecheck, build, focused suites, full pnpm test, Trellis validation, and diff checks passed.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `06643fe` | (see git log) |
+
+### Status
+
+[OK] **Completed**
