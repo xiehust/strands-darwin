@@ -740,3 +740,41 @@ Split the 96 KB backlog into a thin router plus stable 20-priority pages, update
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: Recover oversized model context
+
+**Date**: 2026-08-27
+**Task**: Recover oversized model context
+**Branch**: `main`
+
+### Summary
+
+Classified Mantle overflow errors, made durable tool-result offload default-on, repaired oversized restored snapshots before provider requests, aligned bounded driver guidance, suspended memory extraction, and archived the completed overflow task.
+
+### Main Changes
+
+- Added exact Mantle context-overflow classification and default-on session-scoped file offload with explicit opt-out.
+- Repaired legacy oversized tool results before resumed provider assembly while preserving durable retrieval references and child isolation.
+- Aligned TUI, text, and structured failure guidance and synchronized architecture, specs, and bilingual docs.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e673891` | (see git log) |
+| `7a45463` | (see git log) |
+| `cbbd09d` | (see git log) |
+| `3bffe3d` | (see git log) |
+
+### Testing
+
+- [OK] pnpm test; pnpm typecheck; focused overflow/offload/headless/TUI suites; frozen offline install; SDK syntax and patch checks.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Resume 08-27-llm-memory-extraction only when overflow work is no longer the priority.
