@@ -1955,3 +1955,14 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Milestone | Accepted commit | Host acceptance |
 | --- | --- | --- |
 | Diagnose and fix provider-silent interactive heap growth | not committed (working-tree review requested) | `pnpm typecheck`; `pnpm tsx spike/verify-react-production-memory.ts`; `pnpm tsx spike/verify-startup-screen.tsx`; `pnpm tsx spike/verify-startup-pty.ts`; `pnpm test` |
+
+## Batch 62 — SER-041 clipboard image prompt input
+
+- Origin: `docs/research/research_2026-08-27.md`, run `2026-08-27T12:45:27Z` (rolled `peer` path).
+- Child session: `session-20260827-125133864`.
+- Managed tasks: `bg-28198ab5-9ffc-4dc1-8932-c30a5287b5d0` (implementation, succeeded, exit 0) and `bg-90e4820b-b04f-496e-896a-8813be8cd12d` (same-session Host-focused provider-rejection correction, succeeded, exit 0).
+- Token spend: implementation `input=522 output=59,088 cacheRead=36,976,101 cacheWrite=225,097`; correction `input=68 output=7,706 cacheRead=8,114,753 cacheWrite=21,641`; aggregate `input=590 output=66,794 cacheRead=45,090,854 cacheWrite=246,738`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SER-041 | `2b04e59` implementation, `152aa7d` task archive, `20b39e3` journal, Host-found correction `f4645d1` | Host inspected the source/spec/test diff and rejected the initial result because an unsupported multimodal provider consumed the only in-memory image. Acceptance followed only after the exact literal prompt and same image were restored for retry/removal without another clipboard read or model call. Host independently passed `verify-runtime-image-input.ts` (5/5), `verify-clipboard-image.ts` (8/8), `verify-image-viewer.ts` (34/34), `verify-prompt-queue.ts` (31/31), free pty `clipboardImage` (14/14), `queue` (17/17), `permissionEscape` (3/3), `compacting` (5/5), `completion` (67/67), `recall` (22/22), `historySearch` (14/14), stream-resumption and help suites, `pnpm typecheck`, full `pnpm test` after Host backlog closure, and `pnpm build`; plus commit/diff checks, clean-tree verification, and AGENTS.md size (28,097 bytes < 32 KiB). The feature uses one ordinary SDK text-plus-`ImageBlock` invocation, shares the bounded path-image decoder, preserves one-image queue ownership, and keeps all durable text records free of image bytes, base64, clipboard contents, and fabricated paths. |

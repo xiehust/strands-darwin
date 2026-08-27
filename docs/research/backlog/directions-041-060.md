@@ -365,7 +365,7 @@ Claude Code and Codex establish prompt-bound rewind/branch UX; the current Stran
 
 ## SER-041 — Attach a clipboard image to the next interactive prompt as a bounded visible chip, using the existing image decoder and SDK `ImageBlock` input while keeping trajectory/recall text-only and truthful
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 59
 - Score: 14
 - Importance: 5
@@ -377,6 +377,7 @@ Claude Code and Codex establish prompt-bound rewind/branch UX; the current Stran
 
 ### Implementation / acceptance evidence
 
+Accepted in `2b04e59` plus Host-found provider-rejection correction `f4645d1` (task archive `152aa7d`, journal `20b39e3`; child session `session-20260827-125133864`; managed tasks `bg-28198ab5-9ffc-4dc1-8932-c30a5287b5d0` and `bg-90e4820b-b04f-496e-896a-8813be8cd12d`, both succeeded, exit 0). Host inspected the 32-file implementation, rejected the initial provider-failure state because it consumed the only in-memory image, and accepted only after the same literal prompt and image were restored for retry/removal without another clipboard or model call. Host independently passed runtime image input 5/5, clipboard adapter 8/8, image decoder/viewer 34/34, prompt queue 31/31, free pty `clipboardImage` 14/14, `queue` 17/17, `permissionEscape` 3/3, `compacting` 5/5, `completion` 67/67, `recall` 22/22, `historySearch` 14/14, stream resumption, help, `pnpm typecheck`, and `pnpm build`; commit/diff checks, clean-tree verification, and AGENTS.md size (28,097 bytes < 32 KiB) also passed. The full `pnpm test` reached only the expected Host-owned interim backlog failure while this evidence section was empty; after this closure the backlog validator and full gate are rerun before final reporting.
 
 ### Notes / blockers / abandonment reason
 
