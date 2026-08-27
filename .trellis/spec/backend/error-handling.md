@@ -33,6 +33,12 @@ throw new ConfigError(`${path} is not valid JSON (expected Claude Code mcpServer
 | Generated-memory validation metadata cannot be persisted | Continue from the deterministic in-memory eligibility projection; omit unsafe generated context and do not refuse runtime | Audit metadata is useful but cannot be required to make a read-only safety decision |
 
 | `/memory` store is absent | List/show report absent; remember may create strict state; forget changes nothing | Absence is a valid local state, not corruption |
+| `contextOffload` is not boolean, or `maxResultTokens` is invalid / combined with explicit `contextOffload: false` | `ConfigError`, refuse to start; omitted/default-on and explicit `true` accept a valid threshold | A configured threshold must describe the effective plugin rather than silently coexist with an opt-out |
+| Restored oversized successful tool result with effective context offload | On the first pre-model hook, count/store/replace it through the normal durable offloader before request assembly; invocation autosave persists the bounded form | Protected recent history cannot be summarized away, so legacy snapshots need prevention before the doomed provider call |
+| Restored-result token count or offload storage fails | Keep the original block byte-for-byte, publish no placeholder/reference, finish the finite scan once, then continue ordinary model/error behavior | Optional storage must not corrupt tool pairing or create a retry loop/dangling reference |
+| Unrecovered `ContextWindowOverflowError` | Keep the session alive and use the shared bounded interactive/text/structured message with `/compact`, narrower-retry, and `/clear` guidance; ordinary errors stay unchanged | A provider limit failure needs an actionable next step without a driver resend or schema/trajectory rewrite |
+
+
 | `/memory` state/parent/topic path is malformed, invalid UTF-8, oversized, wrong-project, forged, non-regular or symlinked | Refuse the operation and leave disk/live prompt unchanged | Management state crosses a user-file trust boundary and must fail closed |
 | `/memory remember` is empty, oversized, secret-like, boundary-bearing, control/dump/policy-like, duplicate or over count | Refuse atomically with bounded notice | Explicit notes are context, never a generic policy or secret persistence channel |
 | `/memory forget` target is malformed/unknown or suppression cap is reached | Refuse/no-op atomically; retain current prompt and state | Narrowing must be durable but cannot make an unbounded tombstone store |

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Review implementation against exact SDK reuse, bounded retry, offload, resume, and explicit compact invariants."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Check all storage/provider/recovery failure branches for non-destructive, actionable, bounded behavior."}
+{"file":".trellis/spec/backend/session-trajectory.md","reason":"Verify no recovery mutation turns trajectory into a participant or rewrites historical evidence."}
+{"file":".trellis/spec/backend/structured-headless-output.md","reason":"Verify structured schema, privacy projection, bounds, and terminal ordering remain unchanged."}
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Verify TUI failure guidance, prompt queue return, context advisory, and frame budget remain compliant."}

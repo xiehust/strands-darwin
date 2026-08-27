@@ -20,6 +20,9 @@ darwin -p|--print <message>
   [--max-model-calls <positive integer>] [--context-offload] [--compact-before]
 ```
 
+
+`--context-offload` is a process-only force-on override, not the ordinary enablement path: main runtimes already offload by default, and the flag only overrides persistent `contextOffload: false` without mutating config.
+
 `text` is the default and its stdout/stderr bytes and ordering are the pre-SER-011 protocol.
 `--output-format` is a single value flag valid only with `-p/--print`. Missing, repeated or unknown
 values, and structured use without a prompt, are CLI usage errors before runtime/model construction:
@@ -137,6 +140,7 @@ unbounded and complete, matching text mode's atomic complete-answer contract.
 | Observer or SDK logger degrades | Warning/diagnostic; does not fail an otherwise durable success |
 | Usage key unreported | Omit key; do not write zero |
 | Output pipe fails or process receives SIGKILL | Terminal record is not guaranteed |
+| Unrecovered context overflow | Preserve schema v1/stage/class/cause/order and place the shared bounded `/compact` / narrower-request / `/clear` guidance in the existing `message`; emit no continuation or extra event |
 
 ### 5. Good / Base / Bad Cases
 

@@ -417,6 +417,9 @@ behavior, bounded wording, one transcript notice, and empty live-turn state. Kee
 `verify-clear-session.ts`, `verify-compact.ts`, and `verify-status-command.ts` green.
 
 
+An unrecovered `ContextWindowOverflowError` uses the ordinary failed-turn Static notice and the shared bounded driver projection: provider detail plus `/compact`, a narrower retry, or `/clear`. It adds no live-frame participant, row, automatic retry, or compaction. The existing failed-turn path still marks the busy state aborted and returns queued prompts to the editor unsent. The offline real-pty `spike/verify-tui.ts contextOverflow` scenario proves the notice, no continuation, and that the same session returns to an executable prompt.
+
+
 
 ## Contract: the only sanctioned whole-screen clear is `/clear`, and it costs two things at once
 

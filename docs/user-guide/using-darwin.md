@@ -59,12 +59,13 @@ Headless mode cannot prompt. Static-safe calls and persisted allow rules run; an
 Bounded automation flags, valid only with `-p/--print`:
 
 ```bash
-darwin -p "run the complete task" --context-offload
-darwin -p "bounded task" --context-offload --max-model-calls 200
+darwin -p "run the complete task"
+darwin -p "force offload on despite config opt-out" --context-offload
+darwin -p "bounded task" --max-model-calls 200
 darwin -p "continue" --session <id> --compact-before
 ```
 
-`--max-model-calls` refuses the next provider request after the positive ceiling. `--context-offload` enables process-only oversized-result offload. `--compact-before` summarizes restored history first and does not start the requested turn if that summary cannot be persisted.
+`--max-model-calls` refuses the next provider request after the positive ceiling. Oversized-result offload is already default-on; `--context-offload` is a compatible process-only force-on override for a persistent `contextOffload: false` opt-out. `--compact-before` summarizes restored history first and does not start the requested turn if that summary cannot be persisted.
 
 ## Structured output
 

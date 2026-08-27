@@ -14,7 +14,7 @@
 - **Turn numbers restart per process.** A resumed trajectory can contain several `turn 1` records. Spend totals still count actual closing records.
 - **Background control is process-local.** Resume retains logs, not task controls/cursors. Normal shutdown reaps process groups; `SIGKILL`/machine failure cannot guarantee it.
 - **Structured output cannot guarantee a terminal record after `SIGKILL` or `EPIPE`.**
-- **Diagnostics and offloaded results may contain sensitive conversation/tool material and are retained.** Both are opt-in; there is no automatic session garbage collection.
+- **Diagnostics and offloaded results may contain sensitive conversation/tool material and are retained.** Diagnostics is opt-in; oversized-result offload is default-on unless explicitly disabled. There is no automatic session garbage collection.
 - **Direct Anthropic needs an optional peer dependency.** See [Getting started](getting-started.md).
 
 For implementation-level invariants, read [load-bearing decisions](../architecture/load-bearing-decisions.md) before changing the affected subsystem.

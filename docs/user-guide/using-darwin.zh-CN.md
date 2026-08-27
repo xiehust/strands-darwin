@@ -59,12 +59,13 @@ session: session-20260814-160833123
 以下有界自动化选项只可与 `-p/--print` 一起使用：
 
 ```bash
-darwin -p "run the complete task" --context-offload
-darwin -p "bounded task" --context-offload --max-model-calls 200
+darwin -p "run the complete task"
+darwin -p "force offload on despite config opt-out" --context-offload
+darwin -p "bounded task" --max-model-calls 200
 darwin -p "continue" --session <id> --compact-before
 ```
 
-`--max-model-calls` 到达正整数上限后，会拒绝下一次供应商请求。`--context-offload` 只为当前进程启用超大结果卸载。`--compact-before` 先摘要恢复的历史；若摘要无法持久化，本次目标回合不会开始。
+`--max-model-calls` 到达正整数上限后，会拒绝下一次供应商请求。超大结果卸载默认开启；`--context-offload` 是兼容的进程级强制开启覆盖项，可覆盖持久的 `contextOffload: false` 退出配置。`--compact-before` 先摘要恢复的历史；若摘要无法持久化，本次目标回合不会开始。
 
 ## 结构化输出
 

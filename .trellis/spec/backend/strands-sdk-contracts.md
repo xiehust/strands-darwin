@@ -15,6 +15,17 @@
 Acceptance re-reads the current source catalogue, then creates a fresh Agent through `AgentRuntime.create()`. After `initialize()` has established the new session, a source `SessionManager.restoreSnapshot({ snapshotId })` loads the authoritative checkpoint; Darwin then refreshes current learned-memory projection, working context and final system-prompt cache point in the ordinary restore order before writing the successor's own `snapshot_latest`. The source latest/immutable snapshots, catalogue, trajectory and resume pointer are never copied, truncated or rewritten. The pointer still moves only through `markResumable()` after the successor completes a turn.
 
 The predecessor transfers live permission mode, MCP clients and the process-owned background-task manager exactly as `/clear`, and retires only after successful successor assembly. On failure it stays live. The selected prompt returns to the editor unsent. The visible notice is required to state that the workspace is unchanged and that workspace files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned-memory files were not rewound. Checks: `spike/verify-rewind.ts`, `spike/verify-rewind-search.ts`, and free `spike/verify-tui.ts rewind`.
+## Context offload defaults
+
+Every main `AgentRuntime` installs the SDK `ContextOffloader` unless effective config explicitly sets `contextOffload: false`. Omitted config therefore resolves to concrete `true`; `maxResultTokens` is valid with omitted/default-on or explicit `true` and invalid with explicit `false`. Keep session-scoped `LocalFileStorage`, the SDK default 2,500-token threshold and 1,000-token preview unless overridden, `retrieve_offloaded_content`, and `evictAfterCycles: null`, so references remain durable across resume. Headless `--context-offload` remains a process-only force-on override that does not mutate loaded or persisted config. Main-runtime successors rebuild the same policy through `AgentRuntime.create`; child Agents retain their existing separate conversation/result contract and receive neither parent offload storage nor the retrieval tool.
+
+The pinned SDK offloader also scans restored messages exactly once on the Agent's first `BeforeModelCallEvent`, after `SessionManager` initialization restore and before provider request cloning. Oversized successful legacy `ToolResultBlock`s use the same count/store/preview/reference transformation as new results. The scan first resolves historical `ToolUseBlock` identities against the live tool registry, so delegated final answers and retrieval-tool results retain the normal-path exclusions; it accepts a prior `[Offloaded: …]` block only when its exact marker shape, tool-use-bound reference names, and current durable-storage entries all verify, never marker text alone. Replacement is in-place at the content-block slot, preserving the `Message` object and its tracking id/metadata/order plus tool-use id/status/pairing. Count/store failure leaves the original block intact, creates no published dangling reference, best-effort removes successful sibling unified-storage writes from a failed multi-block attempt, continues over the finite restored list, and cannot turn into a per-cycle retry. Invocation autosave persists any repair for the next restore.
+
+An unrecovered `ContextWindowOverflowError` receives one bounded driver projection shared by interactive, text-headless, and structured-headless paths, recommending `/compact`, a narrower request, or `/clear`. It does not change the thrown object, trajectory failure observation, schema v1, stream-interruption exclusion, or ordinary errors.
+
+Checks: `spike/verify-config.ts`, `spike/verify-context-offload.ts`, `spike/verify-context-overflow.ts`, `spike/verify-headless.ts`, `spike/verify-headless-structured.ts`, and `spike/verify-skills.ts`.
+
+
 
 
 Only `src/agent/runtime.ts` constructs the SDK `Agent`. Keep it a thin assembly; all
@@ -1629,10 +1640,11 @@ missing or unreadable record, 2 for usage.
 - The SDK bash module installs SIGINT/SIGTERM listeners that call `process.exit(0)`. Headless mode
   must replace those handlers, keep its own handler installed through cleanup/persistence, cancel
   active work, and exit nonzero. Interactive mode keeps its established Ctrl+C policy.
-- The three token-efficiency controls are headless-only and opt-in. `--max-model-calls` installs a
+- The three token-efficiency CLI controls are headless-only. `--max-model-calls` installs a
   `BeforeModelCallEvent` hook that throws before provider call `limit + 1`; each process gets a fresh
-  count. `--context-offload` enables the existing session-scoped ContextOffloader without changing
-  loaded/persisted config. `--compact-before` runs the existing reversible `AgentRuntime.compact()`
+  count. ContextOffloader is default-on; `--context-offload` is a compatible process-only force-on
+  override that does not change loaded/persisted config. `--compact-before` runs the existing
+  reversible `AgentRuntime.compact()`
   after restore and before the requested turn; failure starts no public turn and follows the runtime
   failure/strict-cleanup path. With none of these flags, text and structured protocols are unchanged.
 
@@ -1975,7 +1987,7 @@ The built-in source is `src/skills/builtin/developer/SKILL.md`; `pnpm build` mus
 - Run each child from the exact target root. The child prompt says it is the direct worker and must not load `developer`, start another darwin, or delegate again; without that guard a built-in skill advertised to both Host and child can recurse.
 - The first child is one complete direct worker, not a planning-only turn. It may load the target's configured non-developer skills and owns task/planning/research artifacts, implementation, checks, spec updates and authorized commits. Do not set `DARWIN_PLANNING_ONLY`, do not pre-compact a fresh session, and do not make implementation wait for Host plan approval. Only unresolved product/scope/authorization decisions return to the Host/user.
 - Every child invocation uses `--yolo` by default because a headless process cannot answer permission prompts. Yolo changes confirmation behavior only: the Host still establishes and enforces the named repository and authorized task scope. The Host independently inspects the diff and runs acceptance checks; failed acceptance returns to the same child session rather than being hidden by a Host edit.
-- Developer commands enable process-only context offload but no model-call budget by default; the
+- Developer commands rely on default-on durable context offload (and may retain the compatible force-on flag) but use no model-call budget by default; the
   direct worker follows repository skills to a natural completion. The generic hard CLI ceiling is
   added only when the user or Host explicitly supplies a positive integer. Correction compacts only
   after a large prior turn. Children batch independent reads/checks and serialize dependent writes.

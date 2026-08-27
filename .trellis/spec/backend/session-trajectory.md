@@ -64,8 +64,10 @@ turn completes.
 
 Recording is on by default and switched off with `trajectory: false` in `~/.darwin/config.json`. It
 is a session key (`SESSION_KEYS`), so `/model` preserves it and a `models` entry carrying it is
-rejected. Unlike `contextOffload` this changes nothing the model sees, which is why it defaults on
-while that one defaults off.
+rejected. Like default-on `contextOffload`, recording is enabled unless explicitly disabled. Recording differs in that it changes nothing the model sees.
+
+A resumed legacy snapshot may be repaired by the default-on SDK offloader on its first pre-model hook. That mutation belongs to live conversation state and the next `snapshot_latest`, not to this observer: no historical trajectory line or immutable snapshot is rewritten, no synthetic event is added, and a failed turn still records the original `ContextWindowOverflowError`. Driver-only actionable guidance is a presentation projection and never replaces `turnEnded.failure.message` in the append-only record.
+
 
 ### Contract: a session can be *left* mid-process, and leaving it touches none of its files
 

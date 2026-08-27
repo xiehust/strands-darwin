@@ -69,8 +69,8 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `summaryRatio` | `0.8` | fraction of old messages summarized on overflow |
 | `preserveRecentMessages` | `10` | messages kept verbatim by summarization |
 | `contextWarnRatio` | `0.8` | post-turn `/compact` recommendation threshold; `0` disables |
-| `contextOffload` | `false` | store oversized tool results beside the session, leaving a preview/reference |
-| `maxResultTokens` | SDK default `2500` | offload threshold; requires `contextOffload: true`, must exceed `1000` |
+| `contextOffload` | `true` | store oversized tool results beside the session, leaving a preview/reference; `false` opts out |
+| `maxResultTokens` | SDK default `2500` | offload threshold; valid with default/explicit `true`, rejected with `contextOffload: false`, must exceed `1000` |
 | `trajectory` | `true` | append every turn to trajectory |
 | `diagnostics` | `false` | per-session SDK/darwin debug log |
 | `memory` | true while trajectory is available | project memory; omitted follows `trajectory: false` |

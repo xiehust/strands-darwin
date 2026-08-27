@@ -32,7 +32,7 @@ writes every stderr record it wrote before, and the trajectory is untouched.
 
 `diagnostics` is a boolean in `SESSION_KEYS` (`src/config.ts`), absent by default.
 
-Off by default for the same reason as `contextOffload`: the SDK's debug lines interpolate provider
+Off by default because the SDK's debug lines interpolate provider
 payloads (`error=<${error}>`, a rejected request echoed back), so they can carry
 conversation-derived material. Whoever switches it on is debugging and has decided that is
 acceptable. That decision may not be made for them.

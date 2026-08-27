@@ -20,7 +20,7 @@ darwin trajectory replay <id> [--turn N] [--json]
 darwin trajectory fork <id>
 ```
 
-只用于 print 模式的选项：`--context-offload`、正整数 `--max-model-calls <n>`、`--compact-before`、`--output-format text|json|stream-json`。权限覆盖选项：`--permission-mode default|auto|plan|yolo`、`--yolo`。为兼容包管理器传参，位于开头的一个独立 `--` 会忽略。未知或非法参数语法返回 2。
+只用于 print 模式的选项：`--context-offload`（进程级强制开启；卸载默认已开启）、正整数 `--max-model-calls <n>`、`--compact-before`、`--output-format text|json|stream-json`。权限覆盖选项：`--permission-mode default|auto|plan|yolo`、`--yolo`。为兼容包管理器传参，位于开头的一个独立 `--` 会忽略。未知或非法参数语法返回 2。
 
 ## 斜杠命令与内置 skill 入口
 

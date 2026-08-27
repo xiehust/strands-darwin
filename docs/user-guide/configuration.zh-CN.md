@@ -69,8 +69,8 @@
 | `summaryRatio` | `0.8` | 上下文溢出时被摘要的旧消息比例 |
 | `preserveRecentMessages` | `10` | 摘要时原样保留的消息数 |
 | `contextWarnRatio` | `0.8` | 回合结束后建议 `/compact` 的阈值；`0` 关闭提醒 |
-| `contextOffload` | `false` | 把超大工具结果存到会话目录，上下文只留预览和引用 |
-| `maxResultTokens` | SDK 默认 `2500` | 卸载阈值；要求 `contextOffload: true`，且必须大于 `1000` |
+| `contextOffload` | `true` | 把超大工具结果存到会话目录，上下文只留预览和引用；`false` 显式退出 |
+| `maxResultTokens` | SDK 默认 `2500` | 卸载阈值；默认或显式 `true` 时有效，与 `contextOffload: false` 冲突，且必须大于 `1000` |
 | `trajectory` | `true` | 把每轮追加到轨迹 |
 | `diagnostics` | `false` | 每会话 SDK/darwin 调试日志 |
 | `memory` | 轨迹可用时开启 | 项目记忆；未设置时跟随 `trajectory: false` |
