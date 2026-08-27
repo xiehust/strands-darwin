@@ -204,7 +204,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@strands-agents/sdk@1.12.0': ff312d11c6b32b21bd6472293eace81a18f5d19a696dc3b3775ce9a905ee4c4b
+  '@strands-agents/sdk@1.12.0': 4ba282cf3a2ae16ce2795310c88493fa803befdfed577f0b3d0c2245a8307c11
 
 importers:
 
@@ -218,7 +218,7 @@ importers:
         version: 1.30.0(zod@4.4.3)
       '@strands-agents/sdk':
         specifier: ^1.12.0
-        version: 1.12.0(patch_hash=ff312d11c6b32b21bd6472293eace81a18f5d19a696dc3b3775ce9a905ee4c4b)(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.0)(express@5.2.1)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)
+        version: 1.12.0(patch_hash=4ba282cf3a2ae16ce2795310c88493fa803befdfed577f0b3d0c2245a8307c11)(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.0)(express@5.2.1)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -2049,7 +2049,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@strands-agents/sdk@1.12.0(patch_hash=ff312d11c6b32b21bd6472293eace81a18f5d19a696dc3b3775ce9a905ee4c4b)(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.0)(express@5.2.1)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)':
+  '@strands-agents/sdk@1.12.0(patch_hash=4ba282cf3a2ae16ce2795310c88493fa803befdfed577f0b3d0c2245a8307c11)(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.0)(express@5.2.1)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@aws-sdk/client-bedrock-runtime': 3.1108.0
       '@modelcontextprotocol/sdk': 1.30.0(zod@4.4.3)

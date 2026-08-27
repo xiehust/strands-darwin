@@ -29,6 +29,18 @@ index 23b1dad5bf6ca0dc60ec22d70bf195c1556ba29a..455fc41794c2b6bbe0cc5c86d428cf8c
      return mapped;
  }
  function createResponsesStreamError(message, code) {
+diff --git a/dist/src/models/openai/errors.js b/dist/src/models/openai/errors.js
+index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279e2355066 100644
+--- a/dist/src/models/openai/errors.js
++++ b/dist/src/models/openai/errors.js
+@@ -20,6 +20,7 @@ const CONTEXT_WINDOW_OVERFLOW_PATTERNS = [
+     'input length and `max_tokens` exceed context limit',
+     'too many total text bytes',
+     'exceed customer model maximum',
++    'exceed model maximum',
+ ];
+ /**
+  * Error patterns that indicate rate limiting.
 diff --git a/dist/src/vended-tools/bash/bash.d.ts b/dist/src/vended-tools/bash/bash.d.ts
 index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..8907d109ce2866e376df312ebc0bae1a68acec3d 100644
 --- a/dist/src/vended-tools/bash/bash.d.ts
