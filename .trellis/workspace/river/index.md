@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 30
+- **Total Sessions**: 31
 - **Last Active**: 2026-08-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~801 | Active |
+| `journal-1.md` | ~836 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-08-27 | Prevent final TUI reply duplication | `9da06c3` | `main` |
 | 30 | 2026-08-27 | Agent-managed project memory tools | `06643fe` | `main` |
 | 29 | 2026-08-27 | Recover oversized model context | `e673891`, `7a45463`, `cbbd09d`, `3bffe3d` | `main` |
 | 28 | 2026-08-26 | Paginate self-evolution backlog | `0135f4b` | `main` |

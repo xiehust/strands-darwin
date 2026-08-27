@@ -799,3 +799,38 @@ Replaced heuristic ambient memory extraction with parent-only memory_recall and 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 31: Prevent final TUI reply duplication
+
+**Date**: 2026-08-27
+**Task**: Prevent final TUI reply duplication
+**Branch**: `main`
+
+### Summary
+
+Flush the mutable assistant tail before committing the authoritative text block to Ink Static, with reducer and real-PTY regressions proving the next prompt no longer leaves duplicate scrollback.
+
+### Main Changes
+
+- Added a two-render live-to-Static handoff at text block close without buffering or deduplicating SDK events.
+- Added terminal-state reconstruction and an offline PTY fixture matching the reported final-tail plus next-input failure shape.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9da06c3` | (see git log) |
+
+### Testing
+
+- [OK] pnpm test
+- [OK] pnpm typecheck
+- [OK] pnpm build
+- [OK] pnpm tsx spike/verify-stream-into-static.ts
+- [OK] pnpm tsx spike/verify-tui.ts finalReplyHandoff
+- [OK] pnpm tsx spike/verify-tui.ts updatePlan
+
+### Status
+
+[OK] **Completed**
