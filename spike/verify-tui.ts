@@ -3722,6 +3722,39 @@ async function clipboardImageComposer(): Promise<void> {
       captured.content?.length === 2 && captured.content[0]?.text === 'send image prompt' &&
       captured.content[1]?.image?.source?.bytes !== undefined);
 
+    // Provider rejection is one call and restores the exact literal prompt plus
+    // same in-memory image for retry/removal; no second clipboard read is needed.
+    const beforeRejectAttach = tui.mark();
+    tui.send('\u000f');
+    await tui.waitFor('image attached · PNG', { timeoutMs: 30_000, from: beforeRejectAttach, settleMs: 200 });
+    const callsBeforeReject = Number(await readFile(path.join(dir, 'clipboard-image-calls'), 'utf8'));
+    tui.submit('reject image prompt');
+    await tui.waitFor('image prompt restored after the failed turn', {
+      timeoutMs: 30_000,
+      from: beforeRejectAttach,
+      settleMs: 300,
+    });
+    assert('provider rejection is explicit',
+      tui.screen.slice(beforeRejectAttach).includes('turn failed: provider rejects image input'));
+    assert('provider rejection restores matching literal prompt and image chip',
+      tui.frame.includes('you> reject image prompt') && tui.frame.includes('image attached · PNG'));
+    assert('provider rejection makes exactly one model call',
+      Number(await readFile(path.join(dir, 'clipboard-image-calls'), 'utf8')) === callsBeforeReject + 1);
+    await rm(helper);
+    const beforeRejectRemove = tui.mark();
+    tui.send('\u000f');
+    await tui.waitFor('clipboard image removed from the next prompt', {
+      timeoutMs: 30_000,
+      from: beforeRejectRemove,
+      settleMs: 200,
+    });
+    assert('restored image removes without rereading the missing clipboard helper',
+      !tui.screen.slice(beforeRejectRemove).includes('could not attach clipboard image'));
+    tui.send('\u0015');
+    await writeFile(helper, `#!${process.execPath}\nprocess.stdout.write(require('node:fs').readFileSync(process.env.CLIPBOARD_FIXTURE));\n`);
+    await chmod(helper, 0o755);
+
+
 
 
     // Queue ownership: an attached prompt queued behind a free ! busy state keeps

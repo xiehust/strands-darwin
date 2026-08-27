@@ -363,6 +363,9 @@ export function App({
   const [drainCycle, setDrainCycle] = useState(0);
   /** Invalidates late clipboard-helper settlements after remove/send/clear. */
   const clipboardReadGeneration = useRef(0);
+  /** Image currently owned by one model-bound invocation, blocking reassociation. */
+  const imageTurnInFlight = useRef(false);
+
 
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(onChange),
@@ -673,7 +676,7 @@ export function App({
   }, [dispatch, setAttachedImage, setEditor, setQueued]);
 
   const runTurn = useCallback(
-    async (text: string, userInput = text, image?: ImageBlock) => {
+    async (text: string, userInput = text, image?: ImageBlock): Promise<boolean> => {
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
       let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
@@ -759,7 +762,8 @@ export function App({
       // A cancelled or failed turn never silently sends the queue (SER-027): what
       // was queued behind it comes back to the editor, visible and unsent, and the
       // drain effect below finds nothing to send.
-      if (turnAborted.current) {
+      const failed = turnAborted.current;
+      if (failed) {
         turnAborted.current = false;
         returnQueuedToEditor(true);
       }
@@ -806,6 +810,7 @@ export function App({
         dispatch({ type: 'notice', text: `learned memory: ${memoryProblem}`, severity: 'warn' });
       }
 
+      return !failed;
     },
     [returnQueuedToEditor, runtime, waitUntilRenderFlush],
   );
@@ -1399,13 +1404,26 @@ export function App({
         toSend = `${shellReports.join('\n\n')}\n\n${toSend}`;
       }
 
-      // The ordinary prompt now owns the attachment. Clear the composer before
-      // streaming so later draft edits cannot leak it into another invocation.
+      // The invocation owns its image while streaming. Success consumes it; a
+      // provider/model rejection restores the exact image + literal prompt so the
+      // user can retry or remove without rereading the clipboard.
+      if (image !== undefined) imageTurnInFlight.current = true;
       if (image !== undefined && queuedEntry === undefined) {
         clipboardReadGeneration.current += 1;
         setAttachedImage(undefined);
       }
-      await runTurn(toSend, text, image);
+      const completed = await runTurn(toSend, text, image);
+      if (image !== undefined) imageTurnInFlight.current = false;
+      if (!completed && image !== undefined) {
+        const retryDraft = takeBackDraft([{ text }], editorRef.current.text);
+        setEditor({ text: retryDraft, cursor: { offset: retryDraft.length, affinity: 'upstream' } });
+        setAttachedImage(image);
+        dispatch({
+          type: 'notice',
+          text: 'image prompt restored after the failed turn — retry or press Ctrl+O to remove the image',
+          severity: 'warn',
+        });
+      }
     },
     [dispatch, exit, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setEditor, setQueued, startNewSession, status, writeToTerminal],
   );
@@ -1853,8 +1871,8 @@ export function App({
       if (attachedImageRef.current !== undefined) {
         setAttachedImage(undefined);
         dispatch({ type: 'notice', text: 'clipboard image removed from the next prompt' });
-      } else if (hasQueuedImage(queuedRef.current)) {
-        dispatch({ type: 'notice', text: 'one clipboard image is already queued — take it back or let it send first' });
+      } else if (imageTurnInFlight.current || hasQueuedImage(queuedRef.current)) {
+        dispatch({ type: 'notice', text: 'one clipboard image is already queued or sending — take it back or let it finish first' });
       } else {
         const generation = clipboardReadGeneration.current;
         void readClipboardImage().then(
