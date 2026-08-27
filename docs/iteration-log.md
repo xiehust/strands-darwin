@@ -1947,3 +1947,11 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SER-040 | `db57a87` implementation, `a27b3cd` research/task record, Host-found correction `9ef6cc0`, correction record `8121110` | Host inspected the source/spec/test diff and rejected the initial implementation because failed/cancelled turns and a full catalogue could grow SDK immutable history without bound. Acceptance followed only after a serialized hard 100-snapshot cap using bounded public SDK listings. Host independently passed `verify-rewind.ts` (20/20), `verify-rewind-search.ts` (7/7), free pty `rewind` (7/7), `completion` (67/67), `verify-frame-budget.ts` (80/80), `verify-help-command.ts` (26/26), `verify-prompt-queue.ts` (28/28), `pnpm typecheck`, full `pnpm test`, and `pnpm build`; plus Trellis archive validation, `git diff --check`, `git show --check`, clean-tree verification, and AGENTS.md size (26,616 bytes < 32 KiB). `/rewind` branches authoritative SDK conversation state into a fresh successor, leaves the source/pointer/workspace unchanged, returns the selected prompt unsent, and explicitly disclaims workspace and side-effect rollback. |
+
+### 2026-08-27 — long-silent TUI OOM investigation
+
+- Child session: `session-20260827-065500019`
+
+| Milestone | Accepted commit | Host acceptance |
+| --- | --- | --- |
+| Diagnose and fix provider-silent interactive heap growth | not committed (working-tree review requested) | `pnpm typecheck`; `pnpm tsx spike/verify-react-production-memory.ts`; `pnpm tsx spike/verify-startup-screen.tsx`; `pnpm tsx spike/verify-startup-pty.ts`; `pnpm test` |
