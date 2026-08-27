@@ -33,6 +33,7 @@ export function formatHelpReport(): string {
     '  @ completes a workspace path · acceptance inserts path text only, never file content',
     '  !<command> runs your shell command locally (not as a model tool call)',
     '  Enter sends · Ctrl+J or trailing \\ + Enter inserts a newline · multiline paste never submits',
+    '  Ctrl+O attaches one clipboard image to the next prompt; Ctrl+O again removes it',
     '  Ctrl+R searches this project’s prompt history · type to filter · Ctrl+R/Up/Down navigate · Tab/Enter accepts',
     '  Up/Down precedence: completion · Up queued-message take-back · prompt recall · cursor movement',
     '  Esc closes completion, cancels history search to its exact draft/cursor, or ends prompt recall',

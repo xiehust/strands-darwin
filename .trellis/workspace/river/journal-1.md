@@ -834,3 +834,9 @@ Flush the mutable assistant tail before committing the authoritative text block 
 ### Status
 
 [OK] **Completed**
+
+## 2026-08-27 — SER-041 clipboard image input
+
+Implemented bounded interactive clipboard image attachment at the ordinary SDK content-block seam. `Ctrl+O` reads one PNG through dependency-free platform helpers, reuses the imageViewer decoder/normalizer and aggregate decode chain, renders one counted chip, and carries the image with its prompt/queue entry. Runtime sends one text-plus-`ImageBlock` invocation while trajectory, replay/export, recall, rewind labels, memory evidence and shell records remain literal-text-only.
+
+Added offline runtime/helper/decoder/queue checks and a free pty scenario covering chip persistence/removal, explicit failure, ordinary send, SDK message content, queue ownership and cancel return. Updated SDK, trajectory, frame, TUI-testing, architecture and AGENTS contracts. Focused checks, typecheck and build pass. Full `pnpm test` ran once and reached one pre-existing Host-owned backlog validation failure because SER-041's in-progress evidence subsection is intentionally empty; 155/156 `verify-skills` assertions pass and all earlier suites, including the new tests, pass.

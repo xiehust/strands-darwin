@@ -21,6 +21,20 @@
  * an entry is recorded until the moment it is actually sent.
  */
 
+import type { ImageBlock } from '@strands-agents/sdk';
+
+/** One live-only queued submission; image bytes never enter any durable record. */
+export interface QueuedPrompt {
+  readonly text: string;
+  readonly image?: ImageBlock;
+}
+
+/** One clipboard image may be pending or queued at a time, bounding live memory. */
+export function hasQueuedImage(entries: readonly QueuedPrompt[]): boolean {
+  return entries.some((entry) => entry.image !== undefined);
+}
+
+
 /**
  * Marker every queued row carries. Like `tool ·`, it survives ANSI stripping,
  * monochrome terminals and pty captures, so tests and logs can name the row.
@@ -47,8 +61,10 @@ export function refusesToQueue(text: string): boolean {
  * as a single `<Text wrap="truncate-end">`, so width overflow truncates and can
  * never grow a row the budget did not count.
  */
-export function queueRowText(entry: string): string {
-  return `${QUEUED_MARKER} ${entry.replace(/\n/g, ' ⏎ ')}`;
+export function queueRowText(value: QueuedPrompt | string): string {
+  const entry = typeof value === 'string' ? { text: value } : value;
+  const attachment = entry.image === undefined ? '' : '[image] ';
+  return `${QUEUED_MARKER} ${attachment}${entry.text.replace(/\n/g, ' ⏎ ')}`;
 }
 
 /**
@@ -57,8 +73,8 @@ export function queueRowText(entry: string): string {
  * entries were going to be sent before anything typed later, so they read in
  * that order too.
  */
-export function takeBackDraft(entries: readonly string[], draft: string): string {
-  const queued = entries.join('\n');
+export function takeBackDraft(entries: readonly (QueuedPrompt | string)[], draft: string): string {
+  const queued = entries.map((entry) => typeof entry === 'string' ? entry : entry.text).join('\n');
   return draft === '' ? queued : `${queued}\n${draft}`;
 }
 

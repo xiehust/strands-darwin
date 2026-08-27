@@ -6,6 +6,13 @@
 
 ---
 
+
+## Clipboard image invocation (SER-041)
+
+Interactive clipboard image input is one ordinary SDK invocation. `AgentRuntime.send(modelText, literalText, image)` passes `[new TextBlock(modelText), image]` to the existing `Agent.stream()` exactly once; it never constructs a second Agent, probes provider capability with another call, or intercepts the SDK loop. The provider's ordinary unsupported-image error remains unchanged and visible. Image-bearing turns skip Darwin's text-only rewind catalogue because a prompt string cannot truthfully recreate the multimodal boundary.
+
+The image bytes are live composer/queue state and SDK conversation content only. For a multimodal turn, trajectory and memory provenance receive the literal user prompt, not expanded command text, held shell reports, image bytes, base64, clipboard contents, a fabricated path, or synthetic attachment text. Replay/export/recall therefore remain text-only by construction. `spike/verify-runtime-image-input.ts` uses the runtime's existing offline model factory seam to prove one model call receives one user message containing text plus exact bytes and that the trajectory contains only literal text. `spike/verify-image-viewer.ts` proves clipboard decoding and path-based `imageViewer` share one bounded decode/normalization policy.
+
 ## Agent Assembly
 
 ## SER-040 conversation-only rewind

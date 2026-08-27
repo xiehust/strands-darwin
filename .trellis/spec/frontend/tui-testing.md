@@ -628,3 +628,14 @@ These are free checks; no provider call is required.
 ## Reverse prompt-history search scenario
 
 Run `pnpm tsx spike/verify-tui.ts historySearch` (free: seeded trajectory plus user-owned `!sleep`, no model call). It proves `Ctrl+R` open/filter/navigation/Tab acceptance, exact draft/cursor restoration on Escape, empty history, completion ownership before search, busy/queue take-back ownership, and byte-identical trajectory records. Send control chords and printable payloads as separate PTY events and await the state transition between them; batching `Escape` with `/exit`, or `Ctrl+R` with query text, tests terminal chunking rather than the intended key transition. Existing `recall`, `recallEmpty`, `completion`, `pathCompletion`, `queue`, `permissionEscape`, and `compacting` remain the regression scenarios for neighboring ownership.
+
+
+## Clipboard image composer input (SER-041)
+
+`Ctrl+O` belongs to the ordinary prompt editor only after permission, compaction, prompt-history search and rewind-search ownership. With no pending image it reads one PNG from the operating-system clipboard through `src/tui/clipboard-image.ts`; with an image it removes it. The chip is one truncated, frame-budgeted row stating only format, bounded byte size and `Ctrl+O remove`. Clipboard helper/session/read/decode failures append one bounded warning and preserve the exact draft and prior attachment.
+
+The adapter adds no dependency and invokes no shell: Wayland uses `wl-paste --no-newline --type image/png`, X11 uses `xclip -selection clipboard -t image/png -o`, and macOS uses `pngpaste -`. Unsupported platforms, headless Linux and missing helpers are explicit. Stdout is capped at `MAX_SOURCE_BYTES`, stderr at 512 bytes, and execution at five seconds before bytes enter the shared `decodeImageBytes` imageViewer policy.
+
+A busy ordinary prompt queues `{ text, image? }`; its one-row projection states `[image]` without bytes. Drain passes that same object through ordinary submit, explicit absence cannot borrow a newer editor attachment, and take-back/cancel returns the owned image visibly unsent. Local slash commands and `!` never consume/queue an image. Successful queue/send ownership clears the composer; `/clear` drops old-session image state. Escape, completion, recall, reverse search, multiline/bracketed paste and draft edits never clear it.
+
+Run `pnpm tsx spike/verify-tui.ts clipboardImage` (free) for the real pty chip/edit/remove/failure contract. Send the draft and control chord as separate PTY events with an anchored wait between them; Ink intentionally does not split arbitrary C0 bytes out of a chunk containing printable text. `spike/verify-clipboard-image.ts`, `verify-prompt-queue.ts`, `verify-frame-budget.ts`, and `verify-runtime-image-input.ts` cover helper failures, queue projection/association, row ownership, and SDK invocation.

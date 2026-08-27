@@ -11,6 +11,8 @@
  * unfinished answer; a second press within a short window, or any press while
  * idle, exits. Ctrl+D always exits.
  */
+import type { ImageBlock } from '@strands-agents/sdk';
+
 import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize, type DOMElement } from 'ink';
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
@@ -123,7 +125,8 @@ import {
   rewindSearchView,
   type RewindSearch,
 } from './rewind-search.js';
-import { queuedCountHint, refusesToQueue, takeBackDraft } from './prompt-queue.js';
+import { clipboardImageFact, readClipboardImage } from './clipboard-image.js';
+import { hasQueuedImage, queuedCountHint, refusesToQueue, takeBackDraft, type QueuedPrompt } from './prompt-queue.js';
 import {
   composeShellReport,
   parseShellCommand,
@@ -280,6 +283,14 @@ export function App({
     setEditorState(value);
   }, [commandNames, setDismissedCompletion, workspacePaths]);
   const draft = editor.text;
+  /** Pending clipboard image, live-only; bytes never enter editor text or records. */
+  const [attachedImage, setAttachedImageState] = useState<ImageBlock | undefined>(undefined);
+  const attachedImageRef = useRef(attachedImage);
+  const setAttachedImage = useCallback((next: ImageBlock | undefined) => {
+    attachedImageRef.current = next;
+    setAttachedImageState(next);
+  }, []);
+
   const layout = layoutEditor(draft, columns, editor.cursor);
   const preferredColumn = useRef<number | undefined>(undefined);
 
@@ -338,9 +349,9 @@ export function App({
    * immediate mirror `editorRef` is: batched stdin events must read one
    * generation of the queue.
    */
-  const [queued, setQueuedState] = useState<readonly string[]>([]);
+  const [queued, setQueuedState] = useState<readonly QueuedPrompt[]>([]);
   const queuedRef = useRef(queued);
-  const setQueued = useCallback((next: readonly string[]) => {
+  const setQueued = useCallback((next: readonly QueuedPrompt[]) => {
     queuedRef.current = next;
     setQueuedState(next);
   }, []);
@@ -350,6 +361,8 @@ export function App({
   const draining = useRef(false);
   /** Re-arms the drain effect after an entry whose submit left every dep unchanged. */
   const [drainCycle, setDrainCycle] = useState(0);
+  /** Invalidates late clipboard-helper settlements after remove/send/clear. */
+  const clipboardReadGeneration = useRef(0);
 
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(onChange),
@@ -529,6 +542,7 @@ export function App({
               completions: offeredCompletions,
               moreCompletions: completions.length > offeredCompletions,
               hasHint: streamingHint !== undefined,
+              hasAttachment: attachedImage !== undefined,
               hasRecall: recallIndicator !== undefined,
               ...((rewindSearchProjection ?? historySearchProjection) === undefined ? {} : {
                 searchMatches: (rewindSearchProjection ?? historySearchProjection)?.matches.length ?? 0,
@@ -643,7 +657,9 @@ export function App({
     const entries = queuedRef.current;
     if (entries.length === 0) return false;
     const text = takeBackDraft(entries, editorRef.current.text);
+    const returnedImage = entries.find((entry) => entry.image !== undefined)?.image;
     setQueued([]);
+    if (returnedImage !== undefined) setAttachedImage(returnedImage);
     setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
@@ -654,10 +670,10 @@ export function App({
       });
     }
     return true;
-  }, [dispatch, setEditor, setQueued]);
+  }, [dispatch, setAttachedImage, setEditor, setQueued]);
 
   const runTurn = useCallback(
-    async (text: string, userInput = text) => {
+    async (text: string, userInput = text, image?: ImageBlock) => {
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
       let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
@@ -667,7 +683,11 @@ export function App({
           text,
           async (turnInput) => {
             let answerTailLive = false;
-            for await (const event of runtime.send(turnInput, userInput)) {
+            for await (const event of runtime.send(
+              turnInput,
+              userInput,
+              turnInput === text ? image : undefined,
+            )) {
               if (
                 event.type === 'modelStreamUpdateEvent' &&
                 event.event.type === 'modelContentBlockDeltaEvent' &&
@@ -791,8 +811,11 @@ export function App({
   );
 
   const submit = useCallback(
-    async (raw: string) => {
+    async (raw: string, queuedEntry?: QueuedPrompt) => {
       const text = raw.trim();
+      // A drained entry owns its optional image, including explicit absence. It
+      // must never borrow a newer attachment still sitting beside the editor.
+      const image = queuedEntry === undefined ? attachedImageRef.current : queuedEntry.image;
       if (text === '') return;
 
       // A bounded pure projection of canonical commands and fixed input controls.
@@ -1105,7 +1128,15 @@ export function App({
         // taken back or dropped by /clear was never sent at all.
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
-        setQueued([...queuedRef.current, text]);
+        const queuedAttachment = text.startsWith('!') ? undefined : image;
+        setQueued([...queuedRef.current, {
+          text,
+          ...(queuedAttachment === undefined ? {} : { image: queuedAttachment }),
+        }]);
+        if (queuedAttachment !== undefined) {
+          clipboardReadGeneration.current += 1;
+          setAttachedImage(undefined);
+        }
         return;
       }
 
@@ -1284,6 +1315,8 @@ export function App({
         // The queue dies with the conversation it was typed at (SER-027): nothing
         // was sent, so nothing is recorded — the entries simply never existed.
         setQueued([]);
+        clipboardReadGeneration.current += 1;
+        setAttachedImage(undefined);
         // Mirrored to the *successor's* diagnostics log: the memoized `dispatch` still
         // points at the predecessor's, which this switch has just closed.
         withNoticeDiagnostics(recordAction, next.diagnostics)({
@@ -1366,9 +1399,15 @@ export function App({
         toSend = `${shellReports.join('\n\n')}\n\n${toSend}`;
       }
 
-      await runTurn(toSend, text);
+      // The ordinary prompt now owns the attachment. Clear the composer before
+      // streaming so later draft edits cannot leak it into another invocation.
+      if (image !== undefined && queuedEntry === undefined) {
+        clipboardReadGeneration.current += 1;
+        setAttachedImage(undefined);
+      }
+      await runTurn(toSend, text, image);
     },
-    [dispatch, exit, recordAction, returnQueuedToEditor, runtime, runTurn, setEditor, setQueued, startNewSession, status, writeToTerminal],
+    [dispatch, exit, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setEditor, setQueued, startNewSession, status, writeToTerminal],
   );
 
   // The drain (SER-027): when the session is idle and nothing owns the keyboard,
@@ -1386,7 +1425,7 @@ export function App({
     if (next === undefined) return;
     draining.current = true;
     setQueued(queuedRef.current.slice(1));
-    void submit(next).finally(() => {
+    void submit(next.text, next).finally(() => {
       draining.current = false;
       setDrainCycle((cycle) => cycle + 1);
     });
@@ -1807,6 +1846,37 @@ export function App({
       return;
     }
 
+    // Clipboard image attachment is editor ownership, below permission,
+    // compaction and search modes. Ctrl+O toggles without editing draft text.
+    if (key.ctrl && typed === 'o') {
+      clipboardReadGeneration.current += 1;
+      if (attachedImageRef.current !== undefined) {
+        setAttachedImage(undefined);
+        dispatch({ type: 'notice', text: 'clipboard image removed from the next prompt' });
+      } else if (hasQueuedImage(queuedRef.current)) {
+        dispatch({ type: 'notice', text: 'one clipboard image is already queued — take it back or let it send first' });
+      } else {
+        const generation = clipboardReadGeneration.current;
+        void readClipboardImage().then(
+          (image) => {
+            if (clipboardReadGeneration.current !== generation) return;
+            setAttachedImage(image);
+            dispatch({ type: 'notice', text: clipboardImageFact(image) });
+          },
+          (error: unknown) => {
+            if (clipboardReadGeneration.current !== generation) return;
+            dispatch({
+              type: 'notice',
+              text: `could not attach clipboard image; draft unchanged: ${error instanceof Error ? error.message : String(error)}`,
+              severity: 'warn',
+            });
+          },
+        );
+      }
+      return;
+    }
+
+
     // Escape belongs to the highest transient prompt UI currently shown. A menu
     // wins over recall just as it wins the arrow keys; neither branch touches the
     // editor, submits, dispatches, or changes the queue/runtime. The dismissed query
@@ -2075,6 +2145,7 @@ export function App({
             offset={{ top: chrome.top, left: chrome.left }}
             maxRows={grants.prompt}
             hint={streamingHint}
+            attachment={attachedImage === undefined ? undefined : clipboardImageFact(attachedImage)}
             recallIndicator={recallIndicator}
             historySearch={historySearchProjection}
             rewindSearch={rewindSearchProjection}

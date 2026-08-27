@@ -106,7 +106,7 @@ envelope `{"v":1,"seq":<n>,"t":"<ISO>","turn":<n>,"type":"<t>"}`.
 | `type` | Payload |
 |---|---|
 | `runStarted` | `session`, `agentId`, `darwinVersion`, `provider`, `model`, `permissionMode`, `thinkingEffort`, `resumed`, `restoredMessages`, `pid` |
-| `userInput` | `text` — the string actually handed to `agent.stream()`, so a slash command appears **expanded**, because that is what the model received |
+| `userInput` | `text` — normally the string handed to `agent.stream()`, so a text-only slash command appears **expanded**. SER-041 multimodal input is the deliberate exception: it records the literal user prompt while the SDK receives model text plus an `ImageBlock`; image bytes, base64, clipboard contents, synthetic attachment text and fabricated paths never enter this record |
 | `contentBlockEvent` | the SDK event's own `toJSON()`, capped. `reasoningBlock` is recorded as presence only |
 | `beforeToolCallEvent` | `toolUse` (id, name, input), capped |
 | `afterToolCallEvent` | `toolUse` plus `result` (status, content), capped |

@@ -11,6 +11,8 @@ import {
   loadLocalImage,
   MAX_IMAGE_BYTES,
   MAX_IMAGE_DIMENSION,
+  decodeImageBytes,
+
   MAX_INPUT_PIXELS,
   MAX_REQUEST_PATH_CHARS,
   MAX_SOURCE_BYTES,
@@ -119,6 +121,21 @@ try {
   const flattenedMetadata = await sharp(bytesOf(flattened)).metadata();
   assert('animated GIF is flattened to WebP', flattened.format === 'webp' && flattenedMetadata.format === 'webp');
   assert('animated GIF result contains one static frame', (flattenedMetadata.pages ?? 1) === 1);
+  header('image decoder — shared byte source policy');
+
+  const decodedClipboardBytes = await decodeImageBytes(sources.get('sample.png')!, '.png', 'clipboard image');
+  assert('byte source preserves a compliant PNG exactly',
+    decodedClipboardBytes.format === 'png' && bytesOf(decodedClipboardBytes).equals(sources.get('sample.png')!));
+  let mismatchedBytes = '';
+  try {
+    await decodeImageBytes(sources.get('sample.JPG')!, '.png', 'clipboard image');
+  } catch (error) {
+    mismatchedBytes = error instanceof Error ? error.message : String(error);
+  }
+  assert('byte source rejects MIME/decoded-format mismatch through shared policy',
+    mismatchedBytes.includes('clipboard image: extension declares png'));
+
+
 
   header('image viewer — SDK tool result');
 

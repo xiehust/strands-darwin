@@ -235,10 +235,13 @@ nothing is ever injected into a running SDK stream.
 Required checks: `spike/verify-prompt-queue.ts` (free, in `pnpm test`: the refusal set, row
 projection, take-back composition, hint segment, budget arithmetic, rendered height never above
 the grant), `spike/verify-tui.ts queue` (free pty: listing, take-back ordering with typed text,
-
 cancel return, `/clear` refusal, recall untouched, no `userInput` record), `bang` (free: a queued
 `!` drains and runs after the running one) and the live `usage` mid-turn half (a queued prompt
 drains into its own real turn, no second Enter).
+
+### Clipboard attachment chip
+
+A pending clipboard image claims exactly one prompt-region row. `promptBoxWanted` counts it and `planPromptBox` grants it after completion/search chrome but before recall/hint informational rows; when granted, `InputBox` draws one `Text wrap="truncate-end"`. The row states bounded format/size and the removal gesture only. Queue rows remain one truncated row and state `[image]` without bytes. No image introduces a header, modal, permanent frame surface, animation, or second budget.
 
 ### `/memory` remains transcript history
 

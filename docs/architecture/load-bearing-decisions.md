@@ -41,6 +41,13 @@ occurred without exposing the private control prompt. Authoritative contracts:
 `backend/structured-headless-output.md`. Required checks: `spike/verify-stream-resumption.ts` and
 `spike/verify-headless-structured.ts` (both in `pnpm test`).
 
+
+## Clipboard image input — one transient SDK content-block invocation
+
+**Clipboard images are live interactive input, never durable transcript content.** `Ctrl+O` reads one bounded PNG through platform clipboard helpers and the exact decoder/normalizer shared with the path-based `imageViewer` tool. The pending image is a counted one-row chip and travels with its draft or queue entry until explicit removal or actual queue/send ownership. `AgentRuntime.send` supplies text plus `ImageBlock` to the existing SDK `Agent.stream()` once; unsupported providers fail through the ordinary visible turn-error path, with no capability probe, second call, Agent construction, or loop interception.
+
+Trajectory, replay/export, prompt recall, rewind labels, memory evidence and shell records remain text-only: image bytes, base64, clipboard contents and fabricated paths never enter them. Multimodal trajectory input is the literal user prompt, while model-only expansion/shell reports remain in the SDK content block. The authoritative contracts and free checks are `.trellis/spec/backend/strands-sdk-contracts.md`, `.trellis/spec/frontend/tui-testing.md`, `spike/verify-runtime-image-input.ts`, `spike/verify-clipboard-image.ts`, and `spike/verify-tui.ts clipboardImage`.
+
 ## Direct driver streaming
 
 **Successful turns are public as their ordinary SDK events arrive; there is no whole-turn output

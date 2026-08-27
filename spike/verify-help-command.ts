@@ -44,6 +44,9 @@ const facts = [
   '!<command> runs your shell command locally',
   'Ctrl+J or trailing \\ + Enter inserts a newline',
   'multiline paste never submits',
+  'Ctrl+O attaches one clipboard image to the next prompt',
+  'Ctrl+O again removes it',
+
   'Ctrl+R searches this project’s prompt history',
   'Ctrl+R/Up/Down navigate · Tab/Enter accepts',
   'completion · Up queued-message take-back · prompt recall · cursor movement',

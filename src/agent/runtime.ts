@@ -5,8 +5,8 @@
  * raw event stream to whatever is driving it. Callers (the dev REPL now, Ink
  * later) decide how to render.
  */
-import { Agent, BeforeInvocationEvent, SummarizingConversationManager } from '@strands-agents/sdk';
-import type { AgentStreamEvent, InterventionHandler, McpClient, Model, SessionManager } from '@strands-agents/sdk';
+import { Agent, BeforeInvocationEvent, SummarizingConversationManager, TextBlock } from '@strands-agents/sdk';
+import type { AgentStreamEvent, ImageBlock, InterventionHandler, McpClient, Model, SessionManager } from '@strands-agents/sdk';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
@@ -784,18 +784,23 @@ export class AgentRuntime {
    * One `before` snapshot feeds both the meter and `lastTurnDelta`, so what the record
    * says a turn cost and what `/usage` says it cost cannot be two different readings.
    */
-  async *send(input: string, userInput = input): AsyncIterable<AgentStreamEvent> {
+  async *send(input: string, userInput = input, image?: ImageBlock): AsyncIterable<AgentStreamEvent> {
     const before = this.usage;
     let checkpointId: string | undefined;
-    if (rewindPromptEligible(input)) {
+    // A text-only checkpoint cannot truthfully reproduce a multimodal boundary.
+    if (image === undefined && rewindPromptEligible(input)) {
       checkpointId = await this.captureRewindCheckpoint();
     }
 
     let completed = false;
     let sealed = false;
     try {
+      // A multimodal turn's durable text is the literal submitted prompt. Expanded
+      // command text and held shell reports still reach the model, but image bytes
+      // and synthetic attachment/path text never enter the trajectory.
+      const recordedInput = image === undefined ? input : userInput;
       const recording = this.trajectory?.beginTurn(
-        input,
+        recordedInput,
         startTurnSpend(before, () => this.usage, this.liveConfig),
       );
       // The model may receive an expanded skill/custom-command prompt, but
@@ -812,7 +817,8 @@ export class AgentRuntime {
       }
       // Later events and turn-end are still observed synchronously and appended in
       // the background; `shutdown()` is where that append chain is waited for.
-      for await (const event of recordStream(this.agent.stream(input), recording)) {
+      const invocation = image === undefined ? input : [new TextBlock(input), image];
+      for await (const event of recordStream(this.agent.stream(invocation), recording)) {
         if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
         yield event;
       }

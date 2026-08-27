@@ -29,16 +29,6 @@ const EXTENSION_FORMATS = new Map<string, ImageFormat>([
 ]);
 
 export function createImageViewerTool(projectRoot: string): InvokableTool<{ path: string }, ImageBlock> {
-  // The SDK may execute several tool calls concurrently. Sharp's per-image pixel
-  // bound would not bound their aggregate native memory, so one shared catalogue
-  // serializes image decoding across the parent and every child agent.
-  let decodeChain: Promise<void> = Promise.resolve();
-  const queuedLoad = (requestedPath: string): Promise<ImageBlock> => {
-    const result = decodeChain.then(() => loadLocalImage(projectRoot, requestedPath));
-    decodeChain = result.then(() => undefined, () => undefined);
-    return result;
-  };
-
   return tool({
     name: IMAGE_VIEWER_TOOL_NAME,
     description:
@@ -52,7 +42,7 @@ export function createImageViewerTool(projectRoot: string): InvokableTool<{ path
         .max(MAX_REQUEST_PATH_CHARS)
         .describe('Local image path, absolute or relative to the project root'),
     }),
-    callback: ({ path: requestedPath }) => queuedLoad(requestedPath),
+    callback: ({ path: requestedPath }) => loadLocalImage(projectRoot, requestedPath),
   });
 }
 
@@ -74,46 +64,80 @@ export async function loadLocalImage(projectRoot: string, requestedPath: string)
     : path.resolve(projectRoot, requestedPath);
 
   try {
-    const expectedFormat = formatFromPath(resolvedPath);
+    const extension = path.extname(resolvedPath);
+    formatFromExtension(extension);
     const source = await readBoundedFile(resolvedPath);
-    // Do not select one page here: metadata.pages must reveal animation. The
-    // normalization decoder below explicitly selects page zero.
-    const metadata = await sharp(source, {
-      limitInputPixels: MAX_INPUT_PIXELS,
-      failOn: 'warning',
-    }).metadata();
-
-    if (metadata.format !== expectedFormat) {
-      throw new Error(
-        `extension declares ${expectedFormat}, but the decoded content is ${metadata.format ?? 'not a supported image'}`,
-      );
-    }
-
-    const width = metadata.autoOrient.width ?? metadata.width;
-    const height = metadata.autoOrient.height ?? metadata.height;
-    if (width === undefined || height === undefined || width < 1 || height < 1) {
-      throw new Error('could not determine positive image dimensions');
-    }
-
-    const animated = (metadata.pages ?? 1) > 1;
-    if (
-      !animated &&
-      source.byteLength <= MAX_IMAGE_BYTES &&
-      width <= MAX_IMAGE_DIMENSION &&
-      height <= MAX_IMAGE_DIMENSION
-    ) {
-      return new ImageBlock({ format: expectedFormat, source: { bytes: source } });
-    }
-
-    const normalized = await normalizeImage(source, width, height);
-    return new ImageBlock({ format: 'webp', source: { bytes: normalized } });
+    return await decodeImageBytes(source, extension, '');
   } catch (error) {
     throw new Error(`Could not read image ${resolvedPath}: ${describe(error)}`, { cause: error });
   }
 }
 
-function formatFromPath(filePath: string): ImageFormat {
-  const extension = path.extname(filePath).toLowerCase();
+/**
+ * Applies the imageViewer's one decoding and normalization policy to bytes from
+ * another bounded source, such as the interactive clipboard adapter. One global
+ * chain bounds aggregate Sharp/native memory across path tools and clipboard reads.
+ */
+let sharedDecodeChain: Promise<void> = Promise.resolve();
+
+export function decodeImageBytes(
+  source: Uint8Array,
+  extension: string,
+  sourceLabel = 'extension',
+): Promise<ImageBlock> {
+  const result = sharedDecodeChain.then(() => decodeImageBytesNow(source, extension, sourceLabel));
+  sharedDecodeChain = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function decodeImageBytesNow(
+  source: Uint8Array,
+  extension: string,
+  sourceLabel: string,
+): Promise<ImageBlock> {
+  const prefix = sourceLabel === '' ? '' : `${sourceLabel}: `;
+  if (source.byteLength === 0) throw new Error(`${prefix}source is empty`);
+  if (source.byteLength > MAX_SOURCE_BYTES) {
+    throw new Error(`${prefix}source is ${source.byteLength} bytes; maximum source size is ${MAX_SOURCE_BYTES} bytes`);
+  }
+
+  const expectedFormat = formatFromExtension(extension);
+  const bytes = Buffer.from(source);
+  // Do not select one page here: metadata.pages must reveal animation. The
+  // normalization decoder below explicitly selects page zero.
+  const metadata = await sharp(bytes, {
+    limitInputPixels: MAX_INPUT_PIXELS,
+    failOn: 'warning',
+  }).metadata();
+
+  if (metadata.format !== expectedFormat) {
+    throw new Error(
+      `${prefix}extension declares ${expectedFormat}, but the decoded content is ${metadata.format ?? 'not a supported image'}`,
+    );
+  }
+
+  const width = metadata.autoOrient.width ?? metadata.width;
+  const height = metadata.autoOrient.height ?? metadata.height;
+  if (width === undefined || height === undefined || width < 1 || height < 1) {
+    throw new Error(`${prefix}could not determine positive image dimensions`);
+  }
+
+  const animated = (metadata.pages ?? 1) > 1;
+  if (
+    !animated &&
+    bytes.byteLength <= MAX_IMAGE_BYTES &&
+    width <= MAX_IMAGE_DIMENSION &&
+    height <= MAX_IMAGE_DIMENSION
+  ) {
+    return new ImageBlock({ format: expectedFormat, source: { bytes } });
+  }
+
+  const normalized = await normalizeImage(bytes, width, height);
+  return new ImageBlock({ format: 'webp', source: { bytes: normalized } });
+}
+
+function formatFromExtension(value: string): ImageFormat {
+  const extension = value.toLowerCase();
   const format = EXTENSION_FORMATS.get(extension);
   if (format !== undefined) return format;
   throw new Error(

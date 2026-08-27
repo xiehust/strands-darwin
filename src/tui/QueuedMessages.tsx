@@ -14,14 +14,14 @@ import { Box, Text } from 'ink';
 import React from 'react';
 
 import { hiddenQueuedNotice, planQueueList } from './frame-budget.js';
-import { queueRowText } from './prompt-queue.js';
+import { queueRowText, type QueuedPrompt } from './prompt-queue.js';
 
 export function QueuedMessages({
   entries,
   maxRows,
 }: {
   /** Queue order: index 0 drains next. */
-  readonly entries: readonly string[];
+  readonly entries: readonly (QueuedPrompt | string)[];
   /** Rows this block may draw; the budget's `queued` grant. */
   readonly maxRows: number;
 }): React.JSX.Element | null {

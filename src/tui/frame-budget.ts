@@ -275,6 +275,8 @@ export function promptBoxWanted(input: {
   readonly completions: number;
   readonly moreCompletions: boolean;
   readonly hasHint: boolean;
+  /** One bounded pending clipboard-image fact row. */
+  readonly hasAttachment?: boolean;
   /** The prompt-recall indicator row; absent when no recall walk is open. */
   readonly hasRecall?: boolean;
   /** Search title plus these bounded match rows (and, when needed, one omission row). */
@@ -285,7 +287,7 @@ export function promptBoxWanted(input: {
   const search = input.searchMatches === undefined
     ? 0
     : 1 + input.searchMatches + (input.moreSearchMatches === true ? 1 : 0);
-  return input.draftRows + menu + search +
+  return input.draftRows + menu + search + (input.hasAttachment === true ? 1 : 0) +
     (input.hasRecall === true ? RECALL_INDICATOR_ROWS : 0) + (input.hasHint ? 2 : 0);
 }
 
@@ -376,6 +378,8 @@ export interface PromptBoxPlan {
   readonly searchItems: number;
   /** Draw the search omission row after visible matches. */
   readonly searchMore: boolean;
+  /** Draw the pending clipboard-image fact row. */
+  readonly attachment: boolean;
   /** Draw the prompt-recall indicator row. */
   readonly recall: boolean;
   /** Draw the status hint. */
@@ -403,6 +407,7 @@ export function planPromptBox(input: {
   readonly completions: number;
   readonly moreCompletions: boolean;
   readonly hasHint: boolean;
+  readonly hasAttachment?: boolean;
   /** A recall walk is open, so the indicator wants its one row. */
   readonly hasRecall?: boolean;
   /** Search title plus a bounded result list; absent when search is closed. */
@@ -442,6 +447,11 @@ export function planPromptBox(input: {
   // Two rows of chrome with no entry under them says less than nothing, so a menu
   // that cannot show one entry costs nothing at all.
   if (completionItems > 0) spare -= menuRows;
+  // The pending attachment is actionable editor state, so it precedes recall/hint.
+  const attachmentRows = input.hasAttachment === true && spare >= 1 ? 1 : 0;
+  spare -= attachmentRows;
+
+
 
   // One row, or it is not drawn at all — the same all-or-nothing rule the hint has.
   const recallRows = input.hasRecall === true && spare >= RECALL_INDICATOR_ROWS ? RECALL_INDICATOR_ROWS : 0;
@@ -459,6 +469,7 @@ export function planPromptBox(input: {
     search,
     searchItems,
     searchMore,
+    attachment: attachmentRows > 0,
     recall: recallRows > 0,
     hint: hintRows > 0,
   };

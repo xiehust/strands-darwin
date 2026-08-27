@@ -26,7 +26,7 @@
  */
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import process from 'node:process';
 import path from 'node:path';
@@ -3643,6 +3643,134 @@ async function mcpReport(): Promise<void> {
   }
 }
 
+/** Free real-pty proof of clipboard image chip ownership; no model invocation. */
+async function clipboardImageComposer(): Promise<void> {
+  header('TUI — clipboard image attachment chip and explicit removal');
+  const dir = '/tmp/darwin-clipboard-tui';
+  const bin = path.join(dir, 'bin');
+  const fixture = path.join(dir, 'clipboard.png');
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(bin, { recursive: true });
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFgAI/ScL5WQAAAABJRU5ErkJggg==', 'base64');
+  await writeFile(fixture, png);
+  const helper = path.join(bin, 'wl-paste');
+  await writeFile(helper, `#!${process.execPath}\nprocess.stdout.write(require('node:fs').readFileSync(process.env.CLIPBOARD_FIXTURE));\n`);
+  await chmod(helper, 0o755);
+
+  const tui = startTui({
+    cwd: dir,
+    entry: path.join(import.meta.dirname, 'fixtures', 'clipboard-image-cli.ts'),
+    cols: 100,
+    rows: 30,
+    echo: process.env['DARWIN_TUI_ECHO'] === '1',
+    env: {
+      PATH: `${bin}:${process.env['PATH'] ?? ''}`,
+      WAYLAND_DISPLAY: 'darwin-test',
+      CLIPBOARD_FIXTURE: fixture,
+    },
+  });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const beforeDraft = tui.mark();
+    tui.send('draft-before');
+    await tui.waitFor('you> draft-before', { timeoutMs: 30_000, from: beforeDraft, settleMs: 200 });
+    const beforeAttach = tui.mark();
+    tui.send('\u000f');
+    await tui.waitFor('image attached · PNG', { timeoutMs: 30_000, from: beforeAttach, settleMs: 300 });
+    assert('attachment chip states bounded format/removal facts',
+      tui.frame.includes('image attached · PNG') && tui.frame.includes('Ctrl+O remove'));
+    assert('attachment does not replace the draft', tui.frame.includes('you> draft-before'));
+
+    tui.send('-after');
+    await tui.waitFor('you> draft-before-after', { timeoutMs: 30_000, from: beforeAttach, settleMs: 300 });
+    assert('ordinary edits preserve the chip', tui.frame.includes('image attached · PNG'));
+
+    const beforeRemove = tui.mark();
+    tui.send('\u000f');
+    await tui.waitFor('clipboard image removed from the next prompt', {
+      timeoutMs: 30_000,
+      from: beforeRemove,
+      settleMs: 300,
+    });
+    assert('explicit removal clears only the chip',
+      !tui.frame.includes('image attached · PNG') && tui.frame.includes('you> draft-before-after'));
+
+    const beforeFailure = tui.mark();
+    await rm(helper);
+    tui.send('\u000f');
+    await tui.waitFor('could not attach clipboard image; draft unchanged:', {
+      timeoutMs: 30_000,
+      from: beforeFailure,
+      settleMs: 300,
+    });
+    assert('clipboard failure is explicit and keeps the draft', tui.frame.includes('you> draft-before-after'));
+    // Ordinary send owns and clears the chip, and the free fixture captures one
+    // SDK user message with literal text plus image content.
+    await writeFile(helper, `#!${process.execPath}\nprocess.stdout.write(require('node:fs').readFileSync(process.env.CLIPBOARD_FIXTURE));\n`);
+    await chmod(helper, 0o755);
+    tui.send('\u0015');
+    const beforeSendAttach = tui.mark();
+    tui.send('\u000f');
+    await tui.waitFor('image attached · PNG', { timeoutMs: 30_000, from: beforeSendAttach, settleMs: 200 });
+    tui.submit('send image prompt');
+    await tui.waitFor('image received', { timeoutMs: 30_000, from: beforeSendAttach, settleMs: 300 });
+    assert('ordinary send clears the attachment chip', !tui.frame.includes('image attached · PNG'));
+    const captured = JSON.parse(await readFile(path.join(dir, 'clipboard-image-capture.json'), 'utf8')) as {
+      content?: Array<{ text?: string; image?: { source?: { bytes?: string } } }>;
+    };
+    assert('ordinary pty send reaches one SDK message with text and image',
+      captured.content?.length === 2 && captured.content[0]?.text === 'send image prompt' &&
+      captured.content[1]?.image?.source?.bytes !== undefined);
+
+
+
+    // Queue ownership: an attached prompt queued behind a free ! busy state keeps
+    // its image, and cancellation returns both prompt and chip unsent.
+    await writeFile(helper, `#!${process.execPath}\nprocess.stdout.write(require('node:fs').readFileSync(process.env.CLIPBOARD_FIXTURE));\n`);
+    await chmod(helper, 0o755);
+    tui.send('\u0015');
+    const beforeBusy = tui.mark();
+    tui.submit('!sleep 8');
+    await tui.waitFor('running ! command…', { timeoutMs: 30_000, from: beforeBusy, settleMs: 200 });
+    const beforeQueuedAttach = tui.mark();
+    tui.send('\u000f');
+    await tui.waitFor('image attached · PNG', { timeoutMs: 30_000, from: beforeQueuedAttach, settleMs: 200 });
+    tui.submit('queued image prompt');
+    await tui.waitFor('queued · [image] queued image prompt', {
+      timeoutMs: 30_000,
+      from: beforeQueuedAttach,
+      settleMs: 200,
+    });
+    assert('queued attachment leaves no chip on the newer editor draft', !tui.frame.includes('image attached · PNG'));
+    tui.send('\u0003');
+    await tui.waitFor('1 queued message returned to the editor, not sent', {
+      timeoutMs: 30_000,
+      from: beforeBusy,
+      settleMs: 300,
+    });
+    assert('cancel returns the matching prompt and image chip unsent',
+      tui.frame.includes('you> queued image prompt') && tui.frame.includes('image attached · PNG'));
+    const beforeCleanup = tui.mark();
+    tui.send('\u000f');
+    await tui.waitFor('clipboard image removed from the next prompt', {
+      timeoutMs: 30_000,
+      from: beforeCleanup,
+      settleMs: 200,
+    });
+    tui.send('\u0015');
+    await tui.waitUntil((screen) => screen.slice(beforeCleanup).includes('you> '), {
+      timeoutMs: 30_000,
+      from: beforeCleanup,
+      settleMs: 200,
+    });
+    tui.submit('/exit');
+    assert('TUI exits after local attachment interactions', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -3653,6 +3781,7 @@ const SCENARIOS = {
   multiline: multilineInput,
   chunkedEnter,
   compacting: compactingInputOwnership,
+  clipboardImage: clipboardImageComposer,
   permissionEscape,
   contextOverflow: contextOverflowFailure,
   cursor: cursorEditing,

@@ -111,6 +111,8 @@ export interface TuiOptions {
   args?: string[];
   cols?: number;
   rows?: number;
+  /** Additional child environment values for deterministic platform fixtures. */
+  env?: Record<string, string>;
   /** Echo the terminal output as it arrives. Defaults to false (very noisy). */
   echo?: boolean;
 }
@@ -125,7 +127,7 @@ export function startTui(options: TuiOptions): TuiSession {
       cols: options.cols ?? 120,
       rows: options.rows ?? 50,
       cwd: options.cwd,
-      env: process.env as Record<string, string>,
+      env: { ...(process.env as Record<string, string>), ...options.env },
     },
   );
 

@@ -24,6 +24,7 @@ import {
 } from '../src/tui/frame-budget.js';
 import {
   QUEUED_MARKER,
+  hasQueuedImage,
   queueRowText,
   queuedCountHint,
   refusesToQueue,
@@ -76,6 +77,18 @@ check('a multi-line entry stays one row: newlines become visible ⏎', () => {
   nodeAssert.equal(row.includes('\n'), false);
   nodeAssert.equal(row, `${QUEUED_MARKER} first line ⏎ second line`);
 });
+check('an attached queued row states the fact without bytes', () => {
+  const row = queueRowText({ text: 'inspect this', image: { type: 'imageBlock' } as never });
+  nodeAssert.equal(row, `${QUEUED_MARKER} [image] inspect this`);
+  nodeAssert.equal(row.includes('bytes'), false);
+});
+
+check('the queue exposes whether its one bounded image slot is occupied', () => {
+  const image = { type: 'imageBlock' } as never;
+  nodeAssert.equal(hasQueuedImage([{ text: 'plain' }]), false);
+  nodeAssert.equal(hasQueuedImage([{ text: 'attached', image }]), true);
+});
+
 
 header('prompt queue — take-back composes the draft, oldest first, ahead of typed text');
 
@@ -87,6 +100,9 @@ check('take-back lands ahead of typed text, preserving it', () => {
 });
 check('a multi-line entry keeps its own newlines in the draft', () => {
   nodeAssert.equal(takeBackDraft(['a\nb'], 'c'), 'a\nb\nc');
+});
+check('take-back restores text from an attached entry without serializing image data', () => {
+  nodeAssert.equal(takeBackDraft([{ text: 'look', image: { type: 'imageBlock' } as never }], 'draft'), 'look\ndraft');
 });
 
 header('prompt queue — the busy hint states the count, or nothing');

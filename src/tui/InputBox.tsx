@@ -94,6 +94,7 @@ export function InputBox({
   selectedCompletion,
   editable,
   hint,
+  attachment,
   recallIndicator,
   historySearch,
   rewindSearch,
@@ -112,6 +113,8 @@ export function InputBox({
   readonly selectedCompletion: number;
   readonly editable: boolean;
   readonly hint: string | undefined;
+  /** One bounded live-only fact for a pending clipboard image. */
+  readonly attachment?: string | undefined;
   /**
    * The open recall walk's one row, or nothing when no walk is open.
    *
@@ -142,6 +145,7 @@ export function InputBox({
     completions: offered,
     moreCompletions: completions.length > offered,
     hasHint: hint !== undefined,
+    hasAttachment: attachment !== undefined,
     hasRecall: recallIndicator !== undefined,
     ...(activeSearch === undefined ? {} : {
       searchMatches: activeSearch.matches.length,
@@ -199,6 +203,10 @@ export function InputBox({
           <Text dimColor={!editable} wrap="truncate-end">{row.text}</Text>
         </Box>
       ))}
+
+      {attachment !== undefined && plan.attachment && (
+        <Text color={visualColor.active} bold wrap="truncate-end">{attachment}</Text>
+      )}
 
       {/* Under the draft it describes and above the menu, so the cursor's row inside
           the draft window is unaffected — `useCursor` counts rows from the top of the
