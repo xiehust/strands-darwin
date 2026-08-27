@@ -1966,3 +1966,15 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SER-041 | `2b04e59` implementation, `152aa7d` task archive, `20b39e3` journal, Host-found correction `f4645d1` | Host inspected the source/spec/test diff and rejected the initial result because an unsupported multimodal provider consumed the only in-memory image. Acceptance followed only after the exact literal prompt and same image were restored for retry/removal without another clipboard read or model call. Host independently passed `verify-runtime-image-input.ts` (5/5), `verify-clipboard-image.ts` (8/8), `verify-image-viewer.ts` (34/34), `verify-prompt-queue.ts` (31/31), free pty `clipboardImage` (14/14), `queue` (17/17), `permissionEscape` (3/3), `compacting` (5/5), `completion` (67/67), `recall` (22/22), `historySearch` (14/14), stream-resumption and help suites, `pnpm typecheck`, full `pnpm test` after Host backlog closure, and `pnpm build`; plus commit/diff checks, clean-tree verification, and AGENTS.md size (28,097 bytes < 32 KiB). The feature uses one ordinary SDK text-plus-`ImageBlock` invocation, shares the bounded path-image decoder, preserves one-image queue ownership, and keeps all durable text records free of image bytes, base64, clipboard contents, and fabricated paths. |
+
+
+## Batch 63 — SDK HTTP request vended tool
+
+- Origin: direct user request to vend the Strands TypeScript SDK HTTP request tool.
+- Child session: `session-20260827-142402874`.
+- Managed task: `bg-a1fdcfd9-9b35-462c-bf6a-0c711b816edc` (implementation, workflow records, and commits; succeeded, exit 0).
+- Token spend: `input=96 output=15,413 cacheRead=2,764,664 cacheWrite=85,906`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SDK HTTP request vended tool | `ce68299` implementation, `e5ff287` task archive, `b5e6869` journal | Host inspected the source, offline regression, SDK contract, architecture record, and dependency diff; independently passed `spike/verify-http-request-tool.ts` (7/7), full `pnpm test`, `pnpm typecheck`, and `pnpm build`; plus archived Trellis validation, commit whitespace checks, clean-tree verification, and AGENTS.md size (28,548 bytes < 32 KiB). The parent runtime registers the exact SDK `httpRequest` singleton (`http_request`) in its ordinary tool list, leaves it fail-closed as `execute`, blocks it before prompting in plan mode, and does not expose it to children or add another network path. |
