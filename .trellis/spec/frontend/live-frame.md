@@ -355,6 +355,13 @@ alternative redraws the whole tail per delta
   `warn` notice with the authoritative text in full. No ordinary model can reach that branch (the
   SDK's base `Model.streamAggregated` assembles the block from the deltas it just yielded), so it is
   exercised at the reducer, not through a fake provider.
+- **Closing a live tail is a two-render terminal handoff.** A text `contentBlockEvent` would otherwise
+  remove the mutable tail and append the same text to `<Static>` in one Ink render. On a scrolled
+  terminal the old live rows can then escape into scrollback before Static writes them again. The
+  interactive driver dispatches `prepareAnswerClose`, awaits Ink's public `waitUntilRenderFlush()`,
+  and only then publishes the unchanged content-block event through `turnReducer`. This exception is
+  close-boundary-only: deltas, tools and every other event remain directly streamed, no text is
+  deduplicated, and the transient action changes neither `committedAnswer` nor replay/trajectory.
 - **The label and the blank row belong to specific pieces.** `AnswerPart` is
   `whole | first | middle | last`: label on `whole`/`first`, bottom margin on `whole`/`last`. Ink
   fixes a margin when it writes the entry, so this cannot be decided later — and `formatReplay` must

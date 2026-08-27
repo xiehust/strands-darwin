@@ -165,6 +165,8 @@ export type TurnAction =
   | { type: 'toggleToolDetails' }
   | { type: 'subagentProgress'; progress: SubagentDispatchProgress }
   | { type: 'streamEvent'; event: AgentStreamEvent }
+  /** Clears the mutable answer rows before the same tail is committed to Static. */
+  | { type: 'prepareAnswerClose' }
   | { type: 'turnEnded' }
   | { type: 'clear' }
   /** A `!` command started: one pseudo-tool row in the live panel (live only, never replayed). */
@@ -222,6 +224,15 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
             : tool,
         ),
       };
+
+    case 'prepareAnswerClose':
+      // Ink cannot atomically move mutable rows into `<Static>`: if the same
+      // render removes `liveText` and appends that text to history, some terminals
+      // retain the old rows in scrollback before Static writes them again. The
+      // driver flushes this answer-free state before publishing contentBlockEvent.
+      // `committedAnswer` stays intact because closeAnswer still reconciles the
+      // authoritative block against every piece already written to Static.
+      return state.liveText === '' ? state : { ...state, liveText: '' };
 
     case 'turnEnded': {
       return finishTurn(state);

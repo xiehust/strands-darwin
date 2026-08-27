@@ -111,6 +111,22 @@ header('streaming into history — a line is committed once another follows it')
     answers(state)[answers(state).length - 1]?.part === 'last');
 }
 
+
+header('streaming into history — terminal handoff preserves reducer truth');
+
+{
+  let state = streamChars(initialTurnState, 'alpha\nbeta\ngamma');
+  const committed = state.committedAnswer;
+  assert('the closing tail is live before the terminal handoff', state.liveText === 'beta\ngamma');
+  state = turnReducer(state, { type: 'prepareAnswerClose' });
+  assert('the terminal handoff clears only the mutable answer rows', state.liveText === '');
+  assert('the terminal handoff preserves reconciliation state and history',
+    state.committedAnswer === committed && assembled(state) === committed);
+  state = stream(state, close('alpha\nbeta\ngamma'));
+  assert('the unchanged authoritative block still produces the complete answer once',
+    assembled(state) === 'alpha\nbeta\ngamma');
+}
+
 header('streaming into history — the shapes that must not change');
 
 {

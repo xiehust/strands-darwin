@@ -57,8 +57,9 @@ import { SKILLS_DIRNAME } from '../src/skills/loader.js';
 import { MAX_COMPLETIONS } from '../src/tui/InputBox.js';
 import { recordStream } from '../src/trajectory/stream.js';
 import { TrajectoryRecorder } from '../src/trajectory/writer.js';
-import { REPO_ROOT, startTui, type TuiSession } from './tui-driver.js';
+import { REPO_ROOT, startTui, stripAnsi, type TuiSession } from './tui-driver.js';
 import { assert, header, report } from './shared.js';
+import { reconstructTerminalLines } from './terminal-state.js';
 
 /** A TUI that will not exit is a leaked-handle bug, so exits are bounded. */
 const EXIT_TIMEOUT_MS = 30_000;
@@ -2400,6 +2401,59 @@ async function updatePlanChecklist(): Promise<void> {
   }
 }
 
+/** Free local-model pty proof for the live-tail to Static terminal handoff. */
+async function finalReplyHandoff(): Promise<void> {
+  header('TUI — the final live tail is erased before it enters Static');
+  await resetWorkDir();
+  await writeHomeConfig({ permissionMode: 'yolo', trajectory: true });
+  const entry = path.join(REPO_ROOT, 'spike/fixtures/final-reply-handoff-cli.ts');
+  const checkpoint = path.join(WORK_DIR, 'final-reply-handoff-blocked');
+  const release = path.join(WORK_DIR, 'final-reply-handoff-release');
+  const lastCompleted = 'FINAL-HANDOFF-LAST-COMPLETED';
+  const replyPrompt = 'FINAL-HANDOFF-REPLY-PROMPT';
+  const rows = 30;
+  const tui = startTui({ cwd: WORK_DIR, entry, cols: 100, rows });
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
+    const turn = tui.mark();
+    tui.submit('produce the final reply fixture');
+    await tui.waitUntil(() => existsSync(checkpoint), {
+      timeoutMs: 30_000,
+      label: 'the final-reply pre-close checkpoint',
+    });
+    await tui.waitFor(replyPrompt, { timeoutMs: 30_000, from: turn, settleMs: 100 });
+    assert('the held-back final line and reply prompt are live before content close',
+      tui.frame.includes(lastCompleted) && tui.frame.includes(replyPrompt));
+    assert('the turn remains busy while the authoritative block is held',
+      tui.frame.includes('working…'));
+
+    const rawBeforeRelease = tui.raw.length;
+    await writeFile(release, 'release\n');
+    await waitForIdle(tui, 30_000);
+    const closeBytes = tui.raw.slice(rawBeforeRelease);
+    const firstStaticTail = closeBytes.indexOf(lastCompleted);
+    assert('an answer-free busy frame is written before the tail enters Static',
+      firstStaticTail > 0 && stripAnsi(closeBytes.slice(0, firstStaticTail)).includes('working…'));
+
+    const next = tui.mark();
+    tui.submit('ok');
+    await tui.waitFor('FINAL-HANDOFF-NEXT-TURN', { timeoutMs: 30_000, from: next });
+    await waitForIdle(tui, 30_000);
+    const terminal = reconstructTerminalLines(tui.raw, rows);
+    assert('the final completed line remains in terminal history exactly once after the next input',
+      terminal.filter((line) => line === lastCompleted).length === 1);
+    assert('the final reply prompt remains in terminal history exactly once after the next input',
+      terminal.filter((line) => line === replyPrompt).length === 1);
+
+    tui.submit('/exit');
+    assert('final-reply handoff pty exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+
 async function longAnswer(): Promise<void> {
   header('TUI — a long streamed answer does not repaint the whole screen');
 
@@ -3624,6 +3678,7 @@ const SCENARIOS = {
   mode: modeCommand,
   plan: planHeader,
   updatePlan: updatePlanChecklist,
+  finalReplyHandoff,
   longAnswer,
   tallDraft,
   tallDraftStreaming,

@@ -214,7 +214,7 @@ export function App({
   /** Fresh source-preserving conversation branch; the selected prompt is not sent. */
   readonly startRewind?: (checkpoint: import('../agent/rewind.js').RewindCheckpoint) => Promise<AgentRuntime>;
 }): React.JSX.Element {
-  const { exit } = useApp();
+  const { exit, waitUntilRenderFlush } = useApp();
   const { columns, rows } = useWindowSize();
   const { write: writeToTerminal } = useStdout();
   // The live session. A prop at startup, state afterwards: `/clear` replaces the
@@ -666,8 +666,34 @@ export function App({
         await runWithStreamResumption(
           text,
           async (turnInput) => {
+            let answerTailLive = false;
             for await (const event of runtime.send(turnInput, userInput)) {
+              if (
+                event.type === 'modelStreamUpdateEvent' &&
+                event.event.type === 'modelContentBlockDeltaEvent' &&
+                event.event.delta.type === 'textDelta' &&
+                event.event.delta.text !== ''
+              ) {
+                answerTailLive = true;
+              }
+              if (
+                answerTailLive &&
+                event.type === 'contentBlockEvent' &&
+                event.contentBlock.type === 'textBlock'
+              ) {
+                // A text block closes the mutable answer tail into `<Static>`. If
+                // both changes share one Ink render, a terminal may scroll the old
+                // live rows out of the erasable frame before Static writes the same
+                // text, leaving a visible duplicate. Commit an answer-free frame
+                // first; the authoritative event still follows through the ordinary
+                // reducer path, in order, and no text/event is suppressed.
+                dispatch({ type: 'prepareAnswerClose' });
+                await waitUntilRenderFlush();
+              }
               dispatch({ type: 'streamEvent', event });
+              if (event.type === 'contentBlockEvent' && event.contentBlock.type === 'textBlock') {
+                answerTailLive = false;
+              }
             }
           },
           (error) => {
@@ -761,7 +787,7 @@ export function App({
       }
 
     },
-    [returnQueuedToEditor, runtime],
+    [returnQueuedToEditor, runtime, waitUntilRenderFlush],
   );
 
   const submit = useCallback(
