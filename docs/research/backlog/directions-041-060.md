@@ -361,3 +361,23 @@ Accepted in `db57a87` + Host-found retention correction `9ef6cc0` (research/task
 ### Notes / blockers / abandonment reason
 
 Claude Code and Codex establish prompt-bound rewind/branch UX; the current Strands TypeScript SDK now publicly supplies immutable snapshots, chronological listing and targeted restore, correcting the earlier premise that historical conversation restoration required trajectory reconstruction. Use SDK snapshots only for model state; trajectory remains observer-only and optional. The source session, its latest/immutable snapshots and trajectory stay untouched; a fresh successor session inherits live permission/MCP/background-process ownership like `/clear`, and the selected prompt returns to the editor. Scope is explicitly conversation-only: workspace files, shell/`!` effects, hooks, MCP writes, subagents, background jobs and learned-memory files are not rewound and the notice must say so.
+
+
+## SER-041 — Attach a clipboard image to the next interactive prompt as a bounded visible chip, using the existing image decoder and SDK `ImageBlock` input while keeping trajectory/recall text-only and truthful
+
+- Status: `not-started`
+- Priority: 59
+- Score: 14
+- Importance: 5
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 4
+- Risk: 2
+- Origin report: [`research_2026-08-27.md`](../research_2026-08-27.md) (run `12:45:27Z`, rolled `peer` path)
+
+### Implementation / acceptance evidence
+
+
+### Notes / blockers / abandonment reason
+
+Claude Code and Codex both document direct screenshot input in their terminal composers. Darwin already has bounded local image decoding in `src/tools/image-viewer.ts`, and the installed Strands SDK accepts content-block arrays with byte-backed `ImageBlock`, but `AgentRuntime.send` currently narrows every user turn to a string. Add one interactive clipboard-image attachment path without forking the SDK loop or replacing the path-based `imageViewer` tool. The attachment must be visibly bounded in the live composer, survive unrelated draft edits, clear only when the prompt is actually sent or the user explicitly removes it, and preserve permission/compaction/paste/queue key ownership. Never put image bytes, clipboard contents, or a fabricated local path into trajectory, replay, export, prompt recall, memory evidence, or shell reports; record the literal user prompt and only a bounded truthful attachment fact where the existing record schema permits it. Failures and unsupported terminal/provider paths must leave the draft and attachment state honest and actionable.
