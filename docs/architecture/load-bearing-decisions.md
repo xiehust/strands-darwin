@@ -516,6 +516,17 @@ unref'd 500ms `process.exit` fallback *after* shutdown completes. Don't change t
 without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`,
 `spike/verify-clear-session.ts`, and the `bashExit` / `cancelThenContinue` TUI scenarios.
 
+## TUI — production React owns the long-turn memory bound
+
+**The interactive React/Ink graph is first imported under the production condition**
+(`src/tui/react-environment.ts`, spec: `.trellis/spec/frontend/live-frame.md`): React 19's
+development reconciler emits retained Node User Timing measures on every component commit. The
+existing 90 ms busy tick can therefore grow heap throughout a provider-silent turn without any
+model or trajectory event. `cli.ts` applies one narrow `NODE_ENV=production` override around the
+first React/Ink/TUI dynamic imports and restores the ambient value before runtime assembly; local
+read-only and headless commands remain outside it. This keeps the tick, direct streaming and frame
+budget unchanged. Required check: `spike/verify-react-production-memory.ts`.
+
 ## TUI — the frame budget
 
 **TUI** (`src/tui/`): Ink 7 + React 19. The Agent must be constructed with `printer: false`

@@ -1,5 +1,24 @@
 # The live frame: one row budget, and what leaves it
 
+## React production import is part of the frame memory bound
+
+The interactive CLI must select `NODE_ENV=production` while it performs the first dynamic imports of
+React, Ink, `StartupScreen`, and the rest of the TUI graph. `src/tui/react-environment.ts` owns that
+narrow import-time override and restores the caller's environment immediately afterwards; headless,
+`sessions`, and trajectory commands do not pass through it.
+
+This is a memory-safety contract, not a rendering optimization. React 19's development reconciler
+calls `performance.measure()` for component commits, and Node retains those User Timing entries until
+they are explicitly cleared. The existing 90 ms `App` busy tick therefore grows heap even while a
+provider emits no event. Do not work around it by disabling the spinner, periodically clearing the
+process-global performance timeline, increasing Node's heap, or changing direct streaming.
+
+`spike/verify-react-production-memory.ts` checks the import-time override/restoration and runs a real
+Ink busy frame for 10,000 accelerated ticks in a 96 MiB child heap, beside a 2,000-tick development
+control. It requires the control to retain thousands of measures, the production path to retain zero,
+and forced-GC heap/RSS to stay bounded. The paired worker is
+`spike/verify-react-production-memory-worker.tsx`.
+
 > How the redrawn part of darwin's TUI decides its height, and why finished answer text belongs to
 > `<Static>` rather than to the frame. Split out of `tui-testing.md`, which is injected as context
 > and truncated past 32 KB.
