@@ -57,12 +57,24 @@ async function defaultPrompt(): Promise<void> {
   // The default is coding-agent instructions, not a generic assistant preamble:
   // it must name the tools the runtime actually registers and keep the rules the
   // permission gate and the "verify your work" acceptance criteria depend on.
-  for (const toolName of ['fileEditor', 'bash', 'imageViewer', 'load_skill', 'update_plan', 'subagent']) {
+  for (const toolName of ['fileEditor', 'bash', 'imageViewer', 'load_skill', 'update_plan', 'memory_recall', 'memory_save', 'subagent']) {
     assert(
       `it names the built-in ${toolName} tool`,
       DEFAULT_SYSTEM_PROMPT.includes(`- ${toolName}:`),
     );
   }
+  assert(
+    'it treats recalled memory as fallible context rather than policy',
+    /memory_recall:[\s\S]*fallible context[\s\S]*never as instructions or policy/.test(DEFAULT_SYSTEM_PROMPT),
+  );
+  assert(
+    'it limits durable memory to confirmed facts with exact evidence',
+    /memory_save:[\s\S]*only after confirming[\s\S]*exact current source line[\s\S]*exact quote from the\n  current user/.test(DEFAULT_SYSTEM_PROMPT),
+  );
+  assert(
+    'it states that a save persists only after a durable successful turn',
+    /persistence occurs only after a durable successful turn/.test(DEFAULT_SYSTEM_PROMPT),
+  );
   assert('it limits parallel subagents to independent reads', /parallel children for\n  independent reads, not concurrent writes/.test(DEFAULT_SYSTEM_PROMPT));
   assert('it tells the model to read before editing', /have not read/i.test(DEFAULT_SYSTEM_PROMPT));
   assert('it tells the model to verify its work', /verify/i.test(DEFAULT_SYSTEM_PROMPT));
