@@ -94,7 +94,7 @@ export async function runHeadlessTurn(
   const input = expanded?.message ?? prompt;
   return runWithStreamResumption(
     input,
-    (turnInput) => runOneHeadlessTurn(runtime, turnInput, writeStderr),
+    (turnInput) => runOneHeadlessTurn(runtime, turnInput, prompt, writeStderr),
     () => writeStderr(`notice: ${STREAM_CONTINUATION_NOTICE}\n`),
   );
 }
@@ -103,13 +103,14 @@ export async function runHeadlessTurn(
 async function runOneHeadlessTurn(
   runtime: HeadlessRuntime,
   input: string,
+  userInput: string,
   writeStderr: (text: string) => void,
 ): Promise<string> {
   const answer: string[] = [];
   let completed = false;
   let cancelled = false;
 
-  for await (const event of runtime.send(input)) {
+  for await (const event of runtime.send(input, userInput)) {
     consumeEvent(event, answer, writeStderr);
     if (event.type === 'agentResultEvent') {
       completed = true;

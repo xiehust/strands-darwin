@@ -1,9 +1,9 @@
 {
   "id": "llm-memory-extraction",
   "name": "llm-memory-extraction",
-  "title": "LLM-based learned memory extraction",
-  "description": "",
-  "status": "planning",
+  "title": "Agent-managed project memory tools",
+  "description": "Replace heuristic extraction with parent-only built-in save and retrieval tools backed by project-scoped files.",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -23,7 +23,7 @@
   "relatedFiles": [],
   "notes": "",
   "meta": {
-    "suspended": "true",
-    "suspended_reason": "overflow-fix-priority"
+    "resumedAt": "2026-08-27",
+    "resumedReason": "planning continued with agent-managed memory tools"
   }
 }

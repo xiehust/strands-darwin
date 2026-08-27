@@ -88,12 +88,11 @@
 <base prompt>                                  内置值或你的替换内容
 <project-instructions source="AGENTS.md">…    仓库规则
 <available_skills>…                            官方 AgentSkills 目录
-<learned-memory>…                              可选、已校验的项目上下文
 <working-context>…                             当前运行事实
 <cache point>
 ```
 
-只有基础 prompt 可以替换。`AGENTS.md`、skills、符合条件的项目记忆和工作上下文仍会追加。
+只有基础 prompt 可以替换。`AGENTS.md`、skills 和工作上下文仍会追加。项目记忆由父 agent 按需调用 `memory_recall` 检索，不再把完整归档常驻注入 prompt。
 内置基础 prompt 会说明始终可用的 `fileEditor` 和 `bash` 工具，并固定其他功能依赖的行为规则：编辑前先读文件、控制改动范围、运行合适的检查验证结果，以及不得绕过权限拒绝。替换基础 prompt 会把这些文字全部替掉，需要保留的规则应自行写入新版本。
 
 基础 prompt 的优先顺序如下：

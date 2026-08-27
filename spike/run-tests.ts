@@ -65,6 +65,7 @@ const suites = [
   'verify-compact.ts',
   'verify-trajectory.ts',
   'verify-memory.ts',
+  'verify-memory-tools.ts',
   'verify-memory-command.ts',
   'verify-memory-validation.ts',
   'verify-resume-recap.ts',

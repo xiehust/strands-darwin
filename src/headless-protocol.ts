@@ -299,7 +299,7 @@ export async function runStructuredHeadlessTurn(
     input,
     async (turnInput) => {
       writer.turnStarted();
-      return runOneStructuredHeadlessTurn(runtime, turnInput, writer, onToolStart);
+      return runOneStructuredHeadlessTurn(runtime, turnInput, prompt, writer, onToolStart);
     },
     (error) => {
       continued = true;
@@ -314,6 +314,7 @@ export async function runStructuredHeadlessTurn(
 async function runOneStructuredHeadlessTurn(
   runtime: HeadlessRuntime,
   input: string,
+  userInput: string,
   writer: StructuredHeadlessWriter,
   onToolStart: (name: string, input: unknown) => string,
 ): Promise<StructuredTurnResult> {
@@ -322,7 +323,7 @@ async function runOneStructuredHeadlessTurn(
   let cancelled = false;
   let messageIndex = 0;
 
-  for await (const event of runtime.send(input)) {
+  for await (const event of runtime.send(input, userInput)) {
     switch (event.type) {
       case 'modelMessageEvent':
         appendSafeMessage(event.message, answer, writer, () => ++messageIndex);

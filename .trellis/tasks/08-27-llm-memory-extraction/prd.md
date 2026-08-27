@@ -1,69 +1,71 @@
-# LLM-based learned memory extraction
+# Agent-managed project memory tools
 
 ## Goal
 
-Replace the current first-lines heuristic with a bounded LLM distillation step so learned project memory retains only durable, future-useful facts from completed coding turns while preserving Darwin's existing project scope, user management, validation, and fail-closed prompt-injection boundaries.
+Replace heuristic/post-turn learned-memory extraction with bounded built-in tools that let the active agent decide when durable project knowledge should be saved and when relevant knowledge should be retrieved. Persist memory as strict project-scoped files while preserving user management, evidence validation, and fail-closed prompt-injection boundaries.
 
 ## Background
 
-- The current extractor in `src/memory/store.ts` is deterministic and keeps up to eight early answer lines after syntactic filtering. A 2026-08-27 audit found 25 generated entries / 174 facts in this project, but zero exact anchors and zero entries eligible for ambient context; across all local projects, all 36 generated entries were `unknown`.
-- The existing design derives only from closed durable successful trajectory turns, schedules work after the visible turn, stores strict project-keyed state, excludes invalid/unknown/expired generated context before every request, and keeps `/memory remember` notes distinct.
-- The current architecture and specs explicitly say extraction makes no model/network call. This task intentionally changes that product decision while retaining the rule that extraction never forks or participates in the parent SDK agent loop.
-- `@strands-agents/sdk@1.12.0` already ships `ModelExtractor`, which makes a direct `Model.streamAggregated()` call with a dedicated system prompt and parses bounded fact-shaped JSON. The SDK also supports Agent structured output, but Darwin's invariant permits only `src/agent/runtime.ts` to construct `Agent`; a direct model-based extraction boundary avoids a second agent loop.
+- The current extractor in `src/memory/store.ts` scans durable successful trajectory turns and keeps early answer lines after syntactic filtering. A 2026-08-27 audit found many generated facts but no valid exact anchors, so none entered ambient context.
+- The existing implementation already has strict project-keyed state, atomic writes, exact source-anchor validation, expiry, suppression, `/memory` user management, and global project-scoped storage under `~/.darwin/projects/<project-key>/memory/`.
+- The product direction changed during planning: do not launch a separate post-turn LLM extraction call. Let the active parent agent use bounded built-in memory tools within its ordinary turn instead.
 
 ## Requirements
 
-### Extraction behavior
+### Built-in tool behavior
 
-- Use an LLM after an eligible turn becomes durable to select semantic memory candidates; do not ask the parent answer to emit a memory-specific section.
-- Prefer no memory over weak memory. Retain only durable information likely to help a future coding session, including confirmed product/architecture decisions, stable repository conventions, verified non-obvious root causes, recurring verification requirements, and explicit durable user preferences.
-- Reject temporary progress, git status and commit hashes, generic headings, one-off commands/results, unanswered questions, unconfirmed proposals, facts obvious from current source without additional value, and sensitive or identity-bearing material.
-- Produce a strict bounded machine-readable result. Malformed, oversized, incomplete, policy-like, or sensitive output produces no generated memory and cannot fail the completed user turn.
-- Keep generated candidates atomic and independently validatable rather than invalidating an entire multi-fact topic because one candidate lacks evidence.
+- Provide a parent-only built-in read tool that searches project memory and returns bounded relevant entries as explicitly fallible data. The agent decides when retrieval is useful; no full generated-memory archive is injected into every request.
+- Provide a parent-only built-in save tool for atomic durable facts such as confirmed architecture/product decisions, stable repository conventions, verified non-obvious root causes, recurring verification requirements, and explicit durable user preferences.
+- Prefer no memory over weak memory. Reject temporary progress, git status and commit hashes, generic headings, one-off commands/results, unanswered questions, unconfirmed proposals, secrets, credentials, prompt boundaries, unrelated bulk dumps, and policy-like instructions. Non-secret account identity may be saved when it is durable and relevant to the project.
+- A save issued during a turn is staged and becomes durable only after that turn closes successfully and its trajectory is durable. Failed, cancelled, partial, or non-`endTurn` turns leave no generated memory.
+- Tool results are strict, bounded machine-readable projections. Memory tools run through the ordinary SDK tool loop but cannot invoke other tools, edit repository files, create/retry/intercept an agent loop, or trigger a separate model call.
 
 ### Evidence, freshness, and state
 
-- Generated code/project claims must carry bounded exact current project-relative evidence that Darwin reopens and hashes itself; model-supplied evidence is never trusted without deterministic validation.
-- A candidate without acceptable evidence must not enter ambient context. The design must decide whether it is omitted entirely or retained as visibly ineligible audit state without recreating the current large `unknown` archive.
-- Preserve project-key binding, strict state parsing, symlink/no-follow protections, age expiry, durable generated-ID suppression, `/memory list|show|forget|remember`, user notes, and the single bounded `<learned-memory>` block.
-- Define deterministic deduplication/supersession so a newer confirmed fact can replace a conflicting stale one instead of accumulating both.
-- Define migration/rebuild treatment for current v2 generated entries and existing trajectory history; no existing trajectory, snapshot, resume pointer, config, or worktree byte may be rewritten.
+- Generated code/project claims must carry bounded exact current project-relative evidence that Darwin reopens and hashes itself; model-supplied paths and quotes are never trusted without deterministic validation.
+- Explicit user preferences and non-secret account identity must quote exact bounded text from the current user input; Darwin verifies that quote and supplies current session/turn provenance. The model cannot invent either source. Such entries remain project-scoped and are stored only in Darwin's private `0700` directory and `0600` files.
+- Invalid or unanchored generated candidates are rejected rather than retained as a growing `unknown` archive.
+- Preserve project-key binding, strict parsing, symlink/no-follow protections, age expiry, durable generated-ID suppression, `/memory list|show|forget|remember`, user notes, and deterministic deduplication/supersession.
+- Existing trajectory, snapshot, resume pointer, config, and worktree bytes are never rewritten.
 
-### Scheduling, cost, and observability
+### File storage and retrieval
 
-- The extraction model call stays outside the visible turn's critical path and outside the parent conversation. Failure, timeout, cancellation, shutdown, or malformed output degrades by skipping extraction and surfacing a bounded existing memory-status problem.
-- Calls are serialized/coalesced and bounded by input size, output size, candidate count, timeout, and retry policy. There is no autonomous retry loop.
-- Extraction calls and token usage must be observable and distinguishable from parent-turn usage; they must not be silently attributed to the parent trajectory spend.
-- `memory: false` and effective trajectory opt-out continue to make no extraction call and create no memory state.
+- Keep memory outside the repository under the existing project-keyed Darwin directory so normal memory use does not dirty the worktree.
+- Use strict versioned JSON as the authoritative state because it supports exact schema validation, atomic replacement, stable IDs, provenance, anchors, suppression, and migration. A bounded Markdown index may remain as a human-readable projection but is never authoritative or parsed back as trusted memory.
+- Retrieval is local and deterministic: bounded lexical ranking/listing over the validated store, with no vector database, embedding model, network call, or hidden second LLM call.
+- Returned entries are revalidated before use and explicitly labelled as fallible context rather than instructions or policy.
 
-### Safety and architecture
+### Configuration, permissions, and lifecycle
 
-- Extraction input is limited to bounded eligible user/final-answer evidence and only the minimum project evidence needed for validation. Reasoning, raw tool payloads, credentials, environment dumps, and child transcripts remain excluded.
-- Treat trajectory/model content as untrusted data inside explicit prompt boundaries; extracted text can never become instructions, permissions, hooks, tool calls, or a model-facing write/search tool.
-- Reuse the configured Strands model abstraction and SDK-supported direct model extraction behavior; do not add a provider SDK path, vector index, embedding dependency, model-facing memory tool, or second general-purpose `Agent`.
-- Preserve delayed post-durable scheduling and the centralized pre-request eligibility projection.
+- `memory: false` and effective trajectory opt-out expose neither model-facing memory tool and create no memory state.
+- `memory_recall` is classified as a statically safe local read and runs silently. `memory_save` is classified as an ordinary write: default mode asks, auto mode uses the existing classifier path, plan mode denies, and yolo mode runs silently. No memory-specific permission exception or allow-rule exists.
+- Parent and subagent memory state are isolated: subagents cannot save or retrieve project memory on the parent's behalf.
+- Cancellation, failed/partial turns, and `/clear` before a turn is durably closed discard staged saves. Once a successful `endTurn` is durably recorded, orderly retirement or shutdown may finish its already-accepted serialized commit; areas without a durable settlement are discarded. Resume starts with no staged state.
+- Existing `/memory` remains the user-only management and audit surface; model tools do not gain forget, bulk export, arbitrary file, or raw-state operations.
 
 ## Acceptance Criteria
 
-- [ ] A deterministic offline model fixture proves durable decisions/root causes/preferences are selected while temporary progress, headings, questions, unconfirmed recommendations, secrets, account identities, and malformed output are rejected.
-- [ ] Every accepted generated fact is independently bounded, evidence-backed, and deterministically revalidated; one rejected candidate does not suppress unrelated valid candidates.
-- [ ] A seeded real-world-style trajectory corpus produces useful eligible facts rather than zero anchors, and stale/conflicting facts are deterministically omitted or superseded.
-- [ ] Extraction runs only after a closed successful durable turn, never delays or changes the parent stream/result/trajectory, and at most the configured bounded work is launched per coalesced batch.
-- [ ] Provider failure, timeout, cancellation, invalid JSON/schema, and shutdown leave the prior valid store usable, report one bounded degradation, and cause no automatic retry storm.
-- [ ] `memory: false` and trajectory-disabled configurations make zero extractor model calls and preserve the current no-store/no-prompt behavior.
-- [ ] `/memory` management, suppressions, explicit user notes, expiry, startup/resume/`/clear` prompt ordering, strict state/path safety, and byte-purity of source records continue to pass focused checks.
-- [ ] Extraction model token use is exposed separately from ordinary parent-turn usage and documented as billable provider work.
-- [ ] Specs, architecture rationale, English/Chinese user documentation, and AGENTS.md's load-bearing index no longer claim model/network-free extraction.
-- [ ] Offline focused suites, `pnpm typecheck`, and `pnpm test` pass; a separately named live check demonstrates one real configured-provider extraction call and valid persisted output.
+- [x] Offline fixtures prove the agent-facing tools can save and retrieve durable decisions, root causes, preferences, and non-secret account identity, while secrets, credentials, temporary facts, policy-like text, oversized or malformed candidates, and unrelated dumps are rejected.
+- [x] A save becomes visible only after a successful durable `endTurn`; failure, cancellation, partial output, undurable recording, and `/clear` before durable close discard it, while orderly shutdown may finish an already accepted durable commit.
+- [x] Every accepted generated project fact is independently bounded, evidence-backed, deterministically revalidated, and returned only as fallible data.
+- [x] Retrieval is bounded, deterministic, project-scoped, network-free, and does not inject the complete memory archive into every model request.
+- [x] Duplicate facts collapse deterministically and a newer validated fact can supersede a conflicting stale generated fact without replacing user-authored notes.
+- [x] `memory: false` and trajectory-disabled configurations expose no memory tools and preserve the current no-store behavior.
+- [x] `/memory` management, suppressions, explicit user notes, expiry, strict state/path safety, and byte-purity of source records continue to pass focused checks.
+- [x] Existing valid state has an explicit migration path; invalid legacy generated entries are not silently trusted or backfilled by a model call.
+- [x] Specs, architecture rationale, English/Chinese user documentation, and AGENTS.md's load-bearing index describe agent-managed on-demand memory accurately.
+- [x] Focused offline suites, `pnpm typecheck`, and `pnpm test` pass. No live extraction/retrieval check is required because those operations add no model call; auto mode retains its existing permission-classifier model call and is verified through the injected offline classifier seam.
 
 ## Out of Scope
 
 - Vector/embedding retrieval or semantic search.
-- A model-facing `remember`/`search_memory` tool.
-- Letting the extractor edit arbitrary files or invoke tools.
-- Rewriting trajectory history, repository source, snapshots, or resume pointers.
-- Replacing explicit `/memory remember` user notes with generated entries.
+- A separate extraction model, second general-purpose `Agent`, or post-turn model call.
+- Subagent access to project memory.
+- A model-facing forget/delete/raw-state tool.
+- Secret or credential persistence, a secret manager, credential rotation, or a cross-project credential vault.
+- Letting memory tools edit arbitrary files or repository source.
+- Rewriting trajectory history, snapshots, or resume pointers.
 
 ## Open Product Decision
 
-- Which configured model should perform the additional billable extraction call, and how should its cost be controlled when memory remains default-on?
+- None currently; the permission and secret-handling behavior is resolved above.

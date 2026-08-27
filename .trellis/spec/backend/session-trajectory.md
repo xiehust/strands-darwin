@@ -13,22 +13,21 @@ state** of a conversation: the messages that survived summarization, as the mode
 It cannot answer "what did the agent run in that session", it is rewritten on every turn, and
 reading it tells you nothing about tool calls whose results were later compacted away.
 
-## Derived learned-memory boundary (SER-031)
+## Agent-managed memory settlement boundary (SER-031)
 
-Trajectory remains the immutable source record. Default-on learned memory is a separate derived store under
-`~/.darwin/projects/<project-key>/memory/`; `memory: false` opts out. Because trajectory is the source,
-omitting memory alongside `trajectory: false` also disables memory, while explicitly combining
-`memory: true` with `trajectory: false` is invalid. Its reader never repairs, appends, or marks trajectory state.
-`TrajectoryRecorder` may invoke an optional synchronous/no-throw `onTurnDurable()` callback only after the
-closing turn batch append resolves. That callback may schedule work, but may not read or write synchronously
-on the stream path.
+Trajectory remains an immutable observer, never memory input or authority. Effective memory requires
+trajectory because a model-requested save may become durable only after its own successful closing batch is
+durable. `TrajectoryRecorder` publishes one caught, unawaited `onTurnSettled` notification after append
+settlement: durable metadata contains host-owned session, turn, closing seq/time, stop reason and
+failure/partial flags; an undurable notification contains only turn and a bounded reason. No memory I/O is
+awaited on the stream or append path.
 
-Eligibility requires a clean complete file and, for one turn, `userInput`, final assistant
-`agentResultEvent`, and `turnEnded { stopReason: "endTurn" }` with no `failure`, `partialText`, or truncation.
-Active, abandoned, failed, cancelled, short, damaged, or truncated turns are ineligible. Projection reads
-only input text for naming and the final answer for facts; reasoning, tool events/results, failure payloads,
-and partial text are never extraction input. Generated provenance is source session + turn + closing seq +
-timestamp. See `src/memory/store.ts` and `spike/verify-memory.ts` for executable bounds and cases.
+The runtime-owned controller reconciles settlement and exact successful `endTurn` sealing in either order.
+Only a matching durable settlement with no failure/partial state commits staged candidates. Missing recorder,
+opening-barrier failure, failed/cancelled/abandoned consumption, undurable closing append, or `/clear` before
+acceptance discards them. Once both sides accept a commit, orderly shutdown may await its private serialized
+commit chain after trajectory close. Resume starts with no staged state. Ordinary before/after memory tool
+events remain the sole trajectory evidence; no memory record type or trajectory rescan/backfill exists.
 
 Subagent heartbeats and targeted-cancellation controls are deliberately absent from the record.
 They are driver-visible transient dispatch observations, not model or turn events. The existing
@@ -39,8 +38,8 @@ record type (`SRF-015`, `spike/verify-subagent-heartbeats.ts`).
 
 The trajectory is the complement: **append-only**, **observational**, and never authoritative. The
 snapshot remains the only thing `resume` and `fork` restore from. Raw trajectory records never become
-model context; only the separately bounded/redacted SER-031 derived index may be loaded. The resumed-TUI recap below is a
-bounded human-display projection only.
+model context or memory extraction input. Project memory is retrieved only through the separate bounded
+`memory_recall` tool. The resumed-TUI recap below is a bounded human-display projection only.
 
 ### SER-040 rewind authority boundary
 

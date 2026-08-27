@@ -655,6 +655,27 @@ export function classify(toolName: string, rawInput: unknown): PermissionRequest
         details: [],
         input: rawInput,
       };
+    case 'memory_recall':
+      return {
+        toolName,
+        kind: 'read',
+        summary: `memory_recall: ${firstLine(str(input['query']) ?? '(missing query)')}`,
+        details: [],
+        input: rawInput,
+      };
+    case 'memory_save': {
+      const evidence = asRecord(input['evidence']);
+      return {
+        toolName,
+        kind: 'write',
+        summary: `memory_save: ${str(input['key']) ?? '(missing key)'} · ${str(input['category']) ?? '(missing category)'}`,
+        details: [
+          { label: 'Title', value: firstLine(str(input['title']) ?? '(missing title)') },
+          ...(str(evidence['path']) === undefined ? [] : [{ label: 'Evidence', value: firstLine(str(evidence['path'])!) }]),
+        ],
+        input: rawInput,
+      };
+    }
     default:
       return {
         toolName,
@@ -790,6 +811,10 @@ export function assessRisk(request: PermissionRequest, projectRoot: string): Ris
 
   if (request.toolName === 'fileEditor') {
     return assessWriteRisk(str(input['path']) ?? '', projectRoot);
+  }
+
+  if (request.toolName === 'memory_save') {
+    return { risk: 'dangerous', riskReason: 'writes durable Darwin project memory' };
   }
 
   return { risk: 'dangerous', riskReason: 'unrecognized tool — cannot be classified as safe' };

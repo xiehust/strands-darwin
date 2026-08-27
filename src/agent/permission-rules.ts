@@ -141,6 +141,7 @@ export function matchesAnyRule(
  * statically, so the effect is that they always ask.
  */
 export function isRuleExempt(target: RuleTarget, projectRoot: string): boolean {
+  if (target.toolName === 'memory_save') return true;
   if (target.toolName !== 'fileEditor') return false;
 
   const filePath = readString(target.input, 'path');

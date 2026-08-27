@@ -89,7 +89,7 @@ Core source areas:
 src/agent/        runtime, models, permissions, prompts, sessions, diagnostics
 src/tui/          Ink application, frame budget, editor, projections, rendering
 src/trajectory/   append-only writer and offline readers/replay/fork/export
-src/memory/       project memory extraction, validation, commands
+src/memory/       parent memory tools, durable staging, validation, commands
 src/skills/       official AgentSkills policy adapter and built-ins
 src/agents/       child definitions, dispatch registry, subagent tool
 src/mcp/          configuration and read-only registry projection

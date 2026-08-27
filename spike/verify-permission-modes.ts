@@ -95,6 +95,17 @@ function staticRules(): void {
     'unknown / MCP tools are dangerous',
     riskOf('mcp__server__do_thing', { arg: 1 }).risk === 'dangerous',
   );
+  assert('memory_recall is a statically safe local read', riskOf('memory_recall', { query: 'architecture' }).risk === 'safe');
+  assert('memory_save is an ordinary dangerous write', riskOf('memory_save', { key: 'decision:x', category: 'decision', title: 'x' }).risk === 'dangerous');
+  const memoryRequest = classify('memory_save', {
+    key: 'decision:x', category: 'decision', title: 'Bounded title', fact: 'secret fact body',
+    evidence: { path: 'AGENTS.md', quote: 'sensitive evidence quote' },
+  });
+  assert('memory save permission presentation omits fact and quote text',
+    !JSON.stringify({ summary: memoryRequest.summary, details: memoryRequest.details }).includes('secret fact body') &&
+    !JSON.stringify({ summary: memoryRequest.summary, details: memoryRequest.details }).includes('sensitive evidence quote'));
+  assert('memory save can never match or suggest an allow rule',
+    matchesAnyRule(['memory_save'], memoryRequest, ROOT) === undefined && suggestRules(memoryRequest, ROOT).length === 0);
 }
 
 /**

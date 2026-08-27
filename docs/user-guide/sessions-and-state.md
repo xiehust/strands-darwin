@@ -72,16 +72,15 @@ Memory is default-on when trajectory is available and stored outside the tree:
 
 ```text
 ~/.darwin/projects/<project-key>/memory/
-├── state.json
-├── index.md
-└── topics/
+├── state.json       # strict versioned authority
+└── index.md         # optional human-readable projection
 ```
 
-After a successful substantive turn is visible and durable, a delayed coalesced offline rebuild considers only closed successful turns. Failed/cancelled/active/short/damaged/truncated turns are skipped. Extraction uses no model, reasoning, raw tool payload, vector index, watcher, or network. It drops likely credentials, `.env` material, code/log dumps, and instruction-like text, and records provenance.
+The parent agent decides when to call `memory_recall` and `memory_save`; subagents receive neither tool. Recall performs bounded local lexical ranking over currently validated entries and returns explicitly fallible data, not instructions or policy. It makes no network, vector, embedding, or hidden model call, and the full archive is never injected into every prompt.
 
-Generated facts enter prompts only when exact bounded project-relative line/hash anchors still match and age is inside `memoryHorizonDays` (default 28; exact boundary expired). `0` disables age expiry only. Validation runs at startup, resume, `/clear`, and immediately before requests. States `invalid`, `unknown`, and `expired` stay auditable but are omitted. User notes do not auto-expire and are not presented as verified code facts.
+Save is an ordinary permission-gated write. Project facts require one exact current project-relative source line; explicit preferences and non-secret account identity require one exact quote from the current user input. A save is staged and becomes durable only after that same turn closes as a successfully recorded `endTurn`. Failure, cancellation, partial output, recorder degradation, or `/clear` before durable acceptance discards it. Generated facts expire under `memoryHorizonDays` (default 28; `0` disables age only) and are revalidated on recall.
 
-At most one bounded `<learned-memory>` index enters after project instructions/skills and before working context/cache. It is labelled fallible context, never policy; topic bodies are not injected. Manage it locally:
+Manage and audit it locally:
 
 ```text
 /memory
@@ -90,7 +89,7 @@ At most one bounded `<learned-memory>` index enters after project instructions/s
 /memory forget <id|number|all>
 ```
 
-`remember` atomically rejects likely secrets, prompt-boundary markup, dumps, and oversized notes. `forget` refreshes live prompt state and suppresses generated IDs so rebuild cannot resurrect them. Unreadable, forged, wrong-project, or symlink-escaped stores are refused; extraction/validation failures only warn. Memory never rewrites trajectory, snapshot, pointer, config, or repository files.
+`remember` atomically rejects likely secrets, prompt-boundary markup, dumps, and oversized notes. `forget` suppresses generated IDs so an exact forgotten fact cannot be restored. Unreadable, forged, wrong-project, or symlink-escaped stores are refused; validation/commit failures only warn. Memory never rewrites trajectory, snapshot, pointer, config, or repository files.
 
 ## Diagnostics
 

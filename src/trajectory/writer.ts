@@ -73,6 +73,19 @@ export interface RecorderRunInfo {
 
 export const INPUT_DURABILITY_TIMEOUT_MS = 2000;
 
+export type TurnSettlement =
+  | {
+      readonly durable: true;
+      readonly session: string;
+      readonly turn: number;
+      readonly seq: number;
+      readonly at: string;
+      readonly stopReason: string | undefined;
+      readonly failure: boolean;
+      readonly partial: boolean;
+    }
+  | { readonly durable: false; readonly turn: number; readonly reason: string };
+
 export interface RecorderOptions {
   file: string;
   /** Written into the `runStarted` record this process appends first. */
@@ -89,8 +102,8 @@ export interface RecorderOptions {
    * real writes is a behaviour nothing tests.
    */
   maxBytes?: number;
-  /** Detached derived observers run only after a turn's closing batch is durable. */
-  onTurnDurable?: () => void;
+  /** Detached observer runs exactly once after the closing append settles. */
+  onTurnSettled?: (settlement: TurnSettlement) => void;
 }
 
 /** What `/trajectory` and the headless diagnostic report about this run. */
@@ -337,7 +350,7 @@ export class TrajectoryRecorder {
   private truncationsThisRun = 0;
   private bytesThisRun = 0;
   private fileBytes = 0;
-  private readonly onTurnDurable: (() => void) | undefined;
+  private readonly onTurnSettled: ((settlement: TurnSettlement) => void) | undefined;
 
   constructor(options: RecorderOptions) {
     this.file = options.file;
@@ -346,7 +359,7 @@ export class TrajectoryRecorder {
     this.maxBytes = options.maxBytes ?? MAX_FILE_BYTES;
     this.inputDurabilityTimeoutMs =
       options.inputDurabilityTimeoutMs ?? INPUT_DURABILITY_TIMEOUT_MS;
-    this.onTurnDurable = options.onTurnDurable;
+    this.onTurnSettled = options.onTurnSettled;
   }
 
   /**
@@ -361,6 +374,11 @@ export class TrajectoryRecorder {
     if (!this.active) return undefined;
     this.turns += 1;
     return new TurnRecording(this, this.turns, input, spend);
+  }
+
+  /** The next turn identity without opening or writing a turn. */
+  get nextTurn(): number | undefined {
+    return this.active ? this.turns + 1 : undefined;
   }
 
   /**
@@ -484,19 +502,28 @@ export class TrajectoryRecorder {
     if (this.pending.length === 0) return;
     const batch = this.pending;
     this.pending = [];
+    const closing = closesTurn
+      ? batch.findLast((entry) => entry.record.type === 'turnEnded')
+      : undefined;
+    const turn = closing?.record.turn ?? 0;
     this.chain = this.chain
       .then(() => this.append(batch))
-      .then((appended) => {
-        if (!closesTurn || !appended) return;
-        try {
-          this.onTurnDurable?.();
-        } catch {
-          // A derived observer is advisory and cannot affect trajectory durability.
-        }
+      .then((settlement) => {
+        if (!closesTurn) return;
+        this.publishSettlement(settlement ?? { durable: false, turn, reason: 'closing trajectory batch was not appended' });
       })
       .catch((error: unknown) => {
         this.fail(error);
+        if (closesTurn) this.publishSettlement({ durable: false, turn, reason: boundedSettlementReason(error) });
       });
+  }
+
+  private publishSettlement(settlement: TurnSettlement): void {
+    try {
+      this.onTurnSettled?.(settlement);
+    } catch {
+      // Derived observation is advisory and cannot affect trajectory durability.
+    }
   }
 
   /** Flushes and waits, so a turn's records are durable before the process exits. */
@@ -505,20 +532,23 @@ export class TrajectoryRecorder {
     await this.chain;
   }
 
-  private async append(batch: BufferedRecord[]): Promise<boolean> {
-    if (this.problem !== undefined) return false;
+  private async append(batch: BufferedRecord[]): Promise<TurnSettlement | undefined> {
+    const closing = batch.findLast((entry) => entry.record.type === 'turnEnded');
+    if (this.problem !== undefined) return closing === undefined ? undefined : { durable: false, turn: closing.record.turn, reason: boundedSettlementReason(this.problem) };
 
     const prefix = await this.prepare();
     // A bounded input barrier may have timed out while prepare/open was pending.
     // Do not let that detached operation append later after recording has stopped.
-    if (this.problem !== undefined) return false;
-    const lines = [...this.header(), ...batch].map((buffered) => this.encode(buffered));
+    if (this.problem !== undefined) return closing === undefined ? undefined : { durable: false, turn: closing.record.turn, reason: boundedSettlementReason(this.problem) };
+    const all = [...this.header(), ...batch];
+    const encoded = all.map((buffered) => ({ buffered, seq: this.seq, line: this.encode(buffered) }));
+    const lines = encoded.map((entry) => entry.line);
     const payload = `${prefix}${lines.join('')}`;
 
     let handle: FileHandle | undefined;
     try {
       handle = await this.openFile(this.file, 'a');
-      if (this.problem !== undefined) return false;
+      if (this.problem !== undefined) return closing === undefined ? undefined : { durable: false, turn: closing.record.turn, reason: boundedSettlementReason(this.problem) };
       await handle.write(payload, null, 'utf8');
       const written = Buffer.byteLength(payload, 'utf8');
       this.recordsThisRun += lines.length;
@@ -526,7 +556,19 @@ export class TrajectoryRecorder {
       this.fileBytes += written;
 
       if (this.fileBytes >= this.maxBytes) await this.stopForBudget(handle);
-      return true;
+      if (closing === undefined) return undefined;
+      const encodedClosing = encoded.find((entry) => entry.buffered === closing);
+      const record = closing.record as Extract<PendingRecord, { type: 'turnEnded' }>;
+      return {
+        durable: true,
+        session: this.run.session,
+        turn: record.turn,
+        seq: encodedClosing?.seq ?? Math.max(0, this.seq - 1),
+        at: closing.at,
+        stopReason: record.stopReason,
+        failure: record.failure !== undefined,
+        partial: record.partialText !== undefined,
+      };
     } finally {
       await handle?.close().catch(() => {
         // A failed close has already had its write succeed or fail on its own.
@@ -630,4 +672,11 @@ export class TrajectoryRecorder {
       `recording stopped: ${this.file} reached its ${this.maxBytes}-byte budget ` +
       '(the record is complete up to this point)';
   }
+}
+
+
+function boundedSettlementReason(error: unknown): string {
+  const text = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').trim() || 'trajectory closing append failed';
+  const points = [...text];
+  return points.length <= 200 ? text : `${points.slice(0, 199).join('')}…`;
 }

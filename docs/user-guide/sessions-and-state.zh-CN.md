@@ -72,16 +72,15 @@ session spend: input=412 output=1350 cacheRead=130961(+1 unreported) cacheWrite=
 
 ```text
 ~/.darwin/projects/<project-key>/memory/
-├── state.json
-├── index.md
-└── topics/
+├── state.json       # 严格、带版本的权威状态
+└── index.md         # 可选的人类可读投影
 ```
 
-有实质内容的成功回合显示并落盘后，darwin 会安排一个延迟、合并执行的离线重建。失败、取消、进行中、过短、损坏或截断的回合都会跳过。提取过程不调用模型，不读取思考或原始工具 payload，也不使用向量索引、文件监听或网络。疑似凭证、`.env` 内容、代码/日志大段文本和指令式文字都会过滤，并保存来源。
+只有父 agent 能调用 `memory_recall` 和 `memory_save`，子 agent 不会获得这两个工具。Recall 在当前已校验条目上做有界、本地、确定性的词法排序，结果明确标为可能出错的数据而非指令或策略；它不调用网络、向量、embedding 或隐藏模型，也不会把完整归档常驻注入每次 prompt。
 
-生成事实只有在有界、精确的项目相对行号/hash 锚点仍然匹配，并且没有超过 `memoryHorizonDays`（默认 28 天）时，才会进入 prompt；到达边界当天即视为过期。设为 `0` 只关闭时间过期，不关闭来源校验。启动、恢复、`/clear` 和每次请求前都会重新校验。`invalid`、`unknown`、`expired` 仍可审计，但不会注入。用户手写备注不会自动过期，也不会伪装成已验证代码事实。
+Save 走普通写权限。项目事实必须提供一条精确的当前项目相对源码行；明确用户偏好和非敏感账户身份必须引用当前用户输入中的精确文本。保存先暂存，只有同一回合以成功且轨迹已落盘的 `endTurn` 结束后才会持久化。失败、取消、部分输出、轨迹退化或落盘接受前 `/clear` 都会丢弃暂存。生成事实仍受 `memoryHorizonDays`（默认 28 天；`0` 只关闭时间过期）控制，并在 recall 时重新校验。
 
-模型最多收到一个有界 `<learned-memory>` 索引，位置在项目指令/skills 之后、工作上下文/cache 之前。它明确标为可能出错的上下文，不是策略；topic 正文不会自动注入。本地管理命令为：
+本地管理和审计命令为：
 
 ```text
 /memory
@@ -90,7 +89,7 @@ session spend: input=412 output=1350 cacheRead=130961(+1 unreported) cacheWrite=
 /memory forget <id|number|all>
 ```
 
-`remember` 会原子拒绝疑似密钥、prompt 边界标记、dump 和超长备注。`forget` 会同步刷新当前 prompt，并抑制生成 ID，防止重建时复活。不可读、伪造、项目不符或通过符号链接逃逸的 store 会被拒绝；提取/校验问题只产生提示。记忆不会重写轨迹、快照、指针、配置或仓库文件。
+`remember` 会原子拒绝疑似密钥、prompt 边界标记、dump 和超长备注。`forget` 会抑制生成 ID，防止完全相同的已忘记事实重新出现。不可读、伪造、项目不符或通过符号链接逃逸的 store 会被拒绝；校验/提交问题只产生提示。记忆不会重写轨迹、快照、指针、配置或仓库文件。
 
 ## 诊断日志
 

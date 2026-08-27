@@ -183,24 +183,11 @@ function normalizedPromptBlocks(prompt: SystemPrompt | undefined): Exclude<Syste
   if (withoutCache.length === 2 && isWorkingContextBlock(withoutCache[1])) return [...prompt];
   if (
     withoutCache.length === 3 &&
-    isLearnedMemoryBlock(withoutCache[1]) &&
-    isWorkingContextBlock(withoutCache[2])
-  ) return [...prompt];
-
-  if (
-    withoutCache.length === 3 &&
     isOfficialSkillsBlock(withoutCache[1]) &&
     isWorkingContextBlock(withoutCache[2])
   ) {
     return [...prompt];
   }
-  if (
-    withoutCache.length === 4 &&
-    isOfficialSkillsBlock(withoutCache[1]) &&
-    isLearnedMemoryBlock(withoutCache[2]) &&
-    isWorkingContextBlock(withoutCache[3])
-  ) return [...prompt];
-
   return undefined;
 }
 
@@ -210,12 +197,6 @@ function isOfficialSkillsBlock(block: unknown): block is TextBlock {
   return text.startsWith('<available_skills>') && text.endsWith('</available_skills>');
 }
 
-
-function isLearnedMemoryBlock(block: unknown): block is TextBlock {
-  if (!(block instanceof TextBlock)) return false;
-  const text = block.text.trim();
-  return text.startsWith('<learned-memory>') && text.endsWith('</learned-memory>');
-}
 
 function isWorkingContextBlock(block: unknown): block is TextBlock {
   if (!(block instanceof TextBlock)) return false;

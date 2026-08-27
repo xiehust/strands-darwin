@@ -314,7 +314,7 @@ export function App({
   const trajectoryWarned = useRef(false);
   /** Same, once, for the diagnostics log: it latches its own failure too. */
   const diagnosticsWarned = useRef(false);
-  /** One bounded learned-memory degradation notice per runtime. */
+  /** One bounded project-memory degradation notice per runtime. */
   const memoryWarned = useRef(false);
   /** True while `/clear` is assembling the successor runtime; see the handler. */
   const clearing = useRef(false);
@@ -657,7 +657,7 @@ export function App({
   }, [dispatch, setEditor, setQueued]);
 
   const runTurn = useCallback(
-    async (text: string) => {
+    async (text: string, userInput = text) => {
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
       let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
@@ -666,7 +666,7 @@ export function App({
         await runWithStreamResumption(
           text,
           async (turnInput) => {
-            for await (const event of runtime.send(turnInput)) {
+            for await (const event of runtime.send(turnInput, userInput)) {
               dispatch({ type: 'streamEvent', event });
             }
           },
@@ -1340,7 +1340,7 @@ export function App({
         toSend = `${shellReports.join('\n\n')}\n\n${toSend}`;
       }
 
-      await runTurn(toSend);
+      await runTurn(toSend, text);
     },
     [dispatch, exit, recordAction, returnQueuedToEditor, runtime, runTurn, setEditor, setQueued, startNewSession, status, writeToTerminal],
   );

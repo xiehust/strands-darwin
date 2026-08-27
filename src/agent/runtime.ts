@@ -67,9 +67,9 @@ import { WebSearchEmptyResults } from '../mcp/web-search-empty-results.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
 import { runMemoryCommand, type MemoryCommandResult } from '../memory/command.js';
-import { applyLearnedMemory, canApplyLearnedMemory, memoryPromptFragment } from '../memory/prompt.js';
-import { MemoryScheduler } from '../memory/scheduler.js';
-import { loadMemoryIndex, type MemoryStatus } from '../memory/store.js';
+import { MemoryToolController } from '../memory/controller.js';
+import { createMemoryTools } from '../memory/tools.js';
+import type { MemoryStatus } from '../memory/store.js';
 
 import { recordStream } from '../trajectory/stream.js';
 import {
@@ -377,7 +377,7 @@ export class AgentRuntime {
     /** Undefined unless `diagnostics: true` asked for the log. Off is the default. */
     private readonly diagnosticsLog: DiagnosticsLog | undefined,
     /** Undefined only when effective config disables derived project context. */
-    private readonly memoryScheduler: MemoryScheduler | undefined,
+    private readonly memoryController: MemoryToolController | undefined,
     readonly info: RuntimeInfo,
     /**
      * What this runtime was created with, so {@link startNewSession} can assemble its
@@ -398,7 +398,7 @@ export class AgentRuntime {
     diagnosticsLog: DiagnosticsLog | undefined,
     mcpClients: readonly McpClient[] = [],
     backgroundBash?: BackgroundBashManager,
-    memoryScheduler?: MemoryScheduler,
+    memoryController?: MemoryToolController,
     lifecycleHooks?: LifecycleHookRunner,
   ): Promise<void> {
     if (diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
@@ -406,7 +406,7 @@ export class AgentRuntime {
       disconnectAll(mcpClients),
       backgroundBash?.shutdown() ?? Promise.resolve(),
       diagnosticsLog?.close() ?? Promise.resolve(),
-      memoryScheduler?.close() ?? Promise.resolve(),
+      memoryController?.close() ?? Promise.resolve(),
       lifecycleHooks?.close() ?? Promise.resolve(),
     ]);
   }
@@ -443,7 +443,7 @@ export class AgentRuntime {
     if (diagnosticsLog !== undefined) setSdkVerboseSink(diagnosticsLog.sdkSink);
     let startupMcpClients: readonly McpClient[] = [];
     let startupBackgroundBash: BackgroundBashManager | undefined;
-    let startupMemoryScheduler: MemoryScheduler | undefined;
+    let startupMemoryController: MemoryToolController | undefined;
     let startupLifecycleHooks: LifecycleHookRunner | undefined;
 
     // Keep assembly in one function so one catch owns every resource acquired
@@ -458,9 +458,6 @@ export class AgentRuntime {
     const loadedInstructions = await loadProjectInstructions(options.projectRoot);
     const instructions = loadedInstructions.instructions;
     const basePrompt = await loadSystemPrompt(options.projectRoot, config.systemPrompt);
-    const memoryIndex = config.memory === true
-      ? await loadMemoryIndex(options.projectRoot, { horizonDays: config.memoryHorizonDays ?? 28 })
-      : undefined;
     const mcp = options.inherit?.mcp ?? await loadMcpClients(options.projectRoot, {
       quietStdioStderr: options.quietMcpStderr === true,
     });
@@ -546,6 +543,8 @@ export class AgentRuntime {
           })
         : undefined;
 
+    const memoryController = config.memory === true ? new MemoryToolController(options.projectRoot, config.memoryHorizonDays ?? 28) : undefined;
+    startupMemoryController = memoryController;
     const agent = new Agent({
       id: AGENT_ID,
       model,
@@ -621,6 +620,7 @@ export class AgentRuntime {
     // Progress belongs to the parent turn. Register only after the child catalogue
     // and allowlists are fixed, so no child can author an unrelated checklist.
     agent.toolRegistry.add(createUpdatePlanTool());
+    if (memoryController !== undefined) agent.toolRegistry.add(createMemoryTools(memoryController));
     const subagents = new SubagentTool({
       registry: agentDefinitions,
       tools: childTools,
@@ -644,9 +644,6 @@ export class AgentRuntime {
     // directory listing. Applied last, it is also the only fragment a resumed
     // prompt can still be corrected by.
     const workingContext = await buildWorkingContext(options.projectRoot);
-    if (!applyLearnedMemory(agent, memoryIndex === undefined ? undefined : memoryPromptFragment(memoryIndex))) {
-      throw new Error('Could not refresh learned memory on the restored system prompt.');
-    }
     if (!applyWorkingContext(agent, workingContext.fragment)) {
       throw new Error('Could not refresh working context on the restored system prompt.');
     }
@@ -666,8 +663,6 @@ export class AgentRuntime {
     // recorded turn creates it, so a session that never runs one leaves nothing
     // behind, the same rule `markResumable()` follows for the resume pointer.
     const thinkingPlan = planThinking(config);
-    const memoryScheduler = config.memory === true ? new MemoryScheduler({ projectRoot: options.projectRoot }) : undefined;
-    startupMemoryScheduler = memoryScheduler;
     const trajectory =
       config.trajectory === false
         ? undefined
@@ -685,7 +680,7 @@ export class AgentRuntime {
               restoredMessages: agent.messages.length,
             },
             ...runtimeRecorderOverrides,
-            ...(memoryScheduler === undefined ? {} : { onTurnDurable: () => memoryScheduler.schedule() }),
+            ...(memoryController === undefined ? {} : { onTurnSettled: (settlement) => memoryController.settle(settlement) }),
           });
 
     const runtime = new AgentRuntime(
@@ -705,7 +700,7 @@ export class AgentRuntime {
       config.preserveRecentMessages,
       trajectory,
       diagnosticsLog,
-      memoryScheduler,
+      memoryController,
       {
         config,
         projectRoot: options.projectRoot,
@@ -756,7 +751,7 @@ export class AgentRuntime {
         diagnosticsLog,
         startupMcpClients,
         startupBackgroundBash,
-        startupMemoryScheduler,
+        startupMemoryController,
         startupLifecycleHooks,
       );
       throw error;
@@ -789,39 +784,42 @@ export class AgentRuntime {
    * One `before` snapshot feeds both the meter and `lastTurnDelta`, so what the record
    * says a turn cost and what `/usage` says it cost cannot be two different readings.
    */
-  async *send(input: string): AsyncIterable<AgentStreamEvent> {
+  async *send(input: string, userInput = input): AsyncIterable<AgentStreamEvent> {
     const before = this.usage;
-    if (this.liveConfig.memory === true) {
-      const memoryIndex = await loadMemoryIndex(this.projectRoot, {
-        horizonDays: this.liveConfig.memoryHorizonDays ?? 28,
-      });
-      if (!applyLearnedMemory(this.agent, memoryIndex === undefined ? undefined : memoryPromptFragment(memoryIndex))) {
-        throw new Error('Could not refresh validated learned memory before the model request.');
-      }
-    }
-
     let checkpointId: string | undefined;
     if (rewindPromptEligible(input)) {
       checkpointId = await this.captureRewindCheckpoint();
     }
 
     let completed = false;
+    let sealed = false;
     try {
       const recording = this.trajectory?.beginTurn(
         input,
         startTurnSpend(before, () => this.usage, this.liveConfig),
       );
+      // The model may receive an expanded skill/custom-command prompt, but
+      // preference/identity provenance is allowed to quote only what the user
+      // actually submitted. Drivers pass that raw text as the second argument.
+      this.memoryController?.openTurn(recording?.turn, userInput);
       // The current input is the one exception to fire-and-forget recording: make it
       // readable to offline observers before Agent.stream() can invoke a provider or
       // tool. The recorder owns the bound and resolves on write failure/timeout, so
       // this wait can delay a turn briefly but can never become a reason it dies.
       await recording?.inputDurable();
+      if (recording !== undefined && this.trajectory?.status.active === false) {
+        this.memoryController?.discard();
+      }
       // Later events and turn-end are still observed synchronously and appended in
       // the background; `shutdown()` is where that append chain is waited for.
       for await (const event of recordStream(this.agent.stream(input), recording)) {
         if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
         yield event;
       }
+      this.memoryController?.seal(
+        completed && this.trajectory?.status.active !== false,
+      );
+      sealed = true;
       if (completed && checkpointId !== undefined) {
         const catalogue = await appendRewindCheckpoint(this.projectRoot, this.info.sessionId, {
           snapshotId: checkpointId,
@@ -833,6 +831,9 @@ export class AgentRuntime {
         }
       }
     } finally {
+      // Seeing an endTurn event is not enough when the consumer abandons this
+      // generator before natural completion: only the natural path above seals.
+      if (!sealed) this.memoryController?.discard();
       this.lastTurnDelta = deltaUsage(before, this.usage);
     }
   }
@@ -891,7 +892,7 @@ export class AgentRuntime {
 
   /** Best-effort status of enabled derived project memory. */
   get memoryStatus(): MemoryStatus | undefined {
-    return this.memoryScheduler?.status;
+    return this.memoryController?.status;
   }
 
   /**
@@ -902,21 +903,9 @@ export class AgentRuntime {
     if (this.liveConfig.memory !== true) {
       return { changed: false, text: 'project memory is off — remove memory: false if set, and enable trajectory recording in ~/.darwin/config.json' };
     }
-    // Validate the current prompt shape before any disk mutation. A malformed restored
-    // prompt must fail closed rather than narrow disk while leaving stale live context.
-    if (!canApplyLearnedMemory(this.agent, undefined)) {
-      throw new Error('Could not verify the assembled system prompt for memory refresh.');
-    }
     const result = await runMemoryCommand(this.projectRoot, input, {
       horizonDays: this.liveConfig.memoryHorizonDays ?? 28,
     });
-    if (result.index !== undefined) {
-      if (!applyLearnedMemory(this.agent, memoryPromptFragment(result.index))) {
-        // The shape was verified above and no await occurs between write completion and
-        // replacement, so this can only signal an internal invariant violation.
-        throw new Error('Could not refresh learned memory on the assembled system prompt.');
-      }
-    }
     return result;
   }
 
@@ -1384,14 +1373,19 @@ export class AgentRuntime {
    * session down with it.
    */
   private async retire(): Promise<void> {
-    await Promise.allSettled([
+    // `/clear` and rewind retire the session before any still-pending closing append
+    // may accept memory. Already accepted commits are unaffected and still awaited.
+    this.memoryController?.discardUnsettled();
+    const trajectory = await Promise.allSettled([
       this.subagents.shutdown(),
       this.stopBashSession(),
       this.lifecycleHooks?.close() ?? Promise.resolve(),
       this.trajectory?.close() ?? Promise.resolve(),
       this.diagnosticsLog?.close() ?? Promise.resolve(),
-      this.memoryScheduler?.close() ?? Promise.resolve(),
     ]);
+    // Closing trajectory first publishes the final settlement. The controller then
+    // discards unresolved staging and waits only for commits already accepted.
+    await Promise.allSettled([Promise.resolve(trajectory), this.memoryController?.close() ?? Promise.resolve()]);
   }
 
   /**
@@ -1461,15 +1455,15 @@ export class AgentRuntime {
       this.stopBashSession(options.throwOnError === true),
       this.lifecycleHooks?.close() ?? Promise.resolve(),
       disconnectAll(this.mcp.clients, { throwOnError: options.throwOnError === true }),
-      // The one place the append chain is awaited, so the last turn's records are
-      // durable before the process exits. Settled alongside the rest: a record that
-      // cannot be written must not skip process cleanup.
+      // Settle the append chain before memory closes below. The callback stays
+      // unawaited; cleanup only waits for a commit after durable acceptance.
       this.trajectory?.close() ?? Promise.resolve(),
       // Same rule for the diagnostics log, and it cannot reject: its failures are
       // latched internally and reported as a problem, never thrown.
       this.diagnosticsLog?.close() ?? Promise.resolve(),
-      this.memoryScheduler?.close() ?? Promise.resolve(),
     ]);
+    const memoryResults = await Promise.allSettled([this.memoryController?.close() ?? Promise.resolve()]);
+    results.push(...memoryResults);
     const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
     if (options.throwOnError === true && failures.length > 0) {
       throw new AggregateError(failures, `${failures.length} runtime cleanup operation(s) failed`);

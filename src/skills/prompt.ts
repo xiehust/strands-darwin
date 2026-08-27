@@ -10,7 +10,6 @@ import { CachePointBlock, TextBlock } from '@strands-agents/sdk';
 import type { LocalAgent, SystemPrompt } from '@strands-agents/sdk';
 
 const WORKING_CONTEXT_TAG = 'working-context';
-const LEARNED_MEMORY_TAG = 'learned-memory';
 const AVAILABLE_SKILLS_OPEN = '<available_skills>';
 const AVAILABLE_SKILLS_CLOSE = '</available_skills>';
 const LEGACY_SKILLS_TAG = 'available-skills';
@@ -38,7 +37,6 @@ export function orderOfficialSkillsPrompt(agent: LocalAgent): boolean {
   agent.systemPrompt = [
     new TextBlock(parsed.base),
     parsed.catalogue,
-    ...(parsed.learnedMemory === undefined ? [] : [parsed.learnedMemory]),
     ...(parsed.workingContext === undefined ? [] : [parsed.workingContext]),
     ...(parsed.cachePoint === undefined ? [] : [parsed.cachePoint]),
   ];
@@ -52,7 +50,6 @@ export function orderOfficialSkillsPrompt(agent: LocalAgent): boolean {
 export function refreshKnownPrompt(
   prompt: SystemPrompt | undefined,
   fragment: string | undefined,
-  learnedMemory?: string | null,
 ): SystemPrompt | undefined {
   if (typeof prompt === 'string') {
     // Pre-migration uncached/OpenAI snapshots stored the whole prompt as one
@@ -60,7 +57,7 @@ export function refreshKnownPrompt(
     // legitimately mention either tag as prose and must remain byte-identical.
     const legacy = splitLegacyPrompt(prompt);
     if (legacy !== undefined) {
-      return refreshParsedPrompt({ base: legacy.base, workingContext: new TextBlock(legacy.workingContext) }, fragment, learnedMemory);
+      return refreshParsedPrompt({ base: legacy.base, workingContext: new TextBlock(legacy.workingContext) }, fragment);
     }
     // A fresh base/project prompt has no historical structural prologue. If one
     // is present but the complete suffix cannot be proven, refuse instead of
@@ -69,30 +66,25 @@ export function refreshKnownPrompt(
       return undefined;
     }
     const base = prompt.trimEnd();
-    return base === '' ? undefined : refreshParsedPrompt({ base }, fragment, learnedMemory);
+    return base === '' ? undefined : refreshParsedPrompt({ base }, fragment);
   }
   if (!Array.isArray(prompt)) return undefined;
 
   const legacy = parseLegacyCachedPrompt(prompt);
-  if (legacy !== undefined) return refreshParsedPrompt(legacy, fragment, learnedMemory);
+  if (legacy !== undefined) return refreshParsedPrompt(legacy, fragment);
   if (isAmbiguousLegacyCachedPrompt(prompt)) return undefined;
   const parsed = parseKnownPrompt(prompt);
   if (parsed === undefined) return undefined;
-  return refreshParsedPrompt(parsed, fragment, learnedMemory);
+  return refreshParsedPrompt(parsed, fragment);
 }
 
 function refreshParsedPrompt(
   parsed: PromptParts,
   workingContext: string | undefined,
-  learnedMemory: string | null | undefined,
 ): SystemPrompt {
-  const memoryBlock = learnedMemory === null
-    ? undefined
-    : learnedMemory === undefined ? parsed.learnedMemory : new TextBlock(learnedMemory);
   return [
     new TextBlock(parsed.base),
     ...(parsed.catalogue === undefined ? [] : [parsed.catalogue]),
-    ...(memoryBlock === undefined ? [] : [memoryBlock]),
     ...(workingContext === undefined
       ? parsed.workingContext === undefined ? [] : [parsed.workingContext]
       : [new TextBlock(workingContext)]),
@@ -126,7 +118,6 @@ function parseKnownPrompt(prompt: SystemPrompt): PromptParts | undefined {
   if (withoutCache.some((block) => !(block instanceof TextBlock))) return undefined;
 
   let catalogue: TextBlock | undefined;
-  let learnedMemory: TextBlock | undefined;
   let workingContext: TextBlock | undefined;
   const baseParts: string[] = [];
 
@@ -136,11 +127,8 @@ function parseKnownPrompt(prompt: SystemPrompt): PromptParts | undefined {
       catalogue = block;
       continue;
     }
-    if (isLearnedMemory(block.text)) {
-      if (learnedMemory !== undefined) return undefined;
-      learnedMemory = block;
-      continue;
-    }
+    // Historical ambient memory blocks are intentionally dropped during prompt refresh.
+    if (block.text.trim().startsWith('<learned-memory>') && block.text.trim().endsWith('</learned-memory>')) continue;
     if (isWorkingContext(block.text)) {
       if (workingContext !== undefined) return undefined;
       workingContext = new TextBlock(extractWorkingContext(block.text) ?? block.text);
@@ -154,7 +142,7 @@ function parseKnownPrompt(prompt: SystemPrompt): PromptParts | undefined {
   if (baseParts.length !== 1) return undefined;
   const base = (baseParts[0] ?? '').trimEnd();
   if (base === '') return undefined;
-  return { base, catalogue, learnedMemory, workingContext, cachePoint };
+  return { base, catalogue, workingContext, cachePoint };
 }
 
 /** Migrates snapshots written before official AgentSkills used separate blocks. */
@@ -221,7 +209,6 @@ function splitLegacyPrompt(text: string): LegacyPromptParts | undefined {
 interface PromptParts {
   base: string;
   catalogue?: TextBlock | undefined;
-  learnedMemory?: TextBlock | undefined;
   workingContext?: TextBlock | undefined;
   cachePoint?: CachePointBlock | undefined;
 }
@@ -230,12 +217,6 @@ function isCatalogue(text: string): boolean {
   const trimmed = text.trim();
   return trimmed.startsWith(AVAILABLE_SKILLS_OPEN) && trimmed.endsWith(AVAILABLE_SKILLS_CLOSE);
 }
-
-function isLearnedMemory(text: string): boolean {
-  const trimmed = text.trim();
-  return trimmed.startsWith(`<${LEARNED_MEMORY_TAG}>`) && trimmed.endsWith(`</${LEARNED_MEMORY_TAG}>`);
-}
-
 
 function isWorkingContext(text: string): boolean {
   const trimmed = text.trim();

@@ -12,7 +12,7 @@
 
 `/rewind` is an SDK-snapshot branch, never an Agent-loop fork or trajectory replay. Before an editor-eligible invocation (`<= 4000` Unicode code points), `AgentRuntime.send()` first calls public `SessionManager.listSnapshotIds({ target, limit: 100 })`. A per-runtime promise tail serializes that check/save/identify critical section so concurrent callers cannot both claim the final slot. Only while fewer than 100 rewind-owned immutable snapshots exist does it save one and identify it with a second public listing bounded to one row (`startAfter` the previous id). Failed, cancelled and abandoned turns consume this same capacity because their immutable snapshots cannot be deleted or reused; at capacity capture is omitted, while the ordinary invocation and mutable latest snapshot continue. Only a normal `agentResultEvent { stopReason: "endTurn" }` promotes a captured id plus bounded prompt text into `<session-state>/rewind-checkpoints.json`; failed, cancelled, abandoned, oversized, in-progress and post-capacity prompts are not selectable. Catalogue reads are strict and bounded at 100 entries / 512 KiB. Existing immutable snapshots are never deleted or rewritten.
 
-Acceptance re-reads the current source catalogue, then creates a fresh Agent through `AgentRuntime.create()`. After `initialize()` has established the new session, a source `SessionManager.restoreSnapshot({ snapshotId })` loads the authoritative checkpoint; Darwin then refreshes current learned-memory projection, working context and final system-prompt cache point in the ordinary restore order before writing the successor's own `snapshot_latest`. The source latest/immutable snapshots, catalogue, trajectory and resume pointer are never copied, truncated or rewritten. The pointer still moves only through `markResumable()` after the successor completes a turn.
+Acceptance re-reads the current source catalogue, then creates a fresh Agent through `AgentRuntime.create()`. After `initialize()` has established the new session, a source `SessionManager.restoreSnapshot({ snapshotId })` loads the authoritative checkpoint; Darwin then drops any historical ambient-memory block, refreshes current working context and the final system-prompt cache point in the ordinary restore order before writing the successor's own `snapshot_latest`. The source latest/immutable snapshots, catalogue, trajectory and resume pointer are never copied, truncated or rewritten. The pointer still moves only through `markResumable()` after the successor completes a turn.
 
 The predecessor transfers live permission mode, MCP clients and the process-owned background-task manager exactly as `/clear`, and retires only after successful successor assembly. On failure it stays live. The selected prompt returns to the editor unsent. The visible notice is required to state that the workspace is unchanged and that workspace files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned-memory files were not rewound. Checks: `spike/verify-rewind.ts`, `spike/verify-rewind-search.ts`, and free `spike/verify-tui.ts rewind`.
 ## Context offload defaults
@@ -42,37 +42,42 @@ manager), never by forking the agent loop.
 - Contract check: `spike/verify-retry-guard.ts` is a network-free real-Agent suite in `pnpm test`; `spike/verify-tool-hooks.ts` and `spike/verify-background-bash.ts` retain the adjacent ordering and shell contracts.
 
 
-## SER-031 learned-memory contract
+## SER-031 agent-managed project-memory contract
 
-`AgentRuntime.create` remains the only assembly boundary. Learned memory is enabled by default when trajectory
-recording is available; root config `memory: false` opts out. Omitted memory with `trajectory: false` is an
-implicit opt-out, while explicit `memory: true` with `trajectory: false` is a startup `ConfigError`. When
-enabled, runtime strictly reads bounded project-scoped `state.json`, renders at most
-`MEMORY_INDEX_MAX_BYTES` of compact index context, and wraps it in exactly one
-`<learned-memory>` block labelled fallible context/not instructions or policy, and refreshes restored prompts
-after `Agent.initialize()`. Prompt order is base → project instructions → official skills → optional learned
-memory → current working context → final cache point. Fresh, explicit resume, and `/clear` all pass through
-this factory; topic files are never loaded into the prompt.
+`AgentRuntime.create` remains the only assembly boundary. Memory is enabled by default when trajectory
+recording is available; root config `memory: false` opts out, omitted memory follows `trajectory: false`, and
+explicit `memory: true` with `trajectory: false` is a startup `ConfigError`. Enabled runtimes register
+`memory_recall` and `memory_save` only on the parent after the child catalogue is fixed. Recall is a statically
+safe bounded local lexical read. Save is a dangerous, rule-exempt ordinary write: default asks, auto uses the
+existing classifier, plan denies before side effects, and yolo proceeds. Neither tool constructs/intercepts an
+Agent loop, invokes another tool, or makes a separate model/network/vector call.
 
-Extraction is not an SDK invocation, intervention, plugin tool, or loop retry. The trajectory's post-durable
-callback only schedules `MemoryScheduler`; the scheduler delays, serializes/coalesces, times out, latches a
-bounded status problem, and cannot reject the completed user turn. No `search_memory`, generic persistence
-tool, vector/embedding dependency, or topic-wide injection is allowed. Effective `memory: false` installs no
-scheduler, writes no memory file, enables no local `/memory` mutation, and injects no block.
+Save accepts one atomic closed-category fact. Project claims require a unique exact current project-relative
+line reopened and hashed by Darwin; preferences and non-secret identity require a unique exact quote from the
+current user input. A runtime controller stages at most eight candidates in the active recorded turn, then
+commits only after both exact successful `endTurn` sealing and matching durable closing-append settlement.
+Failure, cancellation, partial/abandoned output, recorder degradation, resume, or `/clear` before acceptance
+discards staging. Accepted commits serialize during orderly cleanup and cannot change the completed turn.
+
+Strict project-bound `state.json` v3 is authoritative; generated IDs derive from normalized key plus fact,
+duplicates collapse, newer validated same-key generated facts supersede older ones, and user notes remain
+distinct. V1/v2 reads atomize only anchored facts and require current revalidation before authorized write;
+suppressions, expiry and no-follow/private atomic file protections remain. Recall revalidates with
+`persist: false` and labels output fallible data, not policy. The full archive is never ambient prompt input;
+prompt order is base → project instructions → official skills → current working context → final cache point.
 
 
 ## SER-032 local project-memory management
 
 - `/memory` is handled only by the interactive driver. It is not an SDK tool, intervention, hook, custom command expansion, or model invocation.
 - Grammar is closed: bare/list, `show <safe-id|one-based-list-number>`, `forget <safe-id|one-based-list-number|all>`, and `remember <bounded-note>`. No path argument is ever opened.
-- `memory/state.json` under the existing project-keyed user directory is the strict versioned authority. It carries the canonical project key; reads use bounded regular-file/no-follow checks, strict UTF-8, parent-directory checks, and exact schema validation. Malformed, oversized, wrong-project, forged, or symlinked state is refused.
-- The first load of an accepted SER-031 Markdown index/topics store performs one bounded exact migration to strict state before prompt use; after that, list/show are byte-zero projections.
-
-- Generated entries state trajectory provenance, exact-anchor validation metadata, and `sensitivity: heuristic-filtered`. Prompt-derived topic titles are capped at 100 Unicode code points; when truncation adds the visible `…` marker, that marker is part of the 100-code-point producer/strict-state-consumer bound. Explicit user entries state authored time, `freshness: unvalidated`, and `sensitivity: heuristic-screened`. Generated validation is exact but sensitivity remains heuristic; explicit notes are intentionally not code-validated.
-- Remember is explicit user input only and rejects secret-like, boundary-tag, control, dump, oversized, and policy-like text. Generated extraction remains the only generated write path.
-- Forget records bounded generated-ID suppression and removes user entries. Rebuild preserves user notes and suppression, so forgotten generated IDs do not reappear.
-- Rebuild and management serialize. A mutation validates the Darwin-owned prompt shape before disk work, atomically commits strict state, then synchronously replaces the live learned-memory block before returning. Skills catalogue, working context, and the sole final cache point stay in order. `/clear`, fresh and resumed runtimes continue through `AgentRuntime.create` and read the current narrowed state.
-- List/show may atomically refresh only bounded validation metadata in the memory manifest; refused/unknown mutations are byte-zero. Every operation leaves source/worktree, trajectory, snapshots, resume pointer, config and unrelated files untouched and uses only the existing transcript notice surface.
+- `memory/state.json` under the existing project-keyed user directory is the strict v3 authority. It carries the canonical project key; reads use bounded regular-file/no-follow checks, strict UTF-8, parent-directory checks, and exact schema validation. Malformed, oversized, wrong-project, forged, or symlinked state is refused.
+- V1/v2 state is accepted only through deterministic in-memory atomization. Read-only list/show revalidate without writing; the first authorized mutation keeps only currently eligible anchored legacy facts, while preserving user notes and bounded suppression ids. Markdown and legacy topic files are never parsed back as authority.
+- Generated entries expose stable id/key/category, one fact, host-owned turn provenance, exact evidence metadata, and current validation. Explicit user entries retain authored time and `explicit/unvalidated`; they are intentionally not code-validated or age-expired.
+- Remember is explicit user input only and rejects secret-like, boundary-tag, control, dump, oversized, temporary, and policy-like text. The parent-only `memory_save` tool is the only generated write path.
+- Forget records bounded generated-id/legacy-lineage suppression and removes user entries. A later save cannot restore the exact suppressed generated fact; a newly approved changed fact under the same key remains distinct.
+- Model saves and management serialize on the same state lock. Authorized mutation atomically commits strict state, regenerates the optional human index, and removes only safely validated obsolete legacy topic projections. No operation mutates the live system prompt.
+- List/show are byte-zero projections. Every operation leaves source/worktree, trajectory, snapshots, resume pointer, config and unrelated files untouched and uses only the existing transcript notice surface.
 
 
 ### Contract: `printer: false` is mandatory
@@ -85,12 +90,12 @@ Ink for the terminal. Every `new Agent({...})` in this project must pass `printe
 
 ## SER-033 generated-memory validation and expiry
 
-- The strict project-bound memory manifest is v2; v1 entries migrate as unanchored/unknown. Generated facts may carry one bounded exact project-relative UTF-8 line/hash anchor. Missing or unsafe deterministic evidence is `unknown`, never guessed.
-- One eligibility projection validates generated entries before startup assembly, every `AgentRuntime.send()` model request, and `/memory` refresh. Fresh, resumed and `/clear` still use `AgentRuntime.create`; no SDK loop is forked or intercepted.
-- Validation opens only canonical-root-contained regular files read-only/no-follow, with finite file/line/code-point/entry bounds and exact hashes. Traversal, symlink escape, changed/deleted evidence, binary/oversized/unreadable files all fail closed and generated context is omitted.
+- Strict project-bound state is v3. V1/v2 generated topics are atomized into bounded single-fact legacy entries with deterministic keys/lineage, but stored validation metadata is never trusted. Missing or unsafe deterministic evidence is omitted, never guessed or backfilled from trajectory.
+- `memory_save` validates current evidence before staging and repeats validation at durable commit. `memory_recall` and `/memory` list/show revalidate in memory with `persist: false`; fresh, resumed and `/clear` runtimes inject no archive and create no state merely by starting.
+- Validation opens only canonical-root-contained regular files read-only/no-follow, with finite file/line/code-point/entry bounds and exact hashes. Traversal, symlink escape, changed/deleted evidence, binary/oversized/unreadable files all fail closed and generated entries are omitted from recall.
 - `memoryHorizonDays` is one strict top-level session field, integer 0–365, default 28, preserved across model switches and `/clear`. Generated evidence is expired at the exact horizon boundary; 0 deliberately disables age expiry but never source validation.
-- Explicit user notes neither auto-expire nor undergo silent code validation. They remain fallible explicit context and survive rebuilds. `/memory list/show` reports exact generated state/reason and bounded anchor metadata without source text.
-- Validation metadata may be atomically persisted for audit; failure to persist does not trust generated context or refuse the runtime. Validation never rewrites source, trajectory, snapshots, pointers, config, or unrelated state and adds no watcher, polling, timer, model/network work, tool, vector, or dependency.
+- Generated preference/identity entries use only a host-created hash and length after an exact unique current-input quote check; the quoted input is not duplicated into state. Explicit `/memory remember` notes neither auto-expire nor undergo silent code validation.
+- Validation never rewrites source, trajectory, snapshots, pointers, config, or unrelated state and adds no watcher, polling, timer, model/network work, vector store, or dependency.
 
 
 ### Contract: `await agent.initialize()` before anything else

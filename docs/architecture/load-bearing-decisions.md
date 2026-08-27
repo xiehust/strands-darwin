@@ -84,7 +84,7 @@ The pinned SDK patch additionally repairs restored legacy oversized successful t
 
 ## `/rewind` — an SDK checkpoint branch, never workspace rollback
 
-**A rewind branches authoritative conversation state into a fresh Agent; it never rewrites the source or compensates external effects.** Before editor-eligible invocations, the runtime uses bounded public SDK listings to enforce a hard 100-snapshot rewind capacity, then creates a Strands immutable snapshot only while room remains. Failed/cancelled captures consume capacity; a full cap skips later capture without blocking the ordinary turn, deleting history or hiding existing selectable points. A bounded catalogue makes only successfully completed captured prompt boundaries selectable. Acceptance revalidates the source row, creates a successor through the one `AgentRuntime.create()` factory, restores the source snapshot before current learned-memory/working-context/cache refresh, and retires the predecessor only after success. The selected prompt returns to the editor unsent, and the resume pointer stays on the source until the successor completes a turn.
+**A rewind branches authoritative conversation state into a fresh Agent; it never rewrites the source or compensates external effects.** Before editor-eligible invocations, the runtime uses bounded public SDK listings to enforce a hard 100-snapshot rewind capacity, then creates a Strands immutable snapshot only while room remains. Failed/cancelled captures consume capacity; a full cap skips later capture without blocking the ordinary turn, deleting history or hiding existing selectable points. A bounded catalogue makes only successfully completed captured prompt boundaries selectable. Acceptance revalidates the source row, creates a successor through the one `AgentRuntime.create()` factory, restores the source snapshot before dropping any historical ambient-memory block and refreshing current working context/cache, and retires the predecessor only after success. The selected prompt returns to the editor unsent, and the resume pointer stays on the source until the successor completes a turn.
 
 Trajectory remains optional observation and is never used to reconstruct messages. Source latest/immutable snapshots, catalogue and trajectory stay byte-identical. Process-owned live permission mode, MCP clients and background jobs transfer like `/clear`; workspace files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned-memory files are explicitly *not* rewound. This omission is part of the notice, not documentation fine print. Checks: `verify-rewind.ts`, `verify-rewind-search.ts`, and free `tui rewind`.
 
@@ -314,7 +314,7 @@ activation, Darwin rejects resource symlinks/outside-root resolution and caps ho
 
 **System prompt composition order is fixed** on every actual model request: base prompt →
 `<project-instructions>` (AGENTS.md, `src/agent/instructions.ts`) → official
-`<available_skills>` → optional `<learned-memory>` → `<working-context>` (`src/agent/working-context.ts`) → final cache point.
+`<available_skills>` → `<working-context>` (`src/agent/working-context.ts`) → final cache point.
 Official AgentSkills injects before each invocation; Darwin registers a later hook that moves that
 exact catalogue TextBlock ahead of current working context and cache. Repeated/resumed invocations
 remove the previous official block via persisted appState before reordering, so the catalogue is
@@ -330,42 +330,37 @@ must never state the creating run's date as today's. The base is the only user-r
 base is in effect.
 
 
-## Learned project memory
+## Agent-managed project memory
 
-**Learned project memory is default-on derived context, never authority** (`src/memory/`).
-It is enabled when `memory` is omitted and trajectory recording is available; explicit `memory: false` opts
-out. For compatibility and privacy intent, `trajectory: false` with omitted memory also disables it, while
-explicit `memory: true` with `trajectory: false` is invalid because the requested source cannot exist.
-Only closed durable successful `endTurn` trajectory evidence is projected after the turn into bounded
-Markdown under `~/.darwin/projects/<project-key>/memory/`; trajectory bytes remain the append-only source
-and are never repaired or reinterpreted in place. Extraction is deterministic/offline, excludes reasoning
-and raw tool records, drops sensitive/dump-like candidates, preserves session/turn/sequence/time provenance,
-and runs through a delayed coalescing timeout-bound scheduler whose failures only surface on existing
-post-turn warning paths. Runtime startup reads strict bounded state, renders only its compact index, and inserts exactly one labelled
-`<learned-memory>` block after official skills and before current working context/final cache. The wrapper
-states that its contents are fallible context—not instructions or policy—and project instructions win.
-Topic bodies are inspectable files but are not ambient prompt input. Resume and `/clear` refresh through the
-ordinary `AgentRuntime.create` factory.
+**Project memory is default-on, parent-only, and on demand** (`src/memory/`). Effective `memory: false`,
+including the implicit opt-out from `trajectory: false`, registers neither model-facing tool and creates no
+state. When enabled, `memory_recall` is a statically safe local read over strict validated state, while
+`memory_save` is an ordinary dangerous write that follows default/auto/plan/yolo permission behavior and can
+never be covered by an allow rule. Both are registered only after the child catalogue is fixed, so subagents
+cannot retrieve or save parent memory.
 
-**`/memory` is bounded user-only local management, never a persistence tool.** A strict versioned `state.json`
-is the authority and binds itself to the canonical project key. Generated facts carry bounded exact
-project-relative line/hash anchors only when extraction can identify safe current text evidence; before every
-model request one centralized projection validates canonical regular UTF-8 files, excludes unknown/invalid
-facts, and expires generated evidence at the strict top-level `memoryHorizonDays` horizon (28 days by default,
-0 disables age expiry only). Exact-horizon age is expired. Validation metadata remains inspectable, and restored
-source can reactivate a non-expired entry. Explicit `/memory remember <note>` entries carry authored time and
-`sensitivity: heuristic-screened`; they are visibly fallible user context, never silently code-validated or
-expired. Validation reads are bounded/no-follow and never modify worktree bytes. Grammar is only `list`,
-`show <safe-id|number>`, `forget <safe-id|number|all>`, and `remember <bounded-note>`. Remember screens secrets,
-prompt boundaries, controls, dumps and policy-like text. Forget stores bounded generated-ID suppressions, so
-a deterministic rebuild cannot restore a forgotten entry, and removes user notes. Mutations serialize with
-rebuilds, atomically commit strict state, and replace the verified Darwin-owned live prompt block before
-returning, preserving official skills, working context and one final cache point. Malformed/oversized/forged
-or symlinked state is refused. After one bounded exact SER-031 Markdown-to-state migration on first load,
-list/show never mutate. No operation invokes the model, network, MCP, trajectory,
-snapshot, resume pointer or config, and there is still no model-facing search/write tool, vector index,
-embedding, or SDK-loop fork. Free checks: `verify-memory-validation.ts`, `verify-memory-command.ts`, `verify-memory.ts`,
-`verify-clear-session.ts`, `verify-help-command.ts`, and `tui completion`.
+A save validates one atomic fact and stages it in the active foreground turn. Project claims require one
+unique exact current project-relative UTF-8 source line; preferences and non-secret account identity require
+one exact unique quote from the current user input. Darwin derives hashes, line numbers, session, turn,
+closing sequence and time itself. The controller commits only after both an exact successful `endTurn` seal
+and the matching closing trajectory append settlement arrive; failure, cancellation, partial output,
+consumer abandonment, recorder degradation, or `/clear` before acceptance discards staging. Once accepted,
+serialized cleanup may finish the commit without changing the completed turn.
+
+`state.json` version 3 is authoritative under the existing project-keyed private directory. Entries have a
+stable namespaced key, closed category, one fact, host-owned provenance, evidence and validation. IDs derive
+deterministically from normalized key plus fact; duplicates collapse and a newer validated fact supersedes
+an older generated fact with the same key, never a user note. Generated suppressions, age expiry, strict
+no-follow parsing, `0700` directories, `0600` atomic files and `/memory list|show|forget|remember` remain.
+Version-1/2 state is read through a deterministic atomizing migration; only currently revalidated anchored
+facts survive an authorized mutation, and trajectories are never rescanned or backfilled.
+
+Recall performs bounded deterministic lexical ranking, revalidates generated entries with `persist: false`,
+and returns explicitly fallible data rather than instructions or policy. It makes no model, network,
+embedding or vector call, writes nothing, and never injects the full archive into the system prompt. The
+optional bounded `index.md` is a human projection only; legacy topic projections are removed on authorized
+mutation. Free checks: `verify-memory-validation.ts`, `verify-memory-tools.ts`, `verify-memory-command.ts`,
+`verify-memory.ts`, and `verify-clear-session.ts`.
 
 ## Prompt caching
 

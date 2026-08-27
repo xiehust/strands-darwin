@@ -116,10 +116,10 @@ function clip(value: string): string[] {
 }
 
 /** Renders one turn: streaming text plus tool-call activity. */
-async function renderTurn(runtime: AgentRuntime, input: string): Promise<void> {
+async function renderTurn(runtime: AgentRuntime, input: string, userInput = input): Promise<void> {
   let streamingText = false;
 
-  for await (const event of runtime.send(input)) {
+  for await (const event of runtime.send(input, userInput)) {
     switch (event.type) {
       case 'modelStreamUpdateEvent': {
         if (
@@ -291,7 +291,7 @@ async function main(): Promise<void> {
               ? `  · loaded skill "${expanded.skill.name}"`
               : `  · loaded command "/${expanded.command.name}"`,
           );
-          await renderTurn(runtime, expanded.message);
+          await renderTurn(runtime, expanded.message, input);
           continue;
         }
         await renderTurn(runtime, input);

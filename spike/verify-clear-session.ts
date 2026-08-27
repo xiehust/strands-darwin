@@ -147,16 +147,17 @@ async function main(): Promise<void> {
   });
   let live = previousRuntime;
   const initialPrompt = JSON.stringify(runtimeAgent(live).systemPrompt);
-  assert('a fresh runtime loads the current bounded learned-memory index once',
-    initialPrompt.includes('first-memory') && initialPrompt.split('<learned-memory>').length === 2);
+  assert('a fresh runtime exposes memory tools without ambient archive injection',
+    live.info.toolNames.includes('memory_recall') && live.info.toolNames.includes('memory_save') &&
+    !initialPrompt.includes('first-memory') && !initialPrompt.includes('<learned-memory>'));
   const remembered = await live.manageMemory('/memory remember live-memory-note');
   const livePromptAfterRemember = JSON.stringify(runtimeAgent(live).systemPrompt);
-  assert('/memory remember refreshes the current live prompt before returning',
-    remembered.changed && livePromptAfterRemember.includes('live-memory-note'));
+  assert('/memory remember updates private state without changing the live prompt',
+    remembered.changed && !livePromptAfterRemember.includes('live-memory-note'));
   const rememberedId = remembered.text.match(/user-[a-f0-9]+/)?.[0] ?? '';
   const forgotten = await live.manageMemory(`/memory forget ${rememberedId}`);
   const livePromptAfterForget = JSON.stringify(runtimeAgent(live).systemPrompt);
-  assert('/memory forget narrows the current live prompt before returning',
+  assert('/memory forget narrows private state and still leaves the prompt unchanged',
     forgotten.changed && !livePromptAfterForget.includes('live-memory-note'));
 
 
@@ -239,7 +240,9 @@ async function main(): Promise<void> {
     assert('…and is a valid session id', isValidSessionId(next.info.sessionId));
     assert('…and sorts after it, so recency order still holds', next.info.sessionId > previousId);
     const nextPrompt = JSON.stringify(runtimeAgent(next).systemPrompt);
-    assert('/clear reads current learned memory through the factory', nextPrompt.includes('current-memory') && !nextPrompt.includes('first-memory'));
+    assert('/clear rebuilds memory tools without ambient archive injection',
+      next.info.toolNames.includes('memory_recall') && next.info.toolNames.includes('memory_save') &&
+      !nextPrompt.includes('current-memory') && !nextPrompt.includes('first-memory'));
     await writeMemory(root, 'resumed-memory');
     const resumed = await AgentRuntime.create({
       projectRoot: root,
@@ -247,7 +250,9 @@ async function main(): Promise<void> {
       permissionBridge: allowAllBridge,
     });
     const resumedPrompt = JSON.stringify(runtimeAgent(resumed).systemPrompt);
-    assert('an explicitly resumed runtime refreshes current learned memory', resumedPrompt.includes('resumed-memory') && !resumedPrompt.includes('first-memory'));
+    assert('an explicitly resumed runtime keeps current memory on demand only',
+      resumed.info.toolNames.includes('memory_recall') && resumed.info.toolNames.includes('memory_save') &&
+      !resumedPrompt.includes('resumed-memory') && !resumedPrompt.includes('first-memory'));
     await resumed.shutdown();
 
     assert('the new session starts with no conversation', next.messageCount === 0);

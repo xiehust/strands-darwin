@@ -88,12 +88,11 @@ Every request uses this fixed order, followed by the final cache point:
 <base prompt>                                  built-in or your replacement
 <project-instructions source="AGENTS.md">…    repository rules
 <available_skills>…                            official AgentSkills catalogue
-<learned-memory>…                              optional validated project context
 <working-context>…                             current run facts
 <cache point>
 ```
 
-Only the base is replaceable. `AGENTS.md`, skills, learned memory when eligible, and working context remain additive.
+Only the base is replaceable. `AGENTS.md`, skills, and working context remain additive. Project memory is retrieved on demand through the parent-only `memory_recall` tool rather than injected as an ambient archive.
 The built-in base names the always-available `fileEditor` and `bash` tools and pins the behavioral rules other features rely on: read before editing, keep edits small, verify by running an appropriate check, and never work around a permission denial. A replacement replaces all of that base text, so include any equivalent rules you still need.
 
 Base override precedence:
