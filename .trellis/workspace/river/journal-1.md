@@ -995,3 +995,41 @@ pnpm test (twice), and pnpm build all green.
 ### Status
 
 [OK] **Completed**
+
+---
+
+## 2026-08-28 — Bounded composer undo (SER-044)
+
+**Date**: 2026-08-28
+**Task**: Bounded composer undo (SER-044)
+**Branch**: `main`
+
+### Summary
+
+Added bounded composer undo: Ctrl+_ / Ctrl+- (byte 0x1f — Ink's legacy parser
+reports it as bare `\u001f` with no ctrl flag; the handler also covers the kitty
+chord) restores the exact {text, cursor} destroyed by Ctrl+K/U (killToRowEdge),
+Ctrl+W / Alt+Backspace (deleteWordBefore) and Alt+D / Alt+Delete (deleteWordAfter).
+Pure primitives in prompt-editor.ts (UNDO_CAP 16, pushUndo drops oldest, popUndo);
+App.tsx owns the stack as a ref like preferredColumn, pushes only when a chord
+changes text, and clears at the top of submit(), queue take-back, recall
+replacement, history-search accept and rewind accept. Empty-stack undo is a
+consumed no-op; no new UI surface. Unit coverage in verify-prompt-editor.ts; new
+free pty scenario `undo` (13th free scenario, AGENTS.md updated). Discovered two
+pty delivery rules now in tui-testing.md: control bytes coalesced with other bytes
+fold into the text chunk and are stripped (send each in its own write, anchored on
+the render it causes via the `frame` getter), and bytes sent before Ink's raw mode
+are eaten by the cooked line discipline where Ctrl+U/W are kill/werase. Typecheck,
+full pnpm test, undo ×3, and cursor/multiline/wordNav/completion/recall/recallEmpty/
+queue/historySearch all green; pnpm build refreshed dist.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a22d72d` | feat(tui): bounded composer undo on ctrl+_ (SER-044) |
+| `fc3351b` | chore(task): archive 08-28-composer-undo |
+
+### Status
+
+[OK] **Completed**
