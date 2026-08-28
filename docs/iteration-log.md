@@ -1989,3 +1989,14 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SER-042 | `c32e5f6` implementation, `6c3c7b1` task archive, `bf71a13` journal | Host inspected the source/spec/test diff: `src/tui/prompt-editor.ts` gained pure grapheme-aware word primitives only (`moveWordHorizontal`, `deleteWordAfter`, shared boundary helpers with Ctrl+W's `deleteWordBefore`), and the Alt/Ctrl+Arrow, Alt+B/F, Alt+Backspace/Alt+Delete and Alt+D chords sit after every existing key owner and before the generic ctrl/meta ignore, leaving plain-arrow and unmodified backspace/delete branches byte-identical. Host independently passed `verify-prompt-editor.ts` (43/43), free pty `wordNav` (11/11), `cursor` (5/5), `multiline` (9/9), `completion` (67/67), `recall` (22/22), `recallEmpty` (4/4), `queue` (17/17), `historySearch` (11/11), `pnpm typecheck`, full `pnpm test` (exit 0), and `pnpm build`; plus `git diff --check`/`git show --check`, clean-tree verification, and AGENTS.md size (29,452 bytes < 32 KiB, free-scenario list grown to twelve with `wordNav`). |
+
+## Batch 65 — SER-043 terminal attention bell
+
+- Origin: `docs/research/research_2026-08-28.md`, run `2026-08-28T13:03:31Z` (rolled `tui` path).
+- Child session: `session-20260828-140438963`.
+- Managed task: `bg-618777c4-abc6-48d8-9e91-2553d9a91f95` (implementation, workflow records, and commits; succeeded, exit 0).
+- Token spend: `input=204 output=62,931 cacheRead=12,760,721 cacheWrite=189,449`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SER-043 | `94909b8` implementation, `e8376df` task archive, `8c379cf` journal | Host inspected the source/spec/test diff: `src/tui/terminal-bell.ts` is the sole BEL writer (enabled writes exactly one raw `\x07` to real stdout, disabled writes nothing, broken stdout swallowed), wired only at the consolidated `cli.ts` permission-publication observer (shared by `/clear`/rewind successors) and `App.tsx` `runTurn` `finally` beside the interactive `TurnComplete` publication; new session-scoped `terminalBell` key defaults `false` with `ConfigError` refusal on non-boolean. Host independently passed `verify-terminal-bell.ts` (14/14 — raw pty holds exactly one BEL per permission publication and per completed turn when enabled, zero when disabled), `verify-config.ts` (248/248), `pnpm typecheck`, full `pnpm test` (exit 0), and `pnpm build`; plus grep proof (no `\x07` outside `terminal-bell.ts`, no tui import from headless/dev-repl/agents), `git diff --check`/`git show --check`, and clean-tree verification. |
