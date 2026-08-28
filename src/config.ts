@@ -202,6 +202,17 @@ export interface SessionFields {
   /** Token threshold above which a tool result is offloaded. SDK default: 2500. */
   maxResultTokens?: number;
   /**
+   * Ring the terminal bell (one raw BEL, `\x07`, straight to stdout — never an Ink
+   * row) when the interactive TUI publishes a permission prompt and when a turn
+   * completes. **Off by default**: an audible/visual signal nobody asked for is an
+   * annoyance, and off must stay byte-identical to before the feature existed.
+   * Headless drivers and child agents never ring regardless of this value.
+   *
+   * Optional in the type for hand-built configs; {@link loadConfig} always stores
+   * the resolved boolean, so an absent key reads back as `false`.
+   */
+  terminalBell?: boolean;
+  /**
    * Record an append-only trajectory of every turn to
    * `~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl`, powering
    * `darwin trajectory search|replay|fork` and `/trajectory`. On by default.
@@ -299,6 +310,7 @@ const SESSION_KEYS = [
   'contextWarnRatio',
   'contextOffload',
   'maxResultTokens',
+  'terminalBell',
   'trajectory',
   'diagnostics',
   'memory',
@@ -326,6 +338,7 @@ const DEFAULTS = {
   thinkingEffort: DEFAULT_THINKING_EFFORT,
   contextWarnRatio: 0.8,
   contextOffload: true,
+  terminalBell: false,
   memory: true,
   memoryHorizonDays: 28,
 } as const satisfies Partial<AppConfig>;
@@ -832,6 +845,8 @@ function validateSessionFields(
       DEFAULTS.contextWarnRatio,
     contextOffload:
       booleanField(input, 'contextOffload', configPath) ?? DEFAULTS.contextOffload,
+    terminalBell:
+      booleanField(input, 'terminalBell', configPath) ?? DEFAULTS.terminalBell,
     memoryHorizonDays:
       integerField(input, 'memoryHorizonDays', configPath, { min: 0, max: 365 }) ??
       DEFAULTS.memoryHorizonDays,

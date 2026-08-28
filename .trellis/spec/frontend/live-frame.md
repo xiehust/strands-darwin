@@ -454,6 +454,24 @@ behavior, bounded wording, one transcript notice, and empty live-turn state. Kee
 An unrecovered `ContextWindowOverflowError` uses the ordinary failed-turn Static notice and the shared bounded driver projection: provider detail plus `/compact`, a narrower retry, or `/clear`. It adds no live-frame participant, row, automatic retry, or compaction. The existing failed-turn path still marks the busy state aborted and returns queued prompts to the editor unsent. The offline real-pty `spike/verify-tui.ts contextOverflow` scenario proves the notice, no continuation, and that the same session returns to an executable prompt.
 
 
+## Contract: the terminal attention bell is a raw control byte, never a frame participant (SER-043)
+
+With `terminalBell: true` (default `false`), the interactive driver writes exactly one BEL
+(`\x07`) to the **real stdout** at each of the two existing driver-owned lifecycle publication
+points: a permission prompt being published to the user (the `PermissionQueue` observer wiring in
+`cli.ts` `runInteractive`, which already de-duplicates re-asks of one prompt identity) and a turn
+completing (next to `observeTurnComplete(..., 'interactive')` in `App`'s `runTurn` finally, any
+outcome). `src/tui/terminal-bell.ts` is the only writer.
+
+BEL is a non-printing control byte written between Ink renders, so it is not a row, not a budget
+participant, and invisible to ANSI-stripped assertions, `/export` byte-stability and replay. It is
+never emitted per frame render, never from headless drivers, never for child agents, and never
+inside lifecycle hook command execution. Disabled performs no write at all — the default path stays
+byte-identical to before the feature existed — and a throwing stdout is swallowed.
+
+Tests required: `spike/verify-terminal-bell.ts` (unit contract plus real-pty raw-byte counts for
+both config states, no model call) and the `terminalBell` block in `spike/verify-config.ts`.
+
 
 ## Contract: the only sanctioned whole-screen clear is `/clear`, and it costs two things at once
 

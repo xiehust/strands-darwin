@@ -1036,6 +1036,45 @@ async function diagnosticsField(): Promise<void> {
   assert('a /model switch preserves it', switched.diagnostics === true);
 }
 
+async function terminalBellField(): Promise<void> {
+  header('config — terminal attention bell');
+  const def = await loadConfig(await writeConfig('{}'));
+  // Off by default: a signal nobody asked for is an annoyance, and the default
+  // path must stay byte-identical to before the feature existed.
+  assert('the bell is off by default', def.terminalBell === false);
+
+  const on = await loadConfig(await writeConfig('{ "terminalBell": true }'));
+  assert('the bell can be switched on', on.terminalBell === true);
+  const off = await loadConfig(await writeConfig('{ "terminalBell": false }'));
+  assert('explicit false is accepted', off.terminalBell === false);
+
+  const bad = await expectConfigError('a non-boolean terminalBell value is refused', async () =>
+    loadConfig(await writeConfig('{ "terminalBell": "loud" }')),
+  );
+  assert('…and the error names the field', bad.includes('terminalBell'));
+
+  // Session-scoped: it survives /model, and a models entry carrying it is refused
+  // rather than ignored — a bell that silently applied to one model and not
+  // another would ring (or stay silent) against the file's stated intent.
+  const withModels = await loadConfig(
+    await writeConfig(
+      '{ "terminalBell": true, "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5" }] }',
+    ),
+  );
+  assert('terminalBell survives the models array form', withModels.terminalBell === true);
+  const misplaced = await expectConfigError('terminalBell inside a models entry is refused', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "terminalBell": true }] }',
+      ),
+    ),
+  );
+  assert('…and that error names the key', misplaced.includes('terminalBell'));
+
+  const switched = withModelChoice(withModels, withModels.modelChoices[0]!);
+  assert('a /model switch preserves the bell', switched.terminalBell === true);
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
@@ -1050,6 +1089,7 @@ async function main(): Promise<void> {
   await memoryField();
   await trajectoryField();
   await diagnosticsField();
+  await terminalBellField();
   await permissionModes();
   await permissionRules();
   await toolHooks();

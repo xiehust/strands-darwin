@@ -153,6 +153,7 @@ import {
   formatThinking,
 } from './status-format.js';
 import { PlanChecklist } from './PlanChecklist.js';
+import { ringTerminalBell } from './terminal-bell.js';
 import { initialTurnState, turnReducer, type HistoryItem, type TurnAction } from './turn-state.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
@@ -792,6 +793,10 @@ export function App({
       } finally {
         if (turnAborted.current && lifecycleOutcome === 'success') lifecycleOutcome = 'cancelled';
         runtime.observeTurnComplete(lifecycleOutcome, 'interactive');
+        // The attention bell shares the TurnComplete publication moment exactly:
+        // one raw BEL to stdout per finished turn (any outcome), interactive only,
+        // and a no-op unless `terminalBell` is configured on.
+        ringTerminalBell(runtime.config.terminalBell === true);
         dispatch({ type: 'turnEnded' });
         setStatus('idle');
         // Cleared with the status, so a cancelled or failed turn stops the busy

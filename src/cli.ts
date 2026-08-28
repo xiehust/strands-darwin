@@ -34,6 +34,7 @@ import {
 import { ConfigError } from './config.js';
 import { productionHeadlessDependencies, runHeadlessProcess } from './headless-runner.js';
 import { withProductionReactImports } from './tui/react-environment.js';
+import { ringTerminalBell } from './tui/terminal-bell.js';
 
 const FORCE_EXIT_AFTER_MS = 500;
 
@@ -170,7 +171,19 @@ async function runInteractive(options: CliOptions): Promise<void> {
     }
     throw error;
   }
-  permissions.setObserver((request) => runtime.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input }));
+  /**
+   * One observer wiring shared by the initial session and every `/clear`/rewind
+   * successor: lifecycle-hook publication plus the config-gated attention bell,
+   * both fired at the moment the prompt is published to the user (the queue
+   * de-duplicates re-asks of the same prompt identity).
+   */
+  const observePermissionPublication = (rt: AgentRuntime): void => {
+    permissions.setObserver((request) => {
+      rt.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input });
+      ringTerminalBell(rt.config.terminalBell === true);
+    });
+  };
+  observePermissionPublication(runtime);
 
   /**
    * Human context is restored from the exact session trajectory, never from Agent
@@ -223,13 +236,13 @@ async function runInteractive(options: CliOptions): Promise<void> {
       startNewSession: async () => {
         const next = await current.startNewSession();
         current = next;
-        permissions.setObserver((request) => current.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input }));
+        observePermissionPublication(next);
         return next;
       },
       startRewind: async (checkpoint) => {
         const next = await current.startRewind(checkpoint);
         current = next;
-        permissions.setObserver((request) => current.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input }));
+        observePermissionPublication(next);
         return next;
       },
     }),
