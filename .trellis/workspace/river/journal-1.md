@@ -893,3 +893,24 @@ Registered the SDK HTTP request singleton on the parent runtime, proved fail-clo
 ### Status
 
 [OK] **Completed**
+
+
+## Session 34: Keep dependent background waits attached
+
+**Date**: 2026-08-28
+**Task**: Keep dependent background waits attached
+**Branch**: `main`
+
+### Summary
+
+Extended terminal-focused bash waits to five minutes, added exact wait-again guidance for still-running timeouts, preserved compact TUI behavior, and verified focused/full suites.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `066fb6f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
