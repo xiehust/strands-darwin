@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 34
+- **Total Sessions**: 35
 - **Last Active**: 2026-08-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~916 | Active |
+| `journal-1.md` | ~937 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 35 | 2026-08-28 | Full transcript replay on interactive resume | `27ed5c3` | `main` |
 | 34 | 2026-08-28 | Keep dependent background waits attached | `066fb6f` | `main` |
 | 33 | 2026-08-27 | Vend SDK HTTP request tool | `ce68299` | `main` |
 | 32 | 2026-08-27 | SER-041 clipboard image input | `2b04e59` | `main` |

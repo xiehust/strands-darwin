@@ -914,3 +914,24 @@ Extended terminal-focused bash waits to five minutes, added exact wait-again gui
 ### Status
 
 [OK] **Completed**
+
+
+## Session 35: Full transcript replay on interactive resume
+
+**Date**: 2026-08-28
+**Task**: Full transcript replay on interactive resume
+**Branch**: `main`
+
+### Summary
+
+Replaced the bounded last-turn resume recap with a full transcript replay through replayRecords/turnReducer; distinct degradation notices kept; observer/byte-zero invariants proven; specs, AGENTS row and pty resume scenario updated.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `27ed5c3` | (see git log) |
+
+### Status
+
+[OK] **Completed**
