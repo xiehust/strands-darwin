@@ -382,3 +382,24 @@ Accepted in `2b04e59` plus Host-found provider-rejection correction `f4645d1` (t
 ### Notes / blockers / abandonment reason
 
 Claude Code and Codex both document direct screenshot input in their terminal composers. Darwin already has bounded local image decoding in `src/tools/image-viewer.ts`, and the installed Strands SDK accepts content-block arrays with byte-backed `ImageBlock`, but `AgentRuntime.send` currently narrows every user turn to a string. Add one interactive clipboard-image attachment path without forking the SDK loop or replacing the path-based `imageViewer` tool. The attachment must be visibly bounded in the live composer, survive unrelated draft edits, clear only when the prompt is actually sent or the user explicitly removes it, and preserve permission/compaction/paste/queue key ownership. Never put image bytes, clipboard contents, or a fabricated local path into trajectory, replay, export, prompt recall, memory evidence, or shell reports; record the literal user prompt and only a bounded truthful attachment fact where the existing record schema permits it. Failures and unsupported terminal/provider paths must leave the draft and attachment state honest and actionable.
+
+
+## SER-042 — Add word-wise composer navigation and deletion: Alt/Ctrl+Arrow and Alt+B/F word jumps plus Alt+Backspace/Alt+D word deletes as grapheme-aware prompt-editor primitives, preserving completion/queue/recall/permission key ownership
+
+- Status: `in-progress`
+- Priority: 60
+- Score: 15
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 1
+- Origin report: [`research_2026-08-28.md`](../research_2026-08-28.md) (run `13:03:31Z`, rolled `tui` path)
+
+### Implementation / acceptance evidence
+
+None yet — not started.
+
+### Notes / blockers / abandonment reason
+
+Left/Right currently move exactly one grapheme (`src/tui/App.tsx:2087–2099`, `moveHorizontal(…, ±1, …)`) and every meta/alt chord is discarded by the generic ignore (`src/tui/App.tsx:2132`). The installed Ink keypress parser already delivers Alt+Left/Right (`CSI 1;3D/C`), Ctrl+Left/Right (`CSI 1;5D/C`), Alt+B/F (`metaKeyCodeRe`) and kitty-protocol alt/meta with `key.meta`/`key.ctrl` set, so the gap is entirely app-side. Add word-boundary primitives in `src/tui/prompt-editor.ts` beside the existing `deleteWordBefore` (line 178), reusing its word-character notion and the module's `Intl.Segmenter` grapheme segmentation so word jumps never split a grapheme; wire Alt/Ctrl+Arrow word movement, Alt+B/F equivalents, Alt+Backspace (delete word before, alias of Ctrl+W's primitive) and Alt+D (delete word after) in `App.tsx` **after** the existing owners — permission prompt, completion menu (Tab/arrows), queue take-back, recall, history/rewind search — so no current key contract changes; plain arrows and all existing chords stay byte-identical. Extend `spike/verify-prompt-editor.ts` with word-boundary cases (ASCII, emoji/ZWJ, CJK, punctuation runs, whitespace runs, line boundaries) and add a free pty scenario proving the chords act on the draft while menus/queue/recall still own their keys. No new frame row, no config, no persistence.
