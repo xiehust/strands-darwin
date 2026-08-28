@@ -20,6 +20,9 @@ import { SubagentTool } from '../src/agents/subagent-tool.js';
 import { ToolHookGate } from '../src/hooks/tool-hooks.js';
 import {
   BackgroundBashManager,
+  OUTPUT_SENSITIVE_WAIT_MAX_MS,
+  TERMINAL_FOCUSED_WAIT_MAX_MS,
+  TERMINAL_WAIT_TIMEOUT_INSTRUCTION,
   createBackgroundBashTool,
   createForegroundBashTool,
   type BackgroundStartResult,
@@ -301,12 +304,20 @@ async function waitContracts(): Promise<void> {
     const timeoutBefore = Date.now();
     const timedOut = await manager.wait(quiet.taskId, 80);
     const timeoutElapsed = Date.now() - timeoutBefore;
-    assert('quiet wait returns empty running snapshot only at its finite timeout', timedOut.reason === 'timeout' && timedOut.status.state === 'running' && timedOut.output.output === '' && timeoutElapsed >= 60 && timeoutElapsed < 300);
+    assert(
+      'output-sensitive timeout stays bounded without terminal-focused continuation guidance',
+      timedOut.reason === 'timeout' && timedOut.status.state === 'running' && timedOut.output.output === '' &&
+        timedOut.instruction === undefined && timeoutElapsed >= 60 && timeoutElapsed < 300,
+    );
 
     const terminal = await manager.start('sleep .08; exit 0');
     const terminalBefore = Date.now();
     const terminalResult = await manager.wait(terminal.taskId, 1_000);
-    assert('wait wakes promptly on terminal transition', terminalResult.reason === 'terminal' && terminalResult.status.state === 'succeeded' && Date.now() - terminalBefore < 500);
+    assert(
+      'output-sensitive terminal transition wakes promptly without guidance',
+      terminalResult.reason === 'terminal' && terminalResult.status.state === 'succeeded' &&
+        terminalResult.instruction === undefined && Date.now() - terminalBefore < 500,
+    );
 
     const growing = await manager.start("sleep .05; printf 'one'; sleep .08; printf 'two'; sleep 1000");
     const first = await manager.wait(growing.taskId, 500);
@@ -319,7 +330,8 @@ async function waitContracts(): Promise<void> {
     assert(
       'terminal-focused wait retains intermediate output without waking until terminal state',
       terminalFocusedResult.reason === 'terminal' && terminalFocusedResult.status.state === 'succeeded' &&
-        terminalFocusedResult.output.output === 'onetwo' && Date.now() - terminalFocusedBefore >= 120,
+        terminalFocusedResult.output.output === 'onetwo' && terminalFocusedResult.instruction === undefined &&
+        Date.now() - terminalFocusedBefore >= 120,
     );
     const terminalFocusedDrain = await manager.output(terminalFocused.taskId);
     assert('terminal-focused wait returns retained output exactly once', terminalFocusedDrain.output === '' && terminalFocusedDrain.startOffset === terminalFocusedResult.output.endOffset);
@@ -330,7 +342,26 @@ async function waitContracts(): Promise<void> {
     assert(
       'terminal-focused wait aggregates output and remains bounded by finite timeout',
       terminalTimeoutResult.reason === 'timeout' && terminalTimeoutResult.status.state === 'running' &&
-        terminalTimeoutResult.output.output === 'firstsecond' && Date.now() - terminalTimeoutBefore >= 110 && Date.now() - terminalTimeoutBefore < 350,
+        terminalTimeoutResult.output.output === 'firstsecond' &&
+        terminalTimeoutResult.instruction === TERMINAL_WAIT_TIMEOUT_INSTRUCTION &&
+        [...terminalTimeoutResult.instruction].length < 240 &&
+        Date.now() - terminalTimeoutBefore >= 110 && Date.now() - terminalTimeoutBefore < 350,
+    );
+
+    const cancelledAfterDeadline = await manager.start('sleep 1000');
+    const expiredController = new AbortController();
+    expiredController.abort();
+    const cancelledAfterDeadlineResult = await manager.wait(
+      cancelledAfterDeadline.taskId,
+      1,
+      expiredController.signal,
+      false,
+    );
+    assert(
+      'terminal-focused cancellation has precedence over timeout guidance',
+      cancelledAfterDeadlineResult.reason === 'cancelled' &&
+        cancelledAfterDeadlineResult.status.state === 'running' &&
+        cancelledAfterDeadlineResult.instruction === undefined,
     );
 
     const bounded = await manager.start("node -e \"process.stdout.write('x'.repeat(70000))\"; sleep 1000");
@@ -409,13 +440,21 @@ async function waitContracts(): Promise<void> {
     const terminalCancelled = await terminalCancelledPromise;
     assert(
       'terminal-focused cancellation returns retained output promptly without stopping the task',
-      terminalCancelled.reason === 'cancelled' && terminalCancelled.output.output === 'before-cancel' && exists(terminalCancellable.pid),
+      terminalCancelled.reason === 'cancelled' && terminalCancelled.output.output === 'before-cancel' &&
+        terminalCancelled.instruction === undefined && exists(terminalCancellable.pid),
     );
 
-    for (const badWait of [0, 30_001, 1.5, Number.NaN]) {
+    for (const badWait of [0, OUTPUT_SENSITIVE_WAIT_MAX_MS + 1, 1.5, Number.NaN]) {
       let waitError = '';
       try { await manager.wait(quiet.taskId, badWait); } catch (error) { waitError = String(error); }
-      assert('manager rejects wait bounds even outside provider validation', waitError.includes('integer from 1 to 30000'));
+      assert('manager preserves output-sensitive wait bounds outside provider validation',
+        waitError.includes('output-sensitive') && waitError.includes(`1 to ${OUTPUT_SENSITIVE_WAIT_MAX_MS}`));
+    }
+    for (const badWait of [0, TERMINAL_FOCUSED_WAIT_MAX_MS + 1, 1.5, Number.NaN]) {
+      let waitError = '';
+      try { await manager.wait(quiet.taskId, badWait, undefined, false); } catch (error) { waitError = String(error); }
+      assert('manager applies the larger finite terminal-focused bound outside provider validation',
+        waitError.includes('terminal-focused') && waitError.includes(`1 to ${TERMINAL_FOCUSED_WAIT_MAX_MS}`));
     }
     let invalidId = '';
     try { await manager.wait('not-owned', 10); } catch (error) { invalidId = String(error); }
@@ -441,7 +480,7 @@ async function waitContracts(): Promise<void> {
   assert(
     'shutdown releases terminal-focused wait with retained output and still reaps its process group',
     (shutdownWait.reason === 'shutdown' || shutdownWait.reason === 'terminal') && shutdownWait.output.output === 'before-shutdown' &&
-      Date.now() - shutdownBefore < 1_300 && !exists(shutdownTask.pid),
+      shutdownWait.instruction === undefined && Date.now() - shutdownBefore < 1_300 && !exists(shutdownTask.pid),
   );
   await rm(shutdownRoot, { recursive: true, force: true });
 }
@@ -524,13 +563,22 @@ async function wrapperAndPermissionContracts(): Promise<void> {
   const waitedWithCommand = await managementWrapped.invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 123, command: redundantCommand } as never, waitContext);
   assert('wait ignores redundant command without changing the manager result', JSON.stringify(waitedWithCommand) === JSON.stringify(waited));
   await managementWrapped.invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 123, wakeOnOutput: false }, waitContext);
+  await managementWrapped.invoke({
+    mode: 'wait', taskId: expectedTaskId, waitMs: TERMINAL_FOCUSED_WAIT_MAX_MS, wakeOnOutput: false,
+  }, waitContext);
+  await managementWrapped.invoke({
+    mode: 'wait', taskId: expectedTaskId, waitMs: OUTPUT_SENSITIVE_WAIT_MAX_MS,
+  }, waitContext);
   assert(
     'management callbacks dispatch only lifecycle fields and never execute or reinterpret redundant command',
-    managementCalls.length === 9 &&
-      managementCalls.every((call, index) => call.mode === (['status', 'status', 'output', 'output', 'stop', 'stop', 'wait', 'wait', 'wait'] as const)[index] && call.taskId === expectedTaskId) &&
-      managementCalls.slice(6).every((call) => call.waitMs === 123 && call.signal === waitController.signal) &&
-      managementCalls[6]?.wakeOnOutput === undefined && managementCalls[7]?.wakeOnOutput === undefined && managementCalls[8]?.wakeOnOutput === false &&
-      seen.length === 0,
+    managementCalls.length === 11 &&
+      managementCalls.every((call, index) => call.mode === (['status', 'status', 'output', 'output', 'stop', 'stop', 'wait', 'wait', 'wait', 'wait', 'wait'] as const)[index] && call.taskId === expectedTaskId) &&
+      managementCalls.slice(6, 9).every((call) => call.waitMs === 123 && call.signal === waitController.signal) &&
+      managementCalls[6]?.wakeOnOutput === undefined && managementCalls[7]?.wakeOnOutput === undefined &&
+      managementCalls[8]?.wakeOnOutput === false && managementCalls[9]?.wakeOnOutput === false &&
+      managementCalls[9]?.waitMs === TERMINAL_FOCUSED_WAIT_MAX_MS && managementCalls[9]?.signal === waitController.signal &&
+      managementCalls[10]?.waitMs === OUTPUT_SENSITIVE_WAIT_MAX_MS && managementCalls[10]?.wakeOnOutput === undefined &&
+      managementCalls[10]?.signal === waitController.signal && seen.length === 0,
   );
 
   const context = { marker: true } as never;
@@ -562,7 +610,9 @@ async function wrapperAndPermissionContracts(): Promise<void> {
     for (const invalidWait of [
       { mode: 'wait', taskId: expectedTaskId },
       { mode: 'wait', taskId: expectedTaskId, waitMs: 0 },
-      { mode: 'wait', taskId: expectedTaskId, waitMs: 30_001 },
+      { mode: 'wait', taskId: expectedTaskId, waitMs: OUTPUT_SENSITIVE_WAIT_MAX_MS + 1 },
+      { mode: 'wait', taskId: expectedTaskId, waitMs: OUTPUT_SENSITIVE_WAIT_MAX_MS + 1, wakeOnOutput: true },
+      { mode: 'wait', taskId: expectedTaskId, waitMs: TERMINAL_FOCUSED_WAIT_MAX_MS + 1, wakeOnOutput: false },
       { mode: 'wait', waitMs: 10 },
       { mode: 'status', taskId: expectedTaskId, waitMs: 10 },
     ]) {
@@ -572,8 +622,11 @@ async function wrapperAndPermissionContracts(): Promise<void> {
     }
     assert(
       'provider description states the exact bounded and terminal-focused wait semantics',
-      managementWrapped.description.includes('integer from 1 to 30000') && managementWrapped.description.includes('incremental output') &&
-        managementWrapped.description.includes('wakeOnOutput:false'),
+      managementWrapped.description.includes('1-30000 ms') &&
+        managementWrapped.description.includes('up to 300000 ms') &&
+        managementWrapped.description.includes('aggregates intermediate output') &&
+        managementWrapped.description.includes('wakeOnOutput:false') &&
+        managementWrapped.description.includes('background completion does not resume the agent'),
     );
     const waitPermission = classify('bash', { mode: 'wait', taskId: expectedTaskId, waitMs: 123, wakeOnOutput: false, command: redundantCommand });
     assert('terminal-focused wait is permission-safe and cannot become command execution', waitPermission.kind === 'read' && waitPermission.summary.includes('bash wait') && assessRisk(waitPermission, root).risk === 'safe');

@@ -11,6 +11,17 @@ import type { BashInput, BashOutput } from '@strands-agents/sdk/vended-tools/bas
 import { z } from 'zod';
 
 import { sessionPaths } from '../agent/session.js';
+import {
+  OUTPUT_SENSITIVE_WAIT_MAX_MS,
+  TERMINAL_FOCUSED_WAIT_MAX_MS,
+  TERMINAL_WAIT_TIMEOUT_INSTRUCTION,
+} from './background-wait-contract.js';
+
+export {
+  OUTPUT_SENSITIVE_WAIT_MAX_MS,
+  TERMINAL_FOCUSED_WAIT_MAX_MS,
+  TERMINAL_WAIT_TIMEOUT_INSTRUCTION,
+} from './background-wait-contract.js';
 
 const OUTPUT_LIMIT = 64 * 1024;
 const TERM_GRACE_MS = 500;
@@ -73,6 +84,8 @@ export interface BackgroundWaitResult {
   reason: 'output' | 'changed' | 'terminal' | 'timeout' | 'cancelled' | 'shutdown';
   status: BackgroundTaskStatus;
   output: BackgroundOutputResult;
+  /** Present only when an explicit terminal-focused wait times out while still running. */
+  instruction?: string;
 }
 
 interface ManagedTask {
@@ -155,8 +168,10 @@ export class BackgroundBashManager {
     wakeOnOutput = true,
   ): Promise<BackgroundWaitResult> {
     const task = this.lookup(taskId);
-    if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > 30_000) {
-      throw new Error('Background bash waitMs must be an integer from 1 to 30000');
+    const maxWaitMs = wakeOnOutput ? OUTPUT_SENSITIVE_WAIT_MAX_MS : TERMINAL_FOCUSED_WAIT_MAX_MS;
+    if (!Number.isInteger(waitMs) || waitMs < 1 || waitMs > maxWaitMs) {
+      const focus = wakeOnOutput ? 'output-sensitive' : 'terminal-focused';
+      throw new Error(`Background bash ${focus} waitMs must be an integer from 1 to ${maxWaitMs}`);
     }
     if (!wakeOnOutput) return this.waitForTerminal(task, waitMs, signal);
 
@@ -238,9 +253,13 @@ export class BackgroundBashManager {
         status: await this.snapshot(task),
       };
     });
+    const finalReason = final.status.state === 'running' ? reason : 'terminal';
     return {
-      reason: final.status.state === 'running' ? reason : 'terminal',
+      reason: finalReason,
       ...final,
+      ...(finalReason === 'timeout'
+        ? { instruction: TERMINAL_WAIT_TIMEOUT_INSTRUCTION }
+        : {}),
     };
   }
 
@@ -653,8 +672,8 @@ const inputSchema = z.object({
   command: z.string().optional().describe('Command required by execute and start; ignored by status, output, wait, and stop'),
   timeout: z.number().positive().optional().describe('Timeout in seconds for execute mode; ignored by start'),
   taskId: z.string().optional().describe('Session-local task id required by status, output, wait, and stop'),
-  waitMs: z.number().int().min(1).max(30_000).optional()
-    .describe('Bounded wait in milliseconds, required only by wait mode (1-30000)'),
+  waitMs: z.number().int().min(1).max(TERMINAL_FOCUSED_WAIT_MAX_MS).optional()
+    .describe(`Bounded wait in milliseconds, required only by wait mode: at most ${OUTPUT_SENSITIVE_WAIT_MAX_MS} by default, or ${TERMINAL_FOCUSED_WAIT_MAX_MS} only with wakeOnOutput:false`),
   wakeOnOutput: z.boolean().optional()
     .describe('Wait mode only: false retains intermediate output and wakes only on terminal state, cancellation, shutdown, or timeout; defaults to true'),
 }).strict().superRefine((input, context) => {
@@ -669,6 +688,14 @@ const inputSchema = z.object({
   }
   if (input.mode === 'wait' && input.waitMs === undefined) {
     context.addIssue({ code: 'custom', path: ['waitMs'], message: 'waitMs is required in wait mode' });
+  }
+  if (input.mode === 'wait' && input.waitMs !== undefined &&
+      input.wakeOnOutput !== false && input.waitMs > OUTPUT_SENSITIVE_WAIT_MAX_MS) {
+    context.addIssue({
+      code: 'custom',
+      path: ['waitMs'],
+      message: `waitMs above ${OUTPUT_SENSITIVE_WAIT_MAX_MS} requires wakeOnOutput:false`,
+    });
   }
   if (input.mode !== 'execute' && input.mode !== 'restart' && input.mode !== 'start' && input.timeout !== undefined) {
     context.addIssue({ code: 'custom', path: ['timeout'], message: `timeout is not accepted in ${input.mode} mode` });
@@ -705,9 +732,10 @@ export function createBackgroundBashTool(
       'Runs foreground commands in a persistent shell and session-owned background commands. ' +
       'Modes: execute, restart, start, list, status, output, wait, and stop. ' +
       'Never block execute mode with sleep to wait for something slow: start the command in the background, ' +
-      'do other work, then use wait with taskId and waitMs (an integer from 1 to 30000). ' +
-      'Wait consumes incremental output and returns {reason, status, output}; by default it wakes on output or another consumer changing the cursor. ' +
-      'Set wakeOnOutput:false to aggregate intermediate output and wake only on terminal state, cancellation, shutdown, or timeout.',
+      'do other work, then use wait with taskId and waitMs. ' +
+      `Output-sensitive waits use 1-${OUTPUT_SENSITIVE_WAIT_MAX_MS} ms and return {reason, status, output}; by default they wake on output or another consumer changing the cursor. ` +
+      `Set wakeOnOutput:false for a terminal-focused wait up to ${TERMINAL_FOCUSED_WAIT_MAX_MS} ms that aggregates intermediate output and wakes only on terminal state, cancellation, shutdown, or timeout. ` +
+      'A still-running terminal-focused timeout tells you to call wait again before ending when later work depends on completion; background completion does not resume the agent.',
     inputSchema,
     callback: (input, context?: ToolContext) => {
       switch (input.mode) {

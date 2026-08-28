@@ -1,3 +1,4 @@
+import { TERMINAL_WAIT_TIMEOUT_INSTRUCTION } from '../tools/background-wait-contract.js';
 import { formatTaskId, summarizeTaskCommand } from './task-format.js';
 
 export const BACKGROUND_BASH_MODES = ['start', 'list', 'status', 'output', 'wait', 'stop'] as const;
@@ -17,6 +18,7 @@ const SNAPSHOT_KEYS = [
 ] as const;
 const OUTPUT_KEYS = ['taskId', 'output', 'startOffset', 'endOffset', 'hasMore', 'outputPath'] as const;
 const WAIT_KEYS = ['reason', 'status', 'output'] as const;
+const WAIT_TIMEOUT_KEYS = ['reason', 'status', 'output', 'instruction'] as const;
 const WAIT_REASONS = ['output', 'changed', 'terminal', 'timeout', 'cancelled', 'shutdown'] as const;
 
 /** Recognizes only manager-owned bash lifecycle calls; foreground bash stays unchanged. */
@@ -101,7 +103,7 @@ export function compactBackgroundResult(
     }
 
     case 'wait': {
-      if (!isWaitResult(payload) || !matchesInputTaskId(input, payload.status.taskId)) {
+      if (!isWaitResult(payload, input) || !matchesInputTaskId(input, payload.status.taskId)) {
         return { kind: 'fallback' };
       }
       if (payload.status.state === 'running') return { kind: 'suppress' };
@@ -160,18 +162,39 @@ function isOutputResult(value: unknown): value is {
     typeof value.hasMore === 'boolean' && typeof value.outputPath === 'string';
 }
 
-function isWaitResult(value: unknown): value is {
+function isWaitResult(value: unknown, input: unknown): value is {
   reason: (typeof WAIT_REASONS)[number];
   status: { taskId: string; state: string };
   output: { taskId: string; output: string };
+  instruction?: string;
 } {
-  if (!isRecord(value) || !hasExactKeys(value, WAIT_KEYS) ||
+  if (!isRecord(value) ||
+      (!hasExactKeys(value, WAIT_KEYS) && !hasExactKeys(value, WAIT_TIMEOUT_KEYS)) ||
       typeof value.reason !== 'string' || !(WAIT_REASONS as readonly string[]).includes(value.reason) ||
       !isFullTaskSnapshot(value.status) || !isOutputResult(value.output) ||
       value.status.taskId !== value.output.taskId) return false;
+
+  if (!isRecord(input) ||
+      (input.wakeOnOutput !== undefined && typeof input.wakeOnOutput !== 'boolean')) return false;
+  const terminalFocused = input.wakeOnOutput === false;
+  const hasInstruction = Object.hasOwn(value, 'instruction');
+
+  if (terminalFocused) {
+    if (value.reason === 'output' || value.reason === 'changed') return false;
+    if (value.reason === 'terminal') return !hasInstruction && value.status.state !== 'running';
+    if (value.reason === 'timeout') {
+      return value.status.state === 'running' && hasInstruction &&
+        value.instruction === TERMINAL_WAIT_TIMEOUT_INSTRUCTION;
+    }
+    return !hasInstruction && value.status.state === 'running';
+  }
+
+  if (hasInstruction) return false;
   if (value.reason === 'output') return value.output.output !== '';
-  if (value.reason === 'terminal') return value.output.output === '' && value.status.state !== 'running';
-  return value.output.output === '' && value.status.state === 'running';
+  if (value.reason === 'terminal') {
+    return value.status.state !== 'running' && value.output.output === '';
+  }
+  return value.status.state === 'running' && value.output.output === '';
 }
 
 function isFullTaskSnapshot(value: unknown): value is { taskId: string; state: string } {

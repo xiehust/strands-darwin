@@ -520,13 +520,14 @@ Before a shell write, only a plain whole-command `cd <relative>` or slash-contai
 command path may be refused when absent under cwd but present under project root; complex shell
 syntax fails open, and the diagnostic is non-mutating and names both locations. A redundant
 provider `timeout` on `start` is ignored after policy observation and never becomes a background
-lifetime. Their provider-facing
-`wait` is also bounded (1–30000 ms), observes cancellation and shutdown, and consumes output
-only through the existing serialized byte cursor. Output-sensitive wakeup stays the compatibility
-default; explicit `wakeOnOutput: false` advances and retains up to the ordinary output cap while
-waiting only for terminal state, cancellation, shutdown, or timeout. Neither form owns or delays
-process cleanup. A cancelled model stream's socket has no public cleanup, so `cli.ts` arms an
-unref'd 500ms `process.exit` fallback *after* shutdown completes. Don't change these paths
+lifetime. Their provider-facing `wait` observes cancellation and shutdown and consumes output
+only through the existing serialized byte cursor. Output-sensitive wakeup stays bounded at 1–30000 ms and is the
+compatibility default; explicit `wakeOnOutput: false` accepts a finite 1–300000 ms, advances and
+retains up to the ordinary output cap, and waits only for terminal state, cancellation, shutdown, or
+timeout. Only its still-running timeout adds bounded model-visible wait-again guidance stating that
+background completion does not resume the agent; it never continues or calls the model itself.
+Neither form owns or delays process cleanup. A cancelled model stream's socket has no public cleanup,
+so `cli.ts` arms an unref'd 500ms `process.exit` fallback *after* shutdown completes. Don't change these paths
 without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`,
 `spike/verify-clear-session.ts`, and the `bashExit` / `cancelThenContinue` TUI scenarios.
 

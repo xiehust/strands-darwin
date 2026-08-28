@@ -1423,7 +1423,7 @@ bash({
   wakeOnOutput?: boolean
 }): Promise<{
   reason: 'output' | 'changed' | 'terminal' | 'timeout' | 'cancelled' | 'shutdown';
-  status: BackgroundTaskStatus; output: BackgroundOutputResult
+  status: BackgroundTaskStatus; output: BackgroundOutputResult; instruction?: string
 }>
 bash({ mode: 'stop', taskId: string, command?: string }): Promise<BackgroundTaskStatus>
 new BackgroundBashManager(projectRoot, sessionId)
@@ -1459,21 +1459,27 @@ Background states are `running | succeeded | failed | stopped`.
   complete the final UTF-8 character, and advances a byte cursor without duplicates. Hold
   an incomplete suffix while the file is growing; terminal malformed bytes may decode as
   replacement characters so the cursor cannot stall.
-- `wait` requires integer `waitMs` in `[1, 30000]`. It probes at the manager's bounded 20 ms
-  interval without holding the task serialization queue. With `wakeOnOutput` omitted or `true`,
-  behavior stays output-sensitive: return `{ reason, status, output }` on consumable output, a
+- `wait` probes at the manager's bounded 20 ms interval without holding the task serialization
+  queue. With `wakeOnOutput` omitted or `true`, integer `waitMs` remains `[1, 30000]` and behavior
+  stays output-sensitive: return `{ reason, status, output }` on consumable output, a
   concurrent consumer changing the cursor, terminal transition, timeout, caller cancellation,
   or manager shutdown. Its nested output is the ordinary single-consumer cursor read, so
   concurrent `wait`/`output` calls consume disjoint ordered byte ranges; a losing concurrent
   wait returns `changed`, not a full timeout.
-- Explicit `wakeOnOutput: false` is terminal-focused. It advances the same serialized cursor
-  while polling, retains at most the ordinary 64 KiB output cap, and does not return merely for
-  output or a concurrent cursor change. It returns retained contiguous output on terminal
+- Explicit `wakeOnOutput: false` is terminal-focused and accepts integer `waitMs` in
+  `[1, 300000]` (five minutes), a practical but finite build/test bound. It advances the same
+  serialized cursor while polling, retains at most the ordinary 64 KiB output cap, and does not
+  return merely for output or a concurrent cursor change. It returns retained contiguous output on terminal
   state, caller cancellation, manager shutdown, or timeout. A competing consumer may split the
   stream: every byte still belongs to exactly one consumer, retained offsets describe only the
   terminal-focused wait's contiguous range, and `hasMore` truthfully reports unread bytes when
-  aggregation reaches its cap or cannot continue across another consumer's range. Cancellation
-  only releases the observer; it does not stop the task. Shutdown releases observers before
+  aggregation reaches its cap or cannot continue across another consumer's range. Only a
+  terminal-focused `timeout` whose final status remains `running` adds one bounded `instruction`:
+  when later work depends on completion, call `bash wait` again before ending the turn because
+  background completion does not resume the agent. Terminal, cancelled, shutdown, and every
+  output-sensitive result omit it. This is tool-result guidance only: no automatic continuation,
+  model call, callback, or background-completion wake is added. Cancellation only releases the
+  observer; it does not stop the task. Shutdown releases observers before
   entering the unchanged process-reaping path.
 - `stop` owns the whole POSIX process group: SIGTERM, poll up to 500 ms, SIGKILL, poll up to
   500 ms. Natural leader exit performs the same descendant cleanup before terminal state.
@@ -1489,8 +1495,8 @@ Background states are `running | succeeded | failed | stopped`.
   `bash:<pattern>` rules and auto/default/yolo behavior apply. `list`, `status`, `output`,
   `wait`, `stop`, and `restart` are safe lifecycle calls. `status`, `output`, `wait`, and
   `stop` tolerate and ignore a redundant `command` field, but still require and dispatch
-  only by `taskId`; only `wait` accepts `waitMs` and `wakeOnOutput`, and `list` remains strict. Existing Pre/Post hooks see each immediate outer `bash` call, not eventual
-  background completion.
+  only by `taskId`; only `wait` accepts `waitMs` and `wakeOnOutput`, and `list` remains strict.
+  Existing Pre/Post hooks see each immediate outer `bash` call, not eventual background completion.
 
 ### 4. Validation & Error Matrix
 
@@ -1502,10 +1508,11 @@ Background states are `running | succeeded | failed | stopped`.
 | Log deleted/unreadable | Status keeps process metadata with `outputBytes: null`; output errors with the owned path |
 | Spawn fails | Reject start, close the parent log handle, kill/register-clean any exposed group |
 | Repeated/concurrent output or wait | Serialized, disjoint cursor ranges |
-| `waitMs` absent, non-integer, below 1, or above 30000 | Zod tool error; manager also rejects direct invalid calls |
+| `waitMs` absent/non-integer/below 1, output-sensitive above 30000, or terminal-focused above 300000 | Zod tool error; manager also rejects direct invalid calls with the applicable finite bound |
 | `wakeOnOutput` on a non-wait mode | Zod tool error; do not reinterpret the operation |
 | Default wait sees no output/state change | Return `reason: timeout` within its declared bound with empty incremental output |
-| Terminal-focused wait sees intermediate output | Retain/advance up to 64 KiB; do not return until terminal, cancellation, shutdown, or timeout |
+| Terminal-focused wait sees intermediate output | Retain/advance up to 64 KiB; do not return until terminal, cancellation, shutdown, or its finite five-minute maximum |
+| Terminal-focused wait times out while still running | Preserve `reason: timeout`, status/output/cursor semantics, and add one bounded wait-again/no-auto-resume instruction; do not continue automatically |
 | Terminal-focused wait races another cursor consumer | Return only its contiguous retained range; no duplicates; truthful `hasMore` |
 | Wait caller cancels / manager shuts down | Return promptly with retained output; cancellation leaves task running, shutdown continues normal reaping |
 | Repeated/concurrent stop | Share one termination operation and stable terminal state |
@@ -1555,7 +1562,7 @@ child.kill('SIGTERM')
 const backgroundBash = new BackgroundBashManager(projectRoot, sessionId)
 const bash = createBackgroundBashTool(backgroundBash)
 const task = await bash({ mode: 'start', command })
-const result = await bash({ mode: 'wait', taskId: task.taskId, waitMs: 30000, wakeOnOutput: false })
+const result = await bash({ mode: 'wait', taskId: task.taskId, waitMs: 300000, wakeOnOutput: false })
 await backgroundBash.shutdown()
 ```
 

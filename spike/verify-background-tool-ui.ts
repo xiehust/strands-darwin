@@ -22,6 +22,7 @@ import {
   serializeToolInput,
 } from '../src/tui/tool-detail-presentation.js';
 import { initialTurnState, previewToolResult, turnReducer, type TurnState } from '../src/tui/turn-state.js';
+import { TERMINAL_WAIT_TIMEOUT_INSTRUCTION } from '../src/tools/background-wait-contract.js';
 import { assert, header, report } from './shared.js';
 
 const TASK_ID = 'bg-12345678-1234-1234-1234-123456789abc';
@@ -134,6 +135,17 @@ const providerVisibleWaitResult = JSON.stringify(waitOutputPayload);
 const waitOutputProjection = compactBackgroundResult('wait', { taskId: TASK_ID }, [{
   type: 'jsonBlock', json: waitOutputPayload,
 }]);
+const guidedTimeoutPayload = waitPayload({
+  reason: 'timeout',
+  output: outputPayload({ output: 'retained terminal-focused output\n', endOffset: 33 }),
+});
+guidedTimeoutPayload.instruction = TERMINAL_WAIT_TIMEOUT_INSTRUCTION;
+const guidedTimeoutProjection = compactBackgroundResult('wait', {
+  taskId: TASK_ID,
+  wakeOnOutput: false,
+}, [{
+  type: 'jsonBlock', json: guidedTimeoutPayload,
+}]);
 assert('compact projection leaves the provider-visible wait result untouched',
   JSON.stringify(waitOutputPayload) === providerVisibleWaitResult);
 
@@ -145,9 +157,12 @@ const terminalStatus = statusPayload({
 const terminalWaitProjection = compactBackgroundResult('wait', { taskId: TASK_ID }, [{
   type: 'jsonBlock', json: waitPayload({ reason: 'terminal', status: terminalStatus }),
 }]);
-const terminalWaitWithOutputProjection = compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+const terminalWaitWithOutputProjection = compactBackgroundResult('wait', {
+  taskId: TASK_ID,
+  wakeOnOutput: false,
+}, [{
   type: 'jsonBlock', json: waitPayload({
-    reason: 'output',
+    reason: 'terminal',
     status: terminalStatus,
     output: outputPayload({ output: 'final incremental output\n', endOffset: 25 }),
   }),
@@ -159,6 +174,7 @@ assert('wait projections suppress every valid running result and retain only ter
       type: 'jsonBlock', json: waitPayload({ reason }),
     }]).kind === 'suppress') &&
   waitOutputProjection.kind === 'suppress' &&
+  guidedTimeoutProjection.kind === 'suppress' &&
   terminalWaitProjection.kind === 'compact' &&
   terminalWaitProjection.summary === 'bash wait: bg-12345678 succeeded' &&
   terminalWaitProjection.preview === '' &&
@@ -233,6 +249,24 @@ const driftCases = [
       output: outputPayload({ output: '', endOffset: 0 }),
     }),
   }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+    type: 'jsonBlock', json: { ...waitPayload({ reason: 'cancelled' }), instruction: 'wrong reason' },
+  }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID }, [{
+    type: 'jsonBlock', json: { ...waitPayload({ reason: 'timeout' }), instruction: TERMINAL_WAIT_TIMEOUT_INSTRUCTION },
+  }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID, wakeOnOutput: false }, [{
+    type: 'jsonBlock', json: waitPayload({ reason: 'timeout' }),
+  }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID, wakeOnOutput: false }, [{
+    type: 'jsonBlock', json: waitPayload({ reason: 'output' }),
+  }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID, wakeOnOutput: false }, [{
+    type: 'jsonBlock', json: { ...waitPayload({ reason: 'timeout' }), instruction: '' },
+  }]),
+  compactBackgroundResult('wait', { taskId: TASK_ID, wakeOnOutput: false }, [{
+    type: 'jsonBlock', json: { ...waitPayload({ reason: 'timeout' }), instruction: 'unrecognized guidance' },
+  }]),
 ];
 
 assert('shape, id, state, and numeric drift all use full-preview fallback',
@@ -262,6 +296,14 @@ for (const [index, reason] of emptyRunningWaitReasons.entries()) {
   assert('valid empty running waits create no static history', compact.history.length === beforeWait);
 }
 
+const beforeGuidedTimeout = compact.history.length;
+compact = reduce(compact, before('wait-guided-timeout', {
+  mode: 'wait', taskId: TASK_ID, waitMs: 300000, wakeOnOutput: false,
+}));
+compact = reduce(compact, after('wait-guided-timeout', guidedTimeoutPayload));
+assert('compact mode suppresses a valid model-visible terminal-focused timeout instruction',
+  compact.history.length === beforeGuidedTimeout && compact.activeTools.length === 0);
+
 const beforeRunningWaitOutput = compact.history.length;
 compact = reduce(compact, before('wait-output', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
 compact = reduce(compact, after('wait-output', waitPayload({
@@ -283,9 +325,11 @@ assert('a terminal wait without output retains exactly one concise terminal row'
   terminalWait?.kind === 'tool' && terminalWait.summary === 'bash wait: bg-12345678 failed' &&
   terminalWait.preview === '');
 const beforeTerminalWaitOutput = compact.history.length;
-compact = reduce(compact, before('wait-terminal-output', { mode: 'wait', taskId: TASK_ID, waitMs: 1000 }));
+compact = reduce(compact, before('wait-terminal-output', {
+  mode: 'wait', taskId: TASK_ID, waitMs: 1000, wakeOnOutput: false,
+}));
 compact = reduce(compact, after('wait-terminal-output', waitPayload({
-  reason: 'output',
+  reason: 'terminal',
   status: statusPayload({ state: 'succeeded', finishedAt: '2026-01-01T00:00:01.000Z', exitCode: 0 }),
   output: outputPayload({ output: 'final wait chunk\n', startOffset: 20, endOffset: 37 }),
 })));
@@ -377,6 +421,15 @@ assert('expanded wait retains the ordinary full successful preview, output, and 
   expandedWait?.kind === 'tool' && expandedWait.preview.includes('/private/task.log') &&
   expandedWait.preview.includes('sleep 10') &&
   expandedWait.preview.includes('incremental wait output') && expandedWait.inputPreview.includes('waitMs'));
+expanded = reduce(expanded, before('expanded-guided-timeout', {
+  mode: 'wait', taskId: TASK_ID, waitMs: 300000, wakeOnOutput: false,
+}));
+expanded = reduce(expanded, after('expanded-guided-timeout', guidedTimeoutPayload));
+const expandedGuidedTimeout = expanded.history.at(-1);
+assert('expanded terminal-focused timeout retains output and model-visible guidance',
+  expandedGuidedTimeout?.kind === 'tool' &&
+  expandedGuidedTimeout.preview.includes('retained terminal-focused output') &&
+  expandedGuidedTimeout.preview.includes(TERMINAL_WAIT_TIMEOUT_INSTRUCTION));
 
 expanded = reduce(expanded, before('expanded-denied', { mode: 'stop', taskId: TASK_ID }));
 expanded = reduce(expanded, afterText('expanded-denied', 'DENIED: stop refused\nowner: policy'));
