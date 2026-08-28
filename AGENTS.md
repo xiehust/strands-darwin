@@ -138,6 +138,12 @@ in `pnpm test`. All checks listed here are free (no model call) unless marked *l
   Long-form architecture rationale goes to `docs/architecture/load-bearing-decisions.md`.
 - This repo is Trellis-managed (see `AGENTS.md`): non-trivial work goes through a task under
   `.trellis/tasks/` with PRD → implement → check → spec update → commit.
+- The installed `darwin` command runs `dist/`, not `src/`: after any commit that touches
+  `src/` or the built-in skills, run `pnpm build` before reporting done — typecheck and
+  tests do not refresh `dist`, and an unbuilt fix is invisible to the next `darwin` launch
+  (a stale dist is how a "fixed" bug reappears in the very next session). The developer
+  skill already requires this after every accepted iteration; this applies to interactive
+  sessions too.
 - Every `/developer` (developer-skill) supervision run must append its batch record to
   `docs/iteration-log.md` before reporting completion — child session id, one milestone table
   row per accepted commit, and what the Host re-ran for acceptance. The log is part of the
