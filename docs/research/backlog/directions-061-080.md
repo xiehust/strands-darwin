@@ -24,7 +24,7 @@ Darwin never signals the terminal today: a grep for BEL/OSC writes across `src/`
 
 ## SER-044 — Add bounded composer undo: Ctrl+_ restores the draft and cursor state destroyed by kill/word-delete chords from a small capped editor-owned snapshot stack, cleared on submit/queue/clear, never touching recall or search snapshots
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 62
 - Score: 9
 - Importance: 3
@@ -36,7 +36,7 @@ Darwin never signals the terminal today: a grep for BEL/OSC writes across `src/`
 
 ### Implementation / acceptance evidence
 
-None yet — not started.
+Accepted in `a22d72d` (task archive `fc3351b`, journal `6e20949`; child session `session-20260828-144128660`; managed task `bg-aa391bed-8fe7-4443-bb8f-376022df838a`, succeeded, exit 0). Pure bounded primitives (`UNDO_CAP = 16`, `UndoStack`, `pushUndo`, `popUndo`) in `src/tui/prompt-editor.ts`; `App.tsx` owns the ref like `preferredColumn`, snapshots via `applyDestructive` only when a chord actually changes text (Ctrl+K/U, Ctrl+W/Alt+Backspace, Alt+D/Alt+Delete), pops on Ctrl+_ (legacy 0x1f byte and kitty ctrl chord, consumed even when empty), and clears at submit, queue take-back/return, recall acceptance, history-search accept, and rewind accept; search/recall snapshot-restore untouched. Host inspected the diff and independently passed `verify-prompt-editor.ts` 48/48, free pty `undo` 7/7, `cursor` 5/5, `multiline` 9/9, `wordNav` 11/11, `completion` 67/67, `recall` 22/22, `recallEmpty` 4/4, `queue` 17/17, `historySearch` 11/11, `pnpm typecheck`, `pnpm build`, `git diff --check`/`show --check`, clean tree, and AGENTS.md size 29,618 bytes < 32 KiB; the one full-`pnpm test` failure was the documented pre-existing `verify-subagent-heartbeats` timing flake, which passed 21/21 in isolation immediately after and also flaked at the pre-batch HEAD.
 
 ### Notes / blockers / abandonment reason
 

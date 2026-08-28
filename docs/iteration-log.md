@@ -2000,3 +2000,14 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SER-043 | `94909b8` implementation, `e8376df` task archive, `8c379cf` journal | Host inspected the source/spec/test diff: `src/tui/terminal-bell.ts` is the sole BEL writer (enabled writes exactly one raw `\x07` to real stdout, disabled writes nothing, broken stdout swallowed), wired only at the consolidated `cli.ts` permission-publication observer (shared by `/clear`/rewind successors) and `App.tsx` `runTurn` `finally` beside the interactive `TurnComplete` publication; new session-scoped `terminalBell` key defaults `false` with `ConfigError` refusal on non-boolean. Host independently passed `verify-terminal-bell.ts` (14/14 — raw pty holds exactly one BEL per permission publication and per completed turn when enabled, zero when disabled), `verify-config.ts` (248/248), `pnpm typecheck`, full `pnpm test` (exit 0), and `pnpm build`; plus grep proof (no `\x07` outside `terminal-bell.ts`, no tui import from headless/dev-repl/agents), `git diff --check`/`git show --check`, and clean-tree verification. |
+
+## Batch 66 — SER-044 bounded composer undo
+
+- Origin: `docs/research/research_2026-08-28.md`, run `2026-08-28T13:03:31Z` (rolled `tui` path).
+- Child session: `session-20260828-144128660`.
+- Managed task: `bg-aa391bed-8fe7-4443-bb8f-376022df838a` (implementation, workflow records, and commits; succeeded, exit 0).
+- Token spend: `input=222 output=85,804 cacheRead=13,580,240 cacheWrite=196,534`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SER-044 | `a22d72d` implementation, `fc3351b` task archive, `6e20949` journal | Host inspected the source/spec/test diff: pure bounded primitives (`UNDO_CAP = 16`, `UndoStack`, `pushUndo`, `popUndo`) in `src/tui/prompt-editor.ts`; `App.tsx` snapshots via `applyDestructive` only when a kill/word-delete chord actually changes text, pops on Ctrl+_ (legacy 0x1f byte and kitty ctrl chord, consumed even when empty), and clears the stack at submit, queue take-back/return, recall acceptance, history-search accept, and rewind accept, leaving search/recall snapshot-restore untouched. Host independently passed `verify-prompt-editor.ts` (48/48), free pty `undo` (7/7), `cursor` (5/5), `multiline` (9/9), `wordNav` (11/11), `completion` (67/67), `recall` (22/22), `recallEmpty` (4/4), `queue` (17/17), `historySearch` (11/11), `pnpm typecheck`, and `pnpm build`; plus `git diff --check`/`git show --check`, clean-tree verification, and AGENTS.md size (29,618 bytes < 32 KiB, free-scenario list grown to thirteen with `undo`). The one full-`pnpm test` failure was the documented pre-existing `verify-subagent-heartbeats` timing flake — it passed 21/21 in isolation immediately after and had also flaked at the pre-batch HEAD (`51a051c`'s parent), so it is not attributed to this change. |
