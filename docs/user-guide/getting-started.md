@@ -17,6 +17,28 @@ pnpm start
 
 `node-pty` is a native dev dependency used for real PTY tests. pnpm builds only native packages allowed by the workspace, and it is already listed in `pnpm-workspace.yaml`. Extend that list if you add another native dependency.
 
+### Global `darwin` command
+
+`pnpm start` runs the TypeScript source in place and needs no build. To get the `darwin` executable on your `PATH`, build first and then install globally:
+
+```bash
+pnpm build            # emits the CLI to dist/; bin points at dist/src/cli.js
+pnpm add --global .
+```
+
+The global package is linked to this clone, so keep the directory after installing. When you change the source, re-run `pnpm build` to refresh the linked `dist/`.
+
+### Troubleshooting the global command
+
+If `darwin` fails to start with `Error: Cannot find module '.../pnpm/global/v11/<hash>/node_modules/darwin/dist/src/cli.js'`, the global shim is pointing at a stale pnpm store entry — usually after the clone was moved, an interrupted reinstall, or a pruned global store. `pnpm build` succeeding and `node dist/src/cli.js` running fine while the `darwin` shim fails is the tell. Re-register the global package against the current clone:
+
+```bash
+pnpm remove --global darwin   # ignore "not found in global packages"; the shim is stale
+pnpm build
+pnpm add --global .
+darwin sessions               # verify: read-only, makes no model call
+```
+
 ## The working directory is the project
 
 Run darwin from the repository it should edit. The CLI's current working directory resolves all project-scoped instructions and extensions:
