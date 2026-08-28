@@ -1978,3 +1978,14 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SDK HTTP request vended tool | `ce68299` implementation, `e5ff287` task archive, `b5e6869` journal | Host inspected the source, offline regression, SDK contract, architecture record, and dependency diff; independently passed `spike/verify-http-request-tool.ts` (7/7), full `pnpm test`, `pnpm typecheck`, and `pnpm build`; plus archived Trellis validation, commit whitespace checks, clean-tree verification, and AGENTS.md size (28,548 bytes < 32 KiB). The parent runtime registers the exact SDK `httpRequest` singleton (`http_request`) in its ordinary tool list, leaves it fail-closed as `execute`, blocks it before prompting in plan mode, and does not expose it to children or add another network path. |
+
+## Batch 64 — SER-042 word-wise composer editing
+
+- Origin: `docs/research/research_2026-08-28.md`, run `2026-08-28T13:03:31Z` (rolled `tui` path).
+- Child session: `session-20260828-133204010`.
+- Managed task: `bg-b260775b-2125-4863-be93-c6e808e24113` (implementation, workflow records, and commits; succeeded, exit 0).
+- Token spend: `input=140 output=56,250 cacheRead=7,413,648 cacheWrite=162,421`.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SER-042 | `c32e5f6` implementation, `6c3c7b1` task archive, `bf71a13` journal | Host inspected the source/spec/test diff: `src/tui/prompt-editor.ts` gained pure grapheme-aware word primitives only (`moveWordHorizontal`, `deleteWordAfter`, shared boundary helpers with Ctrl+W's `deleteWordBefore`), and the Alt/Ctrl+Arrow, Alt+B/F, Alt+Backspace/Alt+Delete and Alt+D chords sit after every existing key owner and before the generic ctrl/meta ignore, leaving plain-arrow and unmodified backspace/delete branches byte-identical. Host independently passed `verify-prompt-editor.ts` (43/43), free pty `wordNav` (11/11), `cursor` (5/5), `multiline` (9/9), `completion` (67/67), `recall` (22/22), `recallEmpty` (4/4), `queue` (17/17), `historySearch` (11/11), `pnpm typecheck`, full `pnpm test` (exit 0), and `pnpm build`; plus `git diff --check`/`git show --check`, clean-tree verification, and AGENTS.md size (29,452 bytes < 32 KiB, free-scenario list grown to twelve with `wordNav`). |

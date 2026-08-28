@@ -4,7 +4,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ## SER-043 — Add a config-gated terminal attention bell: one BEL when a permission prompt is published and one when a turn completes, emitted at the existing driver lifecycle points, never inside the Ink frame, off by default
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 61
 - Score: 10
 - Importance: 3

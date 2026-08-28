@@ -386,7 +386,7 @@ Claude Code and Codex both document direct screenshot input in their terminal co
 
 ## SER-042 — Add word-wise composer navigation and deletion: Alt/Ctrl+Arrow and Alt+B/F word jumps plus Alt+Backspace/Alt+D word deletes as grapheme-aware prompt-editor primitives, preserving completion/queue/recall/permission key ownership
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 60
 - Score: 15
 - Importance: 4
@@ -398,7 +398,7 @@ Claude Code and Codex both document direct screenshot input in their terminal co
 
 ### Implementation / acceptance evidence
 
-None yet — not started.
+Accepted in `c32e5f6` (task archive `6c3c7b1`, journal `bf71a13`; child session `session-20260828-133204010`; managed task `bg-b260775b-2125-4863-be93-c6e808e24113`, succeeded, exit 0). Pure word primitives (`moveWordHorizontal`, `deleteWordAfter`, shared `wordBoundaryBefore`/`wordBoundaryAfter` refactoring Ctrl+W's `deleteWordBefore` onto the same boundary) landed in `src/tui/prompt-editor.ts`; chords wired in `App.tsx` after every existing key owner and before the generic ctrl/meta ignore. Host inspected the full diff (grep-level proof the editor module gained pure functions only; plain arrows/backspace paths byte-identical in the unmodified branches) and independently passed `verify-prompt-editor.ts` 43/43, free pty `wordNav` 11/11, `cursor` 5/5, `multiline` 9/9, `completion` 67/67, `recall` 22/22, `recallEmpty` 4/4, `queue` 17/17, `historySearch` 11/11, `pnpm typecheck`, full `pnpm test` (exit 0), `pnpm build`, `git diff --check`/`show --check`, clean tree, and AGENTS.md size 29,452 bytes < 32 KiB.
 
 ### Notes / blockers / abandonment reason
 
