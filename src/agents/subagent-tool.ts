@@ -16,6 +16,7 @@ import type { ProjectInstructions } from '../agent/instructions.js';
 import { composeSystemPrompt } from '../agent/instructions.js';
 import { installMaxTokensRecovery, withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import type { AppConfig } from '../config.js';
+import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
@@ -37,6 +38,8 @@ export interface SubagentToolOptions {
    * dispatch is unobservable and its child's approvals cannot be labelled.
    */
   dispatches?: SubagentDispatchRegistry;
+  /** Shared portable hook policy; child context remains invocation-local. */
+  codexHooks?: CodexHookRunner;
   /** Test/diagnostic observer; receives the real child after initialization. */
   onChildInitialized?: ChildAgentObserver;
 }
@@ -152,6 +155,9 @@ export class SubagentTool {
       return 'Subagent task cancelled.';
     }
 
+    // A child owns its portable lifecycle commands so targeted cancellation and
+    // settlement cannot cancel or wait on a sibling or parent hook process.
+    const childCodexHooks = this.options.codexHooks?.fork();
     const child = new Agent({
       id: `darwin-subagent-${definition.name}-${randomUUID()}`,
       name: definition.name,
@@ -188,13 +194,30 @@ export class SubagentTool {
       await child.initialize();
       this.options.onChildInitialized?.(child);
       const invocationState = {};
-      const result = await child.invoke(task, { invocationState });
-      dispatch?.finish(result.stopReason === 'cancelled' ? 'cancelled' : 'succeeded');
-      return withRetainedMaxTokensText(result.toString(), invocationState);
+      const hookContext = await childCodexHooks?.subagentStart({
+        id: child.id,
+        name: definition.name,
+      });
+      const result = await child.invoke(injectCodexContext(task, hookContext), { invocationState });
+      const outcome = result.stopReason === 'cancelled' ? 'cancelled' : 'succeeded';
+      dispatch?.finish(outcome);
+      const report = withRetainedMaxTokensText(result.toString(), invocationState);
+      // Child assistant text is private until the ordinary bounded tool result is
+      // returned. Do not duplicate it into a lifecycle command payload.
+      void childCodexHooks?.subagentStop({
+        id: child.id,
+        name: definition.name,
+        outcome,
+      });
+      return report;
     } finally {
       context?.agent.cancelSignal.removeEventListener('abort', cancelChild);
       this.activeAgents.delete(child);
-      await stopBashSession(child);
+      childCodexHooks?.cancel();
+      await Promise.allSettled([
+        stopBashSession(child),
+        childCodexHooks?.close() ?? Promise.resolve(),
+      ]);
     }
   }
 

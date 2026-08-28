@@ -25,19 +25,19 @@ let current = await AgentRuntime.create({
   session: { kind: 'continue' },
   permissionBridge: permissions.bridge,
 });
-permissions.setObserver((source) => current.observePermissionRequest(source));
+permissions.setObserver((request) => current.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input }));
 
 const instance = render(React.createElement(App, {
   runtime: current,
   permissions,
   startNewSession: async () => {
     current = await current.startNewSession();
-    permissions.setObserver((source) => current.observePermissionRequest(source));
+    permissions.setObserver((request) => current.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input }));
     return current;
   },
   startRewind: async (checkpoint: RewindCheckpoint) => {
     current = await current.startRewind(checkpoint);
-    permissions.setObserver((source) => current.observePermissionRequest(source));
+    permissions.setObserver((request) => current.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input }));
     return current;
   },
 }), { exitOnCtrlC: false, patchConsole: false });

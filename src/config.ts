@@ -30,6 +30,7 @@ import {
   type ThinkingEffort,
   type ThinkingPlan,
 } from './agent/thinking.js';
+import { decodeCodexHooks, CODEX_HOOK_EVENTS, type CodexHooksConfig } from './hooks/codex-hooks.js';
 import type { ToolHookCommand, ToolHookGroup, ToolHooksConfig } from './hooks/tool-hooks.js';
 import { darwinDir, hookExtensionRoots, userDarwinDir, userProjectDir, type ExtensionRoot } from './paths.js';
 
@@ -1039,9 +1040,15 @@ export interface HookShadowNotice {
   shadowed: string[];
 }
 
+export type ToolHookPolicyLayer =
+  | { readonly dialect: 'native'; readonly file: string; readonly hooks: ToolHooksConfig }
+  | { readonly dialect: 'codex'; readonly file: string; readonly hooks: CodexHooksConfig };
+
 export interface ProjectPolicy {
   allowRules: string[];
   hooks: ToolHooksConfig | undefined;
+  codexHooks: CodexHooksConfig | undefined;
+  toolHookLayers: readonly ToolHookPolicyLayer[];
   hookSources: string[];
   hookShadowNotices: HookShadowNotice[];
   legacyRules: boolean;
@@ -1067,6 +1074,7 @@ export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPol
     loaded.push(await loadHookLayer(layer, projectRoot));
   }
   const active = loaded.flatMap((layer) => layer.sources);
+  const portable = loaded.flatMap((layer) => layer.codexSources);
   const preToolUse = active.flatMap((source) => source.hooks.PreToolUse ?? []);
   const postToolUse = [...active].reverse().flatMap((source) => source.hooks.PostToolUse ?? []);
   const turnComplete = active.flatMap((source) => source.hooks.TurnComplete ?? []);
@@ -1077,10 +1085,26 @@ export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPol
     ...(turnComplete.length === 0 ? {} : { TurnComplete: turnComplete }),
     ...(permissionRequest.length === 0 ? {} : { PermissionRequest: permissionRequest }),
   };
+  const codexHooks = portable.length === 0 ? undefined : Object.fromEntries(
+    CODEX_HOOK_EVENTS.flatMap((event) => {
+      const groups = event === 'PostToolUse'
+        ? [...portable].reverse().flatMap((source) => source.hooks[event] ?? [])
+        : portable.flatMap((source) => source.hooks[event] ?? []);
+      return groups.length === 0 ? [] : [[event, groups]];
+    }),
+  ) as CodexHooksConfig;
   return {
     allowRules,
     hooks,
-    hookSources: active.map((source) => source.file),
+    codexHooks,
+    toolHookLayers: loaded.flatMap((layer) => [
+      ...layer.codexSources.map((source) => ({ dialect: 'codex', file: source.file, hooks: source.hooks } as const)),
+      ...layer.sources.map((source) => ({ dialect: 'native', file: source.file, hooks: source.hooks } as const)),
+    ]),
+    hookSources: loaded.flatMap((layer) => [
+      ...layer.codexSources.map((source) => source.file),
+      ...layer.sources.map((source) => source.file),
+    ]),
     hookShadowNotices: loaded.flatMap((layer) => layer.notice === undefined ? [] : [layer.notice]),
     legacyRules: primaryRecord === undefined && legacyRecord?.['permissionRules'] !== undefined,
   };
@@ -1091,12 +1115,31 @@ interface ActiveHookSource {
   hooks: ToolHooksConfig;
 }
 
+interface ActiveCodexHookSource {
+  file: string;
+  hooks: CodexHooksConfig;
+}
+
 interface LoadedHookLayer {
   sources: ActiveHookSource[];
+  codexSources: ActiveCodexHookSource[];
   notice?: HookShadowNotice;
 }
 
 async function loadHookLayer(layer: ExtensionRoot, projectRoot: string): Promise<LoadedHookLayer> {
+  const codexSources: ActiveCodexHookSource[] = [];
+  if (layer.kind === 'agents') {
+    const portableFile = path.join(layer.root, HOOKS_FILENAME);
+    try {
+      const portableRecord = await readOptionalRecord(portableFile);
+      if (portableRecord !== undefined) {
+        codexSources.push({ file: portableFile, hooks: decodeCodexHooks(portableRecord, portableFile) });
+      }
+    } catch (error) {
+      if (error instanceof ConfigError) throw error;
+      throw new ConfigError(`${portableFile} could not be loaded: ${describe(error)}`);
+    }
+  }
   const directory = path.join(layer.root, 'hooks');
   let entries: import('node:fs').Dirent[];
   try {
@@ -1132,7 +1175,7 @@ async function loadHookLayer(layer: ExtensionRoot, projectRoot: string): Promise
     }
   }
 
-  if (layer.kind === 'agents') return { sources };
+  if (layer.kind === 'agents') return { sources, codexSources };
   const legacyFile = layer.scope === 'global' ? globalHooksPath() : projectHooksPath(projectRoot);
   const configFile = layer.scope === 'global' ? configPath() : path.join(darwinDir(projectRoot), CONFIG_FILENAME);
   const legacyFileExists = await pathExists(legacyFile);
@@ -1150,6 +1193,7 @@ async function loadHookLayer(layer: ExtensionRoot, projectRoot: string): Promise
       .filter((value): value is string => value !== undefined);
     return {
       sources,
+      codexSources,
       ...(shadowed.length === 0 ? {} : {
         notice: { layer: `${layer.scope} .darwin`, directory, shadowed },
       }),
@@ -1158,11 +1202,13 @@ async function loadHookLayer(layer: ExtensionRoot, projectRoot: string): Promise
 
   if (legacyFileExists) {
     const record = await readRequiredRecord(legacyFile);
-    return { sources: [{ file: legacyFile, hooks: hooksField(record, legacyFile) }] };
+    return { sources: [{ file: legacyFile, hooks: hooksField(record, legacyFile) }], codexSources };
   }
   const configRecord = await readOptionalRecord(configFile);
   const embedded = hooksFromRecord(configRecord, configFile);
-  return embedded === undefined ? { sources: [] } : { sources: [{ file: configFile, hooks: embedded }] };
+  return embedded === undefined
+    ? { sources: [], codexSources }
+    : { sources: [{ file: configFile, hooks: embedded }], codexSources };
 }
 
 async function readRequiredRecord(file: string): Promise<Record<string, unknown>> {

@@ -131,13 +131,13 @@ export async function runHeadlessProcess(
       quietMcpStderr: true,
       permissionBridge: structured
         ? async (request) => {
-            runtime?.observePermissionRequest(request.source.label);
+            runtime?.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input });
             protocol?.permissionDenied(request);
             note(`permission denied — ${headlessField(request.summary)}\n`, 'warn');
             return { allowed: false };
           }
         : async (request) => {
-            runtime?.observePermissionRequest(request.source.label);
+            runtime?.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input });
             return createHeadlessPermissionBridge((text) => note(text, 'warn'))(request);
           },
       ...(options.permissionModeOverride !== undefined && {
@@ -267,6 +267,11 @@ export async function runHeadlessProcess(
         else target.stderr.write(`${formatHeadlessUsage(runtime.usage, runtime.config)}\n`);
       } catch {
         // A meter that cannot be read is not a reason to change the exit status.
+      }
+
+      for (const problem of runtime.takeHookProblems()) {
+        if (structured) warnings.push(structuredWarning('hook', 'warn', problem));
+        else target.stderr.write(`hook: ${headlessField(problem)}\n`);
       }
 
       try {

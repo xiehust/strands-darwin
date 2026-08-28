@@ -61,6 +61,7 @@ import {
   type TurnCompleteOutcome,
   type TurnCompleteSource,
 } from '../hooks/lifecycle-hooks.js';
+import { CodexHookRunner, injectCodexContext } from '../hooks/codex-hook-runner.js';
 import { ToolHookGate } from '../hooks/tool-hooks.js';
 import { CodeGraphPreflight } from '../mcp/codegraph-preflight.js';
 import { disconnectAll, loadMcpClients, mcpServerStatuses, type McpLoadResult, type McpServerStatus } from '../mcp/registry.js';
@@ -368,8 +369,11 @@ export class AgentRuntime {
     private readonly subagentDispatches: SubagentDispatchRegistry,
     private readonly backgroundBash: BackgroundBashManager,
     private readonly gate: PermissionGate,
-    /** Undefined when neither lifecycle event is configured: absent config spawns nothing. */
+    /** Undefined when neither native lifecycle event is configured. */
     private readonly lifecycleHooks: LifecycleHookRunner | undefined,
+    private readonly toolHookLayers: readonly import('../config.js').ToolHookPolicyLayer[],
+    /** Portable Codex-dialect session/tool/lifecycle adapter. */
+    private readonly codexHooks: CodexHookRunner | undefined,
     private readonly sessionManager: SessionManager,
     private readonly compactionManager: SummarizingConversationManager,
     private readonly preserveRecentMessages: number,
@@ -401,6 +405,7 @@ export class AgentRuntime {
     backgroundBash?: BackgroundBashManager,
     memoryController?: MemoryToolController,
     lifecycleHooks?: LifecycleHookRunner,
+    codexHooks?: CodexHookRunner,
   ): Promise<void> {
     if (diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
     await Promise.allSettled([
@@ -409,6 +414,7 @@ export class AgentRuntime {
       diagnosticsLog?.close() ?? Promise.resolve(),
       memoryController?.close() ?? Promise.resolve(),
       lifecycleHooks?.close() ?? Promise.resolve(),
+      codexHooks?.close() ?? Promise.resolve(),
     ]);
   }
 
@@ -446,6 +452,7 @@ export class AgentRuntime {
     let startupBackgroundBash: BackgroundBashManager | undefined;
     let startupMemoryController: MemoryToolController | undefined;
     let startupLifecycleHooks: LifecycleHookRunner | undefined;
+    let startupCodexHooks: CodexHookRunner | undefined;
 
     // Keep assembly in one function so one catch owns every resource acquired
     // after the process-global diagnostics tap is installed.
@@ -483,13 +490,30 @@ export class AgentRuntime {
       classifier: createModelClassifier(config, options.projectRoot),
     });
 
-    // One composed intervention owns retry → Pre → permission → body → Post
-    // ordering. An empty hook config spawns no shell process; lifecycle hooks stay
-    // separate observers and never become SDK interventions.
+    const codexHooks = policy.codexHooks === undefined ? undefined : new CodexHookRunner({
+      projectRoot: options.projectRoot,
+      hooks: policy.codexHooks,
+      sessionId: session.sessionId,
+      config,
+      permissionMode: () => gate.mode,
+      ...(diagnosticsLog === undefined ? {} : { problem: (problem: string) => diagnosticsLog.notice(problem, 'warn') }),
+    });
+    startupCodexHooks = codexHooks;
+
+    // The intervention is assembled before the Agent, while rewritten input validation
+    // needs the final post-initialize registry (including MCP tools). The callback is
+    // assigned immediately after construction and is never invoked during assembly.
+    let toolForName: (name: string) => import('@strands-agents/sdk').Tool | undefined = () => undefined;
+    // One composed intervention owns retry → native/portable Pre → permission → body
+    // → portable/native Post ordering. Lifecycle adapters stay outside the SDK loop.
     const intervention: InterventionHandler = new ToolHookGate(
       options.projectRoot,
       policy.hooks ?? {},
       gate,
+      undefined,
+      codexHooks,
+      policy.toolHookLayers,
+      (name) => toolForName(name),
     );
     const lifecycleConfig = lifecycleHooksFromConfig(policy.hooks);
     const lifecycleHooks = lifecycleConfig === undefined
@@ -564,6 +588,7 @@ export class AgentRuntime {
       // with our rendering (and fight Ink for the terminal in step 5).
       printer: false,
     });
+    toolForName = (name) => agent.tools.find((candidate) => candidate.name === name);
     installMaxTokensRecovery(agent);
 
     // The constructor does not initialize; the SDK defers it to the first
@@ -630,6 +655,7 @@ export class AgentRuntime {
       config,
       createModel: createModelFromConfig,
       dispatches: subagentDispatches,
+      ...(codexHooks === undefined ? {} : { codexHooks }),
     });
     agent.toolRegistry.add(subagents.tool);
 
@@ -696,6 +722,8 @@ export class AgentRuntime {
       backgroundBash,
       gate,
       lifecycleHooks,
+      policy.toolHookLayers,
+      codexHooks,
       sessionManager,
       compactionManager,
       config.preserveRecentMessages,
@@ -745,6 +773,14 @@ export class AgentRuntime {
       },
       options,
     );
+    if (options.rewindRestore === undefined) {
+      const source = options.inherit !== undefined
+        ? 'clear'
+        : session.restoreRequested
+          ? 'resume'
+          : 'startup';
+      await codexHooks?.sessionStart(source);
+    }
     return runtime;
     };
     return assemble().catch(async (error: unknown) => {
@@ -754,6 +790,7 @@ export class AgentRuntime {
         startupBackgroundBash,
         startupMemoryController,
         startupLifecycleHooks,
+        startupCodexHooks,
       );
       throw error;
     });
@@ -787,6 +824,11 @@ export class AgentRuntime {
    */
   async *send(input: string, userInput = input, image?: ImageBlock): AsyncIterable<AgentStreamEvent> {
     const before = this.usage;
+    const submitted = await this.codexHooks?.userPromptSubmit(userInput);
+    if (submitted !== undefined && !submitted.allowed) {
+      throw new Error(submitted.reason ?? 'UserPromptSubmit hook blocked this prompt.');
+    }
+    const modelInput = injectCodexContext(input, submitted?.context);
     let checkpointId: string | undefined;
     // A text-only checkpoint cannot truthfully reproduce a multimodal boundary.
     if (image === undefined && rewindPromptEligible(input)) {
@@ -799,9 +841,8 @@ export class AgentRuntime {
       // A multimodal turn's durable text is the literal submitted prompt. Expanded
       // command text and held shell reports still reach the model, but image bytes
       // and synthetic attachment/path text never enter the trajectory.
-      const recordedInput = image === undefined ? input : userInput;
       const recording = this.trajectory?.beginTurn(
-        recordedInput,
+        userInput,
         startTurnSpend(before, () => this.usage, this.liveConfig),
       );
       // The model may receive an expanded skill/custom-command prompt, but
@@ -818,7 +859,7 @@ export class AgentRuntime {
       }
       // Later events and turn-end are still observed synchronously and appended in
       // the background; `shutdown()` is where that append chain is waited for.
-      const invocation = image === undefined ? input : [new TextBlock(input), image];
+      const invocation = image === undefined ? modelInput : [new TextBlock(modelInput), image];
       for await (const event of recordStream(this.agent.stream(invocation), recording)) {
         if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
         yield event;
@@ -927,8 +968,10 @@ export class AgentRuntime {
    * live agent back exactly where it started.
    */
   async compact(): Promise<CompactResult> {
+    const pre = await this.codexHooks?.preCompact('manual');
+    if (pre !== undefined && !pre.allowed) throw new Error(pre.reason ?? 'PreCompact hook blocked compaction.');
     try {
-      return await compactConversation({
+      const result = await compactConversation({
         agent: this.agent,
         model: this.model,
         manager: this.compactionManager,
@@ -938,6 +981,8 @@ export class AgentRuntime {
           await this.markResumable();
         },
       });
+      await this.codexHooks?.postCompact('manual');
+      return result;
     } catch (error) {
       // compactConversation has already restored the live messages. If saving the
       // compact snapshot succeeded but the pointer write failed, overwrite latest
@@ -1137,6 +1182,7 @@ export class AgentRuntime {
     this.model = model;
     this.liveConfig = next;
     this.subagents.updateConfig(next);
+    this.codexHooks?.updateConfig(next);
     this.thinkingPlan = thinkingPlan;
     this.promptCachePlan = promptCachePlan;
 
@@ -1233,6 +1279,7 @@ export class AgentRuntime {
    */
   cancel(): void {
     this.lifecycleHooks?.cancel();
+    this.codexHooks?.cancel();
     this.subagents.cancelActive();
     this.agent.cancel();
   }
@@ -1240,11 +1287,29 @@ export class AgentRuntime {
   /** Publishes a bounded driver-owned turn outcome; command results are unobservable. */
   observeTurnComplete(outcome: TurnCompleteOutcome, source: TurnCompleteSource): void {
     this.lifecycleHooks?.publish({ event: 'TurnComplete', outcome, source });
+    this.codexHooks?.stop(outcome);
   }
 
-  /** Publishes the source label only when a permission prompt becomes visible. */
-  observePermissionRequest(source: string): void {
-    this.lifecycleHooks?.publish({ event: 'PermissionRequest', source });
+  /** Drains bounded portable-hook diagnostics for the existing driver notice channels. */
+  takeHookProblems(): string[] {
+    return this.codexHooks?.takeProblems() ?? [];
+  }
+
+  /** Publishes one truthful approval request only when it becomes visible. */
+  observePermissionRequest(request: { source: string; toolName: string; toolInput: unknown }): void {
+    const event = { event: 'PermissionRequest' as const, source: request.source };
+    if (this.codexHooks === undefined) {
+      this.lifecycleHooks?.publish(event);
+      return;
+    }
+    // Setup order is source-granular: portable before native within each .agents layer.
+    for (const layer of this.toolHookLayers) {
+      if (layer.dialect === 'codex') {
+        this.codexHooks.permissionRequest(request, layer.hooks.PermissionRequest);
+      } else {
+        this.lifecycleHooks?.publishGroups(event, layer.hooks.PermissionRequest);
+      }
+    }
   }
 
   /** Completed prompt boundaries available for an in-session conversation branch. */
@@ -1383,16 +1448,21 @@ export class AgentRuntime {
     // `/clear` and rewind retire the session before any still-pending closing append
     // may accept memory. Already accepted commits are unaffected and still awaited.
     this.memoryController?.discardUnsettled();
-    const trajectory = await Promise.allSettled([
+    const ownedWork = await Promise.allSettled([
       this.subagents.shutdown(),
       this.stopBashSession(),
       this.lifecycleHooks?.close() ?? Promise.resolve(),
       this.trajectory?.close() ?? Promise.resolve(),
-      this.diagnosticsLog?.close() ?? Promise.resolve(),
     ]);
     // Closing trajectory first publishes the final settlement. The controller then
     // discards unresolved staging and waits only for commits already accepted.
-    await Promise.allSettled([Promise.resolve(trajectory), this.memoryController?.close() ?? Promise.resolve()]);
+    await Promise.allSettled([Promise.resolve(ownedWork), this.memoryController?.close() ?? Promise.resolve()]);
+    // SessionEnd is the final advisory boundary: all session-owned work above has
+    // settled, while diagnostics remains open to retain a bounded hook problem.
+    await Promise.allSettled([
+      this.codexHooks?.sessionEnd('other').then(() => this.codexHooks?.close()) ?? Promise.resolve(),
+    ]);
+    await Promise.allSettled([this.diagnosticsLog?.close() ?? Promise.resolve()]);
   }
 
   /**
@@ -1452,10 +1522,6 @@ export class AgentRuntime {
    * exiting.
    */
   async shutdown(options: { throwOnError?: boolean } = {}): Promise<void> {
-    // Cleared before the awaits below: the log is about to be closed, and an SDK
-    // warning logged during cleanup must not be handed to a sink that has stopped
-    // accepting lines. `warn`/`error` keep reaching the renderer either way.
-    if (this.diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
     const results = await Promise.allSettled([
       this.subagents.shutdown(),
       this.backgroundBash.shutdown(),
@@ -1465,12 +1531,16 @@ export class AgentRuntime {
       // Settle the append chain before memory closes below. The callback stays
       // unawaited; cleanup only waits for a commit after durable acceptance.
       this.trajectory?.close() ?? Promise.resolve(),
-      // Same rule for the diagnostics log, and it cannot reject: its failures are
-      // latched internally and reported as a problem, never thrown.
-      this.diagnosticsLog?.close() ?? Promise.resolve(),
     ]);
     const memoryResults = await Promise.allSettled([this.memoryController?.close() ?? Promise.resolve()]);
     results.push(...memoryResults);
+    // SessionEnd is advisory but ordered after owned work. Keep diagnostics open
+    // through it, then detach the process-global SDK tap before closing the file.
+    results.push(...await Promise.allSettled([
+      this.codexHooks?.sessionEnd('other').then(() => this.codexHooks?.close()) ?? Promise.resolve(),
+    ]));
+    if (this.diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
+    results.push(...await Promise.allSettled([this.diagnosticsLog?.close() ?? Promise.resolve()]));
     const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
     if (options.throwOnError === true && failures.length > 0) {
       throw new AggregateError(failures, `${failures.length} runtime cleanup operation(s) failed`);

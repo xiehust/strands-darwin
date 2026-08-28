@@ -810,6 +810,10 @@ export function App({
         dispatch({ type: 'notice', text: `learned memory: ${memoryProblem}`, severity: 'warn' });
       }
 
+      for (const problem of runtime.takeHookProblems()) {
+        dispatch({ type: 'notice', text: `hook: ${problem}`, severity: 'warn' });
+      }
+
       return !failed;
     },
     [returnQueuedToEditor, runtime, waitUntilRenderFlush],

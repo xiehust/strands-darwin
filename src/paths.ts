@@ -86,8 +86,10 @@ export function sensitiveDarwinPaths(projectRoot: string): string[] {
   return [
     path.join(userDarwinDir(), 'config.json'),
     path.join(userDarwinDir(), 'hooks.json'),
+    path.join(userAgentsDir(), 'hooks.json'),
     path.join(userProjectDir(projectRoot), 'permission-rules.json'),
     path.join(darwinDir(projectRoot), 'hooks.json'),
+    path.join(agentsDir(projectRoot), 'hooks.json'),
     path.join(darwinDir(projectRoot), 'config.json'),
   ];
 }

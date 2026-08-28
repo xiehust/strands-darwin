@@ -118,7 +118,7 @@ async function main(): Promise<void> {
 
   header('permission queue — visible prompt observation is exactly once');
   const observed: string[] = [];
-  const queue = new PermissionQueue((source) => observed.push(source));
+  const queue = new PermissionQueue((request) => observed.push(request.source.label));
   const first = queue.bridge(request('parent'));
   const withdrawn = new AbortController();
   const second = queue.bridge(request('reader#dispatch-1', withdrawn.signal));
@@ -129,7 +129,7 @@ async function main(): Promise<void> {
   await Promise.all([first, second]);
   const third = queue.bridge(request('reader#dispatch-1'));
   assert('a later logical prompt with the same source publishes once', observed.join(',') === 'parent,reader#dispatch-1');
-  queue.setObserver((source) => observed.push(source));
+  queue.setObserver((request) => observed.push(request.source.label));
   assert('observer replacement does not republish the current prompt', observed.length === 2);
   queue.answer({ allowed: false });
   await third;

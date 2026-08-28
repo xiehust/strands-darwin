@@ -86,8 +86,9 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
     cancel() {
       cancelled = true;
     },
-    observePermissionRequest(source: string) {
-      if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'permissionRequest', source })}\n`);
+    takeHookProblems: () => [],
+    observePermissionRequest(request: { source: string }) {
+      if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'permissionRequest', source: request.source })}\n`);
     },
     observeTurnComplete(outcome: string, source: string) {
       if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'turnComplete', outcome, source })}\n`);

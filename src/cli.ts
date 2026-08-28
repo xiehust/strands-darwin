@@ -170,7 +170,7 @@ async function runInteractive(options: CliOptions): Promise<void> {
     }
     throw error;
   }
-  permissions.setObserver((source) => runtime.observePermissionRequest(source));
+  permissions.setObserver((request) => runtime.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input }));
 
   /**
    * Human context is restored from the exact session trajectory, never from Agent
@@ -223,13 +223,13 @@ async function runInteractive(options: CliOptions): Promise<void> {
       startNewSession: async () => {
         const next = await current.startNewSession();
         current = next;
-        permissions.setObserver((source) => current.observePermissionRequest(source));
+        permissions.setObserver((request) => current.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input }));
         return next;
       },
       startRewind: async (checkpoint) => {
         const next = await current.startRewind(checkpoint);
         current = next;
-        permissions.setObserver((source) => current.observePermissionRequest(source));
+        permissions.setObserver((request) => current.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input }));
         return next;
       },
     }),

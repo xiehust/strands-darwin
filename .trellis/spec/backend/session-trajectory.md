@@ -106,7 +106,7 @@ envelope `{"v":1,"seq":<n>,"t":"<ISO>","turn":<n>,"type":"<t>"}`.
 | `type` | Payload |
 |---|---|
 | `runStarted` | `session`, `agentId`, `darwinVersion`, `provider`, `model`, `permissionMode`, `thinkingEffort`, `resumed`, `restoredMessages`, `pid` |
-| `userInput` | `text` — normally the string handed to `agent.stream()`, so a text-only slash command appears **expanded**. SER-041 multimodal input is the deliberate exception: it records the literal user prompt while the SDK receives model text plus an `ImageBlock`; image bytes, base64, clipboard contents, synthetic attachment text and fabricated paths never enter this record |
+| `userInput` | `text` — the literal submitted user text when supplied separately to `AgentRuntime.send`, while the SDK may receive expanded slash-command text plus bounded portable hook context. Legacy/direct callers that omit the separate value record their input unchanged. SER-041 multimodal input likewise records only the literal user prompt while the SDK receives model text plus an `ImageBlock`; hook context, image bytes, base64, clipboard contents, synthetic attachment text and fabricated paths never enter this record |
 | `contentBlockEvent` | the SDK event's own `toJSON()`, capped. `reasoningBlock` is recorded as presence only |
 | `beforeToolCallEvent` | `toolUse` (id, name, input), capped |
 | `afterToolCallEvent` | `toolUse` plus `result` (status, content), capped |
@@ -382,7 +382,7 @@ must not become a second copy of.
   Reading a 64 MiB file to keep 100 strings would be I/O nobody asked for.
 - It offers back **only what was sent**, and only under 4000 code points — under `MAX_FIELD_CHARS`
   (8000) on purpose, so a `userInput` text this file truncated on the way in can never be re-sent
-  silently. A skill expansion (recorded expanded, per the table above) is excluded by the same cap.
+  silently. Older/direct callers may still record expanded text; every such over-bound value is excluded by the same cap.
 - Absence, `trajectory: false` and damage are **readings, not failures**; the caller never sees an
   exception, and no keystroke waits on the read.
 

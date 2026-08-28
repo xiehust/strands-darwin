@@ -13,7 +13,7 @@
 
 名称比较不区分大小写，第一份有效定义生效。项目资源覆盖全局资源，必需的内置名称始终保留。可选资源有误时会跳过并报告，不影响其他有效定义。
 
-直接 hook 文件按 wrapper 合并：Pre 顺序为全局 `.agents`、全局 `.darwin`、项目 `.agents`、项目 `.darwin`；Post 完全反向。只有某一层没有直接 hook JSON 目录时，才回退到旧版 `.darwin/hooks.json` 或配置内嵌 hooks。
+原生直接 hook 文件按 wrapper 合并：Pre 顺序为全局 `.agents`、全局 `.darwin`、项目 `.agents`、项目 `.darwin`；Post 完全反向。只有某一层没有直接 hook JSON 目录时，才回退到旧版 `.darwin/hooks.json` 或配置内嵌 hooks。全局/项目直接 `.agents/hooks.json` 是独立的 Codex 兼容可移植源，排在同层 `.agents/hooks/*.json` 之前；`.codex/hooks.json` 明确不会被读取。
 
 ## MCP 服务器
 
@@ -122,3 +122,17 @@ Trace the requested behavior, cite files and symbols, and report to the parent.
 ## 工具 hooks
 
 `PreToolUse` 和 `PostToolUse` shell 命令包裹模型工具调用。顺序是全局 Pre → 项目 Pre → 权限/工具 → 项目 Post → 全局 Post。正在生效的 hook 文件和目录属于敏感路径，不能被放行规则覆盖。`plan` 会在 Pre hook 之前拒绝写入/执行。不要把密钥写进已提交的 hook 配置；建议使用分层 `hooks/*.json`，旧文件只作为兼容后备。
+
+### Codex 兼容可移植 hooks
+
+darwin 还会按 Codex 三层 JSON 结构（`hooks` → matcher 组 → handler）读取 `~/.agents/hooks.json` 与 `<project>/.agents/hooks.json`。支持 11 个已文档化事件：`SessionStart`、`SessionEnd`、`UserPromptSubmit`、`PreToolUse`、`PermissionRequest`、`PostToolUse`、`PreCompact`、`PostCompact`、`SubagentStart`、`SubagentStop`、`Stop`。matcher 使用正则表达式；省略、`""`、`"*"` 都表示全匹配。handler 只支持串行 `type: "command"`，在项目根目录运行，继承环境，通过有界 JSON stdin/stdout 通信；支持有界 `timeout`、可选 `commandWindows`，并校验 `additionalContextLimit`。展示元数据不会新增 TUI 表面。
+
+为了保持 darwin 的安全契约，控制能力有意比 Codex 更窄：
+
+- `SessionStart`、`UserPromptSubmit`、`PostCompact` 与匹配的 `SubagentStart` 可加入有界、仅本次调用可见的上下文。原始用户文本仍是 trajectory/recall/memory 的来源；不会改写 system prompt、恢复历史或子代理定义。
+- `UserPromptSubmit` 的 block 输出或退出码 2 会在 trajectory/provider/tool 工作前本地拒绝。
+- `PreToolUse` 支持 deny/退出码 2，以及校验后的 `allow + updatedInput`；顺序仍是 plan/retry guard 之后、最终权限分类之前。`bash` 也可匹配 `Bash`；会修改文件的 `fileEditor` 操作也可匹配 `apply_patch`、`Edit`、`Write`。
+- 显式 `/compact` 与无头 `--compact-before` 以 `trigger: "manual"` 发布 `PreCompact`/`PostCompact`；不会把 SDK 自动溢出恢复伪装成 Codex `auto` 支持。
+- `PermissionRequest`、`PostToolUse`、`SubagentStop`、`Stop`、`SessionEnd` 仅作观察/通知。它们不能自动放行权限、替换/重试/隐藏结果，也不能让父或子代理自动续跑。`SubagentStop` 不包含子代理 transcript 路径或 assistant 文本；只有普通的有界 subagent 结果会返回父代理。不支持的控制字段通过现有有界 notice/自动化 diagnostic 报告，但不会改变原结果。
+
+首版在启动时拒绝 `mcp_tool`、`prompt`、`agent` 与 `async: true` handler。它不读取 `.codex/hooks.json` 或内联 TOML，不实现 Codex trust/managed/plugin 策略，不新增 `/hooks` 浏览器，不伪造 `turn_id`/transcript path，也不承诺崩溃或空闲超时下的 `SessionEnd`。在仓库中启动 darwin 即表示信任该仓库的可执行策略；活动策略的解析、schema 或正则错误会阻止启动。

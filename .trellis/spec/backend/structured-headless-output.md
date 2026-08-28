@@ -98,7 +98,7 @@ and remain nonfatal, matching their existing domain contract.
 | `permission.denied` | bounded `toolName`, `kind`, `summary`, projected `source` | Headless bridge immediately denied a promptable call |
 | `tool.started` | bounded `toolUseId`, `name`, classification `summary` | A tool call began; raw input is absent |
 | `tool.completed` | bounded `toolUseId`, `name`, `status` | `success`, `failure`, or `denied`; raw result is absent |
-| `diagnostic` | source, level, bounded message | SDK warning/error observed live |
+| `diagnostic` | source, level, bounded message | SDK warning/error observed live, or a bounded portable-hook problem projected without raw subprocess output |
 | `subagent.progress` | bounded `dispatchId`, `agentName`, integer `elapsedMs`, closed `phase`, optional bounded `toolName` | Stream-JSON only; periodic long-dispatch heartbeat, never task/prompt/reasoning/tool payload/result/transcript |
 | `result` | terminal contract above | Exactly one authoritative terminal record |
 
@@ -121,7 +121,7 @@ recovery only, retained partial assistant `TextBlock`s are read from `MaxTokensE
 (the post-aggregation message the SDK preserves), emitted once, then joined with the completed retry.
 
 Tool ids/names/summaries retain the 240-code-point headless bound. Error and diagnostic strings are
-capped at 8,000 Unicode code points with `truncated: true`. Completed messages longer than that are
+capped at 8,000 Unicode code points with `truncated: true`; diagnostic `source` additionally accepts `hook` for the adapter's bounded problem projection. Completed messages longer than that are
 split into numbered parts, so streaming never silently loses assistant text. JSON escaping means an
 embedded newline remains inside one physical JSONL record. The terminal success result is deliberately
 unbounded and complete, matching text mode's atomic complete-answer contract.

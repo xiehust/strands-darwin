@@ -229,8 +229,8 @@ header('prompt history — what is too long is skipped, and said');
 
 await resetProject();
 {
-  // The shape of a skill expansion: recorded expanded (that is the trajectory
-  // contract), and useless in an editor.
+  // The shape of an older/directly recorded skill expansion: over-bound and
+  // useless in an editor even though current drivers record literal user text.
   const expansion = `# Skill instructions\n${'x'.repeat(MAX_HISTORY_ENTRY_CHARS + 1)}`;
   await seed(
     'session-20260104-000001',

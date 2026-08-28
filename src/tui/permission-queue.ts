@@ -30,10 +30,10 @@ interface QueueEntry {
 export class PermissionQueue {
   private observedIdentities = new WeakSet<object>();
 
-  constructor(private observe?: (source: string) => void) {}
+  constructor(private observe?: (request: AssessedPermissionRequest) => void) {}
 
   /** Installs a session-owned observer; `/clear` starts a fresh identity scope. */
-  setObserver(observe: ((source: string) => void) | undefined): void {
+  setObserver(observe: ((request: AssessedPermissionRequest) => void) | undefined): void {
     this.observe = observe;
     this.observedIdentities = new WeakSet<object>();
     this.observeCurrent();
@@ -149,7 +149,7 @@ export class PermissionQueue {
       this.observedIdentities.add(identity);
     }
     try {
-      this.observe?.(entry.request.source.label);
+      this.observe?.(entry.request);
     } catch {
       // Observation can never alter or strand the permission decision.
     }

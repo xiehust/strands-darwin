@@ -48,10 +48,16 @@ export class LifecycleHookRunner {
 
   publish(event: LifecycleHookEvent): void {
     if (this.closed) return;
+    this.publishGroups(event, this.hooks[event.event]);
+  }
+
+
+  /** Publishes one source layer without changing the native payload or process path. */
+  publishGroups(event: LifecycleHookEvent, groups: readonly ToolHookGroup[] | undefined): void {
+    if (this.closed || groups === undefined) return;
     const payload = serializeLifecycleHookEvent(event);
     if (payload === undefined) return;
-
-    for (const group of this.hooks[event.event] ?? []) {
+    for (const group of groups) {
       if (!matchesToolGlob(group.matcher, event.source)) continue;
       for (const hook of group.hooks) this.spawn(hook.command, payload);
     }

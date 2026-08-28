@@ -13,7 +13,7 @@ Named skills, agents, and commands resolve after built-in reservations in this o
 
 The first valid case-insensitive name wins; project resources override global ones, while required built-in names remain reserved. Invalid optional resources are skipped and reported rather than stopping valid siblings.
 
-Direct hook files merge as wrappers: global `.agents`, global `.darwin`, project `.agents`, project `.darwin` for Pre and observation-only lifecycle events; exact reverse for Post. Legacy `.darwin/hooks.json` and config-embedded hooks are fallbacks only when a layer has no direct hook JSON directory.
+Native direct hook files merge as wrappers: global `.agents`, global `.darwin`, project `.agents`, project `.darwin` for Pre and observation-only lifecycle events; exact reverse for Post. Legacy `.darwin/hooks.json` and config-embedded hooks are fallbacks only when a layer has no direct hook JSON directory. Direct global/project `.agents/hooks.json` is a separate Codex-compatible portable source ordered before that `.agents/hooks/*.json` layer; `.codex/hooks.json` is deliberately never loaded.
 
 ## MCP servers
 
@@ -131,5 +131,20 @@ Hook files accept exactly four event keys. `PreToolUse` and `PostToolUse` shell 
 ```
 
 `TurnComplete.outcome` is `success`, `failure`, or `cancelled`. `PermissionRequest` fires once when a logical prompt actually becomes current; queued prompts wait and prompts withdrawn before display do not fire. Lifecycle commands start without blocking the turn or permission decision. Darwin discards their stdout, stderr, launch errors, and exit status; they cannot write into Ink, model context, permission decisions, tool events, or trajectory records. Cancel, `/clear`, and shutdown terminate their process groups with bounded TERM→KILL cleanup.
+
+
+### Portable Codex-compatible hooks
+
+Darwin also reads `~/.agents/hooks.json` and `<project>/.agents/hooks.json` using the Codex three-level JSON shape (`hooks` → matcher groups → handlers). It accepts the eleven documented event names: `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, `PreCompact`, `PostCompact`, `SubagentStart`, `SubagentStop`, and `Stop`. Matchers are regular expressions; omission, `""`, and `"*"` mean match all. Handlers are sequential `type: "command"` processes with project-root cwd, inherited environment, bounded JSON stdin/output, bounded `timeout`, optional `commandWindows`, and validated `additionalContextLimit`. Presentation metadata is inert.
+
+Supported control is intentionally narrower than Codex where Darwin's safety contracts require it:
+
+- `SessionStart`, `UserPromptSubmit`, `PostCompact`, and matching `SubagentStart` can add bounded invocation-local context. Literal submitted text remains the trajectory/recall/memory source; no system prompt, restored history, or child definition is rewritten.
+- `UserPromptSubmit` block output or exit 2 refuses locally before trajectory/provider/tool work.
+- `PreToolUse` deny/exit 2 and validated `allow + updatedInput` are supported after plan/retry guards and before final permission classification. `bash` also matches `Bash`; mutating `fileEditor` operations also match `apply_patch`, `Edit`, and `Write`.
+- Manual `/compact` and headless `--compact-before` publish `PreCompact`/`PostCompact` with trigger `manual`; SDK automatic overflow recovery is not presented as Codex `auto` parity.
+- `PermissionRequest`, `PostToolUse`, `SubagentStop`, `Stop`, and `SessionEnd` are observation/advisory projections. They cannot auto-allow, replace/retry/suppress a result, or continue a parent/child turn. `SubagentStop` omits the child transcript path and assistant text; only the ordinary bounded subagent result reaches the parent. Unsupported controls are reported through bounded existing notices/automation diagnostics without changing the owner.
+
+The first adapter rejects `mcp_tool`, `prompt`, `agent`, and `async: true` handlers at startup. It does not read `.codex/hooks.json` or inline TOML, implement Codex trust/managed/plugin policy, add a `/hooks` browser, fabricate `turn_id`/transcript paths, or promise crash/idle `SessionEnd`. Commands are trusted executable repository policy when Darwin is launched in that repository; active parse/schema/regex errors fail startup.
 
 Active hook files/directories are executable policy and cannot be covered by allow rules. Keep secrets out of committed hook config and prefer direct layered `hooks/*.json`; legacy files remain compatibility fallbacks.

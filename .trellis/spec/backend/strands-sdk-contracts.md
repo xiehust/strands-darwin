@@ -1074,6 +1074,75 @@ new Agent({ interventions: [intervention] })
 
 ---
 
+
+## Scenario: portable Codex-compatible `.agents/hooks.json`
+
+### 1. Scope / Trigger
+
+Use this contract only for direct global/project `.agents/hooks.json`. Keep native `hooks/*.json`, legacy Darwin fallback, and the SDK loop unchanged. Never discover `.codex/hooks.json` implicitly.
+
+### 2. Signatures
+
+```typescript
+const CODEX_HOOK_EVENTS = [
+  'SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse',
+  'PermissionRequest', 'PostToolUse', 'PreCompact', 'PostCompact',
+  'SubagentStart', 'SubagentStop', 'Stop',
+] as const
+
+decodeCodexHooks(value: unknown, source: string): CodexHooksConfig
+new CodexHookRunner({ projectRoot, hooks, sessionId, config, permissionMode })
+```
+
+Codex groups use regex matchers; omitted, empty and `*` mean match all. Only synchronous command handlers are accepted: nonblank `command`, optional nonblank `commandWindows`, positive bounded `timeout`, inert string metadata, and non-negative integer `additionalContextLimit` converted to a conservative byte cap under the global context maximum.
+
+### 3. Contracts
+
+- Discovery/source order is global `.agents/hooks.json`, global native `.agents/hooks/*.json`, global Darwin native, project `.agents/hooks.json`, project native `.agents/hooks/*.json`, project Darwin native. Post reverses source granularity. Parse/schema/regex errors name the active direct source and field and fail startup. Every direct portable file is sensitive/un-ruleable executable policy.
+- Commands run sequentially with project-root cwd, inherited environment, one bounded truthful JSON object, bounded output and timeout, and session/child-owned TERM→KILL process groups. Common payload fields are available `session_id`, `cwd`, exact `hook_event_name`, live `model`, and truthfully mappable `permission_mode`; never fabricate `turn_id` or a transcript path.
+- `SessionStart` (`startup|resume|clear`), `UserPromptSubmit`, `PostCompact`, and matched `SubagentStart` may create bounded invocation-local context. Rewind emits no false session source. Parent injection changes only the model-facing text block; literal `userInput` remains trajectory/recall/memory evidence. Child injection changes only the selected child's task invocation.
+- `UserPromptSubmit` block/exit 2 refuses before rewind capture, trajectory begin, provider or tool work. `PreToolUse` remains after plan/retry guards and before final permission classification; it may deny or apply a validated object `updatedInput`, after which later hooks and permission see the replacement. Alias matching never changes payload `tool_name`.
+- `PostToolUse`, visible `PermissionRequest`, `SubagentStop`, driver-owned `Stop`, and orderly `SessionEnd` are observations/advisories. Their output cannot auto-allow, replace/retry/suppress a result, or continue a turn. Child stop payloads omit transcript paths and assistant text, so the ordinary bounded parent tool result remains the sole child-produced channel. Manual `/compact`/`--compact-before` alone emit `trigger: manual`; SDK overflow recovery is not exposed as false `auto` parity.
+- Parent/child tool policy is shared. Child lifecycle processes are separately owned so targeted cancellation cannot cancel a sibling or parent hook. No hook event/output is appended to trajectory or rendered as a second transcript/live-frame channel.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Portable file absent | Silent; no runner/process |
+| Unknown event, invalid regex/schema/timeout/context limit | `ConfigError` naming source and field |
+| `mcp_tool`, `prompt`, `agent`, or `async:true` | Startup refusal; never silently weaken semantics |
+| Context-producing handler fails | Drop its context, continue safely, report bounded problem through existing diagnostics |
+| `UserPromptSubmit` block / exit 2 | Local refusal; no sent/recorded turn |
+| Pre launch/timeout/invalid rewrite/nonzero other than 2 | Deny before permission/body |
+| Post/lifecycle controlling output | Keep owning result/permission/outcome; report unsupported control through the bounded existing TUI/headless diagnostic projection, never raw stderr |
+| Cancel, `/clear`, startup unwind, shutdown | TERM→KILL every owned command tree; one `SessionEnd` latch per runtime |
+
+### 5. Good / Base / Bad Cases
+
+- **Good:** this repository's `.agents/hooks.json` injects one Trellis workflow block into one parent invocation and one curated block only into a matching Trellis child.
+- **Base:** native Darwin files continue using glob matching and native payloads with no Codex reinterpretation.
+- **Bad:** reading identical `.codex/hooks.json` duplicates execution; converting regex to glob changes policy; injecting into stored messages corrupts literal trajectory/resume semantics; accepting `PermissionRequest allow` creates a second authorization path.
+
+### 6. Tests Required
+
+`spike/verify-codex-hooks.ts` covers all event names, decoder/source/path behavior, regex/match-all, command processes, payload/context/control bounds, runtime parent injection, local block and cleanup. Retain `verify-state-layers.ts`, `verify-tool-hooks.ts`, `verify-lifecycle-hooks.ts`, `verify-subagents.ts`, `verify-clear-session.ts`, `verify-trajectory.ts`, `verify-runtime-image-input.ts`, and `verify-headless-structured.ts`; finish with `pnpm typecheck`, `pnpm test`, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+```typescript
+// WRONG: guess dialect, load Codex-owned duplicate policy, or rewrite durable input.
+loadEveryJson('.agents', '.codex').map(asOneHookSchema)
+trajectory.beginTurn(injectContext(userInput))
+
+// CORRECT: source identifies dialect; only the model-facing invocation is decorated.
+const portable = decodeCodexHooks(projectAgentsHooks, source)
+const recording = trajectory.beginTurn(literalUserInput)
+agent.stream(injectCodexContext(expandedModelInput, boundedContext))
+```
+
+---
+
 ## Scenario: observation-only lifecycle command hooks
 
 ### 1. Scope / Trigger

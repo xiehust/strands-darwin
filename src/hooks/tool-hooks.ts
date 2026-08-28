@@ -7,10 +7,14 @@ import {
   type BeforeInvocationEvent,
   type BeforeModelCallEvent,
   type BeforeToolCallEvent,
+  type Tool,
 } from '@strands-agents/sdk';
 
 import type { PermissionGate } from '../agent/permission.js';
 import { RepeatedFailureGuard } from '../agent/retry-guard.js';
+import type { ToolHookPolicyLayer } from '../config.js';
+import type { CodexHookRunner } from './codex-hook-runner.js';
+import type { CodexHookGroup } from './codex-hooks.js';
 
 export interface ToolHookCommand {
   readonly type: 'command';
@@ -164,6 +168,9 @@ export class ToolHookGate extends InterventionHandler {
     private readonly hooks: ToolHooksConfig,
     private readonly permissionGate: PermissionGate,
     private readonly retryGuard = new RepeatedFailureGuard(),
+    private readonly codexHooks?: CodexHookRunner,
+    private readonly policyLayers?: readonly ToolHookPolicyLayer[],
+    private readonly toolForName?: (name: string) => Tool | undefined,
   ) {
     super();
   }
@@ -182,19 +189,54 @@ export class ToolHookGate extends InterventionHandler {
     const repeated = await this.retryGuard.beforeToolCall(event);
     if (repeated.type !== 'proceed') return repeated;
 
-    for (const hook of matchingCommands(this.hooks.PreToolUse, event.toolUse.name)) {
-      const result = await runToolHookCommand(
-        this.projectRoot,
-        hook.command,
-        event.toolUse.name,
-        event.toolUse.input,
-        event.agent.cancelSignal,
-      );
-      if (event.agent.cancelSignal.aborted) {
-        return InterventionActions.deny(`Tool call ${event.toolUse.name} was cancelled before execution.`);
+    if (this.policyLayers === undefined) {
+      const portable = await this.codexHooks?.preToolUse({
+        toolName: event.toolUse.name,
+        toolUseId: event.toolUse.toolUseId,
+        toolInput: event.toolUse.input,
+        signal: event.agent.cancelSignal,
+      });
+      if (portable !== undefined) {
+        if (!portable.allowed) return InterventionActions.deny(portable.reason ?? 'Blocked by PreToolUse hook.');
+        if (portable.input !== event.toolUse.input) {
+          if (this.toolForName === undefined) return InterventionActions.deny(`PreToolUse updatedInput for ${event.toolUse.name} could not be validated.`);
+          const invalid = validatePortableToolInput(
+            event.toolUse.name,
+            portable.input,
+            event.tool ?? this.toolForName(event.toolUse.name),
+          );
+          if (invalid !== undefined) return InterventionActions.deny(invalid);
+        }
+        event.toolUse.input = portable.input as typeof event.toolUse.input;
       }
-      if (result.error !== undefined || result.exitCode !== 0) {
-        return InterventionActions.deny(preFailureReason(hook.command, event.toolUse.name, result));
+      const denied = await this.runNativePre(this.hooks.PreToolUse, event);
+      if (denied !== undefined) return denied;
+    } else {
+      for (const layer of this.policyLayers) {
+        if (layer.dialect === 'codex') {
+          const portable = await this.codexHooks?.preToolUse({
+            toolName: event.toolUse.name,
+            toolUseId: event.toolUse.toolUseId,
+            toolInput: event.toolUse.input,
+            signal: event.agent.cancelSignal,
+          }, layer.hooks.PreToolUse);
+          if (portable !== undefined) {
+            if (!portable.allowed) return InterventionActions.deny(portable.reason ?? 'Blocked by PreToolUse hook.');
+            if (portable.input !== event.toolUse.input) {
+              if (this.toolForName === undefined) return InterventionActions.deny(`PreToolUse updatedInput for ${event.toolUse.name} could not be validated.`);
+              const invalid = validatePortableToolInput(
+                event.toolUse.name,
+                portable.input,
+                event.tool ?? this.toolForName(event.toolUse.name),
+              );
+              if (invalid !== undefined) return InterventionActions.deny(invalid);
+            }
+            event.toolUse.input = portable.input as typeof event.toolUse.input;
+          }
+        } else {
+          const denied = await this.runNativePre(layer.hooks.PreToolUse, event);
+          if (denied !== undefined) return denied;
+        }
       }
     }
 
@@ -212,10 +254,65 @@ export class ToolHookGate extends InterventionHandler {
   override async afterToolCall(event: AfterToolCallEvent): Promise<AfterAction> {
     if (!this.takeEligibility(event)) return InterventionActions.proceed();
 
-    for (const hook of matchingCommands(this.hooks.PostToolUse, event.toolUse.name)) {
+    if (this.policyLayers === undefined) {
+      await this.runPortablePost(event);
+      await this.runNativePost(this.hooks.PostToolUse, event);
+    } else {
+      for (const layer of [...this.policyLayers].reverse()) {
+        if (layer.dialect === 'codex') {
+          await this.runPortablePost(event, layer.hooks.PostToolUse);
+        } else {
+          await this.runNativePost(layer.hooks.PostToolUse, event);
+        }
+      }
+    }
+    return this.retryGuard.afterToolCall(event);
+  }
+
+  override beforeModelCall(event: BeforeModelCallEvent): ModelAction {
+    return this.retryGuard.beforeModelCall(event);
+  }
+
+  private async runNativePre(
+    groups: readonly ToolHookGroup[] | undefined,
+    event: BeforeToolCallEvent,
+  ): Promise<BeforeAction | undefined> {
+    for (const hook of matchingCommands(groups, event.toolUse.name)) {
+      const result = await runToolHookCommand(
+        this.projectRoot,
+        hook.command,
+        event.toolUse.name,
+        event.toolUse.input,
+        event.agent.cancelSignal,
+      );
+      if (event.agent.cancelSignal.aborted) {
+        return InterventionActions.deny(`Tool call ${event.toolUse.name} was cancelled before execution.`);
+      }
+      if (result.error !== undefined || result.exitCode !== 0) {
+        return InterventionActions.deny(preFailureReason(hook.command, event.toolUse.name, result));
+      }
+    }
+    return undefined;
+  }
+
+  private async runPortablePost(
+    event: AfterToolCallEvent,
+    groups?: readonly CodexHookGroup[],
+  ): Promise<void> {
+    await this.codexHooks?.postToolUse({
+      toolName: event.toolUse.name,
+      toolUseId: event.toolUse.toolUseId,
+      toolInput: event.toolUse.input,
+      toolResponse: event.result.toJSON(),
+    }, groups);
+  }
+
+  private async runNativePost(
+    groups: readonly ToolHookGroup[] | undefined,
+    event: AfterToolCallEvent,
+  ): Promise<void> {
+    for (const hook of matchingCommands(groups, event.toolUse.name)) {
       if (event.agent.cancelSignal.aborted) break;
-      // Post hooks are observation-only. Every matching command runs, and no
-      // failure may replace, retry, or hide the original tool result.
       await runToolHookCommand(
         this.projectRoot,
         hook.command,
@@ -224,11 +321,6 @@ export class ToolHookGate extends InterventionHandler {
         event.agent.cancelSignal,
       );
     }
-    return this.retryGuard.afterToolCall(event);
-  }
-
-  override beforeModelCall(event: BeforeModelCallEvent): ModelAction {
-    return this.retryGuard.beforeModelCall(event);
   }
 
   private markEligible(event: BeforeToolCallEvent): void {
@@ -246,6 +338,58 @@ export class ToolHookGate extends InterventionHandler {
     if (ids.size === 0) this.eligible.delete(event.agent);
     return true;
   }
+}
+
+/**
+ * The SDK validates Zod-backed tools only when their callback starts, after the
+ * permission gate. A portable rewrite therefore needs a narrow host-side check
+ * before permission or an invalid replacement could be classified/approved as a
+ * different operation and fail only after authorization. Function/MCP schemas do
+ * not expose a reusable validator, so retain the documented object guarantee there;
+ * the aliased Darwin tools get their exact public-shape checks here.
+ */
+function validatePortableToolInput(toolName: string, input: unknown, selectedTool: Tool | undefined): string | undefined {
+  const value = recordInput(input);
+  if (value === undefined) return `PreToolUse updatedInput for ${toolName} must be an object.`;
+  if (selectedTool === undefined) return `PreToolUse updatedInput for unknown tool ${toolName} could not be validated.`;
+  const actualName = selectedTool.name;
+  if (actualName === 'bash') {
+    if (value['mode'] !== 'execute' || typeof value['command'] !== 'string') {
+      return 'PreToolUse updatedInput for bash must contain mode "execute" and a string command.';
+    }
+    if (value['timeout'] !== undefined && (typeof value['timeout'] !== 'number' || !Number.isFinite(value['timeout']) || value['timeout'] <= 0)) {
+      return 'PreToolUse updatedInput for bash has an invalid timeout.';
+    }
+    if (hasKeysOutside(value, ['mode', 'command', 'timeout'])) return 'PreToolUse updatedInput for bash has unsupported fields.';
+  } else if (actualName === 'fileEditor') {
+    const command = value['command'];
+    if (!['create', 'str_replace', 'insert'].includes(typeof command === 'string' ? command : '') || typeof value['path'] !== 'string') {
+      return 'PreToolUse updatedInput for fileEditor must be a mutating command with a string path.';
+    }
+    if (hasKeysOutside(value, ['command', 'path', 'file_text', 'old_str', 'new_str', 'insert_line'])) {
+      return 'PreToolUse updatedInput for fileEditor has unsupported fields.';
+    }
+    if (command === 'create' && typeof value['file_text'] !== 'string') return 'PreToolUse updatedInput for fileEditor create requires file_text.';
+    if (command === 'str_replace' && (typeof value['old_str'] !== 'string' || typeof value['new_str'] !== 'string')) {
+      return 'PreToolUse updatedInput for fileEditor str_replace requires old_str and new_str.';
+    }
+    if (command === 'insert' && (typeof value['new_str'] !== 'string' || !Number.isInteger(value['insert_line']))) {
+      return 'PreToolUse updatedInput for fileEditor insert requires new_str and an integer insert_line.';
+    }
+  }
+  // The remaining local/MCP function tools accept replacement argument objects;
+  // their SDK-owned callback/schema validation still runs on the final input.
+  return undefined;
+}
+
+function recordInput(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function hasKeysOutside(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).some((key) => !allowed.includes(key));
 }
 
 function matchingCommands(
