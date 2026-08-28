@@ -14,7 +14,7 @@
 import type { ImageBlock } from '@strands-agents/sdk';
 
 import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize, type DOMElement } from 'ink';
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
 import type { DiagnosticsLog } from '../agent/diagnostics.js';
 import {
@@ -367,6 +367,47 @@ export function App({
   const imageTurnInFlight = useRef(false);
 
 
+  /**
+   * Terminal-only acknowledgement for the answer-close handoff. Dispatching a
+   * reducer action proves only that React accepted it; the layout effect below
+   * acknowledges the specific commit that removed the mutable tail.
+   */
+  const answerCloseSequence = useRef(0);
+  const answerCloseWaiters = useRef(new Map<number, () => void>());
+  const presentationMounted = useRef(true);
+  const unmountBarrier = useRef<{ promise: Promise<void>; resolve: () => void } | undefined>(undefined);
+  if (unmountBarrier.current === undefined) {
+    let resolve = (): void => undefined;
+    const promise = new Promise<void>((done) => { resolve = done; });
+    unmountBarrier.current = { promise, resolve };
+  }
+
+  useLayoutEffect(() => {
+    for (const [id, acknowledge] of answerCloseWaiters.current) {
+      if (id > state.answerCloseCommit) continue;
+      answerCloseWaiters.current.delete(id);
+      acknowledge();
+    }
+  }, [state.answerCloseCommit]);
+
+  useLayoutEffect(() => () => {
+    presentationMounted.current = false;
+    for (const acknowledge of answerCloseWaiters.current.values()) acknowledge();
+    answerCloseWaiters.current.clear();
+    unmountBarrier.current?.resolve();
+  }, []);
+
+  const prepareAnswerClose = useCallback((): Promise<void> => {
+    if (!presentationMounted.current) return Promise.resolve();
+    const id = answerCloseSequence.current + 1;
+    answerCloseSequence.current = id;
+    return new Promise<void>((acknowledge) => {
+      answerCloseWaiters.current.set(id, acknowledge);
+      dispatch({ type: 'prepareAnswerClose', id });
+    });
+  }, [dispatch]);
+
+
   const pendingPermission = useSyncExternalStore(
     (onChange) => permissions.subscribe(onChange),
     permissions.getSnapshot,
@@ -710,8 +751,11 @@ export function App({
                 // text, leaving a visible duplicate. Commit an answer-free frame
                 // first; the authoritative event still follows through the ordinary
                 // reducer path, in order, and no text/event is suppressed.
-                dispatch({ type: 'prepareAnswerClose' });
-                await waitUntilRenderFlush();
+                const unmounted = unmountBarrier.current?.promise ?? Promise.resolve();
+                await Promise.race([prepareAnswerClose(), unmounted]);
+                if (presentationMounted.current) {
+                  await Promise.race([waitUntilRenderFlush(), unmounted]);
+                }
               }
               dispatch({ type: 'streamEvent', event });
               if (event.type === 'contentBlockEvent' && event.contentBlock.type === 'textBlock') {
@@ -816,7 +860,7 @@ export function App({
 
       return !failed;
     },
-    [returnQueuedToEditor, runtime, waitUntilRenderFlush],
+    [prepareAnswerClose, returnQueuedToEditor, runtime, waitUntilRenderFlush],
   );
 
   const submit = useCallback(

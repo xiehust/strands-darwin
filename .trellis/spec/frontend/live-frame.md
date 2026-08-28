@@ -361,10 +361,12 @@ alternative redraws the whole tail per delta
 - **Closing a live tail is a two-render terminal handoff.** A text `contentBlockEvent` would otherwise
   remove the mutable tail and append the same text to `<Static>` in one Ink render. On a scrolled
   terminal the old live rows can then escape into scrollback before Static writes them again. The
-  interactive driver dispatches `prepareAnswerClose`, awaits Ink's public `waitUntilRenderFlush()`,
-  and only then publishes the unchanged content-block event through `turnReducer`. This exception is
-  close-boundary-only: deltas, tools and every other event remain directly streamed, no text is
-  deduplicated, and the transient action changes neither `committedAnswer` nor replay/trajectory.
+  interactive driver dispatches a monotonically identified `prepareAnswerClose`, awaits a React
+  layout-effect acknowledgement of that specific answer-free commit, then awaits Ink's public
+  `waitUntilRenderFlush()` before publishing the unchanged content-block event through `turnReducer`.
+  Cancellation/unmount resolves pending acknowledgements so stream consumption cannot hang. This
+  exception is close-boundary-only: deltas, tools and every other event remain directly streamed, no
+  text is deduplicated, and the transient action changes neither `committedAnswer` nor replay/trajectory.
 - **The label and the blank row belong to specific pieces.** `AnswerPart` is
   `whole | first | middle | last`: label on `whole`/`first`, bottom margin on `whole`/`last`. Ink
   fixes a margin when it writes the entry, so this cannot be decided later — and `formatReplay` must

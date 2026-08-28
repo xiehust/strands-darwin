@@ -118,8 +118,9 @@ header('streaming into history — terminal handoff preserves reducer truth');
   let state = streamChars(initialTurnState, 'alpha\nbeta\ngamma');
   const committed = state.committedAnswer;
   assert('the closing tail is live before the terminal handoff', state.liveText === 'beta\ngamma');
-  state = turnReducer(state, { type: 'prepareAnswerClose' });
+  state = turnReducer(state, { type: 'prepareAnswerClose', id: 7 });
   assert('the terminal handoff clears only the mutable answer rows', state.liveText === '');
+  assert('the terminal handoff exposes its specific React commit identity', state.answerCloseCommit === 7);
   assert('the terminal handoff preserves reconciliation state and history',
     state.committedAnswer === committed && assembled(state) === committed);
   state = stream(state, close('alpha\nbeta\ngamma'));

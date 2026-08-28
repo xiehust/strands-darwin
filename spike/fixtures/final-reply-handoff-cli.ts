@@ -11,20 +11,18 @@ const CHECKPOINT = path.join(process.cwd(), 'final-reply-handoff-blocked');
 const RELEASE = path.join(process.cwd(), 'final-reply-handoff-release');
 
 /**
- * The tail matches the reported failure shape: most lines become Static while
- * streaming, while the final non-blank completed line, blank line and prompt stay
- * live until the authoritative content block closes.
+ * A long, wrapping CJK reply matching the reported failure shape. The final
+ * paragraph is yielded separately, then held live before the block closes;
+ * everything before it has already exercised live-to-Static scrolling in the
+ * short viewport.
  */
-export const FINAL_REPLY = [
-  'FINAL-HANDOFF-VERIFY-1',
-  'FINAL-HANDOFF-VERIFY-2',
-  'FINAL-HANDOFF-VERIFY-3',
-  'FINAL-HANDOFF-VERIFY-4',
-  'FINAL-HANDOFF-VERIFY-5',
-  'FINAL-HANDOFF-LAST-COMPLETED',
-  '',
-  'FINAL-HANDOFF-REPLY-PROMPT',
-].join('\n');
+const BODY = Array.from(
+  { length: 18 },
+  (_, index) => `第${String(index + 1).padStart(2, '0')}段：这是用于终端滚动回归的长篇中文回答，内容持续换行并进入静态历史。`,
+).join('\n\n');
+
+const FINAL_PARAGRAPH = '末段唯一标记：提交边界完成后，这一整段中文只能在终端历史中保留一次。';
+const FINAL_REPLY_PREFIX = `${BODY}\n\n`;
 
 class FinalReplyHandoffModel extends Model<BaseModelConfig> {
   private config: BaseModelConfig = { modelId: 'fake.final-reply-handoff', contextWindowLimit: 200_000 };
@@ -38,14 +36,18 @@ class FinalReplyHandoffModel extends Model<BaseModelConfig> {
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     yield { type: 'modelContentBlockStartEvent' };
 
-    const text = this.calls === 1 ? FINAL_REPLY : 'FINAL-HANDOFF-NEXT-TURN';
-    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text } };
-
     if (this.calls === 1) {
-      writeFileSync(CHECKPOINT, 'tail is live before content stop\n');
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: FINAL_REPLY_PREFIX } };
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: FINAL_PARAGRAPH } };
+      // Pause only after App has consumed the final delta. The PTY test waits until
+      // that paragraph is visibly part of the mutable frame before allowing the
+      // authoritative block to close, so it exercises the actual handoff race.
+      writeFileSync(CHECKPOINT, 'final paragraph yielded; content stop blocked\n');
       const deadline = Date.now() + 30_000;
       while (!existsSync(RELEASE) && Date.now() < deadline) await delay(20);
       if (!existsSync(RELEASE)) throw new Error('final reply handoff release timed out');
+    } else {
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'FINAL-HANDOFF-NEXT-TURN' } };
     }
 
     yield { type: 'modelContentBlockStopEvent' };

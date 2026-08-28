@@ -112,6 +112,8 @@ export interface TurnState {
   history: HistoryItem[];
   /** Assistant text still arriving, and not yet committed to history. */
   liveText: string;
+  /** Latest terminal-only close preparation committed by React. */
+  answerCloseCommit: number;
   /**
    * Text of the in-flight answer already committed to `<Static>`, newlines
    * included, `''` when no piece of the current answer has been written yet.
@@ -145,6 +147,7 @@ export interface TurnState {
 export const initialTurnState: TurnState = {
   history: [],
   liveText: '',
+  answerCloseCommit: 0,
   committedAnswer: '',
   thinking: false,
   activeTools: [],
@@ -165,8 +168,8 @@ export type TurnAction =
   | { type: 'toggleToolDetails' }
   | { type: 'subagentProgress'; progress: SubagentDispatchProgress }
   | { type: 'streamEvent'; event: AgentStreamEvent }
-  /** Clears the mutable answer rows before the same tail is committed to Static. */
-  | { type: 'prepareAnswerClose' }
+  /** Clears mutable answer rows and identifies the React commit the driver must await. */
+  | { type: 'prepareAnswerClose'; id: number }
   | { type: 'turnEnded' }
   | { type: 'clear' }
   /** A `!` command started: one pseudo-tool row in the live panel (live only, never replayed). */
@@ -229,10 +232,12 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       // Ink cannot atomically move mutable rows into `<Static>`: if the same
       // render removes `liveText` and appends that text to history, some terminals
       // retain the old rows in scrollback before Static writes them again. The
-      // driver flushes this answer-free state before publishing contentBlockEvent.
+      // monotonically identified state change lets the driver await this specific
+      // React commit before flushing Ink and publishing contentBlockEvent.
       // `committedAnswer` stays intact because closeAnswer still reconciles the
       // authoritative block against every piece already written to Static.
-      return state.liveText === '' ? state : { ...state, liveText: '' };
+      if (action.id <= state.answerCloseCommit) return state;
+      return { ...state, liveText: '', answerCloseCommit: action.id };
 
     case 'turnEnded': {
       return finishTurn(state);

@@ -2409,10 +2409,9 @@ async function finalReplyHandoff(): Promise<void> {
   const entry = path.join(REPO_ROOT, 'spike/fixtures/final-reply-handoff-cli.ts');
   const checkpoint = path.join(WORK_DIR, 'final-reply-handoff-blocked');
   const release = path.join(WORK_DIR, 'final-reply-handoff-release');
-  const lastCompleted = 'FINAL-HANDOFF-LAST-COMPLETED';
-  const replyPrompt = 'FINAL-HANDOFF-REPLY-PROMPT';
-  const rows = 30;
-  const tui = startTui({ cwd: WORK_DIR, entry, cols: 100, rows });
+  const finalParagraph = '末段唯一标记：提交边界完成后，这一整段中文只能在终端历史中保留一次。';
+  const rows = 20;
+  const tui = startTui({ cwd: WORK_DIR, entry, cols: 46, rows });
 
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
@@ -2422,29 +2421,36 @@ async function finalReplyHandoff(): Promise<void> {
       timeoutMs: 30_000,
       label: 'the final-reply pre-close checkpoint',
     });
-    await tui.waitFor(replyPrompt, { timeoutMs: 30_000, from: turn, settleMs: 100 });
-    assert('the held-back final line and reply prompt are live before content close',
-      tui.frame.includes(lastCompleted) && tui.frame.includes(replyPrompt));
-    assert('the turn remains busy while the authoritative block is held',
-      tui.frame.includes('working…'));
+    await tui.waitFor('终端滚动回归', { timeoutMs: 30_000, from: turn, settleMs: 100 });
+    assert('the long CJK prefix has filled the constrained terminal before the final paragraph',
+      tui.screen.slice(turn).includes('终端滚动回归'));
+    await tui.waitUntil(() => {
+      const frame = tui.frame.replace(/\s+/gu, '');
+      return frame.includes(finalParagraph.replace(/\s+/gu, '')) && frame.includes('working…');
+    }, {
+      timeoutMs: 30_000,
+      label: 'the live final paragraph immediately before content close',
+      settleMs: 100,
+    });
+    assert('the final paragraph is still mutable while the authoritative block is held',
+      tui.frame.replace(/\s+/gu, '').includes(finalParagraph.replace(/\s+/gu, '')));
 
     const rawBeforeRelease = tui.raw.length;
     await writeFile(release, 'release\n');
     await waitForIdle(tui, 30_000);
     const closeBytes = tui.raw.slice(rawBeforeRelease);
-    const firstStaticTail = closeBytes.indexOf(lastCompleted);
-    assert('an answer-free busy frame is written before the tail enters Static',
+    const firstStaticTail = closeBytes.indexOf(finalParagraph.slice(0, 8));
+    assert('an answer-free busy frame is written before the final paragraph enters Static',
       firstStaticTail > 0 && stripAnsi(closeBytes.slice(0, firstStaticTail)).includes('working…'));
 
     const next = tui.mark();
     tui.submit('ok');
     await tui.waitFor('FINAL-HANDOFF-NEXT-TURN', { timeoutMs: 30_000, from: next });
     await waitForIdle(tui, 30_000);
-    const terminal = reconstructTerminalLines(tui.raw, rows);
-    assert('the final completed line remains in terminal history exactly once after the next input',
-      terminal.filter((line) => line === lastCompleted).length === 1);
-    assert('the final reply prompt remains in terminal history exactly once after the next input',
-      terminal.filter((line) => line === replyPrompt).length === 1);
+    const terminalText = reconstructTerminalLines(tui.raw, rows).join('\n').replace(/\s+/gu, '');
+    const compactFinalParagraph = finalParagraph.replace(/\s+/gu, '');
+    assert('the final CJK paragraph remains in terminal history exactly once after the next turn',
+      terminalText.split(compactFinalParagraph).length - 1 === 1);
 
     tui.submit('/exit');
     assert('final-reply handoff pty exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
