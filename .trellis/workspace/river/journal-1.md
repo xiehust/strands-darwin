@@ -962,3 +962,36 @@ cursor/multiline/completion/recall/recallEmpty/queue/historySearch all green.
 ### Status
 
 [OK] **Completed**
+
+## Session 37: Terminal attention bell (SER-043)
+
+**Date**: 2026-08-28
+**Task**: Terminal attention bell (SER-043)
+**Branch**: `main`
+
+### Summary
+
+Added a config-gated terminal attention bell: new session-scoped `terminalBell`
+boolean (default false, non-boolean refuses startup, survives /model, refused inside
+a models entry), `src/tui/terminal-bell.ts` as the sole BEL writer, wired at the two
+driver-owned lifecycle publication points only — the PermissionQueue observer in
+cli.ts runInteractive and the runTurn finally next to observeTurnComplete in App.tsx.
+Off path performs no write at all; headless/child agents never ring. New free pty
+suite `verify-terminal-bell.ts` (offline tool-calling model through the real CLI;
+counts raw un-stripped \x07: exactly 1 at permission publication, +1 per completed
+turn, 0 when disabled) plus a `terminalBell` block in verify-config.ts; both in
+pnpm test. Discovered: a project-root fileEditor write is statically safe in default
+mode, so the fixture uses bash redirection to force a deterministic prompt. Specs:
+error-handling degradation rows + live-frame SER-043 contract. Typecheck, full
+pnpm test (twice), and pnpm build all green.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `94909b8` | feat(tui): config-gated terminal attention bell |
+| `e8376df` | chore(task): archive 08-28-terminal-bell |
+
+### Status
+
+[OK] **Completed**
