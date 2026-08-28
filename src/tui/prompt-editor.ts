@@ -178,23 +178,72 @@ export function killToRowEdge(value: EditorValue, layout: EditorLayout, edge: 's
 export function deleteWordBefore(value: EditorValue): EditorValue {
   const cursor = snapCursor(value.text, value.cursor);
   if (cursor.offset === 0) return { ...value, cursor };
-
-  let start = cursor.offset;
-  while (start > 0) {
-    const previous = previousBoundary(value.text, start);
-    if (!/^\s+$/.test(value.text.slice(previous, start))) break;
-    start = previous;
-  }
-  while (start > 0) {
-    const previous = previousBoundary(value.text, start);
-    if (/^\s+$/.test(value.text.slice(previous, start))) break;
-    start = previous;
-  }
-
+  const start = wordBoundaryBefore(value.text, cursor.offset);
   return {
     text: value.text.slice(0, start) + value.text.slice(cursor.offset),
     cursor: { offset: start, affinity: 'downstream' },
   };
+}
+
+/**
+ * Deletes the whitespace-delimited word after the cursor (readline Alt+D):
+ * leading whitespace first, then every non-whitespace grapheme — the forward
+ * mirror of {@link deleteWordBefore}, with the same grapheme guarantees.
+ */
+export function deleteWordAfter(value: EditorValue): EditorValue {
+  const cursor = snapCursor(value.text, value.cursor);
+  if (cursor.offset === value.text.length) return { ...value, cursor };
+  const end = wordBoundaryAfter(value.text, cursor.offset);
+  return {
+    text: value.text.slice(0, cursor.offset) + value.text.slice(end),
+    cursor: { offset: cursor.offset, affinity: 'downstream' },
+  };
+}
+
+/**
+ * Moves the cursor one whitespace-delimited word (readline Alt+B / Alt+F and
+ * the Alt/Ctrl+Arrow chords). The boundaries are exactly the ones the word
+ * deletions use, so a jump and its delete always agree — and, like them, a
+ * grapheme is never split. Affinity follows {@link moveHorizontal}: leftward
+ * landings read as downstream, rightward as upstream.
+ */
+export function moveWordHorizontal(text: string, cursor: EditorCursor, direction: -1 | 1): EditorCursor {
+  const safe = snapCursor(text, cursor);
+  return direction < 0
+    ? { offset: wordBoundaryBefore(text, safe.offset), affinity: 'downstream' }
+    : { offset: wordBoundaryAfter(text, safe.offset), affinity: 'upstream' };
+}
+
+/** Start of the word before `offset`: skip whitespace back, then the word. */
+function wordBoundaryBefore(text: string, offset: number): number {
+  let start = offset;
+  while (start > 0) {
+    const previous = previousBoundary(text, start);
+    if (!/^\s+$/.test(text.slice(previous, start))) break;
+    start = previous;
+  }
+  while (start > 0) {
+    const previous = previousBoundary(text, start);
+    if (/^\s+$/.test(text.slice(previous, start))) break;
+    start = previous;
+  }
+  return start;
+}
+
+/** End of the word after `offset`: skip whitespace forward, then the word. */
+function wordBoundaryAfter(text: string, offset: number): number {
+  let end = offset;
+  while (end < text.length) {
+    const next = nextBoundary(text, end);
+    if (!/^\s+$/.test(text.slice(end, next))) break;
+    end = next;
+  }
+  while (end < text.length) {
+    const next = nextBoundary(text, end);
+    if (/^\s+$/.test(text.slice(end, next))) break;
+    end = next;
+  }
+  return end;
 }
 
 export function moveVertical(

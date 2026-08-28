@@ -75,6 +75,7 @@ import type { PermissionQueue } from './permission-queue.js';
 import {
   backspaceAtCursor,
   deleteAtCursor,
+  deleteWordAfter,
   deleteWordBefore,
   insertAtCursor,
   killToRowEdge,
@@ -82,6 +83,7 @@ import {
   moveHorizontal,
   moveToRowEdge,
   moveVertical,
+  moveWordHorizontal,
   type EditorValue,
 } from './prompt-editor.js';
 import {
@@ -1987,6 +1989,27 @@ export function App({
       return;
     }
 
+    // Word chords (readline Alt+B/Alt+F/Alt+D). The parser strips the ESC
+    // prefix, so these arrive as key.meta plus the bare letter — after the
+    // owners above (a pending permission took the keyboard, search modes took
+    // their query keys) and before the generic meta ignore below.
+    if (key.meta && !key.ctrl && (typed === 'b' || typed === 'f')) {
+      setEditor((current) => ({
+        ...current,
+        cursor: moveWordHorizontal(current.text, current.cursor, typed === 'b' ? -1 : 1),
+      }));
+      preferredColumn.current = undefined;
+      return;
+    }
+
+    if (key.meta && !key.ctrl && typed === 'd') {
+      setEditor((current) => deleteWordAfter(current));
+      preferredColumn.current = undefined;
+      setSelectedCompletion(0);
+      endRecall();
+      return;
+    }
+
     // No guard for a streaming turn: typing during one stays allowed, and a
     // submission during one is queued in submit() (SER-027) — local commands
     // like /usage still answer mid-turn immediately. (A pending confirmation is
@@ -2084,6 +2107,19 @@ export function App({
       return;
     }
 
+    // Word jumps on modified arrows (terminals encode Alt+Left as CSI 1;3D,
+    // Ctrl+Left as CSI 1;5D — both reach Ink as arrow plus meta/ctrl). After
+    // the menu's Tab/Up/Down ownership above; plain arrows keep their exact
+    // one-grapheme contract below.
+    if ((key.leftArrow || key.rightArrow) && (key.ctrl || key.meta)) {
+      setEditor((current) => ({
+        ...current,
+        cursor: moveWordHorizontal(current.text, current.cursor, key.leftArrow ? -1 : 1),
+      }));
+      preferredColumn.current = undefined;
+      return;
+    }
+
     if (key.leftArrow || key.rightArrow) {
       setEditor((current) => ({
         ...current,
@@ -2121,7 +2157,12 @@ export function App({
     }
 
     if (key.backspace || key.delete) {
-      setEditor((current) => key.backspace ? backspaceAtCursor(current) : deleteAtCursor(current));
+      // Alt+Backspace (ESC+DEL or ESC+BS → meta+backspace) deletes the word
+      // before the cursor with the exact primitive Ctrl+W uses; Alt+Delete is
+      // its forward mirror, matching the unmodified pairing below.
+      setEditor((current) => key.meta
+        ? (key.backspace ? deleteWordBefore(current) : deleteWordAfter(current))
+        : (key.backspace ? backspaceAtCursor(current) : deleteAtCursor(current)));
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
       endRecall();

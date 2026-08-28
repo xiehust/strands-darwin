@@ -4,6 +4,7 @@ import {
   backspaceAtCursor,
   cellWidth,
   deleteAtCursor,
+  deleteWordAfter,
   deleteWordBefore,
   insertAtCursor,
   killToRowEdge,
@@ -11,6 +12,7 @@ import {
   moveHorizontal,
   moveToRowEdge,
   moveVertical,
+  moveWordHorizontal,
   type EditorValue,
 } from '../src/tui/prompt-editor.js';
 import { assert, header, report } from './shared.js';
@@ -182,6 +184,86 @@ check('ctrl+w on an empty draft or at offset 0 is a no-op', () => {
 });
 check('ctrl+w on pure whitespace deletes all of it', () => {
   nodeAssert.equal(wordDelete('   ').text, '');
+});
+
+header('prompt editor — word navigation and forward word delete');
+const wordLeft = (text: string, offset: number): number =>
+  moveWordHorizontal(text, { offset, affinity: 'upstream' }, -1).offset;
+const wordRight = (text: string, offset: number): number =>
+  moveWordHorizontal(text, { offset, affinity: 'downstream' }, 1).offset;
+check('word left jumps to the start of the previous ASCII word', () => {
+  nodeAssert.deepEqual(
+    moveWordHorizontal('alpha beta', { offset: 10, affinity: 'upstream' }, -1),
+    { offset: 6, affinity: 'downstream' },
+  );
+  nodeAssert.equal(wordLeft('alpha beta', 6), 0);
+});
+check('word right jumps to the end of the next ASCII word', () => {
+  nodeAssert.deepEqual(
+    moveWordHorizontal('alpha beta', { offset: 0, affinity: 'downstream' }, 1),
+    { offset: 5, affinity: 'upstream' },
+  );
+  nodeAssert.equal(wordRight('alpha beta', 5), 10);
+});
+check('a punctuation run is one whitespace-delimited word, matching ctrl+w', () => {
+  nodeAssert.equal(wordLeft('run --flag=value now', 17), 4);
+  nodeAssert.equal(wordRight('run --flag=value now', 3), 16);
+});
+check('word jumps consume a whole whitespace run', () => {
+  nodeAssert.equal(wordLeft('a   b', 4), 0);
+  nodeAssert.equal(wordRight('a   b', 1), 5);
+});
+check('word jumps land on grapheme boundaries around joined emoji', () => {
+  const text = `${family} ok`;
+  nodeAssert.equal(wordLeft(text, text.length), family.length + 1);
+  nodeAssert.equal(wordLeft(text, family.length + 1), 0);
+  nodeAssert.equal(wordRight(text, 0), family.length);
+});
+check('word jumps treat a CJK run as one word', () => {
+  nodeAssert.equal(wordLeft('你好 世界', 5), 3);
+  nodeAssert.equal(wordLeft('你好 世界', 3), 0);
+  nodeAssert.equal(wordRight('你好 世界', 2), 5);
+});
+check('word jumps cross a newline like any other whitespace', () => {
+  nodeAssert.equal(wordLeft('alpha\nbeta', 6), 0);
+  nodeAssert.equal(wordRight('alpha\nbeta', 5), 10);
+});
+check('word jumps at the edges of the text are no-ops', () => {
+  nodeAssert.equal(wordLeft('alpha', 0), 0);
+  nodeAssert.equal(wordRight('alpha', 5), 5);
+  nodeAssert.equal(wordLeft('', 0), 0);
+  nodeAssert.equal(wordRight('', 0), 0);
+});
+
+const wordDeleteAfter = (text: string, offset: number): EditorValue =>
+  deleteWordAfter({ text, cursor: { offset, affinity: 'downstream' } });
+check('alt+d deletes the whitespace-delimited word after the cursor', () => {
+  nodeAssert.deepEqual(wordDeleteAfter('alpha beta', 0), {
+    text: ' beta',
+    cursor: { offset: 0, affinity: 'downstream' },
+  });
+});
+check('alt+d consumes leading whitespace before the word', () => {
+  nodeAssert.equal(wordDeleteAfter('alpha   beta', 5).text, 'alpha');
+});
+check('alt+d mid-word deletes only from the cursor', () => {
+  nodeAssert.deepEqual(wordDeleteAfter('alpha beta', 8), {
+    text: 'alpha be',
+    cursor: { offset: 8, affinity: 'downstream' },
+  });
+});
+check('alt+d crosses a newline like any other whitespace', () => {
+  nodeAssert.equal(wordDeleteAfter('alpha\nbeta', 5).text, 'alpha');
+});
+check('alt+d treats joined emoji and combining sequences as word graphemes', () => {
+  nodeAssert.equal(wordDeleteAfter(`ok ${family}e\u0301`, 2).text, 'ok');
+});
+check('alt+d at the end of the text or on an empty draft is a no-op', () => {
+  nodeAssert.equal(wordDeleteAfter('alpha', 5).text, 'alpha');
+  nodeAssert.equal(wordDeleteAfter('', 0).text, '');
+});
+check('alt+d on pure whitespace deletes all of it', () => {
+  nodeAssert.equal(wordDeleteAfter('   ', 0).text, '');
 });
 
 report();

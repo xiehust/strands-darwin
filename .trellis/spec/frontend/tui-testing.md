@@ -74,6 +74,7 @@ Any change to `App` input handling or `InputBox` rendering crosses the terminal-
 - Preserve LF and tab; drop other C0 controls and DEL.
 - Paste never submits. It inserts the entire payload at the cursor, including all line breaks.
 - Render the first logical line after `you> ` and later explicit lines after `...> `; soft-wrapped rows align under the content. Cursor, arrows, Home/End, and deletion use grapheme boundaries and terminal-cell widths.
+- Word-wise chords share Ctrl+W's whitespace-delimited word notion and grapheme boundaries: Alt/Ctrl+Arrow (CSI `1;3`/`1;5` modifiers) and Alt+B/Alt+F jump word-wise, Alt+Backspace (ESC+DEL/ESC+BS → meta+backspace) deletes the word before the cursor with the same primitive Ctrl+W uses, Alt+D the word after. They sit after permission/search/menu ownership and before the generic ctrl/meta ignore, so no earlier key contract changes. In pty tests only escape sequences and backspace bytes split out of a batched write — Ink's input parser folds bare control bytes into the surrounding text chunk, where draft normalization strips them — so drive cursor homing with CSI Home/End, not Ctrl+A/E (`spike/verify-tui.ts wordNav`).
 - Plain Enter still submits, and slash completion still takes Up/Down/Enter precedence when shown.
 - Do not enable terminal mouse tracking: native scrollback and drag-to-select take priority over click-to-position editing.
 - A permission prompt owns paste and keyboard input while visible.

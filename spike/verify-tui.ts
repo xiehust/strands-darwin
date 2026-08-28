@@ -879,6 +879,99 @@ async function cursorEditing(): Promise<void> {
 }
 
 /**
+ * Word-wise composer navigation and deletion (SER-042). Every chord is sent as
+ * the raw bytes a terminal emits — CSI-modified arrows (Alt = `1;3`, Ctrl =
+ * `1;5`), ESC+letter for Alt+B/F/D, ESC+DEL for Alt+Backspace — and asserted
+ * by inserting a unique marker at the landing offset. Only escape sequences and
+ * backspace bytes survive batching as their own key events (Ink's input parser
+ * folds bare control bytes like Ctrl+A into the surrounding text chunk, where
+ * draft normalization strips them), so cursor homing and draft clearing use
+ * CSI Home/End/Down plus repeated DEL bytes. Nothing is submitted, so this
+ * makes no model call. The neighbouring key owners (completion menu, queue
+ * take-back, recall) keep their own scenarios; this one proves the new chords
+ * act on the draft without submitting it.
+ */
+async function wordNavigation(): Promise<void> {
+  header('TUI — word-wise navigation and deletion');
+
+  const dir = '/tmp/darwin-word-nav-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  const tui = startTui({ cwd: dir, cols: 60, rows: 20 });
+
+  const home = '\u001b[H';
+  // Down to the last visual row, End, then enough backspaces for any draft here.
+  const clearDraft = `\u001b[B\u001b[B\u001b[F${'\u007f'.repeat(30)}`;
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    // Alt+Left jumps to the start of the previous word, not one grapheme.
+    let mark = tui.mark();
+    tui.send('alpha beta\u001b[1;3D1');
+    await tui.waitFor('you> alpha 1beta', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('alt+left lands at the previous word boundary', tui.screen.slice(mark).includes('you> alpha 1beta'));
+
+    // Ctrl+Left is the same jump; twice from the end reaches the draft start.
+    mark = tui.mark();
+    tui.send(`${clearDraft}alpha beta\u001b[1;5D\u001b[1;5D2`);
+    await tui.waitFor('you> 2alpha beta', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('ctrl+left repeats to the draft start', tui.screen.slice(mark).includes('you> 2alpha beta'));
+
+    // Ctrl+Right from the start lands after the second word, not the first.
+    mark = tui.mark();
+    tui.send(`${clearDraft}aa bb cc${home}\u001b[1;5C\u001b[1;5C3`);
+    await tui.waitFor('you> aa bb3 cc', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('ctrl+right lands at the next word end', tui.screen.slice(mark).includes('you> aa bb3 cc'));
+
+    // Alt+B / Alt+F are the ESC-prefixed chord equivalents.
+    mark = tui.mark();
+    tui.send(`${clearDraft}alpha beta\u001bb4`);
+    await tui.waitFor('you> alpha 4beta', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('alt+b jumps back one word', tui.screen.slice(mark).includes('you> alpha 4beta'));
+
+    mark = tui.mark();
+    tui.send(`${clearDraft}alpha beta${home}\u001bf5`);
+    await tui.waitFor('you> alpha5 beta', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('alt+f jumps forward one word', tui.screen.slice(mark).includes('you> alpha5 beta'));
+
+    // Word jumps cross a draft newline like any other whitespace.
+    mark = tui.mark();
+    tui.send(`${clearDraft}one\ntwo\u001bb\u001bb6`);
+    await tui.waitFor('you> 6one', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('alt+b crosses a draft line boundary', tui.screen.slice(mark).includes('you> 6one'));
+
+    // Alt+Backspace (ESC+DEL) deletes the word before the cursor whole —
+    // including a joined emoji, which goes as one word, never split.
+    mark = tui.mark();
+    tui.send(`${clearDraft}gamma delta\u001b\u007fW7`);
+    await tui.waitFor('you> gamma W7', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('alt+backspace deletes the previous word', tui.screen.slice(mark).includes('you> gamma W7'));
+
+    mark = tui.mark();
+    tui.send(`${clearDraft}hi 👩‍👩‍👧‍👦👩‍👩‍👧‍👦\u001b\u007fok8`);
+    await tui.waitFor('you> hi ok8', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('alt+backspace removes a joined-emoji word whole', tui.screen.slice(mark).includes('you> hi ok8'));
+
+    // Alt+D deletes the word after the cursor.
+    mark = tui.mark();
+    tui.send(`${clearDraft}epsilon zeta${home}\u001bd9`);
+    await tui.waitFor('you> 9 zeta', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('alt+d deletes the following word', tui.screen.slice(mark).includes('you> 9 zeta'));
+
+    assert('word chords never submit the draft', !tui.screen.includes('working…'));
+
+    tui.send('\u0004');
+
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('word navigation scenario exits cleanly', code === 0);
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Completion uses a temporary project with one skill, one custom command, and a
  * colliding command. Nothing is submitted, so this makes no model call.
  */
@@ -3839,6 +3932,7 @@ const SCENARIOS = {
   permissionEscape,
   contextOverflow: contextOverflowFailure,
   cursor: cursorEditing,
+  wordNav: wordNavigation,
   completion: slashCompletion,
   pathCompletion,
   historySearch: promptHistorySearch,
