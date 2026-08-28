@@ -13,6 +13,9 @@ import {
   moveToRowEdge,
   moveVertical,
   moveWordHorizontal,
+  popUndo,
+  pushUndo,
+  UNDO_CAP,
   type EditorValue,
 } from '../src/tui/prompt-editor.js';
 import { assert, header, report } from './shared.js';
@@ -264,6 +267,51 @@ check('alt+d at the end of the text or on an empty draft is a no-op', () => {
 });
 check('alt+d on pure whitespace deletes all of it', () => {
   nodeAssert.equal(wordDeleteAfter('   ', 0).text, '');
+});
+
+header('prompt editor — composer undo stack (SER-044)');
+check('the cap is the specified 16', () => nodeAssert.equal(UNDO_CAP, 16));
+check('destroy-then-undo restores text and cursor exactly for every covered chord', () => {
+  const columns = 40;
+  const chords: readonly ((value: EditorValue) => EditorValue)[] = [
+    (value) => killToRowEdge(value, layoutEditor(value.text, columns, value.cursor), 'end'),
+    (value) => killToRowEdge(value, layoutEditor(value.text, columns, value.cursor), 'start'),
+    deleteWordBefore,
+    deleteWordAfter,
+  ];
+  for (const chord of chords) {
+    const before: EditorValue = { text: 'alpha beta\ngamma', cursor: { offset: 8, affinity: 'downstream' } };
+    const after = chord(before);
+    nodeAssert.notEqual(after.text, before.text);
+    const stack = pushUndo([], before);
+    const popped = popUndo(stack);
+    nodeAssert.ok(popped !== undefined);
+    nodeAssert.deepEqual(popped.value, before);
+    nodeAssert.deepEqual(popped.stack, []);
+  }
+});
+check('repeated undo walks further back, newest first', () => {
+  const first = atEnd('one');
+  const second = atEnd('one two');
+  let stack = pushUndo(pushUndo([], first), second);
+  let popped = popUndo(stack);
+  nodeAssert.ok(popped !== undefined);
+  nodeAssert.deepEqual(popped.value, second);
+  stack = popped.stack;
+  popped = popUndo(stack);
+  nodeAssert.ok(popped !== undefined);
+  nodeAssert.deepEqual(popped.value, first);
+  nodeAssert.equal(popUndo(popped.stack), undefined);
+});
+check('pushing past the cap drops the oldest snapshot, never the newest', () => {
+  let stack: readonly EditorValue[] = [];
+  for (let i = 0; i <= UNDO_CAP; i += 1) stack = pushUndo(stack, atEnd(`draft ${i}`));
+  nodeAssert.equal(stack.length, UNDO_CAP);
+  nodeAssert.equal(stack[0]?.text, 'draft 1');
+  nodeAssert.equal(stack[UNDO_CAP - 1]?.text, `draft ${UNDO_CAP}`);
+});
+check('undo on an empty stack is a harmless no-op', () => {
+  nodeAssert.equal(popUndo([]), undefined);
 });
 
 report();

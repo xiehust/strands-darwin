@@ -972,6 +972,143 @@ async function wordNavigation(): Promise<void> {
 }
 
 /**
+ * Composer undo (SER-044): Ctrl+_ arrives as raw byte 0x1f and restores the
+ * draft a kill/word-delete chord destroyed. Nothing model-bound is submitted —
+ * the only submission is the local `/usage` report — so this makes no model call.
+ */
+async function composerUndo(): Promise<void> {
+  header('TUI — composer undo (Ctrl+_)');
+
+  const dir = '/tmp/darwin-composer-undo-tui';
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true });
+  const tui = startTui({ cwd: dir, cols: 60, rows: 20 });
+
+  // Raw 0x1f: what a terminal sends for both Ctrl+_ and Ctrl+-.
+  const undo = '\u001f';
+  // Down to the last visual row, End, then enough backspaces for any draft here.
+  const clearDraft = `\u001b[B\u001b[B\u001b[F${'\u007f'.repeat(30)}`;
+
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+
+    // Two pty rules shape every step (tui-testing spec): Ink's input parser
+    // splits only escape sequences and backspace bytes out of a batched chunk —
+    // a bare control byte glued to other bytes folds into the text chunk, where
+    // draft normalization strips it — and bytes sent before Ink's raw mode owns
+    // stdin are eaten by the cooked line discipline (Ctrl+U/Ctrl+W are its
+    // kill/werase). So every control byte goes in its own write, and each write
+    // is separated from the next by a wait on the render it must cause: the
+    // `frame` getter (latest complete repaint only) anchors the kill renders,
+    // and each undo is proven by a marker the restore then *discards*, which no
+    // fold-and-strip path can reproduce.
+    const frameLacks = (needle: string) =>
+      tui.waitUntil(() => !tui.frame.includes(needle), { timeoutMs: 30_000, settleMs: 200 });
+
+    let mark = tui.mark();
+    tui.send('alpha beta');
+    await tui.waitFor('you> alpha beta', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+
+    // Ctrl+U kills the whole draft; undo restores text and cursor exactly,
+    // discarding the marker typed after the kill.
+    tui.send('\u0015');
+    await frameLacks('alpha beta');
+    mark = tui.mark();
+    tui.send('K');
+    await tui.waitFor('you> K', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    mark = tui.mark();
+    tui.send(undo);
+    await tui.waitFor('you> alpha beta', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    tui.send('1');
+    await tui.waitFor('you> alpha beta1', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('ctrl+u then ctrl+_ restores the killed draft, cursor included', tui.screen.slice(mark).includes('you> alpha beta1'));
+
+    // Ctrl+W kills one word; undo brings it back whole.
+    mark = tui.mark();
+    tui.send(`${clearDraft}gamma delta`);
+    await tui.waitFor('you> gamma delta', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    tui.send('\u0017');
+    await frameLacks('delta');
+    mark = tui.mark();
+    tui.send('W');
+    await tui.waitFor('you> gamma W', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    mark = tui.mark();
+    tui.send(undo);
+    await tui.waitFor('you> gamma delta', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    tui.send('2');
+    await tui.waitFor('you> gamma delta2', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('ctrl+w then ctrl+_ restores the deleted word', tui.screen.slice(mark).includes('you> gamma delta2'));
+
+    // Two destructive chords, two undos: repeated Ctrl+_ walks further back.
+    mark = tui.mark();
+    tui.send(`${clearDraft}foo bar`);
+    await tui.waitFor('you> foo bar', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    tui.send('\u0017');
+    await frameLacks('bar');
+    tui.send('\u0015');
+    await frameLacks('foo');
+    mark = tui.mark();
+    tui.send('M');
+    await tui.waitFor('you> M', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    mark = tui.mark();
+    tui.send(undo);
+    await tui.waitFor('you> foo', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    mark = tui.mark();
+    tui.send(undo);
+    await tui.waitFor('you> foo bar', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    tui.send('3');
+    await tui.waitFor('you> foo bar3', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('repeated ctrl+_ walks back through both chords', tui.screen.slice(mark).includes('you> foo bar3'));
+
+    // A multi-line draft round-trips: Ctrl+U kills the second row, undo
+    // restores it on its continuation row with the cursor back at the end.
+    mark = tui.mark();
+    tui.send(`${clearDraft}one\ntwo`);
+    await tui.waitFor('...> two', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    tui.send('\u0015');
+    await frameLacks('two');
+    mark = tui.mark();
+    tui.send('F');
+    await tui.waitFor('...> F', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    mark = tui.mark();
+    tui.send(undo);
+    await tui.waitFor('...> two', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    tui.send('4');
+    await tui.waitFor('...> two4', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('undo restores a multi-line draft exactly', tui.screen.slice(mark).includes('...> two4'));
+
+    // Submission clears the stack: a kill snapshot from before the sent prompt
+    // must not be resurrectable afterwards, even though it was never popped.
+    // The undo byte after the submit needs no render anchor — an empty stack is
+    // deliberately a no-op — so the marker's own render separates the writes.
+    mark = tui.mark();
+    tui.send(`${clearDraft}temp`);
+    await tui.waitFor('you> temp', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    tui.send('\u0015');
+    await frameLacks('temp');
+    mark = tui.mark();
+    tui.submit('/usage');
+    await tui.waitFor('token usage — this run', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    mark = tui.mark();
+    tui.send(undo);
+    await tui.waitUntil(() => true, { timeoutMs: 30_000, settleMs: 300 });
+    tui.send('5');
+    await tui.waitFor('you> 5', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    assert('undo after a submit resurrects nothing', !tui.screen.slice(mark).includes('you> temp'));
+
+    assert('undo chords never submit the draft', !tui.screen.includes('working…'));
+
+    tui.send('\u0004');
+
+    const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
+    assert('composer undo scenario exits cleanly', code === 0);
+  } finally {
+    tui.kill();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Completion uses a temporary project with one skill, one custom command, and a
  * colliding command. Nothing is submitted, so this makes no model call.
  */
@@ -3933,6 +4070,7 @@ const SCENARIOS = {
   contextOverflow: contextOverflowFailure,
   cursor: cursorEditing,
   wordNav: wordNavigation,
+  undo: composerUndo,
   completion: slashCompletion,
   pathCompletion,
   historySearch: promptHistorySearch,

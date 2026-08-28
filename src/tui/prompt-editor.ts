@@ -200,6 +200,36 @@ export function deleteWordAfter(value: EditorValue): EditorValue {
   };
 }
 
+/** Hard cap on composer undo snapshots; pushing past it drops the oldest. */
+export const UNDO_CAP = 16;
+
+/**
+ * The composer undo stack (SER-044): the exact `EditorValue`s destroyed by the
+ * kill/word-delete chords, newest last. Pure immutable data owned by the
+ * caller — the editor module never holds state — and deliberately separate
+ * from the history/rewind search snapshots, which keep their own restore.
+ */
+export type UndoStack = readonly EditorValue[];
+
+/**
+ * Pushes the draft a destructive chord is about to destroy. Bounded: past
+ * {@link UNDO_CAP} entries the oldest snapshot is dropped, never the newest.
+ */
+export function pushUndo(stack: UndoStack, value: EditorValue): UndoStack {
+  const next = [...stack, value];
+  return next.length > UNDO_CAP ? next.slice(next.length - UNDO_CAP) : next;
+}
+
+/**
+ * Pops the newest snapshot (Ctrl+_), or `undefined` when the stack is empty —
+ * the caller treats that as a harmless no-op. Repeated pops walk further back.
+ */
+export function popUndo(stack: UndoStack): { stack: UndoStack; value: EditorValue } | undefined {
+  const value = stack[stack.length - 1];
+  if (value === undefined) return undefined;
+  return { stack: stack.slice(0, -1), value };
+}
+
 /**
  * Moves the cursor one whitespace-delimited word (readline Alt+B / Alt+F and
  * the Alt/Ctrl+Arrow chords). The boundaries are exactly the ones the word

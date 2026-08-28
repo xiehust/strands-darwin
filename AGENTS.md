@@ -52,8 +52,8 @@ pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-ta
 `spike/verify-tui.ts mode`, `spike/verify-tui.ts clear`, `spike/verify-tui.ts completion`,
 `spike/verify-tui.ts pathCompletion`, `spike/verify-tui.ts recall`,
 `spike/verify-tui.ts recallEmpty`, `spike/verify-tui.ts bang`, `spike/verify-tui.ts queue`,
-`spike/verify-tui.ts wordNav` and
-`spike/verify-tui.ts mcp` make no model calls at all, so all twelve are free to run;
+`spike/verify-tui.ts wordNav`, `spike/verify-tui.ts undo` and
+`spike/verify-tui.ts mcp` make no model calls at all, so all thirteen are free to run;
 `completion` is the scenario to re-run after touching the built-in slash commands, since the menu row
 count (`MAX_COMPLETIONS`) has to keep every built-in visible, `pathCompletion` is its `@`
 counterpart, `recall` is the one that keeps `Up`/`Down` shared between the menu, the cursor and
@@ -61,7 +61,9 @@ prompt history (its history is seeded straight into a trajectory record, which i
 nothing), `bang` proves a real `!` command runs, streams and records without the model, `queue`
 proves the SER-027 prompt queue (listing, `Up` take-back, cancel return, `/clear`-family refusal)
 against a `!` busy state, `wordNav` proves the Alt/Ctrl word-jump and word-delete chords act on a
-real pty draft without disturbing the other key owners, and `mcp`
+real pty draft without disturbing the other key owners, `undo` proves Ctrl+_ (raw byte 0x1f)
+restores the drafts those kill/word-delete chords destroy and that a submit clears the undo
+stack, and `mcp`
 proves the `/mcp` report over a real broken-plus-healthy server pair with in-repo fixtures only.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model

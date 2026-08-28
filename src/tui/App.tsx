@@ -84,7 +84,10 @@ import {
   moveToRowEdge,
   moveVertical,
   moveWordHorizontal,
+  popUndo,
+  pushUndo,
   type EditorValue,
+  type UndoStack,
 } from './prompt-editor.js';
 import {
   NO_WORKSPACE_PATHS,
@@ -296,6 +299,23 @@ export function App({
 
   const layout = layoutEditor(draft, columns, editor.cursor);
   const preferredColumn = useRef<number | undefined>(undefined);
+  // Composer undo (SER-044): the drafts destroyed by kill/word-delete chords,
+  // owned here like `preferredColumn`. Cleared wherever the draft leaves the
+  // editor's ownership (submit, queue take-back, recall walk, search accept),
+  // so Ctrl+_ can never resurrect a prompt that was already sent or recorded.
+  const undoStack = useRef<UndoStack>([]);
+  /**
+   * Applies one destructive editing chord: snapshots the exact draft it
+   * destroys (only when it destroys anything — a no-op kill at an edge must
+   * not burn an undo step), then commits the result. Reads the immediate
+   * editor mirror for the same batched-stdin reason `setEditor` does.
+   */
+  const applyDestructive = useCallback((edit: (current: EditorValue) => EditorValue) => {
+    const current = editorRef.current;
+    const next = edit(current);
+    if (next.text !== current.text) undoStack.current = pushUndo(undoStack.current, current);
+    setEditor(next);
+  }, [setEditor]);
 
   // The frame's fixed furniture. Only the header is *measured*: its height depends
   // on nothing below it, so measuring it cannot oscillate. Everything else states
@@ -707,6 +727,9 @@ export function App({
     const returnedImage = entries.find((entry) => entry.image !== undefined)?.image;
     setQueued([]);
     if (returnedImage !== undefined) setAttachedImage(returnedImage);
+    // The queue's entries replace the draft wholesale; the drafts destroyed by
+    // earlier chords are no longer what Ctrl+_ should bring back.
+    undoStack.current = [];
     setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
@@ -877,6 +900,11 @@ export function App({
       // must never borrow a newer attachment still sitting beside the editor.
       const image = queuedEntry === undefined ? attachedImageRef.current : queuedEntry.image;
       if (text === '') return;
+      // A submission ends the draft's life in the editor (accepted, queued, or
+      // expanded into a local command). Conservative on the few busy refusals
+      // that retain the draft: clearing there only loses undo history — the
+      // failure mode this guards against is resurrecting a sent prompt.
+      undoStack.current = [];
 
       // A bounded pure projection of canonical commands and fixed input controls.
       // It owns every whitespace-separated /help form before the busy guard, so an
@@ -1589,6 +1617,9 @@ export function App({
    * the top one, which is the rule that leaves `moveVertical` intact.
    */
   const applyRecalled = useCallback((text: string) => {
+    // A recalled record entry replaces the draft: the recall walk keeps its own
+    // snapshot behavior, and undo must not cross into a different prompt's text.
+    undoStack.current = [];
     setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
     preferredColumn.current = undefined;
     // A recalled `/…` prompt reopens the command menu, so the selection has to start
@@ -1709,6 +1740,10 @@ export function App({
     if (key.return || key.tab) {
       const accepted = acceptPromptHistorySearch(current);
       if (accepted !== undefined) {
+        // Acceptance replaces the draft with a past prompt; the search's own
+        // Escape-restore snapshot stays untouched, but undo must not reach
+        // back into the pre-search draft from a different text.
+        undoStack.current = [];
         setEditor(accepted);
         setSelectedCompletion(0);
         preferredColumn.current = undefined;
@@ -1765,6 +1800,9 @@ export function App({
     recordAction({ type: 'clear' });
     setRuntime(next);
     setRewindSearch(undefined);
+    // The restored session replaces the whole editor state; the selected prompt
+    // returns unsent, and undo must not reach across the session boundary.
+    undoStack.current = [];
     setEditor({ text: selected.prompt, cursor: { offset: selected.prompt.length, affinity: 'upstream' } });
     setSelectedCompletion(0);
     contextWarnLatch.current = createContextWarnLatch();
@@ -1976,8 +2014,25 @@ export function App({
       return;
     }
 
+    // Composer undo (SER-044). Most terminals send both Ctrl+_ and Ctrl+- as
+    // byte 0x1f, which Ink's legacy parser reports as the bare unit separator
+    // with no modifier flags; the kitty protocol reports a real ctrl chord.
+    // An empty stack is a harmless no-op — the key is consumed either way, so
+    // the byte can never fall through into the draft as text.
+    if (typed === '\u001f' || (key.ctrl && (typed === '_' || typed === '-'))) {
+      const popped = popUndo(undoStack.current);
+      if (popped !== undefined) {
+        undoStack.current = popped.stack;
+        setEditor(popped.value);
+        preferredColumn.current = undefined;
+        setSelectedCompletion(0);
+        endRecall();
+      }
+      return;
+    }
+
     if (key.ctrl && (typed === 'k' || typed === 'u')) {
-      setEditor((current) =>
+      applyDestructive((current) =>
         killToRowEdge(current, layoutEditor(current.text, columns, current.cursor), typed === 'k' ? 'end' : 'start'),
       );
       preferredColumn.current = undefined;
@@ -1987,7 +2042,7 @@ export function App({
     }
 
     if (key.ctrl && typed === 'w') {
-      setEditor((current) => deleteWordBefore(current));
+      applyDestructive((current) => deleteWordBefore(current));
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
       endRecall();
@@ -2008,7 +2063,7 @@ export function App({
     }
 
     if (key.meta && !key.ctrl && typed === 'd') {
-      setEditor((current) => deleteWordAfter(current));
+      applyDestructive((current) => deleteWordAfter(current));
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
       endRecall();
@@ -2164,10 +2219,14 @@ export function App({
     if (key.backspace || key.delete) {
       // Alt+Backspace (ESC+DEL or ESC+BS → meta+backspace) deletes the word
       // before the cursor with the exact primitive Ctrl+W uses; Alt+Delete is
-      // its forward mirror, matching the unmodified pairing below.
-      setEditor((current) => key.meta
-        ? (key.backspace ? deleteWordBefore(current) : deleteWordAfter(current))
-        : (key.backspace ? backspaceAtCursor(current) : deleteAtCursor(current)));
+      // its forward mirror, matching the unmodified pairing below. Only the
+      // word variants snapshot for undo — a single-grapheme delete is not the
+      // destructive loss SER-044 guards, and would flood the bounded stack.
+      if (key.meta) {
+        applyDestructive((current) => key.backspace ? deleteWordBefore(current) : deleteWordAfter(current));
+      } else {
+        setEditor((current) => key.backspace ? backspaceAtCursor(current) : deleteAtCursor(current));
+      }
       preferredColumn.current = undefined;
       setSelectedCompletion(0);
       endRecall();
