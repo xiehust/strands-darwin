@@ -16,12 +16,14 @@ right shape for "did this ever appear on screen".
 
 
 For resumed-startup UI, run free scenario `pnpm tsx spike/verify-tui.ts resume`. Seed the fixture with
-a real local SDK `Agent` + `SessionManager` snapshot and the real `TrajectoryRecorder`, then launch
-the real CLI with `--resume <id>` at 120x50. Anchor on the settled prompt and assert recap/request/
-answer ordering before it, the latest-frame row bound, and state-exclusive fresh-session absence.
-Hash `trajectory.jsonl`, `snapshot_latest.json`, and `last-session.json` before and after startup;
-also compare trajectory line count. Exit from the first prompt with a deliberately invalid provider
-model id, so any accidental model/network call fails the scenario rather than passing silently.
+a real local SDK `Agent` + `SessionManager` snapshot and the real `TrajectoryRecorder` over two
+completed turns, then launch the real CLI with `--resume <id>` at 120x50. Anchor on the settled
+prompt and assert the full-transcript ordering before it — recap header, then the earliest turn's
+request/answer, then the last turn's — plus the long request's final line (proving no truncation),
+the latest-frame row bound, and state-exclusive fresh-session absence. Hash `trajectory.jsonl`,
+`snapshot_latest.json`, and `last-session.json` before and after startup; also compare trajectory
+line count. Exit from the first prompt with a deliberately invalid provider model id, so any
+accidental model/network call fails the scenario rather than passing silently.
 - Long-running subagent tests use the registry's injected short heartbeat interval, never a real
   30-second sleep. Assert no event before the interval, stable id/increasing elapsed after it,
   canary absence from progress JSON/rendering, independent cancellation of parallel children,

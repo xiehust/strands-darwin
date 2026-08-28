@@ -1697,7 +1697,8 @@ tool call is silently denied with no prompt shown.
 
 - **Interactive resume restores human context without changing model context (`SER-028`).** After
   `AgentRuntime.create()` has restored a non-empty snapshot, `cli.ts` reads that exact session's
-  trajectory through `loadResumeRecap()` and passes bounded display-only `HistoryItem`s to `App`.
+  trajectory through `loadResumeRecap()` and passes the full replayed transcript as display-only
+  `HistoryItem`s to `App` (`replayRecords` through the ordinary reducer — one projection, uncapped).
   The recap never enters `agent.messages`; `messageCount` before/after is therefore the SDK-restored
   count, with no synthetic user/assistant pair. It calls neither `Agent.stream()` nor a model, saves
   no snapshot, appends no trajectory record and moves no pointer. Quitting from the first prompt is

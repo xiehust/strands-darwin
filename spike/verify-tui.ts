@@ -158,6 +158,10 @@ class ResumeFixtureModel extends Model<BaseModelConfig> {
   private config: BaseModelConfig = { modelId: 'fake.resume-recap', contextWindowLimit: 200_000 };
   calls = 0;
 
+  constructor(private readonly answers: readonly string[]) {
+    super();
+  }
+
   override updateConfig(config: BaseModelConfig): void {
     this.config = { ...this.config, ...config };
   }
@@ -167,10 +171,11 @@ class ResumeFixtureModel extends Model<BaseModelConfig> {
   }
 
   override async *stream(_messages: Message[], _options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    const answer = this.answers[Math.min(this.calls, this.answers.length - 1)] as string;
     this.calls += 1;
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     yield { type: 'modelContentBlockStartEvent' };
-    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'last completed answer' } };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: answer } };
     yield { type: 'modelContentBlockStopEvent' };
     yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
   }
@@ -1550,11 +1555,12 @@ async function agentDispatches(): Promise<void> {
 /**
  * SER-028: resume restores human context from the trajectory without touching any
  * durable session artifact or invoking a model. The seed uses a real SDK Agent,
- * SessionManager and TrajectoryRecorder; the resumed process exits from its first
- * prompt, before any ordinary turn can run.
+ * SessionManager and TrajectoryRecorder over two completed turns, so the scenario
+ * proves the *full* transcript replays — the earliest turn included — and the
+ * resumed process exits from its first prompt, before any ordinary turn can run.
  */
 async function resumedHumanContext(): Promise<void> {
-  header('TUI — resumed session shows bounded read-only human context');
+  header('TUI — resumed session replays the full read-only human transcript');
 
   await resetWorkDir();
   await writeHomeConfig({
@@ -1566,7 +1572,7 @@ async function resumedHumanContext(): Promise<void> {
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
   });
   const sessionId = 'session-resume-recap';
-  const model = new ResumeFixtureModel();
+  const model = new ResumeFixtureModel(['earliest answer marker', 'last completed answer']);
   const manager = createSessionManager(WORK_DIR, sessionId);
   const agent = new Agent({
     id: 'darwin',
@@ -1591,15 +1597,18 @@ async function resumedHumanContext(): Promise<void> {
       restoredMessages: 0,
     },
   });
+  const firstRequest = 'earliest request marker from turn one';
   const request = `last completed request ${'context '.repeat(120)}\n${Array.from({ length: 10 }, (_, i) => `request-line-${i}`).join('\n')}`;
-  for await (const _event of recordStream(agent.stream(request), recorder.beginTurn(request))) {
-    // Drain exactly as AgentRuntime.send's caller does.
+  for (const prompt of [firstRequest, request]) {
+    for await (const _event of recordStream(agent.stream(prompt), recorder.beginTurn(prompt))) {
+      // Drain exactly as AgentRuntime.send's caller does.
+    }
   }
   await recorder.close();
   await manager.saveSnapshot({ target: agent, isLatest: true });
   await writePointer(WORK_DIR, sessionId);
-  assert('the fixture made exactly one local model call while seeding', model.calls === 1);
-  assert('the fixture snapshot contains one request/answer pair', agent.messages.length === 2);
+  assert('the fixture made exactly two local model calls while seeding', model.calls === 2);
+  assert('the fixture snapshot contains two request/answer pairs', agent.messages.length === 4);
 
   const snapshot = snapshotPath(WORK_DIR, sessionId, 'darwin');
   const pointer = sessionPaths(WORK_DIR).pointerFile;
@@ -1610,16 +1619,22 @@ async function resumedHumanContext(): Promise<void> {
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 400 });
     const screen = tui.screen;
-    const recapAt = screen.indexOf('resume recap · 2 restored model message(s)');
+    const recapAt = screen.indexOf('resume recap · 4 restored model message(s)');
+    const earliestRequestAt = screen.indexOf('earliest request marker from turn one');
+    const earliestAnswerAt = screen.indexOf('earliest answer marker');
     const requestAt = screen.indexOf('last completed request');
     const answerAt = screen.indexOf('last completed answer');
     const promptAt = screen.lastIndexOf('you>');
-    assert('recap, request and answer appear before the prompt',
-      recapAt >= 0 && requestAt > recapAt && answerAt > requestAt && promptAt > answerAt);
-    assert('the long request is bounded with an explicit marker', screen.includes('resume recap truncated'));
+    assert('the earliest turn replays after the recap header — the full transcript, not the last turn',
+      recapAt >= 0 && earliestRequestAt > recapAt && earliestAnswerAt > earliestRequestAt);
+    assert('the last turn follows the earliest, before the prompt',
+      requestAt > earliestAnswerAt && answerAt > requestAt && promptAt > answerAt);
+    assert('the long request replays in full — its final line renders, unmarked',
+      screen.includes('request-line-9') && !screen.includes('resume recap truncated'));
     assert('enabled recording adds no disabled-state warning',
       !screen.includes('trajectory recording is disabled for this run'));
-    assert('earlier transcript omission is explicit', screen.includes('earlier session transcript omitted'));
+    assert('nothing claims an earlier transcript was omitted',
+      !screen.includes('earlier session transcript omitted'));
     assert('the current 120x50 frame remains within its viewport', tui.frame.split('\n').length <= 50);
 
     tui.submit('/exit');
@@ -2788,7 +2803,7 @@ async function rewindSession(): Promise<void> {
   const manager = createSessionManager(WORK_DIR, sourceId);
   const agent = new Agent({
     id: 'darwin',
-    model: new ResumeFixtureModel(),
+    model: new ResumeFixtureModel(['last completed answer']),
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     sessionManager: manager,
     printer: false,

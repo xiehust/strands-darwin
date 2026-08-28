@@ -330,16 +330,19 @@ latest live frame.
 
 ## Contract: resumed context is startup Static history, never frame furniture
 
-`SER-028` seeds `turnReducer` history with a bounded recap only when an interactive runtime actually
-restored SDK messages. `MessageList` writes those entries through its existing `<Static>` exactly
-once, before the input prompt. They are terminal scrollback/history: not a Header row, not a chrome
-claim, not re-rendered live state, and not part of `frameBudget`. Fresh sessions pass no startup
-history, so their frame baseline is byte-for-byte the pre-feature shape. `/clear`'s existing `clear`
-action empties the recap and remounts Static with the old transcript.
+`SER-028` seeds `turnReducer` history with the full replayed session transcript only when an
+interactive runtime actually restored SDK messages. `MessageList` writes those entries through its
+existing `<Static>` exactly once, before the input prompt. They are terminal scrollback/history: not
+a Header row, not a chrome claim, not re-rendered live state, and not part of `frameBudget` — which
+is why the transcript can be unbounded (scrollback length equals session length) without touching
+the budget. Fresh sessions pass no startup history, so their frame baseline is byte-for-byte the
+pre-feature shape. `/clear`'s existing `clear` action empties the recap and remounts Static with the
+old transcript.
 
-The request and answer are each at most six logical lines / 600 Unicode code points, marker included;
-source/degradation notices are fixed one-line entries. A real `120x50` pty resume fixture asserts the
-latest live frame still fits 50 rows while the recap precedes `you>`.
+The replayed rows are `replayRecords` output verbatim — no per-row truncation beyond what the record
+itself carries; source/degradation notices are fixed one-line entries. A real `120x50` pty resume
+fixture asserts the latest live frame still fits 50 rows while the multi-turn transcript precedes
+`you>`.
 
 ## Contract: a finished answer line belongs to `<Static>`, not to the live frame
 

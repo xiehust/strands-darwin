@@ -299,22 +299,27 @@ a stack trace and never the pointer's session instead. Pointer semantics stay th
 it; quitting without a turn moves nothing. Free check: `spike/verify-sessions-command.ts` (in
 `pnpm test`).
 
-## Resumed-session human recap — restore the human, not a second model history
+## Resumed-session full transcript — restore the human, not a second model history
 
-**A resumed TUI gets one bounded read-only trajectory projection as startup transcript**
+**A resumed TUI gets the full replayed session transcript as read-only startup scrollback**
 (`src/trajectory/resume-recap.ts`, `src/cli.ts`, `src/tui/App.tsx`; specs:
 `backend/session-trajectory.md`, `backend/strands-sdk-contracts.md` § Sessions,
 `frontend/live-frame.md`). Runtime remains the only Agent constructor and the snapshot remains the
 only model-context authority. After it restores messages, interactive startup reads the exact
-session trajectory, selects the last record-ordered completed turn, replays that slice through the
-ordinary reducer, and seeds only display history with its request/answer plus honest omission or
-degradation notices. The projection is capped at six lines / 600 Unicode code points per text and
-never shows prior tools/full transcript. It makes no model/network call, creates no synthetic model
-message, writes no file and does not move resumability state. Fresh/headless sessions skip it;
-missing/pre-recording/disabled/damaged records say what is unavailable. The recap is `<Static>`
+session trajectory, replays the whole record through the ordinary reducer (`replayRecords` — the
+same one projection `/export` and `trajectory replay` use, never a second formatter), and seeds only
+display history: a recap header notice first, then every run's user rows, tool rows, answers and `!`
+shell rows in record order, with honest degradation notices (missing/disabled/damage/dropped/
+truncation) after the body. There is deliberately no size cap — measured at 1.2 MiB / 2,801 records
+the replay takes ~12 ms and the rows are written once to `<Static>` — so startup scrollback length
+equals session length (user decision 2026-08-28, superseding the earlier bounded last-turn recap).
+Seeded item ids come from the same process-local counter the live session uses, so later live rows
+cannot collide. It makes no model/network call, creates no synthetic model message, writes no file
+and does not move resumability state. Fresh/headless sessions skip it;
+missing/pre-recording/disabled/damaged records say what is unavailable. The transcript is `<Static>`
 startup history, not header/frame furniture, and `/clear` removes it. Free checks:
-`verify-resume-recap.ts` (in `pnpm test`) and `verify-tui.ts resume` at 120x50 with hashes over the
-trajectory, snapshot and pointer.
+`verify-resume-recap.ts` (in `pnpm test`) and `verify-tui.ts resume` at 120x50 over a multi-turn
+fixture with hashes over the trajectory, snapshot and pointer.
 
 
 

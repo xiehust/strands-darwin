@@ -426,21 +426,28 @@ Free checks: `spike/verify-export-command.ts` (in `pnpm test`) and `spike/verify
 ### A sixth reader: resumed-session human recap (`SER-028`)
 
 An interactively restored TUI reads only that resolved session's `trajectory.jsonl` and projects the
-last turn that has a `turnEnded` record. Selection is record-order aware across process restarts
-(turn ordinals restart per recorder run); the selected slice is fed through `replayRecords`, so the
-ordinary `turnReducer` remains authoritative for assembled assistant text. The projection keeps only
-the request and answer — never tools or the full transcript — and bounds each independently to 600
-Unicode code points and six logical lines, including an explicit omission marker.
+**full recorded transcript** — every run's user rows, tool rows, assistant answers, `!` shell rows
+and notices, in record order — by feeding the whole record through `replayRecords`, so the ordinary
+`turnReducer` remains the one authoritative projection (the same one `/export` and `trajectory
+replay` use; user decision 2026-08-28, superseding the earlier bounded last-turn recap). There is no
+per-turn truncation and no `earlier session transcript omitted` notice: startup scrollback length
+equals session length. That is deliberately uncapped — measured at 1.2 MiB / 2,801 records,
+`replayRecords` reconstructs in ~12 ms, and the seeded rows are written once to `<Static>`
+scrollback, never redrawn.
 
 This reader is an observer like replay/export: it imports no runtime, Agent, Model, writer or session
 manager; it makes no model/network call and writes nothing. The resulting `HistoryItem[]` seeds the
-TUI's existing `<Static>` startup transcript only. It is never injected into `agent.messages`, never
-changes `messageCount`, and `/clear` removes it with the old transcript. Fresh sessions skip the read.
-Missing files (normal for pre-recording or `trajectory: false` sessions), disabled recording, no
-closed turn, reader damage, record truncation and dropped replay payloads are distinct stated
-limitations. `spike/verify-resume-recap.ts` proves the pure/read-only projection; free pty scenario
-`verify-tui.ts resume` proves real snapshot restore, 120x50 rendering and byte-zero trajectory,
-snapshot and resume-pointer startup.
+TUI's existing `<Static>` startup transcript only — a `resume recap · N restored model message(s)`
+header notice first, then the replayed history (whose item ids come from the same process-local
+counter the live session uses, so seeded and later live rows cannot collide). It is never injected
+into `agent.messages`, never changes `messageCount`, and `/clear` removes it with the old transcript.
+Fresh sessions skip the read. Missing files (normal for pre-recording or `trajectory: false`
+sessions), disabled recording, an empty/no-transcript record, reader damage, recorded field
+truncation and dropped replay payloads are distinct stated notices, never suppression.
+`spike/verify-resume-recap.ts` proves the pure/read-only projection, its equality with
+`replayRecords` over the same records, and the structural import graph; free pty scenario
+`verify-tui.ts resume` proves a real multi-turn snapshot restore renders the earliest turn, 120x50
+rendering and byte-zero trajectory, snapshot and resume-pointer startup.
 
 ### `replay`
 

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/session-trajectory.md","reason":"SER-028 resume recap contract, replay one-projection rule, observer/no-model-call requirements."}
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Static history versus live frame ownership; startup history must not become a live-frame participant."}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"How to write/extend the real pty resume scenario with anchored waits and state-exclusive assertions."}

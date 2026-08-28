@@ -1,18 +1,15 @@
-/** Focused offline verification of the SER-028 trajectory recap projection. */
+/** Focused offline verification of the SER-028 full-replay resume transcript. */
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { trajectoryPath } from '../src/agent/session.js';
 import { readTrajectory } from '../src/trajectory/reader.js';
 import type { TrajectoryRecord } from '../src/trajectory/record.js';
-import {
-  boundRecapText,
-  loadResumeRecap,
-  projectResumeRecap,
-  RESUME_RECAP_TEXT_CODE_POINTS,
-  RESUME_RECAP_TEXT_LINES,
-} from '../src/trajectory/resume-recap.js';
+import { historyWithoutIds, replayRecords } from '../src/trajectory/replay.js';
+import { loadResumeRecap, projectResumeRecap } from '../src/trajectory/resume-recap.js';
+import { initialTurnState, turnReducer } from '../src/tui/turn-state.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const HOME = ownPrivateHome('resume-recap');
@@ -40,6 +37,21 @@ function turn(turn: number, request: string, answer: string): TrajectoryRecord[]
   ];
 }
 
+function runStarted(resumed: boolean, restoredMessages: number, pid: number): TrajectoryRecord {
+  return record(0, 'runStarted', {
+    session: SESSION,
+    agentId: 'darwin',
+    darwinVersion: 'test',
+    provider: 'bedrock',
+    model: 'fake.recap',
+    permissionMode: 'default',
+    thinkingEffort: 'high',
+    resumed,
+    restoredMessages,
+    pid,
+  });
+}
+
 function text(history: Awaited<ReturnType<typeof loadResumeRecap>>): string {
   return history.map((item) => {
     if (item.kind === 'tool') return `${item.summary}\n${item.preview}`;
@@ -52,87 +64,118 @@ function sha256(value: Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-header('resume recap — exact last completed turn through replay');
+header('resume recap — structural: an observer over the one replay projection');
 
+const source = readFileSync(
+  path.join(import.meta.dirname, '..', 'src', 'trajectory', 'resume-recap.ts'),
+  'utf8',
+);
+assert('resume-recap.ts imports nothing from the SDK — no model call by construction',
+  !source.includes("'@strands-agents"));
+assert('resume-recap.ts imports no runtime, Agent, session manager or writer',
+  !/from '[^']*(agent\/|writer\.js)/.test(source));
+assert('resume-recap.ts never writes — readTrajectory is its only file API',
+  !/writeFile|appendFile|createWriteStream|truncate|\bunlink\b/.test(source) && source.includes('readTrajectory'));
+assert('the transcript body is replayRecords through the ordinary reducer, never a second formatter',
+  source.includes('replayRecords(records)'));
+assert('the per-turn recap truncation is gone',
+  !source.includes('boundRecapText') && !source.includes('RESUME_RECAP_TEXT') &&
+  !source.includes('earlier session transcript omitted'));
+
+header('resume recap — the full replayed transcript, across runs and open turns');
+
+const toolUse = { name: 'bash', toolUseId: 'tool-recap-1', input: { command: 'ls' } };
 const records = [
-  record(0, 'runStarted', {
-    session: SESSION,
-    agentId: 'darwin',
-    darwinVersion: 'test',
-    provider: 'bedrock',
-    model: 'fake.recap',
-    permissionMode: 'default',
-    thinkingEffort: 'high',
-    resumed: false,
-    restoredMessages: 0,
-    pid: 1,
+  runStarted(false, 0, 1),
+  record(1, 'userInput', { text: 'oldest request' }),
+  record(1, 'beforeToolCallEvent', { data: { toolUse } }),
+  record(1, 'afterToolCallEvent', {
+    data: { toolUse, result: { toolResult: { toolUseId: 'tool-recap-1', status: 'success', content: [{ text: 'tool output from the first run' }] } } },
   }),
-  ...turn(1, 'oldest request', 'oldest answer'),
-  // Deliberately a greater ordinal than the later run's completed turn: recorder
-  // ordinals restart per process, so selecting max(turn) would choose this wrong pair.
+  record(1, 'contentBlockEvent', { data: { contentBlock: { text: 'oldest answer' } } }),
+  record(1, 'turnEnded', { stopReason: 'endTurn', ms: 1, recorded: {}, dropped: {} }),
   ...turn(2, 'older request', 'older answer'),
+  record(0, 'shellCommand', { command: 'echo shell-history', exitCode: 0, signal: null, timedOut: false, durationMs: 3, output: 'shell-history' }),
   record(3, 'userInput', { text: 'unfinished request' }),
-  record(0, 'runStarted', {
-    session: SESSION,
-    agentId: 'darwin',
-    darwinVersion: 'test',
-    provider: 'bedrock',
-    model: 'fake.recap',
-    permissionMode: 'default',
-    thinkingEffort: 'high',
-    resumed: true,
-    restoredMessages: 2,
-    pid: 2,
-  }),
+  runStarted(true, 2, 2),
   ...turn(1, 'last completed request', 'last completed answer'),
   record(2, 'userInput', { text: 'new unfinished request' }),
 ];
 const projected = projectResumeRecap(records, { restoredMessages: 4, trajectoryEnabled: true });
 const projectedText = text(projected);
-assert('the title reports the already-restored message count', projectedText.includes('4 restored model message(s)'));
-assert('the last closed request and answer are selected',
-  projectedText.includes('last completed request') && projectedText.includes('last completed answer'));
-assert('an unfinished later request is not presented as completed context', !projectedText.includes('new unfinished request'));
-assert('the prior run and its greater-ordinal closed turn are omitted',
-  !projectedText.includes('oldest request') && !projectedText.includes('oldest answer') &&
-  !projectedText.includes('older request') && !projectedText.includes('older answer'));
-assert('the omission is explicit', projectedText.includes('earlier session transcript omitted'));
+assert('the title notice is the first row and reports the already-restored message count',
+  projected[0]?.kind === 'notice' && projected[0].text.includes('4 restored model message(s)'));
+assert('the body equals replayRecords over the same records — the one projection, ids aside',
+  JSON.stringify(historyWithoutIds(projected.slice(1))) ===
+    JSON.stringify(historyWithoutIds(replayRecords(records).history)));
+assert('every turn of every run is present, oldest first',
+  ['oldest request', 'oldest answer', 'older request', 'older answer', 'last completed request', 'last completed answer']
+    .every((marker) => projectedText.includes(marker)) &&
+  projectedText.indexOf('oldest request') < projectedText.indexOf('older request') &&
+  projectedText.indexOf('older request') < projectedText.indexOf('last completed request'));
+assert('tool rows from an earlier run replay too',
+  projected.some((item) => item.kind === 'tool' && item.name === 'bash') &&
+  projectedText.includes('tool output from the first run'));
+assert('a recorded `!` shell command replays as its user and finished rows',
+  projectedText.includes('!echo shell-history') && projectedText.includes('$ echo shell-history (exit 0'));
+assert('open turns replay as the transcript the session actually showed',
+  projectedText.includes('unfinished request') && projectedText.includes('new unfinished request'));
+assert('the omission and truncation notices are gone',
+  !projectedText.includes('earlier session transcript omitted') && !projectedText.includes('resume recap truncated'));
+assert('a clean record earns no degradation notice',
+  !projectedText.includes('damaged') && !projectedText.includes('payload record') && !projectedText.includes('field truncation'));
+assert('every seeded history id is unique', new Set(projected.map((item) => item.id)).size === projected.length);
+{
+  // The seeded body shares the live session's process-local id counter, so a row the
+  // live session appends later can never collide with a replayed one.
+  const seeded = new Set(projected.map((item) => item.id));
+  const live = turnReducer(initialTurnState, { type: 'userInput', text: 'after resume' });
+  assert('a later live row gets an id no seeded row holds', !seeded.has(live.history[0]?.id ?? ''));
+}
 
-header('resume recap — bounds are measured in code points and lines');
+header('resume recap — long texts replay verbatim, unbounded');
 
 const long = `${'🙂'.repeat(900)}\n${Array.from({ length: 12 }, (_, i) => `line-${i}`).join('\n')}`;
-const bounded = boundRecapText(long);
-assert('the code-point cap includes the marker', [...bounded].length <= RESUME_RECAP_TEXT_CODE_POINTS);
-assert('the logical-line cap includes the marker', bounded.split('\n').length <= RESUME_RECAP_TEXT_LINES);
-assert('the marker states the omission', bounded.includes('resume recap truncated'));
-assert('Unicode is not split into replacement characters', !bounded.includes('�'));
-const boundedProjection = projectResumeRecap(turn(1, long, long), {
-  restoredMessages: 2,
-  trajectoryEnabled: true,
-});
-const user = boundedProjection.find((item) => item.kind === 'user');
-const assistant = boundedProjection.find((item) => item.kind === 'assistant');
-assert('request and answer are bounded independently',
-  user?.text.includes('resume recap truncated') === true && assistant?.text.includes('resume recap truncated') === true);
+const unbounded = projectResumeRecap(turn(1, long, long), { restoredMessages: 2, trajectoryEnabled: true });
+const user = unbounded.find((item) => item.kind === 'user');
+assert('a long request replays byte-identical, with no marker', user?.text === long);
+const answer = unbounded
+  .filter((item): item is Extract<typeof unbounded[number], { kind: 'assistant' }> => item.kind === 'assistant')
+  .map((item) => item.text)
+  .join('\n');
+assert('a long answer replays in full', answer.includes('🙂'.repeat(900)) && answer.includes('line-11'));
+assert('no truncation marker is invented', !text(unbounded).includes('resume recap truncated'));
 
 header('resume recap — honest degradation and tolerant reading');
 
 const damagedProjection = projectResumeRecap(
-  turn(1, 'request', 'answer').map((entry, index) =>
-    index === 1 ? { ...entry, data: { dropped: 'record-too-large' }, trunc: [{ path: 'data', chars: 999, kept: 0 }] } : entry),
+  [
+    ...turn(1, 'readable request', 'readable answer'),
+    ...turn(2, 'request-two', 'answer-two').map((entry, index) =>
+      index === 1 ? { ...entry, data: { dropped: 'record-too-large' }, trunc: [{ path: 'data', chars: 999, kept: 0 }] } : entry),
+  ],
   { restoredMessages: 2, trajectoryEnabled: false, damage: 'skipped 1 unreadable line(s)' },
 );
 const damagedText = text(damagedProjection);
 assert('disabled recording is stated without suppressing readable context',
-  damagedText.includes('trajectory recording is disabled') && damagedText.includes('request'));
-assert('reader damage, dropped payload and field truncation are all stated',
-  damagedText.includes('source damage') && damagedText.includes('payload record') && damagedText.includes('field truncation'));
-assert('a missing answer is not invented', damagedText.includes('answer is missing'));
-assert('a record with no closed turn is an explicit normal projection',
-  text(projectResumeRecap([record(1, 'userInput', { text: 'open' })], {
+  damagedText.includes('trajectory recording is disabled') && damagedText.includes('readable request'));
+assert('reader damage, dropped payload and field truncation are distinct stated notices',
+  damagedProjection.filter((item) => item.kind === 'notice' && (
+    item.text.includes('source is damaged') ||
+    item.text.includes('capped/unreadable payload record') ||
+    item.text.includes('recorded field truncation')
+  )).length === 3);
+assert('a dropped payload never invents the answer it removed', !damagedText.includes('answer-two'));
+assert('a record with no replayable transcript is an explicit normal projection',
+  text(projectResumeRecap([runStarted(false, 0, 1)], { restoredMessages: 0, trajectoryEnabled: true }))
+    .includes('no replayable transcript'));
+assert('a record with only an open turn still shows what the session showed',
+  text(projectResumeRecap([record(1, 'userInput', { text: 'open request' })], {
     restoredMessages: 1,
     trajectoryEnabled: true,
-  })).includes('no completed turn'));
+  })).includes('open request'));
+
+header('resume recap — byte-zero loading of a real, mid-write file');
 
 await rm(HOME, { recursive: true, force: true });
 await mkdir(ROOT, { recursive: true });
@@ -149,8 +192,9 @@ const loaded = await loadResumeRecap({
 const after = await readFile(file);
 assert('the existing tolerant reader states a partial trailing line', text(loaded).includes('partial trailing line'));
 assert('loading is byte-zero against the trajectory', sha256(before) === sha256(after));
-assert('the damaged file still yields the last completed context',
-  text(loaded).includes('last completed request') && text(loaded).includes('last completed answer'));
+assert('the damaged file still yields the full transcript',
+  ['oldest request', 'older answer', 'last completed request', 'last completed answer']
+    .every((marker) => text(loaded).includes(marker)));
 const read = await readTrajectory(file);
 assert('the loader did not repair or append a record', read.partialTrailingLine && read.records.length === records.length);
 
