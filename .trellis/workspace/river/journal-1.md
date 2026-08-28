@@ -935,3 +935,30 @@ Replaced the bounded last-turn resume recap with a full transcript replay throug
 ### Status
 
 [OK] **Completed**
+
+## Session 36: Word-wise composer navigation and deletion (SER-042)
+
+**Date**: 2026-08-28
+**Task**: Word-wise composer navigation and deletion (SER-042)
+**Branch**: `main`
+
+### Summary
+
+Added Alt/Ctrl+Arrow, Alt+B/F word jumps, Alt+Backspace and Alt+D word deletes to the
+prompt editor: pure grapheme-aware primitives (moveWordHorizontal, deleteWordAfter,
+shared wordBoundaryBefore/After behind Ctrl+W's deleteWordBefore) in prompt-editor.ts,
+wired in App.tsx after every existing key owner. New free pty scenario `wordNav`
+(discovered: Ink's input parser folds bare control bytes into text chunks, so batched
+pty tests must home the cursor with CSI Home/End, not Ctrl+A/E — recorded in
+tui-testing.md). Unit spike +19 word-boundary cases; typecheck, full pnpm test, and
+cursor/multiline/completion/recall/recallEmpty/queue/historySearch all green.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c32e5f6` | feat(tui): word-wise composer navigation and deletion |
+
+### Status
+
+[OK] **Completed**
