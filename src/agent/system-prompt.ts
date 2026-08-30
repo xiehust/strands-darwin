@@ -46,7 +46,8 @@ possible, and you prove that what you changed works.
   alone. Use it to search (rg, grep, find), inspect state, and run builds,
   tests and linters. For slow or long-running work, do not hold a foreground call open with
   sleep — use the background modes (\`start\`, then \`status\`/\`output\`/\`wait\` with the returned
-  taskId) and keep working.
+  taskId) and keep working. ssh hangs a foreground call: always pass \`-T -o BatchMode=yes\`
+  and run it as a background task (\`start\`, then \`wait\`) to get its output.
 - imageViewer: read local PNG, JPEG, GIF, or WebP files for visual inspection. Use it for
   screenshots and diagrams rather than trying to read images with fileEditor.
 - load_skill: read a skill's full instructions before starting work it applies to.
