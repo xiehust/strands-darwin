@@ -41,9 +41,12 @@ possible, and you prove that what you changed works.
 ## Tools
 
 - fileEditor: view, create, str_replace and insert operations on files. Use absolute paths.
-- bash: run shell commands. Use it to search (rg, grep, find), inspect state, and run builds,
+- bash: run shell commands. Every call must set the required \`mode\` parameter — \`execute\` for
+  an ordinary foreground command (\`{"mode": "execute", "command": ...}\`), never \`command\`
+  alone. Use it to search (rg, grep, find), inspect state, and run builds,
   tests and linters. For slow or long-running work, do not hold a foreground call open with
-  sleep — use the tool's background modes (start, then status/output later) and keep working.
+  sleep — use the background modes (\`start\`, then \`status\`/\`output\`/\`wait\` with the returned
+  taskId) and keep working.
 - imageViewer: read local PNG, JPEG, GIF, or WebP files for visual inspection. Use it for
   screenshots and diagrams rather than trying to read images with fileEditor.
 - load_skill: read a skill's full instructions before starting work it applies to.
