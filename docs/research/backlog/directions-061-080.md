@@ -45,7 +45,7 @@ napshot-restore for modal flows (`src/tui/prompt-history-search.ts` snapshots dr
 
 ## SER-045 — Add a parent-only `workflow` tool: a bounded declarative DAG of subagent tasks executed by the SDK `Graph` orchestrator, with each node built by the existing subagent child recipe and only bounded terminus reports returned to the parent
 
-- Status: `not-started`
+- Status: `done`
 - Priority: 63
 - Score: 9
 - Importance: 4
@@ -57,7 +57,7 @@ napshot-restore for modal flows (`src/tui/prompt-history-search.ts` snapshots dr
 
 ### Implementation / acceptance evidence
 
-None yet — not started.
+Accepted 2026-08-30 in `cbd2863` (task archive `94d63a9`, journal `109a956`; child session `session-20260830-083601272`; managed task `bg-ef70bc59-8467-4efb-8208-c606857695e0`, succeeded, exit 0). `src/agents/child-recipe.ts` extracts the shared child-construction recipe consumed by both `SubagentTool` (behavior unchanged) and the new parent-only `src/agents/workflow-tool.ts` (data-only DAG, `MAX_WORKFLOW_NODES = 8` / `MAX_WORKFLOW_EDGES = 28`, Kahn cycle refusal and bounded validation errors before any dispatch/model/child exists, SDK `Graph` execution with `maxSteps = nodeCount` and the parent cancel signal into `graph.invoke`, terminus-only result); registered in `runtime.ts` after the child-catalogue capture, classified `read` in `permission.ts` on the `subagent` precedent. Host independently passed `pnpm typecheck`, full `pnpm test` (exit 0), `spike/verify-workflow-tool.ts` in isolation (32/32), `pnpm build`, `git diff --check`/`git show --check`, and AGENTS.md 30,278 bytes < 32 KiB; details in `docs/iteration-log.md` Batch 67. Documented accepted deviation: no whole-graph `timeout` knob — bounded by node cap, `maxSteps`, and cancellation, matching every other delegation path.
 
 ### Notes / blockers / abandonment reason
 
