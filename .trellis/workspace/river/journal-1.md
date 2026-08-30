@@ -1111,3 +1111,24 @@ precedent.
 ### Status
 
 [OK] **Completed** — task archived to archive/2026-08/.
+
+
+## Session 37: Fix persistent final reply duplication (Static mid-insert)
+
+**Date**: 2026-08-30
+**Task**: Fix persistent final reply duplication (Static mid-insert)
+**Branch**: `main`
+
+### Summary
+
+Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the final update_plan checklist mid-history, and Ink <Static>'s index-based consumption re-emitted the shifted closing answer while swallowing the checklist. Reproduced deterministically with a new pty probe, fixed finishTurn to append-only, added prefix-stability and terminal-reconstruction regressions, updated SER-036 spec, rebuilt dist.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2a05ee6` | (see git log) |
+
+### Status
+
+[OK] **Completed**
