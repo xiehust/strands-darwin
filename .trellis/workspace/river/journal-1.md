@@ -1033,3 +1033,46 @@ queue/historySearch all green; pnpm build refreshed dist.
 ### Status
 
 [OK] **Completed**
+
+---
+
+## 2026-08-30 — SER-045: parent-only `workflow` DAG tool (SDK Graph)
+
+### What happened
+
+Implemented backlog direction SER-045 end to end as a headless worker:
+a parent-only `workflow` tool running a bounded declarative DAG (≤8 nodes,
+≤28 edges, data never code) on the installed SDK `Graph`. Extracted the
+subagent child construction into `src/agents/child-recipe.ts`
+(`buildRecipeChild` + `stopBashSession`) so `SubagentTool` and the new
+`WorkflowTool` share one recipe; SubagentTool observable behavior unchanged.
+Each node is a thin `InvokableAgent` adapter (user node id outward, unique
+`darwin-workflow-*` Agent id inward) that prepends the node task to the
+SDK's dependency-merged input; per-node dispatch registry entries with
+random ids (shared parent tool_use id would make targeted cancel
+ambiguous); one owned AbortController forwards the parent cancel signal
+into `graph.invoke` so unstarted nodes never run; terminus content only
+returns. Permission classification `read`, following the subagent
+precedent.
+
+### Verification
+
+- `pnpm typecheck` green; full `pnpm test` green (exit 0), including new
+  `spike/verify-workflow-tool.ts` (32 asserts: validation refusals with zero
+  construction, diamond-DAG SDK dependency merge/order, dispatch + provenance,
+  terminus-only result, failure sweep, parent cancellation reaching unstarted
+  nodes, parent-only registration order). verify-subagent-heartbeats passed
+  in the full run (no flake rerun needed).
+- Spec: strands-sdk-contracts.md § "bounded declarative workflow DAG
+  (SER-045)"; AGENTS.md row (30,278 bytes < 32 KiB); load-bearing-decisions.md
+  § "Workflow DAG tool". `pnpm build` run after commit.
+
+### Commits
+
+| Commit | Subject |
+|---|---|
+| `cbd2863` | feat(agents): add parent-only workflow dag tool on the sdk graph |
+
+### Status
+
+[OK] **Completed** — docs/research/ untouched (Host owns backlog status).
