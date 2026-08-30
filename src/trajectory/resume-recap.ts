@@ -97,8 +97,10 @@ export function projectResumeRecap(
   }
   const truncations = records.reduce((total, record) => total + (record.trunc?.length ?? 0), 0);
   if (truncations > 0) {
+    // Info, not warn: truncation is a recorded fact about the file (fields capped at
+    // write time), not damage — the restored conversation itself is intact.
     history.push(
-      notice(`resume recap transcript contains ${truncations} recorded field truncation(s)`, 'warn', 'trunc'),
+      notice(`resume recap transcript contains ${truncations} recorded field truncation(s)`, 'info', 'trunc'),
     );
   }
   return history;
