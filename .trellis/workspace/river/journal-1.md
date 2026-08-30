@@ -1076,3 +1076,38 @@ precedent.
 ### Status
 
 [OK] **Completed** — docs/research/ untouched (Host owns backlog status).
+
+## 2026-08-30 — /workflow built-in command (08-30-workflow-command)
+
+**Task**: user request "为workflow增加'/workflow' command主动触发"; option A
+(prompt-style trigger) chosen explicitly over direct DAG execution.
+
+- New `src/commands/workflow-command.ts`: pure `parseWorkflowCommand` +
+  `WORKFLOW_COMMAND_USAGE`; expansion template names the `workflow` tool,
+  restates ≤8-node bound and reads-parallel/writes-serialized, embeds the
+  task verbatim, keeps an indivisible-task escape hatch.
+- `expandSlashCommand` checks it first (built-in reservation precedes skills
+  and custom commands); `'missing-task'` → null, drivers (TUI + dev-repl) own
+  the bare-form usage notice. `BUILTIN_COMMAND_NAMES` +workflow,
+  `MAX_COMPLETIONS` 19→20.
+- Test fallout: frame-budget omission fixture and pathCompletion pad sat
+  exactly at the old cap; grown to overflow by construction. The both-sides
+  omission assertion was red on clean HEAD (1-past-cap fixture can never
+  omit on both sides) — fixed alongside.
+- `pnpm typecheck` + `pnpm test` green; `verify-tui.ts completion` 68/68,
+  `pathCompletion` 27/27, new `verify-workflow-command.ts` 20/20 (in
+  run-tests). trellis-implement wrote it, trellis-check fixed one missing
+  semicolon; Host re-ran the full gate.
+- Spec: SER-045 scenario grew the trigger contract bullet + required checks;
+  AGENTS.md workflow row (30,516 bytes < 32 KiB); load-bearing-decisions.md;
+  user-guide reference/extensions EN+zh. `pnpm build` run after commit.
+
+### Commits
+
+| Commit | Subject |
+|---|---|
+| `6a95dcb` | feat(commands): add /workflow prompt-style trigger for the dag tool |
+
+### Status
+
+[OK] **Completed** — task archived to archive/2026-08/.
