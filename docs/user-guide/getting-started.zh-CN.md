@@ -17,6 +17,28 @@ pnpm start
 
 `node-pty` 是真实 PTY 测试所需的原生开发依赖。pnpm 只构建工作区白名单中的原生包，`pnpm-workspace.yaml` 已经包含它。若增加其他原生依赖，需要同步扩充白名单。
 
+### 全局 `darwin` 命令
+
+`pnpm start` 直接运行 TypeScript 源码，无需构建。若想让 `darwin` 可执行文件进入 `PATH`，请先构建再全局安装：
+
+```bash
+pnpm build            # 产物写入 dist/；bin 指向 dist/src/cli.js
+pnpm add --global .
+```
+
+全局包链接到当前克隆目录，安装后请保留该目录。修改源码后，重新运行 `pnpm build` 以刷新被链接的 `dist/`。
+
+### 全局命令排障
+
+如果 `darwin` 启动时报 `Error: Cannot find module '.../pnpm/global/v11/<hash>/node_modules/darwin/dist/src/cli.js'`，说明全局 shim 指向了一个已失效的 pnpm store 条目——通常发生在克隆目录被移动、重装被中断，或全局 store 被清理之后。判断特征是：`pnpm build` 成功、`node dist/src/cli.js` 也能跑，但 `darwin` shim 失败。针对当前克隆目录重新注册全局包即可：
+
+```bash
+pnpm remove --global darwin   # 若提示 "not found in global packages" 可忽略，shim 已失效
+pnpm build
+pnpm add --global .
+darwin sessions               # 验证：只读，不产生模型调用
+```
+
 ## 当前工作目录就是项目
 
 请从目标仓库中启动 darwin。CLI 的当前工作目录决定全部项目级指令和扩展从哪里读取：
