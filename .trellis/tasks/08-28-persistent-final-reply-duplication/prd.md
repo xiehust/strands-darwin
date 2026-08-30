@@ -31,3 +31,28 @@ Ensure the final held-back assistant tail appears exactly once when a long reply
 - Suppressing genuinely repeated model text.
 - Rewriting trajectories or changing SDK/provider events.
 - Broad Ink renderer changes unrelated to this close boundary.
+
+## Resolution (2026-08-30)
+
+The two timing fixes (`9da06c3`, `0ae83f8`) hardened the wrong boundary. The real root cause was
+found via the recorded failing session (`session-20260830-110550523`) and a deterministic pty
+reproduction (`spike/probe-final-reply-duplication.ts`):
+
+- The failing turn used `update_plan`, so `turnEnded`'s `finishTurn` called
+  `insertFinalPlanBeforeAnswer`, inserting the final checklist projection **into the middle** of
+  `history` — before the already-committed closing answer entry.
+- Ink's `<Static>` consumes its `items` array by index (`items.slice(index)`); a mid-array insert
+  shifts the committed suffix back into the unconsumed window. The closing `last` answer entry
+  (label-free, own bottom margin — exactly the reported screenshot shape) was written to the
+  terminal a second time, and the checklist itself was silently swallowed (0 occurrences in the
+  reconstructed terminal).
+- Reproduction was 100% deterministic across 60x20/90x30/120x45/200x50 and four delta-timing
+  patterns once the fixture issued `update_plan` before the closing reply; without `update_plan`
+  it never reproduced — which is why the bug read as "occasional".
+
+Fix: `finishTurn` now **appends** the final checklist projection after everything the turn already
+committed; `insertFinalPlanBeforeAnswer` is deleted. `spike/verify-update-plan.tsx` asserts the
+append-only (prefix-stability) invariant across `turnEnded`, the pty `updatePlan` scenario counts
+the closing answer exactly once and the persisted checklist in the erase-aware reconstructed
+terminal, and the probe stays as the terminal-level regression. Spec updated:
+`.trellis/spec/frontend/live-frame.md` § SER-036.

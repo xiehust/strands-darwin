@@ -2645,6 +2645,16 @@ async function updatePlanChecklist(): Promise<void> {
       tui.screen.slice(next).includes('ordinary no-tool answer'));
     assert('the next live frame contains no stale checklist', !tui.frame.includes('plan · 8 items'));
 
+    // Erase-aware terminal buffer: live repaints are gone, only Static writes
+    // remain. The closing answer must be there exactly once (the reported
+    // duplicate-final-reply bug re-emitted it), and the final checklist
+    // projection must actually persist (the mid-array insert swallowed it).
+    const terminal = reconstructTerminalLines(tui.raw, 30).join('\n').replace(/\s+/gu, '');
+    assert('the closing assistant line stays in terminal history exactly once',
+      terminal.split('assistantlinevisiblebeforeterminal').length - 1 === 1);
+    assert('the final checklist projection persists in terminal history',
+      terminal.includes('[x]latestitem1') && terminal.includes('[>]latestitem2'));
+
     tui.submit('/exit');
     assert('updatePlan pty exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
   } finally {

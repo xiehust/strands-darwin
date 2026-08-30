@@ -126,13 +126,21 @@ try {
     type: 'contentBlockEvent',
     contentBlock: { type: 'textBlock', text: closingText },
   } as never);
+  const closingBeforeEnd = closing.history;
   closing = turnReducer(closing, { type: 'turnEnded' });
+  // Load-bearing: Ink's <Static> consumes items by index, so `turnEnded` must
+  // extend history without moving anything already in it — a mid-array insert
+  // re-emits the shifted suffix to the terminal (the duplicate-final-reply bug)
+  // and swallows the checklist.
+  assert('turn end never reorders or shifts entries already committed to history',
+    closingBeforeEnd.every((item, index) => closing.history[index] === item));
   const finalPlanAt = closing.history.findIndex((item) => item.kind === 'plan');
   const closingAnswerAt = closing.history.findIndex(
     (item) => item.kind === 'assistant' && item.text === closingText,
   );
-  assert('the final checklist precedes the closing answer so progress cannot hide the summary',
-    finalPlanAt >= 0 && closingAnswerAt === finalPlanAt + 1 && closing.history.at(-1)?.kind === 'assistant');
+  assert('the final checklist is appended after the closing answer, never inserted before it',
+    finalPlanAt >= 0 && closingAnswerAt >= 0 && finalPlanAt > closingAnswerAt
+      && closing.history.at(-1)?.kind === 'plan');
   let chunked = turnReducer(initialTurnState, { type: 'userInput', text: 'chunked work' });
   chunked = stream(chunked, before('chunked-plan', latest));
   chunked = stream(chunked, after('chunked-plan', latest));
@@ -145,10 +153,12 @@ try {
       { kind: 'assistant', id: 'chunk-last', text: 'summary line 3', part: 'last', codeOpen: false },
     ],
   };
+  const chunkedBeforeEnd = chunked.history;
   chunked = turnReducer(chunked, { type: 'turnEnded' });
   const chunkPlanAt = chunked.history.findIndex((item) => item.kind === 'plan');
   assert('the final checklist never splits a progressively committed closing answer',
-    chunkPlanAt >= 0 && chunked.history.slice(chunkPlanAt + 1).map((item) => item.kind).join(',') === 'assistant,assistant,assistant');
+    chunkPlanAt === chunked.history.length - 1
+      && chunkedBeforeEnd.every((item, index) => chunked.history[index] === item));
   let toolEnded = turnReducer(initialTurnState, { type: 'userInput', text: 'tool-ended work' });
   toolEnded = stream(toolEnded, {
     type: 'contentBlockEvent',

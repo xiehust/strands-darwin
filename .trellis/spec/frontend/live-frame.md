@@ -97,10 +97,16 @@ A one-row grant states `plan · N items`; a partial list spends its final grante
 colour: `[ ]` pending, `[>]` in progress, `[x]` completed.
 
 Successful `update_plan` events enter the reducer immediately through `streamEvent`, replacing
-`livePlan` while the turn is still open. `turnEnded` inserts exactly one bounded `plan` item immediately
-before a contiguous closing assistant-answer suffix, then clears `livePlan`. The assistant answer is
-therefore the turn's last visible fact instead of being pushed above a tall checklist. If a turn ends
-on a tool or notice rather than an answer, the checklist remains appended after that terminal fact.
+`livePlan` while the turn is still open. `turnEnded` **appends** exactly one bounded `plan` item after
+everything the turn already committed, then clears `livePlan`. Appending is load-bearing, not a style
+choice: Ink's `<Static>` consumes its `items` array by index (`items.slice(index)`), so an insert
+before entries already written shifts the committed suffix back into the unconsumed window — the
+closing answer is then written to the terminal a second time (the reported duplicate-final-reply bug,
+sessions 2026-08-27/28/30) while the checklist itself is silently swallowed. `turnEnded` must extend
+`history` without moving any existing entry; `spike/verify-update-plan.tsx` asserts that prefix
+stability directly and `spike/probe-final-reply-duplication.ts` reproduces the terminal-level
+duplication against any regression. The live checklist rows above the frame remain the in-turn
+presentation; the appended projection is the turn's terminal record.
 Failure/cancellation paths use the same terminal projection. Repeating the terminal action or starting
 the next user turn cannot duplicate or retain the live list. An unfinished list is advisory and never
 starts another model turn. The final projection uses the same markers, shows at most 10 items plus

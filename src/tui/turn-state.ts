@@ -591,11 +591,17 @@ function answerEntry(text: string, part: AnswerPart, codeOpen: boolean): History
   return { kind: 'assistant', id: nextId('assistant'), text, part, codeOpen };
 }
 
-/** Commits terminal-only turn projections once, with the closing answer last. */
+/** Commits terminal-only turn projections once, appended after the closing answer. */
 function finishTurn(state: TurnState): TurnState {
   // Flush anything the model left unterminated (e.g. a cancelled turn) so it is
-  // not lost when the live area clears. The final checklist is presentation-only;
-  // placing it before the answer prevents it from hiding the turn's actual reply.
+  // not lost when the live area clears. The final checklist is presentation-only
+  // and is *appended*, never inserted before entries already in history: Ink's
+  // `<Static>` consumes its items by index (`items.slice(index)`), so a mid-array
+  // insert shifts the already-written suffix back into the unconsumed window —
+  // the closing answer would be written to the terminal a second time and the
+  // checklist itself silently swallowed (the reported duplicate-final-reply bug,
+  // reproduced by `spike/probe-final-reply-duplication.ts`). Append-only is the
+  // one ordering `<Static>` can render exactly once.
   const flushed = flushLiveText(state);
   return {
     ...flushed,
@@ -604,33 +610,8 @@ function finishTurn(state: TurnState): TurnState {
     livePlan: [],
     history: state.livePlan.length === 0
       ? flushed.history
-      : insertFinalPlanBeforeAnswer(flushed.history, state.livePlan),
+      : [...flushed.history, { kind: 'plan', id: nextId('plan'), plan: state.livePlan }],
   };
-}
-
-/** Keeps this turn's closing assistant answer as its last visible fact. */
-function insertFinalPlanBeforeAnswer(
-  history: readonly HistoryItem[],
-  plan: readonly PlanItem[],
-): HistoryItem[] {
-  const turnStart = history.findLastIndex((item) => item.kind === 'user');
-  const last = history.at(-1);
-  // Only a contiguous assistant suffix is a closing answer. If the turn ended on
-  // a tool/notice instead, the checklist remains the terminal projection.
-  let at = last?.kind === 'assistant' && (last.part === 'whole' || last.part === 'last')
-    ? history.length - 1
-    : history.length;
-  // One closing answer can be several adjacent Static items: progressive pieces or
-  // multiple authoritative text blocks. Keep the checklist outside the whole suffix.
-  while (at > turnStart + 1 && at < history.length) {
-    if (history[at - 1]?.kind !== 'assistant') break;
-    at -= 1;
-  }
-  return [
-    ...history.slice(0, at),
-    { kind: 'plan', id: nextId('plan'), plan },
-    ...history.slice(at),
-  ];
 }
 
 /**
