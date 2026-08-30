@@ -49,6 +49,7 @@ Print-only options: `--context-offload` (process-only force-on; offload is defau
 | `/tasks` | background jobs, including while busy |
 | `/trajectory` | this run's local record status |
 | `/usage` | process token buckets; unreported is not zero |
+| `/workflow <task>` | ask the model to orchestrate the task as one `workflow` DAG call; bare form prints usage |
 | `/skill-name [request]` | explicitly load/send a skill |
 | `/developer <requirement>` | supervise a complete persistent headless worker |
 | `/self-evolution-research` | bundled skill: backlog/research/scored supervised iteration loop |

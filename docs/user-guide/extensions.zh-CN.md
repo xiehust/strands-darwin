@@ -117,7 +117,7 @@ Trace the requested behavior, cite files and symbols, and report to the parent.
 
 ## Workflow（DAG 委派）
 
-`workflow` 是 `subagent` 的多步版本：不再一次调用只派发一个任务，而是由模型声明一个小型任务依赖图，按依赖顺序调度执行。用自然语言描述流水线即可——例如"先并行调研 X 和 Y，再据此实现，最后审查 diff"——模型可以把它作为一次 `workflow` 调用提交，而不必逐步人工推进。
+`workflow` 是 `subagent` 的多步版本：不再一次调用只派发一个任务，而是由模型声明一个小型任务依赖图，按依赖顺序调度执行。用自然语言描述流水线即可——例如"先并行调研 X 和 Y，再据此实现，最后审查 diff"——模型可以把它作为一次 `workflow` 调用提交，而不必逐步人工推进。若想显式引导，输入 `/workflow <任务描述>`：该内置命令会展开成一条普通 prompt，请模型用 `workflow` 工具编排该任务（DAG 仍由模型拆解；不带参数的 `/workflow` 只打印用法）。
 
 输入是数据，永远不是代码：
 

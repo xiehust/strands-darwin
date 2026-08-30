@@ -49,6 +49,7 @@ darwin trajectory fork <id>
 | `/tasks` | 后台任务；忙碌时也可用 |
 | `/trajectory` | 当前运行的本地记录状态 |
 | `/usage` | 当前进程 token 分桶；未报告不等于零 |
+| `/workflow <task>` | 请模型把任务编排为一次 `workflow` DAG 调用；不带参数时打印用法 |
 | `/skill-name [request]` | 显式加载并发送一个 skill |
 | `/developer <requirement>` | 监督一个完整、可持续的无头 worker |
 | `/self-evolution-research` | 内置 skill：待办/研究/评分/受监督迭代循环 |

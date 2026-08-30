@@ -1474,6 +1474,16 @@ graph.invoke('', { cancelSignal })                         // MultiAgentInvokeOp
 - **Reads parallel, writes serialized.** Concurrent nodes share one working tree with no
   isolation; the tool description pins the rule (parallel branches are for reads, writes are
   serialized by edges) so the model sees it.
+- **`/workflow <task>` is a prompt-style trigger, never a second execution channel.** The
+  built-in expands (in `expandSlashCommand`, checked before skills and custom commands so no
+  extension can shadow it) into one fixed-template prompt naming the `workflow` tool,
+  restating the node bound and the reads-parallel/writes-serialized rule, and embedding the
+  user's description verbatim — then flows down the ordinary submit path: the model still
+  owns DAG decomposition and every node call is gated as usual. `parseWorkflowCommand`
+  (`src/commands/workflow-command.ts`) stays pure and never imports `WorkflowTool`. Bare
+  `/workflow` is the drivers' bounded local usage notice (TUI and dev-repl), never a model
+  call; the runtime maps `'missing-task'` to null and never fabricates a turn. Busy
+  submissions queue like any prompt (SER-027; it is not on the refuse list).
 
 ### 4. Validation & Error Matrix
 
@@ -1490,6 +1500,8 @@ Required offline check: `spike/verify-workflow-tool.ts` (validation refusals, di
 order and SDK dependency merge, per-node dispatches with provenance, terminus-only result,
 failure and cancellation sweeps, parent-only registration order), plus
 `verify-subagent-heartbeats.ts` and `verify-subagents.ts` for the unchanged subagent recipe.
+For the `/workflow` trigger: `spike/verify-workflow-command.ts` (parse, template, name
+reservation) and `spike/verify-tui.ts completion` (every built-in still fits the menu).
 
 ---
 

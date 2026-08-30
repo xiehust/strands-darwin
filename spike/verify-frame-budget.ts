@@ -613,7 +613,7 @@ function renderedRows(element: React.ReactElement, columns: number): number {
     /files \(.*\) — bounded scan: 4000 paths:/.test(noted));
   assert('path rows carry no slash prefix', noted.includes('❯ src/') && !noted.includes('❯ /src/'));
 
-  const overflowItems = Array.from({ length: 20 }, (_, index) => `item-${String(index).padStart(2, '0')}`);
+  const overflowItems = Array.from({ length: 21 }, (_, index) => `item-${String(index).padStart(2, '0')}`);
   const renderOverflow = (selectedCompletion: number): string => renderToString(
     React.createElement(InputBox, {
       layout: layoutEditor('/', 80, { offset: 1, affinity: 'upstream' }),
@@ -631,9 +631,9 @@ function renderedRows(element: React.ReactElement, columns: number): number {
   );
   const renderedCases = [
     { name: 'first', selected: 0, marker: '❯ /item-00', notice: '… 1 more not shown (1 below)' },
-    { name: 'middle', selected: 10, marker: '❯ /item-10', notice: '… 1 more not shown (1 above)' },
-    { name: 'last', selected: 19, marker: '❯ /item-19', notice: '… 1 more not shown (1 above)' },
-    { name: 'wrapped', selected: moveCompletionSelection(0, 20, -1), marker: '❯ /item-19', notice: '… 1 more not shown (1 above)' },
+    { name: 'middle', selected: 10, marker: '❯ /item-10', notice: '… 1 more not shown (1 below)' },
+    { name: 'last', selected: 20, marker: '❯ /item-20', notice: '… 1 more not shown (1 above)' },
+    { name: 'wrapped', selected: moveCompletionSelection(0, 21, -1), marker: '❯ /item-20', notice: '… 1 more not shown (1 above)' },
   ];
   for (const renderedCase of renderedCases) {
     const output = renderOverflow(renderedCase.selected);

@@ -39,6 +39,7 @@ import {
 import { CONFIG_FILENAME } from '../config.js';
 import type { AppConfig, ModelChoice } from '../config.js';
 import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
+import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from '../commands/workflow-command.js';
 import { MCP_CONFIG_FILENAME, mcpConfigCandidates } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
@@ -1451,6 +1452,18 @@ export function App({
         return;
       }
 
+      // Bare /workflow is the built-in's local usage notice, never a turn: the
+      // runtime maps 'missing-task' to null, so without this it would fall
+      // through as ordinary input and spend a model call. With a task it takes
+      // the generic expansion path below like any other prompt command.
+      if (parseWorkflowCommand(text) === 'missing-task') {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        dispatch({ type: 'notice', text: WORKFLOW_COMMAND_USAGE });
+        return;
+      }
+
       setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
       setSelectedCompletion(0);
       dispatch({ type: 'userInput', text });
@@ -1466,7 +1479,9 @@ export function App({
             text:
               expanded.kind === 'skill'
                 ? `loaded skill "${expanded.skill.name}"`
-                : `loaded command "/${expanded.command.name}"`,
+                : expanded.kind === 'workflow'
+                  ? 'delegating via the workflow tool'
+                  : `loaded command "/${expanded.command.name}"`,
           });
           toSend = expanded.message;
         }

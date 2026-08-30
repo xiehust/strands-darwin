@@ -33,6 +33,7 @@ import {
   type CustomCommandRegistry,
   type ExpandedCustomCommand,
 } from '../commands/custom-commands.js';
+import { parseWorkflowCommand } from '../commands/workflow-command.js';
 import {
   appendAllowRule,
   applyThinkingEffort,
@@ -241,7 +242,8 @@ export interface ModelChangeResult {
 }
 export type ExpandedSlashCommand =
   | ({ kind: 'skill' } & ExpandedSkillCommand)
-  | ({ kind: 'command' } & ExpandedCustomCommand);
+  | ({ kind: 'command' } & ExpandedCustomCommand)
+  | { kind: 'workflow'; message: string };
 
 /** Estimated size of the next request's context, plus the model's window. */
 export interface ContextEstimate {
@@ -1520,11 +1522,19 @@ export class AgentRuntime {
   }
 
   /**
-   * Expands a skill or project command into the prompt sent to the model.
-   * Skills are checked first as a defensive backstop to the loader's collision
+   * Expands a built-in prompt command, a skill, or a project command into the
+   * prompt sent to the model. `/workflow` is checked first: built-in
+   * reservation precedes skills and custom commands, so no extension can
+   * shadow it. Its bare form returns null — the drivers own that local usage
+   * notice, and the runtime never fabricates a turn. Skills are checked before
+   * custom commands as a defensive backstop to the loader's collision
    * filtering. Unknown slash input remains ordinary user input.
    */
   async expandSlashCommand(input: string): Promise<ExpandedSlashCommand | null> {
+    const workflow = parseWorkflowCommand(input);
+    if (workflow === 'missing-task') return null;
+    if (workflow !== null) return { kind: 'workflow', ...workflow };
+
     const skill = await expandSkillCommand(this.skills, input);
     if (skill !== null) return { kind: 'skill', ...skill };
 

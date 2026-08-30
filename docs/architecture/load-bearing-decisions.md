@@ -471,7 +471,14 @@ forwards the parent's cancel signal into `graph.invoke`, so cancellation stops r
 and unstarted nodes alike, and a `finally` sweep settles leftover dispatches as `cancelled`.
 Registered strictly after the child-catalogue capture, so children can never orchestrate; the
 tool description pins reads-parallel/writes-serialized because concurrent nodes share one working
-tree. Required check: `spike/verify-workflow-tool.ts` (in `pnpm test`).
+tree. The `/workflow <task>` built-in is a prompt-style trigger onto this same tool, never a
+second execution channel: `parseWorkflowCommand` (`src/commands/workflow-command.ts`, pure, never
+imports `WorkflowTool`) expands in `expandSlashCommand` — checked before skills and custom
+commands so no extension can shadow the reserved name — into one fixed template that names the
+tool, restates the bounds and the reads/writes rule, and embeds the description verbatim, then
+flows down the ordinary submit path (busy submissions queue per SER-027); bare `/workflow` is a
+local driver usage notice, never a model call. Required check: `spike/verify-workflow-tool.ts`
+and `spike/verify-workflow-command.ts` (both in `pnpm test`).
 
 ## Session trajectory
 

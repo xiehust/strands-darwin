@@ -1247,7 +1247,8 @@ async function slashCompletion(): Promise<void> {
     await tui.waitFor('help — local controls', { timeoutMs: 30_000, from: beforeHelp, settleMs: 400 });
     const help = tui.screen.slice(beforeHelp);
     assert('/help answers locally without starting a model turn',
-      help.includes('commands (18/18):') && help.includes('Ctrl+J or trailing \\ + Enter') &&
+      help.includes(`commands (${BUILTIN_COMMAND_NAMES.length}/${BUILTIN_COMMAND_NAMES.length}):`) &&
+      help.includes('Ctrl+J or trailing \\ + Enter') &&
       !help.includes('working…'));
     assert('/help uses the existing transcript surface and leaves the live controls intact',
       tui.frame.includes('you>'));
@@ -1388,6 +1389,8 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /tasks is listed', completed.includes('  /tasks'));
     assert('the built-in /trajectory is listed', completed.includes('  /trajectory'));
     assert('the built-in /usage is listed', completed.includes('  /usage'));
+    assert('the built-in /workflow is listed',
+      completed.includes('  /workflow — orchestrate a task with the workflow tool'));
     assert(
       'runtime completion order is built-ins, custom commands, then skills',
       completed.indexOf('/review') < completed.lastIndexOf('/commit-message'),
@@ -1502,8 +1505,10 @@ async function pathCompletion(): Promise<void> {
   await writeFile(path.join(outside, 'secret.txt'), 'OUTSIDE_TUI_SECRET\n', 'utf8');
   await symlink(outside, path.join(dir, 'escape'), 'dir');
   // Enough entries that the menu must drop some, so "what is not shown is stated" is
-  // asserted on the real thing rather than on the helper that counts it.
-  for (let index = 1; index <= 15; index += 1) {
+  // asserted on the real thing rather than on the helper that counts it. 18 pads make
+  // 23 candidates — far enough past MAX_COMPLETIONS (20) that a mid-list selection
+  // truthfully hides rows on *both* sides of the window.
+  for (let index = 1; index <= 18; index += 1) {
     await writeFile(path.join(dir, 'pad', `p${String(index).padStart(2, '0')}.md`), 'pad\n', 'utf8');
   }
 
@@ -1553,23 +1558,24 @@ async function pathCompletion(): Promise<void> {
     await tui.waitFor('❯ notes.md', { timeoutMs: 30_000, settleMs: 400 });
 
     // Walk beyond the bounded prefix and accept the visibly selected path with Tab.
+    // 12 steps land mid-window (index 12 of 23), where rows hide on both sides.
     const beforePathWindow = tui.mark();
-    tui.send('\u001b[B'.repeat(10));
-    await tui.waitFor('❯ pad/p08.md', { timeoutMs: 30_000, from: beforePathWindow, settleMs: 400 });
+    tui.send('\u001b[B'.repeat(12));
+    await tui.waitFor('❯ pad/p10.md', { timeoutMs: 30_000, from: beforePathWindow, settleMs: 400 });
     assert('Down windows an overflowing path menu around the selected candidate',
-      tui.frame.includes('❯ pad/p08.md') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
+      tui.frame.includes('❯ pad/p10.md') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
     assert('the path window states omissions above and below truthfully',
       /… \d+ more not shown \(\d+ above, \d+ below\)/.test(tui.frame));
     const beforePathTab = tui.mark();
     tui.send('\t');
-    await tui.waitFor('you> pad/p08.md', { timeoutMs: 30_000, from: beforePathTab, settleMs: 400 });
+    await tui.waitFor('you> pad/p10.md', { timeoutMs: 30_000, from: beforePathTab, settleMs: 400 });
     assert('Tab accepts exactly the visibly selected path candidate',
-      tui.frame.includes('you> pad/p08.md') && !tui.frame.includes('files ('));
+      tui.frame.includes('you> pad/p10.md') && !tui.frame.includes('files ('));
 
     // Reopen and wrap upward to the final full-list path. Enter accepts the same row
     // the marker names, without starting a turn.
     tui.send('\u0015');
-    await tui.waitUntil(() => !tui.frame.includes('files (') && !tui.frame.includes('you> pad/p08.md'), {
+    await tui.waitUntil(() => !tui.frame.includes('files (') && !tui.frame.includes('you> pad/p10.md'), {
       timeoutMs: 10_000,
       label: 'path draft cleared before reopening completion',
     });

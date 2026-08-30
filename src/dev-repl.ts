@@ -23,6 +23,7 @@ import {
 } from './agent/permission.js';
 import { isThinkingEffort, THINKING_EFFORTS, type ThinkingPlan } from './agent/thinking.js';
 import { CONFIG_FILENAME, ConfigError } from './config.js';
+import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from './commands/workflow-command.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
 import { DARWIN_DIRNAME } from './paths.js';
 
@@ -281,6 +282,14 @@ async function main(): Promise<void> {
         continue;
       }
 
+      // Bare /workflow is the built-in's local usage notice, no model call: the
+      // runtime maps 'missing-task' to null, so without this it would fall
+      // through as ordinary input. With a task it expands below.
+      if (parseWorkflowCommand(input) === 'missing-task') {
+        console.log(`  ${WORKFLOW_COMMAND_USAGE}\n`);
+        continue;
+      }
+
       try {
         // Skills and project commands send their expanded prompt instead of the
         // raw command. Unknown slash commands fall through as ordinary input.
@@ -289,7 +298,9 @@ async function main(): Promise<void> {
           console.log(
             expanded.kind === 'skill'
               ? `  · loaded skill "${expanded.skill.name}"`
-              : `  · loaded command "/${expanded.command.name}"`,
+              : expanded.kind === 'workflow'
+                ? '  · delegating via the workflow tool'
+                : `  · loaded command "/${expanded.command.name}"`,
           );
           await renderTurn(runtime, expanded.message, input);
           continue;

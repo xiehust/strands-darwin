@@ -117,7 +117,7 @@ Multiple subagent calls in one assistant message run concurrently. Permission pr
 
 ## Workflows (DAG delegation)
 
-`workflow` is the multi-step counterpart to `subagent`: instead of one task per call, the model declares a small dependency graph of tasks and the run is scheduled for it. Ask for a pipeline in plain language — "research X, then implement it, then review the diff, with the two research steps in parallel" — and the model can submit it as one `workflow` call instead of shepherding each step by hand.
+`workflow` is the multi-step counterpart to `subagent`: instead of one task per call, the model declares a small dependency graph of tasks and the run is scheduled for it. Ask for a pipeline in plain language — "research X, then implement it, then review the diff, with the two research steps in parallel" — and the model can submit it as one `workflow` call instead of shepherding each step by hand. To steer a turn toward this explicitly, type `/workflow <task description>`: the built-in expands into one ordinary prompt asking the model to orchestrate the task with the `workflow` tool (the model still decomposes the DAG; bare `/workflow` just prints usage).
 
 The input is data, never code:
 

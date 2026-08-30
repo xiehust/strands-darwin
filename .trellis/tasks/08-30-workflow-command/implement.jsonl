@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "workflow tool contract: bounded DAG, SDK Graph, reads-parallel/writes-serialized — the expansion template must restate, never contradict, these"}
+{"file": ".trellis/spec/frontend/prompt-completion.md", "reason": "slash-completion contract the new built-in row and MAX_COMPLETIONS growth must honour"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "frontend layer conventions for the App.tsx / InputBox edits"}
+{"file": ".trellis/tasks/08-30-workflow-command/prd.md", "reason": "requirements and acceptance criteria"}
+{"file": ".trellis/tasks/08-30-workflow-command/design.md", "reason": "technical design: module layout, union growth, driver handling"}

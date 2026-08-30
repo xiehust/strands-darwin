@@ -21,7 +21,7 @@ import { visualColor, visualMarker } from './visual-language.js';
  * "… n more" row — a workspace has more paths than any menu could hold, so for them
  * that row is the normal case rather than the overflow one.
  */
-export const MAX_COMPLETIONS = 19;
+export const MAX_COMPLETIONS = 20;
 
 /**
  * Which source the offered rows came from.

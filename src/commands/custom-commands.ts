@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'export', 'help', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'status', 'tasks', 'trajectory', 'usage'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'export', 'help', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'status', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -53,6 +53,8 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // The record this session is writing, not the CLI's search/fork/replay verbs.
   trajectory: 'this session\u2019s recorded trajectory',
   usage: 'token counts this run',
+  // A prompt expansion, not an executor: the model still decomposes the DAG.
+  workflow: 'orchestrate a task with the workflow tool',
 };
 
 /**
