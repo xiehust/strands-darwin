@@ -13,7 +13,7 @@
 | [配置与上下文](configuration.zh-CN.md) | 全部配置字段、模型切换、缓存、思考强度、system prompt、`AGENTS.md`、工作上下文 |
 | [会话与状态](sessions-and-state.zh-CN.md) | 快照、恢复、轨迹、费用、导出/分叉、记忆、诊断、存储路径 |
 | [权限](permissions.zh-CN.md) | 四种模式、静态安全判定、分类器、放行规则及撤销 |
-| [扩展](extensions.zh-CN.md) | 发现顺序、MCP、skills、内置工作流、子代理、自定义命令、hooks |
+| [扩展](extensions.zh-CN.md) | 发现顺序、MCP、skills、内置工作流、子代理、workflow DAG、自定义命令、hooks |
 | [命令与按键参考](reference.zh-CN.md) | CLI、斜杠命令、输入语法、按键、各命令行为 |
 | [限制与开发](development.zh-CN.md) | 已知限制、本地质量门、测试套件、调试 REPL、架构索引 |
 

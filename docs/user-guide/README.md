@@ -13,7 +13,7 @@ This guide owns darwin's operational documentation. The [root README](../../READ
 | [Configuration and context](configuration.md) | every config field, model switching, caching, effort, system prompt, `AGENTS.md`, working context |
 | [Sessions and state](sessions-and-state.md) | snapshots, resume, trajectory, cost, export/fork, memory, diagnostics, stored paths |
 | [Permissions](permissions.md) | four modes, static safety, classifier behavior, allow rules and revocation |
-| [Extensions](extensions.md) | discovery order, MCP, skills, bundled workflows, subagents, custom commands, hooks |
+| [Extensions](extensions.md) | discovery order, MCP, skills, bundled workflows, subagents, workflow DAGs, custom commands, hooks |
 | [Command and keyboard reference](reference.md) | CLI, slash commands, prompt syntax, keys, command-specific behavior |
 | [Limitations and development](development.md) | known limits, local gates, test suites, debugging REPL, architecture index |
 

@@ -115,6 +115,29 @@ Children have fresh model/context, no parent messages, no persisted session, and
 
 Multiple subagent calls in one assistant message run concurrently. Permission prompts remain serialized and source-labelled. `/agents` lists only this run's dispatch metadata, never child transcripts. Parallelism is for read-heavy work: children share one unisolated working tree with no locks/conflict detection, so serialize mutation.
 
+## Workflows (DAG delegation)
+
+`workflow` is the multi-step counterpart to `subagent`: instead of one task per call, the model declares a small dependency graph of tasks and the run is scheduled for it. Ask for a pipeline in plain language — "research X, then implement it, then review the diff, with the two research steps in parallel" — and the model can submit it as one `workflow` call instead of shepherding each step by hand.
+
+The input is data, never code:
+
+```json
+{
+  "nodes": [
+    { "id": "map",    "agent": "explorer", "task": "Map the auth module; cite files and symbols." },
+    { "id": "tests",  "agent": "explorer", "task": "List existing auth test coverage and gaps." },
+    { "id": "plan",   "task": "Using the reports above, propose a minimal fix plan." }
+  ],
+  "edges": [["map", "plan"], ["tests", "plan"]]
+}
+```
+
+Each node runs as one fresh child agent (`agent` defaults to `general`; the same `.darwin/agents/` definitions apply). An edge `[source, target]` means `target` waits for `source` and receives its final report as input — intermediate reports flow between nodes without round-tripping through the parent conversation. Nodes whose dependencies are all satisfied run in parallel, capped by optional `maxConcurrency`.
+
+Bounds and refusals: at most 8 nodes and 28 edges; duplicate or unknown node ids, unknown agent names, blank tasks, and cycles are refused with a bounded error before any child is created. Only the terminus reports (nodes where execution ended) return to the parent; child transcripts stay private.
+
+Everything from the subagent section still holds per node: fresh model/context, the shared permission gate with source-labelled prompts, dispatch rows on `/agents` with targeted `/agents cancel <id>`, bash-session reaping, and Ctrl+C cancelling the whole run including unstarted nodes. The same working-tree caveat also holds: parallel branches are for reads only — serialize writes by putting an edge between them.
+
 ## Custom commands
 
 Place Markdown under `.darwin/commands/` or global/portable counterparts. `/name arguments` sends the file body as the message, replacing `$ARGUMENTS` with text after the command. Built-ins remain reserved; command discovery follows the common precedence.

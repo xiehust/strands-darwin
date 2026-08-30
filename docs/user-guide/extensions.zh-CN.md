@@ -115,6 +115,29 @@ Trace the requested behavior, cite files and symbols, and report to the parent.
 
 同一条助手消息里的多个 `subagent` 调用并行执行。权限框仍串行，并标明来源。`/agents` 只列当前运行的派发元数据，从不包含子对话。并行适合读取型工作：所有子代理共享一个没有隔离、锁或冲突检测的工作树，因此写入必须串行。
 
+## Workflow（DAG 委派）
+
+`workflow` 是 `subagent` 的多步版本：不再一次调用只派发一个任务，而是由模型声明一个小型任务依赖图，按依赖顺序调度执行。用自然语言描述流水线即可——例如"先并行调研 X 和 Y，再据此实现，最后审查 diff"——模型可以把它作为一次 `workflow` 调用提交，而不必逐步人工推进。
+
+输入是数据，永远不是代码：
+
+```json
+{
+  "nodes": [
+    { "id": "map",    "agent": "explorer", "task": "Map the auth module; cite files and symbols." },
+    { "id": "tests",  "agent": "explorer", "task": "List existing auth test coverage and gaps." },
+    { "id": "plan",   "task": "Using the reports above, propose a minimal fix plan." }
+  ],
+  "edges": [["map", "plan"], ["tests", "plan"]]
+}
+```
+
+每个节点作为一个全新子代理运行（`agent` 缺省为 `general`，同样使用 `.darwin/agents/` 里的定义）。边 `[source, target]` 表示 `target` 等待 `source` 完成，并把它的最终报告作为输入——中间报告在节点之间直接流转，不占用父会话上下文。依赖全部满足的节点并行运行，可用可选的 `maxConcurrency` 限流。
+
+边界与拒绝：最多 8 个节点、28 条边；节点 id 重复或未知、代理名未知、任务为空、图中有环，都会在创建任何子代理之前以有界错误拒绝。只有终点报告（执行路径结束处的节点）返回给父代理；子对话保持私有。
+
+子代理一节的所有约束对每个节点同样成立：全新模型/上下文、共享权限 gate 且提示标明来源、`/agents` 派发行与定向 `/agents cancel <id>`、bash 会话回收、Ctrl+C 取消整个运行（包括尚未启动的节点）。工作树警告同样适用：并行分支只用于读取——需要写入时用边把它们串行化。
+
 ## 自定义命令
 
 把 Markdown 放在 `.darwin/commands/` 或对应全局/可移植目录中。输入 `/name arguments` 时，文件正文会作为消息发送，其中 `$ARGUMENTS` 替换为命令后的文字。内置名称仍保留；发现顺序遵循通用优先级。
