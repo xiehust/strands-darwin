@@ -647,6 +647,23 @@ export function classify(toolName: string, rawInput: unknown): PermissionRequest
         details: [{ label: 'Task', value: str(input['task']) ?? '(missing task)' }],
         input: rawInput,
       };
+    // Like `subagent`: launching the DAG is a read — every tool call each node
+    // makes is gated individually through the same shared intervention, with
+    // dispatch `source` provenance labelling which child asked.
+    case 'workflow': {
+      const nodes = Array.isArray(input['nodes']) ? input['nodes'] : [];
+      const listed = nodes
+        .map((node) => asRecord(node))
+        .map((node) => `${str(node['id']) ?? '(missing id)'}(${str(node['agent']) ?? 'general'})`)
+        .join(', ');
+      return {
+        toolName,
+        kind: 'read',
+        summary: `workflow: ${nodes.length} node${nodes.length === 1 ? '' : 's'}`,
+        details: [{ label: 'Nodes', value: firstLine(listed) }],
+        input: rawInput,
+      };
+    }
     case 'update_plan':
       return {
         toolName,

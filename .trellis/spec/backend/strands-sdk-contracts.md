@@ -1398,6 +1398,101 @@ const subagents = new SubagentTool({ /* … */ intervention: gate, dispatches })
 
 ---
 
+## Scenario: bounded declarative workflow DAG (SER-045)
+
+### 1. Scope / Trigger
+
+Use this contract whenever the parent delegates a multi-step plan whose intermediate reports
+must flow worker-to-worker without round-tripping through the parent context. One `workflow`
+tool call runs one bounded DAG of subagent tasks on the installed SDK `Graph` orchestrator.
+
+### 2. Signatures
+
+```typescript
+workflow({
+  nodes: { id: string; agent?: string; task: string }[],  // 1..MAX_WORKFLOW_NODES (8)
+  edges?: [source: string, target: string][],             // 0..MAX_WORKFLOW_EDGES (28)
+  maxConcurrency?: number,                                 // 1..8; default: node count
+}): Promise<string>
+new WorkflowTool({ registry, tools, intervention, projectInstructions, config, createModel,
+  dispatches?, codexHooks?, onChildInitialized? })         // src/agents/workflow-tool.ts
+buildRecipeChild({ definition, config, model, tools, intervention, projectInstructions,
+  idPrefix, dispatch }): Agent                             // src/agents/child-recipe.ts
+new Graph({ id, nodes, edges, maxSteps: nodeCount, maxConcurrency })  // @strands-agents/sdk
+graph.invoke('', { cancelSignal })                         // MultiAgentInvokeOptions
+```
+
+### 3. Contracts
+
+- **Input is data, never code.** Node ids, agent names, task strings and plain
+  `[source, target]` pairs; no edge handlers, no conditions, no callables. An invalid DAG is
+  one bounded thrown error **before any child, model, or dispatch is constructed**: over-cap
+  counts (zod), blank task, duplicate node id, unknown agent name (lists available agents),
+  unknown edge endpoint, duplicate edge, and cycles (Kahn's algorithm — validation only).
+- **Scheduling stays the SDK's.** AND-semantics dependency resolution, dependency-merged node
+  inputs (`[node: <id>]` labels + upstream final content), `maxConcurrency` and terminus
+  resolution are the installed `Graph`; darwin never reimplements or forks any of it.
+  `maxSteps` equals the node count, which bounds the run and silences the SDK's
+  unbounded-graph warning. No wall-clock `timeout` knob — no other delegation path has one;
+  the run is bounded by the node cap, `maxSteps` and cancellation.
+- **Every node is a recipe child.** `buildRecipeChild` is the single child-construction
+  recipe shared with `SubagentTool` — composed system prompt, per-definition tool filtering,
+  the same shared gate instance (so allow-rules keep applying and provenance carries
+  `source`), dispatch phase hooks, `installMaxTokensRecovery`, `printer: false`. Neither
+  caller may construct a child `Agent` directly. One config snapshot is taken per workflow
+  invocation before async model construction; each node gets its own model.
+- **Adapter seam, not a Graph subclass.** Each node enters the graph as a thin
+  `InvokableAgent` whose `id` is the user's node id (edges and dependency labels read as
+  declared) while the inner Agent id stays globally unique
+  (`darwin-workflow-<agent>-<uuid>`) for the dispatch registry. The adapter's `stream()`
+  prepends the node's own task (plus codex-hook context) to the SDK-provided input and drops
+  the empty placeholder block from the graph-level `''` input; it also gives each node a
+  private `invocationState` so max-tokens recovery stays per-child, folding retained partial
+  text back into the node's final message via a rebuilt `AgentResult`.
+- **One dispatch per node on the existing registry.** Begun before model construction with
+  `toolUseId` omitted: all nodes share the parent `tool_use` id, and deriving dispatch ids
+  from it would collide, making targeted `/agents cancel` fail closed as `ambiguous`. Nodes
+  surface through the existing `/agents` rows, terminal notices, heartbeats and headless
+  progress events — no new TUI frame surface. (The live `workflow` tool row does not get the
+  per-dispatch elapsed suffix; that enrichment maps one dispatch to one `subagent` row.)
+- **Terminus content only.** The tool result is the SDK `MultiAgentResult.content`
+  (terminus nodes' combined content) projected to text; child transcripts stay private and
+  no child event reaches the trajectory. CANCELLED → `"Workflow cancelled."`; FAILED → one
+  bounded thrown error naming failed node ids with the first line of each node error.
+- **Cancellation reaches unstarted nodes.** One owned `AbortController` forwards the parent
+  tool context's `cancelSignal` (and `cancelActive()`/`shutdown()`) into
+  `graph.invoke(…, { cancelSignal })`; the SDK aborts running nodes and never schedules
+  pending ones. Targeted `/agents cancel` before a node starts returns a synthetic
+  `"Workflow node cancelled."` result without invoking the child. The `finally` sweep
+  settles every still-running dispatch as `cancelled`, reaps each child's bash session and
+  closes each node's codex-hook fork.
+- **Parent-only, like `update_plan` and `subagent`.** Constructed and registered strictly
+  after the child tool catalogue is captured in `runtime.ts`, so no child catalogue can ever
+  contain `workflow` (no recursive orchestration). Permission classification is `read` with
+  a bounded node listing, following the `subagent` precedent: launching the DAG is a read;
+  every tool call a node makes is gated individually. Never set `toolExecutor`.
+- **Reads parallel, writes serialized.** Concurrent nodes share one working tree with no
+  isolation; the tool description pins the rule (parallel branches are for reads, writes are
+  serialized by edges) so the model sees it.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Over-cap nodes/edges, blank task, dup/unknown ids, dup edges, cycle, unknown agent | Bounded tool error; zero models, children, dispatches constructed |
+| Node model construction throws | Whole tool call errors; finally sweep settles remaining dispatches `cancelled` |
+| Node child throws mid-run | Node dispatch `failed`; SDK marks node FAILED; dependants never start, swept `cancelled`; tool errors boundedly |
+| Parent cancel mid-run | Running children cancelled, unstarted nodes never scheduled; all dispatches settle `cancelled` |
+| Targeted `/agents cancel <node dispatch>` | Exactly that child stops; siblings and dependants continue with its synthetic report |
+| COMPLETED with empty terminus text | `"Workflow completed with no terminus report."` notice, never an error |
+
+Required offline check: `spike/verify-workflow-tool.ts` (validation refusals, diamond-DAG
+order and SDK dependency merge, per-node dispatches with provenance, terminus-only result,
+failure and cancellation sweeps, parent-only registration order), plus
+`verify-subagent-heartbeats.ts` and `verify-subagents.ts` for the unchanged subagent recipe.
+
+---
+
 ## Scenario: session-owned background bash jobs
 
 ### 1. Scope / Trigger

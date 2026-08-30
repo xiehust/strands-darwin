@@ -1,22 +1,12 @@
-import { randomUUID } from 'node:crypto';
-
-import {
-  AfterModelCallEvent,
-  AfterToolCallEvent,
-  Agent,
-  BeforeModelCallEvent,
-  BeforeToolCallEvent,
-  SummarizingConversationManager,
-  tool,
-} from '@strands-agents/sdk';
+import { Agent, tool } from '@strands-agents/sdk';
 import type { InterventionHandler, Model, Tool, ToolContext } from '@strands-agents/sdk';
 import { z } from 'zod';
 
 import type { ProjectInstructions } from '../agent/instructions.js';
-import { composeSystemPrompt } from '../agent/instructions.js';
-import { installMaxTokensRecovery, withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
+import { withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
+import { buildRecipeChild, stopBashSession } from './child-recipe.js';
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
@@ -158,33 +148,16 @@ export class SubagentTool {
     // A child owns its portable lifecycle commands so targeted cancellation and
     // settlement cannot cancel or wait on a sibling or parent hook process.
     const childCodexHooks = this.options.codexHooks?.fork();
-    const child = new Agent({
-      id: `darwin-subagent-${definition.name}-${randomUUID()}`,
-      name: definition.name,
-      description: definition.description,
+    const child = buildRecipeChild({
+      definition,
+      config,
       model,
-      systemPrompt: composeSystemPrompt(definition.systemPrompt, this.options.projectInstructions),
-      tools: this.toolsFor(definition),
-      conversationManager: new SummarizingConversationManager({
-        summaryRatio: config.summaryRatio,
-        preserveRecentMessages: config.preserveRecentMessages,
-      }),
-      interventions: [this.options.intervention],
-      printer: false,
+      tools: this.options.tools,
+      intervention: this.options.intervention,
+      projectInstructions: this.options.projectInstructions,
+      idPrefix: 'subagent',
+      dispatch,
     });
-    installMaxTokensRecovery(child);
-    // Hooks expose only operation boundaries. Never inspect model messages, tool
-    // input/results, reasoning, or child transcript for progress.
-    child.addHook(BeforeModelCallEvent, () => dispatch?.setPhase({ kind: 'model' }));
-    child.addHook(AfterModelCallEvent, () => dispatch?.setPhase({ kind: 'starting' }));
-    child.addHook(BeforeToolCallEvent, (event) => {
-      dispatch?.setPhase({ kind: 'tool', toolName: event.toolUse.name });
-    });
-    child.addHook(AfterToolCallEvent, () => dispatch?.setPhase({ kind: 'starting' }));
-    // Before initialize(), so the first gated call resolves to its dispatch and a
-    // targeted cancellation can stop only this child.
-    dispatch?.attachAgent(child.id);
-    dispatch?.attachCancel(() => child.cancel());
 
     this.activeAgents.add(child);
     const cancelChild = () => child.cancel();
@@ -226,22 +199,5 @@ export class SubagentTool {
     return this.options.registry.definitions.find(
       (definition) => definition.name.toLowerCase() === normalized,
     );
-  }
-
-  private toolsFor(definition: AgentDefinition): Tool[] {
-    if (definition.tools === undefined) return [...this.options.tools];
-    const allowed = new Set(definition.tools);
-    return this.options.tools.filter((candidate) => allowed.has(candidate.name));
-  }
-}
-
-/** Reaps the persistent shell associated with one child Agent, if it used bash. */
-async function stopBashSession(agent: Agent): Promise<void> {
-  if (!agent.tools.some((candidate) => candidate.name === 'bash')) return;
-
-  try {
-    await agent.tool['bash']?.invoke({ mode: 'restart' }, { recordDirectToolCall: false });
-  } catch {
-    // Cleanup is best-effort; the child's original result or failure takes priority.
   }
 }

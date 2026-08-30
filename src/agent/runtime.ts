@@ -26,6 +26,7 @@ import {
   type SubagentDispatchStatus,
 } from '../agents/dispatch-registry.js';
 import { SubagentTool } from '../agents/subagent-tool.js';
+import { WorkflowTool } from '../agents/workflow-tool.js';
 import {
   expandCustomCommand,
   loadCustomCommands,
@@ -366,6 +367,7 @@ export class AgentRuntime {
     private readonly skills: SkillsPlugin,
     private readonly commands: CustomCommandRegistry,
     private readonly subagents: SubagentTool,
+    private readonly workflows: WorkflowTool,
     private readonly subagentDispatches: SubagentDispatchRegistry,
     private readonly backgroundBash: BackgroundBashManager,
     private readonly gate: PermissionGate,
@@ -658,6 +660,19 @@ export class AgentRuntime {
       ...(codexHooks === undefined ? {} : { codexHooks }),
     });
     agent.toolRegistry.add(subagents.tool);
+    // Same fixed child catalogue and shared gate as `subagent`; registered after
+    // the catalogue capture so `workflow` stays parent-only, like `update_plan`.
+    const workflows = new WorkflowTool({
+      registry: agentDefinitions,
+      tools: childTools,
+      intervention,
+      projectInstructions: instructions,
+      config,
+      createModel: createModelFromConfig,
+      dispatches: subagentDispatches,
+      ...(codexHooks === undefined ? {} : { codexHooks }),
+    });
+    agent.toolRegistry.add(workflows.tool);
 
     // Strictly after initialize(): session restore may have replaced both prompt
     // and official skill appState. Refresh current facts, then place the final
@@ -718,6 +733,7 @@ export class AgentRuntime {
       skills,
       commands,
       subagents,
+      workflows,
       subagentDispatches,
       backgroundBash,
       gate,
@@ -1281,6 +1297,7 @@ export class AgentRuntime {
     this.lifecycleHooks?.cancel();
     this.codexHooks?.cancel();
     this.subagents.cancelActive();
+    this.workflows.cancelActive();
     this.agent.cancel();
   }
 
@@ -1524,6 +1541,7 @@ export class AgentRuntime {
   async shutdown(options: { throwOnError?: boolean } = {}): Promise<void> {
     const results = await Promise.allSettled([
       this.subagents.shutdown(),
+      this.workflows.shutdown(),
       this.backgroundBash.shutdown(),
       this.stopBashSession(options.throwOnError === true),
       this.lifecycleHooks?.close() ?? Promise.resolve(),

@@ -447,6 +447,32 @@ cancel one child, collision/unknown/terminal ids refuse locally, siblings and th
 alive. Ctrl+C still cancels every child plus the parent. Settlement clears timers/cancellers before
 completion publication. Required check: `spike/verify-subagent-heartbeats.ts` (in `pnpm test`).
 
+## Workflow DAG tool
+
+**`workflow` is a parent-only bounded declarative DAG whose execution is the installed SDK
+`Graph`, never a darwin scheduler** (`src/agents/workflow-tool.ts`, `src/agents/child-recipe.ts`;
+contract in `.trellis/spec/backend/strands-sdk-contracts.md` § "bounded declarative workflow DAG
+(SER-045)"). The input is data, never code — node ids, agent names, task strings and plain
+`[source, target]` edge pairs, capped at 8 nodes / 28 edges — and an invalid DAG (cycle,
+duplicate/unknown id, unknown agent, blank task, over-cap count) is one bounded tool error before
+any dispatch, model or child exists. Everything that schedules — AND-semantics dependency
+resolution, dependency-merged node inputs, `maxConcurrency`, terminus resolution — is the SDK's:
+darwin only wraps each node in a thin `InvokableAgent` adapter (node id outward, unique
+`darwin-workflow-*` agent id inward) that prepends the node's own task to the SDK-provided input.
+Each node is built by `buildRecipeChild`, the single child-construction recipe extracted from and
+still used by `SubagentTool` — same composed prompt, tool filtering, shared gate with dispatch
+`source` provenance, registry heartbeats and targeted `/agents cancel`, codex-hook fork,
+max-tokens recovery, bash reaping — so the two delegation surfaces cannot drift; neither may
+construct a child `Agent` directly. Only the graph's terminus content returns to the parent;
+child transcripts stay private, no child event reaches the trajectory, and nodes appear through
+the existing dispatch-registry rows (each with its own random dispatch id — deriving from the
+shared parent `tool_use` id would make targeted cancel ambiguous). One owned `AbortController`
+forwards the parent's cancel signal into `graph.invoke`, so cancellation stops running children
+and unstarted nodes alike, and a `finally` sweep settles leftover dispatches as `cancelled`.
+Registered strictly after the child-catalogue capture, so children can never orchestrate; the
+tool description pins reads-parallel/writes-serialized because concurrent nodes share one working
+tree. Required check: `spike/verify-workflow-tool.ts` (in `pnpm test`).
+
 ## Session trajectory
 
 **Session trajectory is an observer, never a participant** (`src/trajectory/`, spec:
