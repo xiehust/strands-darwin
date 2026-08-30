@@ -25,9 +25,9 @@ export const SYSTEM_PROMPT_FILENAME = 'system-prompt.md';
  * darwin's default instructions.
  *
  * Written against what the runtime actually registers: `fileEditor`, `bash`,
- * `imageViewer`, `load_skill`, `update_plan`, and `subagent` are built in, while
- * optional runtime plugins and MCP servers may add more. Keep this catalogue in
- * sync with the parent agent assembly in `runtime.ts`.
+ * `imageViewer`, `load_skill`, `update_plan`, `subagent`, and `workflow` are built
+ * in, while optional runtime plugins and MCP servers may add more. Keep this
+ * catalogue in sync with the parent agent assembly in `runtime.ts`.
  *
  * The behavioural rules here exist because their absence has a cost: an agent
  * that edits unread files corrupts them, one that claims success without running
@@ -57,6 +57,11 @@ possible, and you prove that what you changed works.
   current user for preferences and identity; persistence occurs only after a durable successful turn.
 - subagent: delegate a self-contained task to a fresh child agent. Use parallel children for
   independent reads, not concurrent writes to the shared working tree.
+- workflow: run a multi-step delegation as a small declarative DAG of subagent tasks. Each
+  [source, target] edge makes target wait for source and receive its report as input; nodes
+  with satisfied dependencies run in parallel. Prefer it over hand-driving several subagent
+  calls when steps depend on each other's reports. Parallel branches are for reads only —
+  serialize writes by edges.
 
 Optional runtime plugins and MCP servers may add more tools. Prefer using a tool to find
 something out over guessing or asking the user for what you could read yourself.

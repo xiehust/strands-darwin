@@ -76,6 +76,10 @@ async function defaultPrompt(): Promise<void> {
     /persistence occurs only after a durable successful turn/.test(DEFAULT_SYSTEM_PROMPT),
   );
   assert('it limits parallel subagents to independent reads', /parallel children for\n  independent reads, not concurrent writes/.test(DEFAULT_SYSTEM_PROMPT));
+  assert(
+    'it keeps workflow parallelism read-only and serializes writes by edges',
+    /workflow:[\s\S]*Parallel branches are for reads only —\n  serialize writes by edges/.test(DEFAULT_SYSTEM_PROMPT),
+  );
   assert('it tells the model to read before editing', /have not read/i.test(DEFAULT_SYSTEM_PROMPT));
   assert('it tells the model to verify its work', /verify/i.test(DEFAULT_SYSTEM_PROMPT));
   assert(
