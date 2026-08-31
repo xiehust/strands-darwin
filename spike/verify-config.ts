@@ -16,6 +16,7 @@ import {
   ConfigError,
   DEFAULT_REQUEST_TIMEOUT_MS,
   OFFLOAD_PREVIEW_TOKENS,
+  DEFAULT_MAX_RESULT_TOKENS,
   appendAllowRule,
   configPath,
   createModelFromConfig,
@@ -890,7 +891,16 @@ async function contextOffloadFields(): Promise<void> {
 
   const def = await loadConfig(await writeConfig('{}'));
   assert('contextOffload is on by default', def.contextOffload === true);
-  assert('maxResultTokens is absent by default', def.maxResultTokens === undefined);
+  assert(
+    'maxResultTokens defaults to the darwin threshold, not the SDK 2500',
+    def.maxResultTokens === DEFAULT_MAX_RESULT_TOKENS,
+  );
+
+  const off0 = await loadConfig(await writeConfig('{ "contextOffload": false }'));
+  assert(
+    'no threshold is resolved when offloading is off — absence, not a contradiction',
+    off0.maxResultTokens === undefined,
+  );
 
   const on = await loadConfig(await writeConfig('{ "contextOffload": true }'));
   assert('the flag is accepted', on.contextOffload === true);

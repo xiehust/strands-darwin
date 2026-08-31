@@ -210,7 +210,7 @@ export interface SessionFields {
    * offload files) and `session/<session-id>/` (conversation snapshots).
    */
   contextOffload: boolean;
-  /** Token threshold above which a tool result is offloaded. SDK default: 2500. */
+  /** Token threshold above which a tool result is offloaded. Darwin default: {@link DEFAULT_MAX_RESULT_TOKENS}. */
   maxResultTokens?: number;
   /**
    * Ring the terminal bell (one raw BEL, `\x07`, straight to stdout — never an Ink
@@ -445,6 +445,18 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
  * threshold covers the need until someone asks for two.
  */
 export const OFFLOAD_PREVIEW_TOKENS = 1_000;
+
+/**
+ * Darwin's default offload threshold, above the SDK's own 2500 on purpose.
+ *
+ * A result between 2500 and this value offloads with poor return: the
+ * 1000-token preview stays in context regardless, so offloading saves only the
+ * remainder per round, while an agent that needs the content pays one full
+ * retrieval round — a complete context replay — to get it back (the issue-#8
+ * single-small-tool round pattern). `maxResultTokens` in config still overrides
+ * in either direction.
+ */
+export const DEFAULT_MAX_RESULT_TOKENS = 5_000;
 
 /** Context windows the installed SDK knows only for unprefixed OpenAI IDs. */
 const OPENAI_CONTEXT_WINDOW_LIMITS: Readonly<Record<string, number>> = {
@@ -917,6 +929,15 @@ function validateSessionFields(
       );
     }
     fields.maxResultTokens = maxResultTokens;
+  } else if (fields.contextOffload) {
+    // Darwin's own default, deliberately above the SDK's 2500: results between
+    // the two thresholds offload poorly — the mandatory 1000-token preview stays
+    // in context anyway, so the per-round saving is small, while reading the rest
+    // costs a full retrieval round (one complete context replay). Raising the
+    // floor trades a few KB of retained context per result for fewer
+    // retrieve-round trips (issue #8). Resolved only when offloading is on, so
+    // `contextOffload: false` keeps the field absent instead of contradicting it.
+    fields.maxResultTokens = DEFAULT_MAX_RESULT_TOKENS;
   }
 
   // Retained as a deprecated global fallback for ~/.darwin/hooks.json. Runtime
