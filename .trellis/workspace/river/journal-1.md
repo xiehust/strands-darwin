@@ -1132,3 +1132,15 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
 ### Status
 
 [OK] **Completed**
+
+## 2026-08-31 — /compact reasoning-block poisoning (08-31-compact-summary-reasoning)
+
+- Diagnosed the `/compact` warn `User messages cannot contain reasoning content`: SDK
+  `generateSummary()` copies the thinking model's full response (reasoning blocks
+  included) into a `role:user` summary message; Bedrock rejects every later request.
+- Fixed in the pinned SDK patch (filter `reasoningBlock` from summary content, throw
+  if nothing remains) — covers both the overflow manager and `/compact`.
+- Added `stripReasoningFromUserMessages` in `src/agent/compact.ts`, wired after
+  initialize/rewind restore in `runtime.ts`, to repair already-poisoned histories.
+- verify-compact grew 14 assertions (27/27); typecheck + full suite green; spec
+  `/compact` scenario updated; committed f4e3271; `pnpm build` refreshed dist.
