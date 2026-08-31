@@ -86,6 +86,19 @@ async function defaultPrompt(): Promise<void> {
     'it tells the model not to work around a denied tool call',
     /denied/.test(DEFAULT_SYSTEM_PROMPT) && /work around/.test(DEFAULT_SYSTEM_PROMPT),
   );
+  // The issue-#8 round-trip rules: every model round replays the whole conversation,
+  // so independent reads share one message and known edits are not dribbled out one
+  // small str_replace per round.
+  assert(
+    'it tells the model to batch independent reads into one message',
+    /Batch independent reads/.test(DEFAULT_SYSTEM_PROMPT) &&
+      /together in one assistant message/.test(DEFAULT_SYSTEM_PROMPT),
+  );
+  assert(
+    'it tells the model to consolidate known edits instead of one per round',
+    /Consolidate edits/.test(DEFAULT_SYSTEM_PROMPT) &&
+      /one small str_replace per round/.test(DEFAULT_SYSTEM_PROMPT),
+  );
 }
 
 async function fileOverride(): Promise<void> {

@@ -51,7 +51,13 @@ class EchoChildModel extends Model<BaseModelConfig> {
   calls = 0;
   received: string[] = [];
   private config: BaseModelConfig = { modelId: 'offline.child', contextWindowLimit: 100_000 };
-  constructor(private readonly label: string, private readonly reportText: string, private readonly delayMs = 5) {
+  constructor(
+    private readonly label: string,
+    private readonly reportText: string,
+    private readonly delayMs = 5,
+    /** Emitted as provider usage metadata after the message, exactly like Bedrock. */
+    private readonly usage?: { inputTokens: number; outputTokens: number },
+  ) {
     super();
   }
   override updateConfig(config: BaseModelConfig): void { this.config = { ...this.config, ...config }; }
@@ -71,6 +77,12 @@ class EchoChildModel extends Model<BaseModelConfig> {
     yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: this.reportText } };
     yield { type: 'modelContentBlockStopEvent' };
     yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+    if (this.usage !== undefined) {
+      yield {
+        type: 'modelMetadataEvent',
+        usage: { ...this.usage, totalTokens: this.usage.inputTokens + this.usage.outputTokens },
+      };
+    }
   }
 }
 
@@ -190,10 +202,10 @@ header('workflow — invalid DAGs refuse with bounded errors before any construc
 header('workflow — diamond DAG: SDK dependency order, merge, dispatches, terminus-only result');
 {
   events.length = 0;
-  const modelA = new EchoChildModel('a', 'a-report UPSTREAM-A', 20);
-  const modelB = new EchoChildModel('b', 'b-report BRANCH-B', 20);
+  const modelA = new EchoChildModel('a', 'a-report UPSTREAM-A', 20, { inputTokens: 100, outputTokens: 10 });
+  const modelB = new EchoChildModel('b', 'b-report BRANCH-B', 20, { inputTokens: 200, outputTokens: 20 });
   const modelC = new EchoChildModel('c', 'c-report BRANCH-C', 20);
-  const modelD = new EchoChildModel('d', 'd-report TERMINUS-D', 5);
+  const modelD = new EchoChildModel('d', 'd-report TERMINUS-D', 5, { inputTokens: 400, outputTokens: 40 });
   const f = fixture([modelA, modelB, modelC, modelD]);
   const progress: SubagentDispatchProgress[] = [];
   f.dispatches.subscribeProgress((event) => progress.push(event));
@@ -238,6 +250,13 @@ header('workflow — diamond DAG: SDK dependency order, merge, dispatches, termi
   assert('dispatch ids are distinct so targeted /agents cancel stays exact',
     new Set(list.map((entry) => entry.dispatchId)).size === 4);
   assert('dispatches carry the resolved agent names', list.filter((entry) => entry.agentName === 'writer').length === 1);
+  assert('every node dispatch freezes its child meter through the shared recipe',
+    list.find((entry) => entry.task === 'seed the diamond')?.usage?.inputTokens === 100 &&
+    list.find((entry) => entry.task === 'expand branch b')?.usage?.outputTokens === 20 &&
+    list.find((entry) => entry.task === 'join the branches')?.usage?.inputTokens === 400);
+  const workflowTotal = f.dispatches.totalUsage();
+  assert('the registry total sums every node, including the usage-silent one as its measured zero',
+    workflowTotal?.dispatches === 4 && workflowTotal.usage.inputTokens === 700 && workflowTotal.usage.outputTokens === 70);
   assert('nodes heartbeat on the existing progress surface',
     progress.some((event) => event.heartbeat) && progress.every((event) => !JSON.stringify(event).includes('report')));
   assert('permission provenance resolves every child to its dispatch label',

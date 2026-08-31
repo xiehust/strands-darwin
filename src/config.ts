@@ -185,6 +185,17 @@ export interface SessionFields {
    */
   contextWarnRatio: number;
   /**
+   * Cumulative parent cache-read tokens per advisory step: the TUI's spend
+   * advisory may fire once per crossed multiple of this, and only while recent
+   * model calls ran ≤1 tool each (`src/tui/spend-advisory.ts`). Set to 0 to
+   * disable. Default: 4,000,000.
+   *
+   * Optional in the type for hand-built configs (the {@link terminalBell}
+   * convention); {@link loadConfig} always stores the resolved number, so an
+   * absent key reads back as the default.
+   */
+  cacheReadWarnTokens?: number;
+  /**
    * Offload oversized tool results to session-scoped storage, keeping a preview
    * plus a reference in context. On by default; explicit `false` opts out.
    * See `maxResultTokens`.
@@ -308,6 +319,7 @@ const SESSION_KEYS = [
   'summaryRatio',
   'preserveRecentMessages',
   'contextWarnRatio',
+  'cacheReadWarnTokens',
   'contextOffload',
   'maxResultTokens',
   'terminalBell',
@@ -337,6 +349,7 @@ const DEFAULTS = {
   promptCache: true,
   thinkingEffort: DEFAULT_THINKING_EFFORT,
   contextWarnRatio: 0.8,
+  cacheReadWarnTokens: 4_000_000,
   contextOffload: true,
   terminalBell: false,
   memory: true,
@@ -843,6 +856,11 @@ function validateSessionFields(
     contextWarnRatio:
       numberField(input, 'contextWarnRatio', configPath, { min: 0, max: 1 }) ??
       DEFAULTS.contextWarnRatio,
+    // Validated on contextWarnRatio's pattern: a finite number with 0 as the
+    // documented off switch. No upper bound — the threshold is a token count.
+    cacheReadWarnTokens:
+      numberField(input, 'cacheReadWarnTokens', configPath, { min: 0 }) ??
+      DEFAULTS.cacheReadWarnTokens,
     contextOffload:
       booleanField(input, 'contextOffload', configPath) ?? DEFAULTS.contextOffload,
     terminalBell:

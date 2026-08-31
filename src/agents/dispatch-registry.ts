@@ -6,7 +6,8 @@
  * consumers observe it (a snapshot list plus a terminal-transition subscription),
  * and everything user-facing is bounded at presentation time. Nothing here reads
  * a child's messages, tool payloads or reasoning — a dispatch record is name, task
- * text, closed phase, state and timestamps, so observability cannot become a way for
+ * text, closed phase, state, timestamps and the child meter's usage counters, so
+ * observability cannot become a way for
  * child transcript to reach the parent conversation.
  *
  * Read-heavy first, deliberately: concurrent dispatches share one working tree
@@ -15,6 +16,8 @@
  * delegate reads/searches in parallel, and keep mutation on one agent at a time.
  */
 import { randomUUID } from 'node:crypto';
+
+import { sumUsage, type UsageTotals } from '../agent/usage.js';
 
 export const SUBAGENT_HEARTBEAT_INTERVAL_MS = 30_000;
 
@@ -41,6 +44,13 @@ export interface SubagentDispatchStatus {
   readonly phase: SubagentDispatchPhase;
   readonly startedAt: string;
   readonly finishedAt: string | null;
+  /**
+   * The child's own `metrics.accumulatedUsage`: live while running, frozen at
+   * the terminal transition (a cancelled or failed child keeps what it spent).
+   * Counters only, never transcript; absent when the child never attached a
+   * reader or its meter could not be read.
+   */
+  readonly usage?: UsageTotals;
 }
 
 export interface SubagentDispatchProgress {
@@ -79,6 +89,11 @@ export interface SubagentDispatchHandle {
   attachAgent(agentId: string): void;
   /** Installs the only operation targeted cancellation may perform. */
   attachCancel(cancel: () => void): void;
+  /**
+   * Installs a reader over the child's live usage meter — counters only, never
+   * transcript. Ignored once terminal, like {@link attachCancel}.
+   */
+  attachUsage(read: () => UsageTotals): void;
   /** True even if cancellation arrived before child construction completed. */
   cancellationRequested(): boolean;
   /** Publishes only closed, reasoning-safe phase metadata. */
@@ -101,6 +116,10 @@ interface DispatchRecord {
   finishedAt: string | null;
   cancellationRequested: boolean;
   cancel: (() => void) | undefined;
+  /** Live meter reader while running; dropped at the terminal transition. */
+  readUsage: (() => UsageTotals) | undefined;
+  /** The last reading, frozen by `finish()`; `undefined` until terminal. */
+  usage: UsageTotals | undefined;
   heartbeat: ReturnType<typeof setInterval> | undefined;
 }
 
@@ -142,6 +161,8 @@ export class SubagentDispatchRegistry {
       finishedAt: null,
       cancellationRequested: false,
       cancel: undefined,
+      readUsage: undefined,
+      usage: undefined,
       heartbeat: undefined,
     };
     this.records.set(key, record);
@@ -158,6 +179,9 @@ export class SubagentDispatchRegistry {
         record.cancel = cancel;
         if (record.cancellationRequested) this.invokeCancel(record);
       },
+      attachUsage: (read) => {
+        if (record.state === 'running') record.readUsage = read;
+      },
       cancellationRequested: () => record.cancellationRequested,
       setPhase: (phase) => this.setPhase(record, phase),
       finish: (state) => this.finish(key, state),
@@ -167,6 +191,23 @@ export class SubagentDispatchRegistry {
   /** Snapshots every dispatch of this run in start order, finished ones included. */
   list(): SubagentDispatchStatus[] {
     return [...this.records.values()].map(snapshot);
+  }
+
+  /**
+   * Every token this run's children have spent so far, summed over each
+   * dispatch's current snapshot usage — running children read live, finished
+   * ones report their frozen terminal reading. `dispatches` counts only the
+   * dispatches whose usage was included in the sum: one whose meter was never
+   * attached or could not be read is excluded rather than summed as zero.
+   * `undefined` when no dispatch ever reported usage, so every surface keeps
+   * its zero-dispatch form instead of inventing an all-zero children section.
+   */
+  totalUsage(): { dispatches: number; usage: UsageTotals } | undefined {
+    const reported = [...this.records.values()]
+      .map((record) => currentUsage(record))
+      .filter((usage): usage is UsageTotals => usage !== undefined);
+    if (reported.length === 0) return undefined;
+    return { dispatches: reported.length, usage: sumUsage(reported) };
   }
 
   /** Subscribes to future terminal transitions; finished dispatches are not replayed. */
@@ -248,6 +289,10 @@ export class SubagentDispatchRegistry {
   private finish(key: string, state: TerminalSubagentDispatchState): void {
     const record = this.records.get(key);
     if (record === undefined || record.state !== 'running') return;
+    // Freeze the meter's last reading before the terminal snapshot is published,
+    // so a cancelled or failed child still reports what it spent before settling.
+    record.usage = currentUsage(record);
+    record.readUsage = undefined;
     record.state = state;
     record.finishedAt = new Date(this.now()).toISOString();
     if (record.heartbeat !== undefined) clearInterval(record.heartbeat);
@@ -266,6 +311,7 @@ export class SubagentDispatchRegistry {
 }
 
 function snapshot(record: DispatchRecord): SubagentDispatchStatus {
+  const usage = currentUsage(record);
   return {
     dispatchId: record.dispatchId,
     agentName: record.agentName,
@@ -274,7 +320,24 @@ function snapshot(record: DispatchRecord): SubagentDispatchStatus {
     phase: record.phase,
     startedAt: record.startedAt,
     finishedAt: record.finishedAt,
+    ...(usage !== undefined && { usage }),
   };
+}
+
+/**
+ * One dispatch's current spend: the frozen terminal reading once finished, a
+ * live meter reading while running. A reader that throws degrades to
+ * `undefined` — an observer over a child's meter must never become a second
+ * reason a dispatch (or a projection over it) fails.
+ */
+function currentUsage(record: DispatchRecord): UsageTotals | undefined {
+  if (record.usage !== undefined) return record.usage;
+  if (record.readUsage === undefined) return undefined;
+  try {
+    return record.readUsage();
+  } catch {
+    return undefined;
+  }
 }
 
 /**

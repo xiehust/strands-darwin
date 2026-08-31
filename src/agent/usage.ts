@@ -1,5 +1,5 @@
 import type { AppConfig } from '../config.js';
-import type { TurnSpend, TurnSpendMeter } from '../trajectory/record.js';
+import type { CallSpendProjector, TurnSpend, TurnSpendMeter } from '../trajectory/record.js';
 
 /** Cumulative token counts reported by the active model during this process. */
 export interface UsageTotals {
@@ -91,6 +91,32 @@ export function formatUsageValue(value: number | undefined): string {
 }
 
 /**
+ * Adds several meters' totals into one — the parent's meter plus each child
+ * dispatch's, for the session-total projection.
+ *
+ * The numeric fields are plain sums. The optional cache counters follow the
+ * "unknown metric is never 0" rule in aggregate form: a cache key is present in
+ * the result only if at least one operand reports it, and within that sum an
+ * absent operand counts as 0 — a meter that never reported cache activity adds
+ * nothing, but cannot erase what another meter measured. When *no* operand
+ * reports a cache counter the result omits it too, so an all-unknown metric
+ * still renders as `not reported`, never as an invented zero.
+ */
+export function sumUsage(totals: readonly UsageTotals[]): UsageTotals {
+  const sum: UsageTotals = {
+    inputTokens: totals.reduce((acc, usage) => acc + usage.inputTokens, 0),
+    outputTokens: totals.reduce((acc, usage) => acc + usage.outputTokens, 0),
+  };
+  if (totals.some((usage) => usage.cacheReadInputTokens !== undefined)) {
+    sum.cacheReadInputTokens = totals.reduce((acc, usage) => acc + (usage.cacheReadInputTokens ?? 0), 0);
+  }
+  if (totals.some((usage) => usage.cacheWriteInputTokens !== undefined)) {
+    sum.cacheWriteInputTokens = totals.reduce((acc, usage) => acc + (usage.cacheWriteInputTokens ?? 0), 0);
+  }
+  return sum;
+}
+
+/**
  * Subtracts `before` from `after` to produce the delta for one turn.
  *
  * Undefined metrics propagate: if the provider did not report a metric
@@ -141,6 +167,38 @@ export function startTurnSpend(
     read: (): TurnSpend | undefined => {
       try {
         const buckets = usageBuckets(deltaUsage(before, readUsage()), config);
+        return {
+          provider: config.provider,
+          model: config.model,
+          ...(buckets.input !== undefined && { input: buckets.input }),
+          output: buckets.output,
+          ...(buckets.cacheRead !== undefined && { cacheRead: buckets.cacheRead }),
+          ...(buckets.cacheWrite !== undefined && { cacheWrite: buckets.cacheWrite }),
+        };
+      } catch {
+        return undefined;
+      }
+    },
+  };
+}
+
+/**
+ * The per-call sibling of {@link startTurnSpend}: projects one completed model
+ * call's own counters — `afterModelCallEvent.stopData.message.metadata.usage`, not a
+ * meter delta — through the same {@link usageBuckets}, stamped with the same
+ * per-turn provider/model attribution.
+ *
+ * Lives here for `startTurnSpend`'s reasons, verbatim: the buckets define what the
+ * numbers mean, the trajectory only stores them, and `src/trajectory/**` must not
+ * import the config this projection needs. `project()` cannot throw — a counter it
+ * cannot project degrades to `undefined`, which the record stores as nothing and
+ * every report reads as unknown.
+ */
+export function startCallSpend(config: AppConfig): CallSpendProjector {
+  return {
+    project: (usage): TurnSpend | undefined => {
+      try {
+        const buckets = usageBuckets(usage, config);
         return {
           provider: config.provider,
           model: config.model,

@@ -4,6 +4,7 @@ import { classify, type ApprovalMode, type PermissionBridge } from './agent/perm
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/stream-resumption.js';
 import type { AgentRuntime } from './agent/runtime.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
+import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
 
 const FIELD_LIMIT = 240;
@@ -39,6 +40,55 @@ export function formatHeadlessUsage(usage: UsageTotals, config: AppConfig): stri
   return (
     `usage: input=${metric(buckets.input)} output=${metric(buckets.output)}` +
     ` cacheRead=${metric(buckets.cacheRead)} cacheWrite=${metric(buckets.cacheWrite)}`
+  );
+}
+
+/**
+ * The child-spend record, written only when at least one dispatch reported
+ * usage (`runtime.childUsage`), so a run without delegation keeps its exact
+ * historical stderr. Mirrors {@link formatHeadlessUsage} — same buckets, same
+ * fixed field order, same `-` for a metric no child's provider reported — plus
+ * the count of dispatches whose meters the sum actually includes.
+ */
+export function formatHeadlessChildUsage(
+  child: { dispatches: number; usage: UsageTotals },
+  config: AppConfig,
+): string {
+  const buckets = usageBuckets(child.usage, config);
+  const metric = (value: number | undefined): string => (value === undefined ? '-' : String(value));
+  return (
+    `usage-children: input=${metric(buckets.input)} output=${metric(buckets.output)}` +
+    ` cacheRead=${metric(buckets.cacheRead)} cacheWrite=${metric(buckets.cacheWrite)}` +
+    ` dispatches=${child.dispatches}`
+  );
+}
+
+/**
+ * The session-total record (parent meter plus children), emitted beside
+ * {@link formatHeadlessChildUsage} under the same only-when-children-reported
+ * condition; `usage:` alone remains the whole story otherwise.
+ */
+export function formatHeadlessTotalUsage(total: UsageTotals, config: AppConfig): string {
+  const buckets = usageBuckets(total, config);
+  const metric = (value: number | undefined): string => (value === undefined ? '-' : String(value));
+  return (
+    `usage-total: input=${metric(buckets.input)} output=${metric(buckets.output)}` +
+    ` cacheRead=${metric(buckets.cacheRead)} cacheWrite=${metric(buckets.cacheWrite)}`
+  );
+}
+
+/**
+ * The per-call efficiency record, written only when at least one completed model
+ * call was observed (`runtime.callStats`), so a run that never reached the model
+ * keeps its exact historical stderr — the `usage-children:` convention. Field
+ * order is fixed for supervisors, and `avgRequestInput` is `-` when no call was
+ * metered — never `0`. The `usage:` record itself stays untouched either way.
+ */
+export function formatHeadlessCallStats(stats: SessionCallStats, config: AppConfig): string {
+  const average = averageRequestInputTokens(stats, config);
+  return (
+    `model-calls: calls=${stats.calls} avgRequestInput=${average === undefined ? '-' : String(average)}` +
+    ` noTool=${stats.noTool} singleTool=${stats.singleTool} multiTool=${stats.multiTool}`
   );
 }
 

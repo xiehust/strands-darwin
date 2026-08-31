@@ -12,7 +12,10 @@ import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
 import type { AppConfig } from '../src/config.js';
 import {
   createHeadlessPermissionBridge,
+  formatHeadlessCallStats,
+  formatHeadlessChildUsage,
   formatHeadlessPermissionMode,
+  formatHeadlessTotalUsage,
   formatHeadlessUsage,
   headlessField,
   runHeadlessTurn,
@@ -313,6 +316,71 @@ async function usageRecordContracts(): Promise<void> {
     assert.doesNotMatch(line, /\n/u);
   }
   countedAssert('records never contain an embedded newline', true);
+
+  // Child/total records exist only when a dispatch reported usage — the caller
+  // gates them on `runtime.childUsage` — and mirror the `usage:` record's shape:
+  // same buckets, same fixed field order, same `-` for an unreported metric.
+  const children = formatHeadlessChildUsage(
+    { dispatches: 2, usage: { inputTokens: 40, outputTokens: 4 } },
+    usageConfig('openai', 'chat'),
+  );
+  assert.equal(children, 'usage-children: input=40 output=4 cacheRead=- cacheWrite=- dispatches=2');
+  assert.match(children, /^usage-children: input=(\d+|-) output=(\d+|-) cacheRead=(\d+|-) cacheWrite=(\d+|-) dispatches=\d+$/u);
+  countedAssert('the children record states its dispatch count and keeps - for unknowns', true);
+
+  const totalLine = formatHeadlessTotalUsage(
+    { inputTokens: 163, outputTokens: 460, cacheReadInputTokens: 789, cacheWriteInputTokens: 12 },
+    usageConfig('bedrock'),
+  );
+  assert.equal(totalLine, 'usage-total: input=163 output=460 cacheRead=789 cacheWrite=12');
+  countedAssert('the total record mirrors the usage record field for field', true);
+
+  for (const line of [children, totalLine]) {
+    assert.doesNotMatch(line, /\n/u);
+  }
+  countedAssert('child and total records are single lines too', true);
+
+  // The model-calls record exists only when a completed call was observed — the
+  // caller gates it on `runtime.callStats` — with a fixed field order and `-` for
+  // an average no call was metered for, never 0.
+  const callsLine = formatHeadlessCallStats(
+    {
+      calls: 12,
+      meteredCalls: 12,
+      usage: { inputTokens: 1200, outputTokens: 240, cacheReadInputTokens: 46_800 },
+      noTool: 2,
+      singleTool: 8,
+      multiTool: 2,
+      recentToolUseCounts: [1, 1, 0, 1, 2, 1, 1, 1, 0, 1],
+    },
+    usageConfig('bedrock'),
+  );
+  assert.equal(callsLine, 'model-calls: calls=12 avgRequestInput=4000 noTool=2 singleTool=8 multiTool=2');
+  assert.match(callsLine, /^model-calls: calls=\d+ avgRequestInput=(\d+|-) noTool=\d+ singleTool=\d+ multiTool=\d+$/u);
+  countedAssert('the model-calls record has a fixed field order', true);
+  const unmeteredLine = formatHeadlessCallStats(
+    {
+      calls: 3,
+      meteredCalls: 0,
+      usage: undefined,
+      noTool: 1,
+      singleTool: 2,
+      multiTool: 0,
+      recentToolUseCounts: [1, 1, 0],
+    },
+    usageConfig('bedrock'),
+  );
+  assert.equal(unmeteredLine, 'model-calls: calls=3 avgRequestInput=- noTool=1 singleTool=2 multiTool=0');
+  countedAssert('an unmetered average is `-`, never 0', true);
+  for (const line of [callsLine, unmeteredLine]) {
+    assert.doesNotMatch(line, /\n/u);
+  }
+  countedAssert('model-calls records are single lines', true);
+
+  // The parent `usage:` record itself never changes shape or content because
+  // children ran: it is computed from the parent meter alone.
+  assert.doesNotMatch(full, /dispatches|children|total/u);
+  countedAssert('the parent usage record stays byte-compatible whatever children spent', true);
 }
 
 async function usageProcessContract(): Promise<void> {

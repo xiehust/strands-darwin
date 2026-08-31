@@ -25,7 +25,8 @@ import {
   type PermissionDecision,
 } from '../agent/permission.js';
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
-import { formatUsageValue, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
+import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
+import { averageRequestInputTokens, type SessionCallStats } from '../agent/call-stats.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from '../agent/stream-resumption.js';
 import { contextOverflowErrorMessage } from '../context-overflow-error.js';
 
@@ -148,6 +149,7 @@ import {
   formatDispatchesReport,
 } from './subagent-format.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
+import { createSpendAdvisoryLatch } from './spend-advisory.js';
 import { formatHelpReport } from './help-format.js';
 import { formatMcpReport } from './mcp-format.js';
 import {
@@ -345,6 +347,8 @@ export function App({
   /** Wall-clock start of the in-flight turn; undefined whenever no turn is running. */
   const turnStartedAt = useRef<number | undefined>(undefined);
   const contextWarnLatch = useRef(createContextWarnLatch());
+  /** Per-session spend advisory latch (issue #8): monotonic per warn-token multiple. */
+  const spendAdvisoryLatch = useRef(createSpendAdvisoryLatch());
   /** One trajectory-problem notice per session; the recorder latches the failure itself. */
   const trajectoryWarned = useRef(false);
   /** Same, once, for the diagnostics log: it latches its own failure too. */
@@ -855,6 +859,20 @@ export function App({
         // best-effort
       }
 
+      // The spend advisory, on the same post-turn terms: advise, never act, and a
+      // metric nobody reported keeps it silent. A hand-built config without the key
+      // reads as disabled (`?? 0`); loadConfig always resolves it.
+      try {
+        const notice = spendAdvisoryLatch.current.check({
+          cacheReadTokens: runtime.usage.cacheReadInputTokens,
+          recentToolUseCounts: runtime.callStats?.recentToolUseCounts,
+          warnTokens: runtime.config.cacheReadWarnTokens ?? 0,
+        });
+        if (notice !== null) dispatch({ type: 'notice', text: notice, severity: 'warn' });
+      } catch {
+        // best-effort, exactly like the context check above
+      }
+
       // Same shape for the trajectory: read after the turn, never during it, and at
       // most once per session. The recorder latches its first failure, so this says
       // "the record stopped here" exactly when that is news — a session that keeps
@@ -933,7 +951,7 @@ export function App({
         dispatch({ type: 'userInput', text });
         dispatch({
           type: 'notice',
-          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage),
+          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage, runtime.childUsage, runtime.callStats),
         });
         return;
       }
@@ -1178,6 +1196,8 @@ export function App({
             trajectory: runtime.trajectoryStatus,
             diagnostics: runtime.diagnosticsStatus,
             usage: runtime.usage,
+            childUsage: runtime.childUsage,
+            callStats: runtime.callStats,
             turnInFlight: status === 'streaming',
             context,
             ...(contextProblem !== undefined && { contextProblem }),
@@ -1396,6 +1416,7 @@ export function App({
         setRuntime(next);
         // Per-session latches, reset with the session they were latched for.
         contextWarnLatch.current = createContextWarnLatch();
+        spendAdvisoryLatch.current = createSpendAdvisoryLatch();
         trajectoryWarned.current = false;
         diagnosticsWarned.current = false;
         // Held `!` reports were destined for the conversation just set aside; the
@@ -1821,6 +1842,7 @@ export function App({
     setEditor({ text: selected.prompt, cursor: { offset: selected.prompt.length, affinity: 'upstream' } });
     setSelectedCompletion(0);
     contextWarnLatch.current = createContextWarnLatch();
+    spendAdvisoryLatch.current = createSpendAdvisoryLatch();
     trajectoryWarned.current = false;
     diagnosticsWarned.current = false;
     pendingShellReports.current = [];
@@ -2586,6 +2608,8 @@ export function formatUsageReport(
   resumed: boolean,
   turnInFlight = false,
   lastTurn?: UsageTotals,
+  children?: { dispatches: number; usage: UsageTotals },
+  callStats?: SessionCallStats,
 ): string {
   const rows = usageRows(usage, config);
   const derived = cacheEffectivenessRows(usage, config);
@@ -2610,7 +2634,59 @@ export function formatUsageReport(
   // in-flight one.
   const lastTurnSection = lastTurn === undefined ? [] : formatLastTurnSection(lastTurn, config, labelWidth);
 
-  return [heading, ...lines, ...footer, ...lastTurnSection].join('\n');
+  // Child sections: only when a dispatch reported spend (`runtime.childUsage`),
+  // so a session that never delegated renders byte-identical to before children
+  // were counted at all. The session total repeats the parent's projection rules
+  // over the summed meters — same rows, same absent-metric honesty.
+  const childSections = children === undefined
+    ? []
+    : [
+        ...usageSection(`subagents (${children.dispatches} dispatch${children.dispatches === 1 ? '' : 'es'})`, children.usage, config, labelWidth),
+        ...usageSection('session total (incl. subagents)', sumUsage([usage, children.usage]), config, labelWidth),
+      ];
+
+  // Efficiency section: only when a completed model call was observed
+  // (`runtime.callStats`), so a session with none renders byte-identical to before
+  // per-call stats existed — the childUsage additive convention, again.
+  const efficiencySection = callStats === undefined ? [] : formatEfficiencySection(callStats, config, labelWidth);
+
+  return [heading, ...lines, ...footer, ...lastTurnSection, ...childSections, ...efficiencySection].join('\n');
+}
+
+/**
+ * The per-call efficiency section of the usage report: how many model round trips
+ * the session has made, how big the average request has been running, and how many
+ * responses bought no, one, or several tools — the shape the "repeated long-context
+ * single-tool round" pattern shows up in. The numbers come from the same
+ * `call-stats` arithmetic `/status` renders, so the two surfaces cannot drift; an
+ * unknown average reads `not reported`, never 0.
+ */
+function formatEfficiencySection(stats: SessionCallStats, config: AppConfig, labelWidth: number): string[] {
+  const rows: { label: string; rendered: string }[] = [
+    { label: 'model calls', rendered: stats.calls.toLocaleString('en-US') },
+    { label: 'avg request input/call', rendered: formatUsageValue(averageRequestInputTokens(stats, config)) },
+    { label: 'single-tool responses', rendered: stats.singleTool.toLocaleString('en-US') },
+    { label: 'multi-tool responses', rendered: stats.multiTool.toLocaleString('en-US') },
+    { label: 'no-tool responses', rendered: stats.noTool.toLocaleString('en-US') },
+  ];
+  const width = Math.max(labelWidth, ...rows.map(({ label }) => label.length));
+  return [
+    'efficiency (completed model calls)',
+    ...rows.map(({ label, rendered }) => `  ${label.padEnd(width)}  ${rendered.padStart(12)}`),
+  ];
+}
+
+/**
+ * One additional labelled section of usage rows, aligned to at least the parent
+ * table's label width — the shape `formatLastTurnSection` set.
+ */
+function usageSection(heading: string, usage: UsageTotals, config: AppConfig, labelWidth: number): string[] {
+  const rows = usageRows(usage, config);
+  const width = Math.max(labelWidth, ...rows.map(({ label }) => label.length));
+  return [
+    heading,
+    ...rows.map(({ label, value }) => `  ${label.padEnd(width)}  ${formatUsageValue(value).padStart(12)}`),
+  ];
 }
 
 /**

@@ -384,6 +384,7 @@ header('streaming into history — replay is the same transcript');
     droppedRecords: 0,
     failures: [],
     turnSpend: [],
+    modelCalls: [],
     spend: { turns: 0, models: [], input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   } as unknown as ReplayResult);
 

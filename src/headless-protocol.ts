@@ -4,6 +4,7 @@ import type { ApprovalMode, AssessedPermissionRequest, PermissionSource } from '
 import { runWithStreamResumption } from './agent/stream-resumption.js';
 import type { HeadlessRuntime } from './headless.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
+import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
 import { contextOverflowErrorMessage } from './context-overflow-error.js';
 import { failureFromError } from './trajectory/record.js';
@@ -31,6 +32,16 @@ export interface StructuredUsage {
   cacheWrite?: number;
 }
 
+/** The `model-calls:` stderr record's fields, for the structured terminal record. */
+export interface StructuredCallStats {
+  calls: number;
+  /** Absent when no call was metered — unknown, never 0. */
+  avgRequestInput?: number;
+  noTool: number;
+  singleTool: number;
+  multiTool: number;
+}
+
 export interface StructuredFailure {
   stage: StructuredFailureStage;
   name: string;
@@ -52,6 +63,20 @@ export interface StructuredTerminalInput {
   resumed?: boolean;
   result?: string;
   usage?: StructuredUsage;
+  /**
+   * Child-agent spend, present only when at least one dispatch reported usage —
+   * the additive counterpart of the `usage-children:` stderr record. `usage`
+   * itself stays parent-only and byte-identical either way.
+   */
+  childUsage?: StructuredUsage & { dispatches: number };
+  /** Parent plus children, under the same only-when-children-reported condition. */
+  totalUsage?: StructuredUsage;
+  /**
+   * Per-model-call efficiency stats, present only when at least one completed
+   * model call was observed — the additive counterpart of the `model-calls:`
+   * stderr record. An unmetered average is an absent key, never 0.
+   */
+  callStats?: StructuredCallStats;
   errors?: readonly StructuredFailure[];
   warnings?: readonly StructuredWarning[];
   continued?: true;
@@ -215,6 +240,9 @@ export class StructuredHeadlessWriter {
       ...(input.resumed === undefined ? {} : { resumed: input.resumed }),
       ...(input.result === undefined ? {} : { result: input.result }),
       ...(input.usage === undefined ? {} : { usage: input.usage }),
+      ...(input.childUsage === undefined ? {} : { childUsage: input.childUsage }),
+      ...(input.totalUsage === undefined ? {} : { totalUsage: input.totalUsage }),
+      ...(input.callStats === undefined ? {} : { callStats: input.callStats }),
       ...(input.errors === undefined || input.errors.length === 0 ? {} : { errors: [...input.errors] }),
       ...(input.warnings === undefined || input.warnings.length === 0 ? {} : { warnings: [...input.warnings] }),
       ...(input.continued === true ? { continued: true } : {}),
@@ -277,6 +305,21 @@ export function structuredUsage(usage: UsageTotals, config: AppConfig): Structur
     output: buckets.output,
     ...(buckets.cacheRead === undefined ? {} : { cacheRead: buckets.cacheRead }),
     ...(buckets.cacheWrite === undefined ? {} : { cacheWrite: buckets.cacheWrite }),
+  };
+}
+
+/**
+ * The `model-calls:` record's fields for the structured terminal record — the same
+ * shared arithmetic, so the two protocols cannot disagree about one session.
+ */
+export function structuredCallStats(stats: SessionCallStats, config: AppConfig): StructuredCallStats {
+  const average = averageRequestInputTokens(stats, config);
+  return {
+    calls: stats.calls,
+    ...(average === undefined ? {} : { avgRequestInput: average }),
+    noTool: stats.noTool,
+    singleTool: stats.singleTool,
+    multiTool: stats.multiTool,
   };
 }
 

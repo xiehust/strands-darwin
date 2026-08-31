@@ -32,6 +32,7 @@ import {
   isRecordedEventType,
   parseRecordLine,
   projectEvent,
+  type CallSpendProjector,
   type TrajectoryRecord,
   type Truncation,
   type TurnFailure,
@@ -134,6 +135,8 @@ export class TurnRecording {
   private stopReason: string | undefined;
   private failure: TurnFailure | undefined;
   private ended = false;
+  /** The agent loop's latest request-size estimate this turn; absent until reported. */
+  private lastProjectedInputTokens: number | undefined;
 
   constructor(
     private readonly recorder: TrajectoryRecorder,
@@ -144,6 +147,12 @@ export class TurnRecording {
      * which the record says by omitting the field, never by writing zeros.
      */
     private readonly spend?: TurnSpendMeter,
+    /**
+     * Projects one completed call's own counters for its `modelCall` record.
+     * Undefined when nothing is projecting, and the records then simply carry no
+     * `spend` — the call lines still exist, priced unknown rather than zero.
+     */
+    private readonly callSpend?: CallSpendProjector,
   ) {
     const { value, trunc } = capField(input, 'text');
     this.recorder.buffer({ turn, type: 'userInput', text: value }, trunc);
@@ -167,11 +176,75 @@ export class TurnRecording {
     if (this.ended) return;
     try {
       this.tally(event);
+      this.observeModelCall(event);
       if (!isRecordedEventType(event.type)) return;
       const { data, trunc } = projectEvent(event);
       this.recorder.buffer({ turn: this.turn, type: event.type, data }, trunc);
     } catch (error) {
       this.recorder.fail(error);
+    }
+  }
+
+  /**
+   * Buffers one bounded `modelCall` record per **completed** model call (issue #8
+   * follow-up A). Synchronous and I/O-free like every other observation — it rides
+   * the turn's ordinary closing append.
+   *
+   * The raw events stay dropped by the allowlist and stay *counted* as dropped;
+   * this is a derived projection like `partialText` and `spend`, not a fifth
+   * recorded event type. A failed attempt (`stopData` absent) writes nothing —
+   * the failure is `turnEnded.failure`'s story, and inventing a call line for a
+   * request no provider answered would price something that never completed.
+   */
+  private observeModelCall(event: AgentStreamEvent): void {
+    if (event.type === 'beforeModelCallEvent') {
+      const projected = (event as { projectedInputTokens?: unknown }).projectedInputTokens;
+      if (typeof projected === 'number' && Number.isFinite(projected)) {
+        this.lastProjectedInputTokens = projected;
+      }
+      return;
+    }
+    if (event.type !== 'afterModelCallEvent') return;
+
+    const stopData = (event as { stopData?: { message?: { metadata?: { usage?: unknown } }; stopReason?: unknown } })
+      .stopData;
+    if (stopData === undefined) return;
+    const attemptCount = (event as { attemptCount?: unknown }).attemptCount;
+    const usage = stopData.message?.metadata?.usage;
+    const spend = usage === undefined ? undefined : this.projectCallSpend(usage);
+    // The provider/model labels are configuration-controlled strings on a rendered
+    // record, so they pass the same cap `turnEnded.spend` does.
+    const capped = spend === undefined ? undefined : capSpend(spend);
+    const stopReason = stopData.stopReason;
+    this.recorder.buffer(
+      {
+        turn: this.turn,
+        type: 'modelCall',
+        attempt: typeof attemptCount === 'number' && Number.isFinite(attemptCount) ? attemptCount : 1,
+        ms: Date.now() - this.startedAt,
+        ...(typeof stopReason === 'string' && stopReason !== '' ? { stopReason } : {}),
+        ...(this.lastProjectedInputTokens === undefined
+          ? {}
+          : { contextTokens: this.lastProjectedInputTokens }),
+        ...(capped === undefined ? {} : { spend: capped.value }),
+      },
+      capped?.trunc ?? [],
+    );
+  }
+
+  /**
+   * One call's spend, or `undefined` when it could not be projected — the same
+   * belt-to-braces {@link readSpend} wears: the injected projector is documented as
+   * non-throwing, and a broken one must cost the price tag only.
+   */
+  private projectCallSpend(usage: unknown): TurnSpend | undefined {
+    if (usage === null || typeof usage !== 'object') return undefined;
+    const { inputTokens, outputTokens } = usage as Record<string, unknown>;
+    if (typeof inputTokens !== 'number' || typeof outputTokens !== 'number') return undefined;
+    try {
+      return this.callSpend?.project(usage as Parameters<CallSpendProjector['project']>[0]);
+    } catch {
+      return undefined;
     }
   }
 
@@ -370,10 +443,10 @@ export class TrajectoryRecorder {
    * object answers the record here, so the record and the live last-turn report cannot
    * be two different readings of one turn.
    */
-  beginTurn(input: string, spend?: TurnSpendMeter): TurnRecording | undefined {
+  beginTurn(input: string, spend?: TurnSpendMeter, callSpend?: CallSpendProjector): TurnRecording | undefined {
     if (!this.active) return undefined;
     this.turns += 1;
-    return new TurnRecording(this, this.turns, input, spend);
+    return new TurnRecording(this, this.turns, input, spend, callSpend);
   }
 
   /** The next turn identity without opening or writing a turn. */

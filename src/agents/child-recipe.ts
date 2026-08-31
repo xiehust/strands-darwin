@@ -77,6 +77,10 @@ export function buildRecipeChild(options: ChildRecipeOptions): Agent {
   // targeted cancellation can stop only this child.
   dispatch?.attachAgent(child.id);
   dispatch?.attachCancel(() => child.cancel());
+  // Clone: the SDK object is a live accumulator, and a frozen terminal reading
+  // must not keep mutating after the dispatch settles. Counters only — the
+  // meter carries no part of the child's transcript.
+  dispatch?.attachUsage(() => ({ ...child.metrics.accumulatedUsage }));
   return child;
 }
 

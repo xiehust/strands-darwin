@@ -58,9 +58,19 @@ export function formatDispatchesReport(
       (dispatch) =>
         `  ${dispatchLabel(dispatch).padEnd(LABEL_COLUMN)}  ${dispatch.state.padEnd(STATE_COLUMN)}  ` +
         `${formatTaskDuration(dispatchElapsedMs(dispatch, nowMs)).padStart(7)}  ` +
-        `${summarizeTaskCommand(dispatch.task, TASK_SUMMARY_LIMIT)}`,
+        `${summarizeTaskCommand(dispatch.task, TASK_SUMMARY_LIMIT)}${dispatchUsageSuffix(dispatch)}`,
     ),
   ].join('\n');
+}
+
+/**
+ * ` — tokens in=X out=Y` when the dispatch snapshot carries usage, nothing
+ * otherwise — a row never invents a zero for a meter that was not read.
+ * Counters only, like everything else on the row.
+ */
+function dispatchUsageSuffix(dispatch: SubagentDispatchStatus): string {
+  if (dispatch.usage === undefined) return '';
+  return ` — tokens in=${dispatch.usage.inputTokens} out=${dispatch.usage.outputTokens}`;
 }
 
 /** The observer notice for a dispatch that just reached a terminal state. */

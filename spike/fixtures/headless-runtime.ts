@@ -66,6 +66,29 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
       outputTokens: 3,
       cacheReadInputTokens: 0,
     },
+    // The real runtime's childUsage is undefined until a dispatch reports usage;
+    // every mode but child-usage keeps that zero-dispatch shape so the exact
+    // stderr/terminal-record assertions double as byte-identity proofs.
+    childUsage: mode === 'child-usage'
+      ? { dispatches: 2, usage: { inputTokens: 40, outputTokens: 4 } }
+      : undefined,
+    sessionUsage: mode === 'child-usage'
+      ? { inputTokens: 52, outputTokens: 7, cacheReadInputTokens: 0 }
+      : { inputTokens: 12, outputTokens: 3, cacheReadInputTokens: 0 },
+    // Like childUsage: the real runtime's callStats is undefined until a completed
+    // model call was observed, so every mode but call-stats keeps the zero-call
+    // shape and the exact-output assertions double as byte-identity proofs.
+    callStats: mode === 'call-stats'
+      ? {
+          calls: 3,
+          meteredCalls: 2,
+          usage: { inputTokens: 40, outputTokens: 6, cacheReadInputTokens: 100 },
+          noTool: 1,
+          singleTool: 2,
+          multiTool: 0,
+          recentToolUseCounts: [1, 1, 0],
+        }
+      : undefined,
     trajectoryStatus: mode === 'observer-warning' ? { problem: 'fixture trajectory warning' } : undefined,
     diagnosticsStatus: undefined,
     diagnostics: undefined,

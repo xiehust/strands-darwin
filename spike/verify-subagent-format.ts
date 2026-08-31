@@ -98,6 +98,29 @@ function reportRows(): void {
   assert('truncation keeps whole code points', !emoji.includes('\uFFFD'));
 }
 
+function usageSuffix(): void {
+  header('subagent format — per-dispatch spend suffix');
+
+  const now = Date.parse('2026-08-15T10:00:12.000Z');
+  // Zero usage-free dispatches: byte-identical to the report before spend existed.
+  const without = formatDispatchesReport([dispatched()], now);
+  assert('a dispatch without usage draws no tokens suffix', !without.includes('tokens'));
+
+  const withUsage = formatDispatchesReport(
+    [
+      dispatched({ usage: { inputTokens: 1200, outputTokens: 45 } }),
+      dispatched({ dispatchId: '0f9e8d7c', state: 'succeeded', finishedAt: '2026-08-15T10:00:04.000Z' }),
+    ],
+    now,
+  );
+  const rows = withUsage.split('\n');
+  console.log(rows.map((line) => `  ${JSON.stringify(line)}`).join('\n'));
+  assert('a dispatch snapshot with usage appends its counters',
+    rows[1]?.endsWith(' — tokens in=1200 out=45') === true);
+  assert('its usage-free sibling row stays byte-identical',
+    rows[2] === formatDispatchesReport([dispatched({ dispatchId: '0f9e8d7c', state: 'succeeded', finishedAt: '2026-08-15T10:00:04.000Z' })], now).split('\n')[1]);
+}
+
 function completionNotice(): void {
   header('subagent format — completion notice');
 
@@ -191,6 +214,7 @@ function registryProjection(): void {
 dispatchIds();
 elapsed();
 reportRows();
+usageSuffix();
 completionNotice();
 liveRow();
 registryProjection();

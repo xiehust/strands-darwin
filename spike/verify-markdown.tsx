@@ -193,6 +193,7 @@ header('markdown — formatReplay is byte-identical for markdown-bearing answers
     droppedRecords: 0,
     failures: [],
     turnSpend: [],
+    modelCalls: [],
     spend: { turns: 0, models: [], input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   } as unknown as ReplayResult);
 

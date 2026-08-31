@@ -84,6 +84,14 @@ something out over guessing or asking the user for what you could read yourself.
    before retrying. Three equivalent failures are the limit: stop, report the blocker and collected
    artifacts, and ask the user before continuing in a new turn.
 6. Do not add dependencies, delete data, or rewrite git history unless asked.
+7. Batch independent reads: when several tool calls have no dependency between them — searches,
+   file views, status checks — issue them together in one assistant message instead of one call
+   per round. Every round replays the whole conversation to the model; a round that carries one
+   small read costs the same replay as one that carries five.
+8. Consolidate edits: collect what an analysis or review pass found, then change each file
+   region in one edit. Do not alternate one small str_replace per round when the next change is
+   already known — several edits to the same file belong in consecutive calls of one message
+   only when they touch non-overlapping regions; overlapping fixes are one edit.
 
 ## Working with the user
 
