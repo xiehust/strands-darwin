@@ -4,7 +4,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ## SER-043 — Add a config-gated terminal attention bell: one BEL when a permission prompt is published and one when a turn completes, emitted at the existing driver lifecycle points, never inside the Ink frame, off by default
 
-- Status: `not-started`
+- Status: `done`
 - Priority: 61
 - Score: 10
 - Importance: 3
@@ -16,7 +16,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ### Implementation / acceptance evidence
 
-Accepted 2026-08-28 in `94909b8` (task archive `e8376df`, journal `8c379cf`); Host acceptance recorded in `docs/iteration-log.md` Batch 65 (`verify-terminal-bell.ts` 14/14, `verify-config.ts` 248/248, `pnpm typecheck`, full `pnpm test` exit 0, `pnpm build`, grep proof that `terminal-bell.ts` is the sole BEL writer). Record repair 2026-08-30: the acceptance commit `6407864` said "SER-043 closes on independent Host acceptance" but only flipped SER-044 to `in-progress`, leaving this record's status line stale at `in-progress`; this run set it to `done` to match the recorded acceptance.
+Accepted 2026-08-28 in `94909b8` (task archive `e8376df`, journal `8c379cf`); Host acceptance recorded in `docs/iteration-log.md` Batch 65 (`verify-terminal-bell.ts` 14/14, `verify-config.ts` 248/248, `pnpm typecheck`, full `pnpm test` exit 0, `pnpm build`, grep proof that `terminal-bell.ts` is the sole BEL writer). Record repair 2026-08-30: the acceptance commit `6407864` said "SER-043 closes on independent Host acceptance" but only flipped SER-044 to `in-progress`, leaving this record's status line stale at `in-progress`; this run set it to `done` to match the recorded acceptance. Second record repair 2026-08-31: the 2026-08-30 repair commit `e5a8773` claimed to set `done` but actually wrote `not-started`; this run set the status line to `done` — the acceptance evidence above is unchanged and remains authoritative.
 
 ### Notes / blockers / abandonment reason
 
@@ -62,3 +62,23 @@ Accepted 2026-08-30 in `cbd2863` (task archive `94d63a9`, journal `109a956`; chi
 ### Notes / blockers / abandonment reason
 
 User-directed: give darwin a Claude Code–style workflow capability (S3, `code.claude.com/docs/en/workflows.md`: orchestration held by an artifact, intermediate results flowing worker-to-worker) built on the Strands SDK `Graph` multi-agent pattern the repo does not use today (no SDK `multiagent/` import anywhere in `src/`). Shape: one new parent-only tool `workflow` whose input is **data, never code** — a bounded DAG `{ nodes: [{ id, agent?, task }], edges: [[source, target]] }` (cap nodes ≤ 8, validate unknown agent names, duplicate/unknown node ids, cycles, over-cap counts with bounded error strings). Execution is the SDK `Graph` (`node_modules/@strands-agents/sdk/dist/src/multiagent/graph.d.ts`): declarative `{nodes, edges}` constructor, AND-semantics dependency scheduling, dependency-merged node inputs (upstream final reports become downstream input without round-tripping through the parent context), bounded `maxConcurrency`, whole-graph `timeout`, and `MultiAgentInvokeOptions.cancelSignal` wired to the parent tool context's cancel signal. Each node is a fresh child built by the exact recipe `SubagentTool.run` uses today (`src/agents/subagent-tool.ts:140–222`: model snapshot, `composeSystemPrompt`, per-definition tool filtering, shared permission intervention with `source` provenance, dispatch-registry heartbeats + targeted `/agents cancel`, codex-hook fork, max-tokens recovery, bash-session reaping) — extract that recipe into a shared factory rather than duplicating it, with `SubagentTool` behavior unchanged. Only bounded terminus content (`_resolveContent`) returns as the tool result; child transcripts stay private; no trajectory record of child events (existing subagent invariant). The tool description must state the reads-parallel/writes-serialized rule: concurrent nodes share one working tree, so parallel branches are for reads and writes are serialized by edges. Parent-only like `update_plan` — never in child catalogues. Verify with a free stub-model suite `spike/verify-workflow-tool.ts` in `pnpm test`: validation refusals; diamond-DAG dependency order with upstream reports visible in downstream input; dispatch registration per node; bounded terminus-only result; cancellation aborting unstarted nodes; existing `verify-subagent-heartbeats.ts` green.
+
+## SRF-019 — Stop trimming `memory_save` quote fields and make evidence rejection reasons specific
+
+- Status: `not-started`
+- Priority: 64
+- Score: 15
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 1
+- Origin report: [`reflection_2026-08-31_session-20260831-011450426.md`](../../reflections/reflection_2026-08-31_session-20260831-011450426.md)
+
+### Implementation / acceptance evidence
+
+(not started)
+
+### Notes / blockers / abandonment reason
+
+In session-20260831-011450426 (harbor project) the agent staged a `root_cause` memory with `evidence.quote` byte-identical to line 11 of `adapters/darwin-swe-bench/pyproject.toml` — verified in-session with `cat -A` (seq 351–352) — and was rejected twice with "memory evidence must be one unique exact current project line" (seq 343/345, 347/348), then spent ~2 minutes phantom-chasing and told the user a wrong hypothesis (seq 355). Root cause: `src/memory/tools.ts:10` applies `z.string().trim()` to every bounded field including `evidence.quote`, while `resolveExactSourceAnchor` (`src/memory/validation.ts`) requires the quote to equal a full source line — so the trim strips leading indentation and every indented project line (most code lines) can never validate. Reproduced both ways against the same dist code and file: untrimmed quote anchors and validates, trimmed quote resolves to no anchor. Fix inside the existing modules: give `evidence.quote` and `userQuote` a bounded-but-untrimmed schema (length/emptiness checks preserved, exact-line validation still gates every save, so nothing widens), and split the controller's single rejection message into reason-specific errors (no matching line vs. multiple matches vs. unreadable file) so an exact-evidence failure is diagnosable. Verify in `verify-memory-tools.ts`/`verify-memory-validation.ts`: an indented unique line saves and commits after `endTurn`; an unindented non-line quote still fails, now with the no-matching-line reason; multi-match and oversized/unsafe paths keep their existing refusals; `pnpm typecheck` and full `pnpm test` stay green.
