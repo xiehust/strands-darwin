@@ -776,7 +776,7 @@ async function researchDocs(): Promise<void> {
   // this migration. New/edited fixture records receive no exception.
   const productionBacklogErrors = await validateBacklog(backlog, pages, REPO_ROOT, new Map([['SER-023', '13:4:5:4:3:3']]));
   if (productionBacklogErrors.length > 0) console.log(`  backlog errors: ${JSON.stringify(productionBacklogErrors)}`);
-  assert('all 63 production records pass paged-backlog validation', productionBacklogErrors.length === 0 && pages.reduce((count, page) => count + [...page.content.matchAll(BACKLOG_SECTION_PATTERN)].length, 0) === 63);
+  assert('all 64 production records pass paged-backlog validation', productionBacklogErrors.length === 0 && pages.reduce((count, page) => count + [...page.content.matchAll(BACKLOG_SECTION_PATTERN)].length, 0) === 64);
 
   const fixtureIndex = '- [Priorities 001–020](./backlog/directions-001-020.md)\n';
   const fixturePage = (content: string, fileName = 'directions-001-020.md'): BacklogPage => ({ fileName, content });
