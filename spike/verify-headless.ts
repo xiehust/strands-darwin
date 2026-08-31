@@ -12,6 +12,7 @@ import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
 import type { AppConfig } from '../src/config.js';
 import {
   createHeadlessPermissionBridge,
+  formatHeadlessCallStats,
   formatHeadlessChildUsage,
   formatHeadlessPermissionMode,
   formatHeadlessTotalUsage,
@@ -338,6 +339,43 @@ async function usageRecordContracts(): Promise<void> {
     assert.doesNotMatch(line, /\n/u);
   }
   countedAssert('child and total records are single lines too', true);
+
+  // The model-calls record exists only when a completed call was observed — the
+  // caller gates it on `runtime.callStats` — with a fixed field order and `-` for
+  // an average no call was metered for, never 0.
+  const callsLine = formatHeadlessCallStats(
+    {
+      calls: 12,
+      meteredCalls: 12,
+      usage: { inputTokens: 1200, outputTokens: 240, cacheReadInputTokens: 46_800 },
+      noTool: 2,
+      singleTool: 8,
+      multiTool: 2,
+      recentToolUseCounts: [1, 1, 0, 1, 2, 1, 1, 1, 0, 1],
+    },
+    usageConfig('bedrock'),
+  );
+  assert.equal(callsLine, 'model-calls: calls=12 avgRequestInput=4000 noTool=2 singleTool=8 multiTool=2');
+  assert.match(callsLine, /^model-calls: calls=\d+ avgRequestInput=(\d+|-) noTool=\d+ singleTool=\d+ multiTool=\d+$/u);
+  countedAssert('the model-calls record has a fixed field order', true);
+  const unmeteredLine = formatHeadlessCallStats(
+    {
+      calls: 3,
+      meteredCalls: 0,
+      usage: undefined,
+      noTool: 1,
+      singleTool: 2,
+      multiTool: 0,
+      recentToolUseCounts: [1, 1, 0],
+    },
+    usageConfig('bedrock'),
+  );
+  assert.equal(unmeteredLine, 'model-calls: calls=3 avgRequestInput=- noTool=1 singleTool=2 multiTool=0');
+  countedAssert('an unmetered average is `-`, never 0', true);
+  for (const line of [callsLine, unmeteredLine]) {
+    assert.doesNotMatch(line, /\n/u);
+  }
+  countedAssert('model-calls records are single lines', true);
 
   // The parent `usage:` record itself never changes shape or content because
   // children ran: it is computed from the parent meter alone.

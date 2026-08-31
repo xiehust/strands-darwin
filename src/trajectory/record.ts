@@ -70,6 +70,7 @@ export type TrajectoryRecordType =
   | 'runStarted'
   | 'userInput'
   | 'turnEnded'
+  | 'modelCall'
   | 'forkedFrom'
   | 'recordingStopped'
   | 'shellCommand'
@@ -199,6 +200,29 @@ export interface TurnSpendMeter {
   read(): TurnSpend | undefined;
 }
 
+/**
+ * Projects one completed model call's provider counters into {@link TurnSpend}.
+ *
+ * Injected into `TrajectoryRecorder.beginTurn` by `AgentRuntime.send`, beside the
+ * turn's {@link TurnSpendMeter} and for the same reason: the projection needs the
+ * live provider/model config, which `src/trajectory/**` must never import — the
+ * structural no-model-import property of every read path depends on it. The usage
+ * parameter is typed structurally (the SDK `Usage` shape) so this file needs no SDK
+ * type either.
+ *
+ * `project()` is called synchronously while a call's record is composed, must not
+ * throw, and returns `undefined` when the counters cannot be projected — recorded
+ * as *nothing*, which reads back as unknown.
+ */
+export interface CallSpendProjector {
+  project(usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadInputTokens?: number;
+    cacheWriteInputTokens?: number;
+  }): TurnSpend | undefined;
+}
+
 export interface TurnEndedRecord extends RecordEnvelope {
   type: 'turnEnded';
   stopReason: string | undefined;
@@ -227,6 +251,38 @@ export interface TurnEndedRecord extends RecordEnvelope {
    * existed, a session recorded with the meter unreadable, and a turn nothing metered
    * are all *unknown*, and no reader may turn that into a zero-cost turn. A failed turn
    * carries this **and** `failure`, because the tokens were billed either way.
+   */
+  spend?: TurnSpend;
+}
+
+/**
+ * One completed model call within a turn (issue #8 follow-up A), written when the
+ * observed `afterModelCallEvent` carries `stopData` — a failed attempt writes
+ * nothing, and stays visible through `attempt` gaps and `turnEnded.failure`.
+ *
+ * This is the turn-scoped `spend` field at call granularity, and it exists for the
+ * same reason: the raw `afterModelCallEvent` is dropped by the allowlist (and stays
+ * dropped — this bounded projection does not change `turnEnded.dropped`), so without
+ * it no reader could say *which* call of a multi-cycle turn grew the context or
+ * burned the cache. Additive under schema v1: readers ignore unknown types.
+ */
+export interface ModelCallRecord extends RecordEnvelope {
+  type: 'modelCall';
+  /** The SDK's 1-indexed attempt count for this cycle; a gap means a failed retry. */
+  attempt: number;
+  /** Milliseconds since the turn started, so a reader can line calls up against tool records. */
+  ms: number;
+  /** The SDK stop reason for this call, when reported. */
+  stopReason?: string;
+  /**
+   * The last `beforeModelCallEvent.projectedInputTokens` seen this turn — the agent
+   * loop's request-size estimate for this call. Absent when never reported; never 0.
+   */
+  contextTokens?: number;
+  /**
+   * This one call's own counters in the {@link TurnSpend} bucket vocabulary, so a
+   * call line and a `turnEnded.spend` line are comparable field for field. Absent
+   * when the provider reported no usage for the call — never zeros.
    */
   spend?: TurnSpend;
 }
@@ -277,6 +333,7 @@ export type TrajectoryRecord =
   | UserInputRecord
   | EventRecord
   | TurnEndedRecord
+  | ModelCallRecord
   | ForkedFromRecord
   | RecordingStoppedRecord
   | ShellCommandRecord;
@@ -552,7 +609,16 @@ export function turnFailureOf(record: TurnEndedRecord): TurnFailure | undefined 
  * usable numbers at all is `undefined`, so "unknown" has exactly one representation.
  */
 export function turnSpendOf(record: TurnEndedRecord): TurnSpend | undefined {
-  const spend = record.spend as unknown;
+  return spendOf(record.spend);
+}
+
+/**
+ * A spend payload as a reader can trust it — the shared half of {@link turnSpendOf}
+ * and {@link modelCallOf}, so a turn's spend and a call's spend cannot become two
+ * readings of one shape.
+ */
+function spendOf(value: unknown): TurnSpend | undefined {
+  const spend = value as unknown;
   if (spend === null || typeof spend !== 'object') return undefined;
   const { provider, model, input, output, cacheRead, cacheWrite } = spend as Record<string, unknown>;
 
@@ -573,6 +639,39 @@ export function turnSpendOf(record: TurnEndedRecord): TurnSpend | undefined {
     ...(counted === undefined ? {} : { output: counted }),
     ...(read === undefined ? {} : { cacheRead: read }),
     ...(written === undefined ? {} : { cacheWrite: written }),
+  };
+}
+
+/** A {@link ModelCallRecord} as readers consume it, numbers validated. */
+export interface ModelCallReading {
+  turn: number;
+  attempt: number;
+  ms: number;
+  stopReason?: string;
+  contextTokens?: number;
+  spend?: TurnSpend;
+}
+
+/**
+ * A record's model-call payload as a reader can trust it, defensive on
+ * {@link turnSpendOf}'s terms: the line may come from a newer darwin that writes
+ * more, or an interrupted write. A value that is not a finite number is **unknown**
+ * — `attempt`/`ms` degrade to 0 (an honest "not usable" for ordinals a report only
+ * prints), and the optional fields to absence, never to an invented 0.
+ */
+export function modelCallOf(record: ModelCallRecord): ModelCallReading {
+  const number = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  const stopReason = (record as { stopReason?: unknown }).stopReason;
+  const contextTokens = number((record as { contextTokens?: unknown }).contextTokens);
+  const spend = spendOf((record as { spend?: unknown }).spend);
+  return {
+    turn: record.turn,
+    attempt: number((record as { attempt?: unknown }).attempt) ?? 0,
+    ms: number((record as { ms?: unknown }).ms) ?? 0,
+    ...(typeof stopReason === 'string' && stopReason !== '' ? { stopReason } : {}),
+    ...(contextTokens === undefined ? {} : { contextTokens }),
+    ...(spend === undefined ? {} : { spend }),
   };
 }
 

@@ -841,6 +841,28 @@ async function contextWarnRatioField(): Promise<void> {
   );
 }
 
+async function cacheReadWarnTokensField(): Promise<void> {
+  header('config — cacheReadWarnTokens field');
+  const def = await loadConfig(await writeConfig('{}'));
+  assert('default is 4,000,000', def.cacheReadWarnTokens === 4_000_000);
+  const off = await loadConfig(await writeConfig('{ "cacheReadWarnTokens": 0 }'));
+  assert('0 is accepted (disables the spend advisory)', off.cacheReadWarnTokens === 0);
+  const custom = await loadConfig(await writeConfig('{ "cacheReadWarnTokens": 10000000 }'));
+  assert('a custom threshold is accepted', custom.cacheReadWarnTokens === 10_000_000);
+  await expectConfigError('a negative value is rejected', async () =>
+    loadConfig(await writeConfig('{ "cacheReadWarnTokens": -1 }')),
+  );
+  await expectConfigError('a non-number is rejected', async () =>
+    loadConfig(await writeConfig('{ "cacheReadWarnTokens": "lots" }')),
+  );
+  // A session key, so it survives /model and may not ride a models entry.
+  await expectConfigError('a models entry carrying it is rejected', async () =>
+    loadConfig(await writeConfig(
+      '{ "models": [ { "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "cacheReadWarnTokens": 5 } ] }',
+    )),
+  );
+}
+
 async function memoryHorizonField(): Promise<void> {
   header('config — generated memory horizon');
   const def = await loadConfig(await writeConfig('{}'));
@@ -1084,6 +1106,7 @@ async function main(): Promise<void> {
   await rejections();
   await requestTimeout();
   await contextWarnRatioField();
+  await cacheReadWarnTokensField();
   await memoryHorizonField();
   await contextOffloadFields();
   await memoryField();

@@ -487,6 +487,41 @@ async function childUsageProtocols(): Promise<void> {
   assert('a run without reporting dispatches emits no child fields and an identical usage', true);
 }
 
+async function callStatsProtocols(): Promise<void> {
+  header('structured headless — per-call stats are additive in both protocols');
+
+  // When completed calls were observed, exactly one record follows `usage:` —
+  // which itself stays byte-identical to the zero-call run below. The fixture's
+  // openai/chat config makes the request total input + cacheRead: (40+100)/2 = 70.
+  const text = await cli('call-stats', 'text');
+  nodeAssert.deepEqual(text, {
+    code: 0,
+    stdout: 'fixture answer\n',
+    stderr:
+      'session: session-fixture\n' +
+      'permission-mode: default\n' +
+      'tool bash — bash: printf fixture\n' +
+      'tool bash — ok\n' +
+      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
+      'model-calls: calls=3 avgRequestInput=70 noTool=1 singleTool=2 multiTool=0\n',
+  });
+  assert('text mode appends model-calls after the unchanged usage record', true);
+
+  const json = await cli('call-stats', 'json');
+  const record = lines(json.stdout)[0]!;
+  nodeAssert.deepEqual(record['usage'], { input: 12, output: 3, cacheRead: 0 });
+  nodeAssert.deepEqual(record['callStats'], { calls: 3, avgRequestInput: 70, noTool: 1, singleTool: 2, multiTool: 0 });
+  assert('structured callStats is additive beside the unchanged usage field', true);
+
+  // Zero observed calls: the terminal record has no callStats field at all —
+  // absent, never an all-zero object.
+  const base = await cli('success', 'json');
+  const baseRecord = lines(base.stdout)[0]!;
+  nodeAssert.equal('callStats' in baseRecord, false);
+  nodeAssert.deepEqual(baseRecord['usage'], { input: 12, output: 3, cacheRead: 0 });
+  assert('a run without completed calls emits no callStats field and an identical usage', true);
+}
+
 function boundsAndEscaping(): void {
   header('structured headless — bounds and one-line escaping');
   const output: string[] = [];
@@ -513,5 +548,6 @@ await terminalLifecycle();
 await sdkProjectionPrivacy();
 usageContract();
 await childUsageProtocols();
+await callStatsProtocols();
 boundsAndEscaping();
 report();

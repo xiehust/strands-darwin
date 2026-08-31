@@ -4,6 +4,7 @@ import { classify, type ApprovalMode, type PermissionBridge } from './agent/perm
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/stream-resumption.js';
 import type { AgentRuntime } from './agent/runtime.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
+import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
 
 const FIELD_LIMIT = 240;
@@ -73,6 +74,21 @@ export function formatHeadlessTotalUsage(total: UsageTotals, config: AppConfig):
   return (
     `usage-total: input=${metric(buckets.input)} output=${metric(buckets.output)}` +
     ` cacheRead=${metric(buckets.cacheRead)} cacheWrite=${metric(buckets.cacheWrite)}`
+  );
+}
+
+/**
+ * The per-call efficiency record, written only when at least one completed model
+ * call was observed (`runtime.callStats`), so a run that never reached the model
+ * keeps its exact historical stderr — the `usage-children:` convention. Field
+ * order is fixed for supervisors, and `avgRequestInput` is `-` when no call was
+ * metered — never `0`. The `usage:` record itself stays untouched either way.
+ */
+export function formatHeadlessCallStats(stats: SessionCallStats, config: AppConfig): string {
+  const average = averageRequestInputTokens(stats, config);
+  return (
+    `model-calls: calls=${stats.calls} avgRequestInput=${average === undefined ? '-' : String(average)}` +
+    ` noTool=${stats.noTool} singleTool=${stats.singleTool} multiTool=${stats.multiTool}`
   );
 }
 

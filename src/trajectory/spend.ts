@@ -28,7 +28,15 @@
  * This module imports no `Agent`, no `Model` and nothing from `src/agent/**`: reporting
  * spend must stay as offline as replaying history.
  */
-import { turnSpendOf, type TrajectoryRecord, type TurnEndedRecord, type TurnSpend } from './record.js';
+import {
+  modelCallOf,
+  turnSpendOf,
+  type ModelCallReading,
+  type ModelCallRecord,
+  type TrajectoryRecord,
+  type TurnEndedRecord,
+  type TurnSpend,
+} from './record.js';
 
 /** One metric's total, and how many recorded turns had nothing to say about it. */
 export interface SpendMetric {
@@ -188,6 +196,43 @@ export function formatTurnSpend(entry: TurnSpendEntry): string {
   if (entry.spend === undefined) return `turn ${entry.turn} spend: unknown (not recorded)`;
   const one = asMetrics(entry.spend);
   return `turn ${entry.turn} spend: ${formatSpendFields(one)} · ${formatModelLabel(modelLabel(entry.spend))}`;
+}
+
+/** Every `modelCall` record in file order, read defensively like the turn entries. */
+export function modelCallEntries(records: readonly TrajectoryRecord[]): ModelCallReading[] {
+  return records
+    .filter((record): record is ModelCallRecord => record.type === 'modelCall')
+    .map((record) => modelCallOf(record));
+}
+
+/**
+ * Cap on one rendered stop reason, in code points. The value is provider-controlled
+ * (and capped at the field cap on disk), so a summary line bounds it again the way
+ * {@link formatModelLabel} bounds a model id.
+ */
+const MAX_STOP_REASON_CHARS = 40;
+
+/**
+ * One completed model call's line for `replay` — bounded, and honest about absence
+ * on the spend rules: an estimate nobody reported and a price nobody projected are
+ * omitted or `unknown`, never rendered as 0.
+ */
+export function formatModelCall(call: ModelCallReading): string {
+  const parts = [
+    `turn ${call.turn} model call (attempt ${call.attempt}, ${call.ms}ms)`,
+    ...(call.stopReason === undefined ? [] : [`stop ${boundedWord(call.stopReason, MAX_STOP_REASON_CHARS)}`]),
+    ...(call.contextTokens === undefined ? [] : [`context ~${call.contextTokens} tokens`]),
+    call.spend === undefined
+      ? 'spend unknown'
+      : `${formatSpendFields(asMetrics(call.spend))} · ${formatModelLabel(modelLabel(call.spend))}`,
+  ];
+  return parts.join(' · ');
+}
+
+/** A provider-controlled word as one bounded token: whitespace collapsed, length capped. */
+function boundedWord(value: string, limit: number): string {
+  const points = [...value.replace(/\s+/gu, ' ').trim()];
+  return points.length <= limit ? points.join('') : `${points.slice(0, Math.max(0, limit - 1)).join('')}…`;
 }
 
 /** One model's line for `replay`, when a file holds more than one. */

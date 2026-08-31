@@ -6,6 +6,7 @@ import type OpenAI from 'openai';
 import type { AppConfig } from '../src/config.js';
 import { formatUsageReport } from '../src/tui/App.js';
 import { cacheEffectivenessRows, deltaUsage, sumUsage, usageBuckets, usageRows, type UsageTotals } from '../src/agent/usage.js';
+import type { SessionCallStats } from '../src/agent/call-stats.js';
 import { assert, header, report } from './shared.js';
 
 function config(provider: 'bedrock' | 'anthropic' | 'openai', openaiApi?: 'chat' | 'responses'): AppConfig {
@@ -316,10 +317,52 @@ function childSectionContracts(): void {
     /cache read\s+50/u.test(withChildren));
 }
 
+function efficiencySectionContracts(): void {
+  header('usage — /usage efficiency section');
+  const parent: UsageTotals = { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 50, cacheWriteInputTokens: 5 };
+  const stats: SessionCallStats = {
+    calls: 12,
+    meteredCalls: 12,
+    usage: { inputTokens: 1200, outputTokens: 240, cacheReadInputTokens: 46_800 },
+    noTool: 2,
+    singleTool: 8,
+    multiTool: 2,
+    recentToolUseCounts: [1, 1, 0, 1, 2, 1, 1, 1, 0, 1],
+  };
+
+  // Absent stats → byte-identical to the pre-efficiency report, the childUsage rule.
+  const without = formatUsageReport(parent, config('bedrock'), false);
+  const withUndefined = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined);
+  assert('zero observed calls renders byte-identically to the pre-efficiency report', without === withUndefined);
+  assert('the zero-call report has no efficiency section', !without.includes('efficiency'));
+
+  const withStats = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, stats);
+  assert('the efficiency section is present and labelled', withStats.includes('efficiency (completed model calls)'));
+  assert('the section counts model calls', /model calls\s+12/u.test(withStats));
+  assert('avg request input per call comes from the shared bucket arithmetic',
+    /avg request input\/call\s+4,000/u.test(withStats));
+  assert('the tool shapes are split out',
+    /single-tool responses\s+8/u.test(withStats) &&
+    /multi-tool responses\s+2/u.test(withStats) &&
+    /no-tool responses\s+2/u.test(withStats));
+  const unmetered = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, {
+    ...stats,
+    meteredCalls: 0,
+    usage: undefined,
+  });
+  assert('an unmetered average reads not reported, never 0',
+    /avg request input\/call\s+not reported/u.test(unmetered));
+  assert('efficiency coexists with the child sections without touching them',
+    formatUsageReport(parent, config('bedrock'), false, false, undefined,
+      { dispatches: 1, usage: { inputTokens: 4, outputTokens: 2 } }, stats)
+      .includes('session total (incl. subagents)'));
+}
+
 await adapterContract();
 projectionContracts();
 effectivenessContracts();
 deltaContracts();
 sumContracts();
 childSectionContracts();
+efficiencySectionContracts();
 report();

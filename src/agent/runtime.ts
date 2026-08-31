@@ -117,7 +117,13 @@ import {
   type RewindCatalogue,
   type RewindCheckpoint,
 } from './rewind.js';
-import { deltaUsage, startTurnSpend, sumUsage, type UsageTotals } from './usage.js';
+import { deltaUsage, startCallSpend, startTurnSpend, sumUsage, type UsageTotals } from './usage.js';
+import {
+  emptyCallStats,
+  recordCompletedCall,
+  type CompletedModelCall,
+  type SessionCallStats,
+} from './call-stats.js';
 
 /** Test seam for proving startup unwind after resources have been acquired. */
 type RuntimeCreateCheckpoint = 'after-initialize';
@@ -354,6 +360,21 @@ export class AgentRuntime {
   private promptCachePlan: PromptCachePlan;
 
   private lastTurnDelta: UsageTotals | undefined = undefined;
+
+  /**
+   * Per-model-call efficiency tallies for this session (issue #8 follow-up A).
+   * Parent-only and session-scoped by construction: only this runtime's own
+   * `send()` feeds it, and `/clear`'s successor runtime starts a fresh one.
+   */
+  private callStatsState: SessionCallStats = emptyCallStats();
+
+  /**
+   * Latched on the first tally failure. The stats are an observer of the stream:
+   * a broken tally degrades every surface to absence (no efficiency section, no
+   * `model-calls:` record) rather than reporting numbers it can no longer trust —
+   * and can never become a second reason a turn dies.
+   */
+  private callStatsBroken = false;
 
   /** Serializes the bounded list/save/list critical section across concurrent callers. */
   private rewindCaptureTail: Promise<void> = Promise.resolve();
@@ -862,6 +883,10 @@ export class AgentRuntime {
       const recording = this.trajectory?.beginTurn(
         userInput,
         startTurnSpend(before, () => this.usage, this.liveConfig),
+        // The per-call spend projector, injected beside the turn meter and for its
+        // reason: the `modelCall` record needs the live provider/model config, which
+        // `src/trajectory/**` must never import.
+        startCallSpend(this.liveConfig),
       );
       // The model may receive an expanded skill/custom-command prompt, but
       // preference/identity provenance is allowed to quote only what the user
@@ -880,6 +905,10 @@ export class AgentRuntime {
       const invocation = image === undefined ? modelInput : [new TextBlock(modelInput), image];
       for await (const event of recordStream(this.agent.stream(invocation), recording)) {
         if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
+        // Observed at the same point `recordStream` observes: synchronously, between
+        // `stream()` and the `yield`, so `/usage` asked mid-turn already counts the
+        // calls that completed. Cannot throw — see {@link observeCallStats}.
+        this.observeCallStats(event);
         yield event;
       }
       this.memoryController?.seal(
@@ -1249,6 +1278,38 @@ export class AgentRuntime {
    */
   get lastTurnUsage(): UsageTotals | undefined {
     return this.lastTurnDelta;
+  }
+
+  /**
+   * Folds one stream event into the session call stats. Synchronous, and swallows
+   * its own failures on the recorder's terms: an observer between `stream()` and
+   * `yield` that could throw would be a second way for a turn to die. The first
+   * failure latches the stats broken — every surface then reads absence rather
+   * than a tally that silently missed calls.
+   */
+  private observeCallStats(event: AgentStreamEvent): void {
+    if (this.callStatsBroken || event.type !== 'afterModelCallEvent') return;
+    try {
+      const stopData = (event as { stopData?: CompletedModelCall }).stopData;
+      // A failed attempt has no stopData: nothing completed, nothing to count.
+      if (stopData === undefined) return;
+      this.callStatsState = recordCompletedCall(this.callStatsState, stopData);
+    } catch {
+      this.callStatsBroken = true;
+    }
+  }
+
+  /**
+   * Per-model-call efficiency stats for this session's parent agent, or
+   * `undefined` until a completed call has been observed — so every surface that
+   * reads this stays byte-identical to before the feature existed when nothing
+   * happened yet (the `childUsage` convention). Also `undefined` after a tally
+   * failure: a broken stat degrades to absence, never to a wrong number. Children
+   * are deliberately not counted here; their spend is {@link childUsage}'s story.
+   */
+  get callStats(): SessionCallStats | undefined {
+    if (this.callStatsBroken || this.callStatsState.calls === 0) return undefined;
+    return this.callStatsState;
   }
 
   /**

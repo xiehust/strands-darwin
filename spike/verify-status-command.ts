@@ -18,6 +18,7 @@
 import type { PromptCachePlan } from '../src/agent/prompt-cache.js';
 import type { ContextEstimate, UsageTotals } from '../src/agent/runtime.js';
 import type { ThinkingPlan } from '../src/agent/thinking.js';
+import { describeCallEfficiency, type SessionCallStats } from '../src/agent/call-stats.js';
 import { withSoleChoice, type AppConfig } from '../src/config.js';
 import { BUILTIN_COMMAND_NAMES, builtinCommandDescription } from '../src/commands/custom-commands.js';
 import type { McpServerStatus } from '../src/mcp/registry.js';
@@ -117,6 +118,7 @@ function facts(overrides: Partial<StatusFacts> = {}): StatusFacts {
     diagnostics: LOGGING,
     usage: SPENT,
     childUsage: undefined,
+    callStats: undefined,
     turnInFlight: false,
     context: ESTIMATE,
     ...overrides,
@@ -285,12 +287,56 @@ function testChildUsage(): void {
     openaiChildren.includes('usage (subagents, 1 dispatch): input 5 · output 2 · cache read not reported · cache write not reported'));
 }
 
+function testCallStats(): void {
+  header('formatStatusReport — per-call efficiency is additive, one bounded shared line');
+
+  const stats: SessionCallStats = {
+    calls: 12,
+    meteredCalls: 12,
+    usage: { inputTokens: 1200, outputTokens: 240, cacheReadInputTokens: 46_800 },
+    noTool: 2,
+    singleTool: 8,
+    multiTool: 2,
+    recentToolUseCounts: [1, 1, 0, 1, 2, 1, 1, 1, 0, 1],
+  };
+
+  // Zero completed calls: byte-identical to a report that never knew about them.
+  const base = formatStatusReport(facts());
+  assert('without callStats no model-calls line exists', !base.includes('model calls:'));
+
+  const withStats = formatStatusReport(facts({ callStats: stats }));
+  const baseLines = base.split('\n');
+  const statLines = withStats.split('\n');
+  const added = statLines.filter((line) => !baseLines.includes(line));
+  assert('callStats adds exactly one line and leaves every existing line byte-identical',
+    added.length === 1 && statLines.filter((line) => baseLines.includes(line)).join('\n') === base);
+  assert('the line is the shared describeCallEfficiency rendering',
+    added[0] === `  model calls: ${describeCallEfficiency(stats, BEDROCK)}` &&
+    withStats.includes('model calls: 12 completed · avg request input 4,000 · tool responses 8 single / 2 multi / 2 none'));
+  assert('the line sits directly under the tokens row',
+    statLines[statLines.findIndex((line) => line.includes('tokens')) + 1]?.includes('model calls:') === true);
+  assert('an unmetered average reads not reported, never 0',
+    formatStatusReport(facts({ callStats: { ...stats, meteredCalls: 0, usage: undefined } }))
+      .includes('avg request input not reported'));
+  // Both additive blocks together: the child lines keep their slot, the call line follows.
+  const both = formatStatusReport(facts({
+    childUsage: { dispatches: 1, usage: { inputTokens: 1, outputTokens: 1 } },
+    callStats: stats,
+  })).split('\n');
+  const tokensIndex = both.findIndex((line) => line.includes('tokens'));
+  assert('with children present the call line follows the two child lines',
+    both[tokensIndex + 1]?.includes('usage (subagents') === true &&
+    both[tokensIndex + 2]?.includes('usage (session total)') === true &&
+    both[tokensIndex + 3]?.includes('model calls:') === true);
+}
+
 function main(): void {
   testEveryFactPresent();
   testUnknownStaysUnknown();
   testBoundedLists();
   testStatesAndDegradation();
   testChildUsage();
+  testCallStats();
   testMenuCapacity();
   report();
 }

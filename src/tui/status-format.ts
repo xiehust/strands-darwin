@@ -19,6 +19,7 @@ import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import type { ThinkingPlan } from '../agent/thinking.js';
 import { formatUsageValue, sumUsage, usageBuckets } from '../agent/usage.js';
+import { describeCallEfficiency, type SessionCallStats } from '../agent/call-stats.js';
 import type { AppConfig } from '../config.js';
 import type { McpServerStatus } from '../mcp/registry.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
@@ -66,6 +67,12 @@ export interface StatusFacts {
    * dispatch registry, or undefined when no dispatch ever reported usage.
    */
   childUsage: { dispatches: number; usage: UsageTotals } | undefined;
+  /**
+   * `runtime.callStats` — per-model-call efficiency tallies, or undefined when
+   * no completed call has been observed (which keeps the zero-call report
+   * byte-identical, the childUsage convention).
+   */
+  callStats: SessionCallStats | undefined;
   /** True while a turn streams: the meter has not counted it yet, said out loud. */
   turnInFlight: boolean;
   /** The awaited `runtime.contextEstimate()`, or undefined when it failed. */
@@ -117,6 +124,17 @@ export function formatStatusReport(facts: StatusFacts): string {
       0,
       `  usage (subagents, ${dispatches} dispatch${dispatches === 1 ? '' : 'es'}): ${describeCounters(usage, facts.config)}`,
       `  usage (session total): ${describeCounters(sumUsage([facts.usage, usage]), facts.config)}`,
+    );
+  }
+  // Per-call efficiency rides the same additive convention, one bounded line from
+  // the shared `describeCallEfficiency` renderer (the same arithmetic the /usage
+  // efficiency section derives from), directly under the token block.
+  if (facts.callStats !== undefined) {
+    const tokensIndex = rows.findIndex(([label]) => label === 'tokens');
+    lines.splice(
+      tokensIndex + 1 + (facts.childUsage === undefined ? 0 : 2),
+      0,
+      `  model calls: ${describeCallEfficiency(facts.callStats, facts.config)}`,
     );
   }
   return ['status — this session', ...lines].join('\n');

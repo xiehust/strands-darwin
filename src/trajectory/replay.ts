@@ -18,14 +18,18 @@ import { describeDamage, type TrajectoryReadResult } from './reader.js';
 import {
   formatTurnFailure,
   turnFailureOf,
+  type ModelCallReading,
+  type ModelCallRecord,
   type TrajectoryRecord,
   type TurnEndedRecord,
   type TurnFailure,
 } from './record.js';
 import {
+  formatModelCall,
   formatModelSpend,
   formatSpendFields,
   formatTurnSpend,
+  modelCallEntries,
   summarizeSpend,
   turnSpendEntries,
   type SpendSummary,
@@ -50,6 +54,13 @@ export interface ReplayResult {
    * an unmeasured turn is reported as unknown rather than dropped from the report.
    */
   turnSpend: TurnSpendEntry[];
+  /**
+   * Every completed model call the record holds, in file order — the call-level
+   * reading `modelCall` records exist for. Empty for files that predate the record
+   * type, which is what keeps their `formatReplay` (and therefore `/export`)
+   * byte-identical.
+   */
+  modelCalls: ModelCallReading[];
   /** The same numbers aggregated for the whole file, with the models that incurred them. */
   spend: SpendSummary;
 }
@@ -79,6 +90,9 @@ export function replayRecords(
   // rather than the file's: the history it prints is filtered the same way, and a total
   // covering turns it did not show would describe a different report.
   const closed: TurnEndedRecord[] = [];
+  // Same collection discipline as `closed`: a `--turn` replay reports only the calls
+  // of the turn it shows.
+  const modelCalls: ModelCallRecord[] = [];
   let droppedRecords = 0;
 
   for (const record of records) {
@@ -163,6 +177,13 @@ export function replayRecords(
         state = turnReducer(state, { type: 'turnEnded' });
         continue;
 
+      case 'modelCall':
+        // No history item: the live TUI never drew a row for a completed model call,
+        // and replay must not invent one. The record surfaces as the bounded
+        // per-call lines `formatReplay` appends beside the spend report.
+        modelCalls.push(record);
+        continue;
+
       case 'forkedFrom':
       case 'recordingStopped':
         continue;
@@ -176,6 +197,7 @@ export function replayRecords(
     droppedRecords,
     failures,
     turnSpend: turnSpendEntries(closed),
+    modelCalls: modelCallEntries(modelCalls),
     spend: summarizeSpend(closed),
   };
 }
@@ -293,6 +315,12 @@ export function formatReplay(result: ReplayResult): string {
   for (const failure of result.failures) {
     lines.push(`  turn ${failure.turn} failed: ${formatTurnFailure(failure)}`);
   }
+
+  // The call-level reading first, one bounded line per completed model call, so a
+  // reader can see *which* call of a multi-cycle turn grew the context before the
+  // per-turn totals summarize it. Absent for files that predate the record type,
+  // which keeps their transcript (and `/export`) byte-identical.
+  for (const call of result.modelCalls) lines.push(`  ${formatModelCall(call)}`);
 
   // What it cost, at the one verbosity a transcript can afford it: one bounded line per
   // turn — including the turns nothing measured, because a report that quietly omitted

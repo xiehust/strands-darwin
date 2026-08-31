@@ -83,6 +83,12 @@ additive and optional: a run without delegation emits neither key, and `usage` s
 and byte-identical either way — the structured counterpart of the text-mode `usage-children:` /
 `usage-total:` stderr records that follow the unchanged `usage:` line under the same condition.
 
+When at least one completed model call was observed, the terminal result additionally carries
+`callStats` — `calls`, `avgRequestInput` (absent when no call was metered — unknown, never 0),
+and the response tool-shape tallies `noTool`/`singleTool`/`multiTool`. Parent calls only, under
+the same additive convention: the structured counterpart of the text-mode `model-calls:` stderr
+record, and a run that never reached the model emits neither.
+
 Success is a durability statement, not merely a model stop reason. Order is:
 
 1. consume the SDK turn;

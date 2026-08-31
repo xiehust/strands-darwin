@@ -38,7 +38,7 @@ import {
   setRuntimeModelFactoryForTest,
   setRuntimeRecorderOverridesForTest,
 } from '../src/agent/runtime.js';
-import { startTurnSpend, type UsageTotals } from '../src/agent/usage.js';
+import { startCallSpend, startTurnSpend, type UsageTotals } from '../src/agent/usage.js';
 import { withSoleChoice, type AppConfig } from '../src/config.js';
 import { CliUsageError, parseCliArgs } from '../src/cli-args.js';
 import {
@@ -66,10 +66,13 @@ import {
   MAX_RECORD_BYTES,
   failureFromError,
   formatTurnFailure,
+  modelCallOf,
   parseRecordLine,
   turnFailureOf,
   turnOutcome,
   turnSpendOf,
+  type CallSpendProjector,
+  type ModelCallRecord,
   type TrajectoryRecord,
   type TurnEndedRecord,
   type TurnSpendMeter,
@@ -397,10 +400,13 @@ async function recordedTurn(
   agent: Agent,
   rec: TrajectoryRecorder | undefined,
   input: string,
-  options: { stopAfter?: number; spend?: TurnSpendMeter } = {},
+  options: { stopAfter?: number; spend?: TurnSpendMeter; callSpend?: CallSpendProjector } = {},
 ): Promise<AgentStreamEvent[]> {
   const seen: AgentStreamEvent[] = [];
-  for await (const event of recordStream(agent.stream(input), rec?.beginTurn(input, options.spend))) {
+  for await (const event of recordStream(
+    agent.stream(input),
+    rec?.beginTurn(input, options.spend, options.callSpend),
+  )) {
     seen.push(event);
     if (options.stopAfter !== undefined && seen.length >= options.stopAfter) break;
   }
@@ -1531,6 +1537,149 @@ async function turnSpendReadPaths(): Promise<void> {
   assert('a spend whose numbers are not numbers reads as unknown', turnSpendOf(brokenRecord) === undefined);
 }
 
+async function modelCallRecords(): Promise<void> {
+  header('trajectory — every completed model call leaves one bounded record, priced per call');
+
+  const dir = path.join(ROOT, 'model-calls');
+  await rm(dir, { recursive: true, force: true });
+
+  // One turn, two completed model calls (tool cycle + answer), driven through a real
+  // Agent so the recorded events are the SDK's own before/afterModelCallEvent pair.
+  const first = usage(100, 20, { read: 50, write: 10 });
+  const second = usage(200, 30, { read: 5, write: 1 });
+  const model = new MeteredModel([
+    { usage: first, toolCall: { name: 'echoTool', input: { note: 'per call' } } },
+    { usage: second, text: 'the answer after the tool call' },
+  ]);
+  const agent = newAgent(model);
+  await agent.initialize();
+
+  const file = path.join(dir, 'trajectory.jsonl');
+  const rec = recorder(file);
+  await recordedTurn(agent, rec, 'one turn, two calls', {
+    spend: meterFor(agent),
+    callSpend: startCallSpend(spendConfig('bedrock')),
+  });
+  await rec.close();
+
+  const read = await readTrajectory(file);
+  const calls = read.records.filter((r): r is ModelCallRecord => r.type === 'modelCall');
+  assert('one modelCall record per completed call, in order', calls.length === 2);
+  const [callOne, callTwo] = calls.map((record) => modelCallOf(record));
+  assert('both calls belong to the turn and carry the SDK 1-indexed attempt count',
+    calls.every((record) => record.turn === 1) && callOne?.attempt === 1 && callTwo?.attempt === 1);
+  assert('ms is time since turn start, a finite non-negative number per call',
+    (callOne?.ms ?? -1) >= 0 && (callTwo?.ms ?? -1) >= (callOne?.ms ?? 0));
+  assert('each call records the stop reason the SDK reported for it',
+    callOne?.stopReason === 'toolUse' && callTwo?.stopReason === 'endTurn');
+  assert('spend is the call\u2019s own counters, not the running turn delta',
+    callOne?.spend?.input === 100 && callOne.spend.output === 20 &&
+    callOne.spend.cacheRead === 50 && callOne.spend.cacheWrite === 10 &&
+    callTwo?.spend?.input === 200 && callTwo.spend.output === 30 &&
+    callTwo.spend.cacheRead === 5 && callTwo.spend.cacheWrite === 1);
+  assert('the per-call spend carries the same attribution vocabulary as turnEnded.spend',
+    callOne?.spend?.provider === 'bedrock' && callOne.spend.model === 'global.anthropic.claude-opus-5');
+  assert('contextTokens is the agent loop\u2019s request estimate for each call — present here, and never 0',
+    calls.every((record) => {
+      const reading = modelCallOf(record);
+      return reading.contextTokens !== undefined && reading.contextTokens > 0;
+    }));
+  assert('the second call\u2019s estimate reflects the grown context, not a stale first reading',
+    (callTwo?.contextTokens ?? 0) > (callOne?.contextTokens ?? 0));
+
+  const end = read.records.find((r): r is TurnEndedRecord => r.type === 'turnEnded');
+  const callSeqs = calls.map((record) => record.seq);
+  assert('call records precede the closing record in the same buffered batch',
+    end !== undefined && callSeqs.every((seq) => seq < end.seq));
+  assert('the raw afterModelCallEvent stays a counted drop — the projection is not a fifth recorded event type',
+    (end?.dropped['afterModelCallEvent'] ?? 0) >= 2 && end?.recorded['afterModelCallEvent'] === undefined);
+  assert('a modelCall line parses through the envelope validator',
+    parseRecordLine(JSON.stringify(calls[0]))?.type === 'modelCall');
+
+  // A provider that reports no usage for the call: the record exists, the price does not.
+  const silentFile = path.join(dir, 'silent.jsonl');
+  const silentRec = recorder(silentFile);
+  const silentAgent = newAgent(new MeteredModel([{ text: 'no usage reported' }]));
+  await silentAgent.initialize();
+  await recordedTurn(silentAgent, silentRec, 'unmetered call', {
+    callSpend: startCallSpend(spendConfig('bedrock')),
+  });
+  await silentRec.close();
+  const silentLine = (await readFile(silentFile, 'utf8'))
+    .split('\n')
+    .find((line) => line.includes('"modelCall"')) as string;
+  assert('an unmetered call\u2019s spend is an absent key, never zeros',
+    silentLine !== undefined && !silentLine.includes('"spend"'));
+
+  // No projector injected at all (a legacy caller): the call lines still exist, unpriced.
+  const bareFile = path.join(dir, 'bare.jsonl');
+  const bareRec = recorder(bareFile);
+  const bareAgent = newAgent(new MeteredModel([{ usage: usage(11, 3), text: 'metered but unprojected' }]));
+  await bareAgent.initialize();
+  await recordedTurn(bareAgent, bareRec, 'no projector');
+  await bareRec.close();
+  const bareCalls = (await readTrajectory(bareFile)).records.filter((r) => r.type === 'modelCall');
+  assert('without a projector the record is written with spend absent',
+    bareCalls.length === 1 && modelCallOf(bareCalls[0] as ModelCallRecord).spend === undefined);
+
+  // A failed attempt records nothing: the first call completed, the second threw.
+  const failFile = path.join(dir, 'failed.jsonl');
+  const failRec = recorder(failFile);
+  const thrown = new ProviderExplosion('the provider refused the second call');
+  const failAgent = newAgent(
+    new MeteredModel([
+      { usage: first, toolCall: { name: 'echoTool', input: { note: 'before the failure' } } },
+      { throws: thrown },
+    ]),
+  );
+  await failAgent.initialize();
+  let caught: unknown;
+  try {
+    await recordedTurn(failAgent, failRec, 'fails on the second call', {
+      spend: meterFor(failAgent),
+      callSpend: startCallSpend(spendConfig('bedrock')),
+    });
+  } catch (error) {
+    caught = error;
+  }
+  await failRec.close();
+  assert('the thrown error still reaches the caller as the identical object', caught === thrown);
+  const failRead = await readTrajectory(failFile);
+  const failCalls = failRead.records.filter((r): r is ModelCallRecord => r.type === 'modelCall');
+  const failEnd = failRead.records.find((r): r is TurnEndedRecord => r.type === 'turnEnded');
+  assert('only the completed call is recorded; the failed attempt leaves no call line',
+    failCalls.length === 1 && modelCallOf(failCalls[0] as ModelCallRecord).spend?.input === 100);
+  assert('the failed attempt stays visible where it belongs: turnEnded.failure',
+    failEnd !== undefined && turnOutcome(failEnd) === 'failed');
+
+  // Replay: the call lines are a bounded projection beside the spend report, and the
+  // reconstructed history is untouched — the live TUI never drew a row for them.
+  const replayed = replayRecords(read.records);
+  const withoutCalls = replayRecords(read.records.filter((record) => record.type !== 'modelCall'));
+  assert('modelCall records add no history item to replay',
+    JSON.stringify(historyWithoutIds(replayed.history)) === JSON.stringify(historyWithoutIds(withoutCalls.history)));
+  assert('replay collects one entry per call', replayed.modelCalls.length === 2);
+  const formatted = formatReplay({ ...replayed, damage: undefined });
+  assert('formatReplay prints one bounded line per completed call',
+    formatted.includes('turn 1 model call (attempt 1,') &&
+    formatted.includes('stop toolUse') &&
+    formatted.includes('stop endTurn') &&
+    formatted.includes('input=100 output=20 cacheRead=50 cacheWrite=10'));
+  const callLines = formatted.split('\n').filter((line) => line.includes('model call (attempt'));
+  assert('each call line is one bounded line', callLines.length === 2 && callLines.every((line) => [...line].length < 400));
+  assert('a file without modelCall records renders formatReplay byte-identically to before the type existed',
+    !formatReplay({ ...withoutCalls, damage: undefined }).includes('model call (attempt'));
+
+  // A defensively read damaged payload degrades to unknown, never to invented zeros.
+  const junk = modelCallOf({
+    v: 1, seq: 9, t: 'now', turn: 2, type: 'modelCall',
+    attempt: 'x', ms: Number.NaN, stopReason: 7, contextTokens: 'big', spend: { provider: 3 },
+  } as unknown as ModelCallRecord);
+  assert('a damaged modelCall payload reads as unknown fields, not zeros',
+    junk.turn === 2 && junk.attempt === 0 && junk.ms === 0 &&
+    junk.stopReason === undefined && junk.contextTokens === undefined && junk.spend === undefined);
+}
+
 async function replayFidelity(): Promise<void> {
   header('trajectory — replay reconstructs the live history with no model call');
 
@@ -2249,6 +2398,7 @@ async function main(): Promise<void> {
     await failedTurnReadPaths();
     await turnSpend();
     await turnSpendReadPaths();
+    await modelCallRecords();
     await replayFidelity();
     await searchContracts();
     await forkContracts();

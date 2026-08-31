@@ -1,5 +1,5 @@
 import type { AppConfig } from '../config.js';
-import type { TurnSpend, TurnSpendMeter } from '../trajectory/record.js';
+import type { CallSpendProjector, TurnSpend, TurnSpendMeter } from '../trajectory/record.js';
 
 /** Cumulative token counts reported by the active model during this process. */
 export interface UsageTotals {
@@ -167,6 +167,38 @@ export function startTurnSpend(
     read: (): TurnSpend | undefined => {
       try {
         const buckets = usageBuckets(deltaUsage(before, readUsage()), config);
+        return {
+          provider: config.provider,
+          model: config.model,
+          ...(buckets.input !== undefined && { input: buckets.input }),
+          output: buckets.output,
+          ...(buckets.cacheRead !== undefined && { cacheRead: buckets.cacheRead }),
+          ...(buckets.cacheWrite !== undefined && { cacheWrite: buckets.cacheWrite }),
+        };
+      } catch {
+        return undefined;
+      }
+    },
+  };
+}
+
+/**
+ * The per-call sibling of {@link startTurnSpend}: projects one completed model
+ * call's own counters — `afterModelCallEvent.stopData.message.metadata.usage`, not a
+ * meter delta — through the same {@link usageBuckets}, stamped with the same
+ * per-turn provider/model attribution.
+ *
+ * Lives here for `startTurnSpend`'s reasons, verbatim: the buckets define what the
+ * numbers mean, the trajectory only stores them, and `src/trajectory/**` must not
+ * import the config this projection needs. `project()` cannot throw — a counter it
+ * cannot project degrades to `undefined`, which the record stores as nothing and
+ * every report reads as unknown.
+ */
+export function startCallSpend(config: AppConfig): CallSpendProjector {
+  return {
+    project: (usage): TurnSpend | undefined => {
+      try {
+        const buckets = usageBuckets(usage, config);
         return {
           provider: config.provider,
           model: config.model,

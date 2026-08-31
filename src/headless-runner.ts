@@ -13,6 +13,7 @@ import {
   formatHeadlessDiagnosticsProblem,
   formatHeadlessPermissionMode,
   formatHeadlessTrajectoryProblem,
+  formatHeadlessCallStats,
   formatHeadlessChildUsage,
   formatHeadlessTotalUsage,
   formatHeadlessUsage,
@@ -22,6 +23,7 @@ import {
 import {
   StructuredHeadlessWriter,
   runStructuredHeadlessTurn,
+  structuredCallStats,
   structuredFailure,
   structuredUsage,
   structuredWarning,
@@ -265,6 +267,7 @@ export async function runHeadlessProcess(
     let usage: ReturnType<typeof structuredUsage> | undefined;
     let childUsage: (ReturnType<typeof structuredUsage> & { dispatches: number }) | undefined;
     let totalUsage: ReturnType<typeof structuredUsage> | undefined;
+    let callStats: ReturnType<typeof structuredCallStats> | undefined;
     if (runtime !== undefined) {
       try {
         if (structured) usage = structuredUsage(runtime.usage, runtime.config);
@@ -288,6 +291,19 @@ export async function runHeadlessProcess(
         }
       } catch {
         // Child meters are observers too; a failed read costs the records, not the run.
+      }
+      try {
+        // Same additive contract as the child records: the `model-calls:` record and
+        // the structured `callStats` field exist only when at least one completed
+        // model call was observed, so a run that never reached the model keeps its
+        // exact historical output. `usage:`/`usage` above stay untouched.
+        const stats = runtime.callStats;
+        if (stats !== undefined) {
+          if (structured) callStats = structuredCallStats(stats, runtime.config);
+          else target.stderr.write(`${formatHeadlessCallStats(stats, runtime.config)}\n`);
+        }
+      } catch {
+        // The stats are an observer; a failed read costs the record, not the run.
       }
 
       for (const problem of runtime.takeHookProblems()) {
@@ -336,6 +352,7 @@ export async function runHeadlessProcess(
         ...(usage === undefined ? {} : { usage }),
         ...(childUsage === undefined ? {} : { childUsage }),
         ...(totalUsage === undefined ? {} : { totalUsage }),
+        ...(callStats === undefined ? {} : { callStats }),
         ...(errors.length === 0 ? {} : { errors }),
         ...(warnings.length === 0 ? {} : { warnings }),
         ...(continued ? { continued: true } : {}),
