@@ -65,7 +65,7 @@ User-directed: give darwin a Claude Code–style workflow capability (S3, `code.
 
 ## SRF-019 — Stop trimming `memory_save` quote fields and make evidence rejection reasons specific
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 64
 - Score: 15
 - Importance: 4
@@ -77,7 +77,7 @@ User-directed: give darwin a Claude Code–style workflow capability (S3, `code.
 
 ### Implementation / acceptance evidence
 
-(not started)
+Accepted 2026-08-31 in `f6d750a` (task archive `e95a15d`; child session `session-20260831-031847766`; managed tasks `bg-789ac43e` transient-provider-failed, retry `bg-7dd4296b` succeeded, exit 0). `src/memory/tools.ts` adds `boundedUntrimmed(max)` (min-1 + code-point cap, no `.trim()`) applied only to `evidence.quote` (4000) and `userQuote` (500); `resolveExactSourceAnchor` returns `SourceAnchorResolution` with a closed six-reason failure set (`quote-not-one-line`/`unsafe-path`/`oversized-source`/`unreadable-source`/`no-matching-line`/`multiple-matching-lines`), safety checks order- and effect-identical; the controller maps each reason to its own message and the post-resolve `validateAnchor` re-check gets a distinct message. Host independently re-ran `verify-memory-validation.ts` 20/20, `verify-memory-tools.ts` 15/15, `pnpm typecheck`, full `pnpm test` (zero FAIL lines), `pnpm build`, plus a direct probe: the indented `src/memory/tools.ts` line 17 anchors `{ok:true, line:17}` while its trimmed variant and an absent line both return `{ok:false, failure:'no-matching-line'}`. Host acceptance recorded in `docs/iteration-log.md` Batch 68.
 
 ### Notes / blockers / abandonment reason
 
