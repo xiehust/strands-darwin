@@ -25,7 +25,7 @@ import {
   type PermissionDecision,
 } from '../agent/permission.js';
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
-import { formatUsageValue, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
+import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from '../agent/stream-resumption.js';
 import { contextOverflowErrorMessage } from '../context-overflow-error.js';
 
@@ -933,7 +933,7 @@ export function App({
         dispatch({ type: 'userInput', text });
         dispatch({
           type: 'notice',
-          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage),
+          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage, runtime.childUsage),
         });
         return;
       }
@@ -1178,6 +1178,7 @@ export function App({
             trajectory: runtime.trajectoryStatus,
             diagnostics: runtime.diagnosticsStatus,
             usage: runtime.usage,
+            childUsage: runtime.childUsage,
             turnInFlight: status === 'streaming',
             context,
             ...(contextProblem !== undefined && { contextProblem }),
@@ -2586,6 +2587,7 @@ export function formatUsageReport(
   resumed: boolean,
   turnInFlight = false,
   lastTurn?: UsageTotals,
+  children?: { dispatches: number; usage: UsageTotals },
 ): string {
   const rows = usageRows(usage, config);
   const derived = cacheEffectivenessRows(usage, config);
@@ -2610,7 +2612,31 @@ export function formatUsageReport(
   // in-flight one.
   const lastTurnSection = lastTurn === undefined ? [] : formatLastTurnSection(lastTurn, config, labelWidth);
 
-  return [heading, ...lines, ...footer, ...lastTurnSection].join('\n');
+  // Child sections: only when a dispatch reported spend (`runtime.childUsage`),
+  // so a session that never delegated renders byte-identical to before children
+  // were counted at all. The session total repeats the parent's projection rules
+  // over the summed meters — same rows, same absent-metric honesty.
+  const childSections = children === undefined
+    ? []
+    : [
+        ...usageSection(`subagents (${children.dispatches} dispatch${children.dispatches === 1 ? '' : 'es'})`, children.usage, config, labelWidth),
+        ...usageSection('session total (incl. subagents)', sumUsage([usage, children.usage]), config, labelWidth),
+      ];
+
+  return [heading, ...lines, ...footer, ...lastTurnSection, ...childSections].join('\n');
+}
+
+/**
+ * One additional labelled section of usage rows, aligned to at least the parent
+ * table's label width — the shape `formatLastTurnSection` set.
+ */
+function usageSection(heading: string, usage: UsageTotals, config: AppConfig, labelWidth: number): string[] {
+  const rows = usageRows(usage, config);
+  const width = Math.max(labelWidth, ...rows.map(({ label }) => label.length));
+  return [
+    heading,
+    ...rows.map(({ label, value }) => `  ${label.padEnd(width)}  ${formatUsageValue(value).padStart(12)}`),
+  ];
 }
 
 /**

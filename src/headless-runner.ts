@@ -13,6 +13,8 @@ import {
   formatHeadlessDiagnosticsProblem,
   formatHeadlessPermissionMode,
   formatHeadlessTrajectoryProblem,
+  formatHeadlessChildUsage,
+  formatHeadlessTotalUsage,
   formatHeadlessUsage,
   headlessField,
   runHeadlessTurn,
@@ -261,12 +263,31 @@ export async function runHeadlessProcess(
     }
 
     let usage: ReturnType<typeof structuredUsage> | undefined;
+    let childUsage: (ReturnType<typeof structuredUsage> & { dispatches: number }) | undefined;
+    let totalUsage: ReturnType<typeof structuredUsage> | undefined;
     if (runtime !== undefined) {
       try {
         if (structured) usage = structuredUsage(runtime.usage, runtime.config);
         else target.stderr.write(`${formatHeadlessUsage(runtime.usage, runtime.config)}\n`);
       } catch {
         // A meter that cannot be read is not a reason to change the exit status.
+      }
+      try {
+        // Additive by contract: the records exist only when at least one dispatch
+        // reported usage, so a run without delegation keeps its exact historical
+        // stderr and terminal record. `usage:`/`usage` above stay parent-only.
+        const children = runtime.childUsage;
+        if (children !== undefined) {
+          if (structured) {
+            childUsage = { ...structuredUsage(children.usage, runtime.config), dispatches: children.dispatches };
+            totalUsage = structuredUsage(runtime.sessionUsage, runtime.config);
+          } else {
+            target.stderr.write(`${formatHeadlessChildUsage(children, runtime.config)}\n`);
+            target.stderr.write(`${formatHeadlessTotalUsage(runtime.sessionUsage, runtime.config)}\n`);
+          }
+        }
+      } catch {
+        // Child meters are observers too; a failed read costs the records, not the run.
       }
 
       for (const problem of runtime.takeHookProblems()) {
@@ -313,6 +334,8 @@ export async function runHeadlessProcess(
         }),
         ...(outcome === 'success' && reply !== undefined ? { result: reply } : {}),
         ...(usage === undefined ? {} : { usage }),
+        ...(childUsage === undefined ? {} : { childUsage }),
+        ...(totalUsage === undefined ? {} : { totalUsage }),
         ...(errors.length === 0 ? {} : { errors }),
         ...(warnings.length === 0 ? {} : { warnings }),
         ...(continued ? { continued: true } : {}),

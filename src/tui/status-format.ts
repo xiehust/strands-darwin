@@ -18,7 +18,7 @@ import type { ApprovalMode } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import type { ThinkingPlan } from '../agent/thinking.js';
-import { formatUsageValue, usageBuckets } from '../agent/usage.js';
+import { formatUsageValue, sumUsage, usageBuckets } from '../agent/usage.js';
 import type { AppConfig } from '../config.js';
 import type { McpServerStatus } from '../mcp/registry.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
@@ -61,6 +61,11 @@ export interface StatusFacts {
   diagnostics: DiagnosticsStatus | undefined;
   /** `runtime.usage` — the SDK's per-process meter. */
   usage: UsageTotals;
+  /**
+   * `runtime.childUsage` — subagent/workflow child spend summed over the
+   * dispatch registry, or undefined when no dispatch ever reported usage.
+   */
+  childUsage: { dispatches: number; usage: UsageTotals } | undefined;
   /** True while a turn streams: the meter has not counted it yet, said out loud. */
   turnInFlight: boolean;
   /** The awaited `runtime.contextEstimate()`, or undefined when it failed. */
@@ -100,10 +105,21 @@ export function formatStatusReport(facts: StatusFacts): string {
     ],
   ];
   const labelWidth = Math.max(...rows.map(([label]) => label.length));
-  return [
-    'status — this session',
-    ...rows.map(([label, value]) => `  ${label.padEnd(labelWidth)}  ${value}`),
-  ].join('\n');
+  const lines = rows.map(([label, value]) => `  ${label.padEnd(labelWidth)}  ${value}`);
+  // Child spend rides directly under the tokens row as `label: value` lines
+  // rather than table rows, so today's aligned block stays byte-identical when
+  // no dispatch reported usage — the additive-everywhere contract.
+  if (facts.childUsage !== undefined) {
+    const { dispatches, usage } = facts.childUsage;
+    const tokensIndex = rows.findIndex(([label]) => label === 'tokens');
+    lines.splice(
+      tokensIndex + 1,
+      0,
+      `  usage (subagents, ${dispatches} dispatch${dispatches === 1 ? '' : 'es'}): ${describeCounters(usage, facts.config)}`,
+      `  usage (session total): ${describeCounters(sumUsage([facts.usage, usage]), facts.config)}`,
+    );
+  }
+  return ['status — this session', ...lines].join('\n');
 }
 
 /**
@@ -176,18 +192,26 @@ function describeDiagnostics(status: DiagnosticsStatus | undefined): string {
  * metric stays `not reported` — never 0 — whatever the provider.
  */
 function describeTokens(facts: StatusFacts): string {
-  const buckets = usageBuckets(facts.usage, facts.config);
-  const counters = [
-    `input ${formatUsageValue(buckets.input)}`,
-    `output ${formatUsageValue(buckets.output)}`,
-    `cache read ${formatUsageValue(buckets.cacheRead)}`,
-    `cache write ${formatUsageValue(buckets.cacheWrite)}`,
-  ].join(' · ');
+  const counters = describeCounters(facts.usage, facts.config);
   // "This run" is the honest scope: the SDK's meter is per-process, so a resumed
   // session's earlier spend is simply not knowable here — /usage's exact bargain.
   const scope = facts.resumed ? 'this run; earlier runs not counted' : 'this run';
   const inFlight = facts.turnInFlight ? ' (the turn in flight is not counted yet)' : '';
   return `${counters} — ${scope}${inFlight}`;
+}
+
+/**
+ * The four counters of one meter, in the tokens row's own vocabulary and order —
+ * shared with the child/session-total lines so the three cannot drift apart.
+ */
+function describeCounters(usage: UsageTotals, config: AppConfig): string {
+  const buckets = usageBuckets(usage, config);
+  return [
+    `input ${formatUsageValue(buckets.input)}`,
+    `output ${formatUsageValue(buckets.output)}`,
+    `cache read ${formatUsageValue(buckets.cacheRead)}`,
+    `cache write ${formatUsageValue(buckets.cacheWrite)}`,
+  ].join(' · ');
 }
 
 /** Plain cache state for notices that give prompt caching its own labelled row. */

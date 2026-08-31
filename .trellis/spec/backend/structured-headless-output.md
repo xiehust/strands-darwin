@@ -76,6 +76,13 @@ Usage fields are the mutually exclusive cost buckets `input`, `output`, `cacheRe
 A provider-unreported value is an absent key. A provider-reported zero is numeric `0`. Runtime
 failure before a meter exists omits `usage`.
 
+When at least one child dispatch (subagent or workflow node) reported usage, the terminal result
+additionally carries `childUsage` (the same buckets plus integer `dispatches`, counting only
+dispatches whose meter was included in the sum) and `totalUsage` (parent plus children). Both are
+additive and optional: a run without delegation emits neither key, and `usage` stays parent-only
+and byte-identical either way — the structured counterpart of the text-mode `usage-children:` /
+`usage-total:` stderr records that follow the unchanged `usage:` line under the same condition.
+
 Success is a durability statement, not merely a model stop reason. Order is:
 
 1. consume the SDK turn;

@@ -428,8 +428,9 @@ reason), and the prompt renders `[parent]` or `[<agent>#<dispatch>]` on the exis
 line — a label of its own would cost the frame row the header contract forbids. Per-dispatch
 state follows the accepted background-task shape (runtime-exposed manager, observer-only
 subscription, bounded presentation-time projection): `listSubagentDispatches`,
-`subscribeToSubagentDispatches`, `/agents`. Records hold name, task, closed phase, state and
-timestamps only — observability must never become a second path for child transcript or payloads
+`subscribeToSubagentDispatches`, `/agents`. Records hold name, task, closed phase, state,
+timestamps and the child meter's usage counters (live while running, frozen at settlement) —
+observability must never become a second path for child transcript or payloads
 into parent context. And the
 parallelism is scoped to **reads**: concurrent children share one working tree with no isolation
 or conflict detection, so concurrent write delegation is *not* made safe, deliberately and

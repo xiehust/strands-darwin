@@ -5,7 +5,7 @@ import type OpenAI from 'openai';
 
 import type { AppConfig } from '../src/config.js';
 import { formatUsageReport } from '../src/tui/App.js';
-import { cacheEffectivenessRows, deltaUsage, usageBuckets, usageRows, type UsageTotals } from '../src/agent/usage.js';
+import { cacheEffectivenessRows, deltaUsage, sumUsage, usageBuckets, usageRows, type UsageTotals } from '../src/agent/usage.js';
 import { assert, header, report } from './shared.js';
 
 function config(provider: 'bedrock' | 'anthropic' | 'openai', openaiApi?: 'chat' | 'responses'): AppConfig {
@@ -253,8 +253,73 @@ function deltaContracts(): void {
     /cache read\s+700/u.test(reportWithTurn));
 }
 
+function sumContracts(): void {
+  header('usage — cross-meter sum');
+  const parent: UsageTotals = { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 50, cacheWriteInputTokens: 5 };
+  const child: UsageTotals = { inputTokens: 200, outputTokens: 20, cacheReadInputTokens: 70, cacheWriteInputTokens: 7 };
+  const full = sumUsage([parent, child]);
+  assert('numeric fields are plain sums',
+    full.inputTokens === 300 && full.outputTokens === 30 &&
+    full.cacheReadInputTokens === 120 && full.cacheWriteInputTokens === 12);
+
+  // The undefined-cache rule: absent everywhere stays absent, never a fake 0.
+  const noCache: UsageTotals = { inputTokens: 1, outputTokens: 2 };
+  const allUnknown = sumUsage([noCache, { inputTokens: 3, outputTokens: 4 }]);
+  assert('a cache metric no meter reported is absent from the sum',
+    allUnknown.inputTokens === 4 && allUnknown.outputTokens === 6 &&
+    allUnknown.cacheReadInputTokens === undefined && allUnknown.cacheWriteInputTokens === undefined &&
+    !Object.hasOwn(allUnknown, 'cacheReadInputTokens') && !Object.hasOwn(allUnknown, 'cacheWriteInputTokens'));
+
+  // One reporting meter is enough; the silent one counts as 0 within the sum.
+  const mixed = sumUsage([noCache, { inputTokens: 3, outputTokens: 4, cacheReadInputTokens: 9 }]);
+  assert('one reporting operand keeps the metric, absent operands count as 0',
+    mixed.cacheReadInputTokens === 9 && mixed.cacheWriteInputTokens === undefined);
+
+  // A reported zero is a measurement, and survives the sum as one.
+  const zero = sumUsage([{ inputTokens: 1, outputTokens: 1, cacheWriteInputTokens: 0 }, noCache]);
+  assert('a reported zero stays a present zero', Object.hasOwn(zero, 'cacheWriteInputTokens') && zero.cacheWriteInputTokens === 0);
+
+  const single = sumUsage([parent]);
+  assert('a one-operand sum is that operand, field for field',
+    single.inputTokens === 100 && single.outputTokens === 10 &&
+    single.cacheReadInputTokens === 50 && single.cacheWriteInputTokens === 5);
+  const empty = sumUsage([]);
+  assert('an empty sum is all-zero counters with no cache keys',
+    empty.inputTokens === 0 && empty.outputTokens === 0 &&
+    !Object.hasOwn(empty, 'cacheReadInputTokens') && !Object.hasOwn(empty, 'cacheWriteInputTokens'));
+}
+
+function childSectionContracts(): void {
+  header('usage — /usage child sections');
+  const parent: UsageTotals = { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 50, cacheWriteInputTokens: 5 };
+  const children = { dispatches: 2, usage: { inputTokens: 40, outputTokens: 4 } };
+
+  // Absent children → byte-identical to the pre-children report, whatever else is set.
+  const without = formatUsageReport(parent, config('bedrock'), false, false, undefined);
+  const withUndefined = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined);
+  assert('zero dispatches renders byte-identically to the pre-children report', without === withUndefined);
+  assert('the zero-dispatch report has no child sections',
+    !without.includes('subagents') && !without.includes('session total'));
+
+  const withChildren = formatUsageReport(parent, config('bedrock'), false, false, undefined, children);
+  assert('the subagent section counts its dispatches', withChildren.includes('subagents (2 dispatches)'));
+  assert('a single dispatch is not pluralized',
+    formatUsageReport(parent, config('bedrock'), false, false, undefined, { ...children, dispatches: 1 })
+      .includes('subagents (1 dispatch)'));
+  assert('the session total is labelled as including subagents', withChildren.includes('session total (incl. subagents)'));
+  assert('the session-total input row is the parent plus the children', /input\s+140/u.test(withChildren));
+  assert('the child input row shows the children alone', /input\s+40/u.test(withChildren));
+  // Bedrock's projection renders an absent child cache counter as its provider
+  // contract dictates (numeric beside inputTokens) while the totals stay honest:
+  // the summed cache read is the parent's alone, never doubled or zeroed.
+  assert('the summed cache read is the parent value untouched by cache-silent children',
+    /cache read\s+50/u.test(withChildren));
+}
+
 await adapterContract();
 projectionContracts();
 effectivenessContracts();
 deltaContracts();
+sumContracts();
+childSectionContracts();
 report();

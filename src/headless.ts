@@ -42,6 +42,40 @@ export function formatHeadlessUsage(usage: UsageTotals, config: AppConfig): stri
   );
 }
 
+/**
+ * The child-spend record, written only when at least one dispatch reported
+ * usage (`runtime.childUsage`), so a run without delegation keeps its exact
+ * historical stderr. Mirrors {@link formatHeadlessUsage} — same buckets, same
+ * fixed field order, same `-` for a metric no child's provider reported — plus
+ * the count of dispatches whose meters the sum actually includes.
+ */
+export function formatHeadlessChildUsage(
+  child: { dispatches: number; usage: UsageTotals },
+  config: AppConfig,
+): string {
+  const buckets = usageBuckets(child.usage, config);
+  const metric = (value: number | undefined): string => (value === undefined ? '-' : String(value));
+  return (
+    `usage-children: input=${metric(buckets.input)} output=${metric(buckets.output)}` +
+    ` cacheRead=${metric(buckets.cacheRead)} cacheWrite=${metric(buckets.cacheWrite)}` +
+    ` dispatches=${child.dispatches}`
+  );
+}
+
+/**
+ * The session-total record (parent meter plus children), emitted beside
+ * {@link formatHeadlessChildUsage} under the same only-when-children-reported
+ * condition; `usage:` alone remains the whole story otherwise.
+ */
+export function formatHeadlessTotalUsage(total: UsageTotals, config: AppConfig): string {
+  const buckets = usageBuckets(total, config);
+  const metric = (value: number | undefined): string => (value === undefined ? '-' : String(value));
+  return (
+    `usage-total: input=${metric(buckets.input)} output=${metric(buckets.output)}` +
+    ` cacheRead=${metric(buckets.cacheRead)} cacheWrite=${metric(buckets.cacheWrite)}`
+  );
+}
+
 /** A bridge for runs where nobody is present to answer a permission prompt. */
 export function createHeadlessPermissionBridge(writeStderr: (text: string) => void): PermissionBridge {
   return async (request) => {

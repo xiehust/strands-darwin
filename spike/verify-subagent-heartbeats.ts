@@ -42,7 +42,12 @@ class FailingChildModel extends Model<BaseModelConfig> {
 class SlowChildModel extends Model<BaseModelConfig> {
   calls = 0;
   private config: BaseModelConfig = { modelId: 'offline.child', contextWindowLimit: 10_000 };
-  constructor(private readonly delayMs: number, private readonly reportText: string) { super(); }
+  constructor(
+    private readonly delayMs: number,
+    private readonly reportText: string,
+    /** Emitted as provider usage metadata after the message, exactly like Bedrock. */
+    private readonly usage?: { inputTokens: number; outputTokens: number },
+  ) { super(); }
   override updateConfig(config: BaseModelConfig): void { this.config = { ...this.config, ...config }; }
   override getConfig(): BaseModelConfig { return this.config; }
   override async *stream(_messages: Message[]): AsyncIterable<ModelStreamEvent> {
@@ -53,6 +58,12 @@ class SlowChildModel extends Model<BaseModelConfig> {
     yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: this.reportText } };
     yield { type: 'modelContentBlockStopEvent' };
     yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+    if (this.usage !== undefined) {
+      yield {
+        type: 'modelMetadataEvent',
+        usage: { ...this.usage, totalTokens: this.usage.inputTokens + this.usage.outputTokens },
+      };
+    }
   }
 }
 
@@ -103,8 +114,8 @@ async function wait(ms: number): Promise<void> {
 header('subagent heartbeats — interval, privacy, independent cancellation');
 const dispatches = new SubagentDispatchRegistry({ heartbeatIntervalMs: 25 });
 const models = [
-  new SlowChildModel(180, 'cancelled child report must not leak'),
-  new SlowChildModel(105, 'successful child report'),
+  new SlowChildModel(180, 'cancelled child report must not leak', { inputTokens: 500, outputTokens: 50 }),
+  new SlowChildModel(105, 'successful child report', { inputTokens: 11, outputTokens: 3 }),
 ];
 const tool = subagents(dispatches, models);
 const realParent = parent(tool);
@@ -128,6 +139,15 @@ assert('the parent receives both tool results exactly once', result.toString() =
 const final = dispatches.list();
 assert('targeted child is cancelled while its sibling succeeds', final.find((entry) => entry.dispatchId === target.dispatchId)?.state === 'cancelled' && final.find((entry) => entry.dispatchId === survivor.dispatchId)?.state === 'succeeded');
 assert('terminal id is a harmless local refusal', dispatches.cancel(survivor.dispatchId).outcome === 'terminal');
+const survivorUsage = final.find((entry) => entry.dispatchId === survivor.dispatchId)?.usage;
+const cancelledUsage = final.find((entry) => entry.dispatchId === target.dispatchId)?.usage;
+assert('a successful dispatch freezes its child meter at settlement (recipe-attached)',
+  survivorUsage?.inputTokens === 11 && survivorUsage?.outputTokens === 3);
+assert('a cancelled dispatch keeps what it spent — nothing accumulated before the cancel',
+  cancelledUsage !== undefined && cancelledUsage.inputTokens === 0 && cancelledUsage.outputTokens === 0);
+const total = dispatches.totalUsage();
+assert('totalUsage sums every reporting dispatch and counts the included ones',
+  total?.dispatches === 2 && total.usage.inputTokens === 11 && total.usage.outputTokens === 3);
 const heartbeats = progress.filter((event) => event.heartbeat);
 assert('active dispatches emit periodic stable-id increasing elapsed heartbeats', heartbeats.length >= 2 && heartbeats.every((event) => event.elapsedMs >= 25) && heartbeats.some((event, index) => index > 0 && event.elapsedMs > heartbeats[index - 1]!.elapsedMs));
 assert('phase metadata is closed and bounded', progress.every((event) => event.phase.kind === 'starting' || event.phase.kind === 'model' || (event.phase.kind === 'tool' && /^[a-zA-Z0-9_.-]{1,64}$/.test(event.phase.toolName))));
@@ -149,10 +169,55 @@ const failingParent = new Agent({ model: new UnusedParentModel(0, 'unused'), too
 await failingParent.initialize();
 await failingParent.tool.subagent?.invoke({ task: 'public failure task' }).catch(() => undefined);
 assert('a throwing child settles failed', failingDispatches.list()[0]?.state === 'failed');
+assert('a failed dispatch still reports the (zero) spend its meter measured',
+  failingDispatches.list()[0]?.usage?.inputTokens === 0);
 const failureSettledCount = failureProgress.length;
 await wait(45);
 assert('failure clears its heartbeat timer and exposes no error payload', failureProgress.length === failureSettledCount && !JSON.stringify(failureProgress).includes('SECRET-CHILD-FAILURE'));
 await failingTool.shutdown();
+
+header('subagent dispatch usage — live readings, terminal freeze, honest exclusion');
+{
+  const usageRegistry = new SubagentDispatchRegistry({ heartbeatIntervalMs: 60_000 });
+  assert('a registry with no dispatches has no usage to total', usageRegistry.totalUsage() === undefined);
+
+  let meterA = { inputTokens: 10, outputTokens: 1 };
+  const handleA = usageRegistry.begin({ agentName: 'general', task: 'a', toolUseId: 'usagea01' });
+  handleA.attachUsage(() => ({ ...meterA }));
+  const handleB = usageRegistry.begin({ agentName: 'general', task: 'b', toolUseId: 'usageb02' });
+  handleB.attachUsage(() => { throw new Error('meter unreadable'); });
+  const handleC = usageRegistry.begin({ agentName: 'general', task: 'c', toolUseId: 'usagec03' });
+
+  const runningUsage = () => usageRegistry.list().find((entry) => entry.dispatchId === 'usagea01')?.usage;
+  assert('a running dispatch snapshot reads the meter live', runningUsage()?.inputTokens === 10);
+  meterA = { inputTokens: 25, outputTokens: 2 };
+  assert('a later snapshot of the same running dispatch reads the newer value', runningUsage()?.inputTokens === 25);
+  assert('a throwing meter degrades to no usage, never a fake zero',
+    usageRegistry.list().find((entry) => entry.dispatchId === 'usageb02')?.usage === undefined);
+  assert('a dispatch that never attached a meter reports none',
+    usageRegistry.list().find((entry) => entry.dispatchId === 'usagec03')?.usage === undefined);
+  const runningTotal = usageRegistry.totalUsage();
+  assert('totalUsage counts only the dispatches whose usage the sum includes',
+    runningTotal?.dispatches === 1 && runningTotal.usage.inputTokens === 25 && runningTotal.usage.outputTokens === 2);
+
+  // The terminal transition freezes the last reading before publication.
+  let published: { usage?: { inputTokens: number } } | undefined;
+  usageRegistry.subscribe((dispatch) => { published = dispatch; });
+  meterA = { inputTokens: 40, outputTokens: 4 };
+  handleA.finish('cancelled');
+  meterA = { inputTokens: 99, outputTokens: 9 };
+  assert('the terminal listener sees the frozen reading', published?.usage?.inputTokens === 40);
+  assert('a settled dispatch never moves with its old meter', runningUsage()?.inputTokens === 40);
+  handleA.attachUsage(() => ({ inputTokens: 1000, outputTokens: 100 }));
+  assert('attachUsage after terminal is a no-op, like attachCancel', runningUsage()?.inputTokens === 40);
+  handleB.finish('failed');
+  handleC.finish('succeeded');
+  assert('freezing a throwing or absent meter stays honest absence',
+    usageRegistry.list().filter((entry) => entry.usage === undefined).length === 2);
+  const settledTotal = usageRegistry.totalUsage();
+  assert('the settled total is the frozen reading alone',
+    settledTotal?.dispatches === 1 && settledTotal.usage.inputTokens === 40 && settledTotal.usage.outputTokens === 4);
+}
 
 header('subagent heartbeats — existing full cancellation and presentation seams');
 const allDispatches = new SubagentDispatchRegistry({ heartbeatIntervalMs: 20 });

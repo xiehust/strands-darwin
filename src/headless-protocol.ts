@@ -52,6 +52,14 @@ export interface StructuredTerminalInput {
   resumed?: boolean;
   result?: string;
   usage?: StructuredUsage;
+  /**
+   * Child-agent spend, present only when at least one dispatch reported usage —
+   * the additive counterpart of the `usage-children:` stderr record. `usage`
+   * itself stays parent-only and byte-identical either way.
+   */
+  childUsage?: StructuredUsage & { dispatches: number };
+  /** Parent plus children, under the same only-when-children-reported condition. */
+  totalUsage?: StructuredUsage;
   errors?: readonly StructuredFailure[];
   warnings?: readonly StructuredWarning[];
   continued?: true;
@@ -215,6 +223,8 @@ export class StructuredHeadlessWriter {
       ...(input.resumed === undefined ? {} : { resumed: input.resumed }),
       ...(input.result === undefined ? {} : { result: input.result }),
       ...(input.usage === undefined ? {} : { usage: input.usage }),
+      ...(input.childUsage === undefined ? {} : { childUsage: input.childUsage }),
+      ...(input.totalUsage === undefined ? {} : { totalUsage: input.totalUsage }),
       ...(input.errors === undefined || input.errors.length === 0 ? {} : { errors: [...input.errors] }),
       ...(input.warnings === undefined || input.warnings.length === 0 ? {} : { warnings: [...input.warnings] }),
       ...(input.continued === true ? { continued: true } : {}),

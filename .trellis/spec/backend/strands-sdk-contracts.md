@@ -1290,7 +1290,9 @@ Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:
   dispatched anything and must not appear as a failed run. Terminal state is published exactly
   once (`succeeded` / `failed` / `cancelled`, first call wins), listener failures are isolated,
   and a cancelled child settles as `cancelled` rather than `failed` or a permanent `running`.
-- Records hold agent name, task text, closed phase, state and timestamps only. Observability must
+- Records hold agent name, task text, closed phase, state, timestamps and the child meter's usage
+  counters (live while running, frozen at the terminal transition; a cancelled or failed child
+  keeps what it spent). Observability must
   never become a second path for child transcript or payloads to reach the parent — bound the task
   at presentation time, and never store anything the child produced.
 

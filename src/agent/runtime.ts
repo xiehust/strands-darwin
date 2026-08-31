@@ -117,7 +117,7 @@ import {
   type RewindCatalogue,
   type RewindCheckpoint,
 } from './rewind.js';
-import { deltaUsage, startTurnSpend, type UsageTotals } from './usage.js';
+import { deltaUsage, startTurnSpend, sumUsage, type UsageTotals } from './usage.js';
 
 /** Test seam for proving startup unwind after resources have been acquired. */
 type RuntimeCreateCheckpoint = 'after-initialize';
@@ -1251,6 +1251,33 @@ export class AgentRuntime {
     return this.lastTurnDelta;
   }
 
+  /**
+   * Token totals for this run's child agents (subagent dispatches and workflow
+   * nodes), summed over the dispatch registry — running children read live,
+   * finished ones report their frozen terminal reading, and a cancelled or
+   * failed child still counts what it spent. `dispatches` counts only the
+   * dispatches whose usage was included in the sum. `undefined` when no
+   * dispatch ever reported usage, so zero-delegation sessions are
+   * indistinguishable from before children were counted at all.
+   */
+  get childUsage(): { dispatches: number; usage: UsageTotals } | undefined {
+    return this.subagentDispatches.totalUsage();
+  }
+
+  /**
+   * Everything this session has spent: the parent meter ({@link usage}) plus
+   * {@link childUsage} when any child reported spend — exactly `this.usage`
+   * otherwise, so callers without delegation see the same totals they always
+   * did. Summed with `sumUsage`, whose cache counters stay absent until some
+   * meter reports them (never an invented zero). Like the parent meter across
+   * `/model` switches, the raw sum is projected with the *live* config.
+   */
+  get sessionUsage(): UsageTotals {
+    const children = this.childUsage;
+    if (children === undefined) return this.usage;
+    return sumUsage([this.usage, children.usage]);
+  }
+
   /** Current-process background tasks, without creating an agent tool call. */
   listBackgroundTasks(): Promise<BackgroundTaskStatus[]> {
     return this.backgroundBash.list();
@@ -1269,8 +1296,9 @@ export class AgentRuntime {
    *
    * These are *runs*, not the catalogue: `info.agentNames` lists the definitions
    * that may be dispatched, which is a different question answered by a different
-   * path. Records carry name, task text, closed phase, state and timestamps only —
-   * never any part of a child's transcript or tool payload.
+   * path. Records carry name, task text, closed phase, state, timestamps and the
+   * child meter's usage counters — never any part of a child's transcript or tool
+   * payload.
    */
   listSubagentDispatches(): SubagentDispatchStatus[] {
     return this.subagentDispatches.list();

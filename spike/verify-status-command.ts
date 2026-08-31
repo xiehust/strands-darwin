@@ -116,6 +116,7 @@ function facts(overrides: Partial<StatusFacts> = {}): StatusFacts {
     trajectory: RECORDING,
     diagnostics: LOGGING,
     usage: SPENT,
+    childUsage: undefined,
     turnInFlight: false,
     context: ESTIMATE,
     ...overrides,
@@ -247,11 +248,49 @@ function testMenuCapacity(): void {
     MAX_COMPLETIONS >= BUILTIN_COMMAND_NAMES.length);
 }
 
+function testChildUsage(): void {
+  header('formatStatusReport — child spend is additive, never a changed baseline');
+
+  // Zero dispatches: byte-identical to a report that never knew about children.
+  const base = formatStatusReport(facts());
+  assert('without childUsage no subagent or session-total line exists',
+    !base.includes('usage (subagents') && !base.includes('usage (session total)'));
+
+  const withChildren = formatStatusReport(facts({
+    childUsage: { dispatches: 2, usage: { inputTokens: 400, outputTokens: 40 } },
+  }));
+  const baseLines = base.split('\n');
+  const childLines = withChildren.split('\n');
+  const added = childLines.filter((line) => !baseLines.includes(line));
+  assert('childUsage adds exactly two lines and leaves every existing line byte-identical',
+    added.length === 2 && childLines.filter((line) => baseLines.includes(line)).join('\n') === base);
+  assert('the child line names the dispatch count and the summed buckets',
+    withChildren.includes('usage (subagents, 2 dispatches): input 400 · output 40'));
+  assert('the child lines sit directly under the tokens row',
+    childLines[childLines.findIndex((line) => line.includes('tokens')) + 1]?.includes('usage (subagents') === true);
+  // Session total = parent meter + children, through the same bucket renderer.
+  assert('the session total sums the parent meter and the children',
+    withChildren.includes('usage (session total): input 1,634 · output 607 · cache read 9,000 · cache write 100'));
+  assert('a single dispatch is not pluralized',
+    formatStatusReport(facts({ childUsage: { dispatches: 1, usage: { inputTokens: 1, outputTokens: 1 } } }))
+      .includes('(subagents, 1 dispatch):'));
+  // The undefined-cache rule survives the child projection: no child meter
+  // reported cache counters, and bedrock's row contract keeps them numeric —
+  // but an all-unknown provider stays `not reported`.
+  const openaiChildren = formatStatusReport(facts({
+    config: withSoleChoice({ ...BEDROCK, provider: 'openai', model: 'openai.gpt-5.6-sol', openaiApi: 'chat' }),
+    childUsage: { dispatches: 1, usage: { inputTokens: 5, outputTokens: 2 } },
+  }));
+  assert('an unreported child cache metric reads not reported, never 0',
+    openaiChildren.includes('usage (subagents, 1 dispatch): input 5 · output 2 · cache read not reported · cache write not reported'));
+}
+
 function main(): void {
   testEveryFactPresent();
   testUnknownStaysUnknown();
   testBoundedLists();
   testStatesAndDegradation();
+  testChildUsage();
   testMenuCapacity();
   report();
 }

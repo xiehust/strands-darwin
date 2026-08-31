@@ -91,6 +91,32 @@ export function formatUsageValue(value: number | undefined): string {
 }
 
 /**
+ * Adds several meters' totals into one — the parent's meter plus each child
+ * dispatch's, for the session-total projection.
+ *
+ * The numeric fields are plain sums. The optional cache counters follow the
+ * "unknown metric is never 0" rule in aggregate form: a cache key is present in
+ * the result only if at least one operand reports it, and within that sum an
+ * absent operand counts as 0 — a meter that never reported cache activity adds
+ * nothing, but cannot erase what another meter measured. When *no* operand
+ * reports a cache counter the result omits it too, so an all-unknown metric
+ * still renders as `not reported`, never as an invented zero.
+ */
+export function sumUsage(totals: readonly UsageTotals[]): UsageTotals {
+  const sum: UsageTotals = {
+    inputTokens: totals.reduce((acc, usage) => acc + usage.inputTokens, 0),
+    outputTokens: totals.reduce((acc, usage) => acc + usage.outputTokens, 0),
+  };
+  if (totals.some((usage) => usage.cacheReadInputTokens !== undefined)) {
+    sum.cacheReadInputTokens = totals.reduce((acc, usage) => acc + (usage.cacheReadInputTokens ?? 0), 0);
+  }
+  if (totals.some((usage) => usage.cacheWriteInputTokens !== undefined)) {
+    sum.cacheWriteInputTokens = totals.reduce((acc, usage) => acc + (usage.cacheWriteInputTokens ?? 0), 0);
+  }
+  return sum;
+}
+
+/**
  * Subtracts `before` from `after` to produce the delta for one turn.
  *
  * Undefined metrics propagate: if the provider did not report a metric
