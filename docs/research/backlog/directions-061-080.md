@@ -65,7 +65,7 @@ User-directed: give darwin a Claude Code–style workflow capability (S3, `code.
 
 ## SRF-019 — Stop trimming `memory_save` quote fields and make evidence rejection reasons specific
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 64
 - Score: 15
 - Importance: 4
