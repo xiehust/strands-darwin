@@ -61,7 +61,12 @@ Agent loop, invokes another tool, or makes a separate model/network/vector call.
 
 Save accepts one atomic closed-category fact. Project claims require a unique exact current project-relative
 line reopened and hashed by Darwin; preferences and non-secret identity require a unique exact quote from the
-current user input. A runtime controller stages at most eight candidates in the active recorded turn, then
+current user input. Quote fields (`evidence.quote`, `userQuote`) are bounded but never trimmed — the quote must
+stay byte-identical to the full source line, including indentation and trailing whitespace, or to the literal
+user input. Evidence rejection is reason-specific from a closed failure set: the controller distinguishes at
+least a quote that is not one bounded line, an unsafe path, an oversized source, an unreadable/missing source,
+no matching line, and multiple matching lines; the resolver's safety checks are unchanged in effect. A runtime
+controller stages at most eight candidates in the active recorded turn, then
 commits only after both exact successful `endTurn` sealing and matching durable closing-append settlement.
 Failure, cancellation, partial/abandoned output, recorder degradation, resume, or `/clear` before acceptance
 discards staging. Accepted commits serialize during orderly cleanup and cannot change the completed turn.

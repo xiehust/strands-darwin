@@ -2,7 +2,7 @@
 import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { emptyMemoryState, generatedMemoryId, migrateLegacyState, quoteHash, readMemoryState, writeMemoryState, type GeneratedMemoryEntry } from '../src/memory/state.js';
-import { validateMemoryState, sourceAnchor, MEMORY_HORIZON_MS_PER_DAY, MEMORY_SOURCE_MAX_BYTES } from '../src/memory/validation.js';
+import { validateMemoryState, resolveExactSourceAnchor, sourceAnchor, MEMORY_HORIZON_MS_PER_DAY, MEMORY_SOURCE_MAX_BYTES } from '../src/memory/validation.js';
 import { projectKey, projectMemoryDir } from '../src/paths.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 const HOME = ownPrivateHome('memory-validation'); const ROOT = path.join(HOME, 'project'); await mkdir(ROOT, { recursive: true }); const at = '2026-08-01T00:00:00.000Z';
@@ -18,6 +18,18 @@ assert('binary/large/unreadable evidence fails closed', ['convention:binary', 'c
 assert('source remains byte-identical', Buffer.compare(before, await readFile(path.join(ROOT, 'valid.ts'))) === 0);
 const boundary = await validateMemoryState(ROOT, state, { horizonDays: 28, now: () => new Date(Date.parse(at) + 28 * MEMORY_HORIZON_MS_PER_DAY), persist: false }); assert('exact horizon boundary expires every generated entry', boundary.eligible.generated.length === 0);
 const noExpiry = await validateMemoryState(ROOT, state, { horizonDays: 0, now: () => new Date('2036-01-01T00:00:00.000Z'), persist: false }); assert('zero disables age only', noExpiry.eligible.generated.some((entry) => entry.key === 'convention:valid') && noExpiry.state.generated.find((entry) => entry.key === 'convention:changed')?.validation.state === 'invalid');
+
+header('memory resolution — untrimmed exact-line anchoring with specific failure reasons');
+await writeFile(path.join(ROOT, 'indent.ts'), 'export function demo() {\n  return true;\n}\n'); await writeFile(path.join(ROOT, 'dup.ts'), '  const twice = 1;\n  const twice = 1;\n');
+const indented = await resolveExactSourceAnchor(ROOT, 'indent.ts', '  return true;'); assert('an indented line anchors untrimmed at its exact line', indented.ok && indented.anchor.line === 2 && indented.anchor.codePoints === 14);
+const trimmedQuote = await resolveExactSourceAnchor(ROOT, 'indent.ts', 'return true;'); assert('a trimmed variant of an indented line reports no matching line', !trimmedQuote.ok && trimmedQuote.failure === 'no-matching-line');
+const multiMatch = await resolveExactSourceAnchor(ROOT, 'dup.ts', '  const twice = 1;'); assert('a duplicated line reports multiple matching lines', !multiMatch.ok && multiMatch.failure === 'multiple-matching-lines');
+const multiline = await resolveExactSourceAnchor(ROOT, 'indent.ts', '  return true;\n}'); assert('a multiline quote is refused as not one bounded line', !multiline.ok && multiline.failure === 'quote-not-one-line');
+const oversizedSource = await resolveExactSourceAnchor(ROOT, 'large.txt', 'a'); assert('an oversized source file keeps its refusal', !oversizedSource.ok && oversizedSource.failure === 'oversized-source');
+const unsafePath = await resolveExactSourceAnchor(ROOT, '../outside/secret.ts', 'do not read'); assert('a path escaping the project keeps its refusal', !unsafePath.ok && unsafePath.failure === 'unsafe-path');
+const symlinkPath = await resolveExactSourceAnchor(ROOT, 'escape.ts', 'do not read'); assert('a symlink evidence path keeps its refusal', !symlinkPath.ok && symlinkPath.failure === 'unsafe-path');
+const missingFile = await resolveExactSourceAnchor(ROOT, 'missing.ts', 'anything'); assert('a missing evidence file is refused as unreadable', !missingFile.ok && missingFile.failure === 'unreadable-source');
+
 
 header('memory migration — legacy bounds and suppression stay strict');
 const legacyBase = {

@@ -19,7 +19,17 @@ import {
   type MemoryCategory,
   type MemorySource,
 } from './state.js';
-import { resolveExactSourceAnchor, validateAnchor } from './validation.js';
+import { resolveExactSourceAnchor, validateAnchor, type SourceAnchorFailure } from './validation.js';
+
+/** Reason-specific rejection messages so a failed exact-evidence save is diagnosable. */
+const SOURCE_ANCHOR_FAILURE_MESSAGES: Record<SourceAnchorFailure, string> = {
+  'quote-not-one-line': 'memory evidence quote must be a single line within the source line bound',
+  'unsafe-path': 'memory evidence path must be a safe project-relative regular file',
+  'oversized-source': 'memory evidence file exceeds the validation size bound',
+  'unreadable-source': 'memory evidence file is missing or could not be read safely',
+  'no-matching-line': 'memory evidence quote matches no current line in the evidence file; the quote must be byte-identical to one full line, including indentation and trailing whitespace',
+  'multiple-matching-lines': 'memory evidence quote matches more than one line in the evidence file; quote a line that occurs exactly once',
+};
 
 export interface SaveToolInput {
   key: string;
@@ -252,15 +262,18 @@ export class MemoryToolController {
       if (isSensitiveMemoryText(input.evidence.quote)) {
         throw new Error('memory evidence must not contain secret or credential material');
       }
-      const anchor = await this.resolveSourceAnchor(
+      const resolution = await this.resolveSourceAnchor(
         this.projectRoot,
         input.evidence.path,
         input.evidence.quote,
       );
-      if (anchor === undefined || await validateAnchor(this.projectRoot, anchor) !== 'valid') {
-        throw new Error('memory evidence must be one unique exact current project line');
+      if (!resolution.ok) {
+        throw new Error(SOURCE_ANCHOR_FAILURE_MESSAGES[resolution.failure]);
       }
-      return { key, category: input.category, title, fact, evidence: { kind: 'project', anchor } };
+      if (await validateAnchor(this.projectRoot, resolution.anchor) !== 'valid') {
+        throw new Error('memory evidence anchor failed revalidation against the current worktree');
+      }
+      return { key, category: input.category, title, fact, evidence: { kind: 'project', anchor: resolution.anchor } };
     }
 
     const quote = input.userQuote;

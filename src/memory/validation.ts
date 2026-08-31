@@ -58,18 +58,25 @@ export async function validateAnchor(projectRoot: string, anchor: MemorySourceAn
   } finally { await handle?.close().catch(() => {}); }
 }
 
-export async function resolveExactSourceAnchor(projectRoot: string, pathname: string, evidence: string): Promise<MemorySourceAnchor | undefined> {
-  if (!safeRelativePath(pathname) || evidence.includes('\n') || [...evidence].length > MEMORY_SOURCE_LINE_MAX_CODE_POINTS) return undefined;
-  const root = await realpath(projectRoot).catch(() => undefined); if (root === undefined) return undefined; const candidate = path.resolve(root, ...pathname.split('/')); if (!inside(root, candidate)) return undefined;
+/** Closed reason set for exact-line anchoring failures; each save rejection names one. */
+export type SourceAnchorFailure = 'quote-not-one-line' | 'unsafe-path' | 'oversized-source' | 'unreadable-source' | 'no-matching-line' | 'multiple-matching-lines';
+export type SourceAnchorResolution = { readonly ok: true; readonly anchor: MemorySourceAnchor } | { readonly ok: false; readonly failure: SourceAnchorFailure };
+const anchorFailure = (failure: SourceAnchorFailure): SourceAnchorResolution => ({ ok: false, failure });
+
+export async function resolveExactSourceAnchor(projectRoot: string, pathname: string, evidence: string): Promise<SourceAnchorResolution> {
+  if (!safeRelativePath(pathname)) return anchorFailure('unsafe-path');
+  if (evidence.includes('\n') || [...evidence].length > MEMORY_SOURCE_LINE_MAX_CODE_POINTS) return anchorFailure('quote-not-one-line');
+  const root = await realpath(projectRoot).catch(() => undefined); if (root === undefined) return anchorFailure('unreadable-source'); const candidate = path.resolve(root, ...pathname.split('/')); if (!inside(root, candidate)) return anchorFailure('unsafe-path');
   let handle;
   try {
-    const pathStat = await lstat(candidate); if (!pathStat.isFile() || pathStat.isSymbolicLink() || !inside(root, await realpath(candidate))) return undefined;
-    handle = await open(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const stat = await handle.stat(); if (!stat.isFile() || stat.size > MEMORY_SOURCE_MAX_BYTES) return undefined;
+    const pathStat = await lstat(candidate); if (!pathStat.isFile() || pathStat.isSymbolicLink() || !inside(root, await realpath(candidate))) return anchorFailure('unsafe-path');
+    handle = await open(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); const stat = await handle.stat(); if (!stat.isFile()) return anchorFailure('unsafe-path'); if (stat.size > MEMORY_SOURCE_MAX_BYTES) return anchorFailure('oversized-source');
     const buffer = Buffer.alloc(stat.size); let offset = 0; while (offset < stat.size) { const read = await handle.read(buffer, offset, stat.size - offset, offset); if (read.bytesRead === 0) break; offset += read.bytesRead; }
-    if (offset !== stat.size) return undefined; const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); if (text.includes('\0')) return undefined;
-    const lines = text.replace(/\r\n?/g, '\n').split('\n'); if (lines.length > MEMORY_SOURCE_MAX_LINES) return undefined; const matches = lines.flatMap((line, index) => line === evidence ? [index + 1] : []);
-    return matches.length === 1 ? sourceAnchor(pathname, matches[0] as number, evidence) : undefined;
-  } catch { return undefined; } finally { await handle?.close().catch(() => {}); }
+    if (offset !== stat.size) return anchorFailure('unreadable-source'); const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); if (text.includes('\0')) return anchorFailure('unreadable-source');
+    const lines = text.replace(/\r\n?/g, '\n').split('\n'); if (lines.length > MEMORY_SOURCE_MAX_LINES) return anchorFailure('oversized-source'); const matches = lines.flatMap((line, index) => line === evidence ? [index + 1] : []);
+    if (matches.length === 0) return anchorFailure('no-matching-line'); if (matches.length > 1) return anchorFailure('multiple-matching-lines');
+    return { ok: true, anchor: sourceAnchor(pathname, matches[0] as number, evidence) };
+  } catch { return anchorFailure('unreadable-source'); } finally { await handle?.close().catch(() => {}); }
 }
 export function sourceAnchor(pathname: string, line: number, text: string): MemorySourceAnchor { return { path: pathname, line, hash: hashLine(text), codePoints: [...text].length }; }
 export function safeRelativePath(value: string): boolean { return value !== '' && !path.isAbsolute(value) && !value.includes('\\') && value.split('/').every((part) => part !== '' && part !== '.' && part !== '..'); }
