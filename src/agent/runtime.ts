@@ -13,7 +13,12 @@ import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-off
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import path from 'node:path';
 
-import { compactConversation, countConversationTokens, type CompactResult } from './compact.js';
+import {
+  compactConversation,
+  countConversationTokens,
+  stripReasoningFromUserMessages,
+  type CompactResult,
+} from './compact.js';
 import { DiagnosticsLog, type DiagnosticsStatus } from './diagnostics.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
 import { installModelCallBudget } from './model-call-budget.js';
@@ -634,6 +639,14 @@ export class AgentRuntime {
       });
       if (!restored) throw new Error('The selected rewind checkpoint no longer exists.');
     }
+
+    // Older summarizer versions copied reasoning blocks into the user-role
+    // summary message; providers reject any request containing it. Repair the
+    // restored history in memory (covers both ordinary resume above and the
+    // rewind restore just before this); the next ordinary save persists it.
+    // Trajectory files are never rewritten. No notice channel exists here, so
+    // a nonzero count is intentionally silent.
+    stripReasoningFromUserMessages(agent.messages);
 
     // CodeGraph semantic reads are useful only when their target already has a
     // structurally usable index. Prime the current target once, then replace the

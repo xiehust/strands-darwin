@@ -1996,6 +1996,18 @@ SessionManager.saveSnapshot({ target: agent, isLatest: true }): Promise<void>
 - Clone original `Message`s before reduction. Any summarization, counting, snapshot, or pointer
   failure restores them in place; after a persistence-stage failure, best-effort overwrite the
   latest snapshot with the restored state too.
+- Summary content is reasoning-free. Thinking models return `ReasoningBlock`s with the summary,
+  and a user-role message must never carry reasoning content (Bedrock rejects the whole later
+  request with `User messages cannot contain reasoning content`). The pinned SDK patch makes
+  `generateSummary()` drop `reasoningBlock` content before building the user-role summary; a
+  response left with no non-reasoning block is a failed summary (throws), never an empty user
+  message. Both the `/compact` manager and reactive overflow recovery share this path.
+- Repair already-poisoned restores: `stripReasoningFromUserMessages(messages)` (in
+  `src/agent/compact.ts`) strips `reasoningBlock`s from user-role messages in place, preserving
+  message identity/order and skipping (not counting) any message that would become empty. The
+  runtime calls it in `create()` after `initialize()` and the rewind `restoreSnapshot`; the
+  repair is in-memory only — the next ordinary save persists it, trajectory bytes are never
+  rewritten.
 
 ### 4. Validation & Error Matrix
 
@@ -2006,6 +2018,9 @@ SessionManager.saveSnapshot({ target: agent, isLatest: true }): Promise<void>
 | Summary or token count throws | Restore original live messages; surface failure |
 | Latest snapshot or pointer write throws | Restore live messages, best-effort restore latest snapshot, surface failure |
 | Estimated summary is larger | Clamp `estimatedTokensSaved` to zero; never claim negative savings |
+| Summary response carries reasoning blocks | Drop them from the user-role summary; text survives; repeated passes over the compacted history succeed |
+| Summary response is reasoning-only | Failed summary (throw in `generateSummary`); proactive reduce reports `false`; no empty user message |
+| Restored history has a reasoning-carrying user message | Strip in memory at runtime `create()`; assistant reasoning and would-be-empty messages untouched |
 
 ### 5. Good / Base / Bad Cases
 
@@ -2020,7 +2035,10 @@ SessionManager.saveSnapshot({ target: agent, isLatest: true }): Promise<void>
 `spike/verify-compact.ts` uses a deterministic `Model` with real SDK Agent, summarizer,
 session manager, and local storage. Assert the retained messages are byte-identical, context
 counting receives system prompt and tools, an immediate follow-up sees the summary, a fresh
-agent restores it, and persistence failure restores every original message. The pty completion
+agent restores it, and persistence failure restores every original message. The same suite
+drives a reasoning-emitting model through a forced two-pass compaction (no user message may
+carry a `reasoningBlock`; the second pass must succeed), a reasoning-only summary (no-op, no
+mutation), and `stripReasoningFromUserMessages` directly. The pty completion
 scenario asserts `/compact` is discoverable without spending a model call.
 
 ### 7. Wrong vs Correct

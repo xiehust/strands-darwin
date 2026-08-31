@@ -1,3 +1,25 @@
+diff --git a/dist/src/conversation-manager/compression/context-compression.js b/dist/src/conversation-manager/compression/context-compression.js
+index 84e3d1bb0bcd499d3dd2cd07c08baa79807ca79c..7e1c407bb04714309226c40b5daa00827799f477 100644
+--- a/dist/src/conversation-manager/compression/context-compression.js
++++ b/dist/src/conversation-manager/compression/context-compression.js
+@@ -126,9 +126,16 @@ export async function generateSummary(messagesToSummarize, model, systemPrompt)
+     if (!result?.done || !result.value) {
+         throw new Error('Failed to generate summary: no response from model');
+     }
++    // Thinking models include reasoning blocks in the summary response; a
++    // user-role message must never carry reasoning content (providers reject
++    // the request), so keep only the non-reasoning blocks.
++    const summaryContent = result.value.message.content.filter((block) => block.type !== 'reasoningBlock');
++    if (summaryContent.length === 0) {
++        throw new Error('Failed to generate summary: response contained no non-reasoning content');
++    }
+     return new Message({
+         role: 'user',
+-        content: result.value.message.content,
++        content: summaryContent,
+     });
+ }
+ /**
 diff --git a/dist/src/models/openai/errors.js b/dist/src/models/openai/errors.js
 index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279e2355066 100644
 --- a/dist/src/models/openai/errors.js
@@ -65,7 +87,7 @@ index b0223555c1f0410441546be860dbae824ac9857c..0cefd600f9b2324d23033f07c7b44f74
  //# sourceMappingURL=plugin.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-plugins/context-offloader/plugin.js b/dist/src/vended-plugins/context-offloader/plugin.js
-index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..8bca8edc14f7ccb9c2d10e48c7901345098a7837 100644
+index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..53164390bf0897fef9e174ee2b883411ddb517d8 100644
 --- a/dist/src/vended-plugins/context-offloader/plugin.js
 +++ b/dist/src/vended-plugins/context-offloader/plugin.js
 @@ -1,5 +1,5 @@
@@ -273,7 +295,7 @@ index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..8bca8edc14f7ccb9c2d10e48c7901345
          // Extract text preview from text/JSON blocks
          const textParts = [];
          for (const block of content) {
-@@ -388,22 +489,28 @@ export class ContextOffloader {
+@@ -388,22 +495,28 @@ export class ContextOffloader {
                  textParts.push(JSON.stringify(block.json, null, 2));
          }
          const fullText = textParts.join('\n');
@@ -314,7 +336,7 @@ index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..8bca8edc14f7ccb9c2d10e48c7901345
          }
          logger.debug(`tool_use_id=<${toolUseId}>, blocks=<${references.length}>, tokens=<${tokenCount}> | tool result offloaded`);
          // Build replacement content: preview text + media placeholders
-@@ -428,11 +535,28 @@ export class ContextOffloader {
+@@ -428,11 +541,28 @@ export class ContextOffloader {
                  newContent.push(new TextBlock(`[${label}, ${size} bytes${ref ? ` | ref: ${ref}` : ''}]`));
              }
          }

@@ -7,6 +7,7 @@ import {
   Agent,
   Message,
   Model,
+  ReasoningBlock,
   SessionManager,
   SummarizingConversationManager,
   TextBlock,
@@ -18,7 +19,11 @@ import {
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
-import { compactConversation, countConversationTokens } from '../src/agent/compact.js';
+import {
+  compactConversation,
+  countConversationTokens,
+  stripReasoningFromUserMessages,
+} from '../src/agent/compact.js';
 import { assert, header, report } from './shared.js';
 
 class DeterministicModel extends Model<BaseModelConfig> {
@@ -26,6 +31,10 @@ class DeterministicModel extends Model<BaseModelConfig> {
   private summaries = 0;
   private config: BaseModelConfig = { modelId: 'fake.compact', contextWindowLimit: 200_000 };
   failSummaries = false;
+  /** Emit a reasoning block before the summary text, like adaptive thinking does. */
+  emitReasoningOnSummaries = false;
+  /** Emit only a reasoning block on summaries — a summary with no usable content. */
+  reasoningOnlySummaries = false;
 
   override updateConfig(config: BaseModelConfig): void {
     this.config = { ...this.config, ...config };
@@ -52,6 +61,20 @@ class DeterministicModel extends Model<BaseModelConfig> {
       : `continued from: ${textOf(messages[0])}`;
 
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    if (summarizing && (this.emitReasoningOnSummaries || this.reasoningOnlySummaries)) {
+      // Adaptive thinking: the summary response leads with a reasoning block,
+      // assembled by streamAggregated from reasoningContentDelta events.
+      yield { type: 'modelContentBlockStartEvent' };
+      yield {
+        type: 'modelContentBlockDeltaEvent',
+        delta: { type: 'reasoningContentDelta', text: 'thinking about the summary', signature: 'sig-1' },
+      };
+      yield { type: 'modelContentBlockStopEvent' };
+      if (this.reasoningOnlySummaries) {
+        yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+        return;
+      }
+    }
     yield { type: 'modelContentBlockStartEvent' };
     yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text } };
     yield { type: 'modelContentBlockStopEvent' };
@@ -171,6 +194,83 @@ async function main(): Promise<void> {
 
     const counted = await countConversationTokens(model, agent);
     assert('the shared counter remains callable after a turn', counted > 0);
+
+    // Regression: adaptive thinking puts reasoning blocks in the summary
+    // response; unpatched, they land verbatim in the user-role summary message
+    // and the next summarization pass (or any later request) is rejected by
+    // the provider. preserveRecentMessages: 2 forces two reduce passes, so the
+    // second pass summarizes a history containing the first pass's summary.
+    const reasoningModel = new DeterministicModel();
+    reasoningModel.emitReasoningOnSummaries = true;
+    const reasoningAgent = new Agent({ model: reasoningModel, messages: seededMessages(), printer: false });
+    await reasoningAgent.initialize();
+    const reasoningResult = await compactConversation({
+      agent: reasoningAgent,
+      model: reasoningModel,
+      manager: new SummarizingConversationManager({ summaryRatio: 0.8, preserveRecentMessages: 2 }),
+      preserveRecentMessages: 2,
+      persist: async () => {},
+    });
+    assert('compaction with a reasoning-emitting model succeeds', reasoningResult.compacted);
+    assert(
+      'no user message carries a reasoning block after compaction',
+      reasoningAgent.messages.every(
+        (message) => message.role !== 'user' || message.content.every((block) => block.type !== 'reasoningBlock'),
+      ),
+    );
+    const rollingSummary = reasoningAgent.messages[0];
+    assert('the rolling summary stays a user message', rollingSummary?.role === 'user');
+    assert('the rolling summary still carries the summary text', textOf(rollingSummary).includes('marker-early'));
+    assert(
+      'a second summarization pass over the compacted history succeeded',
+      textOf(rollingSummary).includes('summary-2'),
+    );
+
+    // A summary response with nothing but reasoning is a failed summary:
+    // proactive reduce swallows it and reports no reduction — never an empty
+    // user message spliced into the history.
+    const emptyModel = new DeterministicModel();
+    emptyModel.reasoningOnlySummaries = true;
+    const emptyAgent = new Agent({ model: emptyModel, messages: seededMessages(), printer: false });
+    await emptyAgent.initialize();
+    const emptyBefore = JSON.stringify(emptyAgent.messages);
+    const emptyResult = await compactConversation({
+      agent: emptyAgent,
+      model: emptyModel,
+      manager: new SummarizingConversationManager({ summaryRatio: 0.8, preserveRecentMessages: 4 }),
+      preserveRecentMessages: 4,
+      persist: async () => {},
+    });
+    assert('a reasoning-only summary response compacts nothing', !emptyResult.compacted);
+    assert('a reasoning-only summary response mutates no message', JSON.stringify(emptyAgent.messages) === emptyBefore);
+
+    // Restore-time repair for histories poisoned before the summarizer fix.
+    const poisonedText = new TextBlock('## Conversation Summary\n* kept');
+    const poisoned = new Message({
+      role: 'user',
+      content: [new ReasoningBlock({ text: 'leaked thinking', signature: 'sig' }), poisonedText],
+    });
+    const assistantThinking = new Message({
+      role: 'assistant',
+      content: [new ReasoningBlock({ text: 'legal assistant thinking' }), new TextBlock('answer')],
+    });
+    const cleanUser = new Message({ role: 'user', content: [new TextBlock('hello')] });
+    const allReasoning = new Message({ role: 'user', content: [new ReasoningBlock({ text: 'only reasoning' })] });
+    const history = [poisoned, assistantThinking, cleanUser, allReasoning];
+    const repairedCount = stripReasoningFromUserMessages(history);
+    assert('repair counts exactly the poisoned user message', repairedCount === 1);
+    assert(
+      'repair drops the reasoning and keeps the summary text',
+      poisoned.content.length === 1 && poisoned.content[0] === poisonedText,
+    );
+    assert('repair preserves message object identity and order', history[0] === poisoned && history[1] === assistantThinking);
+    assert(
+      'assistant reasoning blocks are untouched',
+      assistantThinking.content.length === 2 && assistantThinking.content[0]?.type === 'reasoningBlock',
+    );
+    assert('clean user messages are untouched', cleanUser.content.length === 1 && cleanUser.content[0]?.type === 'textBlock');
+    assert('an all-reasoning user message is left intact rather than emptied', allReasoning.content.length === 1);
+    assert('a clean list reports zero repairs', stripReasoningFromUserMessages([cleanUser, assistantThinking]) === 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
