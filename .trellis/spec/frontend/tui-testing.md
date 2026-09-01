@@ -140,7 +140,13 @@ if (typed.length > 1 && enter !== undefined) handleBatchedEnter(typed, enter);
   report because the report belongs to existing Static transcript history.
 - Verify the report independently with `verify-help-command.ts`: exact canonical command rows in
   canonical order, no duplicate/invented names, every required syntax/key fact, and finite line,
-  command, and per-line code-point bounds.
+  command, and per-line code-point bounds. The bound assertions must prove the arithmetic, not just
+  the current output: `HELP_FIXED_LINES` matches the rows emitted around the inventory, a
+  cap-filling inventory plus the overflow notice still fits `MAX_HELP_LINES`, and the last fixed row
+  survives the slice.
+- Key facts are documentation of shipped chords only. Adding a composer chord to `src/tui/App.tsx`
+  means adding it here, in both READMEs and in `docs/user-guide/reference*.md` with the same
+  vocabulary; never document a chord no handler implements.
 
 ## Custom slash-command contract
 

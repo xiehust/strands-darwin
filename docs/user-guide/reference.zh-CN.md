@@ -78,6 +78,9 @@ darwin trajectory fork <id>
 | `Home` / `End`、`Ctrl+A` / `Ctrl+E` | 移到可见行开头/结尾 |
 | `Ctrl+K` / `Ctrl+U` | 删除到行尾/行首 |
 | `Ctrl+W` | 删除前一个词 |
+| `Alt`/`Ctrl` + `Left` / `Right`、`Alt+B` / `Alt+F` | 按词移动光标 |
+| `Alt+Backspace` / `Alt+D` | 删除光标前／后的一个词 |
+| `Ctrl+_`（或 `Ctrl+-`） | 撤销最近一次 `Ctrl+K`/`Ctrl+U`、`Ctrl+W` 或 `Alt` 系列删词 |
 | `y` / `n` / `Esc` | 回答权限框；Esc 表示拒绝 |
 | `a` / `A` | 权限框中的窄规则/整工具永久放行 |
 | `Ctrl+B` | 收起/展开工具详情 |

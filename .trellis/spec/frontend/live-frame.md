@@ -328,8 +328,15 @@ event, or other redrawn surface. It calls no runtime accessor and performs no I/
 
 The command rows come directly from the canonical `BUILTIN_COMMAND_NAMES` and
 `BUILTIN_COMMAND_DESCRIPTIONS`; the formatter's finite command, line, and per-line code-point caps
-bound the transcript entry, and omission must be stated if the command cap is ever reached. Any
-whitespace-separated argument is rejected by the same pre-busy local branch. Required checks:
+bound the transcript entry, and omission must be stated if the command cap is ever reached. The line
+cap is **derived, not hand-picked**: `MAX_HELP_LINES === MAX_HELP_COMMANDS + HELP_FIXED_LINES`, where
+`HELP_FIXED_LINES` counts the title, the command-section header, both fixed blocks and the one-line
+overflow notice. A filled command inventory therefore can never make `slice(0, MAX_HELP_LINES)` drop a
+documented control; adding a fixed row means raising `HELP_FIXED_LINES` with it. The fixed key facts
+must name every shipped composer chord — including `SER-042`'s word jumps (`Alt`/`Ctrl`+arrow,
+`Alt+B`/`Alt+F`) and word deletions (`Alt+Backspace`/`Alt+D`) and `SER-044`'s undo (`Ctrl+_`, `Ctrl+-`)
+— and both READMEs plus `docs/user-guide/reference*.md` state the same chords in the same vocabulary.
+Any whitespace-separated argument is rejected by the same pre-busy local branch. Required checks:
 `verify-help-command.ts` for canonical content and explicit bounds, and free pty `verify-tui.ts
 completion` for idle/busy projection, argument rejection, queue stability, and absence from the
 latest live frame.

@@ -101,7 +101,7 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 /rewind                 从已完成提示词分支对话（工作区不变）
 ```
 
-按 `Ctrl+R` 可搜索当前项目的提示历史（输入文字筛选，按 `Ctrl+R`/`Up`/`Down` 切换结果，按 `Enter`/`Tab` 接受，按 `Escape` 取消）；忙碌时按 `Ctrl+C` 取消，按 `Ctrl+B` 展开或收起工具详情，使用 `/exit` 或 `Ctrl+D` 退出。模型发起的工具调用仍会经过当前审批模式；`!` 命令由你亲自输入，因此不走模型工具审批。
+按 `Ctrl+R` 可搜索当前项目的提示历史（输入文字筛选，按 `Ctrl+R`/`Up`/`Down` 切换结果，按 `Enter`/`Tab` 接受，按 `Escape` 取消）；忙碌时按 `Ctrl+C` 取消，按 `Ctrl+B` 展开或收起工具详情，使用 `/exit` 或 `Ctrl+D` 退出。编辑输入时，`Alt/Ctrl+Left/Right` 或 `Alt+B`/`Alt+F` 按词移动光标，`Alt+Backspace`/`Alt+D` 删除光标前／后的一个词，`Ctrl+_`（或 `Ctrl+-`）可撤销最近一次 `Ctrl+K`/`Ctrl+U`、`Ctrl+W` 或 `Alt` 系列的删词操作。模型发起的工具调用仍会经过当前审批模式；`!` 命令由你亲自输入，因此不走模型工具审批。
 
 无交互运行方式如下：
 

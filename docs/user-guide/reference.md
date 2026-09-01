@@ -78,6 +78,9 @@ Print-only options: `--context-offload` (process-only force-on; offload is defau
 | `Home` / `End`, `Ctrl+A` / `Ctrl+E` | visible-row start/end |
 | `Ctrl+K` / `Ctrl+U` | delete to row end/start |
 | `Ctrl+W` | delete previous word |
+| `Alt`/`Ctrl` + `Left` / `Right`, `Alt+B` / `Alt+F` | move by word |
+| `Alt+Backspace` / `Alt+D` | delete the word before/after the cursor |
+| `Ctrl+_` (or `Ctrl+-`) | undo the last `Ctrl+K`/`Ctrl+U`, `Ctrl+W` or `Alt` word deletion in the draft |
 | `y` / `n` / `Esc` | answer permission prompt; Esc denies |
 | `a` / `A` | permission prompt narrow/tool-wide always-allow option |
 | `Ctrl+B` | compact/expanded tool details |

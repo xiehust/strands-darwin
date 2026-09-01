@@ -5,7 +5,18 @@ import {
 
 /** Hard report bounds: help is transcript history, never an unbounded catalogue dump. */
 export const MAX_HELP_COMMANDS = 24;
-export const MAX_HELP_LINES = 40;
+/**
+ * Fixed rows `formatHelpReport()` always emits: the title, the command-section header,
+ * the "prompt and completion" block and the "editing and session" block, plus the
+ * one-line overflow notice a filled command cap would add.
+ */
+export const HELP_FIXED_LINES = 21;
+/**
+ * The line cap must cover the worst case — a command inventory that fills
+ * `MAX_HELP_COMMANDS` *and* every fixed row — so `slice()` can never silently drop a
+ * documented control. Derived, never a hand-picked number with incidental headroom.
+ */
+export const MAX_HELP_LINES = MAX_HELP_COMMANDS + HELP_FIXED_LINES;
 export const MAX_HELP_LINE_CODE_POINTS = 160;
 
 function boundedLine(value: string): string {
@@ -40,6 +51,8 @@ export function formatHelpReport(): string {
     'editing and session:',
     '  Home/End or Ctrl+A/E moves to the visible row edge',
     '  Ctrl+K/U deletes to the row end/start · Ctrl+W deletes the previous word',
+    '  Alt/Ctrl+Left/Right or Alt+B/F moves by word · Alt+Backspace/Alt+D deletes the word before/after',
+    '  Ctrl+_ (or Ctrl+-) undoes the last Ctrl+K/U, Ctrl+W or Alt word deletion in the draft',
     '  /rewind branches conversation only; it never rolls back workspace files or side effects',
     '  Ctrl+B toggles compact/expanded tool details',
     '  Ctrl+C cancels busy work; press again within 2s to exit (while idle, it exits)',

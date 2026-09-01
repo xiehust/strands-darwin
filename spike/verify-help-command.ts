@@ -9,6 +9,7 @@ import {
   BUILTIN_COMMAND_NAMES,
 } from '../src/commands/custom-commands.js';
 import {
+  HELP_FIXED_LINES,
   MAX_HELP_COMMANDS,
   MAX_HELP_LINE_CODE_POINTS,
   MAX_HELP_LINES,
@@ -54,6 +55,9 @@ const facts = [
   'Home/End or Ctrl+A/E',
   'Ctrl+K/U deletes to the row end/start',
   'Ctrl+W deletes the previous word',
+  'Alt/Ctrl+Left/Right or Alt+B/F moves by word',
+  'Alt+Backspace/Alt+D deletes the word before/after',
+  'Ctrl+_ (or Ctrl+-) undoes the last Ctrl+K/U, Ctrl+W or Alt word deletion in the draft',
   'Ctrl+B toggles compact/expanded tool details',
   'Ctrl+C cancels busy work',
   'press again within 2s to exit',
@@ -62,12 +66,18 @@ const facts = [
 for (const fact of facts) assert(`states: ${fact}`, text.includes(fact));
 
 header('/help — explicit hard bounds');
+const fixedLines = lines.length - commandLines.length;
 assert('the command cap covers the canonical built-ins', MAX_HELP_COMMANDS >= BUILTIN_COMMAND_NAMES.length);
 assert('the output stays within the declared line cap', lines.length <= MAX_HELP_LINES);
+assert('the declared fixed-line count matches the rows actually emitted around the inventory',
+  HELP_FIXED_LINES === fixedLines + 1);
+assert('a command inventory filling the command cap plus the overflow notice still cannot truncate a fixed line',
+  MAX_HELP_LINES >= MAX_HELP_COMMANDS + fixedLines + 1);
+assert('the last fixed row survives the line cap', lines[lines.length - 1] === '  Ctrl+D or /exit or /quit exits');
 assert('every output row stays within the declared code-point cap',
   lines.every((line) => [...line].length <= MAX_HELP_LINE_CODE_POINTS));
 assert('all declared bounds are finite positive integers',
-  [MAX_HELP_COMMANDS, MAX_HELP_LINES, MAX_HELP_LINE_CODE_POINTS].every(
+  [MAX_HELP_COMMANDS, MAX_HELP_LINES, MAX_HELP_LINE_CODE_POINTS, HELP_FIXED_LINES].every(
     (bound) => Number.isInteger(bound) && bound > 0,
   ));
 
