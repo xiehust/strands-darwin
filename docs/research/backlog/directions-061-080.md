@@ -85,7 +85,7 @@ In session-20260831-011450426 (harbor project) the agent staged a `root_cause` m
 
 ## SER-046 — State the shipped composer word chords and undo in `/help` and the README input documentation, as a pure projection of fixed local facts
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 65
 - Score: 14
 - Importance: 3
