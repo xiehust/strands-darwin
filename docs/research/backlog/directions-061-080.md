@@ -82,3 +82,43 @@ Accepted 2026-08-31 in `f6d750a` (task archive `e95a15d`; child session `session
 ### Notes / blockers / abandonment reason
 
 In session-20260831-011450426 (harbor project) the agent staged a `root_cause` memory with `evidence.quote` byte-identical to line 11 of `adapters/darwin-swe-bench/pyproject.toml` — verified in-session with `cat -A` (seq 351–352) — and was rejected twice with "memory evidence must be one unique exact current project line" (seq 343/345, 347/348), then spent ~2 minutes phantom-chasing and told the user a wrong hypothesis (seq 355). Root cause: `src/memory/tools.ts:10` applies `z.string().trim()` to every bounded field including `evidence.quote`, while `resolveExactSourceAnchor` (`src/memory/validation.ts`) requires the quote to equal a full source line — so the trim strips leading indentation and every indented project line (most code lines) can never validate. Reproduced both ways against the same dist code and file: untrimmed quote anchors and validates, trimmed quote resolves to no anchor. Fix inside the existing modules: give `evidence.quote` and `userQuote` a bounded-but-untrimmed schema (length/emptiness checks preserved, exact-line validation still gates every save, so nothing widens), and split the controller's single rejection message into reason-specific errors (no matching line vs. multiple matches vs. unreadable file) so an exact-evidence failure is diagnosable. Verify in `verify-memory-tools.ts`/`verify-memory-validation.ts`: an indented unique line saves and commits after `endTurn`; an unindented non-line quote still fails, now with the no-matching-line reason; multi-match and oversized/unsafe paths keep their existing refusals; `pnpm typecheck` and full `pnpm test` stay green.
+
+## SER-046 — State the shipped composer word chords and undo in `/help` and the README input documentation, as a pure projection of fixed local facts
+
+- Status: `not-started`
+- Priority: 65
+- Score: 14
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 1
+- Risk: 1
+- Origin report: [`research_2026-09-01.md`](../research_2026-09-01.md) (run `14:47:59Z`, rolled `tui` path)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+`/help` is Darwin's canonical bounded local discoverability surface, but its "editing and session:" block in `src/tui/help-format.ts` names only `Home/End or Ctrl+A/E`, `Ctrl+K/U`, `Ctrl+W`, `Ctrl+B`, `Ctrl+C` and `Ctrl+D`. Two shipped, spec-documented editing features are missing from it: SER-042's word chords — Alt/Ctrl+Arrow word jumps (`src/tui/App.tsx:2192`), Alt+B/F (`:2074`), Alt+D (`:2083`), Alt+Backspace (`:2243`) — and SER-044's composer undo on Ctrl+_ / Ctrl+- / byte 0x1f (`:2040`). `spike/verify-help-command.ts:55–56` pins exactly the stale subset, so the omission is invisible to the suite. `README.md:104` / `README.zh-CN.md:104` are the only `Ctrl+` mentions in either README and cover Ctrl+R alone; SER-030 already established that correcting stale README input documentation belongs to this surface. Fix strictly inside the existing projection: add the missing lines to `formatHelpReport()` (staying under `MAX_HELP_LINES` / `MAX_HELP_LINE_CODE_POINTS`, and re-checking the bound arithmetic rather than assuming headroom), and mirror the same chords in both READMEs' input sections. No new command, config key, runtime behavior, live-frame row or information channel; `/help` must remain argument-rejecting, handled before busy queueing, and free of model/tool/network work. Acceptance: extend `spike/verify-help-command.ts` to assert the word-chord and undo lines plus the unchanged bounds, keep `spike/verify-tui.ts completion` green, prove README wording names the same chords as `help-format.ts`, and keep `pnpm typecheck` plus the full `pnpm test` green.
+
+## SER-047 — Extend the markdown answer projection's block vocabulary: classify list markers, blockquote prefixes and table pipes as dimmed marker spans, keeping every character
+
+- Status: `not-started`
+- Priority: 66
+- Score: 10
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-01.md`](../research_2026-09-01.md) (run `14:47:59Z`, rolled `tui` path)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+`MarkdownLineKind` in `src/tui/markdown.ts:34` is `'text' | 'heading' | 'fence' | 'code' | 'rule'`, so every bullet, ordered-list item, blockquote and table row falls through to prose `inlineSpans` at `:88` — and `inlineSpans` deliberately keeps a bullet `* item` line plain (`:117–121`) to protect snake_case and multiplication from emphasis styling. The result is that structured answers, the common shape of Darwin's own output, render as undifferentiated prose while headings and code already carry tone. The extension point exists: add block kinds whose leading marker (`-`/`*`/`+`, `N.`/`N)`, `> `, and a table row's `|` separators) becomes a `marker` span and whose remaining text keeps ordinary inline spans, then give the new kinds tone in `spanProps`/`rowToneProps` in `src/tui/MarkdownText.tsx`. The projection contract is the hard constraint (`.trellis/spec/frontend/live-frame.md:428`): every character survives, markers are dimmed in place and never stripped or realigned, so ANSI-stripped output is byte-identical to the committed text, `/export` stays byte-identical, and pty substring assertions keep matching. Two ordering hazards to respect — the existing `RULE` classification of `---`/`***`/`___` must still win over a list marker, and the fence/code branch must still win over everything, so `fenceOpenAfter` stays a boolean and live rows keep agreeing with `<Static>`. Out of scope: reflowing or re-indenting list text, renumbering ordered lists, aligning table columns, and any per-language code highlighting (explicitly out of scope at `src/tui/markdown.ts:20`). Acceptance: `spike/verify-markdown.tsx` asserts the new classifications *and* that concatenated spans equal the input line for every case (including a bullet inside a fenced block, a `---` rule, and a `1.` item), `spike/verify-visual-language.tsx` green, an `/export` byte-identity check over an answer containing lists/quotes/tables, plus `pnpm typecheck` and the full `pnpm test` green.
