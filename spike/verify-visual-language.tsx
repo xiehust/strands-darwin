@@ -309,12 +309,16 @@ header('visual language — markdown answers keep their plain text');
 const markdownHistory: HistoryItem[] = [
   { kind: 'assistant', id: 'md1', text: '## Plan\nUse `pnpm test` — it is **fast**.', part: 'first', codeOpen: false },
   { kind: 'assistant', id: 'md2', text: '```ts\nconst ok = true;\n```', part: 'last', codeOpen: false },
+  // Block markers (SER-047): bullets, ordered markers, a `>` prefix and table
+  // pipes are dimmed in place, so the row still reads as its committed text.
+  { kind: 'assistant', id: 'md3', text: '- first item\n  - nested item\n2. second item\n> quoted advice\n| a | b |\n|---|---|', part: 'last', codeOpen: false },
 ];
 const markdownTranscript = plain(renderToString(
   <MessageList history={markdownHistory} liveText="" liveCodeOpen={false} columns={120} maxLiveRows={8} staticEpoch={0} />,
   { columns: 120 },
 ));
-for (const marker of ['## Plan', 'Use `pnpm test` — it is **fast**.', '```ts', 'const ok = true;']) {
+for (const marker of ['## Plan', 'Use `pnpm test` — it is **fast**.', '```ts', 'const ok = true;',
+  '- first item', '  - nested item', '2. second item', '> quoted advice', '| a | b |', '|---|---|']) {
   assert(`markdown answer survives ANSI stripping verbatim: ${marker}`, markdownTranscript.includes(marker));
 }
 assert('the pieced markdown answer still names darwin once',

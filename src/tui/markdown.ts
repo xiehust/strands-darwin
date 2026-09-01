@@ -7,6 +7,9 @@
  * character of the input survives into the output spans — markers like `**`
  * and ``` are de-emphasized in place, never stripped — so ANSI-stripped output
  * is identical to the plain text, and pty assertions keep matching substrings.
+ * That holds for block structure too: a list marker, a blockquote `>` prefix and
+ * a table row's `|` separators become dim marker spans exactly where they are,
+ * never re-indented, renumbered or column-aligned.
  *
  * Line-oriented and dependency-free on purpose. An answer reaches `<Static>`
  * history in pieces that Ink never redraws, so the one piece of state that
@@ -30,9 +33,15 @@ export interface MarkdownSpan {
 
 /**
  * What one logical line *is*: prose (`text`), a heading, a fence delimiter,
- * a line inside a fenced code block, or a thematic break (`rule`).
+ * a line inside a fenced code block, a thematic break (`rule`), a list item, a
+ * blockquote line, or a pipe-fenced table row.
+ *
+ * The block kinds exist so a line's *leading* structure — a bullet or ordered
+ * marker, a `>` prefix, a row's `|` separators — becomes a dim `marker` span
+ * instead of falling through to prose. It is what gives a `* item` line its
+ * marker: `inlineSpans` deliberately refuses to read that `*` as emphasis.
  */
-export type MarkdownLineKind = 'text' | 'heading' | 'fence' | 'code' | 'rule';
+export type MarkdownLineKind = 'text' | 'heading' | 'fence' | 'code' | 'rule' | 'list' | 'quote' | 'table';
 
 export interface MarkdownLine {
   readonly kind: MarkdownLineKind;
@@ -49,6 +58,22 @@ const HEADING = /^(#{1,6})([ \t]+)(.*)$/u;
 const HEADING_BARE = /^#{1,6}$/u;
 /** Thematic break: ---, *** or ___ (three or more). */
 const RULE = /^ {0,3}(?:-{3,}|\*{3,}|_{3,})[ \t]*$/u;
+/** Blockquote: a `>` run after at most three spaces, plus the space after it. */
+const QUOTE = /^([ \t]{0,3}>[ \t>]*)(.*)$/u;
+/**
+ * List item: a `-`/`*`/`+` bullet or an `N.`/`N)` ordered marker, followed by at
+ * least one space or tab (so `-fast` and `*emphasis*` are prose, not items).
+ * Leading indent is captured with the marker: nesting depth is preserved as the
+ * literal whitespace it already is, never re-indented.
+ */
+const LIST_ITEM = /^([ \t]*)((?:[-*+]|\d{1,9}[.)])[ \t]+)(.*)$/u;
+/**
+ * A table row, decided conservatively: it must both start (after at most three
+ * spaces) and end with `|`. A line merely *containing* a pipe — `cmd | grep x`,
+ * `a | b` in prose — stays prose, because dimming those false positives is a
+ * worse failure than leaving a pipe-less table row undecorated.
+ */
+const TABLE_ROW = /^ {0,3}\|.*\|[ \t]*$/u;
 
 /**
  * Classifies every line of `text` and splits prose lines into inline spans.
@@ -86,8 +111,53 @@ export function markdownLines(text: string, codeOpen = false): readonly Markdown
     if (RULE.test(line)) {
       return { kind: 'rule', spans: [{ text: line, style: 'marker' }] };
     }
+    const quote = QUOTE.exec(line);
+    if (quote !== null) {
+      return { kind: 'quote', spans: markedSpans(quote[1] as string, quote[2] as string) };
+    }
+    const item = LIST_ITEM.exec(line);
+    if (item !== null) {
+      return {
+        kind: 'list',
+        spans: markedSpans(`${item[1] as string}${item[2] as string}`, item[3] as string),
+      };
+    }
+    if (TABLE_ROW.test(line)) {
+      return { kind: 'table', spans: tableSpans(line) };
+    }
     return { kind: 'text', spans: line === '' ? [] : inlineSpans(line) };
   });
+}
+
+/** A leading `marker` span plus the inline spans of what follows it. */
+function markedSpans(marker: string, rest: string): MarkdownSpan[] {
+  const spans: MarkdownSpan[] = [{ text: marker, style: 'marker' }];
+  if (rest !== '') spans.push(...inlineSpans(rest));
+  return spans;
+}
+
+/**
+ * A table row: every `|` is its own `marker` span, every cell keeps ordinary
+ * inline spans. Column widths are never touched — the row's own spacing is part
+ * of the cell text, so the drawn row is exactly as wide as the committed one.
+ */
+function tableSpans(line: string): MarkdownSpan[] {
+  const spans: MarkdownSpan[] = [];
+  let cell = '';
+  const flush = (): void => {
+    if (cell !== '') spans.push(...inlineSpans(cell));
+    cell = '';
+  };
+  for (const char of line) {
+    if (char === '|') {
+      flush();
+      spans.push({ text: '|', style: 'marker' });
+      continue;
+    }
+    cell += char;
+  }
+  flush();
+  return spans;
 }
 
 /**

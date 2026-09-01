@@ -716,7 +716,14 @@ matters for the shape with no finished lines — one unbroken paragraph.
 `.trellis/spec/frontend/live-frame.md` § markdown styling): assistant answers — `<Static>` pieces
 and the live region — draw headings bold, `**bold**`/`*italic*` emphasized, inline and fenced code
 in `markdownCodeColor`, and fence delimiters/rules/markers dim; syntax highlighting by language is
-out of scope. Four things are load-bearing. **Every character is kept** — markers are dimmed in
+out of scope. The vocabulary also covers block structure (SER-047): a list bullet or `N.`/`N)`
+marker with its indent, a blockquote's whole `>` run and every `|` of a pipe-fenced table row become
+dim `marker` spans while the block's own text keeps prose tone — which is what gives a `* item` line
+its marker, since `inlineSpans` refuses to read that `*` as emphasis. Order decides the ties: fenced
+code beats everything, then heading, then `rule` (so `---`/`***` never becomes a list), then quote →
+list → table → prose. A line merely *containing* `|` (`cmd | grep x`) stays prose on purpose: any-pipe
+detection would dim the shell pipelines darwin's own answers are full of. Four things are
+load-bearing. **Every character is kept** — markers are dimmed in
 place, never stripped, so a line's spans concatenate back to the line byte for byte, ANSI-stripped
 output *is* the committed plain text, and `formatReplay` / `/export` are byte-identical to before
 the feature (proven against real recorded sessions); `turn-state.ts` still commits exact plain

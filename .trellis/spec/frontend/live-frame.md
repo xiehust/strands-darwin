@@ -411,6 +411,25 @@ bold with a dim `#` marker, `**bold**`/`*italic*` emphasized, inline and fenced 
 `markdownCodeColor`, fence delimiters/rules/inline markers dim. Syntax highlighting by language is
 deliberately out of scope.
 
+- **Block markers are part of the vocabulary (SER-047).** `MarkdownLineKind` covers `list`, `quote`
+  and `table` as well: a `-`/`*`/`+` bullet or `N.`/`N)` marker followed by whitespace, a `>` prefix
+  after at most three spaces, and a row that both starts and ends with `|`. The leading structure —
+  indent + marker for a list, the whole `>` run for a quote, each `|` for a table row — is one dim
+  `marker` span; the rest of the line keeps ordinary inline spans, and the block's text keeps prose
+  tone (a whole dimmed quoted paragraph would cost legibility the marker already buys). This is what
+  gives a `* item` line its marker, since `inlineSpans` deliberately refuses to read that `*` as
+  emphasis. `spanProps` needs no per-kind branch: a `marker` span already dims.
+  - Classification order is load-bearing and unchanged where it had a winner: fenced `code`/`fence`
+    beats everything (a bullet, a `>` line or a table row inside a fence stays code), `heading`
+    next, then `rule` — `---`/`***`/`___` stays a thematic break and never becomes a list — and only
+    then quote → list → table → prose. `fenceOpenAfter` stays a boolean.
+  - Nothing is realigned: indent is preserved as the literal whitespace it is (no depth semantics
+    beyond that), ordered numbers are never renumbered, and table columns are never aligned.
+  - **Dropped sub-case, on purpose:** a line merely *containing* `|` (`cmd | grep x`, `a | b`, an
+    alternation in prose) is prose, not a table. Treating any pipe as a separator would dim exactly
+    the shell pipelines and alternations darwin's own answers are full of; the leading-plus-trailing
+    pipe test is the decidable form of "the author drew a table".
+
 - **Every character is kept.** Markers are de-emphasized in place, never stripped: concatenating a
   line's spans reproduces the line byte for byte, so ANSI-stripped output *is* the committed plain
   text, pty assertions keep matching answer substrings, and `formatReplay` (`/export`, replay) is

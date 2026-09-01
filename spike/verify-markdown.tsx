@@ -86,6 +86,191 @@ header('markdown — fences, code lines and rules');
   assert('a tilde fence works too', markdownLines('~~~\nx\n~~~').map((line) => line.kind).join(',') === 'fence,code,fence');
 }
 
+header('markdown — block vocabulary: list markers');
+{
+  const kind = (line: string): string | undefined => markdownLines(line)[0]?.kind;
+  const spans = (line: string): readonly { readonly text: string; readonly style: string }[] =>
+    markdownLines(line)[0]?.spans ?? [];
+  const marker = (line: string): { readonly text: string; readonly style: string } | undefined => spans(line)[0];
+
+  for (const bullet of ['- item', '* item', '+ item']) {
+    assert(`a ${bullet[0] as string} bullet is a list line`, kind(bullet) === 'list');
+    assert(`its marker is a dim marker span: ${bullet}`,
+      marker(bullet)?.style === 'marker' && marker(bullet)?.text === `${bullet[0] as string} `);
+    assert(`the bullet keeps every character: ${bullet}`, roundTrip(bullet) === bullet);
+  }
+
+  assert('a 1. ordered item is a list line', kind('1. first') === 'list');
+  assert('the ordered marker is one dim span', marker('1. first')?.text === '1. ' && marker('1. first')?.style === 'marker');
+  assert('a 2) ordered item is a list line', kind('2) second') === 'list');
+  assert('ordered items keep every character', roundTrip('1. first\n2) second') === '1. first\n2) second');
+  assert('the number is never renumbered', marker('7. seventh')?.text === '7. ');
+
+  assert('an indented nested bullet is a list line', kind('    - nested') === 'list');
+  assert('its indent travels inside the marker span, unchanged',
+    marker('    - nested')?.text === '    - ' && marker('    - nested')?.style === 'marker');
+  assert('the nested bullet keeps every character', roundTrip('    - nested') === '    - nested');
+  assert('a tab-indented bullet keeps its tab', roundTrip('\t- nested') === '\t- nested');
+
+  assert('list item text keeps its inline spans',
+    spans('- see **this** now').some((span) => span.style === 'bold' && span.text === 'this'));
+  assert('a marker with nothing after it is still a list line', kind('- ') === 'list');
+  assert('an empty item keeps every character', roundTrip('- ') === '- ');
+
+  // What must NOT become a list.
+  assert('a hyphenated word is not a list', kind('-fast path') === 'text');
+  assert('a bare dash is not a list', kind('-') === 'text');
+  assert('an emphasis-opening line is not a list', kind('*italic* leads') === 'text');
+  assert('a version string is not a list', kind('1.2.3 released') === 'text');
+  assert('prose with a stray asterisk stays prose', kind('two * three is six') === 'text');
+  assert('and keeps every character', roundTrip('two * three is six') === 'two * three is six');
+}
+
+header('markdown — block vocabulary: blockquotes');
+{
+  const line = markdownLines('> quoted **text**')[0];
+  assert('a > line is a quote line', line?.kind === 'quote');
+  assert('the > prefix is one dim marker span', line?.spans[0]?.text === '> ' && line?.spans[0]?.style === 'marker');
+  assert('the quoted text keeps its inline spans',
+    line?.spans.some((span) => span.style === 'bold' && span.text === 'text') === true);
+  assert('the quote is not dimmed as a whole: its text stays a plain-tone span',
+    line?.spans.some((span) => span.style === 'plain') === true);
+  assert('a quote keeps every character', roundTrip('> quoted **text**') === '> quoted **text**');
+
+  const nested = markdownLines('> > deeper')[0];
+  assert('a nested quote is a quote line', nested?.kind === 'quote');
+  assert('the whole > run is the marker', nested?.spans[0]?.text === '> > ');
+  assert('the nested quote keeps every character', roundTrip('> > deeper') === '> > deeper');
+  assert('a >> run is the marker too', markdownLines('>> deeper')[0]?.spans[0]?.text === '>> ');
+  assert('a bare > line is a quote', markdownLines('>')[0]?.kind === 'quote');
+  assert('an indented quote keeps its indent in the marker', markdownLines('  > q')[0]?.spans[0]?.text === '  > ');
+  assert('a quote with no space after > is still a quote', markdownLines('>quoted')[0]?.kind === 'quote');
+  assert('and keeps every character', roundTrip('>quoted') === '>quoted');
+  assert('a comparison in prose is not a quote', markdownLines('a > b is true')[0]?.kind === 'text');
+}
+
+header('markdown — block vocabulary: table rows');
+{
+  const row = markdownLines('| name | value |')[0];
+  assert('a pipe-fenced row is a table line', row?.kind === 'table');
+  assert('every pipe is its own dim marker span',
+    row?.spans.filter((span) => span.style === 'marker' && span.text === '|').length === 3);
+  assert('the cells keep their exact spacing', row?.spans[1]?.text === ' name ' && row?.spans[3]?.text === ' value ');
+  assert('a table row keeps every character', roundTrip('| name | value |') === '| name | value |');
+
+  const delimiter = '|:---|---:|';
+  assert('the delimiter row is a table line', markdownLines(delimiter)[0]?.kind === 'table');
+  assert('the delimiter row keeps every character', roundTrip(delimiter) === delimiter);
+
+  assert('cells keep their inline spans',
+    markdownLines('| `code` | **bold** |')[0]?.spans.some((span) => span.style === 'code' && span.text === 'code') === true);
+
+  const table = '| a | b |\n|---|---|\n| 1 | 2 |';
+  assert('a whole table classifies row by row',
+    markdownLines(table).map((line) => line.kind).join(',') === 'table,table,table');
+  assert('the whole table keeps every character', roundTrip(table) === table);
+  assert('columns are never aligned', roundTrip('|a|      b|') === '|a|      b|');
+
+  // Deliberately NOT a table: a bare pipe in prose. Dimming shell pipes and
+  // prose alternations is a worse failure than an undecorated pipeless row.
+  assert('a shell pipeline in prose is not a table', markdownLines('run rg foo | wc -l next')[0]?.kind === 'text');
+  assert('an alternation in prose is not a table', markdownLines('pick a | b here')[0]?.kind === 'text');
+  assert('a pipeless table row is prose, not a table', markdownLines('a | b')[0]?.kind === 'text');
+  assert('prose with a stray pipe keeps every character', roundTrip('run rg foo | wc -l next') === 'run rg foo | wc -l next');
+  assert('a single lone pipe is not a table', markdownLines('|')[0]?.kind === 'text');
+}
+
+header('markdown — block classification never outranks fences, headings or rules');
+{
+  const FENCED_BLOCKS = '```sh\n- not a bullet\n> not a quote\n| not | a table |\n```';
+  const fenced = markdownLines(FENCED_BLOCKS);
+  assert('a bullet inside a fence stays code', fenced[1]?.kind === 'code');
+  assert('a quote inside a fence stays code', fenced[2]?.kind === 'code');
+  assert('a table row inside a fence stays code', fenced[3]?.kind === 'code');
+  assert('the fenced block keeps every character', roundTrip(FENCED_BLOCKS) === FENCED_BLOCKS);
+  assert('a carried-open fence keeps a bullet as code', markdownLines('- not a bullet', true)[0]?.kind === 'code');
+
+  assert('--- stays a rule, never a list', markdownLines('---')[0]?.kind === 'rule');
+  assert('*** stays a rule, never a list', markdownLines('***')[0]?.kind === 'rule');
+  assert('___ stays a rule', markdownLines('___')[0]?.kind === 'rule');
+  assert('a longer ----- stays a rule', markdownLines('-----')[0]?.kind === 'rule');
+  assert('an indented rule stays a rule', markdownLines('   ---')[0]?.kind === 'rule');
+  assert('a rule keeps every character', roundTrip('---\n***\n___') === '---\n***\n___');
+  assert('a "- -- -" line is still a list item', markdownLines('- -- -')[0]?.kind === 'list');
+  assert('a heading still outranks a quote', markdownLines('# > title')[0]?.kind === 'heading');
+}
+
+header('markdown — a structured answer survives the projection byte for byte');
+const STRUCTURED_ANSWER = [
+  'Findings:',
+  '',
+  '- first **point**',
+  '  - nested point',
+  '1. ordered step',
+  '2) other step',
+  '',
+  '> quoted advice with `code`',
+  '> > deeper',
+  '',
+  '| name | value |',
+  '|------|-------|',
+  '| a    | 1     |',
+  '',
+  '---',
+  '',
+  'Not a table: rg foo | wc -l. Not emphasis: two * three.',
+].join('\n');
+{
+  assert('every line of the structured answer round-trips', roundTrip(STRUCTURED_ANSWER) === STRUCTURED_ANSWER);
+  assert('and it classified as intended',
+    markdownLines(STRUCTURED_ANSWER).map((line) => line.kind).join(',') ===
+      'text,text,list,list,list,list,text,quote,quote,text,table,table,table,text,rule,text,text');
+
+  const rendered = renderToString(<MarkdownAnswerText text={STRUCTURED_ANSWER} codeOpen={false} />, { columns: 200 });
+  assert('stripping ANSI recovers the structured answer byte for byte', plain(rendered) === STRUCTURED_ANSWER);
+  assert('the block markers did add ANSI on the way', rendered !== STRUCTURED_ANSWER);
+
+  const transcript = plain(renderToString(
+    <MessageList
+      history={[{ kind: 'assistant', id: 'a', text: STRUCTURED_ANSWER, part: 'whole', codeOpen: false }]}
+      liveText=""
+      liveCodeOpen={false}
+      columns={200}
+      maxLiveRows={8}
+      staticEpoch={0}
+    />,
+    { columns: 200 },
+  ));
+  assert('the transcript entry keeps the full structured text', transcript.includes(STRUCTURED_ANSWER));
+
+  // The live region: same text, and exactly the row count liveTextView counted.
+  // Blank-line-free on purpose — an empty live row is an empty `<Text>`, which Ink
+  // draws as zero rows, a pre-existing live-block quirk of blank lines (plain prose
+  // 'alpha\n\nbeta' shows it too) and not something block classification changes.
+  const liveBlock = ['- first item', '  - nested item', '2. second item', '> quoted advice', '| a | b |', '|---|---|'].join('\n');
+  const view = liveTextView(liveBlock, 80, 40);
+  const rows = plain(renderToString(
+    <MessageList history={[]} liveText={liveBlock} liveCodeOpen={false} columns={80} maxLiveRows={40} staticEpoch={0} />,
+    { columns: 80 },
+  )).replace(/\n+$/, '').split('\n');
+  assert('the structured live block draws label + exactly the counted rows', rows.length === 1 + view.rows.length);
+  assert('and the live rows are the plain text', rows.slice(1).join('\n') === liveBlock);
+
+  // A list item too wide for the terminal wraps into rows that are not the logical
+  // line: those fall back to whole-row prose tone, and the count still matches.
+  const wide = `- ${'word '.repeat(30).trimEnd()}`;
+  const wideView = liveTextView(wide, 40, 40);
+  const wideRows = plain(renderToString(
+    <MessageList history={[]} liveText={wide} liveCodeOpen={false} columns={40} maxLiveRows={40} staticEpoch={0} />,
+    { columns: 40 },
+  )).replace(/\n+$/, '').split('\n');
+  assert('a wrapped list item wrapped into several rows', wideView.rows.length > 1);
+  assert('a wrapped list item still draws exactly the counted rows', wideRows.length === 1 + wideView.rows.length);
+  assert('and its rows are the wrapped plain text',
+    wideRows.slice(1).join('\n') === wideView.rows.map((row) => row.text).join('\n'));
+}
+
+
 header('markdown — fence state across piece boundaries');
 {
   assert('no fences leaves the state closed', fenceOpenAfter('plain\nlines') === false);
@@ -201,6 +386,28 @@ header('markdown — formatReplay is byte-identical for markdown-bearing answers
   // pieces, one `darwin>` prefix, markers and fences verbatim, no trailing newline.
   const expected = `darwin> ${FENCED_ANSWER.split('\n')[0] as string}\n${FENCED_ANSWER.split('\n').slice(1).join('\n')}`;
   assert('replay output is the plain answer, byte for byte', printed === expected);
+
+  // The same for an answer full of block markers: /export and replay print the
+  // list bullets, `>` prefixes and table pipes exactly as committed.
+  let structured = initialTurnState;
+  for (const char of STRUCTURED_ANSWER) structured = stream(structured, delta(char));
+  structured = stream(structured, close(STRUCTURED_ANSWER));
+
+  const printedStructured = formatReplay({
+    history: structured.history,
+    turns: [1],
+    runs: [],
+    damage: undefined,
+    droppedRecords: 0,
+    failures: [],
+    turnSpend: [],
+    modelCalls: [],
+    spend: { turns: 0, models: [], input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  } as unknown as ReplayResult);
+
+  const expectedStructured =
+    `darwin> ${STRUCTURED_ANSWER.split('\n')[0] as string}\n${STRUCTURED_ANSWER.split('\n').slice(1).join('\n')}`;
+  assert('replay output of a list/quote/table answer is byte-identical', printedStructured === expectedStructured);
 }
 
 report();

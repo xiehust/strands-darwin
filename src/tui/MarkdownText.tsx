@@ -36,6 +36,9 @@ export function MarkdownAnswerText({
   return <Text>{children}</Text>;
 }
 
+/** Line kinds whose spans are inline over the untransformed line text. */
+const INLINE_KINDS: readonly MarkdownLineKind[] = ['text', 'heading', 'list', 'quote', 'table'];
+
 /**
  * One pre-wrapped live row. Inline spans are used only when the row is the whole
  * untransformed logical line (span concatenation === row text); a row a wrap or
@@ -44,7 +47,7 @@ export function MarkdownAnswerText({
  * styling nuance, never a row-count or fence-state disagreement.
  */
 export function liveRowText(rowText: string, line: MarkdownLine | undefined, key: number): React.JSX.Element {
-  if (line !== undefined && (line.kind === 'text' || line.kind === 'heading') && lineText(line) === rowText) {
+  if (line !== undefined && INLINE_KINDS.includes(line.kind) && lineText(line) === rowText) {
     return (
       <Text key={key} wrap="truncate-end">
         {spanElements(line, `row-${key}`)}
@@ -79,8 +82,13 @@ interface SpanProps {
 /**
  * The styling vocabulary: headings bold (their `#` marker dim as well), inline
  * and fenced code in the palette's code colour, fence delimiters, rules and
- * inline markers dim, emphasis bold/italic. Colour and weight are enhancement
- * only — the markdown markers on the text remain the durable statement.
+ * inline markers dim, emphasis bold/italic. A block marker — a list bullet or
+ * ordered marker, a blockquote `>` prefix, a table row's `|` — is an ordinary
+ * `marker` span and needs no branch of its own: it dims through the switch
+ * below, while the block's own text keeps prose tone (dimming a whole quoted
+ * paragraph would cost legibility the marker already buys). Colour and weight
+ * are enhancement only — the markdown markers on the text remain the durable
+ * statement.
  */
 function spanProps(kind: MarkdownLineKind, style: MarkdownSpanStyle): SpanProps {
   if (kind === 'code') return { color: markdownCodeColor };
@@ -110,6 +118,11 @@ function rowToneProps(kind: MarkdownLineKind): SpanProps {
       return { dimColor: true };
     case 'heading':
       return { bold: true };
+    // A wrapped block row loses its marker's position, so it draws as prose:
+    // dimming a fragment of a list item or a table row would be a guess.
+    case 'list':
+    case 'quote':
+    case 'table':
     case 'text':
       return {};
   }
