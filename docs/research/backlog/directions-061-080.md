@@ -85,7 +85,7 @@ In session-20260831-011450426 (harbor project) the agent staged a `root_cause` m
 
 ## SER-046 — State the shipped composer word chords and undo in `/help` and the README input documentation, as a pure projection of fixed local facts
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 65
 - Score: 14
 - Importance: 3
@@ -97,7 +97,7 @@ In session-20260831-011450426 (harbor project) the agent staged a `root_cause` m
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-01 in `1d57aae` (child session `session-20260901-150906982`, managed task `bg-2e619bcc`, exit 0). `src/tui/help-format.ts` adds two fixed rows — `Alt/Ctrl+Left/Right or Alt+B/F moves by word · Alt+Backspace/Alt+D deletes the word before/after` and `Ctrl+_ (or Ctrl+-) undoes the last Ctrl+K/U, Ctrl+W or Alt word deletion in the draft` — and replaces the hand-picked `MAX_HELP_LINES = 40` with the derived `MAX_HELP_COMMANDS + HELP_FIXED_LINES` (24 + 21 = 45) so a growing command inventory can never slice a documented control away; `App.tsx` is untouched, so runtime behavior is unchanged. Both READMEs' input paragraphs and both `docs/user-guide/reference*.md` keyboard tables now name the same five chord families. Host independently re-ran `spike/verify-help-command.ts` (34/34, up from 27, including the new bound arithmetic assertions), `spike/verify-tui.ts completion` (68/68), `pnpm typecheck`, full `pnpm test` (exit 0, zero FAIL lines), `pnpm build`, and read the whole diff. Host acceptance recorded in `docs/iteration-log.md` Batch 69. Documented gap accepted: README↔`help-format.ts` consistency is proved by grep and by a spec obligation, not by the suite, because `verify-help-command.ts` is contractually I/O-free.
 
 ### Notes / blockers / abandonment reason
 
@@ -105,7 +105,7 @@ Not started.
 
 ## SER-047 — Extend the markdown answer projection's block vocabulary: classify list markers, blockquote prefixes and table pipes as dimmed marker spans, keeping every character
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 66
 - Score: 10
 - Importance: 3
