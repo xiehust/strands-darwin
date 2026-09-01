@@ -149,7 +149,6 @@ import {
   formatDispatchesReport,
 } from './subagent-format.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
-import { createSpendAdvisoryLatch } from './spend-advisory.js';
 import { formatHelpReport } from './help-format.js';
 import { formatMcpReport } from './mcp-format.js';
 import {
@@ -347,8 +346,6 @@ export function App({
   /** Wall-clock start of the in-flight turn; undefined whenever no turn is running. */
   const turnStartedAt = useRef<number | undefined>(undefined);
   const contextWarnLatch = useRef(createContextWarnLatch());
-  /** Per-session spend advisory latch (issue #8): monotonic per warn-token multiple. */
-  const spendAdvisoryLatch = useRef(createSpendAdvisoryLatch());
   /** One trajectory-problem notice per session; the recorder latches the failure itself. */
   const trajectoryWarned = useRef(false);
   /** Same, once, for the diagnostics log: it latches its own failure too. */
@@ -857,20 +854,6 @@ export function App({
         if (notice !== null) dispatch({ type: 'notice', text: notice, severity: 'warn' });
       } catch {
         // best-effort
-      }
-
-      // The spend advisory, on the same post-turn terms: advise, never act, and a
-      // metric nobody reported keeps it silent. A hand-built config without the key
-      // reads as disabled (`?? 0`); loadConfig always resolves it.
-      try {
-        const notice = spendAdvisoryLatch.current.check({
-          cacheReadTokens: runtime.usage.cacheReadInputTokens,
-          recentToolUseCounts: runtime.callStats?.recentToolUseCounts,
-          warnTokens: runtime.config.cacheReadWarnTokens ?? 0,
-        });
-        if (notice !== null) dispatch({ type: 'notice', text: notice, severity: 'warn' });
-      } catch {
-        // best-effort, exactly like the context check above
       }
 
       // Same shape for the trajectory: read after the turn, never during it, and at
@@ -1416,7 +1399,6 @@ export function App({
         setRuntime(next);
         // Per-session latches, reset with the session they were latched for.
         contextWarnLatch.current = createContextWarnLatch();
-        spendAdvisoryLatch.current = createSpendAdvisoryLatch();
         trajectoryWarned.current = false;
         diagnosticsWarned.current = false;
         // Held `!` reports were destined for the conversation just set aside; the
@@ -1842,7 +1824,6 @@ export function App({
     setEditor({ text: selected.prompt, cursor: { offset: selected.prompt.length, affinity: 'upstream' } });
     setSelectedCompletion(0);
     contextWarnLatch.current = createContextWarnLatch();
-    spendAdvisoryLatch.current = createSpendAdvisoryLatch();
     trajectoryWarned.current = false;
     diagnosticsWarned.current = false;
     pendingShellReports.current = [];
