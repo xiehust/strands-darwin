@@ -105,7 +105,7 @@ Accepted 2026-09-01 in `1d57aae` (child session `session-20260901-150906982`, ma
 
 ## SER-047 — Extend the markdown answer projection's block vocabulary: classify list markers, blockquote prefixes and table pipes as dimmed marker spans, keeping every character
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 66
 - Score: 10
 - Importance: 3
@@ -117,7 +117,7 @@ Accepted 2026-09-01 in `1d57aae` (child session `session-20260901-150906982`, ma
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-01 in `ff21afd` (child session `session-20260901-152613977`, managed task `bg-382e53bf`, exit 0). `src/tui/markdown.ts` extends `MarkdownLineKind` with `list | quote | table`, classified strictly *after* fence/code, heading and rule so `---`/`***`/`___` stays a rule and a bullet inside a fence stays code: `LIST_ITEM` requires a `-`/`*`/`+` or `N.`/`N)` marker followed by whitespace (so `-fast` and `*emphasis*` stay prose) and folds the leading indent into the one `marker` span, `QUOTE` marks the whole `>`/space run, and `TABLE_ROW` is deliberately conservative — a row must both start and end with `|`, so `rg x | wc -l` and `a | b` stay prose. `MarkdownText.tsx` needs no new `spanProps` branch (a `marker` span already dims) and extends the `liveRowText` inline rule via `INLINE_KINDS`, keeping the wrapped-row whole-tone fallback and the boolean `fenceOpenAfter`. Host independently re-ran `spike/verify-markdown.tsx` (129/129, up from 96 — including span round-trip, ANSI-strip byte identity and a `formatReplay` byte-identity case over a 17-line structured answer), `spike/verify-visual-language.tsx` (69/69), `pnpm typecheck`, full `pnpm test` (exit 0, zero FAIL lines), `pnpm build`, read the whole diff, and ran an own 25-case classification/round-trip probe: every case classified as expected (including `\t- tab` list, `>>x` quote, `|  |` table, `|only`/`x |` prose, `# > t` heading, `-----`/`   ---` rule) with zero round-trip failures and fenced content staying `code`. Host acceptance recorded in `docs/iteration-log.md` Batch 70. Dropped sub-case accepted and recorded in commit body, PRD and spec: any-pipe table detection, because it would dim ordinary shell pipelines.
 
 ### Notes / blockers / abandonment reason
 
