@@ -449,7 +449,14 @@ deliberately out of scope.
   ONE `<Text wrap="truncate-end">` and the row list is exactly what `liveTextView` counted; rows
   carry their source line index (`LiveRow.line`) so tone needs no second wrapping calculation, and a
   row that is not its whole logical line falls back to whole-row tone rather than re-deriving inline
-  spans against transformed text.
+  spans against transformed text. The same zero-row trap binds the live path: `liveTextView` counts an
+  empty logical line as one row on purpose (it is a paragraph break), so `liveRowText` draws a blank
+  row as ONE space rather than empty children — Ink trims that trailing space off again, so the drawn
+  row is still empty text, while the block's height stays the height it claimed. Drawing it as empty
+  children made the block shorter than its claim and hid every paragraph break until the answer
+  reached `<Static>`; `spike/verify-markdown.tsx` pins the counted-equals-drawn equality for interior
+  blank rows, a blank row inside a fence, and (differentially, since a trailing blank row is
+  indistinguishable from the block's bottom margin) a trailing one.
 - **Scope is answers only.** User messages, notices, tool output, the prompt editor and dev-repl are
   untouched; `_underscore_` emphasis is deliberately not recognized (snake_case identifiers are far
   more common in answers than underscore emphasis).

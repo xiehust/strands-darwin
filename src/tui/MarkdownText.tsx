@@ -47,6 +47,14 @@ const INLINE_KINDS: readonly MarkdownLineKind[] = ['text', 'heading', 'list', 'q
  * styling nuance, never a row-count or fence-state disagreement.
  */
 export function liveRowText(rowText: string, line: MarkdownLine | undefined, key: number): React.JSX.Element {
+  // A blank row is drawn as one space, never as empty children: an empty `<Text>`
+  // renders ZERO rows (the same measured Ink trap the history piece works around),
+  // which would silently drop the paragraph-break row `liveTextView` deliberately
+  // counts — the block would then draw shorter than its claim, and every blank line
+  // in a streaming answer would appear only once the text reached `<Static>`.
+  // Ink trims a row's trailing whitespace, so the drawn row is still empty text and
+  // ANSI-stripped live output stays byte-identical to the committed answer.
+  if (rowText === '') return <Text key={key} wrap="truncate-end">{' '}</Text>;
   if (line !== undefined && INLINE_KINDS.includes(line.kind) && lineText(line) === rowText) {
     return (
       <Text key={key} wrap="truncate-end">

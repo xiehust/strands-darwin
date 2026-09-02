@@ -244,9 +244,6 @@ const STRUCTURED_ANSWER = [
   assert('the transcript entry keeps the full structured text', transcript.includes(STRUCTURED_ANSWER));
 
   // The live region: same text, and exactly the row count liveTextView counted.
-  // Blank-line-free on purpose — an empty live row is an empty `<Text>`, which Ink
-  // draws as zero rows, a pre-existing live-block quirk of blank lines (plain prose
-  // 'alpha\n\nbeta' shows it too) and not something block classification changes.
   const liveBlock = ['- first item', '  - nested item', '2. second item', '> quoted advice', '| a | b |', '|---|---|'].join('\n');
   const view = liveTextView(liveBlock, 80, 40);
   const rows = plain(renderToString(
@@ -255,6 +252,46 @@ const STRUCTURED_ANSWER = [
   )).replace(/\n+$/, '').split('\n');
   assert('the structured live block draws label + exactly the counted rows', rows.length === 1 + view.rows.length);
   assert('and the live rows are the plain text', rows.slice(1).join('\n') === liveBlock);
+
+  // Blank rows: `liveTextView` counts an empty logical line as one row on purpose (it
+  // is a paragraph break), and an empty `<Text>` renders zero rows — so a blank row
+  // must be drawn as whitespace or the block draws shorter than its claim and every
+  // paragraph break appears only once the answer reaches `<Static>`. Ink trims the
+  // trailing space back off, so the drawn rows stay byte-identical to the text.
+  for (const blank of ['alpha\n\nbeta', 'alpha\n\n\nbeta', 'a\n\nb\n\nc', '- x\n\n- y', '']) {
+    const blankView = liveTextView(blank, 80, 40);
+    const blankRows = plain(renderToString(
+      <MessageList history={[]} liveText={blank} liveCodeOpen={false} columns={80} maxLiveRows={40} staticEpoch={0} />,
+      { columns: 80 },
+    )).replace(/\n+$/, '').split('\n');
+    const drawn = blank === '' ? [] : blankRows.slice(1);
+    assert(`a live block with blank lines draws every counted row (${JSON.stringify(blank)})`,
+      drawn.length === blankView.rows.length);
+    assert(`and its drawn rows are still exactly the counted text (${JSON.stringify(blank)})`,
+      drawn.join('\n') === blankView.rows.map((row) => row.text).join('\n'));
+  }
+
+  // A *trailing* blank row cannot be told from the block's bottom margin in a string
+  // render, so it is measured differentially: one more counted row must cost exactly
+  // one more rendered line.
+  const rawLines = (text: string): number =>
+    plain(renderToString(
+      <MessageList history={[]} liveText={text} liveCodeOpen={false} columns={80} maxLiveRows={40} staticEpoch={0} />,
+      { columns: 80 },
+    )).split('\n').length;
+  assert('a trailing blank row costs exactly the one row it was counted as',
+    liveTextView('tail\n', 80, 40).rows.length - liveTextView('tail', 80, 40).rows.length === 1
+      && rawLines('tail\n') - rawLines('tail') === 1);
+
+  // A blank row inside a fenced code block is the same trap under a different kind.
+  const fencedBlank = '```\nfirst\n\nlast\n```';
+  const fencedView = liveTextView(fencedBlank, 80, 40);
+  const fencedRows = plain(renderToString(
+    <MessageList history={[]} liveText={fencedBlank} liveCodeOpen={false} columns={80} maxLiveRows={40} staticEpoch={0} />,
+    { columns: 80 },
+  )).replace(/\n+$/, '').split('\n');
+  assert('a blank row inside a fence is drawn too', fencedRows.length - 1 === fencedView.rows.length);
+  assert('and the fenced live rows are the plain text', fencedRows.slice(1).join('\n') === fencedBlank);
 
   // A list item too wide for the terminal wraps into rows that are not the logical
   // line: those fall back to whole-row prose tone, and the count still matches.
