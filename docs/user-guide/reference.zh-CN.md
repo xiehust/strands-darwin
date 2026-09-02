@@ -70,6 +70,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/clear` | 创建后继会话；继承当前模式；丢弃队列 |
 | `/compact [focus]` | 摘要较旧对话；由用户主动触发。可选的 focus 文本（去除首尾空白后不超过 400 个码点，超出则提示拒绝且不执行）会作为一个固定小节追加到 SDK 默认摘要提示之后，要求摘要保留其所述内容；不带 focus 时摘要请求与以往完全一致 |
 | `/context` | 已知/估算的上下文大小；Bedrock 可能使用启发式 |
+| `/copy` | 把最近一条*已完成*回答的转录文本复制到剪贴板：先通过 OSC 52 写入终端（SSH 下可用），仅在存在显示环境时再调用 `wl-copy`/`xclip`/`pbcopy`；一条通知说明复制的字节数（超出上限时为 `N of M`）和工具失败；带参数会拒绝 |
 | `/effort [level]` | 查看或设置会持久化的模型思考强度 |
 | `/exit`、`/quit` | 退出 |
 | `/export <path>` | 精确 replay 投影；不覆盖，也不写会话内部 |
@@ -135,6 +136,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 - `/context` 及阈值提醒只是建议。已知比例跨过阈值后，回合结束时只提醒一次 `/compact`；只有确认比例下降后才重新触发；未知估算保持安静。
 - `/compact` 不会自动执行。SDK conversation manager 在溢出时仍可能按 `summaryRatio` 和 `preserveRecentMessages` 做摘要。
 - `/export` 与离线 replay 使用完全相同的 formatter。
+- `/copy` 复制的正是转录中显示、`/export` 写出的纯文本回答；回合进行中复制的是上一条已完成回答，尚无回答时（或刚 `/clear`/`/rewind` 之后）提示 `nothing to copy`。它不调用模型，也不写入任何记录。SSH 下需要终端接受 OSC 52 剪贴板写入（tmux 需 `set-clipboard on`）。
 
 ## 文件编辑
 

@@ -16,6 +16,7 @@ import React from 'react';
 import { NEVER_WITHDRAWN } from '../src/agent/permission.js';
 import {
   InputBox,
+  MAX_COMPLETIONS,
   completionWindow,
   hiddenCompletionNotice,
   moveCompletionSelection,
@@ -613,7 +614,11 @@ function renderedRows(element: React.ReactElement, columns: number): number {
     /files \(.*\) — bounded scan: 4000 paths:/.test(noted));
   assert('path rows carry no slash prefix', noted.includes('❯ src/') && !noted.includes('❯ /src/'));
 
-  const overflowItems = Array.from({ length: 21 }, (_, index) => `item-${String(index).padStart(2, '0')}`);
+  // Exactly one candidate more than the menu can hold, derived from the cap so growing
+  // it for a new built-in moves this fixture with it instead of leaving nothing hidden.
+  const overflowCount = MAX_COMPLETIONS + 1;
+  const lastItem = `item-${String(overflowCount - 1).padStart(2, '0')}`;
+  const overflowItems = Array.from({ length: overflowCount }, (_, index) => `item-${String(index).padStart(2, '0')}`);
   const renderOverflow = (selectedCompletion: number): string => renderToString(
     React.createElement(InputBox, {
       layout: layoutEditor('/', 80, { offset: 1, affinity: 'upstream' }),
@@ -625,15 +630,18 @@ function renderedRows(element: React.ReactElement, columns: number): number {
       hint: undefined,
       recallIndicator: undefined,
       offset: { top: 0, left: 0 },
-      maxRows: 24,
+      // Room for every offered row plus the fixed chrome around them (one draft row,
+      // the menu's marginTop, its title and the "… n more" row), so the one hidden
+      // candidate is hidden by the cap and not by a tight frame.
+      maxRows: MAX_COMPLETIONS + 4,
     }),
     { columns: 80 },
   );
   const renderedCases = [
     { name: 'first', selected: 0, marker: '❯ /item-00', notice: '… 1 more not shown (1 below)' },
     { name: 'middle', selected: 10, marker: '❯ /item-10', notice: '… 1 more not shown (1 below)' },
-    { name: 'last', selected: 20, marker: '❯ /item-20', notice: '… 1 more not shown (1 above)' },
-    { name: 'wrapped', selected: moveCompletionSelection(0, 21, -1), marker: '❯ /item-20', notice: '… 1 more not shown (1 above)' },
+    { name: 'last', selected: overflowCount - 1, marker: `❯ /${lastItem}`, notice: '… 1 more not shown (1 above)' },
+    { name: 'wrapped', selected: moveCompletionSelection(0, overflowCount, -1), marker: `❯ /${lastItem}`, notice: '… 1 more not shown (1 above)' },
   ];
   for (const renderedCase of renderedCases) {
     const output = renderOverflow(renderedCase.selected);

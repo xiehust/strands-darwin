@@ -16,10 +16,15 @@
  * sessions and allow rules under test are this suite's own and never the
  * developer's — see the note there before adding a scenario that reads one.
  *
+ * Free scenarios (no model call): model | mode | clear | completion | pathCompletion | recall |
+ * recallEmpty | bang | queue | wordNav | undo | mcp | resume | copy — `copy` (SER-057) seeds a
+ * completed answer through a local fixture model and `--resume`, then proves the OSC 52
+ * sequence in the raw pty output decodes to the exact committed answer text.
+ *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | contextOverflow | cursor | completion |
- *                 pathCompletion | historySearch | recall | recallEmpty | resume | bang | queue | clear | mcpStderr | mcp |
+ *                 pathCompletion | historySearch | recall | recallEmpty | resume | copy | bang | queue | clear | mcpStderr | mcp |
  *                 toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
@@ -1375,6 +1380,8 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /clear is listed', completed.includes('  /clear'));
     assert('the built-in /compact is listed', completed.includes('  /compact'));
     assert('the built-in /context is listed', completed.includes('  /context'));
+    // Matched with its description: a custom command could also be named copy.
+    assert('the built-in /copy is listed', completed.includes('  /copy — copy the last answer to the clipboard'));
     assert('the built-in /effort is listed', completed.includes('  /effort'));
     assert('the built-in /exit is listed', completed.includes('  /exit'));
     // Matched with its description: '  /export' is not a prefix of any other row,
@@ -1515,10 +1522,10 @@ async function pathCompletion(): Promise<void> {
   await writeFile(path.join(outside, 'secret.txt'), 'OUTSIDE_TUI_SECRET\n', 'utf8');
   await symlink(outside, path.join(dir, 'escape'), 'dir');
   // Enough entries that the menu must drop some, so "what is not shown is stated" is
-  // asserted on the real thing rather than on the helper that counts it. 18 pads make
-  // 23 candidates — far enough past MAX_COMPLETIONS (20) that a mid-list selection
+  // asserted on the real thing rather than on the helper that counts it. 19 pads make
+  // 24 candidates — far enough past MAX_COMPLETIONS (21) that a mid-list selection
   // truthfully hides rows on *both* sides of the window.
-  for (let index = 1; index <= 18; index += 1) {
+  for (let index = 1; index <= 19; index += 1) {
     await writeFile(path.join(dir, 'pad', `p${String(index).padStart(2, '0')}.md`), 'pad\n', 'utf8');
   }
 
@@ -1568,7 +1575,7 @@ async function pathCompletion(): Promise<void> {
     await tui.waitFor('❯ notes.md', { timeoutMs: 30_000, settleMs: 400 });
 
     // Walk beyond the bounded prefix and accept the visibly selected path with Tab.
-    // 12 steps land mid-window (index 12 of 23), where rows hide on both sides.
+    // 12 steps land mid-window (index 12 of 24), where rows hide on both sides.
     const beforePathWindow = tui.mark();
     tui.send('\u001b[B'.repeat(12));
     await tui.waitFor('❯ pad/p10.md', { timeoutMs: 30_000, from: beforePathWindow, settleMs: 400 });
@@ -1905,6 +1912,139 @@ async function resumedHumanContext(): Promise<void> {
   } finally {
     fresh.kill();
   }
+}
+
+/** Every OSC 52 clipboard sequence in the raw pty output, decoded from its base64 payload. */
+function osc52Payloads(raw: string): string[] {
+  return [...raw.matchAll(/\u001b\]52;c;([A-Za-z0-9+/=]*)\u0007/g)].map((match) =>
+    Buffer.from(match[1] as string, 'base64').toString('utf8'));
+}
+
+/**
+ * SER-057: `/copy` puts the last *completed* answer's transcript text on the clipboard
+ * through OSC 52, without a model call. Free: the completed answer is seeded the way
+ * `resume` seeds one — a local fixture model, real SessionManager and TrajectoryRecorder
+ * — and restored via `--resume`, so the `<Static>` history holds a real committed
+ * `AnswerPart` (`whole`, closed by the replayed `contentBlockEvent`) that no model
+ * produced in this process. The display variables are blanked so the pty child never
+ * reaches for `xclip`/`wl-copy`: OSC 52 alone is the SSH contract under test.
+ */
+async function copyCommand(): Promise<void> {
+  header('TUI — /copy before any answer is a nothing-to-copy notice, never a turn');
+
+  await resetWorkDir();
+  await writeHomeConfig({
+    provider: 'bedrock',
+    model: 'us.anthropic.invalid-no-network-copy',
+    trajectory: true,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+  });
+  const noDisplay = { DISPLAY: '', WAYLAND_DISPLAY: '' };
+
+  const fresh = startTui({ cwd: WORK_DIR, env: noDisplay });
+  try {
+    await fresh.waitFor('you>', { timeoutMs: 60_000, settleMs: 400 });
+    const beforeEmpty = fresh.mark();
+    fresh.submit('/copy');
+    await fresh.waitFor('nothing to copy — no completed answer in this session yet', {
+      timeoutMs: 30_000,
+      from: beforeEmpty,
+      settleMs: 400,
+    });
+    assert('/copy with no completed answer is a local notice, not a model turn',
+      !fresh.screen.slice(beforeEmpty).includes('working…'));
+    assert('nothing-to-copy writes no OSC 52 sequence', osc52Payloads(fresh.raw).length === 0);
+
+    const beforeArgument = fresh.mark();
+    fresh.submit('/copy extra');
+    await fresh.waitFor('/copy takes no arguments', { timeoutMs: 30_000, from: beforeArgument, settleMs: 400 });
+    assert('/copy rejects arguments locally', !fresh.screen.slice(beforeArgument).includes('working…'));
+
+    const beforeTabArgument = fresh.mark();
+    fresh.submit('/copy\textra');
+    await fresh.waitFor('/copy takes no arguments', { timeoutMs: 30_000, from: beforeTabArgument, settleMs: 400 });
+    assert('/copy rejects tab-separated arguments locally', !fresh.screen.slice(beforeTabArgument).includes('working…'));
+    assert('argument refusals write no OSC 52 sequence either', osc52Payloads(fresh.raw).length === 0);
+
+    fresh.submit('/exit');
+    assert('the fresh TUI exits without a model call', (await fresh.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    fresh.kill();
+  }
+
+  header('TUI — /copy emits OSC 52 carrying the exact committed answer text');
+
+  // Two answers, so the copied one is provably the *latest* completed answer. The
+  // second has two lines and a code span: the copied text must be the transcript's
+  // plain text, not a markdown-styled or ANSI-carrying rendering of it.
+  const olderAnswer = 'older answer that must not be copied';
+  const answer = 'copy target line one with `code`\nsecond line of the copy target — ✓';
+  const sessionId = 'session-copy-command';
+  const model = new ResumeFixtureModel([olderAnswer, answer]);
+  const manager = createSessionManager(WORK_DIR, sessionId);
+  const agent = new Agent({
+    id: 'darwin',
+    model,
+    systemPrompt: DEFAULT_SYSTEM_PROMPT,
+    sessionManager: manager,
+    printer: false,
+  });
+  await agent.initialize();
+  const trajectory = trajectoryPath(WORK_DIR, sessionId);
+  const recorder = new TrajectoryRecorder({
+    file: trajectory,
+    run: {
+      session: sessionId,
+      agentId: 'darwin',
+      darwinVersion: 'test',
+      provider: 'bedrock',
+      model: 'fake.copy-command',
+      permissionMode: 'default',
+      thinkingEffort: 'high',
+      resumed: false,
+      restoredMessages: 0,
+    },
+  });
+  for (const prompt of ['first question', 'second question']) {
+    for await (const _event of recordStream(agent.stream(prompt), recorder.beginTurn(prompt))) {
+      // Drain exactly as AgentRuntime.send's caller does.
+    }
+  }
+  await recorder.close();
+  await manager.saveSnapshot({ target: agent, isLatest: true });
+  await writePointer(WORK_DIR, sessionId);
+  assert('the fixture made exactly two local model calls while seeding', model.calls === 2);
+  const trajectoryBefore = await fileHash(trajectory);
+
+  const tui = startTui({ cwd: WORK_DIR, args: ['--resume', sessionId], env: noDisplay });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 400 });
+    assert('the seeded answers are in the restored transcript before /copy runs',
+      tui.screen.includes(olderAnswer) && tui.screen.includes('second line of the copy target'));
+    assert('no OSC 52 sequence is written before /copy is asked for', osc52Payloads(tui.raw).length === 0);
+
+    const beforeCopy = tui.mark();
+    tui.submit('/copy');
+    await tui.waitFor('copied the last answer to the clipboard', { timeoutMs: 30_000, from: beforeCopy, settleMs: 400 });
+    const payloads = osc52Payloads(tui.raw);
+    assert('exactly one OSC 52 clipboard sequence was written to the terminal', payloads.length === 1);
+    assert('its base64 payload decodes to the exact committed text of the latest completed answer',
+      payloads[0] === answer);
+    const notice = tui.screen.slice(beforeCopy);
+    assert('the notice states the byte count and the OSC 52 transport, and no display tool',
+      notice.includes(`(${Buffer.byteLength(answer, 'utf8')} bytes) via OSC 52`) &&
+      !notice.includes('xclip') && !notice.includes('wl-copy'));
+    assert('/copy never starts a model turn', !notice.includes('working…'));
+    assert('/copy leaves the live prompt intact', tui.frame.includes('you>'));
+
+    tui.submit('/exit');
+    assert('the resumed TUI exits without an ordinary model turn', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+
+  assert('/copy appended nothing to the trajectory — the file is byte-identical',
+    (await fileHash(trajectory)) === trajectoryBefore);
 }
 
 
@@ -4103,6 +4243,7 @@ const SCENARIOS = {
   recall: promptRecall,
   recallEmpty: promptRecallWithoutRecord,
   resume: resumedHumanContext,
+  copy: copyCommand,
   bang: bangShellCommand,
   queue: queueTakeback,
   clear: clearSession,

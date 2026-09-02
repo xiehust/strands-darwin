@@ -147,6 +147,14 @@ if (typed.length > 1 && enter !== undefined) handleBatchedEnter(typed, enter);
 - Key facts are documentation of shipped chords only. Adding a composer chord to `src/tui/App.tsx`
   means adding it here, in both READMEs and in `docs/user-guide/reference*.md` with the same
   vocabulary; never document a chord no handler implements.
+- `/copy` (SER-057) follows the same pre-busy local shape and is verified by the free `copy` pty
+  scenario. Its clipboard write is not reliably visible in `screen`/`frame` (the driver's
+  `stripAnsi` removes the OSC, and its character class does not even cover a `+` in base64), so
+  assert it on `tui.raw`: match every `ESC ] 52 ; c ; <base64> BEL`, decode the
+  base64, and compare to the seeded answer text exactly — one sequence per `/copy`, none for the
+  nothing-to-copy or usage notices. Seed the completed answer as `resume` does (local fixture model +
+  `--resume`), blank `DISPLAY`/`WAYLAND_DISPLAY` in the child env so no platform tool is reached for,
+  and hash the trajectory before/after to prove the command recorded nothing.
 
 ## Custom slash-command contract
 

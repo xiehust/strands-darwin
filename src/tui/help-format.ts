@@ -10,7 +10,7 @@ export const MAX_HELP_COMMANDS = 24;
  * the "prompt and completion" block and the "editing and session" block, plus the
  * one-line overflow notice a filled command cap would add.
  */
-export const HELP_FIXED_LINES = 21;
+export const HELP_FIXED_LINES = 22;
 /**
  * The line cap must cover the worst case — a command inventory that fills
  * `MAX_HELP_COMMANDS` *and* every fixed row — so `slice()` can never silently drop a
@@ -54,6 +54,7 @@ export function formatHelpReport(): string {
     '  Alt/Ctrl+Left/Right or Alt+B/F moves by word · Alt+Backspace/Alt+D deletes the word before/after',
     '  Ctrl+_ (or Ctrl+-) undoes the last Ctrl+K/U, Ctrl+W or Alt word deletion in the draft',
     '  /rewind branches conversation only; it never rolls back workspace files or side effects',
+    '  /copy puts the last completed answer on the clipboard via OSC 52 (plus wl-copy/xclip/pbcopy when a display is present)',
     '  Ctrl+B toggles compact/expanded tool details',
     '  Ctrl+C cancels busy work; press again within 2s to exit (while idle, it exits)',
     '  Ctrl+D or /exit or /quit exits',

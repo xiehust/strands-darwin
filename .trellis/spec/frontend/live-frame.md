@@ -341,6 +341,32 @@ Any whitespace-separated argument is rejected by the same pre-busy local branch.
 completion` for idle/busy projection, argument rejection, queue stability, and absence from the
 latest live frame.
 
+## Contract: `/copy` is one transcript notice and one OSC 52 write, never a frame surface
+
+`/copy` (SER-057, `src/tui/copy-command.ts`) copies the newest *completed* answer: the assistant
+`HistoryItem` pieces whose closing part (`whole` or `last`) is already in `<Static>` history, joined
+with `\n`, empty closing pieces contributing nothing — the same text `formatReplay` prints for that
+answer, so the clipboard, the transcript and `/export` cannot disagree. Pieces of an answer still
+streaming (`first`/`middle` with no `last`) are skipped, so a mid-turn `/copy` copies the previous
+completed answer; an empty history (fresh session, after `/clear`, after `/rewind` — both dispatch
+`clear`) yields the bounded `nothing to copy — …` **info** notice, never an error. `App` handles
+`/^\/copy(?:\s|$)/` before the busy guard exactly like `/help`, reading history through a render-time
+mirror ref rather than closing `submit` over `state`; any argument is the local
+`/copy takes no arguments` notice. Transport: one `ESC ] 52 ; c ; <base64> BEL` sequence through
+Ink's `useStdout().write` (the writer `/clear`'s screen clear uses) **first and unconditionally**;
+`wl-copy` (`WAYLAND_DISPLAY`), `xclip -selection clipboard` (`DISPLAY`) or `pbcopy` (macOS) runs
+only when its display is present, through a spawn-based non-throwing helper with a bounded timeout
+whose failure is a clause of the one notice. The payload is bounded by the named `MAX_COPY_BYTES`
+(cut on a code-point boundary); an over-cap copy is stated as `copied N of M bytes`. It adds no
+Header row, live row, budget claim, tool event, runtime accessor call, trajectory record or file
+write, and never touches `Ctrl+O`. Adding it grew `MAX_COMPLETIONS` to 21 and `HELP_FIXED_LINES` to
+22. Required checks: `spike/verify-copy-command.ts` (in `pnpm test`: encoding round-trip, cap counts,
+selection with an in-progress answer, tool selection by env without spawning, failure stated not
+thrown), `spike/verify-help-command.ts` (the fixed row), and free pty `spike/verify-tui.ts copy`
+(a `--resume`-seeded completed answer: the raw pty output holds exactly one OSC 52 sequence whose
+base64 decodes to that answer; nothing-to-copy and usage notices; trajectory byte-identical) plus
+`completion`.
+
 ## Contract: resumed context is startup Static history, never frame furniture
 
 `SER-028` seeds `turnReducer` history with the full replayed session transcript only when an

@@ -150,6 +150,7 @@ import {
   formatDispatchesReport,
 } from './subagent-format.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
+import { COPY_COMMAND_USAGE, runCopyCommand } from './copy-command.js';
 import { formatHelpReport } from './help-format.js';
 import { formatMcpReport } from './mcp-format.js';
 import {
@@ -250,6 +251,11 @@ export function App({
     () => withNoticeDiagnostics(recordAction, runtime.diagnostics),
     [recordAction, runtime],
   );
+  // The transcript as of the latest render, for `/copy`: `submit` is memoized on a
+  // few deps and must not be rebuilt on every streamed line, so it reads the history
+  // through this mirror rather than closing over `state`.
+  const historyRef = useRef(state.history);
+  historyRef.current = state.history;
   const [status, setStatus] = useState<Status>('idle');
   const [workspacePaths, setWorkspacePaths] = useState<WorkspacePaths>(NO_WORKSPACE_PATHS);
   const commandNames = useMemo(
@@ -922,6 +928,24 @@ export function App({
           type: 'notice',
           text: text === '/help' ? formatHelpReport() : '/help takes no arguments',
         });
+        return;
+      }
+
+      // SER-057: the last *completed* answer's transcript text onto the clipboard —
+      // OSC 52 through Ink's own stdout writer first (this is usually an SSH session),
+      // the platform tool only when a display is present. Before the busy guard like
+      // /help, so mid-turn it copies the previous answer while the current one streams.
+      // Reads history only: no runtime accessor, model, tool, record or file.
+      if (/^\/copy(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (text !== '/copy') {
+          dispatch({ type: 'notice', text: COPY_COMMAND_USAGE });
+          return;
+        }
+        const copied = await runCopyCommand({ history: historyRef.current, writeToTerminal });
+        dispatch({ type: 'notice', text: copied.text, severity: copied.severity });
         return;
       }
 

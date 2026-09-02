@@ -58,6 +58,7 @@ const suites = [
   'verify-mcp-command.ts',
   'verify-status-command.ts',
   'verify-help-command.ts',
+  'verify-copy-command.ts',
   'verify-skills.ts',
   'verify-self-reflection.ts',
   'verify-agent-skills.ts',

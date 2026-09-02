@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'effort', 'exit', 'export', 'help', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'status', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'status', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -25,6 +25,8 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // `/compact <focus>` steers one summary; bare `/compact` is the SDK default prompt.
   compact: 'summarize older conversation, optionally around a focus',
   context: 'estimated context size',
+  // The last *completed* answer's transcript text, over OSC 52 — so it works over SSH.
+  copy: 'copy the last answer to the clipboard',
   effort: 'set thinking depth',
   exit: 'quit darwin',
   // Writes a file at the named path, nothing else: no clipboard, no $EDITOR. The

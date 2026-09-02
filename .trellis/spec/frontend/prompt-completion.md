@@ -78,7 +78,9 @@ the editor so several stdin events in one React pass see the same answer. It is 
 Permission ownership is earlier in `App.useInput`, so permission `Escape` still denies. Compaction's
 input-ownership return is also earlier, so editor `Escape` is ignored while compaction runs.
 
-`MAX_COMPLETIONS` grows with the canonical list so adding help cannot hide the previous tail.
+`MAX_COMPLETIONS` grows with the canonical list so adding help cannot hide the previous tail; the
+twentieth built-in, `/copy` (SER-057), grew it to 21, and `verify-tui.ts completion` asserts the row
+with its description because a custom command may also be named `copy`.
 
 `InputBox` therefore takes a `completionKind`: a command row is `/name — description`, a path row is
 the path itself with no description (inventing one would mean reading the file). Only the rendering

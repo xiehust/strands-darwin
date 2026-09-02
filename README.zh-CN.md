@@ -99,6 +99,7 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 /developer <requirement>
 /self-evolution-research
 /help                   查看本地命令、输入语法和按键说明
+/copy                   把最近一条已完成回答复制到剪贴板（OSC 52，SSH 下可用）
 /rewind                 从已完成提示词分支对话（工作区不变）
 ```
 

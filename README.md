@@ -99,6 +99,7 @@ For multiple switchable models, provider-specific fields, Bedrock Mantle, cachin
 /developer <requirement>
 /self-evolution-research
 /help                   local command, prompt, and key reference
+/copy                   copy the last completed answer to the clipboard (OSC 52, works over SSH)
 /rewind                 branch conversation from a completed prompt (workspace unchanged)
 ```
 

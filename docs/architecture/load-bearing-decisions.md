@@ -266,9 +266,36 @@ and never an empty file. Path handling is deliberate: relative targets resolve a
 root, an existing target is refused atomically (`flag: 'wx'`, no `--force` — name another path),
 a target inside `~/.darwin/sessions/` is refused because a transcript planted among the records
 would be read by every scanner of that tree, and the one small local write is awaited with a failure
-costing the export only. Clipboard and `$EDITOR` are out of scope on purpose (SSH-hostile). The
+costing the export only. Clipboard and `$EDITOR` are out of scope on purpose (SSH-hostile) — the
+clipboard has its own command, `/copy` below, whose transport is chosen *for* SSH. The
 fourteenth built-in grew `MAX_COMPLETIONS` again; the free checks are
 `spike/verify-export-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`.
+
+## `/copy` — OSC 52 first, the platform tool second
+
+**`/copy` puts the last *completed* answer's committed transcript text on the clipboard, and the
+terminal is the first transport, not the fallback** (`src/tui/copy-command.ts`, SER-057; spec:
+`frontend/live-frame.md` § `/copy`). The text is `latestCompletedAnswer(history)`: the newest
+answer whose closing `AnswerPart` (`whole` or `last`) is in `<Static>` history, its pieces joined by
+newlines with empty closing pieces contributing nothing — the same rule `formatReplay` applies, so
+what lands on the clipboard is the plain text the transcript shows and `/export` writes (the Markdown
+projection never rewrites a character, so the ANSI-stripped answer *is* this text). An answer still
+streaming has no `last` piece yet, so a mid-turn `/copy` copies the previous completed answer; before
+the first one, or right after `/clear`/`/rewind` (both empty history), the result is one bounded
+`nothing to copy` info notice, never an error. Transport order is the decision: darwin is normally
+driven over SSH, where no `DISPLAY` exists, so one OSC 52 sequence (`ESC ] 52 ; c ; base64 BEL`)
+goes out through Ink's own stdout writer (`useStdout().write`, the path `/clear`'s screen clear
+already uses) *first*, unconditionally; only when `WAYLAND_DISPLAY`/`DISPLAY` is set or the host is
+macOS does a dependency-free helper (spawn, stdin pipe, bounded timeout, non-throwing — the
+`clipboard-image.ts` shape) additionally run `wl-copy`, `xclip -selection clipboard` or `pbcopy`,
+and its failure is a clause of the same notice, never a throw or a second notice. The payload is
+bounded by the named `MAX_COPY_BYTES`, cut on a code-point boundary, and an over-cap copy is stated
+as `copied N of M bytes` — never a silent partial copy. Like `/help`, it sits above the busy guard,
+takes no arguments (a local usage notice otherwise), calls no runtime accessor, model or tool, and
+records nothing: the trajectory keeps one path in, and the clipboard is not a second one. The
+twentieth built-in grew `MAX_COMPLETIONS` to 21 and added one fixed `/help` row; the free checks are
+`spike/verify-copy-command.ts` (in `pnpm test`), `spike/verify-help-command.ts`, and
+`spike/verify-tui.ts copy` / `completion`.
 
 ## `/status` — the consolidated projection
 

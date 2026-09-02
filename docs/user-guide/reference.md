@@ -70,6 +70,7 @@ Rules and limits:
 | `/clear` | new successor session; live mode inherited; queue dropped |
 | `/compact [focus]` | summarize older conversation; user controlled. Optional focus text (≤400 code points after trimming, longer is refused with a notice and nothing runs) is appended to the SDK's default summarizer prompt as one fixed section the summary must keep; without it the summarizer request is unchanged |
 | `/context` | known/estimated context size; Bedrock may use heuristic |
+| `/copy` | last *completed* answer's transcript text to the clipboard: OSC 52 to the terminal first (works over SSH), then `wl-copy`/`xclip`/`pbcopy` only when a display is present; one notice states bytes copied (`N of M` when over the cap) and any tool failure; rejects arguments |
 | `/effort [level]` | show or set persisted model effort |
 | `/exit`, `/quit` | quit |
 | `/export <path>` | exact replay projection; no overwrite/session-internal target |
@@ -135,6 +136,7 @@ Permission and compaction views own keyboard/paste while active. The completion 
 - `/context` and warning estimates are advisory. A known threshold crossing emits one post-turn `/compact` recommendation, rearmed only after a known drop; unknown estimates are silent.
 - `/compact` is never automatic. Overflow summarization may still be invoked by SDK conversation management, using `summaryRatio` and `preserveRecentMessages`.
 - `/export` is byte-for-byte the same formatter as offline replay.
+- `/copy` copies the same plain answer text the transcript shows and `/export` writes; while a turn runs it copies the previous completed answer, and before any answer (or right after `/clear`/`/rewind`) it says `nothing to copy`. It makes no model call and records nothing. Over SSH the OSC 52 sequence needs a terminal that accepts clipboard writes (and tmux `set-clipboard on`).
 
 ## File edits
 
