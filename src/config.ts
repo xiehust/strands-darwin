@@ -15,6 +15,7 @@ import type { BaseModelConfig, JSONValue, Model } from '@strands-agents/sdk';
 import { isValidRule } from './agent/permission-rules.js';
 import { APPROVAL_MODES, isApprovalMode, type ApprovalMode } from './agent/permission.js';
 import {
+  anthropicCacheConfig,
   bedrockCacheConfig,
   planPromptCache,
   PROMPT_CACHE_TTLS,
@@ -1676,10 +1677,14 @@ async function createAnthropicModel(config: AppConfig): Promise<Model> {
   // `params` is merged into the request body verbatim, which is how the same two
   // adaptive-thinking fields reach the native API — it has no dedicated option.
   const thinking = claudeThinkingFields(planThinking(config));
+  const cacheConfig = anthropicCacheConfig(planPromptCache(config));
   return new AnthropicModel({
     modelId: config.model,
     maxTokens: config.maxTokens,
     ...(apiKey !== undefined && { apiKey }),
+    // Tools, system prompt and last user message, one TTL — the same three cache
+    // points Bedrock gets; omitted entirely when caching is off.
+    ...(cacheConfig !== undefined && { cacheConfig }),
     // `clientConfig` is spread into the SDK's own `new Anthropic({...})`, which is
     // how a Messages-API-compatible endpoint is reached without darwin importing
     // the client package itself. Omitted entirely when nothing resolved, so the

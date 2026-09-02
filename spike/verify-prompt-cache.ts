@@ -15,6 +15,7 @@ import path from 'node:path';
 import { CachePointBlock, TextBlock } from '@strands-agents/sdk';
 
 import {
+  anthropicCacheConfig,
   applySystemPromptCachePoint,
   bedrockCacheConfig,
   planPromptCache,
@@ -110,12 +111,22 @@ function decisionTable(): void {
   assert('a non-Claude bedrock model caches nothing', !nova.enabled);
   assert('…and says why', nova.problem?.includes('nova-pro') === true);
 
-  const anthropic = planPromptCache({ ...CLAUDE_CONFIG, provider: 'anthropic', model: 'claude-sonnet-4-6' });
-  assert('the anthropic provider caches the system prompt', anthropic.parts.includes('system prompt'));
+  const anthropic = planPromptCache({
+    ...CLAUDE_CONFIG,
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-6',
+    promptCacheTtl: '1h',
+  });
   assert(
-    '…but not tools or conversation (no cacheConfig in AnthropicModelConfig)',
-    anthropic.parts.length === 1,
+    'the anthropic provider caches tools, system prompt and conversation',
+    JSON.stringify(anthropic.parts) === JSON.stringify(['tools', 'system prompt', 'conversation']),
   );
+  assert('anthropic cacheConfig carries the one shared ttl', JSON.stringify(anthropicCacheConfig(anthropic)) === JSON.stringify({ ttl: '1h' }));
+  assert(
+    'anthropic cacheConfig sets no ttl when the config has none',
+    JSON.stringify(anthropicCacheConfig({ ...anthropic, ttl: undefined })) === '{}',
+  );
+  assert('anthropic cacheConfig is absent when caching is off', anthropicCacheConfig(disabled) === undefined);
 
   const openai = planPromptCache({ ...CLAUDE_CONFIG, provider: 'openai', model: 'gpt-4o' });
   assert('darwin places no explicit cache points for openai', !openai.enabled);
@@ -141,8 +152,8 @@ function modelConfig(): void {
     bedrockCacheConfig(planPromptCache({ ...CLAUDE_CONFIG, model: 'us.amazon.nova-pro-v1:0' })) === undefined,
   );
   assert(
-    'the anthropic provider gets no bedrock cacheConfig',
-    bedrockCacheConfig(planPromptCache({ ...CLAUDE_CONFIG, provider: 'anthropic' })) === undefined,
+    'the anthropic cacheConfig carries no bedrock strategy (every Claude model caches there)',
+    !('strategy' in (anthropicCacheConfig(planPromptCache({ ...CLAUDE_CONFIG, provider: 'anthropic' })) ?? {})),
   );
 }
 

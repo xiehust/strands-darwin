@@ -248,8 +248,8 @@ export function formatPromptCache(plan: PromptCachePlan): string {
   if (plan.automatic) return ' · cache auto';
   if (!plan.enabled) return '';
   const ttl = plan.ttl ?? 'on';
-  // Only the anthropic provider ends up with a single part, and "cache on" there
-  // would overstate what is actually being cached.
+  // A single-part plan (no provider produces one today; the shape stays legal)
+  // names its part, since a bare "cache on" would overstate what is cached.
   return plan.parts.length === 1 ? ` · cache ${ttl} (${plan.parts[0]})` : ` · cache ${ttl}`;
 }
 

@@ -57,7 +57,7 @@
 | `openaiApi` | `chat` | `chat` 或 `responses` |
 | `maxTokens` | `64000` | 最大输出 token 数 |
 | `promptCache` | `true` | 仅 Claude 生效 |
-| `promptCacheTtl` | 供应商默认值（Bedrock 为 `5m`） | 每个 cache point 使用 `5m` 或 `1h` |
+| `promptCacheTtl` | 供应商默认值（`5m`） | 每个 cache point 使用 `5m` 或 `1h`；Bedrock 与 Anthropic 均生效 |
 | `thinkingEffort` | `high` | `low`、`medium`、`high`、`xhigh`、`max` |
 | `classifierModel` | 各供应商的低成本模型 | `auto` 权限模式使用的分类模型 |
 | `requestTimeoutMs` | `180000` | Bedrock 流式请求空闲超时；收到字节后重新计时 |
@@ -123,9 +123,9 @@ Claude 默认启用缓存。darwin 会给稳定的工具 schema、system prompt 
 
 | 部分 | Bedrock Claude | Anthropic API | OpenAI |
 |---|---|---|---|
-| 工具 schema | 缓存 | — | — |
+| 工具 schema | 缓存 | 缓存 | — |
 | system prompt | 缓存 | 缓存 | — |
-| 会话 | 缓存 | — | — |
+| 会话 | 缓存 | 缓存 | — |
 
 设置 `promptCache: false` 可关闭；`promptCacheTtl: "1h"` 会延长缓存时间，但写入成本更高。非 Claude 模型会明确显示不支持。摘要会重写历史，修改 `AGENTS.md`、system prompt 或工具集合也会造成缓存未命中。darwin 把 AgentSkills 目录放在工作上下文和最终 cache point 之前，避免新建/恢复请求重复注入。
 

@@ -2696,8 +2696,17 @@ Bedrock: `spike/verify-prompt-cache-live.ts` — 11,737 tokens written on turn o
 | conversation | same `cacheConfig` | cache point moved to the last user message each request; the SDK strips any earlier ones |
 | system prompt | explicit text blocks + final `CachePointBlock` | working context/cache prepared after initialize; official catalogue reordered before every model call |
 
-`AnthropicModelConfig` has **no** `cacheConfig`, so the `anthropic` provider gets the system
-prompt cache point only. Darwin adds no cache points for OpenAI because OpenAI prompt caching
+Since SDK 1.16.0 `AnthropicModelConfig` has a `cacheConfig` of the shared root `CacheConfig` shape
+(`ttl`, `toolsTTL`, `systemPromptTTL`, `messagesTTL`; `strategy` is ignored because every active
+Claude model caches). `anthropicCacheConfig(plan)` hands it only the shared `ttl` (sections default
+to on), so the `anthropic` provider caches tools, system prompt and last user message on one
+lifetime — the same three parts as Bedrock — and `planPromptCache` reports exactly those. The
+hand-placed system-prompt `CachePointBlock` stays: the SDK honours it and fills a missing TTL
+from `cacheConfig.ttl`. Live proof: `spike/verify-anthropic-live.ts` asserts turn 1 writes/reads
+and turn 2 (one call, longer history) reads more than any turn-1 call while sending < 400 uncached
+input tokens; measured 2026-09-02 through a CloudFront relay: turn 1 input 6 / write 6,115 / read
+16,883 over four calls, turn 2 input 3 / write 91 / read 6,115 (1.12.0 re-sent 836 → 1,344 → 1,867
+uncached tokens over three turns). Darwin adds no cache points for OpenAI because OpenAI prompt caching
 is provider-managed and automatic; the cache plan records that automatic state so the header,
 `/status`, and `/model` say `auto` rather than `off`, without reporting an unsupported-provider warning.
 

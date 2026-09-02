@@ -12,8 +12,9 @@
  * The placement itself belongs to the SDK; this module only decides *whether* and
  * hands the SDK its configuration:
  *
- * - tools + conversation: `BedrockModel({ cacheConfig })` appends a cache point
- *   after `toolConfig.tools` and to the last user message on every request.
+ * - tools + conversation: `BedrockModel({ cacheConfig })` and
+ *   `AnthropicModel({ cacheConfig })` append a cache point after the tool
+ *   definitions and to the last user message on every request.
  * - system prompt: a final `CachePointBlock` appended after initialization and
  *   session restore. Official AgentSkills appends its catalogue before each
  *   invocation; Darwin's later hook moves that block ahead of working context and
@@ -26,14 +27,14 @@
  * logs a `console.warn` per model construction, which would tear the Ink frame.
  */
 import { CachePointBlock, TextBlock } from '@strands-agents/sdk';
-import type { SystemPrompt } from '@strands-agents/sdk';
+import type { CacheConfig, SystemPrompt } from '@strands-agents/sdk';
 import type { BedrockCacheConfig } from '@strands-agents/sdk/models/bedrock';
 
 import type { AppConfig } from '../config.js';
 
 /**
- * Cache lifetime. Bedrock accepts `5m` (its default) and `1h`; the Anthropic API
- * has no equivalent field and ignores it.
+ * Cache lifetime. Bedrock and the Anthropic API both accept `5m` (the default)
+ * and `1h`.
  */
 export const PROMPT_CACHE_TTLS = ['5m', '1h'] as const;
 export type PromptCacheTtl = (typeof PROMPT_CACHE_TTLS)[number];
@@ -98,9 +99,16 @@ export function planPromptCache(config: AppConfig): PromptCachePlan {
         problem: undefined,
       };
     case 'anthropic':
-      // `AnthropicModelConfig` has no `cacheConfig`, so the SDK places no cache
-      // points of its own for this provider; only the one we place by hand works.
-      return { enabled: true, automatic: false, parts: ['system prompt'], ttl, problem: undefined };
+      // Every active Claude model caches, so no id check here; `AnthropicModel`
+      // honours the hand-placed system-prompt point and fills its TTL from
+      // `cacheConfig.ttl`, which keeps the three sections on one lifetime.
+      return {
+        enabled: true,
+        automatic: false,
+        parts: ['tools', 'system prompt', 'conversation'],
+        ttl,
+        problem: undefined,
+      };
     case 'openai':
       // OpenAI caching is automatic and provider-managed; darwin has no cache
       // points to configure, but the visible plan must distinguish that from off.
@@ -124,6 +132,19 @@ export function bedrockCacheConfig(plan: PromptCachePlan): BedrockCacheConfig | 
     // tools → system → messages, and equal values satisfy that trivially.
     ...(plan.ttl !== undefined && { toolsTTL: plan.ttl, messagesTTL: plan.ttl }),
   };
+}
+
+/**
+ * The `cacheConfig` for an Anthropic model, or undefined when nothing is cached.
+ *
+ * `strategy` is meaningless on this provider (the SDK caches every Claude model),
+ * so only the shared TTL is set; the tools / system prompt / conversation sections
+ * default to on and inherit it. A per-section TTL is never set, so one value keeps
+ * the three cache points in step exactly as {@link bedrockCacheConfig} does.
+ */
+export function anthropicCacheConfig(plan: PromptCachePlan): CacheConfig | undefined {
+  if (!plan.parts.includes('tools') && !plan.parts.includes('conversation')) return undefined;
+  return { ...(plan.ttl !== undefined && { ttl: plan.ttl }) };
 }
 
 /** The one agent property this module touches, so a spike can stand in for an Agent. */

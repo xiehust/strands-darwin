@@ -57,7 +57,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `openaiApi` | `chat` | `chat` or `responses` |
 | `maxTokens` | `64000` | maximum output tokens |
 | `promptCache` | `true` | Claude only |
-| `promptCacheTtl` | provider default (`5m` on Bedrock) | `5m` or `1h` at every cache point |
+| `promptCacheTtl` | provider default (`5m`) | `5m` or `1h` at every cache point; Bedrock and Anthropic |
 | `thinkingEffort` | `high` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `classifierModel` | provider-specific cheap model | model used by `auto` permission mode |
 | `requestTimeoutMs` | `180000` | Bedrock streaming idle timeout; arriving bytes reset it |
@@ -123,9 +123,9 @@ Caching is enabled by default for Claude. Darwin marks the stable tool schemas/s
 
 | Part | Bedrock Claude | Anthropic API | OpenAI |
 |---|---|---|---|
-| tool schemas | cached | — | — |
+| tool schemas | cached | cached | — |
 | system prompt | cached | cached | — |
-| conversation | cached | — | — |
+| conversation | cached | cached | — |
 
 Set `promptCache: false` to disable or `promptCacheTtl: "1h"` for a longer, more expensive write. Non-Claude models report caching unavailable. Summarization and changes to `AGENTS.md`, system prompt, or tool set naturally miss cache. Darwin keeps the AgentSkills catalogue before working context and the final cache point so fresh/resumed requests do not duplicate it.
 

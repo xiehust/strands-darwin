@@ -220,7 +220,22 @@ async function providerSwitching(): Promise<void> {
     assert('no base URL resolves with neither baseUrl nor env', resolveAnthropicBaseUrl(anthropic) === undefined);
 
     process.env['ANTHROPIC_API_KEY'] = 'sk-ant-test';
-    assert('anthropic builds once ANTHROPIC_API_KEY is set', (await createModelFromConfig(anthropic)) !== undefined);
+    const anthropicModel = await createModelFromConfig(anthropic);
+    assert('anthropic builds once ANTHROPIC_API_KEY is set', anthropicModel !== undefined);
+    // The SDK's own cacheConfig carries the three cache points (tools, system
+    // prompt, last user message); darwin only hands it the shared TTL.
+    const anthropicCache = (anthropicModel.getConfig() as { cacheConfig?: unknown }).cacheConfig;
+    assert('anthropic gets a cacheConfig with no TTL by default', JSON.stringify(anthropicCache) === '{}');
+    const hourly = await loadConfig(
+      await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6", "promptCacheTtl": "1h" }'),
+    );
+    const hourlyCache = ((await createModelFromConfig(hourly)).getConfig() as { cacheConfig?: unknown }).cacheConfig;
+    assert('promptCacheTtl reaches the anthropic cacheConfig', JSON.stringify(hourlyCache) === JSON.stringify({ ttl: '1h' }));
+    const uncached = await loadConfig(
+      await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6", "promptCache": false }'),
+    );
+    const uncachedCache = ((await createModelFromConfig(uncached)).getConfig() as { cacheConfig?: unknown }).cacheConfig;
+    assert('promptCache: false leaves anthropic without a cacheConfig', uncachedCache === undefined);
 
     process.env['ANTHROPIC_BASE_URL'] = 'https://relay.example.test';
     assert('ANTHROPIC_BASE_URL is used when baseUrl is absent', resolveAnthropicBaseUrl(anthropic) === 'https://relay.example.test');
