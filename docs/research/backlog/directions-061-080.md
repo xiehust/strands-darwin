@@ -125,7 +125,7 @@ Accepted 2026-09-01 in `ff21afd` (child session `session-20260901-152613977`, ma
 
 ## SER-048 — Add `--help`/`-h` and `--version`/`-V` to the CLI as bounded local output routed before any runtime import, and point every `CliUsageError` at `--help`
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 67
 - Score: 14
 - Importance: 3
@@ -137,7 +137,7 @@ Accepted 2026-09-01 in `ff21afd` (child session `session-20260901-152613977`, ma
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-02 in `ca7aa7c` (child session `session-20260902-024725444`, managed task `bg-42f5b885-0858-465e-8679-3af93420d7e4`, exit 0; Trellis task archived in `7c9e5bd`). New `src/cli-usage.ts` holds `CLI_USAGE` (the one grammar source), `CLI_HELP_HINT`, `HELP_FLAGS`/`VERSION_FLAGS` and `localCliAnswer(argv)`, importing only `./version.js`; `src/cli.ts` consults it first in `main()` — ahead of the `sessions`/`trajectory` routes and `parseCliArgs` — so either flag anywhere in argv wins (help before version), and the three `CliUsageError` handlers share one `reportUsageError` that keeps the exact parser message, appends one `Run \`darwin --help\` for usage.` line and exits 2; `parseCliArgs` is untouched. Host independently inspected the whole diff and re-ran `spike/verify-cli-args.ts` (43/43, up from 12: all four flags' stdout/stderr/exit, version equal to `package.json`, no `.darwin/` created in a fresh HOME, help-wins/version-wins combinations, the hint once per error on TUI/headless/trajectory/sessions/value paths, an import-graph scan of `cli-usage.ts`+`version.ts`, and both reference docs containing `CLI_USAGE` byte-for-byte), `pnpm typecheck`, full `pnpm test` (exit 0, zero FAIL lines), `pnpm build`, then `node dist/src/cli.js --help` (grammar, exit 0), `-V` (`darwin 0.0.1`, exit 0) and `--bogus` (message + hint, exit 2); `git status --porcelain` clean. Docs: `reference.md`/`reference.zh-CN.md` quote the grammar verbatim, both READMEs gain `darwin --help`, `strands-sdk-contracts.md` grammar block and `error-handling.md` usage row updated. Product choice accepted by the Host: `--help` anywhere in argv wins, so `darwin trajectory search --help` prints the top-level grammar rather than searching for the literal string (stated in the spec). Recorded in `docs/iteration-log.md` Batch 71.
 
 ### Notes / blockers / abandonment reason
 
@@ -145,7 +145,7 @@ Not started.
 
 ## SER-049 — Refuse unknown keys in `~/.darwin/config.json` (root and `models` entries) with a `ConfigError` that names the key, where it was found and the nearest known key
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 68
 - Score: 12
 - Importance: 3
