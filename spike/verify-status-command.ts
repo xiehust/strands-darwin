@@ -150,6 +150,12 @@ function testEveryFactPresent(): void {
     text.includes('cache read 9,000') && text.includes('cache write 100'));
   assert('the context estimate reuses the /context value',
     text.includes('~2,100 tokens · 1% of 200,000 window · 5 message(s)'));
+  // The anchored shape has to reach `/status` through the same shared renderer, or
+  // the two surfaces would describe one estimate two different ways.
+  assert('a measured context base reaches /status through the same renderer',
+    formatStatusReport(facts({
+      context: { estimatedTokens: 128_431, messageCount: 84, windowTokens: 200_000, measuredTokens: 126_900, tailTokens: 1_531 },
+    })).includes('~128,431 tokens (measured 126,900 + ~1,531 new) · 64% of 200,000 window · 84 message(s)'));
 
   // The model-line suffixes are the header's own renderers, exported from one place.
   assert('cache suffix formatter matches the header vocabulary', formatPromptCache(CACHE_ON) === ' · cache 5m');

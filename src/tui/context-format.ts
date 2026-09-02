@@ -2,15 +2,20 @@
  * Pure presentation for `/context`: how big the conversation has grown and how
  * much of the model's window it occupies.
  *
- * Numbers are request-size estimates, not billing figures. Bedrock may supply a
- * native count; other providers or unsupported calls use the SDK character
- * heuristic. An unknown window is said out loud rather than silently guessed.
+ * Numbers are request-size estimates, not billing figures. When the runtime has a
+ * measurement anchor — the prompt-token total the provider reported for the most
+ * recent completed model call — the line says so and names the measured base plus
+ * the estimated tail, because "measured 126,900 + ~1,531 new" and "~128,431" are
+ * different claims and only one of them is what happened. Without an anchor the line
+ * is the pre-anchor wording, unchanged: a whole-request character heuristic.
+ * An unknown window is said out loud rather than silently guessed.
  */
 import type { ContextEstimate } from '../agent/runtime.js';
 
 /** One transcript line: tokens, window share, and message count. */
 export function formatContextReport(estimate: ContextEstimate): string {
-  return `estimated context — ${formatContextValue(estimate)}`;
+  const label = estimate.measuredTokens === undefined ? 'estimated context' : 'context';
+  return `${label} — ${formatContextValue(estimate)}`;
 }
 
 /**
@@ -19,12 +24,24 @@ export function formatContextReport(estimate: ContextEstimate): string {
  * reuses-`formatReplay` precedent, at line scale).
  */
 export function formatContextValue(estimate: ContextEstimate): string {
-  const tokens = `~${groupDigits(estimate.estimatedTokens)} tokens`;
+  const tokens = `~${groupDigits(estimate.estimatedTokens)} tokens${formatBasis(estimate)}`;
   const window =
     estimate.windowTokens === undefined
       ? 'window unknown'
       : `${formatWindowShare(estimate.estimatedTokens, estimate.windowTokens)} of ${groupDigits(estimate.windowTokens)} window`;
   return `${tokens} · ${window} · ${estimate.messageCount} message(s)`;
+}
+
+/**
+ * How the total was arrived at, when part of it was measured: `(measured M + ~T new)`,
+ * or `(measured M + tail unknown)` when counting the appended messages failed. Empty
+ * when there is no measurement — an absent metric is absent, never rendered as 0.
+ */
+function formatBasis(estimate: ContextEstimate): string {
+  if (estimate.measuredTokens === undefined) return '';
+  const tail =
+    estimate.tailTokens === undefined ? 'tail unknown' : `~${groupDigits(estimate.tailTokens)} new`;
+  return ` (measured ${groupDigits(estimate.measuredTokens)} + ${tail})`;
 }
 
 /**

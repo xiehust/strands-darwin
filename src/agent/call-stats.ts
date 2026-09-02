@@ -16,7 +16,7 @@
  * through `create()`, whose stats start empty.
  */
 import type { AppConfig } from '../config.js';
-import { formatUsageValue, sumUsage, usageBuckets, type UsageTotals } from './usage.js';
+import { formatUsageValue, requestInputTokens, sumUsage, type UsageTotals } from './usage.js';
 
 /**
  * How many recent completed calls the advisory window keeps. Ten is enough to see
@@ -95,7 +95,7 @@ export function recordCompletedCall(
   stats: SessionCallStats,
   call: CompletedModelCall,
 ): SessionCallStats {
-  const usage = usableUsage(call.message?.metadata?.usage);
+  const usage = readCallUsage(call.message?.metadata?.usage);
   const toolUses = countToolUses(call.message?.content);
   return {
     calls: stats.calls + 1,
@@ -152,13 +152,7 @@ export function averageRequestInputTokens(
   config: AppConfig,
 ): number | undefined {
   if (stats.usage === undefined || stats.meteredCalls <= 0) return undefined;
-  const buckets = usageBuckets(stats.usage, config);
-  const submitted =
-    config.provider === 'openai' && config.openaiApi === 'responses'
-      ? stats.usage.inputTokens
-      : buckets.input === undefined
-        ? undefined
-        : buckets.input + (buckets.cacheRead ?? 0) + (buckets.cacheWrite ?? 0);
+  const submitted = requestInputTokens(stats.usage, config);
   if (submitted === undefined) return undefined;
   return Math.round(submitted / stats.meteredCalls);
 }
@@ -177,8 +171,13 @@ export function describeCallEfficiency(stats: SessionCallStats, config: AppConfi
   );
 }
 
-/** One call's provider counters as `UsageTotals`, or `undefined` when unusable. */
-function usableUsage(value: unknown): UsageTotals | undefined {
+/**
+ * One call's provider counters as `UsageTotals`, or `undefined` when unusable.
+ *
+ * Exported so the `/context` measurement anchor reads a completed call's usage
+ * through this same defensive reader instead of writing a second one.
+ */
+export function readCallUsage(value: unknown): UsageTotals | undefined {
   if (value === null || typeof value !== 'object') return undefined;
   const { inputTokens, outputTokens, cacheReadInputTokens, cacheWriteInputTokens } = value as Record<
     string,

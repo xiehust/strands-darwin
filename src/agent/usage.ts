@@ -42,6 +42,29 @@ export function usageBuckets(usage: UsageTotals, config: AppConfig): UsageBucket
   return { input, output: usage.outputTokens, cacheRead, cacheWrite };
 }
 
+/**
+ * How many tokens one call actually submitted — the prompt side of the request,
+ * cache hits included.
+ *
+ * The split follows {@link usageBuckets}: OpenAI Responses reports cache activity
+ * as subsets of `input_tokens`, so its input *is* the request total, while every
+ * other provider reports cache reads/writes beside uncached input, so the request
+ * is their sum (an unreported cache counter contributing nothing rather than
+ * blocking the total). `undefined` when the buckets cannot split honestly —
+ * unknown, never 0.
+ *
+ * Shared by `/usage`'s per-call average and the `/context` measurement anchor, so
+ * the two cannot disagree about what a request cost. Cache reads are counted on
+ * purpose: they still occupy the context window, which is the question `/context`
+ * answers — this is deliberately not a billing view.
+ */
+export function requestInputTokens(usage: UsageTotals, config: AppConfig): number | undefined {
+  const buckets = usageBuckets(usage, config);
+  if (config.provider === 'openai' && config.openaiApi === 'responses') return usage.inputTokens;
+  if (buckets.input === undefined) return undefined;
+  return buckets.input + (buckets.cacheRead ?? 0) + (buckets.cacheWrite ?? 0);
+}
+
 export interface UsageRow {
   label: string;
   /** Undefined means the provider/API did not report this metric. */

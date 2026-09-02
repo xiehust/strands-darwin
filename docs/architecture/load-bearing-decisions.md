@@ -255,6 +255,52 @@ the live frame gains no row; restating what the header shows is the point, becau
 header is the use case. The fifteenth built-in grew `MAX_COMPLETIONS` again; the free checks are
 `spike/verify-status-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion` / `mcp`.
 
+## `/context` — a measured base plus a one-turn tail
+
+**The context estimate anchors on what the provider said the last request cost, and estimates only
+what has been appended since** (`src/agent/context-anchor.ts`, `AgentRuntime.contextEstimate`,
+`src/tui/context-format.ts`; spec: `backend/strands-sdk-contracts.md` § `/context` counting).
+darwin sets `useNativeTokenCount: true`, but Bedrock's `CountTokens` refuses the inference-profile
+ids darwin requires, so the SDK caches the model as skipped and every count is
+`estimateTokensHeuristic` — `chars/4` text, `chars/2` tool-spec JSON. Meanwhile the provider has
+been reporting the real prompt size of every call all along, and `AgentRuntime` already observed
+those counters for `/usage`. The anchor is the one hop that was missing: on each
+`afterModelCallEvent` with `stopData`, `requestInputTokens` (shared with `/usage`'s per-call
+average, so the two cannot disagree) yields that call's submitted total — uncached input plus cache
+read and write, because a cached prefix still occupies the window — and it is stored with
+`agent.messages.length` and the boundary message *by reference*. `/context` then reports
+`measured base + countTokens(tail)`, which turns the largest and most heuristic-hostile part of a
+request (system prompt plus every `toolSpec`) into a measured number and bounds the estimated part
+to one call's worth of tail instead of a whole session's accumulation.
+
+Every way the base can stop being true ends in absence, never in a repair: `resolveAnchor` requires
+both that the history has only grown and that the same object still sits on the boundary, so a
+`/compact` rewrite (shorter, or same length with different objects) drops it; `/clear` and `/rewind`
+build successor runtimes through `create()` and start without one; `changeModel()` clears it
+explicitly, because a measurement made by another tokenizer with another prompt overhead describes a
+request this model would not have sent; and a resumed session reports the plain heuristic line until
+its first metered call. A call that measures nothing — failed attempt, unreported counters, an
+OpenAI-Responses split that cannot be made honestly — installs nothing and invalidates nothing: the
+previous measurement is still the best available. The observer has its own `try/catch` and its own
+broken latch beside the call-stats one, on the trajectory observer's terms: it sits between
+`stream()` and `yield`, so a malformed payload costs the anchor, never the turn. A failed tail count
+keeps the base and says `tail unknown` rather than discarding the measurement it was refining.
+
+The presentation follows the `usageBuckets` honesty rule. With a measurement the line names its
+basis — `context — ~128,431 tokens (measured 126,900 + ~1,531 new) · 64% of 200,000 window` —
+because "measured 126,900 plus an estimate" and "~128,431" are different claims; without one it is
+the pre-anchor wording, byte for byte. `/status` renders the same value through the same
+`formatContextValue`, and the context-pressure latch consumes the same estimate, so it gets more
+accurate without gaining a second threshold.
+
+Rejected, and recorded so it is not re-proposed: fitting a `measured / heuristic` correction factor
+and scaling future heuristics by it. That trades one unknown for another — the ratio is provider-,
+tokenizer- and content-dependent (images, reasoning blocks and JSON tool specs each carry their own
+error), it needs a smoothing window and clamps nobody can justify, and a wrong ratio silently scales
+everything downstream, including the pressure advisory. The anchor form has no fitted parameter.
+Free coverage: `spike/verify-context-anchor.ts` (pure state plus a real offline runtime) and
+`spike/verify-context-format.ts`; `verify-status-command.ts` pins the shared row.
+
 ## Context pressure — advise once, never compact implicitly
 
 **High context pressure is a transcript advisory over the existing estimate and configurable latch,

@@ -129,6 +129,7 @@ import {
   type CompletedModelCall,
   type SessionCallStats,
 } from './call-stats.js';
+import { anchorFromCall, resolveAnchor, type ContextAnchor } from './context-anchor.js';
 
 /** Test seam for proving startup unwind after resources have been acquired. */
 type RuntimeCreateCheckpoint = 'after-initialize';
@@ -263,6 +264,18 @@ export interface ContextEstimate {
   messageCount: number;
   /** The model's context window, when the SDK knows it for this model id. */
   windowTokens: number | undefined;
+  /**
+   * The measured prompt-token total of the most recent completed model call, when a
+   * live anchor supplied the base for {@link estimatedTokens}. Absent means no
+   * measurement was available — the `usageBuckets` rule: unknown, never 0.
+   */
+  measuredTokens?: number;
+  /**
+   * The estimated size of the messages appended since that call — 0 for an empty
+   * tail, absent when the tail count itself failed (the measured base is still
+   * reported rather than discarded).
+   */
+  tailTokens?: number;
 }
 
 export interface RuntimeInfo {
@@ -380,6 +393,23 @@ export class AgentRuntime {
    * and can never become a second reason a turn dies.
    */
   private callStatsBroken = false;
+
+  /**
+   * The most recent completed model call's measured prompt size, with where the
+   * conversation stood when it was measured — the base {@link contextEstimate} builds
+   * on. Parent-only and session-scoped for the same reason as the call stats: only
+   * this runtime's `send()` installs it, and `/clear`/`/rewind` successors start
+   * without one. `undefined` until a metered call completes, which is also what a
+   * resumed session reports until its first turn.
+   */
+  private contextAnchor: ContextAnchor | undefined = undefined;
+
+  /**
+   * Latched on the first anchor failure, separately from {@link callStatsBroken}: the
+   * two observers must not be able to break each other, and a broken anchor degrades
+   * `/context` to the plain heuristic line rather than to a wrong number.
+   */
+  private contextAnchorBroken = false;
 
   /** Serializes the bounded list/save/list critical section across concurrent callers. */
   private rewindCaptureTail: Promise<void> = Promise.resolve();
@@ -922,6 +952,7 @@ export class AgentRuntime {
         // `stream()` and the `yield`, so `/usage` asked mid-turn already counts the
         // calls that completed. Cannot throw — see {@link observeCallStats}.
         this.observeCallStats(event);
+        this.observeContextAnchor(event);
         yield event;
       }
       this.memoryController?.seal(
@@ -1063,18 +1094,52 @@ export class AgentRuntime {
 
   /**
    * Estimates the context the next model request would carry, without sending it:
-   * this reads messages and never mutates them, so it is safe to call mid-turn. The
-   * count itself is the SDK's character heuristic in practice — `useNativeTokenCount`
-   * is on, but Bedrock's `CountTokens` refuses the inference-profile ids darwin
-   * requires (see README "Known limitations"), so the first attempt per model may
-   * make one cheap non-streaming call that fails and is then cached as skipped. The
-   * window comes from the SDK's own per-model table, `undefined` when unknown.
+   * this reads messages and never mutates them, so it is safe to call mid-turn.
+   *
+   * Two shapes, one honest reading. With a live measurement anchor
+   * (`src/agent/context-anchor.ts`) the base is the provider's own prompt-token total
+   * for the most recent completed call — system prompt and every `toolSpec` included,
+   * measured rather than guessed — and only the messages appended since that call are
+   * counted here, which bounds the estimated part to one call's worth of tail. Without
+   * one (a fresh or resumed session before its first metered call, after `/compact`,
+   * after a `/model` switch) it falls back to counting the whole assembled request.
+   *
+   * Either way the count itself is the SDK's character heuristic in practice —
+   * `useNativeTokenCount` is on, but Bedrock's `CountTokens` refuses the
+   * inference-profile ids darwin requires (see README "Known limitations"), so the
+   * first attempt per model may make one cheap non-streaming call that fails and is
+   * then cached as skipped. The window comes from the SDK's own per-model table,
+   * `undefined` when unknown.
    */
   async contextEstimate(): Promise<ContextEstimate> {
+    const messages = this.agent.messages;
+    const windowTokens = this.model.getConfig().contextWindowLimit;
+    const anchor = resolveAnchor(this.contextAnchor, messages);
+    if (anchor === undefined) {
+      return {
+        estimatedTokens: await countConversationTokens(this.model, this.agent),
+        messageCount: messages.length,
+        windowTokens,
+      };
+    }
+    // Only the tail is estimated, and deliberately without `systemPrompt`/`toolSpecs`:
+    // the anchor already measured those, and counting them again would double them.
+    const tail = messages.slice(anchor.messageCount);
+    let tailTokens: number | undefined = 0;
+    if (tail.length > 0) {
+      try {
+        tailTokens = await this.model.countTokens(tail, {});
+      } catch {
+        // A failed tail count must not throw away the measurement it was refining.
+        tailTokens = undefined;
+      }
+    }
     return {
-      estimatedTokens: await countConversationTokens(this.model, this.agent),
-      messageCount: this.agent.messages.length,
-      windowTokens: this.model.getConfig().contextWindowLimit,
+      estimatedTokens: anchor.requestTokens + (tailTokens ?? 0),
+      messageCount: messages.length,
+      windowTokens,
+      measuredTokens: anchor.requestTokens,
+      ...(tailTokens === undefined ? {} : { tailTokens }),
     };
   }
 
@@ -1241,6 +1306,9 @@ export class AgentRuntime {
     this.agent.model = model;
     this.model = model;
     this.liveConfig = next;
+    // The measured `/context` base came from the previous model's tokenizer and its
+    // prompt overhead, and describes a request this model would not have sent.
+    this.contextAnchor = undefined;
     this.subagents.updateConfig(next);
     this.codexHooks?.updateConfig(next);
     this.thinkingPlan = thinkingPlan;
@@ -1309,6 +1377,29 @@ export class AgentRuntime {
       this.callStatsState = recordCompletedCall(this.callStatsState, stopData);
     } catch {
       this.callStatsBroken = true;
+    }
+  }
+
+  /**
+   * Folds one stream event into the `/context` measurement anchor: a completed model
+   * call's provider counters say exactly how large the request it just sent was, so
+   * that number replaces the heuristic base for the next estimate.
+   *
+   * Same observer discipline as {@link observeCallStats}, with its own latch so
+   * neither can break the other. A call that measures nothing (failed attempt,
+   * unreported counters, a split that cannot be made honestly) leaves the previous
+   * anchor in place — it is still the best measurement available — rather than
+   * downgrading `/context` to a pure heuristic mid-session.
+   */
+  private observeContextAnchor(event: AgentStreamEvent): void {
+    if (this.contextAnchorBroken || event.type !== 'afterModelCallEvent') return;
+    try {
+      const stopData = (event as { stopData?: CompletedModelCall }).stopData;
+      if (stopData === undefined) return;
+      const anchor = anchorFromCall(stopData, this.agent.messages, this.liveConfig);
+      if (anchor !== undefined) this.contextAnchor = anchor;
+    } catch {
+      this.contextAnchorBroken = true;
     }
   }
 

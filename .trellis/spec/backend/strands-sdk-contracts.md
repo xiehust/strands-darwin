@@ -2072,7 +2072,8 @@ window metadata changes.
 ```text
 BedrockModel({ useNativeTokenCount: true })
 OpenAIModel({ contextWindowLimit?: number })
-/context -> estimated context — ~N tokens · P% of W window · M message(s)
+/context -> estimated context — ~N tokens · P% of W window · M message(s)      (no measurement)
+/context -> context — ~N tokens (measured B + ~T new) · P% of W window · M message(s)
 ```
 
 ### 3. Contracts
@@ -2104,6 +2105,45 @@ estimated request size, not a billing metric.
 
 `spike/verify-config.ts` asserts native Bedrock counting, prefixed/unprefixed known OpenAI metadata,
 and unknown-model degradation. `spike/verify-context-format.ts` pins presentation.
+
+### Measurement anchor: measured base plus counted tail
+
+`/context` prefers the measurement the provider already reported over its own heuristic. On each
+`afterModelCallEvent` carrying `stopData`, `AgentRuntime.observeContextAnchor` stores that call's
+submitted prompt total — `requestInputTokens(usage, config)`, the same arithmetic `/usage`'s per-call
+average uses: OpenAI Responses' `inputTokens` (cache already inside it), otherwise uncached input
+plus cache read plus cache write, because a cached prefix still occupies the window. This is a
+window-occupancy figure and deliberately not a billing view. Stored with it: `agent.messages.length`
+at that moment and the boundary message by object reference.
+
+`contextEstimate()` then reports `measured base + countTokens(tail, {})`, where the tail is
+`messages.slice(anchor.messageCount)` — counted through the same SDK counter, never a second
+estimator, and deliberately without `systemPrompt`/`toolSpecs`, which the anchor already measured.
+`ContextEstimate.measuredTokens`/`tailTokens` are present only when a measurement was used; absence
+means not measured, never `0` (`usageBuckets` rule). The system prompt's `<working-context>` is
+re-derived each run, so the base describes the previous call's prompt: every completed call refreshes
+it, which is what bounds the drift to one call.
+
+A fitted `measured / heuristic` correction factor is rejected: provider-, tokenizer- and
+content-dependent, requiring unjustifiable smoothing/clamps, and silently scaling every downstream
+consumer including the pressure advisory. Do not reintroduce it.
+
+| Condition | Result |
+|---|---|
+| Completed call, usable counters | Install anchor; next estimate is measured base + tail |
+| Failed call, unreported counters, unsplittable Responses reading, empty history | Install nothing, invalidate nothing — previous measurement stays |
+| History only appended to | Anchor resolves; growth is charged to the tail, base unchanged |
+| History shortened or rewritten (`/compact`) | `resolveAnchor` drops it; whole-request heuristic line returns |
+| `/model` switch | `changeModel()` clears it explicitly (foreign tokenizer/prompt overhead) |
+| `/clear`, `/rewind`, fresh or resumed session | No anchor until the first metered call |
+| Tail `countTokens` throws | Keep the base, report `tailTokens` absent (`tail unknown`) |
+| Observer throws | Latch the anchor broken (separate from call stats); never fail the turn |
+
+Presentation is shared with `/status` through `formatContextValue`: with a measurement the line reads
+`context — ~N tokens (measured M + ~T new) · …`; without one it stays byte-identical to the
+pre-anchor `estimated context — ~N tokens · …`. `spike/verify-context-anchor.ts` covers the pure
+state and a real offline runtime (installation, invalidation matrix, tail-only counting, degradation);
+`spike/verify-context-format.ts` and `verify-status-command.ts` pin the two rendered shapes.
 
 ### Context-pressure advisory
 

@@ -1,5 +1,5 @@
 /** Pure formatting contracts for the /context report. No model, no network. */
-import { createContextWarnLatch, formatContextReport, formatWindowShare } from '../src/tui/context-format.js';
+import { createContextWarnLatch, formatContextReport, formatContextValue, formatWindowShare } from '../src/tui/context-format.js';
 import { initialTurnState, turnReducer, type TurnState } from '../src/tui/turn-state.js';
 import { assert, header, report } from './shared.js';
 
@@ -25,6 +25,53 @@ assert('an unknown window is said out loud instead of guessed',
 assert('an empty conversation still reports honestly',
   formatContextReport({ estimatedTokens: 0, messageCount: 0, windowTokens: 200_000 }) ===
   'estimated context — ~0 tokens · 0% of 200,000 window · 0 message(s)');
+
+header('/context — report line with a measured base');
+assert('a measured base is named, and stops the line calling itself merely estimated',
+  formatContextReport({
+    estimatedTokens: 128_431,
+    messageCount: 84,
+    windowTokens: 200_000,
+    measuredTokens: 126_900,
+    tailTokens: 1_531,
+  }) ===
+  'context — ~128,431 tokens (measured 126,900 + ~1,531 new) · 64% of 200,000 window · 84 message(s)');
+assert('an empty tail says so rather than hiding the basis',
+  formatContextReport({
+    estimatedTokens: 126_900,
+    messageCount: 12,
+    windowTokens: 200_000,
+    measuredTokens: 126_900,
+    tailTokens: 0,
+  }) ===
+  'context — ~126,900 tokens (measured 126,900 + ~0 new) · 63% of 200,000 window · 12 message(s)');
+assert('a failed tail count keeps the measurement and admits the gap',
+  formatContextReport({
+    estimatedTokens: 126_900,
+    messageCount: 12,
+    windowTokens: 200_000,
+    measuredTokens: 126_900,
+  }) ===
+  'context — ~126,900 tokens (measured 126,900 + tail unknown) · 63% of 200,000 window · 12 message(s)');
+assert('an unknown window is still said out loud with a measured base',
+  formatContextReport({
+    estimatedTokens: 5_000,
+    messageCount: 4,
+    windowTokens: undefined,
+    measuredTokens: 4_900,
+    tailTokens: 100,
+  }) ===
+  'context — ~5,000 tokens (measured 4,900 + ~100 new) · window unknown · 4 message(s)');
+// The measured base is a basis, not a second total: the share and the token figure
+// are still computed from `estimatedTokens` alone.
+assert('the window share follows the total, not the measured part',
+  formatContextValue({
+    estimatedTokens: 160_000,
+    messageCount: 9,
+    windowTokens: 200_000,
+    measuredTokens: 100_000,
+    tailTokens: 60_000,
+  }).includes('80% of 200,000 window'));
 
 header('/context — pressure notice latch');
 const KNOWN_WINDOW = 1_000_000;
