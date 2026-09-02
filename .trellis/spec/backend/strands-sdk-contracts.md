@@ -1796,6 +1796,13 @@ tool call is silently denied with no prompt shown.
   Both `openai` and `@anthropic-ai/sdk` are now direct dependencies (the latter pinned to the
   SDK's peer range `^0.109.1` — `pnpm peers check` must stay clean), so the `ConfigError`
   wrapper only fires on a pruned install.
+- Context window: the window `/context`, `/status` and the pressure advice use is
+  `model.getConfig().contextWindowLimit`, which the SDK fills from its static `CONTEXT_WINDOW_LIMITS`
+  table (`models/defaults.js`, cross-region prefixes stripped) and darwin fills for `openai.`-prefixed
+  Mantle ids from `OPENAI_CONTEXT_WINDOW_LIMITS`. The optional `contextWindowLimit` model key (whole
+  tokens ≥ 1, every provider) is passed explicitly and wins over both tables; absent, nothing is passed
+  so the lookup is untouched and an unknown id stays `window unknown` — never the SDK's 200,000
+  utilization fallback. Coverage: `verify-config.ts` `contextWindowLimitField`.
 - Anthropic base URL: `baseUrl` is an anthropic-only `MODEL_KEYS` entry validated as an
   `http(s)` URL; `resolveAnthropicBaseUrl()` decides `baseUrl → ANTHROPIC_BASE_URL → undefined`
   (client default) and the result reaches the SDK only as `clientConfig: { baseURL }` — never a

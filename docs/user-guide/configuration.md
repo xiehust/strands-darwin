@@ -56,6 +56,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `bedrockMantle` | `false` | OpenAI provider via AWS; mutually exclusive with `apiKeyEnv` |
 | `openaiApi` | `chat` | `chat` or `responses` |
 | `maxTokens` | `64000` | maximum output tokens |
+| `contextWindowLimit` | SDK per-model table, else unknown | whole tokens; overrides the table for `/context`, `/status` and the context-pressure advice |
 | `promptCache` | `true` | Claude only |
 | `promptCacheTtl` | provider default (`5m`) | `5m` or `1h` at every cache point; Bedrock and Anthropic |
 | `thinkingEffort` | `high` | `low`, `medium`, `high`, `xhigh`, `max` |

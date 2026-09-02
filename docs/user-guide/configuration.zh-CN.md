@@ -56,6 +56,7 @@
 | `bedrockMantle` | `false` | OpenAI provider 通过 AWS 调用；不可与 `apiKeyEnv` 同时使用 |
 | `openaiApi` | `chat` | `chat` 或 `responses` |
 | `maxTokens` | `64000` | 最大输出 token 数 |
+| `contextWindowLimit` | SDK 内置模型表，否则未知 | 整数 token 数；覆盖内置表，用于 `/context`、`/status` 和上下文压力提示 |
 | `promptCache` | `true` | 仅 Claude 生效 |
 | `promptCacheTtl` | 供应商默认值（`5m`） | 每个 cache point 使用 `5m` 或 `1h`；Bedrock 与 Anthropic 均生效 |
 | `thinkingEffort` | `high` | `low`、`medium`、`high`、`xhigh`、`max` |

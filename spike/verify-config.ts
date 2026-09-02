@@ -1270,6 +1270,64 @@ async function unknownKeys(): Promise<void> {
  * unknown keys refused, a documented key the schema lacks is a setting nobody
  * can write, and a schema key the docs lack is a setting nobody can find.
  */
+async function contextWindowLimitField(): Promise<void> {
+  header('config — contextWindowLimit overrides the SDK and Mantle tables');
+
+  const windowOf = (model: Model): number | undefined =>
+    (model.getConfig() as { contextWindowLimit?: number }).contextWindowLimit;
+
+  // Absent: the SDK table decides, and an id it does not know stays unknown.
+  const known = await loadConfig(await writeConfig('{ "provider": "bedrock", "model": "global.anthropic.claude-sonnet-4-6" }'));
+  assert('an SDK-known bedrock id resolves its window from the table', windowOf(await createModelFromConfig(known)) === 1_000_000);
+  const unknown = await loadConfig(await writeConfig('{ "provider": "bedrock", "model": "us.example.mystery-model-v1" }'));
+  assert('an unknown id has no window without the field', windowOf(await createModelFromConfig(unknown)) === undefined);
+  assert('the field is absent from the loaded config when unset', unknown.contextWindowLimit === undefined);
+
+  // Present: the explicit value wins on every provider.
+  const bedrock = await loadConfig(
+    await writeConfig('{ "provider": "bedrock", "model": "us.example.mystery-model-v1", "contextWindowLimit": 400000 }'),
+  );
+  assert('contextWindowLimit loads as a model field', bedrock.contextWindowLimit === 400000);
+  assert('bedrock passes the configured window to the model', windowOf(await createModelFromConfig(bedrock)) === 400000);
+  const overridden = await loadConfig(
+    await writeConfig('{ "provider": "bedrock", "model": "global.anthropic.claude-sonnet-4-6", "contextWindowLimit": 200000 }'),
+  );
+  assert('an explicit window beats the SDK table', windowOf(await createModelFromConfig(overridden)) === 200000);
+
+  const savedKey = process.env['ANTHROPIC_API_KEY'];
+  process.env['ANTHROPIC_API_KEY'] = 'sk-ant-test';
+  try {
+    const anthropic = await loadConfig(
+      await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6", "contextWindowLimit": 500000 }'),
+    );
+    assert('anthropic passes the configured window to the model', windowOf(await createModelFromConfig(anthropic)) === 500000);
+  } finally {
+    if (savedKey === undefined) delete process.env['ANTHROPIC_API_KEY'];
+    else process.env['ANTHROPIC_API_KEY'] = savedKey;
+  }
+
+  const mantle = await loadConfig(
+    await writeConfig(
+      '{ "provider": "openai", "model": "openai.gpt-5.6-sol", "bedrockMantle": true, "openaiApi": "responses", ' +
+        '"region": "us-east-1", "contextWindowLimit": 128000 }',
+    ),
+  );
+  assert("an explicit window beats darwin's Mantle table", windowOf(await createModelFromConfig(mantle)) === 128000);
+
+  // Refusals name the key and the rule.
+  for (const [what, value, needle] of [
+    ['a fractional window is refused', '1000.5', 'whole number'],
+    ['a zero window is refused', '0', 'at least 1'],
+    ['a string window is refused', '"200k"', 'finite number'],
+  ] as const) {
+    const message = await expectConfigError(
+      what,
+      async () => loadConfig(await writeConfig(`{ "provider": "bedrock", "model": "global.anthropic.claude-sonnet-4-6", "contextWindowLimit": ${value} }`)),
+    );
+    assert(`…and says why (${needle})`, message.includes('"contextWindowLimit"') && message.includes(needle));
+  }
+}
+
 async function documentedKeys(): Promise<void> {
   header('config — every documented key is known, every known key is documented');
 
@@ -1313,6 +1371,7 @@ async function documentedKeys(): Promise<void> {
     apiKeyEnv: 'UNUSED_KEY',
     bedrockMantle: false,
     maxTokens: 4096,
+    contextWindowLimit: 250000,
     thinkingEffort: 'low',
     promptCache: true,
     promptCacheTtl: '5m',
@@ -1340,6 +1399,7 @@ async function documentedKeys(): Promise<void> {
   const flat = await loadConfig(await writeConfig(JSON.stringify(flatFixture)));
   assert('a flat file using every documented Bedrock-compatible key loads',
     flat.model === 'us.anthropic.claude-sonnet-4-6' && flat.permissionMode === 'plan' && flat.requestTimeoutMs === 1000);
+  assert('the flat file carries its contextWindowLimit', flat.contextWindowLimit === 250000);
 
   const array = await loadConfig(
     await writeConfig(
@@ -1373,6 +1433,7 @@ async function main(): Promise<void> {
   await unknownKeys();
   await documentedKeys();
   await requestTimeout();
+  await contextWindowLimitField();
   await contextWarnRatioField();
   await memoryHorizonField();
   await contextOffloadFields();

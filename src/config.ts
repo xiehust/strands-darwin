@@ -137,6 +137,14 @@ export interface ModelFields {
   openaiApi?: OpenAIApiMode;
   maxTokens: number;
   /**
+   * Total context window of the model in tokens, for `/context`, `/status` and the
+   * context-pressure advice. Optional: unset, the SDK's built-in per-model table
+   * decides (plus darwin's own table for `openai.`-prefixed Mantle ids), and an id
+   * neither knows reads `window unknown`. An explicit value always wins over both
+   * tables — the SDK never re-resolves a value that was set by hand.
+   */
+  contextWindowLimit?: number;
+  /**
    * Prompt caching, on by default. darwin re-sends a large unchanging prefix every
    * turn (tool schemas, the assembled system prompt, the conversation so far), so
    * the cache-write premium pays for itself almost immediately. Only Claude models
@@ -302,6 +310,7 @@ export const MODEL_KEYS = [
   'bedrockMantle',
   'openaiApi',
   'maxTokens',
+  'contextWindowLimit',
   'thinkingEffort',
   'promptCache',
   'promptCacheTtl',
@@ -911,6 +920,16 @@ function validateModelFields(input: Record<string, unknown>, where: string): Mod
     maxTokens: numberField(input, 'maxTokens', where, { min: 1 }) ?? DEFAULTS.maxTokens,
     promptCache: booleanField(input, 'promptCache', where) ?? DEFAULTS.promptCache,
   };
+
+  // Whole tokens only: the SDK divides by it for utilization and the TUI prints it
+  // grouped, so a fraction would be both meaningless and ugly.
+  const contextWindowLimit = numberField(input, 'contextWindowLimit', where, { min: 1 });
+  if (contextWindowLimit !== undefined) {
+    if (!Number.isInteger(contextWindowLimit)) {
+      throw new ConfigError(`${where}: "contextWindowLimit" must be a whole number of tokens, got ${contextWindowLimit}.`);
+    }
+    fields.contextWindowLimit = contextWindowLimit;
+  }
 
   // Checked rather than passed through: an unsupported TTL is only rejected once
   // the first request reaches Bedrock, as an opaque ValidationException.
@@ -1632,6 +1651,7 @@ function createBedrockModel(config: AppConfig): Model {
     region: resolveRegion(config.region),
     modelId: config.model,
     maxTokens: config.maxTokens,
+    ...configuredContextWindow(config),
     // `/context` and proactive context management use Bedrock's native
     // CountTokensCommand. The SDK caches unsupported/IAM failures and falls back
     // to its character heuristic, so enabling this cannot break later turns.
@@ -1681,6 +1701,7 @@ async function createAnthropicModel(config: AppConfig): Promise<Model> {
   return new AnthropicModel({
     modelId: config.model,
     maxTokens: config.maxTokens,
+    ...configuredContextWindow(config),
     ...(apiKey !== undefined && { apiKey }),
     // Tools, system prompt and last user message, one TTL — the same three cache
     // points Bedrock gets; omitted entirely when caching is off.
@@ -1714,7 +1735,8 @@ async function createOpenAIModel(config: AppConfig): Promise<Model> {
       ? { bedrockMantleConfig: { region: resolveRegion(config.region) } }
       : optionalApiKey(readApiKey(config));
 
-  const contextWindowLimit = openAIContextWindowLimit(config.model);
+  // The user's window beats darwin's Mantle table, which beats the SDK's own.
+  const contextWindowLimit = config.contextWindowLimit ?? openAIContextWindowLimit(config.model);
   const options = {
     modelId: config.model,
     maxTokens: config.maxTokens,
@@ -1737,6 +1759,15 @@ function openaiApiMode(config: AppConfig): OpenAIApiMode {
 /** The `apiKey` option, or nothing — each provider SDK has its own env fallback. */
 function optionalApiKey(apiKey: string | undefined): { apiKey?: string } {
   return apiKey === undefined ? {} : { apiKey };
+}
+
+/**
+ * The `contextWindowLimit` option, or nothing — so an absent field leaves the SDK's
+ * own table lookup exactly as it was (`exactOptionalPropertyTypes` forbids passing
+ * `undefined` explicitly).
+ */
+function configuredContextWindow(config: AppConfig): { contextWindowLimit?: number } {
+  return config.contextWindowLimit === undefined ? {} : { contextWindowLimit: config.contextWindowLimit };
 }
 
 /**
