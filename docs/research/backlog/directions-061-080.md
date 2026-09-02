@@ -269,7 +269,7 @@ Evidence from session-20260902-054329719: the six-edit batch at seq 122–127 fo
 
 ## SER-053 — Close the mutating escapes in the static read-only bash classifier: a whitelisted first word is safe only when none of its arguments is a known mutating option (`find -delete/-exec/-execdir/-ok/-okdir/-fprint*/-fls`, `git branch -d/-D/-m/-M/-c/-C/-u/--set-upstream-to/--unset-upstream/--edit-description/--delete/--move/--copy`, `git log/diff/show --output`)
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 74
 - Score: 16
 - Importance: 5
