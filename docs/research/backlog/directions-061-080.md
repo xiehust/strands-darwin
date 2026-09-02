@@ -266,3 +266,83 @@ Accepted 2026-09-02 in `21b8e6c` (child session `session-20260902-091357310`, ma
 Closure notes (Host, 2026-09-02): rule 8 grew from 4 to 10 lines (rules 7+8 together 8 → 14); the Host accepted that length because all three required statements are load-bearing and the rest of the prompt is unchanged. The child itself practised the rule — all mutations through `fileEditor`, `view`-then-`str_replace` on the scaffolded PRD, verification in a separate message from the edits — which is the first in-repo confirmation the wording is followable. Original research notes follow.
 
 Evidence from session-20260902-054329719: the six-edit batch at seq 122–127 follows today's rule 8 verbatim (six non-overlapping regions of one file, one message) and lost four edits (seq 137–143); `pnpm typecheck` (seq 128) was batched beside the edits it was meant to verify, so its result (seq 143) was a snapshot of whatever state `tsc` read. From the recovery onward the model wrote files through the shell instead — `python3 - <<'EOF'` on `spike/verify-config.ts` (seq 201, 206, 219) and on four docs files at once (seq 224), `cat >` for two task files (seq 102, 107) — six writes with no edit-diff row and no `fileEditor` record; the motive is inferred from ordering only because reasoning blocks are redacted in the record (Evidence confidence 4, not 5). Also fold in F3: `fileEditor create` refuses an existing file (seq 99, `File already exists … Cannot overwrite`) — the guidance is to `view` then `str_replace` a scaffolded file, not to fall back to a heredoc; the overwrite-flag alternative scored 5 and was rejected. Dependency: ordered after SRF-020 because the correct wording ("applied in order" vs. "never side by side") depends on whether serialization lands; if SRF-020 is abandoned, ship the "never side by side" wording.
+
+## SER-053 — Close the mutating escapes in the static read-only bash classifier: a whitelisted first word is safe only when none of its arguments is a known mutating option (`find -delete/-exec/-execdir/-ok/-okdir/-fprint*/-fls`, `git branch -d/-D/-m/-M/-c/-C/-u/--set-upstream-to/--unset-upstream/--edit-description/--delete/--move/--copy`, `git log/diff/show --output`)
+
+- Status: `not-started`
+- Priority: 74
+- Score: 16
+- Importance: 5
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `09:37:20Z`, user-directed `peer` path: Claude Code tools reference)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+Requirement: keep the whitelist principle of `assessBashRisk` (`src/agent/permission.ts:840–863`) — the metacharacter check, per-segment evaluation and `SAFE_BASH_COMMANDS`/`SAFE_GIT_SUBCOMMANDS` stay — and add a per-command argument rule so that a segment whose first word is whitelisted is still `dangerous`, with a reason naming the option, when any of its arguments is a known mutating option: `find` `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, `-fprint`, `-fprint0`, `-fprintf`, `-fls`; `git branch` with `-d`, `-D`, `-m`, `-M`, `-c`, `-C`, `-u`, `--set-upstream-to`, `--unset-upstream`, `--edit-description`, `--delete`, `--move`, `--copy` (combined short flags such as `-Df` count); `git log`, `git diff`, `git show` with `--output` or `--output=…`. Evidence: offline probe with `classify` + `assessRisk` at HEAD `578cce5` classified `find . -name "*.tmp" -delete`, `find . -name "*.log" -exec rm {} \;`, `git branch -D main`, `git branch -m main old`, `git diff --output=/tmp/x.patch` and `git log --output=/tmp/log.txt` as `safe — read-only command`, so in `default` and `auto` modes they run without a prompt (`PermissionGate.beforeToolCall`, `permission.ts:473`). Plan mode is unaffected (bash is `execute` kind; `planGuard` denies it). Claude Code documents the same idea as a curated built-in read-only command set (S1). Acceptance: the six probe commands classify `dangerous` naming the option; `ls -la`, `cat <file>`, `rg foo | head -5`, `git log --oneline -5`, `git branch --show-current`, `git diff --stat`, `find . -name '*.ts'` still classify `safe`; `spike/verify-classifier.ts` / `verify-permission-modes.ts` cover both sets; `docs/user-guide/permissions.md` (and `.zh-CN`) and `strands-sdk-contracts.md` state the argument rule; wildcard allow-rules (`permission-rules.ts`) are user-authored and unchanged. Do not add new commands to the whitelist in this direction.
+
+## SER-054 — Make a foreground bash timeout truthful and non-destructive to evidence: the timeout error result carries the bounded tail of captured stdout/stderr, the effective timeout, the shell-restart/cwd statement and one `start`/`wait` pointer
+
+- Status: `not-started`
+- Priority: 75
+- Score: 14
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `09:37:20Z`, user-directed `peer` path: Claude Code tools reference)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+Requirement: when a foreground `execute` exceeds its timeout, the pinned SDK bash session (`node_modules/@strands-agents/sdk/dist/src/vended-tools/bash/bash.js:254–258`, carried in `patches/@strands-agents__sdk@1.16.0.patch`) currently does `isTimedOut = true; cleanup(); this.stop(); reject(new BashTimeoutError('Command timed out after N seconds'))` — everything the command printed is discarded, the persistent shell is killed (the next call restarts at the initial cwd) and the model learns only the one line. The patch's own `BashSessionError` (`:224–232`) already carries `output`, `error`, `cwd` and `exitCode` for the unexpected-exit case, so the seam and precedent exist. Give `BashTimeoutError` the same bounded fields and make the tool's error result state: the timeout in seconds, the bounded tail of captured stdout and stderr (reuse the background `wait` projection's field cap and truncation vocabulary from `src/tools/background-bash.ts` — never a new cap), that the persistent shell was restarted and what its cwd is now, and one pointer to `start`/`wait` for long-running work. Kill/exit semantics, `SHELL_RESTART_NOTICE`, exit-0 success handling and background modes are unchanged; no auto-backgrounding (the persistent shell cannot detach a running command — state that in the spec rather than imitating Claude Code's move-to-background). Peer evidence: Claude Code's result `Command did not complete within its 120s timeout and was moved to the background` plus task id and output path (S1). Acceptance: `spike/verify-background-bash.ts` (no model call) drives a real `execute` past a short timeout and asserts the error result contains the bounded stdout/stderr tail, the timeout figure, the restart/cwd statement and the pointer; a command that finishes in time is byte-identical to today's output; the SDK patch re-applies cleanly and `pnpm typecheck`, full `pnpm test`, `pnpm build` pass.
+
+## SER-056 — Add a parent-only `web_fetch` tool: content-negotiated GET with HTML→bounded readable text, `http`→`https` upgrade, same-host redirects followed and cross-host redirects reported, an explicit truncation notice and a stated lossy projection; `http_request` byte-identical
+
+- Status: `not-started`
+- Priority: 76
+- Score: 10
+- Importance: 4
+- Architecture fit: 3
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `09:37:20Z`, user-directed `peer` path: Claude Code tools reference)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+Requirement: a new ordinary tool `web_fetch({ url, maxChars? })` registered only in the parent tools list next to `http_request` (`src/agent/runtime.ts:644`) and excluded from child catalogues the same way (state the rule in `strands-sdk-contracts.md`). Behavior, mirroring Claude Code's `WebFetch` (S1) where darwin's constraints allow: send `Accept: text/markdown, text/plain;q=0.9, text/html;q=0.8, */*;q=0.1` so servers with content negotiation return markdown; upgrade `http://` to `https://`; follow redirects on the same host, but when the target host differs return a successful result naming the original URL and the redirect target instead of following it; when the response is HTML, convert it to bounded readable text with a dependency-free projection (drop `script`/`style`/`noscript`/`nav`/`header`/`footer`/`svg`, keep heading/paragraph/list/blockquote/pre/code structure as markdown-ish lines, render links as `text (url)`, decode entities, collapse whitespace); when it is markdown/plain, keep the text; cap the returned body at a stated code-point budget (default in the low tens of thousands, `maxChars` may lower but not exceed the ceiling) with an explicit `[truncated: N of M code points]` notice; state in the tool description that the projection is lossy and that `http_request` returns the raw body. Reuse the SDK `http_request` timeout/cancel pattern (`AbortSignal.any` with `context.cancelSignal`) but do **not** wrap, call or alter `httpRequest` — the spec (`strands-sdk-contracts.md:258–305`) forbids it; `spike/verify-http-request-tool.ts` must stay green unchanged. Permission: classified by the existing unknown→`execute` fail-closed path — never `read`/`safe` — so `default` asks, `plan` denies before any request, wildcard rules may allow it. Evidence: this run's fetch of the user's page through `http_request` returned 656 KB of HTML (`http-request.js:54–55`, unbounded `response.text()`), was offloaded by the context offloader and cost a second round to read as markdown. Acceptance: `spike/verify-web-fetch.ts` in `pnpm test` with a local HTTP fixture server proves markdown negotiation, HTML→text projection, truncation notice, cross-host redirect report, same-host redirect follow, `http`→`https` upgrade (via a redirect-recording fixture or URL assertion), default-mode denial classification with source, plan-mode denial with zero requests, absence from the child catalogue, and no `fetch` when denied; `pnpm typecheck`, full `pnpm test`, `pnpm build`; `docs/user-guide/reference.md` lists the tool. Adding a dependency is not authorized by this direction.
+
+## SER-055 — Add optional `replace_all: boolean` (default false) to `str_replace` in the pinned file-editor: every non-overlapping occurrence replaced with a count-and-lines result; absent/false byte-identical; permission box and finished diff show one old→new pair plus an input-derived "every occurrence" marker, never a disk read
+
+- Status: `not-started`
+- Priority: 77
+- Score: 9
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `09:37:20Z`, user-directed `peer` path: Claude Code tools reference)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+Requirement: extend the pinned SDK file-editor (`node_modules/@strands-agents/sdk/dist/src/vended-tools/file-editor/file-editor.js`, carried in `patches/@strands-agents__sdk@1.16.0.patch`) so `str_replace` accepts an optional `replace_all: boolean`. When true and `old_str` occurs one or more times, every non-overlapping occurrence (the existing `findOccurrences`) is replaced in one write and the success result names the count and the line numbers replaced, plus one snippet; when true and `old_str` is absent, the existing miss error and advisory apply unchanged. When absent or false, every path is byte-identical to today's (`:258–271`: empty-`old_str` error, miss advisory, `Multiple occurrences … Please ensure it is unique` error, single-replacement snippet). Peer evidence: Claude Code's `Edit` requires uniqueness unless `replace_all: true` (S1); darwin's system-prompt rule 8 forbids `sed -i`, so bulk renames today are N gated calls. Rendering constraints: `src/tui/edit-diff.ts` diffs the tool *input*, never disk — show one `old_str`→`new_str` pair and an explicit input-derived marker such as `replace_all: every occurrence` in the permission box details and the finished row; the `+N -N` stat stays input-derived (one pair); `summary`/replay text unchanged in form. `src/tools/file-editor-serial.ts` passes the field through untouched (same-path ordering unchanged). Permission classification stays `write` on the same path. Acceptance: `spike/verify-file-editor.ts` proves `replace_all: true` with 3 occurrences replaces all three, reports count and lines, and leaves the rest of the file byte-identical; `replace_all: true` with 0 occurrences yields the unchanged miss advisory; absent/false outputs equal today's strings exactly; `spike/verify-edit-diff.ts` proves the marker and that no file read occurs; `spike/verify-file-editor-serial.ts` still passes; the patch re-applies cleanly; `pnpm typecheck`, full `pnpm test`, `pnpm build`; `strands-sdk-contracts.md` FileEditor section and `docs/user-guide/reference.md` updated.
