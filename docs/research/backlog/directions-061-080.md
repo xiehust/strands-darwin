@@ -349,7 +349,7 @@ Requirement: extend the pinned SDK file-editor (`node_modules/@strands-agents/sd
 
 ## SER-057 — Add `/copy`: put the last completed answer's committed text on the clipboard — OSC 52 written to the terminal first, a platform tool (`wl-copy`/`xclip`/`pbcopy`) only when a display is present; bounded payload with truncation stated; one transcript notice; never a model call, trajectory write or `/export` change
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 78
 - Score: 11
 - Importance: 3
