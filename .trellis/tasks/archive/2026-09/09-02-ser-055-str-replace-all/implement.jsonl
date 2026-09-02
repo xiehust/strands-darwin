@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "FileEditor contracts: miss advisory (patched hunk), same-path serial wrapper, pnpm patch regeneration procedure"}
+{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Contract: file edits render as marker-stable line diffs — marker vocabulary, information equivalence, summary never carries stat/markers"}
