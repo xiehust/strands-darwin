@@ -165,7 +165,7 @@ Accepted 2026-09-02 in `8481bab` (child session `session-20260902-030515467`, ma
 
 ## SER-050 — Let `-p` read piped (non-TTY) stdin to EOF under a stated byte cap and append it to the one-shot prompt as one delimited block; TTY or empty stdin leaves behaviour byte-identical
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 69
 - Score: 8
 - Importance: 3
@@ -177,7 +177,7 @@ Accepted 2026-09-02 in `8481bab` (child session `session-20260902-030515467`, ma
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-02 in `5ca7772` (child session `session-20260902-034134274`, managed task `bg-8164618f-a90f-4664-b879-8aa12f54276c`, exit 0; Trellis task archived in `1b5059c`). New `src/headless-stdin.ts` owns `readPipedStdin(source)` and `composeHeadlessPrompt(prompt, piped)`: a TTY source is never iterated; `/dev/null`, immediate EOF or whitespace-only bytes yield `undefined` so the prompt is byte-identical to before; otherwise the prompt becomes `<message>` + blank line + `--- piped stdin (<N> bytes) ---` … `--- end of piped stdin ---`, appended exactly once. Recorded decisions: cap 256 KiB and **refuse** (exit 2, `CliUsageError` class) rather than truncate — a silently shortened diff reviewed as whole is the same silent class the feature removes — with the read stopping at the first byte past the cap; invalid UTF-8 or NUL is refused, bytes are never base64'd. `src/headless-runner.ts` gains the injectable `readPipedStdin` dependency and performs the read in the pre-protocol slot (before the signal swap, the `session:` record, the structured writer and `createRuntime`), so a refusal is an ordinary usage error in every output format; `src/cli-usage.ts` adds one shared `usageErrorText()` and one `CLI_USAGE` line (both reference docs quote it identically). `parseCliArgs` untouched; no new trajectory field or structured-output field. Host independently inspected the whole diff and re-ran `spike/verify-headless.ts` (182/182: TTY never iterated, cap stops the read, UTF-8/NUL refusal, fence shape, one-importer structural check, `stdio 'ignore'` vs empty/whitespace pipe byte-identical, piped text once in `send()`, over-cap exit 2 with no trace file in text and `json`, exactly-at-cap accepted, `json`/`stream-json` identical with or without a pipe), `spike/verify-cli-args.ts` (43/43), `pnpm typecheck`, full `pnpm test` (exit 0, zero FAIL lines), `pnpm build`, then live `dist` probes in a throwaway project: `printf 'alpha beta' | darwin -p … --max-model-calls 1` → `trajectory replay` shows the block once and exactly one `userInput` record carrying the composed prompt, the model echoed `alpha beta`; `-p … < /dev/null` → zero `piped stdin` lines in replay; a 300 000-byte pipe → `error: piped standard input exceeds the 262144-byte cap for -p…` + `--help` hint, exit 2. Docs: `reference.md`/`zh-CN` gain a "Piped stdin with `-p`" section including the open-pipe caveat; `strands-sdk-contracts.md` headless scenario and `structured-headless-output.md` updated. Recorded in `docs/iteration-log.md` Batch 73.
 
 ### Notes / blockers / abandonment reason
 
@@ -185,7 +185,7 @@ The headless path takes its prompt only from argv: `HeadlessOptions` (`src/headl
 
 ## SER-051 — Accept optional focus text on `/compact <focus>`: build the compaction manager per call with the SDK default summarization prompt plus a bounded user focus, never altering unfocused output
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 70
 - Score: 7
 - Importance: 3
