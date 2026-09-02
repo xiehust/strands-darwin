@@ -329,7 +329,7 @@ Requirement: a new ordinary tool `web_fetch({ url, maxChars? })` registered only
 
 ## SER-055 — Add optional `replace_all: boolean` (default false) to `str_replace` in the pinned file-editor: every non-overlapping occurrence replaced with a count-and-lines result; absent/false byte-identical; permission box and finished diff show one old→new pair plus an input-derived "every occurrence" marker, never a disk read
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 77
 - Score: 9
 - Importance: 3
@@ -341,7 +341,7 @@ Requirement: a new ordinary tool `web_fetch({ url, maxChars? })` registered only
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-02 in `4c40426` (child session `session-20260902-110209882`, managed task `bg-8d0298ff-9e5b-4151-b769-2b815d59f029`, exit 0; journal `8af72c6`, Trellis task archived in `23a56ce`). The pinned SDK patch's `file-editor.js` schema gains `replace_all: z.boolean().optional()` (described as `str_replace` only; other commands ignore it); `handleStrReplace`/`buildStrReplaceResult` take `replaceAll` — every pre-existing branch is verbatim, the uniqueness throw is skipped only when the flag is set, all non-overlapping `findOccurrences` hits are spliced in one pass and one `writeText`, and the success result names the count and pre-edit line numbers plus one snippet around the first replacement (count 1 has the same shape); `types.d.ts` declares `replace_all?`. darwin side: `src/tui/edit-diff.ts` reads a boolean `replace_all` (non-boolean → raw fallback) and adds the input-derived header row `REPLACE_ALL_ROW = 'replace_all: every occurrence'` (stat/markers/`summary` untouched; `fileEditorReplaceAll()` exported); `tool-detail-presentation.ts` prepends it to the compact finished row; `permission.ts` `classify` adds a `Replace all: every occurrence` detail after `Operation` (kind and summary unchanged); `file-editor-serial.ts` passes the field through. Host acceptance, independently re-run: a throwaway `SerializedFileEditorTool.stream()` probe on a real temp file with three `foo`s — without the flag today's exact `Multiple occurrences of old_str \`foo\` in lines [1,3,4]` error; with `replace_all: true` success naming `3 occurrences … at lines [1,3,4]` and the file reading `qux one\nbar\nqux two\nbaz qux\n`; `replace_all: true` on an absent string today's exact miss advisory; `classify` details and the projection carry the row above the one `- qux`/`+ foo` pair — plus `verify-file-editor.ts` 89/89 (pre-change strings captured as literals), `verify-file-editor-serial.ts` 50/50, `verify-edit-diff.ts` 112/112, `verify-visual-language.tsx` 74/74, `verify-export-command.ts` 32/32, `pnpm typecheck` exit 0, full `pnpm test` exit 0 with zero FAIL lines, `pnpm build` exit 0, tree clean. Docs: spec SER-055 contract plus two corrected sentences, `tui-testing.md` diff contract, load-bearing File-edit diffs and Same-path sections, `reference.md`/`.zh-CN` "File edits", AGENTS.md FileEditor row +1 clause (32,667 B). Recorded in `docs/iteration-log.md` Batch 81.
 
 ### Notes / blockers / abandonment reason
 
