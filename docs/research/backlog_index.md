@@ -10,6 +10,7 @@ Pages use stable inclusive ranges of 20 priorities. Closed ranges are never reba
 - [Priorities 021–040](./backlog/directions-021-040.md)
 - [Priorities 041–060](./backlog/directions-041-060.md)
 - [Priorities 061–080](./backlog/directions-061-080.md)
+- [Priorities 081–100](./backlog/directions-081-100.md)
 
 Read this index first. For routine selection, search the routed pages for direction headings plus exact `Status`, `Priority`, and `Origin report` metadata; do not load completed records' evidence and notes. Read only the selected direction section and unfinished batch peers sharing its origin report.
 

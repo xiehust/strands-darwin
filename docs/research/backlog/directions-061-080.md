@@ -346,3 +346,63 @@ Accepted 2026-09-02 in `4c40426` (child session `session-20260902-110209882`, ma
 ### Notes / blockers / abandonment reason
 
 Requirement: extend the pinned SDK file-editor (`node_modules/@strands-agents/sdk/dist/src/vended-tools/file-editor/file-editor.js`, carried in `patches/@strands-agents__sdk@1.16.0.patch`) so `str_replace` accepts an optional `replace_all: boolean`. When true and `old_str` occurs one or more times, every non-overlapping occurrence (the existing `findOccurrences`) is replaced in one write and the success result names the count and the line numbers replaced, plus one snippet; when true and `old_str` is absent, the existing miss error and advisory apply unchanged. When absent or false, every path is byte-identical to today's (`:258–271`: empty-`old_str` error, miss advisory, `Multiple occurrences … Please ensure it is unique` error, single-replacement snippet). Peer evidence: Claude Code's `Edit` requires uniqueness unless `replace_all: true` (S1); darwin's system-prompt rule 8 forbids `sed -i`, so bulk renames today are N gated calls. Rendering constraints: `src/tui/edit-diff.ts` diffs the tool *input*, never disk — show one `old_str`→`new_str` pair and an explicit input-derived marker such as `replace_all: every occurrence` in the permission box details and the finished row; the `+N -N` stat stays input-derived (one pair); `summary`/replay text unchanged in form. `src/tools/file-editor-serial.ts` passes the field through untouched (same-path ordering unchanged). Permission classification stays `write` on the same path. Acceptance: `spike/verify-file-editor.ts` proves `replace_all: true` with 3 occurrences replaces all three, reports count and lines, and leaves the rest of the file byte-identical; `replace_all: true` with 0 occurrences yields the unchanged miss advisory; absent/false outputs equal today's strings exactly; `spike/verify-edit-diff.ts` proves the marker and that no file read occurs; `spike/verify-file-editor-serial.ts` still passes; the patch re-applies cleanly; `pnpm typecheck`, full `pnpm test`, `pnpm build`; `strands-sdk-contracts.md` FileEditor section and `docs/user-guide/reference.md` updated.
+
+## SER-057 — Add `/copy`: put the last completed answer's committed text on the clipboard — OSC 52 written to the terminal first, a platform tool (`wl-copy`/`xclip`/`pbcopy`) only when a display is present; bounded payload with truncation stated; one transcript notice; never a model call, trajectory write or `/export` change
+
+- Status: `not-started`
+- Priority: 78
+- Score: 11
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `14:43:25Z`, rolled `peer` path)
+
+### Implementation / acceptance evidence
+
+(none yet)
+
+### Notes / blockers / abandonment reason
+
+Requirement: a built-in `/copy` (added to `BUILTIN_COMMAND_NAMES`/descriptions in `src/commands/custom-commands.ts`, `MAX_COMPLETIONS` 20→21 in `src/tui/InputBox.tsx`, one `/help` row) that copies the committed text of the last *completed* assistant answer — the same ANSI-free text the `<Static>` transcript holds and `/export` writes (`src/tui/turn-state.ts` `AnswerPart`; `formatReplay`) — to the clipboard. Transport: write one OSC 52 sequence (`ESC ] 52 ; c ; <base64> BEL`) to the terminal's stdout through the existing Ink output path first (darwin is normally driven over SSH); when `WAYLAND_DISPLAY`/`DISPLAY` or macOS is present, also run the platform copy tool through a dependency-free helper mirroring `src/tui/clipboard-image.ts` (`wl-copy`, `xclip -selection clipboard`, `pbcopy`), bounded and non-throwing, its failure stated. Payload bound: a fixed byte cap (state it in the module) — over the cap the notice says exactly how many bytes of how many were copied; never a silent partial copy. While a turn is running, copy the latest completed answer (the in-progress one is not "completed"); before the first answer or right after `/clear`/`/rewind` the result is a bounded "nothing to copy" notice, not an error. `/copy` takes no arguments (an argument is a local usage notice), is handled locally before busy queueing like `/help`, and makes no model call, tool call, trajectory record or file write; it never touches `Ctrl+O` (image attach). Peer evidence: Codex `/copy` (S2), Gemini `/copy` with OSC 52 over SSH/WSL (S5). Acceptance: a free pty scenario asserts the raw output contains the OSC 52 sequence whose base64 decodes to the exact committed answer text; a pre-answer `/copy` produces the nothing-to-copy notice; `spike/verify-tui.ts completion` stays green with the new row; `/export` bytes unchanged; `pnpm typecheck`, `pnpm test`, `pnpm build`. Handoff constraint: AGENTS.md has 101 B of headroom — no new AGENTS.md row; the spec/doc sentence goes to `.trellis/spec/frontend/live-frame.md` and `docs/user-guide/reference.md`.
+
+## SER-058 — Add `darwin doctor`: an offline read-only diagnostics subcommand composing the existing loaders — config validity (`ConfigError` reported, never thrown), model choice, MCP config source and per-server command presence, skills catalogue with skipped entries, hooks files and dialect, project policy, sessions directory and versions — no session, model call, MCP connection or write; exit 1 when a problem is found
+
+- Status: `not-started`
+- Priority: 79
+- Score: 10
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 2
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `14:43:25Z`, rolled `peer` path)
+
+### Implementation / acceptance evidence
+
+(none yet)
+
+### Notes / blockers / abandonment reason
+
+Requirement: a `darwin doctor` CLI verb, modelled on `src/cli-sessions.ts` (`SESSIONS_COMMAND`, `isSessionsInvocation`, `parseSessionsArgs`, an `Io` interface), added to `CLI_USAGE` in `src/cli-usage.ts` and quoted in `docs/user-guide/reference.md` (pinned by `spike/verify-cli-args.ts`). It prints one bounded report built only from the loaders that already exist: `loadConfig` (a `ConfigError` becomes a named problem line, never a throw/exit before the report), the resolved model/provider/effort/cache facts, `mcpConfigCandidates` (which file is used, which is overridden/ignored) plus, per configured stdio server, whether its command resolves on `PATH` — **never** spawning or connecting a server; `scanSkills` over the layered roots with every skipped entry and reason; `loadProjectPolicy`/hooks files with their dialect (native vs Codex adapter) and decode problems; `loadSystemPrompt` source/problem; the sessions directory and count; darwin/node versions. Zero mutation: no file, directory or pointer is created or moved anywhere (including `~/.darwin`), no model call, no MCP process; exit 0 when no problem was found, exit 1 when at least one was, with problems marked in-line and totalled. Arguments other than the verb are a usage error (exit 2). Peer evidence: `claude doctor` "read-only … without starting a session" (S1), `codex doctor` (S2), DeepSeek `dsh --dump-config` (S3). Acceptance: `spike/verify-doctor-command.ts` (added to `pnpm test`) runs the verb against throwaway HOME/project fixtures — valid config → exit 0; unknown config key / invalid JSON → named problem, exit 1; MCP config naming a command whose script would write a marker file → the marker never appears and the report says "not found"/"found" for the command; a skill root over 200 entries → the skip stated; before/after directory snapshots byte-identical; the import graph reaches no runtime/SDK/Ink module (assert like `verify-cli-args.ts`). `pnpm typecheck`, `pnpm test`, `pnpm build`. Handoff constraint: AGENTS.md has 101 B of headroom — no new AGENTS.md row; the contract sentence goes to `.trellis/spec/backend/error-handling.md` and `docs/user-guide/reference.md`.
+
+## SER-059 — Esc Esc on an empty idle composer opens the existing `/rewind` picker: a second Escape within a short window, first Escape keeps its current owners (completion menu, history search, recall); busy/queue/permission states ignore it; `/help` and README state the chord
+
+- Status: `not-started`
+- Priority: 80
+- Score: 9
+- Importance: 2
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `14:43:25Z`, rolled `peer` path)
+
+### Implementation / acceptance evidence
+
+(none yet)
+
+### Notes / blockers / abandonment reason
+
+Requirement: in `src/tui/App.tsx`'s Escape branch (currently: completion menu dismissal, else `endRecall()`), when the composer is empty, no turn is running, no permission prompt is pending, the queue is empty and no transient UI (completion, history search, recall, rewind picker) owns the key, a second Escape arriving within a bounded window (a named constant, ~500 ms, measured from the first no-op Escape) opens the same rewind picker that typing `/rewind` opens (`openRewindSearch` with the current catalogue), with identical behaviour from there — nothing is sent, no snapshot is created, the selected prompt returns unsent exactly as SER-040 specifies. The first Escape stays a no-op on an empty idle composer; a draft, a running turn, a queued entry or a pending permission resets the chord and Escape keeps its existing owners. When there is no rewind catalogue (fresh session, or rewind unavailable) the second Escape shows the same bounded notice `/rewind` would. `/help` (`src/tui/help-format.ts`) gains the key row and `docs/user-guide/reference.md`/README input documentation state it (SER-046 pattern). No new frame row, timer channel or trajectory record. Peer evidence: Codex "Press Esc twice with an empty composer to edit the previous user message" (S2), Gemini `/rewind` "Press Esc twice as a shortcut" (S5). Acceptance: `spike/verify-tui.ts rewind` (free) extended or a sibling scenario: Esc Esc on an empty idle composer shows the picker; a single Esc, Esc Esc with a draft, and Esc Esc while a `!` command is busy do not; `spike/verify-help-command.ts` pins the row; `pnpm typecheck`, `pnpm test`, `pnpm build`. Handoff constraint: AGENTS.md has 101 B of headroom — no new AGENTS.md row; the sentence goes to `.trellis/spec/frontend/prompt-recall.md` (rewind section).
