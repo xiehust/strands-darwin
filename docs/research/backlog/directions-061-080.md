@@ -309,7 +309,7 @@ Requirement: when a foreground `execute` exceeds its timeout, the pinned SDK bas
 
 ## SER-056 — Add a parent-only `web_fetch` tool: content-negotiated GET with HTML→bounded readable text, `http`→`https` upgrade, same-host redirects followed and cross-host redirects reported, an explicit truncation notice and a stated lossy projection; `http_request` byte-identical
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 76
 - Score: 10
 - Importance: 4
@@ -321,7 +321,7 @@ Requirement: when a foreground `execute` exceeds its timeout, the pinned SDK bas
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-02 in `d14b27c` (child session `session-20260902-103415340`, managed task `bg-e4bf96cd-e1ee-4393-9715-332c8448ef30`, exit 0; journal `980fc6c`, Trellis task archived in `58965f8`). New `src/tools/web-fetch.ts` built with the SDK `tool()` factory: `normalizeWebFetchUrl` (http→https upgrade, scheme/length checks), `fetchWebPage` (`redirect: 'manual'`, same-host redirects followed up to 5 hops, cross-host redirect returned as a successful result naming both URLs, `Accept: text/markdown, text/plain;q=0.9, text/html;q=0.8, */*;q=0.1`, darwin `User-Agent`, 4 MiB download cap, 30 s timeout via its own `AbortSignal.any([timeout, context.cancelSignal])`), dependency-free `htmlToText`/`decodeEntities`, `boundCodePoints` with ceiling `WEB_FETCH_MAX_CHARS = 40_000` and the `[truncated: N of M code points]` notice, binary content-types refused with type and length, a `notice` array carrying upgrade/redirect/truncation/lossy statements; it never imports or calls `httpRequest`. `src/agent/runtime.ts` registers `webFetch` after `httpRequest` and replaces the single-name child filter with `PARENT_ONLY_TOOL_NAMES = {retrieve_offloaded_content, http_request, web_fetch}` — which also repairs a spec/code gap the child found: children had been receiving `http_request` although AGENTS.md, the load-bearing doc and the spec matrix all said parent-only. `spike/verify-web-fetch.ts` (73 assertions, local fixture server, no external network) is in `pnpm test`; `permission.ts`, `verify-http-request-tool.ts`, `package.json` and `pnpm-lock.yaml` are untouched. Host acceptance, independently re-run: two real-network probes through `fetchWebPage` — `http://code.claude.com/docs/en/tools-reference` (`maxChars: 3000`) upgraded to https, negotiated `text/markdown`, `[truncated: 3000 of 105823 code points]`; `https://example.com/` projected to readable text with the lossy notice; a GitHub `raw/` URL's 302 to `raw.githubusercontent.com` reported, not followed — plus `verify-web-fetch.ts` 73/73, `verify-http-request-tool.ts` 7/7, `pnpm typecheck` exit 0, full `pnpm test` exit 0 with zero FAIL lines, `pnpm build` exit 0 (`dist/src/tools/web-fetch.js`), tree clean. Docs: `docs/user-guide/reference.md`/`.zh-CN` "Web access tools", spec `web_fetch` contract beside `http_request`, load-bearing section, AGENTS.md row extended by one clause (32,578 B). Recorded in `docs/iteration-log.md` Batch 80.
 
 ### Notes / blockers / abandonment reason
 
@@ -329,7 +329,7 @@ Requirement: a new ordinary tool `web_fetch({ url, maxChars? })` registered only
 
 ## SER-055 — Add optional `replace_all: boolean` (default false) to `str_replace` in the pinned file-editor: every non-overlapping occurrence replaced with a count-and-lines result; absent/false byte-identical; permission box and finished diff show one old→new pair plus an input-derived "every occurrence" marker, never a disk read
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 77
 - Score: 9
 - Importance: 3
