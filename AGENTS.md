@@ -42,6 +42,7 @@ AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / perm
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
 AWS_REGION=us-west-2 pnpm tsx spike/verify-thinking-live.ts   # effort levels the service really accepts, and that high reasons
 pnpm tsx spike/verify-mantle-live.ts                          # openai.* over Bedrock Mantle: tool calls, multi-turn, live /effort
+pnpm tsx spike/verify-anthropic-live.ts [model]               # anthropic provider through ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY: tool calls, multi-turn
 pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2    # which models Mantle actually serves, per region
 pnpm tsx spike/verify-model-command.ts --live                  # /model: switch provider mid-session, conversation intact
 pnpm tsx spike/probe-model-switch.ts                          # what survives handing a conversation to another provider

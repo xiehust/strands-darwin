@@ -28,6 +28,7 @@ import {
   saveEnabledModel,
   saveThinkingEffort,
   openAIContextWindowLimit,
+  resolveAnthropicBaseUrl,
   resolveRegion,
   withModelChoice,
 } from '../src/config.js';
@@ -199,19 +200,61 @@ async function providerSwitching(): Promise<void> {
     (bedrockModel.getConfig() as { useNativeTokenCount?: boolean }).useNativeTokenCount === true,
   );
 
-  // Anthropic and OpenAI need peer dependencies this install does not carry. The
-  // config path is still proven: it reaches provider construction and fails there
-  // with an actionable install instruction, not a code error.
-  const anthropic = await loadConfig(
-    await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6" }'),
-  );
-  assert('anthropic is selected from config', anthropic.provider === 'anthropic');
-  const anthropicError = await expectConfigError(
-    'anthropic reports its missing peer dependency as a ConfigError',
-    () => createModelFromConfig(anthropic),
-  );
-  console.log(`  anthropic: ${anthropicError.split('\n')[0]}`);
-  assert('anthropic error names the package to install', anthropicError.includes('@anthropic-ai/sdk'));
+  // The Anthropic peer *is* installed, so the config path reaches the real
+  // constructor. The base URL decision is darwin's (`baseUrl` → ANTHROPIC_BASE_URL
+  // → client default), so it is asserted here without any network.
+  const savedAnthropicKey = process.env['ANTHROPIC_API_KEY'];
+  const savedAnthropicBase = process.env['ANTHROPIC_BASE_URL'];
+  delete process.env['ANTHROPIC_API_KEY'];
+  delete process.env['ANTHROPIC_BASE_URL'];
+  try {
+    const anthropic = await loadConfig(
+      await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6" }'),
+    );
+    assert('anthropic is selected from config', anthropic.provider === 'anthropic');
+    const keyless = await expectConfigError(
+      'anthropic without a credential is refused as a ConfigError',
+      () => createModelFromConfig(anthropic),
+    );
+    assert('the refusal names ANTHROPIC_API_KEY and apiKeyEnv', keyless.includes('ANTHROPIC_API_KEY') && keyless.includes('apiKeyEnv'));
+    assert('no base URL resolves with neither baseUrl nor env', resolveAnthropicBaseUrl(anthropic) === undefined);
+
+    process.env['ANTHROPIC_API_KEY'] = 'sk-ant-test';
+    assert('anthropic builds once ANTHROPIC_API_KEY is set', (await createModelFromConfig(anthropic)) !== undefined);
+
+    process.env['ANTHROPIC_BASE_URL'] = 'https://relay.example.test';
+    assert('ANTHROPIC_BASE_URL is used when baseUrl is absent', resolveAnthropicBaseUrl(anthropic) === 'https://relay.example.test');
+    assert('anthropic builds against the env base URL', (await createModelFromConfig(anthropic)) !== undefined);
+
+    const withBase = await loadConfig(
+      await writeConfig(
+        '{ "provider": "anthropic", "model": "claude-sonnet-4-6", "baseUrl": "https://gateway.example.test/v1" }',
+      ),
+    );
+    assert('baseUrl is accepted for anthropic', withBase.baseUrl === 'https://gateway.example.test/v1');
+    assert('baseUrl wins over ANTHROPIC_BASE_URL', resolveAnthropicBaseUrl(withBase) === 'https://gateway.example.test/v1');
+    assert('anthropic builds against the configured base URL', (await createModelFromConfig(withBase)) !== undefined);
+    assert('baseUrl is a model key', (MODEL_KEYS as readonly string[]).includes('baseUrl'));
+
+    const badUrl = await expectConfigError(
+      'a non-http(s) baseUrl is refused',
+      async () => loadConfig(await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6", "baseUrl": "gateway.example.test" }')),
+    );
+    assert('the refusal names baseUrl and the value', badUrl.includes('"baseUrl"') && badUrl.includes('gateway.example.test'));
+    for (const provider of ['bedrock', 'openai']) {
+      const model = provider === 'bedrock' ? 'global.anthropic.claude-sonnet-4-6' : 'gpt-5';
+      const wrongProvider = await expectConfigError(
+        `baseUrl on provider ${provider} is refused`,
+        async () => loadConfig(await writeConfig(`{ "provider": "${provider}", "model": "${model}", "baseUrl": "https://x.example.test" }`)),
+      );
+      assert(`the ${provider} refusal names the anthropic-only rule`, wrongProvider.includes('only applies to provider "anthropic"'));
+    }
+  } finally {
+    if (savedAnthropicKey === undefined) delete process.env['ANTHROPIC_API_KEY'];
+    else process.env['ANTHROPIC_API_KEY'] = savedAnthropicKey;
+    if (savedAnthropicBase === undefined) delete process.env['ANTHROPIC_BASE_URL'];
+    else process.env['ANTHROPIC_BASE_URL'] = savedAnthropicBase;
+  }
 
   const openai = await loadConfig(await writeConfig('{ "provider": "openai", "model": "gpt-5" }'));
   assert('openai is selected from config', openai.provider === 'openai');
@@ -1243,7 +1286,8 @@ async function documentedKeys(): Promise<void> {
 
   // And they load: one flat Bedrock file carrying every model and session key
   // (the Bedrock-only `requestTimeoutMs` forces the provider, which excludes the
-  // OpenAI-only `openaiApi`), plus the array form carrying that key and
+  // OpenAI-only `openaiApi` and the Anthropic-only `baseUrl` — the latter loads in
+  // `providerSwitching`), plus the array form carrying `openaiApi` and
   // `models`/`enable`/`name`. The fixture's key set is asserted against the
   // schema so a key added to either list has to be exercised here too.
   const flatFixture = {
@@ -1273,9 +1317,9 @@ async function documentedKeys(): Promise<void> {
     memoryHorizonDays: 7,
     systemPrompt: 'You are terse.',
   };
-  const flatKeys = [...MODEL_KEYS, ...SESSION_KEYS].filter((key) => key !== 'openaiApi');
+  const flatKeys = [...MODEL_KEYS, ...SESSION_KEYS].filter((key) => key !== 'openaiApi' && key !== 'baseUrl');
   assert(
-    'the flat fixture carries every schema key but openaiApi',
+    'the flat fixture carries every schema key but openaiApi and baseUrl',
     JSON.stringify([...Object.keys(flatFixture)].sort()) === JSON.stringify([...flatKeys].sort()),
   );
   const flat = await loadConfig(await writeConfig(JSON.stringify(flatFixture)));

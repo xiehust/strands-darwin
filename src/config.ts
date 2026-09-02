@@ -104,6 +104,13 @@ export interface ModelFields {
   /** Env var holding the API key, for providers that need one. */
   apiKeyEnv?: string;
   /**
+   * `anthropic` provider only: base URL of an Anthropic Messages API-compatible
+   * endpoint (a gateway, proxy or relay in front of `api.anthropic.com`). Falls
+   * back to `ANTHROPIC_BASE_URL`, then the client's own default — see
+   * {@link resolveAnthropicBaseUrl}. Must be an `http:` or `https:` URL.
+   */
+  baseUrl?: string;
+  /**
    * `openai` provider only: route requests through Amazon Bedrock's
    * OpenAI-compatible "Mantle" endpoint instead of `api.openai.com`, reaching
    * `openai.*` / `xai.*` / `google.gemma-*` models with AWS credentials rather
@@ -290,6 +297,7 @@ export const MODEL_KEYS = [
   'model',
   'region',
   'apiKeyEnv',
+  'baseUrl',
   'bedrockMantle',
   'openaiApi',
   'maxTokens',
@@ -486,6 +494,24 @@ export function resolveRegion(configured?: string): string {
     DEFAULT_REGION
   );
 }
+
+/**
+ * The base URL the `anthropic` provider will talk to: `baseUrl` from the config,
+ * else a non-empty `ANTHROPIC_BASE_URL`, else undefined — meaning the Anthropic
+ * client's own default (`https://api.anthropic.com`).
+ *
+ * Resolved here rather than left to the client (which reads the same env var by
+ * itself) for the same reason `region` is: one place decides, so a spike can
+ * assert the decision without a network and a future status surface can print it.
+ */
+export function resolveAnthropicBaseUrl(config: Pick<AppConfig, 'baseUrl'>): string | undefined {
+  if (config.baseUrl !== undefined) return config.baseUrl;
+  const fromEnv = process.env['ANTHROPIC_BASE_URL'];
+  return fromEnv === undefined || fromEnv === '' ? undefined : fromEnv;
+}
+
+/** Conventional env var the Anthropic client reads when no `apiKeyEnv` is set. */
+const ANTHROPIC_API_KEY_ENV = 'ANTHROPIC_API_KEY';
 
 /**
  * Completes a flat config with the one-entry catalogue it implies.
@@ -906,6 +932,24 @@ function validateModelFields(input: Record<string, unknown>, where: string): Mod
 
   const apiKeyEnv = stringField(input, 'apiKeyEnv', where);
   if (apiKeyEnv !== undefined) fields.apiKeyEnv = apiKeyEnv;
+
+  // Anthropic-only, and checked as a URL here: the client would accept any string
+  // and fail on the first request with a fetch error that names neither the file
+  // nor the key.
+  const baseUrl = stringField(input, 'baseUrl', where);
+  if (baseUrl !== undefined) {
+    if (provider !== 'anthropic') {
+      throw new ConfigError(
+        `${where}: "baseUrl" only applies to provider "anthropic" (this one sets ${JSON.stringify(provider)}).`,
+      );
+    }
+    if (!isHttpUrl(baseUrl)) {
+      throw new ConfigError(
+        `${where}: "baseUrl" must be an http: or https: URL, got ${JSON.stringify(baseUrl)}.`,
+      );
+    }
+    fields.baseUrl = baseUrl;
+  }
 
   // Rejected here rather than left to the SDK, which throws the same conflict as
   // a bare Error naming neither the file nor the two keys the user wrote.
@@ -1612,6 +1656,18 @@ async function createAnthropicModel(config: AppConfig): Promise<Model> {
   // Config is validated before the import: a mistake in the user's own file is
   // reported whether or not the optional peer dependency happens to be installed.
   const apiKey = readApiKey(config);
+  // Without `apiKeyEnv` the client falls back to ANTHROPIC_API_KEY on its own, but
+  // when that is empty too it throws a bare Error from the constructor; refusing
+  // here keeps a missing credential inside the ConfigError boundary.
+  if (apiKey === undefined) {
+    const conventional = process.env[ANTHROPIC_API_KEY_ENV];
+    if (conventional === undefined || conventional === '') {
+      throw new ConfigError(
+        `Provider "anthropic" needs an API key: set ${ANTHROPIC_API_KEY_ENV} or name another environment variable with "apiKeyEnv".`,
+      );
+    }
+  }
+  const baseURL = resolveAnthropicBaseUrl(config);
   const { AnthropicModel } = await importProviderModule<typeof import('@strands-agents/sdk/models/anthropic')>(
     '@strands-agents/sdk/models/anthropic',
     'anthropic',
@@ -1624,6 +1680,11 @@ async function createAnthropicModel(config: AppConfig): Promise<Model> {
     modelId: config.model,
     maxTokens: config.maxTokens,
     ...(apiKey !== undefined && { apiKey }),
+    // `clientConfig` is spread into the SDK's own `new Anthropic({...})`, which is
+    // how a Messages-API-compatible endpoint is reached without darwin importing
+    // the client package itself. Omitted entirely when nothing resolved, so the
+    // default install passes exactly what it always has.
+    ...(baseURL !== undefined && { clientConfig: { baseURL } }),
     ...(thinking !== undefined && { params: thinking as Record<string, unknown> }),
   });
 }
@@ -1744,6 +1805,15 @@ function readApiKey(config: AppConfig): string | undefined {
     );
   }
   return value;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const { protocol } = new URL(value);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function isProvider(value: unknown): value is Provider {

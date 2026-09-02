@@ -52,6 +52,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `model` | `global.anthropic.claude-opus-5` | provider-specific ID |
 | `region` | AWS env, then `us-west-2` | Bedrock/Mantle region |
 | `apiKeyEnv` | provider convention | environment variable containing direct API key |
+| `baseUrl` | `ANTHROPIC_BASE_URL`, then `https://api.anthropic.com` | Anthropic only; `http(s)` URL of a Messages API-compatible endpoint |
 | `bedrockMantle` | `false` | OpenAI provider via AWS; mutually exclusive with `apiKeyEnv` |
 | `openaiApi` | `chat` | `chat` or `responses` |
 | `maxTokens` | `64000` | maximum output tokens |

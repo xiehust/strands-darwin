@@ -96,13 +96,18 @@ aws bedrock list-inference-profiles --region us-west-2 \
 
 ## 直连 Anthropic
 
-选择 `provider: "anthropic"` 前，先安装 SDK 的可选 peer dependency：
+Anthropic 支持已经安装。`apiKeyEnv` 可指定密钥所在的环境变量；未指定时使用 `ANTHROPIC_API_KEY`；两者都没有时 darwin 拒绝启动并同时点名这两个选项。
 
-```bash
-pnpm add @anthropic-ai/sdk
+任何兼容 Anthropic Messages API 的端点（网关、代理、中继）都可通过 `baseUrl` 接入，值必须是 `http:` 或 `https:` URL。未设置时依次回落到 `ANTHROPIC_BASE_URL` 和客户端默认的 `https://api.anthropic.com`。其他 provider 设置 `baseUrl` 会被拒绝。
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "baseUrl": "https://gateway.example.com",
+  "apiKeyEnv": "ANTHROPIC_API_KEY"
+}
 ```
-
-`apiKeyEnv` 可指定密钥所在的环境变量；未指定时使用 `ANTHROPIC_API_KEY`。
 
 ## OpenAI 与 Bedrock Mantle
 

@@ -52,6 +52,7 @@
 | `model` | `global.anthropic.claude-opus-5` | 供应商对应的模型 ID |
 | `region` | AWS 环境变量，其次 `us-west-2` | Bedrock/Mantle 区域 |
 | `apiKeyEnv` | 供应商惯例 | 保存直连 API key 的环境变量名 |
+| `baseUrl` | `ANTHROPIC_BASE_URL`，其次 `https://api.anthropic.com` | 仅 Anthropic；Messages API 兼容端点的 `http(s)` URL |
 | `bedrockMantle` | `false` | OpenAI provider 通过 AWS 调用；不可与 `apiKeyEnv` 同时使用 |
 | `openaiApi` | `chat` | `chat` 或 `responses` |
 | `maxTokens` | `64000` | 最大输出 token 数 |

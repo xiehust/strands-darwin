@@ -86,7 +86,7 @@ TUI 测试使用的 `node-pty` 是原生开发依赖，已列入 `pnpm-workspace
 }
 ```
 
-Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.` 或 `global.` 等推理配置文件 ID，不能直接填写 `anthropic.*`。直连供应商默认读取 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`；直连 Anthropic 还需安装可选 peer dependency `@anthropic-ai/sdk`。
+Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.` 或 `global.` 等推理配置文件 ID，不能直接填写 `anthropic.*`。直连供应商默认读取 `ANTHROPIC_API_KEY` 或 `OPENAI_API_KEY`；直连 Anthropic 还支持通过 `baseUrl`（或 `ANTHROPIC_BASE_URL`）接入任何兼容 Messages API 的端点。
 
 多模型切换、各供应商字段、Bedrock Mantle、缓存、思考强度、上下文限制和全部会话设置，见[入门与模型供应商](docs/user-guide/getting-started.zh-CN.md)和[配置与上下文](docs/user-guide/configuration.zh-CN.md)。
 

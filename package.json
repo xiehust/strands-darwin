@@ -28,6 +28,7 @@
     "url": "https://github.com/xiehust/strands-darwin/issues"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.109.1",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@strands-agents/sdk": "^1.12.0",

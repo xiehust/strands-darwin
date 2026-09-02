@@ -96,13 +96,18 @@ Region resolution is `region` → `AWS_REGION` → `AWS_DEFAULT_REGION` → `us-
 
 ## Direct Anthropic
 
-Install the SDK's optional peer before selecting `provider: "anthropic"`:
+Anthropic support is installed. Set `apiKeyEnv` to your key's environment-variable name or use `ANTHROPIC_API_KEY`; with neither, darwin refuses to start and names both.
 
-```bash
-pnpm add @anthropic-ai/sdk
+Any Anthropic Messages API-compatible endpoint (gateway, proxy, relay) is reached through `baseUrl`, which must be an `http:` or `https:` URL. Without it darwin uses `ANTHROPIC_BASE_URL`, then the client's default `https://api.anthropic.com`. `baseUrl` is refused on other providers.
+
+```json
+{
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "baseUrl": "https://gateway.example.com",
+  "apiKeyEnv": "ANTHROPIC_API_KEY"
+}
 ```
-
-Set `apiKeyEnv` to your key's environment-variable name or use `ANTHROPIC_API_KEY`.
 
 ## OpenAI and Bedrock Mantle
 

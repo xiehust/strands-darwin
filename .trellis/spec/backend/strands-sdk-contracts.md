@@ -1792,6 +1792,16 @@ tool call is silently denied with no prompt shown.
   `createModelFromConfig()` — their SDK packages are optional peer deps, and a static
   import would crash installs that only use Bedrock. Read the API key env var *before*
   the dynamic import so a missing key fails with `ConfigError`, not a module error.
+  Both `openai` and `@anthropic-ai/sdk` are now direct dependencies (the latter pinned to the
+  SDK's peer range `^0.109.1` — `pnpm peers check` must stay clean), so the `ConfigError`
+  wrapper only fires on a pruned install.
+- Anthropic base URL: `baseUrl` is an anthropic-only `MODEL_KEYS` entry validated as an
+  `http(s)` URL; `resolveAnthropicBaseUrl()` decides `baseUrl → ANTHROPIC_BASE_URL → undefined`
+  (client default) and the result reaches the SDK only as `clientConfig: { baseURL }` — never a
+  pre-built `client` (which would need darwin to import `@anthropic-ai/sdk` itself). A missing
+  credential (no `apiKeyEnv`, empty `ANTHROPIC_API_KEY`) is a `ConfigError` naming both, refused
+  before the import. Offline coverage: `verify-config.ts` `providerSwitching`; live:
+  `spike/verify-anthropic-live.ts`.
 - Token usage lives at `result.lastMessage.toJSON().metadata.usage`, not
   `result.metrics` (which serialization drops — see "a serialized `AgentResult` carries
   no metrics" under Prompt Caching / usage below).
