@@ -205,7 +205,7 @@ Accepted 2026-09-02 in `bd050d2` (child session `session-20260902-040942462`, ma
 
 ## SER-052 — Make `/compact` terminate and report honestly: stop the reduce loop when a pass does not shrink the conversation, treat an SDK-swallowed summarization failure as failure rather than success, and repair the `compacting` pty scenario that has been red since `f4e3271`
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 71
 - Score: 14
 - Importance: 4
@@ -217,7 +217,7 @@ Accepted 2026-09-02 in `bd050d2` (child session `session-20260902-040942462`, ma
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-02 in `618f771` (child session `session-20260902-044757342`, managed task `bg-37875105-4e7a-489e-a957-249ede571346`, exit 0; Trellis task archived in `87ef668`, including a `break-loop.md` analysis). `compactConversation` (`src/agent/compact.ts`) gains two guards in the shared loop, so `/compact`, `/compact <focus>` and `--compact-before` inherit both: a pass that returns `true` without lowering `agent.messages.length` is undone from a shallow snapshot (identity preserved) and ends the loop, so `compacted`/`messagesAfter` describe what really changed and at most one summarizer call is spent beyond the shrinking ones; a pass that returns `false` is the SDK's swallowed proactive failure (inside this loop the SDK has no honest `false`) and now throws `SWALLOWED_SUMMARIZATION_FAILURE`, which the existing catch turns into `compaction failed; conversation restored: …` — never `compacted: true`. Recorded decisions: 2 messages / preserve 0 is an honest `already compact` no-op after exactly one call (the SDK clamps `summaryRatio` to ≤ 0.8, so a pair can never be summarized in one pass); detection was chosen over a sentinel `error` because the SDK types it `ContextWindowOverflowError`, overwrites `.cause` with it, and `failureFromError` reads `.cause` — a fabricated overflow cause would have reached structured headless output; the `compacting` pty scenario now seeds two turns with `preserveRecentMessages: 1` and waits for the exact `conversation compacted — 4 → 2 messages`, a real one-pass compaction. Host independently inspected the whole diff and re-ran `spike/verify-compact.ts` (70/70, up from 52: 2/0 one call and byte-identical no-op, 16/0 exactly three calls with the third undone, second- and first-pass failures reject and restore, focused manager shares the guards, reasoning-only summary now a failure), `spike/verify-headless.ts` (182/182), `pnpm typecheck`, full `pnpm test` (exit 0, zero FAIL lines), `pnpm build`, the live `AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts compacting` (5/5, compaction 15 s), and an own fake-model probe: `2/0 → calls=1 after=2 compacted=false`; `16/0 → calls=3 after=2 compacted=true`; `16/10 → calls=1 after=11`; summarizer failing on the 2nd or 1st call → reject with the conversation restored. Specs: `strands-sdk-contracts.md` § `/compact` (termination + failure contracts, three matrix rows), `error-handling.md` (two rows), load-bearing doc paragraph, AGENTS.md row (31,657 B < 32 KiB). Recorded in `docs/iteration-log.md` Batch 75.
 
 ### Notes / blockers / abandonment reason
 
