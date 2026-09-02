@@ -1301,3 +1301,30 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
   `pnpm build`; `node dist/src/cli.js doctor` here: exit 0, no problems. AGENTS.md untouched at
   32,667 B; contract in `error-handling.md` degradation table + a load-bearing-decisions heading.
   Committed b68851f.
+
+## 2026-09-02 — SER-059 Esc Esc opens the `/rewind` chooser (09-02-ser-059-esc-esc-rewind)
+
+- One opener, two keys: the `/rewind` command body (from the `startRewind` guard through
+  `setRewindSearch(openRewindSearch(...))`) became `openRewindChooser(): Promise<boolean>` in
+  `App.tsx`, and the Escape chord calls the same callback — the pty scenario proves the shared path
+  by anchoring on the command's own capacity warning and refusal wording rather than new strings.
+- Chord bookkeeping is a single `useRef<number>` read-and-cleared at the *top* of `useInput`, so
+  every key — including an Escape consumed by permission denial or a search mode, which return
+  before the composer branch — disarms it, and only the composer's own Escape on an empty idle
+  composer (`status === 'idle'`, empty queue, empty draft) re-arms. `\x1b\x1b` in one chunk is one
+  Ink `escape` with `meta` and counts as both presses. `ESCAPE_REWIND_CHORD_MS = 500` lives in the
+  pure `rewind-search.ts` so `help-format.ts` and the spikes import it without `App.tsx`.
+- The new `escRewind` scenario found a pre-existing bug on its fresh-session leg: a refused
+  `/rewind` (no catalogue) printed its notice but left `/rewind` in the draft (neither the batched
+  `text\r` path nor the menu-accept path clears it — `/help`/`/clear` clear their own), so the
+  following `/exit` went to the model as `/rewind/exit`. The command now clears the draft whenever
+  the opener resolves `false` (and on the takes-no-arguments refusal); the chord path has an empty
+  draft by definition. Pinned by `a refused /rewind leaves an empty draft`.
+- Two-Escape pty timing: separate writes 120 ms apart for "inside the window", `window + 300 ms`
+  for "too far apart"; the first single-Esc check doubles as the first press of the far-apart pair.
+- `verify-tui.ts escRewind` 20/20; `rewind` 7, `completion` 69, `recall` 22, `historySearch` 11,
+  `undo` 7, `wordNav` 11 all green; `verify-help-command.ts` 36/36 (`HELP_FIXED_LINES` 22→23);
+  typecheck, full `pnpm test` (86 suites, 0 failed), `pnpm build`. AGENTS.md untouched at 32,667 B;
+  spec sentence in `prompt-recall.md` § `/rewind` (plus the Escape lines in `tui-testing.md` and
+  `live-frame.md`), rationale under load-bearing-decisions § `/rewind`. Committed 5eea0e4.
+
