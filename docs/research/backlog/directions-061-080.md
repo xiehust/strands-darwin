@@ -289,7 +289,7 @@ Requirement: keep the whitelist principle of `assessBashRisk` (`src/agent/permis
 
 ## SER-054 — Make a foreground bash timeout truthful and non-destructive to evidence: the timeout error result carries the bounded tail of captured stdout/stderr, the effective timeout, the shell-restart/cwd statement and one `start`/`wait` pointer
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 75
 - Score: 14
 - Importance: 4
@@ -301,7 +301,7 @@ Requirement: keep the whitelist principle of `assessBashRisk` (`src/agent/permis
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-02 in `0255368` (child session `session-20260902-101002155`, managed task `bg-ca0ec822-9eba-48b8-991e-80e741653b7c`, exit 0; Trellis task archived in `772187e`, journal `fdab9c2`). The pinned SDK patch's `bash.js` gains `TIMEOUT_TAIL_LIMIT` (64 KiB, the same figure as the background projection's `OUTPUT_LIMIT`), a multi-byte-safe `boundedTail`, `describeTail` (`<n> bytes` or `last <kept> of <total> bytes; hasMore: true`, `(none)` when empty), a timeout handler that builds `BashTimeoutError` with `output`/`error`/`cwd`/`timeoutSeconds` and an ordered message — timeout figure → stdout tail → stderr tail → "shell was killed … restart … with cwd: <initial>" → `start`+`wait` pointer — and a `stop()` that resets the tracked cwd to the initial cwd so the next command's wrong-root preflight is truthful; `types.d.ts` declares the four fields; `src/` untouched (the SDK's `createErrorResult` turns the message into the `Error: …` tool result verbatim). No auto-backgrounding: the persistent shell cannot detach a running command, stated in the spec. Host acceptance, independently re-run: a throwaway `createForegroundBashTool` probe (`cd /tmp && echo before-out; echo before-err 1>&2; sleep 5`, `timeout: 1`) returned `BashTimeoutError` with `output "before-out"`, `error "before-err"`, `cwd` = project root, `timeoutSeconds 1` and the message in the required order, and the following `pwd; echo ok` ran in the project root; installed `bash.js` contains `TIMEOUT_TAIL_LIMIT`; `spike/verify-background-bash.ts` 157/157 (was 142; new `foregroundTimeoutContracts()` covers fields, order, byte-identical in-time result, 64 KiB `hasMore` tail, multi-byte cut, post-timeout preflight cwd, queue continuation); `pnpm typecheck` exit 0; full `pnpm test` exit 0 with zero FAIL lines; `pnpm build` exit 0; tree clean. Spec/docs: `strands-sdk-contracts.md` timeout paragraph + matrix row + required assertions, `error-handling.md` row, load-bearing § Process exit sentence; AGENTS.md unchanged. Recorded in `docs/iteration-log.md` Batch 79.
 
 ### Notes / blockers / abandonment reason
 
@@ -309,7 +309,7 @@ Requirement: when a foreground `execute` exceeds its timeout, the pinned SDK bas
 
 ## SER-056 — Add a parent-only `web_fetch` tool: content-negotiated GET with HTML→bounded readable text, `http`→`https` upgrade, same-host redirects followed and cross-host redirects reported, an explicit truncation notice and a stated lossy projection; `http_request` byte-identical
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 76
 - Score: 10
 - Importance: 4
