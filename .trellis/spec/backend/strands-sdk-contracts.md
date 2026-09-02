@@ -1969,6 +1969,7 @@ Background states are `running | succeeded | failed | stopped`.
 | Log deleted/unreadable | Status keeps process metadata with `outputBytes: null`; output errors with the owned path |
 | Spawn fails | Reject start, close the parent log handle, kill/register-clean any exposed group |
 | Repeated/concurrent output or wait | Serialized, disjoint cursor ranges |
+| User `/tasks` while `output`/`wait` consumers exist (SER-060) | The TUI's tail rows come from `readBackgroundTail(outputPath)` in `src/tools/background-tail.ts` — its own read-only `O_NOFOLLOW` open of at most the last `TASK_TAIL_WINDOW_BYTES` — never from `readOutput`; the task's `cursor`, `OUTPUT_LIMIT` accounting and any in-flight `wait` are untouched, so `startOffset`/`endOffset`/`output`/`hasMore` before and after a `/tasks` are byte-identical; the reader never rejects (missing/replaced/unreadable → `unavailable`) |
 | `waitMs` absent/non-integer/below 1, output-sensitive above 30000, or terminal-focused above 300000 | Zod tool error; manager also rejects direct invalid calls with the applicable finite bound |
 | `wakeOnOutput` on a non-wait mode | Zod tool error; do not reinterpret the operation |
 | Default wait sees no output/state change | Return `reason: timeout` within its declared bound with empty incremental output |
@@ -2005,6 +2006,9 @@ Background states are `running | succeeded | failed | stopped`.
   success/failure/stop events, unsubscribe/listener/log-snapshot failure isolation, delayed
   combined output, default and terminal-focused bounded waits, shared-cursor aggregation,
   split-UTF-8 reads, TERM→KILL stop, launch/shutdown races, and bounded cleanup.
+- `spike/verify-tasks-tail.ts`: real jobs; a tail read before `output` and during a
+  terminal-focused `wait` leaves both results identical to control runs, and the tail after
+  `output` still shows the last three lines; bounded window, placeholders, no throw.
 - `spike/probe-background-bash-exit.ts`: direct exit, normal shutdown, CLI-style forced
   exit, SIGINT, and SIGTERM with SDK bash signal handlers loaded; leader and descendant must
   both disappear within deadlines.

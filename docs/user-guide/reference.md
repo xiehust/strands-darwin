@@ -91,7 +91,7 @@ Rules and limits:
 | `/permissions` | live allow rules and origins |
 | `/permissions revoke <n/rule/all>` | synchronously narrow live/disk rules |
 | `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/spend/context report |
-| `/tasks` | background jobs, including while busy |
+| `/tasks` | background jobs with their last three non-empty output lines, including while busy; reading them never moves the model's `output`/`wait` cursor |
 | `/trajectory` | this run's local record status |
 | `/usage` | process token buckets; unreported is not zero |
 | `/workflow <task>` | ask the model to orchestrate the task as one `workflow` DAG call; bare form prints usage |

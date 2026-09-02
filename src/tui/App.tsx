@@ -44,6 +44,7 @@ import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from '../commands/workflow-command.js';
 import { MCP_CONFIG_FILENAME, mcpConfigCandidates } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
+import { readBackgroundTails } from '../tools/background-tail.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
 import { exportTranscript } from '../trajectory/export.js';
 import {
@@ -1076,7 +1077,10 @@ export function App({
 
 
       // Reads the manager directly rather than entering the model/tool loop. Like
-      // /usage it remains available mid-turn and cannot queue or cancel work.
+      // /usage it remains available mid-turn and cannot queue or cancel work. The
+      // output tails come from the logs themselves, never through the manager's
+      // cursor, so a glance here cannot move the model's `output`/`wait` offsets;
+      // every tail settles before the one notice is composed.
       if (/^\/tasks(?:\s|$)/.test(text)) {
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
@@ -1087,7 +1091,8 @@ export function App({
         }
         try {
           const tasks = await runtime.listBackgroundTasks();
-          dispatch({ type: 'notice', text: formatTasksReport(tasks) });
+          const tails = await readBackgroundTails(tasks);
+          dispatch({ type: 'notice', text: formatTasksReport(tasks, Date.now(), tails) });
         } catch (error) {
           dispatch({
             type: 'notice',

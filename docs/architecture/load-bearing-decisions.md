@@ -750,6 +750,19 @@ so `cli.ts` arms an unref'd 500ms `process.exit` fallback *after* shutdown compl
 without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`,
 `spike/verify-clear-session.ts`, and the `bashExit` / `cancelThenContinue` TUI scenarios.
 
+**The `/tasks` output tails read the log, never the cursor (SER-060).** The byte cursor behind
+`bash output` and `wait` is the model's: every byte belongs to exactly one consumer, and the
+offsets it reports are how the model knows what it has and has not seen. A user glancing at
+`/tasks` must not become a hidden second consumer, so the three recent non-empty lines under each
+job row come from `src/tools/background-tail.ts` — its own read-only `O_NOFOLLOW` open of at
+most the last `TASK_TAIL_WINDOW_BYTES` of `outputPath`, split, ANSI-stripped, blank lines dropped —
+and the manager's `readOutput`, `cursor`, `OUTPUT_LIMIT` accounting and any in-flight `wait` are
+not touched: `startOffset`/`endOffset`/`output`/`hasMore` before and after a `/tasks` are
+byte-identical (`spike/verify-tasks-tail.ts` proves it against control runs). The reader never
+rejects — a missing or replaced log is `(output unavailable)`, a readable one without a non-empty
+line `(no output yet)` — and every tail settles before the one `<Static>` notice is dispatched, so
+the report stays a single bounded transcript block with no live row or timer.
+
 ## TUI — production React owns the long-turn memory bound
 
 **The interactive React/Ink graph is first imported under the production condition**

@@ -1,8 +1,14 @@
 /** Focused, network-free checks for background task transcript formatting. */
 import type { BackgroundTaskStatus } from '../src/tools/background-bash.js';
+import type { BackgroundTail } from '../src/tools/background-tail.js';
 import {
+  TASK_TAIL_EMPTY_NOTICE,
+  TASK_TAIL_LINE_LIMIT,
+  TASK_TAIL_PREFIX,
+  TASK_TAIL_UNAVAILABLE_NOTICE,
   formatTaskCompletion,
   formatTaskDuration,
+  formatTaskTail,
   formatTasksReport,
   summarizeTaskCommand,
   taskElapsedMs,
@@ -40,6 +46,30 @@ const reportText = formatTasksReport([
   task({ state: 'succeeded', finishedAt: '2026-01-01T00:00:02Z' }),
 ], Date.parse('2026-01-01T00:00:05Z'));
 assert('task reports include short id, states, elapsed time, and normalized command', reportText.includes('bg-12345678') && reportText.includes('running') && reportText.includes('5s') && reportText.includes('succeeded') && reportText.includes('pnpm test --filter long-name'));
+
+header('background task output tails (SER-060)');
+const tails = new Map<string, BackgroundTail>([
+  ['bg-aaaaaaaa-0000-0000-0000-000000000000', { kind: 'lines', lines: ['one', '  two', 'three'], bytesRead: 16 }],
+  ['bg-bbbbbbbb-0000-0000-0000-000000000000', { kind: 'empty', bytesRead: 0 }],
+  ['bg-cccccccc-0000-0000-0000-000000000000', { kind: 'unavailable' }],
+]);
+const tailReport = formatTasksReport([
+  task({ taskId: 'bg-aaaaaaaa-0000-0000-0000-000000000000' }),
+  task({ taskId: 'bg-bbbbbbbb-0000-0000-0000-000000000000' }),
+  task({ taskId: 'bg-cccccccc-0000-0000-0000-000000000000' }),
+  task({ taskId: 'bg-dddddddd-0000-0000-0000-000000000000' }),
+], Date.parse('2026-01-01T00:00:05Z'), tails);
+const tailRows = tailReport.split('\n');
+assert('the legacy call without tails is byte-identical to the one-row shape', reportText.split('\n').length === 3 && !reportText.includes(TASK_TAIL_PREFIX));
+assert('tail rows follow their job row, indented and marked', tailRows[1]?.startsWith('  bg-aaaaaaaa') === true && tailRows.slice(2, 5).join('|') === `${TASK_TAIL_PREFIX}one|${TASK_TAIL_PREFIX}  two|${TASK_TAIL_PREFIX}three`);
+assert('an empty log states no output yet under its row', tailRows[5]?.startsWith('  bg-bbbbbbbb') === true && tailRows[6] === `${TASK_TAIL_PREFIX}${TASK_TAIL_EMPTY_NOTICE}`);
+assert('an unavailable log states so', tailRows[7]?.startsWith('  bg-cccccccc') === true && tailRows[8] === `${TASK_TAIL_PREFIX}${TASK_TAIL_UNAVAILABLE_NOTICE}`);
+assert('a task the reader did not cover reads as unavailable', tailRows[9]?.startsWith('  bg-dddddddd') === true && tailRows[10] === `${TASK_TAIL_PREFIX}${TASK_TAIL_UNAVAILABLE_NOTICE}` && tailRows.length === 11);
+const longTail = formatTaskTail({ kind: 'lines', lines: [`${'x'.repeat(TASK_TAIL_LINE_LIMIT - 2)}😀tail`], bytesRead: 1 });
+assert('tail lines truncate end-first by code point with …', longTail.length === 1 && longTail[0] === `${TASK_TAIL_PREFIX}${'x'.repeat(TASK_TAIL_LINE_LIMIT - 2)}😀…`);
+assert('a defensive over-long tail is cut to the last three lines', formatTaskTail({ kind: 'lines', lines: ['1', '2', '3', '4'], bytesRead: 8 }).join('|') === `${TASK_TAIL_PREFIX}2|${TASK_TAIL_PREFIX}3|${TASK_TAIL_PREFIX}4`);
+assert('the marker is not a job-row prefix', !/^\s{2}bg-/.test(TASK_TAIL_PREFIX) && TASK_TAIL_PREFIX.startsWith('    '));
+
 const failure = formatTaskCompletion(task({ state: 'failed', finishedAt: '2026-01-01T00:00:02Z', exitCode: 7, signal: 'SIGTERM' }));
 assert('failure notices include state, elapsed time, and all available exit metadata', failure.includes('failed') && failure.includes('2s') && failure.includes('exit 7') && failure.includes('signal SIGTERM'));
 report();

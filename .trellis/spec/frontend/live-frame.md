@@ -208,7 +208,10 @@ nothing is ever injected into a running SDK stream.
 - **What queues, exactly.** Prompts, skill/command expansions and `!` commands queue. Local
   report/control commands (`/usage`, `/effort`, `/mode`, `/permissions`, `/tasks`, `/agents`,
   `/context`, `/trajectory`, `/export`, `/mcp`, `/status`) keep answering mid-turn immediately —
-  they sit above the busy check, as before. `/clear`, `/compact`, `/model`, `/exit` and `/quit`
+  they sit above the busy check, as before. `/tasks` stays one bounded `<Static>` notice even
+  with its per-job output tails (SER-060): the tail rows are read from the log files before the
+  notice is dispatched, are ANSI-stripped so each is one row, and add no live row or timer.
+  `/clear`, `/compact`, `/model`, `/exit` and `/quit`
   **refuse** with a `… does not queue` notice, draft retained — the one place SER-010's retention
   shape deliberately survives (`refusesToQueue`): a session-replacing command run minutes later,
   unprompted, is worse than a second Enter. Compaction still owns the whole keyboard, so nothing

@@ -224,12 +224,13 @@ runtime.subscribeToBackgroundTasks(listener): () => void
 /tasks // local command; no arguments; valid while idle or streaming
 ```
 
-The report shows short id, presentation-only command summary, state, and elapsed duration. Running duration ends at report time; terminal duration ends at `finishedAt`.
+The report shows short id, presentation-only command summary, state, and elapsed duration. Running duration ends at report time; terminal duration ends at `finishedAt`. Under each job row it shows up to `TASK_TAIL_LINES` (3) recent non-empty output lines (SER-060), each prefixed `TASK_TAIL_PREFIX` (`    │ `) and truncated end-first to `TASK_TAIL_LINE_LIMIT` (100) code points with `…`.
 
 ### 3. Contracts
 
 - Handle `/tasks` before the busy-turn guard, like `/usage`. Match any whitespace separator (`/^\/tasks(?:\s|$)/`) so tab/newline arguments are rejected locally rather than reaching the model.
 - `/tasks` reads the runtime manager directly: it must not call `send`, cancel, queue, or emit a tool event. Empty state says `none in this run` because `--resume` does not restore process control.
+- The tail rows are read by `readBackgroundTails(tasks)` (`src/tools/background-tail.ts`) straight from each `outputPath` — at most the last `TASK_TAIL_WINDOW_BYTES` (8 KiB), a leading partial line dropped, split on `\r\n`/`\n`/`\r`, ANSI escapes and C0 controls stripped, tabs expanded, blank lines dropped, last three kept — **never through `readOutput`**, so the model's `bash output`/`wait` cursor is untouched. All tails settle before the one notice is dispatched; there is no partial or second notice, no live row, no timer. A zero-output job keeps its single row **plus one stated line**: `(no output yet)` for a readable log without a non-empty line, `(output unavailable)` for a missing/replaced/unreadable log or a task the reader did not cover. The reader never throws; only a failed `list()` produces the `could not list background tasks:` notice. `formatTasksReport` without a `tails` argument keeps the original one-row shape.
 - Subscribe in a mounted `useEffect` and return the unsubscribe closure. Dispatch only a `notice`; never `turnEnded` or status changes. The informational `<Static>` history entry is non-modal, visible while idle, and cannot steal permission/input focus.
 - Normalize command whitespace and bound summaries only at presentation time. Truncate by Unicode code points, not UTF-16 code units, so an emoji boundary cannot render `�`; agent-side list output keeps the full command.
 - Background lifecycle `bash` calls (`start`, `list`, `status`, `output`, `wait`, `stop`) are a presentation-only projection. Compact mode suppresses successful status and empty output polls. Successful waits are ephemeral while the observed task state is running, whether their incremental output is empty or non-empty; a terminal wait retains exactly one short-id/state row, also when its result carries output. Nested output/status/command/path/cursor metadata stays out of compact wait history. Failures remain fully diagnostic, expanded mode keeps the ordinary bounded payload, provider/model-visible results remain unchanged except for the terminal-focused running-timeout instruction owned by the manager contract, that valid instruction remains suppressed with the running poll, and unknown or internally contradictory successful payloads fall back rather than being silently suppressed.
@@ -250,6 +251,8 @@ The report shows short id, presentation-only command summary, state, and elapsed
 | Task finishes while idle | React dispatch redraws immediately without keyboard input |
 | TUI unmounts before runtime shutdown stops jobs | Effect unsubscribes; no write into dead renderer |
 | Long/multiline/Unicode command | Single-line bounded complete-code-point summary |
+| Job log has output / only blank lines / is missing | Last three non-empty lines under the row / `(no output yet)` / `(output unavailable)`; never an error, never a cursor move |
+| Coloured or tab-separated output lines | ANSI and C0 controls stripped, tabs to spaces before truncation — one row per line |
 
 ### 5. Good / Base / Bad Cases
 
@@ -259,7 +262,8 @@ The report shows short id, presentation-only command summary, state, and elapsed
 
 ### 6. Tests Required
 
-- `spike/verify-task-format.ts`: whitespace, bounds, Unicode code-point truncation, running/terminal time endpoints, empty report, and failure metadata.
+- `spike/verify-task-format.ts`: whitespace, bounds, Unicode code-point truncation, running/terminal time endpoints, empty report, failure metadata, and the tail rows (marker, placeholders, uncovered task, end-first truncation, legacy shape without tails).
+- `spike/verify-tasks-tail.ts`: real jobs through the real manager — last three non-empty ANSI-stripped lines under the row; `output` after a tail read and a terminal-focused `wait` spanning one are byte-identical to control runs; tail unchanged after `output`; `(no output yet)`, `(output unavailable)` without a throw; width truncation; a log larger than the window reads exactly `TASK_TAIL_WINDOW_BYTES`. No model-free pty path can start a background job, so the pty `completion` scenario keeps only the empty-state `/tasks` assertions.
 - `spike/verify-background-tool-ui.ts`: lifecycle recognition, compact active/result summaries, status/empty-output suppression, empty and non-empty running-wait suppression, terminal waits with and without output, malformed fallback, failure preservation, expanded mode, and foreground compatibility.
 - `spike/verify-tui.ts toolDetails`: zero-model `Ctrl+B` toggles both ways, reports each mode, preserves a draft, and starts no turn.
 - `spike/verify-tui.ts completion`: zero-model `/tasks`, space/tab argument rejection, completion row, and no `working…` marker.

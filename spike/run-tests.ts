@@ -34,6 +34,7 @@ const suites = [
   'verify-http-request-tool.ts',
   'verify-web-fetch.ts',
   'verify-task-format.ts',
+  'verify-tasks-tail.ts',
   'verify-busy-suffix.ts',
   'verify-context-format.ts',
   'verify-context-anchor.ts',

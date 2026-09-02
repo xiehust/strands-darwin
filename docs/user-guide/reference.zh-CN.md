@@ -91,7 +91,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/permissions` | 当前放行规则及来源 |
 | `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘规则 |
 | `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/费用/上下文 |
-| `/tasks` | 后台任务；忙碌时也可用 |
+| `/tasks` | 后台任务及其最近三行非空输出；忙碌时也可用；读取不会移动模型的 `output`/`wait` 游标 |
 | `/trajectory` | 当前运行的本地记录状态 |
 | `/usage` | 当前进程 token 分桶；未报告不等于零 |
 | `/workflow <task>` | 请模型把任务编排为一次 `workflow` DAG 调用；不带参数时打印用法 |
