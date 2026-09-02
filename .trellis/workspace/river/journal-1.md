@@ -1328,3 +1328,30 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
   spec sentence in `prompt-recall.md` § `/rewind` (plus the Escape lines in `tui-testing.md` and
   `live-frame.md`), rationale under load-bearing-decisions § `/rewind`. Committed 5eea0e4.
 
+## 2026-09-02 — SER-060 `/tasks` output tails (09-02-ser-060-tasks-output-tail)
+
+- The tail is a second *reader*, not a second *consumer*: `src/tools/background-tail.ts` opens the
+  job's `outputPath` itself (`O_RDONLY | O_NOFOLLOW`, regular file only), reads at most the last
+  `TASK_TAIL_WINDOW_BYTES` (8 KiB), drops the leading partial line only when a complete line follows
+  it, splits on `\r\n`/`\n`/`\r`, strips ANSI/C0, expands tabs, drops blank lines and keeps the last
+  `TASK_TAIL_LINES` (3). It imports nothing from `background-bash.ts`, so it cannot touch `cursor`,
+  `OUTPUT_LIMIT` or a `wait` in flight. Proof shape that worked well: identical control/probe jobs,
+  tail only the probe, then compare `output()` (and a terminal-focused `wait` spanning the tail read)
+  field by field; then tail again after `output()` and deep-equal it to the pre-`output()` tail.
+- Formatter split: sanitizing is a property of the log text and lives with the reader; the display
+  width (`TASK_TAIL_LINE_LIMIT` 100, marker `    │ `) is presentation and lives in `task-format.ts`,
+  where `summarizeTaskCommand`'s truncation became a shared `truncateEnd` (pinned by the existing
+  suite). `formatTasksReport(tasks, nowMs, tails?)` — the optional map keeps legacy calls byte-identical;
+  `App.tsx` awaits `readBackgroundTails(tasks)` before the one notice, so no partial second notice.
+- Decision stated in spec: a zero-output job keeps its row **plus** `(no output yet)`; a missing/
+  replaced/unreadable log or an uncovered task reads `(output unavailable)`; the reader never rejects.
+- No model-free pty path can start a background job (`!` is not one), so `verify-tui.ts completion`
+  keeps only the empty-state `/tasks` assertions and `verify-tasks-tail.ts` carries the tail proof —
+  said so in `tui-testing.md` § Tests Required.
+- `verify-tasks-tail.ts` 33/33 (new, in `pnpm test`), `verify-task-format.ts` 18/18 (was 10);
+  `verify-tui.ts completion` 69, `bang` 19, `queue` 17 all green; typecheck, full `pnpm test`
+  (0 failed), `pnpm build`. AGENTS.md untouched at 32,667 B; contract rows in `tui-testing.md`
+  (background task monitoring), `strands-sdk-contracts.md` (wait/cursor matrix + tests),
+  `error-handling.md` degradation table, one sentence in `live-frame.md`, rationale paragraph under
+  load-bearing-decisions § Process exit. Committed 5c4dcb3.
+
