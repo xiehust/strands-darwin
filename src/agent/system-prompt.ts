@@ -89,9 +89,15 @@ something out over guessing or asking the user for what you could read yourself.
    per round. Every round replays the whole conversation to the model; a round that carries one
    small read costs the same replay as one that carries five.
 8. Consolidate edits: collect what an analysis or review pass found, then change each file
-   region in one edit. Do not alternate one small str_replace per round when the next change is
-   already known — several edits to the same file belong in consecutive calls of one message
-   only when they touch non-overlapping regions; overlapping fixes are one edit.
+   region in one edit; overlapping fixes to one region are one edit. Do not alternate
+   one small str_replace per round when the next change is already known: tool calls in one
+   message run concurrently, but fileEditor edits to the same file are applied in call order, so
+   disjoint edits to one file may share a message and each later call sees the earlier result.
+   A verification command (typecheck, tests, a build, \`rg\` for the new text) never shares a
+   message with the edits it checks — it runs in the next message, after the edit results are in.
+   File mutations go through fileEditor (create, str_replace, insert), not \`cat >\`/heredocs,
+   \`sed -i\`, \`python3 - <<EOF\` or \`tee\`, so the edit diff, the permission classification and the
+   trajectory record exist; create refuses an existing file — view, then str_replace the scaffold.
 
 ## Working with the user
 

@@ -408,6 +408,22 @@ must never state the creating run's date as today's. The base is the only user-r
 `DEFAULT_SYSTEM_PROMPT`), so the project's own instructions stay additive on top of whichever
 base is in effect.
 
+**Working-method rule 8 states the real same-message execution contract** (SRF-021). Until
+2026-09-02 it told the model that "several edits to the same file belong in consecutive calls of
+one message only when they touch non-overlapping regions" — advice that, under the SDK's
+concurrent tool executor, lost 4 of 6 disjoint `str_replace` calls in
+session-20260902-054329719 and then pushed the model into `python3 - <<'EOF'` / `cat >` writes
+with no edit diff, no permission classification and no `fileEditor` trajectory record
+(`docs/reflections/reflection_2026-09-02_session-20260902-054329719.md`, F2/F3). With SRF-020's
+same-path ordering (`src/tools/file-editor-serial.ts`) the rule now says: tool calls in one
+message run concurrently, but `fileEditor` edits to the same file are applied in call order, so
+disjoint edits to one file may share a message; overlapping fixes to one region are one edit; a
+verification command never shares a message with the edits it checks (it would read an unknown
+state); file mutations go through `fileEditor`, not heredocs/`sed -i`/inline Python/`tee`; and
+`create` refusing an existing file means `view` then `str_replace`, not a shell fallback. The
+rule count and every other line of the base prompt are unchanged, so the cached prefix shape is
+the same; `spike/verify-working-context.ts` pins the phrases and the eight-rule count.
+
 
 ## Agent-managed project memory
 

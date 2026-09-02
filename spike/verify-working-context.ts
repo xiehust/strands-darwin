@@ -267,6 +267,47 @@ function resumedPrompt(): void {
   assert('refreshing with identical facts changes nothing', JSON.stringify(restored.systemPrompt) === before);
 }
 
+/**
+ * The Working-method rules are what the base prompt tells the model about its own
+ * execution contract, so a wording change here is a behavior change. Rule 8 states the
+ * SRF-020 contract (same-file fileEditor edits in one message apply in call order) rather
+ * than the pre-serialization advice that lost 4 of 6 edits in
+ * session-20260902-054329719, and it routes writes through fileEditor.
+ */
+function workingMethodRules(): void {
+  header('system prompt — rule 8 states the same-message edit contract');
+
+  const section = DEFAULT_SYSTEM_PROMPT.split('\n## Working method\n')[1]?.split('\n## ')[0] ?? '';
+  const numbered = section.split('\n').filter((line) => /^\d+\. /.test(line)).map((line) => line.split('.')[0]);
+  assert('the section is found', section.length > 0);
+  assert('exactly eight numbered rules, 1 through 8', numbered.join(',') === '1,2,3,4,5,6,7,8');
+
+  assert(
+    'same-file edits in one message are stated as applied in call order',
+    /fileEditor edits to the same file are applied in call order/.test(section),
+  );
+  assert('overlapping fixes to one region stay one edit', /overlapping fixes to one region are one edit/.test(section));
+  assert(
+    'a verification command never shares a message with the edits it checks',
+    /never shares a\s+message\s+with the edits it checks/.test(section) && /runs in the next message/.test(section),
+  );
+  assert(
+    'file mutations go through fileEditor, not shell heredocs',
+    /mutations go through fileEditor \(create, str_replace, insert\)/.test(section) &&
+      /`cat >`\/heredocs/.test(section) &&
+      /`python3 - <<EOF`/.test(section),
+  );
+  assert(
+    'create refusing an existing file points to view then str_replace',
+    /create refuses an existing file — view, then str_replace/.test(section),
+  );
+  assert(
+    'the pre-serialization wording is gone',
+    !/consecutive calls of one message/.test(DEFAULT_SYSTEM_PROMPT) && !/non-overlapping regions/.test(DEFAULT_SYSTEM_PROMPT),
+  );
+  assert('the base prompt is still one static text with no working context of its own', !DEFAULT_SYSTEM_PROMPT.includes(`<${WORKING_CONTEXT_TAG}>`));
+}
+
 async function main(): Promise<void> {
   await rm(ROOT, { recursive: true, force: true });
   try {
@@ -276,6 +317,7 @@ async function main(): Promise<void> {
     resumed();
     await composition();
     resumedPrompt();
+    workingMethodRules();
   } finally {
     await rm(ROOT, { recursive: true, force: true });
   }
