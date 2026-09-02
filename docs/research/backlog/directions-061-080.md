@@ -125,7 +125,7 @@ Accepted 2026-09-01 in `ff21afd` (child session `session-20260901-152613977`, ma
 
 ## SER-048 — Add `--help`/`-h` and `--version`/`-V` to the CLI as bounded local output routed before any runtime import, and point every `CliUsageError` at `--help`
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 67
 - Score: 14
 - Importance: 3
