@@ -1178,3 +1178,27 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
   load-bearing Process exit § updated; AGENTS.md untouched (32,412 B, no phrase false).
   Committed 0255368.
 
+## 2026-09-02 — SER-056 parent-only `web_fetch` tool (09-02-ser-056-web-fetch-tool)
+
+- `http_request` returns `response.text()` unbounded; a docs page was 656 KB of HTML that the
+  offloader had to absorb. Added a sibling tool `web_fetch({ url, maxChars? })` in
+  `src/tools/web-fetch.ts` — SDK `tool()` factory, no dependency: markdown-first `Accept`,
+  `http→https` upgrade, same-host redirects followed (5 hops), cross-host ones *reported*
+  (status, original url, empty body, both URLs in `notice`), dependency-free HTML→text
+  (`TextBuilder` line model with quote-depth prefixes; drop sets for script/style/nav/…), binary
+  refused by type+length before reading, 4 MiB download cap, 40 000 code-point body ceiling
+  with `[truncated: N of M code points]`. Own `AbortSignal.any([timeout, cancelSignal])`;
+  `httpRequest` never imported by the module.
+- Test technique worth reusing: the tool speaks https, the fixture is plain http — inject a
+  `fetchImpl` that rewrites only the fixture origin. It records the requested URL string, which
+  is exactly how the upgrade is proven end to end without TLS. Child-catalogue exclusion is
+  observed black-box through `runtime.info.agentProblems`: a probe agent definition with
+  `tools: ["web_fetch"]` is reported as naming an unknown tool.
+- Found a spec/code gap: `childTools` only filtered `retrieve_offloaded_content`, so
+  `http_request` *was* handed to children although AGENTS.md, the load-bearing doc and the spec
+  matrix all said otherwise. Promoted the filter to `PARENT_ONLY_TOOL_NAMES` (offload retrieval,
+  `http_request`, `web_fetch`) and named the mechanism in the matrix row.
+- `verify-web-fetch.ts` 73/73 (in `pnpm test`); `verify-http-request-tool.ts` 7/7 unchanged;
+  typecheck + full suite exit 0. AGENTS.md 32,412 → 32,578 B: no room for a new row, so the
+  existing HTTP row gained one clause. Committed d14b27c.
+
