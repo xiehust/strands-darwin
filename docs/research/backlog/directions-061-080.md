@@ -389,7 +389,7 @@ Requirement: a `darwin doctor` CLI verb, modelled on `src/cli-sessions.ts` (`SES
 
 ## SER-059 — Esc Esc on an empty idle composer opens the existing `/rewind` picker: a second Escape within a short window, first Escape keeps its current owners (completion menu, history search, recall); busy/queue/permission states ignore it; `/help` and README state the chord
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 80
 - Score: 9
 - Importance: 2
@@ -401,7 +401,7 @@ Requirement: a `darwin doctor` CLI verb, modelled on `src/cli-sessions.ts` (`SES
 
 ### Implementation / acceptance evidence
 
-(none yet)
+Accepted 2026-09-02 in `5eea0e4` (child session `session-20260902-162118803`, managed task `bg-9ccfafad-ae61-43f6-b768-642031831b2a`, exit 0, no correction turn; journal `23b0c26`, Trellis task archived in `a915f03`). `src/tui/rewind-search.ts` exports `ESCAPE_REWIND_CHORD_MS = 500`; `App.tsx` extracts the `/rewind` body into one `openRewindChooser(): Promise<boolean>` that both the command and the chord call (catalogue listing is the only runtime accessor, no snapshot, nothing sent, every refusal one bounded notice + `false`); the armed timestamp is a `useRef` read-and-cleared at the top of `useInput` so any other key or an Escape consumed by permission/search/menu/recall disarms it, and only the composer's own Escape branch re-arms when `status === 'idle'`, the queue is empty and the draft is empty; two ESC bytes in one stdin chunk (Ink `escape`+`meta`) count as both presses. Adjacent pre-existing bug fixed in the same commit and pinned: a refused `/rewind` (no catalogue) used to leave `/rewind` in the draft so the next submission was glued onto it — the command now clears the draft on refusal like `/help`. `/help` gains one row (`HELP_FIXED_LINES` 22→23, window interpolated from the constant). Host acceptance, all independently re-run at `a915f03`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 (86 suites, 0 `FAIL`); free pty `escRewind` 20/20 (Esc Esc + catalogue opens the chooser with the `rewind` scenario's anchors; single Esc nothing; Esc Esc with a draft keeps the draft; Esc Esc during a busy `!sleep` nothing; fresh session → the exact `/rewind` notice and an empty draft; two Escapes window+300 ms apart nothing), `rewind` 7/7, `completion` 69/69, `recall` 22/22, `historySearch` 11/11, `undo` 7/7, `wordNav` 11/11; `spike/verify-help-command.ts` 36/36; `pnpm build` exit 0; `git show --check` clean on the feature commit (journal commit has one cosmetic blank line at EOF); AGENTS.md untouched at 32,667 B. Docs: `reference.md`/`zh-CN` key row, README/`zh-CN` sentence, specs `prompt-recall.md` (rewind section), `tui-testing.md`, `live-frame.md` Escape lines, `load-bearing-decisions.md` § `/rewind` paragraph. Logged as [`Batch 84`](../../iteration-log.md).
 
 ### Notes / blockers / abandonment reason
 

@@ -4,7 +4,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ## SER-060 — Show up to three recent non-empty output lines under each background job in `/tasks`, read as a bounded tail of the job's `outputPath` — never through `readOutput`, so the model's shared cursor and `wait` semantics are untouched; rows stay one `<Text>` each and counted
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 81
 - Score: 9
 - Importance: 2
