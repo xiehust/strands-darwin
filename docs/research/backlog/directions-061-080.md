@@ -349,7 +349,7 @@ Requirement: extend the pinned SDK file-editor (`node_modules/@strands-agents/sd
 
 ## SER-057 — Add `/copy`: put the last completed answer's committed text on the clipboard — OSC 52 written to the terminal first, a platform tool (`wl-copy`/`xclip`/`pbcopy`) only when a display is present; bounded payload with truncation stated; one transcript notice; never a model call, trajectory write or `/export` change
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 78
 - Score: 11
 - Importance: 3
@@ -361,7 +361,7 @@ Requirement: extend the pinned SDK file-editor (`node_modules/@strands-agents/sd
 
 ### Implementation / acceptance evidence
 
-(none yet)
+Accepted 2026-09-02 in `00c5b90` (child session `session-20260902-151008260`; first managed task `bg-ff85a637-c79a-4578-acbc-f72e37c3854e` died in a transient provider `ModelError: terminated` after creating the Trellis task dir, retry task `bg-f3c55c0f-dac5-4a2b-b02f-f93d1de7f40f` in the same session exit 0, no correction turn; journal `9ab77a8`, Trellis task archived in `5d5ac85`). New `src/tui/copy-command.ts`: `latestCompletedAnswer` walks history back to the newest `whole`/`last` `AnswerPart` and joins pieces the way `formatReplay` does (in-progress `first`/`middle` skipped, so a mid-turn `/copy` copies the previous answer); `boundCopyPayload` cuts at `MAX_COPY_BYTES = 262_144` on a code-point boundary and the notice states `copied N of M bytes`; `osc52Sequence` (`ESC ] 52 ; c ; base64 BEL`) goes through Ink's `useStdout().write`; `clipboardCopyCommand` picks `pbcopy`/`wl-copy`/`xclip -selection clipboard` only for macOS/`WAYLAND_DISPLAY`/`DISPLAY`, and `writeClipboardCommand` (5 s timeout) never rejects — a failure is a clause of the one notice. `App.tsx` handles `/copy` above the busy guard like `/help`, reading history through a render-time `historyRef`; `copy` added to `BUILTIN_COMMAND_NAMES`, `MAX_COMPLETIONS` 20→21, `HELP_FIXED_LINES` 21→22 with one row. Host acceptance, all independently re-run at `5d5ac85`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 (no `FAIL` line); `spike/verify-tui.ts copy` 16/16 (free; seeds a completed answer via the `resume` fixture and decodes the raw pty OSC 52 payload to the exact answer, nothing-to-copy and usage notices, trajectory hash unchanged), `completion` 69/69, `pathCompletion` 27/27; `spike/verify-copy-command.ts` 41/41; `spike/verify-help-command.ts` 35/35; `pnpm build` exit 0; `git show --check` clean on all three commits; AGENTS.md untouched at 32,667 B. Docs: `reference.md`/`zh-CN`, README/`zh-CN`, `load-bearing-decisions.md` new `## /copy` section, specs `live-frame.md`, `prompt-completion.md`, `tui-testing.md` (OSC assertions must read `tui.raw` — the driver's `stripAnsi` eats base64 `+`). Not exercised by any suite: a real `wl-copy`/`xclip`/`pbcopy` run (needs a display); only selection and failure paths are covered. Logged as [`Batch 82`](../../iteration-log.md).
 
 ### Notes / blockers / abandonment reason
 
@@ -369,7 +369,7 @@ Requirement: a built-in `/copy` (added to `BUILTIN_COMMAND_NAMES`/descriptions i
 
 ## SER-058 — Add `darwin doctor`: an offline read-only diagnostics subcommand composing the existing loaders — config validity (`ConfigError` reported, never thrown), model choice, MCP config source and per-server command presence, skills catalogue with skipped entries, hooks files and dialect, project policy, sessions directory and versions — no session, model call, MCP connection or write; exit 1 when a problem is found
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 79
 - Score: 10
 - Importance: 3
