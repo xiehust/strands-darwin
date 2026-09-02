@@ -22,9 +22,10 @@ Classification uses `(toolName, input)`, because one tool can read and write. Un
 | `fileEditor view`, `load_skill`, bash lifecycle inspection/restart | yes |
 | `fileEditor` writes inside project, except `.git/`, `.env*`, sensitive Darwin policy/config | yes in ordinary modes; denied in `plan` |
 | bash whose every segment starts with an allowlisted read-only command (`git status/log/diff/show/branch`, `ls`, `cat`, `grep`, `rg`, `find`, …), with no redirection/substitution | yes |
+| an allowlisted command carrying a known mutating option — `find` with `-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`/`-fprint*`/`-fls`; `git branch` with `-d`/`-D`/`-m`/`-M`/`-c`/`-C`/`-u` (also inside combined flags such as `-Df`), `--delete`/`--move`/`--copy`/`--set-upstream-to[=…]`/`--unset-upstream`/`--edit-description`; `git log`/`diff`/`show` with `--output[=…]` | no — the prompt names the option |
 | all other calls, including every MCP tool | no |
 
-This is whitelist-only: parser uncertainty costs a prompt, never silent approval. `plan` allows reads, skill loading, job inspection, and delegation; denies file mutation, command-bearing bash, and unknown/MCP tools. It denies before `PreToolUse`, so a blocked operation cannot trigger project hook commands. Stored rules remain on disk but are ignored and stated as such.
+The allowlist is judged per segment: `git status && git branch -D main` prompts because of the second half. This is whitelist-only: parser uncertainty costs a prompt, never silent approval. `plan` allows reads, skill loading, job inspection, and delegation; denies file mutation, command-bearing bash, and unknown/MCP tools. It denies before `PreToolUse`, so a blocked operation cannot trigger project hook commands. Stored rules remain on disk but are ignored and stated as such.
 
 Denying is not a tool error. The model receives a user-declined result and is instructed not to retry or work around it.
 

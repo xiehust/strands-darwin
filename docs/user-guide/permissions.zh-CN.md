@@ -22,9 +22,10 @@
 | `fileEditor view`、`load_skill`、bash 生命周期查询/restart | 是 |
 | 项目内 `fileEditor` 写入，但不包括 `.git/`、`.env*` 和敏感 Darwin 策略/配置 | 普通模式下是；`plan` 中拒绝 |
 | 每个命令段都以只读白名单命令开头（`git status/log/diff/show/branch`、`ls`、`cat`、`grep`、`rg`、`find` 等），且无重定向/替换的 bash | 是 |
+| 白名单命令带有已知的写操作选项——`find` 带 `-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`/`-fprint*`/`-fls`；`git branch` 带 `-d`/`-D`/`-m`/`-M`/`-c`/`-C`/`-u`（包括 `-Df` 这类合并短选项）、`--delete`/`--move`/`--copy`/`--set-upstream-to[=…]`/`--unset-upstream`/`--edit-description`；`git log`/`diff`/`show` 带 `--output[=…]` | 否——权限框会指出该选项 |
 | 其他全部调用，包括所有 MCP 工具 | 否 |
 
-这是纯白名单：解析不确定时多问一次，不会静默放行。`plan` 允许读文件、加载 skill、查询后台任务和委派；拒绝文件修改、带命令的 bash 以及未知/MCP 工具。它在 `PreToolUse` 之前拒绝，因此被拦截的操作不会触发项目 hook 命令。磁盘上的规则仍保留，但会显示为已忽略。
+白名单按命令段逐段判定：`git status && git branch -D main` 会因为后半段而询问。这是纯白名单：解析不确定时多问一次，不会静默放行。`plan` 允许读文件、加载 skill、查询后台任务和委派；拒绝文件修改、带命令的 bash 以及未知/MCP 工具。它在 `PreToolUse` 之前拒绝，因此被拦截的操作不会触发项目 hook 命令。磁盘上的规则仍保留，但会显示为已忽略。
 
 拒绝不算工具错误。模型收到的是用户拒绝结果，并被要求不要重试或绕过。
 

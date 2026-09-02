@@ -40,6 +40,19 @@ function staticRules(): void {
     'ls -la src',
     'cat package.json | grep name',
     'rg PermissionGate src && echo found',
+    // SER-053: read-only forms that carry arguments must stay safe.
+    'ls -la',
+    'cat README.md',
+    'rg foo | head -5',
+    'git branch --show-current',
+    'git branch -a',
+    'git branch --list',
+    'git branch -avv',
+    'git diff --stat',
+    'git show HEAD --stat',
+    "find . -name '*.ts'",
+    'find . -type f -newer x',
+    'find . -name "*.log" -print',
   ];
   for (const command of safeBash) {
     assert(`safe: ${command}`, riskOf('bash', { command }).risk === 'safe');
@@ -56,6 +69,51 @@ function staticRules(): void {
   ] as const;
   for (const [command, why] of dangerousBash) {
     assert(`dangerous (${why}): ${command || '(empty)'}`, riskOf('bash', { command }).risk === 'dangerous');
+  }
+
+  header('static risk rules — mutating arguments of whitelisted commands (SER-053)');
+
+  // [command, option the reason must name]
+  const mutatingArgs = [
+    ['find . -name "*.tmp" -delete', '-delete'],
+    ['find . -name "*.log" -exec rm {} \\;', '-exec'],
+    ['find . -execdir rm {} +', '-execdir'],
+    ['find . -ok rm {} \\;', '-ok'],
+    ['find . -okdir rm {} \\;', '-okdir'],
+    ['find . -fprint /tmp/list', '-fprint'],
+    ['find . -fprint0 /tmp/list', '-fprint0'],
+    ['find . -fprintf /tmp/list %p', '-fprintf'],
+    ['find . -fls /tmp/list', '-fls'],
+    ['git branch -D main', '-D'],
+    ['git branch -d feature', '-d'],
+    ['git branch -m main old', '-m'],
+    ['git branch -M main', '-M'],
+    ['git branch -c a b', '-c'],
+    ['git branch -C a b', '-C'],
+    ['git branch -u origin/main', '-u'],
+    ['git branch -Df main', '-D'],
+    ['git branch -fD main', '-D'],
+    ['git branch --set-upstream-to origin/main', '--set-upstream-to'],
+    ['git branch --set-upstream-to=origin/main', '--set-upstream-to'],
+    ['git branch --unset-upstream', '--unset-upstream'],
+    ['git branch --edit-description', '--edit-description'],
+    ['git branch --delete feature', '--delete'],
+    ['git branch --move a b', '--move'],
+    ['git branch --copy a b', '--copy'],
+    ['git diff --output=/tmp/x.patch', '--output'],
+    ['git diff --output /tmp/x.patch', '--output'],
+    ['git log --output=/tmp/log.txt', '--output'],
+    ['git show --output=/tmp/s.txt HEAD', '--output'],
+    // The argument rule is applied per segment.
+    ['ls | find . -delete', '-delete'],
+    ['git status && git branch -D main', '-D'],
+  ] as const;
+  for (const [command, option] of mutatingArgs) {
+    const verdict = riskOf('bash', { command });
+    assert(
+      `dangerous, reason names ${option}: ${command}`,
+      verdict.risk === 'dangerous' && verdict.riskReason.includes(`\`${option}\``),
+    );
   }
 
   assert('bash restart is safe (read kind)', riskOf('bash', { mode: 'restart' }).risk === 'safe');

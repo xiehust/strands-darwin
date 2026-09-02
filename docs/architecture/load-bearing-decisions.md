@@ -120,7 +120,11 @@ The default prompt is reached only through the package root: the SDK declares it
 
 **Permissions** (`src/agent/permission.ts`): a `PermissionGate extends InterventionHandler`
 classifies each tool call by `(toolName, input)` — not name alone, because `fileEditor` spans
-read and write in one tool — and unknown tools (all MCP tools) fail closed as `execute`.
+read and write in one tool — and unknown tools (all MCP tools) fail closed as `execute`. Static
+bash safety is a whitelist on the first word of every segment *and* on its arguments: a
+whitelisted `find`/`git branch`/`git log|diff|show` carrying a known mutating option
+(`-delete`, `-exec…`, `-D`, `--move`, `--output=…`, …) is `dangerous` with the option named
+(spec: `backend/strands-sdk-contracts.md` § Static bash safety).
 `plan` mode is enforced before risk, allow rules, classifier, bridge, and configured Pre hooks:
 reads proceed, while writes/executes deterministically deny. The same composed intervention
 protects child agents. Denial uses `InterventionActions.deny(...)`, never `confirm()`. The UI

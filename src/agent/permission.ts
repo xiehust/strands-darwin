@@ -807,6 +807,39 @@ const SAFE_BASH_COMMANDS = new Set([
 
 const SAFE_GIT_SUBCOMMANDS = new Set(['status', 'log', 'diff', 'show', 'branch']);
 
+/**
+ * Options that turn a whitelisted read-only command into a mutation. A segment
+ * whose first word is on the list is still `dangerous` when it carries one of
+ * these; the reason names the option so the prompt explains itself.
+ */
+const MUTATING_FIND_OPTIONS = new Set([
+  '-delete',
+  '-exec',
+  '-execdir',
+  '-ok',
+  '-okdir',
+  '-fprint',
+  '-fprint0',
+  '-fprintf',
+  '-fls',
+]);
+
+/** `git branch` short flags that delete, rename, copy or retarget a branch. */
+const MUTATING_GIT_BRANCH_SHORT_FLAGS = new Set(['d', 'D', 'm', 'M', 'c', 'C', 'u']);
+
+/** Their long spellings; `--set-upstream-to=<ref>` is matched on the part before `=`. */
+const MUTATING_GIT_BRANCH_LONG_OPTIONS = new Set([
+  '--set-upstream-to',
+  '--unset-upstream',
+  '--edit-description',
+  '--delete',
+  '--move',
+  '--copy',
+]);
+
+/** Read-only git subcommands that still write a file when given `--output`. */
+const GIT_OUTPUT_SUBCOMMANDS = new Set(['log', 'diff', 'show']);
+
 /** Sensitive file basenames a write must never touch silently. */
 const ENV_FILE = /^\.env(\..+)?$/;
 
@@ -850,17 +883,49 @@ function assessBashRisk(command: string): RiskAssessment {
   }
 
   for (const segment of segments) {
-    const [word = '', subcommand = ''] = segment.split(/\s+/);
+    const [word = '', subcommand = '', ...rest] = segment.split(/\s+/);
     if (word === 'git') {
       if (!SAFE_GIT_SUBCOMMANDS.has(subcommand)) {
         return { risk: 'dangerous', riskReason: `\`git ${subcommand}\` is not a read-only git command` };
       }
+      const option = mutatingGitOption(subcommand, rest);
+      if (option !== undefined) {
+        return { risk: 'dangerous', riskReason: `\`${option}\` makes \`git ${subcommand}\` a mutating command` };
+      }
     } else if (!SAFE_BASH_COMMANDS.has(word)) {
       return { risk: 'dangerous', riskReason: `\`${word}\` is not on the safe-command list` };
+    } else if (word === 'find') {
+      const option = [subcommand, ...rest].find((arg) => MUTATING_FIND_OPTIONS.has(arg));
+      if (option !== undefined) {
+        return { risk: 'dangerous', riskReason: `\`${option}\` makes \`find\` a mutating command` };
+      }
     }
   }
 
   return { risk: 'safe', riskReason: 'read-only command' };
+}
+
+/**
+ * The mutating option a whitelisted git subcommand carries, or undefined when
+ * every argument is read-only. Every token is scanned — including anything after
+ * a `--` separator — because a miss costs a prompt, never silent approval.
+ */
+function mutatingGitOption(subcommand: string, args: string[]): string | undefined {
+  for (const arg of args) {
+    if (subcommand === 'branch') {
+      if (arg.startsWith('--')) {
+        const name = arg.split('=', 1)[0] ?? arg;
+        if (MUTATING_GIT_BRANCH_LONG_OPTIONS.has(name)) return name;
+      } else if (arg.startsWith('-') && arg.length > 1) {
+        // Combined short flags: `-Df` and `-fD` both delete.
+        const flag = [...arg.slice(1)].find((char) => MUTATING_GIT_BRANCH_SHORT_FLAGS.has(char));
+        if (flag !== undefined) return `-${flag}`;
+      }
+    } else if (GIT_OUTPUT_SUBCOMMANDS.has(subcommand)) {
+      if (arg === '--output' || arg.startsWith('--output=')) return '--output';
+    }
+  }
+  return undefined;
 }
 
 function assessWriteRisk(filePath: string, projectRoot: string): RiskAssessment {

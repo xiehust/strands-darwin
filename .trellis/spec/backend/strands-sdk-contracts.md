@@ -820,6 +820,30 @@ class PermissionGate extends InterventionHandler {
 must default to `execute` (gated) and are never statically safe. See `classify()` /
 `assessRisk()` in `src/agent/permission.ts`.
 
+#### Static bash safety: whitelisted first word *and* no mutating argument
+
+`assessBashRisk` proves a bash command `safe` only when it has no shell metacharacters and
+**every** `|`/`&&`/`||`/`;` segment (a) starts with a `SAFE_BASH_COMMANDS` word or a `git`
+`SAFE_GIT_SUBCOMMANDS` subcommand and (b) carries none of that command's known mutating options.
+The argument rule (SER-053) exists because the first word alone let `find … -delete`,
+`find … -exec rm {} \;`, `git branch -D main`, `git branch -m a b` and
+`git diff/log --output=<file>` run unprompted in `default`/`auto`:
+
+| Whitelisted command | Mutating options → `dangerous`, reason names the option |
+|---|---|
+| `find` | `-delete`, `-exec`, `-execdir`, `-ok`, `-okdir`, `-fprint`, `-fprint0`, `-fprintf`, `-fls` |
+| `git branch` | `-d`, `-D`, `-m`, `-M`, `-c`, `-C`, `-u` (any of them inside a combined short flag such as `-Df` / `-fD`), `--set-upstream-to` / `--set-upstream-to=…`, `--unset-upstream`, `--edit-description`, `--delete`, `--move`, `--copy` |
+| `git log`, `git diff`, `git show` | `--output`, `--output=…` |
+
+Rules of the rule: it is checked per segment, after the first-word check and before the
+`safe` verdict; every token is scanned, including anything after a `--` separator (a miss costs a
+prompt, never silent approval); it adds nothing to the two whitelist sets and does not touch
+user-authored allow rules (`permission-rules.ts`), the `auto` classifier, or `plan` denial.
+Read-only forms with arguments stay `safe` — `ls -la`, `rg foo | head -5`,
+`git log --oneline -5`, `git branch --show-current` / `-a` / `--list`, `git diff --stat`,
+`git show HEAD --stat`, `find . -name '*.ts'`, `find . -type f -newer x`. Verified offline in
+`spike/verify-permission-modes.ts` (`staticRules()`), which is in `pnpm test`.
+
 ## Scenario: enforced read-only planning permission mode
 
 ### 1. Scope / Trigger
