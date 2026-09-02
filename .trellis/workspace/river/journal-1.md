@@ -1159,3 +1159,22 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
 - Left for a follow-up direction: bare `git branch <name>` (positional create) is still
   statically safe — the direction scoped the rule to options only.
 
+## 2026-09-02 — SER-054 foreground bash timeout keeps captured output (09-02-ser-054-bash-timeout-evidence)
+
+- A foreground `execute` past its timeout rejected with `Command timed out after N seconds`
+  only: captured stdout/stderr were discarded and the persistent shell was killed without
+  saying so (next call woke up at the initial cwd).
+- Fixed at the existing seam in the pinned SDK patch (`bash.js` timeout handler, the same
+  place that shapes the exit-0 restart notice): `BashTimeoutError` now carries `output`,
+  `error` (≤ 64 KiB tails, multi-byte-safe cut), `cwd`, `timeoutSeconds`; its message —
+  what `createErrorResult` shows the model — states timeout → stdout tail → stderr tail →
+  killed/restart-with-cwd → `start`+`wait` pointer. Cap and `hasMore` word are the
+  background projection's. No auto-background: the shell cannot detach a running command.
+  `stop()` resets the tracked cwd so the post-timeout wrong-root preflight is truthful.
+- Patch procedure: `pnpm patch … --edit-dir` → edit → `node --check` → `pnpm patch-commit`;
+  `pnpm install --frozen-lockfile` + `cmp` proved re-apply. `verify-background-bash.ts`
+  grew 15 assertions (157/157); typecheck, full `pnpm test`, `pnpm build` green.
+  Spec (`strands-sdk-contracts.md` bash contract + matrix, `error-handling.md` row) and
+  load-bearing Process exit § updated; AGENTS.md untouched (32,412 B, no phrase false).
+  Committed 0255368.
+
