@@ -1202,3 +1202,35 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
   typecheck + full suite exit 0. AGENTS.md 32,412 → 32,578 B: no room for a new row, so the
   existing HTTP row gained one clause. Committed d14b27c.
 
+## 2026-09-02 — SER-055 `replace_all` on `fileEditor str_replace` (09-02-ser-055-str-replace-all)
+
+- The pinned SDK editor refused non-unique `old_str`, and rule 8 forbids `sed -i`, so a bulk
+  rename in one file was N gated calls. Added `replace_all: z.boolean().optional()` to the
+  vended schema through the existing pnpm patch: `buildStrReplaceResult(…, replaceAll)` keeps
+  every pre-existing branch verbatim and only skips the uniqueness throw when the flag is set,
+  splicing the ascending non-overlapping `findOccurrences()` hits in one pass and one
+  `writeText`. Result text names the count and the *pre-edit* line numbers (the same numbers the
+  uniqueness error reports) plus one snippet around the first replacement; count 1 takes the same
+  shape. Other commands ignore the flag — already true today, since the zod object strips it.
+- Identity was proven, not asserted: before touching `node_modules` I printed the four
+  `str_replace` result strings (multiple / miss / empty / single) and the `insert` text from the
+  installed tool and embedded them as literals in `verify-file-editor.ts`; the pre-change spike
+  files (`git show HEAD:spike/…`) also still pass unchanged against the new patch.
+- Patch procedure that worked: `pnpm patch @strands-agents/sdk@1.16.0 --edit-dir <dir>` applies
+  the *existing* patch to the pristine package (the edit dir was byte-identical to the installed
+  `file-editor.js`), edit, `node --check`, `pnpm patch-commit <dir>`; only the lockfile
+  `patch_hash` follows. Re-apply proof: `--ignore-existing` pristine + `patch -p1 --dry-run`
+  clean + `diff -r` of the patched pristine `dist` against the installed one empty.
+- Rendering stays input-derived: the diff and `+N -N` stay the one pair; the scope is one row —
+  `classify()` adds a `Replace all: every occurrence` detail (so dev-repl and every gate consumer
+  state it, not just the Ink box), and `REPLACE_ALL_ROW` (`replace_all: every occurrence`) heads
+  `fileEditorInputProjection` and `compactEditDiff`. `summary` untouched (replay prints it
+  verbatim); `readEdit` accepts a boolean `replace_all` and treats any other type as an
+  unrecognized shape.
+- Out of scope, recorded in the PRD: `validatePortableToolInput` in `src/hooks/tool-hooks.ts`
+  lists the fileEditor keys a Codex `PreToolUse updatedInput` may carry and does not include
+  `replace_all`; a hook that rewrites such an input is refused fail-closed, never misapplied.
+- `verify-file-editor.ts` 89/89, `verify-file-editor-serial.ts` 50/50, `verify-edit-diff.ts`
+  112/112, `verify-visual-language.tsx` 74/74; typecheck, full `pnpm test` (exit 0, 84 suites),
+  `pnpm install --frozen-lockfile`, `pnpm build` green. AGENTS.md 32,578 → 32,667 B (one clause
+  on the FileEditor recovery row). Committed 4c40426.
