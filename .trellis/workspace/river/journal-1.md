@@ -1234,3 +1234,34 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
   112/112, `verify-visual-language.tsx` 74/74; typecheck, full `pnpm test` (exit 0, 84 suites),
   `pnpm install --frozen-lockfile`, `pnpm build` green. AGENTS.md 32,578 → 32,667 B (one clause
   on the FileEditor recovery row). Committed 4c40426.
+
+## 2026-09-02 — SER-057 `/copy` last completed answer to the clipboard (09-02-ser-057-copy-command)
+
+- New `src/tui/copy-command.ts`: `latestCompletedAnswer(history)` walks `<Static>` history
+  backwards to the first `whole`/`last` `AnswerPart` and joins that answer's pieces with `\n`,
+  empty closing pieces contributing nothing — the exact `formatReplay` rule, so clipboard,
+  transcript and `/export` cannot disagree. An in-progress answer (`first`/`middle`, no `last`)
+  is skipped without consulting `status`, so mid-turn `/copy` copies the previous answer.
+- Transport order was the decision: OSC 52 (`ESC ] 52 ; c ; base64 BEL`) through Ink's
+  `useStdout().write` first and unconditionally (SSH is the normal case); `wl-copy`/`xclip
+  -selection clipboard`/`pbcopy` only when `WAYLAND_DISPLAY`/`DISPLAY`/macOS says a display is
+  there, via a spawn-based non-throwing helper in the `clipboard-image.ts` shape; its failure is a
+  clause of the one notice. `MAX_COPY_BYTES = 262_144`, cut on a code-point boundary, over-cap
+  stated as `copied N of M bytes` (warn).
+- `App` reads history through a render-time mirror ref (`historyRef`) instead of adding
+  `state.history` to `submit`'s deps — that callback must not be rebuilt per streamed line.
+- Seeding a completed answer for a *free* pty scenario worked by reusing the `resume` seeding
+  (local `ResumeFixtureModel` + real `SessionManager`/`TrajectoryRecorder` + `--resume`): the
+  restored history holds a real `whole` piece. The OSC write is invisible to the driver's
+  `screen` (its `stripAnsi` eats the OSC — and would leave a fragment if the base64 held a `+`),
+  so the scenario decodes the sequence from `tui.raw`. Display variables are blanked in the
+  child env so no platform tool is reached for.
+- Growing `MAX_COMPLETIONS` 20→21 broke two hard-wired fixtures: `pathCompletion`'s pad count
+  (18→19 keeps three candidates past the cap) and `verify-frame-budget.ts`'s overflow menu
+  (21 items, `maxRows: 24` — now `MAX_COMPLETIONS + 1` items and `MAX_COMPLETIONS + 4` rows, the
+  4 being draft, marginTop, title and the "… n more" row). Both now derive from the cap.
+- `verify-copy-command.ts` 41/41 (in `pnpm test`), `verify-help-command.ts` 35/35,
+  `verify-frame-budget.ts` 80/80, free pty `copy` 16/16, `completion` 69/69, `pathCompletion`
+  27/27; typecheck, full `pnpm test` (exit 0, zero FAIL lines), `pnpm build` green. AGENTS.md
+  untouched at 32,667 B; rationale went to `docs/architecture/load-bearing-decisions.md`
+  § `/copy`. Committed 00c5b90.
