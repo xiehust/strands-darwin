@@ -648,7 +648,10 @@ reaped in `runtime.shutdown()` via direct `restart` — the tool keys shells per
 is never released and exit takes ~15s longer. The pinned SDK patch serializes foreground
 execute/restart per Agent: a numeric exit 0 with no signal returns that command's captured
 stdout/stderr plus a restart notice and the next call starts a replacement shell; nonzero and
-signalled exits remain metadata-bearing failures. Serialization is also what keeps parallel
+signalled exits remain metadata-bearing failures. A foreground timeout still kills the shell (it
+cannot detach a running command, so there is no move-to-background), but its error result keeps
+the ≤ 64 KiB tails of captured stdout/stderr, names the timeout figure, states that the shell
+restarts at the initial cwd and points to `start` + `wait`. Serialization is also what keeps parallel
 foreground calls from sharing listeners and attributing one command's output to another.
 Session-owned background bash jobs are reaped as whole process groups with bounded TERM→KILL
 cleanup plus a synchronous `exit` fallback. Darwin configures the foreground tool from the

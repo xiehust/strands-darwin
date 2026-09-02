@@ -425,10 +425,10 @@ index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..8907d109ce2866e376df312ebc0bae1a
  //# sourceMappingURL=bash.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/bash.js b/dist/src/vended-tools/bash/bash.js
-index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb336770d5c 100644
+index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3ccd9820b3a 100644
 --- a/dist/src/vended-tools/bash/bash.js
 +++ b/dist/src/vended-tools/bash/bash.js
-@@ -1,8 +1,13 @@
+@@ -1,8 +1,44 @@
  import { tool } from '../../tools/tool-factory.js';
  import { z } from 'zod';
  import { spawn } from 'child_process';
@@ -437,12 +437,43 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb3
  import { Buffer } from 'buffer';
  import { BashTimeoutError, BashSessionError } from './types.js';
 +const SHELL_RESTART_NOTICE = 'Notice: Persistent bash shell exited with code 0; it will restart before the next command.';
++/**
++ * Byte cap on each captured-stream tail carried by a timeout result. Deliberately
++ * the same 64 KiB figure as Darwin's background `output`/`wait` projection
++ * (`OUTPUT_LIMIT` in `src/tools/background-bash.ts`), which also owns the
++ * `hasMore` vocabulary used below; do not introduce a second cap.
++ */
++const TIMEOUT_TAIL_LIMIT = 64 * 1024;
++/**
++ * Keep at most `limit` trailing UTF-8 bytes of `text`, never starting inside a
++ * multi-byte sequence, and report how much there was.
++ */
++function boundedTail(text, limit) {
++    const bytes = Buffer.from(text, 'utf-8');
++    if (bytes.length <= limit) {
++        return { text, total: bytes.length, kept: bytes.length };
++    }
++    let start = bytes.length - limit;
++    while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) {
++        start += 1;
++    }
++    return { text: bytes.subarray(start).toString('utf-8'), total: bytes.length, kept: bytes.length - start };
++}
++function describeTail(label, tail) {
++    if (tail.total === 0) {
++        return `${label}: (none)`;
++    }
++    const bound = tail.kept === tail.total
++        ? `${tail.total} bytes`
++        : `last ${tail.kept} of ${tail.total} bytes; hasMore: true`;
++    return `${label} (${bound}):\n${tail.text}`;
++}
 +const UNSAFE_PREFLIGHT_SYNTAX = /[\n\r'"\\;&|<>$`(){}\[\]*?!]/;
 +const PLAIN_RELATIVE_PATH = /^(?:\.\/)?[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+\/?$/;
  const bashInputSchema = z.object({
      mode: z
          .enum(['execute', 'restart'])
-@@ -10,6 +15,57 @@ const bashInputSchema = z.object({
+@@ -10,6 +46,57 @@ const bashInputSchema = z.object({
      command: z.string().optional().describe('The bash command to execute (required when mode is "execute")'),
      timeout: z.number().positive().optional().describe('Timeout in seconds (default: 120, applies only to execute mode)'),
  });
@@ -500,7 +531,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb3
  /**
   * Internal class for managing a bash session.
   */
-@@ -18,9 +74,21 @@ class BashSession {
+@@ -18,9 +105,21 @@ class BashSession {
      _started = false;
      _timeout;
      _sentinel;
@@ -523,7 +554,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb3
      }
      /**
       * Starts the bash process if not already started.
-@@ -31,7 +99,7 @@ class BashSession {
+@@ -31,7 +130,7 @@ class BashSession {
          }
          try {
              this._process = spawn('bash', [], {
@@ -532,7 +563,13 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb3
                  env: { ...process.env, PS1: '', PS2: '' },
              });
              if (!this._process.stdin || !this._process.stdout || !this._process.stderr) {
-@@ -61,9 +129,14 @@ class BashSession {
+@@ -57,13 +156,20 @@ class BashSession {
+             this._process.kill();
+             this._process = null;
+             this._started = false;
++            // The replacement shell spawns at the initial cwd; keep the preflight truthful.
++            this._cwd = this._initialCwd;
+         }
          activeSessions.delete(this);
      }
      /**
@@ -548,7 +585,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb3
          this.start();
          if (!this._process || !this._process.stdin || !this._process.stdout || !this._process.stderr) {
              throw new BashSessionError('Bash session not properly initialized');
-@@ -73,32 +146,87 @@ class BashSession {
+@@ -73,32 +179,87 @@ class BashSession {
          let stderrData = '';
          let timeoutHandle = null;
          let isTimedOut = false;
@@ -644,7 +681,29 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb3
                  }
              };
              // Handler for process errors
-@@ -136,7 +264,7 @@ class BashSession {
+@@ -127,7 +288,20 @@ class BashSession {
+                 isTimedOut = true;
+                 cleanup();
+                 this.stop();
+-                reject(new BashTimeoutError(`Command timed out after ${effectiveTimeout} seconds`));
++                // The persistent shell cannot detach a running command, so the kill
++                // stands; what it printed so far is evidence and travels with the error.
++                const stdoutTail = boundedTail(stdoutData.trim(), TIMEOUT_TAIL_LIMIT);
++                const stderrTail = boundedTail(stderrData.trim(), TIMEOUT_TAIL_LIMIT);
++                const failure = new BashTimeoutError(`Command did not complete within ${effectiveTimeout} seconds and was killed.\n` +
++                    `${describeTail('stdout captured before the timeout', stdoutTail)}\n` +
++                    `${describeTail('stderr captured before the timeout', stderrTail)}\n` +
++                    `Persistent bash shell was killed with the command; it will restart before the next command with cwd: ${this._initialCwd} (shell variables and cd from before the timeout are gone).\n` +
++                    'For work that may run longer than the timeout, use mode "start" and then "wait" with the returned taskId instead of raising the timeout.');
++                failure.output = stdoutTail.text;
++                failure.error = stderrTail.text;
++                failure.cwd = this._initialCwd;
++                failure.timeoutSeconds = effectiveTimeout;
++                reject(failure);
+             }, effectiveTimeout * 1000);
+             // Attach listeners
+             stdout.on('data', onStdoutData);
+@@ -136,7 +310,7 @@ class BashSession {
              this._process.on('error', onError);
              // Send command with sentinel
              try {
@@ -653,7 +712,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb3
              }
              catch (err) {
                  cleanup();
-@@ -151,6 +279,16 @@ class BashSession {
+@@ -151,6 +325,16 @@ class BashSession {
   */
  // eslint-disable-next-line @typescript-eslint/no-explicit-any
  const sessions = new WeakMap();
@@ -670,7 +729,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb3
  /**
   * Track all active sessions for cleanup on process exit.
   */
-@@ -221,42 +359,50 @@ const DEFAULT_DESCRIPTION = 'Executes bash shell commands in a persistent sessio
+@@ -221,42 +405,50 @@ const DEFAULT_DESCRIPTION = 'Executes bash shell commands in a persistent sessio
   * State (variables, working directory) persists within the session.
   * Node.js only.
   */
@@ -786,10 +845,10 @@ index c6bdcac15ef1c7c99cb6cee08e8422548c1d5b95..35527ffe4386aaac0d982f145945737d
  export { makeShell, makeBash } from '../shell/make-shell.js';
  export { SANDBOX_SHELL_DESCRIPTION, ShellTimeoutError, ShellExecutionError } from '../shell/types.js';
 diff --git a/dist/src/vended-tools/bash/types.d.ts b/dist/src/vended-tools/bash/types.d.ts
-index 1be553288395c19e1251d86ef7c4d798c1917ace..d0ad68b868500222da59df13e2aef74837115fca 100644
+index 1be553288395c19e1251d86ef7c4d798c1917ace..84026e846d8a91198fcac3bbdbbfe096382a1a0e 100644
 --- a/dist/src/vended-tools/bash/types.d.ts
 +++ b/dist/src/vended-tools/bash/types.d.ts
-@@ -48,10 +48,16 @@ export interface BashOutput {
+@@ -48,21 +48,40 @@ export interface BashOutput {
       * Empty string if no errors occurred.
       */
      error: string;
@@ -807,7 +866,18 @@ index 1be553288395c19e1251d86ef7c4d798c1917ace..d0ad68b868500222da59df13e2aef748
  }
  /**
   * Error thrown when a bash command exceeds its timeout.
-@@ -63,6 +69,12 @@ export declare class BashTimeoutError extends Error {
+  */
+ export declare class BashTimeoutError extends Error {
++    /** Bounded tails of what the command printed before the timeout killed it. */
++    output?: string;
++    error?: string;
++    /** Cwd the replacement persistent shell starts in. */
++    cwd?: string;
++    /** Effective timeout in seconds. */
++    timeoutSeconds?: number;
+     constructor(message: string);
+ }
+ /**
   * Error thrown when a bash session encounters an error.
   */
  export declare class BashSessionError extends Error {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { Agent, Model, type BaseModelConfig, type InvokableTool, type Message, type ModelStreamEvent } from '@strands-agents/sdk';
-import { BashSessionError } from '@strands-agents/sdk/vended-tools/bash';
+import { BashSessionError, BashTimeoutError } from '@strands-agents/sdk/vended-tools/bash';
 import type { BashInput, BashOutput } from '@strands-agents/sdk/vended-tools/bash';
 
 import {
@@ -933,6 +933,92 @@ async function foregroundShellExitContracts(): Promise<void> {
   }
 }
 
+async function foregroundTimeoutContracts(): Promise<void> {
+  header('background bash — foreground timeout keeps captured output and states the shell state (SER-054)');
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-foreground-timeout-'));
+  const manager = new BackgroundBashManager(root, 'session-foreground-timeout');
+  const wrapped = createBackgroundBashTool(manager, createForegroundBashTool(root));
+  const agent = new Agent({ model: new BashStartModel(), tools: [wrapped], printer: false });
+  await agent.initialize();
+  const context = { agent } as never;
+  const TAIL_LIMIT = 64 * 1024; // the background `output`/`wait` projection's cap (OUTPUT_LIMIT)
+
+  const timeoutOf = async (command: string, timeout: number): Promise<BashTimeoutError | undefined> => {
+    try { await wrapped.invoke({ mode: 'execute', command, timeout }, context); return undefined; }
+    catch (error) { return error as BashTimeoutError; }
+  };
+  const ordered = (text: string, ...parts: string[]): boolean => {
+    let last = -1;
+    for (const part of parts) {
+      const at = text.indexOf(part, last + 1);
+      if (at < 0) return false;
+      last = at;
+    }
+    return true;
+  };
+
+  try {
+    // Pre-change expectation captured before SER-054: a command that finishes in time is byte-identical.
+    const inTime = await wrapped.invoke({ mode: 'execute', command: "printf 'in-time-out\\n'; printf 'in-time-err\\n' >&2; (exit 3)" }, context);
+    assert('a command finishing within its timeout is byte-identical to the pre-change result',
+      JSON.stringify(inTime) === `{"output":"in-time-out","error":"in-time-err","cwd":"${root}","exitCode":3}`);
+
+    await wrapped.invoke({ mode: 'execute', command: 'cd /tmp; export TIMEOUT_STATE=set' }, context);
+    const timedOut = await timeoutOf("echo before; echo before-err >&2; sleep 5", 1);
+    assert('a foreground timeout still rejects with BashTimeoutError', timedOut instanceof BashTimeoutError);
+    const message = timedOut?.message ?? '';
+    assert('the timeout error carries the bounded stdout/stderr tails, the restart cwd and the timeout figure',
+      timedOut?.output === 'before' && timedOut?.error === 'before-err' &&
+      timedOut?.cwd === root && timedOut?.timeoutSeconds === 1);
+    assert('the timeout result states the timeout figure first', message.startsWith('Command did not complete within 1 seconds'));
+    assert('the timeout result carries the pre-timeout stdout and stderr with their byte counts',
+      message.includes('stdout captured before the timeout (6 bytes):\nbefore\n') &&
+      message.includes('stderr captured before the timeout (10 bytes):\nbefore-err\n'));
+    assert('an uncut tail carries no hasMore marker', !message.includes('hasMore'));
+    assert('the timeout result states that the shell was killed, restarts before the next command, and where',
+      message.includes('Persistent bash shell was killed') &&
+      message.includes(`it will restart before the next command with cwd: ${root}`));
+    assert('the timeout result points to start + wait instead of a longer timeout',
+      message.includes('use mode "start" and then "wait"') && message.includes('instead of raising the timeout'));
+    assert('the timeout result keeps the required order: timeout, stdout, stderr, restart/cwd, pointer',
+      ordered(message, 'did not complete within', 'stdout captured', 'stderr captured', 'will restart before the next command', 'mode "start"'));
+
+    const replacement = await wrapped.invoke({ mode: 'execute', command: 'pwd; printf %s "${TIMEOUT_STATE-unset}"' }, context) as BashOutput;
+    assert('the replacement shell really starts at the stated cwd with the old shell state gone',
+      replacement.output === `${root}\nunset` && replacement.cwd === root && replacement.error === '');
+
+    const preflightRoot = path.join(root, 'preflight-dir');
+    await mkdir(preflightRoot, { recursive: true });
+    await wrapped.invoke({ mode: 'execute', command: 'cd /tmp' }, context);
+    await timeoutOf('sleep 5', 1);
+    const preflight = await wrapped.invoke({ mode: 'execute', command: 'cd preflight-dir' }, context) as BashOutput;
+    assert('the wrong-root preflight uses the replacement cwd after a timeout, not the killed shell\'s',
+      preflight.error === '' && preflight.cwd === preflightRoot);
+
+    const long = await timeoutOf("head -c 70000 /dev/zero | tr '\\0' x; printf 'tail-end'; sleep 5", 1);
+    assert('a long stdout tail is cut to the 64 KiB cap with the background projection\'s vocabulary',
+      long?.output !== undefined && Buffer.byteLength(long.output) === TAIL_LIMIT &&
+      long.output.endsWith('tail-end') && long.message.includes(`stdout captured before the timeout (last ${TAIL_LIMIT} of 70008 bytes; hasMore: true):\n`));
+    assert('a silent stream is stated as none rather than omitted',
+      long?.message.includes('stderr captured before the timeout: (none)') === true);
+
+    // 10 x, then € (3 bytes at offsets 10–12), then 65535 x: the 64 KiB cut lands on
+    // byte 12, inside the €, so a byte-exact tail would start with a broken sequence.
+    const unicode = await timeoutOf(`printf 'xxxxxxxxxx\\342\\202\\254'; head -c ${TAIL_LIMIT - 1} /dev/zero | tr '\\0' x; sleep 5`, 1);
+    assert('a cut tail never starts inside a multi-byte sequence',
+      unicode?.output !== undefined && Buffer.byteLength(unicode.output) === TAIL_LIMIT - 1 &&
+      /^x+$/.test(unicode.output) && !unicode.output.includes('\uFFFD') &&
+      unicode.message.includes(`(last ${TAIL_LIMIT - 1} of ${TAIL_LIMIT + 12} bytes; hasMore: true)`));
+
+    const afterTimeouts = await wrapped.invoke({ mode: 'execute', command: 'echo recovered' }, context) as BashOutput;
+    assert('the foreground queue continues after timeouts', afterTimeouts.output === 'recovered' && afterTimeouts.cwd === root);
+  } finally {
+    await wrapped.invoke({ mode: 'restart' }, context);
+    await manager.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function shutdownAndExitContracts(): Promise<void> {
   header('background bash — bounded shutdown and process exit fallback');
   const root = await mkdtemp(path.join(tmpdir(), 'darwin-background-shutdown-'));
@@ -1043,5 +1129,6 @@ await waitContracts();
 await wrapperAndPermissionContracts();
 await foregroundCwdPreflightContracts();
 await foregroundShellExitContracts();
+await foregroundTimeoutContracts();
 await shutdownAndExitContracts();
 report();

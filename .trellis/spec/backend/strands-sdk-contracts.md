@@ -211,6 +211,26 @@ next queued call starts a replacement shell. Nonzero or signalled closes remain
 sentinel keeps normal completion open until both streams have crossed the command boundary, so
 stderr cannot leak into the next invocation.
 
+A foreground `execute` that exceeds its timeout (SER-054) still kills the persistent shell — it
+cannot detach a running command, so Darwin does **not** imitate Claude Code's move-to-background;
+the kill stands and the next queued call starts a replacement shell at the initial cwd. What
+changes is the evidence: the rejected `BashTimeoutError` carries `output` and `error` (the
+trailing ≤ 64 KiB of each captured stream, never starting inside a multi-byte sequence), `cwd`
+(the replacement shell's cwd) and `timeoutSeconds`, and its message — which the SDK's
+`createErrorResult` turns verbatim into the `Error: …` tool result — states, in this order:
+`Command did not complete within N seconds and was killed.`; `stdout captured before the
+timeout (<n> bytes):` or `(last <kept> of <total> bytes; hasMore: true):` followed by the tail,
+or `: (none)`; the same for stderr; `Persistent bash shell was killed with the command; it will
+restart before the next command with cwd: <initial cwd> (…)`; and one pointer to `mode "start"`
+plus `"wait"` instead of raising the timeout. The 64 KiB cap and the `hasMore` word are the
+background `output`/`wait` projection's (`OUTPUT_LIMIT` in `src/tools/background-bash.ts`) — the
+patch's `TIMEOUT_TAIL_LIMIT` must stay equal to it and no second cap or vocabulary may appear.
+`stop()` also resets the tracked effective cwd to the initial cwd, so the wrong-root preflight of
+the first post-timeout command judges against the shell that will actually run it. Everything
+else — kill/exit semantics, `SHELL_RESTART_NOTICE`, exit-0 success, `BashSessionError`,
+background modes, the `timeout` schema field, and the byte-exact result of a command that
+finishes in time — is unchanged.
+
 Darwin constructs the foreground tool with the already-verified `RuntimeOptions.projectRoot` as
 both initial cwd and session project root. Each serialized execute appends a private `pwd -P`
 probe in the same shell write, strips that marker, and returns `cwd`; configured restart returns
@@ -234,6 +254,7 @@ root correction. Existing cwd-relative paths and paths missing in both locations
 | Shell closes with `code === 0`, `signal === null` | Return captured buffers and last effective cwd; append the restart notice to `error`; next queued call starts a shell |
 | Shell closes nonzero | Throw `BashSessionError` with exact `exitCode`, `signal: null`, `output`, `error`, and last effective `cwd` |
 | Shell closes by signal | Throw `BashSessionError` with `exitCode: null`, exact `signal`, `output`, `error`, and last effective `cwd` |
+| Foreground `execute` exceeds its timeout | Kill the shell (no detach, no auto-background); throw `BashTimeoutError` whose message states timeout figure → bounded stdout tail → bounded stderr tail → killed/restart-with-cwd → `start`+`wait` pointer, and whose `output`/`error`/`cwd`/`timeoutSeconds` fields carry the same; next queued call starts a shell at the initial cwd |
 | Parallel executes on one Agent | Settle in invocation order with disjoint captured buffers |
 | Execute/restart on different Agents | Remain independent; do not share a queue or shell |
 
@@ -246,7 +267,9 @@ race intact.
 Required assertions live in `spike/verify-background-bash.ts`: real initial/persisted/restarted
 cwd, conservative refusal and pass-through shapes, no-launch/no-mutation evidence, real parallel
 invocations, stdout/stderr ownership, visible exit-0 notice, replacement health, nonzero/signal
-metadata, queue recovery, normal persistence, raw permission/hook input, per-Agent isolation, and
+metadata, queue recovery, normal persistence, raw permission/hook input, per-Agent isolation,
+the timeout result (fields, ordered message, byte-identical in-time result, 64 KiB `hasMore`
+tail, multi-byte-safe cut, post-timeout preflight cwd, queue continuation), and
 all background TERM→KILL/exit cleanup cases. Also run `probe-cancel-exit.ts`,
 `verify-clear-session.ts`, and the
 `bashExit` / `cancelThenContinue` TUI scenarios after changing the patch.
