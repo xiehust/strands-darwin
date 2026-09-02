@@ -36,9 +36,29 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
 
 --context-offload force-enables the default-on offloader for this process; it never persists.
 Print-only flags: --output-format, --max-model-calls, --context-offload, --compact-before, --continue.
+With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one delimited block (256 KiB cap).
 ```
 
 Print-only options: `--context-offload` (process-only force-on; offload is default-on), positive `--max-model-calls <n>`, `--compact-before`, `--output-format text|json|stream-json`. Permission overrides: `--permission-mode default|auto|plan|yolo`, `--yolo`. One leading standalone `--` is ignored for package-manager forwarding. Unknown/invalid grammar exits 2 with `error: <message>` on stderr followed by one hint line, `Run \`darwin --help\` for usage.`
+
+### Piped stdin with `-p`
+
+`git diff | darwin -p "review this change"` sends both. When `-p` runs with a stdin that is not a terminal, darwin reads it to EOF and appends it to the message as exactly one delimited block — the message first, then a blank line, then:
+
+```text
+--- piped stdin (<N> bytes) ---
+<the piped text, verbatim>
+--- end of piped stdin ---
+```
+
+`<N>` is the raw byte count; a newline is added before the footer only when the text does not already end with one. That composed text is the one user input: it is what the model receives, what the session trajectory's `userInput` line records (under its existing 8,000-code-point field cap) and what `darwin trajectory replay` shows. The `json` / `stream-json` envelopes gain no field — they never echoed the prompt.
+
+Rules and limits:
+
+- A terminal stdin, `/dev/null`, an immediate EOF or whitespace-only input add nothing — the run is byte-identical to one without a pipe, and nothing is printed about it. The interactive TUI never reads stdin this way.
+- Cap: **256 KiB** (262,144 bytes). Larger input is refused before any session or model work, as a usage error (`error: piped standard input exceeds the 262144-byte cap for -p; …`, then the `--help` hint, exit 2). Darwin never truncates the block silently; pipe less (`head -c`, a filter) or name the file in the message instead.
+- Input must be UTF-8 text without NUL bytes; binary input is refused the same way. Bytes are never sent as base64.
+- Caveat, as for `cat`: a parent that holds the pipe open without writing makes `-p` wait for EOF. Redirect from `/dev/null` (or spawn with `stdio: 'ignore'`, as the developer skill's background `bash start` jobs already do) when no input is intended.
 
 ## Slash commands and bundled skill entry points
 

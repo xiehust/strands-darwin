@@ -1,7 +1,11 @@
 /** Network-free checks for headless parsing, output, permissions and sessions. */
 import nodeAssert from 'node:assert/strict';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import { pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 
 import type { AgentStreamEvent } from '@strands-agents/sdk';
@@ -9,7 +13,16 @@ import type { AgentStreamEvent } from '@strands-agents/sdk';
 import { resolveSession, sessionPaths } from '../src/agent/session.js';
 import { NEVER_WITHDRAWN, PARENT_PERMISSION_SOURCE } from '../src/agent/permission.js';
 import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
+import { usageErrorText } from '../src/cli-usage.js';
 import type { AppConfig } from '../src/config.js';
+import {
+  PIPED_STDIN_FOOTER,
+  PIPED_STDIN_MAX_BYTES,
+  composeHeadlessPrompt,
+  formatPipedStdinHeading,
+  readPipedStdin,
+  type PipedStdinSource,
+} from '../src/headless-stdin.js';
 import {
   createHeadlessPermissionBridge,
   formatHeadlessCallStats,
@@ -409,10 +422,294 @@ async function usageProcessContract(): Promise<void> {
   await assert.rejects(() => readFile(path.join(ROOT, 'never-created')), /ENOENT/u);
 }
 
+
+// ---------------------------------------------------------------------------
+// SER-050 — piped stdin appended to the -p prompt as one delimited block.
+// ---------------------------------------------------------------------------
+
+function source(chunks: readonly (string | Uint8Array)[], isTTY?: boolean): PipedStdinSource {
+  const readable = Readable.from([...chunks], { objectMode: true });
+  return { isTTY, [Symbol.asyncIterator]: () => readable[Symbol.asyncIterator]() };
+}
+
+/** Counts non-overlapping occurrences of `needle` in `haystack`. */
+function occurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
+async function pipedStdinUnitContracts(): Promise<void> {
+  header('piped stdin — reader and composer (SER-050)');
+
+  // A terminal is never iterated: the iterator here would throw if it were touched.
+  const tty: PipedStdinSource = {
+    isTTY: true,
+    [Symbol.asyncIterator]() {
+      throw new Error('a TTY stdin must never be read');
+    },
+  };
+  assert.equal(await readPipedStdin(tty), undefined);
+  countedAssert('a TTY stdin resolves undefined without touching the stream', true);
+
+  // /dev/null, immediate EOF and whitespace-only bytes are all "no input".
+  assert.equal(await readPipedStdin(source([])), undefined);
+  assert.equal(await readPipedStdin(source([' \n\t\n'])), undefined);
+  assert.equal(await readPipedStdin(source([Buffer.from('\n'), Buffer.from('  ')])), undefined);
+  countedAssert('empty and whitespace-only stdin resolve undefined', true);
+
+  // Real text: the raw byte count is what the heading states, across chunk shapes.
+  assert.deepEqual(await readPipedStdin(source(['alpha beta'])), { text: 'alpha beta', bytes: 10 });
+  assert.deepEqual(
+    await readPipedStdin(source([Buffer.from('hé'), Buffer.from('llo\n')])),
+    { text: 'héllo\n', bytes: 7 },
+  );
+  const halves = Buffer.from('é');
+  assert.deepEqual(
+    await readPipedStdin(source([halves.subarray(0, 1), halves.subarray(1)])),
+    { text: 'é', bytes: 2 },
+  );
+  countedAssert('bytes are counted raw and multi-byte sequences split across chunks decode whole', true);
+
+  // The composed prompt: argument untouched, one blank line, one fenced block.
+  const composed = composeHeadlessPrompt('review this', { text: 'alpha beta', bytes: 10 });
+  assert.equal(
+    composed,
+    `review this\n\n${formatPipedStdinHeading(10)}\nalpha beta\n${PIPED_STDIN_FOOTER}`,
+    'composed prompt',
+  );
+  assert.equal(formatPipedStdinHeading(10), '--- piped stdin (10 bytes) ---');
+  assert.equal(PIPED_STDIN_FOOTER, '--- end of piped stdin ---');
+  assert.equal(
+    composeHeadlessPrompt('p', { text: 'x\n', bytes: 2 }),
+    `p\n\n${formatPipedStdinHeading(2)}\nx\n${PIPED_STDIN_FOOTER}`,
+    'trailing newline kept',
+  );
+  assert.equal(
+    composeHeadlessPrompt('p', { text: 'x', bytes: 1 }).endsWith(`\nx\n${PIPED_STDIN_FOOTER}`),
+    true,
+  );
+  assert.equal(composeHeadlessPrompt('review this', undefined), 'review this');
+  assert.equal(occurrences(composed, '--- piped stdin ('), 1);
+  assert.equal(occurrences(composed, PIPED_STDIN_FOOTER), 1);
+  countedAssert('the block is appended once, the argument is untouched, and a trailing newline is added only when missing', true);
+
+  // Over the cap: refused as a usage error, and the read stops at the first byte past it.
+  assert.equal(PIPED_STDIN_MAX_BYTES, 256 * 1024);
+  await assert.rejects(
+    () => readPipedStdin(source(['abcdefgh', 'i']), 8),
+    (error: unknown) => error instanceof CliUsageError
+      && error.message === 'piped standard input exceeds the 8-byte cap for -p; pipe less (for example through head -c) or name a path in the message instead.',
+  );
+  let yielded = 0;
+  let released = false;
+  const endless: PipedStdinSource = {
+    isTTY: false,
+    async *[Symbol.asyncIterator]() {
+      try {
+        for (;;) {
+          yielded += 1;
+          yield Buffer.alloc(1024, 0x61);
+        }
+      } finally {
+        released = true;
+      }
+    },
+  };
+  await assert.rejects(() => readPipedStdin(endless, 4096), CliUsageError);
+  assert.equal(yielded, 5);
+  assert.equal(released, true);
+  countedAssert('a producer past the cap is abandoned after one extra chunk, never drained', true);
+
+  // Binary: refused, never encoded.
+  await assert.rejects(
+    () => readPipedStdin(source([Buffer.from([0x68, 0xff, 0xfe, 0x69])])),
+    (error: unknown) => error instanceof CliUsageError
+      && error.message === 'piped standard input is not UTF-8 text; -p accepts text only.',
+  );
+  await assert.rejects(
+    () => readPipedStdin(source(['text\u0000more'])),
+    (error: unknown) => error instanceof CliUsageError
+      && error.message === 'piped standard input contains NUL bytes; -p accepts text only.',
+  );
+  countedAssert('invalid UTF-8 and NUL bytes are refused as usage errors', true);
+
+  // Structural: the reader has exactly one caller, the headless runner; interactive code
+  // never names process.stdin.
+  const src = path.resolve('src');
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.tsx?$/u.test(entry.name)) files.push(full);
+    }
+  };
+  walk(src);
+  const importers: string[] = [];
+  const stdinUsers: string[] = [];
+  for (const file of files) {
+    const text = await readFile(file, 'utf8');
+    if (/from '\.\.?\/(?:.*\/)?headless-stdin\.js'/u.test(text)) importers.push(path.relative(src, file));
+    if (/process\.stdin/u.test(text)) stdinUsers.push(path.relative(src, file));
+  }
+  assert.deepEqual(importers, ['headless-runner.ts']);
+  assert.deepEqual(stdinUsers.sort(), ['dev-repl.ts', 'headless-runner.ts', 'headless-stdin.ts']);
+  assert.equal(stdinUsers.some((file) => file === 'cli.ts' || file.startsWith('tui/')), false);
+  countedAssert('only the headless runner reaches the reader; cli.ts and the TUI never touch process.stdin', true);
+}
+
+const FIXTURE_RUNTIME = pathToFileURL(path.resolve('spike/fixtures/headless-runtime.ts')).href;
+const FIXTURE_PROJECT_ROOT = '/tmp/darwin-headless-stdin-project-root';
+
+interface FixtureRun {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  /** The fixture runtime's trace records, or `undefined` when no runtime was created. */
+  trace: Record<string, unknown>[] | undefined;
+}
+
+/**
+ * Spawns the fixture headless driver (real `runHeadlessProcess`, scripted runtime) with
+ * either `/dev/null` on fd 0 — exactly how every pre-existing harness and the developer
+ * skill's `bash start` children launch it — or a real pipe carrying `stdin`.
+ */
+async function fixtureRun(
+  stdin: 'ignore' | string | Buffer,
+  outputFormat: 'text' | 'json' | 'stream-json' = 'text',
+): Promise<FixtureRun> {
+  const traceFile = path.join(os.tmpdir(), `darwin-headless-stdin-${process.pid}-${Date.now()}-${Math.random()}.jsonl`);
+  rmSync(traceFile, { force: true });
+  const args = ['--import', 'tsx', 'spike/fixtures/headless-cli.ts', '-p', 'fixture prompt'];
+  if (outputFormat !== 'text') args.push('--output-format', outputFormat);
+  const child = spawn(process.execPath, args, {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      DARWIN_HEADLESS_FIXTURE_MODE: 'success',
+      DARWIN_HEADLESS_RUNTIME_FIXTURE: FIXTURE_RUNTIME,
+      DARWIN_HEADLESS_FIXTURE_PROJECT_ROOT: FIXTURE_PROJECT_ROOT,
+      DARWIN_HEADLESS_FIXTURE_EXPECTED_PROJECT_ROOT: FIXTURE_PROJECT_ROOT,
+      DARWIN_HEADLESS_FIXTURE_TRACE: traceFile,
+    },
+    stdio: [stdin === 'ignore' ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout!.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk; });
+  child.stderr!.setEncoding('utf8').on('data', (chunk: string) => { stderr += chunk; });
+  if (stdin !== 'ignore') {
+    child.stdin!.on('error', () => undefined);
+    child.stdin!.end(stdin);
+  }
+  const code = await Promise.race([
+    new Promise<number | null>((resolve) => child.once('close', resolve)),
+    new Promise<never>((_, reject) => setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`headless stdin fixture (${outputFormat}) did not exit within 15s`));
+    }, 15_000)),
+  ]);
+  const trace = existsSync(traceFile)
+    ? (await readFile(traceFile, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
+    : undefined;
+  rmSync(traceFile, { force: true });
+  return { code, stdout, stderr, trace };
+}
+
+function sendInputs(run: FixtureRun): unknown[] {
+  return (run.trace ?? []).filter((record) => record.type === 'send').map((record) => record.input);
+}
+
+async function pipedStdinProcessContracts(): Promise<void> {
+  header('piped stdin — real pipe through the headless runner (SER-050)');
+
+  // Baseline: /dev/null on fd 0, the shape every existing harness spawns.
+  const ignored = await fixtureRun('ignore');
+  assert.equal(ignored.code, 0);
+  assert.equal(ignored.stdout, 'fixture answer\n', 'ignore stdout');
+  assert.equal(
+    ignored.stderr,
+    'session: session-fixture\n' +
+    'permission-mode: default\n' +
+    'tool bash — bash: printf fixture\n' +
+    'tool bash — ok\n' +
+    'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n',
+    'ignore stderr',
+  );
+  assert.deepEqual(sendInputs(ignored), ['fixture prompt']);
+  countedAssert('stdio ignore keeps the exact pre-SER-050 stdout, stderr and model-facing prompt', true);
+
+  // Immediate EOF and whitespace-only pipes are indistinguishable from /dev/null.
+  for (const [label, bytes] of [['an empty pipe', ''], ['a whitespace-only pipe', ' \n\t\n']] as const) {
+    const run = await fixtureRun(bytes);
+    assert.equal(run.code, 0, label);
+    assert.equal(run.stdout, ignored.stdout, `${label} stdout`);
+    assert.equal(run.stderr, ignored.stderr, `${label} stderr`);
+    assert.deepEqual(sendInputs(run), ['fixture prompt'], label);
+  }
+  countedAssert('empty and whitespace-only stdin add no block and print no notice', true);
+
+  // Real text: appended exactly once; everything else byte-identical to the baseline.
+  const piped = await fixtureRun('alpha beta\n');
+  const expected = composeHeadlessPrompt('fixture prompt', { text: 'alpha beta\n', bytes: 11 });
+  assert.equal(piped.code, 0);
+  assert.equal(piped.stdout, ignored.stdout, 'piped stdout');
+  assert.equal(piped.stderr, ignored.stderr, 'piped stderr');
+  assert.deepEqual(sendInputs(piped), [expected]);
+  assert.equal(occurrences(expected, 'alpha beta'), 1);
+  assert.equal(occurrences(expected, formatPipedStdinHeading(11)), 1);
+  assert.equal(occurrences(expected, PIPED_STDIN_FOOTER), 1);
+  assert.equal(expected.startsWith('fixture prompt\n\n--- piped stdin (11 bytes) ---\n'), true);
+  countedAssert('piped text reaches send() exactly once inside the one delimited block', true);
+
+  // Over the cap: a usage error before any runtime exists, in the text protocol …
+  const overCap = await fixtureRun(Buffer.alloc(PIPED_STDIN_MAX_BYTES + 1, 0x61));
+  assert.equal(overCap.code, 2);
+  assert.equal(overCap.stdout, '');
+  assert.equal(
+    overCap.stderr,
+    usageErrorText(`piped standard input exceeds the ${PIPED_STDIN_MAX_BYTES}-byte cap for -p; pipe less (for example through head -c) or name a path in the message instead.`),
+    'over-cap stderr',
+  );
+  assert.equal(overCap.trace, undefined);
+  countedAssert('one byte over the cap is refused with exit 2, empty stdout and no runtime', true);
+
+  // … and in a structured format too: usage failure has no structured output contract.
+  const overCapJson = await fixtureRun(Buffer.alloc(PIPED_STDIN_MAX_BYTES + 1, 0x61), 'json');
+  assert.equal(overCapJson.code, 2);
+  assert.equal(overCapJson.stdout, '');
+  assert.equal(overCapJson.stderr, overCap.stderr, 'over-cap json stderr');
+  assert.equal(overCapJson.trace, undefined);
+  countedAssert('the refusal is the same human usage error under --output-format json', true);
+
+  // Exactly at the cap is accepted.
+  const atCap = await fixtureRun(Buffer.alloc(PIPED_STDIN_MAX_BYTES, 0x61));
+  assert.equal(atCap.code, 0);
+  assert.equal(sendInputs(atCap).length, 1);
+  assert.equal(String(sendInputs(atCap)[0]).includes(formatPipedStdinHeading(PIPED_STDIN_MAX_BYTES)), true);
+  countedAssert('input exactly at the cap is accepted', true);
+
+  // Structured envelopes: unchanged apart from the composed prompt, which they never echo.
+  for (const format of ['json', 'stream-json'] as const) {
+    const base = await fixtureRun('ignore', format);
+    const withPipe = await fixtureRun('alpha beta\n', format);
+    assert.equal(base.code, 0, format);
+    assert.equal(withPipe.code, 0, format);
+    const strip = (text: string): string => text.replace(/"timestamp":"[^"]+"/gu, '"timestamp":"T"');
+    assert.equal(strip(withPipe.stdout), strip(base.stdout), `${format} stdout`);
+    assert.equal(withPipe.stderr, base.stderr, `${format} stderr`);
+    assert.doesNotMatch(withPipe.stdout, /alpha beta|piped stdin|fixture prompt/u, format);
+    assert.deepEqual(sendInputs(base), ['fixture prompt'], format);
+    assert.deepEqual(sendInputs(withPipe), [expected], format);
+  }
+  countedAssert('json and stream-json output is identical with or without a pipe, and neither echoes the prompt', true);
+}
+
 await parserContracts();
 await outputContracts();
 await sessionContracts();
 await mcpStderrContract();
 await usageRecordContracts();
 await usageProcessContract();
+await pipedStdinUnitContracts();
+await pipedStdinProcessContracts();
 report();

@@ -1866,6 +1866,7 @@ darwin -p|--print <message>
   [--continue|--resume [<id>]|--session <id>]
   [--permission-mode default|auto|plan|yolo|--yolo]
   [--max-model-calls <positive integer>] [--context-offload] [--compact-before]
+  [< piped stdin]                                (SER-050: non-TTY stdin appended as one block, 256 KiB cap)
 
 darwin sessions                                  (no model call, no network, no writes)
 darwin trajectory <list|search|replay|fork> …    (no model call, no network)
@@ -1924,6 +1925,29 @@ missing or unreadable record, 2 for usage.
 - The SDK bash module installs SIGINT/SIGTERM listeners that call `process.exit(0)`. Headless mode
   must replace those handlers, keep its own handler installed through cleanup/persistence, cancel
   active work, and exit nonzero. Interactive mode keeps its established Ctrl+C policy.
+- **Piped stdin (SER-050).** `readPipedStdin(process.stdin)` (`src/headless-stdin.ts`) runs
+  only inside `runHeadlessProcess`, through the injectable
+  `HeadlessRunnerDependencies.readPipedStdin`, in the same pre-protocol slot as argument
+  parsing: before the SIGINT/SIGTERM swap, before any `session:` record, before the structured
+  writer emits anything and before `createRuntime`. A TTY stdin is never iterated; `/dev/null`
+  (`stdio: 'ignore'` — every existing harness and the developer skill's managed children),
+  immediate EOF and whitespace-only bytes resolve to "no input", so the prompt argument reaches
+  `send()` byte-identical to before. Otherwise the model-facing prompt is
+  `composeHeadlessPrompt(argument, piped)`: the argument untouched, one blank line, then exactly
+  one block — `--- piped stdin (<N raw bytes> bytes) ---`, the UTF-8 text (a newline added
+  before the footer only when missing), `--- end of piped stdin ---`. That composed string is the
+  one user input: what `runtime.send()` receives, what the `userInput` trajectory line records
+  under its existing `MAX_FIELD_CHARS` cap, what memory and `UserPromptSubmit` hooks see; no
+  second channel, no envelope field (the structured protocols never echoed the prompt). Cap
+  `PIPED_STDIN_MAX_BYTES` = 256 KiB, **refused, never truncated**: the first byte past it stops
+  the read (the iterator's `return()` destroys the pipe, so a runaway producer is not drained)
+  and the run is an ordinary usage error in every output format — `usageErrorText(...)` on stderr
+  (the same helper `cli.ts`'s `reportUsageError` uses), empty stdout, exit 2, no runtime, no
+  session state. Invalid UTF-8 (`TextDecoder` fatal) and NUL bytes are refused the same way;
+  bytes are never sent as base64. Interactive mode does not import the module (asserted over
+  `src/` in `verify-headless.ts`). Documented caveat: a parent holding the pipe open without
+  writing makes `-p` wait for EOF, as `cat` does. `parseCliArgs` stays I/O-free; the grammar
+  states the rule in one `CLI_USAGE` line quoted by both reference docs.
 - The three token-efficiency CLI controls are headless-only. `--max-model-calls` installs a
   `BeforeModelCallEvent` hook that throws before provider call `limit + 1`; each process gets a fresh
   count. ContextOffloader is default-on; `--context-offload` is a compatible process-only force-on
@@ -1952,6 +1976,8 @@ failure is the only case that has no structured output contract and retains huma
 | Condition | Result |
 |---|---|
 | Missing/blank prompt, bad/repeated value flag, unknown flag | stderr usage error, exit 2, no runtime/model |
+| Piped stdin over 256 KiB, not UTF-8, or containing NUL | same stderr usage error shape, exit 2, empty stdout, no runtime — in every output format |
+| Piped stdin is a TTY, `/dev/null`, immediate EOF or whitespace-only | no block, no notice; stdout/stderr/`send()` input byte-identical to a run without a pipe |
 | Invalid or missing explicit session snapshot | fixed session record, actionable stderr error, exit 1 |
 | Permission required with no human | immediate denial record/result; never wait on stdin |
 | Turn fails/cancels or has no final reply | stdout empty, stderr error, pointer unchanged, exit 1 |
@@ -1970,7 +1996,13 @@ failure is the only case that has no structured output contract and retains huma
 
 `spike/verify-headless.ts` covers parser aliases/precedence, immediate permission denial, bounded
 single-line tool records, assembled answer extraction, strict snapshot selection, MCP stderr
-isolation, usage exit status, and no ANSI/stdout leakage. Also run a built-CLI SIGINT probe that
+isolation, usage exit status, no ANSI/stdout leakage, and piped stdin (SER-050): reader/composer
+units (TTY never iterated, empty/whitespace → none, raw byte count across chunk shapes, cap stops
+the read, UTF-8/NUL refusal, fixed fence, one-importer structural check) plus the fixture driver
+spawned with `stdio 'ignore'` versus a real pipe — identical stdout/stderr/trace for empty and
+whitespace pipes, the composed prompt exactly once in `send()`, exit-2 refusal one byte over the
+cap in text and `json` with no trace file, acceptance exactly at the cap, and `json`/`stream-json`
+output identical with or without a pipe. Also run a built-CLI SIGINT probe that
 waits for the session record, sends SIGINT, and asserts nonzero exit plus empty stdout. Live smoke
 checks should prove fresh + explicit-id multi-turn restore and default-denial/yolo behavior.
 

@@ -28,6 +28,12 @@ darwin -p|--print <message>
 values, and structured use without a prompt, are CLI usage errors before runtime/model construction:
 human stderr, empty stdout, exit 2.
 
+The piped-stdin read (SER-050, `strands-sdk-contracts.md` headless scenario) belongs to this same
+pre-runtime slot: `runHeadlessProcess` composes the prompt before the writer emits anything, and an
+over-cap or non-UTF-8 pipe is a human stderr usage error with exit 2 in every output format. The
+envelopes carry no prompt field before or after SER-050; the composed prompt is visible only
+through `send()` and the trajectory `userInput` record.
+
 Once a structured invocation parses, stdout is exclusively the structured protocol and ordinary
 stderr is empty. MCP subprocess banners stay suppressed. SIGKILL and stdout failure such as EPIPE are
 outside the caught protocol and cannot guarantee a terminal record.
@@ -144,6 +150,7 @@ unbounded and complete, matching text mode's atomic complete-answer contract.
 | Condition | Result |
 |---|---|
 | Missing/repeated/unknown output value, or output mode without `-p` | Human stderr usage error; empty stdout; exit 2; no runtime |
+| Piped stdin over the 256 KiB cap, not UTF-8, or containing NUL | Same human stderr usage error; empty stdout; exit 2; no runtime; no envelope |
 | Runtime fails before session resolution | One failure result with `sessionId: null`, no usage |
 | Explicit id or generated id is known before later startup failure | Terminal envelope retains that id |
 | Turn throws | Ordered `stage: "turn"` error; strict cleanup still runs; no pointer/result |

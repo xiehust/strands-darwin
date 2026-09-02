@@ -27,10 +27,19 @@ export const CLI_USAGE = `Usage: darwin [--resume [<id>]|--session <id>] [--perm
 
 --context-offload force-enables the default-on offloader for this process; it never persists.
 Print-only flags: --output-format, --max-model-calls, --context-offload, --compact-before, --continue.
+With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one delimited block (256 KiB cap).
 `;
 
 /** The one hint every usage error appends after its `error:` line. */
 export const CLI_HELP_HINT = 'Run `darwin --help` for usage.';
+
+/**
+ * The one shape every usage error takes on stderr: the exact parser message (tests pin
+ * those strings) on the `error:` line, then the single `--help` hint. Callers set exit 2.
+ */
+export function usageErrorText(message: string): string {
+  return `error: ${message}\n${CLI_HELP_HINT}\n`;
+}
 
 /**
  * The stdout text for a `--help`/`--version` invocation, or `undefined` when argv asks

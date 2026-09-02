@@ -36,9 +36,29 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
 
 --context-offload force-enables the default-on offloader for this process; it never persists.
 Print-only flags: --output-format, --max-model-calls, --context-offload, --compact-before, --continue.
+With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one delimited block (256 KiB cap).
 ```
 
 只用于 print 模式的选项：`--context-offload`（进程级强制开启；卸载默认已开启）、正整数 `--max-model-calls <n>`、`--compact-before`、`--output-format text|json|stream-json`。权限覆盖选项：`--permission-mode default|auto|plan|yolo`、`--yolo`。为兼容包管理器传参，位于开头的一个独立 `--` 会忽略。未知或非法参数语法返回 2：stderr 先打印 `error: <message>`，再跟一行提示 `Run \`darwin --help\` for usage.`。
+
+### `-p` 与管道 stdin
+
+`git diff | darwin -p "review this change"` 会把两者一起发送。当 `-p` 运行时 stdin 不是终端，darwin 会把它读到 EOF，然后作为**恰好一个**带定界符的块追加到消息之后——先是消息本身，再一个空行，然后是：
+
+```text
+--- piped stdin (<N> bytes) ---
+<管道文本，原样>
+--- end of piped stdin ---
+```
+
+`<N>` 是原始字节数；只有在文本末尾没有换行时才会在结尾定界符前补一个换行。拼接后的文本就是唯一的一条用户输入：模型收到的是它，会话轨迹的 `userInput` 记录的是它（仍受既有的 8,000 码点字段上限约束），`darwin trajectory replay` 显示的也是它。`json` / `stream-json` 信封不会新增任何字段——它们本来就不回显 prompt。
+
+规则与限制：
+
+- 终端 stdin、`/dev/null`、立即 EOF 或只有空白的输入不会追加任何内容——这次运行与没有管道时逐字节相同，也不会打印任何提示。交互式 TUI 从不以这种方式读取 stdin。
+- 上限：**256 KiB**（262,144 字节）。更大的输入会在任何会话或模型工作之前被拒绝，形式为用法错误（`error: piped standard input exceeds the 262144-byte cap for -p; …`，随后是 `--help` 提示行，退出码 2）。darwin 绝不会悄悄截断这个块；请少传一些（`head -c`、过滤器）或改为在消息里写出文件路径。
+- 输入必须是不含 NUL 字节的 UTF-8 文本；二进制输入会以同样方式被拒绝。字节永远不会以 base64 发送。
+- 注意事项（与 `cat` 相同）：父进程若一直握着管道却不写入，`-p` 会一直等待 EOF。无意提供输入时请从 `/dev/null` 重定向（或像 developer skill 的后台 `bash start` 任务那样以 `stdio: 'ignore'` 启动）。
 
 ## 斜杠命令与内置 skill 入口
 

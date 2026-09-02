@@ -7,6 +7,8 @@ import { classify } from './agent/permission.js';
 import { dispatchLabel } from './agents/dispatch-registry.js';
 import { routeSdkLogs, type SdkLogEntry } from './agent/sdk-logging.js';
 import type { CliOptions } from './cli-args.js';
+import { CliUsageError } from './cli-args.js';
+import { usageErrorText } from './cli-usage.js';
 import { contextOverflowErrorMessage } from './context-overflow-error.js';
 import {
   createHeadlessPermissionBridge,
@@ -30,6 +32,7 @@ import {
   type StructuredFailure,
   type StructuredWarning,
 } from './headless-protocol.js';
+import { composeHeadlessPrompt, readPipedStdin, type PipedStdin } from './headless-stdin.js';
 
 export type HeadlessOptions = CliOptions & { prompt: string; projectRoot: string };
 
@@ -43,6 +46,12 @@ export interface HeadlessRunnerDependencies {
   createRuntime(options: RuntimeOptions): Promise<AgentRuntime>;
   routeLogs(sink: (entry: SdkLogEntry) => void): () => void;
   forceExitIfHung(): void;
+  /**
+   * SER-050: the piped (non-TTY) stdin to append to the prompt, `undefined` for a TTY,
+   * `/dev/null` or whitespace-only input. Production reads `process.stdin`; fixtures and
+   * in-process tests inject their own. Throws `CliUsageError` past the cap or on binary.
+   */
+  readPipedStdin(): Promise<PipedStdin | undefined>;
 }
 
 export const productionHeadlessDependencies: HeadlessRunnerDependencies = {
@@ -50,6 +59,7 @@ export const productionHeadlessDependencies: HeadlessRunnerDependencies = {
   createRuntime: (options) => AgentRuntime.create(options),
   routeLogs: routeSdkLogs,
   forceExitIfHung: () => undefined,
+  readPipedStdin: () => readPipedStdin(process.stdin),
 };
 
 /**
@@ -61,6 +71,19 @@ export async function runHeadlessProcess(
   dependencies: HeadlessRunnerDependencies,
 ): Promise<void> {
   const target = dependencies.process;
+  // The piped-stdin read sits in the same pre-protocol slot as argument parsing: before
+  // the signal-handler swap, before any `session:` record, before the structured writer
+  // has emitted anything and before a runtime exists. A refusal is therefore an ordinary
+  // usage error in every output format — human stderr, empty stdout, exit 2, no state.
+  let prompt: string;
+  try {
+    prompt = composeHeadlessPrompt(options.prompt, await dependencies.readPipedStdin());
+  } catch (error) {
+    if (!(error instanceof CliUsageError)) throw error;
+    target.stderr.write(usageErrorText(error.message));
+    target.exitCode = 2;
+    return;
+  }
   const structuredFormat = options.outputFormat === 'text' ? undefined : options.outputFormat;
   const structured = structuredFormat !== undefined;
   const protocol = structuredFormat === undefined
@@ -191,7 +214,7 @@ export async function runHeadlessProcess(
     if (structured) {
       const turn = await runStructuredHeadlessTurn(
         runtime,
-        options.prompt,
+        prompt,
         protocol!,
         (name, input) => classify(name, input).summary,
       );
@@ -203,7 +226,7 @@ export async function runHeadlessProcess(
       if (runtime.info.diagnosticsFile !== undefined) {
         note(`diagnostics: ${runtime.info.diagnosticsFile}\n`);
       }
-      reply = await runHeadlessTurn(runtime, options.prompt, (text) => note(text));
+      reply = await runHeadlessTurn(runtime, prompt, (text) => note(text));
     }
   } catch (error) {
     if (structured && interrupted && isInterruptedError(error)) {

@@ -26,7 +26,7 @@ import {
   parseTrajectoryArgs,
   runTrajectoryCommand,
 } from './cli-trajectory.js';
-import { CLI_HELP_HINT, localCliAnswer } from './cli-usage.js';
+import { localCliAnswer, usageErrorText } from './cli-usage.js';
 import { ConfigError } from './config.js';
 import { productionHeadlessDependencies, runHeadlessProcess } from './headless-runner.js';
 import { withProductionReactImports } from './tui/react-environment.js';
@@ -117,10 +117,11 @@ async function runTrajectory(argv: readonly string[]): Promise<void> {
 
 /**
  * The one shape every usage error takes: the exact message (the parsers' strings are
- * the contract; tests pin them), then a single hint at `--help`, then exit 2.
+ * the contract; tests pin them), then a single hint at `--help`, then exit 2. The
+ * headless runner's piped-stdin refusal writes the same `usageErrorText`.
  */
 function reportUsageError(error: CliUsageError): void {
-  process.stderr.write(`error: ${error.message}\n${CLI_HELP_HINT}\n`);
+  process.stderr.write(usageErrorText(error.message));
   process.exitCode = 2;
 }
 
