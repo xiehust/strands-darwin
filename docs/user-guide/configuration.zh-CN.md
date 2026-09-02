@@ -75,10 +75,13 @@
 | `diagnostics` | `false` | 每会话 SDK/darwin 调试日志 |
 | `memory` | 轨迹可用时开启 | 项目记忆；未设置时跟随 `trajectory: false` |
 | `memoryHorizonDays` | `28` | 生成记忆的有效天数，整数 `0–365`；`0` 只关闭过期检查 |
+| `terminalBell` | `false` | 在权限提示和回合结束时响一次终端铃（仅交互式 TUI） |
 | `systemPrompt` | 内置值 | 替换基础 prompt，并优先于项目文件 |
 | `hooks` | — | 旧版内嵌后备配置；建议使用分层 `hooks/*.json` |
 
 `memory: true` 与 `trajectory: false` 不能同时使用。权限放行规则不属于该配置，它按项目存于 `~/.darwin/projects/<project-key>/permission-rules.json`。在配置文件中写入 `permissionRules` 会导致启动失败。
+
+上面两张表就是全部字段。其他任何键——无论在顶层还是 `models` 条目内，包括 `$schema` 或注释风格的键——都是未知字段，会导致启动失败，而不会被静默忽略：错误信息会指出文件、每个未知字段及其位置，并在拼写接近时给出最近的已知字段（`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`）。请修正拼写或删除该字段。
 
 ## System prompt 组成
 

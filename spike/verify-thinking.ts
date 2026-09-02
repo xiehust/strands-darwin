@@ -254,17 +254,16 @@ async function liveSwitch(): Promise<void> {
 async function persistence(): Promise<void> {
   header('thinking — /effort is remembered');
 
-  // Merged into the raw JSON: an unknown key from a newer darwin and the user's own
-  // settings both have to survive the write, same rule as appendAllowRule.
+  // Merged into the raw JSON: the user's own settings have to survive the write,
+  // same rule as appendAllowRule.
   const root = await writeConfig(
-    '{\n  "model": "global.anthropic.claude-opus-5",\n  "futureSetting": { "keep": true }\n}\n',
+    '{\n  "model": "global.anthropic.claude-opus-5",\n  "promptCache": false\n}\n',
   );
   await saveThinkingEffort(root, 'xhigh');
 
   const written = JSON.parse(await readFile(configPath(root), 'utf8')) as Record<string, unknown>;
   assert('the level is written', written['thinkingEffort'] === 'xhigh');
-  assert('unrelated known keys survive', written['model'] === 'global.anthropic.claude-opus-5');
-  assert('unknown keys survive', JSON.stringify(written['futureSetting']) === '{"keep":true}');
+  assert('unrelated known keys survive', written['model'] === 'global.anthropic.claude-opus-5' && written['promptCache'] === false);
 
   const reloaded = await loadConfig(root);
   assert('the written level loads back', reloaded.thinkingEffort === 'xhigh');
@@ -285,6 +284,19 @@ async function persistence(): Promise<void> {
     saveThinkingEffort(root, 'turbo' as ThinkingEffort),
   );
   assert('…and the global file is untouched', (await loadConfig(root)).thinkingEffort === 'medium');
+
+  // Last, because the file is global and this leaves it unloadable: the writer is
+  // not a validator — it merges into the raw record and never drops a byte it
+  // does not understand. Refusing the unknown key is the *loader's* job
+  // (SER-049), so the file writes fine and then fails to load by name.
+  const foreign = await writeConfig(
+    '{\n  "model": "global.anthropic.claude-opus-5",\n  "futureSetting": { "keep": true }\n}\n',
+  );
+  await saveThinkingEffort(foreign, 'xhigh');
+  const foreignWritten = JSON.parse(await readFile(configPath(foreign), 'utf8')) as Record<string, unknown>;
+  assert('the writer keeps an unknown key byte-for-byte', JSON.stringify(foreignWritten['futureSetting']) === '{"keep":true}');
+  const refused = await expectConfigError('…and the loader then refuses it', () => loadConfig(foreign));
+  assert('…naming the unknown key', refused.includes('unknown key "futureSetting"'));
 }
 
 async function main(): Promise<void> {

@@ -52,13 +52,15 @@ async function pathsAndConfig(): Promise<void> {
   await symlink(A, alias);
   assert('symlink aliases share a canonical key', projectKey(alias) === projectKey(A));
 
-  await write(configPath(), JSON.stringify({ model: 'global.anthropic.claude-opus-5', future: true }));
+  // Unknown keys are refused by the loader (SER-049; the writer's raw-merge
+  // property is pinned in verify-thinking.ts), so the global fixture is all known.
+  await write(configPath(), JSON.stringify({ model: 'global.anthropic.claude-opus-5', promptCache: false }));
   await write(path.join(A, '.darwin', 'config.json'), JSON.stringify({ model: 'project.must.not.win' }));
   assert('global application config controls startup', (await loadConfig(A)).model === 'global.anthropic.claude-opus-5');
   await saveThinkingEffort(A, 'low');
   const persisted = JSON.parse(await readFile(configPath(), 'utf8')) as Record<string, unknown>;
   assert('runtime persistence writes global config', persisted['thinkingEffort'] === 'low');
-  assert('unknown global keys survive persistence', persisted['future'] === true);
+  assert('other global keys survive persistence', persisted['promptCache'] === false);
   assert('project application config remains untouched', (await readFile(path.join(A, '.darwin', 'config.json'), 'utf8')).includes('project.must.not.win'));
 
   // Rules in the global file would silently apply to nothing: they are read from

@@ -15,8 +15,10 @@ import type { Model } from '@strands-agents/sdk';
 import {
   ConfigError,
   DEFAULT_REQUEST_TIMEOUT_MS,
+  MODEL_KEYS,
   OFFLOAD_PREVIEW_TOKENS,
   DEFAULT_MAX_RESULT_TOKENS,
+  SESSION_KEYS,
   appendAllowRule,
   configPath,
   createModelFromConfig,
@@ -511,10 +513,12 @@ async function permissionRules(): Promise<void> {
 
   header('config — appending a rule');
 
-  // Merged into the raw JSON: an unknown key from a newer darwin, and the user's
-  // own settings, both have to survive the write.
+  // Rules live in their own project-scoped file, so the user's own settings in
+  // the global config have to be untouched by the write. (An unknown
+  // forward-compatibility key used to sit here; unknown keys are now refused —
+  // see unknownKeys() — so a known one stands in.)
   const root = await writeConfig(
-    '{\n  "model": "us.anthropic.claude-sonnet-4-6",\n  "futureSetting": { "keep": true }\n}\n',
+    '{\n  "model": "us.anthropic.claude-sonnet-4-6",\n  "thinkingEffort": "low"\n}\n',
   );
   await appendAllowRule(root, 'bash:pnpm *');
   await appendAllowRule(root, 'fileEditor:src/**');
@@ -528,8 +532,9 @@ async function permissionRules(): Promise<void> {
     'both rules are persisted, duplicates collapsed',
     JSON.stringify(reloaded.allowRules) === '["bash:pnpm *","fileEditor:src/**"]',
   );
+  const untouched = await loadConfig(root);
   assert('application config is unchanged by rule persistence',
-    (await loadConfig(root)).model === 'us.anthropic.claude-sonnet-4-6');
+    untouched.model === 'us.anthropic.claude-sonnet-4-6' && untouched.thinkingEffort === 'low');
 
   // The prompt is the only writer today, but a rule that could never match must
   // not reach the file whatever calls it.
@@ -1089,6 +1094,216 @@ async function terminalBellField(): Promise<void> {
   assert('a /model switch preserves the bell', switched.terminalBell === true);
 }
 
+/**
+ * Unknown keys are refused, not ignored (SER-049). A key in neither half of the
+ * schema is never read, so before this a misspelled `thinkingEfort` loaded
+ * cleanly and silently kept the default — the exact silent no-op the config
+ * rows of `error-handling.md` exist to prevent.
+ */
+async function unknownKeys(): Promise<void> {
+  header('config — unknown keys are refused, naming the key, its place and the nearest known key');
+
+  const file = configPath(ROOT);
+
+  const misspelled = await expectConfigError('a misspelled root key is refused', async () =>
+    loadConfig(await writeConfig('{ "thinkingEfort": "high", "promptCache": true }')),
+  );
+  assert('the error names the config file', misspelled.startsWith(`${file}: `));
+  assert('…and the unknown key', misspelled.includes('"thinkingEfort"'));
+  assert('…and where it was found', misspelled.includes('at the top level'));
+  assert('…and suggests the key that was meant', misspelled.includes('did you mean "thinkingEffort"?'));
+  assert('…and says why it is refused rather than ignored', /refused rather than ignored/.test(misspelled));
+
+  const entryKey = await expectConfigError('an unknown key inside a models entry is refused', async () =>
+    loadConfig(
+      await writeConfig(
+        JSON.stringify({
+          models: [
+            { enable: true, name: 'opus', model: 'global.anthropic.claude-opus-5' },
+            { enable: false, name: 'gpt-5.6-sol', provider: 'openai', model: 'openai.gpt-5.6-sol', temprature: 0.2 },
+          ],
+        }),
+      ),
+    ),
+  );
+  assert('the entry error names the key', entryKey.includes('"temprature"'));
+  assert('…and the entry position', entryKey.includes('in models[1]'));
+  assert('…and the entry name', entryKey.includes('models[1] ("gpt-5.6-sol")'));
+  assert('…without a suggestion when nothing is close', !entryKey.includes('did you mean'));
+
+  // No escape hatch: the file has one reader, so a tolerated `$schema` would be
+  // the first accepted-but-ignored key of the class this check removes.
+  const schema = await expectConfigError('a stray "$schema" at the root is refused', async () =>
+    loadConfig(await writeConfig('{ "$schema": "https://example.invalid/darwin.json", "model": "x" }')),
+  );
+  assert('the "$schema" error names the key', schema.includes('"$schema"') && schema.includes('at the top level'));
+  assert('…without a suggestion', !schema.includes('did you mean'));
+
+  const two = await expectConfigError('two unknown keys are reported together', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "permisionMode": "yolo", "models": [{ "enable": true, "model": "x", "maxToken": 100 }] }',
+      ),
+    ),
+  );
+  assert('one message names the root key', two.includes('"permisionMode" at the top level (did you mean "permissionMode"?)'));
+  assert('…and the entry key', two.includes('"maxToken" in models[0] (did you mean "maxTokens"?)'));
+  assert('…in the plural', two.includes('unknown keys ') && two.endsWith('remove them.'));
+  assert('…an unnamed entry is addressed by position alone', !two.includes('models[0] ("'));
+
+  // Near misses: a transposition (Damerau) and a case slip both resolve.
+  const transposed = await expectConfigError('a transposed key gets a suggestion', async () =>
+    loadConfig(await writeConfig('{ "promptCahce": false }')),
+  );
+  assert('the transposition suggests promptCache', transposed.includes('did you mean "promptCache"?'));
+
+  const lowercase = await expectConfigError('a case slip is still an unknown key', async () =>
+    loadConfig(await writeConfig('{ "permissionmode": "yolo" }')),
+  );
+  assert('…with the correctly cased key suggested', lowercase.includes('did you mean "permissionMode"?'));
+
+  const far = await expectConfigError('an unknown key with no close match is refused', async () =>
+    loadConfig(await writeConfig('{ "favouriteColour": "green" }')),
+  );
+  assert('…without a suggestion', far.includes('"favouriteColour" at the top level') && !far.includes('did you mean'));
+  assert('…in the singular', far.includes('unknown key "favouriteColour"') && far.endsWith('remove it.'));
+
+  // `enable` is array-form only, so at the root it is as unknown as any typo.
+  const enableAtRoot = await expectConfigError('"enable" at the root is unknown', async () =>
+    loadConfig(await writeConfig('{ "enable": true, "model": "x" }')),
+  );
+  assert('the root "enable" error names it', enableAtRoot.includes('"enable" at the top level'));
+
+  // Precedence: the misplaced-known-key messages are more specific and win when
+  // both problems are present, and their wording is unchanged.
+  const misplacedFirst = await expectConfigError('a misplaced known key still gets its own message', async () =>
+    loadConfig(
+      await writeConfig('{ "model": "x", "bogus": 1, "models": [{ "enable": true, "model": "y", "nope": 1 }] }'),
+    ),
+  );
+  assert(
+    'the misplaced message wins over the unknown-key message',
+    /"model" belongs inside a "models" entry, not next to "models"/.test(misplacedFirst) &&
+      !misplacedFirst.includes('unknown key'),
+  );
+  const sessionInEntry = await expectConfigError('a session key in an entry still gets its own message', async () =>
+    loadConfig(
+      await writeConfig('{ "bogus": 1, "models": [{ "enable": true, "model": "y", "trajectory": false }] }'),
+    ),
+  );
+  assert(
+    'the entry message is unchanged and wins',
+    /models\[0\] carries "trajectory", which applies to the whole session/.test(sessionInEntry) &&
+      !sessionInEntry.includes('unknown key'),
+  );
+
+  // Bounded: a pasted foreign file names at most ten keys and counts the rest.
+  const flood: Record<string, number> = {};
+  for (let i = 0; i < 14; i++) flood[`zzz_unknown_${i}`] = i;
+  const flooded = await expectConfigError('many unknown keys are refused in one bounded message', async () =>
+    loadConfig(await writeConfig(JSON.stringify(flood))),
+  );
+  assert('…naming ten and counting the rest', flooded.includes('"zzz_unknown_9"') &&
+    !flooded.includes('"zzz_unknown_10"') && flooded.includes('… and 4 more'));
+}
+
+/**
+ * The documented key tables and the schema must agree in both directions: with
+ * unknown keys refused, a documented key the schema lacks is a setting nobody
+ * can write, and a schema key the docs lack is a setting nobody can find.
+ */
+async function documentedKeys(): Promise<void> {
+  header('config — every documented key is known, every known key is documented');
+
+  const docs = ['docs/user-guide/configuration.md', 'docs/user-guide/configuration.zh-CN.md'];
+  const expected = new Set<string>([...MODEL_KEYS, ...SESSION_KEYS, 'models', 'enable']);
+  for (const doc of docs) {
+    const text = await readFile(path.resolve(doc), 'utf8');
+    // The two field tables: rows whose first cell is a backticked key. Stops at
+    // the next `##` heading so the caching / effort tables are not swept in.
+    const tables = /^## (Model fields|模型字段)\n([\s\S]*?)^## (Session fields|会话字段)\n([\s\S]*?)^## /m.exec(text);
+    assert(`${doc} has the model and session field tables`, tables !== null);
+    if (tables === null) continue;
+    const keysOf = (table: string): string[] =>
+      [...table.matchAll(/^\| `([^`]+)` \|/gm)].map((match) => match[1] as string);
+    const modelDocumented = keysOf(tables[2] as string);
+    const sessionDocumented = keysOf(tables[4] as string);
+    const documented = new Set([...modelDocumented, ...sessionDocumented]);
+
+    const undocumented = [...expected].filter((key) => !documented.has(key));
+    const unknownToSchema = [...documented].filter((key) => !expected.has(key));
+    assert(`${doc}: every schema key is documented (${undocumented.join(', ') || 'none missing'})`, undocumented.length === 0);
+    assert(`${doc}: every documented key is in the schema (${unknownToSchema.join(', ') || 'none unknown'})`, unknownToSchema.length === 0);
+    assert(`${doc}: model table lists only model keys plus models/enable`,
+      modelDocumented.every((key) => (MODEL_KEYS as readonly string[]).includes(key) || key === 'models' || key === 'enable'));
+    assert(`${doc}: session table lists only session keys`,
+      sessionDocumented.every((key) => (SESSION_KEYS as readonly string[]).includes(key)));
+    assert(`${doc} states the unknown-key rule`, /unknown key|未知(的)?键|未知字段/i.test(text));
+  }
+
+  // And they load: one flat Bedrock file carrying every model and session key
+  // (the Bedrock-only `requestTimeoutMs` forces the provider, which excludes the
+  // OpenAI-only `openaiApi`), plus the array form carrying that key and
+  // `models`/`enable`/`name`. The fixture's key set is asserted against the
+  // schema so a key added to either list has to be exercised here too.
+  const flatFixture = {
+    provider: 'bedrock',
+    name: 'sonnet',
+    model: 'us.anthropic.claude-sonnet-4-6',
+    region: 'us-west-2',
+    apiKeyEnv: 'UNUSED_KEY',
+    bedrockMantle: false,
+    maxTokens: 4096,
+    thinkingEffort: 'low',
+    promptCache: true,
+    promptCacheTtl: '5m',
+    classifierModel: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+    requestTimeoutMs: 1000,
+    permissionMode: 'plan',
+    hooks: {},
+    summaryRatio: 0.5,
+    preserveRecentMessages: 4,
+    contextWarnRatio: 0.7,
+    contextOffload: true,
+    maxResultTokens: 2000,
+    terminalBell: false,
+    trajectory: true,
+    diagnostics: false,
+    memory: true,
+    memoryHorizonDays: 7,
+    systemPrompt: 'You are terse.',
+  };
+  const flatKeys = [...MODEL_KEYS, ...SESSION_KEYS].filter((key) => key !== 'openaiApi');
+  assert(
+    'the flat fixture carries every schema key but openaiApi',
+    JSON.stringify([...Object.keys(flatFixture)].sort()) === JSON.stringify([...flatKeys].sort()),
+  );
+  const flat = await loadConfig(await writeConfig(JSON.stringify(flatFixture)));
+  assert('a flat file using every documented Bedrock-compatible key loads',
+    flat.model === 'us.anthropic.claude-sonnet-4-6' && flat.permissionMode === 'plan' && flat.requestTimeoutMs === 1000);
+
+  const array = await loadConfig(
+    await writeConfig(
+      JSON.stringify({
+        models: [
+          { enable: false, name: 'sonnet', model: 'us.anthropic.claude-sonnet-4-6' },
+          {
+            enable: true,
+            name: 'sol',
+            provider: 'openai',
+            model: 'openai.gpt-5.6-sol',
+            bedrockMantle: true,
+            openaiApi: 'responses',
+            region: 'us-east-1',
+          },
+        ],
+        permissionMode: 'default',
+      }),
+    ),
+  );
+  assert('an array file using models/enable/name and the OpenAI-only keys loads', array.openaiApi === 'responses' && array.name === 'sol');
+}
+
 async function main(): Promise<void> {
   await defaults();
   await regionFallback();
@@ -1096,6 +1311,8 @@ async function main(): Promise<void> {
   await modelArray();
   await modelCatalogue();
   await rejections();
+  await unknownKeys();
+  await documentedKeys();
   await requestTimeout();
   await contextWarnRatioField();
   await memoryHorizonField();

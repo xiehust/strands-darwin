@@ -75,10 +75,13 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `diagnostics` | `false` | per-session SDK/darwin debug log |
 | `memory` | true while trajectory is available | project memory; omitted follows `trajectory: false` |
 | `memoryHorizonDays` | `28` | generated-memory age, integer `0–365`; `0` disables age only |
+| `terminalBell` | `false` | ring the terminal bell on permission prompts and turn completion (interactive TUI only) |
 | `systemPrompt` | built-in | replaces the base prompt and wins over project file |
 | `hooks` | — | legacy embedded fallback; prefer layered `hooks/*.json` |
 
 `memory: true` with `trajectory: false` is invalid. Permission allow rules are deliberately not config fields: they live per project in `~/.darwin/projects/<project-key>/permission-rules.json`; a `permissionRules` field in config is a startup error.
+
+The two tables above are the complete key set. Any other key — at the root or inside a `models` entry, including `$schema` or comment-style keys — is an unknown key and a startup error, never a silently ignored one: the message names the file, every unknown key and where it was found, and suggests the nearest known key when a spelling is close (`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`). Fix the spelling or remove the key.
 
 ## System prompt composition
 

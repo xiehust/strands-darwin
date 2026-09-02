@@ -1725,6 +1725,15 @@ tool call is silently denied with no prompt shown.
 - Token usage lives at `result.lastMessage.toJSON().metadata.usage`, not
   `result.metrics` (which serialization drops — see "a serialized `AgentResult` carries
   no metrics" under Prompt Caching / usage below).
+- `~/.darwin/config.json` is a closed schema: `MODEL_KEYS` and `SESSION_KEYS` (exported from
+  `src/config.ts`) plus `models` at the root and `enable` in an entry are the only keys
+  `loadConfig` accepts. Known keys are type-checked and misplaced known keys refused first (their
+  messages are more specific), then every remaining unknown key is refused in one `ConfigError`
+  with location and a `did you mean` within edit distance 2. Writers (`saveEnabledModel`,
+  `saveThinkingEffort`) merge into the raw record and never validate. Adding a key means growing
+  the list *and* the two `docs/user-guide/configuration*.md` tables — `spike/verify-config.ts`
+  walks them against each other in both directions (`documentedKeys()`), and `unknownKeys()`
+  pins the refusal, suggestion, precedence and the 10-key bound.
 
 ---
 

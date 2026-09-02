@@ -279,8 +279,12 @@ export const CONFIG_FILENAME = 'config.json';
  * may only appear inside a `models` entry; at the root they are the single-model
  * form. Listed rather than inferred because the two forms are validated by the
  * same function and the error messages name the key that is in the wrong place.
+ *
+ * Exported (read-only) so `spike/verify-config.ts` can walk the documented key
+ * tables against the schema: with unknown keys refused, a key the docs promise
+ * but this list lacks would be a documented setting nobody can write.
  */
-const MODEL_KEYS = [
+export const MODEL_KEYS = [
   'provider',
   'name',
   'model',
@@ -302,7 +306,7 @@ const MODEL_KEYS = [
  * that silently applied to one model and not another would be a security
  * surprise, which is why an entry carrying one is rejected rather than ignored.
  */
-const SESSION_KEYS = [
+export const SESSION_KEYS = [
   'permissionMode',
   'hooks',
   'summaryRatio',
@@ -600,13 +604,132 @@ function validate(parsed: unknown, configPath: string, validateEmbeddedHooks = t
   // The array form is a *file* format, not a second runtime shape: the enabled
   // entry is resolved here and the result is the same flat AppConfig the
   // single-model form produces, so nothing downstream knows which form was used.
+  //
+  // Unknown keys are refused last: every known key has been type-checked and
+  // every misplaced known key already named with where it belongs, so those
+  // more specific messages keep precedence.
   if (input['models'] === undefined) {
-    return withSoleChoice({ ...validateModelFields(input, configPath), ...session });
+    const fields = validateModelFields(input, configPath);
+    refuseUnknownKeys(input, configPath);
+    return withSoleChoice({ ...fields, ...session });
   }
 
   const choices = validateModelChoices(input, configPath);
+  refuseUnknownKeys(input, configPath);
   const enabled = choices.find((choice) => choice.enabled) as ModelChoice;
   return { ...enabled.fields, ...session, modelChoices: choices };
+}
+
+/** The keys a config root may carry: both halves plus the array form's container. */
+const ROOT_KEYS: readonly string[] = [...SESSION_KEYS, ...MODEL_KEYS, 'models'];
+
+/** The keys one `models` entry may carry: the model half plus its switch. */
+const ENTRY_KEYS: readonly string[] = [...MODEL_KEYS, 'enable'];
+
+/** Largest edit distance at which a known key is offered as "did you mean". */
+const MAX_SUGGESTION_DISTANCE = 2;
+
+/** Unknown keys named per message, so a pasted foreign file cannot flood the terminal. */
+const MAX_UNKNOWN_KEYS_NAMED = 10;
+
+/**
+ * Refuses every key the schema does not know, at the root and inside `models`
+ * entries, in one message.
+ *
+ * Refused rather than ignored: a key in neither half is never read, so
+ * `"thinkingEfort": "high"` would silently keep the default effort and
+ * `"promptCahce": false` would silently keep billing cache writes — the user
+ * wrote intent and got the opposite with no signal. All unknown keys are
+ * reported together so one fix-and-retry cycle covers the file, and the nearest
+ * known key is offered when one is within {@link MAX_SUGGESTION_DISTANCE}.
+ * There is deliberately no `$schema`/comment escape hatch: the file has one
+ * reader, and an accepted-but-ignored key is exactly the class this removes.
+ */
+function refuseUnknownKeys(root: Record<string, unknown>, configPath: string): void {
+  const unknown: string[] = [];
+  const collect = (record: Record<string, unknown>, known: readonly string[], where: string): void => {
+    for (const key of Object.keys(record)) {
+      if (known.includes(key)) continue;
+      const suggestion = nearestKnownKey(key, known);
+      unknown.push(
+        `${JSON.stringify(boundedKey(key))} ${where}` +
+          (suggestion === undefined ? '' : ` (did you mean ${JSON.stringify(suggestion)}?)`),
+      );
+    }
+  };
+
+  collect(root, ROOT_KEYS, 'at the top level');
+  const models = root['models'];
+  if (Array.isArray(models)) {
+    models.forEach((entry, index) => {
+      if (!isRecord(entry)) return;
+      const name = entry['name'];
+      const label =
+        typeof name === 'string' && name !== '' ? `models[${index}] (${JSON.stringify(name)})` : `models[${index}]`;
+      collect(entry, ENTRY_KEYS, `in ${label}`);
+    });
+  }
+
+  if (unknown.length === 0) return;
+  const named = unknown.slice(0, MAX_UNKNOWN_KEYS_NAMED);
+  const more = unknown.length - named.length;
+  throw new ConfigError(
+    `${configPath}: unknown ${unknown.length === 1 ? 'key' : 'keys'} ${named.join(', ')}` +
+      `${more > 0 ? `, … and ${more} more` : ''}. ` +
+      `Unknown keys are refused rather than ignored, because a misspelled setting would silently ` +
+      `leave the default in effect — fix the spelling or remove ${unknown.length === 1 ? 'it' : 'them'}.`,
+  );
+}
+
+/** The key as the message shows it: long foreign keys are cut so the line stays readable. */
+function boundedKey(key: string): string {
+  const MAX = 64;
+  return key.length > MAX ? `${key.slice(0, MAX - 1)}…` : key;
+}
+
+/**
+ * The known key closest to `key` within {@link MAX_SUGGESTION_DISTANCE}, compared
+ * case-insensitively so `permissionmode` finds `permissionMode`. Ties go to the
+ * earlier key in declaration order, so the suggestion is deterministic.
+ */
+function nearestKnownKey(key: string, known: readonly string[]): string | undefined {
+  const needle = key.toLowerCase();
+  let best: { key: string; distance: number } | undefined;
+  for (const candidate of known) {
+    // Length alone rules most candidates out, which also bounds the DP below to
+    // strings within two characters of a known key's length.
+    if (Math.abs(candidate.length - needle.length) > MAX_SUGGESTION_DISTANCE) continue;
+    const distance = editDistance(needle, candidate.toLowerCase());
+    if (distance <= MAX_SUGGESTION_DISTANCE && (best === undefined || distance < best.distance)) {
+      best = { key: candidate, distance };
+    }
+  }
+  return best?.key;
+}
+
+/**
+ * Optimal string alignment (restricted Damerau-Levenshtein) distance: insertions,
+ * deletions, substitutions and adjacent transpositions each cost one, so the
+ * common typos — a dropped letter (`thinkingEfort`), a swapped pair
+ * (`promptCahce`) — are one edit away from the key they meant.
+ */
+function editDistance(a: string, b: string): number {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const d: number[][] = Array.from({ length: rows }, () => new Array<number>(cols).fill(0));
+  for (let i = 0; i < rows; i++) d[i]![0] = i;
+  for (let j = 0; j < cols; j++) d[0]![j] = j;
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let value = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        value = Math.min(value, d[i - 2]![j - 2]! + 1);
+      }
+      d[i]![j] = value;
+    }
+  }
+  return d[a.length]![b.length]!;
 }
 
 /**
