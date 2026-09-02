@@ -145,7 +145,7 @@ Accepted 2026-09-02 in `ca7aa7c` (child session `session-20260902-024725444`, ma
 
 ## SER-049 — Refuse unknown keys in `~/.darwin/config.json` (root and `models` entries) with a `ConfigError` that names the key, where it was found and the nearest known key
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 68
 - Score: 12
 - Importance: 3
@@ -157,7 +157,7 @@ Accepted 2026-09-02 in `ca7aa7c` (child session `session-20260902-024725444`, ma
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-02 in `8481bab` (child session `session-20260902-030515467`, managed task `bg-f45d1e13-5bb5-486d-bd60-b1e1a260bb0a`, exit 0; Trellis task archived in `68b4027`). `src/config.ts` adds `refuseUnknownKeys()`, called in `validate()` after the known-key type checks and after `modelEntries()`' misplaced-half checks so those more specific messages keep precedence byte-for-byte; root allows `SESSION_KEYS ∪ MODEL_KEYS ∪ {models}`, entries allow `MODEL_KEYS ∪ {enable}`; all unknowns go in one `ConfigError` naming the file, each key (JSON-quoted, cut at 64 chars, ≤10 named then `… and N more`), `at the top level` / `in models[i] ("name")`, and `did you mean "…"?` when a known key is within optimal-string-alignment distance 2 case-insensitively; no `$schema`/comment escape hatch; `MODEL_KEYS`/`SESSION_KEYS` exported read-only for the doc walk. Host independently inspected the whole diff and re-ran `spike/verify-config.ts` (300/300, up from 170: misspelled root key, unknown entry key with entry name, `$schema`, two unknowns in one message, transposition and case-slip suggestions, no-match → no suggestion, `enable` at root, misplaced-key precedence pinned unchanged, the 10-key bound, and a two-way walk of both user-guide key tables against the schema), `pnpm typecheck`, full `pnpm test` (exit 0, zero FAIL lines on the confirming run; one earlier run showed the pre-existing `verify-subagent-heartbeats` wall-clock flake, 3/3 green alone), `pnpm build`, then a private-HOME `dist` probe with `thinkingEfort` at the root and `regoin` in `models[0]`: `error: …unknown keys "thinkingEfort" at the top level (did you mean "thinkingEffort"?), "regoin" in models[0] ("a") (did you mean "region"?)…`, exit 1, while a valid file still loads. Findings the walk surfaced: `terminalBell` was in `SESSION_KEYS` but in neither user-guide table (both fixed); three suites carried a forward-compat "unknown key survives" fixture (`verify-config.ts`, `verify-thinking.ts`, `verify-state-layers.ts`) — load paths now use known keys and `verify-thinking.ts` pins that the writer's raw merge is then refused by name on load. Docs: `configuration.md`/`zh-CN` state the rule, `error-handling.md` gains the row, `strands-sdk-contracts.md` § Model Configuration gains the closed-schema bullet. Recorded in `docs/iteration-log.md` Batch 72.
 
 ### Notes / blockers / abandonment reason
 
@@ -165,7 +165,7 @@ Not started.
 
 ## SER-050 — Let `-p` read piped (non-TTY) stdin to EOF under a stated byte cap and append it to the one-shot prompt as one delimited block; TTY or empty stdin leaves behaviour byte-identical
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 69
 - Score: 8
 - Importance: 3
