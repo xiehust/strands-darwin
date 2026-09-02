@@ -5,7 +5,7 @@
   <p>
     <a href="https://nodejs.org/"><img alt="Node.js >=20.3.0" src="https://img.shields.io/badge/Node.js-%3E%3D20.3.0-339933?logo=nodedotjs&amp;logoColor=white"></a>
     <a href="https://www.typescriptlang.org/"><img alt="TypeScript 7.0.2" src="https://img.shields.io/badge/TypeScript-7.0.2-3178C6?logo=typescript&amp;logoColor=white"></a>
-    <a href="https://www.npmjs.com/package/@strands-agents/sdk"><img alt="Strands Agents SDK 1.12.0" src="https://img.shields.io/badge/Strands_Agents_SDK-1.12.0-5E4AE3"></a>
+    <a href="https://www.npmjs.com/package/@strands-agents/sdk"><img alt="Strands Agents SDK 1.16.0" src="https://img.shields.io/badge/Strands_Agents_SDK-1.16.0-5E4AE3"></a>
     <a href="https://spdx.org/licenses/ISC.html"><img alt="ISC License" src="https://img.shields.io/badge/License-ISC-blue.svg"></a>
   </p>
   <img src="docs/images/welcome.png" alt="darwin terminal welcome screen" width="100%">

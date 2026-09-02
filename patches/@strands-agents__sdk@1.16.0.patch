@@ -21,10 +21,10 @@ index 84e3d1bb0bcd499d3dd2cd07c08baa79807ca79c..7e1c407bb04714309226c40b5daa0082
  }
  /**
 diff --git a/dist/src/index.d.ts b/dist/src/index.d.ts
-index e07163f891ff1472c0fbf446c8423e2228574d58..caa86ad77bb151c6d9a7ab947ea5d1ca0432f8dd 100644
+index 89047d0b24999df274f256d25b4cca8624ce7ac6..ca746d6e27aa644eaf5186c79185263fa3d1fc53 100644
 --- a/dist/src/index.d.ts
 +++ b/dist/src/index.d.ts
-@@ -53,6 +53,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
+@@ -56,6 +56,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
  export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
  export { SlidingWindowConversationManager, type SlidingWindowConversationManagerConfig, } from './conversation-manager/sliding-window-conversation-manager.js';
  export { SummarizingConversationManager, type SummarizingConversationManagerConfig, } from './conversation-manager/summarizing-conversation-manager.js';
@@ -33,10 +33,10 @@ index e07163f891ff1472c0fbf446c8423e2228574d58..caa86ad77bb151c6d9a7ab947ea5d1ca
  export type { Logger } from './logging/types.js';
  export { type McpClientOptions, type McpListToolsOptions, type McpToolFilterCallback, type McpToolFilters, type McpToolMatcher, type McpClientConfig, type McpClientCredentials, type McpTransport, type McpCallToolOptions, type TasksConfig, type McpConnectionState, type McpServerConfig, type SerializableMcpToolFilters, McpClient, } from './mcp/index.js';
 diff --git a/dist/src/index.js b/dist/src/index.js
-index 329c816c53806b4d3c66d8944c7bc9798ab4bf2d..9027a18786ec9cecfc26e1c7498c1cf0b8972c5e 100644
+index 3cb62b859eba690822bbd8fb1c2c9388cd151394..4a1febbd5752dc4bb0cbba24b0695c5ce40143e9 100644
 --- a/dist/src/index.js
 +++ b/dist/src/index.js
-@@ -50,6 +50,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
+@@ -52,6 +52,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
  export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
  export { SlidingWindowConversationManager, } from './conversation-manager/sliding-window-conversation-manager.js';
  export { SummarizingConversationManager, } from './conversation-manager/summarizing-conversation-manager.js';
@@ -69,10 +69,10 @@ index e17f00ac284c1e3357d55205c57b431061141b55..a7b4edd12a5ac33277a5ad2c4bcea4c4
      stopReason: StopReason;
  }
 diff --git a/dist/src/models/openai/responses-adapter.js b/dist/src/models/openai/responses-adapter.js
-index 23b1dad5bf6ca0dc60ec22d70bf195c1556ba29a..455fc41794c2b6bbe0cc5c86d428cf8c7134810f 100644
+index 25091ff4351eaa61dc370382a251285ed6f3a629..8d342dc7be28c63b7f609bd3c9cca00f3877b664 100644
 --- a/dist/src/models/openai/responses-adapter.js
 +++ b/dist/src/models/openai/responses-adapter.js
-@@ -326,9 +326,13 @@ function mapResponsesUsage(usage) {
+@@ -328,9 +328,13 @@ function mapResponsesUsage(usage) {
          totalTokens: usage.total_tokens,
      };
      const cached = usage.input_tokens_details?.cached_tokens;
@@ -111,7 +111,7 @@ index b0223555c1f0410441546be860dbae824ac9857c..0cefd600f9b2324d23033f07c7b44f74
  //# sourceMappingURL=plugin.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-plugins/context-offloader/plugin.js b/dist/src/vended-plugins/context-offloader/plugin.js
-index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..53164390bf0897fef9e174ee2b883411ddb517d8 100644
+index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..8a6410ee3181d605dcf1be5f862cd3e22aab48d8 100644
 --- a/dist/src/vended-plugins/context-offloader/plugin.js
 +++ b/dist/src/vended-plugins/context-offloader/plugin.js
 @@ -1,5 +1,5 @@
@@ -151,7 +151,7 @@ index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..53164390bf0897fef9e174ee2b883411
      _keyStoredAt = new Map();
      _retrievalTool;
      constructor(config) {
-@@ -214,7 +230,8 @@ export class ContextOffloader {
+@@ -208,7 +224,8 @@ export class ContextOffloader {
          }
          this._storageForAgent(agent);
          agent.addHook(AfterToolCallEvent, (event) => this._handleToolResult(event));
@@ -161,7 +161,7 @@ index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..53164390bf0897fef9e174ee2b883411
              const cycleCount = agent.metrics.cycleCount;
              if (this._storage instanceof LegacyInMemoryStorage) {
                  this._storage._evict(cycleCount);
-@@ -345,40 +362,130 @@ export class ContextOffloader {
+@@ -339,40 +356,130 @@ export class ContextOffloader {
              .filter((r) => r.ref)
              .map((r) => `  ${r.ref} (${r.description})`)
              .join('\n');
@@ -319,7 +319,7 @@ index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..53164390bf0897fef9e174ee2b883411
          // Extract text preview from text/JSON blocks
          const textParts = [];
          for (const block of content) {
-@@ -388,22 +495,28 @@ export class ContextOffloader {
+@@ -382,22 +489,28 @@ export class ContextOffloader {
                  textParts.push(JSON.stringify(block.json, null, 2));
          }
          const fullText = textParts.join('\n');
@@ -360,7 +360,7 @@ index 2569b5ce9a20e4e0ccf5f1e00f7f6ea62e9d4094..53164390bf0897fef9e174ee2b883411
          }
          logger.debug(`tool_use_id=<${toolUseId}>, blocks=<${references.length}>, tokens=<${tokenCount}> | tool result offloaded`);
          // Build replacement content: preview text + media placeholders
-@@ -428,11 +541,28 @@ export class ContextOffloader {
+@@ -422,11 +535,28 @@ export class ContextOffloader {
                  newContent.push(new TextBlock(`[${label}, ${size} bytes${ref ? ` | ref: ${ref}` : ''}]`));
              }
          }
@@ -760,37 +760,36 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..06b2123ec4821b12e53f04da5a6f1cb3
  //# sourceMappingURL=bash.js.map
 \ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/index.d.ts b/dist/src/vended-tools/bash/index.d.ts
-index 74f8db2f387fa4374920935939b9229f94187aba..9ce7b8ab45e820e7b0561b76d30f88f4a1c8c0b4 100644
+index 9dec5cf05c98402657b1637e745532b9a4e13c03..55d91ba45478088cde57bb27e1d3048d919c7228 100644
 --- a/dist/src/vended-tools/bash/index.d.ts
 +++ b/dist/src/vended-tools/bash/index.d.ts
-@@ -5,7 +5,7 @@
-  * stateless tool that routes commands through a sandbox, which runs whichever
-  * shell that sandbox provides.
+@@ -6,7 +6,7 @@
+  * names are re-exported here so pre-rename imports through this path keep
+  * working until v2.0.0.
   */
 -export { bash } from './bash.js';
 +export { bash, createBash } from './bash.js';
- export { makeShell, makeBash } from './make-shell.js';
- export type { MakeShellOptions, MakeBashOptions } from './make-shell.js';
- export { SANDBOX_SHELL_DESCRIPTION, SANDBOX_BASH_DESCRIPTION, BashTimeoutError, BashSessionError, ShellTimeoutError, ShellExecutionError, } from './types.js';
+ export { BashTimeoutError, BashSessionError } from './types.js';
+ export type { BashInput, BashOutput, ExecuteInput, RestartInput } from './types.js';
+ export { makeShell, makeBash } from '../shell/make-shell.js';
 diff --git a/dist/src/vended-tools/bash/index.js b/dist/src/vended-tools/bash/index.js
-index 19409ad6160e57325f377097c83795579cc31cf0..606a301fb63090684f4d928011552140fcca4087 100644
+index c6bdcac15ef1c7c99cb6cee08e8422548c1d5b95..35527ffe4386aaac0d982f145945737dcb4419e1 100644
 --- a/dist/src/vended-tools/bash/index.js
 +++ b/dist/src/vended-tools/bash/index.js
-@@ -5,7 +5,7 @@
-  * stateless tool that routes commands through a sandbox, which runs whichever
-  * shell that sandbox provides.
+@@ -7,7 +7,7 @@
+  * working until v2.0.0.
   */
+ import { SANDBOX_SHELL_DESCRIPTION } from '../shell/types.js';
 -export { bash } from './bash.js';
 +export { bash, createBash } from './bash.js';
- export { makeShell, makeBash } from './make-shell.js';
- export { SANDBOX_SHELL_DESCRIPTION, SANDBOX_BASH_DESCRIPTION, BashTimeoutError, BashSessionError, ShellTimeoutError, ShellExecutionError, } from './types.js';
- //# sourceMappingURL=index.js.map
-\ No newline at end of file
+ export { BashTimeoutError, BashSessionError } from './types.js';
+ export { makeShell, makeBash } from '../shell/make-shell.js';
+ export { SANDBOX_SHELL_DESCRIPTION, ShellTimeoutError, ShellExecutionError } from '../shell/types.js';
 diff --git a/dist/src/vended-tools/bash/types.d.ts b/dist/src/vended-tools/bash/types.d.ts
-index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..0e8a97cca8e72363de51ec9ad86a4e4824460da3 100644
+index 1be553288395c19e1251d86ef7c4d798c1917ace..d0ad68b868500222da59df13e2aef74837115fca 100644
 --- a/dist/src/vended-tools/bash/types.d.ts
 +++ b/dist/src/vended-tools/bash/types.d.ts
-@@ -50,10 +50,16 @@ export interface BashOutput {
+@@ -48,10 +48,16 @@ export interface BashOutput {
       * Empty string if no errors occurred.
       */
      error: string;
@@ -808,7 +807,7 @@ index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..0e8a97cca8e72363de51ec9ad86a4e48
  }
  /**
   * Error thrown when a bash command exceeds its timeout.
-@@ -65,6 +71,12 @@ export declare class BashTimeoutError extends Error {
+@@ -63,6 +69,12 @@ export declare class BashTimeoutError extends Error {
   * Error thrown when a bash session encounters an error.
   */
  export declare class BashSessionError extends Error {
@@ -820,9 +819,10 @@ index 6b64c4e390b20e3a440d31e7e4b2b7fabab73b09..0e8a97cca8e72363de51ec9ad86a4e48
 +    cwd?: string;
      constructor(message: string);
  }
- /**
+ //# sourceMappingURL=types.d.ts.map
+\ No newline at end of file
 diff --git a/dist/src/vended-tools/file-editor/file-editor.js b/dist/src/vended-tools/file-editor/file-editor.js
-index 044cf09a239dad3a846c156d0811bbead244535e..178240ef48642d8be9f469ca3d762d3cbe69ec21 100644
+index c8f38b7acac37a781e1467a655e88834aa97b4ef..dc8b858c256622eb5b305c7f8fa3a9fc26a51f5d 100644
 --- a/dist/src/vended-tools/file-editor/file-editor.js
 +++ b/dist/src/vended-tools/file-editor/file-editor.js
 @@ -7,6 +7,11 @@ import * as path from 'path';
@@ -980,24 +980,14 @@ index 044cf09a239dad3a846c156d0811bbead244535e..178240ef48642d8be9f469ca3d762d3c
  /**
   * Performs a unique str_replace transformation on file content. Validates that
   * `oldStr` appears exactly once. Returns the new content plus a snippet around
-@@ -128,9 +257,18 @@ function buildStrReplaceResult(originalContent, oldStr, newStr, filePath) {
-     const fileContent = originalContent.replace(/\t/g, '        ');
-     const expandedOldStr = oldStr.replace(/\t/g, '        ');
-     const expandedNewStr = newStr ? newStr.replace(/\t/g, '        ') : '';
--    const occurrences = (fileContent.match(new RegExp(escapeRegExp(expandedOldStr), 'g')) || []).length;
-+    let occurrences = 0;
-+    let occurrenceOffset = fileContent.indexOf(expandedOldStr);
-+    while (occurrenceOffset !== -1) {
-+        occurrences += 1;
-+        if (occurrences > 1)
-+            break;
-+        occurrenceOffset = fileContent.indexOf(expandedOldStr, occurrenceOffset + Math.max(1, expandedOldStr.length));
-+    }
-     if (occurrences === 0) {
+@@ -131,7 +260,9 @@ function buildStrReplaceResult(originalContent, oldStr, newStr, filePath) {
+     const replacement = newStr ?? '';
+     const occurrences = findOccurrences(originalContent, oldStr);
+     if (occurrences.length === 0) {
 -        throw new Error(`No replacement was performed, old_str \`${oldStr}\` did not appear verbatim in ${filePath}.`);
-+        const advisory = formatMissContext(fileContent, expandedOldStr);
++        const advisory = formatMissContext(originalContent, oldStr);
 +        const displayedOldStr = formatOldStrForError(oldStr);
 +        throw new Error(`No replacement was performed, old_str \`${displayedOldStr}\` did not appear verbatim in ${filePath}.\n\n${advisory}`);
      }
-     if (occurrences > 1) {
-         const lines = fileContent.split('\n');
+     if (occurrences.length > 1) {
+         const lineNumbers = occurrences.map((occurrence) => occurrence.line);

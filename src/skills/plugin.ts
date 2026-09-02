@@ -133,6 +133,9 @@ export class SkillsPlugin implements Plugin {
       interrupt: () => {
         throw new Error('load_skill activation does not support interrupts');
       },
+      // A slash expansion is synchronous with the keystroke that asked for it;
+      // nothing can cancel it, so the signal is one that never aborts.
+      cancelSignal: new AbortController().signal,
     };
   }
 }

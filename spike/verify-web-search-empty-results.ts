@@ -132,6 +132,7 @@ async function runTool(
     invocationState: {},
     toolUse: { name: tool.name, toolUseId, input },
     interrupt: () => undefined,
+    cancelSignal: new AbortController().signal,
   } as ToolContext;
   const stream = tool.stream(context);
   const events: ToolStreamEvent[] = [];

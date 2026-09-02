@@ -7,7 +7,7 @@
  */
 import type { Agent, Message, Model, SummarizingConversationManagerConfig } from '@strands-agents/sdk';
 // `DEFAULT_SUMMARIZATION_PROMPT` reaches the package root only through the pinned
-// SDK patch (`patches/@strands-agents__sdk@1.12.0.patch`, `dist/src/index.*`
+// SDK patch (`patches/@strands-agents__sdk@1.16.0.patch`, `dist/src/index.*`
 // hunks): the SDK declares it in a module its `exports` map does not expose.
 // Never copy the string here — a copy would drift from what the SDK sends when
 // no focus is given.

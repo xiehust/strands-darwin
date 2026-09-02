@@ -31,7 +31,7 @@
     "@anthropic-ai/sdk": "^0.109.1",
     "@aws/bedrock-token-generator": "^1.1.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@strands-agents/sdk": "^1.12.0",
+    "@strands-agents/sdk": "^1.16.0",
     "gray-matter": "^4.0.3",
     "ink": "^7.1.1",
     "openai": "^6.49.0",

@@ -1,6 +1,7 @@
 # Strands TypeScript SDK Usage Contracts
 
-> Hard-won, tested contracts for `@strands-agents/sdk` (verified on 1.12.0, 2026-08-13).
+> Hard-won, tested contracts for `@strands-agents/sdk` (verified on 1.12.0, 2026-08-13; pin moved to
+> 1.16.0 on 2026-09-02 — every `†` suite and the patch-focused suites re-run green, see § SDK pin).
 > Every rule here was validated by a runnable script under `spike/`; when upgrading the
 > SDK, re-run the scripts named below before trusting these still hold.
 
@@ -432,7 +433,7 @@ keeps its own `conversationManager` with the configurable `summaryRatio`; nothin
   stays one user-role message of non-reasoning blocks.
 - `DEFAULT_SUMMARIZATION_PROMPT` is imported from the package root `'@strands-agents/sdk'`. The
   SDK declares it in `dist/src/conversation-manager/compression/context-compression.js`, which the
-  package `exports` map does not expose; the pinned patch `patches/@strands-agents__sdk@1.12.0.patch`
+  package `exports` map does not expose; the pinned patch `patches/@strands-agents__sdk@1.16.0.patch`
   therefore adds one re-export line to `dist/src/index.js` and one to `dist/src/index.d.ts`. Never
   copy the prompt text into darwin (it would drift from what the SDK sends unfocused) and never
   deep-import it. On SDK upgrade, regenerate the patch and keep both hunks; if the SDK starts
@@ -2737,7 +2738,7 @@ activity under `usage.input_tokens_details`: `cached_tokens` is the input read f
 `cache_write_tokens` is the input written to cache. Both fields may legitimately be zero.
 
 `@strands-agents/sdk@1.12.0` maps only `cached_tokens`, and published `1.13.0` has the same
-omission. The tracked pnpm patch in `patches/@strands-agents__sdk@1.12.0.patch` maps both fields
+omission. The tracked pnpm patch in `patches/@strands-agents__sdk@1.16.0.patch` maps both fields
 to `cacheReadInputTokens` / `cacheWriteInputTokens` using presence-aware non-negative checks.
 `spike/verify-usage.ts` drives the real `OpenAIModel` Responses adapter with a fake stream and
 proves both values reach `Agent.metrics` without a model or network call. Keep the patch until
@@ -3107,3 +3108,28 @@ are never rewritten.
 Skills, child-agent definitions, commands, and hooks may come from project/global `.agents` as well as `.darwin`, without changing their schemas or SDK execution seams. Named-resource precedence is built-in reservation, project `.darwin`, project `.agents`, global `.darwin`, global `.agents`; validation precedes name claiming. Hook files are direct lexical `hooks/*.json` inputs and fail closed. Pre source order is global `.agents`, global `.darwin`, project `.agents`, project `.darwin`; Post reverses source order. A `.darwin` directory source shadows that layer's legacy `hooks.json` and embedded config hooks visibly.
 
 Skill roots may be symlinks. Resource safety resolves the root and permits nested symlinks only when final targets stay inside that real root, retaining the 200-entry preflight and use-time recheck.
+
+---
+
+## SDK pin — 1.16.0 and the regenerated patch
+
+- `@strands-agents/sdk` is pinned at `1.16.0` with `patches/@strands-agents__sdk@1.16.0.patch`
+  (14 files). Regenerated 2026-09-02 from the pristine tarball: 11 of the 1.12.0 hunks applied with
+  offsets only; three were re-done by hand — `vended-tools/bash/index.{js,d.ts}` (upstream re-shaped
+  the index around a `../shell` split; only the `createBash` re-export is added) and
+  `vended-tools/file-editor/file-editor.js` hunk 3 (upstream replaced the regex/tab-expansion
+  occurrence count with `findOccurrences()`; the miss advisory now formats on the raw content,
+  `verify-file-editor.ts` 63/63 unchanged).
+- 1.16.0 lists `@tobilu/qmd` (local search store) as an optional dependency that pulls native builds
+  (`better-sqlite3`, `node-llama-cpp`, `tree-sitter-*`). Darwin never imports it, so
+  `pnpm-workspace.yaml` names it in `ignoredOptionalDependencies`; without that, `pnpm install`
+  fails with `ERR_PNPM_IGNORED_BUILDS`. Do not approve those builds instead.
+- API change absorbed: `ToolContext.cancelSignal: AbortSignal` is required. Darwin's own synthetic
+  contexts (`src/skills/plugin.ts` slash expansion, the preflight/web-search spikes) pass a signal
+  that never aborts; every other context comes from the SDK.
+- Upgrade procedure that worked: `pnpm patch <pkg>@<new>` → `patch -p1 < old.patch` inside the edit
+  dir → port rejects → `node --check` every patched `.js` → `pnpm patch-commit` → `pnpm typecheck` →
+  the six patch-focused suites (`verify-file-editor`, `verify-background-bash`, `verify-compact`,
+  `verify-context-offload`, `verify-retry-guard`, `verify-http-request-tool`) → `pnpm test` → free
+  pty scenarios → the live cache suites for both Claude providers.
+
