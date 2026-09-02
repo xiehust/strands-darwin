@@ -1860,17 +1860,35 @@ darwin -p|--print <message>
 
 darwin sessions                                  (no model call, no network, no writes)
 darwin trajectory <list|search|replay|fork> …    (no model call, no network)
+darwin --help | -h                               (CLI_USAGE on stdout, exit 0; local, no writes)
+darwin --version | -V                            (`darwin <DARWIN_VERSION>` on stdout, exit 0; local, no writes)
 
 stderr: ^session: ([a-z0-9_-]+)$
 stderr: ^permission-mode: (default|auto|plan|yolo)$
 stderr: ^trajectory: .+$          (only when recording degraded)
 exit: 0 success; 1 runtime/turn/persistence/cleanup/interruption; 2 CLI usage
+stderr on exit 2: ^error: .+$ then exactly one `Run `darwin --help` for usage.` line
 ```
 
 `--session` is strict and names an existing project-local snapshot. It takes precedence over
 `--continue`/bare `--resume`; `--resume <id>` is the same strict path under the resume flag
 (combining it with `--session` is a usage error); `--continue` follows `.darwin/last-session.json`
 and retains the existing fresh-session fallback when no usable pointer exists.
+
+The grammar text has one source: `CLI_USAGE` in `src/cli-usage.ts`. `darwin --help` prints it
+byte for byte, the `cli.ts` header comment points at it instead of repeating it, and
+`docs/user-guide/reference.md` / `reference.zh-CN.md` quote it verbatim; `spike/verify-cli-args.ts`
+pins all three so they cannot drift. `--help`/`-h` and `--version`/`-V` are resolved by
+`localCliAnswer(argv)` first of all — before `sessions`/`trajectory` routing and before
+`parseCliArgs` — so either flag anywhere in argv wins over every subcommand and every other flag
+(help before version; `darwin trajectory search --help` therefore prints the top-level grammar,
+not a search). `src/cli-usage.ts` imports only `src/version.ts`, and neither imports the SDK,
+runtime, config, Ink or React (asserted over the import graph); answering writes no file.
+`parseCliArgs` itself stays unaware of the two flags and still reports them as `Unknown argument`,
+so its pinned messages are unchanged. Every `CliUsageError` handler in `cli.ts` goes through one
+`reportUsageError`: the parser's exact message on the `error:` line, then exactly one
+`Run \`darwin --help\` for usage.` hint line, exit 2. There is no `help` subcommand and no
+per-subcommand help page.
 
 At the process boundary, `cli.ts` removes exactly one argv-leading standalone `--` before any
 routing or parsing. This accepts the conventional package-script transport shape without weakening

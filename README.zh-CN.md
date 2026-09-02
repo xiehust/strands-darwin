@@ -66,6 +66,7 @@ darwin
 darwin --resume
 darwin --resume <id>        # 查看 id：darwin sessions
 darwin --session <id>
+darwin --help               # 用法语法；darwin --version 打印版本
 ```
 
 开发 darwin 本身时，仍可使用 `pnpm start` 直接运行 TypeScript 源码，无需全局安装。

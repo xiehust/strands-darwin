@@ -18,9 +18,27 @@ darwin trajectory list
 darwin trajectory search "text" [--session <id>]
 darwin trajectory replay <id> [--turn N] [--json]
 darwin trajectory fork <id>
+darwin --help                               # usage grammar, exit 0
+darwin --version                            # darwin <version>, exit 0
 ```
 
-Print-only options: `--context-offload` (process-only force-on; offload is default-on), positive `--max-model-calls <n>`, `--compact-before`, `--output-format text|json|stream-json`. Permission overrides: `--permission-mode default|auto|plan|yolo`, `--yolo`. One leading standalone `--` is ignored for package-manager forwarding. Unknown/invalid grammar exits 2.
+`darwin --help` (or `-h`) prints the grammar below to stdout and exits 0; `darwin --version` (or `-V`) prints `darwin <version>` from `package.json`. Both are answered locally before any argument parsing, runtime, config or model work — no file is written — and either flag anywhere in argv wins over everything else (help before version). The block is quoted from `CLI_USAGE` in `src/cli-usage.ts` and pinned by `spike/verify-cli-args.ts`:
+
+```text
+Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]
+       darwin -p <message> [--output-format text|json|stream-json]
+         [--continue|--resume [<id>]|--session <id>] [permission flags]
+         [--max-model-calls <n>] [--context-offload] [--compact-before]
+       darwin sessions
+       darwin trajectory <list|search|replay|fork> …
+       darwin --help | -h
+       darwin --version | -V
+
+--context-offload force-enables the default-on offloader for this process; it never persists.
+Print-only flags: --output-format, --max-model-calls, --context-offload, --compact-before, --continue.
+```
+
+Print-only options: `--context-offload` (process-only force-on; offload is default-on), positive `--max-model-calls <n>`, `--compact-before`, `--output-format text|json|stream-json`. Permission overrides: `--permission-mode default|auto|plan|yolo`, `--yolo`. One leading standalone `--` is ignored for package-manager forwarding. Unknown/invalid grammar exits 2 with `error: <message>` on stderr followed by one hint line, `Run \`darwin --help\` for usage.`
 
 ## Slash commands and bundled skill entry points
 

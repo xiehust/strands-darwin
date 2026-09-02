@@ -18,9 +18,27 @@ darwin trajectory list
 darwin trajectory search "text" [--session <id>]
 darwin trajectory replay <id> [--turn N] [--json]
 darwin trajectory fork <id>
+darwin --help                               # 用法语法，退出码 0
+darwin --version                            # darwin <version>，退出码 0
 ```
 
-只用于 print 模式的选项：`--context-offload`（进程级强制开启；卸载默认已开启）、正整数 `--max-model-calls <n>`、`--compact-before`、`--output-format text|json|stream-json`。权限覆盖选项：`--permission-mode default|auto|plan|yolo`、`--yolo`。为兼容包管理器传参，位于开头的一个独立 `--` 会忽略。未知或非法参数语法返回 2。
+`darwin --help`（或 `-h`）把下面的语法原文打印到 stdout 并以 0 退出；`darwin --version`（或 `-V`）打印取自 `package.json` 的 `darwin <version>`。两者都在解析其余参数、加载运行时、配置或模型之前就地回答，不写任何文件；只要 argv 里出现其中一个，它就优先于其他所有参数（help 又优先于 version）。下面这段引自 `src/cli-usage.ts` 的 `CLI_USAGE`，由 `spike/verify-cli-args.ts` 锁定：
+
+```text
+Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]
+       darwin -p <message> [--output-format text|json|stream-json]
+         [--continue|--resume [<id>]|--session <id>] [permission flags]
+         [--max-model-calls <n>] [--context-offload] [--compact-before]
+       darwin sessions
+       darwin trajectory <list|search|replay|fork> …
+       darwin --help | -h
+       darwin --version | -V
+
+--context-offload force-enables the default-on offloader for this process; it never persists.
+Print-only flags: --output-format, --max-model-calls, --context-offload, --compact-before, --continue.
+```
+
+只用于 print 模式的选项：`--context-offload`（进程级强制开启；卸载默认已开启）、正整数 `--max-model-calls <n>`、`--compact-before`、`--output-format text|json|stream-json`。权限覆盖选项：`--permission-mode default|auto|plan|yolo`、`--yolo`。为兼容包管理器传参，位于开头的一个独立 `--` 会忽略。未知或非法参数语法返回 2：stderr 先打印 `error: <message>`，再跟一行提示 `Run \`darwin --help\` for usage.`。
 
 ## 斜杠命令与内置 skill 入口
 

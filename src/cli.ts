@@ -2,14 +2,9 @@
 /**
  * `darwin` entry point.
  *
- * Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]
- *        darwin -p <message> [--output-format text|json|stream-json]
- *          [--continue|--resume [<id>]|--session <id>] [permission flags]
- *          [--max-model-calls <n>] [--context-offload] [--compact-before]
- *        darwin sessions
- *        darwin trajectory <list|search|replay|fork> …
- *
- * `--context-offload` force-enables the default-on offloader for this process; it never persists.
+ * The usage grammar lives in one place, `CLI_USAGE` in `./cli-usage.ts` — it is what
+ * `darwin --help` prints and what `docs/user-guide/reference.md` quotes, so it is not
+ * repeated here.
  */
 import process from 'node:process';
 
@@ -31,6 +26,7 @@ import {
   parseTrajectoryArgs,
   runTrajectoryCommand,
 } from './cli-trajectory.js';
+import { CLI_HELP_HINT, localCliAnswer } from './cli-usage.js';
 import { ConfigError } from './config.js';
 import { productionHeadlessDependencies, runHeadlessProcess } from './headless-runner.js';
 import { withProductionReactImports } from './tui/react-environment.js';
@@ -45,6 +41,14 @@ async function main(): Promise<void> {
   // guarantee lives in `src/trajectory/**`, which imports no `Agent` and no `Model`
   // at all; `spike/verify-trajectory.ts` asserts it over the module's import graph.)
   const argv = normalizeLeadingArgvSeparator(process.argv.slice(2));
+  // `--help`/`-h` and `--version`/`-V` are the most local answers of all: fixed text
+  // from `cli-usage.ts`, no file read or write, no parser. Anywhere in argv they win
+  // over subcommands and every other flag, so they resolve first.
+  const localAnswer = localCliAnswer(argv);
+  if (localAnswer !== undefined) {
+    process.stdout.write(localAnswer);
+    return;
+  }
   if (isTrajectoryInvocation(argv)) {
     await runTrajectory(argv.slice(1));
     return;
@@ -62,8 +66,7 @@ async function main(): Promise<void> {
     options = parseCliArgs(argv);
   } catch (error) {
     if (error instanceof CliUsageError) {
-      process.stderr.write(`error: ${error.message}\n`);
-      process.exitCode = 2;
+      reportUsageError(error);
       return;
     }
     throw error;
@@ -86,8 +89,7 @@ async function runSessions(argv: readonly string[]): Promise<void> {
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
-      process.stderr.write(`error: ${error.message}\n`);
-      process.exitCode = 2;
+      reportUsageError(error);
       return;
     }
     process.stderr.write(`error: ${errorMessage(error)}\n`);
@@ -105,13 +107,21 @@ async function runTrajectory(argv: readonly string[]): Promise<void> {
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
-      process.stderr.write(`error: ${error.message}\n`);
-      process.exitCode = 2;
+      reportUsageError(error);
       return;
     }
     process.stderr.write(`error: ${errorMessage(error)}\n`);
     process.exitCode = 1;
   }
+}
+
+/**
+ * The one shape every usage error takes: the exact message (the parsers' strings are
+ * the contract; tests pin them), then a single hint at `--help`, then exit 2.
+ */
+function reportUsageError(error: CliUsageError): void {
+  process.stderr.write(`error: ${error.message}\n${CLI_HELP_HINT}\n`);
+  process.exitCode = 2;
 }
 
 async function runHeadless(options: CliOptions & { prompt: string }): Promise<void> {

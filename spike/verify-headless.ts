@@ -401,7 +401,8 @@ async function usageProcessContract(): Promise<void> {
   ]);
   assert.equal(result.code, 2);
   assert.equal(stdout, '');
-  assert.match(stderr, /^error: -p expects a non-empty message\.\n$/u);
+  // The exact parser message, then the one `--help` hint every usage error carries (SER-048).
+  assert.match(stderr, /^error: -p expects a non-empty message\.\nRun `darwin --help` for usage\.\n$/u);
   assert.doesNotMatch(stderr, /\x1b\[/u);
 
   // A usage failure must not touch project state.

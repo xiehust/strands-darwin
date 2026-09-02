@@ -66,6 +66,7 @@ darwin
 darwin --resume
 darwin --resume <id>        # ids: darwin sessions
 darwin --session <id>
+darwin --help               # usage grammar; darwin --version prints the version
 ```
 
 When developing darwin itself, `pnpm start` still runs the TypeScript source without a global installation.
