@@ -6,17 +6,22 @@
  * single-sourced, and nothing the permission box stated before the diff existed
  * may go unstated after it.
  */
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { classify } from '../src/agent/permission.js';
 import {
   DIFF_ADDED,
   DIFF_CONTEXT,
   DIFF_REMOVED,
+  REPLACE_ALL_ROW,
   diffLineEmphasis,
   diffLineTone,
   diffStat,
   emphasisSpans,
   fileEditorDiff,
   fileEditorInputProjection,
+  fileEditorReplaceAll,
   formatDiffStat,
   permissionDisplayDetails,
 } from '../src/tui/edit-diff.js';
@@ -258,6 +263,58 @@ assert('an oversized single line is shown complete, code point for code point',
   hugeLine.join('\n') === fileEditorDiff(hugeInput));
 assert('an oversized line carries no truncation marker',
   hugeLine.every((line) => !line.startsWith('… truncated')));
+
+header('edit diff — replace_all: one input-derived row above the same one pair (SER-055)');
+
+const everyInput = { ...strReplace('  return n + 2;', '  return n * 2;'), replace_all: true };
+const onceInput = strReplace('  return n + 2;', '  return n * 2;');
+const explicitOnce = { ...onceInput, replace_all: false };
+const pairDiff = fileEditorDiff(onceInput) ?? '';
+assert('the bare diff of a replace_all input is exactly the one pair — no count, no marker',
+  fileEditorDiff(everyInput) === pairDiff && pairDiff === `${DIFF_REMOVED}  return n + 2;\n${DIFF_ADDED}  return n * 2;`);
+assert('old and new stay recoverable from the markers',
+  oldOf(fileEditorDiff(everyInput) ?? '') === '  return n + 2;' && newOf(fileEditorDiff(everyInput) ?? '') === '  return n * 2;');
+assert('the +N -N stat is the one pair\'s, never a count of occurrences',
+  formatDiffStat(diffStat(fileEditorDiff(everyInput) ?? '')) === '+1 -1');
+assert('the reader recognizes replace_all: true and false, and nothing else',
+  fileEditorReplaceAll(everyInput) && !fileEditorReplaceAll(explicitOnce) && !fileEditorReplaceAll(onceInput)
+    && !fileEditorReplaceAll({ command: 'insert', path: '/tmp/x.ts', insert_line: 1, new_str: 'x' }));
+assert('a non-boolean replace_all is an unrecognized shape — raw fallback, nothing lost',
+  fileEditorDiff({ ...onceInput, replace_all: 'yes' }) === undefined
+    && fileEditorReplaceAll({ ...onceInput, replace_all: 'yes' }) === false);
+assert('the expanded projection states the row after the path header, before the diff',
+  fileEditorInputProjection(everyInput) === `command: str_replace\npath: /tmp/example.ts\n${REPLACE_ALL_ROW}\n${pairDiff}`);
+assert('replace_all: false and absent projections are unchanged and carry no row',
+  fileEditorInputProjection(explicitOnce) === fileEditorInputProjection(onceInput)
+    && fileEditorInputProjection(onceInput)?.includes(REPLACE_ALL_ROW) === false);
+const compactEvery = compactEditDiff(everyInput, 'fileEditor');
+assert('the compact finished row is the same row above the bare diff',
+  compactEvery.join('\n') === `${REPLACE_ALL_ROW}\n${pairDiff}`);
+assert('compact rows without the flag are exactly the bare diff',
+  compactEditDiff(onceInput, 'fileEditor').join('\n') === pairDiff
+    && compactEditDiff(explicitOnce, 'fileEditor').join('\n') === pairDiff);
+assert('the row is a header, not a diff line — no tone, not counted',
+  diffLineTone(REPLACE_ALL_ROW) === undefined && formatDiffStat(diffStat(compactEvery.join('\n'))) === '+1 -1');
+assert('the active-panel rows carry the same row',
+  toolInputRows(everyInput, 80, 'fileEditor').some((row) => row.text === REPLACE_ALL_ROW && row.tone === undefined));
+
+const everyRequest = classify('fileEditor', everyInput);
+assert('classification stays a write with the same summary',
+  everyRequest.kind === 'write' && everyRequest.summary === 'fileEditor str_replace: /tmp/example.ts'
+    && everyRequest.summary === classify('fileEditor', onceInput).summary);
+assert('the gate states the scope as its own detail row, before the content blocks',
+  everyRequest.details.map((d) => `${d.label}=${d.editContent === true ? 'edit' : d.value}`).join(',')
+    === 'Path=/tmp/example.ts,Operation=str_replace,Replace all=every occurrence,Replace=edit,With=edit');
+assert('the permission box keeps that row untoned beside the one-pair Diff block',
+  permissionDisplayDetails(everyRequest).map((d) => `${d.label}:${String(d.diff)}`).join(',')
+    === 'Path:false,Operation:false,Replace all:false,Diff (+1 -1):true');
+assert('without the flag the gate\'s details are today\'s',
+  classify('fileEditor', onceInput).details.map((d) => d.label).join(',') === 'Path,Operation,Replace,With'
+    && classify('fileEditor', explicitOnce).details.map((d) => d.label).join(',') === 'Path,Operation,Replace,With');
+
+const editDiffSource = readFileSync(fileURLToPath(new URL('../src/tui/edit-diff.ts', import.meta.url)), 'utf8');
+assert('the diff module still opens no file — no fs import, no read API',
+  !/from ['"]node:fs|from ['"]fs['"]|readFile|openSync|createReadStream/.test(editDiffSource));
 
 header('edit diff — intraline emphasis: bold span over the same bytes');
 

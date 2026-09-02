@@ -489,10 +489,11 @@ nor bytes — it only decides when a same-path mutation starts.)
 
 The same version-pinned SDK patch extends only `buildStrReplaceResult()` after exact occurrence
 counting returns zero. The call remains an error and `handleStrReplace()` never reaches
-`sandbox.writeText()`. Exact unique replacement, multiple-occurrence errors, required-field/path/
-directory/read/size validation, provider schema, and all `view` behavior stay SDK-owned and
-unchanged. Never use an advisory candidate to mutate, retry, read another path, or convert the miss
-into success.
+`sandbox.writeText()`. Exact unique replacement, the multiple-occurrence error (without
+`replace_all`, see the next contract), required-field/path/directory/read/size validation, and all
+`view` behavior stay SDK-owned and unchanged; the provider schema is SDK-owned plus the one optional
+`replace_all` boolean. Never use an advisory candidate to mutate, retry, read another path, or
+convert the miss into success.
 
 #### Deterministic bounded matching and output
 
@@ -533,6 +534,71 @@ errors, provider schema, the 1 MiB limit, and all view contracts. On SDK upgrade
 patch from the pristine package, run `node --check` on installed `file-editor.js`, then run that
 focused suite before the project gates.
 
+### Contract: `str_replace` with `replace_all: true` replaces every occurrence in one write (SER-055)
+
+#### Scope / trigger
+
+The pinned patch adds one optional field to `fileEditorInputSchema` —
+`replace_all: z.boolean().optional()`, described as applying to `str_replace` only — and threads
+`input.replace_all === true` into `handleStrReplace()` → `buildStrReplaceResult()`. Other commands
+ignore the field (the zod object strips it; an `insert` carrying `replace_all: true` produces the
+same bytes as one without). `types.d.ts` `StrReplaceInput` gains the matching optional property.
+Peer evidence: Claude Code's `Edit` refuses non-unique `old_string` unless `replace_all: true`;
+darwin's system-prompt rule 8 forbids `sed -i`, so without this a bulk rename inside one file is N
+gated calls.
+
+#### Contracts
+
+- `replace_all` absent or `false`: every path is byte-identical to the pre-SER-055 tool — empty
+  `old_str` error, miss error + advisory, `No replacement was performed. Multiple occurrences of
+  old_str … Please ensure it is unique`, and the single-replacement success text. The identity is
+  measured against strings captured from the installed tool *before* the change (embedded in the
+  suite), not re-derived.
+- `replace_all: true`, ≥ 1 occurrence: every non-overlapping occurrence from the existing
+  `findOccurrences()` (ascending, left to right, `position += needle.length`) is replaced in one
+  pass and one `sandbox.writeText()`. The success text is
+  `The file <path> has been edited: replace_all replaced N occurrence(s) of old_str at line(s)
+  [l1,…] (line numbers before the edit). ` followed by one `cat -n` snippet
+  (`a snippet of <path> around the first replacement`, the existing snippet window computed at the
+  first occurrence) and the existing review sentence. The line numbers are the 1-based pre-edit
+  numbers `findOccurrences()` reports — the same numbers the uniqueness error names — so a
+  line-count-changing `new_str` does not shift them. Exactly one occurrence is the same shape with
+  `1 occurrence … line [l]`, never the single-replacement text.
+- `replace_all: true`, 0 occurrences: the unchanged miss error + advisory, zero writes. Empty
+  `old_str`: the unchanged error, checked first.
+- `new_str` absent with `replace_all: true` deletes every occurrence (the replacement is `''`, as
+  in the single case).
+- `src/tools/file-editor-serial.ts` is untouched by the field: the wrapper delegates the SDK
+  `stream()` with the original context, its `toolSpec` is the SDK object (so the new property is
+  visible through it), and `mutationKey()` keys a `replace_all` call like any other `str_replace`.
+- Presentation is input-derived only (`.trellis/spec/frontend/tui-testing.md` § file edits render
+  as marker-stable line diffs): the gate adds the detail row `Replace all: every occurrence`,
+  `fileEditorInputProjection`/`compactEditDiff` add the header row `replace_all: every occurrence`,
+  the diff and `+N -N` stat stay the one pair's, `summary` is unchanged, and no surface reads the
+  file to count occurrences.
+
+#### Validation matrix
+
+| Case | Required result |
+|---|---|
+| absent / `false`, 3 occurrences | today's exact `Multiple occurrences … [1,3,5] … unique` error, zero writes |
+| absent / `false`, miss / empty `old_str` / 1 occurrence | today's exact strings (miss advisory, empty error, single-replacement success) |
+| `true`, 3 occurrences | `success`, one write, whole file equals the expected bytes, text names `3 occurrences … lines [1,3,5] (line numbers before the edit)`, one snippet around the first replacement |
+| `true`, 1 occurrence | same shape, `1 occurrence … line [4]` |
+| `true`, 0 occurrences / empty `old_str` | today's exact miss advisory / empty error, zero writes |
+| `true`, `old_str: 'aa'` in `aaaa\nab aa` | 3 non-overlapping replacements, `lines [1,1,2]`, file `XX\nab X` |
+| `true`, multi-line `old_str`, line-count-changing `new_str` | every occurrence replaced, pre-edit line numbers reported |
+| `true`, `new_str` absent | every occurrence deleted |
+| `insert` + `replace_all: true` | today's exact insert text |
+| schema | `replace_all` is `type: boolean`, not required, description names `str_replace` and says other commands ignore it |
+| wrapped (`SerializedFileEditorTool`) `replace_all` call | same result bytes as unwrapped; a following same-path edit still lands in order |
+
+Required assertions live in `spike/verify-file-editor.ts` (identity strings, all `true` cases,
+schema) and `spike/verify-file-editor-serial.ts` (pass-through), both in `pnpm test`. Regenerate
+the patch through `pnpm patch @strands-agents/sdk@1.16.0 --edit-dir <dir>` (which applies the
+existing patch to the pristine package) → edit → `node --check` → `pnpm patch-commit <dir>`; the
+lockfile's `patch_hash` follows.
+
 ### Contract: same-path fileEditor mutations apply in call order within one Agent (SRF-020)
 
 #### Scope / trigger
@@ -566,6 +632,8 @@ is no discovery window or refresh callback to decorate.
 - Entries only ever resolve: a failed or cancelled edit releases the chain in `finally`, and a
   settled last entry deletes its key, so the map cannot grow with the session.
 - Never set `toolExecutor`; never change the pinned SDK patch or its error strings for this.
+- New `str_replace` fields (SER-055 `replace_all`) need nothing here: the wrapper never reads the
+  input beyond `command`/`path`, so they pass through and key the same chain.
 
 #### Validation & error matrix
 
@@ -583,7 +651,7 @@ Required assertions live in `spike/verify-file-editor-serial.ts` (in `pnpm test`
 with a scripted model emitting one multi-tool-use message against real temp files, a slow fake
 original for timing, `buildRecipeChild` for the child, and `AgentRuntime.create` for the
 installation (`_toolExecutor instanceof ConcurrentToolExecutor`). `spike/verify-file-editor.ts`
-must stay unchanged and green.
+must stay green, and the wrapper change must not touch it.
 
 
 ### Contract: `/compact` builds one `SummarizingConversationManager` per call, with an optional bounded focus (SER-051)

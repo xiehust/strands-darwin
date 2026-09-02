@@ -892,7 +892,7 @@ index 1be553288395c19e1251d86ef7c4d798c1917ace..84026e846d8a91198fcac3bbdbbfe096
  //# sourceMappingURL=types.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-tools/file-editor/file-editor.js b/dist/src/vended-tools/file-editor/file-editor.js
-index c8f38b7acac37a781e1467a655e88834aa97b4ef..dc8b858c256622eb5b305c7f8fa3a9fc26a51f5d 100644
+index c8f38b7acac37a781e1467a655e88834aa97b4ef..06cc4454899669805633df0ff0228b26b04532df 100644
 --- a/dist/src/vended-tools/file-editor/file-editor.js
 +++ b/dist/src/vended-tools/file-editor/file-editor.js
 @@ -7,6 +7,11 @@ import * as path from 'path';
@@ -907,7 +907,27 @@ index c8f38b7acac37a781e1467a655e88834aa97b4ef..dc8b858c256622eb5b305c7f8fa3a9fc
  /**
   * Zod schema for file editor input validation.
   */
-@@ -110,15 +115,139 @@ function applyViewRange(fileContent, viewRange) {
+@@ -26,6 +31,10 @@ const fileEditorInputSchema = z.object({
+         .number()
+         .optional()
+         .describe('Line number where text should be inserted (0-indexed, required for insert command).'),
++    replace_all: z
++        .boolean()
++        .optional()
++        .describe('For str_replace only: replace every non-overlapping occurrence of old_str in one write instead of requiring it to be unique (default false). Other commands ignore it.'),
+ });
+ /**
+  * File editor tool for viewing, creating, and editing files programmatically.
+@@ -67,7 +76,7 @@ export function makeFileEditor(sandboxOrOptions, maybeOptions) {
+                 case 'create':
+                     return handleCreate(sandbox, filePath, input.file_text);
+                 case 'str_replace':
+-                    return handleStrReplace(sandbox, filePath, input.old_str, input.new_str);
++                    return handleStrReplace(sandbox, filePath, input.old_str, input.new_str, input.replace_all === true);
+                 case 'insert':
+                     return handleInsert(sandbox, filePath, input.insert_line, input.new_str);
+                 default:
+@@ -110,35 +119,178 @@ function applyViewRange(fileContent, viewRange) {
      if (start < 1 || start > nLines) {
          throw new Error(`Invalid \`view_range\`: [${start}, ${end}]. Its first element \`${start}\` should be within the range of lines of the file: [1, ${nLines}]`);
      }
@@ -1048,9 +1068,20 @@ index c8f38b7acac37a781e1467a655e88834aa97b4ef..dc8b858c256622eb5b305c7f8fa3a9fc
 +}
 +
  /**
-  * Performs a unique str_replace transformation on file content. Validates that
-  * `oldStr` appears exactly once. Returns the new content plus a snippet around
-@@ -131,7 +260,9 @@ function buildStrReplaceResult(originalContent, oldStr, newStr, filePath) {
+- * Performs a unique str_replace transformation on file content. Validates that
+- * `oldStr` appears exactly once. Returns the new content plus a snippet around
+- * the change site (with 0-indexed `startLine`).
++ * Performs a str_replace transformation on file content. Without `replaceAll`,
++ * validates that `oldStr` appears exactly once; with it, every non-overlapping
++ * occurrence is replaced in one pass. Returns the new content plus a snippet
++ * around the (first) change site (with 0-indexed `startLine`), and the 1-based
++ * line numbers of the replaced occurrences as counted before the edit.
+  */
+-function buildStrReplaceResult(originalContent, oldStr, newStr, filePath) {
++function buildStrReplaceResult(originalContent, oldStr, newStr, filePath, replaceAll = false) {
+     if (oldStr.length === 0) {
+         throw new Error(`No replacement was performed, old_str must not be empty.`);
+     }
      const replacement = newStr ?? '';
      const occurrences = findOccurrences(originalContent, oldStr);
      if (occurrences.length === 0) {
@@ -1059,5 +1090,74 @@ index c8f38b7acac37a781e1467a655e88834aa97b4ef..dc8b858c256622eb5b305c7f8fa3a9fc
 +        const displayedOldStr = formatOldStrForError(oldStr);
 +        throw new Error(`No replacement was performed, old_str \`${displayedOldStr}\` did not appear verbatim in ${filePath}.\n\n${advisory}`);
      }
-     if (occurrences.length > 1) {
+-    if (occurrences.length > 1) {
++    if (!replaceAll && occurrences.length > 1) {
          const lineNumbers = occurrences.map((occurrence) => occurrence.line);
+         throw new Error(`No replacement was performed. Multiple occurrences of old_str \`${oldStr}\` in lines ${JSON.stringify(lineNumbers)}. Please ensure it is unique`);
+     }
+     const matchIndex = occurrences[0].offset;
+-    const newContent = originalContent.slice(0, matchIndex) + replacement + originalContent.slice(matchIndex + oldStr.length);
++    let newContent;
++    if (replaceAll) {
++        // Occurrences are ascending and non-overlapping, so the pieces between them
++        // are copied once each and the first replacement lands at `matchIndex`.
++        const pieces = [];
++        let cursor = 0;
++        for (const occurrence of occurrences) {
++            pieces.push(originalContent.slice(cursor, occurrence.offset), replacement);
++            cursor = occurrence.offset + oldStr.length;
++        }
++        pieces.push(originalContent.slice(cursor));
++        newContent = pieces.join('');
++    }
++    else {
++        newContent = originalContent.slice(0, matchIndex) + replacement + originalContent.slice(matchIndex + oldStr.length);
++    }
+     const replacementLine = originalContent.substring(0, matchIndex).split('\n').length - 1;
+     const insertedLines = replacement.split('\n').length;
+     const originalLines = oldStr.split('\n').length;
+@@ -147,7 +299,7 @@ function buildStrReplaceResult(originalContent, oldStr, newStr, filePath) {
+     const startLine = Math.max(0, replacementLine - SNIPPET_LINES);
+     const endLine = Math.min(newLines.length, replacementLine + SNIPPET_LINES + lineDifference + 1);
+     const snippet = newLines.slice(startLine, endLine).join('\n');
+-    return { newContent, snippet, startLine };
++    return { newContent, snippet, startLine, replacedLines: occurrences.map((occurrence) => occurrence.line) };
+ }
+ /**
+  * Inserts text at a 0-indexed line in file content. Validates the insertion
+@@ -289,7 +441,7 @@ async function handleCreate(sandbox, filePath, fileText) {
+     await sandbox.writeText(filePath, fileText);
+     return `File created successfully at: ${filePath}`;
+ }
+-async function handleStrReplace(sandbox, filePath, oldStr, newStr) {
++async function handleStrReplace(sandbox, filePath, oldStr, newStr, replaceAll = false) {
+     if (oldStr === undefined) {
+         throw new Error('Parameter `old_str` is required for command: str_replace');
+     }
+@@ -303,8 +455,12 @@ async function handleStrReplace(sandbox, filePath, oldStr, newStr) {
+     }
+     const fileContent = await sandbox.readText(filePath);
+     assertWithinSizeLimit(fileContent);
+-    const { newContent, snippet, startLine } = buildStrReplaceResult(fileContent, oldStr, newStr, filePath);
++    const { newContent, snippet, startLine, replacedLines } = buildStrReplaceResult(fileContent, oldStr, newStr, filePath, replaceAll);
+     await sandbox.writeText(filePath, newContent);
++    if (replaceAll) {
++        const count = replacedLines.length;
++        return `The file ${filePath} has been edited: replace_all replaced ${count} occurrence${count === 1 ? '' : 's'} of old_str at line${count === 1 ? '' : 's'} ${JSON.stringify(replacedLines)} (line numbers before the edit). ${makeOutput(snippet, `a snippet of ${filePath} around the first replacement`, startLine + 1)}Review the changes and make sure they are as expected. Edit the file again if necessary.`;
++    }
+     return `The file ${filePath} has been edited. ${makeOutput(snippet, `a snippet of ${filePath}`, startLine + 1)}Review the changes and make sure they are as expected. Edit the file again if necessary.`;
+ }
+ async function handleInsert(sandbox, filePath, insertLine, newStr) {
+diff --git a/dist/src/vended-tools/file-editor/types.d.ts b/dist/src/vended-tools/file-editor/types.d.ts
+index a673d4adbfc1bb9792ab744b67f4010325c66eb8..a63cfc42445cbff56ce8da62b9fee22e42ca275f 100644
+--- a/dist/src/vended-tools/file-editor/types.d.ts
++++ b/dist/src/vended-tools/file-editor/types.d.ts
+@@ -31,6 +31,8 @@ export interface StrReplaceInput {
+     path: string;
+     old_str: string;
+     new_str?: string;
++    /** Replace every non-overlapping occurrence of `old_str` instead of requiring it to be unique (default false). */
++    replace_all?: boolean;
+ }
+ /**
+  * Input parameters for insert operation.

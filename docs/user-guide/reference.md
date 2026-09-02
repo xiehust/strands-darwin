@@ -136,6 +136,15 @@ Permission and compaction views own keyboard/paste while active. The completion 
 - `/compact` is never automatic. Overflow summarization may still be invoked by SDK conversation management, using `summaryRatio` and `preserveRecentMessages`.
 - `/export` is byte-for-byte the same formatter as offline replay.
 
+## File edits
+
+`fileEditor str_replace` requires `old_str` to occur exactly once; a repeated match is refused with
+the line numbers. Pass `replace_all: true` to replace every non-overlapping occurrence in one write —
+the result names the count and the (pre-edit) line numbers and shows one snippet around the first
+replacement. The permission box and the finished row still show the one `old_str`→`new_str` pair,
+with a `Replace all: every occurrence` / `replace_all: every occurrence` row stating the scope (from
+the input, never from the file). Other commands ignore the flag.
+
 ## Web access tools (parent agent only)
 
 Both are ordinary gated tools: they prompt in `default`, are denied in `plan`, and may be covered by

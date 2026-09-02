@@ -245,6 +245,30 @@ try {
   assert('the following edit on the same path was not blocked', missResults.get('m2')?.status === 'success');
   assert('the following edit landed', (await readFile(missed, 'utf8')) === 'const value = 1;\nconst other = 3;\n');
 
+  header('fileEditor serial — replace_all passes through the wrapper unchanged (SER-055)');
+  const wrapperSchema = wrapper.toolSpec.inputSchema as { properties?: Record<string, { type?: string }> };
+  assert('the wrapper exposes the SDK schema\'s optional replace_all boolean',
+    wrapperSchema.properties?.['replace_all']?.type === 'boolean');
+  const everywhere = path.join(root, 'everywhere.txt');
+  const everywhereSeed = 'token a\nkeep\ntoken b\ntoken c\n';
+  await writeFile(everywhere, everywhereSeed);
+  const replaceAllInput = { command: 'str_replace', path: everywhere, old_str: 'token', new_str: 'TOKEN', replace_all: true };
+  const unwrappedAll = await unwrapped(controlAgent, replaceAllInput);
+  const unwrappedAllText = await readFile(everywhere, 'utf8');
+  await writeFile(everywhere, everywhereSeed);
+  const { results: allResults } = await runBatch(new SerializedFileEditorTool(fileEditor), [
+    { id: 'a1', input: replaceAllInput },
+    replace('a2', everywhere, 'keep', 'KEPT'),
+  ]);
+  assert('the wrapped replace_all call replaced every occurrence, same result bytes as the unwrapped tool',
+    allResults.get('a1')?.status === 'success' && allResults.get('a1')?.text === unwrappedAll.text
+      && unwrappedAllText === 'TOKEN a\nkeep\nTOKEN b\nTOKEN c\n'
+      && allResults.get('a1')?.text.includes('replaced 3 occurrences of old_str at lines [1,3,4]') === true);
+  assert('the same-path edit issued after it still lands in order',
+    allResults.get('a2')?.status === 'success' && (await readFile(everywhere, 'utf8')) === 'TOKEN a\nKEPT\nTOKEN b\nTOKEN c\n');
+  assert('a replace_all input keys the same chain as any other str_replace',
+    mutationKey(replaceAllInput) === everywhere);
+
   header('fileEditor serial — unrelated calls stay concurrent, same-path mutations wait');
   const timed: TimedCall[] = [];
   const t0 = Date.now();

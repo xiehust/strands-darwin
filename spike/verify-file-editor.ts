@@ -121,6 +121,12 @@ try {
       && schema.properties['view_range'].prefixItems?.every((item) => item.type === 'number') === true);
   assert('write-command fields remain present in the same provider schema',
     ['file_text', 'old_str', 'new_str', 'insert_line'].every((name) => schema.properties?.[name] !== undefined));
+  const replaceAllProperty = schema.properties?.['replace_all'] as { type?: string; description?: string } | undefined;
+  assert('replace_all is exposed as an optional boolean (SER-055)',
+    replaceAllProperty?.type === 'boolean' && !(schema.required ?? []).includes('replace_all'));
+  assert('the replace_all description scopes it to str_replace and says other commands ignore it',
+    (replaceAllProperty?.description ?? '').includes('str_replace')
+      && (replaceAllProperty?.description ?? '').includes('Other commands ignore it'));
 
   header('fileEditor — oversized positive view end clamps to EOF');
 
@@ -297,6 +303,103 @@ try {
     multiple.status === 'error'
       && multiple.text.includes('Multiple occurrences of old_str')
       && !multiple.text.includes('Advisory context'));
+
+  header('fileEditor — replace_all absent/false is byte-identical to the pre-SER-055 tool');
+
+  // Captured 2026-09-02 from the installed tool *before* `replace_all` existed
+  // (only the temp path differs per run). These are the strings the identity
+  // claim is measured against, not re-derived from the current implementation.
+  const samplePath = path.join(root, 'sample.txt');
+  const sampleContent = 'alpha token one\nbeta line\ntoken two here\ngamma\ntoken three\nomega';
+  const capturedMultiple = 'Error: No replacement was performed. Multiple occurrences of old_str `token` in lines [1,3,5]. Please ensure it is unique';
+  const capturedMiss = `Error: No replacement was performed, old_str \`beta line missing\` did not appear verbatim in ${samplePath}.\n\nAdvisory context only; no fuzzy replacement was attempted.\nNo safe useful close textual match was found in the current file.`;
+  const capturedEmpty = 'Error: No replacement was performed, old_str must not be empty.';
+  const capturedSingle = `The file ${samplePath} has been edited. Here's the result of running \`cat -n\` on a snippet of ${samplePath}:\n     1  alpha token one\n     2  beta line\n     3  token two here\n     4  GAMMA\n     5  token three\n     6  omega\nReview the changes and make sure they are as expected. Edit the file again if necessary.`;
+  const capturedInsert = `The file ${samplePath} has been edited. Here's the result of running \`cat -n\` on a snippet of the edited file:\n     1  alpha token one\n     2  ins\n     3  beta line\n     4  token two here\n     5  GAMMA\n     6  token three\nReview the changes and make sure they are as expected (correct indentation, no duplicate lines, etc). Edit the file again if necessary.`;
+
+  const withReplaceAll = (input: Record<string, unknown>, replaceAll: boolean | undefined): Record<string, unknown> =>
+    ({ ...input, ...(replaceAll === undefined ? {} : { replace_all: replaceAll }) });
+  const replaceInput = (oldStr: string, newStr: string): Record<string, unknown> =>
+    ({ command: 'str_replace', path: samplePath, old_str: oldStr, new_str: newStr });
+
+  for (const [label, flag] of [['absent', undefined], ['false', false]] as const) {
+    await writeFile(samplePath, sampleContent);
+    const identityMultiple = await runFileEditor(agent, withReplaceAll(replaceInput('token', 'TOKEN'), flag));
+    assert(`replace_all ${label}: the multiple-occurrence error is today's exact string`,
+      identityMultiple.status === 'error' && identityMultiple.text === capturedMultiple);
+    const identityMiss = await runFileEditor(agent, withReplaceAll(replaceInput('beta line missing', 'x'), flag));
+    assert(`replace_all ${label}: the miss advisory is today's exact string`,
+      identityMiss.status === 'error' && identityMiss.text === capturedMiss);
+    const identityEmpty = await runFileEditor(agent, withReplaceAll(replaceInput('', 'x'), flag));
+    assert(`replace_all ${label}: the empty old_str error is today's exact string`,
+      identityEmpty.status === 'error' && identityEmpty.text === capturedEmpty);
+    assert(`replace_all ${label}: the three refusals wrote nothing`,
+      await readFile(samplePath, 'utf8') === sampleContent);
+    const identitySingle = await runFileEditor(agent, withReplaceAll(replaceInput('gamma', 'GAMMA'), flag));
+    assert(`replace_all ${label}: the single-replacement success is today's exact string`,
+      identitySingle.status === 'success' && identitySingle.text === capturedSingle);
+  }
+
+  header('fileEditor — replace_all: true replaces every non-overlapping occurrence in one write');
+
+  await writeFile(samplePath, sampleContent);
+  const writesBeforeAll = writes;
+  const replacedAll = await runFileEditor(agent, withReplaceAll(replaceInput('token', 'TOKEN'), true));
+  assert('three occurrences succeed', replacedAll.status === 'success');
+  assert('three occurrences cost exactly one sandbox write', writes === writesBeforeAll + 1);
+  assert('the whole file is byte-identical to the expected result — untouched text included',
+    await readFile(samplePath, 'utf8') === 'alpha TOKEN one\nbeta line\nTOKEN two here\ngamma\nTOKEN three\nomega');
+  assert('the result names the count and the three pre-edit line numbers',
+    replacedAll.text.includes('replace_all replaced 3 occurrences of old_str at lines [1,3,5] (line numbers before the edit).'));
+  assert('the result shows one snippet, around the first replacement',
+    replacedAll.text.includes(`a snippet of ${samplePath} around the first replacement:\n     1  alpha TOKEN one\n     2  beta line\n     3  TOKEN two here\n     4  gamma\n     5  TOKEN three\n`)
+      && (replacedAll.text.match(/cat -n/g) ?? []).length === 1);
+  assert('the result keeps the existing review sentence',
+    replacedAll.text.endsWith('Review the changes and make sure they are as expected. Edit the file again if necessary.'));
+
+  await writeFile(samplePath, sampleContent);
+  const replacedOne = await runFileEditor(agent, withReplaceAll(replaceInput('gamma', 'GAMMA'), true));
+  assert('exactly one occurrence takes the same result shape with count 1',
+    replacedOne.status === 'success'
+      && replacedOne.text.includes('replace_all replaced 1 occurrence of old_str at line [4] (line numbers before the edit).')
+      && await readFile(samplePath, 'utf8') === 'alpha token one\nbeta line\ntoken two here\nGAMMA\ntoken three\nomega');
+
+  await writeFile(samplePath, sampleContent);
+  const writesBeforeAllMiss = writes;
+  const replaceAllMiss = await runFileEditor(agent, withReplaceAll(replaceInput('beta line missing', 'x'), true));
+  assert('replace_all with zero occurrences is today\'s exact miss advisory',
+    replaceAllMiss.status === 'error' && replaceAllMiss.text === capturedMiss);
+  const replaceAllEmpty = await runFileEditor(agent, withReplaceAll(replaceInput('', 'x'), true));
+  assert('replace_all with an empty old_str is today\'s exact error',
+    replaceAllEmpty.status === 'error' && replaceAllEmpty.text === capturedEmpty);
+  assert('replace_all refusals write nothing',
+    writes === writesBeforeAllMiss && await readFile(samplePath, 'utf8') === sampleContent);
+
+  const overlapPath = path.join(root, 'overlap.txt');
+  await writeFile(overlapPath, 'aaaa\nab aa');
+  const overlapping = await runFileEditor(agent, { command: 'str_replace', path: overlapPath, old_str: 'aa', new_str: 'X', replace_all: true });
+  assert('occurrences are non-overlapping, left to right (findOccurrences)',
+    overlapping.status === 'success'
+      && overlapping.text.includes('replaced 3 occurrences of old_str at lines [1,1,2]')
+      && await readFile(overlapPath, 'utf8') === 'XX\nab X');
+
+  const multilinePath = path.join(root, 'multiline.txt');
+  await writeFile(multilinePath, 'x\nold\nend\ny\nold\nend\nz');
+  const multiline = await runFileEditor(agent, {
+    command: 'str_replace', path: multilinePath, old_str: 'old\nend', new_str: 'new\nmiddle\nend', replace_all: true,
+  });
+  assert('a line-count-changing replacement applies everywhere and reports pre-edit lines',
+    multiline.status === 'success'
+      && multiline.text.includes('replaced 2 occurrences of old_str at lines [2,5]')
+      && await readFile(multilinePath, 'utf8') === 'x\nnew\nmiddle\nend\ny\nnew\nmiddle\nend\nz');
+  const deletedAll = await runFileEditor(agent, { command: 'str_replace', path: multilinePath, old_str: 'middle\n', replace_all: true });
+  assert('an absent new_str deletes every occurrence',
+    deletedAll.status === 'success' && await readFile(multilinePath, 'utf8') === 'x\nnew\nend\ny\nnew\nend\nz');
+
+  await writeFile(samplePath, 'alpha token one\nbeta line\ntoken two here\nGAMMA\ntoken three\nomega');
+  const insertIgnoresFlag = await runFileEditor(agent, { command: 'insert', path: samplePath, insert_line: 1, new_str: 'ins', replace_all: true });
+  assert('other commands ignore replace_all — insert output is today\'s exact string',
+    insertIgnoresFlag.status === 'success' && insertIgnoresFlag.text === capturedInsert);
 
 
   header('fileEditor — unrelated view behavior is unchanged');

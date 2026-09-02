@@ -302,6 +302,24 @@ for (const marker of [
 assert('the compact excerpt carries no Input label — it is the diff itself',
   !compactTranscript.includes('Input:'));
 
+// SER-055: a `replace_all: true` finished row states its scope on one row above
+// the same one pair; the stat stays the pair's and the summary is untouched.
+const replaceAllHistory: HistoryItem[] = [{
+  kind: 'tool', id: 'ta', name: 'fileEditor', summary: 'fileEditor str_replace: /workspace/src/calc.ts',
+  status: 'ok', preview: '', expanded: false,
+  inputPreview: 'replace_all: every occurrence\n- token\n+ TOKEN',
+  diffStat: { added: 1, removed: 1 },
+}];
+const replaceAllTranscript = plain(renderToString(
+  <MessageList history={replaceAllHistory} liveText="" liveCodeOpen={false} columns={80} maxLiveRows={8} staticEpoch={0} />,
+  { columns: 80 },
+));
+for (const marker of ['replace_all: every occurrence', '- token', '+ TOKEN', 'fileEditor str_replace (+1 -1): /workspace/src/calc.ts']) {
+  assert(`replace_all finished row states ${marker}`, replaceAllTranscript.includes(marker));
+}
+assert('the replace_all row precedes the pair',
+  replaceAllTranscript.indexOf('replace_all: every occurrence') < replaceAllTranscript.indexOf('- token'));
+
 header('visual language — markdown answers keep their plain text');
 // The full projection contracts live in verify-markdown.tsx; this guards the
 // composed surface: a markdown-bearing answer drawn through MessageList still

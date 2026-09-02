@@ -524,6 +524,10 @@ the permission prompt or in the expanded tool input (active panel and finished `
 - The tool history item carries `diffStat?: { added, removed }` (`turn-state.ts`) — absent means
   "not a diff", never 0. `formatReplay` prints only `summary`/`preview`, which is what keeps
   `/export` and `trajectory replay` byte-stable; never fold the stat into `summary`.
+- SER-055: `REPLACE_ALL_ROW = 'replace_all: every occurrence'` and
+  `fileEditorReplaceAll(rawInput): boolean` (true only for a recognized `str_replace` whose
+  `replace_all` is the boolean `true`). The reader accepts `replace_all` on `str_replace` when it
+  is a boolean; a non-boolean value is an unrecognized shape (raw fallback).
 
 ### 3. Contracts
 
@@ -552,6 +556,14 @@ the permission prompt or in the expanded tool input (active panel and finished `
   get none. ANSI-stripped output stays byte-identical to the plain diff.
 - Tone scope is the tool: only `fileEditor` rows are ever toned or emphasized, so a bash command
   starting with `- ` stays plain. dev-repl keeps the raw `Replace:`/`With:` blocks.
+- `replace_all: true` (SER-055) is stated from the input, never from the file: the diff is still the
+  one `old_str`→`new_str` pair and the `+N -N` stat is that pair's; the scope is one extra row —
+  `fileEditorInputProjection` adds `replace_all: every occurrence` after the `path:` header
+  (expanded finished row, active panel), `compactEditDiff` puts the same row above the bare diff
+  (compact finished row), and `classify()` adds the detail row `Replace all: every occurrence`
+  after `Operation` so the permission box, dev-repl and every gate consumer state it
+  (`permissionDisplayDetails` passes it through untoned). The row is a header row: no tone, not
+  counted by `diffStat`, never in `summary`. `replace_all: false`/absent add nothing.
 
 ### 4. Tests required
 

@@ -1,6 +1,6 @@
 /** Bounded, Unicode-safe presentation of tool inputs and results. */
 
-import { fileEditorDiff, fileEditorInputProjection } from './edit-diff.js';
+import { REPLACE_ALL_ROW, fileEditorDiff, fileEditorInputProjection, fileEditorReplaceAll } from './edit-diff.js';
 
 export type ToolPreviewStatus = 'ok' | 'error' | 'denied';
 
@@ -144,7 +144,10 @@ export function compactEditDiff(input: unknown, toolName?: string): string[] {
   if (toolName !== 'fileEditor') return [];
   const diff = fileEditorDiff(input);
   if (diff === undefined) return [];
-  return diff.split('\n');
+  // A `replace_all: true` str_replace states its scope on one header row above
+  // the bare pair (SER-055) — input-derived, so the finished row can say "every
+  // occurrence" without ever reading the file; the stat stays the pair's.
+  return [...(fileEditorReplaceAll(input) ? [REPLACE_ALL_ROW] : []), ...diff.split('\n')];
 }
 
 /**

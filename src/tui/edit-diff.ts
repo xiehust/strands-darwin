@@ -36,6 +36,16 @@ export const DIFF_REMOVED = '- ';
 export const DIFF_CONTEXT = '  ';
 
 /**
+ * The one header row a `str_replace` carrying `replace_all: true` adds to its
+ * projections (SER-055). Input-derived like everything else here: the diff still
+ * shows the one `old_str` → `new_str` pair the model sent, and this row states
+ * that the pair applies to every occurrence — the file is never read to count
+ * them. It is a header row, not a marker line, so {@link diffLineTone} and
+ * {@link diffStat} ignore it and the `+N -N` stat stays the one pair's.
+ */
+export const REPLACE_ALL_ROW = 'replace_all: every occurrence';
+
+/**
  * LCS matrix cap. Above this the middle (after common prefix/suffix trim) falls
  * back to remove-all/add-all — still information-equivalent, just without
  * interleaving — so a pathological input costs alignment quality, never a stall.
@@ -209,7 +219,18 @@ export function fileEditorInputProjection(rawInput: unknown): string | undefined
   if (diff === undefined || edit === undefined) return undefined;
   const header = [`command: ${edit.command}`, `path: ${edit.path}`];
   if (edit.command === 'insert') header.push(`insert line: ${edit.insertLine}`);
+  if (edit.replaceAll === true) header.push(REPLACE_ALL_ROW);
   return `${header.join('\n')}\n${diff}`;
+}
+
+/**
+ * Whether a `fileEditor` input is a recognized `str_replace` carrying
+ * `replace_all: true` — the one fact the compact finished row states above the
+ * bare diff. `false`, absent, or any unrecognized shape is `false`.
+ */
+export function fileEditorReplaceAll(rawInput: unknown): boolean {
+  const edit = readEdit(rawInput);
+  return edit?.command === 'str_replace' && edit.replaceAll === true;
 }
 
 /** One permission detail block as the box should draw it. */
@@ -267,6 +288,8 @@ interface FileEditorEdit {
   oldStr?: string;
   newStr?: string;
   insertLine?: number;
+  /** `str_replace` only: the input's own `replace_all` flag, when it is a boolean. */
+  replaceAll?: boolean;
 }
 
 /**
@@ -283,7 +306,7 @@ function readEdit(rawInput: unknown): FileEditorEdit | undefined {
 
   const expected: Record<string, readonly string[]> = {
     create: ['command', 'path', 'file_text'],
-    str_replace: ['command', 'path', 'old_str', 'new_str'],
+    str_replace: ['command', 'path', 'old_str', 'new_str', 'replace_all'],
     insert: ['command', 'path', 'insert_line', 'new_str'],
   };
   if (typeof command !== 'string' || !(command in expected)) return undefined;
@@ -303,12 +326,17 @@ function readEdit(rawInput: unknown): FileEditorEdit | undefined {
     case 'str_replace': {
       if (typeof input['old_str'] !== 'string') return undefined;
       if (input['new_str'] !== undefined && typeof input['new_str'] !== 'string') return undefined;
+      // The SDK schema types `replace_all` as an optional boolean; anything else
+      // is a shape this reader does not recognize and the raw blocks keep stating.
+      const replaceAll = input['replace_all'];
+      if (replaceAll !== undefined && typeof replaceAll !== 'boolean') return undefined;
       const newStr = optionalString('new_str');
       return {
         command,
         path,
         oldStr: input['old_str'],
         ...(newStr === undefined ? {} : { newStr }),
+        ...(replaceAll === undefined ? {} : { replaceAll }),
       };
     }
     case 'insert': {

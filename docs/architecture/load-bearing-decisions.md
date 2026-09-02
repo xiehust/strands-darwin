@@ -567,7 +567,10 @@ built from the parent's catalogue has its own chains, and `/clear`'s successor s
 Entries only resolve (a failed edit releases the chain) and a settled tail deletes its key, so the
 map is bounded by in-flight calls. `toolExecutor` stays unset and the pinned patch untouched.
 Required check: `spike/verify-file-editor-serial.ts` (in `pnpm test`), with
-`spike/verify-file-editor.ts` unchanged.
+`spike/verify-file-editor.ts` unchanged by the wrapper. The pinned patch's own `str_replace`
+extension (SER-055 `replace_all: true` — every non-overlapping occurrence in one write, count and
+pre-edit line numbers in the result; absent/`false` byte-identical to before) passes through the
+wrapper untouched, since it never reads the input beyond `command` and `path`.
 
 
 ## Workflow DAG tool
@@ -813,6 +816,13 @@ code-point prefix/suffix, and bolds the changed span as an `emphasis` range on t
 `BoundedContentRow` the heights come from — enhancement layered exactly like tone, so
 ANSI-stripped output is byte-identical to the plain diff and unrelated pairs (no shared edge),
 unequal runs and tab-bearing lines simply get none.
+
+SER-055 kept the projection input-derived when `str_replace` gained `replace_all`: the diff and
+the `+N -N` stat stay the one pair the model sent, and the scope is one extra row read from the
+input — `replace_all: every occurrence` above the diff (`REPLACE_ALL_ROW`, in
+`fileEditorInputProjection` and `compactEditDiff`) and a `Replace all: every occurrence` detail
+row from `classify()` in the permission box — so no surface ever opens the file to count
+occurrences and `summary` is untouched.
 
 ## Streaming answers into `<Static>`
 

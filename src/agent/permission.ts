@@ -762,6 +762,10 @@ function classifyFileEditor(
       details.push({ label: 'New content', value: str(input['file_text']) ?? '', editContent: true });
       break;
     case 'str_replace':
+      // `replace_all: true` widens what approval means — every occurrence, one
+      // write — so the gate states it as its own row (SER-055); the kind and the
+      // summary are unchanged, and the diff still shows the one pair.
+      if (input['replace_all'] === true) details.push({ label: 'Replace all', value: 'every occurrence' });
       details.push({ label: 'Replace', value: str(input['old_str']) ?? '', editContent: true });
       // new_str is optional: omitting it deletes the matched text.
       details.push({

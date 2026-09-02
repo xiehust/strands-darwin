@@ -136,6 +136,13 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 - `/compact` 不会自动执行。SDK conversation manager 在溢出时仍可能按 `summaryRatio` 和 `preserveRecentMessages` 做摘要。
 - `/export` 与离线 replay 使用完全相同的 formatter。
 
+## 文件编辑
+
+`fileEditor str_replace` 要求 `old_str` 在文件中只出现一次；出现多次时会拒绝并列出行号。传入
+`replace_all: true` 可在一次写入中替换所有不重叠的匹配——结果会给出替换数量和（编辑前的）行号，并只显示第一处替换附近的一段代码。权限框和完成行仍只显示一对
+`old_str`→`new_str`，另加一行 `Replace all: every occurrence` / `replace_all: every occurrence`
+说明作用范围（来自输入，绝不读取文件）。其他命令会忽略该字段。
+
 ## 网络访问工具（仅主代理）
 
 两者都是普通的受权限管控工具：`default` 模式会询问，`plan` 模式直接拒绝，也可以用放行规则覆盖。子代理和 workflow 节点都拿不到它们。
