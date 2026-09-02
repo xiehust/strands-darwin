@@ -43,6 +43,7 @@ const suites = [
   'verify-permission-presentation.ts',
   'verify-edit-diff.ts',
   'verify-file-editor.ts',
+  'verify-file-editor-serial.ts',
   'verify-permission-modes.ts',
   'verify-permission-mode-switch.ts',
   'verify-permissions-command.ts',

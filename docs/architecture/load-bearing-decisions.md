@@ -503,6 +503,29 @@ cancel one child, collision/unknown/terminal ids refuse locally, siblings and th
 alive. Ctrl+C still cancels every child plus the parent. Settlement clears timers/cancellers before
 completion publication. Required check: `spike/verify-subagent-heartbeats.ts` (in `pnpm test`).
 
+## Same-path fileEditor ordering — serialize the mutation, never the executor
+
+The SDK's vended `fileEditor` writes with `readText → compute → writeText` and no lock, and the
+concurrent executor above races every tool call of one assistant message. So six `str_replace`
+calls on one file in one message each read the original and the last write wins — while all six
+report `success` (measured 1/6 surviving unwrapped; session-20260902-054329719 lost 4/6 on
+`src/config.ts` and spent 13 % of the turn re-applying them). `src/tools/file-editor-serial.ts`
+fixes the write, not the executor: `SerializedFileEditorTool` takes the singleton's place in the
+runtime `tools:` list (static tool, so no discovery window and no `addOrReplace` dance) and is a
+pure projection — same name, description and `toolSpec`, the SDK's own `stream()` with the
+untouched context, so result and error bytes, permission classification, edit-diff rows and
+trajectory records cannot differ. What it adds is *when*: `create`/`str_replace`/`insert` on one
+resolved absolute path await the previous mutation on that path for the same Agent
+(`WeakMap<Agent, Map<path, chain>>` off `context.agent`, the vended bash tool's precedent), so each
+call reads what the previous one wrote and an `insert_line` means the updated file. `view`,
+distinct paths, pathless input, every other tool and every other Agent stay concurrent — a child
+built from the parent's catalogue has its own chains, and `/clear`'s successor starts empty.
+Entries only resolve (a failed edit releases the chain) and a settled tail deletes its key, so the
+map is bounded by in-flight calls. `toolExecutor` stays unset and the pinned patch untouched.
+Required check: `spike/verify-file-editor-serial.ts` (in `pnpm test`), with
+`spike/verify-file-editor.ts` unchanged.
+
+
 ## Workflow DAG tool
 
 **`workflow` is a parent-only bounded declarative DAG whose execution is the installed SDK

@@ -62,6 +62,7 @@ import {
   type BackgroundTaskListener,
   type BackgroundTaskStatus,
 } from '../tools/background-bash.js';
+import { SerializedFileEditorTool } from '../tools/file-editor-serial.js';
 import { createImageViewerTool } from '../tools/image-viewer.js';
 import { createUpdatePlanTool } from '../tools/update-plan.js';
 import {
@@ -635,8 +636,12 @@ export class AgentRuntime {
       // order. Only the base is user-overridable: project instructions stay additive.
       systemPrompt: composeSystemPrompt(basePrompt.prompt, instructions),
       // McpClient instances act as tool sources: the SDK discovers and registers
-      // their tools during initialize().
-      tools: [bash, fileEditor, imageViewer, httpRequest, ...mcp.clients],
+      // their tools during initialize(). The fileEditor is the SDK singleton behind
+      // a same-path ordering wrapper (SRF-020): substituted here rather than
+      // `addOrReplace`d after construction because it is static, so the raw tool is
+      // never registered, and `childTools` below hands children the same wrapper
+      // with per-Agent chains.
+      tools: [bash, new SerializedFileEditorTool(fileEditor), imageViewer, httpRequest, ...mcp.clients],
       plugins: offloader === undefined ? [skills] : [skills, offloader],
       sessionManager,
       conversationManager,

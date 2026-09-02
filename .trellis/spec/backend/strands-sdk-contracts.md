@@ -348,9 +348,11 @@ source-row uniqueness/order, sentinel/in-range compatibility, write-call and fil
 purity, invalid-bound errors, and unchanged empty/directory/missing/decoding/size behavior. Run it
 when upgrading `@strands-agents/sdk` or changing the pinned patch.
 
-Wrong: wrap `fileEditor` in Darwin and reproduce its mixed read/write schema or post-process an
+Wrong: wrap `fileEditor` in Darwin to reproduce its mixed read/write schema or post-process an
 error string. Correct: keep runtime assembly unchanged and patch the SDK-private range helper,
-where the full content and all existing validation context already live.
+where the full content and all existing validation context already live. (The SRF-020 ordering
+wrapper below is not this: it delegates the unchanged SDK `stream()` and touches neither schema
+nor bytes — it only decides when a same-path mutation starts.)
 
 ### Contract: exact fileEditor str_replace misses include bounded advisory context
 
@@ -401,6 +403,59 @@ ambiguity, adversarial input, Unicode, zero writes and metadata purity, exact su
 errors, provider schema, the 1 MiB limit, and all view contracts. On SDK upgrade, regenerate the pnpm
 patch from the pristine package, run `node --check` on installed `file-editor.js`, then run that
 focused suite before the project gates.
+
+### Contract: same-path fileEditor mutations apply in call order within one Agent (SRF-020)
+
+#### Scope / trigger
+
+The vended `handleCreate` / `handleStrReplace` / `handleInsert` are readText → compute →
+writeText with no lock, and Darwin keeps the default `ConcurrentToolExecutor` (never
+`toolExecutor`, see "Concurrency: parallel execution, never parallel prompting"). Unwrapped, N
+same-path edits in one assistant message each read the original file and the last write wins
+while every result reports `status: "success"` (measured: 1 of 6 disjoint `str_replace` survived;
+session-20260902-054329719 lost 4 of 6 on `src/config.ts`). `src/tools/file-editor-serial.ts`
+therefore substitutes `new SerializedFileEditorTool(fileEditor)` for the singleton in the runtime
+`tools:` list — before `initialize()`, so the raw tool is never registered and `childTools` hands
+every `buildRecipeChild` child the same wrapper. Not `addOrReplace`: the tool is static, so there
+is no discovery window or refresh callback to decorate.
+
+#### Contracts
+
+- The wrapper is a projection: same `name`, `description` and `toolSpec` object as the SDK
+  singleton; it `yield*`s the SDK tool's own `stream()` with the untouched `ToolContext`. Result
+  and error bytes (including the SRF-011 miss advisory), permission classification, edit-diff
+  rendering and trajectory records are byte-identical because input and callback never change.
+- Serialized: `create`, `str_replace`, `insert` whose `path` is an absolute string, keyed by the
+  resolved path exactly as the SDK writes it (trailing separators stripped, `path.resolve`
+  normalized; `a/b/` and `a//b` share one chain). Each such call awaits the previous chain entry
+  for the **same Agent** (`WeakMap<Agent, Map<path, Promise>>` off `context.agent`, the vended
+  bash tool's precedent), so it reads what the previous call wrote and `insert_line` means the
+  updated file's line numbers.
+- Not serialized: `view`, distinct paths, calls without a usable absolute string path (the SDK
+  rejects relative paths itself), every other tool, and calls from a different Agent — a child
+  never shares the parent's chain; `/clear`'s successor starts empty.
+- Entries only ever resolve: a failed or cancelled edit releases the chain in `finally`, and a
+  settled last entry deletes its key, so the map cannot grow with the session.
+- Never set `toolExecutor`; never change the pinned SDK patch or its error strings for this.
+
+#### Validation & error matrix
+
+| Case | Required result |
+|---|---|
+| N ≥ 4 disjoint `str_replace` on one path, one message | All N land, in call order; every result `success` |
+| Dependent edits (each `old_str` is the previous `new_str`) | Every one succeeds — strict call order |
+| `insert` after a length-changing `str_replace`, same path | Lands where the updated file's numbering says |
+| Slow edit on A alongside edit on B and `view` on A | B's edit and the view finish without waiting (< 150 ms vs 300 ms) |
+| `str_replace` miss then valid edit on the same path | Miss error bytes identical to the unwrapped tool; the valid edit is not blocked |
+| Parent's slow edit on P in flight; child edits P | Child does not wait; parent's own second edit on P does |
+| Batch settled | `pendingPaths(agent)` empty for every Agent |
+
+Required assertions live in `spike/verify-file-editor-serial.ts` (in `pnpm test`): a real `Agent`
+with a scripted model emitting one multi-tool-use message against real temp files, a slow fake
+original for timing, `buildRecipeChild` for the child, and `AgentRuntime.create` for the
+installation (`_toolExecutor instanceof ConcurrentToolExecutor`). `spike/verify-file-editor.ts`
+must stay unchanged and green.
+
 
 ### Contract: `/compact` builds one `SummarizingConversationManager` per call, with an optional bounded focus (SER-051)
 
