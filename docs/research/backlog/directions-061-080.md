@@ -122,3 +122,83 @@ Accepted 2026-09-01 in `ff21afd` (child session `session-20260901-152613977`, ma
 ### Notes / blockers / abandonment reason
 
 `MarkdownLineKind` in `src/tui/markdown.ts:34` is `'text' | 'heading' | 'fence' | 'code' | 'rule'`, so every bullet, ordered-list item, blockquote and table row falls through to prose `inlineSpans` at `:88` — and `inlineSpans` deliberately keeps a bullet `* item` line plain (`:117–121`) to protect snake_case and multiplication from emphasis styling. The result is that structured answers, the common shape of Darwin's own output, render as undifferentiated prose while headings and code already carry tone. The extension point exists: add block kinds whose leading marker (`-`/`*`/`+`, `N.`/`N)`, `> `, and a table row's `|` separators) becomes a `marker` span and whose remaining text keeps ordinary inline spans, then give the new kinds tone in `spanProps`/`rowToneProps` in `src/tui/MarkdownText.tsx`. The projection contract is the hard constraint (`.trellis/spec/frontend/live-frame.md:428`): every character survives, markers are dimmed in place and never stripped or realigned, so ANSI-stripped output is byte-identical to the committed text, `/export` stays byte-identical, and pty substring assertions keep matching. Two ordering hazards to respect — the existing `RULE` classification of `---`/`***`/`___` must still win over a list marker, and the fence/code branch must still win over everything, so `fenceOpenAfter` stays a boolean and live rows keep agreeing with `<Static>`. Out of scope: reflowing or re-indenting list text, renumbering ordered lists, aligning table columns, and any per-language code highlighting (explicitly out of scope at `src/tui/markdown.ts:20`). Acceptance: `spike/verify-markdown.tsx` asserts the new classifications *and* that concatenated spans equal the input line for every case (including a bullet inside a fenced block, a `---` rule, and a `1.` item), `spike/verify-visual-language.tsx` green, an `/export` byte-identity check over an answer containing lists/quotes/tables, plus `pnpm typecheck` and the full `pnpm test` green.
+
+## SER-048 — Add `--help`/`-h` and `--version`/`-V` to the CLI as bounded local output routed before any runtime import, and point every `CliUsageError` at `--help`
+
+- Status: `not-started`
+- Priority: 67
+- Score: 14
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 1
+- Risk: 1
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `02:29:40Z`, rolled `open` path)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+`parseCliArgs` (`src/cli-args.ts:201–202`) throws `CliUsageError('Unknown argument …')` for anything it does not know, so `darwin --help`, `darwin -h` and `darwin --version` all print `error: Unknown argument "--help"` and exit 2 — verified live on 2026-09-02 against both `pnpm tsx src/cli.ts` and `node dist/src/cli.js`. The canonical grammar exists only as the source comment at `src/cli.ts:5–12` and in `docs/user-guide/reference.md:6–24`; the version is already resolved for trajectory records by `DARWIN_VERSION` (`src/version.ts:33`). Requirement: `--help`/`-h` print the usage grammar (the same grammar the header comment states, kept in one exported constant so the comment, the flag and `reference.md` cannot drift) to stdout and exit 0; `--version`/`-V` print `darwin <DARWIN_VERSION>` and exit 0; both are routed like `sessions`/`trajectory` (`src/cli.ts:48–58`) — before argument parsing of the rest, before any runtime, config, model or Ink import, no file write, no network; every `CliUsageError` path keeps its exact message and exit 2 but its stderr line gains one bounded hint naming `darwin --help`. Combining `--help` with other flags is fine (help wins); `--version` likewise. Out of scope: a `help` subcommand, per-subcommand help pages, coloured output. Acceptance: `spike/verify-cli-args.ts` extended — `--help`, `-h`, `--version`, `-V` exit 0 with the expected stdout and empty stderr, the printed version equals `package.json`'s, unknown-flag cases still exit 2 with the original message plus the hint, and the help/version path imports no runtime/Ink module (an import-graph assertion in the style of `spike/verify-trajectory.ts`); `docs/user-guide/reference.md` (+ `reference.zh-CN.md`) document the flags; `pnpm typecheck` and the full `pnpm test` green.
+
+## SER-049 — Refuse unknown keys in `~/.darwin/config.json` (root and `models` entries) with a `ConfigError` that names the key, where it was found and the nearest known key
+
+- Status: `not-started`
+- Priority: 68
+- Score: 12
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `02:29:40Z`, rolled `open` path)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+`validate` (`src/config.ts:593–608`) type-checks known keys and `validateModelChoices` (`:666–681`) refuses a *known* key found in the wrong half — the spec records why at `.trellis/spec/backend/error-handling.md:49`: "a key in the wrong half would silently do nothing". A key in *neither* list is never looked at: a private-`HOME` probe on 2026-09-02 with `{"thinkingEfort":"high"}` loaded successfully and kept the default effort, and the same holds for `promptCahce: false` (cache stays on and bills cache writes) or `permisionMode` (mode stays default). That is exactly the silent no-op the spec's own principle (`error-handling.md:30`, "Explicit intent must never be guessed or silently ignored") forbids. Requirement: after the existing misplaced-half checks, any root key outside `SESSION_KEYS ∪ MODEL_KEYS ∪ {'models'}` (`src/config.ts:283,305`) and any `models` entry key outside `MODEL_KEYS ∪ {'enable'}` (`:690`) raises `ConfigError` naming the file, the key, its location (root or `models[i]`/entry name) and — when one is within a small edit distance — the nearest known key as a "did you mean"; several unknown keys are reported in one message. Keep the misplaced-known-key messages exactly as they are (they are more specific). Out of scope: a comment/`$schema` escape hatch unless the child records a product reason for one; warning-instead-of-refusing (the table's config rows all refuse). Acceptance: `spike/verify-config.ts` gains cases for a misspelled root key, an unknown entry key, a stray `$schema`, two unknowns in one file, and a near-miss suggestion, and asserts every documented key in `docs/user-guide/configuration.md` still loads; `error-handling.md` gets the new table row; `configuration.md` (+ zh-CN) states the rule; `pnpm typecheck` and the full `pnpm test` green.
+
+## SER-050 — Let `-p` read piped (non-TTY) stdin to EOF under a stated byte cap and append it to the one-shot prompt as one delimited block; TTY or empty stdin leaves behaviour byte-identical
+
+- Status: `not-started`
+- Priority: 69
+- Score: 8
+- Importance: 3
+- Architecture fit: 3
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 3
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `02:29:40Z`, rolled `open` path)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+The headless path takes its prompt only from argv: `HeadlessOptions` (`src/headless-runner.ts:34`) carries `prompt: string`, both drivers send `options.prompt` alone (`:194`, `:206`), and `grep -n stdin src/cli.ts src/headless.ts src/headless-runner.ts` finds nothing — so `git diff | darwin -p "review this"` sends the sentence and silently drops the diff. Requirement: in `-p` mode only, when `process.stdin.isTTY` is falsy, read stdin to EOF under a stated byte cap and, if non-empty, append it to the prompt as one delimited block (the prompt text first, then the block, with a fixed heading naming it as piped input); TTY stdin, `/dev/null` and immediate EOF change nothing — the existing `spike/verify-headless.ts:388` (`stdio 'ignore'`) and the developer skill's managed children (`src/tools/background-bash.ts:351`, `stdio 'ignore'`) must run byte-identically. Over-cap input is either refused with a `CliUsageError`-style message or truncated with the omission stated in the block; the child picks one and records why. The composed text is what the trajectory `userInput` line records, under the existing `MAX_FIELD_CHARS` cap (`src/trajectory/record.ts:24`), and what structured headless output echoes — no second input channel or schema field. Interactive mode never reads stdin this way. Known risk to state in `docs/user-guide/reference.md`: a parent that keeps the pipe open without writing makes `-p` wait for EOF (the same as `cat`); the developer skill's background `start` launches are unaffected. Acceptance: `spike/verify-headless.ts` cases — piped text appears exactly once in the model-facing prompt and in the `userInput` record; `stdio 'ignore'` runs are byte-identical to today's expected output; over-cap behaviour matches the recorded choice; structured (`json`/`stream-json`) output unchanged apart from the composed prompt; `reference.md` (+ zh-CN) documents the semantics and the caveat; `pnpm typecheck` and the full `pnpm test` green.
+
+## SER-051 — Accept optional focus text on `/compact <focus>`: build the compaction manager per call with the SDK default summarization prompt plus a bounded user focus, never altering unfocused output
+
+- Status: `not-started`
+- Priority: 70
+- Score: 7
+- Importance: 3
+- Architecture fit: 3
+- Evidence confidence: 4
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-09-02.md`](../research_2026-09-02.md) (run `02:29:40Z`, rolled `open` path)
+
+### Implementation / acceptance evidence
+
+Not started.
+
+### Notes / blockers / abandonment reason
+
+`/compact` refuses arguments outright (`src/tui/App.tsx:1423–1431`, notice `/compact takes no arguments`), and the runtime builds one process-lifetime `compactionManager` (`src/agent/runtime.ts:603–606`, `summaryRatio: 0.8`, no `summarizationSystemPrompt`) whose only consumer is `compact()` (`:1061`), so the user cannot tell the summarizer what the summary must keep for the task in hand. The SDK exposes the hook: `SummarizingConversationManagerConfig.summarizationSystemPrompt` (`node_modules/@strands-agents/sdk/dist/src/conversation-manager/summarizing-conversation-manager.d.ts:31–34`) — but it is constructor-only, and the default prompt `DEFAULT_SUMMARIZATION_PROMPT` is declared in `…/conversation-manager/compression/context-compression.d.ts:3` without a package-root re-export. Requirement: `/compact` with no text behaves exactly as today (same manager configuration, same summary message shape, `--compact-before` untouched); `/compact <focus>` passes a bounded (cap stated, e.g. a few hundred code points) focus into a per-call `SummarizingConversationManager` whose prompt is the SDK default prompt followed by one fixed section carrying the focus — never a copied prompt string that would drift from the SDK, so the child must reach `DEFAULT_SUMMARIZATION_PROMPT` through a public path (an SDK re-export, or one line in the pinned `patches/@strands-agents__sdk@1.12.0.patch`) and must halt on that premise if neither is acceptable. The reasoning-block scrub in `src/agent/compact.ts:95–104` must keep applying to focused summaries. `PreCompact`/`PostCompact` hook payloads stay `trigger: manual`; the trajectory records the `/compact …` line as it records `/compact` today. `help-format.ts` and `reference.md` state the argument. Acceptance: `spike/verify-compact.ts` extended — unfocused compaction produces the same summary message shape as before, focused compaction's summarizer request contains the default prompt verbatim plus the focus once, over-cap focus is refused with a notice and compaction does not run; `spike/verify-tui.ts compacting` green; `spike/verify-help-command.ts` and `spike/verify-tui.ts completion` green; `pnpm typecheck` and the full `pnpm test` green.
