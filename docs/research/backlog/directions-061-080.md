@@ -369,7 +369,7 @@ Requirement: a built-in `/copy` (added to `BUILTIN_COMMAND_NAMES`/descriptions i
 
 ## SER-058 — Add `darwin doctor`: an offline read-only diagnostics subcommand composing the existing loaders — config validity (`ConfigError` reported, never thrown), model choice, MCP config source and per-server command presence, skills catalogue with skipped entries, hooks files and dialect, project policy, sessions directory and versions — no session, model call, MCP connection or write; exit 1 when a problem is found
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 79
 - Score: 10
 - Importance: 3
@@ -381,7 +381,7 @@ Requirement: a built-in `/copy` (added to `BUILTIN_COMMAND_NAMES`/descriptions i
 
 ### Implementation / acceptance evidence
 
-(none yet)
+Accepted 2026-09-02 in `b68851f` (child session `session-20260902-154331847`, managed task `bg-77134106-0a2a-463d-b787-59a6078a2231`, exit 0, no correction turn; journal `ac59842`, Trellis task archived in `7b680bb`). New `src/cli-doctor.ts` (`DOCTOR_COMMAND`, `isDoctorInvocation`, `parseDoctorArgs`, `DoctorIo`, `runDoctorCommand`, `lookupOnPath`) dispatched in `src/cli.ts` beside `sessions` before the runtime path; sections config / system prompt / project instructions (bytes vs `MAX_INSTRUCTIONS_BYTES`) / mcp / skills / hooks and policy / permission rules / sessions / versions; `! ` problem lines totalled, exit 0/1, `doctor extra` exit 2. Two behaviour-preserving loader refactors: `config.ts` gains pure `configFilePath()` so `loadConfig` and the hook-layer loader no longer `mkdirSync` `~/.darwin` on read (`configPath()` keeps the mkdir for writers); `mcp/registry.ts` gains `readMcpServerConfigs` (parse/merge only) that `loadMcpClients` builds on. Host acceptance, all independently re-run at `7b680bb`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 (86 suites, 0 `FAIL` lines); `spike/verify-doctor-command.ts` 71/71 (real `tsx src/cli.ts doctor` child against pristine HOME/project fixtures: valid → 0, unknown key / invalid JSON → named problem + exit 1, PATH-found marker-writer never runs, bogus command "not found", http/sse "not connected (doctor never connects)", skipped skills and hook dialects stated, before/after snapshot identical, import closure free of runtime/Ink/`Agent`, no write/spawn/net API in the module); `spike/verify-cli-args.ts` 43/43 with the new usage row; free pty `mode` 25/25 and `completion` 69/69; `pnpm build` exit 0; Host's own fresh-`HOME` probe: `doctor` exit 0 and `HOME` left empty; every runtime writer of `~/.darwin` paths uses `mkdir recursive` (`session.ts`, `trajectory/writer.ts`, `memory/state.ts`), so the dropped read-side mkdir is safe; `git show --check` clean; AGENTS.md untouched at 32,667 B. `node dist/src/cli.js doctor` in this repo exits 0 with `no problems found`. Docs: `reference.md`/`zh-CN` (CLI row, usage quote, `### darwin doctor`), README/`zh-CN`, `error-handling.md` two degradation rows, `load-bearing-decisions.md` one heading. Child self-reported one rule-8 slip (journal whitespace trim via `sed -i`). Logged as [`Batch 83`](../../iteration-log.md).
 
 ### Notes / blockers / abandonment reason
 
@@ -389,7 +389,7 @@ Requirement: a `darwin doctor` CLI verb, modelled on `src/cli-sessions.ts` (`SES
 
 ## SER-059 — Esc Esc on an empty idle composer opens the existing `/rewind` picker: a second Escape within a short window, first Escape keeps its current owners (completion menu, history search, recall); busy/queue/permission states ignore it; `/help` and README state the chord
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 80
 - Score: 9
 - Importance: 2
