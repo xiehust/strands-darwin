@@ -23,6 +23,7 @@ import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import {
   COMPACT_FOCUS_HEADING,
   MAX_COMPACT_FOCUS_CODE_POINTS,
+  SWALLOWED_SUMMARIZATION_FAILURE,
   compactConversation,
   compactFocusRefusal,
   compactionManagerConfig,
@@ -40,7 +41,8 @@ class DeterministicModel extends Model<BaseModelConfig> {
   readonly summaryPrompts: (StreamOptions['systemPrompt'])[] = [];
   private summaries = 0;
   private config: BaseModelConfig = { modelId: 'fake.compact', contextWindowLimit: 200_000 };
-  failSummaries = false;
+  /** 1-based index of the first summarization request that throws (Infinity: never). */
+  failSummariesFrom = Number.POSITIVE_INFINITY;
   /** Emit a reasoning block before the summary text, like adaptive thinking does. */
   emitReasoningOnSummaries = false;
   /** Emit only a reasoning block on summaries — a summary with no usable content. */
@@ -64,9 +66,11 @@ class DeterministicModel extends Model<BaseModelConfig> {
   }
 
   override async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
-    if (this.failSummaries) throw new Error('summary unavailable');
     const summarizing = textOf(messages.at(-1)) === 'Please summarize this conversation.';
-    if (summarizing) this.summaryPrompts.push(options?.systemPrompt);
+    if (summarizing) {
+      this.summaryPrompts.push(options?.systemPrompt);
+      if (this.summaryPrompts.length >= this.failSummariesFrom) throw new Error('summary unavailable');
+    }
     const text = summarizing
       ? `summary-${++this.summaries}: retained marker-early`
       : `continued from: ${textOf(messages[0])}`;
@@ -253,23 +257,130 @@ async function main(): Promise<void> {
       textOf(rollingSummary).includes('summary-2'),
     );
 
-    // A summary response with nothing but reasoning is a failed summary:
-    // proactive reduce swallows it and reports no reduction — never an empty
-    // user message spliced into the history.
+    // A summary response with nothing but reasoning is a failed summary: the SDK's
+    // proactive reduce swallows the throw and reports `false`. Before SER-052 that
+    // read as a silent no-op; now it is the failure it is — rejected, everything
+    // restored, never an empty user message spliced into the history.
     const emptyModel = new DeterministicModel();
     emptyModel.reasoningOnlySummaries = true;
     const emptyAgent = new Agent({ model: emptyModel, messages: seededMessages(), printer: false });
     await emptyAgent.initialize();
     const emptyBefore = JSON.stringify(emptyAgent.messages);
-    const emptyResult = await compactConversation({
-      agent: emptyAgent,
-      model: emptyModel,
-      manager: new SummarizingConversationManager({ summaryRatio: 0.8, preserveRecentMessages: 4 }),
-      preserveRecentMessages: 4,
+    let emptyError: unknown;
+    try {
+      await compactConversation({
+        agent: emptyAgent,
+        model: emptyModel,
+        manager: new SummarizingConversationManager({ summaryRatio: 0.8, preserveRecentMessages: 4 }),
+        preserveRecentMessages: 4,
+        persist: async () => {},
+      });
+    } catch (error) {
+      emptyError = error;
+    }
+    assert(
+      'a reasoning-only summary response is a compaction failure, not a no-op',
+      emptyError instanceof Error && emptyError.message === SWALLOWED_SUMMARIZATION_FAILURE,
+    );
+    assert('a reasoning-only summary response mutates no message', JSON.stringify(emptyAgent.messages) === emptyBefore);
+
+    // SER-052 (a): two messages, preserve 0. The SDK summarizes at most 80% of the
+    // list, so the one pass it makes replaces the oldest message with a summary of
+    // itself and the count stays 2. Undo it, stop, report "already compact" — one
+    // summarizer call, never a loop.
+    const pairModel = new DeterministicModel();
+    const pair = [
+      new Message({ role: 'user', content: [new TextBlock('Reply with exactly COMPACT_SEED.')] }),
+      new Message({ role: 'assistant', content: [new TextBlock('COMPACT_SEED')] }),
+    ];
+    const pairAgent = new Agent({ model: pairModel, messages: pair, printer: false });
+    await pairAgent.initialize();
+    const pairBefore = JSON.stringify(pairAgent.messages);
+    let pairPersisted = false;
+    const pairResult = await compactConversation({
+      agent: pairAgent,
+      model: pairModel,
+      manager: createCompactionManager(0),
+      preserveRecentMessages: 0,
+      persist: async () => {
+        pairPersisted = true;
+      },
+    });
+    assert('2 messages / preserve 0 terminates with exactly one summarizer call', pairModel.summaryPrompts.length === 1);
+    assert('2 messages / preserve 0 reports no compaction and the real count', !pairResult.compacted && pairResult.messagesAfter === 2 && pairResult.messagesBefore === 2);
+    assert('2 messages / preserve 0 leaves the conversation byte-identical', JSON.stringify(pairAgent.messages) === pairBefore);
+    assert('the undone pass keeps message identity', pairAgent.messages[0] === pair[0] && pairAgent.messages[1] === pair[1]);
+    assert('2 messages / preserve 0 persists nothing', !pairPersisted);
+
+    // SER-052 (a′): preserve 0 on a long history. Passes 1 and 2 shrink (16 → 5 → 2);
+    // pass 3 would summarize the rolling summary alone without lowering the count,
+    // so it is undone: the rolling summary is pass 2's, the newest message is the
+    // original object, and exactly three summarizer calls were made.
+    const floorModel = new DeterministicModel();
+    const floorSeed = seededMessages();
+    const floorAgent = new Agent({ model: floorModel, messages: floorSeed, printer: false });
+    await floorAgent.initialize();
+    const floorResult = await compactConversation({
+      agent: floorAgent,
+      model: floorModel,
+      manager: createCompactionManager(0),
+      preserveRecentMessages: 0,
       persist: async () => {},
     });
-    assert('a reasoning-only summary response compacts nothing', !emptyResult.compacted);
-    assert('a reasoning-only summary response mutates no message', JSON.stringify(emptyAgent.messages) === emptyBefore);
+    assert('preserve 0 on 16 messages makes exactly three summarizer calls', floorModel.summaryPrompts.length === 3);
+    assert('preserve 0 on 16 messages compacts to two messages and says so', floorResult.compacted && floorResult.messagesAfter === 2 && floorAgent.messages.length === 2);
+    assert('the undone final pass leaves pass 2 as the rolling summary', textOf(floorAgent.messages[0]).includes('summary-2') && !textOf(floorAgent.messages[0]).includes('summary-3'));
+    assert('the newest message survives preserve-0 compaction by identity', floorAgent.messages[1] === floorSeed[15]);
+
+    // SER-052 (b): the summarizer fails on the second pass. The SDK swallows the
+    // throw and returns `false`; darwin must reject and restore every message —
+    // never report the first pass as `compacted: true`.
+    const secondFailModel = new DeterministicModel();
+    secondFailModel.failSummariesFrom = 2;
+    const secondFailAgent = new Agent({ model: secondFailModel, messages: seededMessages(), printer: false });
+    await secondFailAgent.initialize();
+    const secondFailBefore = JSON.stringify(secondFailAgent.messages);
+    let secondFailPersisted = false;
+    let secondFailError: unknown;
+    try {
+      await compactConversation({
+        agent: secondFailAgent,
+        model: secondFailModel,
+        manager: createCompactionManager(2),
+        preserveRecentMessages: 2,
+        persist: async () => {
+          secondFailPersisted = true;
+        },
+      });
+    } catch (error) {
+      secondFailError = error;
+    }
+    assert('a second-pass summarizer failure made exactly two summarizer calls', secondFailModel.summaryPrompts.length === 2);
+    assert('a second-pass summarizer failure rejects naming the swallowed failure', secondFailError instanceof Error && secondFailError.message === SWALLOWED_SUMMARIZATION_FAILURE);
+    assert('a second-pass summarizer failure restores every original message', JSON.stringify(secondFailAgent.messages) === secondFailBefore);
+    assert('a second-pass summarizer failure persists nothing', !secondFailPersisted);
+
+    // SER-052 (c): the summarizer fails on the first pass — same failure path.
+    const firstFailModel = new DeterministicModel();
+    firstFailModel.failSummariesFrom = 1;
+    const firstFailAgent = new Agent({ model: firstFailModel, messages: seededMessages(), printer: false });
+    await firstFailAgent.initialize();
+    const firstFailBefore = JSON.stringify(firstFailAgent.messages);
+    let firstFailError: unknown;
+    try {
+      await compactConversation({
+        agent: firstFailAgent,
+        model: firstFailModel,
+        manager: createCompactionManager(4),
+        preserveRecentMessages: 4,
+        persist: async () => {},
+      });
+    } catch (error) {
+      firstFailError = error;
+    }
+    assert('a first-pass summarizer failure made exactly one summarizer call', firstFailModel.summaryPrompts.length === 1);
+    assert('a first-pass summarizer failure rejects', firstFailError instanceof Error && firstFailError.message === SWALLOWED_SUMMARIZATION_FAILURE);
+    assert('a first-pass summarizer failure restores every original message', JSON.stringify(firstFailAgent.messages) === firstFailBefore);
 
     // SER-051 (b): a focused compaction's summarizer prompt is the SDK default
     // verbatim, one blank line, the fixed heading, then the focus — each once.
@@ -311,6 +422,29 @@ async function main(): Promise<void> {
       ),
     );
     assert('the focused rolling summary stays a user message with its text', focusedAgent.messages[0]?.role === 'user' && textOf(focusedAgent.messages[0]).includes('summary-2'));
+
+    // SER-052 (e): the focused manager runs through the same loop, so it inherits
+    // the no-shrink guard — one focused summarizer call, then "already compact".
+    const focusedPairModel = new DeterministicModel();
+    const focusedPairAgent = new Agent({
+      model: focusedPairModel,
+      messages: [
+        new Message({ role: 'user', content: [new TextBlock('Reply with exactly COMPACT_SEED.')] }),
+        new Message({ role: 'assistant', content: [new TextBlock('COMPACT_SEED')] }),
+      ],
+      printer: false,
+    });
+    await focusedPairAgent.initialize();
+    const focusedPairBefore = JSON.stringify(focusedPairAgent.messages);
+    const focusedPairResult = await compactConversation({
+      agent: focusedPairAgent,
+      model: focusedPairModel,
+      manager: createCompactionManager(0, focus),
+      preserveRecentMessages: 0,
+      persist: async () => {},
+    });
+    assert('a focused 2-message / preserve-0 compaction makes exactly one focused summarizer call', focusedPairModel.summaryPrompts.length === 1 && focusedPairModel.summaryPrompts[0] === focusedPrompt);
+    assert('a focused 2-message / preserve-0 compaction is an honest no-op', !focusedPairResult.compacted && JSON.stringify(focusedPairAgent.messages) === focusedPairBefore);
 
     // (c) an over-cap focus is refused before any manager, hook, or model call exists.
     const overCap = 'x'.repeat(MAX_COMPACT_FOCUS_CODE_POINTS + 1);

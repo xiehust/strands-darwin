@@ -86,9 +86,21 @@ export interface CompactResult {
   estimatedTokensBefore: number;
   estimatedTokensAfter: number;
   estimatedTokensSaved: number;
-  /** False when the recent-message window already contains the whole conversation. */
+  /**
+   * True only when the message count really dropped. False when the recent
+   * window already contains the whole conversation, or when the one pass the
+   * SDK could make did not lower the count (undone; see `compactConversation`).
+   */
   compacted: boolean;
 }
+
+/**
+ * The failure surfaced when the SDK's proactive `reduce()` swallows a summarization
+ * error and returns `false`. The SDK's own `proactive summarization failed` warning,
+ * routed through `routeSdkLogs`, carries the underlying cause right before this.
+ */
+export const SWALLOWED_SUMMARIZATION_FAILURE =
+  'the summarizer made no reduction; the preceding sdk warning names the cause';
 
 export interface CompactConversationOptions {
   agent: Agent;
@@ -101,6 +113,15 @@ export interface CompactConversationOptions {
 /**
  * Summarizes every reducible old message, persists the result, and restores the
  * original messages if summarization, counting, or persistence fails.
+ *
+ * Termination and honesty rules (SER-052):
+ * - a pass that returns `true` without lowering the message count is undone and
+ *   ends the loop, so `compacted` / `messagesAfter` describe what really changed
+ *   and the loop makes at most one summarizer call beyond the shrinking ones;
+ * - a pass that returns `false` is a summarization failure the SDK swallowed
+ *   (proactive `reduce()` has no other `false` inside this loop) — it rejects and
+ *   rolls back everything, never reports `compacted: true`.
+ * Both rules apply to focused and unfocused managers alike.
  */
 export async function compactConversation({
   agent,
@@ -127,8 +148,27 @@ export async function compactConversation({
   try {
     let compacted = false;
     while (agent.messages.length > preserveRecentMessages + 1) {
+      // A shallow snapshot is enough to undo one pass: the SDK splices the list
+      // and never mutates the messages themselves, so putting the same objects
+      // back leaves identity intact.
+      const beforePass = agent.messages.slice();
       const reduced = await manager.reduce({ agent, model });
-      if (!reduced) break;
+      if (!reduced) {
+        // Inside this loop the SDK has no honest `false`: "insufficient messages"
+        // needs `length <= preserveRecentMessages` (excluded by the condition) and
+        // "all protected" needs `pinFirst` (never set here). Without an `error`
+        // argument the SDK swallows a summarization failure, logs it, and returns
+        // `false` — so this is that failure, and a rollback, never a no-op.
+        throw new Error(SWALLOWED_SUMMARIZATION_FAILURE);
+      }
+      if (agent.messages.length >= beforePass.length) {
+        // The SDK summarizes at most 80% of the list, so a 2-message history
+        // becomes "a summary of the oldest message plus the newest" — the same
+        // count, less fidelity, forever. Undo that pass and stop; `compacted`
+        // stays whatever the earlier, shrinking passes made it.
+        agent.messages.splice(0, agent.messages.length, ...beforePass);
+        break;
+      }
       compacted = true;
     }
 

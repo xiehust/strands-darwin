@@ -735,7 +735,13 @@ async function compactingInputOwnership(): Promise<void> {
   header('TUI — compaction owns keyboard and paste input');
 
   await resetWorkDir();
-  await writeHomeConfig({ preserveRecentMessages: 0 });
+  // Two turns (4 messages) and a recent window of one: the SDK summarizes
+  // `min(max(1, floor(4 × 0.8)), 4 − 1) = 3` messages in exactly one pass, so
+  // this is a real compaction (`4 → 2 messages`). A 2-message seed with
+  // preserve 0 is an honest no-op since SER-052 (the SDK cannot summarize a
+  // 2-message history in one pass), which would not prove ownership *during*
+  // compaction.
+  await writeHomeConfig({ preserveRecentMessages: 1 });
   const tui = startTui({ cwd: WORK_DIR });
 
   try {
@@ -743,6 +749,10 @@ async function compactingInputOwnership(): Promise<void> {
     const seedTurn = tui.mark();
     tui.submit('Reply with exactly COMPACT_SEED. Do not use tools.');
     await tui.waitFor('COMPACT_SEED', { timeoutMs: 240_000, from: seedTurn });
+    await waitForIdle(tui, 240_000);
+    const secondSeed = tui.mark();
+    tui.submit('Reply with exactly COMPACT_SEED_TWO. Do not use tools.');
+    await tui.waitFor('COMPACT_SEED_TWO', { timeoutMs: 240_000, from: secondSeed });
     await waitForIdle(tui, 240_000);
 
     const compact = tui.mark();
@@ -752,7 +762,7 @@ async function compactingInputOwnership(): Promise<void> {
 
     tui.send('blocked-keys\u001b\u001b[D\u007f');
     tui.send('\u001b[200~blocked-paste\u001b[201~');
-    await tui.waitFor(/conversation (?:compacted|already compact)/, {
+    await tui.waitFor(/conversation compacted — 4 → 2 messages/, {
       timeoutMs: 240_000,
       from: compact,
       settleMs: 400,

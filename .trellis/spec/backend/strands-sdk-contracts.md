@@ -456,8 +456,11 @@ the fixed heading; trim/blank/cap/code-point counting; the reasoning scrub on a 
 compaction; the manager-before-hook order in `runtime.compact`; and a source assertion that
 `compact.ts` root-imports the constant with no deep import and no copied prompt text.
 `spike/verify-help-command.ts` and `spike/verify-tui.ts completion` (free) pin the description;
-`spike/verify-tui.ts compacting` (live) pins keyboard ownership. After touching the patch:
-`pnpm install --frozen-lockfile` must reapply it and `pnpm typecheck` must pass.
+`spike/verify-tui.ts compacting` (live) pins keyboard ownership during a real `4 → 2` compaction.
+After touching the patch: `pnpm install --frozen-lockfile` must reapply it and `pnpm typecheck`
+must pass. The per-call manager runs through the one `compactConversation` loop, so the SER-052
+termination and swallowed-failure rules (§ explicit `/compact` scenario) apply to focused and
+unfocused compaction alike.
 
 #### Wrong vs correct
 
@@ -2110,8 +2113,39 @@ SessionManager.saveSnapshot({ target: agent, isLatest: true }): Promise<void>
 
 - Run only while the agent is idle; direct message mutation during `Agent.stream()` is unsafe.
 - Explicit compaction uses a dedicated SDK summarizer at its maximum `summaryRatio` (0.8),
-  repeatedly, until one rolling summary plus configured `preserveRecentMessages` remain.
-  The configured manager attached to `Agent` remains unchanged for reactive overflow recovery.
+  repeatedly, until one rolling summary plus configured `preserveRecentMessages` remain — or
+  until a pass stops lowering the count (below). The configured manager attached to `Agent`
+  remains unchanged for reactive overflow recovery.
+- **Termination (SER-052).** Every pass snapshots the message list (shallow — the SDK splices,
+  it never mutates member messages). A pass that returns `true` without lowering
+  `agent.messages.length` is undone by splicing the snapshot back (message identity preserved)
+  and ends the loop; `compacted` is true only if the count really dropped and `messagesAfter` is
+  the real count. Each iteration therefore either lowers the count by ≥ 1 or exits, so the loop
+  needs no pass bound and makes at most one summarizer call beyond the shrinking ones. Darwin
+  does **not** replicate the SDK's split arithmetic to predict a no-shrink pass; the guard is
+  observational so it stays right if the SDK changes. Recorded consequence: the SDK clamps
+  `summaryRatio` to `[0.1, 0.8]`, so a 2-message history is never summarized in one pass
+  (`floor(2 × 0.8) = 1`); with `preserveRecentMessages: 0` the floor is two messages (one
+  rolling summary plus the newest message) and discovering it costs one summarizer call.
+  2 messages / preserve 0 is therefore an honest `already compact` no-op after one call, not
+  "one summary replaces the pair".
+- **Swallowed failure is failure (SER-052).** `reduce()` is called without `error`, so the SDK's
+  proactive path catches a summarization error, logs `proactive summarization failed`, and
+  returns `false`. Inside darwin's loop the SDK has no other `false` (`insufficient messages`
+  needs `length <= preserveRecentMessages`, excluded by the loop condition; `all protected`
+  needs `pinFirst`, never set on this manager), so `compactConversation` throws
+  `SWALLOWED_SUMMARIZATION_FAILURE` on any pass — first or later — and the existing catch
+  restores the cloned originals; drivers print `compaction failed; conversation restored: …`.
+  Never `compacted: true` after a failed pass, and never a partial result. The SDK's own
+  warning already reaches the user through `routeSdkLogs` (TUI `sdk warn:` notice, headless
+  stderr) immediately before darwin's notice, so the cause is not lost. A sentinel `error`
+  argument was rejected: it is typed `ContextWindowOverflowError`, the SDK overwrites the
+  thrown error's `.cause` with it, and `failureFromError` (`src/trajectory/record.ts`) would
+  then print a fabricated `cause: ContextWindowOverflowError` in a structured headless
+  `--compact-before` runtime failure.
+- Both rules live in `compactConversation`, so the focused (`/compact <focus>`) and unfocused
+  (`/compact`, `--compact-before`) managers share them; nothing changes on the runtime's
+  overflow-recovery `SummarizingConversationManager`.
 - Delegate split adjustment to the SDK: it moves boundaries to preserve tool-use/result pairs.
 - Count the complete next request before and after: messages, the finished system prompt
   (including cache blocks), and every registered `toolSpec`. The result is an estimated
@@ -2140,12 +2174,14 @@ SessionManager.saveSnapshot({ target: agent, isLatest: true }): Promise<void>
 | Condition | Result |
 |---|---|
 | `messages.length <= preserveRecentMessages + 1` | No model/count/storage call; `compacted: false` |
-| SDK `reduce` returns `false` before any pass | No-op result |
+| SDK `reduce` returns `false` on any pass (swallowed summarization failure) | Throw `SWALLOWED_SUMMARIZATION_FAILURE`; restore original live messages; never `compacted: true`, never a partial result; the SDK's own `sdk warn` line precedes darwin's notice |
+| SDK `reduce` returns `true` but the count did not drop | Undo that pass (snapshot spliced back, identity kept); stop; `compacted` reflects earlier shrinking passes only; at most one such call per compaction |
+| 2 messages, `preserveRecentMessages: 0` | One summarizer call, undone; `compacted: false`, `messagesAfter: 2`; `already compact` notice |
 | Summary or token count throws | Restore original live messages; surface failure |
 | Latest snapshot or pointer write throws | Restore live messages, best-effort restore latest snapshot, surface failure |
 | Estimated summary is larger | Clamp `estimatedTokensSaved` to zero; never claim negative savings |
 | Summary response carries reasoning blocks | Drop them from the user-role summary; text survives; repeated passes over the compacted history succeed |
-| Summary response is reasoning-only | Failed summary (throw in `generateSummary`); proactive reduce reports `false`; no empty user message |
+| Summary response is reasoning-only | Failed summary (throw in `generateSummary`); proactive reduce reports `false`; `/compact` surfaces it as failure and restores; no empty user message |
 | Restored history has a reasoning-carrying user message | Strip in memory at runtime `create()`; assistant reasoning and would-be-empty messages untouched |
 
 ### 5. Good / Base / Bad Cases
@@ -2153,6 +2189,11 @@ SessionManager.saveSnapshot({ target: agent, isLatest: true }): Promise<void>
 - **Good:** 500-message session becomes one summary plus the recent window, follow-up succeeds,
   and `--resume` restores the compacted list.
 - **Base:** conversation already fits the summary-plus-window shape; report no work needed.
+  Two messages with `preserveRecentMessages: 0` also report `already compact`, after the one
+  pass the SDK can make is found not to lower the count and is undone.
+- **Bad:** the summarizer is throttled on the second of three passes; the SDK swallows the
+  error and returns `false`. Reporting the first pass as `compacted: true` would persist a
+  half-compacted history the user was told succeeded, so the whole operation rolls back.
 - **Bad:** saving the compacted snapshot fails after message mutation; returning success would
   make the current process and resumed process disagree, so the operation rolls back.
 
@@ -2163,9 +2204,17 @@ session manager, and local storage. Assert the retained messages are byte-identi
 counting receives system prompt and tools, an immediate follow-up sees the summary, a fresh
 agent restores it, and persistence failure restores every original message. The same suite
 drives a reasoning-emitting model through a forced two-pass compaction (no user message may
-carry a `reasoningBlock`; the second pass must succeed), a reasoning-only summary (no-op, no
-mutation), and `stripReasoningFromUserMessages` directly. The pty completion
-scenario asserts `/compact` is discoverable without spending a model call.
+carry a `reasoningBlock`; the second pass must succeed), a reasoning-only summary (rejects
+with `SWALLOWED_SUMMARIZATION_FAILURE`, no mutation), and `stripReasoningFromUserMessages`
+directly. SER-052 cases: 2 messages / preserve 0 terminates after exactly one summarizer call
+with `compacted: false`, byte-identical messages, identity kept, nothing persisted; 16 messages
+/ preserve 0 makes exactly three summarizer calls, ends at 2 messages with pass 2 as the rolling
+summary (pass 3 undone) and the newest message by identity; a summarizer failure on the second
+pass and on the first pass both reject, restore every message and persist nothing; the focused
+manager on 2 messages / preserve 0 makes one focused call and is a no-op. The pty completion
+scenario asserts `/compact` is discoverable without spending a model call; the live
+`spike/verify-tui.ts compacting` scenario seeds two turns with `preserveRecentMessages: 1` so
+one pass compacts `4 → 2 messages` for real while it proves keyboard/paste ownership.
 
 ### 7. Wrong vs Correct
 
