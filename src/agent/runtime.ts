@@ -65,6 +65,7 @@ import {
 import { SerializedFileEditorTool } from '../tools/file-editor-serial.js';
 import { createImageViewerTool } from '../tools/image-viewer.js';
 import { createUpdatePlanTool } from '../tools/update-plan.js';
+import { webFetch } from '../tools/web-fetch.js';
 import {
   LifecycleHookRunner,
   lifecycleHooksFromConfig,
@@ -169,6 +170,19 @@ export function setRuntimeRecorderOverridesForTest(
  * previous snapshots from `--resume`.
  */
 const AGENT_ID = 'darwin';
+
+/**
+ * Parent-registered tools that never enter the child catalogue: the offloader's
+ * retrieval tool (parent-session storage) and both network tools (children are
+ * for workspace reads; network access is a parent decision). `update_plan`,
+ * `workflow`, `subagent` and the memory tools stay parent-only by registration
+ * order instead — they are added after the catalogue is captured.
+ */
+const PARENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'retrieve_offloaded_content',
+  httpRequest.name,
+  webFetch.name,
+]);
 
 export interface RuntimeOptions {
   projectRoot: string;
@@ -641,7 +655,7 @@ export class AgentRuntime {
       // `addOrReplace`d after construction because it is static, so the raw tool is
       // never registered, and `childTools` below hands children the same wrapper
       // with per-Agent chains.
-      tools: [bash, new SerializedFileEditorTool(fileEditor), imageViewer, httpRequest, ...mcp.clients],
+      tools: [bash, new SerializedFileEditorTool(fileEditor), imageViewer, httpRequest, webFetch, ...mcp.clients],
       plugins: offloader === undefined ? [skills] : [skills, offloader],
       sessionManager,
       conversationManager,
@@ -708,7 +722,9 @@ export class AgentRuntime {
     // `subagent` so children can never recursively delegate. The offloader's
     // retrieval capability is parent-session state: children have no matching
     // plugin/storage contract, so never hand them a dangling retrieval tool.
-    const childTools = agent.tools.filter((tool) => tool.name !== 'retrieve_offloaded_content');
+    // Network access (`http_request`, `web_fetch`) stays parent-only too: the
+    // documented invariant is that children work on reads inside the workspace.
+    const childTools = agent.tools.filter((tool) => !PARENT_ONLY_TOOL_NAMES.has(tool.name));
     const agentDefinitions = await loadAgentDefinitions(
       options.projectRoot,
       childTools.map((tool) => tool.name),

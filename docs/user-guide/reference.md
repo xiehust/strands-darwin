@@ -135,3 +135,13 @@ Permission and compaction views own keyboard/paste while active. The completion 
 - `/context` and warning estimates are advisory. A known threshold crossing emits one post-turn `/compact` recommendation, rearmed only after a known drop; unknown estimates are silent.
 - `/compact` is never automatic. Overflow summarization may still be invoked by SDK conversation management, using `summaryRatio` and `preserveRecentMessages`.
 - `/export` is byte-for-byte the same formatter as offline replay.
+
+## Web access tools (parent agent only)
+
+Both are ordinary gated tools: they prompt in `default`, are denied in `plan`, and may be covered by
+allow-rules. Subagents and workflow nodes never receive them.
+
+| Tool | What comes back |
+|---|---|
+| `http_request` | the SDK tool: any method, headers and body; the raw response body, unbounded |
+| `web_fetch` | GET only, `Accept` prefers markdown; `http://` upgraded to `https://`; same-host redirects followed, cross-host redirects reported instead; HTML converted to readable text (a **lossy** projection — scripts, styles, navigation, layout and attributes dropped), markdown/plain text kept verbatim, binary bodies refused with type and length; body capped at 40 000 code points (`maxChars` may lower it) with `[truncated: N of M code points]` stated; download stops at 4 MiB |

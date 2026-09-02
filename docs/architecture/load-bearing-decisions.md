@@ -33,6 +33,30 @@ callback. Child catalogues do not include it; widening their capabilities requir
 design decision. Authoritative contract: `.trellis/spec/backend/strands-sdk-contracts.md`.
 Required offline check: `spike/verify-http-request-tool.ts` (in `pnpm test`).
 
+## `web_fetch` — a bounded readable projection, a sibling of `http_request`, never a wrapper
+
+**Reading a web page is a second ordinary parent tool with a stated budget, not a change to the
+raw one.** `http_request` returns the raw body unbounded, so a documentation page arrives as
+hundreds of KB of HTML and is only bounded by the context offloader. `web_fetch({ url, maxChars? })`
+(`src/tools/web-fetch.ts`) performs one GET with `Accept` preferring markdown, upgrades `http://`
+to `https://`, follows same-host redirects (bounded hops) and *reports* cross-host ones instead of
+following them, converts HTML to readable text with a dependency-free projection (headings, `- `
+items, `> ` quotes, fenced `pre`, `text (url)` links, `[image: alt]`, entities decoded; `script`/
+`style`/`noscript`/`template`/`svg`/`nav`/`header`/`footer`/`aside` dropped), keeps every other
+text type verbatim, refuses binary bodies with type and length, stops the download at 4 MiB and
+caps the body at 40 000 code points — `maxChars` may lower that ceiling, never raise it — with the
+shared `[truncated: N of M code points]` notice. The result states every lossy step in `notice`.
+The module builds its own `AbortSignal.any([timeout, context.cancelSignal])`; it never imports,
+calls or wraps `httpRequest`, whose bytes and tests stay untouched. Classification deliberately
+stays the unknown-tool fail-closed `execute` path (the URL is visible in the `Input` detail), so
+`default` asks, `plan` denies before any request and allow-rules may cover it. Registration is the
+parent `tools:` list next to `httpRequest`; the one `PARENT_ONLY_TOOL_NAMES` filter that already
+kept `retrieve_offloaded_content` out of `childTools` now also names `http_request` and
+`web_fetch` — the child-catalogue exclusion the spec and this document always stated for
+`http_request` is enforced by the same mechanism instead of assumed. Authoritative contract:
+`.trellis/spec/backend/strands-sdk-contracts.md`. Required offline check:
+`spike/verify-web-fetch.ts` (in `pnpm test`).
+
 ## Repeated tool failures — bounded intervention guard
 
 **One model invocation may execute three materially equivalent failed tool variants, not an unbounded sequence.** The composed SDK intervention observes original `ToolResultBlock`s after configured Post hooks without rewriting them, normalizes a bounded failure class/signature, and denies a later call to that tool before Pre hooks, permission, or body once one signature reaches the limit. A second failure injects bounded evidence-backed-hypothesis guidance before the next model call; the third says to stop, report the blocker and collected artifacts, and ask the user. A new SDK invocation replaces the state. One shared guard remains isolated by Agent, so concurrent children cannot poison each other. Explicit numeric/failed bash status is covered; user-authored `!` commands never enter this model-tool intervention. The pinned foreground bash result exposes its real command `exitCode` for this purpose without changing shell execution or output. Authoritative contract: `.trellis/spec/backend/strands-sdk-contracts.md`. Required check: `spike/verify-retry-guard.ts` (in `pnpm test`).

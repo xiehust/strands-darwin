@@ -135,3 +135,12 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 - `/context` 及阈值提醒只是建议。已知比例跨过阈值后，回合结束时只提醒一次 `/compact`；只有确认比例下降后才重新触发；未知估算保持安静。
 - `/compact` 不会自动执行。SDK conversation manager 在溢出时仍可能按 `summaryRatio` 和 `preserveRecentMessages` 做摘要。
 - `/export` 与离线 replay 使用完全相同的 formatter。
+
+## 网络访问工具（仅主代理）
+
+两者都是普通的受权限管控工具：`default` 模式会询问，`plan` 模式直接拒绝，也可以用放行规则覆盖。子代理和 workflow 节点都拿不到它们。
+
+| 工具 | 返回什么 |
+|---|---|
+| `http_request` | SDK 自带工具：任意方法、请求头和请求体；原始响应体，不设上限 |
+| `web_fetch` | 仅 GET，`Accept` 优先请求 markdown；`http://` 自动升级为 `https://`；同主机重定向会跟随，跨主机重定向只报告不跟随；HTML 转成可读文本（**有损**投影——脚本、样式、导航、布局和属性都会丢弃），markdown/纯文本原样保留，二进制响应体拒绝并说明类型和长度；正文上限 40 000 个码点（`maxChars` 只能调低），截断时明确标注 `[truncated: N of M code points]`；下载最多读取 4 MiB |

@@ -306,7 +306,7 @@ Children remain unchanged and do not receive the tool.
 | Fresh parent runtime | Exactly one registered tool named `http_request`, identical to the SDK export |
 | Default mode, user denies | Permission bridge sees parent `execute`; callback/network never runs |
 | Plan mode | Denied before permission bridge and callback/network |
-| Child catalogue | No `http_request` tool |
+| Child catalogue | No `http_request` tool — enforced by the `PARENT_ONLY_TOOL_NAMES` filter that derives `childTools` in `runtime.ts` (a project agent definition whose `tools` allowlist names it is reported as an unknown tool) |
 | Approved/yolo parent call | SDK owns input validation, cancellation, timeout, request, and result/error shape |
 
 #### Good / base / bad cases
@@ -327,6 +327,112 @@ and zero fetch calls. It belongs in `pnpm test` and must make no real model or n
 Wrong: `tools: [...]; void httpRequest.invoke(input)` from a driver or helper, which bypasses the
 Agent intervention. Correct: `tools: [..., httpRequest, ...mcp.clients]` only in the parent assembly,
 with `http_request` left to the fail-closed permission fallback.
+
+### Contract: `web_fetch` is a parent-only bounded readable projection, a sibling of `http_request` (SER-056)
+
+#### Scope / trigger
+
+When the model needs to *read* a web page rather than obtain its raw bytes, the parent runtime
+offers `web_fetch` (`src/tools/web-fetch.ts`, built with the SDK `tool()` factory). It is
+registered in the same parent `tools:` list directly after `httpRequest`. It never imports, calls,
+wraps or reconfigures `httpRequest`: the SDK singleton stays byte-identical and its contract above
+is unchanged.
+
+#### Signatures
+
+```ts
+webFetch: InvokableTool<{ url: string; maxChars?: number }, WebFetchResult>   // name 'web_fetch'
+interface WebFetchResult { url: string; status: number; contentType: string; body: string; notice: string[] }
+normalizeWebFetchUrl(raw): { url: string; upgraded: boolean }   // throws before any request
+htmlToText(html, baseUrl): string
+boundCodePoints(text, budget): { body; shown; total }
+fetchWebPage(input, { fetchImpl?, signal? })   // the callback body; fetchImpl defaults to globalThis.fetch per call
+WEB_FETCH_MAX_CHARS = 40_000; WEB_FETCH_MAX_DOWNLOAD_BYTES = 4 MiB; WEB_FETCH_MAX_REDIRECTS = 5; WEB_FETCH_TIMEOUT_SECONDS = 30
+WEB_FETCH_ACCEPT = 'text/markdown, text/plain;q=0.9, text/html;q=0.8, */*;q=0.1'
+WEB_FETCH_TRUNCATION_NOTICE = '[truncated: N of M code points]'   // formatTruncationNotice(shown, total)
+```
+
+#### Contracts
+
+- GET only, `Accept` = `WEB_FETCH_ACCEPT`, `User-Agent` names darwin. `http:` is upgraded to
+  `https:` before the request and stated in `notice`; any other scheme or an unparsable URL is a
+  bounded error before `fetch` runs.
+- Redirects use `redirect: 'manual'`. A target whose `URL.host` (hostname and port) equals the
+  current host is followed, at most `WEB_FETCH_MAX_REDIRECTS` hops (the next hop is a bounded
+  error); each hop is re-normalized (upgraded if `http:`). A target on another host is **not**
+  followed: the result is successful with the redirect `status`, the original `url`, an empty
+  `body` and a `notice` naming both URLs. A 3xx without `Location` is reported the same way.
+- Content: `text/html`/`application/xhtml+xml` — or an undeclared type whose first bytes sniff as
+  HTML — becomes `htmlToText` output plus `WEB_FETCH_LOSSY_NOTICE`; `text/*`, JSON/XML/JS/YAML
+  application types and `+json`/`+xml` are kept verbatim; a declared non-text type is a bounded
+  error naming the type and the `Content-Length` (or "unknown length") without reading the body;
+  an undeclared type containing NUL in its first KiB is refused after the bounded read. Non-2xx
+  statuses keep the body and add an `HTTP <status>` notice.
+- `htmlToText` is dependency-free and local per tag: `script`/`style`/`noscript`/`template`/
+  `svg`/`nav`/`header`/`footer`/`aside` subtrees and comments dropped, `head` dropped except its
+  `title` (rendered as the first `# ` line); `h1`–`h6` → `#`×N, block elements → line/paragraph
+  breaks, `li` → `- `, `blockquote` → `> ` per line, `pre` → fenced with whitespace preserved,
+  inline `code` → backticks, `a[href]` → `text (absolute url)`, `img` → `[image: alt]`, table
+  cells joined with ` | `; named (common set) and numeric entities decoded; whitespace runs and
+  blank-line runs collapsed. Malformed markup degrades to text, never throws.
+- Bounds: the raw download stops at `WEB_FETCH_MAX_DOWNLOAD_BYTES` (stated); the body is cut at a
+  code-point boundary to `min(maxChars, WEB_FETCH_MAX_CHARS)` — an over-ceiling `maxChars` is
+  clamped and stated — and a cut appends `formatTruncationNotice(shown, total)` to `notice`.
+- Cancellation: the callback composes `AbortSignal.any([AbortSignal.timeout(30 s),
+  context.cancelSignal])` itself and maps `AbortError`/`TimeoutError` to a bounded
+  `web_fetch: request cancelled|timed out …: GET <url>` error — the same composition as
+  `http-request.js`, implemented locally.
+- Permission: `classify('web_fetch', input)` is the unknown-tool fail-closed default — `execute`,
+  summary `web_fetch (unrecognized tool — approval required)`, the JSON input (URL) in the `Input`
+  detail. Do not add a `read`/safe case. `plan` denies before any request; `default` prompts;
+  wildcard allow-rules may cover it.
+- Registration: parent `tools:` only. `PARENT_ONLY_TOOL_NAMES` in `runtime.ts` (the filter that
+  derives `childTools`) names `retrieve_offloaded_content`, `http_request` and `web_fetch`; a
+  project agent definition whose `tools` allowlist names either network tool is reported as an
+  unknown tool in `info.agentProblems`. Never append it in `SubagentTool`/`WorkflowTool` or the
+  child recipe.
+
+#### Validation & error matrix
+
+| Case | Required behavior |
+|---|---|
+| `http://…` input | requested as `https://…`; `notice` states the upgrade |
+| `ftp:`/`file:`/`javascript:`/garbage | bounded `web_fetch:` error, zero requests |
+| `text/markdown` / other `text/*` / JSON | body verbatim, `notice` empty (unless truncated) |
+| HTML (declared or sniffed) | readable projection + lossy notice |
+| declared binary type | error naming type and length; body never read |
+| body over budget | body = first `min(maxChars, 40 000)` code points + `[truncated: N of M code points]` |
+| `maxChars` > ceiling | clamped to 40 000 and stated |
+| > 4 MiB body | download capped and stated; then the code-point budget applies |
+| same-host redirect | followed; `url` is the final URL |
+| cross-host redirect | one request; `status` 3xx, original `url`, empty body, both URLs in `notice` |
+| > 5 same-host hops | bounded error naming the hop limit |
+| non-2xx | body kept, `HTTP <status>` notice |
+| `cancelSignal` aborted | rejects with `web_fetch: request cancelled: GET <url>` |
+| classification | `execute` via the default branch, URL in details; plan denies with zero requests |
+| child catalogue | absent; allowlist naming it is an unknown-tool problem |
+
+#### Good / base / bad cases
+
+Good: `web_fetch({ url })` for documentation, changelogs, issue pages; `http_request` when the raw
+body, a non-GET method or response headers are needed. Base: no page is fetched, startup registers
+metadata only. Bad: wrapping `httpRequest` to post-process its body, classifying `web_fetch` as
+`read`, following cross-host redirects silently, returning binary bytes, adding an HTML parser
+dependency, or handing the tool to children.
+
+#### Tests required
+
+`spike/verify-web-fetch.ts` (in `pnpm test`) drives a local `http.createServer` fixture through an
+injected `fetchImpl` that rewrites only the fixture origin from `https` to `http`, and proves every
+row above plus the pure helpers; its runtime section reuses the fake-model/poisoned-`fetch`
+technique of `verify-http-request-tool.ts`, which must stay green and unchanged.
+
+#### Wrong vs correct
+
+Wrong: `const page = await httpRequest.invoke({ method: 'GET', url }); return htmlToText(page.body)`
+— calls and post-processes the SDK singleton. Correct: an independent `fetchWebPage` in
+`web-fetch.ts` that owns its request, redirect, classification and bounding, registered next to
+`httpRequest` and excluded from children by `PARENT_ONLY_TOOL_NAMES`.
 
 ### Contract: fileEditor clamps only oversized positive view ends
 
