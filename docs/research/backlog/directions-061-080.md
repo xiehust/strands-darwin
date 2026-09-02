@@ -205,7 +205,7 @@ Accepted 2026-09-02 in `bd050d2` (child session `session-20260902-040942462`, ma
 
 ## SER-052 — Make `/compact` terminate and report honestly: stop the reduce loop when a pass does not shrink the conversation, treat an SDK-swallowed summarization failure as failure rather than success, and repair the `compacting` pty scenario that has been red since `f4e3271`
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 71
 - Score: 14
 - Importance: 4
