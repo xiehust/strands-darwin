@@ -340,11 +340,25 @@ export const SESSION_KEYS = [
   'systemPrompt',
 ] as const;
 
-/** `~/.darwin/config.json`. The optional argument remains for source compatibility. */
+/**
+ * `~/.darwin/config.json`, derived and nothing else: no directory is created.
+ *
+ * The readers (`loadConfig`, the hook-layer loader, `darwin doctor`) resolve the
+ * path through this so that *reading* configuration never leaves a `~/.darwin`
+ * behind — an offline diagnostic run, or a `--help`-adjacent inspection in a
+ * pristine HOME, must be byte-identical before and after.
+ */
+export function configFilePath(): string {
+  return path.join(userDarwinDir(), CONFIG_FILENAME);
+}
+
+/** `~/.darwin/config.json`, with its parent directory ensured. The optional argument remains for source compatibility. */
 export function configPath(_projectRoot?: string): string {
-  const file = path.join(userDarwinDir(), CONFIG_FILENAME);
+  const file = configFilePath();
   // Callers historically wrote fixtures directly to this returned path.
   // Ensuring the parent synchronously keeps that API usable after the move home.
+  // Writers (`saveThinkingEffort`, `saveEnabledModel`) and fixture-writing spikes
+  // use this form; readers use `configFilePath()`.
   mkdirSync(path.dirname(file), { recursive: true });
   return file;
 }
@@ -599,7 +613,8 @@ export function withModelChoice(config: AppConfig, target: ModelChoice): AppConf
  * error, since silently ignoring it would hide the user's intent.
  */
 export async function loadConfig(projectRoot: string): Promise<AppConfig> {
-  const file = configPath(projectRoot);
+  // A reader: derive the path without creating `~/.darwin` (see `configFilePath`).
+  const file = configFilePath();
 
   let raw: string;
   try {
@@ -1408,7 +1423,8 @@ async function loadHookLayer(layer: ExtensionRoot, projectRoot: string): Promise
 
   if (layer.kind === 'agents') return { sources, codexSources };
   const legacyFile = layer.scope === 'global' ? globalHooksPath() : projectHooksPath(projectRoot);
-  const configFile = layer.scope === 'global' ? configPath() : path.join(darwinDir(projectRoot), CONFIG_FILENAME);
+  // Read-only inspection: never create `~/.darwin` on the policy path either.
+  const configFile = layer.scope === 'global' ? configFilePath() : path.join(darwinDir(projectRoot), CONFIG_FILENAME);
   const legacyFileExists = await pathExists(legacyFile);
   if (sources.length > 0) {
     // Shadowed legacy input is notice-only. In particular, an invalid project

@@ -85,6 +85,7 @@ const suites = [
 
   'verify-export-command.ts',
   'verify-sessions-command.ts',
+  'verify-doctor-command.ts',
   'verify-clear-session.ts',
   'verify-rewind.ts',
   'verify-diagnostics.ts',

@@ -66,6 +66,7 @@ darwin
 darwin --resume
 darwin --resume <id>        # 查看 id：darwin sessions
 darwin --session <id>
+darwin doctor               # 离线只读诊断：配置、MCP、技能、hook；发现问题时退出码 1
 darwin --help               # 用法语法；darwin --version 打印版本
 ```
 

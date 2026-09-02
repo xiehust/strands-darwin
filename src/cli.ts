@@ -16,6 +16,7 @@ import {
   parseCliArgs,
   type CliOptions,
 } from './cli-args.js';
+import { isDoctorInvocation, parseDoctorArgs, runDoctorCommand } from './cli-doctor.js';
 import {
   isSessionsInvocation,
   parseSessionsArgs,
@@ -60,6 +61,13 @@ async function main(): Promise<void> {
     await runSessions(argv.slice(1));
     return;
   }
+  // `doctor` is the strictest reader of all: it composes the startup loaders into
+  // one report without starting a session, and must create nothing — so it too
+  // resolves before the runtime path.
+  if (isDoctorInvocation(argv)) {
+    await runDoctor(argv.slice(1));
+    return;
+  }
 
   let options: CliOptions;
   try {
@@ -83,6 +91,24 @@ async function runSessions(argv: readonly string[]): Promise<void> {
   try {
     parseSessionsArgs(argv);
     process.exitCode = await runSessionsCommand({
+      projectRoot: process.cwd(),
+      out: (text) => process.stdout.write(text),
+      err: (text) => process.stderr.write(text),
+    });
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      reportUsageError(error);
+      return;
+    }
+    process.stderr.write(`error: ${errorMessage(error)}\n`);
+    process.exitCode = 1;
+  }
+}
+
+async function runDoctor(argv: readonly string[]): Promise<void> {
+  try {
+    parseDoctorArgs(argv);
+    process.exitCode = await runDoctorCommand({
       projectRoot: process.cwd(),
       out: (text) => process.stdout.write(text),
       err: (text) => process.stderr.write(text),

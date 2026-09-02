@@ -66,6 +66,7 @@ darwin
 darwin --resume
 darwin --resume <id>        # ids: darwin sessions
 darwin --session <id>
+darwin doctor               # offline read-only diagnostics: config, MCP, skills, hooks; exit 1 on problems
 darwin --help               # usage grammar; darwin --version prints the version
 ```
 

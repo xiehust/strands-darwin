@@ -10,6 +10,7 @@ darwin --resume                             # last project session
 darwin --resume <id>                        # named session
 darwin --session <id>                       # named session, including a fork
 darwin sessions                             # restorable snapshots
+darwin doctor                               # offline read-only diagnostics, exit 1 on problems
 darwin -p "prompt"                          # one-shot text
 darwin -p "prompt" --continue               # follow last pointer
 darwin -p "prompt" --output-format json
@@ -30,6 +31,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--continue|--resume [<id>]|--session <id>] [permission flags]
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
+       darwin doctor
        darwin trajectory <list|search|replay|fork> …
        darwin --help | -h
        darwin --version | -V
@@ -40,6 +42,10 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 ```
 
 Print-only options: `--context-offload` (process-only force-on; offload is default-on), positive `--max-model-calls <n>`, `--compact-before`, `--output-format text|json|stream-json`. Permission overrides: `--permission-mode default|auto|plan|yolo`, `--yolo`. One leading standalone `--` is ignored for package-manager forwarding. Unknown/invalid grammar exits 2 with `error: <message>` on stderr followed by one hint line, `Run \`darwin --help\` for usage.`
+
+### `darwin doctor`
+
+An offline, read-only diagnostics report composed from the same loaders a session would run at startup: `~/.darwin/config.json` (provider, model, region or base URL, whether the named API-key variable is set — never its value — effort, prompt cache, context offload, trajectory / memory / diagnostics, permission mode), the system-prompt source, `AGENTS.md` size against the 32 KiB preload cap, the MCP config files in effect (which is read, which is ignored) and every configured server — a stdio `command` is looked up on `PATH`, an `http`/`sse` server is named as `not connected (doctor never connects)` — the skills catalogue per layer with every skipped entry and its reason, hook files with their dialect (native or Codex adapter), the permission-rules file, the sessions store and versions. A loader that would refuse to start the TUI (`ConfigError`) becomes one problem line here instead: problem lines start with `! `, are totalled at the end, and set the exit code — 0 when none, 1 when at least one. `doctor` starts no session, calls no model, spawns or connects to no MCP server, uses no network, and creates or moves nothing anywhere (not even `~/.darwin`); it takes no arguments (anything after the verb exits 2 with the usage error). Pinned by `spike/verify-doctor-command.ts`.
 
 ### Piped stdin with `-p`
 

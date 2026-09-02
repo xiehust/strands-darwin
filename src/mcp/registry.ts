@@ -132,6 +132,33 @@ export async function loadMcpClients(
   projectRoot: string,
   options: { quietStdioStderr?: boolean } = {},
 ): Promise<McpLoadResult> {
+  const { servers, ...sources } = await readMcpServerConfigs(projectRoot);
+  if (servers === undefined) return { clients: [], ...sources };
+
+  const prefixed = withDefaultPrefixes(servers);
+  const clients = options.quietStdioStderr === true
+    ? await loadServersQuietly(prefixed)
+    : await McpClient.loadServers(prefixed, { continueOnError: true });
+  return { clients, ...sources };
+}
+
+/** The declarative half of {@link loadMcpClients}: which files were read, and what they declare. */
+export interface McpServerConfigs extends Omit<McpLoadResult, 'clients'> {
+  /**
+   * Every declared server, project layer over global, exactly as written (no default
+   * prefix, no `${VAR}` interpolation — the SDK does both at connect time). `undefined`
+   * when no config file exists at all, which is the ordinary "no MCP" answer.
+   */
+  servers: Record<string, McpServerConfig> | undefined;
+}
+
+/**
+ * Reads and merges the MCP config files without constructing a single client:
+ * nothing is spawned and nothing connects. `darwin doctor` reports from this;
+ * {@link loadMcpClients} builds on it. An unreadable or malformed file is the same
+ * {@link ConfigError} startup raises.
+ */
+export async function readMcpServerConfigs(projectRoot: string): Promise<McpServerConfigs> {
   const { global, preferred, fallback } = mcpConfigCandidates(projectRoot);
 
   const [hasGlobal, hasPreferred, hasFallback] = await Promise.all([
@@ -140,7 +167,7 @@ export async function loadMcpClients(
   const projectConfig = hasPreferred ? preferred : hasFallback ? fallback : undefined;
   const ignoredConfigPath = hasPreferred && hasFallback ? fallback : undefined;
   if (!hasGlobal && projectConfig === undefined) {
-    return { clients: [], configPaths: [], overriddenServerNames: [], configPath: undefined, ignoredConfigPath };
+    return { servers: undefined, configPaths: [], overriddenServerNames: [], configPath: undefined, ignoredConfigPath };
   }
 
   const sources = [...new Set([hasGlobal ? global : undefined, projectConfig].filter(
@@ -163,12 +190,8 @@ export async function loadMcpClients(
       );
     }
   }
-  const prefixed = withDefaultPrefixes(servers);
-  const clients = options.quietStdioStderr === true
-    ? await loadServersQuietly(prefixed)
-    : await McpClient.loadServers(prefixed, { continueOnError: true });
   return {
-    clients,
+    servers,
     configPaths: sources,
     overriddenServerNames,
     configPath: projectConfig ?? (hasGlobal ? global : undefined),

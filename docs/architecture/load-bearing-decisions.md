@@ -409,6 +409,29 @@ a stack trace and never the pointer's session instead. Pointer semantics stay th
 it; quitting without a turn moves nothing. Free check: `spike/verify-sessions-command.ts` (in
 `pnpm test`).
 
+## `darwin doctor` — reports, never refuses; reads, never creates
+
+**The doctor is the startup loaders composed into one report, with exactly one rule changed: a
+loader that would refuse to start becomes a marked line** (`src/cli-doctor.ts`; spec:
+`backend/error-handling.md` degradation table). It calls the same `loadConfig`,
+`loadSystemPrompt`, `loadProjectInstructions`, `scanSkills` and `loadProjectPolicy` a session
+runs, so it says what a session *would* load rather than what a second parser thinks; a
+`ConfigError` (or a thrown skills scan) is one `! `-prefixed line carrying the loader's own
+message, the report always completes, problems are totalled and decide the exit code (0 / 1; 2 for
+any argument after the verb). Two loaders had to grow a side-effect-free half for this to be
+honest: `configPath()` created `~/.darwin` on the way to a *read*, so the two readers now derive
+the path through `configFilePath()` and only writers keep the mkdir; and `loadMcpClients` spawned
+servers as it parsed, so its declarative half is `readMcpServerConfigs` — the doctor reads servers
+from it and checks a stdio `command` with a plain `X_OK` PATH lookup (`lookupOnPath`), states an
+`http`/`sse` server as `not connected (doctor never connects)`, and never prints `args`, `env` or
+`headers`, which may carry tokens (the config's `apiKeyEnv` is reported as set/unset, never its
+value). It routes in `cli.ts` beside `sessions`, before argument parsing; its module closure
+reaches no runtime, headless, TUI, Ink or React module and imports no `Agent`. Free check:
+`spike/verify-doctor-command.ts` (in `pnpm test`): a marker-writing fixture command is found on
+PATH and never runs, a pristine HOME and the fixture project are snapshotted (path, kind, size,
+mtime) before and after the real process run and compared byte for byte. AGENTS.md has no row for
+this decision on purpose — it sits 101 bytes under its preload cap.
+
 ## Resumed-session full transcript — restore the human, not a second model history
 
 **A resumed TUI gets the full replayed session transcript as read-only startup scrollback**
