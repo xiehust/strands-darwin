@@ -17,15 +17,17 @@
  * developer's — see the note there before adding a scenario that reads one.
  *
  * Free scenarios (no model call): model | mode | clear | completion | pathCompletion | recall |
- * recallEmpty | bang | queue | wordNav | undo | mcp | resume | copy — `copy` (SER-057) seeds a
- * completed answer through a local fixture model and `--resume`, then proves the OSC 52
- * sequence in the raw pty output decodes to the exact committed answer text.
+ * recallEmpty | bang | queue | wordNav | undo | mcp | resume | copy | rewind | escRewind — `copy`
+ * (SER-057) seeds a completed answer through a local fixture model and `--resume`, then proves
+ * the OSC 52 sequence in the raw pty output decodes to the exact committed answer text;
+ * `escRewind` (SER-059) drives the seeded `rewind` fixture with two separate Escape pty events
+ * and proves the chord opens the `/rewind` chooser only on an empty idle composer.
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | contextOverflow | cursor | completion |
  *                 pathCompletion | historySearch | recall | recallEmpty | resume | copy | bang | queue | clear | mcpStderr | mcp |
- *                 toolDetails |
+ *                 rewind | escRewind | toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
  */
@@ -60,6 +62,7 @@ import { AGENTS_DIRNAME } from '../src/agents/loader.js';
 import { BUILTIN_COMMAND_NAMES, COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
 import { SKILLS_DIRNAME } from '../src/skills/loader.js';
 import { MAX_COMPLETIONS } from '../src/tui/InputBox.js';
+import { ESCAPE_REWIND_CHORD_MS } from '../src/tui/rewind-search.js';
 import { recordStream } from '../src/trajectory/stream.js';
 import { TrajectoryRecorder } from '../src/trajectory/writer.js';
 import { REPO_ROOT, startTui, stripAnsi, type TuiSession } from './tui-driver.js';
@@ -3191,11 +3194,13 @@ async function clearSession(): Promise<void> {
   }
 }
 
-/** Free pty `/rewind`: pre-seeded SDK snapshot + catalogue, no provider call. */
-async function rewindSession(): Promise<void> {
-  header('TUI — /rewind branches conversation and restores the selected prompt');
+/**
+ * Seeds the `/rewind` fixture state under a fresh {@link WORK_DIR}: a resumable
+ * source session at full capture capacity with one catalogued completed prompt
+ * boundary, so `rewind-tui-fixture.ts` resumes it with no provider call.
+ */
+async function seedRewindSource(sourceId: string): Promise<void> {
   await resetWorkDir();
-  const sourceId = 'session-rewind-source';
   const manager = createSessionManager(WORK_DIR, sourceId);
   const agent = new Agent({
     id: 'darwin',
@@ -3222,6 +3227,13 @@ async function rewindSession(): Promise<void> {
     completedAt: new Date().toISOString(),
   });
   await writePointer(WORK_DIR, sourceId);
+}
+
+/** Free pty `/rewind`: pre-seeded SDK snapshot + catalogue, no provider call. */
+async function rewindSession(): Promise<void> {
+  header('TUI — /rewind branches conversation and restores the selected prompt');
+  const sourceId = 'session-rewind-source';
+  await seedRewindSource(sourceId);
 
   const tui = startTui({ cwd: WORK_DIR, entry: path.join(REPO_ROOT, 'spike/rewind-tui-fixture.ts') });
   try {
@@ -3254,6 +3266,129 @@ async function rewindSession(): Promise<void> {
     assert('rewind scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
   } finally {
     tui.kill();
+  }
+}
+
+/** Two Escapes as two pty events, `gapMs` apart — never one `\x1b\x1b` chunk. */
+async function sendEscapeTwice(tui: TuiSession, gapMs: number): Promise<void> {
+  tui.send('\u001b');
+  await settle(gapMs);
+  tui.send('\u001b');
+}
+
+/** The chooser's title row and every `/rewind` refusal wording, for "nothing opened" checks. */
+function opensRewind(text: string): boolean {
+  return text.includes('rewind prompts') || text.includes('rewind unavailable') || text.includes('/rewind is not available');
+}
+
+/**
+ * Esc Esc (SER-059), free: the same seeded fixture as `rewind`, no provider call.
+ *
+ * Proves the chord is the `/rewind` command's own path — the picker's title, the
+ * capacity notice, acceptance, the returned prompt and the fresh-session refusal are
+ * the strings the `rewind` scenario anchors on — and that every guard holds: one Esc
+ * shows nothing, two Escapes further apart than {@link ESCAPE_REWIND_CHORD_MS} show
+ * nothing, a non-empty draft is left intact with no picker, and a busy `!` command
+ * ignores the chord. The Escapes are separate pty writes with a real gap (the spec's
+ * separate-control-byte rule), so what is measured is the timestamp window, not
+ * terminal chunking.
+ */
+async function escapeEscapeRewind(): Promise<void> {
+  header('TUI — Esc Esc on an empty idle composer opens the /rewind chooser');
+  const sourceId = 'session-esc-rewind-source';
+  await seedRewindSource(sourceId);
+  const INSIDE_WINDOW_MS = 120;
+  const OUTSIDE_WINDOW_MS = ESCAPE_REWIND_CHORD_MS + 300;
+
+  const tui = startTui({ cwd: WORK_DIR, entry: path.join(REPO_ROOT, 'spike/rewind-tui-fixture.ts') });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('fixture resumes the source session', headerSessionId(tui.frame) === sourceId);
+
+    // One Escape on an empty idle composer is the no-op it always was.
+    const beforeSingle = tui.mark();
+    tui.send('\u001b');
+    await settle(OUTSIDE_WINDOW_MS);
+    assert('a single Esc opens nothing', !opensRewind(tui.screen.slice(beforeSingle)));
+    assert('…and starts no turn', !tui.screen.slice(beforeSingle).includes('working…'));
+
+    // The Escape above is now older than the window: this one is a first press again.
+    tui.send('\u001b');
+    await settle(OUTSIDE_WINDOW_MS);
+    assert('two Escapes further apart than the window open nothing', !opensRewind(tui.screen.slice(beforeSingle)));
+
+    // A draft is something to lose: the chord is ignored and the draft untouched.
+    const beforeDraft = tui.mark();
+    tui.send('keep this draft');
+    await tui.waitFor('you> keep this draft', { timeoutMs: 30_000, from: beforeDraft, settleMs: 200 });
+    await sendEscapeTwice(tui, INSIDE_WINDOW_MS);
+    await settle(500);
+    assert('Esc Esc with a draft opens nothing', !opensRewind(tui.screen.slice(beforeDraft)));
+    assert('…and leaves the draft intact', tui.frame.includes('you> keep this draft'));
+    tui.send('\u0015');
+    await settle(400);
+    assert('Ctrl+U clears the draft again', !tui.frame.includes('keep this draft'));
+
+    // A running `!` command is a busy composer (`status === 'shell'`): no chord.
+    const beforeBusy = tui.mark();
+    tui.submit('!sleep 3');
+    await tui.waitFor('running ! command…', { timeoutMs: 30_000, from: beforeBusy, settleMs: 200 });
+    await sendEscapeTwice(tui, INSIDE_WINDOW_MS);
+    await settle(500);
+    assert('Esc Esc while a ! command runs opens nothing', !opensRewind(tui.screen.slice(beforeBusy)));
+    await tui.waitFor('$ sleep 3 (exit 0 in', { timeoutMs: 30_000, from: beforeBusy, settleMs: 300 });
+    assert('the ! command still completes normally', !opensRewind(tui.screen.slice(beforeBusy)));
+
+    // Empty, idle, nothing queued: the second Escape inside the window is `/rewind`.
+    const before = tui.mark();
+    await sendEscapeTwice(tui, INSIDE_WINDOW_MS);
+    await tui.waitFor('rewind prompts', { timeoutMs: 30_000, from: before, settleMs: 300 });
+    assert('the chooser lists the catalogued prompt', tui.frame.includes('selected prompt returns here'));
+    assert('the command\u2019s own capacity notice is shown — one code path, not a copy',
+      tui.screen.slice(before).includes('rewind checkpoint capacity reached'));
+    assert('the chord fakes no /rewind transcript row', !tui.screen.slice(before).includes('you> /rewind'));
+    tui.send('\r');
+    await tui.waitFor('Workspace unchanged:', { timeoutMs: 60_000, from: before, settleMs: 500 });
+    const successor = headerSessionId(tui.frame);
+    assert('acceptance moves the header to a fresh session, exactly as /rewind does',
+      successor !== '' && successor !== sourceId);
+    assert('the selected prompt returns to the editor unsent',
+      tui.frame.includes('you> selected prompt returns here') && !tui.screen.slice(before).includes('working…'));
+    tui.send('\u0015');
+    await settle(400);
+    tui.submit('/exit');
+    assert('escRewind scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+
+  // A fresh session has no catalogue: the chord shows exactly the notice `/rewind` shows.
+  await resetWorkDir();
+  await rm(sessionPaths(WORK_DIR).pointerFile, { force: true });
+  const fresh = startTui({ cwd: WORK_DIR, entry: path.join(REPO_ROOT, 'spike/rewind-tui-fixture.ts') });
+  try {
+    await fresh.waitFor('you>', { timeoutMs: 60_000 });
+    const beforeChord = fresh.mark();
+    await sendEscapeTwice(fresh, INSIDE_WINDOW_MS);
+    await fresh.waitFor('rewind unavailable', { timeoutMs: 30_000, from: beforeChord, settleMs: 300 });
+    const chordNotice = withoutWhitespace(fresh.screen.slice(beforeChord));
+    assert('a fresh session\u2019s Esc Esc states the no-catalogue refusal',
+      chordNotice.includes(withoutWhitespace('rewind unavailable — no completed prompt checkpoint is catalogued yet')));
+    assert('…and opens no chooser', !fresh.screen.slice(beforeChord).includes('rewind prompts'));
+    const beforeCommand = fresh.mark();
+    fresh.submit('/rewind');
+    await fresh.waitFor('rewind unavailable', { timeoutMs: 30_000, from: beforeCommand, settleMs: 300 });
+    assert('…which is the same notice /rewind shows',
+      withoutWhitespace(fresh.screen.slice(beforeCommand))
+        .includes(withoutWhitespace('rewind unavailable — no completed prompt checkpoint is catalogued yet')));
+    // The refused command is consumed like any local notice: it must not linger in
+    // the draft, where the next submission would be glued onto it.
+    await settle(300);
+    assert('a refused /rewind leaves an empty draft', /you>\s*$/.test(fresh.frame.trimEnd()) && !fresh.frame.includes('you> /rewind'));
+    fresh.submit('/exit');
+    assert('fresh escRewind session exits cleanly', (await fresh.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    fresh.kill();
   }
 }
 
@@ -4248,6 +4383,7 @@ const SCENARIOS = {
   queue: queueTakeback,
   clear: clearSession,
   rewind: rewindSession,
+  escRewind: escapeEscapeRewind,
   mcpStderr: mcpStderrIsolation,
   mcp: mcpReport,
   toolDetails: toolDetailsToggle,

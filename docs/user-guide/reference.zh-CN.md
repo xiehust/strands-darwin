@@ -120,6 +120,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `Tab` | 接受选中的补全项 |
 | `Up` / `Down` | 先操作菜单，再取回队列、回看历史或移动多行光标 |
 | `Escape` | 关闭当前补全菜单或结束历史回看；保留草稿和光标（权限框中仍表示拒绝） |
+| `Esc` `Esc` | 输入框为空且空闲时（无草稿、无回合、无 `!` 命令、无队列、无权限框），500 ms 内再按一次 `Esc` 打开 `/rewind` 选择器——与输入 `/rewind` 完全相同；此时单按一次 `Esc` 不做任何事 |
 | `Home` / `End`、`Ctrl+A` / `Ctrl+E` | 移到可见行开头/结尾 |
 | `Ctrl+K` / `Ctrl+U` | 删除到行尾/行首 |
 | `Ctrl+W` | 删除前一个词 |

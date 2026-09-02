@@ -80,7 +80,7 @@ per further row with nothing streaming, and one in-flight call with details expa
   window hides. If the cursor lands in the header after a layout change, this is why.
 - A **windowed draft has no `you>` row** (it scrolled out), so `waitForIdle` and `awaitsPermission`
   cannot be used while a tall draft is up — clear the draft first.
-- Escape dismissal creates no participant or row. Closing completion removes only the menu's existing claim; ending recall removes only its existing one-row indicator. Draft layout, cursor, queue, tools, answer, and transcript remain untouched.
+- Escape dismissal creates no participant or row. Closing completion removes only the menu's existing claim; ending recall removes only its existing one-row indicator. Draft layout, cursor, queue, tools, answer, and transcript remain untouched. The Esc Esc chord (SER-059) adds no row of its own either: an armed first Escape is an invisible timestamp, and the second opens the same bounded search claim `/rewind` opens.
 
 
 

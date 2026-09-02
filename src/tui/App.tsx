@@ -123,6 +123,7 @@ import {
   type PromptHistorySearch,
 } from './prompt-history-search.js';
 import {
+  ESCAPE_REWIND_CHORD_MS,
   acceptRewindSearch,
   appendRewindSearchQuery,
   backspaceRewindSearchQuery,
@@ -527,6 +528,49 @@ export function App({
     const current = rewindSearchRef.current;
     if (current !== undefined) setRewindSearch(update(current));
   }, [setRewindSearch]);
+  // The one way the chooser opens — `/rewind` and the Esc Esc chord (SER-059)
+  // both call it, so they cannot drift. Opening is local/read-only: the catalogue
+  // listing is the only runtime accessor, no snapshot is created, nothing is sent.
+  // Resolves `true` only when the chooser is actually up; every refusal is one
+  // bounded notice and `false`.
+  const openRewindChooser = useCallback(async (): Promise<boolean> => {
+    if (startRewind === undefined) {
+      dispatch({ type: 'notice', text: '/rewind is not available in this driver', severity: 'warn' });
+      return false;
+    }
+    const catalogue = await runtime.listRewindCheckpoints();
+    if (catalogue.problem !== undefined) {
+      dispatch({ type: 'notice', text: `rewind unavailable: ${catalogue.problem}`, severity: 'warn' });
+      return false;
+    }
+    if (catalogue.checkpoints.length === 0) {
+      dispatch({
+        type: 'notice',
+        text: runtime.info.resumed
+          ? 'rewind unavailable — this resumed session has no catalogued completed prompt boundary; unmapped historical SDK snapshots are not guessed'
+          : 'rewind unavailable — no completed prompt checkpoint is catalogued yet',
+        severity: 'warn',
+      });
+      return false;
+    }
+    if (catalogue.captureCapacityReached) {
+      dispatch({
+        type: 'notice',
+        text: 'rewind checkpoint capacity reached — existing completed boundaries remain available; later turns are not added',
+        severity: 'warn',
+      });
+    }
+    const opening = editorRef.current;
+    setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+    setRecall(undefined);
+    setHistorySearch(undefined);
+    setRewindSearch(openRewindSearch(opening, runtime.info.sessionId, catalogue.checkpoints));
+    return true;
+  }, [dispatch, runtime, setEditor, setHistorySearch, setRecall, setRewindSearch, startRewind]);
+  // When the first no-op Escape landed on an empty idle composer; a second one
+  // within ESCAPE_REWIND_CHORD_MS opens the chooser. Cleared by any other key or
+  // owner, so the chord can never straddle a draft, a turn or a menu.
+  const escapeArmedAt = useRef<number | undefined>(undefined);
   const historySearchRequest = useRef(0);
 
   // Read bookkeeping, in a ref for the same reason the path scan's is: a landed read
@@ -1334,41 +1378,17 @@ export function App({
       if (/^\/rewind(?:\s|$)/.test(text)) {
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
+        // A refused open is a consumed command like any other local notice: the
+        // draft is cleared so `/rewind` does not linger in front of the next prompt.
+        // An opened chooser owns the editor itself (and restores it on Escape).
         if (text !== '/rewind') {
           dispatch({ type: 'notice', text: '/rewind takes no arguments' });
+          setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
           return;
         }
-        if (startRewind === undefined) {
-          dispatch({ type: 'notice', text: '/rewind is not available in this driver', severity: 'warn' });
-          return;
+        if (!(await openRewindChooser())) {
+          setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         }
-        const catalogue = await runtime.listRewindCheckpoints();
-        if (catalogue.problem !== undefined) {
-          dispatch({ type: 'notice', text: `rewind unavailable: ${catalogue.problem}`, severity: 'warn' });
-          return;
-        }
-        if (catalogue.checkpoints.length === 0) {
-          dispatch({
-            type: 'notice',
-            text: runtime.info.resumed
-              ? 'rewind unavailable — this resumed session has no catalogued completed prompt boundary; unmapped historical SDK snapshots are not guessed'
-              : 'rewind unavailable — no completed prompt checkpoint is catalogued yet',
-            severity: 'warn',
-          });
-          return;
-        }
-        if (catalogue.captureCapacityReached) {
-          dispatch({
-            type: 'notice',
-            text: 'rewind checkpoint capacity reached — existing completed boundaries remain available; later turns are not added',
-            severity: 'warn',
-          });
-        }
-        const opening = editorRef.current;
-        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
-        setRecall(undefined);
-        setHistorySearch(undefined);
-        setRewindSearch(openRewindSearch(opening, runtime.info.sessionId, catalogue.checkpoints));
         return;
       }
 
@@ -1555,7 +1575,7 @@ export function App({
         });
       }
     },
-    [dispatch, exit, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setEditor, setQueued, startNewSession, status, writeToTerminal],
+    [dispatch, exit, openRewindChooser, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setEditor, setQueued, startNewSession, status, writeToTerminal],
   );
 
   // The drain (SER-027): when the session is idle and nothing owns the keyboard,
@@ -1956,6 +1976,12 @@ export function App({
   }, [exit, pendingPermission, permissions, runtime, status]);
 
   useInput((typed, key) => {
+    // Esc Esc chord (SER-059) bookkeeping: every key disarms it, and only the
+    // composer's own Escape branch below re-arms — so an Escape consumed by an
+    // earlier owner (permission, a search mode, a menu) never counts as a first press.
+    const armedEscapeAt = escapeArmedAt.current;
+    escapeArmedAt.current = undefined;
+
     if (key.ctrl && typed === 'd') {
       exit();
       return;
@@ -2044,8 +2070,21 @@ export function App({
       if (visible.length > 0 && currentCompletion.identity !== undefined) {
         setDismissedCompletion(currentCompletion.identity);
         setSelectedCompletion(0);
-      } else {
+      } else if (recallRef.current !== undefined) {
         endRecall();
+      } else if (status === 'idle' && queuedRef.current.length === 0 && editorRef.current.text === '') {
+        // Esc Esc (SER-059): no owner took this Escape and there is nothing to
+        // lose — empty draft, no turn or `!` command, no queue (a pending
+        // permission returned above). The first press arms a timestamp; a second
+        // inside the window opens the `/rewind` chooser through the command's own
+        // path. Two ESC bytes in one stdin chunk reach Ink as one escape with
+        // `meta`, which is both presses at once.
+        const now = Date.now();
+        if (key.meta || (armedEscapeAt !== undefined && now - armedEscapeAt < ESCAPE_REWIND_CHORD_MS)) {
+          void openRewindChooser();
+        } else {
+          escapeArmedAt.current = now;
+        }
       }
       return;
     }

@@ -4,6 +4,12 @@ import type { EditorValue } from './prompt-editor.js';
 
 export const MAX_REWIND_SEARCH_MATCHES = 5;
 export const MAX_REWIND_SEARCH_QUERY_CODE_POINTS = 256;
+/**
+ * Esc Esc (SER-059): how long after a first no-op Escape on an empty idle
+ * composer a second Escape still opens the `/rewind` chooser. A timestamp
+ * comparison in the key handler, never a timer.
+ */
+export const ESCAPE_REWIND_CHORD_MS = 500;
 
 export interface RewindSearch {
   readonly original: EditorValue;

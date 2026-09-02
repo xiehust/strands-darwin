@@ -2,6 +2,7 @@ import {
   BUILTIN_COMMAND_DESCRIPTIONS,
   BUILTIN_COMMAND_NAMES,
 } from '../commands/custom-commands.js';
+import { ESCAPE_REWIND_CHORD_MS } from './rewind-search.js';
 
 /** Hard report bounds: help is transcript history, never an unbounded catalogue dump. */
 export const MAX_HELP_COMMANDS = 24;
@@ -10,7 +11,7 @@ export const MAX_HELP_COMMANDS = 24;
  * the "prompt and completion" block and the "editing and session" block, plus the
  * one-line overflow notice a filled command cap would add.
  */
-export const HELP_FIXED_LINES = 22;
+export const HELP_FIXED_LINES = 23;
 /**
  * The line cap must cover the worst case — a command inventory that fills
  * `MAX_HELP_COMMANDS` *and* every fixed row — so `slice()` can never silently drop a
@@ -48,6 +49,7 @@ export function formatHelpReport(): string {
     '  Ctrl+R searches this project’s prompt history · type to filter · Ctrl+R/Up/Down navigate · Tab/Enter accepts',
     '  Up/Down precedence: completion · Up queued-message take-back · prompt recall · cursor movement',
     '  Esc closes completion, cancels history search to its exact draft/cursor, or ends prompt recall',
+    `  Esc Esc (within ${ESCAPE_REWIND_CHORD_MS} ms) on an empty idle composer opens the /rewind chooser; one Esc there does nothing`,
     'editing and session:',
     '  Home/End or Ctrl+A/E moves to the visible row edge',
     '  Ctrl+K/U deletes to the row end/start · Ctrl+W deletes the previous word',

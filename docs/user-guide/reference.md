@@ -120,6 +120,7 @@ Rules and limits:
 | `Tab` | accept selected completion |
 | `Up` / `Down` | menu first; then queue take-back, recall, or multiline cursor |
 | `Escape` | close current completion menu or end recall; preserve draft/cursor (permission prompt still denies) |
+| `Esc` `Esc` | on an empty idle composer (no draft, turn, `!` command, queue or prompt), a second `Esc` within 500 ms opens the `/rewind` chooser — same behavior as typing `/rewind`; one `Esc` there does nothing |
 | `Home` / `End`, `Ctrl+A` / `Ctrl+E` | visible-row start/end |
 | `Ctrl+K` / `Ctrl+U` | delete to row end/start |
 | `Ctrl+W` | delete previous word |

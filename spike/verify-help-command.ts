@@ -15,6 +15,7 @@ import {
   MAX_HELP_LINES,
   formatHelpReport,
 } from '../src/tui/help-format.js';
+import { ESCAPE_REWIND_CHORD_MS } from '../src/tui/rewind-search.js';
 import { assert, header, report } from './shared.js';
 
 header('/help — canonical command projection');
@@ -52,6 +53,7 @@ const facts = [
   'Ctrl+R/Up/Down navigate · Tab/Enter accepts',
   'completion · Up queued-message take-back · prompt recall · cursor movement',
   'Esc closes completion, cancels history search to its exact draft/cursor, or ends prompt recall',
+  `Esc Esc (within ${ESCAPE_REWIND_CHORD_MS} ms) on an empty idle composer opens the /rewind chooser; one Esc there does nothing`,
   'Home/End or Ctrl+A/E',
   'Ctrl+K/U deletes to the row end/start',
   'Ctrl+W deletes the previous word',
