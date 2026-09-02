@@ -149,7 +149,10 @@ const total = dispatches.totalUsage();
 assert('totalUsage sums every reporting dispatch and counts the included ones',
   total?.dispatches === 2 && total.usage.inputTokens === 11 && total.usage.outputTokens === 3);
 const heartbeats = progress.filter((event) => event.heartbeat);
-assert('active dispatches emit periodic stable-id increasing elapsed heartbeats', heartbeats.length >= 2 && heartbeats.every((event) => event.elapsedMs >= 25) && heartbeats.some((event, index) => index > 0 && event.elapsedMs > heartbeats[index - 1]!.elapsedMs));
+// `elapsedMs` is `floor(Date.now() - startedAt)` while the interval runs on libuv's
+// monotonic clock, so a 25 ms tick can legitimately measure 24 ms — a 1 ms rounding
+// artefact, not an early heartbeat. Anything shorter would be a real bug.
+assert('active dispatches emit periodic stable-id increasing elapsed heartbeats', heartbeats.length >= 2 && heartbeats.every((event) => event.elapsedMs >= 24) && heartbeats.some((event, index) => index > 0 && event.elapsedMs > heartbeats[index - 1]!.elapsedMs));
 assert('phase metadata is closed and bounded', progress.every((event) => event.phase.kind === 'starting' || event.phase.kind === 'model' || (event.phase.kind === 'tool' && /^[a-zA-Z0-9_.-]{1,64}$/.test(event.phase.toolName))));
 assert('progress contains no reasoning, payload, result, or transcript canaries', CANARIES.every((canary) => !JSON.stringify(progress).includes(canary)));
 const settledCount = progress.length;
