@@ -60,7 +60,7 @@ export const RESEARCH_PATHS = [
     weight: 1,
     focus: 'Strands SDK capabilities darwin does not use yet',
     scope:
-      'The SDK surface darwin has not adopted — hooks, plugins, interventions, conversation managers, model and tool features — measured against what darwin hand-rolls or does without. Read `.trellis/spec/backend/strands-sdk-contracts.md` first; a "missing" SDK feature is often a recorded contract.',
+      'The SDK surface darwin has not adopted — hooks, plugins, interventions, conversation managers, model and tool features — measured against what darwin hand-rolls or does without. Read the repository\'s recorded SDK contracts first (start from `AGENTS.md` and the architecture documents it points to); a "missing" SDK feature is often a recorded contract.',
   },
   {
     id: 'open',

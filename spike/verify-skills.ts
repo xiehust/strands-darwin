@@ -237,7 +237,8 @@ async function missingDirectory(): Promise<void> {
   assert('research has the exact four-state vocabulary', ['`not-started`', '`in-progress`', '`done`', '`abandoned`'].every((status) => researchWorkflow.includes(status)));
   assert('fresh research covers named and additional products', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', 'at least one additional relevant'].every((term) => researchWorkflow.includes(term)));
   assert('research refuses fabricated claims without source access', researchWorkflow.includes('source access is unavailable') && researchWorkflow.includes('never fabricate'));
-  assert('peer evidence is compared with current Darwin architecture', researchWorkflow.includes('source, tests, README, `.trellis/spec/`') && researchWorkflow.includes('SDK-extension architecture'));
+  assert('peer evidence is compared with current Darwin architecture', researchWorkflow.includes('source, tests, README, the repository\'s own instruction and architecture documents') && researchWorkflow.includes('SDK-extension architecture'));
+  assert('research does not depend on the optional Trellis workflow', !researchWorkflow.includes('.trellis') && !researchWorkflow.includes('Trellis'));
   assert('same-day runs append safely', researchWorkflow.includes('append a new `## Run — <UTC timestamp>` section') && researchWorkflow.includes('Never replace or rewrite an earlier same-day run'));
   assert('research proposes at most five directions', researchWorkflow.includes('zero to five new, non-duplicate iteration directions'));
   assert('ranking includes importance, difficulty, and supporting dimensions', ['**Importance**', '**Implementation difficulty**', '**Architecture fit**', '**Evidence confidence**', '**Implementation risk**'].every((term) => researchWorkflow.includes(term)));
