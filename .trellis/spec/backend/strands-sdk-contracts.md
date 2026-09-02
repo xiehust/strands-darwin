@@ -401,6 +401,73 @@ errors, provider schema, the 1 MiB limit, and all view contracts. On SDK upgrade
 patch from the pristine package, run `node --check` on installed `file-editor.js`, then run that
 focused suite before the project gates.
 
+### Contract: `/compact` builds one `SummarizingConversationManager` per call, with an optional bounded focus (SER-051)
+
+#### Scope / trigger
+
+`AgentRuntime.compact(focus?)` is the only consumer of the `/compact` manager. It is built per
+call by `createCompactionManager(preserveRecentMessages, focus)` in `src/agent/compact.ts`
+because `SummarizingConversationManagerConfig.summarizationSystemPrompt` is constructor-only in
+the SDK. Callers: the TUI `/compact [focus]` branch (`src/tui/App.tsx`) and headless
+`--compact-before` (`src/headless-runner.ts`, always without a focus). SDK overflow recovery
+keeps its own `conversationManager` with the configurable `summaryRatio`; nothing here touches it.
+
+#### Signatures
+
+- `normalizeCompactFocus(text) → string | undefined` — trimmed text; blank means "no focus".
+- `compactFocusRefusal(focus) → string | undefined` — the notice when the focus exceeds
+  `MAX_COMPACT_FOCUS_CODE_POINTS` (400 code points, `[...focus].length`), else undefined.
+- `focusedSummarizationPrompt(focus)` = `DEFAULT_SUMMARIZATION_PROMPT + '\n\n' +
+  COMPACT_FOCUS_HEADING + '\n' + focus`. The heading is one fixed line; the focus is plain text
+  under it — never parsed, never a sub-command.
+- `compactionManagerConfig(preserveRecentMessages, focus?)` — `{ summaryRatio: 0.8,
+  preserveRecentMessages }` and, only when a focus is given, `summarizationSystemPrompt`. It
+  throws the refusal notice for an over-cap focus before any manager exists.
+
+#### Contracts
+
+- Unfocused output never changes: without a focus the config carries exactly the two keys the
+  former process-lifetime manager was built with, so the SDK applies `DEFAULT_SUMMARIZATION_PROMPT`
+  itself and the summarizer request is byte-identical to a pre-SER-051 `/compact`. The summary
+  stays one user-role message of non-reasoning blocks.
+- `DEFAULT_SUMMARIZATION_PROMPT` is imported from the package root `'@strands-agents/sdk'`. The
+  SDK declares it in `dist/src/conversation-manager/compression/context-compression.js`, which the
+  package `exports` map does not expose; the pinned patch `patches/@strands-agents__sdk@1.12.0.patch`
+  therefore adds one re-export line to `dist/src/index.js` and one to `dist/src/index.d.ts`. Never
+  copy the prompt text into darwin (it would drift from what the SDK sends unfocused) and never
+  deep-import it. On SDK upgrade, regenerate the patch and keep both hunks; if the SDK starts
+  exporting the constant itself, drop the hunks and keep the root import.
+- The over-cap refusal happens before the `PreCompact` codex hook and before any model call:
+  `runtime.compact()` constructs the manager first. The TUI refuses locally with the same notice
+  (no `compacting` state entered). `PreCompact`/`PostCompact` payloads are unchanged (`trigger:
+  manual`, no focus field).
+- The reasoning-block scrub lives inside the patched `generateSummary`, so it applies to focused
+  and unfocused summaries alike.
+- The TUI records `/compact <focus>` as it records `/compact`: one `userInput` transcript
+  action; it never reaches `AgentRuntime.send`, so it is absent from recall and from the
+  trajectory's `userInput` lines. Busy refusal matches the first word, so `/compact <focus>` still
+  refuses to queue.
+
+#### Tests required
+
+`spike/verify-compact.ts` (free): unfocused requests carry exactly `DEFAULT_SUMMARIZATION_PROMPT`
+and the two-key config; focused requests carry the default prompt once plus the focus once under
+the fixed heading; trim/blank/cap/code-point counting; the reasoning scrub on a focused two-pass
+compaction; the manager-before-hook order in `runtime.compact`; and a source assertion that
+`compact.ts` root-imports the constant with no deep import and no copied prompt text.
+`spike/verify-help-command.ts` and `spike/verify-tui.ts completion` (free) pin the description;
+`spike/verify-tui.ts compacting` (live) pins keyboard ownership. After touching the patch:
+`pnpm install --frozen-lockfile` must reapply it and `pnpm typecheck` must pass.
+
+#### Wrong vs correct
+
+Wrong: `const PROMPT = 'You are a conversation summarizer…'` in darwin, or
+`import … from '@strands-agents/sdk/dist/src/conversation-manager/compression/context-compression.js'`.
+Wrong: setting `summarizationSystemPrompt: DEFAULT_SUMMARIZATION_PROMPT` on the unfocused
+manager "for symmetry" — it is equivalent today but makes the unfocused request depend on darwin's
+import instead of the SDK's own default. Correct: two-key config unfocused, root import, one patch
+hunk per `index.*` file.
+
 
 ## Observing the stream (what darwin measured to record it)
 

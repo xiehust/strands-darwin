@@ -68,7 +68,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 |---|---|
 | `/agents` | 当前运行的有界派发列表；只有元数据 |
 | `/clear` | 创建后继会话；继承当前模式；丢弃队列 |
-| `/compact` | 摘要较旧对话；由用户主动触发 |
+| `/compact [focus]` | 摘要较旧对话；由用户主动触发。可选的 focus 文本（去除首尾空白后不超过 400 个码点，超出则提示拒绝且不执行）会作为一个固定小节追加到 SDK 默认摘要提示之后，要求摘要保留其所述内容；不带 focus 时摘要请求与以往完全一致 |
 | `/context` | 已知/估算的上下文大小；Bedrock 可能使用启发式 |
 | `/effort [level]` | 查看或设置会持久化的模型思考强度 |
 | `/exit`、`/quit` | 退出 |

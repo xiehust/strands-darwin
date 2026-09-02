@@ -1,10 +1,11 @@
 /** Offline contracts for explicit conversation compaction and persisted resume. */
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import {
   Agent,
+  DEFAULT_SUMMARIZATION_PROMPT,
   Message,
   Model,
   ReasoningBlock,
@@ -20,14 +21,23 @@ import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
 import {
+  COMPACT_FOCUS_HEADING,
+  MAX_COMPACT_FOCUS_CODE_POINTS,
   compactConversation,
+  compactFocusRefusal,
+  compactionManagerConfig,
   countConversationTokens,
+  createCompactionManager,
+  focusedSummarizationPrompt,
+  normalizeCompactFocus,
   stripReasoningFromUserMessages,
 } from '../src/agent/compact.js';
 import { assert, header, report } from './shared.js';
 
 class DeterministicModel extends Model<BaseModelConfig> {
   readonly counted: { messages: number; systemPrompt: unknown; toolNames: string[] }[] = [];
+  /** The system prompt of every summarization request, in call order. */
+  readonly summaryPrompts: (StreamOptions['systemPrompt'])[] = [];
   private summaries = 0;
   private config: BaseModelConfig = { modelId: 'fake.compact', contextWindowLimit: 200_000 };
   failSummaries = false;
@@ -53,9 +63,10 @@ class DeterministicModel extends Model<BaseModelConfig> {
     return super.countTokens(messages, options);
   }
 
-  override async *stream(messages: Message[], _options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+  override async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     if (this.failSummaries) throw new Error('summary unavailable');
     const summarizing = textOf(messages.at(-1)) === 'Please summarize this conversation.';
+    if (summarizing) this.summaryPrompts.push(options?.systemPrompt);
     const text = summarizing
       ? `summary-${++this.summaries}: retained marker-early`
       : `continued from: ${textOf(messages[0])}`;
@@ -103,7 +114,8 @@ async function main(): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'darwin-compact-'));
   const storage = new LocalFileStorage(root);
   const model = new DeterministicModel();
-  const manager = new SummarizingConversationManager({ summaryRatio: 0.8, preserveRecentMessages: 4 });
+  // The unfocused `/compact` manager, built exactly as the runtime builds it.
+  const manager = createCompactionManager(4);
   const sessionManager = new SessionManager({ sessionId: 'compact-test', storage, saveLatestOn: 'invocation' });
   const agent = new Agent({
     id: 'darwin',
@@ -134,6 +146,21 @@ async function main(): Promise<void> {
     assert('context token estimate shrinks', result.estimatedTokensSaved > 0 && result.estimatedTokensAfter < result.estimatedTokensBefore);
     assert('token counting includes the assembled system prompt', model.counted.every((call) => call.systemPrompt === agent.systemPrompt));
     assert('token counting includes registered tools', model.counted.every((call) => call.toolNames.includes('fileEditor')));
+    // SER-051 (a): unfocused compaction sends the summarizer exactly the SDK default
+    // prompt, and the summary is one user-role message of text only.
+    assert('unfocused compaction made at least one summarization request', model.summaryPrompts.length > 0);
+    assert(
+      'unfocused compaction sends the summarizer exactly DEFAULT_SUMMARIZATION_PROMPT',
+      model.summaryPrompts.every((prompt) => prompt === DEFAULT_SUMMARIZATION_PROMPT),
+    );
+    assert(
+      'the unfocused summary is a user-role message carrying text blocks only',
+      agent.messages[0]?.role === 'user' && agent.messages[0].content.every((block) => block.type === 'textBlock'),
+    );
+    assert(
+      'the unfocused manager config has exactly the two pre-existing keys',
+      JSON.stringify(compactionManagerConfig(4)) === JSON.stringify({ summaryRatio: 0.8, preserveRecentMessages: 4 }),
+    );
 
     const restoredModel = new DeterministicModel();
     const restored = new Agent({
@@ -243,6 +270,81 @@ async function main(): Promise<void> {
     });
     assert('a reasoning-only summary response compacts nothing', !emptyResult.compacted);
     assert('a reasoning-only summary response mutates no message', JSON.stringify(emptyAgent.messages) === emptyBefore);
+
+    // SER-051 (b): a focused compaction's summarizer prompt is the SDK default
+    // verbatim, one blank line, the fixed heading, then the focus — each once.
+    const focus = 'keep every file path and the failing test name';
+    const focusedPrompt = focusedSummarizationPrompt(focus);
+    assert('the focused prompt starts with DEFAULT_SUMMARIZATION_PROMPT and a blank line', focusedPrompt.startsWith(`${DEFAULT_SUMMARIZATION_PROMPT}\n\n`));
+    assert('the focused prompt ends with the fixed heading and the focus', focusedPrompt.endsWith(`${COMPACT_FOCUS_HEADING}\n${focus}`));
+    assert('the default prompt appears exactly once in the focused prompt', focusedPrompt.split(DEFAULT_SUMMARIZATION_PROMPT).length === 2);
+    assert('the focus appears exactly once in the focused prompt', focusedPrompt.split(focus).length === 2);
+    assert(
+      'the focused manager config adds only summarizationSystemPrompt',
+      JSON.stringify(compactionManagerConfig(4, focus)) ===
+        JSON.stringify({ summaryRatio: 0.8, preserveRecentMessages: 4, summarizationSystemPrompt: focusedPrompt }),
+    );
+    assert('normalizeCompactFocus trims', normalizeCompactFocus('  keep paths \n') === 'keep paths');
+    assert('a blank focus is no focus', normalizeCompactFocus('   ') === undefined && normalizeCompactFocus(undefined) === undefined);
+    assert('a focus at the cap is accepted', compactFocusRefusal('é'.repeat(MAX_COMPACT_FOCUS_CODE_POINTS)) === undefined);
+
+    // (d) the reasoning scrub applies to a focused summary too; preserveRecentMessages: 2
+    // forces two reduce passes, so the second summarizes the first focused summary.
+    const focusedModel = new DeterministicModel();
+    focusedModel.emitReasoningOnSummaries = true;
+    const focusedAgent = new Agent({ model: focusedModel, messages: seededMessages(), printer: false });
+    await focusedAgent.initialize();
+    const focusedResult = await compactConversation({
+      agent: focusedAgent,
+      model: focusedModel,
+      manager: createCompactionManager(2, focus),
+      preserveRecentMessages: 2,
+      persist: async () => {},
+    });
+    assert('focused compaction with a reasoning-emitting model succeeds', focusedResult.compacted);
+    assert('focused compaction made summarization requests', focusedModel.summaryPrompts.length >= 2);
+    assert('every focused summarization request carries the focused prompt', focusedModel.summaryPrompts.every((prompt) => prompt === focusedPrompt));
+    assert(
+      'no user message carries a reasoning block after focused compaction',
+      focusedAgent.messages.every(
+        (message) => message.role !== 'user' || message.content.every((block) => block.type !== 'reasoningBlock'),
+      ),
+    );
+    assert('the focused rolling summary stays a user message with its text', focusedAgent.messages[0]?.role === 'user' && textOf(focusedAgent.messages[0]).includes('summary-2'));
+
+    // (c) an over-cap focus is refused before any manager, hook, or model call exists.
+    const overCap = 'x'.repeat(MAX_COMPACT_FOCUS_CODE_POINTS + 1);
+    const refusal = compactFocusRefusal(overCap);
+    assert(
+      'an over-cap focus yields a notice naming the length and the cap',
+      refusal !== undefined && refusal.includes(String(MAX_COMPACT_FOCUS_CODE_POINTS + 1)) && refusal.includes(String(MAX_COMPACT_FOCUS_CODE_POINTS)),
+    );
+    assert('a surrogate-pair focus is measured in code points', compactFocusRefusal('😀'.repeat(MAX_COMPACT_FOCUS_CODE_POINTS)) === undefined);
+    let overCapError: unknown;
+    try {
+      createCompactionManager(4, overCap);
+    } catch (error) {
+      overCapError = error;
+    }
+    assert('creating a manager with an over-cap focus throws the same notice', overCapError instanceof Error && overCapError.message === refusal);
+    // The runtime refuses before its PreCompact hook, so nothing downstream (hook,
+    // reduce loop, model) can run for an over-cap focus.
+    const runtimeSource = await readFile(new URL('../src/agent/runtime.ts', import.meta.url), 'utf8');
+    const compactBody = runtimeSource.slice(runtimeSource.indexOf('async compact(focus?: string)'));
+    const managerAt = compactBody.indexOf('createCompactionManager(');
+    const hookAt = compactBody.indexOf('preCompact(');
+    assert('runtime.compact builds (and so refuses) the manager before the PreCompact hook', managerAt !== -1 && hookAt !== -1 && managerAt < hookAt);
+
+    // (e) the default prompt is imported from the package root, never a deep path or a copy.
+    const compactSource = await readFile(new URL('../src/agent/compact.ts', import.meta.url), 'utf8');
+    assert(
+      'compact.ts imports DEFAULT_SUMMARIZATION_PROMPT from the @strands-agents/sdk root',
+      /import \{[^}]*\bDEFAULT_SUMMARIZATION_PROMPT\b[^}]*\} from '@strands-agents\/sdk';/u.test(compactSource),
+    );
+    assert('compact.ts never deep-imports context-compression', !/from '@strands-agents\/sdk\/[^']*context-compression/u.test(compactSource));
+    assert('compact.ts carries no copy of the SDK prompt text', !compactSource.includes('You are a conversation summarizer'));
+    const [firstPromptLine = ''] = DEFAULT_SUMMARIZATION_PROMPT.split('\n');
+    assert('the root re-export is the SDK prompt (its first line reads as the summarizer instruction)', firstPromptLine.startsWith('You are a conversation summarizer'));
 
     // Restore-time repair for histories poisoned before the summarizer fix.
     const poisonedText = new TextBlock('## Conversation Summary\n* kept');

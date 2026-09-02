@@ -20,6 +20,30 @@ index 84e3d1bb0bcd499d3dd2cd07c08baa79807ca79c..7e1c407bb04714309226c40b5daa0082
      });
  }
  /**
+diff --git a/dist/src/index.d.ts b/dist/src/index.d.ts
+index e07163f891ff1472c0fbf446c8423e2228574d58..caa86ad77bb151c6d9a7ab947ea5d1ca0432f8dd 100644
+--- a/dist/src/index.d.ts
++++ b/dist/src/index.d.ts
+@@ -53,6 +53,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
+ export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
+ export { SlidingWindowConversationManager, type SlidingWindowConversationManagerConfig, } from './conversation-manager/sliding-window-conversation-manager.js';
+ export { SummarizingConversationManager, type SummarizingConversationManagerConfig, } from './conversation-manager/summarizing-conversation-manager.js';
++export { DEFAULT_SUMMARIZATION_PROMPT } from './conversation-manager/compression/context-compression.js';
+ export { configureLogging } from './logging/logger.js';
+ export type { Logger } from './logging/types.js';
+ export { type McpClientOptions, type McpListToolsOptions, type McpToolFilterCallback, type McpToolFilters, type McpToolMatcher, type McpClientConfig, type McpClientCredentials, type McpTransport, type McpCallToolOptions, type TasksConfig, type McpConnectionState, type McpServerConfig, type SerializableMcpToolFilters, McpClient, } from './mcp/index.js';
+diff --git a/dist/src/index.js b/dist/src/index.js
+index 329c816c53806b4d3c66d8944c7bc9798ab4bf2d..9027a18786ec9cecfc26e1c7498c1cf0b8972c5e 100644
+--- a/dist/src/index.js
++++ b/dist/src/index.js
+@@ -50,6 +50,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
+ export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
+ export { SlidingWindowConversationManager, } from './conversation-manager/sliding-window-conversation-manager.js';
+ export { SummarizingConversationManager, } from './conversation-manager/summarizing-conversation-manager.js';
++export { DEFAULT_SUMMARIZATION_PROMPT } from './conversation-manager/compression/context-compression.js';
+ // Logging
+ export { configureLogging } from './logging/logger.js';
+ // MCP Client types and implementations
 diff --git a/dist/src/models/openai/errors.js b/dist/src/models/openai/errors.js
 index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279e2355066 100644
 --- a/dist/src/models/openai/errors.js

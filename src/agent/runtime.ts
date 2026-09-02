@@ -16,6 +16,8 @@ import path from 'node:path';
 import {
   compactConversation,
   countConversationTokens,
+  createCompactionManager,
+  normalizeCompactFocus,
   stripReasoningFromUserMessages,
   type CompactResult,
 } from './compact.js';
@@ -435,7 +437,7 @@ export class AgentRuntime {
     /** Portable Codex-dialect session/tool/lifecycle adapter. */
     private readonly codexHooks: CodexHookRunner | undefined,
     private readonly sessionManager: SessionManager,
-    private readonly compactionManager: SummarizingConversationManager,
+    /** The `/compact` recent window; the manager itself is built per call (focus is constructor-only). */
     private readonly preserveRecentMessages: number,
     /** Undefined when `trajectory: false` switched recording off for this run. */
     private readonly trajectory: TrajectoryRecorder | undefined,
@@ -597,13 +599,8 @@ export class AgentRuntime {
       preserveRecentMessages: config.preserveRecentMessages,
     });
 
-    // `/compact` has a different target from overflow recovery: collapse every
-    // reducible old message in one command, leaving one summary plus the recent
-    // window. A ratio of 0.8 is the SDK's maximum and minimizes model calls.
-    const compactionManager = new SummarizingConversationManager({
-      summaryRatio: 0.8,
-      preserveRecentMessages: config.preserveRecentMessages,
-    });
+    // `/compact` builds its own SummarizingConversationManager per call (see
+    // `createCompactionManager` in compact.ts): the optional focus is constructor-only.
     // On by default for every main runtime; explicit config false opts out and the
     // headless CLI override can force it back on for one process. Storage is
     // session-scoped and on disk, next to the background-task logs, so a reference
@@ -807,7 +804,6 @@ export class AgentRuntime {
       policy.toolHookLayers,
       codexHooks,
       sessionManager,
-      compactionManager,
       config.preserveRecentMessages,
       trajectory,
       diagnosticsLog,
@@ -1057,15 +1053,22 @@ export class AgentRuntime {
    * `/compact` must not become part of the context it is trying to shrink. The
    * original messages are cloned so any model/count/storage failure can put the
    * live agent back exactly where it started.
+   *
+   * `focus` (trimmed here; blank means none) makes this one summary keep what it
+   * names: the summarizer's system prompt becomes the SDK default followed by one
+   * fixed focus section. Without a focus the manager is configured exactly as
+   * before per-call construction existed. An over-cap focus is refused here,
+   * before the PreCompact hook and before any model call.
    */
-  async compact(): Promise<CompactResult> {
+  async compact(focus?: string): Promise<CompactResult> {
+    const manager = createCompactionManager(this.preserveRecentMessages, normalizeCompactFocus(focus));
     const pre = await this.codexHooks?.preCompact('manual');
     if (pre !== undefined && !pre.allowed) throw new Error(pre.reason ?? 'PreCompact hook blocked compaction.');
     try {
       const result = await compactConversation({
         agent: this.agent,
         model: this.model,
-        manager: this.compactionManager,
+        manager,
         preserveRecentMessages: this.preserveRecentMessages,
         persist: async () => {
           await this.agent.sessionManager?.saveSnapshot({ target: this.agent, isLatest: true });

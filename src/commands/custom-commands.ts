@@ -22,7 +22,8 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   agents: 'list or cancel subagent dispatches',
   // Starts a new session; the one being left stays on disk and resumable.
   clear: 'start a new session',
-  compact: 'summarize older conversation',
+  // `/compact <focus>` steers one summary; bare `/compact` is the SDK default prompt.
+  compact: 'summarize older conversation, optionally around a focus',
   context: 'estimated context size',
   effort: 'set thinking depth',
   exit: 'quit darwin',

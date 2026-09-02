@@ -24,6 +24,7 @@ import {
   type AllowRuleEntry,
   type PermissionDecision,
 } from '../agent/permission.js';
+import { compactFocusRefusal, normalizeCompactFocus } from '../agent/compact.js';
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { averageRequestInputTokens, type SessionCallStats } from '../agent/call-stats.js';
@@ -1424,13 +1425,17 @@ export function App({
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
-        if (text !== '/compact') {
-          dispatch({ type: 'notice', text: '/compact takes no arguments' });
+        // Optional focus: plain text the summarizer is told to keep, never a
+        // sub-command. Over the cap is a local notice — no hook, no model call.
+        const focus = normalizeCompactFocus(text.slice('/compact'.length));
+        const refusal = compactFocusRefusal(focus);
+        if (refusal !== undefined) {
+          dispatch({ type: 'notice', text: refusal });
           return;
         }
         setStatus('compacting');
         try {
-          const result = await runtime.compact();
+          const result = await runtime.compact(focus);
           dispatch({ type: 'notice', text: formatCompactReport(result) });
         } catch (error) {
           dispatch({

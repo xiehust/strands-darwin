@@ -5,8 +5,80 @@
  * transformation and token accounting, which keeps it testable with a real SDK
  * Agent and a deterministic model.
  */
-import type { Agent, Message, Model } from '@strands-agents/sdk';
-import { SummarizingConversationManager } from '@strands-agents/sdk';
+import type { Agent, Message, Model, SummarizingConversationManagerConfig } from '@strands-agents/sdk';
+// `DEFAULT_SUMMARIZATION_PROMPT` reaches the package root only through the pinned
+// SDK patch (`patches/@strands-agents__sdk@1.12.0.patch`, `dist/src/index.*`
+// hunks): the SDK declares it in a module its `exports` map does not expose.
+// Never copy the string here — a copy would drift from what the SDK sends when
+// no focus is given.
+import { DEFAULT_SUMMARIZATION_PROMPT, SummarizingConversationManager } from '@strands-agents/sdk';
+
+/**
+ * `/compact` collapses every reducible old message in one command, leaving one
+ * summary plus the recent window. 0.8 is the SDK's maximum ratio and minimizes
+ * model calls; overflow recovery uses the configurable `summaryRatio` instead.
+ */
+export const COMPACT_SUMMARY_RATIO = 0.8;
+/** Upper bound on one `/compact <focus>` argument, in code points, after trimming. */
+export const MAX_COMPACT_FOCUS_CODE_POINTS = 400;
+/**
+ * The one fixed section appended after the SDK prompt when a focus is given. The
+ * focus is plain text under this heading — never parsed, never a command.
+ */
+export const COMPACT_FOCUS_HEADING = "User's focus for this summary (keep what it names in detail):";
+
+/**
+ * Trims a `/compact` argument; blank text means "no focus". Returns the trimmed
+ * text unbounded — {@link compactFocusRefusal} decides whether it may be used.
+ */
+export function normalizeCompactFocus(text: string | undefined): string | undefined {
+  const trimmed = text?.trim() ?? '';
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
+/** The notice for a focus over the cap, or undefined when the focus is acceptable. */
+export function compactFocusRefusal(focus: string | undefined): string | undefined {
+  if (focus === undefined) return undefined;
+  const length = [...focus].length;
+  if (length <= MAX_COMPACT_FOCUS_CODE_POINTS) return undefined;
+  return `/compact focus is too long (${length} code points; cap ${MAX_COMPACT_FOCUS_CODE_POINTS}) — compaction did not run`;
+}
+
+/**
+ * The summarizer system prompt: the SDK default verbatim, then — only with a
+ * focus — one blank line and the fixed focus section. Unfocused callers must not
+ * call this; they leave the manager's `summarizationSystemPrompt` unset so the
+ * SDK applies its own default and the request is identical to a plain `/compact`.
+ */
+export function focusedSummarizationPrompt(focus: string): string {
+  return `${DEFAULT_SUMMARIZATION_PROMPT}\n\n${COMPACT_FOCUS_HEADING}\n${focus}`;
+}
+
+/**
+ * Constructor config for one `/compact` manager. Without a focus the object has
+ * exactly the two keys the process-lifetime manager used to be built with, so the
+ * unfocused request cannot differ from before per-call construction existed.
+ *
+ * @throws When the focus is over the cap — refused before any manager, hook or
+ *   model call exists.
+ */
+export function compactionManagerConfig(
+  preserveRecentMessages: number,
+  focus?: string,
+): SummarizingConversationManagerConfig {
+  const refusal = compactFocusRefusal(focus);
+  if (refusal !== undefined) throw new Error(refusal);
+  return {
+    summaryRatio: COMPACT_SUMMARY_RATIO,
+    preserveRecentMessages,
+    ...(focus !== undefined && { summarizationSystemPrompt: focusedSummarizationPrompt(focus) }),
+  };
+}
+
+/** One manager per `/compact` call: the focus is constructor-only in the SDK. */
+export function createCompactionManager(preserveRecentMessages: number, focus?: string): SummarizingConversationManager {
+  return new SummarizingConversationManager(compactionManagerConfig(preserveRecentMessages, focus));
+}
 
 export interface CompactResult {
   messagesBefore: number;

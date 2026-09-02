@@ -68,7 +68,7 @@ Rules and limits:
 |---|---|
 | `/agents` | bounded dispatch list for this run; metadata only |
 | `/clear` | new successor session; live mode inherited; queue dropped |
-| `/compact` | summarize older conversation; user controlled |
+| `/compact [focus]` | summarize older conversation; user controlled. Optional focus text (≤400 code points after trimming, longer is refused with a notice and nothing runs) is appended to the SDK's default summarizer prompt as one fixed section the summary must keep; without it the summarizer request is unchanged |
 | `/context` | known/estimated context size; Bedrock may use heuristic |
 | `/effort [level]` | show or set persisted model effort |
 | `/exit`, `/quit` | quit |
