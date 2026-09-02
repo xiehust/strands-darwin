@@ -384,6 +384,14 @@ const DEFAULT_MODELS: readonly ModelFields[] = [
     thinkingEffort: DEFAULTS.thinkingEffort,
   },
   {
+    name: 'claude-fable-5.1',
+    provider: 'bedrock',
+    model: 'global.anthropic.claude-fable-5-1',
+    maxTokens: DEFAULTS.maxTokens,
+    promptCache: DEFAULTS.promptCache,
+    thinkingEffort: DEFAULTS.thinkingEffort,
+  },
+  {
     name: 'claude-opus-5',
     // The enabled entry, by construction: {@link defaultConfig} marks whichever
     // entry carries DEFAULTS.model, so the flat fallbacks and the catalogue can

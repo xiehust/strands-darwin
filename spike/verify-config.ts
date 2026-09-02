@@ -95,7 +95,11 @@ async function defaults(): Promise<void> {
   // same one the flat fallbacks name.
   const names = config.modelChoices.map((choice) => choice.name);
   console.log(`  catalogue: ${names.join(', ')}`);
-  assert('the defaults offer the whole preset catalogue', config.modelChoices.length === 5);
+  assert('the defaults offer the whole preset catalogue', config.modelChoices.length === 6);
+  assert(
+    'the defaults include Claude Fable 5.1',
+    config.modelChoices.some((choice) => choice.fields.model === 'global.anthropic.claude-fable-5-1'),
+  );
   assert(
     'exactly one preset entry is enabled…',
     config.modelChoices.filter((choice) => choice.enabled).length === 1,
@@ -136,15 +140,15 @@ async function defaults(): Promise<void> {
 
   // The first /model switch in a new installation must materialize the preset
   // catalogue rather than treating the still-missing file as an explicit flat config.
-  await saveEnabledModel(ROOT, 4);
+  await saveEnabledModel(ROOT, 5);
   const savedDefaults = JSON.parse(await readFile(configPath(ROOT), 'utf8')) as {
     models: { name?: string; model?: string; enable?: boolean }[];
   };
-  assert('the first preset switch creates the full models array', savedDefaults.models.length === 5);
-  assert('the selected preset is enabled in the new file', savedDefaults.models[4]?.enable === true);
+  assert('the first preset switch creates the full models array', savedDefaults.models.length === 6);
+  assert('the selected preset is enabled in the new file', savedDefaults.models[5]?.enable === true);
   assert(
     'every other preset is explicitly disabled in the new file',
-    savedDefaults.models.slice(0, 4).every((entry) => entry.enable === false),
+    savedDefaults.models.slice(0, 5).every((entry) => entry.enable === false),
   );
   const savedDefaultReload = await loadConfig(ROOT);
   assert('the first preset switch survives a reload', savedDefaultReload.model === 'openai.gpt-5.6-sol');
