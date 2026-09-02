@@ -41,14 +41,14 @@ Backlog record: `docs/research/backlog/directions-061-080.md` § SER-053 (Priori
 
 ## Acceptance Criteria
 
-- [ ] AC1. The six probe commands classify `dangerous` and the reason names the option.
-- [ ] AC2. Every still-safe form in R4 classifies `safe`.
-- [ ] AC3. Combined short flags (`-Df`, `-fD`) and the `=`-joined spellings
+- [x] AC1. The six probe commands classify `dangerous` and the reason names the option.
+- [x] AC2. Every still-safe form in R4 classifies `safe`.
+- [x] AC3. Combined short flags (`-Df`, `-fD`) and the `=`-joined spellings
   (`--set-upstream-to=x`, `--output=x`) are caught.
-- [ ] AC4. A mutating option in a later piped/chained segment makes the command `dangerous`.
-- [ ] AC5. Docs and spec state the argument rule.
-- [ ] AC6. `pnpm typecheck` clean; `pnpm test` exit 0 with zero FAIL lines.
-- [ ] AC7. Commits follow the repository convention; task archived; `git status --porcelain`
+- [x] AC4. A mutating option in a later piped/chained segment makes the command `dangerous`.
+- [x] AC5. Docs and spec state the argument rule.
+- [x] AC6. `pnpm typecheck` clean; `pnpm test` exit 0 with zero FAIL lines.
+- [x] AC7. Commits follow the repository convention; task archived; `git status --porcelain`
   clean.
 
 ## Requirement-to-test checklist

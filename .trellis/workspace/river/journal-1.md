@@ -1144,3 +1144,18 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
   initialize/rewind restore in `runtime.ts`, to repair already-poisoned histories.
 - verify-compact grew 14 assertions (27/27); typecheck + full suite green; spec
   `/compact` scenario updated; committed f4e3271; `pnpm build` refreshed dist.
+
+## 2026-09-02 — SER-053 static bash classifier mutating-argument escapes (09-02-ser-053-bash-classifier-mutating-args)
+
+- `assessBashRisk` judged a segment by its first word only, so `find … -delete`,
+  `find … -exec`, `git branch -D/-m`, `git diff/log --output=` were `safe — read-only
+  command` and ran unprompted in `default`/`auto`.
+- Added a per-command mutating-option rule (`find`, `git branch` incl. combined short
+  flags and `--opt=value`, `git log/diff/show --output`) after the first-word check;
+  whitelist sets, allow rules, classifier and plan denial untouched.
+- `verify-permission-modes.ts` grew 45 assertions (154/154); typecheck + full suite
+  exit 0; user guide (en/zh), `strands-sdk-contracts.md` static-safety contract and
+  load-bearing-decisions Permissions § state the rule. Committed 14378bc.
+- Left for a follow-up direction: bare `git branch <name>` (positional create) is still
+  statically safe — the direction scoped the rule to options only.
+
