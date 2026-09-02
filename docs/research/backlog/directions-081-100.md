@@ -4,7 +4,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ## SER-060 — Show up to three recent non-empty output lines under each background job in `/tasks`, read as a bounded tail of the job's `outputPath` — never through `readOutput`, so the model's shared cursor and `wait` semantics are untouched; rows stay one `<Text>` each and counted
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 81
 - Score: 9
 - Importance: 2
@@ -16,7 +16,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ### Implementation / acceptance evidence
 
-(none yet)
+Accepted 2026-09-02 in `5c4dcb3` (child session `session-20260902-165036184`, managed task `bg-8e375138-ad65-43da-ab06-f61611e4c303`, exit 0, no correction turn; journal `12d04d3`, Trellis task archived in `5099137`). New `src/tools/background-tail.ts` — `TASK_TAIL_LINES = 3`, `TASK_TAIL_WINDOW_BYTES = 8 KiB`, `sanitizeTailLine` (ANSI/C0 stripped, tabs→spaces), `readBackgroundTail(outputPath)` → `{lines, bytesRead} | {empty} | {unavailable}` and `readBackgroundTails(tasks)`; it opens the log itself with `O_RDONLY|O_NOFOLLOW`, reads at most the last window, drops a leading partial line only when a complete line follows, imports nothing from `background-bash.ts` and never rejects. `task-format.ts` gains `TASK_TAIL_LINE_LIMIT = 100`, `TASK_TAIL_PREFIX` (`    │ `), the two placeholders and `formatTaskTail`; `formatTasksReport(tasks, nowMs, tails?)` keeps legacy calls byte-identical; a zero-output job keeps its row plus one stated `(no output yet)` line (decision recorded in `tui-testing.md`). `App.tsx` `/tasks` awaits `listBackgroundTasks()` then `readBackgroundTails()` before the single notice. Host acceptance, all independently re-run at `5099137`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 (87 suites, 0 `FAIL`); `spike/verify-tasks-tail.ts` 33/33 (real manager job with blank and ANSI lines → exactly the last three non-empty lines stripped/marked/indented; tail-then-`output` equals a control job's `output` field by field and a terminal-focused `wait` spanning a tail read equals control; tail after `output` unchanged; no output and blank-only → `(no output yet)`; deleted path and a directory → `(output unavailable)` without throw; 99 chars + `…` at the limit; > 8 KiB file → `bytesRead === 8192`, markers shown, cursor still 0); `spike/verify-task-format.ts` 18/18; `spike/verify-background-bash.ts` 157/157; free pty `bang` 19/19, `queue` 17/17, `completion` 69/69; `pnpm build` exit 0; `git show --check` clean on the feature and archive commits (journal commit: one cosmetic blank-line finding); AGENTS.md untouched at 32,667 B. No model-free way exists to start a real background job from a pty, so the unit suite carries the tail proof (stated in `tui-testing.md`). Docs: `reference.md`/`zh-CN` `/tasks` row; specs `tui-testing.md`, `strands-sdk-contracts.md` cursor-matrix row, `error-handling.md` row, `live-frame.md` sentence; `load-bearing-decisions.md` § Process exit paragraph. Child self-reported one rule-8 slip (journal whitespace trim via a `python3` heredoc). Logged as [`Batch 85`](../../iteration-log.md).
 
 ### Notes / blockers / abandonment reason
 
