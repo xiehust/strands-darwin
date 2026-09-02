@@ -269,7 +269,7 @@ Evidence from session-20260902-054329719: the six-edit batch at seq 122–127 fo
 
 ## SER-053 — Close the mutating escapes in the static read-only bash classifier: a whitelisted first word is safe only when none of its arguments is a known mutating option (`find -delete/-exec/-execdir/-ok/-okdir/-fprint*/-fls`, `git branch -d/-D/-m/-M/-c/-C/-u/--set-upstream-to/--unset-upstream/--edit-description/--delete/--move/--copy`, `git log/diff/show --output`)
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 74
 - Score: 16
 - Importance: 5
@@ -281,7 +281,7 @@ Evidence from session-20260902-054329719: the six-edit batch at seq 122–127 fo
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted 2026-09-02 in `14378bc` (child session `session-20260902-095357955`, managed task `bg-7edbe478-2380-4ce8-9414-debb1d43d9e5`, exit 0; Trellis task archived in `c5dcd39`). `src/agent/permission.ts` gains `MUTATING_FIND_OPTIONS`, `MUTATING_GIT_BRANCH_SHORT_FLAGS`/`MUTATING_GIT_BRANCH_LONG_OPTIONS`, `GIT_OUTPUT_SUBCOMMANDS` and `mutatingGitOption()`; `assessBashRisk` keeps the metacharacter check and the first-word whitelist per segment, then scans every remaining token of a whitelisted `find`/`git branch`/`git log|diff|show` segment (combined short flags char-by-char, `--opt=value` on the part before `=`, tokens after `--` included) and returns `dangerous` with `` `<option>` makes `<command>` a mutating command ``. Whitelist sets, `permission-rules.ts`, the `auto` classifier and `plan` denial are unchanged. Host acceptance, independently re-run: a 25-command `classify`+`assessRisk` probe (the six original escapes plus `git branch -Df/-fD/-u/--set-upstream-to=`, bare `find -delete`, `ls | find . -delete`, `git status && git branch -D main` all `dangerous` naming the option; `ls -la`, `rg foo | head -5`, `git branch --show-current`/`-a`/`-avv`, `git diff --stat`, `git show HEAD --stat`, `find . -name "*.ts"`, `git log --oneline -5` still `safe`), `spike/verify-permission-modes.ts` 154/154 (was 109), `pnpm typecheck` exit 0, full `pnpm test` exit 0 with zero FAIL lines, `pnpm build` exit 0 (`MUTATING_FIND_OPTIONS` in `dist/src/agent/permission.js`), `git status --porcelain` clean. Docs: `docs/user-guide/permissions.md`/`.zh-CN` static-safety row, `strands-sdk-contracts.md` `#### Static bash safety`, one sentence in `load-bearing-decisions.md` § Permissions. Recorded in `docs/iteration-log.md` Batch 78.
 
 ### Notes / blockers / abandonment reason
 
@@ -289,7 +289,7 @@ Requirement: keep the whitelist principle of `assessBashRisk` (`src/agent/permis
 
 ## SER-054 — Make a foreground bash timeout truthful and non-destructive to evidence: the timeout error result carries the bounded tail of captured stdout/stderr, the effective timeout, the shell-restart/cwd statement and one `start`/`wait` pointer
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 75
 - Score: 14
 - Importance: 4
