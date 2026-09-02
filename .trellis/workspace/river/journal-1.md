@@ -1265,3 +1265,39 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
   27/27; typecheck, full `pnpm test` (exit 0, zero FAIL lines), `pnpm build` green. AGENTS.md
   untouched at 32,667 B; rationale went to `docs/architecture/load-bearing-decisions.md`
   § `/copy`. Committed 00c5b90.
+
+## 2026-09-02 — SER-058 `darwin doctor` offline read-only diagnostics (09-02-ser-058-doctor-command)
+
+- New `src/cli-doctor.ts` on the `cli-sessions.ts` model (`DOCTOR_COMMAND`, `isDoctorInvocation`,
+  `parseDoctorArgs`, `DoctorIo`, `runDoctorCommand → exit code`), routed in `cli.ts` beside
+  `sessions` before argument parsing; `darwin doctor` row in `CLI_USAGE` and both reference docs.
+  Sections: config, system prompt, project instructions, mcp, skills, hooks and policy, permission
+  rules, sessions, versions; `! `-marked problem lines totalled at the end, exit 0 / 1 / 2.
+- The one design rule: compose the *real* startup loaders and turn a refusal into a line — never a
+  second parser. That forced two side-effect-free halves: `configPath()` `mkdirSync`'d `~/.darwin`
+  on every *read* (`loadConfig` and the hook-layer loader), so a pure `configFilePath()` now serves
+  the readers and only writers/fixture spikes keep the mkdir form (nothing in `src/` relied on the
+  directory existing — every `userDarwinDir()` use is `mkdir recursive` or ENOENT-tolerant); and
+  `loadMcpClients` spawned servers while parsing, so its declarative half became
+  `readMcpServerConfigs` (same `ConfigError`, same override/ignored derivation), with
+  `loadMcpClients` rebuilt on top of it.
+- Stdio commands are checked with a plain `X_OK` PATH walk (`lookupOnPath`), http/sse servers say
+  `not connected (doctor never connects)`, `${VAR}` commands are stated as not checked rather than
+  re-implementing the SDK's interpolation. `args`/`env`/`headers` are never printed (tokens);
+  `apiKeyEnv` is reported as set/unset, never the value.
+- Non-obvious finding: an invalid global `config.json` yields *two* problem lines — `loadConfig`
+  and `loadProjectPolicy` both read it (the latter for embedded legacy `hooks`). Kept, because
+  both refusals are true and each names the file; the spike pins exactly two.
+- Spike gotcha: a child `node --import tsx` resolves `tsx` from the child's cwd, so a fixture
+  project with no `node_modules` fails with `ERR_MODULE_NOT_FOUND`; the suite passes
+  `import.meta.resolve('tsx')` instead. Also, the "no write/spawn API" source regex had to anchor
+  on calls — bare `truncate`/`cp(` matched `truncated`/`reportMcp(`.
+- `verify-doctor-command.ts` 71/71 (in `pnpm test`): unknown key / invalid JSON named with the
+  file, marker-writing PATH fixture found and never run, skipped skills with the loader's reason,
+  hooks dialects, pristine HOME + fixture project snapshots byte-identical around the real process
+  run, `doctor extra` exit 2, import-graph closure free of runtime/headless/tui/Ink/React/`Agent`.
+  `verify-cli-args.ts` 43/43; refactored loaders' suites (`verify-config` 332, `verify-state-layers`
+  37, `verify-mcp-command` 33) green; typecheck, full `pnpm test` (86 suites, 0 failed),
+  `pnpm build`; `node dist/src/cli.js doctor` here: exit 0, no problems. AGENTS.md untouched at
+  32,667 B; contract in `error-handling.md` degradation table + a load-bearing-decisions heading.
+  Committed b68851f.
