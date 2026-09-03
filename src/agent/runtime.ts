@@ -22,9 +22,15 @@ import {
   type CompactResult,
 } from './compact.js';
 import { DiagnosticsLog, type DiagnosticsStatus } from './diagnostics.js';
+import {
+  BackgroundDelegationObserver,
+  backgroundDelegationConfig,
+  MANAGE_BACKGROUND_TASK_TOOL_NAME,
+} from './background-delegation.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
 import { installModelCallBudget } from './model-call-budget.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
+import { concurrencyCap } from '../agents/concurrency-limit.js';
 import {
   SubagentDispatchRegistry,
   type SubagentCancelResult,
@@ -32,8 +38,8 @@ import {
   type SubagentDispatchProgressListener,
   type SubagentDispatchStatus,
 } from '../agents/dispatch-registry.js';
-import { SubagentTool } from '../agents/subagent-tool.js';
-import { WorkflowTool } from '../agents/workflow-tool.js';
+import { SUBAGENT_TOOL_NAME, SubagentTool } from '../agents/subagent-tool.js';
+import { WORKFLOW_TOOL_NAME, WorkflowTool } from '../agents/workflow-tool.js';
 import {
   expandCustomCommand,
   loadCustomCommands,
@@ -182,6 +188,9 @@ const PARENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   'retrieve_offloaded_content',
   httpRequest.name,
   webFetch.name,
+  // Registered by the SDK's backgroundTasks plugin during initialize(); a child has
+  // no plugin, so the tool would list nothing and could not cancel anything.
+  MANAGE_BACKGROUND_TASK_TOOL_NAME,
 ]);
 
 export interface RuntimeOptions {
@@ -444,6 +453,8 @@ export class AgentRuntime {
     private readonly subagents: SubagentTool,
     private readonly workflows: WorkflowTool,
     private readonly subagentDispatches: SubagentDispatchRegistry,
+    /** Forwards background runs' `AfterToolCallEvent`s into `send()`'s stream (SER-064). */
+    private readonly backgroundDelegation: BackgroundDelegationObserver,
     private readonly backgroundBash: BackgroundBashManager,
     private readonly gate: PermissionGate,
     /** Undefined when neither native lifecycle event is configured. */
@@ -642,6 +653,18 @@ export class AgentRuntime {
 
     const memoryController = config.memory === true ? new MemoryToolController(options.projectRoot, config.memoryHorizonDays ?? 28) : undefined;
     startupMemoryController = memoryController;
+    // The fileEditor is the SDK singleton behind a same-path ordering wrapper
+    // (SRF-020): substituted here rather than `addOrReplace`d after construction
+    // because it is static, so the raw tool is never registered, and `childTools`
+    // below hands children the same wrapper with per-Agent chains.
+    const ordinaryTools = [bash, new SerializedFileEditorTool(fileEditor), imageViewer, httpRequest, webFetch];
+    // SER-064: the two delegation tools are the only ones the model may route to the
+    // SDK's background executor; everything else — the ordinary tools by name, and by
+    // wildcard whatever `initialize()` discovers later — stays foreground. Cap and
+    // delegation tools are the parent's; children are built by `buildRecipeChild`
+    // and never receive this option.
+    const backgroundDelegationTools = [SUBAGENT_TOOL_NAME, WORKFLOW_TOOL_NAME];
+    const backgroundDelegation = new BackgroundDelegationObserver(backgroundDelegationTools);
     const agent = new Agent({
       id: AGENT_ID,
       model,
@@ -650,22 +673,24 @@ export class AgentRuntime {
       // order. Only the base is user-overridable: project instructions stay additive.
       systemPrompt: composeSystemPrompt(basePrompt.prompt, instructions),
       // McpClient instances act as tool sources: the SDK discovers and registers
-      // their tools during initialize(). The fileEditor is the SDK singleton behind
-      // a same-path ordering wrapper (SRF-020): substituted here rather than
-      // `addOrReplace`d after construction because it is static, so the raw tool is
-      // never registered, and `childTools` below hands children the same wrapper
-      // with per-Agent chains.
-      tools: [bash, new SerializedFileEditorTool(fileEditor), imageViewer, httpRequest, webFetch, ...mcp.clients],
+      // their tools during initialize().
+      tools: [...ordinaryTools, ...mcp.clients],
       plugins: offloader === undefined ? [skills] : [skills, offloader],
       sessionManager,
       conversationManager,
       interventions: [intervention],
+      backgroundTasks: backgroundDelegationConfig({
+        delegationTools: backgroundDelegationTools,
+        ordinaryToolNames: ordinaryTools.map((tool) => tool.name),
+        maxConcurrency: concurrencyCap(config),
+      }),
       // Required: the SDK's own printer writes to stdout and would interleave
       // with our rendering (and fight Ink for the terminal in step 5).
       printer: false,
     });
     toolForName = (name) => agent.tools.find((candidate) => candidate.name === name);
     installMaxTokensRecovery(agent);
+    backgroundDelegation.install(agent);
 
     // The constructor does not initialize; the SDK defers it to the first
     // invocation. Session restore runs on InitializedEvent, MCP tools are
@@ -733,13 +758,17 @@ export class AgentRuntime {
     // and allowlists are fixed, so no child can author an unrelated checklist.
     agent.toolRegistry.add(createUpdatePlanTool());
     if (memoryController !== undefined) agent.toolRegistry.add(createMemoryTools(memoryController));
+    // Children build their models through the same factory seam as the parent: in
+    // production it *is* `createModelFromConfig`; offline suites can script a child
+    // (`spike/verify-background-delegation.ts`) without a provider.
+    const createChildModel = (childConfig: AppConfig) => runtimeModelFactory(childConfig);
     const subagents = new SubagentTool({
       registry: agentDefinitions,
       tools: childTools,
       intervention,
       projectInstructions: instructions,
       config,
-      createModel: createModelFromConfig,
+      createModel: createChildModel,
       dispatches: subagentDispatches,
       ...(codexHooks === undefined ? {} : { codexHooks }),
     });
@@ -752,7 +781,7 @@ export class AgentRuntime {
       intervention,
       projectInstructions: instructions,
       config,
-      createModel: createModelFromConfig,
+      createModel: createChildModel,
       dispatches: subagentDispatches,
       ...(codexHooks === undefined ? {} : { codexHooks }),
     });
@@ -819,6 +848,7 @@ export class AgentRuntime {
       subagents,
       workflows,
       subagentDispatches,
+      backgroundDelegation,
       backgroundBash,
       gate,
       lifecycleHooks,
@@ -961,9 +991,14 @@ export class AgentRuntime {
         this.memoryController?.discard();
       }
       // Later events and turn-end are still observed synchronously and appended in
-      // the background; `shutdown()` is where that append chain is waited for.
+      // the background; `shutdown()` is where that append chain is waited for. The
+      // SDK stream is first passed through the background-delegation observer, which
+      // yields the hook-only `AfterToolCallEvent` of a background child ahead of the
+      // next SDK event, so the recorder and every driver see one ordinary
+      // before/after pair for a delegation the model routed to the background.
       const invocation = image === undefined ? modelInput : [new TextBlock(modelInput), image];
-      for await (const event of recordStream(this.agent.stream(invocation), recording)) {
+      const stream = this.backgroundDelegation.observe(this.agent.stream(invocation));
+      for await (const event of recordStream(stream, recording)) {
         if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
         // Observed at the same point `recordStream` observes: synchronously, between
         // `stream()` and the `yield`, so `/usage` asked mid-turn already counts the
@@ -1311,8 +1346,9 @@ export class AgentRuntime {
   async changeModel(target: ModelChoice): Promise<ModelChangeResult> {
     const next = withModelChoice(this.liveConfig, target);
     // Built before anything is mutated: a failure here (a missing peer dependency,
-    // a bad region) must leave the session on the model it was already using.
-    const model = await createModelFromConfig(next);
+    // a bad region) must leave the session on the model it was already using. Same
+    // factory seam as `create()`: `createModelFromConfig` in production.
+    const model = await runtimeModelFactory(next);
 
     const thinkingPlan = planThinking(next);
     const promptCachePlan = planPromptCache(next);

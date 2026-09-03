@@ -16,6 +16,7 @@ import { isSensitiveDarwinPath } from '../paths.js';
 import { InterventionActions, InterventionHandler } from '@strands-agents/sdk';
 import type { BeforeToolCallEvent } from '@strands-agents/sdk';
 
+import { MANAGE_BACKGROUND_TASK_TOOL_NAME } from './background-delegation.js';
 import {
   hasShellMetacharacters,
   matchesAnyRule,
@@ -690,6 +691,28 @@ export function classify(toolName: string, rawInput: unknown): PermissionRequest
           { label: 'Title', value: firstLine(str(input['title']) ?? '(missing title)') },
           ...(str(evidence['path']) === undefined ? [] : [{ label: 'Evidence', value: firstLine(str(evidence['path'])!) }]),
         ],
+        input: rawInput,
+      };
+    }
+    // The SDK backgroundTasks plugin's own tool (SER-064). `list`/`get` read the
+    // plugin's in-memory task table and nothing else. `cancel` stops a running
+    // child, so it keeps the fail-closed `execute` kind with a summary that says so:
+    // a model-driven cancel prompts in `default`, is denied in `plan`, and
+    // `/agents cancel <id>` stays the user-only path.
+    case MANAGE_BACKGROUND_TASK_TOOL_NAME: {
+      const mode = str(input['mode']);
+      const taskId = str(input['taskId']) ?? '(missing task id)';
+      if (mode === 'list') {
+        return { toolName, kind: 'read', summary: 'background tasks: list', details: [], input: rawInput };
+      }
+      if (mode === 'get') {
+        return { toolName, kind: 'read', summary: `background task: get ${taskId}`, details: [], input: rawInput };
+      }
+      return {
+        toolName,
+        kind: 'execute',
+        summary: `background task: ${mode ?? '(missing mode)'} ${taskId}`,
+        details: [{ label: 'Task', value: taskId }],
         input: rawInput,
       };
     }

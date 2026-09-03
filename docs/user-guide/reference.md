@@ -163,3 +163,14 @@ allow-rules. Subagents and workflow nodes never receive them.
 |---|---|
 | `http_request` | the SDK tool: any method, headers and body; the raw response body, unbounded |
 | `web_fetch` | GET only, `Accept` prefers markdown; `http://` upgraded to `https://`; same-host redirects followed, cross-host redirects reported instead; HTML converted to readable text (a **lossy** projection — scripts, styles, navigation, layout and attributes dropped), markdown/plain text kept verbatim, binary bodies refused with type and length; body capped at 40 000 code points (`maxChars` may lower it) with `[truncated: N of M code points]` stated; download stops at 4 MiB |
+
+## Background delegation (parent agent only)
+
+The Strands SDK's `backgroundTasks` plugin adds an optional `_background_execution` flag to `subagent`
+and `workflow` only; every other tool stays foreground. A flagged call is gated exactly like a
+foreground one, returns an acknowledgement with a task id, and its report is delivered before the
+parent's next model call in the same turn. Children never see the flag or the tool below.
+
+| Tool | Gating |
+|---|---|
+| `strands_manage_background_task` | `mode: list` / `get` are reads; `mode: cancel` is a fail-closed `execute` (prompts in `default`, denied in `plan`); `/agents cancel <id>` is the user-only path |

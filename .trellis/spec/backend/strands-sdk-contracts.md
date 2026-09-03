@@ -1647,6 +1647,75 @@ unaffected: it matches the *parent's* thrown `ModelError`, and a child failure o
 reaches the parent as an error tool result. Required check: `spike/verify-failed-child-text.ts`
 (in `pnpm test`); `spike/verify-retry-guard.ts` still counts the failed child.
 
+#### Background delegation (`SER-064`)
+
+The parent Agent is constructed (`AgentRuntime.create`, the only place) with the SDK's own
+`backgroundTasks` option, built by `backgroundDelegationConfig()` in
+`src/agent/background-delegation.ts`: `agentic: ['subagent', 'workflow']`, `never: [<every
+ordinary tool in the constructor's tools array by name>, '*']` (the wildcard covers tools that
+exist only after `initialize()` — MCP, `retrieve_offloaded_content`, the plugin's own manage
+tool), `waitForCompletion: true`, `maxConcurrency: concurrencyCap(config)` (the SER-061 cap; the
+SDK engine queues beyond it, and each queued body still meets the registry check when it runs).
+Darwin schedules nothing: the SDK plugin (`dist/src/background-tasks/background-tasks.js`) adds an
+optional boolean `_background_execution` to the two delegation specs through
+`InvokeModelStage.Input` middleware, and children built by `buildRecipeChild` never receive the
+option — their specs carry no flag and their catalogue excludes `strands_manage_background_task`
+(`PARENT_ONLY_TOOL_NAMES`). Measured against `@strands-agents/sdk@1.16.0`:
+
+- **Hook before route.** `ToolExecutor.executeTool` (`dist/src/tools/executors/executor.js`)
+  yields `BeforeToolCallEvent` and honours a hook `cancel` *before* `routeToolCall`, so the
+  retry guard, portable/native Pre hooks and the permission gate run for a background-marked call
+  exactly as for a foreground one; a denial is an ordinary `DENIED:` after-event and no task,
+  ack, dispatch record or child exists. `routeToolCall` strips the flag, so the tool body and
+  `classify()` never see it (`subagent`/`workflow` stay `read` regardless — plan mode lets a
+  delegation run, background or not). `submitToolCall` returns the ack (`Background task
+  dispatched.` / `Task ID:` / `Tool:` / `Status:`) as that call's tool result; the stream shows
+  it as a `toolResultEvent`, with **no** `afterToolCallEvent`.
+- **Same-invocation delivery.** With `waitForCompletion: true`, the plugin's
+  `AfterInvocationEvent` hook waits for every tracked task, then `_deliverReady` appends one
+  synthetic assistant `strands_background_task_result` tool-use (`toolUseId` = task id, input
+  `{ toolName }`) plus user tool-result pair through `continuations.addInput`, and `Agent.stream()`
+  runs another iteration (a second `BeforeInvocationEvent`, then a model call) inside the same
+  `send()`. A result therefore never crosses into a later user turn; `AgentResultEvent` fires once,
+  on the final iteration. After Ctrl+C the continuation is abandoned (`stopReason: 'cancelled'`),
+  the task stays tracked and the SDK delivers its pair before the *next* turn's first model call —
+  documented behaviour, never a mid-turn injection and never lost. Corollary: the retry guard's
+  `beforeInvocation` reset also fires on the continuation iteration.
+- **Hook-only events, forwarded.** The background run's real `AfterToolCallEvent` reaches hook
+  callbacks only (`executeBackground` → `_invokeCallbacks`), so the context offloader
+  (`vended-plugins/context-offloader/plugin.js`, `AfterToolCallEvent` hook) and the retry guard
+  (intervention `afterToolCall`) treat it like any result, but the stream never yields it.
+  `BackgroundDelegationObserver` (same module) hooks it at `HookOrder.SDK_LAST` and yields the same
+  event object into `send()`'s stream ahead of the next SDK event, for tool-use ids the stream
+  itself showed as routed (a `beforeToolCallEvent` for a delegation tool with the flag and no
+  `cancel`); ids a stream after-event closes are dropped. Nothing else is added, reordered,
+  buffered or rewritten, and the trajectory records that after-event as an ordinary
+  `afterToolCallEvent` — no new record type; the synthetic pair arrives as `messageAddedEvent`s,
+  counted as dropped like every other one. Replay therefore shows the delegation row with its
+  report exactly as a foreground call; the ack row is a live-only `toolResultEvent` projection
+  (`turn-state.ts`: `… · delegated in background (task <id>)`, then the result row
+  `… · background result`; the live row stays up while the child runs and carries the dispatch
+  heartbeat). A delivered pair whose row is still live (a task that never ran its body) finishes
+  it from the `messageAddedEvent`.
+- **Manage tool.** `strands_manage_background_task` is parent-only; `classify()` maps `list`/`get`
+  to `read` and `cancel` (or a missing mode) to the fail-closed `execute` with summary
+  `background task: cancel <id>` — prompts in `default`, denied in `plan`; `/agents cancel <id>`
+  remains the user-only path.
+- **Cancel, `/clear`, `/model`, `/rewind`.** `runtime.cancel()` cancels the child directly
+  (`cancelActive`) and through the parent signal the child registered on; the dispatch settles
+  `cancelled` and the next `send()` works. `/clear` and `/rewind` successors come from the same
+  `create()` factory, so they carry the option; `/model` swaps `Agent.model` in place, so the plugin
+  is untouched. `assertCanLoadSnapshot` (`agent.js` `loadSnapshot`) throws only when an initialized
+  agent still *tracks* tasks: the rewind successor calls `restoreSnapshot` right after its own
+  `initialize()` with none tracked, and a completed turn ends with none tracked (delivery removes
+  them), so it cannot fire in normal use; `_persistTasks` keeps the table in `appState`, and a
+  restored non-terminal task is recovered as `failed` and delivered on the next model call.
+
+Required check: `spike/verify-background-delegation.ts` (in `pnpm test`, offline, one scripted
+model for parent and child); `spike/verify-subagents.ts`, `verify-workflow-tool.ts`,
+`verify-subagent-limit.ts`, `verify-retry-guard.ts`, `verify-trajectory.ts`, `verify-rewind.ts`,
+`verify-clear-session.ts` and `verify-context-offload.ts` stay green.
+
 #### Concurrency: parallel execution, never parallel prompting
 
 Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:

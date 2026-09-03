@@ -27,7 +27,14 @@ import {
   type ShellOutcome,
 } from './shell-command.js';
 import { shortDispatchId, type SubagentDispatchProgress } from '../agents/dispatch-registry.js';
-import { subagentCallSummary } from './subagent-format.js';
+import {
+  backgroundAckTaskId,
+  backgroundDelegationAckSummary,
+  backgroundDelegationLiveSummary,
+  backgroundDelegationRequested,
+  backgroundDelegationResultSummary,
+  subagentCallSummary,
+} from './subagent-format.js';
 import { compactEditDiff, expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 
 export type HistoryItem =
@@ -105,6 +112,14 @@ export interface ActiveTool {
   /** Safe registry-only progress for an active delegation row. */
   subagentProgress?: SubagentDispatchProgress;
   backgroundMode?: BackgroundBashMode;
+  /**
+   * Set when the model routed this delegation to the SDK's background executor
+   * (SER-064). `baseSummary` is the row's label without the background marker;
+   * `taskId` arrives with the SDK's ack and lets the delivered
+   * `strands_background_task_result` pair find this row if no `afterToolCallEvent`
+   * ever does.
+   */
+  backgroundDelegation?: { readonly baseSummary: string; readonly taskId?: string };
 }
 
 export interface TurnState {
@@ -358,9 +373,13 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
       // Delegation rows carry the dispatch identity and the task: several children
       // run at once, so three rows reading `subagent: general` distinguish nothing.
       // Pure in the tool-use block — the reducer never reads the dispatch registry.
-      const summary =
+      const baseSummary =
         subagentCallSummary(event.toolUse.name, event.toolUse.input, event.toolUse.toolUseId) ??
         request.summary;
+      // A delegation the model routed to the SDK's background executor (SER-064):
+      // the row stays live while the child runs — the ack only releases the parent.
+      const background = backgroundDelegationRequested(event.toolUse.name, event.toolUse.input);
+      const summary = background ? backgroundDelegationLiveSummary(baseSummary) : baseSummary;
       return {
         ...flushLiveText(state),
         thinking: false,
@@ -378,95 +397,168 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
                   backgroundMode,
                   compactSummary: compactBackgroundCallSummary(backgroundMode, event.toolUse.input),
                 }),
+            ...(background ? { backgroundDelegation: { baseSummary } } : {}),
           },
         ],
       };
     }
 
-    case 'afterToolCallEvent': {
-      const toolUseId = event.toolUse.toolUseId;
-      const active = state.activeTools.find((tool) => tool.id === toolUseId);
-      // The active row's summary first, then the same delegation projection, then
-      // the plain classification: a finished dispatch must not lose the identity
-      // the live row showed just because the panel entry was already dropped.
-      let summary =
-        active?.summary ??
-        subagentCallSummary(event.toolUse.name, event.toolUse.input, toolUseId) ??
-        classify(event.toolUse.name, event.toolUse.input).summary;
-      let preview = previewToolResult(event.result.content);
-      const status: ToolStatus =
-        event.result.status === 'error' ? (preview.startsWith('DENIED:') ? 'denied' : 'error') : 'ok';
-      const activeTools = state.activeTools.filter((tool) => tool.id !== toolUseId);
-      const toolInput = active?.input ?? event.toolUse.input;
-      const plan = status === 'ok' && event.toolUse.name === UPDATE_PLAN_TOOL_NAME
-        ? parsePlanInput(toolInput)
-        : undefined;
-
-      // Failures always retain the ordinary diagnostic. Compact presentation is
-      // applied only after a successful manager result has been safely decoded.
-      // Some SDK after-events omit the original input, so prefer the mode captured
-      // when the call entered the live panel.
-      const backgroundMode =
-        active?.backgroundMode ?? backgroundBashMode(event.toolUse.name, event.toolUse.input);
-      if (backgroundMode !== undefined && !state.toolDetailsExpanded) {
-        // Compact labels stay bounded even when a call fails or its successful
-        // payload drifts. Failures and fallbacks still retain the full preview.
-        summary = active?.compactSummary ?? compactBackgroundCallSummary(
-          backgroundMode,
-          active?.input ?? event.toolUse.input,
-        );
-        if (status === 'ok') {
-          const compact = compactBackgroundResult(
-            backgroundMode,
-            active?.input ?? event.toolUse.input,
-            event.result.content,
-          );
-          if (compact.kind === 'suppress') return { ...state, activeTools };
-          if (compact.kind === 'compact') {
-            summary = compact.summary;
-            preview = compact.preview;
-          }
-        }
+    case 'toolResultEvent': {
+      // Foreground results already finished their row on `afterToolCallEvent`. The
+      // one result that reaches a still-live row is the SDK's background dispatch
+      // ack (SER-064): the executor returns it in place of an after-event, and the
+      // background run's own after-event finishes the row later. Anything else on a
+      // background row — admission failed, an unrecognized ack — means no run will
+      // follow, so the row finishes here with what the model received.
+      const result = event.result;
+      const active = state.activeTools.find(
+        (tool) => tool.id === result.toolUseId && tool.backgroundDelegation !== undefined,
+      );
+      if (active?.backgroundDelegation === undefined) return state;
+      const taskId = result.status === 'error' ? undefined : backgroundAckTaskId(result.content);
+      if (taskId === undefined) {
+        return finishToolCall(state, { name: active.name, toolUseId: active.id, input: active.input }, result);
       }
-
-      // The diff-bearing presentation of a finished fileEditor write, computed
-      // from the same input the SDK received. A finished row lands in `<Static>`
-      // scrollback — written once, never repainted — so the diff is shown
-      // complete in both modes: compact rows carry the bare diff, expanded rows
-      // the labelled projection. Only the live surfaces (active panel,
-      // permission box) stay bounded, and other tools keep the bounded
-      // `expandedToolInput` JSON.
-      const fullDiff = event.toolUse.name === 'fileEditor' ? fileEditorDiff(toolInput) : undefined;
-      const fullProjection =
-        event.toolUse.name === 'fileEditor' ? fileEditorInputProjection(toolInput) : undefined;
-
+      const baseSummary = active.backgroundDelegation.baseSummary;
       return {
         ...state,
-        activeTools,
-        livePlan: plan ?? state.livePlan,
+        activeTools: state.activeTools.map((tool) =>
+          tool.id === active.id ? { ...tool, backgroundDelegation: { baseSummary, taskId } } : tool,
+        ),
         history: [
           ...state.history,
           {
             kind: 'tool',
             id: nextId('tool'),
-            name: event.toolUse.name,
-            summary,
-            status,
-            // Bound before immutable history/replay state owns the string.
-            preview: toolResultPreview(preview, status, state.toolDetailsExpanded).join('\n'),
-            inputPreview: state.toolDetailsExpanded
-              ? fullProjection ?? expandedToolInput(toolInput, event.toolUse.name).join('\n')
-              : compactEditDiff(toolInput, event.toolUse.name).join('\n'),
+            name: active.name,
+            summary: backgroundDelegationAckSummary(baseSummary, taskId),
+            status: 'ok',
+            preview: '',
+            inputPreview: '',
             expanded: state.toolDetailsExpanded,
-            ...(fullDiff === undefined ? {} : { diffStat: diffStat(fullDiff) }),
           },
         ],
       };
     }
 
+    case 'afterToolCallEvent':
+      return finishToolCall(state, event.toolUse, event.result);
+
+    case 'messageAddedEvent': {
+      // The SDK delivers a finished background task to the model as a synthetic
+      // `strands_background_task_result` tool-use/tool-result pair (SER-064). The
+      // run's own `afterToolCallEvent` has normally finished the row already; only a
+      // task that never ran its tool body — cancelled while queued, an execution
+      // error before the body — still has a live row here, and finishes with the
+      // delivered content so no row outlives its result. Ordinary tool-result
+      // messages carry model-issued tool-use ids, which never match a task id.
+      if (event.message.role !== 'user') return state;
+      let next = state;
+      for (const block of event.message.content) {
+        if (block.type !== 'toolResultBlock') continue;
+        const active = next.activeTools.find((tool) => tool.backgroundDelegation?.taskId === block.toolUseId);
+        if (active === undefined) continue;
+        next = finishToolCall(next, { name: active.name, toolUseId: active.id, input: active.input }, block);
+      }
+      return next;
+    }
+
     default:
       return state;
   }
+}
+
+/**
+ * Finishes one tool call's row from its result — the `afterToolCallEvent` body, in
+ * a function because a background delegation's ack, delivered pair and after-event
+ * must all end the same way (SER-064).
+ */
+function finishToolCall(
+  state: TurnState,
+  toolUse: { readonly name: string; readonly toolUseId: string; readonly input: unknown },
+  result: { readonly status: 'success' | 'error'; readonly content: readonly unknown[] },
+): TurnState {
+  const toolUseId = toolUse.toolUseId;
+  const active = state.activeTools.find((tool) => tool.id === toolUseId);
+  // The active row's summary first, then the same delegation projection, then
+  // the plain classification: a finished dispatch must not lose the identity
+  // the live row showed just because the panel entry was already dropped. A
+  // background-routed delegation ends as its result row.
+  let summary =
+    active?.backgroundDelegation !== undefined
+      ? backgroundDelegationResultSummary(active.backgroundDelegation.baseSummary)
+      : active?.summary ??
+        subagentCallSummary(toolUse.name, toolUse.input, toolUseId) ??
+        classify(toolUse.name, toolUse.input).summary;
+  let preview = previewToolResult(result.content);
+  const status: ToolStatus =
+    result.status === 'error' ? (preview.startsWith('DENIED:') ? 'denied' : 'error') : 'ok';
+  const activeTools = state.activeTools.filter((tool) => tool.id !== toolUseId);
+  const toolInput = active?.input ?? toolUse.input;
+  const plan = status === 'ok' && toolUse.name === UPDATE_PLAN_TOOL_NAME
+    ? parsePlanInput(toolInput)
+    : undefined;
+
+  // Failures always retain the ordinary diagnostic. Compact presentation is
+  // applied only after a successful manager result has been safely decoded.
+  // Some SDK after-events omit the original input, so prefer the mode captured
+  // when the call entered the live panel.
+  const backgroundMode =
+    active?.backgroundMode ?? backgroundBashMode(toolUse.name, toolUse.input);
+  if (backgroundMode !== undefined && !state.toolDetailsExpanded) {
+    // Compact labels stay bounded even when a call fails or its successful
+    // payload drifts. Failures and fallbacks still retain the full preview.
+    summary = active?.compactSummary ?? compactBackgroundCallSummary(
+      backgroundMode,
+      active?.input ?? toolUse.input,
+    );
+    if (status === 'ok') {
+      const compact = compactBackgroundResult(
+        backgroundMode,
+        active?.input ?? toolUse.input,
+        result.content,
+      );
+      if (compact.kind === 'suppress') return { ...state, activeTools };
+      if (compact.kind === 'compact') {
+        summary = compact.summary;
+        preview = compact.preview;
+      }
+    }
+  }
+
+  // The diff-bearing presentation of a finished fileEditor write, computed
+  // from the same input the SDK received. A finished row lands in `<Static>`
+  // scrollback — written once, never repainted — so the diff is shown
+  // complete in both modes: compact rows carry the bare diff, expanded rows
+  // the labelled projection. Only the live surfaces (active panel,
+  // permission box) stay bounded, and other tools keep the bounded
+  // `expandedToolInput` JSON.
+  const fullDiff = toolUse.name === 'fileEditor' ? fileEditorDiff(toolInput) : undefined;
+  const fullProjection =
+    toolUse.name === 'fileEditor' ? fileEditorInputProjection(toolInput) : undefined;
+
+  return {
+    ...state,
+    activeTools,
+    livePlan: plan ?? state.livePlan,
+    history: [
+      ...state.history,
+      {
+        kind: 'tool',
+        id: nextId('tool'),
+        name: toolUse.name,
+        summary,
+        status,
+        // Bound before immutable history/replay state owns the string.
+        preview: toolResultPreview(preview, status, state.toolDetailsExpanded).join('\n'),
+        inputPreview: state.toolDetailsExpanded
+          ? fullProjection ?? expandedToolInput(toolInput, toolUse.name).join('\n')
+          : compactEditDiff(toolInput, toolUse.name).join('\n'),
+        expanded: state.toolDetailsExpanded,
+        ...(fullDiff === undefined ? {} : { diffStat: diffStat(fullDiff) }),
+      },
+    ],
+  };
 }
 
 /**

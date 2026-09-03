@@ -33,6 +33,7 @@ import type {
 import { z } from 'zod';
 
 import type { ProjectInstructions } from '../agent/instructions.js';
+import { backgroundDelegationDescriptionClause } from '../agent/background-delegation.js';
 import { withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
@@ -133,6 +134,7 @@ export class WorkflowTool {
         'nodes share one working tree: parallel branches are for READS ONLY; serialize ' +
         'writes by edges. Only bounded terminus reports are returned. ' +
         `${concurrencyDescriptionClause(concurrencyCap(options.config))} ` +
+        `${backgroundDelegationDescriptionClause()} ` +
         `Available agents: ${catalogue}`,
       inputSchema: workflowInputSchema,
       callback: (input, context) => this.track(input, context),

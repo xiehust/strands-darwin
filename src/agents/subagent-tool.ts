@@ -3,6 +3,7 @@ import type { InterventionHandler, Model, Tool, ToolContext } from '@strands-age
 import { z } from 'zod';
 
 import type { ProjectInstructions } from '../agent/instructions.js';
+import { backgroundDelegationDescriptionClause } from '../agent/background-delegation.js';
 import { withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
@@ -69,6 +70,7 @@ export class SubagentTool {
       description:
         'Delegate a self-contained task to a fresh child agent with an independent context. ' +
         `Only the final report is returned. ${concurrencyDescriptionClause(concurrencyCap(options.config))} ` +
+        `${backgroundDelegationDescriptionClause()} ` +
         `Available agents: ${catalogue}`,
       inputSchema: z.object({
         task: z.string().min(1).describe('A complete, self-contained task for the child agent'),

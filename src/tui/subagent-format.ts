@@ -11,6 +11,8 @@
  * block.
  */
 import { SUBAGENT_TOOL_NAME } from '../agents/subagent-tool.js';
+import { WORKFLOW_TOOL_NAME } from '../agents/workflow-tool.js';
+import { backgroundExecutionRequested } from '../agent/background-delegation.js';
 import {
   dispatchLabel,
   shortDispatchId,
@@ -134,3 +136,39 @@ export function subagentCallSummary(
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+/**
+ * SER-064: the three readings one background-routed delegation row goes through.
+ *
+ * The transcript sees a delegation the model marked `_background_execution: true`
+ * three times: as a live row while the child runs (the SDK's ack keeps the parent
+ * going, but the child *is* still running, and the dispatch heartbeat lands on this
+ * row), as one finished ack row when the parent receives the dispatch
+ * acknowledgement, and as the finished result row when the background run's own
+ * `afterToolCallEvent` arrives — the same row a foreground call ends with, so the
+ * report renders exactly like a foreground result. All three are pure functions of
+ * the parent's tool-use block and the SDK's ack text; none reads a task registry.
+ */
+export function backgroundDelegationRequested(toolName: string, input: unknown): boolean {
+  return (
+    (toolName === SUBAGENT_TOOL_NAME || toolName === WORKFLOW_TOOL_NAME) &&
+    backgroundExecutionRequested(input)
+  );
+}
+
+/** Live-panel label while the background child is still running. */
+export function backgroundDelegationLiveSummary(baseSummary: string): string {
+  return `${baseSummary} · background`;
+}
+
+/** The finished ack row: the parent was released while task `taskId` runs. */
+export function backgroundDelegationAckSummary(baseSummary: string, taskId: string): string {
+  return `${baseSummary} · delegated in background (task ${taskId})`;
+}
+
+/** The finished result row, carrying the child's report like a foreground call. */
+export function backgroundDelegationResultSummary(baseSummary: string): string {
+  return `${baseSummary} · background result`;
+}
+
+export { backgroundAckTaskId } from '../agent/background-delegation.js';

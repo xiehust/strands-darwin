@@ -160,3 +160,13 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 |---|---|
 | `http_request` | SDK 自带工具：任意方法、请求头和请求体；原始响应体，不设上限 |
 | `web_fetch` | 仅 GET，`Accept` 优先请求 markdown；`http://` 自动升级为 `https://`；同主机重定向会跟随，跨主机重定向只报告不跟随；HTML 转成可读文本（**有损**投影——脚本、样式、导航、布局和属性都会丢弃），markdown/纯文本原样保留，二进制响应体拒绝并说明类型和长度；正文上限 40 000 个码点（`maxChars` 只能调低），截断时明确标注 `[truncated: N of M code points]`；下载最多读取 4 MiB |
+
+## 后台委派（仅主代理）
+
+Strands SDK 的 `backgroundTasks` 插件只为 `subagent` 与 `workflow` 附加可选的 `_background_execution`
+标志；其他工具一律前台执行。带标志的调用与前台调用经过完全相同的权限检查，立即返回带任务 id 的确认，
+其报告会在父代理同一回合的下一次模型调用之前交付。子代理看不到该标志，也没有下面这个工具。
+
+| 工具 | 权限 |
+|---|---|
+| `strands_manage_background_task` | `mode: list` / `get` 为读取；`mode: cancel` 是默认关闭的 `execute`（`default` 模式下询问，`plan` 模式下拒绝）；`/agents cancel <id>` 仍是仅用户可用的取消路径 |

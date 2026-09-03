@@ -115,6 +115,8 @@ Trace the requested behavior, cite files and symbols, and report to the parent.
 
 同一条助手消息里的多个 `subagent` 调用并行执行。权限框仍串行，并标明来源。`/agents` 只列当前运行的派发元数据，从不包含子对话。并行适合读取型工作：所有子代理共享一个没有隔离、锁或冲突检测的工作树，因此写入必须串行。并行数量受 `maxConcurrentSubagents` 限制（默认 `8`，统计正在运行的 `subagent` 与 `workflow` 派发）：超出上限的调用会在创建任何模型或子代理之前返回一条有界错误，告知模型等待某个运行中的派发结束。子代理报告（以及 workflow 的终点报告）中若有行模仿 darwin 自身的提示框架（`<system-reminder>`、`<project-instructions>`、`<available_skills>`、`<working-context>`）或 `Human:`/`Assistant:` 对话角色，这些行会在行首加一个反斜杠转义，并在报告最前面加一行标记说明匹配到了什么（`alwaysAllow`、`--dangerously` 之类的绕过权限词汇只加标记）；内容不会被删除或改写，父代理自己的工具调用仍要经过权限 gate。如果子代理（或 workflow 节点）在已经产出文本之后才失败，错误结果会保留这些证据：在原始错误信息之后附上一行固定说明（`subagent was cut off before finishing; its last output follows:`）和子代理最后一条 assistant 文本，上限 4000 个码点，并做同样的转义——它仍然是一次失败（`/agents` 行显示 `failed`），没有产出任何文本的子代理只报告原始错误，被取消的子代理也不会被当作失败。
 
+**后台委派。** 当模型暂时不需要某次 `subagent` 或 `workflow` 的报告（读取型任务，而非写入）时，可以在调用里加上 `_background_execution: true`——这是 Strands SDK 的 `backgroundTasks` 插件只为这两个工具附加的可选标志。这类调用的权限检查与前台调用完全相同（plan 模式、hooks 与重试守卫都在派发之前执行），随后立即返回一条带任务 id 的确认，父代理继续工作；子代理的报告会在父代理**同一回合**的下一次模型调用之前交付，绝不会漂移到之后的用户回合。在对话记录里你会看到：委派行在子代理运行期间保持活动（带常规的 `/agents` 心跳），一行确认 `subagent … · delegated in background (task <id>)`，最后是结果行 `… · background result`，携带的报告与前台调用一模一样。`Ctrl+C` 同样会取消后台子代理；`/agents` 仍会列出它；SDK 自带的 `strands_manage_background_task` 工具可以自由 `list`/`get`，但模型发起的 `cancel` 需要审批（plan 模式下拒绝）——`/agents cancel <id>` 仍是用户自己的取消路径。同时运行的后台任务体不超过 `maxConcurrentSubagents`。
+
 ## Workflow（DAG 委派）
 
 `workflow` 是 `subagent` 的多步版本：不再一次调用只派发一个任务，而是由模型声明一个小型任务依赖图，按依赖顺序调度执行。用自然语言描述流水线即可——例如"先并行调研 X 和 Y，再据此实现，最后审查 diff"——模型可以把它作为一次 `workflow` 调用提交，而不必逐步人工推进。若想显式引导，输入 `/workflow <任务描述>`：该内置命令会展开成一条普通 prompt，请模型用 `workflow` 工具编排该任务（DAG 仍由模型拆解；不带参数的 `/workflow` 只打印用法）。

@@ -603,6 +603,25 @@ cut-off note and the child's last assistant text, capped at 4000 code points and
 same projection; a text-less failure is the unchanged error object and cancellation is never wrapped
 (`spike/verify-failed-child-text.ts`).
 
+**Background delegation is the SDK's `backgroundTasks` plugin, never a darwin scheduler**
+(SER-064, `src/agent/background-delegation.ts`). The parent Agent — and only the parent; children
+from `buildRecipeChild` never get the option — is constructed with `agentic: ['subagent',
+'workflow']`, every ordinary tool plus `'*'` under `never`, `waitForCompletion: true` and
+`maxConcurrency` equal to the SER-061 cap. The SDK adds the optional `_background_execution` flag
+to the two delegation specs, and its executor honours `BeforeToolCallEvent` — the retry guard, the
+hooks and the permission gate — *before* `routeToolCall`, so a background-marked call is gated
+exactly like a foreground one and a denial leaves no task, ack or dispatch. The ack is that call's
+tool result; the finished task is delivered as one synthetic `strands_background_task_result` pair
+before the parent's next model call in the *same* invocation (`waitForCompletion`), so a report never
+crosses into a later user turn. The one thing darwin adds is observation: the background run's
+`AfterToolCallEvent` reaches hook callbacks only, so `BackgroundDelegationObserver` forwards that
+same SDK event object into `send()`'s stream ahead of the next SDK event — recorder and drivers see
+an ordinary before/after pair, the trajectory gains no record type, replay shows the delegation row
+with its report as for a foreground call, and the live-only ack row (`… · delegated in background
+(task <id>)`) is a `toolResultEvent` projection. `strands_manage_background_task` is parent-only
+(`PARENT_ONLY_TOOL_NAMES`), `list`/`get` read, `cancel` fail-closed `execute`; `/agents cancel <id>`
+stays the user-only path (`spike/verify-background-delegation.ts`).
+
 
 Long-running dispatch visibility stays inside that same observer boundary. The registry owns one
 unref'd ≤30-second heartbeat per running child and publishes only stable id, bounded agent name,
