@@ -1619,6 +1619,34 @@ not projected — they never reach the parent. Required check: `spike/verify-rep
 (in `pnpm test`) plus the seam cases in `spike/verify-subagents.ts` and
 `spike/verify-workflow-tool.ts`.
 
+#### Failed child's last text (`SER-063`)
+
+When a child's invocation throws (a `subagent` dispatch or a `workflow` node), the error the
+parent sees keeps what the child had already said. `withFailedChildText()` in
+`src/agents/failed-child-text.ts` is applied in the `catch` of `SubagentTool.run` and of the
+workflow node adapter: it reads only the child's *last assistant message* — text blocks
+concatenated, never reasoning, tool-use/tool-result blocks, earlier turns or the system prompt —
+plus any partials the max-tokens recovery retained (`retainedMaxTokensPartials()`, each counted
+once even though the hook also pushes them into `messages`). The SDK never stores a message
+whose own stream failed, so what surfaces is the retained partial or the last assistant message
+completed before the failing model call. With non-blank text, it rethrows
+`new Error(message, { cause: original })` whose `name` is the original's and whose message is
+the original message, a newline, the fixed note `subagent was cut off before finishing; its
+last output follows:`, a newline, and the text truncated end-first to `FAILED_CHILD_TEXT_CAP`
+(4000 code points) with the suffix `… [truncated N code points]`, then passed through
+`projectChildReport()` exactly like a success report. It is still an error: `dispatch.finish('failed')`
+is unchanged, the retry guard classifies by the preserved `name` and counts the failure,
+`turnEnded.failure` changes only in message length, and no new event, notice, record or TUI row
+exists. A child with no assistant text yields the original error object (`===`); a non-`Error`
+throwable and a child whose `cancelSignal` is aborted pass through untouched — cancellation is
+not a failure, so `Subagent task cancelled.` and every cancelled outcome stay byte-identical. The
+graph failure message (`Workflow failed — <id>: <first line>`) keeps, per failed node, that
+node's note-plus-text after its first line (`splitFailedChildMessage()`), so the bound is one
+≤200-char line plus one node's capped text per failed node. `runWithStreamResumption` is
+unaffected: it matches the *parent's* thrown `ModelError`, and a child failure only ever
+reaches the parent as an error tool result. Required check: `spike/verify-failed-child-text.ts`
+(in `pnpm test`); `spike/verify-retry-guard.ts` still counts the failed child.
+
 #### Concurrency: parallel execution, never parallel prompting
 
 Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:

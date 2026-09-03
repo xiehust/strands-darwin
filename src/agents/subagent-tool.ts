@@ -9,6 +9,7 @@ import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-ru
 import { buildRecipeChild, stopBashSession } from './child-recipe.js';
 import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage } from './concurrency-limit.js';
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
+import { withFailedChildText } from './failed-child-text.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
 import { projectChildReport } from './report-projection.js';
@@ -176,11 +177,11 @@ export class SubagentTool {
     this.activeAgents.add(child);
     const cancelChild = () => child.cancel();
     context?.agent.cancelSignal.addEventListener('abort', cancelChild, { once: true });
+    const invocationState = {};
 
     try {
       await child.initialize();
       this.options.onChildInitialized?.(child);
-      const invocationState = {};
       const hookContext = await childCodexHooks?.subagentStart({
         id: child.id,
         name: definition.name,
@@ -199,6 +200,10 @@ export class SubagentTool {
         outcome,
       });
       return report;
+    } catch (error) {
+      // Still an error (dispatch settles `failed` in the caller): only the message
+      // grows, by the child's bounded last assistant text through the same projection.
+      throw withFailedChildText(error, child, invocationState);
     } finally {
       context?.agent.cancelSignal.removeEventListener('abort', cancelChild);
       this.activeAgents.delete(child);

@@ -33,8 +33,15 @@ function textOf(message: Message): string {
 
 /** Adds privately consumed partial output back to an invoke()-only result. */
 export function withRetainedMaxTokensText(result: string, invocationState: InvocationState): string {
-  const state = invocationState as RecoveryInvocationState;
-  return `${(state[RETAINED_PARTIALS] ?? []).map(textOf).join('')}${result}`;
+  return `${retainedMaxTokensPartials(invocationState).map(textOf).join('')}${result}`;
+}
+
+/**
+ * The partial assistant messages this recovery retained for one invocation, in
+ * order. Read-only view for the failed-child seam; the key itself stays private.
+ */
+export function retainedMaxTokensPartials(invocationState: InvocationState): readonly Message[] {
+  return (invocationState as RecoveryInvocationState)[RETAINED_PARTIALS] ?? [];
 }
 
 /**

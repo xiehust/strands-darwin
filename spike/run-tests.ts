@@ -68,6 +68,7 @@ const suites = [
   'verify-subagents.ts',
   'verify-subagent-limit.ts',
   'verify-report-projection.ts',
+  'verify-failed-child-text.ts',
   'verify-subagent-heartbeats.ts',
   'verify-workflow-tool.ts',
   'verify-subagent-format.ts',

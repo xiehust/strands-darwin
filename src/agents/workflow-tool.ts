@@ -39,6 +39,7 @@ import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-ru
 import { buildRecipeChild, stopBashSession } from './child-recipe.js';
 import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage } from './concurrency-limit.js';
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
+import { splitFailedChildMessage, withFailedChildText } from './failed-child-text.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
 import { projectChildReport } from './report-projection.js';
@@ -243,9 +244,11 @@ export class WorkflowTool {
       const result = await graph.invoke('', { cancelSignal: controller.signal });
       if (result.status === 'CANCELLED') return 'Workflow cancelled.';
       if (result.status !== 'COMPLETED') {
+        // One bounded line per failed node; a node that was cut off after
+        // producing text also carries its SER-063 note + capped last text.
         const failures = result.results
           .filter((node) => node.status === 'FAILED')
-          .map((node) => `${node.nodeId}: ${firstLine(node.error?.message ?? 'unknown error')}`)
+          .map((node) => `${node.nodeId}: ${nodeFailureText(node.error?.message ?? 'unknown error')}`)
           .join('; ');
         throw new Error(`Workflow ${result.status.toLowerCase()}${failures === '' ? '' : ` — ${failures}`}`);
       }
@@ -308,12 +311,12 @@ export class WorkflowTool {
       return syntheticResult('Workflow node cancelled.');
     }
 
+    // Private per node, not the graph's shared reference: each child keeps its
+    // own one-shot max-tokens recovery allowance, like a subagent dispatch.
+    const invocationState: InvocationState = {};
     try {
       await child.initialize();
       this.options.onChildInitialized?.(child);
-      // Private per node, not the graph's shared reference: each child keeps its
-      // own one-shot max-tokens recovery allowance, like a subagent dispatch.
-      const invocationState: InvocationState = {};
       const hookContext = await codexHooks?.subagentStart({
         id: child.id,
         name: definition.name,
@@ -332,7 +335,8 @@ export class WorkflowTool {
       return withRetainedResult(result, invocationState);
     } catch (error) {
       dispatch?.finish('failed');
-      throw error;
+      // Still a node failure; the message carries the child's bounded last text.
+      throw withFailedChildText(error, child, invocationState);
     }
   }
 
@@ -454,4 +458,16 @@ function terminusText(content: readonly ContentBlock[]): string {
 function firstLine(text: string): string {
   const line = text.split('\n', 1)[0] ?? '';
   return line.length > 200 ? `${line.slice(0, 200)}…` : line;
+}
+
+/**
+ * One failed node's contribution to the graph failure message: the first line of
+ * its error (≤200 chars) and, when the node's child was cut off after producing
+ * text, the SER-063 note plus that text — already capped at
+ * `FAILED_CHILD_TEXT_CAP` code points by `withFailedChildText`, so the bound per
+ * failed node is one line plus one node's retained text, never more.
+ */
+function nodeFailureText(message: string): string {
+  const { head, tail } = splitFailedChildMessage(message);
+  return tail === undefined ? firstLine(head) : `${firstLine(head)}\n${tail}`;
 }

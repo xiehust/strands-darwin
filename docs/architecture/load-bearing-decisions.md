@@ -596,7 +596,12 @@ crosses through one pure projection (`src/agents/report-projection.ts`, SER-062)
 categories (permission-bypass vocabulary earns the marker alone) — never removed or reworded, clean
 reports byte-identical, idempotent, and a report-level projection rather than a security boundary,
 since any tool call it leads the parent to make still meets the gate
-(`spike/verify-report-projection.ts`).
+(`spike/verify-report-projection.ts`). A child that *fails* after producing text keeps that
+evidence too (SER-063, `src/agents/failed-child-text.ts`): the rethrown error — still an error,
+dispatch `failed`, retry guard counting, original kept as `cause` with its `name` — appends one fixed
+cut-off note and the child's last assistant text, capped at 4000 code points and passed through the
+same projection; a text-less failure is the unchanged error object and cancellation is never wrapped
+(`spike/verify-failed-child-text.ts`).
 
 
 Long-running dispatch visibility stays inside that same observer boundary. The registry owns one
