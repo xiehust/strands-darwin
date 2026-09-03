@@ -53,7 +53,7 @@ darwin --session "$NEW"
 darwin -p "carry on" --session "$NEW"
 ```
 
-`/trajectory` locally reports this run's file, record/byte counts, truncation, and problems. `/export <path>` writes `formatReplay(replayRead(...))` exactly, refuses an existing file and targets under `~/.darwin/sessions/`, and reports trajectory absence as nothing to export.
+`/trajectory` locally reports this run's file, record/byte counts, truncation, and problems. `/export <path>` writes `formatReplay(replayRead(...))` exactly, refuses an existing file and targets under `~/.darwin/sessions/`, and reports trajectory absence as nothing to export. `/copy` puts the last completed answer's text — the same plain text the export contains — on the clipboard via OSC 52, without touching the trajectory.
 
 ## Usage and spend
 

@@ -53,7 +53,7 @@ darwin --session "$NEW"
 darwin -p "carry on" --session "$NEW"
 ```
 
-`/trajectory` 在本地报告当前运行的文件、记录数/字节数、截断和问题。`/export <path>` 精确写出 `formatReplay(replayRead(...))`，拒绝覆盖已有文件，也拒绝写入 `~/.darwin/sessions/` 内部；没有轨迹时只提示无内容可导出。
+`/trajectory` 在本地报告当前运行的文件、记录数/字节数、截断和问题。`/export <path>` 精确写出 `formatReplay(replayRead(...))`，拒绝覆盖已有文件，也拒绝写入 `~/.darwin/sessions/` 内部；没有轨迹时只提示无内容可导出。`/copy` 则把最近一条已完成回答的文本（与导出内容相同的纯文本）通过 OSC 52 放到剪贴板，不触碰轨迹。
 
 ## 用量与费用
 

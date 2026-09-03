@@ -36,8 +36,11 @@ pnpm add --global .
 pnpm remove --global darwin   # 若提示 "not found in global packages" 可忽略，shim 已失效
 pnpm build
 pnpm add --global .
+darwin doctor                 # 验证：离线只读诊断，不创建任何文件，发现问题时退出码 1
 darwin sessions               # 验证：只读，不产生模型调用
 ```
+
+会话拒绝启动或某个扩展看起来没有加载时，也应先运行 `darwin doctor`：它用启动时同一批加载器输出配置、MCP、技能、hook 和系统提示词的检查结果，但不启动会话、不调用模型、不连接 MCP，每个问题都以 `!` 标出。
 
 ## 当前工作目录就是项目
 

@@ -6,6 +6,8 @@
 
 The startup frame identifies the model, session, cache, effort, permission mode, loaded instructions, extensions, and local help. Assistant Markdown styling is presentation-only: ANSI-stripped output preserves every character and replay/export remain plain-text projections. File-edit diffs come from proposed tool input, not a reread of disk; finished transcript diffs are complete while live permission/tool panels remain bounded.
 
+`/copy` puts the last *completed* answer's transcript text on the clipboard — the same plain text `/export` writes. It emits one OSC 52 sequence through the terminal first (so it works over SSH) and runs `wl-copy`/`xclip`/`pbcopy` only when a display is present; an over-cap answer is reported as `copied N of M bytes`, never silently cut. While a turn streams it copies the previous answer; before any answer it says so instead of erroring.
+
 While a turn runs, the existing `working…`/`thinking…` row shows elapsed time and reported token spend. Unreported usage is omitted, never rendered as zero. `Ctrl+B` toggles compact/expanded tool details without changing the prompt draft.
 
 ## Prompt editing and completion
@@ -15,6 +17,7 @@ While a turn runs, the existing `working…`/`thinking…` row shows elapsed tim
 - `Up`/`Down` first control an open menu; otherwise `Up` can take back the oldest queued message, then recall sent trajectory prompts from this project, or move in a multiline draft.
 - Recall contains sent `userInput` records only, newest first, collapses consecutive duplicates, and excludes entries over 4,000 code points. No trajectory means no history, not an error.
 - `Escape` closes the current `/` or `@` completion menu without changing the draft or cursor. Editing the query opens completion again. During recall, `Escape` ends the walk but keeps the recalled prompt in the editor.
+- `Escape` twice within 500 ms on an empty, idle composer opens the same chooser as `/rewind` (conversation-only branch from an earlier completed prompt; files are never rolled back). A draft, a running turn, a queued message or a pending permission makes the second `Escape` an ordinary one.
 - `Ctrl+J` or trailing `\` + `Enter` inserts a newline. Multiline paste does not send unexpectedly.
 
 ## Queueing while busy
@@ -99,6 +102,6 @@ The model-facing `bash` tool has these modes:
 
 States are `running`, `succeeded`, `failed`, `stopped`. `wakeOnOutput: false` aggregates terminal-focused incremental output until terminal state, cancellation, shutdown, or timeout; omitted/true wakes on output. If a terminal-focused timeout is still running, its result tells the model to wait again before ending when later work depends on completion, because background completion does not resume the agent. All readers share the cursor; no wait automatically continues the turn.
 
-`/tasks` is local, works while streaming, and makes no model call. Repeated successful polls stay compact; explicit output and failures remain visible. Combined stdout/stderr logs are retained at `~/.darwin/sessions/<project-key>/<session-id>/background/<task-id>.log` and are never pruned automatically.
+`/tasks` is local, works while streaming, and makes no model call. Under each job it shows up to three recent non-empty output lines (ANSI stripped, truncated end-first) read from the tail of the log file itself — never through the shared cursor, so a glance at `/tasks` cannot change what the model's next `output`/`wait` returns; a job with no output yet says so. Repeated successful polls stay compact; explicit output and failures remain visible. Combined stdout/stderr logs are retained at `~/.darwin/sessions/<project-key>/<session-id>/background/<task-id>.log` and are never pruned automatically.
 
 Task IDs/cursors are process-only. Resume keeps logs but cannot regain control of old jobs. Main/child agents share the registry. Shutdown reaps every registered process group; `SIGKILL` or machine failure cannot guarantee cleanup. `start` follows bash permissions/rules; lifecycle inspection, `stop`, and `restart` are safe.

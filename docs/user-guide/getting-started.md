@@ -36,8 +36,11 @@ If `darwin` fails to start with `Error: Cannot find module '.../pnpm/global/v11/
 pnpm remove --global darwin   # ignore "not found in global packages"; the shim is stale
 pnpm build
 pnpm add --global .
+darwin doctor                 # verify: offline read-only diagnostics, creates nothing, exit 1 on problems
 darwin sessions               # verify: read-only, makes no model call
 ```
+
+`darwin doctor` is also the first thing to run when a session refuses to start or an extension seems missing: it prints the same config, MCP, skills, hooks and system-prompt findings the startup loaders would, without a session, a model call or an MCP connection, and marks each problem with `!`.
 
 ## The working directory is the project
 

@@ -83,7 +83,7 @@
 
 `memory: true` 与 `trajectory: false` 不能同时使用。权限放行规则不属于该配置，它按项目存于 `~/.darwin/projects/<project-key>/permission-rules.json`。在配置文件中写入 `permissionRules` 会导致启动失败。
 
-上面两张表就是全部字段。其他任何键——无论在顶层还是 `models` 条目内，包括 `$schema` 或注释风格的键——都是未知字段，会导致启动失败，而不会被静默忽略：错误信息会指出文件、每个未知字段及其位置，并在拼写接近时给出最近的已知字段（`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`）。请修正拼写或删除该字段。
+上面两张表就是全部字段。其他任何键——无论在顶层还是 `models` 条目内，包括 `$schema` 或注释风格的键——都是未知字段，会导致启动失败，而不会被静默忽略：错误信息会指出文件、每个未知字段及其位置，并在拼写接近时给出最近的已知字段（`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`）。请修正拼写或删除该字段。`darwin doctor` 会在不启动会话的情况下以 `!` 行报告同样的问题（并以退出码 1 结束），因此改完配置可以先检查再启动。
 
 ## System prompt 组成
 

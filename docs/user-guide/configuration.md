@@ -83,7 +83,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 
 `memory: true` with `trajectory: false` is invalid. Permission allow rules are deliberately not config fields: they live per project in `~/.darwin/projects/<project-key>/permission-rules.json`; a `permissionRules` field in config is a startup error.
 
-The two tables above are the complete key set. Any other key — at the root or inside a `models` entry, including `$schema` or comment-style keys — is an unknown key and a startup error, never a silently ignored one: the message names the file, every unknown key and where it was found, and suggests the nearest known key when a spelling is close (`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`). Fix the spelling or remove the key.
+The two tables above are the complete key set. Any other key — at the root or inside a `models` entry, including `$schema` or comment-style keys — is an unknown key and a startup error, never a silently ignored one: the message names the file, every unknown key and where it was found, and suggests the nearest known key when a spelling is close (`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`). Fix the spelling or remove the key. `darwin doctor` reports the same problem as a `!` line (and exits 1) without starting a session, so a config edit can be checked before the next launch.
 
 ## System prompt composition
 
