@@ -585,7 +585,11 @@ observability must never become a second path for child transcript or payloads
 into parent context. And the
 parallelism is scoped to **reads**: concurrent children share one working tree with no isolation
 or conflict detection, so concurrent write delegation is *not* made safe, deliberately and
-documented rather than guarded.
+documented rather than guarded. Fan-out itself is bounded by `maxConcurrentSubagents` (default 8,
+the `workflow` node cap): `subagent` and `workflow` consult the registry's `running` count before
+`createModel`/`begin()` and refuse with one fixed bounded error telling the model to wait for a
+settlement rather than retry — no queue, timer or new state, the terminal transition is what frees
+a slot (`src/agents/concurrency-limit.ts`, `spike/verify-subagent-limit.ts`).
 
 
 Long-running dispatch visibility stays inside that same observer boundary. The registry owns one

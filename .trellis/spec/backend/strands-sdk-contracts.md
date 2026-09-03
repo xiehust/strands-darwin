@@ -1616,6 +1616,24 @@ Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:
   isolation, locking or conflict detection, and nothing in darwin makes concurrent write
   delegation safe. This is a documented limitation, not a gap to be closed with a new denial
   path: the permission model does not change.
+- **Fan-out is capped, not queued (SER-061).** `maxConcurrentSubagents` (`SessionFields`,
+  positive integer, default `DEFAULT_MAX_CONCURRENT_SUBAGENTS = 8` = `MAX_WORKFLOW_NODES`;
+  `0`, negatives, fractions and strings are `ConfigError`) is the ceiling on the one
+  registry's `running` records (`SubagentDispatchRegistry.runningCount()`), shared by
+  `subagent` and `workflow` through `src/agents/concurrency-limit.ts`. `SubagentTool.dispatch`
+  checks it after resolving the agent name and **before `createModel` and `begin()`**;
+  `WorkflowTool.run` checks `running + min(nodes, maxConcurrency ?? nodes) > cap` in the
+  validation-before-dispatch position. A refused call throws one fixed bounded message
+  (`Concurrent subagent limit reached: <running> of <cap> dispatches running. Do not retry
+  until one settles; wait for its result instead.`, plus `This call needs N slots; M are free.`
+  when N > 1) so the SDK returns an ordinary error result; no model, record or child exists for
+  it, and the retry guard treating it as a failure is intended. Settlement through the existing
+  terminal transition is the only thing that frees a slot — there is no waiting, queue, timer
+  or new state; a `workflow` node holds its slot from `begin()` until it settles even while the
+  graph has it waiting on a dependency. The cap reads the tool's live config (`updateConfig`
+  after `/model` applies to the next call), is stated once in each tool description, and is
+  parent-side only: children see nothing new and `PARENT_ONLY_TOOL_NAMES` is unchanged.
+  `/clear`'s successor builds a fresh registry, so it starts with zero running dispatches.
 
 #### Provenance and per-dispatch observability
 
@@ -1656,6 +1674,7 @@ Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:
 | Parent cancelled during model construction | Return cancelled result; do not create child; dispatch settles `cancelled` |
 | Child invoke throws | Tool reports an error through SDK; dispatch settles `failed`; child bash cleanup still runs |
 | Two dispatches in one assistant message | Both run concurrently; both dispatches observable while running |
+| Running dispatches already at `maxConcurrentSubagents` | Bounded fixed-shape tool error naming cap and count; no model, dispatch record or child; settlement re-admits |
 | Two children ask for permission at once | Prompts queue one at a time, each labelled with its own dispatch |
 
 #### Long-dispatch progress and targeted cancellation (`SRF-015`)
@@ -1711,6 +1730,11 @@ structured-protocol compatibility), plus `verify-subagents.ts`.
   parent-vs-child provenance, dispatch states (`succeeded`/`failed`/`cancelled`, unknown name
   recording nothing), and registry observer semantics (exactly once, listener isolation,
   unsubscribe).
+- `spike/verify-subagent-limit.ts`: the `maxConcurrentSubagents` ceiling with gated offline
+  models — the (N+1)th `subagent` call and an over-wide `workflow` refused with the fixed
+  message before any model, dispatch record or child; settlement re-admitting; a fitting
+  `maxConcurrency` admitted; live `updateConfig`; both descriptions naming the cap.
+  `spike/verify-config.ts` covers the field's default, override, refusals and `/model` survival.
 - `spike/verify-subagent-format.ts`: dispatch-id purity and fallback, elapsed endpoints, the
   `/agents` report (empty wording, one row per dispatch, code-point-safe bounds), the completion
   notice, and the live delegation row.
@@ -1844,6 +1868,7 @@ graph.invoke('', { cancelSignal })                         // MultiAgentInvokeOp
 | Condition | Required behavior |
 |---|---|
 | Over-cap nodes/edges, blank task, dup/unknown ids, dup edges, cycle, unknown agent | Bounded tool error; zero models, children, dispatches constructed |
+| `running + min(nodes, maxConcurrency ?? nodes)` exceeds `maxConcurrentSubagents` | Same shared fixed-shape error as `subagent` (with the needs/free clause); zero models, children, dispatches constructed |
 | Node model construction throws | Whole tool call errors; finally sweep settles remaining dispatches `cancelled` |
 | Node child throws mid-run | Node dispatch `failed`; SDK marks node FAILED; dependants never start, swept `cancelled`; tool errors boundedly |
 | Parent cancel mid-run | Running children cancelled, unstarted nodes never scheduled; all dispatches settle `cancelled` |

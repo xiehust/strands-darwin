@@ -7,6 +7,7 @@ import { withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
 import { buildRecipeChild, stopBashSession } from './child-recipe.js';
+import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage } from './concurrency-limit.js';
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
@@ -65,7 +66,8 @@ export class SubagentTool {
       name: SUBAGENT_TOOL_NAME,
       description:
         'Delegate a self-contained task to a fresh child agent with an independent context. ' +
-        `Only the final report is returned. Available agents: ${catalogue}`,
+        `Only the final report is returned. ${concurrencyDescriptionClause(concurrencyCap(options.config))} ` +
+        `Available agents: ${catalogue}`,
       inputSchema: z.object({
         task: z.string().min(1).describe('A complete, self-contained task for the child agent'),
         agent: z.string().optional().describe(`Agent name; defaults to ${DEFAULT_AGENT_NAME}`),
@@ -109,6 +111,17 @@ export class SubagentTool {
     if (definition === undefined) {
       const available = this.options.registry.definitions.map((candidate) => candidate.name).join(', ');
       return `No subagent named ${JSON.stringify(requestedName)}. Available agents: ${available}.`;
+    }
+
+    // The ceiling is checked before anything is constructed: a refused call
+    // builds no model, begins no dispatch and creates no child. Settlement on the
+    // registry's terminal transition is the only thing that frees a slot, so the
+    // error tells the model to wait for a result rather than retry. Live config
+    // on purpose (not a constructor snapshot): `/model` hands the tool a new one.
+    if (this.options.dispatches !== undefined) {
+      const cap = concurrencyCap(this.config);
+      const running = this.options.dispatches.runningCount();
+      if (running >= cap) throw new Error(concurrencyLimitMessage(cap, running));
     }
 
     // Recorded only once the request names a real agent: an unknown name never

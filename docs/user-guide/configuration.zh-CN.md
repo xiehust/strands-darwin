@@ -77,6 +77,7 @@
 | `diagnostics` | `false` | 每会话 SDK/darwin 调试日志 |
 | `memory` | 轨迹可用时开启 | 项目记忆；未设置时跟随 `trajectory: false` |
 | `memoryHorizonDays` | `28` | 生成记忆的有效天数，整数 `0–365`；`0` 只关闭过期检查 |
+| `maxConcurrentSubagents` | `8` | 同时运行的子代理派发上限（`subagent` 调用加 `workflow` 节点）；正整数；超出的调用会在创建任何模型或子代理之前被拒绝 |
 | `terminalBell` | `false` | 在权限提示和回合结束时响一次终端铃（仅交互式 TUI） |
 | `systemPrompt` | 内置值 | 替换基础 prompt，并优先于项目文件 |
 | `hooks` | — | 旧版内嵌后备配置；建议使用分层 `hooks/*.json` |

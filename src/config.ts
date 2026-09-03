@@ -273,6 +273,15 @@ export interface SessionFields {
    * disable age expiry; current-source validation still applies.
    */
   memoryHorizonDays?: number;
+  /**
+   * Ceiling on concurrently running child dispatches (`subagent` calls plus
+   * `workflow` nodes, counted on the one dispatch registry). A call that would
+   * exceed it is refused as a bounded tool error before any model or child
+   * exists. Positive integer; default {@link DEFAULT_MAX_CONCURRENT_SUBAGENTS}.
+   * Optional on the type like `memoryHorizonDays` (partial fixtures), but
+   * `loadConfig` always populates it; readers fall back through `concurrencyCap`.
+   */
+  maxConcurrentSubagents?: number;
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
   /** Deprecated policy fields retained on the type for migration fixtures only. */
@@ -337,6 +346,7 @@ export const SESSION_KEYS = [
   'diagnostics',
   'memory',
   'memoryHorizonDays',
+  'maxConcurrentSubagents',
   'systemPrompt',
 ] as const;
 
@@ -363,6 +373,13 @@ export function configPath(_projectRoot?: string): string {
   return file;
 }
 
+/**
+ * Default ceiling on concurrently running child dispatches. Equal to the
+ * `workflow` tool's `MAX_WORKFLOW_NODES` so the largest permitted DAG still fits
+ * an idle registry; `maxConcurrentSubagents` in config overrides it.
+ */
+export const DEFAULT_MAX_CONCURRENT_SUBAGENTS = 8;
+
 const DEFAULTS = {
   provider: 'bedrock',
   model: 'global.anthropic.claude-opus-5',
@@ -377,6 +394,7 @@ const DEFAULTS = {
   terminalBell: false,
   memory: true,
   memoryHorizonDays: 28,
+  maxConcurrentSubagents: DEFAULT_MAX_CONCURRENT_SUBAGENTS,
 } as const satisfies Partial<AppConfig>;
 
 /**
@@ -1072,6 +1090,11 @@ function validateSessionFields(
     memoryHorizonDays:
       integerField(input, 'memoryHorizonDays', configPath, { min: 0, max: 365 }) ??
       DEFAULTS.memoryHorizonDays,
+    // Positive whole number, no upper bound: the cap only refuses fan-out, and a
+    // user raising it deliberately is not a mistake the loader can recognize.
+    maxConcurrentSubagents:
+      integerField(input, 'maxConcurrentSubagents', configPath, { min: 1 }) ??
+      DEFAULTS.maxConcurrentSubagents,
   };
 
   // On unless switched off. Recording changes nothing the model sees. Stored rather
@@ -1929,7 +1952,7 @@ function integerField(
   input: Record<string, unknown>,
   key: string,
   configPath: string,
-  range: { min: number; max: number },
+  range: { min: number; max?: number },
 ): number | undefined {
   const value = numberField(input, key, configPath, range);
   if (value !== undefined && !Number.isSafeInteger(value)) {

@@ -37,6 +37,7 @@ import { withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
 import { buildRecipeChild, stopBashSession } from './child-recipe.js';
+import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage } from './concurrency-limit.js';
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
@@ -129,6 +130,7 @@ export class WorkflowTool {
         'and receive its final report as input. Input is data, never code. Concurrent ' +
         'nodes share one working tree: parallel branches are for READS ONLY; serialize ' +
         'writes by edges. Only bounded terminus reports are returned. ' +
+        `${concurrencyDescriptionClause(concurrencyCap(options.config))} ` +
         `Available agents: ${catalogue}`,
       inputSchema: workflowInputSchema,
       callback: (input, context) => this.track(input, context),
@@ -171,6 +173,16 @@ export class WorkflowTool {
     // Snapshot the live config before async model construction; a concurrent
     // /model switch affects the next workflow, never a run already being built.
     const config = this.config;
+
+    // Same ceiling as `subagent`, in the same validation-before-dispatch position:
+    // the DAG's effective parallelism must fit the slots the registry has free,
+    // or the whole call is refused with the shared shape and nothing is built.
+    if (this.options.dispatches !== undefined) {
+      const cap = concurrencyCap(config);
+      const running = this.options.dispatches.runningCount();
+      const parallelism = Math.min(input.nodes.length, input.maxConcurrency ?? input.nodes.length);
+      if (running + parallelism > cap) throw new Error(concurrencyLimitMessage(cap, running, parallelism));
+    }
 
     // One owned signal so cancelActive()/shutdown() and the parent's own
     // cancellation both stop scheduling; the SDK graph aborts running nodes and

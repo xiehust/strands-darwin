@@ -113,7 +113,7 @@ Required: valid unique non-`general` name (`[A-Za-z0-9_-]+`), description, nonem
 
 Children have fresh model/context, no parent messages, no persisted session, and no recursive `subagent`. Later children use the currently selected model. Tool restrictions are not permission grants: child calls use the shared gate/rules. Delegation itself is safe. Ctrl+C cancels child with parent and its bash session is reaped.
 
-Multiple subagent calls in one assistant message run concurrently. Permission prompts remain serialized and source-labelled. `/agents` lists only this run's dispatch metadata, never child transcripts. Parallelism is for read-heavy work: children share one unisolated working tree with no locks/conflict detection, so serialize mutation.
+Multiple subagent calls in one assistant message run concurrently. Permission prompts remain serialized and source-labelled. `/agents` lists only this run's dispatch metadata, never child transcripts. Parallelism is for read-heavy work: children share one unisolated working tree with no locks/conflict detection, so serialize mutation. Fan-out is capped by `maxConcurrentSubagents` (default `8`, counted over running `subagent` and `workflow` dispatches): a call over the cap returns one bounded error telling the model to wait for a running dispatch to settle, before any model or child is created.
 
 ## Workflows (DAG delegation)
 
@@ -134,7 +134,7 @@ The input is data, never code:
 
 Each node runs as one fresh child agent (`agent` defaults to `general`; the same `.darwin/agents/` definitions apply). An edge `[source, target]` means `target` waits for `source` and receives its final report as input — intermediate reports flow between nodes without round-tripping through the parent conversation. Nodes whose dependencies are all satisfied run in parallel, capped by optional `maxConcurrency`.
 
-Bounds and refusals: at most 8 nodes and 28 edges; duplicate or unknown node ids, unknown agent names, blank tasks, and cycles are refused with a bounded error before any child is created. Only the terminus reports (nodes where execution ended) return to the parent; child transcripts stay private.
+Bounds and refusals: at most 8 nodes and 28 edges; duplicate or unknown node ids, unknown agent names, blank tasks, and cycles are refused with a bounded error before any child is created. A DAG whose effective parallelism (`min(nodes, maxConcurrency)`) does not fit the free `maxConcurrentSubagents` slots is refused the same way — every node holds a slot from the moment the run begins until it settles. Only the terminus reports (nodes where execution ended) return to the parent; child transcripts stay private.
 
 Everything from the subagent section still holds per node: fresh model/context, the shared permission gate with source-labelled prompts, dispatch rows on `/agents` with targeted `/agents cancel <id>`, bash-session reaping, and Ctrl+C cancelling the whole run including unstarted nodes. The same working-tree caveat also holds: parallel branches are for reads only — serialize writes by putting an edge between them.
 

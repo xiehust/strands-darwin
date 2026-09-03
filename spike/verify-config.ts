@@ -14,6 +14,7 @@ import type { Model } from '@strands-agents/sdk';
 
 import {
   ConfigError,
+  DEFAULT_MAX_CONCURRENT_SUBAGENTS,
   DEFAULT_REQUEST_TIMEOUT_MS,
   MODEL_KEYS,
   OFFLOAD_PREVIEW_TOKENS,
@@ -930,6 +931,29 @@ async function memoryHorizonField(): Promise<void> {
   assert('a /model switch preserves the generated memory horizon', switched.memoryHorizonDays === 90);
 }
 
+async function maxConcurrentSubagentsField(): Promise<void> {
+  header('config — maxConcurrentSubagents field');
+  const def = await loadConfig(await writeConfig('{}'));
+  assert(`default is ${DEFAULT_MAX_CONCURRENT_SUBAGENTS}`,
+    def.maxConcurrentSubagents === 8 && def.maxConcurrentSubagents === DEFAULT_MAX_CONCURRENT_SUBAGENTS);
+  const custom = await loadConfig(await writeConfig('{ "maxConcurrentSubagents": 3 }'));
+  assert('a positive whole-number override is accepted', custom.maxConcurrentSubagents === 3);
+  const wide = await loadConfig(await writeConfig('{ "maxConcurrentSubagents": 64 }'));
+  assert('there is no upper bound', wide.maxConcurrentSubagents === 64);
+  for (const value of ['0', '-1', '1.5', '"8"']) {
+    const message = await expectConfigError(`invalid cap ${value} is a ConfigError (refuses to start)`, async () =>
+      loadConfig(await writeConfig(`{ "maxConcurrentSubagents": ${value} }`)),
+    );
+    assert(`the ${value} error names the field`, message.includes('maxConcurrentSubagents'));
+  }
+  const misplaced = await expectConfigError('the cap is rejected inside a model entry', async () =>
+    loadConfig(await writeConfig('{ "models": [{ "model": "global.anthropic.claude-opus-5", "enable": true, "maxConcurrentSubagents": 2 }] }')),
+  );
+  assert('the misplaced error names the top-level key', misplaced.includes('maxConcurrentSubagents') && misplaced.includes('top level'));
+  const switched = withModelChoice(custom, custom.modelChoices[0]!);
+  assert('a /model switch preserves the cap', switched.maxConcurrentSubagents === 3);
+}
+
 
 async function contextOffloadFields(): Promise<void> {
   header('config — context offload fields');
@@ -1389,6 +1413,7 @@ async function documentedKeys(): Promise<void> {
     diagnostics: false,
     memory: true,
     memoryHorizonDays: 7,
+    maxConcurrentSubagents: 4,
     systemPrompt: 'You are terse.',
   };
   const flatKeys = [...MODEL_KEYS, ...SESSION_KEYS].filter((key) => key !== 'openaiApi' && key !== 'baseUrl');
@@ -1436,6 +1461,7 @@ async function main(): Promise<void> {
   await contextWindowLimitField();
   await contextWarnRatioField();
   await memoryHorizonField();
+  await maxConcurrentSubagentsField();
   await contextOffloadFields();
   await memoryField();
   await trajectoryField();

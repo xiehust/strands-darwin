@@ -194,6 +194,17 @@ export class SubagentDispatchRegistry {
   }
 
   /**
+   * Dispatches not yet settled — the number the concurrency cap compares
+   * against. A `workflow` node counts from `begin()` even while the SDK graph has
+   * it waiting on a dependency; a slot frees only at the terminal transition.
+   */
+  runningCount(): number {
+    let running = 0;
+    for (const record of this.records.values()) if (record.state === 'running') running += 1;
+    return running;
+  }
+
+  /**
    * Every token this run's children have spent so far, summed over each
    * dispatch's current snapshot usage — running children read live, finished
    * ones report their frozen terminal reading. `dispatches` counts only the

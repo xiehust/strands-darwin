@@ -77,6 +77,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `diagnostics` | `false` | per-session SDK/darwin debug log |
 | `memory` | true while trajectory is available | project memory; omitted follows `trajectory: false` |
 | `memoryHorizonDays` | `28` | generated-memory age, integer `0–365`; `0` disables age only |
+| `maxConcurrentSubagents` | `8` | ceiling on running child dispatches (`subagent` calls plus `workflow` nodes); positive integer; a call over it is refused before any model or child exists |
 | `terminalBell` | `false` | ring the terminal bell on permission prompts and turn completion (interactive TUI only) |
 | `systemPrompt` | built-in | replaces the base prompt and wins over project file |
 | `hooks` | — | legacy embedded fallback; prefer layered `hooks/*.json` |
