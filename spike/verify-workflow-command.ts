@@ -57,6 +57,8 @@ function template(): void {
   assert('the DAG node bound is restated', message.includes('at most 8'));
   assert('the reads-parallel / writes-serialized rule is restated',
     message.includes('parallel branches are for reads only') && message.includes('serialize writes by edges'));
+  assert('the SER-065 writeScopes declaration is restated for writing nodes',
+    message.includes('writeScopes') && message.includes('project-relative path prefixes'));
   assert('the indivisible-task escape hatch is present', message.includes('handle it directly'));
   assert('the usage notice names the command and its argument',
     WORKFLOW_COMMAND_USAGE.includes('/workflow') && WORKFLOW_COMMAND_USAGE.includes('<task description>'));

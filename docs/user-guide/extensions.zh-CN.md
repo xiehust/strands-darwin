@@ -140,6 +140,23 @@ Trace the requested behavior, cite files and symbols, and report to the parent.
 
 子代理一节的所有约束对每个节点同样成立：全新模型/上下文、共享权限 gate 且提示标明来源、`/agents` 派发行与定向 `/agents cancel <id>`、bash 会话回收、Ctrl+C 取消整个运行（包括尚未启动的节点）。工作树警告同样适用：并行分支只用于读取——需要写入时用边把它们串行化。
 
+**声明写入范围。** 会写文件的节点应当用 `writeScopes` 说明写在哪里：1 到 8 个相对于项目根的路径前缀，每个指向一个文件或一个目录子树（`src/tui` 覆盖 `src/tui/App.tsx`；`./src/tui/` 规范化后是同一个范围）。这让"写入用边串行化"的规则变成可检查的：
+
+```json
+{
+  "nodes": [
+    { "id": "ui",   "task": "Restyle the header row.",        "writeScopes": ["src/tui"] },
+    { "id": "docs", "task": "Document the new header row.",   "writeScopes": ["docs/user-guide"] },
+    { "id": "review", "task": "Review both diffs; report only." }
+  ],
+  "edges": [["ui", "review"], ["docs", "review"]]
+}
+```
+
+在创建任何子代理之前就会拒绝：绝对路径、空串或 `.`、逃出项目根的条目（`../x`）、含 NUL 字节的条目、超过 8 个条目——以及最重要的一条：两个节点的范围重叠（相等，或一个包含另一个；按路径段比较，所以 `src/tu` 与 `src/tui` 不重叠）却没有任何方向的边路径把它们连起来。补一条边，或者把范围拆开。没有 `writeScopes` 的节点不参与检查，行为与以前完全一致。
+
+运行中会拒绝：带范围的节点用 `fileEditor` 做 `create`、`str_replace` 或 `insert`，而路径落在所有声明范围之外。这个拒绝走普通权限 gate，作为子代理能读到的拒绝结果（写明它的派发标签、路径和范围），永远不会变成向你弹出的确认框——任何模式下都如此，包括 `yolo`。`view` 不受影响；**bash 不在覆盖范围内**：shell 命令会写哪些文件无法静态判断，所以范围声明防不住节点在 shell 里 `echo > file`。
+
 ## 自定义命令
 
 把 Markdown 放在 `.darwin/commands/` 或对应全局/可移植目录中。输入 `/name arguments` 时，文件正文会作为消息发送，其中 `$ARGUMENTS` 替换为命令后的文字。内置名称仍保留；发现顺序遵循通用优先级。

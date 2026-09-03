@@ -32,7 +32,9 @@ function workflowPrompt(task: string): string {
     'Orchestrate this task with the `workflow` tool: decompose it into a bounded DAG of at ' +
     'most 8 subagent nodes, where each [source, target] edge both orders the work and hands ' +
     'the source\u2019s final report to the target as input. Concurrent nodes share one ' +
-    'working tree, so parallel branches are for reads only \u2014 serialize writes by edges. ' +
+    'working tree, so parallel branches are for reads only \u2014 serialize writes by edges and ' +
+    'declare each writing node\u2019s writeScopes (project-relative path prefixes) so overlapping ' +
+    'unordered writers are refused up front. ' +
     'If the task is truly indivisible, handle it directly and say why a workflow does not ' +
     'fit.\n\n' +
     `Task: ${task}`

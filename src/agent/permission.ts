@@ -129,6 +129,13 @@ export interface PermissionSource {
   dispatchId?: string;
   /** Child only: the dispatched definition name. */
   agentName?: string;
+  /**
+   * Child only, `workflow` nodes that declared them (SER-065): normalized
+   * project-relative path prefixes this child may write under. The gate denies a
+   * `fileEditor` write outside every entry before any other step; absent means
+   * the child is judged exactly like an unscoped one.
+   */
+  writeScopes?: readonly string[];
 }
 
 /**
@@ -150,7 +157,7 @@ export const PARENT_PERMISSION_SOURCE: PermissionSource = Object.freeze({
  */
 export type DispatchSourceResolver = (
   agentId: string,
-) => { dispatchId: string; agentName: string; label: string } | undefined;
+) => { dispatchId: string; agentName: string; label: string; writeScopes?: readonly string[] } | undefined;
 
 /**
  * A {@link PermissionRequest} with its risk assessment, its origin, and the
@@ -451,6 +458,18 @@ export class PermissionGate extends InterventionHandler {
     withdrawn: AbortSignal,
     promptIdentity: object,
   ): Promise<InterventionAction | typeof WITHDRAWN> {
+    // Resolved for every call, not only the ones that prompt: a classifier or a
+    // bridge that wants to know whose work it is judging should not have to
+    // reconstruct it from the tool input.
+    const source = this.sourceOf(event.agent.id);
+
+    // A `workflow` node's declared write scopes (SER-065) are judged first: they
+    // are a structural fact of the DAG the parent declared, not a confirmation
+    // policy, so they hold in every mode (yolo included), never prompt, and are
+    // not something a rule or a classifier verdict can widen.
+    const scoped = this.writeScopeGuard(event.toolUse.name, event.toolUse.input, source);
+    if (scoped !== undefined) return scoped;
+
     const guarded = this.planGuard(event.toolUse.name, event.toolUse.input);
     if (guarded !== undefined) return guarded;
 
@@ -458,10 +477,7 @@ export class PermissionGate extends InterventionHandler {
     const request: AssessedPermissionRequest = {
       ...base,
       ...assessRisk(base, this.options.projectRoot),
-      // Resolved for every call, not only the ones that prompt: a classifier or a
-      // bridge that wants to know whose work it is judging should not have to
-      // reconstruct it from the tool input.
-      source: this.sourceOf(event.agent.id),
+      source,
       promptIdentity,
       suggestions: suggestRules(base, this.options.projectRoot),
       withdrawn,
@@ -529,7 +545,27 @@ export class PermissionGate extends InterventionHandler {
       label: dispatch.label,
       dispatchId: dispatch.dispatchId,
       agentName: dispatch.agentName,
+      ...(dispatch.writeScopes === undefined ? {} : { writeScopes: dispatch.writeScopes }),
     };
+  }
+
+  /**
+   * Denies a scoped `workflow` node's `fileEditor` write that lands outside every
+   * declared scope. Undefined means the ordinary flow owns the call — including
+   * every parent call, every `subagent` dispatch, every unscoped node, `view`, and
+   * every other tool (bash is deliberately not covered: a command's write set is
+   * not statically knowable, and the description says so).
+   */
+  private writeScopeGuard(toolName: string, input: unknown, source: PermissionSource): InterventionAction | undefined {
+    if (source.kind !== 'child' || source.writeScopes === undefined) return undefined;
+    const violation = writeScopeViolation(toolName, input, source.writeScopes, this.options.projectRoot);
+    if (violation === undefined) return undefined;
+    return InterventionActions.deny(
+      `Workflow node ${source.label} declared writeScopes [${source.writeScopes.join(', ')}] and ` +
+        `fileEditor ${violation.command} on ${violation.path} is outside every declared scope. ` +
+        `Do not retry this write or route it elsewhere outside your scope; ` +
+        `finish what lies inside it and report the out-of-scope change in your final answer.`,
+    );
   }
 
   /**
@@ -979,6 +1015,52 @@ function assessWriteRisk(filePath: string, projectRoot: string): RiskAssessment 
   }
 
   return { risk: 'safe', riskReason: 'write inside the project' };
+}
+
+/** The `fileEditor` commands a declared write scope governs; `view` is a read and never judged. */
+const SCOPED_FILE_EDITOR_COMMANDS = new Set(['create', 'str_replace', 'insert']);
+
+/** Keeps a long or multi-line model-supplied path from stretching the denial reason. */
+const SCOPE_PATH_DISPLAY_LIMIT = 200;
+
+/**
+ * Whether one `fileEditor` write falls outside every declared scope (SER-065).
+ *
+ * Judged by `(toolName, input)` like the rest of the gate. `scopes` are the
+ * normalized project-relative prefixes `workflow` validated (no leading `./`,
+ * no trailing `/`, no `..`, never `.`); containment is by path segment, so
+ * `src/tui` covers `src/tui/App.tsx` but not `src/tuix`. The request path is
+ * resolved against `projectRoot` (absolute or relative), and one that escapes
+ * the project is outside every scope by construction. Any other tool, any other
+ * command, an unscoped caller — `undefined`, and the ordinary flow owns the call.
+ */
+export function writeScopeViolation(
+  toolName: string,
+  rawInput: unknown,
+  scopes: readonly string[],
+  projectRoot: string,
+): { command: string; path: string } | undefined {
+  if (toolName !== 'fileEditor') return undefined;
+  const input = asRecord(rawInput);
+  const command = str(input['command']) ?? '';
+  if (!SCOPED_FILE_EDITOR_COMMANDS.has(command)) return undefined;
+  const filePath = str(input['path']) ?? '';
+  if (scopes.some((scope) => pathWithinScope(filePath, scope, projectRoot))) return undefined;
+  const shown = filePath === '' ? '(no path)' : firstLine(filePath);
+  return {
+    command,
+    path: shown.length > SCOPE_PATH_DISPLAY_LIMIT ? `${shown.slice(0, SCOPE_PATH_DISPLAY_LIMIT)}…` : shown,
+  };
+}
+
+/** Segment-wise containment of a request path in one normalized scope prefix. */
+function pathWithinScope(filePath: string, scope: string, projectRoot: string): boolean {
+  if (filePath === '') return false;
+  const relative = path.relative(projectRoot, path.resolve(projectRoot, filePath));
+  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return false;
+  const segments = relative.split(path.sep);
+  const prefix = scope.split('/');
+  return prefix.length <= segments.length && prefix.every((segment, index) => segments[index] === segment);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

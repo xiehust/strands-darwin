@@ -17,6 +17,7 @@
  * private and no child event reaches the trajectory.
  */
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 
 import { Agent, AgentResult, Graph, Message, TextBlock, tool } from '@strands-agents/sdk';
 import type {
@@ -49,6 +50,8 @@ export const WORKFLOW_TOOL_NAME = 'workflow';
 export const MAX_WORKFLOW_NODES = 8;
 /** The largest simple DAG on {@link MAX_WORKFLOW_NODES} nodes: n·(n−1)/2. */
 export const MAX_WORKFLOW_EDGES = 28;
+/** Declared write-scope prefixes per node (SER-065). */
+export const MAX_WRITE_SCOPES = 8;
 
 const workflowInputSchema = z.object({
   nodes: z
@@ -57,6 +60,15 @@ const workflowInputSchema = z.object({
         id: z.string().min(1).max(64).describe('Unique node id; edges reference it'),
         agent: z.string().optional().describe(`Agent name; defaults to ${DEFAULT_AGENT_NAME}`),
         task: z.string().min(1).describe('A complete, self-contained task for this node'),
+        writeScopes: z
+          .array(z.string())
+          .min(1, 'writeScopes must name at least one path prefix when given')
+          .max(MAX_WRITE_SCOPES, `writeScopes allows at most ${MAX_WRITE_SCOPES} path prefixes per node`)
+          .optional()
+          .describe(
+            'Project-relative path prefixes (file or directory subtree) this node may write with ' +
+              'fileEditor; omit for read-only nodes',
+          ),
       }),
     )
     .min(1)
@@ -110,7 +122,11 @@ interface WorkflowNode {
  * stream events to the parent: the graph consumes each child privately and only
  * terminus content returns. Parallel branches share one working tree with no
  * isolation, so the description pins the rule: reads may run in parallel,
- * writes must be serialized by edges.
+ * writes must be serialized by edges. SER-065 makes that rule checkable: a node
+ * may declare `writeScopes`, unordered overlapping declarations are refused in
+ * `validate()`, and the scopes ride the dispatch record so the shared permission
+ * gate — never a new gate here — denies a scoped child's out-of-scope
+ * `fileEditor` write.
  */
 export class WorkflowTool {
   readonly tool: Tool;
@@ -132,7 +148,10 @@ export class WorkflowTool {
         'dependency order, where each [source, target] edge makes target wait for source ' +
         'and receive its final report as input. Input is data, never code. Concurrent ' +
         'nodes share one working tree: parallel branches are for READS ONLY; serialize ' +
-        'writes by edges. Only bounded terminus reports are returned. ' +
+        'writes by edges. A writing node should declare writeScopes (project-relative path ' +
+        'prefixes): two nodes with overlapping scopes and no edge path between them are ' +
+        'refused, and a scoped node\u2019s fileEditor write outside its scopes is denied ' +
+        '(bash is not covered). Only bounded terminus reports are returned. ' +
         `${concurrencyDescriptionClause(concurrencyCap(options.config))} ` +
         `${backgroundDelegationDescriptionClause()} ` +
         `Available agents: ${catalogue}`,
@@ -171,7 +190,7 @@ export class WorkflowTool {
   private async run(input: WorkflowInput, context?: ToolContext): Promise<string> {
     // Refuses before anything is constructed: an invalid DAG spawns zero
     // children, begins zero dispatches, and builds zero models.
-    const definitions = this.validate(input);
+    const { definitions, writeScopes } = this.validate(input);
     const edges = input.edges ?? [];
 
     // Snapshot the live config before async model construction; a concurrent
@@ -204,9 +223,13 @@ export class WorkflowTool {
         // `toolUseId` deliberately omitted: every node of one workflow call
         // shares the parent tool_use id, and deriving dispatch ids from it would
         // collide — targeted `/agents cancel` must address exactly one child.
+        // Declared scopes ride the record so the shared gate can resolve them
+        // from the child's agent id; the registry never judges them itself.
+        const scopes = writeScopes.get(node.id);
         const dispatch = this.options.dispatches?.begin({
           agentName: definition.name,
           task: node.task,
+          ...(scopes === undefined ? {} : { writeScopes: scopes }),
         });
         const model = await this.options.createModel(config);
         nodes.push({
@@ -343,9 +366,14 @@ export class WorkflowTool {
   }
 
   /** Bounded refusals, in input order; throws before any construction work. */
-  private validate(input: WorkflowInput): Map<string, AgentDefinition> {
+  private validate(input: WorkflowInput): {
+    definitions: Map<string, AgentDefinition>;
+    /** Normalized declared scopes, only for nodes that declared any. */
+    writeScopes: Map<string, readonly string[]>;
+  } {
     const available = this.options.registry.definitions.map((definition) => definition.name).join(', ');
     const definitions = new Map<string, AgentDefinition>();
+    const writeScopes = new Map<string, readonly string[]>();
     for (const node of input.nodes) {
       if (node.task.trim() === '') throw new Error(`Node ${JSON.stringify(node.id)} has an empty task.`);
       if (definitions.has(node.id)) throw new Error(`Duplicate node id ${JSON.stringify(node.id)}.`);
@@ -358,6 +386,9 @@ export class WorkflowTool {
         );
       }
       definitions.set(node.id, definition);
+      if (node.writeScopes !== undefined) {
+        writeScopes.set(node.id, node.writeScopes.map((entry) => normalizeWriteScope(node.id, entry)));
+      }
     }
 
     const edges = input.edges ?? [];
@@ -397,7 +428,29 @@ export class WorkflowTool {
         .join(', ');
       throw new Error(`Workflow edges form a cycle involving node(s): ${cyclic}.`);
     }
-    return definitions;
+
+    // SER-065: two nodes that both declare scopes may overlap only when an edge
+    // path orders them. Reachability over the (now acyclic) declared edges —
+    // validation only, like Kahn above; the SDK graph still does the scheduling.
+    const scoped = [...writeScopes.entries()];
+    if (scoped.length > 1) {
+      const reach = reachability(definitions.keys(), edges);
+      for (let i = 0; i < scoped.length; i += 1) {
+        for (let j = i + 1; j < scoped.length; j += 1) {
+          const [idA, scopesA] = scoped[i]!;
+          const [idB, scopesB] = scoped[j]!;
+          if (reach.get(idA)?.has(idB) === true || reach.get(idB)?.has(idA) === true) continue;
+          const overlap = firstOverlap(scopesA, scopesB);
+          if (overlap === undefined) continue;
+          throw new Error(
+            `Nodes ${JSON.stringify(idA)} and ${JSON.stringify(idB)} declare overlapping writeScopes ` +
+            `(${JSON.stringify(overlap[0])} and ${JSON.stringify(overlap[1])}) but no edge path orders them. ` +
+            `Add an edge between them or split the scopes so each node owns different files.`,
+          );
+        }
+      }
+    }
+    return { definitions, writeScopes };
   }
 
   private find(name: string): AgentDefinition | undefined {
@@ -425,6 +478,78 @@ function composeNodeInput(task: string, hookContext: string | undefined, args: I
     return [new TextBlock(text), ...blocks];
   }
   return text;
+}
+
+/**
+ * One declared write scope, normalized (SER-065): `path.posix.normalize`, then
+ * the leading `./` and any trailing `/` stripped, so `./src/tui/` and `src/tui`
+ * are the same scope. Refused with a bounded error naming the node and the
+ * entry: absolute paths, empty or `.` (the whole project is not a scope — leave
+ * `writeScopes` off instead), anything that still starts with `..` after
+ * normalization (escapes the project root), and NUL bytes. Backslashes are
+ * ordinary characters here; scopes are posix-relative by contract.
+ */
+export function normalizeWriteScope(nodeId: string, entry: string): string {
+  const refuse = (why: string): never => {
+    throw new Error(
+      `Node ${JSON.stringify(nodeId)} writeScopes entry ${JSON.stringify(boundedEntry(entry))} ${why}.`,
+    );
+  };
+  if (entry.includes('\0')) return refuse('contains a NUL byte');
+  if (path.posix.isAbsolute(entry)) return refuse('is absolute; scopes are project-relative prefixes');
+  let normalized = path.posix.normalize(entry);
+  if (normalized.startsWith('./')) normalized = normalized.slice(2);
+  while (normalized.length > 1 && normalized.endsWith('/')) normalized = normalized.slice(0, -1);
+  if (normalized === '' || normalized === '.') return refuse('is empty; name a file or directory prefix');
+  if (normalized === '..' || normalized.startsWith('../')) return refuse('escapes the project root');
+  return normalized;
+}
+
+/**
+ * Whether two normalized scopes denote the same subtree or one contains the
+ * other — by path segment, so `src/tu` and `src/tui` are disjoint while
+ * `src/tui` and `src/tui/App.tsx` overlap.
+ */
+export function scopesOverlap(a: string, b: string): boolean {
+  const sa = a.split('/');
+  const sb = b.split('/');
+  const shorter = sa.length <= sb.length ? sa : sb;
+  const longer = shorter === sa ? sb : sa;
+  return shorter.every((segment, index) => longer[index] === segment);
+}
+
+function firstOverlap(scopesA: readonly string[], scopesB: readonly string[]): [string, string] | undefined {
+  for (const a of scopesA) for (const b of scopesB) if (scopesOverlap(a, b)) return [a, b];
+  return undefined;
+}
+
+/** Forward reachability over validated (acyclic) edges: id → every node an edge path leads to. */
+function reachability(ids: Iterable<string>, edges: readonly (readonly [string, string])[]): Map<string, Set<string>> {
+  const successors = new Map<string, string[]>();
+  for (const [source, target] of edges) {
+    const list = successors.get(source);
+    if (list === undefined) successors.set(source, [target]);
+    else list.push(target);
+  }
+  const reach = new Map<string, Set<string>>();
+  for (const id of ids) {
+    const seen = new Set<string>();
+    const stack = [...(successors.get(id) ?? [])];
+    while (stack.length > 0) {
+      const next = stack.pop() as string;
+      if (seen.has(next)) continue;
+      seen.add(next);
+      stack.push(...(successors.get(next) ?? []));
+    }
+    reach.set(id, seen);
+  }
+  return reach;
+}
+
+/** A model-supplied entry is quoted in the refusal; keep the refusal one bounded line. */
+function boundedEntry(entry: string): string {
+  const oneLine = entry.replace(/[\r\n\0]/g, '\u2400');
+  return oneLine.length > 120 ? `${oneLine.slice(0, 120)}…` : oneLine;
 }
 
 /** Folds privately retained max-tokens partial text back into the node result. */

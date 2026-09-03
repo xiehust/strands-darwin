@@ -14,6 +14,10 @@
  * with no isolation, locking or conflict detection whatsoever. Nothing in this
  * module makes concurrent *write* delegation safe, and it is not meant to —
  * delegate reads/searches in parallel, and keep mutation on one agent at a time.
+ * The one write-related fact a record may carry is the `writeScopes` a
+ * `workflow` node *declared* (SER-065): normalized path prefixes handed through
+ * {@link SubagentDispatchSource} to the permission gate, which is the only
+ * thing that enforces them. The registry stores and reports; it never judges.
  */
 import { randomUUID } from 'node:crypto';
 
@@ -69,6 +73,12 @@ export interface SubagentDispatchSource {
   readonly agentName: string;
   /** Bounded, ready to render: `<agent>#<dispatchId>`. */
   readonly label: string;
+  /**
+   * Declared `workflow` node write scopes (SER-065): normalized project-relative
+   * path prefixes, already validated by the tool. Absent for `subagent`
+   * dispatches and unscoped nodes, which the gate must treat exactly as before.
+   */
+  readonly writeScopes?: readonly string[];
 }
 
 /** Receives one immutable snapshot when a dispatch first reaches a terminal state. */
@@ -121,6 +131,8 @@ interface DispatchRecord {
   /** The last reading, frozen by `finish()`; `undefined` until terminal. */
   usage: UsageTotals | undefined;
   heartbeat: ReturnType<typeof setInterval> | undefined;
+  /** Frozen copy of the declared scopes; `undefined` when none were declared. */
+  readonly writeScopes: readonly string[] | undefined;
 }
 
 export interface SubagentDispatchRegistryOptions {
@@ -147,7 +159,13 @@ export class SubagentDispatchRegistry {
     this.now = options.now ?? Date.now;
   }
 
-  begin(dispatch: { agentName: string; task: string; toolUseId?: string | undefined }): SubagentDispatchHandle {
+  begin(dispatch: {
+    agentName: string;
+    task: string;
+    toolUseId?: string | undefined;
+    /** `workflow` nodes only: normalized scopes the tool already validated. */
+    writeScopes?: readonly string[] | undefined;
+  }): SubagentDispatchHandle {
     const key = randomUUID();
     const startedAtMs = this.now();
     const record: DispatchRecord = {
@@ -164,6 +182,7 @@ export class SubagentDispatchRegistry {
       readUsage: undefined,
       usage: undefined,
       heartbeat: undefined,
+      writeScopes: dispatch.writeScopes === undefined ? undefined : Object.freeze([...dispatch.writeScopes]),
     };
     this.records.set(key, record);
     record.heartbeat = setInterval(() => this.publishProgress(record, true), this.heartbeatIntervalMs);
@@ -259,6 +278,7 @@ export class SubagentDispatchRegistry {
       dispatchId: record.dispatchId,
       agentName: boundedAgentName(record.agentName),
       label: dispatchLabel(record),
+      ...(record.writeScopes === undefined ? {} : { writeScopes: record.writeScopes }),
     };
   }
 

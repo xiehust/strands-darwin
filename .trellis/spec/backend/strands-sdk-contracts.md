@@ -1716,6 +1716,62 @@ model for parent and child); `spike/verify-subagents.ts`, `verify-workflow-tool.
 `verify-subagent-limit.ts`, `verify-retry-guard.ts`, `verify-trajectory.ts`, `verify-rewind.ts`,
 `verify-clear-session.ts` and `verify-context-offload.ts` stay green.
 
+#### Workflow write scopes (`SER-065`)
+
+The "serialize writes by edges" rule made checkable, and enforced through the **existing** gate.
+Origin: darwin's own measured same-file race (`docs/architecture/load-bearing-decisions.md` §
+Same-path fileEditor ordering) and the peer pattern of advisory path prefixes with overlap
+warnings rather than locks.
+
+- **Schema.** Each `workflow` node gains optional `writeScopes: string[]` (zod `min(1)`,
+  `max(MAX_WRITE_SCOPES = 8)`, both with bounded messages). An entry is a project-relative path
+  prefix denoting the file or directory subtree at that path. `normalizeWriteScope(nodeId, entry)`
+  (`src/agents/workflow-tool.ts`, exported) applies `path.posix.normalize`, strips a leading `./`
+  and trailing `/`, and refuses — one bounded `Node "<id>" writeScopes entry "<entry>" <why>.` line
+  (entry ≤120 code points, control characters replaced), in the existing `validate()` position, so
+  zero models/children/dispatches exist — entries containing NUL, absolute entries, anything that
+  normalizes to `''`/`.` (the whole project is not a scope; omit `writeScopes` instead), and
+  anything that still starts with `..` after normalization.
+- **Overlap rule.** Containment is by path **segment** (`scopesOverlap`): `src/tui` covers
+  `src/tui/App.tsx`, equal scopes overlap, `src/tu` and `src/tui` do not. After the Kahn cycle
+  check, `validate()` computes forward reachability over the declared edges (`reachability`, DFS,
+  validation only — the SDK `Graph` still schedules) and, for every pair of nodes that both
+  declare scopes and are reachable in **neither** direction, refuses the whole call on the first
+  overlapping pair: `Nodes "a" and "b" declare overlapping writeScopes ("src/tui" and
+  "src/tui/App.tsx") but no edge path orders them. …`. A path in either direction (through
+  unscoped nodes included) admits the pair. Nodes without `writeScopes` take no part.
+- **Carriage.** `SubagentDispatchRegistry.begin()` accepts optional `writeScopes` (frozen copy on
+  the record), and `sourceFor(agentId)` returns it on `SubagentDispatchSource` only when present;
+  `WorkflowTool.run` passes each node's normalized list into `begin()`. `subagent` dispatches never
+  set it. `DispatchSourceResolver` and `PermissionSource` (`writeScopes?`) carry it into the gate;
+  the registry stores and reports, it never judges.
+- **Gate denial.** `PermissionGate.decideOnce` resolves `source` first and runs
+  `writeScopeGuard` **before** the plan guard, the yolo short-circuit, the safe check, allow-rules,
+  the classifier and the bridge — so it holds in every mode (yolo included), never prompts, and
+  no rule or verdict can widen it. The pure predicate `writeScopeViolation(toolName, input,
+  scopes, projectRoot)` (exported) judges only `fileEditor` with `command` ∈ {`create`,
+  `str_replace`, `insert`}: the path (absolute or relative) is resolved against `projectRoot`; one
+  escaping the project or missing (`(no path)`) is outside every scope; containment is by segment.
+  A violation is `InterventionActions.deny(...)` (never `confirm()`) with one bounded reason:
+  `Workflow node <label> declared writeScopes [<scopes>] and fileEditor <command> on <path> is
+  outside every declared scope. Do not retry this write or route it elsewhere outside your scope;
+  finish what lies inside it and report the out-of-scope change in your final answer.` (path
+  ≤200 code points). The SDK turns it into an ordinary `DENIED:` tool result; the node does not
+  fail. `view`, every other tool, the parent, `subagent` children and unscoped nodes are
+  byte-identical to before. **Bash is out of scope** — a command's write set is not statically
+  knowable; the tool description says so.
+- **Description and `/workflow`.** The tool description carries one sentence (declare
+  `writeScopes`; overlapping unordered nodes refused; out-of-scope `fileEditor` writes denied; bash
+  not covered). The `/workflow <task>` template restates the tool's contract in its own words (it
+  does not embed the description verbatim) and gained a clause asking for `writeScopes` on writing
+  nodes; `spike/verify-workflow-command.ts` pins it.
+
+Required check: `spike/verify-workflow-scopes.ts` (in `pnpm test`, offline: scripted child models,
+a stub `fileEditor`, the real gate with `dispatchSource` wired); `verify-workflow-tool.ts`,
+`verify-workflow-command.ts`, `verify-permissions-command.ts`, `verify-subagents.ts`,
+`verify-subagent-limit.ts`, `verify-background-delegation.ts` and `verify-subagent-heartbeats.ts`
+stay green.
+
 #### Concurrency: parallel execution, never parallel prompting
 
 Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:
@@ -1737,7 +1793,10 @@ Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:
 - Concurrency is scoped to **read-heavy** delegation. Children share one working tree with no
   isolation, locking or conflict detection, and nothing in darwin makes concurrent write
   delegation safe. This is a documented limitation, not a gap to be closed with a new denial
-  path: the permission model does not change.
+  path: the permission model does not change. The one refinement is SER-065 — a `workflow` node
+  may *declare* `writeScopes`, checked for unordered overlap at validation and enforced as a
+  `deny(...)` inside the existing gate's decision path; it narrows what a declared node may
+  write, it does not make undeclared concurrent writes safe.
 - **Fan-out is capped, not queued (SER-061).** `maxConcurrentSubagents` (`SessionFields`,
   positive integer, default `DEFAULT_MAX_CONCURRENT_SUBAGENTS = 8` = `MAX_WORKFLOW_NODES`;
   `0`, negatives, fractions and strings are `ConfigError`) is the ceiling on the one

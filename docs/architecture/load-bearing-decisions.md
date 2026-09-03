@@ -688,10 +688,27 @@ tree. The `/workflow <task>` built-in is a prompt-style trigger onto this same t
 second execution channel: `parseWorkflowCommand` (`src/commands/workflow-command.ts`, pure, never
 imports `WorkflowTool`) expands in `expandSlashCommand` — checked before skills and custom
 commands so no extension can shadow the reserved name — into one fixed template that names the
-tool, restates the bounds and the reads/writes rule, and embeds the description verbatim, then
+tool, restates the bounds and the reads/writes rule, and embeds the task verbatim, then
 flows down the ordinary submit path (busy submissions queue per SER-027); bare `/workflow` is a
 local driver usage notice, never a model call. Required check: `spike/verify-workflow-tool.ts`
 and `spike/verify-workflow-command.ts` (both in `pnpm test`).
+
+**Declared write scopes make the reads-parallel/writes-serialized rule checkable, through the
+existing gate (SER-065).** A node may declare `writeScopes` — one to eight project-relative path
+prefixes, each the file or directory subtree at that path, normalized with `path.posix.normalize`
+(leading `./` and trailing `/` stripped; absolute, empty/`.`, root-escaping and NUL entries are
+bounded refusals naming the node and the entry, in the same validate-before-anything position).
+Containment is by path segment (`src/tui` covers `src/tui/App.tsx`; `src/tu` does not), and two
+scoped nodes whose scopes overlap are refused as a whole unless an edge path orders them in some
+direction — reachability computed over the validated DAG for validation only. The normalized list
+rides the node's dispatch record into `SubagentDispatchSource`, so `PermissionGate.sourceOf()` knows
+the caller's scopes and `decideOnce` denies — `deny(...)`, before plan/yolo/safe/rules/classifier/
+prompt, so no user is ever asked about it — a scoped child's `fileEditor` `create`/`str_replace`/
+`insert` whose resolved path is outside every scope, with one bounded reason naming the dispatch
+label, the path and the scopes. `view`, every other tool, unscoped nodes, `subagent` dispatches and
+the parent are byte-identical to before; bash is deliberately not covered (its write set is not
+statically knowable) and the description says so. Required check: `spike/verify-workflow-scopes.ts`
+(in `pnpm test`).
 
 ## Session trajectory
 

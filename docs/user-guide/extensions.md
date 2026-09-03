@@ -140,6 +140,23 @@ Bounds and refusals: at most 8 nodes and 28 edges; duplicate or unknown node ids
 
 Everything from the subagent section still holds per node: fresh model/context, the shared permission gate with source-labelled prompts, dispatch rows on `/agents` with targeted `/agents cancel <id>`, bash-session reaping, and Ctrl+C cancelling the whole run including unstarted nodes. The same working-tree caveat also holds: parallel branches are for reads only — serialize writes by putting an edge between them.
 
+**Declared write scopes.** A node that writes should say where, with `writeScopes`: one to eight project-relative path prefixes, each naming a file or a directory subtree (`src/tui` covers `src/tui/App.tsx`; `./src/tui/` normalizes to the same scope). This makes the "serialize writes by edges" rule checkable:
+
+```json
+{
+  "nodes": [
+    { "id": "ui",   "task": "Restyle the header row.",        "writeScopes": ["src/tui"] },
+    { "id": "docs", "task": "Document the new header row.",   "writeScopes": ["docs/user-guide"] },
+    { "id": "review", "task": "Review both diffs; report only." }
+  ],
+  "edges": [["ui", "review"], ["docs", "review"]]
+}
+```
+
+Refused before any child exists: an absolute entry, an empty or `.` entry, one that escapes the project (`../x`), one containing a NUL byte, more than eight entries — and, above all, two nodes whose scopes overlap (equal, or one inside the other, compared by path segment, so `src/tu` and `src/tui` do not overlap) when no edge path connects them in either direction. Add the edge or split the scopes. Nodes without `writeScopes` take no part in the check and behave exactly as before.
+
+Denied while running: a scoped node's `fileEditor` `create`, `str_replace` or `insert` whose path lands outside every declared scope. The denial goes through the ordinary permission gate as a refusal the child reads (naming its dispatch label, the path and its scopes) and never as a prompt to you — in every mode, `yolo` included. `view` is never affected, and **bash is not covered**: a shell command's write set cannot be known statically, so scopes are no defence against `echo > file` from a node's shell.
+
 ## Custom commands
 
 Place Markdown under `.darwin/commands/` or global/portable counterparts. `/name arguments` sends the file body as the message, replacing `$ARGUMENTS` with text after the command. Built-ins remain reserved; command discovery follows the common precedence.
