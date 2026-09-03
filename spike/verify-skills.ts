@@ -58,6 +58,9 @@ function builtinsOf(skills: readonly Skill[]): Skill[] {
   return skills.filter((skill) => isUnder(skillDirectory(skill), BUILTIN_SKILLS_DIR));
 }
 
+/** Every shipped built-in: the three required ones plus the commit-message sample (moved from `.darwin/skills/` in 2da5a27). */
+const SHIPPED_BUILTIN_SKILLS: readonly string[] = [...REQUIRED_BUILTIN_SKILLS, 'commit-message'];
+
 /** Builds a throwaway skills tree covering the good and broken cases. */
 async function buildFixture(): Promise<void> {
   await rm(TMP_ROOT, { recursive: true, force: true });
@@ -158,7 +161,7 @@ async function missingDirectory(): Promise<void> {
 
   const { skills, problems } = await scanSkills('/tmp/darwin-skills-does-not-exist');
 
-  assert('all required built-ins remain without a project directory', builtinsOf(skills).length === REQUIRED_BUILTIN_SKILLS.length && REQUIRED_BUILTIN_SKILLS.every((name) => builtinsOf(skills).some((skill) => skill.name === name)));
+  assert('all shipped built-ins remain without a project directory', builtinsOf(skills).length === SHIPPED_BUILTIN_SKILLS.length && SHIPPED_BUILTIN_SKILLS.every((name) => builtinsOf(skills).some((skill) => skill.name === name)));
   assert('project absence is silent (global .agents problems remain attributable)', problems.every((problem) => !problem.directory.includes('/tmp/darwin-skills-does-not-exist/')));
   assert('the built-ins resolve beside the loader module', REQUIRED_BUILTIN_SKILLS.every((name) => skillDirectory(requireSkill(skills, name)) === path.join(BUILTIN_SKILLS_DIR, name)));
 
@@ -352,8 +355,8 @@ async function missingDirectory(): Promise<void> {
   assert(
     'a root skills/ directory is no longer scanned',
     !legacyScan.skills.some((skill) => isUnder(skillDirectory(skill), legacyRoot)) &&
-      builtinsOf(legacyScan.skills).length === REQUIRED_BUILTIN_SKILLS.length &&
-      REQUIRED_BUILTIN_SKILLS.every((name) => legacyScan.skills.some((skill) => skill.name === name)),
+      builtinsOf(legacyScan.skills).length === SHIPPED_BUILTIN_SKILLS.length &&
+      SHIPPED_BUILTIN_SKILLS.every((name) => legacyScan.skills.some((skill) => skill.name === name)),
   );
 }
 
@@ -788,7 +791,7 @@ async function researchDocs(): Promise<void> {
   // this migration. New/edited fixture records receive no exception.
   const productionBacklogErrors = await validateBacklog(backlog, pages, REPO_ROOT, new Map([['SER-023', '13:4:5:4:3:3']]));
   if (productionBacklogErrors.length > 0) console.log(`  backlog errors: ${JSON.stringify(productionBacklogErrors)}`);
-  assert('all 81 production records pass paged-backlog validation', productionBacklogErrors.length === 0 && pages.reduce((count, page) => count + [...page.content.matchAll(BACKLOG_SECTION_PATTERN)].length, 0) === 81);
+  assert('all 86 production records pass paged-backlog validation', productionBacklogErrors.length === 0 && pages.reduce((count, page) => count + [...page.content.matchAll(BACKLOG_SECTION_PATTERN)].length, 0) === 86);
 
   const fixtureIndex = '- [Priorities 001–020](./backlog/directions-001-020.md)\n';
   const fixturePage = (content: string, fileName = 'directions-001-020.md'): BacklogPage => ({ fileName, content });
@@ -842,8 +845,9 @@ async function realProjectSkill(): Promise<void> {
   assert('project skills have no duplicate-name problems after Trellis moved to .agents',
     localProblems.every((problem) => !problem.reason.includes('duplicate skill name')));
   assert(
-    'commit-message remains under .darwin/skills/',
-    skillDirectory(requireSkill(skills, 'commit-message')).includes(path.join('.darwin', SKILLS_DIRNAME)),
+    'commit-message is a built-in beside the loader module, no longer under .darwin/skills/',
+    skillDirectory(requireSkill(skills, 'commit-message')) === path.join(BUILTIN_SKILLS_DIR, 'commit-message') &&
+      localProblems.every((problem) => !problem.reason.includes('reserved by built-in')),
   );
   assert(
     'Trellis skills are discovered from .agents/skills/',

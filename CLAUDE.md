@@ -151,5 +151,5 @@ stream events map per the table in the archived MVP task's `research/spike-resul
   with an opaque `Connection closed`.
 - pnpm's `minimumReleaseAge` may hold back very fresh `@strands-agents/sdk` releases; don't
   bypass it.
-- Running darwin in this repo dogfoods it: the Trellis `AGENTS.md` gets preloaded and
-  `.darwin/skills/commit-message` is a live sample skill.
+- Running darwin in this repo dogfoods it: this `AGENTS.md` gets preloaded and
+  `src/skills/builtin/commit-message` is a live sample skill.
