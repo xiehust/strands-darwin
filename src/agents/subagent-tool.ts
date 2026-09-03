@@ -11,6 +11,7 @@ import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage }
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
+import { projectChildReport } from './report-projection.js';
 
 export const SUBAGENT_TOOL_NAME = 'subagent';
 
@@ -187,7 +188,9 @@ export class SubagentTool {
       const result = await child.invoke(injectCodexContext(task, hookContext), { invocationState });
       const outcome = result.stopReason === 'cancelled' ? 'cancelled' : 'succeeded';
       dispatch?.finish(outcome);
-      const report = withRetainedMaxTokensText(result.toString(), invocationState);
+      // The one seam where child text becomes the parent's tool result: escape
+      // imitation of darwin's own framing and mark it, never remove or reword.
+      const report = projectChildReport(withRetainedMaxTokensText(result.toString(), invocationState));
       // Child assistant text is private until the ordinary bounded tool result is
       // returned. Do not duplicate it into a lifecycle command payload.
       void childCodexHooks?.subagentStop({

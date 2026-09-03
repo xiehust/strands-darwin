@@ -41,6 +41,7 @@ import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage }
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
+import { projectChildReport } from './report-projection.js';
 
 export const WORKFLOW_TOOL_NAME = 'workflow';
 export const MAX_WORKFLOW_NODES = 8;
@@ -249,7 +250,9 @@ export class WorkflowTool {
         throw new Error(`Workflow ${result.status.toLowerCase()}${failures === '' ? '' : ` — ${failures}`}`);
       }
       const report = terminusText(result.content);
-      return report === '' ? 'Workflow completed with no terminus report.' : report;
+      // The fixed placeholder stays byte-identical; only real terminus text is
+      // projected (escape framing imitation, mark it, never remove or reword).
+      return report === '' ? 'Workflow completed with no terminus report.' : projectChildReport(report);
     } finally {
       context?.agent.cancelSignal.removeEventListener('abort', cancelRun);
       this.activeControllers.delete(controller);

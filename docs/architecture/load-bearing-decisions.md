@@ -589,7 +589,14 @@ documented rather than guarded. Fan-out itself is bounded by `maxConcurrentSubag
 the `workflow` node cap): `subagent` and `workflow` consult the registry's `running` count before
 `createModel`/`begin()` and refuse with one fixed bounded error telling the model to wait for a
 settlement rather than retry — no queue, timer or new state, the terminal transition is what frees
-a slot (`src/agents/concurrency-limit.ts`, `spike/verify-subagent-limit.ts`).
+a slot (`src/agents/concurrency-limit.ts`, `spike/verify-subagent-limit.ts`). The report itself
+crosses through one pure projection (`src/agents/report-projection.ts`, SER-062) at exactly the
+`subagent` and `workflow`-terminus result seams: lines imitating darwin's own framing tags or
+`Human:`/`Assistant:` roles gain one leading backslash and one bounded marker line names the matched
+categories (permission-bypass vocabulary earns the marker alone) — never removed or reworded, clean
+reports byte-identical, idempotent, and a report-level projection rather than a security boundary,
+since any tool call it leads the parent to make still meets the gate
+(`spike/verify-report-projection.ts`).
 
 
 Long-running dispatch visibility stays inside that same observer boundary. The registry owns one

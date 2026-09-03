@@ -1594,6 +1594,31 @@ system prompt. `general` is built in and reserved. Dispatch states are
 - Reap each child's bash session with direct `restart` in `finally`. Shared MCP clients remain
   owned and disconnected only by the main runtime.
 
+#### Report projection (`SER-062`)
+
+The child's final text passes through exactly one pure function, `projectChildReport()` in
+`src/agents/report-projection.ts`, at the two seams where it becomes a parent tool result:
+`SubagentTool.run` (after `withRetainedMaxTokensText`) and the `workflow` terminus (after the
+empty-report substitution, so `Workflow completed with no terminus report.` stays byte-identical).
+A line that, after optional leading whitespace, opens or closes one of darwin's own framing tags
+(`<project-instructions`, `<available_skills>`, `<working-context>`, `<system-reminder>`,
+case-insensitive) or starts with `Human:` / `Assistant:` (exact case) gains one backslash before
+the `<` or the role, and nothing else on the line changes. When any line matched, or the report
+mentions permission-bypass vocabulary (`alwaysAllow`, `permissionMode`, `--dangerously`,
+`bypassPermissions`, `skip-permissions`, `--yolo`, case-insensitive), one fixed first line
+`[darwin: subagent report matched instruction-shaped pattern(s): <categories>]` is prepended with
+categories from the closed vocabulary `framing-tag`, `transcript-role`, `permission-vocabulary`
+in that order; vocabulary alone earns the marker only. A clean report returns the same string
+object; the projection is idempotent (a leading canonical marker is folded, escaped lines never
+re-match), O(n) over lines with anchored prefix checks, and never deletes, reorders or rewords.
+The projected string *is* the ordinary tool result — trajectory, replay, retry guard and dispatch
+records see one value; there is no new record, notice, event or TUI row. It is a report-level
+projection, not a security boundary: a tool call the report leads the parent to make still goes
+through the permission gate. Intermediate node results inside a `workflow` (dependency merge) are
+not projected — they never reach the parent. Required check: `spike/verify-report-projection.ts`
+(in `pnpm test`) plus the seam cases in `spike/verify-subagents.ts` and
+`spike/verify-workflow-tool.ts`.
+
 #### Concurrency: parallel execution, never parallel prompting
 
 Measured against `@strands-agents/sdk@1.12.0` with scripted models, no network:

@@ -113,7 +113,7 @@ Trace the requested behavior, cite files and symbols, and report to the parent.
 
 子代理使用新的模型实例和上下文，不继承父会话消息，不持久化 session，也不能递归调用 `subagent`。之后派发的子代理使用当时已选择的模型。工具限制不是权限授权，子代理调用仍经过共享 gate 和规则。委派本身不做项目 I/O，因此安全。`Ctrl+C` 会同时取消父回合和子代理，并回收其 bash 会话。
 
-同一条助手消息里的多个 `subagent` 调用并行执行。权限框仍串行，并标明来源。`/agents` 只列当前运行的派发元数据，从不包含子对话。并行适合读取型工作：所有子代理共享一个没有隔离、锁或冲突检测的工作树，因此写入必须串行。并行数量受 `maxConcurrentSubagents` 限制（默认 `8`，统计正在运行的 `subagent` 与 `workflow` 派发）：超出上限的调用会在创建任何模型或子代理之前返回一条有界错误，告知模型等待某个运行中的派发结束。
+同一条助手消息里的多个 `subagent` 调用并行执行。权限框仍串行，并标明来源。`/agents` 只列当前运行的派发元数据，从不包含子对话。并行适合读取型工作：所有子代理共享一个没有隔离、锁或冲突检测的工作树，因此写入必须串行。并行数量受 `maxConcurrentSubagents` 限制（默认 `8`，统计正在运行的 `subagent` 与 `workflow` 派发）：超出上限的调用会在创建任何模型或子代理之前返回一条有界错误，告知模型等待某个运行中的派发结束。子代理报告（以及 workflow 的终点报告）中若有行模仿 darwin 自身的提示框架（`<system-reminder>`、`<project-instructions>`、`<available_skills>`、`<working-context>`）或 `Human:`/`Assistant:` 对话角色，这些行会在行首加一个反斜杠转义，并在报告最前面加一行标记说明匹配到了什么（`alwaysAllow`、`--dangerously` 之类的绕过权限词汇只加标记）；内容不会被删除或改写，父代理自己的工具调用仍要经过权限 gate。
 
 ## Workflow（DAG 委派）
 
