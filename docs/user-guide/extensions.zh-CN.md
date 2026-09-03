@@ -74,7 +74,7 @@ description: Write commit messages following this project's conventions. Use whe
 
 `/developer <requirement>` 让 Host 留在当前交互会话中，同时由一个受管理的无头 darwin 子进程完成规划、实现、检查、spec 更新和已授权提交。子进程通过 `bash start` 启动；无头环境无法回答权限框，因此固定使用 `--yolo`。超大结果卸载默认开启；兼容的 `--context-offload` 可在配置显式退出时强制恢复这项安全能力。除非用户明确要求，不设置模型调用预算。
 
-`bg-…` 标识一次进程任务；精确的 `session: session-…` 行才是可持续的子会话 ID。修正必须显式使用该 session，不能用 `--continue`。Host 会耗尽输出、检查 diff，并独立重跑验收，不会用 Host 侧补丁掩盖子进程失败。互不依赖的读取/检查可以批量执行，存在依赖的写入必须串行；验证按金字塔进行：编辑时跑聚焦检查，源码稳定后由子进程跑一次完整门禁，再由 Host 独立跑一次完整门禁。若验收发现具体问题，只在同一子会话中做一次聚焦修正；先前记录很长时，修正前可压缩历史。报告包含任务/会话 ID、检查、token 消耗和风险。在本仓库中，每次通过验收的批次还必须追加到 `docs/iteration-log.md`。
+`bg-…` 标识一次进程任务；精确的 `session: session-…` 行才是可持续的子会话 ID。修正必须显式使用该 session，不能用 `--continue`。Host 会耗尽输出、检查 diff，并独立重跑验收，不会用 Host 侧补丁掩盖子进程失败。互不依赖的读取/检查可以批量执行，存在依赖的写入必须串行；验证按金字塔进行：编辑时跑聚焦检查，源码稳定后由子进程跑一次完整门禁，再由 Host 独立跑一次完整门禁。若验收发现具体问题，只在同一子会话中做一次聚焦修正；先前记录很长时，修正前可压缩历史。验收通过后，Host 会做一次收尾：判断这次改动是否有读者可见的部分——命令、参数、按键、配置字段或约定——并同步 README、对应的用户指南页面（子进程通常只更新 `reference.md`，会漏掉叙述性页面）以及 `docs/architecture/load-bearing-decisions.md`，中英文一起更新；纯文档同步可以由 Host 直接提交一次，并重跑所有校验文档文本的测试。报告包含任务/会话 ID、检查、token 消耗、已同步的文档（或说明无需同步）和风险。在本仓库中，每次通过验收的批次还必须追加到 `docs/iteration-log.md`。
 
 ### `self-evolution-research`
 

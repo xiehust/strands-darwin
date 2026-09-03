@@ -75,13 +75,24 @@ After the child reports completion, independently inspect the repository diff an
 
 After every accepted requirement iteration in the darwin repository, run `pnpm build` from the repository root before reporting acceptance or launching the next worker. This refreshes the `dist` CLI and copied built-in skills that the next `darwin` process actually loads; typecheck and tests do not replace it. Treat a failed build as an acceptance failure and send the exact failure to the same child session for correction.
 
-## 6. Report
+## 6. Wrap up: keep the user-facing docs in step
+
+Acceptance proves the code; the wrap-up proves a reader can find out about it. After each accepted iteration, ask whether the change altered anything a user or maintainer reads about — a command, flag, key chord, config field, output format, contract or invariant — and check the three surfaces that describe darwin to people:
+
+- **README** (`README.md` and `README.zh-CN.md`): the command/flag tables and the short feature prose;
+- **user guide** (`docs/user-guide/`): the task-oriented page the change belongs to (`using-darwin`, `getting-started`, `configuration`, `sessions-and-state`, `permissions`, `extensions`, `development`) as well as `reference.md` — children usually update the reference and README and skip the narrative pages, so that is where to look; English and `zh-CN` stay in step;
+- **architecture docs** (`docs/architecture/load-bearing-decisions.md`, and `AGENTS.md`'s index table only when a new load-bearing invariant exists): the rationale heading the change belongs under.
+
+Only edit where something is actually stale or missing; a change with no user-visible surface needs no docs commit, and say so. A docs-only sync carries no source change, so the Host may write it directly in one `docs(...)` commit — the "never patch to conceal a failure" rule in section 5 is about implementation, not documentation — or hand it to the same child session as a focused correction when the gap is large or needs code-level knowledge the child already holds. Either way: run every suite that pins documentation text (search `spike/` for the doc paths you touched — for example `verify-cli-args.ts` quotes `CLI_USAGE` from `reference.md`), respect the `AGENTS.md` byte cap (`MAX_INSTRUCTIONS_BYTES`: check `wc -c AGENTS.md` before and after; rationale goes to the load-bearing doc when the cap is near), and run `pnpm build` again if the sync touched a built-in skill under `src/skills/builtin/`.
+
+## 7. Report
 
 Report:
 
 - the child conversation session id;
 - every background task id and terminal outcome;
 - changed files and independently run acceptance checks/results;
+- the docs wrap-up: which README / user-guide / architecture pages were synced (and the commit), or that none needed it;
 - **token spend**: the captured `usage:` figures per child task, plus an aggregate total across every task in this delegation (state `-` metrics as unknown rather than folding them into a sum, and say when a task reported no line at all); and
 - unresolved risks, denied operations, or decisions still needed.
 

@@ -189,6 +189,17 @@ async function missingDirectory(): Promise<void> {
   assert('developer preserves product and task-scope authority', workflow.includes('ask the user') && workflow.includes('yolo changes confirmation behavior, not task scope'));
   assert('developer requires independent acceptance and no hidden Host patch', workflow.includes('independently inspect') && workflow.includes('Do not patch the implementation yourself'));
   assert(
+    'developer wraps up by bringing README, user guide and architecture docs in step and reports it',
+    workflow.includes('## 6. Wrap up: keep the user-facing docs in step') &&
+      workflow.includes('`README.md` and `README.zh-CN.md`') &&
+      workflow.includes('`docs/user-guide/`') &&
+      workflow.includes('`docs/architecture/load-bearing-decisions.md`') &&
+      workflow.includes('a change with no user-visible surface needs no docs commit, and say so') &&
+      workflow.includes('run every suite that pins documentation text') &&
+      workflow.includes('the docs wrap-up: which README / user-guide / architecture pages were synced'),
+  );
+
+  assert(
     'developer retries transient child server failures without looping',
     workflow.includes('turn failed: The server had an error while processing your request. Sorry about that!') &&
       workflow.includes('Retry at most two times') &&

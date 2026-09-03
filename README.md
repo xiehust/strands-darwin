@@ -28,6 +28,7 @@ unfinished backlog, or one weighted research-path draw
   → evidence-backed research and scored directions
   → developer-supervised implementation
   → independent acceptance and commit
+  → README / user-guide / architecture docs brought in step
   → the accepted Darwin researches and builds the next revision
 ```
 
