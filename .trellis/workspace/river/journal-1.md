@@ -1355,3 +1355,25 @@ Root-caused the recurring duplicate-final-reply bug: finishTurn inserted the fin
   `error-handling.md` degradation table, one sentence in `live-frame.md`, rationale paragraph under
   load-bearing-decisions § Process exit. Committed 5c4dcb3.
 
+
+
+## Session 38: Cost accounting from the LiteLLM price table, per model
+
+**Date**: 2026-09-04
+**Task**: Cost accounting from the LiteLLM price table, per model
+**Branch**: `main`
+
+### Summary
+
+Developer-skill supervision of child session-20260904-021257844 (two turns). Iteration 1 (31ed30c): ~/.darwin/model-prices.json fetch-once cache (mapped id never refetched, litellmKey:null for unlisted ids, bounded 10s/8MiB fetch degrading to unavailable, DARWIN_MODEL_PRICES_FETCH=off), pure cost math, cost row in /status and /usage, separate headless cost: record with usage: byte-identical. Iteration 2 (fe7ee6d): per-model shares in the runtime so /status,/usage,cost: price each model at its own rates after /model; offline cost in trajectory list/replay via spend.ts (pure math moved to src/pricing/cost.ts, readers never fetch/write); developer and self-reflection skills capture cost:. Host acceptance: typecheck, pnpm test (96 suites), tui completion, real headless probe and offline trajectory readers; pnpm build after each. Child spend approx 24-25 USD.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `31ed30c` | (see git log) |
+| `fe7ee6d` | (see git log) |
+
+### Status
+
+[OK] **Completed**
