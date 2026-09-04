@@ -160,6 +160,8 @@ the wait yields the cancelled notice with no further call, the cap yields the at
 
 Trajectory, replay/export, prompt recall, rewind labels, memory evidence and shell records remain text-only: image bytes, base64, clipboard contents and fabricated paths never enter them. Multimodal trajectory input is the literal user prompt, while model-only expansion/shell reports remain in the SDK content block. The free checks are `spike/verify-runtime-image-input.ts`, `spike/verify-clipboard-image.ts`, and `spike/verify-tui.ts clipboardImage`.
 
+**The shared normalizer caps every image at 2000px on either edge, not the 8000px single-image limit.** Anthropic applies the stricter per-image limit to every image in a request that carries more than 20 image blocks, and tool-result images from earlier turns are resent with each request — so a session that keeps calling `imageViewer` eventually crosses 20 and, with one 8000px-era image in history, fails every later turn (`image dimensions exceed max allowed size for many-image requests: 2000 pixels`). Anything past the cap becomes a ≤2000px WebP; 2000px itself passes through byte-identical. Because snapshots saved under the old cap still hold oversized bytes, `create()` runs `normalizeRestoredImages(agent.messages)` right after the reasoning repair: the same decoder/normalizer, applied in memory to `ImageBlock`s in user content and `toolResultBlock` content, compliant and undecodable blocks left as they are, block order and message identity preserved; the next ordinary save persists it and the trajectory is never rewritten. Required check: `spike/verify-image-viewer.ts` (in `pnpm test`).
+
 ## Direct driver streaming
 
 **Successful turns are public as their ordinary SDK events arrive; there is no whole-turn output

@@ -70,7 +70,7 @@ import {
   type BackgroundTaskStatus,
 } from '../tools/background-bash.js';
 import { SerializedFileEditorTool } from '../tools/file-editor-serial.js';
-import { createImageViewerTool } from '../tools/image-viewer.js';
+import { createImageViewerTool, normalizeRestoredImages } from '../tools/image-viewer.js';
 import { createUpdatePlanTool } from '../tools/update-plan.js';
 import { webFetch } from '../tools/web-fetch.js';
 import {
@@ -763,6 +763,13 @@ export class AgentRuntime {
     // Trajectory files are never rewritten. No notice channel exists here, so
     // a nonzero count is intentionally silent.
     stripReasoningFromUserMessages(agent.messages);
+
+    // Sessions saved before the image dimension cap dropped to Anthropic's
+    // many-image limit (2000px once a request holds more than 20 images) can
+    // carry tool-result images the provider now rejects on every turn. Shrink
+    // them in memory through the imageViewer's own normalizer; same persistence
+    // and silence contract as the reasoning repair above.
+    await normalizeRestoredImages(agent.messages);
 
     // CodeGraph semantic reads are useful only when their target already has a
     // structurally usable index. Prime the current target once, then replace the

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ImageBlock } from '@strands-agents/sdk';
+import { ImageBlock, Message, TextBlock, ToolResultBlock } from '@strands-agents/sdk';
 import sharp from 'sharp';
 
 import {
@@ -12,6 +12,7 @@ import {
   MAX_IMAGE_BYTES,
   MAX_IMAGE_DIMENSION,
   decodeImageBytes,
+  normalizeRestoredImages,
 
   MAX_INPUT_PIXELS,
   MAX_REQUEST_PATH_CHARS,
@@ -93,7 +94,20 @@ try {
   const resized = await loadLocalImage(root, 'screenshots/wide.png');
   const resizedMetadata = await sharp(bytesOf(resized)).metadata();
   assert('over-dimension image is converted to WebP', resized.format === 'webp');
-  assert('over-dimension image is resized within 8000px', (resizedMetadata.width ?? Infinity) <= MAX_IMAGE_DIMENSION);
+  assert('over-dimension image is resized within the dimension cap', (resizedMetadata.width ?? Infinity) <= MAX_IMAGE_DIMENSION);
+
+  // Anthropic rejects any image over 2000px on either edge once a request
+  // carries more than 20 images ("many-image requests"); tool-result images
+  // accumulate across turns, so the cap is exactly that limit.
+  assert('dimension cap is the many-image limit of 2000px', MAX_IMAGE_DIMENSION === 2000);
+  const atCap = await sharp({ create: { width: 2000, height: 4, channels: 3, background: 'green' } }).png().toBuffer();
+  const atCapBlock = await decodeImageBytes(atCap, '.png');
+  assert('an image exactly at the cap passes through unchanged', atCapBlock.format === 'png' && bytesOf(atCapBlock).equals(atCap));
+  const overCap = await sharp({ create: { width: 2001, height: 4, channels: 3, background: 'green' } }).png().toBuffer();
+  const overCapBlock = await decodeImageBytes(overCap, '.png');
+  const overCapMetadata = await sharp(bytesOf(overCapBlock)).metadata();
+  assert('one pixel over the cap is normalized',
+    overCapBlock.format === 'webp' && (overCapMetadata.width ?? Infinity) <= MAX_IMAGE_DIMENSION);
 
   // Sharp's create input can stamp EXIF orientation. The normalized result should
   // have physical dimensions matching the auto-oriented view.
@@ -134,6 +148,56 @@ try {
   }
   assert('byte source rejects MIME/decoded-format mismatch through shared policy',
     mismatchedBytes.includes('clipboard image: extension declares png'));
+
+  header('restored history — oversized images are re-normalized in place');
+
+  // A session saved under the old 8000px cap: one oversized tool-result image,
+  // one compliant one, one oversized direct user image, text and a corrupt
+  // image block that must be left alone.
+  const compliantBytes = sources.get('sample.png')!;
+  const corrupt = new ImageBlock({ format: 'png', source: { bytes: Buffer.from('not an image') } });
+  const keptText = new TextBlock('screenshot follows');
+  const restored = [
+    new Message({ role: 'user', content: [keptText, new ImageBlock({ format: 'png', source: { bytes: overCap } })] }),
+    new Message({
+      role: 'user',
+      content: [
+        new ToolResultBlock({
+          toolUseId: 'image-1',
+          status: 'success',
+          content: [new ImageBlock({ format: 'png', source: { bytes: widePng } })],
+        }),
+        new ToolResultBlock({
+          toolUseId: 'image-2',
+          status: 'success',
+          content: [new ImageBlock({ format: 'png', source: { bytes: compliantBytes } }), corrupt],
+        }),
+      ],
+    }),
+    new Message({ role: 'assistant', content: [new TextBlock('ok')] }),
+  ];
+  const beforeLengths = restored.map((message) => message.content.length);
+  const repairedCount = await normalizeRestoredImages(restored);
+  assert('exactly the two oversized images are counted', repairedCount === 2);
+  assert('message and block counts are unchanged', restored.every((message, index) => message.content.length === beforeLengths[index]));
+  assert('non-image blocks keep identity', restored[0]!.content[0] === keptText && restored[2]!.content[0]!.type === 'textBlock');
+  const userImage = restored[0]!.content[1];
+  const userImageMetadata = userImage instanceof ImageBlock ? await sharp(bytesOf(userImage)).metadata() : undefined;
+  assert('oversized direct user image is shrunk within the cap',
+    userImage instanceof ImageBlock && userImage.format === 'webp' && (userImageMetadata?.width ?? Infinity) <= MAX_IMAGE_DIMENSION);
+  const firstResult = restored[1]!.content[0];
+  const toolImage = firstResult instanceof ToolResultBlock ? firstResult.content[0] : undefined;
+  const toolImageMetadata = toolImage instanceof ImageBlock ? await sharp(bytesOf(toolImage)).metadata() : undefined;
+  assert('oversized tool-result image is shrunk within the cap',
+    toolImage instanceof ImageBlock && toolImage.format === 'webp' && (toolImageMetadata?.width ?? Infinity) <= MAX_IMAGE_DIMENSION);
+  const secondResult = restored[1]!.content[1];
+  const compliantImage = secondResult instanceof ToolResultBlock ? secondResult.content[0] : undefined;
+  assert('compliant tool-result image keeps its exact bytes',
+    compliantImage instanceof ImageBlock && compliantImage.format === 'png' && bytesOf(compliantImage).equals(compliantBytes));
+  assert('undecodable image block is left untouched, not thrown',
+    secondResult instanceof ToolResultBlock && secondResult.content[1] === corrupt);
+  assert('a second pass finds nothing to repair', (await normalizeRestoredImages(restored)) === 0);
+  assert('empty history is a no-op', (await normalizeRestoredImages([])) === 0);
 
 
 

@@ -1,15 +1,23 @@
 import { open } from 'node:fs/promises';
 import path from 'node:path';
 
-import { ImageBlock, tool, type ImageFormat, type InvokableTool } from '@strands-agents/sdk';
+import { ImageBlock, tool, type ImageFormat, type InvokableTool, type Message } from '@strands-agents/sdk';
 import sharp from 'sharp';
 import { z } from 'zod';
 
 export const IMAGE_VIEWER_TOOL_NAME = 'imageViewer';
 
-/** Bedrock Converse's per-image payload and dimension limits. */
+/** Bedrock Converse's per-image payload limit. */
 export const MAX_IMAGE_BYTES = 3_932_160;
-export const MAX_IMAGE_DIMENSION = 8_000;
+/**
+ * Anthropic's per-image dimension limit for many-image requests. A single image
+ * may be 8000px, but once a request carries more than 20 image blocks — and
+ * every earlier turn's `imageViewer` results are resent with each request —
+ * any image over 2000px on either edge is rejected ("many-image requests").
+ * Tool-result images accumulate across a session, so only the stricter cap
+ * keeps a conversation sendable for its whole life.
+ */
+export const MAX_IMAGE_DIMENSION = 2_000;
 
 /** Darwin-owned resource bounds for untrusted local input. */
 export const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
@@ -143,6 +151,64 @@ function formatFromExtension(value: string): ImageFormat {
   throw new Error(
     `unsupported extension ${extension === '' ? '(none)' : extension}; expected .png, .jpg, .jpeg, .gif, or .webp`,
   );
+}
+
+const FORMAT_EXTENSIONS = new Map<ImageFormat, string>([
+  ['png', '.png'],
+  ['jpeg', '.jpeg'],
+  ['gif', '.gif'],
+  ['webp', '.webp'],
+]);
+
+/**
+ * Re-normalizes byte-backed images in restored history that no longer fit the
+ * current limits, in place.
+ *
+ * Sessions saved before the dimension cap dropped to the many-image limit can
+ * hold tool-result or user images up to 8000px; once more than 20 images have
+ * accumulated the provider rejects every later request, so the session is
+ * stuck. Each oversized block is replaced by the output of the same decoder
+ * and normalizer that `imageViewer` applies to fresh input; compliant blocks,
+ * message identity, block order and every non-image block are untouched. The
+ * mutation is in-memory only, so the next ordinary save persists it and
+ * trajectory files are never rewritten. A block that cannot be decoded is
+ * left as it was and not counted: this repair is best-effort and never throws.
+ *
+ * @returns The number of image blocks replaced.
+ */
+export async function normalizeRestoredImages(messages: Message[]): Promise<number> {
+  let repaired = 0;
+  for (const message of messages) {
+    repaired += await normalizeImageArray(message.content);
+    for (const block of message.content) {
+      if (block.type === 'toolResultBlock') repaired += await normalizeImageArray(block.content);
+    }
+  }
+  return repaired;
+}
+
+async function normalizeImageArray(blocks: unknown[]): Promise<number> {
+  let repaired = 0;
+  for (let index = 0; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (!(block instanceof ImageBlock) || block.source.type !== 'imageSourceBytes') continue;
+    const extension = FORMAT_EXTENSIONS.get(block.format);
+    if (extension === undefined) continue;
+    const original = block.source.bytes;
+    let replacement: ImageBlock;
+    try {
+      replacement = await decodeImageBytes(original, extension, 'restored image');
+    } catch {
+      continue;
+    }
+    if (replacement.source.type !== 'imageSourceBytes') continue;
+    const unchanged = replacement.format === block.format &&
+      replacement.source.bytes.byteLength === original.byteLength;
+    if (unchanged) continue;
+    blocks[index] = replacement;
+    repaired += 1;
+  }
+  return repaired;
 }
 
 async function readBoundedFile(filePath: string): Promise<Buffer> {
