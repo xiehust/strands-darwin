@@ -174,3 +174,83 @@ Premise adjustment from SER-066's acceptance (2026-09-04, `b52e061`): the retry 
 
 Depends on SER-066 (the runtime retry state). Requirement: `src/tui/busy-suffix.ts` gains an optional retry-state input rendered as one bounded phrase after the existing elapsed/token suffix (e.g. `· throttled, retry 3/6 in 12s`), absent when there is no wait, read on the busy row's existing tick in `src/tui/App.tsx` — no new frame row, tick source or channel (§ The busy rows). `src/headless-protocol.ts` emits one additive `model.retrying` event (`attempt`, `maxAttempts`, `waitMs`, `reason`) when a wait begins, alongside the `turn.continuing` precedent; schema v1 readers ignore unknown types. A recipe child in a wait publishes a `waiting-on-model` safe phase through the existing `setPhase` so the heartbeat row and `subagent.progress` show it. When the cap is reached, the driver's `turn failed:` notice states the attempts made (e.g. `after 6 attempts`). Trajectory records are unchanged (failed attempts remain visible as `modelCall.attempt` gaps); `/export` and `formatReplay` stay byte-identical. Acceptance: `spike/verify-busy-suffix.ts` (phrase present/absent/bounded), `spike/verify-headless-structured.ts` (event shape and ordering), `spike/verify-subagent-heartbeats.ts` (phase), a free pty fixture or scenario showing the phrase on the busy row without a second row, `spike/verify-export-command.ts` unchanged; `pnpm typecheck`, `pnpm test`, `pnpm build`; docs (`reference.md` + `zh-CN`, load-bearing section from SER-066 extended).
 
+## SRF-022 — Derive the backlog record count in `spike/verify-skills.ts` from the routed pages instead of a hard-coded literal, so research and reflection appends keep `pnpm test` green while a malformed section still fails
+
+- Status: `not-started`
+- Priority: 89
+- Score: 13
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 1
+- Risk: 1
+- Origin report: [`reflection_2026-09-04_session-20260904-111433119.md`](../../reflections/reflection_2026-09-04_session-20260904-111433119.md)
+
+### Implementation / acceptance evidence
+
+Not started. Requirement: in `spike/verify-skills.ts`, replace the `=== 88` literal in the `all N production records pass paged-backlog validation` assertion with a total derived independently from the pages — the sum over routed pages of `BACKLOG_DIRECTION_HEADING_PATTERN` matches — asserted equal to the number of records `validateBacklog` parsed and strictly greater than zero; keep the `SER-023` exception map and the per-page malformed-heading check unchanged; the assertion label no longer embeds a number. Acceptance: `pnpm tsx spike/verify-skills.ts` green on the current tree (which now holds 92 records); a fixture page with one heading whose metadata block is broken still produces a `malformed direction heading(s)` error and fails the assertion; `pnpm typecheck`, `pnpm test`.
+
+### Notes / blockers / abandonment reason
+
+Evidence: session `session-20260904-111433119` seq 284/288 (`FAIL all 86 production records pass paged-backlog validation` immediately after SER-066/067 were appended; the Host stashed to confirm the clean tree was green and patched the literal to 88 inside the docs commit `5fb8eac`, seq 292–298) and commit `43caa8c`'s message ("bump the paged-backlog record count to 86 … (b51c459 missed it)"). The reflection that queued this direction appended four sections and cannot touch `spike/`, so `pnpm test` is red on `verify-skills` until this lands — implement it first in the batch.
+
+## SRF-023 — Make offloaded `json` tool results searchable: `retrieve_offloaded_content`'s `pattern`/`line_range`/`context_lines` operate on a line-preserving text projection of stored `application/json` content (string fields with embedded newlines expanded onto real lines), while full retrieval, stored bytes, preview and restored-history repair stay byte-identical
+
+- Status: `not-started`
+- Priority: 90
+- Score: 12
+- Importance: 4
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 2
+- Origin report: [`reflection_2026-09-04_session-20260904-111433119.md`](../../reflections/reflection_2026-09-04_session-20260904-111433119.md)
+
+### Implementation / acceptance evidence
+
+Not started. Requirement: extend the pinned SDK patch's `vended-plugins/context-offloader/plugin.js` (the file the durable-offload row already patches) so that when a reference's stored content type is `application/json` and a `pattern`, `line_range` or `context_lines` is supplied, the search/slice runs over a deterministic readable projection: the pretty JSON in which every string value containing `\n` is emitted as `<key>:` followed by its lines verbatim (indented consistently), so `output` of darwin's `bash`/`wait` results and `text` of nested blocks are addressable by line. Line numbers in results refer to that projection and are stable across calls. Omitting pattern/range returns the parsed JSON exactly as today; stored bytes, the preview text, marker shape, reference format and the legacy-repair path are unchanged (§ Durable context offload). Bounded: the projection is built per call from the stored bytes and never persisted. Acceptance: `spike/verify-context-offload.ts` gains cases where an offloaded `bash` result with a 300-line output answers `line_range {100,120}` with those output lines, `pattern '^## '` returns only heading lines with context, a `line_range` past the end errors with the projected line count, and a full retrieval remains `deepEqual` to the original `json`; `pnpm typecheck`, `pnpm test`; `patches/` regenerated through pnpm's patch flow, never hand-edited in `node_modules`.
+
+### Notes / blockers / abandonment reason
+
+Evidence: session `session-20260904-111433119` — five of six retrievals failed to address the content: seq 31 and 404 `Error: line_range.start (…) is beyond content length (6 lines).`, seq 252 `No matches found … (searched 6 lines)`, seq 35 `1 match … [output truncated, narrow your search]`, seq 391 three "matches" that were one 10,039-character JSON line holding the whole child report; each miss was followed by a disk re-read (`sed -n`, seq 39, 256, 408) at ~130–180 K prompt tokens per round. Root cause verified in `plugin.js`: json blocks are stored as `JSON.stringify(block.json, null, 2)`, so darwin's `bash` `{cwd, error, exitCode, output}` becomes a six-line document. Independent of SRF-022 in code; ordered after it only because SRF-022 unblocks `pnpm test`. SRF-024 touches the same patch hunk — implement in this order to avoid a patch rebase.
+
+## SRF-024 — Never offload `load_skill` results: a bounded by-name exclusion in the ContextOffloader (`excludeTools` in the pinned patch, or the equivalent identity check) configured from `src/agent/runtime.ts`, so a skill body always reaches the model whole in one round
+
+- Status: `not-started`
+- Priority: 91
+- Score: 12
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 1
+- Origin report: [`reflection_2026-09-04_session-20260904-111433119.md`](../../reflections/reflection_2026-09-04_session-20260904-111433119.md)
+
+### Implementation / acceptance evidence
+
+Not started. Requirement: the offloader's `_handleToolResult` already returns early for delegation tools and its own retrieval tool; add one bounded, explicit exclusion by tool name — a `excludeTools?: readonly string[]` constructor option in the pinned patch (validated as non-empty strings, defaulting to none) — and pass `['load_skill']` where `src/agent/runtime.ts` constructs `ContextOffloader`. Children keep their separate final-result contract and are unaffected. No other tool is excluded; skill size stays bounded by the skills layer's own caps. Docs: one sentence in the durable-offload load-bearing section and the AGENTS.md row. Acceptance: `spike/verify-context-offload.ts` asserts that a `load_skill` result above `maxResultTokens` reaches the model intact (no `[Offloaded` prefix, no reference) while a same-size `bash` result in the same agent is still offloaded, and that the restored-history repair path also leaves historical `load_skill` results alone; `spike/verify-skills.ts`, `pnpm typecheck`, `pnpm test`.
+
+### Notes / blockers / abandonment reason
+
+Evidence: session `session-20260904-111433119` seq 308 `load_skill developer` → `[Offloaded: 1 blocks, ~6,677 tokens]`, followed at seq 312 by a whole-reference retrieval (8,110 characters recorded, `trunc` noted) — the preview and the full body both remained in context, so the offload saved nothing and cost one ~145 K-token model round; a model trusting the 1,000-token preview would act on a truncated skill. Depends on nothing; shares the patch hunk with SRF-023, so implement after it.
+
+## SRF-025 — Raise the terminal-focused background `bash wait` cap (`TERMINAL_FOCUSED_WAIT_MAX_MS`) from 5 to 30 minutes for the explicit `wakeOnOutput: false` form only, keeping the 30 s output-sensitive default, cancellation/shutdown/terminal wake, the output cap, the shared cursor and the wait-again guidance exactly as they are
+
+- Status: `not-started`
+- Priority: 92
+- Score: 12
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 1
+- Risk: 2
+- Origin report: [`reflection_2026-09-04_session-20260904-111433119.md`](../../reflections/reflection_2026-09-04_session-20260904-111433119.md)
+
+### Implementation / acceptance evidence
+
+Not started. Requirement: change the constant in `src/tools/background-wait-contract.ts` to `1_800_000`; the zod `waitMs` `max`, the tool description text and any presentation string that names the bound follow from the constant; `OUTPUT_SENSITIVE_WAIT_MAX_MS` stays `30_000` and the `waitMs above 30000 requires wakeOnOutput:false` refusal is unchanged. Behaviour during the longer wait is byte-identical to today's: `cancelSignal` and shutdown wake it at once, output aggregation respects `OUTPUT_LIMIT` and the shared cursor, a still-running timeout returns the existing `TERMINAL_WAIT_TIMEOUT_INSTRUCTION`. Docs: the load-bearing paragraph "explicit `wakeOnOutput: false` accepts a finite 1–300000 ms" and the AGENTS.md row "up to five minutes" state the new bound; `reference.md` + `zh-CN` if they name it. Acceptance: `spike/verify-background-bash.ts` asserts the new schema maximum, refusal of `1_800_001`, refusal of `> 30000` without `wakeOnOutput:false`, and a cancel that ends a multi-minute terminal-focused wait within the existing settle bound; `pnpm typecheck`, `pnpm test`, `probe-cancel-exit.ts` unchanged.
+
+### Notes / blockers / abandonment reason
+
+Evidence: session `session-20260904-111433119` — ten `wait` calls hit the 300 s cap (seq 370, 375, 379, 383, 489, 493, 497, 501, 505, 510) while two headless children ran 22 min 49 s and 30 min 47 s; the model call after each one (seq 373, 377, 381, 385, 491, 495, 499, 503, 508, 512) emitted only the next `wait`, together 1,931,074 prompt tokens for 1,611 output tokens (11.4 % of the session). No documented safety reason for the specific 300 s value exists in `docs/architecture/load-bearing-decisions.md`; the bound stays finite and cancellable. Independent of the other three directions.
+
