@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "SDK 契约（AGENT_ID 稳定性、initialize、session 布局）——改 AGENT_ID 与 session 路径时必须理解其后果"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "ConfigError 边界与降级规则——新增 AGENTS.md 读取与 .darwin/ 路径的错误路径要对齐"}
+{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "pty 测试方法——改路径后重跑/修改验证套件要遵循锚定等待等约定"}
+{"file": ".trellis/tasks/archive/2026-08/08-13-tui-coding-agent-mvp/research/spike-results.md", "reason": "上一任务的实测坑（devEngines、initialize、printer 等），改造时避免回退"}

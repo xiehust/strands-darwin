@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Memory prompt assembly, config, factory, management, and no-loop-fork contracts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Startup validation must degrade visibly and fail closed without refusing runtime."}
+{"file":".trellis/spec/backend/session-trajectory.md","reason":"Trajectory is immutable source evidence and must remain byte-identical."}
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Memory management remains one bounded transcript notice with no new live row."}
+{"file":"docs/research/research_2026-08-22.md","reason":"Authoritative S10-S11 validation and 28-day expiry product evidence."}

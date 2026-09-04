@@ -219,7 +219,7 @@ Evidence: session `session-20260904-111433119` — five of six retrievals failed
 
 ## SRF-024 — Never offload `load_skill` results: a bounded by-name exclusion in the ContextOffloader (`excludeTools` in the pinned patch, or the equivalent identity check) configured from `src/agent/runtime.ts`, so a skill body always reaches the model whole in one round
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 91
 - Score: 12
 - Importance: 3
@@ -231,7 +231,9 @@ Evidence: session `session-20260904-111433119` — five of six retrievals failed
 
 ### Implementation / acceptance evidence
 
-Not started. Requirement: the offloader's `_handleToolResult` already returns early for delegation tools and its own retrieval tool; add one bounded, explicit exclusion by tool name — a `excludeTools?: readonly string[]` constructor option in the pinned patch (validated as non-empty strings, defaulting to none) — and pass `['load_skill']` where `src/agent/runtime.ts` constructs `ContextOffloader`. Children keep their separate final-result contract and are unaffected. No other tool is excluded; skill size stays bounded by the skills layer's own caps. Docs: one sentence in the durable-offload load-bearing section and the AGENTS.md row. Acceptance: `spike/verify-context-offload.ts` asserts that a `load_skill` result above `maxResultTokens` reaches the model intact (no `[Offloaded` prefix, no reference) while a same-size `bash` result in the same agent is still offloaded, and that the restored-history repair path also leaves historical `load_skill` results alone; `spike/verify-skills.ts`, `pnpm typecheck`, `pnpm test`.
+Accepted 2026-09-04 in `a0f6900` (child session `session-20260904-141312598`; managed tasks `bg-6f1a7b9c-203b-4f73-943a-206e09befc14` — failed before any model call with the provider error `Bedrock is unable to process your request.`, zero usage, cost unknown — and the automatic same-session retry `bg-a773bf1b-8566-45ef-95f0-4c372133bd89`, exit 0, no correction turn; launched from repository source at `e34723a`). Pinned patch regenerated via `pnpm patch` → fileEditor → `pnpm patch-commit` (15 file diffs intact; removed lines are `index`/hunk headers plus the one repair-scan condition inside darwin's own hunk, extended with `excludedToolUseIds`; lock hash only). `ContextOffloader` gains `excludeTools?: readonly string[]` — validated as an array of non-empty strings (`excludeTools must be an array of non-empty tool names`), default none, stored as a `Set`; `_handleToolResult` returns early for a listed name after the error/delegation/retrieval checks; the restored-history scan skips their `toolUseId`s like delegation/retrieval ids; `plugin.d.ts` typed with a one-line doc comment. `src/agent/runtime.ts` passes `excludeTools: ['load_skill']` on the parent offloader (children construct no offloader — `child-recipe.ts` never mentions `ContextOffloader`, pinned by the suite). `spike/verify-context-offload.ts` 35 → 49: `load_skill` result byte-identical with no `[Offloaded` and the whole body in the model request; same-agent bash-shaped result still offloaded (exactly one stored key); resumed runtime repairs a legacy sibling while a historical `load_skill` result reaches the provider whole; constructor rejects `['']`/`[42]`/a bare string, accepts `[]`/undefined and `[]` still offloads; source pin of the runtime option. Docs: one paragraph under load-bearing § Durable context offload; one clause in the `AGENTS.md` row (31,160 B < 32,768); user-guide pages only name the flag and fork copying, so none touched. Host acceptance, independently re-run at `a0f6900`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 (0 `FAIL`); `verify-context-offload.ts` 49/49; `verify-skills.ts` 159/159; `pnpm build` exit 0 with the exclusion present in `dist/src/agent/runtime.js`. Logged as [`Batch 95`](../../iteration-log.md).
+
+Original requirement: the offloader's `_handleToolResult` already returns early for delegation tools and its own retrieval tool; add one bounded, explicit exclusion by tool name — a `excludeTools?: readonly string[]` constructor option in the pinned patch (validated as non-empty strings, defaulting to none) — and pass `['load_skill']` where `src/agent/runtime.ts` constructs `ContextOffloader`. Children keep their separate final-result contract and are unaffected. No other tool is excluded; skill size stays bounded by the skills layer's own caps. Docs: one sentence in the durable-offload load-bearing section and the AGENTS.md row. Acceptance: `spike/verify-context-offload.ts` asserts that a `load_skill` result above `maxResultTokens` reaches the model intact (no `[Offloaded` prefix, no reference) while a same-size `bash` result in the same agent is still offloaded, and that the restored-history repair path also leaves historical `load_skill` results alone; `spike/verify-skills.ts`, `pnpm typecheck`, `pnpm test`.
 
 ### Notes / blockers / abandonment reason
 
@@ -239,7 +241,7 @@ Evidence: session `session-20260904-111433119` seq 308 `load_skill developer` �
 
 ## SRF-025 — Raise the terminal-focused background `bash wait` cap (`TERMINAL_FOCUSED_WAIT_MAX_MS`) from 5 to 30 minutes for the explicit `wakeOnOutput: false` form only, keeping the 30 s output-sensitive default, cancellation/shutdown/terminal wake, the output cap, the shared cursor and the wait-again guidance exactly as they are
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 92
 - Score: 12
 - Importance: 3

@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Authoritative Agent assembly, session restore ordering, successor ownership and prompt restoration contracts."}
+{"file":".trellis/spec/backend/session-trajectory.md","reason":"Trajectory observer-only authority boundary and source-preserving session artifacts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Domain degradation and cleanup rules for catalogue/restore failures."}
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Bounded chooser rows and Static/live-frame ownership."}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Free pty scenario synchronization and assertions."}
+{"file":".trellis/spec/frontend/prompt-recall.md","reason":"Existing prompt selection keyboard precedence and editor restoration patterns."}
+{"file":"docs/research/research_2026-08-26.md","reason":"Originating 12:29:54Z evidence and SER-040 product boundary."}
+{"file":"docs/research/backlog_index.md","reason":"Canonical SER-040 scope and implementation status."}

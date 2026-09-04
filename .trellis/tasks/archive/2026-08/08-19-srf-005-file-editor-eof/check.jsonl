@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Verify SDK contract and focused suite"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Preserve explicit validation and I/O failures"}

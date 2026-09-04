@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Completion rows share the bounded live-frame grant and omission row."}
+{"file":".trellis/spec/frontend/prompt-completion.md","reason":"Defines completion sources, ordering, acceptance, and keyboard precedence."}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Defines render and pty verification requirements for bounded TUI surfaces."}

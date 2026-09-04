@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/08-13-tui-coding-agent-mvp/research/strands-ts-sdk-findings.md", "reason": "Strands TS SDK 能力清单与 API 用法（provider/MCP/vended tools/session/hooks），实现的事实依据，避免造轮子"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "TypeScript 代码质量约定，适用于 agent core / MCP / skills 模块"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理约定：MCP 连接失败、坏 SKILL.md 容错、bash 超时等路径"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Ink 是 React 渲染器，TUI 组件（MessageList/PermissionPrompt 等）遵循组件约定"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "TUI 状态机与流式渲染会用自定义 React hooks"}
+{"file": ".trellis/tasks/08-13-tui-coding-agent-mvp/research/spike-results.md", "reason": "Spike 实测结论：真实 API（addHook/interventions）、权限方案定案、Bedrock modelId、流事件清单、printer:false 等实现细节"}

@@ -1,0 +1,29 @@
+{
+  "id": "codex-compatible-hooks",
+  "name": "codex-compatible-hooks",
+  "title": "Codex-compatible hook adapter",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P2",
+  "creator": "river",
+  "assignee": "river",
+  "createdAt": "2026-08-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "dev_type": "feature",
+    "description": "Load portable Codex-shaped command hooks from .agents/hooks.json through bounded Darwin lifecycle adapters."
+  }
+}

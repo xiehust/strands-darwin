@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Owns SDK agent-loop reuse, overflow conversation management, context offload, explicit compact, headless controls, session persistence, and required regression contracts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Defines failure/degradation behavior for compaction, provider errors, optional storage, and actionable user-visible recovery."}
+{"file":".trellis/spec/backend/session-trajectory.md","reason":"Constrains trajectory to remain an observer and documents offload/reference behavior across sessions and resume."}
+{"file":".trellis/spec/backend/structured-headless-output.md","reason":"Pins bounded structured failure projection and schema/event-order compatibility while error guidance changes."}
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Pins advisory-only context pressure, failed-turn notices, queue behavior, and the no-new-live-row frame budget."}

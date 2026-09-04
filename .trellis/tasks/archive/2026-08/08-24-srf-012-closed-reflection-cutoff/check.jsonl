@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/session-trajectory.md","reason":"Check nonmutation, closed-turn boundary, refusal, and observer invariants."}
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Check exact self-reflection selection, cutoff handoff, managed-child, template, and backlog behavior."}

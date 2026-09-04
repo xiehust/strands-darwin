@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Authoritative Agent assembly, intervention, permission, child-agent, and prompt contracts for the implementation."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Apply repository guidance before introducing bounded normalization and state helpers."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Keep tool-result, intervention, and model-guidance boundaries explicit and bounded."}
+{"file":"docs/reflections/reflection_2026-08-25_session-20260825-023511752.md","reason":"Primary evidence and intended SRF-016 behavior."}

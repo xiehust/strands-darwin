@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Check parent-only registration, SDK reuse, permission modes, and no second loop."}
+{"file": ".trellis/spec/backend/session-trajectory.md", "reason": "Check durable settlement preserves append-only observer semantics."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Check every memory failure degrades safely and honestly."}
+{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Check changed free TUI scenarios with anchored real-pty assertions if needed."}
+{"file": ".trellis/spec/frontend/live-frame.md", "reason": "Ensure memory changes add no unbudgeted live-frame surface."}

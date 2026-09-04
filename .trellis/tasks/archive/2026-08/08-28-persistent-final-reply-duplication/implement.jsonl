@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Defines direct streaming, Static answer lifecycle, and the existing close-boundary handoff."}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Defines real PTY regression requirements and terminal-state assertions."}

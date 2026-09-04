@@ -1,0 +1,33 @@
+{
+  "id": "srf-004-foreground-shell-exit",
+  "name": "srf-004-foreground-shell-exit",
+  "title": "SRF-004 foreground shell exit recovery",
+  "description": "Treat persistent foreground bash shell exit 0 as success with captured output and restart notice; preserve failure metadata and add parallel race coverage.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P1",
+  "creator": "river",
+  "assignee": "river",
+  "createdAt": "2026-08-19",
+  "completedAt": "2026-08-19",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "patches/@strands-agents__sdk@1.12.0.patch",
+    "spike/verify-background-bash.ts",
+    "src/tools/background-bash.ts",
+    ".trellis/spec/backend/strands-sdk-contracts.md",
+    "docs/architecture/load-bearing-decisions.md",
+    "AGENTS.md"
+  ],
+  "notes": "Implemented and verified; Host retains backlog and iteration-log closure.",
+  "meta": {}
+}

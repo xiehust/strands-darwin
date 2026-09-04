@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Review loader precedence, official SDK reuse, symlink containment, and parent/child hook sharing against load-bearing contracts."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review every malformed/missing/symlink case against the domain-specific fail or degrade matrix."}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Review startup notices and completion behavior across direct loader and real-pty checks."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace each discovered source through runtime metadata, execution, permission safety, and user-visible reporting."}

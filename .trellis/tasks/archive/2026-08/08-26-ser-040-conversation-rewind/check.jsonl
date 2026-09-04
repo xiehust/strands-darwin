@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Check runtime restore and successor semantics."}
+{"file":".trellis/spec/backend/session-trajectory.md","reason":"Check trajectory remains optional and observer-only."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Check safe refusal and unwind behavior."}
+{"file":".trellis/spec/frontend/live-frame.md","reason":"Check chooser row budgeting and transcript notices."}
+{"file":".trellis/spec/frontend/tui-testing.md","reason":"Check pty scenario quality and no-provider acceptance."}
+{"file":".trellis/spec/frontend/prompt-recall.md","reason":"Check keyboard/editor interaction consistency."}

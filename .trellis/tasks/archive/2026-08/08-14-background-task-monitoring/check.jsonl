@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Review list/subscription changes against lifecycle and SDK boundary contracts"}
+{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Review /tasks and asynchronous notice coverage using anchored PTY assertions"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Review listener isolation and existing cleanup degradation behavior"}

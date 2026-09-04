@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/session-trajectory.md", "reason": "Check the implementation against the written caps, append-only mechanics and replay guarantees/non-guarantees."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify the write-failure and malformed-record paths degrade exactly as the table says."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "General code standards for the new module."}

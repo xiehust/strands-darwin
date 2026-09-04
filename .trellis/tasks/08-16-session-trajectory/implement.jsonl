@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Forbids forking or intercepting the SDK agent loop, and documents the session snapshot / restore behaviour the fork primitive copies."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Degradation rules a trajectory write failure must follow, plus the owned-HOME rule for any suite touching global state."}
+{"file": ".trellis/spec/backend/session-trajectory.md", "reason": "Record format, caps, append-only mechanics and the replay-correctness contract this task establishes."}
+{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Frame-height and pty-scenario rules for the /trajectory command and the completion row it adds."}
