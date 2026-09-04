@@ -176,7 +176,7 @@ Depends on SER-066 (the runtime retry state). Requirement: `src/tui/busy-suffix.
 
 ## SRF-022 — Derive the backlog record count in `spike/verify-skills.ts` from the routed pages instead of a hard-coded literal, so research and reflection appends keep `pnpm test` green while a malformed section still fails
 
-- Status: `not-started`
+- Status: `done`
 - Priority: 89
 - Score: 13
 - Importance: 3
@@ -188,15 +188,16 @@ Depends on SER-066 (the runtime retry state). Requirement: `src/tui/busy-suffix.
 
 ### Implementation / acceptance evidence
 
-Not started. Requirement: in `spike/verify-skills.ts`, replace the `=== 88` literal in the `all N production records pass paged-backlog validation` assertion with a total derived independently from the pages — the sum over routed pages of `BACKLOG_DIRECTION_HEADING_PATTERN` matches — asserted equal to the number of records `validateBacklog` parsed and strictly greater than zero; keep the `SER-023` exception map and the per-page malformed-heading check unchanged; the assertion label no longer embeds a number. Acceptance: `pnpm tsx spike/verify-skills.ts` green on the current tree (which now holds 92 records); a fixture page with one heading whose metadata block is broken still produces a `malformed direction heading(s)` error and fails the assertion; `pnpm typecheck`, `pnpm test`.
+Accepted 2026-09-04 in `58e2415` (child session `session-20260904-132948664`, managed task `bg-53741c3d-b3ae-4719-b946-d2f416327709`, exit 0, no correction turn; launched from repository source at `0b7a321`, where the Host's own gate showed `pnpm test` red on exactly this assertion). `spike/verify-skills.ts` only (+11/−1): the `all 88 production records …` assertion became `every production record passes paged-backlog validation and every direction heading is a parsed record` — `validateBacklog` errors empty, the summed `BACKLOG_DIRECTION_HEADING_PATTERN` count `> 0` and equal to the summed `BACKLOG_SECTION_PATTERN` count; the suite prints `production backlog records: 92 (92 direction headings)` instead of embedding a number in the label. The `SER-023` exception map and the per-page malformed-heading check are untouched. One new fixture case: a well-formed heading with the blank line before `- Status:` removed still yields `malformed direction heading(s)`, so the derived count cannot hide a broken section. Host acceptance, independently re-run at `58e2415`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 (0 `FAIL`); `pnpm build` exit 0; tree clean apart from this status edit. No user-facing surface, so no docs sync (the child grepped `docs/architecture/`, spike headers, `AGENTS.md`, `README.md` for the literal — none named it). Logged as [`Batch 93`](../../iteration-log.md).
 
 ### Notes / blockers / abandonment reason
 
+Original requirement: in `spike/verify-skills.ts`, replace the `=== 88` literal in the `all N production records pass paged-backlog validation` assertion with a total derived independently from the pages — the sum over routed pages of `BACKLOG_DIRECTION_HEADING_PATTERN` matches — asserted equal to the number of records `validateBacklog` parsed and strictly greater than zero; keep the `SER-023` exception map and the per-page malformed-heading check unchanged; the assertion label no longer embeds a number. Acceptance: `pnpm tsx spike/verify-skills.ts` green on the current tree (which now holds 92 records); a fixture page with one heading whose metadata block is broken still produces a `malformed direction heading(s)` error and fails the assertion; `pnpm typecheck`, `pnpm test`.
 Evidence: session `session-20260904-111433119` seq 284/288 (`FAIL all 86 production records pass paged-backlog validation` immediately after SER-066/067 were appended; the Host stashed to confirm the clean tree was green and patched the literal to 88 inside the docs commit `5fb8eac`, seq 292–298) and commit `43caa8c`'s message ("bump the paged-backlog record count to 86 … (b51c459 missed it)"). The reflection that queued this direction appended four sections and cannot touch `spike/`, so `pnpm test` is red on `verify-skills` until this lands — implement it first in the batch.
 
 ## SRF-023 — Make offloaded `json` tool results searchable: `retrieve_offloaded_content`'s `pattern`/`line_range`/`context_lines` operate on a line-preserving text projection of stored `application/json` content (string fields with embedded newlines expanded onto real lines), while full retrieval, stored bytes, preview and restored-history repair stay byte-identical
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 90
 - Score: 12
 - Importance: 4

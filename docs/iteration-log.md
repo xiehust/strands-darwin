@@ -2316,3 +2316,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 
 
 
+## Batch 93 — SRF-022 the backlog record count derived from the routed pages
+
+- Origin: `docs/reflections/reflection_2026-09-04_session-20260904-111433119.md` (self-reflection over the SER-066/067 research session; first of four `SRF-022`–`SRF-025` directions, ordered first because it unblocks `pnpm test`).
+- Starting point: HEAD `0b7a321` (the reflection commit); Host gate at HEAD: `pnpm typecheck` exit 0, full `pnpm test` exit 1 with exactly one `FAIL` — `all 88 production records pass paged-backlog validation`, the hard-coded count the reflection's four appended sections broke and this direction's own scope, so delegation proceeded on the characterized red.
+- Child session: `session-20260904-132948664`, launched from repository source (`pnpm tsx src/cli.ts -p … --yolo --context-offload`, no model-call ceiling).
+- Managed tasks: `bg-53741c3d-b3ae-4719-b946-d2f416327709` (implementation, one commit; succeeded, exit 0; `usage: input=26 output=8408 cacheRead=497482 cacheWrite=37335`; `cost: total=1.0117 … model=global.anthropic.claude-fable-5-1`; `model-calls: calls=12`). No retry, no correction turn.
+- Token spend (aggregate): `input=26 output=8,408 cacheRead=497,482 cacheWrite=37,335`; cost `1.0117` USD at LiteLLM base rates.
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SRF-022 | `58e2415` test-only | Host read the 12-line diff of `spike/verify-skills.ts`: the numbered label replaced by `every production record passes paged-backlog validation and every direction heading is a parsed record`, asserting `validateBacklog` errors empty, the summed `BACKLOG_DIRECTION_HEADING_PATTERN` count `> 0` and equal to the summed `BACKLOG_SECTION_PATTERN` count, with the derived total printed (`production backlog records: 92 (92 direction headings)`); `SER-023` exception map and per-page malformed-heading check untouched; one new fixture (well-formed heading, blank line before `- Status:` removed) still yields `malformed direction heading(s)`. Independently re-run at `58e2415`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 (0 `FAIL`); `pnpm build` exit 0. No user-facing surface, no docs sync needed (child grepped architecture docs, spike headers, `AGENTS.md`, `README.md` for the literal — none named it). |
+
+
