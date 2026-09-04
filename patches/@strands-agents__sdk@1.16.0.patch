@@ -425,10 +425,10 @@ index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..8907d109ce2866e376df312ebc0bae1a
  //# sourceMappingURL=bash.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/bash.js b/dist/src/vended-tools/bash/bash.js
-index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3ccd9820b3a 100644
+index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fac7a100e9 100644
 --- a/dist/src/vended-tools/bash/bash.js
 +++ b/dist/src/vended-tools/bash/bash.js
-@@ -1,8 +1,44 @@
+@@ -1,8 +1,64 @@
  import { tool } from '../../tools/tool-factory.js';
  import { z } from 'zod';
  import { spawn } from 'child_process';
@@ -444,6 +444,26 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
 + * `hasMore` vocabulary used below; do not introduce a second cap.
 + */
 +const TIMEOUT_TAIL_LIMIT = 64 * 1024;
++/**
++ * Grace between SIGTERM and SIGKILL when `stop()` takes down the shell's process
++ * group. Deliberately the same 500 ms as Darwin's background manager
++ * (`TERM_GRACE_MS` in `src/tools/background-bash.ts`), so a timed-out foreground
++ * child and a stopped background job share one TERM→KILL shape; keep them equal.
++ */
++const FOREGROUND_TERM_GRACE_MS = 500;
++/**
++ * Signal a whole process group. A group that is already gone (ESRCH) or refuses
++ * the signal (EPERM) is not an error; nothing here may throw, because the KILL
++ * leg runs from an unref'd timer where a throw would be an uncaught exception.
++ */
++function signalProcessGroup(pid, signal) {
++    try {
++        process.kill(-pid, signal);
++    }
++    catch {
++        // ESRCH / EPERM: the group is gone or not ours any more.
++    }
++}
 +/**
 + * Keep at most `limit` trailing UTF-8 bytes of `text`, never starting inside a
 + * multi-byte sequence, and report how much there was.
@@ -473,7 +493,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
  const bashInputSchema = z.object({
      mode: z
          .enum(['execute', 'restart'])
-@@ -10,6 +46,57 @@ const bashInputSchema = z.object({
+@@ -10,6 +66,57 @@ const bashInputSchema = z.object({
      command: z.string().optional().describe('The bash command to execute (required when mode is "execute")'),
      timeout: z.number().positive().optional().describe('Timeout in seconds (default: 120, applies only to execute mode)'),
  });
@@ -531,7 +551,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
  /**
   * Internal class for managing a bash session.
   */
-@@ -18,9 +105,21 @@ class BashSession {
+@@ -18,9 +125,21 @@ class BashSession {
      _started = false;
      _timeout;
      _sentinel;
@@ -554,17 +574,53 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
      }
      /**
       * Starts the bash process if not already started.
-@@ -31,7 +130,7 @@ class BashSession {
+@@ -30,17 +149,28 @@ class BashSession {
+             return;
          }
          try {
++            // detached: the shell leads its own process group so stop() can take a
++            // timed-out foreground child down with it instead of orphaning it to pid 1.
              this._process = spawn('bash', [], {
 -                cwd: process.cwd(),
 +                cwd: this._initialCwd,
                  env: { ...process.env, PS1: '', PS2: '' },
++                detached: true,
              });
              if (!this._process.stdin || !this._process.stdout || !this._process.stderr) {
-@@ -57,13 +156,20 @@ class BashSession {
-             this._process.kill();
+                 throw new BashSessionError('Failed to create bash process streams');
+             }
+             this._started = true;
+             activeSessions.add(this);
+-            // Handle unexpected process exits
+-            this._process.on('close', () => {
++            // Handle unexpected process exits. The handler is bound to the shell it
++            // was installed for: after stop() the next queued call may already have
++            // started a replacement before the killed shell's `close` arrives (the
++            // group kill makes that prompt), and a bare reset here would drop the
++            // replacement's reference — an unstopped shell that outlives the session.
++            const started = this._process;
++            started.on('close', () => {
++                if (this._process !== started) {
++                    return;
++                }
+                 this._process = null;
+                 this._started = false;
+             });
+@@ -54,16 +184,43 @@ class BashSession {
+      */
+     stop() {
+         if (this._process) {
+-            this._process.kill();
++            // Signal the shell's whole process group (it was spawned detached), so a
++            // foreground child the shell is waiting on dies with it instead of being
++            // reparented to pid 1. TERM first, then one bounded KILL after
++            // FOREGROUND_TERM_GRACE_MS; the timer is unref'd and never awaited, so
++            // retire()/shutdown do not get slower.
++            const pid = this._process.pid;
++            if (typeof pid === 'number') {
++                signalProcessGroup(pid, 'SIGTERM');
++                setTimeout(() => signalProcessGroup(pid, 'SIGKILL'), FOREGROUND_TERM_GRACE_MS).unref();
++            }
              this._process = null;
              this._started = false;
 +            // The replacement shell spawns at the initial cwd; keep the preflight truthful.
@@ -576,19 +632,35 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
 -     * Runs a command in the bash session.
 +     * Runs a command in the bash session. The per-Agent foreground queue ensures
 +     * this method has exclusive ownership of the persistent process and streams.
++     * `cancelSignal` is the tool call's `ToolContext.cancelSignal`: an abort takes
++     * the shell's process group down (TERM→KILL, like the timeout) and rejects at
++     * once; an already-aborted signal rejects before anything is spawned or written.
       */
-     async run(command, timeout) {
+-    async run(command, timeout) {
++    async run(command, timeout, cancelSignal) {
 +        const diagnostic = this._projectRoot === null ? null : wrongRootDiagnostic(command, this._cwd, this._projectRoot);
 +        if (diagnostic !== null) {
 +            return diagnostic;
 +        }
++        if (cancelSignal?.aborted) {
++            const failure = new BashSessionError('Command was cancelled before it started; nothing ran.');
++            failure.output = '';
++            failure.error = '';
++            failure.cwd = this._cwd;
++            failure.cancelled = true;
++            throw failure;
++        }
          this.start();
          if (!this._process || !this._process.stdin || !this._process.stdout || !this._process.stderr) {
              throw new BashSessionError('Bash session not properly initialized');
-@@ -73,32 +179,87 @@ class BashSession {
+@@ -72,33 +229,90 @@ class BashSession {
+         let stdoutData = '';
          let stderrData = '';
          let timeoutHandle = null;
-         let isTimedOut = false;
+-        let isTimedOut = false;
++        // Set once the timeout or an abort has already settled this call with a
++        // group kill; the killed shell's later `close` must not settle it again.
++        let isKilled = false;
 +        let stdoutDone = false;
 +        let stderrDone = false;
          return new Promise((resolve, reject) => {
@@ -652,10 +724,11 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
              };
 -            // Handler for process close
 -            const onClose = (code) => {
+-                if (!isTimedOut) {
 +            // Handler for process close. Node emits close only after stdio has closed,
 +            // so the buffers contain everything this invocation produced.
 +            const onClose = (code, signal) => {
-                 if (!isTimedOut) {
++                if (!isKilled) {
                      cleanup();
 -                    reject(new BashSessionError(`Bash process exited unexpectedly with code ${code ?? 'unknown'}`));
 +                    const output = stdoutData.trim();
@@ -681,8 +754,56 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
                  }
              };
              // Handler for process errors
-@@ -127,7 +288,20 @@ class BashSession {
-                 isTimedOut = true;
+@@ -107,13 +321,14 @@ class BashSession {
+                 this.stop();
+                 reject(new BashSessionError(`Bash process error: ${err.message}`));
+             };
+-            // Cleanup function - removes per-command listeners and timeout.
+-            // Does NOT stop the process, preserving session state between calls.
++            // Cleanup function - removes per-command listeners, timeout and the abort
++            // listener. Does NOT stop the process, preserving session state between calls.
+             const cleanup = () => {
+                 if (timeoutHandle !== null) {
+                     clearTimeout(timeoutHandle);
+                     timeoutHandle = null;
+                 }
++                cancelSignal?.removeEventListener('abort', onAbort);
+                 stdout.off('data', onStdoutData);
+                 stderr.off('data', onStderrData);
+                 // Check if process still exists before removing listeners
+@@ -122,27 +337,77 @@ class BashSession {
+                     this._process.off('error', onError);
+                 }
+             };
++            // Cancellation: mirrors the timeout branch — group kill, captured tails as
++            // evidence, reject at once without waiting for the shell's `close` (the KILL
++            // leg finishes on stop()'s unref'd timer).
++            const onAbort = () => {
++                if (isKilled) {
++                    return;
++                }
++                isKilled = true;
++                cleanup();
++                this.stop();
++                const stdoutTail = boundedTail(stdoutData.trim(), TIMEOUT_TAIL_LIMIT);
++                const stderrTail = boundedTail(stderrData.trim(), TIMEOUT_TAIL_LIMIT);
++                const failure = new BashSessionError(`Command was cancelled and its process group was killed (SIGTERM, then SIGKILL after ${FOREGROUND_TERM_GRACE_MS} ms).\n` +
++                    `${describeTail('stdout captured before cancellation', stdoutTail)}\n` +
++                    `${describeTail('stderr captured before cancellation', stderrTail)}\n` +
++                    `Persistent bash shell was killed with the command; it will restart before the next command with cwd: ${this._initialCwd} (shell variables and cd from before the cancellation are gone).`);
++                failure.output = stdoutTail.text;
++                failure.error = stderrTail.text;
++                failure.cwd = this._initialCwd;
++                failure.cancelled = true;
++                reject(failure);
++            };
+             // Set up timeout
+             timeoutHandle = setTimeout(() => {
+-                isTimedOut = true;
++                if (isKilled) {
++                    return;
++                }
++                isKilled = true;
                  cleanup();
                  this.stop();
 -                reject(new BashTimeoutError(`Command timed out after ${effectiveTimeout} seconds`));
@@ -703,16 +824,36 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
              }, effectiveTimeout * 1000);
              // Attach listeners
              stdout.on('data', onStdoutData);
-@@ -136,7 +310,7 @@ class BashSession {
+             stderr.on('data', onStderrData);
+             this._process.on('close', onClose);
              this._process.on('error', onError);
-             // Send command with sentinel
+-            // Send command with sentinel
++            // Send command with sentinel. The command runs inside a brace group whose
++            // stdin is /dev/null: it is not a subshell (cd/variables persist), but a
++            // command that reads stdin gets EOF at once instead of waiting on the tool's
++            // command socket — or eating the sentinel lines below and wedging the shell.
++            // The leading `:` keeps the group non-empty, so a comment-only or blank
++            // command stays the no-op it always was instead of a syntax error that ends
++            // the shell (`$?` is untouched: `:` runs before the command, never after).
++            // The closing brace sits on its own line, after a blank one, so neither a
++            // trailing `# comment` nor a trailing `\` line continuation can swallow it.
              try {
 -                stdin.write(`${command}\necho "${this._sentinel}"\n`);
-+                stdin.write(`${command}\n__darwin_exit_code=$?\ncommand printf '${this._exitCodeSentinel}%s\\n' "$__darwin_exit_code"\ncommand printf '${this._cwdSentinel}%s\\0\\n' "$(command pwd -P)"\necho "${this._sentinel}"\necho "${this._stderrSentinel}" >&2\n`);
++                stdin.write(`{\n:\n${command}\n\n} </dev/null\n__darwin_exit_code=$?\ncommand printf '${this._exitCodeSentinel}%s\\n' "$__darwin_exit_code"\ncommand printf '${this._cwdSentinel}%s\\0\\n' "$(command pwd -P)"\necho "${this._sentinel}"\necho "${this._stderrSentinel}" >&2\n`);
              }
              catch (err) {
                  cleanup();
-@@ -151,6 +325,16 @@ class BashSession {
+                 this.stop();
+                 reject(new BashSessionError(`Failed to write command: ${err.message}`));
++                return;
+             }
++            // The abort listener joins only once the command is really running, so
++            // cleanup() (which removes it) is the single owner of every per-call hook.
++            cancelSignal?.addEventListener('abort', onAbort, { once: true });
+         });
+     }
+ }
+@@ -151,6 +416,16 @@ class BashSession {
   */
  // eslint-disable-next-line @typescript-eslint/no-explicit-any
  const sessions = new WeakMap();
@@ -729,7 +870,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
  /**
   * Track all active sessions for cleanup on process exit.
   */
-@@ -221,42 +405,50 @@ const DEFAULT_DESCRIPTION = 'Executes bash shell commands in a persistent sessio
+@@ -221,42 +496,50 @@ const DEFAULT_DESCRIPTION = 'Executes bash shell commands in a persistent sessio
   * State (variables, working directory) persists within the session.
   * Node.js only.
   */
@@ -809,8 +950,8 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..fd4910a0ca1329782e9dd1b29855f3cc
 +                    sessions.set(agent, session);
 +                    sessionFinalizer.register(agent, session);
 +                }
-+                // Execute command
-+                return session.run(input.command, input.timeout);
++                // Execute command; the call's cancelSignal lets an abort reach the running child.
++                return session.run(input.command, input.timeout, context.cancelSignal);
 +            });
 +        },
 +    });
@@ -845,10 +986,10 @@ index c6bdcac15ef1c7c99cb6cee08e8422548c1d5b95..35527ffe4386aaac0d982f145945737d
  export { makeShell, makeBash } from '../shell/make-shell.js';
  export { SANDBOX_SHELL_DESCRIPTION, ShellTimeoutError, ShellExecutionError } from '../shell/types.js';
 diff --git a/dist/src/vended-tools/bash/types.d.ts b/dist/src/vended-tools/bash/types.d.ts
-index 1be553288395c19e1251d86ef7c4d798c1917ace..84026e846d8a91198fcac3bbdbbfe096382a1a0e 100644
+index 1be553288395c19e1251d86ef7c4d798c1917ace..6eeccf95f2a8666b0c8daaefaeac6ce5698e282b 100644
 --- a/dist/src/vended-tools/bash/types.d.ts
 +++ b/dist/src/vended-tools/bash/types.d.ts
-@@ -48,21 +48,40 @@ export interface BashOutput {
+@@ -48,21 +48,45 @@ export interface BashOutput {
       * Empty string if no errors occurred.
       */
      error: string;
@@ -887,6 +1028,11 @@ index 1be553288395c19e1251d86ef7c4d798c1917ace..84026e846d8a91198fcac3bbdbbfe096
 +    output?: string;
 +    error?: string;
 +    cwd?: string;
++    /**
++     * True when the call's `ToolContext.cancelSignal` aborted it: the shell's
++     * process group was killed (or, if already aborted, nothing was started).
++     */
++    cancelled?: boolean;
      constructor(message: string);
  }
  //# sourceMappingURL=types.d.ts.map

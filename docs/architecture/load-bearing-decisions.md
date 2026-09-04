@@ -795,7 +795,16 @@ stdout/stderr plus a restart notice and the next call starts a replacement shell
 signalled exits remain metadata-bearing failures. A foreground timeout still kills the shell (it
 cannot detach a running command, so there is no move-to-background), but its error result keeps
 the ≤ 64 KiB tails of captured stdout/stderr, names the timeout figure, states that the shell
-restarts at the initial cwd and points to `start` + `wait`. Serialization is also what keeps parallel
+restarts at the initial cwd and points to `start` + `wait`. Each foreground command runs as a brace
+group whose stdin is `/dev/null`: the shell's own stdin is the tool's command socket, and a child
+that inherited it either hung on a prompt until the timeout or ate the sentinel lines and wedged
+the shell for every later call — so prompts now get EOF at once and the rule is stated in the tool
+description. The shell is spawned detached and `stop()` signals its whole process group
+(TERM→KILL, same grace as background jobs), because killing bash alone left the timed-out child
+running under pid 1. Detaching also takes the shell out of the terminal's process group, so the
+foreground `execute` honours the SDK's `ToolContext.cancelSignal`: Esc in the TUI or Ctrl+C in
+headless mode kills the running command's group at once and returns a bounded cancelled result,
+instead of the command running on to its timeout with its result discarded. Serialization is also what keeps parallel
 foreground calls from sharing listeners and attributing one command's output to another.
 Session-owned background bash jobs are reaped as whole process groups with bounded TERM→KILL
 cleanup plus a synchronous `exit` fallback. Darwin configures the foreground tool from the

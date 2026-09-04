@@ -1,5 +1,5 @@
 /** Focused, network-free verification for managed background bash jobs. */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, open, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -1019,6 +1019,225 @@ async function foregroundTimeoutContracts(): Promise<void> {
   }
 }
 
+async function foregroundStdinContracts(): Promise<void> {
+  header('background bash — foreground stdin is /dev/null and a timeout leaves no orphan');
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-foreground-stdin-'));
+  const manager = new BackgroundBashManager(root, 'session-foreground-stdin');
+  const wrapped = createBackgroundBashTool(manager, createForegroundBashTool(root));
+  const agent = new Agent({ model: new BashStartModel(), tools: [wrapped], printer: false });
+  await agent.initialize();
+  const context = { agent } as never;
+  // The patch's FOREGROUND_TERM_GRACE_MS must equal the background manager's TERM_GRACE_MS.
+  const TERM_GRACE_MS = 500;
+  const run = (command: string, timeout?: number) =>
+    wrapped.invoke(timeout === undefined ? { mode: 'execute', command } : { mode: 'execute', command, timeout }, context) as Promise<BashOutput>;
+  const timed = async (command: string): Promise<{ result: BashOutput; elapsed: number }> => {
+    const started = Date.now();
+    const result = await run(command);
+    return { result, elapsed: Date.now() - started };
+  };
+  // pgrep is spawned without a shell so that only pgrep itself (which it excludes)
+  // carries the marker on its command line.
+  const survivors = (marker: string): string[] => {
+    const found = spawnSync('pgrep', ['-f', marker], { encoding: 'utf-8' });
+    return found.stdout.split('\n').filter((line) => line.trim() !== '');
+  };
+
+  try {
+    assert('the tool description states the /dev/null stdin rule next to the ssh sentence',
+      /stdin from \/dev\/null/.test(wrapped.toolSpec.description) &&
+      /non-interactive flags/.test(wrapped.toolSpec.description) &&
+      /-T -o BatchMode=yes/.test(wrapped.toolSpec.description));
+
+    // Pre-change: `cat` read the tool's own sentinel lines off the command socket and
+    // wedged the shell until the timeout killed it.
+    const cat = await timed('cat; echo rc=$?');
+    assert('a bare stdin reader gets EOF at once and reports its own exit code',
+      cat.result.output === 'rc=0' && cat.result.error === '' && cat.elapsed < 1_000);
+    const next = await run('echo next');
+    assert('the sentinel channel is unreachable: the next call in the same shell returns its own output',
+      next.output === 'next' && next.error === '' && next.cwd === root);
+
+    const read = await timed('read -t 5 x; echo rc=$?');
+    assert('read with a timeout sees EOF immediately instead of waiting', read.result.output === 'rc=1' && read.elapsed < 1_000);
+
+    const prompt = await timed(`bash -c 'read -p "Proceed? " a; echo a=$a rc=$?'`);
+    assert('a trellis-update-shaped prompt returns at once with EOF semantics, no timeout',
+      prompt.result.output === 'a= rc=1' && prompt.elapsed < 1_000);
+
+    const python = await timed('python3');
+    assert('an interpreter with no script reads EOF and exits at once',
+      python.result.output === '' && python.elapsed < 5_000 && python.result.exitCode === 0);
+
+    // R3: the brace group is not a subshell; everything a finished command did stays byte-identical.
+    const stateDir = path.join(root, 'state-dir');
+    await mkdir(stateDir, { recursive: true });
+    await run(`cd ${stateDir}`);
+    const pwd = await run('pwd');
+    assert('cd persists across calls through the brace group', pwd.output === stateDir && pwd.cwd === stateDir);
+    await run('X=5');
+    const variable = await run('echo $X');
+    assert('shell variables persist across calls through the brace group', variable.output === '5');
+    const heredoc = await run('cat <<EOF\nhello heredoc\nEOF');
+    assert('a heredoc still feeds its payload despite the /dev/null stdin', heredoc.output === 'hello heredoc');
+    const pythonHeredoc = await run('python3 - <<EOF\nprint("py-heredoc")\nEOF');
+    assert('python3 - <<EOF still reads its script from the heredoc', pythonHeredoc.output === 'py-heredoc' && pythonHeredoc.error === '');
+    const comment = await run('echo trailing # comment');
+    assert('a trailing # comment cannot swallow the group close', comment.output === 'trailing' && comment.error === '');
+    // A group with only a comment (or nothing) is a bash syntax error that ends the
+    // shell with code 2; the leading `:` keeps these the no-ops they were before.
+    const commentOnly = await run('# just a comment');
+    assert('a comment-only command stays a no-op instead of a syntax error that kills the shell',
+      commentOnly.output === '' && commentOnly.error === '' && commentOnly.exitCode === 0 && commentOnly.cwd === stateDir);
+    const blank = await run('   ');
+    assert('a whitespace-only command stays a no-op', blank.output === '' && blank.error === '' && blank.exitCode === 0);
+    // A trailing `\` would join the next line onto the command; with `}` directly
+    // there the group never closes and the call sits until the timeout.
+    const continuation = await timed('echo foo \\');
+    assert('a trailing backslash cannot join the group close onto the command',
+      continuation.result.output === 'foo' && continuation.result.error === '' && continuation.elapsed < 1_000);
+    const nonzero = await run('(exit 4)');
+    assert('the group reports the last command\'s status as before', nonzero.exitCode === 4 && nonzero.output === '');
+    const stderr = await run("printf 'out\\n'; printf 'err\\n' >&2");
+    assert('stdout and stderr still separate through the group', stderr.output === 'out' && stderr.error === 'err');
+
+    // R5: the timed-out child dies with the shell's process group instead of being orphaned.
+    const marker = 'sleep 60.0731';
+    let caught: unknown;
+    try { await run(`echo starting; ${marker}`, 1); } catch (error) { caught = error; }
+    // Queued at once, as the SDK's per-Agent queue does for a model's next call: the
+    // replacement shell starts before the killed shell's `close` has landed (see below).
+    const afterTimeoutPromise = run(`cd ${stateDir}; LATE=kept; echo recovered`);
+    const timeoutError = caught as BashTimeoutError;
+    assert('a foreground timeout still rejects with the SER-054 BashTimeoutError',
+      timeoutError instanceof BashTimeoutError &&
+      timeoutError.message.startsWith('Command did not complete within 1 seconds and was killed.') &&
+      timeoutError.output === 'starting' && timeoutError.cwd === root && timeoutError.timeoutSeconds === 1);
+    const remaining = await eventually(async () => survivors(marker), (pids) => pids.length === 0, TERM_GRACE_MS + 1_500);
+    assert('the timed-out child is gone within the TERM→KILL grace instead of surviving as an orphan', remaining.length === 0);
+    if (remaining.length > 0) {
+      for (const pid of remaining) { try { process.kill(Number(pid), 'SIGKILL'); } catch { /* already gone */ } }
+    }
+
+    // The killed shell's `close` now lands promptly — typically after the next queued
+    // call has already started the replacement. It must not reset the session's
+    // reference to that replacement: that would orphan an unstopped shell (keeping the
+    // process alive) and silently lose the state set in the first replacement call.
+    const afterTimeout = await afterTimeoutPromise;
+    assert('the replacement shell after the group kill works and starts at the project root',
+      afterTimeout.output === 'recovered' && afterTimeout.cwd === stateDir);
+    await delay(TERM_GRACE_MS + 200);
+    const lateClose = await run('echo "$LATE"; pwd');
+    assert('the killed shell\'s late close does not drop the replacement shell or its state',
+      lateClose.output === `kept\n${stateDir}` && lateClose.cwd === stateDir);
+
+    // Darwin's retire()/shutdown path is `restart` → stop(): the group kill must not make it wait.
+    await run('sleep 30.0731 &');
+    const restartStarted = Date.now();
+    assert('configured restart still returns the compatible message with the reset cwd',
+      await wrapped.invoke({ mode: 'restart' }, context) === `Bash session restarted\ncwd: ${root}`);
+    assert('restart does not wait on the KILL timer', Date.now() - restartStarted < TERM_GRACE_MS);
+    const restartedGroupGone = await eventually(async () => survivors('sleep 30.0731'), (pids) => pids.length === 0, TERM_GRACE_MS + 1_500);
+    assert('restart takes the shell\'s background job down with the group', restartedGroupGone.length === 0);
+  } finally {
+    await wrapped.invoke({ mode: 'restart' }, context);
+    await manager.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function foregroundCancelContracts(): Promise<void> {
+  header('background bash — foreground execute honours ToolContext.cancelSignal (R7)');
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-foreground-cancel-'));
+  const manager = new BackgroundBashManager(root, 'session-foreground-cancel');
+  const wrapped = createBackgroundBashTool(manager, createForegroundBashTool(root));
+  const agent = new Agent({ model: new BashStartModel(), tools: [wrapped], printer: false });
+  await agent.initialize();
+  // Same `cancelSignal` field the SDK's tool executor fills in; the wrapper forwards
+  // the context object untouched to the SDK foreground tool.
+  const contextWith = (signal: AbortSignal) => ({ agent, cancelSignal: signal }) as never;
+  const neverAborts = contextWith(new AbortController().signal);
+  const TERM_GRACE_MS = 500;
+  const run = (command: string, context: never = neverAborts) =>
+    wrapped.invoke({ mode: 'execute', command }, context) as Promise<BashOutput>;
+  const survivors = (marker: string): string[] => {
+    const found = spawnSync('pgrep', ['-f', marker], { encoding: 'utf-8' });
+    return found.stdout.split('\n').filter((line) => line.trim() !== '');
+  };
+  const bashChildren = (): number => {
+    const found = spawnSync('pgrep', ['-P', String(process.pid), 'bash'], { encoding: 'utf-8' });
+    return found.stdout.split('\n').filter((line) => line.trim() !== '').length;
+  };
+  const failureOf = async (promise: Promise<unknown>): Promise<BashSessionError | undefined> => {
+    try { await promise; return undefined; } catch (error) { return error as BashSessionError; }
+  };
+
+  try {
+    // 1. An abort mid-command kills the shell's process group and rejects at once.
+    await run('CANCEL_STATE=before');
+    const marker = 'sleep 30.0733';
+    const controller = new AbortController();
+    const started = Date.now();
+    const pending = failureOf(run(`echo partial; ${marker}`, contextWith(controller.signal)));
+    setTimeout(() => controller.abort(), 200);
+    const cancelled = await pending;
+    const elapsed = Date.now() - started;
+    assert('a cancelled foreground command rejects within the TERM→KILL grace instead of waiting for the timeout',
+      cancelled !== undefined && elapsed < TERM_GRACE_MS + 1_000);
+    assert('the cancelled result is a BashSessionError whose first line names the cancellation and the group kill',
+      cancelled instanceof BashSessionError &&
+      cancelled.message.split('\n')[0] === `Command was cancelled and its process group was killed (SIGTERM, then SIGKILL after ${TERM_GRACE_MS} ms).` &&
+      cancelled.message.includes('stdout captured before cancellation (7 bytes):\npartial') &&
+      cancelled.message.includes('stderr captured before cancellation: (none)') &&
+      cancelled.message.includes(`it will restart before the next command with cwd: ${root} (shell variables and cd from before the cancellation are gone).`));
+    assert('the cancelled result carries the SER-054 fields plus cancelled: true (no exit metadata: close is not awaited)',
+      cancelled?.cancelled === true && cancelled.output === 'partial' && cancelled.error === '' &&
+      cancelled.cwd === root && cancelled.exitCode === undefined && cancelled.signal === undefined);
+    const remaining = await eventually(async () => survivors(marker), (pids) => pids.length === 0, TERM_GRACE_MS + 1_000);
+    assert('the cancelled child is gone within the grace instead of running on while its result is discarded', remaining.length === 0);
+    if (remaining.length > 0) {
+      for (const pid of remaining) { try { process.kill(Number(pid), 'SIGKILL'); } catch { /* already gone */ } }
+    }
+
+    // 2. The next call runs in a replacement shell at the initial cwd; state from before is gone.
+    const replacement = await run('echo "after=$CANCEL_STATE"; pwd');
+    assert('the next execute succeeds in a replacement shell at the initial cwd',
+      replacement.output === `after=\n${root}` && replacement.cwd === root && replacement.exitCode === 0);
+
+    // 3. An already-aborted signal rejects before any shell is spawned or written to.
+    // First against a fresh session (no live shell): a naive start()-then-check would
+    // spawn a bash here. The restart's group kill needs the grace to fully land first.
+    await wrapped.invoke({ mode: 'restart' }, neverAborts);
+    await delay(TERM_GRACE_MS + 200);
+    const childrenBefore = bashChildren();
+    const aborted = new AbortController();
+    aborted.abort();
+    const preStarted = Date.now();
+    const preAborted = await failureOf(run('echo never', contextWith(aborted.signal)));
+    const preElapsed = Date.now() - preStarted;
+    assert('an already-aborted signal rejects at once with the not-started notice',
+      preAborted instanceof BashSessionError && preAborted.message === 'Command was cancelled before it started; nothing ran.' &&
+      preAborted.cancelled === true && preAborted.output === '' && preAborted.error === '' && preAborted.cwd === root && preElapsed < 100);
+    assert('the pre-aborted call spawned no bash child', bashChildren() === childrenBefore);
+    // Then against a live shell: neither the command nor a restart may touch its state.
+    await run('CANCEL_STATE=kept');
+    const preAbortedLive = await failureOf(run('echo never; CANCEL_STATE=clobbered', contextWith(aborted.signal)));
+    const untouched = await run('echo "state=$CANCEL_STATE"');
+    assert('the pre-aborted call neither ran its command nor restarted the live shell',
+      preAbortedLive?.cancelled === true && untouched.output === 'state=kept' && untouched.cwd === root);
+
+    // 4. Restart stays synchronous: it ignores the signal and never waits on the KILL timer.
+    const restartStarted = Date.now();
+    assert('restart still returns the compatible message under an aborted signal',
+      await wrapped.invoke({ mode: 'restart' }, contextWith(aborted.signal)) === `Bash session restarted\ncwd: ${root}`);
+    assert('restart does not wait on the KILL timer', Date.now() - restartStarted < TERM_GRACE_MS);
+  } finally {
+    await wrapped.invoke({ mode: 'restart' }, neverAborts);
+    await manager.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function shutdownAndExitContracts(): Promise<void> {
   header('background bash — bounded shutdown and process exit fallback');
   const root = await mkdtemp(path.join(tmpdir(), 'darwin-background-shutdown-'));
@@ -1130,5 +1349,7 @@ await wrapperAndPermissionContracts();
 await foregroundCwdPreflightContracts();
 await foregroundShellExitContracts();
 await foregroundTimeoutContracts();
+await foregroundStdinContracts();
+await foregroundCancelContracts();
 await shutdownAndExitContracts();
 report();

@@ -274,6 +274,80 @@ all background TERM→KILL/exit cleanup cases. Also run `probe-cancel-exit.ts`,
 `verify-clear-session.ts`, and the
 `bashExit` / `cancelThenContinue` TUI scenarios after changing the patch.
 
+### Contract: foreground commands read `/dev/null`, and `stop()` takes the shell's process group down (SER-066)
+
+The persistent shell's stdin is the socket the tool writes commands into. Unpatched, every
+foreground child inherits it: an interactive prompt (`trellis update`'s `Proceed? (Y/n)`, the
+origin of this contract) waits for an answer nobody sends until the tool timeout, and — worse —
+any command that reads stdin (`cat`, `read`, a bare `python3`) consumes the sentinel lines written
+after it, so the shell is wedged for every later call until the timeout kills it. The pinned patch
+fixes this structurally, never by recognizing program names:
+
+- `run()` writes the command as a brace group with its own stdin,
+  `{\n:\n<command>\n\n} </dev/null\n`, followed by the unchanged five sentinel lines. A brace group
+  is not a subshell, so `cd`, variables, `set -e`, `trap` and `exit` behave exactly as before;
+  heredocs (`<<EOF`, `python3 - <<EOF`) still read their body from the command text; `$?` after
+  the group is the last command's status, which is what `__darwin_exit_code=$?` already captured.
+  Two shape details are load-bearing: the leading `:` keeps the group non-empty (a comment-only or
+  whitespace-only command would otherwise be a syntax error that exits the shell; `:` runs before
+  the command, so `$?` is untouched), and the blank line before `}` absorbs a trailing `\`
+  continuation, which would otherwise join the closing brace onto the command line and hang the
+  call to the timeout. The brace is on its own line so a trailing `# comment` cannot swallow it.
+  A syntax error still ends the
+  non-interactive shell with code 2 (the existing nonzero `BashSessionError` row). Anything that
+  reads stdin gets EOF immediately and finishes through the ordinary result — no new error type.
+  Accepted difference: an `alias` defined and used within one command no longer expands (the group
+  is parsed whole); across calls aliases behave as before.
+- `start()` spawns the shell `detached: true` (its own process group). `stop()` sends `SIGTERM` to
+  `-pid` and arms one unref'd `SIGKILL` to the group after `FOREGROUND_TERM_GRACE_MS`, which must
+  stay equal to the background manager's `TERM_GRACE_MS` (500 ms) so a timed-out foreground child
+  and a stopped background job share one TERM→KILL shape. Previously `kill()` reached only bash and
+  the child it was waiting on was reparented to pid 1 and ran on. `stop()` never awaits the timer,
+  so `retire()`/`shutdown()` do not get slower; kill errors (`ESRCH`/`EPERM`) are swallowed because
+  the KILL leg runs from a timer where a throw would be uncaught.
+- The SDK's `close` handler in `start()` is bound to the shell it was installed for. With the group
+  kill, the killed shell's `close` arrives promptly — after the per-Agent queue may already have
+  started the replacement shell for the next call — and the unguarded upstream handler nulled the
+  replacement's reference, leaving an unstopped shell that kept the process alive and lost cwd/
+  variables on the following call. The guard (`if (this._process !== started) return;`) is part of
+  this contract.
+- Cancellation reaches the running command. Because the detached shell is no longer in darwin's
+  terminal process group, a headless `darwin -p` Ctrl+C would otherwise leave the child alive and
+  the call waiting for the tool timeout. The foreground `execute` therefore honours
+  `ToolContext.cancelSignal` — the SDK's documented extension point ("a tool already executing
+  runs to completion unless it checks `context.cancelSignal`"), forwarded untouched by
+  `createBackgroundBashTool`. On abort the call mirrors the timeout branch: one shared `isKilled`
+  guard (abort/timeout/close settle exactly once), `cleanup()` removes the listener, `stop()` takes
+  the group down, and the call rejects at once — without awaiting `close` — with a
+  `BashSessionError` whose message states, in order: `Command was cancelled and its process group
+  was killed (SIGTERM, then SIGKILL after 500 ms).`; the SER-054 `describeTail` lines for stdout and
+  stderr `captured before cancellation`; and `Persistent bash shell was killed with the command; it
+  will restart before the next command with cwd: <initial cwd> (…)`. Fields: `output`, `error`
+  (same tails), `cwd` (initial cwd), `cancelled: true`; `exitCode`/`signal` undefined. A signal that
+  is already aborted rejects after the wrong-root diagnostic and before `start()` — nothing spawned
+  or written — with `Command was cancelled before it started; nothing ran.`, `cancelled: true`,
+  `cwd` = current cwd. `restart` ignores the signal. `runtime.cancel()` → `agent.cancel()` is the
+  only trigger, so TUI Esc and headless Ctrl+C both kill the running foreground command (user
+  decision, Claude Code behaviour); darwin's synthetic tool contexts pass a never-aborting signal.
+- The wrong-root preflight, Pre/Post hooks and permission still see the raw command; the wrapper
+  never appears in results, trajectory or anything the model reads. The darwin-owned description in
+  `createBackgroundBashTool` states the rule in one sentence next to the ssh sentence (stdin is
+  `/dev/null`, prompts get EOF at once, pass the command's non-interactive flags); the SDK
+  `DEFAULT_DESCRIPTION` is not shown to the model and is untouched. Background `start` and `!`
+  shell commands already used `stdio: ['ignore', …]` and are unchanged.
+
+| Foreground outcome | Required result |
+|---|---|
+| Command reads stdin (`cat`, `read -t 5 x`, `read -p`, bare `python3`) | EOF at once; ordinary `{ output, error, cwd }` with the command's own status; the next call in the same shell returns its own output (sentinels never consumed) |
+| Command persists state (`cd`, `X=5`), uses a heredoc, ends in `# comment` or `\`, or is only a comment/whitespace | Byte-identical to the pre-SER-066 result (no-op stays `exitCode 0`, never a shell exit) |
+| Foreground `execute` exceeds its timeout | SER-054 message/fields unchanged; the timed-out child is gone within the TERM→KILL grace; the replacement shell keeps its state when the killed shell's late `close` arrives |
+| Configured `restart` | Returns without waiting on the KILL timer (< grace); a job started in the shell's group dies with it |
+| `cancelSignal` aborts while a command runs | Group TERM→KILL; immediate `BashSessionError` with the ordered cancelled message, `output`/`error` tails, `cwd` = initial cwd, `cancelled: true`; child gone within grace; next call runs in a replacement shell |
+| `cancelSignal` already aborted at run time | Reject before `start()`/write with `Command was cancelled before it started; nothing ran.`, `cancelled: true`; no shell spawned, live shell state intact |
+
+Required assertions live in `foregroundStdinContracts()` and `foregroundCancelContracts()` of
+`spike/verify-background-bash.ts`.
+
 ### Contract: SDK HTTP request is a parent-only ordinary gated tool
 
 #### Scope / trigger

@@ -736,7 +736,8 @@ export function createBackgroundBashTool(
       `Output-sensitive waits use 1-${OUTPUT_SENSITIVE_WAIT_MAX_MS} ms and return {reason, status, output}; by default they wake on output or another consumer changing the cursor. ` +
       `Set wakeOnOutput:false for a terminal-focused wait up to ${TERMINAL_FOCUSED_WAIT_MAX_MS} ms that aggregates intermediate output and wakes only on terminal state, cancellation, shutdown, or timeout. ` +
       'A still-running terminal-focused timeout tells you to call wait again before ending when later work depends on completion; background completion does not resume the agent. ' +
-      'A plain ssh in execute mode waits on a tty and hangs the call: pass -T -o BatchMode=yes and run it as a background task (start, then wait).',
+      'A plain ssh in execute mode waits on a tty and hangs the call: pass -T -o BatchMode=yes and run it as a background task (start, then wait). ' +
+      'Foreground execute runs with stdin from /dev/null: anything that prompts or reads stdin gets EOF at once and fails, so pass the command\'s non-interactive flags (-y, --yes, --force, --no-input).',
     inputSchema,
     callback: (input, context?: ToolContext) => {
       switch (input.mode) {

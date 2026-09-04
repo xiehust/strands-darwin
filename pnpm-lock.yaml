@@ -204,7 +204,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@strands-agents/sdk@1.16.0': 6668ee1afd4d9c5d369f92df419af06b521b5d43def4b4a86435c846c408f925
+  '@strands-agents/sdk@1.16.0': 17dc98df1eeb206039e726e22671d46bb55c847650844eda5c27bcfefbbe0c5b
 
 importers:
 
@@ -221,7 +221,7 @@ importers:
         version: 1.30.0(zod@4.4.3)
       '@strands-agents/sdk':
         specifier: ^1.16.0
-        version: 1.16.0(patch_hash=6668ee1afd4d9c5d369f92df419af06b521b5d43def4b4a86435c846c408f925)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)
+        version: 1.16.0(patch_hash=17dc98df1eeb206039e726e22671d46bb55c847650844eda5c27bcfefbbe0c5b)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -2336,7 +2336,7 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@strands-agents/sdk@1.16.0(patch_hash=6668ee1afd4d9c5d369f92df419af06b521b5d43def4b4a86435c846c408f925)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)':
+  '@strands-agents/sdk@1.16.0(patch_hash=17dc98df1eeb206039e726e22671d46bb55c847650844eda5c27bcfefbbe0c5b)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1)(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@aws-sdk/client-bedrock-runtime': 3.1123.0
       '@modelcontextprotocol/sdk': 1.30.0(zod@4.4.3)
