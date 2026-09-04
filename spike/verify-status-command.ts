@@ -19,6 +19,7 @@ import type { PromptCachePlan } from '../src/agent/prompt-cache.js';
 import type { ContextEstimate, UsageTotals } from '../src/agent/runtime.js';
 import type { ThinkingPlan } from '../src/agent/thinking.js';
 import { describeCost, type ModelPriceLookup } from '../src/agent/cost.js';
+import { sumUsage } from '../src/agent/usage.js';
 import { describeCallEfficiency, type SessionCallStats } from '../src/agent/call-stats.js';
 import { withSoleChoice, type AppConfig } from '../src/config.js';
 import { BUILTIN_COMMAND_NAMES, builtinCommandDescription } from '../src/commands/custom-commands.js';
@@ -119,7 +120,7 @@ function server(partial: Partial<McpServerStatus> & { name: string }): McpServer
 
 /** A complete, healthy session — the baseline the honesty cases vary from. */
 function facts(overrides: Partial<StatusFacts> = {}): StatusFacts {
-  return {
+  const base: Omit<StatusFacts, 'modelShares'> = {
     config: BEDROCK,
     sessionId: 'session-20260819-000000000',
     resumed: false,
@@ -139,6 +140,8 @@ function facts(overrides: Partial<StatusFacts> = {}): StatusFacts {
     context: ESTIMATE,
     ...overrides,
   };
+  // The runtime's single-model shape: one share over the whole meter, the live lookup.
+  return { ...base, modelShares: overrides.modelShares ?? [{ config: base.config, usage: base.usage, lookup: base.modelPrice }] };
 }
 
 function testEveryFactPresent(): void {
@@ -397,6 +400,56 @@ function testCost(): void {
     children.includes('cost (subagents, 2 dispatches): ≈ $0.0030 (base rates, LiteLLM)'));
   assert('the session-total cost line prices parent plus children',
     children.includes(`cost (session total): ≈ $${(expected + 0.003).toFixed(4)} (base rates, LiteLLM)`));
+
+  // After a /model switch the meter holds two models' tokens: each share is priced
+  // at its own rates and the row says so, instead of the live rates over the whole meter.
+  const solConfig: AppConfig = { ...BEDROCK, provider: 'openai', model: 'openai.gpt-5.6-sol', bedrockMantle: true, openaiApi: 'chat' };
+  const solUsage: UsageTotals = { inputTokens: 100_000, outputTokens: 10_000, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 };
+  const SOL: ModelPriceLookup = {
+    kind: 'priced',
+    litellmKey: 'bedrock_mantle/openai.gpt-5.6-sol',
+    rates: { inputCostPerToken: 1e-6, outputCostPerToken: 5e-6 },
+  };
+  const solCost = 100_000 * 1e-6 + 10_000 * 5e-6;
+  const mixed = formatStatusReport(facts({
+    config: solConfig,
+    usage: sumUsage([SPENT, solUsage]),
+    modelPrice: SOL,
+    modelShares: [
+      { config: BEDROCK, usage: SPENT, lookup: PRICED },
+      { config: solConfig, usage: solUsage, lookup: SOL },
+    ],
+  }));
+  assert('two models are each priced at their own rates, and the row counts them',
+    mixed.includes(`cost         ≈ $${(expected + solCost).toFixed(4)} (2 models; base rates, LiteLLM)`));
+  const liveOverWhole = describeCost(SOL, sumUsage([SPENT, solUsage]), solConfig);
+  assert('…which is not the live model\u2019s rates over the whole meter', !mixed.includes(liveOverWhole));
+  const mixedUnpriced = formatStatusReport(facts({
+    config: solConfig,
+    usage: sumUsage([SPENT, solUsage]),
+    modelPrice: { kind: 'none' },
+    modelShares: [
+      { config: BEDROCK, usage: SPENT, lookup: PRICED },
+      { config: solConfig, usage: solUsage, lookup: { kind: 'none' } },
+    ],
+  }));
+  assert('a model without a price makes the row a floor that names it, never 0',
+    mixedUnpriced.includes(`cost         ≥ $${expected.toFixed(4)} (2 models; no price for openai.gpt-5.6-sol; base rates, LiteLLM)`));
+  // Children run the live model: the session total folds them into its share.
+  const mixedChildren = formatStatusReport(facts({
+    config: solConfig,
+    usage: sumUsage([SPENT, solUsage]),
+    modelPrice: SOL,
+    modelShares: [
+      { config: BEDROCK, usage: SPENT, lookup: PRICED },
+      { config: solConfig, usage: solUsage, lookup: SOL },
+    ],
+    childUsage: { dispatches: 1, usage: { inputTokens: 100_000, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 } },
+  }));
+  assert('the subagent cost line prices children at the live model\u2019s rates',
+    mixedChildren.includes('cost (subagents, 1 dispatch): ≈ $0.1000 (base rates, LiteLLM)'));
+  assert('the session total adds the children to the live model\u2019s share, each model still at its own rates',
+    mixedChildren.includes(`cost (session total): ≈ $${(expected + solCost + 0.1).toFixed(4)} (2 models; base rates, LiteLLM)`));
 }
 
 function main(): void {

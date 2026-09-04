@@ -51,6 +51,14 @@ From **every** child task's drained output — initial worker, correction, and r
 
 That is the child process's token spend for that one invocation. The four fields are mutually exclusive cost buckets: `input` excludes every reported cache read and cache write, so aggregate each field independently across tasks and apply its own provider rate. A `-` means the provider never reported that metric; it does not mean zero, so carry it through as unknown rather than adding it in as `0`. Each child process reports only its own run, so the totals never overlap. A task that fails before any model call completes may report zeros or no line at all — record its absence rather than inventing a number.
 
+Beside it, capture the exact stderr record matching:
+
+```text
+^cost: total=(\d+\.\d+|-) input=(\d+\.\d+|-) output=(\d+\.\d+|-) cacheRead=(\d+\.\d+|-) cacheWrite=(\d+\.\d+|-) model=(\S+) pricing=(\S+)$
+```
+
+That is the same spend in approximate USD at LiteLLM base rates, per model. `total` is the figure to report per task; `-` is unknown (an unreported bucket or a model with no cached price), never zero, so a task whose `total` is `-` stays unknown in the aggregate rather than being summed as `0`. A task with no `cost:` line is stated as such.
+
 ## 3. Handle child questions or completion
 
 Read the complete worker reply and compare it with the requirement and repository evidence. Answer a child question directly only when existing evidence resolves it. If product intent, scope, or authorization remains unresolved, ask the user in this Host conversation instead of inventing an answer. A worker stopped by an explicit user/Host ceiling may continue in the same session only with renewed authorization and a precise remaining-work prompt; do not call incomplete work accepted.
@@ -93,7 +101,7 @@ Report:
 - every background task id and terminal outcome;
 - changed files and independently run acceptance checks/results;
 - the docs wrap-up: which README / user-guide / architecture pages were synced (and the commit), or that none needed it;
-- **token spend**: the captured `usage:` figures per child task, plus an aggregate total across every task in this delegation (state `-` metrics as unknown rather than folding them into a sum, and say when a task reported no line at all); and
+- **token spend**: the captured `usage:` figures per child task, plus an aggregate total across every task in this delegation (state `-` metrics as unknown rather than folding them into a sum, and say when a task reported no line at all), and the captured `cost:` USD `total` per task plus its aggregate on the same rule (`-` unknown, never summed as 0; a task with no line stated); and
 - unresolved risks, denied operations, or decisions still needed.
 
 The background registry owns short-lived process lifecycle; the persisted child session owns conversation continuity. Keep those identities separate throughout.

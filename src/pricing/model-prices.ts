@@ -21,7 +21,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import type { ModelPriceLookup, ModelRates } from '../agent/cost.js';
+import type { ModelPriceLookup, ModelRates } from './cost.js';
 import type { AppConfig } from '../config.js';
 import { userModelPricesFile } from '../paths.js';
 

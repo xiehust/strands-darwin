@@ -14,8 +14,12 @@ import {
   costFields,
   describeCost,
   describePricingSource,
+  describeSessionCost,
   estimateCost,
   formatUsd,
+  sessionCost,
+  sessionCostFields,
+  type CostShare,
   type ModelPriceLookup,
   type ModelRates,
 } from '../src/agent/cost.js';
@@ -126,7 +130,80 @@ function machineFields(): void {
     describePricingSource({ kind: 'unavailable' }) === 'unavailable');
 }
 
+/** The per-model aggregation both the live surfaces and the trajectory readers price through. */
+function perModel(): void {
+  header('sessionCost — each model at its own rates; the unknown named, never zeroed');
+
+  const sonnet: CostShare = {
+    model: 'global.anthropic.claude-sonnet-5',
+    lookup: PRICED,
+    buckets: { input: 1_000_000, output: 100_000, cacheRead: 500_000, cacheWrite: 10_000 },
+  };
+  const sol: CostShare = {
+    model: 'openai.gpt-5.6-sol',
+    lookup: { kind: 'priced', litellmKey: 'bedrock_mantle/openai.gpt-5.6-sol', rates: { inputCostPerToken: 1e-6, outputCostPerToken: 5e-6 } },
+    buckets: { input: 1_000_000, output: 100_000, cacheRead: 0, cacheWrite: 0 },
+  };
+
+  // One share is exactly the one-lookup rendering, byte for byte.
+  const one = sessionCost([sonnet]);
+  assert('one priced share is exact, one model, nothing left out',
+    one.exact && one.models.length === 1 && one.pricedShares === 1 && Math.abs(one.total - 3.125) < 1e-12);
+  assert('…and renders as describeCost always did',
+    describeSessionCost(one) === describeCost(PRICED, { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 500_000, cacheWriteInputTokens: 10_000 }, config('bedrock')));
+  assert('one unavailable share renders the one-lookup wording',
+    describeSessionCost(sessionCost([{ ...sonnet, lookup: { kind: 'unavailable' } }])) === 'unknown (price unavailable)');
+  assert('one unlisted share renders the one-lookup wording',
+    describeSessionCost(sessionCost([{ ...sonnet, lookup: { kind: 'none' } }])) === 'unknown (no price for global.anthropic.claude-sonnet-5)');
+
+  // Two priced models: each at its own rates, summed, and counted in the clause.
+  const two = sessionCost([sonnet, sol]);
+  assert('two priced shares sum each at its own rates', two.exact && Math.abs(two.total - 4.625) < 1e-12 && two.models.length === 2);
+  assert('…and the clause counts the models', describeSessionCost(two) === `≈ $4.6250 (2 models; ${COST_BASIS_LABEL})`);
+  assert('the live rates over the whole meter would have said something else',
+    describeCost(sol.lookup, { inputTokens: 2_000_000, outputTokens: 200_000, cacheReadInputTokens: 500_000, cacheWriteInputTokens: 10_000 }, config('openai', 'chat')) !== describeSessionCost(two));
+  const twoFields = sessionCostFields(two);
+  assert('the machine fields sum per bucket with an exact total',
+    twoFields.total === '4.6250' && twoFields.input === '3.0000' && twoFields.output === '1.5000' && twoFields.cacheRead === '0.1000' && twoFields.cacheWrite === '0.0250');
+
+  // One model unpriced: its money is unknown — a floor naming it, never $0 or dropped.
+  const unpriced = sessionCost([sonnet, { ...sol, lookup: { kind: 'none' } }]);
+  assert('an unlisted model leaves the total a floor over the priced share and is named',
+    !unpriced.exact && Math.abs(unpriced.total - 3.125) < 1e-12 && unpriced.unpriced[0]?.model === 'openai.gpt-5.6-sol' &&
+    describeSessionCost(unpriced) === `≥ $3.1250 (2 models; no price for openai.gpt-5.6-sol; ${COST_BASIS_LABEL})`);
+  assert('an unavailable model in a mix is named too (alone it needs no name)',
+    describeSessionCost(sessionCost([sonnet, { ...sol, lookup: { kind: 'unavailable' } }])) === `≥ $3.1250 (2 models; price unavailable for openai.gpt-5.6-sol; ${COST_BASIS_LABEL})`);
+  const unpricedFields = sessionCostFields(unpriced);
+  assert('an unpriced model makes every machine field `-`: a partial sum in a field would be read as the sum',
+    Object.values(unpricedFields).every((value) => value === '-'));
+  assert('nothing priced at all is unknown, every reason named',
+    describeSessionCost(sessionCost([{ ...sonnet, lookup: { kind: 'none' } }, { ...sol, lookup: { kind: 'unavailable' } }])) ===
+      'unknown (no price for global.anthropic.claude-sonnet-5; price unavailable for openai.gpt-5.6-sol)');
+  assert('no shares at all is unknown, not $0', describeSessionCost(sessionCost([])) === 'unknown (no spend recorded)');
+
+  // Missing buckets in a mix name their model; alone they read as before.
+  const gap = sessionCost([sonnet, { ...sol, buckets: { ...sol.buckets, cacheWrite: undefined } }]);
+  assert('a missing bucket in a mix names its model', describeSessionCost(gap) === `≥ $4.6250 (2 models; openai.gpt-5.6-sol: cacheWrite not reported; ${COST_BASIS_LABEL})`);
+  assert('…and that bucket and the total are `-` in the machine fields while the others still sum',
+    sessionCostFields(gap).cacheWrite === '-' && sessionCostFields(gap).total === '-' && sessionCostFields(gap).input === '3.0000');
+  const partly = sessionCost([{ ...sonnet, partlyReported: ['cacheRead'] }]);
+  assert('a partly reported bucket is priced over what was reported and said to be partial',
+    Math.abs(partly.total - 3.125) < 1e-12 && describeSessionCost(partly) === `≥ $3.1250 (cacheRead partly reported; ${COST_BASIS_LABEL})` && sessionCostFields(partly).total === '-');
+  assert('an outside caveat makes the figure a floor without changing its sum',
+    describeSessionCost(one, ['2 turn(s) unknown']) === `≥ $3.1250 (2 turn(s) unknown; ${COST_BASIS_LABEL})`);
+
+  // Bounded: many models are counted, at most three named; long ids are capped.
+  const many = sessionCost(['a', 'b', 'c', 'd', 'e'].map((model) => ({ model, lookup: { kind: 'none' as const }, buckets: sol.buckets })));
+  assert('at most three unpriced models are named, the rest counted',
+    describeSessionCost(sessionCost([sonnet, ...['a', 'b', 'c', 'd', 'e'].map((model) => ({ model, lookup: { kind: 'none' as const }, buckets: sol.buckets }))])) ===
+      `≥ $3.1250 (6 models; no price for a, b, c +2 more; ${COST_BASIS_LABEL})` && many.models.length === 5);
+  const longId = 'x'.repeat(200);
+  const long = describeSessionCost(sessionCost([{ model: longId, lookup: { kind: 'none' }, buckets: sol.buckets }]));
+  assert('a model id is capped in the clause', long.length < 100 && long.includes('…') && !long.includes(longId));
+}
+
 arithmetic();
 rendering();
 machineFields();
+perModel();
 report();

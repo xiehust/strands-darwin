@@ -4,6 +4,7 @@ import { ContextWindowOverflowError, ModelError, type AgentStreamEvent } from '@
 
 import { NEVER_WITHDRAWN } from '../../src/agent/permission.js';
 import type { AgentRuntime, RuntimeOptions } from '../../src/agent/runtime.js';
+import type { ModelPriceLookup, ModelUsageShare } from '../../src/agent/cost.js';
 import type { AppConfig } from '../../src/config.js';
 
 const config: AppConfig = {
@@ -53,6 +54,32 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
   const readyFile = process.env['DARWIN_HEADLESS_FIXTURE_READY'];
   if (readyFile !== undefined) writeFileSync(readyFile, 'ready\n');
 
+  // The real runtime's modelPrice is `unavailable` until the background fetch has
+  // recorded the id; only the priced modes carry rates, so every other mode's exact
+  // stderr doubles as proof that an unpriced run says so rather than 0.
+  const modelPrice: ModelPriceLookup = mode === 'priced' || mode === 'mixed-models'
+    ? {
+        kind: 'priced',
+        litellmKey: 'openai/fake.headless',
+        rates: { inputCostPerToken: 0.001, outputCostPerToken: 0.01, cacheReadInputTokenCost: 0.0001 },
+      }
+    : { kind: 'unavailable' };
+  const usage = { inputTokens: 12, outputTokens: 3, cacheReadInputTokens: 0 };
+  // The real runtime's modelShares is exactly one share over the whole meter until a
+  // `/model` switch ran a turn; the mixed-models mode is the switched shape — a
+  // second, priced share on another model — so the record's multi-model rendering
+  // is asserted through the real runner.
+  const modelShares: ModelUsageShare[] = mode === 'mixed-models'
+    ? [
+        { config, usage: { inputTokens: 10, outputTokens: 2, cacheReadInputTokens: 0 }, lookup: modelPrice },
+        {
+          config: { ...config, model: 'fake.second' },
+          usage: { inputTokens: 2, outputTokens: 1, cacheReadInputTokens: 0 },
+          lookup: { kind: 'priced', litellmKey: 'openai/fake.second', rates: { inputCostPerToken: 0.002, outputCostPerToken: 0.02, cacheReadInputTokenCost: 0.0002 } },
+        },
+      ]
+    : [{ config, usage, lookup: modelPrice }];
+
   return {
     info: {
       sessionId,
@@ -61,11 +88,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
       diagnosticsFile: undefined,
     },
     config,
-    usage: {
-      inputTokens: 12,
-      outputTokens: 3,
-      cacheReadInputTokens: 0,
-    },
+    usage,
     // The real runtime's childUsage is undefined until a dispatch reports usage;
     // every mode but child-usage keeps that zero-dispatch shape so the exact
     // stderr/terminal-record assertions double as byte-identity proofs.
@@ -75,16 +98,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
     sessionUsage: mode === 'child-usage'
       ? { inputTokens: 52, outputTokens: 7, cacheReadInputTokens: 0 }
       : { inputTokens: 12, outputTokens: 3, cacheReadInputTokens: 0 },
-    // The real runtime's modelPrice is `unavailable` until the background fetch has
-    // recorded the id; only the priced mode carries rates, so every other mode's
-    // exact stderr doubles as proof that an unpriced run says so rather than 0.
-    modelPrice: mode === 'priced'
-      ? {
-          kind: 'priced',
-          litellmKey: 'openai/fake.headless',
-          rates: { inputCostPerToken: 0.001, outputCostPerToken: 0.01, cacheReadInputTokenCost: 0.0001 },
-        }
-      : { kind: 'unavailable' },
+    modelPrice,
+    modelShares,
     // Like childUsage: the real runtime's callStats is undefined until a completed
     // model call was observed, so every mode but call-stats keeps the zero-call
     // shape and the exact-output assertions double as byte-identity proofs.

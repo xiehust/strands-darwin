@@ -6,7 +6,7 @@ import type OpenAI from 'openai';
 import type { AppConfig } from '../src/config.js';
 import { formatUsageReport } from '../src/tui/App.js';
 import { cacheEffectivenessRows, deltaUsage, sumUsage, usageBuckets, usageRows, type UsageTotals } from '../src/agent/usage.js';
-import type { ModelPriceLookup } from '../src/agent/cost.js';
+import type { ModelPriceLookup, ModelUsageShare } from '../src/agent/cost.js';
 import type { SessionCallStats } from '../src/agent/call-stats.js';
 import { assert, header, report } from './shared.js';
 
@@ -368,13 +368,15 @@ function costLineContracts(): void {
     rates: { inputCostPerToken: 2e-6, outputCostPerToken: 1e-5, cacheReadInputTokenCost: 2e-7, cacheCreationInputTokenCost: 2.5e-6 },
   };
 
-  // No lookup passed → byte-identical to the pre-cost report (the childUsage rule);
-  // the runtime always passes one, so the TUI report always carries the line.
+  // No shares passed → byte-identical to the pre-cost report (the childUsage rule);
+  // the runtime always passes them, so the TUI report always carries the line.
   const without = formatUsageReport(parent, config('bedrock'), false);
   const withUndefined = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, undefined);
-  assert('no lookup renders byte-identically to the pre-cost report', without === withUndefined && !/^\s+cost\s/mu.test(without));
+  assert('no shares render byte-identically to the pre-cost report', without === withUndefined && !/^\s+cost\s/mu.test(without));
 
-  const withPrice = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, priced);
+  // The runtime's single-model shape: one share over the whole meter.
+  const one = (usage: UsageTotals, cfg: AppConfig, lookup: ModelPriceLookup): readonly ModelUsageShare[] => [{ config: cfg, usage, lookup }];
+  const withPrice = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, one(parent, config('bedrock'), priced));
   const lines = withPrice.split('\n');
   const costIndex = lines.findIndex((line) => /^\s+cost\s/u.test(line));
   assert('the cost line closes the main block, directly under the derived cache rows',
@@ -384,13 +386,38 @@ function costLineContracts(): void {
   assert('pricing adds exactly one line and leaves every other line byte-identical',
     lines.length === without.split('\n').length + 1 && lines.filter((_, i) => i !== costIndex).join('\n') === without);
 
-  const unavailable = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, { kind: 'unavailable' });
+  const unavailable = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, one(parent, config('bedrock'), { kind: 'unavailable' }));
   assert('an unfetched price reads unavailable, never $0', /cost\s+unknown \(price unavailable\)/u.test(unavailable) && !unavailable.includes('$'));
-  const none = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, { kind: 'none' });
+  const none = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, one(parent, config('bedrock'), { kind: 'none' }));
   assert('a model LiteLLM does not list is named', none.includes('unknown (no price for global.anthropic.claude-opus-5)'));
-  const partial = formatUsageReport({ inputTokens: 1_000_000, outputTokens: 100_000 }, config('openai', 'chat'), false, false, undefined, undefined, undefined, priced);
+  const partialUsage: UsageTotals = { inputTokens: 1_000_000, outputTokens: 100_000 };
+  const partial = formatUsageReport(partialUsage, config('openai', 'chat'), false, false, undefined, undefined, undefined, one(partialUsage, config('openai', 'chat'), priced));
   assert('an unreported bucket makes the figure a stated floor',
     partial.includes('≥ $3.0000 (cacheRead not reported, cacheWrite not reported; base rates, LiteLLM)'));
+
+  // After a /model switch: each model's share at its own rates, then one line per model
+  // under the cost line so the mixed figure can be taken apart. Single-model reports add nothing.
+  const sol: ModelPriceLookup = { kind: 'priced', litellmKey: 'bedrock_mantle/openai.gpt-5.6-sol', rates: { inputCostPerToken: 1e-6, outputCostPerToken: 5e-6 } };
+  const solUsage: UsageTotals = { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 };
+  const mixed = formatUsageReport(sumUsage([parent, solUsage]), config('openai', 'chat'), false, false, undefined, undefined, undefined, [
+    { config: config('bedrock'), usage: parent, lookup: priced },
+    { config: config('openai', 'chat'), usage: solUsage, lookup: sol },
+  ]);
+  const mixedLines = mixed.split('\n');
+  const mixedCost = mixedLines.findIndex((line) => /^\s+cost\s/u.test(line));
+  assert('two models are priced at their own rates and counted on the cost line',
+    mixedLines[mixedCost]?.endsWith('≈ $4.6250 (2 models; base rates, LiteLLM)') === true);
+  assert('one per-model line follows for each model, in share order',
+    mixedLines[mixedCost + 1] === '    bedrock/global.anthropic.claude-opus-5: ≈ $3.1250 (base rates, LiteLLM)' &&
+    mixedLines[mixedCost + 2] === '    openai/openai.gpt-5.6-sol: ≈ $1.5000 (base rates, LiteLLM)');
+  assert('a single-model report carries no per-model lines', !withPrice.includes('    bedrock/'));
+  const mixedUnpriced = formatUsageReport(sumUsage([parent, solUsage]), config('openai', 'chat'), false, false, undefined, undefined, undefined, [
+    { config: config('bedrock'), usage: parent, lookup: priced },
+    { config: config('openai', 'chat'), usage: solUsage, lookup: { kind: 'unavailable' } },
+  ]);
+  assert('a model whose price is unavailable makes the figure a floor that names it',
+    mixedUnpriced.includes('≥ $3.1250 (2 models; price unavailable for openai.gpt-5.6-sol; base rates, LiteLLM)') &&
+    mixedUnpriced.includes('    openai/openai.gpt-5.6-sol: unknown (price unavailable)'));
 }
 
 await adapterContract();

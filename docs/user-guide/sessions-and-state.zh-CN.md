@@ -62,20 +62,23 @@ darwin -p "carry on" --session "$NEW"
 ```text
 turn 3 spend: input=412 output=1350 cacheRead=130961 cacheWrite=398 · bedrock/global.anthropic.claude-opus-5
 session spend: input=412 output=1350 cacheRead=130961(+1 unreported) cacheWrite=398(+1 unreported) over 2 turn(s)
+session cost: ≥ $0.0415 (cacheRead partly reported, cacheWrite partly reported; base rates, LiteLLM)
 ```
+
+`trajectory list` 与 `trajectory replay` 也会离线为记录计价，单价来自实时会话填充的同一个 `~/.darwin/model-prices.json`——每个模型按各自缓存的单价计算。`list` 在每行会话后追加一段 `cost: …`；`replay` 在 `session spend:` 下方打印 `session cost:`，若不止一个模型参与，还在每个模型的 token 行后给出该模型自己的金额。缓存不认识的模型视为*未计价*：合计变成指明该模型的下限（`≥ $3.1250 (2 models; no price for us.made-up.model; …)`），绝不算作 0，也绝不省略；只有部分轮次报告的分桶按已报告部分计价并标注 `partly reported`；没有记录 spend 的轮次同样让合计成为下限（`N turn(s) unknown`）。没有缓存文件时显示 `cost: unknown (price unavailable)`。读取记录绝不会下载或写入价格；`/export` 完全不含成本行——导出的文稿只取决于记录本身。
 
 这些数字来自 SDK 对回合的归因，不是账单。`/compact` 和溢出处理中的摘要调用绕过 meter，因此不会计入 `/usage` 或轨迹费用。回合编号会随进程重新从 1 开始，恢复后的记录可能包含多个 `turn 1`；合计按实际结束记录统计。
 
 ### 成本
 
-`/status` 与 `/usage` 按当前模型的 LiteLLM 基础单价为本次运行的分桶计价——`cost  ≈ $0.0123 (base rates, LiteLLM)`；headless 运行则在 `usage:` 之后以一条 stderr 记录写出同样的数字：
+`/status` 与 `/usage` 按 LiteLLM 基础单价为本次运行的分桶计价，**每个模型用各自的单价**——`cost  ≈ $0.0123 (base rates, LiteLLM)`；headless 运行则在 `usage:` 之后以一条 stderr 记录写出同样的数字：
 
 ```text
 usage: input=412 output=1350 cacheRead=130961 cacheWrite=398
 cost: total=0.0415 input=0.0008 output=0.0135 cacheRead=0.0262 cacheWrite=0.0010 model=global.anthropic.claude-sonnet-5 pricing=global.anthropic.claude-sonnet-5
 ```
 
-这只是估算：仅用基础档单价（不含长上下文或 1 小时缓存价目），即使中途 `/model` 切换也按当前模型的单价乘以整个进程的 meter，摘要调用因为 meter 不计而不计入。未报告的分桶绝不按 0 计价——TUI 显示下限（`≥ $0.0030 (cacheRead not reported, cacheWrite not reported; …)`），headless 则把该分桶和 `total` 都写成 `-`。`pricing=` 给出单价所用的 LiteLLM key，或 `none`（LiteLLM 没有该模型）/ `unavailable`（价目表尚未获取——离线，或后台下载还没完成）。
+这只是估算：仅用基础档单价（不含长上下文或 1 小时缓存价目），摘要调用因为 meter 不计而不计入。`/model` 切换后，每个模型的 token 按该模型自己的单价计价：该行会标出模型数（`≈ $4.6250 (2 models; base rates, LiteLLM)`），`/usage` 在其下方为每个模型各加一行，混合中若有模型没有价格，数字就变成指明该模型的下限（`≥ $3.1250 (2 models; no price for <id>; …)`）；此时 headless 写出 `model=2-models pricing=mixed`。未报告的分桶绝不按 0 计价——TUI 显示下限（`≥ $0.0030 (cacheRead not reported, cacheWrite not reported; …)`），headless 则把该分桶和 `total` 都写成 `-`。`pricing=` 给出单价所用的 LiteLLM key，或 `none`（LiteLLM 没有该模型）/ `unavailable`（价目表尚未获取——离线，或后台下载还没完成）。子代理使用父级当前模型，按其单价计价。
 
 单价来自 `~/.darwin/model-prices.json`，其中只保存每个模型 id 解析后的映射（绝不保存整张表）：文件已知的模型不会再次下载；未知 id 会在启动或 `/model` 时触发每进程一次的后台获取；LiteLLM 没有列出的 id 会被记录为无价格，避免每次启动重试。删除该文件即可刷新价格。`DARWIN_MODEL_PRICES_FETCH=off` 可完全关闭下载。
 

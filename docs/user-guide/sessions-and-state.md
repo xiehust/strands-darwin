@@ -62,20 +62,23 @@ A `turnEnded.spend` record stamps provider/model and separately reports `input`,
 ```text
 turn 3 spend: input=412 output=1350 cacheRead=130961 cacheWrite=398 · bedrock/global.anthropic.claude-opus-5
 session spend: input=412 output=1350 cacheRead=130961(+1 unreported) cacheWrite=398(+1 unreported) over 2 turn(s)
+session cost: ≥ $0.0415 (cacheRead partly reported, cacheWrite partly reported; base rates, LiteLLM)
 ```
+
+`trajectory list` and `trajectory replay` also price the record, offline, from the same `~/.darwin/model-prices.json` the live session fills — each model at its own cached rates. `list` appends one `cost: …` clause per session row; `replay` prints `session cost:` under `session spend:` and, when more than one model contributed, each model's own figure after its token row. A model the cache does not know is *unpriced*: the total becomes a floor that names it (`≥ $3.1250 (2 models; no price for us.made-up.model; …)`), never 0 and never dropped; a bucket only some turns reported is priced over the reported part and marked `partly reported`; turns without a recorded spend make the total a floor too (`N turn(s) unknown`). Without a cache file the clause reads `cost: unknown (price unavailable)`. Reading a record never fetches or writes a price, and `/export` carries no cost lines at all — a transcript file depends on the record alone.
 
 This is SDK-meter attribution, not an invoice. Summarization calls (`/compact` and overflow handling) bypass the meter and are absent from `/usage` and trajectory spend. Turn ordinals restart per process, so resumed records may contain multiple `turn 1` entries; totals count actual closing records.
 
 ### Cost
 
-`/status` and `/usage` price this run's buckets at the live model's LiteLLM base rates — `cost  ≈ $0.0123 (base rates, LiteLLM)` — and a headless run writes the same figures as one stderr record after `usage:`:
+`/status` and `/usage` price this run's buckets at LiteLLM base rates, **each model at its own** — `cost  ≈ $0.0123 (base rates, LiteLLM)` — and a headless run writes the same figures as one stderr record after `usage:`:
 
 ```text
 usage: input=412 output=1350 cacheRead=130961 cacheWrite=398
 cost: total=0.0415 input=0.0008 output=0.0135 cacheRead=0.0262 cacheWrite=0.0010 model=global.anthropic.claude-sonnet-5 pricing=global.anthropic.claude-sonnet-5
 ```
 
-It is an estimate: base tier only (no long-context or 1-hour-cache rates), the current model's rates over the whole process meter even after a `/model` switch, and summarization calls excluded because the meter excludes them. An unreported bucket is never priced as 0 — the TUI shows a floor (`≥ $0.0030 (cacheRead not reported, cacheWrite not reported; …)`) and headless writes `-` for that bucket *and* for `total`. `pricing=` names the LiteLLM key the rates came from, or `none` (LiteLLM lists no such model) / `unavailable` (the table has not been fetched — offline, or the background download has not finished yet).
+It is an estimate: base tier only (no long-context or 1-hour-cache rates), and summarization calls excluded because the meter excludes them. After a `/model` switch each model's tokens are priced at that model's rates: the row counts the models (`≈ $4.6250 (2 models; base rates, LiteLLM)`), `/usage` adds one line per model under it, and a model in the mix without a price makes the figure a floor that names it (`≥ $3.1250 (2 models; no price for <id>; …)`). Headless then writes `model=2-models pricing=mixed`. An unreported bucket is never priced as 0 — the TUI shows a floor (`≥ $0.0030 (cacheRead not reported, cacheWrite not reported; …)`) and headless writes `-` for that bucket *and* for `total`. `pricing=` names the LiteLLM key the rates came from, or `none` (LiteLLM lists no such model) / `unavailable` (the table has not been fetched — offline, or the background download has not finished yet). Subagents run the parent's live model and are priced at its rates.
 
 Rates come from `~/.darwin/model-prices.json`, which stores only the resolved mapping per model id (never the whole table): a model the file already knows is never fetched again; an unknown id triggers one background fetch per process at startup or on `/model`, and an id LiteLLM does not list is recorded as unpriced so it is not retried on every launch. Delete the file to refresh prices. `DARWIN_MODEL_PRICES_FETCH=off` disables the download entirely.
 

@@ -404,11 +404,13 @@ async function usageRecordContracts(): Promise<void> {
     litellmKey: 'global.anthropic.claude-sonnet-5',
     rates: { inputCostPerToken: 2e-6, outputCostPerToken: 1e-5, cacheReadInputTokenCost: 2e-7, cacheCreationInputTokenCost: 2.5e-6 },
   };
-  const costLine = formatHeadlessCost(
-    { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 500_000, cacheWriteInputTokens: 10_000 },
-    usageConfig('bedrock'),
-    priced,
-  );
+  const costLine = formatHeadlessCost([
+    {
+      config: usageConfig('bedrock'),
+      usage: { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 500_000, cacheWriteInputTokens: 10_000 },
+      lookup: priced,
+    },
+  ]);
   assert.equal(
     costLine,
     'cost: total=3.1250 input=2.0000 output=1.0000 cacheRead=0.1000 cacheWrite=0.0250' +
@@ -418,7 +420,9 @@ async function usageRecordContracts(): Promise<void> {
   countedAssert('a fully reported, priced run renders every bucket and the total in four-decimal USD', true);
 
   // An unreported bucket is `-`, and so is the total: a floor in `total=` would be read as the total.
-  const partialCost = formatHeadlessCost({ inputTokens: 1_000_000, outputTokens: 100_000 }, usageConfig('openai', 'chat'), priced);
+  const partialCost = formatHeadlessCost([
+    { config: usageConfig('openai', 'chat'), usage: { inputTokens: 1_000_000, outputTokens: 100_000 }, lookup: priced },
+  ]);
   assert.equal(
     partialCost,
     'cost: total=- input=2.0000 output=1.0000 cacheRead=- cacheWrite=- model=openai.gpt-5.6-sol pricing=global.anthropic.claude-sonnet-5',
@@ -426,11 +430,44 @@ async function usageRecordContracts(): Promise<void> {
   assert.match(partialCost, costPattern);
   countedAssert('an unreported bucket keeps its field and the total at `-`, never 0', true);
 
-  const unavailableCost = formatHeadlessCost({ inputTokens: 5, outputTokens: 7 }, usageConfig('bedrock'), { kind: 'unavailable' });
+  const unavailableCost = formatHeadlessCost([
+    { config: usageConfig('bedrock'), usage: { inputTokens: 5, outputTokens: 7 }, lookup: { kind: 'unavailable' } },
+  ]);
   assert.equal(unavailableCost, 'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=global.anthropic.claude-opus-5 pricing=unavailable');
-  const noPriceCost = formatHeadlessCost({ inputTokens: 5, outputTokens: 7 }, usageConfig('bedrock'), { kind: 'none' });
+  const noPriceCost = formatHeadlessCost([
+    { config: usageConfig('bedrock'), usage: { inputTokens: 5, outputTokens: 7 }, lookup: { kind: 'none' } },
+  ]);
   assert.equal(noPriceCost, 'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=global.anthropic.claude-opus-5 pricing=none');
-  for (const line of [costLine, partialCost, unavailableCost, noPriceCost]) {
+
+  // Several models in one run: the record cannot name one model or one key, so it
+  // says how many and `mixed` — each still one `\S+` token for the skill's capture —
+  // and every bucket is each share priced at its own rates, summed.
+  const bedrockShare = {
+    config: usageConfig('bedrock'),
+    usage: { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 500_000, cacheWriteInputTokens: 10_000 },
+    lookup: priced,
+  };
+  const solShare = {
+    config: usageConfig('openai', 'chat'),
+    usage: { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+    lookup: {
+      kind: 'priced' as const,
+      litellmKey: 'bedrock_mantle/openai.gpt-5.6-sol',
+      rates: { inputCostPerToken: 1e-6, outputCostPerToken: 5e-6 },
+    },
+  };
+  const mixed = formatHeadlessCost([bedrockShare, solShare]);
+  assert.equal(
+    mixed,
+    'cost: total=4.6250 input=3.0000 output=1.5000 cacheRead=0.1000 cacheWrite=0.0250 model=2-models pricing=mixed',
+  );
+  assert.match(mixed, costPattern);
+  countedAssert('two priced models render each share at its own rates, summed, as `model=2-models pricing=mixed`', true);
+  // One unpriced model in the mix leaves every bucket unknown: a partial sum in a field would be read as the sum.
+  const mixedUnpriced = formatHeadlessCost([bedrockShare, { ...solShare, lookup: { kind: 'none' as const } }]);
+  assert.equal(mixedUnpriced, 'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=2-models pricing=mixed');
+  countedAssert('an unpriced model in the mix makes every field `-`, never a smaller exact-looking sum', true);
+  for (const line of [costLine, partialCost, unavailableCost, noPriceCost, mixed, mixedUnpriced]) {
     assert.match(line, costPattern);
     assert.doesNotMatch(line, /\n/u);
   }

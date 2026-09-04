@@ -19,7 +19,7 @@ import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import type { ThinkingPlan } from '../agent/thinking.js';
 import { formatUsageValue, sumUsage, usageBuckets } from '../agent/usage.js';
-import { describeCost, type ModelPriceLookup } from '../agent/cost.js';
+import { describeCost, describeModelCosts, withChildUsage, type ModelPriceLookup, type ModelUsageShare } from '../agent/cost.js';
 import { describeCallEfficiency, type SessionCallStats } from '../agent/call-stats.js';
 import type { AppConfig } from '../config.js';
 import type { McpServerStatus } from '../mcp/registry.js';
@@ -70,6 +70,12 @@ export interface StatusFacts {
    */
   modelPrice: ModelPriceLookup;
   /**
+   * `runtime.modelShares` — the meter split per model, each with its own price
+   * lookup, so the cost row prices every model's tokens at its own rates after a
+   * `/model` switch. One share for a single-model session. Same read-only rule.
+   */
+  modelShares: readonly ModelUsageShare[];
+  /**
    * `runtime.childUsage` — subagent/workflow child spend summed over the
    * dispatch registry, or undefined when no dispatch ever reported usage.
    */
@@ -111,9 +117,10 @@ export function formatStatusReport(facts: StatusFacts): string {
     ['trajectory', describeTrajectory(facts.trajectory)],
     ['diagnostics', describeDiagnostics(facts.diagnostics)],
     ['tokens', describeTokens(facts)],
-    // Directly beside the tokens it prices, through the one shared `describeCost`
-    // projection (`/usage` and the headless `cost:` record use the same arithmetic).
-    ['cost', describeCost(facts.modelPrice, facts.usage, facts.config)],
+    // Directly beside the tokens it prices, through the one shared projection
+    // (`/usage` and the headless `cost:` record use the same arithmetic): each
+    // model's share at its own rates, one share for a single-model session.
+    ['cost', describeModelCosts(facts.modelShares)],
     [
       'context',
       facts.context === undefined
@@ -126,8 +133,9 @@ export function formatStatusReport(facts: StatusFacts): string {
   // Child spend rides directly under the cost row as `label: value` lines rather
   // than table rows, so today's aligned block stays byte-identical when no
   // dispatch reported usage — the additive-everywhere contract. Each child usage
-  // line is followed by its cost line, priced at the live model's rates like the
-  // parent's (children run the parent's model config).
+  // line is followed by its cost line: children run the parent's live model config,
+  // so their tokens are priced at its rates, and the session total folds them into
+  // the live model's share beside the parent's per-model shares.
   if (facts.childUsage !== undefined) {
     const { dispatches, usage } = facts.childUsage;
     const total = sumUsage([facts.usage, usage]);
@@ -139,7 +147,7 @@ export function formatStatusReport(facts: StatusFacts): string {
       `  usage (subagents, ${plural}): ${describeCounters(usage, facts.config)}`,
       `  cost (subagents, ${plural}): ${describeCost(facts.modelPrice, usage, facts.config)}`,
       `  usage (session total): ${describeCounters(total, facts.config)}`,
-      `  cost (session total): ${describeCost(facts.modelPrice, total, facts.config)}`,
+      `  cost (session total): ${describeModelCosts(withChildUsage(facts.modelShares, usage, facts.config, facts.modelPrice))}`,
     );
   }
   // Per-call efficiency rides the same additive convention, one bounded line from

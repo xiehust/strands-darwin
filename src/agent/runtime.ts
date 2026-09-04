@@ -140,7 +140,7 @@ import {
   type SessionCallStats,
 } from './call-stats.js';
 import { anchorFromCall, resolveAnchor, type ContextAnchor } from './context-anchor.js';
-import type { ModelPriceLookup } from './cost.js';
+import type { ModelPriceLookup, ModelUsageShare } from './cost.js';
 import { defaultModelPriceStore, type ModelPriceStore } from '../pricing/model-prices.js';
 
 /** Test seam for proving startup unwind after resources have been acquired. */
@@ -406,6 +406,16 @@ export class AgentRuntime {
   private promptCachePlan: PromptCachePlan;
 
   private lastTurnDelta: UsageTotals | undefined = undefined;
+
+  /**
+   * Completed turns' meter deltas, tallied under the config in effect for each turn —
+   * the same `before` snapshot and config the trajectory's turn meter reads, so the
+   * in-process per-model shares and the recorded per-turn spend attribute identically.
+   * Exists so `/status`, `/usage` and the headless `cost:` record can price each
+   * model's tokens at its own rates after a `/model` switch instead of the live
+   * model's rates over the whole meter. Read through {@link modelShares}.
+   */
+  private readonly turnUsageByModel: { config: AppConfig; usage: UsageTotals }[] = [];
 
   /**
    * Per-model-call efficiency tallies for this session (issue #8 follow-up A).
@@ -966,6 +976,11 @@ export class AgentRuntime {
    */
   async *send(input: string, userInput = input, image?: ImageBlock): AsyncIterable<AgentStreamEvent> {
     const before = this.usage;
+    // The config this turn is attributed to, for the recorded spend and the in-process
+    // per-model tally alike. `/model` is refused while a turn is busy, so the live
+    // config cannot move under the turn; capturing it once makes that a property of
+    // this method rather than of the drivers.
+    const turnConfig = this.liveConfig;
     const submitted = await this.codexHooks?.userPromptSubmit(userInput);
     if (submitted !== undefined && !submitted.allowed) {
       throw new Error(submitted.reason ?? 'UserPromptSubmit hook blocked this prompt.');
@@ -985,11 +1000,11 @@ export class AgentRuntime {
       // and synthetic attachment/path text never enter the trajectory.
       const recording = this.trajectory?.beginTurn(
         userInput,
-        startTurnSpend(before, () => this.usage, this.liveConfig),
+        startTurnSpend(before, () => this.usage, turnConfig),
         // The per-call spend projector, injected beside the turn meter and for its
         // reason: the `modelCall` record needs the live provider/model config, which
         // `src/trajectory/**` must never import.
-        startCallSpend(this.liveConfig),
+        startCallSpend(turnConfig),
       );
       // The model may receive an expanded skill/custom-command prompt, but
       // preference/identity provenance is allowed to quote only what the user
@@ -1039,6 +1054,26 @@ export class AgentRuntime {
       // generator before natural completion: only the natural path above seals.
       if (!sealed) this.memoryController?.discard();
       this.lastTurnDelta = deltaUsage(before, this.usage);
+      this.tallyTurnUsage(turnConfig, this.lastTurnDelta);
+    }
+  }
+
+  /**
+   * Adds one completed turn's delta to its model's share. Runs in `send`'s `finally`,
+   * so it cannot throw: a tally that failed would replace the provider's error with
+   * its own, which the observer contract forbids — a failure costs the tally, not
+   * the turn (the remainder rule in {@link modelShares} then attributes the tokens
+   * to the live model, so nothing goes uncounted).
+   */
+  private tallyTurnUsage(config: AppConfig, delta: UsageTotals): void {
+    try {
+      const entry = this.turnUsageByModel.find(
+        (candidate) => candidate.config.model === config.model && candidate.config.provider === config.provider,
+      );
+      if (entry === undefined) this.turnUsageByModel.push({ config, usage: delta });
+      else entry.usage = sumUsage([entry.usage, delta]);
+    } catch {
+      // Observer discipline: never a second reason a turn dies.
     }
   }
 
@@ -1344,6 +1379,38 @@ export class AgentRuntime {
    */
   get modelPrice(): ModelPriceLookup {
     return this.modelPrices.lookup(this.liveConfig);
+  }
+
+  /**
+   * This process's meter split per model, each share with the config that projects
+   * it and what the price cache says about it — what `/status`, `/usage` and the
+   * headless `cost:` record price, each model at its own rates.
+   *
+   * The completed turns' tally comes first, in first-appearance order; whatever the
+   * meter holds beyond it — the turn in flight, or a tally that failed — belongs to
+   * the live model, so the shares always sum to {@link usage} metric for metric and a
+   * single-model session is exactly one share over the whole meter (which keeps its
+   * reports byte-identical to the one-lookup rendering). A zero remainder adds no
+   * share once any turn has been tallied, so a `/model` switch that has not run a
+   * turn yet does not appear as a second model that spent nothing; before the first
+   * turn, the live model's zero share is the report's only subject.
+   *
+   * A read of the cache file per share, never a fetch or a write.
+   */
+  get modelShares(): readonly ModelUsageShare[] {
+    const meter = this.usage;
+    const live = this.liveConfig;
+    const shares = this.turnUsageByModel.map((entry) => ({ config: entry.config, usage: entry.usage }));
+    const remainder = deltaUsage(sumUsage(shares.map((share) => share.usage)), meter);
+    const remainderIsZero =
+      remainder.inputTokens === 0 &&
+      remainder.outputTokens === 0 &&
+      (remainder.cacheReadInputTokens ?? 0) === 0 &&
+      (remainder.cacheWriteInputTokens ?? 0) === 0;
+    const liveShare = shares.find((share) => share.config.model === live.model && share.config.provider === live.provider);
+    if (liveShare !== undefined) liveShare.usage = sumUsage([liveShare.usage, remainder]);
+    else if (shares.length === 0 || !remainderIsZero) shares.push({ config: live, usage: remainder });
+    return shares.map((share) => ({ ...share, lookup: this.modelPrices.lookup(share.config) }));
   }
 
   /** Every configured model, with the live one marked. */

@@ -396,9 +396,13 @@ the user names — `/export <path>` in the TUI (`App.tsx`, a local report above 
 like `/trajectory`). It is a reader under every rule above, plus its own:
 
 - **One projection.** The transcript body is `formatReplay(replayRead(...))`, byte for byte — the
-  export and `darwin trajectory replay` can never disagree. The only part allowed to differ is a
-  commented header (session id, project, record path, export time, tolerated damage) that *says* it
-  is a replay projection. A second formatter here is the drift the replay design exists to prevent.
+  export and `darwin trajectory replay` can never disagree about the record. The only part allowed
+  to differ is a commented header (session id, project, record path, export time, tolerated damage)
+  that *says* it is a replay projection, and — since the per-model pricing of 2026-09-04 — the
+  `session cost:`/per-model cost lines the CLI adds by passing `prices` to `replayRead`: the export
+  passes none, so a transcript file depends on the record alone and never on what
+  `~/.darwin/model-prices.json` held when it was written. A second formatter here is the drift the
+  replay design exists to prevent.
 - **Absence is an answer** on prompt recall's terms: `trajectory: false`
   (`runtime.trajectoryStatus === undefined`), a session whose record file does not exist yet (the
   recorder appends its first batch when a turn *ends*, so a brand-new session has no file), and a
@@ -505,6 +509,36 @@ reporting what a session cost stays as offline as replaying what it did.
 - Turns are counted per **`turnEnded` record**, not per distinct `turn` ordinal: ordinals restart at
   1 in each process that appends to a session, so grouping by ordinal would merge two runs' turns and
   under-report the file.
+
+#### Pricing what was spent (2026-09-04)
+
+Both readers price the spend **per model**, offline, from `~/.darwin/model-prices.json` — the cache
+the runtime fills (`strands-sdk-contracts.md` § cost accounting). The rule this module lives under is
+kept structurally: `spend.ts` imports the pure arithmetic (`src/pricing/cost.ts`) and the sync cache
+reader (`readModelPriceCache`/`lookupFromEntry` from `src/pricing/model-prices.ts`) — never the
+store, its fetch, or anything in `src/agent/**`. The CLI reads the file **once per command**
+(`TrajectoryIo.pricesFile`, defaulting to `userModelPricesFile()`; a suite may point it elsewhere);
+it never fetches, never writes, never calls a model — measured in `spike/verify-trajectory-cost.ts`
+by an unchanged mtime and a `fetch` stub that throws.
+
+- **The lookup key is the recorded darwin model id** — `ModelSpend.model`, carried from
+  `TurnSpend.model` as its own field. The `provider/model` label is never split to recover it.
+- **`list`** appends one more bounded clause after the spend clause, present exactly when at least
+  one turn carried a spend: `cost: ≈ $0.0415 (base rates, LiteLLM)`. Two models are each priced at
+  their own rates and counted (`≈ $4.6250 (2 models; …)`); a model the cache does not price
+  (`litellmKey: null` → `no price for <id>`, no entry → `price unavailable for <id>`) makes the
+  figure a floor `≥` that names it — never 0, never dropped; a bucket no turn reported is
+  `not reported`, one only some turns reported is priced over the reported part and said to be
+  `partly reported`; turns without a spend make the total a floor (`N turn(s) unknown`). Names are
+  bounded (three listed, the rest counted, ids capped). A record without any spend gets no cost
+  clause: `spend: unknown` already says it, and a `$0` would be an invention. No cache file, or a
+  damaged one, prices nothing: `cost: unknown (price unavailable)`.
+- **`replay`** prints `session cost: …` directly under `session spend:` (same vocabulary), and in the
+  per-model breakdown each model's own figure after its token row (`… over 1 turn(s) · cost ≈ $3.1250
+  (base rates, LiteLLM)`, or `· cost unknown (no price for <id>)`). A `--turn <n>` replay prices what
+  it replayed; `--json` is unchanged. Pricing is a `ReplayOptions.prices` input carried on
+  `ReplayResult.cost`, so `formatReplay` stays the one formatter and `/export` (which passes no
+  prices) stays a projection of the record alone.
 
 ## 8. Replay correctness
 

@@ -138,7 +138,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 ## 报告命令约定
 
 - `/status` 只读已有 accessor，不产生任何修改；未知指标显示为 `not reported`；名称列表用 `… N more` 控制长度。
-- `/status` 与 `/usage` 的 `cost` 行是当前模型的 Σ token 分桶 × LiteLLM 基础单价，始终标注 `≈ … (base rates, LiteLLM)`；某个分桶未报告时显示为下限（`≥ $x.xxxx (cacheWrite not reported; …)`），绝不冒充零；`unknown (no price for <model>)` / `unknown (price unavailable)` 说明没有数字的原因。读取它不会触发下载或写入。单价缓存在 `~/.darwin/model-prices.json`，每个模型 id 只在启动时（以及 `/model` 切到新 id 时）后台从 LiteLLM 公开价目表获取一次；环境变量 `DARWIN_MODEL_PRICES_FETCH=off` 可让 darwin 完全不联网，只使用文件里已有的价格。
+- `/status` 与 `/usage` 的 `cost` 行是 Σ token 分桶 × LiteLLM 基础单价，**每个模型按各自单价**（`/model` 切换后该行标出模型数——`≈ … (2 models; …)`——`/usage` 并为每个模型各加一行），始终标注 `≈ … (base rates, LiteLLM)`；某个分桶未报告时显示为下限（`≥ $x.xxxx (cacheWrite not reported; …)`），绝不冒充零，混合中没有价格的模型同样使其成为下限（`≥ … (2 models; no price for <id>; …)`）；`unknown (no price for <model>)` / `unknown (price unavailable)` 说明没有数字的原因。读取它不会触发下载或写入。`trajectory list` 在每行会话后追加同样的 `cost: …` 子句，`trajectory replay` 打印 `session cost:` 及每个模型的金额，全部离线读取同一文件计价——绝不下载、绝不写入；`/export` 不含成本行。单价缓存在 `~/.darwin/model-prices.json`，每个模型 id 只在启动时（以及 `/model` 切到新 id 时）后台从 LiteLLM 公开价目表获取一次；环境变量 `DARWIN_MODEL_PRICES_FETCH=off` 可让 darwin 完全不联网，只使用文件里已有的价格。
 - `/help` 只写一条有界历史通知，在忙碌队列判断前处理，不调用模型/工具/网络，也不改配置或会话。
 - `/mcp` 不探测、不重连；工具名只来自已经注册的状态。
 - `/context` 及阈值提醒只是建议。已知比例跨过阈值后，回合结束时只提醒一次 `/compact`；只有确认比例下降后才重新触发；未知估算保持安静。

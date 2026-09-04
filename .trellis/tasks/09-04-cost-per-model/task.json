@@ -1,13 +1,13 @@
 {
-  "id": "cost-accounting",
-  "name": "cost-accounting",
-  "title": "Cost accounting priced from the LiteLLM price table",
+  "id": "cost-per-model",
+  "name": "cost-per-model",
+  "title": "Cost accounting per model: offline trajectory pricing, live per-model shares, skill capture",
   "description": "",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
-  "priority": "P2",
+  "priority": "P1",
   "creator": "river",
   "assignee": "river",
   "createdAt": "2026-09-04",
@@ -22,7 +22,5 @@
   "parent": null,
   "relatedFiles": [],
   "notes": "",
-  "meta": {
-    "status": "completed"
-  }
+  "meta": {}
 }

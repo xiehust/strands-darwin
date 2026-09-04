@@ -4,7 +4,7 @@ import { classify, type ApprovalMode, type PermissionBridge } from './agent/perm
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/stream-resumption.js';
 import type { AgentRuntime } from './agent/runtime.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
-import { costFields, describePricingSource, type ModelPriceLookup } from './agent/cost.js';
+import { describePricingSource, modelCostFields, type ModelUsageShare } from './agent/cost.js';
 import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
 
@@ -82,19 +82,27 @@ export function formatHeadlessTotalUsage(total: UsageTotals, config: AppConfig):
  * The cost record, written right after the usage records in text mode:
  * `cost: total=<usd|-> input=<usd|-> output=<usd|-> cacheRead=<usd|-> cacheWrite=<usd|-> model=<id> pricing=<litellmKey|unavailable|none>`.
  *
- * Prices the same parent buckets `usage:` reports, through the one `costFields`
- * projection `/status` and `/usage` share. Every figure is four-decimal USD at
- * LiteLLM base rates; `-` is unknown, never `0` — and `total` is `-` whenever any
- * bucket is unknown, because a floor written into `total=` would be read as the
- * total. `pricing` names the LiteLLM key the rates came from (auditable), or why
- * there are none. A separate record so the anchored `usage:` line stays byte-identical.
+ * Prices the same parent buckets `usage:` reports, per model at its own rates —
+ * `runtime.modelShares`, the one projection `/status` and `/usage` share. Every
+ * figure is four-decimal USD at LiteLLM base rates; `-` is unknown, never `0` — and
+ * `total` is `-` whenever any bucket is unknown, because a floor written into
+ * `total=` would be read as the total. `pricing` names the LiteLLM key the rates
+ * came from (auditable), or why there are none. A single-model run — every run that
+ * never switched models — renders exactly as before; when several models
+ * contributed the record cannot name one, so it says how many (`model=2-models
+ * pricing=mixed`, both still one `\S+` token for the supervisor's capture) and a
+ * bucket any share left unknown is `-`. A separate record so the anchored `usage:`
+ * line stays byte-identical.
  */
-export function formatHeadlessCost(usage: UsageTotals, config: AppConfig, lookup: ModelPriceLookup): string {
-  const fields = costFields(lookup, usage, config);
+export function formatHeadlessCost(shares: readonly ModelUsageShare[]): string {
+  const fields = modelCostFields(shares);
+  const single = shares.length === 1 ? shares[0] : undefined;
+  const model = single === undefined ? `${shares.length}-models` : single.config.model;
+  const pricing = single === undefined ? 'mixed' : describePricingSource(single.lookup);
   return (
     `cost: total=${fields.total} input=${fields.input} output=${fields.output}` +
     ` cacheRead=${fields.cacheRead} cacheWrite=${fields.cacheWrite}` +
-    ` model=${headlessField(config.model)} pricing=${headlessField(describePricingSource(lookup))}`
+    ` model=${headlessField(model)} pricing=${headlessField(pricing)}`
   );
 }
 

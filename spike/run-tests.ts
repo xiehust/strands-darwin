@@ -81,6 +81,8 @@ const suites = [
   'verify-usage.ts',
   'verify-cost.ts',
   'verify-model-prices.ts',
+  'verify-model-shares.ts',
+  'verify-trajectory-cost.ts',
   'verify-call-stats.ts',
   'verify-compact.ts',
   'verify-trajectory.ts',

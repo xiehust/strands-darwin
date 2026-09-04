@@ -27,14 +27,18 @@ import {
 import {
   formatModelCall,
   formatModelSpend,
+  formatSessionCost,
   formatSpendFields,
   formatTurnSpend,
   modelCallEntries,
+  priceSpend,
   summarizeSpend,
   turnSpendEntries,
+  type SpendCostReport,
   type SpendSummary,
   type TurnSpendEntry,
 } from './spend.js';
+import type { ModelPriceCache } from '../pricing/model-prices.js';
 
 export interface ReplayResult {
   /** The reconstructed history, in order. */
@@ -63,11 +67,25 @@ export interface ReplayResult {
   modelCalls: ModelCallReading[];
   /** The same numbers aggregated for the whole file, with the models that incurred them. */
   spend: SpendSummary;
+  /**
+   * {@link spend} priced per model from the price cache handed in through
+   * {@link ReplayOptions.prices} — absent when none was, which is how `/export` stays a
+   * projection of the record alone: a transcript file must not depend on what
+   * `~/.darwin/model-prices.json` happened to hold when it was written. Absent too
+   * when no turn carried a spend (there is nothing to price, and `spend` already
+   * says so).
+   */
+  cost?: SpendCostReport;
 }
 
 export interface ReplayOptions {
   /** Replay only this 1-based turn ordinal. */
   turn?: number;
+  /**
+   * A price cache already read (`readModelPriceCache`) — replay never reads, fetches
+   * or writes one itself. The CLI `replay` passes it; `/export` does not.
+   */
+  prices?: ModelPriceCache;
 }
 
 /**
@@ -190,6 +208,7 @@ export function replayRecords(
     }
   }
 
+  const spend = summarizeSpend(closed);
   return {
     history: state.history,
     turns: [...turns].sort((a, b) => a - b),
@@ -198,7 +217,8 @@ export function replayRecords(
     failures,
     turnSpend: turnSpendEntries(closed),
     modelCalls: modelCallEntries(modelCalls),
-    spend: summarizeSpend(closed),
+    spend,
+    ...(options.prices !== undefined && spend.turnsWithSpend > 0 && { cost: priceSpend(spend, options.prices) }),
   };
 }
 
@@ -325,7 +345,9 @@ export function formatReplay(result: ReplayResult): string {
   // What it cost, at the one verbosity a transcript can afford it: one bounded line per
   // turn — including the turns nothing measured, because a report that quietly omitted
   // them would read as a cheaper session — then the file's total. The per-model
-  // breakdown appears only when a total would otherwise mix two price lists.
+  // breakdown appears only when a total would otherwise mix two price lists. Money
+  // follows the tokens on the same rules, only when the caller priced the result:
+  // one `session cost:` line, and each model's own figure beside its token row.
   for (const entry of result.turnSpend) lines.push(`  ${formatTurnSpend(entry)}`);
   if (result.turnSpend.length > 0) {
     const spend = result.spend;
@@ -335,8 +357,9 @@ export function formatReplay(result: ReplayResult): string {
         ? `  session spend: unknown over ${spend.turnsUnknown} turn(s)`
         : `  session spend: ${formatSpendFields(spend)} over ${spend.turnsWithSpend} turn(s)${unknown}`,
     );
+    if (result.cost !== undefined) lines.push(`  ${formatSessionCost(result.cost)}`);
     if (spend.models.length > 1) {
-      for (const model of spend.models) lines.push(`    ${formatModelSpend(model)}`);
+      for (const model of spend.models) lines.push(`    ${formatModelSpend(model, result.cost)}`);
     }
   }
   return lines.join('\n');

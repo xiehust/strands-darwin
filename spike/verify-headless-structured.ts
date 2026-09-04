@@ -529,6 +529,23 @@ async function callStatsProtocols(): Promise<void> {
   });
   assert('a priced run writes the bucket figures and the LiteLLM key, with an unreported bucket keeping total at `-`', true);
 
+  // Two models in one run (the shape after a `/model` switch ran a turn): the record
+  // cannot name one model or one key, so it says how many and `mixed` — each still one
+  // `\S+` token — with each share priced at its own rates and summed; `usage:` unchanged.
+  const mixedModels = await cli('mixed-models', 'text');
+  nodeAssert.deepEqual(mixedModels, {
+    code: 0,
+    stdout: 'fixture answer\n',
+    stderr:
+      'session: session-fixture\n' +
+      'permission-mode: default\n' +
+      'tool bash — bash: printf fixture\n' +
+      'tool bash — ok\n' +
+      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
+      'cost: total=- input=0.0140 output=0.0400 cacheRead=0.0000 cacheWrite=- model=2-models pricing=mixed\n',
+  });
+  assert('a run over two models renders `model=2-models pricing=mixed` with each share at its own rates, usage untouched', true);
+
   const json = await cli('call-stats', 'json');
   const record = lines(json.stdout)[0]!;
   nodeAssert.deepEqual(record['usage'], { input: 12, output: 3, cacheRead: 0 });

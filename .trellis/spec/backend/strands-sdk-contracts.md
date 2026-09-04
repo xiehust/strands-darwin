@@ -3268,17 +3268,37 @@ in flight has to say so — an unchanged counter next to a visibly working agent
 
 ### Contract: cost accounting is a projection over the buckets, priced from a fetch-once cache
 
-Decided by the user (2026-09-04); offline checks `spike/verify-cost.ts`, `spike/verify-model-prices.ts`,
-plus the surface suites (`verify-status-command.ts`, `verify-usage.ts`, `verify-headless.ts`,
-`verify-headless-structured.ts`), all in `pnpm test`.
+Decided by the user (2026-09-04, per-model pricing the same day); offline checks
+`spike/verify-cost.ts`, `spike/verify-model-prices.ts`, `spike/verify-model-shares.ts`,
+`spike/verify-trajectory-cost.ts`, plus the surface suites (`verify-status-command.ts`,
+`verify-usage.ts`, `verify-headless.ts`, `verify-headless-structured.ts`), all in `pnpm test`.
 
-- **One arithmetic, three surfaces.** `src/agent/cost.ts` (no `Agent`/`Model`/I/O import) computes
-  cost = Σ `usageBuckets` bucket × per-token rate and renders it; `/status`, `/usage` and the
-  headless `cost:` record all call it, so they cannot disagree. Every rendering names its basis:
-  `≈ $0.0123 (base rates, LiteLLM)` — four-decimal USD, LiteLLM's base tier only (no
-  `*_above_200k_tokens` / `*_above_1hr` rates), the *live* model's rates over the cumulative
-  per-process meter, summarization calls excluded because the meter excludes them. It is an
-  estimate and says so; it is never an invoice.
+- **One arithmetic, every surface.** `src/pricing/cost.ts` (no `Agent`/`Model`/config/I/O import)
+  computes cost = Σ bucket × per-token rate **per model** (`sessionCost` over `CostShare`s) and
+  renders it (`describeSessionCost`, `sessionCostFields`); `src/agent/cost.ts` re-exports it and
+  adds only the projection from `UsageTotals` + `AppConfig` (`usageBuckets`) into a share, and
+  `src/trajectory/spend.ts` makes the same projection from a record. `/status`, `/usage`, the
+  headless `cost:` record and `trajectory list`/`replay` all price through it, so they cannot
+  disagree. Every rendering names its basis: `≈ $0.0123 (base rates, LiteLLM)` — four-decimal USD,
+  LiteLLM's base tier only (no `*_above_200k_tokens` / `*_above_1hr` rates), summarization calls
+  excluded because the meter excludes them. It is an estimate and says so; it is never an invoice.
+- **Per model, never "live rates × whole meter".** `AgentRuntime` tallies each completed turn's
+  meter delta under the config in effect for that turn — the same `before` snapshot and the same
+  captured `turnConfig` the trajectory's turn meter and call projector receive, so the in-process
+  shares and the recorded `spend` attribute identically; the tally runs in `send`'s `finally` and
+  cannot throw. `runtime.modelShares` is that tally plus a remainder rule: whatever the meter holds
+  beyond the tally (the turn in flight, or a tally that failed) belongs to the live model, so the
+  shares always sum to `runtime.usage` metric for metric, a single-model session is exactly one
+  share over the whole meter (its reports byte-identical to the one-lookup form), and a `/model`
+  switch that has run no turn adds no share. Each share carries `store.lookup(share.config)` — a
+  sync file read per share, never a fetch or a write. With more than one model the human line
+  counts them — `≈ $4.6250 (2 models; base rates, LiteLLM)` — and `/usage` adds one bounded line
+  per model under it; a model in the mix with no price makes the figure a floor that names it
+  (`≥ $3.1250 (2 models; no price for <id>; …)`, `price unavailable for <id>`), and a missing bucket
+  names its model (`<id>: cacheWrite not reported`). Nothing priced at all is `unknown (…)` with
+  every reason named. Names are bounded: at most three listed then `+N more`, each capped at
+  `MAX_COST_MODEL_CHARS`. Children run the live config: their line is priced at it, and the session
+  total folds child usage into the live model's share (`withChildUsage`).
 - **Unknown is never 0.** An `undefined` bucket (unreported, or an unsplittable Responses input)
   is excluded and named, and the total becomes a floor: `≥ $0.0030 (cacheRead not reported,
   cacheWrite not reported; base rates, LiteLLM)`. A counted bucket whose rate LiteLLM does not list
@@ -3286,9 +3306,17 @@ plus the surface suites (`verify-status-command.ts`, `verify-usage.ts`, `verify-
   id → `unknown (no price for <model id>)`; table not fetched → `unknown (price unavailable)`.
   Headless: `cost: total=<usd|-> input=<usd|-> output=<usd|-> cacheRead=<usd|-> cacheWrite=<usd|->
   model=<id> pricing=<litellmKey|unavailable|none>` — `total=-` whenever *any* bucket is unknown,
-  because a floor written into `total=` would be read as the total. It is its own record, written
-  in text mode after `usage:` (and after `usage-children:`/`usage-total:` when present), before
+  because a floor written into `total=` would be read as the total. With several models the record
+  cannot name one: `model=<n>-models pricing=mixed` (both still one `\S+` token), each bucket the
+  per-model sum or `-` wherever any share left it unknown (an unpriced model leaves every bucket
+  unknown — a partial sum in a field would be read as the sum). It is its own record, written in
+  text mode after `usage:` (and after `usage-children:`/`usage-total:` when present), before
   `model-calls:`; the anchored `usage:` line stays byte-identical. Structured modes are unchanged.
+- **The supervisor skills capture it.** `developer` and `self-reflection` capture, beside `usage:`,
+  the exact record `^cost: total=(\d+\.\d+|-) input=(\d+\.\d+|-) output=(\d+\.\d+|-)
+  cacheRead=(\d+\.\d+|-) cacheWrite=(\d+\.\d+|-) model=(\S+) pricing=(\S+)$` per child task and
+  report `total` per task plus an aggregate on the `usage:` rule: `-` is unknown and never summed
+  as 0, a task with no line is stated as such.
 - **The cache is the only I/O and the only network.** `~/.darwin/model-prices.json`
   (`userModelPricesFile()`, derived from the home directory, never `process.cwd()`), schema
   `version: 1`, `source` URL, and `models`: darwin model id → `{ litellmKey, inputCostPerToken,
@@ -3314,13 +3342,16 @@ plus the surface suites (`verify-status-command.ts`, `verify-usage.ts`, `verify-
 - **Startup fires and forgets; reads never fetch.** `AgentRuntime`'s constructor calls
   `void store.ensure(liveConfig)` (so `create()` and the `/clear` successor both do), `changeModel`
   repeats it for the new id; nothing awaits it — not startup, not the first turn — and it cannot
-  reject, warn or reach the Ink frame. `runtime.modelPrice` is `store.lookup(liveConfig)`: a
-  synchronous file read, never a fetch or a write, which is what keeps `/status` byte-zero
-  mutation. The store is one process-wide instance (`defaultModelPriceStore()`), shared by `/clear`
-  successors; children (subagents, workflow nodes) never touch it — they report tokens, the parent
-  prices them at its own live rates. `DARWIN_MODEL_PRICES_FETCH=off` makes the store cache-only;
-  `spike/run-tests.ts` and `spike/verify-tui.ts` set it so their private HOMEs never trigger the
-  download, and an air-gapped user can set it for the same reason.
+  reject, warn or reach the Ink frame. `runtime.modelPrice` is `store.lookup(liveConfig)` and
+  `runtime.modelShares` is one `lookup` per share: synchronous file reads, never a fetch or a
+  write, which is what keeps `/status` byte-zero mutation. The trajectory readers (`trajectory
+  list`/`replay`) read the same file once per command through `readModelPriceCache` alone — the
+  store, its fetch and `src/agent/**` are never imported there (see `session-trajectory.md`
+  § Reporting spend). The store is one process-wide instance (`defaultModelPriceStore()`), shared
+  by `/clear` successors; children (subagents, workflow nodes) never touch it — they report tokens,
+  the parent prices them at its own live rates. `DARWIN_MODEL_PRICES_FETCH=off` makes the store
+  cache-only; `spike/run-tests.ts` and `spike/verify-tui.ts` set it so their private HOMEs never
+  trigger the download, and an air-gapped user can set it for the same reason.
 
 ### Contract: a serialized `AgentResult` carries no metrics, but its last message does
 

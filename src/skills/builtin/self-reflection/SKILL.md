@@ -55,8 +55,10 @@ tool in **`start` mode** with `--yolo --context-offload`; offload is already def
 this retained process-only flag force-enables it if persistent config opted out. Never run the
 child with foreground `execute`. The managed-child contract is the `developer` skill's, applied unchanged: monitor
 with `bash status`, drain with incremental `bash output` until `hasMore: false`, capture the
-child's `^session: ([a-z0-9_-]+)$` and `^usage: input=(\d+|-) output=(\d+|-) cacheRead=(\d+|-)
-cacheWrite=(\d+|-)$` stderr records, and treat `-` as unknown, never zero. The child
+child's `^session: ([a-z0-9_-]+)$`, `^usage: input=(\d+|-) output=(\d+|-) cacheRead=(\d+|-)
+cacheWrite=(\d+|-)$` and `^cost: total=(\d+\.\d+|-) input=(\d+\.\d+|-) output=(\d+\.\d+|-)
+cacheRead=(\d+\.\d+|-) cacheWrite=(\d+\.\d+|-) model=(\S+) pricing=(\S+)$` stderr records, and
+treat `-` as unknown, never zero (a `cost:` `total` of `-` is never summed as 0). The child
 must not load the `developer`, `self-evolution-research`, or `self-reflection` skills,
 must not start another darwin, and must not delegate the reflection again.
 
@@ -163,6 +165,8 @@ Report:
 - the reflection document path and its grade;
 - accepted directions (`SRF` ids with scores) now queued for `self-evolution-research`, and
   rejected ones with their scores;
-- token spend per captured `usage:` line plus the aggregate, `-` metrics stated as unknown;
+- token spend per captured `usage:` line plus the aggregate, `-` metrics stated as unknown, and
+  the captured `cost:` USD `total` per line plus its aggregate on the same rule (a missing line
+  stated as such);
   and
 - unresolved risks, denied operations, or decisions still needed.

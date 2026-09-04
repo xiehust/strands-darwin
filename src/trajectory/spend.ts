@@ -26,7 +26,11 @@
  * as a record count and a byte count that describe a larger file.
  *
  * This module imports no `Agent`, no `Model` and nothing from `src/agent/**`: reporting
- * spend must stay as offline as replaying history.
+ * spend must stay as offline as replaying history. Pricing keeps that rule — the
+ * arithmetic is `src/pricing/cost.ts` and the rates come from a **read** of the price
+ * cache (`src/pricing/model-prices.ts`, the sync reader only): no fetch, no write, no
+ * model call. Each model is priced at its own rates; a model the cache does not know is
+ * *unpriced* and named, its money unknown rather than zero.
  */
 import {
   modelCallOf,
@@ -37,6 +41,8 @@ import {
   type TurnEndedRecord,
   type TurnSpend,
 } from './record.js';
+import { describeSessionCost, sessionCost, type CostBucket, type CostShare, type SessionCost } from '../pricing/cost.js';
+import { lookupFromEntry, type ModelPriceCache } from '../pricing/model-prices.js';
 
 /** One metric's total, and how many recorded turns had nothing to say about it. */
 export interface SpendMetric {
@@ -50,6 +56,10 @@ export interface SpendMetric {
 export interface ModelSpend {
   /** `provider/model`, as recorded on the turn. */
   label: string;
+  /** The recorded provider, as {@link label} carries it. */
+  provider: string;
+  /** The recorded darwin model id — the price-cache key. Never derived by splitting {@link label}. */
+  model: string;
   turns: number;
   input: SpendMetric;
   output: SpendMetric;
@@ -94,7 +104,7 @@ export function summarizeSpend(records: readonly TrajectoryRecord[]): SpendSumma
   for (const spend of spends) {
     const label = modelLabel(spend);
     const existing = models.find((model) => model.label === label);
-    const group = existing ?? emptyModel(label);
+    const group = existing ?? emptyModel(spend);
     if (existing === undefined) models.push(group);
     group.turns += 1;
     accumulate(group, spend);
@@ -235,14 +245,86 @@ function boundedWord(value: string, limit: number): string {
   return points.length <= limit ? points.join('') : `${points.slice(0, Math.max(0, limit - 1)).join('')}…`;
 }
 
-/** One model's line for `replay`, when a file holds more than one. */
-export function formatModelSpend(model: ModelSpend): string {
-  return `${formatModelLabel(model.label)}: ${formatSpendFields(model)} over ${model.turns} turn(s)`;
+/** One model's line for `replay`, when a file holds more than one — priced when a report is given. */
+export function formatModelSpend(model: ModelSpend, cost?: SpendCostReport): string {
+  const line = `${formatModelLabel(model.label)}: ${formatSpendFields(model)} over ${model.turns} turn(s)`;
+  const priced = cost?.models.find((entry) => entry.label === model.label);
+  return priced === undefined ? line : `${line} · cost ${describeSessionCost(priced.cost)}`;
 }
 
-function emptyModel(label: string): ModelSpend {
+/**
+ * What a file's spend cost, priced per model from the price cache, plus each model's
+ * own figure so `replay` can put it beside that model's token row.
+ */
+export interface SpendCostReport {
+  session: SessionCost;
+  models: readonly { label: string; cost: SessionCost }[];
+  /** Turns whose record carried no spend — money nobody measured, so the total is a floor. */
+  turnsUnknown: number;
+}
+
+/**
+ * Prices a {@link SpendSummary} — each model's buckets at that model's rates, read
+ * from the cache passed in (never fetched here). A metric only some turns reported is
+ * priced over the reported part and flagged `partly reported`; a model the cache has no
+ * rates for is unpriced and named. Pure: the same summary and cache always price the same.
+ */
+export function priceSpend(summary: SpendSummary, prices: ModelPriceCache): SpendCostReport {
+  const shares = summary.models.map((model) => ({ label: model.label, share: costShareOf(model, prices) }));
+  return {
+    session: sessionCost(shares.map(({ share }) => share)),
+    models: shares.map(({ label, share }) => ({ label, cost: sessionCost([share]) })),
+    turnsUnknown: summary.turnsUnknown,
+  };
+}
+
+/** The clause `list` appends after the spend clause: `cost: ≈ $0.0415 (base rates, LiteLLM)`. */
+export function formatSpendCost(report: SpendCostReport): string {
+  return `cost: ${describeSessionCost(report.session, unknownTurnCaveats(report))}`;
+}
+
+/** The `session cost:` line `replay` prints under `session spend:`. */
+export function formatSessionCost(report: SpendCostReport): string {
+  return `session cost: ${describeSessionCost(report.session, unknownTurnCaveats(report))}`;
+}
+
+/** Turns nothing measured make any total a floor, said in the cost clause's own vocabulary. */
+function unknownTurnCaveats(report: SpendCostReport): string[] {
+  return report.turnsUnknown === 0 ? [] : [`${report.turnsUnknown} turn(s) unknown`];
+}
+
+const COST_BUCKETS: readonly CostBucket[] = ['input', 'output', 'cacheRead', 'cacheWrite'];
+
+/** One model's spend as the pure module's unit: totals as buckets, gaps as partly reported. */
+function costShareOf(model: ModelSpend, prices: ModelPriceCache): CostShare {
+  const partlyReported = COST_BUCKETS.filter(
+    (bucket) => model[bucket].total !== undefined && model[bucket].unreportedTurns > 0,
+  );
+  return {
+    model: model.model,
+    lookup: lookupFromEntry(prices.models[model.model]),
+    buckets: {
+      input: model.input.total,
+      output: model.output.total,
+      cacheRead: model.cacheRead.total,
+      cacheWrite: model.cacheWrite.total,
+    },
+    ...(partlyReported.length > 0 && { partlyReported }),
+  };
+}
+
+function emptyModel(spend: TurnSpend): ModelSpend {
   const zero = (): SpendMetric => ({ total: undefined, unreportedTurns: 0 });
-  return { label, turns: 0, input: zero(), output: zero(), cacheRead: zero(), cacheWrite: zero() };
+  return {
+    label: modelLabel(spend),
+    provider: spend.provider,
+    model: spend.model,
+    turns: 0,
+    input: zero(),
+    output: zero(),
+    cacheRead: zero(),
+    cacheWrite: zero(),
+  };
 }
 
 function accumulate(model: ModelSpend, spend: TurnSpend): void {

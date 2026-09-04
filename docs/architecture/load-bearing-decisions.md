@@ -892,27 +892,42 @@ scenario asserts the readout is present mid-turn and ticks while the turn runs.
 
 ## Cost accounting
 
-**Cost is a projection over the token buckets, priced from a fetch-once cache — never a new
-channel and never an invoice** (`src/agent/cost.ts`, `src/pricing/model-prices.ts`; contract:
-`.trellis/spec/backend/strands-sdk-contracts.md` § cost accounting). The only arithmetic is
-Σ `usageBuckets` bucket × LiteLLM base rate, in one module with no `Agent`/`Model`/I/O import, so
-`/status`, `/usage` and the headless `cost:` record cannot disagree; every rendering carries its
-basis (`≈ $0.0123 (base rates, LiteLLM)`) because the number is approximate by construction —
-base tier only, the live model's rates over a cumulative meter, summarization calls excluded
-because the meter excludes them. The `usageBuckets` honesty rule carries over unchanged: an
-unreported bucket is excluded and *named* and the total becomes a floor (`≥`), never a smaller
-exact-looking figure and never 0; headless writes `total=-` the moment any bucket is unknown,
-since a floor in a `total=` field would be read as the total. The price table is the feature's
-only I/O and darwin's only non-tool network use, and it is fenced accordingly: `~/.darwin/model-prices.json`
+**Cost is a projection over the token buckets, priced per model from a fetch-once cache — never a
+new channel and never an invoice** (`src/pricing/cost.ts`, `src/agent/cost.ts`,
+`src/pricing/model-prices.ts`, `src/trajectory/spend.ts`; contract:
+`.trellis/spec/backend/strands-sdk-contracts.md` § cost accounting and
+`session-trajectory.md` § Pricing what was spent). The only arithmetic is Σ bucket × LiteLLM base
+rate **per model**, in one module with no `Agent`/`Model`/config/I/O import so that both the live
+surfaces (`/status`, `/usage`, the headless `cost:` record) and the offline readers (`trajectory
+list`/`replay`) price through it and cannot disagree; every rendering carries its basis
+(`≈ $0.0123 (base rates, LiteLLM)`) because the number is approximate by construction — base tier
+only, summarization calls excluded because the meter excludes them. Per model is load-bearing: a
+session that ran `/model` holds two price lists, so the runtime tallies each completed turn's meter
+delta under the config that turn ran on (the same snapshot and config the trajectory's `spend`
+uses) and attributes the remainder — the turn in flight — to the live model; the shares always sum
+to the meter, a single-model session is one share (its reports byte-identical to before), and a
+mixed session says `2 models` and, in `/usage` and `replay`, breaks the figure down. The
+`usageBuckets` honesty rule carries over unchanged and gains a sibling: an unreported bucket is
+excluded and *named* and the total becomes a floor (`≥`), never a smaller exact-looking figure and
+never 0; a model the cache does not price is *unpriced* — its money unknown — and the total is a
+floor that names it, never dropped; headless writes `total=-` the moment anything is unknown and
+`model=<n>-models pricing=mixed` when it cannot name one model, since a floor in a `total=` field
+would be read as the total. The supervisor skills (`developer`, `self-reflection`) capture that
+record beside `usage:` on the same `-`-is-unknown rule. The price table is the feature's only I/O
+and darwin's only non-tool network use, and it is fenced accordingly: `~/.darwin/model-prices.json`
 stores only the resolved per-id mapping (with the LiteLLM key it came from, so it is auditable),
 a mapped id is never refetched, an unmapped id fetches once per process in the background
 (bounded 10 s / 8 MiB, every failure degrades to "unavailable" with no write, no warning, no
 frame), an unlisted id is recorded as `litellmKey: null` so it is not fetched on every launch,
-and reads — what `/status` and `/usage` do — never fetch or write, which is what keeps `/status`
-byte-zero mutation. Children never touch the store: they report tokens, the parent prices them.
-`DARWIN_MODEL_PRICES_FETCH=off` makes the store cache-only, which is how the free suites keep
-their private HOMEs off the network. Free checks: `spike/verify-cost.ts`,
-`spike/verify-model-prices.ts` (fetch stubs that fail the suite when a mapped id fetches), and the
+and reads — what `/status`, `/usage` and the trajectory CLI do — never fetch or write, which is
+what keeps `/status` byte-zero mutation and the readers as offline as replay; `/export` passes no
+prices at all, so a transcript file depends on the record alone. Children never touch the store:
+they report tokens, the parent prices them at its live rates and folds them into that model's
+share. `DARWIN_MODEL_PRICES_FETCH=off` makes the store cache-only, which is how the free suites
+keep their private HOMEs off the network. Free checks: `spike/verify-cost.ts`,
+`spike/verify-model-prices.ts` (fetch stubs that fail the suite when a mapped id fetches),
+`spike/verify-model-shares.ts` (a real offline runtime across `/model`),
+`spike/verify-trajectory-cost.ts` (hand-written records, unchanged cache mtime), and the
 `/status`, `/usage`, headless suites (all in `pnpm test`).
 
 ## File-edit diffs

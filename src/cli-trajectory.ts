@@ -24,8 +24,10 @@ import {
   type TurnEndedRecord,
 } from './trajectory/record.js';
 import { formatReplay, replayRead } from './trajectory/replay.js';
-import { formatSpendSummary, summarizeSpend } from './trajectory/spend.js';
+import { formatSpendCost, formatSpendSummary, priceSpend, summarizeSpend } from './trajectory/spend.js';
 import { searchTrajectories, UnknownSessionError } from './trajectory/search.js';
+import { readModelPriceCache, type ModelPriceCache } from './pricing/model-prices.js';
+import { userModelPricesFile } from './paths.js';
 
 /** Must match `AGENT_ID` in `src/agent/runtime.ts`: snapshots are keyed by it. */
 const AGENT_ID = 'darwin';
@@ -154,6 +156,18 @@ export interface TrajectoryIo {
   projectRoot: string;
   out: (text: string) => void;
   err: (text: string) => void;
+  /**
+   * The price cache `list`/`replay` read to price spend; defaults to
+   * `~/.darwin/model-prices.json`. A **read**, once per command, through the tolerant
+   * sync reader — the CLI readers never fetch or write a price. Injectable so a suite
+   * can price against its own file without owning `HOME`.
+   */
+  pricesFile?: string;
+}
+
+/** One tolerant read of the price cache; a missing or damaged file prices nothing. */
+function readPrices(io: TrajectoryIo): ModelPriceCache {
+  return readModelPriceCache(io.pricesFile ?? userModelPricesFile());
 }
 
 /** Runs one parsed command and returns the process exit code. */
@@ -179,6 +193,7 @@ async function listSessions(io: TrajectoryIo): Promise<number> {
     io.out('no sessions recorded for this project\n');
     return 0;
   }
+  const prices = readPrices(io);
 
   for (const id of ids) {
     const file = trajectoryPath(io.projectRoot, id);
@@ -187,12 +202,17 @@ async function listSessions(io: TrajectoryIo): Promise<number> {
       const read = await readTrajectory(file);
       const damage = describeDamage(read);
       const turns = new Set(read.records.filter((r) => r.turn > 0).map((r) => r.turn)).size;
+      const spend = summarizeSpend(read.records);
       summary =
         `${read.records.length} record(s), ${turns} turn(s), ${read.bytes} bytes` +
         // One bounded clause, so a whole session still fits one row: the four fixed
         // buckets, the models that incurred them, and how many turns nothing measured.
         // A session recorded before spend existed reads `unknown`, never zero.
-        `, ${formatSpendSummary(summarizeSpend(read.records))}` +
+        `, ${formatSpendSummary(spend)}` +
+        // And what they cost, each model at its own cached rates — one more bounded
+        // clause, present exactly when there is a spend to price; an unpriced model
+        // makes it a floor that names the model, never a smaller exact-looking figure.
+        (spend.turnsWithSpend === 0 ? '' : `, ${formatSpendCost(priceSpend(spend, prices))}`) +
         (damage === undefined ? '' : ` — ${damage}`) +
         (describeFailedTurns(read.records) ?? '');
     } catch {
@@ -303,7 +323,7 @@ async function replay(
     throw error;
   }
 
-  const result = replayRead(read, command.turn === undefined ? {} : { turn: command.turn });
+  const result = replayRead(read, { ...(command.turn !== undefined && { turn: command.turn }), prices: readPrices(io) });
   if (result.damage !== undefined) io.err(`${command.sessionId}: ${result.damage}\n`);
   if (command.turn !== undefined && !result.turns.includes(command.turn)) {
     io.err(
