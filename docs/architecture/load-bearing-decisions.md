@@ -9,17 +9,17 @@ This is the long-form companion to the "Architecture — the load-bearing decisi
 in `AGENTS.md`. AGENTS.md is preloaded into darwin's own system prompt on every request and is
 capped at 32 KiB (`MAX_INSTRUCTIONS_BYTES` in `src/agent/instructions.ts`), so it carries only
 the index; each table row's "Decision" names the matching `##` heading here, and the complete
-reasoning for each decision lives under it, verbatim. When a paragraph cites a `.trellis/spec/`
-document, that spec is the authoritative contract — this file is the narrative.
+reasoning for each decision lives under it, verbatim. This file is the authoritative narrative;
+the `spike/` suites named in each section are the executable contract.
 
 ## SDK reuse — the agent loop is never forked
 
 **Everything reuses the SDK; the agent loop is never forked.** `src/agent/runtime.ts` is the
 only place that constructs `Agent`, and it stays a thin assembly. All customization goes
 through SDK extension points: interventions (permissions), plugins (skills), conversation
-manager. If a change seems to require intercepting the loop itself, check
-`.trellis/spec/backend/strands-sdk-contracts.md` first — every non-obvious SDK behavior this
-project relies on (and the runnable script that proves it) is recorded there.
+manager. If a change seems to require intercepting the loop itself, check the relevant section
+below and its `spike/` script first — every non-obvious SDK behavior this project relies on has
+a runnable script that proves it.
 
 ## SDK HTTP request — parent-only ordinary gated tool
 
@@ -30,7 +30,7 @@ Pre hooks, permission classification, the SDK callback, and Post hooks in their 
 order. `http_request` deliberately has no safe classifier special case: unknown tools fail closed
 as `execute`, so default/auto modes require the ordinary decision and plan mode denies before the
 callback. Child catalogues do not include it; widening their capabilities requires a separate
-design decision. Authoritative contract: `.trellis/spec/backend/strands-sdk-contracts.md`.
+design decision.
 Required offline check: `spike/verify-http-request-tool.ts` (in `pnpm test`).
 
 ## `web_fetch` — a bounded readable projection, a sibling of `http_request`, never a wrapper
@@ -52,14 +52,13 @@ stays the unknown-tool fail-closed `execute` path (the URL is visible in the `In
 `default` asks, `plan` denies before any request and allow-rules may cover it. Registration is the
 parent `tools:` list next to `httpRequest`; the one `PARENT_ONLY_TOOL_NAMES` filter that already
 kept `retrieve_offloaded_content` out of `childTools` now also names `http_request` and
-`web_fetch` — the child-catalogue exclusion the spec and this document always stated for
-`http_request` is enforced by the same mechanism instead of assumed. Authoritative contract:
-`.trellis/spec/backend/strands-sdk-contracts.md`. Required offline check:
+`web_fetch` — the child-catalogue exclusion this document always stated for
+`http_request` is enforced by the same mechanism instead of assumed. Required offline check:
 `spike/verify-web-fetch.ts` (in `pnpm test`).
 
 ## Repeated tool failures — bounded intervention guard
 
-**One model invocation may execute three materially equivalent failed tool variants, not an unbounded sequence.** The composed SDK intervention observes original `ToolResultBlock`s after configured Post hooks without rewriting them, normalizes a bounded failure class/signature, and denies a later call to that tool before Pre hooks, permission, or body once one signature reaches the limit. A second failure injects bounded evidence-backed-hypothesis guidance before the next model call; the third says to stop, report the blocker and collected artifacts, and ask the user. A new SDK invocation replaces the state. One shared guard remains isolated by Agent, so concurrent children cannot poison each other. Explicit numeric/failed bash status is covered; user-authored `!` commands never enter this model-tool intervention. The pinned foreground bash result exposes its real command `exitCode` for this purpose without changing shell execution or output. Authoritative contract: `.trellis/spec/backend/strands-sdk-contracts.md`. Required check: `spike/verify-retry-guard.ts` (in `pnpm test`).
+**One model invocation may execute three materially equivalent failed tool variants, not an unbounded sequence.** The composed SDK intervention observes original `ToolResultBlock`s after configured Post hooks without rewriting them, normalizes a bounded failure class/signature, and denies a later call to that tool before Pre hooks, permission, or body once one signature reaches the limit. A second failure injects bounded evidence-backed-hypothesis guidance before the next model call; the third says to stop, report the blocker and collected artifacts, and ask the user. A new SDK invocation replaces the state. One shared guard remains isolated by Agent, so concurrent children cannot poison each other. Explicit numeric/failed bash status is covered; user-authored `!` commands never enter this model-tool intervention. The pinned foreground bash result exposes its real command `exitCode` for this purpose without changing shell execution or output. Required check: `spike/verify-retry-guard.ts` (in `pnpm test`).
 
 ## Stream interruption — one driver-owned continuation
 
@@ -82,7 +81,7 @@ occurred without exposing the private control prompt. Authoritative contracts:
 
 **Clipboard images are live interactive input, never durable transcript content.** `Ctrl+O` reads one bounded PNG through platform clipboard helpers and the exact decoder/normalizer shared with the path-based `imageViewer` tool. The pending image is a counted one-row chip and travels with its draft or queue entry until explicit removal or actual queue/send ownership. `AgentRuntime.send` supplies text plus `ImageBlock` to the existing SDK `Agent.stream()` once; unsupported providers fail through the ordinary visible turn-error path, with no capability probe, second call, Agent construction, or loop interception.
 
-Trajectory, replay/export, prompt recall, rewind labels, memory evidence and shell records remain text-only: image bytes, base64, clipboard contents and fabricated paths never enter them. Multimodal trajectory input is the literal user prompt, while model-only expansion/shell reports remain in the SDK content block. The authoritative contracts and free checks are `.trellis/spec/backend/strands-sdk-contracts.md`, `.trellis/spec/frontend/tui-testing.md`, `spike/verify-runtime-image-input.ts`, `spike/verify-clipboard-image.ts`, and `spike/verify-tui.ts clipboardImage`.
+Trajectory, replay/export, prompt recall, rewind labels, memory evidence and shell records remain text-only: image bytes, base64, clipboard contents and fabricated paths never enter them. Multimodal trajectory input is the literal user prompt, while model-only expansion/shell reports remain in the SDK content block. The free checks are `spike/verify-runtime-image-input.ts`, `spike/verify-clipboard-image.ts`, and `spike/verify-tui.ts clipboardImage`.
 
 ## Direct driver streaming
 
@@ -572,8 +571,8 @@ and switching modes invalidates the conversation cache breakpoint, which is what
 `/effort` free mid-session. A level the model cannot serve is **clamped and reported**, never
 sent — the service rejects it per-request, so one unsupported level breaks every turn; the
 acceptance matrix is measured rather than read, because the AWS page is wrong about it (Sonnet
-4.6 takes `max` and refuses only `xhigh`) and lives in
-`.trellis/spec/backend/strands-sdk-contracts.md`. And `/effort` reconfigures the live model via
+4.6 takes `max` and refuses only `xhigh`) by `spike/verify-thinking-live.ts`. And `/effort`
+reconfigures the live model via
 `Model.updateConfig()` rather than rebuilding the agent — the conversation must survive a change
 of thinking depth — with the config write reported, not awaited, exactly like an accepted
 allow-rule.
@@ -677,8 +676,7 @@ wrapper untouched, since it never reads the input beyond `command` and `path`.
 
 **`workflow` is a parent-only bounded declarative DAG whose execution is the installed SDK
 `Graph`, never a darwin scheduler** (`src/agents/workflow-tool.ts`, `src/agents/child-recipe.ts`;
-contract in `.trellis/spec/backend/strands-sdk-contracts.md` § "bounded declarative workflow DAG
-(SER-045)"). The input is data, never code — node ids, agent names, task strings and plain
+SER-045). The input is data, never code — node ids, agent names, task strings and plain
 `[source, target]` edge pairs, capped at 8 nodes / 28 edges — and an invalid DAG (cycle,
 duplicate/unknown id, unknown agent, blank task, over-cap count) is one bounded tool error before
 any dispatch, model or child exists. Everything that schedules — AND-semantics dependency
@@ -725,8 +723,7 @@ statically knowable) and the description says so. Required check: `spike/verify-
 
 ## Session trajectory
 
-**Session trajectory is an observer, never a participant** (`src/trajectory/`, spec:
-`.trellis/spec/backend/session-trajectory.md`): every turn is appended to
+**Session trajectory is an observer, never a participant** (`src/trajectory/`): every turn is appended to
 `~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl` — a sibling of `background/`
 and `offload/`, on by default, `trajectory: false` to switch off. The whole layer hangs off one
 seam in `AgentRuntime.send`: it first waits on one bounded, no-throw append of the already-observed
@@ -758,8 +755,7 @@ recorded anywhere; child streams never pass through `send`.
 
 ## Session diagnostics
 
-**Session diagnostics are opt-in, and off means untouched** (`src/agent/diagnostics.ts`, spec:
-`.trellis/spec/backend/session-diagnostics.md`): the SDK says several things *only* at `debug` —
+**Session diagnostics are opt-in, and off means untouched** (`src/agent/diagnostics.ts`): the SDK says several things *only* at `debug` —
 that a request was throttled, where it placed its cache points, that native token counting fell
 back to estimation — and `routeSdkLogs` discards that level. With `diagnostics: true` those lines,
 plus `warn`/`error` (which still reach the renderer) and every darwin notice with its severity, are
@@ -840,7 +836,7 @@ the report stays a single bounded transcript block with no live row or timer.
 ## TUI — production React owns the long-turn memory bound
 
 **The interactive React/Ink graph is first imported under the production condition**
-(`src/tui/react-environment.ts`, spec: `.trellis/spec/frontend/live-frame.md`): React 19's
+(`src/tui/react-environment.ts`): React 19's
 development reconciler emits retained Node User Timing measures on every component commit. The
 existing 90 ms busy tick can therefore grow heap throughout a provider-silent turn without any
 model or trajectory event. `cli.ts` applies one narrow `NODE_ENV=production` override around the
@@ -875,8 +871,8 @@ scrolled-out notice). Two Ink traps are load-bearing here: a row whose height mu
 **one** `<Text>` with nested spans, never several `<Text>` children of a `<Box>` (Ink lays those
 out as flex items and wraps them independently); and `useBoxMetrics` is *parent*-relative while
 `useCursor` is frame-absolute, so `InputBox` is handed its parent's offset and adds the rows its
-own window hides. Contract and required checks: `.trellis/spec/frontend/live-frame.md` (pty
-mechanics stay in `frontend/tui-testing.md`).
+own window hides. Required checks: `spike/verify-frame-budget.ts` and the `spike/verify-tui.ts`
+scenarios named above.
 
 The ready-state brand is deliberately outside that budget: `WelcomeHeader` is the first
 presentation-only item in `MessageList`'s existing `<Static>` owner (adjacent Static owners do not
@@ -894,8 +890,7 @@ inverse backgrounds. Checks: `verify-startup-screen.tsx`, `verify-startup-pty.ts
 
 ## The busy rows
 
-**The busy rows are alive, and stay exactly the rows they were** (`src/tui/busy-suffix.ts`,
-contract: `.trellis/spec/frontend/live-frame.md` § the busy rows are alive): while a turn streams,
+**The busy rows are alive, and stay exactly the rows they were** (`src/tui/busy-suffix.ts`): while a turn streams,
 the `working…` hint and the `thinking…` row carry a live suffix — elapsed turn time plus the
 session's reported token spend (` · 12s · ↑1.2k ↓318 tokens`; the `thinking…` row elapsed-only,
 so the spend is never stated twice in one frame) — with no new frame row, no new tick source and
@@ -916,9 +911,7 @@ scenario asserts the readout is present mid-turn and ticks while the turn runs.
 
 **Cost is a projection over the token buckets, priced per model from a fetch-once cache — never a
 new channel and never an invoice** (`src/pricing/cost.ts`, `src/agent/cost.ts`,
-`src/pricing/model-prices.ts`, `src/trajectory/spend.ts`; contract:
-`.trellis/spec/backend/strands-sdk-contracts.md` § cost accounting and
-`session-trajectory.md` § Pricing what was spent). The only arithmetic is Σ bucket × LiteLLM base
+`src/pricing/model-prices.ts`, `src/trajectory/spend.ts`). The only arithmetic is Σ bucket × LiteLLM base
 rate **per model**, in one module with no `Agent`/`Model`/config/I/O import so that both the live
 surfaces (`/status`, `/usage`, the headless `cost:` record) and the offline readers (`trajectory
 list`/`replay`) price through it and cannot disagree; every rendering carries its basis
@@ -955,8 +948,7 @@ keep their private HOMEs off the network. Free checks: `spike/verify-cost.ts`,
 ## File-edit diffs
 
 **A file edit is presented as the line diff of its own input — computed at presentation time,
-never read from disk** (`src/tui/edit-diff.ts`, contract: `.trellis/spec/frontend/tui-testing.md`
-§ file edits render as marker-stable line diffs): the gate has always exposed the raw tool input
+never read from disk** (`src/tui/edit-diff.ts`): the gate has always exposed the raw tool input
 "for a UI that wants to show or diff it itself", and this is that UI. A gated `fileEditor` write
 (`str_replace`, `create`, `insert`) shows a `Diff` block at the permission prompt, and the same
 projection (with `command:`/`path:` header lines) is the expanded tool input in the active panel
@@ -1026,8 +1018,7 @@ matters for the shape with no finished lines — one unbroken paragraph.
 ## Markdown styling
 
 **Markdown styling is a projection over the committed answer text, never a rewrite of it**
-(`src/tui/markdown.ts` pure and dependency-free, `src/tui/MarkdownText.tsx`, contract:
-`.trellis/spec/frontend/live-frame.md` § markdown styling): assistant answers — `<Static>` pieces
+(`src/tui/markdown.ts` pure and dependency-free, `src/tui/MarkdownText.tsx`): assistant answers — `<Static>` pieces
 and the live region — draw headings bold, `**bold**`/`*italic*` emphasized, inline and fenced code
 in `markdownCodeColor`, and fence delimiters/rules/markers dim; syntax highlighting by language is
 out of scope. The vocabulary also covers block structure (SER-047): a list bullet or `N.`/`N)`
@@ -1059,7 +1050,7 @@ happened" assertion passes vacuously on a pipe) and the markdown section of
 ## `@` path completion
 
 **`@` in the prompt completes a workspace path, and inserts the path text — never the file's
-content** (`src/tui/path-completion.ts`, spec: `.trellis/spec/frontend/prompt-completion.md`). Three
+content** (`src/tui/path-completion.ts`). Three
 peers disagree here (Codex adds the path, OpenCode inlines the content, Claude Code autocompletes),
 and taking the Codex shape is the whole security argument: with a path in the draft, file bytes still
 reach the model through the gated, classified, trajectory-recorded `fileEditor` read, while inlining
@@ -1083,8 +1074,7 @@ row the menu already has**.
 ## Prompt recall
 
 **`Up`/`Down` recall previous prompts, read out of the record darwin already keeps — and they take no
-key that already had a meaning** (`src/trajectory/prompt-history.ts`, `src/tui/prompt-recall.ts`,
-spec: `.trellis/spec/frontend/prompt-recall.md`). There is no history store and there must never be
+key that already had a meaning** (`src/trajectory/prompt-history.ts`, `src/tui/prompt-recall.ts`). There is no history store and there must never be
 one: every prompt a session sent is already a `userInput` line in
 `~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl`, so this is a *reader* over bytes
 that exist, proved read-only by hashing every record and the resume pointer before and after,
@@ -1108,9 +1098,7 @@ checks: `spike/verify-prompt-recall.ts`, `spike/verify-tui.ts recall` / `recallE
 ## `!` shell commands
 
 **A draft starting with `!` runs as the user's own shell command — outside the permission gate,
-inside every honesty channel** (`src/tui/shell-command.ts`, App submit path; specs:
-`.trellis/spec/frontend/live-frame.md`, `frontend/prompt-recall.md`,
-`backend/session-trajectory.md` § `shellCommand`). The gate's subject is model tool calls, so the
+inside every honesty channel** (`src/tui/shell-command.ts`, App submit path). The gate's subject is model tool calls, so the
 user typing `!rm -rf build` is the user acting directly — no approval prompt, in **every** mode
 including plan, which constrains the model's writes and not the user's hands. What the gate never
 saw is stated three ways from **one bounded projection** (`projectShellOutput`: SER-009 `boundText`,
@@ -1135,8 +1123,7 @@ and replayed transcripts are one projection. Free checks: `spike/verify-shell-co
 ## The prompt queue
 
 **A submission while the session is busy queues, visibly, and is sent when the turn ends**
-(`src/tui/prompt-queue.ts`, `src/tui/QueuedMessages.tsx`, App state in `src/tui/App.tsx`; contract:
-`.trellis/spec/frontend/live-frame.md` § a busy submission queues). SER-027 **deliberately
+(`src/tui/prompt-queue.ts`, `src/tui/QueuedMessages.tsx`, App state in `src/tui/App.tsx`). SER-027 **deliberately
 supersedes SER-010's "retained, never queued" contract by explicit user product decision**
 (2026-08-19, `docs/research/research_2026-08-19.md` addendum `02:01:06Z`) — the peer shape is
 Claude Code's queue-while-working. Scope was decided with the reopening: **next-turn-only
@@ -1153,7 +1140,7 @@ listing is a fourth **frame-budget participant** (after tools, before the answer
 `queued ·` row per entry with the cut stated, and the busy hint carries ` · N queued` so a fully
 cut listing still cannot accumulate invisibly. `Up` from the draft's first visual row takes the
 whole queue back into the editor ahead of typed text — the gesture joins the key chain between the
-completion menu and prompt recall (`.trellis/spec/frontend/prompt-recall.md`). A **cancel or a
+completion menu and prompt recall. A **cancel or a
 failed turn returns the queue to the editor unsent** (auto-resending into an error is how retry
 loops start), a pending permission holds it untouched, and `/clear` drops it with the conversation.
 Nothing is recorded at enqueue time: a drained entry becomes a `userInput` at send time, and an

@@ -11,7 +11,7 @@
  *   `<Text>` per line would swallow the blank lines a paragraph break committed.
  * - `liveRowText` — one pre-wrapped live row. The row stays ONE
  *   `<Text wrap="truncate-end">` so the block's height is exactly what
- *   `liveTextView` counted (`.trellis/spec/frontend/live-frame.md`).
+ *   `liveTextView` counted (`src/tui/frame-budget.ts`).
  */
 import { Text } from 'ink';
 import React from 'react';

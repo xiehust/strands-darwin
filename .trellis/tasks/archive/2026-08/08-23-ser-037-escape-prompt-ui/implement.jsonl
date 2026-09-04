@@ -1,5 +1,0 @@
-{"file":"docs/research/research_2026-08-23.md","reason":"SER-037 origin evidence and fixed scope"}
-{"file":".trellis/spec/frontend/prompt-completion.md","reason":"slash/path completion query and acceptance contracts"}
-{"file":".trellis/spec/frontend/prompt-recall.md","reason":"recall walk semantics and arrow precedence"}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"real pty input-boundary verification requirements"}
-{"file":".trellis/spec/frontend/live-frame.md","reason":"no new participant or row and shared budget invariants"}

@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Check child isolation, shared gate, provenance resolution, and the recorded concurrency measurements."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Check /agents contracts, observer-only subscription, and that the prompt label adds no frame row."}
-{"file":"docs/research/research_2026-08-15.md","reason":"Check the implementation against SER-002 acceptance without modifying Host-owned outcome fields."}

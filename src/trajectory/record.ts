@@ -5,7 +5,7 @@
  * Everything here is pure and synchronous. The writer must be able to format a
  * record between two stream events without awaiting anything, and every reader —
  * search, replay, the CLI — has to be able to parse a line without constructing a
- * model or an agent. See `.trellis/spec/backend/session-trajectory.md`.
+ * model or an agent. See `docs/architecture/load-bearing-decisions.md` § Session trajectory.
  */
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
@@ -18,8 +18,8 @@ export const SCHEMA_VERSION = 1;
  * Sized so a long assistant answer (~2k tokens) survives whole while a
  * whole-file `fileEditor view` result or a 100k-line log does not. Code points
  * rather than bytes, matching `headlessField`: slicing UTF-8 by byte length
- * replaces a trailing multi-byte sequence with U+FFFD (see the truncation
- * mistake recorded in `.trellis/spec/backend/error-handling.md`).
+ * replaces a trailing multi-byte sequence with U+FFFD (a byte-slice truncation
+ * mistake this project made once and must not repeat).
  */
 export const MAX_FIELD_CHARS = 8_000;
 

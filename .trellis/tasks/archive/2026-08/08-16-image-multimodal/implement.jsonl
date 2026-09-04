@@ -1,2 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Owns SDK FunctionTool/ImageBlock behavior, runtime tool registration, provider limits, and child tool catalogue contracts."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Owns actionable tool-result degradation for invalid and over-bound local images."}

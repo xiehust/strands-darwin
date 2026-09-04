@@ -229,7 +229,7 @@ export async function readPromptHistory(projectRoot: string): Promise<PromptHist
  *
  * Rides on the recall indicator the editor already draws — never a row of its own, for
  * the same reason the workspace-scan note rides on the completion menu's title
- * (`.trellis/spec/frontend/live-frame.md`).
+ * (`src/tui/frame-budget.ts`).
  */
 export function promptHistoryNote(history: PromptHistory): string | undefined {
   const parts: string[] = [];

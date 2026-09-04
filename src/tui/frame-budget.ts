@@ -4,8 +4,8 @@
  * Round 1 bounded the streaming answer against a *measured* chrome height: the
  * header and the box below it were measured with `useBoxMetrics`, and whatever was
  * left over went to the answer. That works only while the chrome itself is
- * bounded, and it is not — measured in
- * `.trellis/tasks/08-17-live-frame-chrome/research/probe-results.md`: a 13-row
+ * bounded, and it is not — measured with `spike/probe-live-frame-overflow.tsx`
+ * (numbers defended in `spike/verify-frame-budget.ts`): a 13-row
  * draft in a 24-row terminal already takes Ink's `clearTerminal` branch (2
  * whole-screen clears, scrollback included, per added row), and one in-flight tool
  * call with details expanded draws 41 rows from caps that count logical lines and

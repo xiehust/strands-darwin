@@ -1,6 +1,6 @@
 /**
  * Reproduction probe for the occasional final-reply duplication
- * (`.trellis/tasks/08-28-persistent-final-reply-duplication/`).
+ * (first seen 2026-08-28 with persistent final replies).
  *
  * Drives the real TUI in a pty with `final-reply-burst-cli.ts` — the recorded
  * session-20260830-110550523 reply tail streamed as bursts with no pause

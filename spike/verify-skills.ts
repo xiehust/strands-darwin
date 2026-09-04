@@ -253,7 +253,7 @@ async function missingDirectory(): Promise<void> {
   assert('fresh research covers named and additional products', ['Claude Code', 'Codex', 'DeepSeek harness', 'PenguinHarness', 'at least one additional relevant'].every((term) => researchWorkflow.includes(term)));
   assert('research refuses fabricated claims without source access', researchWorkflow.includes('source access is unavailable') && researchWorkflow.includes('never fabricate'));
   assert('peer evidence is compared with current Darwin architecture', researchWorkflow.includes('source, tests, README, the repository\'s own instruction and architecture documents') && researchWorkflow.includes('SDK-extension architecture'));
-  assert('research does not depend on the optional Trellis workflow', !researchWorkflow.includes('.trellis') && !researchWorkflow.includes('Trellis'));
+  assert('research does not depend on any external task-workflow tool', !researchWorkflow.includes('.trellis') && !researchWorkflow.includes('Trellis'));
   assert('same-day runs append safely', researchWorkflow.includes('append a new `## Run — <UTC timestamp>` section') && researchWorkflow.includes('Never replace or rewrite an earlier same-day run'));
   assert('research proposes at most five directions', researchWorkflow.includes('zero to five new, non-duplicate iteration directions'));
   assert('ranking includes importance, difficulty, and supporting dimensions', ['**Importance**', '**Implementation difficulty**', '**Architecture fit**', '**Evidence confidence**', '**Implementation risk**'].every((term) => researchWorkflow.includes(term)));
@@ -843,7 +843,7 @@ async function realProjectSkill(): Promise<void> {
 
   assert('commit-message skill is discovered', skills.some((s) => s.name === 'commit-message'));
   const localProblems = problems.filter((problem) => problem.directory.startsWith(`${REPO_ROOT}${path.sep}`));
-  assert('project skills have no duplicate-name problems after Trellis moved to .agents',
+  assert('project skills have no duplicate-name problems across .darwin and .agents',
     localProblems.every((problem) => !problem.reason.includes('duplicate skill name')));
   assert(
     'commit-message is a built-in beside the loader module, no longer under .darwin/skills/',
@@ -851,8 +851,8 @@ async function realProjectSkill(): Promise<void> {
       localProblems.every((problem) => !problem.reason.includes('reserved by built-in')),
   );
   assert(
-    'Trellis skills are discovered from .agents/skills/',
-    skillDirectory(requireSkill(skills, 'trellis-check')).includes(path.join('.agents', SKILLS_DIRNAME)),
+    'project skills are discovered from .darwin/skills/',
+    skillDirectory(requireSkill(skills, 'skill-creator')).includes(path.join('.darwin', SKILLS_DIRNAME)),
   );
 
   const plugin = await SkillsPlugin.load(REPO_ROOT);

@@ -1489,8 +1489,8 @@ export class AgentRuntime {
    * Token totals for every model call this agent has made so far.
    *
    * Read live from the SDK's meter rather than tallied from stream events:
-   * `accumulatedUsage` is a lifetime accumulator (see
-   * `.trellis/spec/backend/strands-sdk-contracts.md`), so it is already the
+   * `accumulatedUsage` is a lifetime accumulator (see the SDK reuse section of
+   * `docs/architecture/load-bearing-decisions.md`), so it is already the
    * running total and is readable between turns, including after a cancelled one
    * that never produced an `agentResultEvent`.
    *
@@ -1755,8 +1755,8 @@ export class AgentRuntime {
    *
    * A *new Agent* is what makes this a new session, and there is no cheaper way:
    * `SessionManager` is an SDK plugin whose snapshot hooks are registered during
-   * `initialize()` with no removal path, and its session id is private and readonly
-   * (`.trellis/spec/backend/strands-sdk-contracts.md`). Assigning a second manager
+   * `initialize()` with no removal path, and its session id is private and readonly.
+   * Assigning a second manager
    * would leave the first one's hooks live, and at the end of the next turn it would
    * overwrite the *previous* session's `snapshot_latest.json` with the cleared
    * conversation — destroying the thing `/clear` exists to preserve. So the successor

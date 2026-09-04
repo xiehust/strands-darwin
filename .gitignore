@@ -10,6 +10,5 @@ dist/
 # Often carries API tokens in headers/env. Use ${VAR} interpolation and delete
 # this line if your team wants the file in the repo.
 .darwin/mcp.json
-# Regenerated per platform by `trellis update`, same as /.claude/ and /.codex/
-# above. Only .darwin/config.json and the commit-message sample skill are this
-# repo's own.
+# /.claude/ and /.codex/ above are per-platform local layers; only .darwin/config.json
+# and the repo's own skills are tracked.

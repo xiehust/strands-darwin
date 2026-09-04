@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/index.md","reason":"Backend review index."}
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Verify the implementation preserves foreground/background bash and process lifecycle contracts."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Verify diagnostic refusal and ordinary failure behavior."}

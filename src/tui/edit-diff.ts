@@ -10,7 +10,7 @@
  *
  * Output vocabulary is three two-character plain-text markers, chosen so the
  * distinction survives ANSI stripping, monochrome terminals and pty tests
- * (`.trellis/spec/frontend/tui-testing.md` § visual hierarchy):
+ * (`docs/architecture/load-bearing-decisions.md` § File-edit diffs):
  *
  *   `- ` removed line · `+ ` added line · `  ` context line
  *

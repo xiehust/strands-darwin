@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Persistent bash tool contract (exit-0 notice, BashSessionError metadata, validation matrix) and the SDK pin/patch regeneration procedure"}
-{"file": "docs/architecture/load-bearing-decisions.md", "reason": "Process exit section owning the foreground shell restart semantics"}
-{"file": "docs/research/backlog/directions-061-080.md", "reason": "SER-054 record: requirement and acceptance"}

@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/live-frame.md","reason":"Preserve shared visual-row budget, Static answer, and header state contracts."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Follow deterministic render and real-pty assertion conventions."}
-{"file":"docs/research/research_2026-08-18.md","reason":"SER-016 evidence and intended extension points."}

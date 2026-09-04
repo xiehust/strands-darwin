@@ -15,7 +15,7 @@
 
 darwin 是一项自托管 AI 开发实验。[v0.0.1 基线版本](https://github.com/xiehust/strands-darwin/releases/tag/v0.0.1)完全由 [Claude Code](https://claude.com/claude-code) 编写。此后的功能、修复和版本发布，都由当前版本的 darwin 在本仓库内完成。新版本通过独立验收后，就会接手下一轮开发。
 
-开发责任始终由人承担：产品取舍、安全边界和工作授权由人决定；仓库证据无法回答的问题也由人处理；最终结果仍需人来验收。darwin 在这些边界内负责编写实现。基线版本提供固定参照，后续工作则由 [`.trellis/`](.trellis/) 下的任务记录和[迭代日志](docs/iteration-log.md)留痕。
+开发责任始终由人承担：产品取舍、安全边界和工作授权由人决定；仓库证据无法回答的问题也由人处理；最终结果仍需人来验收。darwin 在这些边界内负责编写实现。基线版本提供固定参照，后续工作则由 git 历史和[迭代日志](docs/iteration-log.md)留痕。
 
 ### 内置自演进研究
 

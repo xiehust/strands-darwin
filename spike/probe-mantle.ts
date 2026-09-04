@@ -4,7 +4,7 @@
  * whether `maxTokens` reaches the model.
  *
  * This is the script behind the Mantle tables in
- * `.trellis/spec/backend/strands-sdk-contracts.md` and in `src/agent/thinking.ts`.
+ * `docs/architecture/load-bearing-decisions.md` (Thinking effort) and in `src/agent/thinking.ts`.
  * Measured rather than read for the same reason as `verify-thinking-live.ts`: an
  * unsupported field is rejected per-request, so guessing wrong breaks every turn
  * rather than degrading. Every case prints PASS/FAIL with the service's own

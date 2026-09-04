@@ -15,7 +15,7 @@
  * 3. **It is bounded.** Payload caps live in `record.ts`; this file owns the
  *    per-file budget and stops recording when it is reached.
  *
- * See `.trellis/spec/backend/session-trajectory.md`.
+ * See `docs/architecture/load-bearing-decisions.md` § Session trajectory.
  */
 import { open, mkdir, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';

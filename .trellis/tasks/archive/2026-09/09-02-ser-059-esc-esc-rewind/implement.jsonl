@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/prompt-recall.md", "reason": "/rewind chooser contract (SER-040): what the Esc Esc chord must reuse unchanged; Escape ownership order"}
-{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Escape contract line ('a second Escape is inert') to amend; pty rules: send control bytes in separate writes, anchored waits"}
-{"file": ".trellis/spec/frontend/live-frame.md", "reason": "Escape dismissal creates no row; the chord must add no frame surface"}

@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/backend/session-trajectory.md", "reason": "The record format, observer and degradation contracts this change extends"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "Degradation table row for what a thrown turn leaves in the record"}

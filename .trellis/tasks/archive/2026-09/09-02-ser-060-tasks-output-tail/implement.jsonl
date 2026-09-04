@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Background task monitoring contract: /tasks shape, presentation-only bounds, code-point truncation; the tail contract is added here"}
-{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Session-owned background bash jobs: shared cursor, wait aggregation, log ownership checks — the tail reader must leave all of it untouched"}
-{"file": ".trellis/spec/frontend/live-frame.md", "reason": "Transcript notices are Static blocks; no new live row or timer for the tails"}

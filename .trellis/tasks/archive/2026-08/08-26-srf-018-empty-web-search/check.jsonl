@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Check the narrow MCP adapter invariant, parent/child sharing, and retry semantics."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Check that true transport, malformed-input, auth, timeout, and provider errors remain errors."}
-{"file":".trellis/tasks/08-26-srf-018-empty-web-search/research/ownership-seam.md","reason":"Check implementation against the verified provider/API evidence rather than a generic error rewrite."}

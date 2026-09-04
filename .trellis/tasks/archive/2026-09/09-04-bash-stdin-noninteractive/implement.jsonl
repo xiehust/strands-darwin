@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Bash tool contract (SER-054 timeout matrix, per-Agent serialization, cwd probe) and the pinned-patch edit workflow (§ SDK pin — 1.16.0)"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "What refuses vs. degrades; the timeout/BashSessionError shapes must stay within the existing degradation table"}
-{"file": ".trellis/tasks/09-04-bash-stdin-noninteractive/design.md", "reason": "Chosen brace-group wrap, rejected alternatives with measured reasons, process-group kill shape"}

@@ -1,4 +1,0 @@
-{"file": "docs/reflections/reflection_2026-08-21_session-20260821-054705633.md", "reason": "SRF-010 origin, measured cache-read evidence, and user-controlled compaction direction"}
-{"file": ".trellis/spec/frontend/live-frame.md", "reason": "Transcript/live-frame and clear contracts"}
-{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Context estimate and compaction contracts"}
-{"file": "docs/architecture/load-bearing-decisions.md", "reason": "Architecture rationale and invariant index source"}

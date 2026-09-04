@@ -7,8 +7,8 @@
  * actually keeps Ink out of its `clearTerminal` branch — three individually
  * bounded boxes still overflow together.
  *
- * The numbers being defended are in
- * `.trellis/tasks/08-17-live-frame-chrome/research/probe-results.md`.
+ * The numbers being defended were measured with
+ * `spike/probe-live-frame-overflow.tsx` in an 80x24 terminal.
  */
 import { renderToString } from 'ink';
 import React from 'react';

@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Load-bearing SDK Agent assembly, interventions, cancellation, and cleanup contracts"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "Per-entry degradation and user-facing configuration diagnostics"}
-{"file": ".trellis/tasks/08-14-subagent-capability/research/sdk-agents-as-tools.md", "reason": "Measured SDK agents-as-tools event forwarding and lifecycle behavior"}

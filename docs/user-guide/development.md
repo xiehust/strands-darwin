@@ -105,7 +105,7 @@ src/paths.ts      all global/project path ownership
 
 ## Repository development workflow
 
-This repository is Trellis-managed. Nontrivial changes use a task under `.trellis/tasks/` with PRD, optional design/implementation plan, implementation, independent check, spec review, and commit. The paper trail matters because darwin develops darwin. Every supervised `/developer` batch also appends child session, accepted commits, and Host-rerun evidence to [the iteration log](../iteration-log.md).
+Nontrivial changes are understood first (the matching section of `docs/architecture/load-bearing-decisions.md` plus the relevant `spike/` suite), then implemented, verified with `pnpm typecheck`, `pnpm test` and the row's listed checks, and committed. The paper trail matters because darwin develops darwin. Every supervised `/developer` batch also appends child session, accepted commits, and Host-rerun evidence to [the iteration log](../iteration-log.md).
 
 Keep `AGENTS.md` below 32 KiB because darwin preloads only that cap. Do not add `devEngines` to `package.json`; it can break every `npx` MCP server with an opaque closed connection. Do not bypass pnpm's `minimumReleaseAge` for fresh SDK releases. Pinned SDK patches must be revalidated on upgrade.
 

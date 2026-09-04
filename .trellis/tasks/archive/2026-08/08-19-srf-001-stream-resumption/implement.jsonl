@@ -1,7 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"SDK loop, stream error identity, cancellation, and provider wrapping contracts"}
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"append-only failed-turn observer semantics"}
-{"file":".trellis/spec/backend/structured-headless-output.md","reason":"text/JSON/JSONL lifecycle, privacy, and terminal-result contract"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"TUI async state ownership and status transitions"}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"deterministic orchestration and queue/cancel regression expectations"}
-{"file":"docs/reflections/reflection_2026-08-19_session-20260819-075248263.md","reason":"SRF-001 origin evidence and scored direction"}
-{"file":".trellis/tasks/08-19-srf-001-stream-resumption/research/seams.md","reason":"repository seams, SDK error hierarchy, and chosen boundary"}

@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "pty-test conventions for re-running the completion scenario"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "quality gate expectations"}
-{"file": ".trellis/tasks/08-30-workflow-command/prd.md", "reason": "acceptance criteria A1–A6"}
-{"file": ".trellis/tasks/08-30-workflow-command/design.md", "reason": "design the implementation must match"}

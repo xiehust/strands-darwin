@@ -312,8 +312,7 @@ async function approvePath(): Promise<void> {
     // Draining, not a plain idle wait: the request says not to run shell commands and
     // the model mostly obeys, but when it does not, the extra call raises a second
     // permission box this scenario never answers — every assertion passes and the run
-    // then burns its whole timeout. See the known-flake note in
-    // `.trellis/spec/frontend/tui-testing.md`.
+    // then burns its whole timeout — a known flake shape for pty scenarios.
     await settleTurn(tui, 240_000);
 
     const after = await readFile(APPROVE_TARGET, 'utf8');
@@ -2958,7 +2957,7 @@ async function longAnswer(): Promise<void> {
 /**
  * A draft taller than the terminal is the other half of the live-frame contract.
  *
- * Measured before the fix (`.trellis/tasks/08-17-live-frame-chrome/research/`): in
+ * Measured before the fix (`spike/probe-live-frame-overflow.tsx`): in
  * an 80x24 terminal the first `ESC[3J` appeared at a **13-row draft** and every
  * further row cost 2 more — with no model streaming at all, just an idle session
  * being typed into. `ESC[3J` erases the scrollback, so this was the transcript
@@ -3165,7 +3164,7 @@ async function clearSession(): Promise<void> {
     assert('/clear starts no model turn', !notice.includes('working…'));
 
     // One deliberate whole-screen clear, not the per-render clear the frame budget
-    // exists to prevent (`.trellis/spec/frontend/live-frame.md`).
+    // exists to prevent (`src/tui/frame-budget.ts`).
     assert('the screen is cleared exactly once', clearCount(tui.raw.slice(rawBeforeClear)) === 1);
     assert('the pre-clear transcript is gone from the frame', !tui.frame.includes('subagent dispatches'));
     assert('the prompt is usable again', tui.frame.includes('you>'));

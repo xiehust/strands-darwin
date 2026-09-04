@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/prompt-recall.md","reason":"Existing history-reader, recall, and key-precedence contract."}
-{"file":".trellis/spec/frontend/live-frame.md","reason":"Counted-row and bounded live-frame contract."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Real PTY test conventions and state-exclusive assertions."}
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"Read-only append-only trajectory authority and bounds."}
-{"file":"docs/research/research_2026-08-26.md","reason":"SER-039 origin and accepted scope; read-only host-owned evidence."}

@@ -1,6 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Permission interventions, composed hook ordering, child sharing, and headless contracts."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Fail-closed denial and actionable diagnostic conventions."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Header frame-height, anchored waits, and bounded pty exit contracts."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Shared mode vocabulary and pre-modification search rules."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Config-to-runtime-to-TUI/headless data-flow checks."}
-{"file":"docs/research/research_2026-08-15.md","reason":"SER-001 origin, peer evidence, and independently observable acceptance."}

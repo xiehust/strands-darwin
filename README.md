@@ -15,7 +15,7 @@
 
 darwin is an experiment in self-hosted AI development. The [v0.0.1 baseline](https://github.com/xiehust/strands-darwin/releases/tag/v0.0.1) was built entirely with [Claude Code](https://claude.com/claude-code). Every later feature, fix, and release is made by running the current darwin inside this repository. Once a revision passes independent acceptance, that revision becomes the tool used to build the next one.
 
-A human remains the developer of record: people set product and safety boundaries, authorize work, resolve decisions the repository cannot answer, and accept the result. The implementation is produced by darwin under those boundaries. The baseline is a fixed comparison point; Trellis task records under [`.trellis/`](.trellis/) and the [iteration log](docs/iteration-log.md) make subsequent work auditable.
+A human remains the developer of record: people set product and safety boundaries, authorize work, resolve decisions the repository cannot answer, and accept the result. The implementation is produced by darwin under those boundaries. The baseline is a fixed comparison point; the git history and the [iteration log](docs/iteration-log.md) make subsequent work auditable.
 
 ### Built-in self-evolution research
 

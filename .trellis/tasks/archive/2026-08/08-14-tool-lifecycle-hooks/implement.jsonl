@@ -1,2 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Defines the intervention extension point, denial semantics, shared subagent gate, and lifecycle ordering constraints."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Defines startup config validation and fail-closed versus skip-and-surface behavior."}

@@ -7,7 +7,7 @@
  * or re-derives a conversation from records.
  *
  * What is copied, and what deliberately is not, is recorded in
- * `.trellis/spec/backend/session-trajectory.md`:
+ * `docs/architecture/load-bearing-decisions.md` § Session trajectory:
  *
  * - snapshot: copied verbatim, so the fork restores exactly the source conversation.
  * - `offload/`: copied when present, and a failure fails the whole fork — a fork

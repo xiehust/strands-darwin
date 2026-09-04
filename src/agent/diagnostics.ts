@@ -16,7 +16,7 @@
  * byte-for-byte the run it was before this module existed.
  *
  * It is an observer, under the same discipline the trajectory earned
- * (`.trellis/spec/backend/session-trajectory.md` §6), and one bound stricter:
+ * (`src/trajectory/`), and one bound stricter:
  *
  * 1. **It cannot affect a turn.** {@link DiagnosticsLog.write} is synchronous,
  *    catches everything, performs no I/O and never touches the console — the SDK's
@@ -31,7 +31,7 @@
  *    write all leave a line in the file (or a surfaced problem when the file is what
  *    failed). A log that went quiet without saying so would be worse than none.
  *
- * See `.trellis/spec/backend/session-diagnostics.md`.
+ * See `docs/architecture/load-bearing-decisions.md` § Session diagnostics.
  */
 import { open, mkdir, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';

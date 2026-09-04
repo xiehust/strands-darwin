@@ -1,5 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/tasks/08-22-modern-premium-tui/prd.md", "reason": "Check every user-visible and compatibility acceptance criterion."}
-{"file": ".trellis/spec/frontend/live-frame.md", "reason": "Verify no live-row growth, scrollback loss, or Static ownership violation."}
-{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Apply deterministic visual and PTY verification requirements."}
-{"file": ".trellis/tasks/08-22-modern-premium-tui/design.md", "reason": "Review implementation against approved visual system and welcome lifecycle."}

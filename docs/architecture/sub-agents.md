@@ -260,4 +260,4 @@ The executable contracts are concentrated in:
   cancellation, and process-lifecycle integration.
 
 The SDK-specific measurements and invariants are maintained in
-`.trellis/spec/backend/strands-sdk-contracts.md` under “Scenario: isolated subagents as a tool.”
+`load-bearing-decisions.md` under "Subagents" and proven by `spike/verify-subagents.ts`.

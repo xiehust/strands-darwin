@@ -1,7 +1,0 @@
-{"file":".trellis/spec/backend/index.md","reason":"Backend quality checklist for final full-scope review."}
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Verify implementation and real-Agent tests preserve all measured SDK/prompt/session contracts."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Verify fatal/optional skill failure semantics and user-visible RuntimeInfo problems."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend quality index applies to slash completion/header behavior exercised by the migration."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Completion scenario and any TUI assertions must follow the pty testing contract."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review end-to-end flow from discovery through tool schema, permission, prompt/cache/session and UI."}
-{"file":".trellis/tasks/08-17-official-sdk-agent-skills/research/official-agent-skills-probe.md","reason":"Compare code and tests against observed official first/repeat/resume and resource-bound behavior."}

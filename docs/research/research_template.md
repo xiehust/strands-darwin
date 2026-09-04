@@ -53,7 +53,7 @@ State which source tools were available, the UTC access date, and any products t
 
 | Capability / architecture | Repository evidence | Current behavior |
 |---|---|---|
-| `<area>` | `src/...` / `spike/...` / `.trellis/spec/...` | `<observed behavior>` |
+| `<area>` | `src/...` / `spike/...` / `docs/architecture/...` | `<observed behavior>` |
 
 ### Comparison and gaps
 

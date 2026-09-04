@@ -105,7 +105,7 @@ src/paths.ts      全局/项目路径归属
 
 ## 仓库开发流程
 
-本仓库由 Trellis 管理。非琐碎改动需要在 `.trellis/tasks/` 下建立任务，包含 PRD、按需提供 design/implementation plan，并依次完成实现、独立检查、规范复核和提交。这份记录很重要，因为 darwin 正在用自身开发自身。每次受监督的 `/developer` 批次还要把子会话、通过验收的提交和 Host 重跑证据追加到[迭代日志](../iteration-log.md)。
+非琐碎改动先理解相关区域（`docs/architecture/load-bearing-decisions.md` 中对应章节和相关的 `spike/` 测试套件），再实现、用 `pnpm typecheck`、`pnpm test` 及表格中列出的检查验证，然后提交。这份记录很重要，因为 darwin 正在用自身开发自身。每次受监督的 `/developer` 批次还要把子会话、通过验收的提交和 Host 重跑证据追加到[迭代日志](../iteration-log.md)。
 
 `AGENTS.md` 必须小于 32 KiB，因为 darwin 只预加载这一上限。不要在 `package.json` 添加 `devEngines`，否则所有 `npx` MCP 服务器都可能只报含糊的连接关闭。不要绕过 pnpm 的 `minimumReleaseAge` 安装过新的 SDK 版本。升级 SDK 后，必须重新验证固定 patch。
 

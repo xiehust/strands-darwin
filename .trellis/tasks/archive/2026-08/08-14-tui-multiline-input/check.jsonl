@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Verify the new pty scenario follows the established interactive testing contracts."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check that multiline data survives terminal ingestion, state, rendering, and submit boundaries."}

@@ -1,6 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Isolated-subagent contract, shared gate instance, SDK tool-executor and hook-dispatch behavior."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Background-task observation shape, anchored pty waits, and the frame-height rule the source label must respect."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Degradation conventions for observers and non-fatal reporting."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse the existing manager/observer/projection pattern instead of inventing a second one."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Registry-to-runtime-to-reducer-to-Ink data flow for dispatch state and provenance."}
-{"file":"docs/research/research_2026-08-15.md","reason":"SER-002 origin, peer evidence, and independently observable acceptance."}

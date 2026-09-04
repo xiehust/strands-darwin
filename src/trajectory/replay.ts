@@ -6,7 +6,7 @@
  * `turnReducer` the live TUI uses, so live rendering and replay cannot drift into
  * two different readings of the same events. What replay guarantees, and the nine
  * things it explicitly does not reproduce, are written down in
- * `.trellis/spec/backend/session-trajectory.md`.
+ * `docs/architecture/load-bearing-decisions.md` § Session trajectory.
  *
  * This module imports no `Agent`, no `Model` and nothing from `src/agent/runtime.ts`:
  * replay makes zero model calls by construction, not by discipline.
