@@ -134,7 +134,7 @@ Original requirement: `workflowInputSchema` nodes gain optional `writeScopes: st
 
 ## SER-066 — Darwin-owned model retry policy: one `AfterModelCallEvent` hook on the parent and every recipe child replaces the SDK default strategy (`retryStrategy: null`), keeps a bounded schedule, makes the backoff wait resolve early on the agent's cancel signal without spending another model call, also retries a Bedrock pre-stream `ThrottlingException` (`ModelError` cause), and exposes the current wait as bounded runtime state
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 87
 - Score: 12
 - Importance: 4
