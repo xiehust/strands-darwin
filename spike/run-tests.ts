@@ -100,6 +100,7 @@ const suites = [
   'verify-rewind.ts',
   'verify-diagnostics.ts',
   'verify-max-tokens-recovery.ts',
+  'verify-model-retry.ts',
   'verify-model-call-budget.ts',
   'verify-thinking.ts',
   'verify-model-command.ts',

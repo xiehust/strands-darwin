@@ -29,6 +29,7 @@ import {
 } from './background-delegation.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
 import { installModelCallBudget } from './model-call-budget.js';
+import { installModelRetry, type ModelRetryHandle, type RetryWaitState } from './model-retry.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
 import { concurrencyCap } from '../agents/concurrency-limit.js';
 import {
@@ -481,6 +482,8 @@ export class AgentRuntime {
     private readonly subagentDispatches: SubagentDispatchRegistry,
     /** Forwards background runs' `AfterToolCallEvent`s into `send()`'s stream (SER-064). */
     private readonly backgroundDelegation: BackgroundDelegationObserver,
+    /** The parent Agent's own retry state; children keep theirs behind their installer (SER-066). */
+    private readonly modelRetry: ModelRetryHandle,
     private readonly backgroundBash: BackgroundBashManager,
     private readonly gate: PermissionGate,
     /** Undefined when neither native lifecycle event is configured. */
@@ -720,9 +723,14 @@ export class AgentRuntime {
       // Required: the SDK's own printer writes to stdout and would interleave
       // with our rendering (and fight Ink for the terminal in step 5).
       printer: false,
+      // Explicit opt-out of the SDK's DefaultModelRetryStrategy, whose backoff sleeps
+      // inside the hook callback — hidden from the driver and deaf to cancel().
+      // Darwin's own hook + middleware below keep the same schedule (SER-066).
+      retryStrategy: null,
     });
     toolForName = (name) => agent.tools.find((candidate) => candidate.name === name);
     installMaxTokensRecovery(agent);
+    const modelRetry = installModelRetry(agent);
     backgroundDelegation.install(agent);
 
     // The constructor does not initialize; the SDK defers it to the first
@@ -882,6 +890,7 @@ export class AgentRuntime {
       workflows,
       subagentDispatches,
       backgroundDelegation,
+      modelRetry,
       backgroundBash,
       gate,
       lifecycleHooks,
@@ -1521,6 +1530,16 @@ export class AgentRuntime {
    */
   get lastTurnUsage(): UsageTotals | undefined {
     return this.lastTurnDelta;
+  }
+
+  /**
+   * The parent Agent's model-retry wait in progress — decided on a failed attempt,
+   * cleared when the wait ends (timer or cancel) and at turn end — or `undefined`
+   * when no attempt is waiting. Read on the driver's existing tick; a child's wait is
+   * reachable only through its own installer and never surfaces here (SER-066).
+   */
+  retryWait(): RetryWaitState | undefined {
+    return this.modelRetry.retryWait();
   }
 
   /**

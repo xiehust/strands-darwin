@@ -5,7 +5,7 @@
  * node) must build indistinguishable children: same system prompt composition,
  * same per-definition tool filtering, same shared permission intervention, same
  * dispatch-registry provenance and phase hooks, same max-tokens recovery, same
- * bash-session reaping. Extracting the recipe here is what keeps them from
+ * model retry, same bash-session reaping. Extracting the recipe here is what keeps them from
  * drifting — neither caller may construct a child `Agent` directly.
  */
 import { randomUUID } from 'node:crypto';
@@ -23,6 +23,7 @@ import type { InterventionHandler, Model, Tool } from '@strands-agents/sdk';
 import type { ProjectInstructions } from '../agent/instructions.js';
 import { composeSystemPrompt } from '../agent/instructions.js';
 import { installMaxTokensRecovery } from '../agent/max-tokens-recovery.js';
+import { installModelRetry } from '../agent/model-retry.js';
 import type { AppConfig } from '../config.js';
 import type { SubagentDispatchHandle } from './dispatch-registry.js';
 import type { AgentDefinition } from './loader.js';
@@ -65,8 +66,12 @@ export function buildRecipeChild(options: ChildRecipeOptions): Agent {
     }),
     interventions: [options.intervention],
     printer: false,
+    // Same opt-out as the parent: darwin's cancellable retry replaces the SDK default.
+    retryStrategy: null,
   });
   installMaxTokensRecovery(child);
+  // One private retry state per child; its wait is not published anywhere yet (SER-066).
+  installModelRetry(child);
   child.addHook(BeforeModelCallEvent, () => dispatch?.setPhase({ kind: 'model' }));
   child.addHook(AfterModelCallEvent, () => dispatch?.setPhase({ kind: 'starting' }));
   child.addHook(BeforeToolCallEvent, (event) => {

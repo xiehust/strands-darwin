@@ -28,6 +28,8 @@ Submitting a normal prompt or `!` command while a turn is busy queues it for the
 
 A turn that fails with the exact retryable `ModelError: Stream ended without completing a message` gets at most one visible successor continuation. The failed turn remains recorded; retry happens through ordinary orchestration, never inside the SDK loop.
 
+A throttled model call (a provider 429, including Bedrock's `Too many requests` raised before any stream event) is retried inside the turn with the SDK's default schedule — up to 6 attempts with exponential backoff, 4 s base, 240 s cap, jittered. The wait is darwin's own: `Esc` / `Ctrl+C` during it takes effect at once, ends the turn with that attempt's error and makes no further model call. When every attempt is throttled, the turn fails with the last provider error. Other model errors are not retried.
+
 ## User shell commands
 
 A prompt beginning with `!` runs one user-authorized `bash -c` process group, in every permission mode including `plan`:

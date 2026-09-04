@@ -17,7 +17,7 @@ the `spike/` suites named in each section are the executable contract.
 **Everything reuses the SDK; the agent loop is never forked.** `src/agent/runtime.ts` is the
 only place that constructs `Agent`, and it stays a thin assembly. All customization goes
 through SDK extension points: interventions (permissions), plugins (skills), conversation
-manager. If a change seems to require intercepting the loop itself, check the relevant section
+manager, hooks and `InvokeModelStage` middleware (model retry). If a change seems to require intercepting the loop itself, check the relevant section
 below and its `spike/` script first — every non-obvious SDK behavior this project relies on has
 a runnable script that proves it.
 
@@ -75,6 +75,51 @@ occurred without exposing the private control prompt. Authoritative contracts:
 `backend/strands-sdk-contracts.md`, `backend/session-trajectory.md`, and
 `backend/structured-headless-output.md`. Required checks: `spike/verify-stream-resumption.ts` and
 `spike/verify-headless-structured.ts` (both in `pnpm test`).
+
+## Model retry — darwin-owned cancellable wait
+
+**Darwin owns model-call retry through two SDK extension points on the same Agent, keeps the
+SDK's schedule, and never sleeps where the driver cannot see or the user cannot cancel.** The
+pinned SDK's `DefaultModelRetryStrategy` sleeps inside its `AfterModelCallEvent` callback, and
+`Agent._streamCore` runs hook callbacks *before* yielding the event, so a throttled attempt reached
+the driver only after its whole backoff, `cancel()` during the sleep was dead until it ended and
+then cost one more model call, and a Bedrock pre-stream `ThrottlingException` (a plain `ModelError`
+with that exception as `cause`) was never retried at all. `AgentRuntime.create` and
+`buildRecipeChild` therefore pass `retryStrategy: null` (the documented opt-out; the SDK's duplicate
+warning has nothing to warn about with an empty list) and call `installModelRetry`
+(`src/agent/model-retry.ts`) once per Agent — parent, subagent child and workflow node alike, each
+with private state.
+
+The installer splits the wait so it is visible and cancellable without touching the loop: the
+`AfterModelCallEvent` hook only *decides* — it acts when `event.error` is set and no hook already set
+`event.retry`, never once `event.agent.cancelSignal` is aborted, classifies through
+`isRetryableModelError` (`ModelThrottledError`, plus a `ModelError` whose `cause` is an `Error`
+named `ThrottlingException`; never `ContextWindowOverflowError`, `MaxTokensError`, the exact
+stream-interruption `ModelError` owned by `stream-resumption.ts`, or anything else), computes the
+delay with the SDK's own exported `ExponentialBackoff` (6 attempts, 4 s base, 240 s cap, full jitter
+— the default's numbers, resetting per budget when `attemptCount === 1`), publishes one frozen
+`RetryWaitState` (`attempt`, `maxAttempts`, `waitMs`, `until`, `reason` ≤ 200 code points) and sets
+`event.retry = true` at once. So the failed event reaches `send()`'s consumer within milliseconds of
+the failure. The wait itself runs in an `InvokeModelStage` wrap middleware — the SDK's designed
+interception point around one model call — before `next()`: a timer racing the agent's
+`cancelSignal`, cleared on both paths. On abort the middleware rethrows the failed attempt's own
+error without invoking the provider; the loop's ordinary catch yields the `AfterModelCallEvent` for
+it, the hook declines because the signal is aborted, and the turn ends with that error and no
+further model call. A true `stopReason: 'cancelled'` is not produced here on purpose: the SDK only
+settles it after a provider call reports the abort, and the alternatives are one more model call or
+a hook throwing control-flow errors. The TUI already reads an error after Esc as a cancelled
+outcome (`turnAborted`); headless reports the error as the turn's failure.
+
+`AgentRuntime.retryWait()` exposes the parent's state for the driver's existing tick (SER-067
+renders it); it is cleared when the wait ends, when the next model call actually begins, and at
+`AfterInvocationEvent`. A child's state stays behind its own installer. Trajectory records are
+unchanged: failed attempts remain visible only as `modelCall.attempt` gaps and `turnEnded.failure`
+carries the last attempt's original error at the cap. No config key tunes this. The schedule's only
+seam is `setModelRetryScheduleForTest`, used by the offline suite; production never sets it.
+Required check: `spike/verify-model-retry.ts` (in `pnpm test`) — failures delivered before the
+wait, cancel settling in milliseconds with no further call, the Bedrock cause retried and another
+cause not, exactly `maxAttempts` calls at the cap with the failure recorded, the state accessor
+populated then cleared, and a recipe child behaving the same under `dispatches.cancel`.
 
 
 ## Clipboard image input — one transient SDK content-block invocation
