@@ -4,6 +4,7 @@ import { classify, type ApprovalMode, type PermissionBridge } from './agent/perm
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/stream-resumption.js';
 import type { AgentRuntime } from './agent/runtime.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
+import { costFields, describePricingSource, type ModelPriceLookup } from './agent/cost.js';
 import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
 
@@ -74,6 +75,26 @@ export function formatHeadlessTotalUsage(total: UsageTotals, config: AppConfig):
   return (
     `usage-total: input=${metric(buckets.input)} output=${metric(buckets.output)}` +
     ` cacheRead=${metric(buckets.cacheRead)} cacheWrite=${metric(buckets.cacheWrite)}`
+  );
+}
+
+/**
+ * The cost record, written right after the usage records in text mode:
+ * `cost: total=<usd|-> input=<usd|-> output=<usd|-> cacheRead=<usd|-> cacheWrite=<usd|-> model=<id> pricing=<litellmKey|unavailable|none>`.
+ *
+ * Prices the same parent buckets `usage:` reports, through the one `costFields`
+ * projection `/status` and `/usage` share. Every figure is four-decimal USD at
+ * LiteLLM base rates; `-` is unknown, never `0` — and `total` is `-` whenever any
+ * bucket is unknown, because a floor written into `total=` would be read as the
+ * total. `pricing` names the LiteLLM key the rates came from (auditable), or why
+ * there are none. A separate record so the anchored `usage:` line stays byte-identical.
+ */
+export function formatHeadlessCost(usage: UsageTotals, config: AppConfig, lookup: ModelPriceLookup): string {
+  const fields = costFields(lookup, usage, config);
+  return (
+    `cost: total=${fields.total} input=${fields.input} output=${fields.output}` +
+    ` cacheRead=${fields.cacheRead} cacheWrite=${fields.cacheWrite}` +
+    ` model=${headlessField(config.model)} pricing=${headlessField(describePricingSource(lookup))}`
   );
 }
 

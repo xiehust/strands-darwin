@@ -6,6 +6,7 @@ import type OpenAI from 'openai';
 import type { AppConfig } from '../src/config.js';
 import { formatUsageReport } from '../src/tui/App.js';
 import { cacheEffectivenessRows, deltaUsage, sumUsage, usageBuckets, usageRows, type UsageTotals } from '../src/agent/usage.js';
+import type { ModelPriceLookup } from '../src/agent/cost.js';
 import type { SessionCallStats } from '../src/agent/call-stats.js';
 import { assert, header, report } from './shared.js';
 
@@ -358,6 +359,40 @@ function efficiencySectionContracts(): void {
       .includes('session total (incl. subagents)'));
 }
 
+function costLineContracts(): void {
+  header('usage — /usage cost line');
+  const parent: UsageTotals = { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 500_000, cacheWriteInputTokens: 10_000 };
+  const priced: ModelPriceLookup = {
+    kind: 'priced',
+    litellmKey: 'global.anthropic.claude-sonnet-5',
+    rates: { inputCostPerToken: 2e-6, outputCostPerToken: 1e-5, cacheReadInputTokenCost: 2e-7, cacheCreationInputTokenCost: 2.5e-6 },
+  };
+
+  // No lookup passed → byte-identical to the pre-cost report (the childUsage rule);
+  // the runtime always passes one, so the TUI report always carries the line.
+  const without = formatUsageReport(parent, config('bedrock'), false);
+  const withUndefined = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, undefined);
+  assert('no lookup renders byte-identically to the pre-cost report', without === withUndefined && !/^\s+cost\s/mu.test(without));
+
+  const withPrice = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, priced);
+  const lines = withPrice.split('\n');
+  const costIndex = lines.findIndex((line) => /^\s+cost\s/u.test(line));
+  assert('the cost line closes the main block, directly under the derived cache rows',
+    costIndex > 0 && lines[costIndex - 1]?.includes('served from cache') === true);
+  assert('the line is the shared describeCost rendering, labelled approximate with its basis',
+    lines[costIndex]?.endsWith('≈ $3.1250 (base rates, LiteLLM)') === true);
+  assert('pricing adds exactly one line and leaves every other line byte-identical',
+    lines.length === without.split('\n').length + 1 && lines.filter((_, i) => i !== costIndex).join('\n') === without);
+
+  const unavailable = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, { kind: 'unavailable' });
+  assert('an unfetched price reads unavailable, never $0', /cost\s+unknown \(price unavailable\)/u.test(unavailable) && !unavailable.includes('$'));
+  const none = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, { kind: 'none' });
+  assert('a model LiteLLM does not list is named', none.includes('unknown (no price for global.anthropic.claude-opus-5)'));
+  const partial = formatUsageReport({ inputTokens: 1_000_000, outputTokens: 100_000 }, config('openai', 'chat'), false, false, undefined, undefined, undefined, priced);
+  assert('an unreported bucket makes the figure a stated floor',
+    partial.includes('≥ $3.0000 (cacheRead not reported, cacheWrite not reported; base rates, LiteLLM)'));
+}
+
 await adapterContract();
 projectionContracts();
 effectivenessContracts();
@@ -365,4 +400,5 @@ deltaContracts();
 sumContracts();
 childSectionContracts();
 efficiencySectionContracts();
+costLineContracts();
 report();

@@ -66,6 +66,19 @@ session spend: input=412 output=1350 cacheRead=130961(+1 unreported) cacheWrite=
 
 This is SDK-meter attribution, not an invoice. Summarization calls (`/compact` and overflow handling) bypass the meter and are absent from `/usage` and trajectory spend. Turn ordinals restart per process, so resumed records may contain multiple `turn 1` entries; totals count actual closing records.
 
+### Cost
+
+`/status` and `/usage` price this run's buckets at the live model's LiteLLM base rates — `cost  ≈ $0.0123 (base rates, LiteLLM)` — and a headless run writes the same figures as one stderr record after `usage:`:
+
+```text
+usage: input=412 output=1350 cacheRead=130961 cacheWrite=398
+cost: total=0.0415 input=0.0008 output=0.0135 cacheRead=0.0262 cacheWrite=0.0010 model=global.anthropic.claude-sonnet-5 pricing=global.anthropic.claude-sonnet-5
+```
+
+It is an estimate: base tier only (no long-context or 1-hour-cache rates), the current model's rates over the whole process meter even after a `/model` switch, and summarization calls excluded because the meter excludes them. An unreported bucket is never priced as 0 — the TUI shows a floor (`≥ $0.0030 (cacheRead not reported, cacheWrite not reported; …)`) and headless writes `-` for that bucket *and* for `total`. `pricing=` names the LiteLLM key the rates came from, or `none` (LiteLLM lists no such model) / `unavailable` (the table has not been fetched — offline, or the background download has not finished yet).
+
+Rates come from `~/.darwin/model-prices.json`, which stores only the resolved mapping per model id (never the whole table): a model the file already knows is never fetched again; an unknown id triggers one background fetch per process at startup or on `/model`, and an id LiteLLM does not list is recorded as unpriced so it is not retried on every launch. Delete the file to refresh prices. `DARWIN_MODEL_PRICES_FETCH=off` disables the download entirely.
+
 ## Project memory
 
 Memory is default-on when trajectory is available and stored outside the tree:

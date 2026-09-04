@@ -95,6 +95,11 @@ and the response tool-shape tallies `noTool`/`singleTool`/`multiTool`. Parent ca
 the same additive convention: the structured counterpart of the text-mode `model-calls:` stderr
 record, and a run that never reached the model emits neither.
 
+The text-mode `cost:` stderr record (see `strands-sdk-contracts.md` § cost accounting) has **no**
+structured counterpart yet: the terminal result carries no `cost` field, and `usage`/`childUsage`/
+`totalUsage`/`callStats` are unchanged by pricing. Adding one later must follow the same additive,
+unknown-is-absent convention.
+
 Success is a durability statement, not merely a model stop reason. Order is:
 
 1. consume the SDK turn;

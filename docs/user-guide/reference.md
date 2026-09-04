@@ -90,10 +90,10 @@ Rules and limits:
 | `/model [name]` | list/switch configured models, conversation intact |
 | `/permissions` | live allow rules and origins |
 | `/permissions revoke <n/rule/all>` | synchronously narrow live/disk rules |
-| `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/spend/context report |
+| `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/spend/cost/context report |
 | `/tasks` | background jobs with their last three non-empty output lines, including while busy; reading them never moves the model's `output`/`wait` cursor |
 | `/trajectory` | this run's local record status |
-| `/usage` | process token buckets; unreported is not zero |
+| `/usage` | process token buckets plus an approximate USD cost; unreported is not zero |
 | `/workflow <task>` | ask the model to orchestrate the task as one `workflow` DAG call; bare form prints usage |
 | `/skill-name [request]` | explicitly load/send a skill |
 | `/developer <requirement>` | supervise a complete persistent headless worker |
@@ -138,6 +138,7 @@ Permission and compaction views own keyboard/paste while active. The completion 
 ## Report contracts
 
 - `/status` reads existing accessors only, mutates nothing, displays unknown metrics as `not reported`, and bounds name lists with `… N more`.
+- The `cost` row of `/status` and `/usage` is Σ token bucket × LiteLLM base rate for the live model, always labelled `≈ … (base rates, LiteLLM)`; an unreported bucket turns it into a floor (`≥ $x.xxxx (cacheWrite not reported; …)`), never 0; `unknown (no price for <model>)` / `unknown (price unavailable)` say why there is no figure. Reading it never fetches or writes. Rates live in `~/.darwin/model-prices.json`, filled once per model id from LiteLLM's public price table in the background at startup (and on `/model` to a new id); `DARWIN_MODEL_PRICES_FETCH=off` in the environment keeps darwin off the network and prices only what the file already knows.
 - `/help` is one bounded transcript notice, works before busy queueing, and performs no model/tool/network/config/session work.
 - `/mcp` never probes or reconnects; tool names come from already registered state.
 - `/context` and warning estimates are advisory. A known threshold crossing emits one post-turn `/compact` recommendation, rearmed only after a known drop; unknown estimates are silent.

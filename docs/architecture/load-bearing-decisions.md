@@ -890,6 +890,31 @@ cleared in `runTurn`'s `finally`, so cancelled and failed turns stop the readout
 Free check: `spike/verify-busy-suffix.ts` (in `pnpm test`); the live `verify-tui.ts usage`
 scenario asserts the readout is present mid-turn and ticks while the turn runs.
 
+## Cost accounting
+
+**Cost is a projection over the token buckets, priced from a fetch-once cache — never a new
+channel and never an invoice** (`src/agent/cost.ts`, `src/pricing/model-prices.ts`; contract:
+`.trellis/spec/backend/strands-sdk-contracts.md` § cost accounting). The only arithmetic is
+Σ `usageBuckets` bucket × LiteLLM base rate, in one module with no `Agent`/`Model`/I/O import, so
+`/status`, `/usage` and the headless `cost:` record cannot disagree; every rendering carries its
+basis (`≈ $0.0123 (base rates, LiteLLM)`) because the number is approximate by construction —
+base tier only, the live model's rates over a cumulative meter, summarization calls excluded
+because the meter excludes them. The `usageBuckets` honesty rule carries over unchanged: an
+unreported bucket is excluded and *named* and the total becomes a floor (`≥`), never a smaller
+exact-looking figure and never 0; headless writes `total=-` the moment any bucket is unknown,
+since a floor in a `total=` field would be read as the total. The price table is the feature's
+only I/O and darwin's only non-tool network use, and it is fenced accordingly: `~/.darwin/model-prices.json`
+stores only the resolved per-id mapping (with the LiteLLM key it came from, so it is auditable),
+a mapped id is never refetched, an unmapped id fetches once per process in the background
+(bounded 10 s / 8 MiB, every failure degrades to "unavailable" with no write, no warning, no
+frame), an unlisted id is recorded as `litellmKey: null` so it is not fetched on every launch,
+and reads — what `/status` and `/usage` do — never fetch or write, which is what keeps `/status`
+byte-zero mutation. Children never touch the store: they report tokens, the parent prices them.
+`DARWIN_MODEL_PRICES_FETCH=off` makes the store cache-only, which is how the free suites keep
+their private HOMEs off the network. Free checks: `spike/verify-cost.ts`,
+`spike/verify-model-prices.ts` (fetch stubs that fail the suite when a mapped id fetches), and the
+`/status`, `/usage`, headless suites (all in `pnpm test`).
+
 ## File-edit diffs
 
 **A file edit is presented as the line diff of its own input — computed at presentation time,

@@ -57,6 +57,8 @@ session: session-20260814-160833123
 
 The session ID uses lowercase letters, numbers, hyphens, or underscores and must name an existing snapshot for strict selection. `--continue` follows the last-session pointer and is headless-only; with no pointer it starts fresh.
 
+Before exit, text mode writes the anchored `usage:` token record (`input`/`output`/`cacheRead`/`cacheWrite`, `-` for unreported), the optional `usage-children:`/`usage-total:` records when children ran, then one `cost:` record pricing the parent buckets at the model's LiteLLM base rates (`total=… … model=<id> pricing=<litellmKey|unavailable|none>`, `-` for anything unknown — see [Sessions and state § Cost](./sessions-and-state.md#cost)), then `model-calls:` when calls were observed.
+
 Headless mode cannot prompt. Static-safe calls and persisted allow rules run; any call reaching the default bridge is immediately denied. Use `--permission-mode auto`, `--permission-mode yolo`, or `--yolo` only when those semantics fit the automation. A denial is not necessarily process failure if the model handles it. Success requires the turn, snapshot, resume pointer, and strict cleanup to succeed. SIGINT is cancellation and exits nonzero.
 
 Bounded automation flags, valid only with `-p/--print`:

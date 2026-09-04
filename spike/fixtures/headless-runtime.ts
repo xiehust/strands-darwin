@@ -75,6 +75,16 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
     sessionUsage: mode === 'child-usage'
       ? { inputTokens: 52, outputTokens: 7, cacheReadInputTokens: 0 }
       : { inputTokens: 12, outputTokens: 3, cacheReadInputTokens: 0 },
+    // The real runtime's modelPrice is `unavailable` until the background fetch has
+    // recorded the id; only the priced mode carries rates, so every other mode's
+    // exact stderr doubles as proof that an unpriced run says so rather than 0.
+    modelPrice: mode === 'priced'
+      ? {
+          kind: 'priced',
+          litellmKey: 'openai/fake.headless',
+          rates: { inputCostPerToken: 0.001, outputCostPerToken: 0.01, cacheReadInputTokenCost: 0.0001 },
+        }
+      : { kind: 'unavailable' },
     // Like childUsage: the real runtime's callStats is undefined until a completed
     // model call was observed, so every mode but call-stats keeps the zero-call
     // shape and the exact-output assertions double as byte-identity proofs.

@@ -112,7 +112,8 @@ async function parserAndTextCompatibility(): Promise<void> {
       'permission-mode: default\n' +
       'tool bash — bash: printf fixture\n' +
       'tool bash — ok\n' +
-      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n',
+      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
+      'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=fake.headless pricing=unavailable\n',
   });
   const failure = await cli('turn-failure', 'text');
   nodeAssert.deepEqual(failure, {
@@ -124,7 +125,8 @@ async function parserAndTextCompatibility(): Promise<void> {
       'tool bash — bash: printf fixture\n' +
       'tool bash — ok\n' +
       'error: fixture turn failed\n' +
-      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n',
+      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
+      'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=fake.headless pricing=unavailable\n',
   });
   const interrupted = await cli('interrupt', 'text', { signal: 'SIGINT' });
   nodeAssert.deepEqual(interrupted, {
@@ -136,7 +138,8 @@ async function parserAndTextCompatibility(): Promise<void> {
       'tool bash — bash: printf fixture\n' +
       'tool bash — ok\n' +
       'error: Interrupted.\n' +
-      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n',
+      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
+      'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=fake.headless pricing=unavailable\n',
   });
   assert('text success/failure/interrupt stdout and stderr order are exact', true);
 }
@@ -466,9 +469,10 @@ async function childUsageProtocols(): Promise<void> {
       'tool bash — ok\n' +
       'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
       'usage-children: input=40 output=4 cacheRead=- cacheWrite=- dispatches=2\n' +
-      'usage-total: input=52 output=7 cacheRead=0 cacheWrite=-\n',
+      'usage-total: input=52 output=7 cacheRead=0 cacheWrite=-\n' +
+      'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=fake.headless pricing=unavailable\n',
   });
-  assert('text mode appends usage-children and usage-total after the unchanged usage record', true);
+  assert('text mode appends usage-children and usage-total after the unchanged usage record, then the cost record', true);
 
   const json = await cli('child-usage', 'json');
   const record = lines(json.stdout)[0]!;
@@ -503,9 +507,27 @@ async function callStatsProtocols(): Promise<void> {
       'tool bash — bash: printf fixture\n' +
       'tool bash — ok\n' +
       'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
+      'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=fake.headless pricing=unavailable\n' +
       'model-calls: calls=3 avgRequestInput=70 noTool=1 singleTool=2 multiTool=0\n',
   });
-  assert('text mode appends model-calls after the unchanged usage record', true);
+  assert('text mode appends model-calls after the unchanged usage and cost records', true);
+
+  // A priced fixture: the runner reads `runtime.modelPrice` and the record carries
+  // real four-decimal figures with the audited LiteLLM key. The fixture is openai/chat,
+  // so cacheWrite stays unreported and the total honestly stays `-`.
+  const priced = await cli('priced', 'text');
+  nodeAssert.deepEqual(priced, {
+    code: 0,
+    stdout: 'fixture answer\n',
+    stderr:
+      'session: session-fixture\n' +
+      'permission-mode: default\n' +
+      'tool bash — bash: printf fixture\n' +
+      'tool bash — ok\n' +
+      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
+      'cost: total=- input=0.0120 output=0.0300 cacheRead=0.0000 cacheWrite=- model=fake.headless pricing=openai/fake.headless\n',
+  });
+  assert('a priced run writes the bucket figures and the LiteLLM key, with an unreported bucket keeping total at `-`', true);
 
   const json = await cli('call-stats', 'json');
   const record = lines(json.stdout)[0]!;

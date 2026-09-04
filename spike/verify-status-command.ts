@@ -18,6 +18,7 @@
 import type { PromptCachePlan } from '../src/agent/prompt-cache.js';
 import type { ContextEstimate, UsageTotals } from '../src/agent/runtime.js';
 import type { ThinkingPlan } from '../src/agent/thinking.js';
+import { describeCost, type ModelPriceLookup } from '../src/agent/cost.js';
 import { describeCallEfficiency, type SessionCallStats } from '../src/agent/call-stats.js';
 import { withSoleChoice, type AppConfig } from '../src/config.js';
 import { BUILTIN_COMMAND_NAMES, builtinCommandDescription } from '../src/commands/custom-commands.js';
@@ -98,6 +99,20 @@ const SPENT: UsageTotals = {
 
 const ESTIMATE: ContextEstimate = { estimatedTokens: 2100, messageCount: 5, windowTokens: 200_000 };
 
+/** The state before the background fetch has recorded the model — the honest default. */
+const UNAVAILABLE: ModelPriceLookup = { kind: 'unavailable' };
+/** Sonnet-class base rates, as LiteLLM lists `global.anthropic.claude-sonnet-5`. */
+const PRICED: ModelPriceLookup = {
+  kind: 'priced',
+  litellmKey: 'global.anthropic.claude-sonnet-5',
+  rates: {
+    inputCostPerToken: 2e-6,
+    outputCostPerToken: 1e-5,
+    cacheReadInputTokenCost: 2e-7,
+    cacheCreationInputTokenCost: 2.5e-6,
+  },
+};
+
 function server(partial: Partial<McpServerStatus> & { name: string }): McpServerStatus {
   return { state: 'connected', toolNames: [], ...partial };
 }
@@ -117,6 +132,7 @@ function facts(overrides: Partial<StatusFacts> = {}): StatusFacts {
     trajectory: RECORDING,
     diagnostics: LOGGING,
     usage: SPENT,
+    modelPrice: UNAVAILABLE,
     childUsage: undefined,
     callStats: undefined,
     turnInFlight: false,
@@ -270,12 +286,13 @@ function testChildUsage(): void {
   const baseLines = base.split('\n');
   const childLines = withChildren.split('\n');
   const added = childLines.filter((line) => !baseLines.includes(line));
-  assert('childUsage adds exactly two lines and leaves every existing line byte-identical',
-    added.length === 2 && childLines.filter((line) => baseLines.includes(line)).join('\n') === base);
+  assert('childUsage adds exactly four lines (usage + cost, twice) and leaves every existing line byte-identical',
+    added.length === 4 && childLines.filter((line) => baseLines.includes(line)).join('\n') === base);
   assert('the child line names the dispatch count and the summed buckets',
     withChildren.includes('usage (subagents, 2 dispatches): input 400 · output 40'));
-  assert('the child lines sit directly under the tokens row',
-    childLines[childLines.findIndex((line) => line.includes('tokens')) + 1]?.includes('usage (subagents') === true);
+  assert('the child lines sit directly under the cost row, which sits under tokens',
+    childLines[childLines.findIndex((line) => line.includes('tokens')) + 1]?.includes('cost') === true &&
+    childLines[childLines.findIndex((line) => line.includes('  cost ')) + 1]?.includes('usage (subagents') === true);
   // Session total = parent meter + children, through the same bucket renderer.
   assert('the session total sums the parent meter and the children',
     withChildren.includes('usage (session total): input 1,634 · output 607 · cache read 9,000 · cache write 100'));
@@ -319,8 +336,8 @@ function testCallStats(): void {
   assert('the line is the shared describeCallEfficiency rendering',
     added[0] === `  model calls: ${describeCallEfficiency(stats, BEDROCK)}` &&
     withStats.includes('model calls: 12 completed · avg request input 4,000 · tool responses 8 single / 2 multi / 2 none'));
-  assert('the line sits directly under the tokens row',
-    statLines[statLines.findIndex((line) => line.includes('tokens')) + 1]?.includes('model calls:') === true);
+  assert('the line sits directly under the cost row (itself under tokens)',
+    statLines[statLines.findIndex((line) => line.includes('  cost ')) + 1]?.includes('model calls:') === true);
   assert('an unmetered average reads not reported, never 0',
     formatStatusReport(facts({ callStats: { ...stats, meteredCalls: 0, usage: undefined } }))
       .includes('avg request input not reported'));
@@ -330,10 +347,56 @@ function testCallStats(): void {
     callStats: stats,
   })).split('\n');
   const tokensIndex = both.findIndex((line) => line.includes('tokens'));
-  assert('with children present the call line follows the two child lines',
-    both[tokensIndex + 1]?.includes('usage (subagents') === true &&
-    both[tokensIndex + 2]?.includes('usage (session total)') === true &&
-    both[tokensIndex + 3]?.includes('model calls:') === true);
+  assert('with children present the call line follows the cost row and the four child lines',
+    both[tokensIndex + 1]?.includes('  cost ') === true &&
+    both[tokensIndex + 2]?.includes('usage (subagents') === true &&
+    both[tokensIndex + 3]?.includes('cost (subagents') === true &&
+    both[tokensIndex + 4]?.includes('usage (session total)') === true &&
+    both[tokensIndex + 5]?.includes('cost (session total)') === true &&
+    both[tokensIndex + 6]?.includes('model calls:') === true);
+}
+
+function testCost(): void {
+  header('formatStatusReport — cost is one row beside tokens, priced by the shared projection');
+
+  // Default facts: the fetch has not recorded the model. Said as unavailable, never $0.
+  const unavailable = formatStatusReport(facts());
+  const lines = unavailable.split('\n');
+  const tokensIndex = lines.findIndex((line) => line.includes('  tokens '));
+  assert('the cost row sits directly under the tokens row',
+    lines[tokensIndex + 1]?.trimStart().startsWith('cost ') === true);
+  assert('an unfetched price reads unavailable, never a number',
+    unavailable.includes('unknown (price unavailable)') && !unavailable.includes('$'));
+  assert('a model LiteLLM does not list names itself as unpriced',
+    formatStatusReport(facts({ modelPrice: { kind: 'none' } }))
+      .includes('unknown (no price for us.anthropic.claude-sonnet-4-6)'));
+
+  // Priced: SPENT is 1,234 in · 567 out · 9,000 cache read · 100 cache write at Sonnet rates.
+  const priced = formatStatusReport(facts({ modelPrice: PRICED }));
+  const expected = 1234 * 2e-6 + 567 * 1e-5 + 9000 * 2e-7 + 100 * 2.5e-6;
+  assert('the row is the shared describeCost rendering, labelled approximate with its basis',
+    priced.includes(`cost         ≈ $${expected.toFixed(4)} (base rates, LiteLLM)`) &&
+    priced.includes(describeCost(PRICED, SPENT, BEDROCK)));
+  assert('pricing changes only the cost row', (() => {
+    const a = unavailable.split('\n');
+    const b = priced.split('\n');
+    return a.length === b.length && a.every((line, i) => line === b[i] || line.includes('  cost '));
+  })());
+
+  // An unreported bucket makes the total a floor, never a smaller exact-looking number.
+  const partial = formatStatusReport(facts({ modelPrice: PRICED, usage: { inputTokens: 1000, outputTokens: 100 } }));
+  assert('an unreported cache bucket turns the figure into a stated floor',
+    partial.includes('≥ $0.0030 (cacheRead not reported, cacheWrite not reported; base rates, LiteLLM)'));
+
+  // Children: their cost line follows each usage line, priced the same way.
+  const children = formatStatusReport(facts({
+    modelPrice: PRICED,
+    childUsage: { dispatches: 2, usage: { inputTokens: 1000, outputTokens: 100, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 } },
+  }));
+  assert('the subagent cost line prices the children alone',
+    children.includes('cost (subagents, 2 dispatches): ≈ $0.0030 (base rates, LiteLLM)'));
+  assert('the session-total cost line prices parent plus children',
+    children.includes(`cost (session total): ≈ $${(expected + 0.003).toFixed(4)} (base rates, LiteLLM)`));
 }
 
 function main(): void {
@@ -343,6 +406,7 @@ function main(): void {
   testStatesAndDegradation();
   testChildUsage();
   testCallStats();
+  testCost();
   testMenuCapacity();
   report();
 }

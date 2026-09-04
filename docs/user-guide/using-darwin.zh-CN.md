@@ -57,6 +57,8 @@ session: session-20260814-160833123
 
 严格选择会话时，ID 只能含小写字母、数字、连字符或下划线，并且必须对应已有快照。`--continue` 仅用于无头模式，跟随最近会话指针；指针不存在时新建会话。
 
+退出前，文本模式会写出锚定的 `usage:` token 记录（`input`/`output`/`cacheRead`/`cacheWrite`，未报告为 `-`），有子代理时再写 `usage-children:`/`usage-total:`，然后写一条 `cost:` 记录，按模型的 LiteLLM 基础单价为父级分桶计价（`total=… … model=<id> pricing=<litellmKey|unavailable|none>`，未知一律为 `-`，见 [会话与状态 § 成本](./sessions-and-state.zh-CN.md#成本)），最后在观察到模型调用时写 `model-calls:`。
+
 无头模式无法弹出审批框。静态安全调用和已保存的放行规则仍能执行；其余调用到达默认 bridge 后会立即拒绝。只有确认自动化场景适合时，才使用 `--permission-mode auto`、`--permission-mode yolo` 或 `--yolo`。工具被拒绝不一定导致进程失败，模型可以处理拒绝后正常结束。只有回合、快照、最近会话指针和严格清理全部成功，进程才返回成功。SIGINT 属于取消，状态码非零。
 
 以下有界自动化选项只可与 `-p/--print` 一起使用：

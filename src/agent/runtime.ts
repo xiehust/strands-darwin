@@ -140,6 +140,8 @@ import {
   type SessionCallStats,
 } from './call-stats.js';
 import { anchorFromCall, resolveAnchor, type ContextAnchor } from './context-anchor.js';
+import type { ModelPriceLookup } from './cost.js';
+import { defaultModelPriceStore, type ModelPriceStore } from '../pricing/model-prices.js';
 
 /** Test seam for proving startup unwind after resources have been acquired. */
 type RuntimeCreateCheckpoint = 'after-initialize';
@@ -440,6 +442,13 @@ export class AgentRuntime {
   /** Serializes the bounded list/save/list critical section across concurrent callers. */
   private rewindCaptureTail: Promise<void> = Promise.resolve();
 
+  /**
+   * The per-process model price cache (`~/.darwin/model-prices.json`). Process-wide
+   * on purpose: a `/clear` successor shares its fetch-once bookkeeping, and children
+   * never touch it — they report tokens, the parent prices them.
+   */
+  private readonly modelPrices: ModelPriceStore = defaultModelPriceStore();
+
   private constructor(
     private readonly agent: Agent,
     // Not readonly: `/model` replaces it, which is also why `Agent.model` being a
@@ -481,6 +490,10 @@ export class AgentRuntime {
     this.thinkingPlan = info.thinking;
     this.liveConfig = info.config;
     this.promptCachePlan = info.promptCache;
+    // Fire and forget: a mapped id costs one file read, an unmapped one starts the
+    // single bounded background fetch. Nothing awaits it — not startup, not the
+    // first turn — and it cannot reject, so it cannot become a startup failure.
+    void this.modelPrices.ensure(this.liveConfig);
   }
 
   /**
@@ -1323,6 +1336,16 @@ export class AgentRuntime {
     return this.promptCachePlan;
   }
 
+  /**
+   * What the price cache knows about the live model — `priced` with its LiteLLM
+   * key and base rates, `none` when LiteLLM lists no such id, `unavailable` until
+   * the background fetch has recorded it. A read of the cache file, never a fetch
+   * or a write, so `/status` and `/usage` stay byte-zero mutation.
+   */
+  get modelPrice(): ModelPriceLookup {
+    return this.modelPrices.lookup(this.liveConfig);
+  }
+
   /** Every configured model, with the live one marked. */
   get modelChoices(): readonly ModelChoice[] {
     return this.liveConfig.modelChoices;
@@ -1366,6 +1389,8 @@ export class AgentRuntime {
     this.agent.model = model;
     this.model = model;
     this.liveConfig = next;
+    // Same rule as startup: lookup → fetch once if the new id is unmapped → record.
+    void this.modelPrices.ensure(next);
     // The measured `/context` base came from the previous model's tokenizer and its
     // prompt overhead, and describes a request this model would not have sent.
     this.contextAnchor = undefined;

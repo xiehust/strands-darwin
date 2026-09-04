@@ -66,6 +66,19 @@ session spend: input=412 output=1350 cacheRead=130961(+1 unreported) cacheWrite=
 
 这些数字来自 SDK 对回合的归因，不是账单。`/compact` 和溢出处理中的摘要调用绕过 meter，因此不会计入 `/usage` 或轨迹费用。回合编号会随进程重新从 1 开始，恢复后的记录可能包含多个 `turn 1`；合计按实际结束记录统计。
 
+### 成本
+
+`/status` 与 `/usage` 按当前模型的 LiteLLM 基础单价为本次运行的分桶计价——`cost  ≈ $0.0123 (base rates, LiteLLM)`；headless 运行则在 `usage:` 之后以一条 stderr 记录写出同样的数字：
+
+```text
+usage: input=412 output=1350 cacheRead=130961 cacheWrite=398
+cost: total=0.0415 input=0.0008 output=0.0135 cacheRead=0.0262 cacheWrite=0.0010 model=global.anthropic.claude-sonnet-5 pricing=global.anthropic.claude-sonnet-5
+```
+
+这只是估算：仅用基础档单价（不含长上下文或 1 小时缓存价目），即使中途 `/model` 切换也按当前模型的单价乘以整个进程的 meter，摘要调用因为 meter 不计而不计入。未报告的分桶绝不按 0 计价——TUI 显示下限（`≥ $0.0030 (cacheRead not reported, cacheWrite not reported; …)`），headless 则把该分桶和 `total` 都写成 `-`。`pricing=` 给出单价所用的 LiteLLM key，或 `none`（LiteLLM 没有该模型）/ `unavailable`（价目表尚未获取——离线，或后台下载还没完成）。
+
+单价来自 `~/.darwin/model-prices.json`，其中只保存每个模型 id 解析后的映射（绝不保存整张表）：文件已知的模型不会再次下载；未知 id 会在启动或 `/model` 时触发每进程一次的后台获取；LiteLLM 没有列出的 id 会被记录为无价格，避免每次启动重试。删除该文件即可刷新价格。`DARWIN_MODEL_PRICES_FETCH=off` 可完全关闭下载。
+
 ## 项目记忆
 
 轨迹可用时，记忆默认开启并存于工作树外：

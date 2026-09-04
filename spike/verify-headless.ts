@@ -27,6 +27,7 @@ import {
   createHeadlessPermissionBridge,
   formatHeadlessCallStats,
   formatHeadlessChildUsage,
+  formatHeadlessCost,
   formatHeadlessPermissionMode,
   formatHeadlessTotalUsage,
   formatHeadlessUsage,
@@ -394,6 +395,49 @@ async function usageRecordContracts(): Promise<void> {
   // children ran: it is computed from the parent meter alone.
   assert.doesNotMatch(full, /dispatches|children|total/u);
   countedAssert('the parent usage record stays byte-compatible whatever children spent', true);
+
+  // The cost record: its own line, fixed field order, four-decimal USD or `-`.
+  const costPattern =
+    /^cost: total=(\d+\.\d{4}|-) input=(\d+\.\d{4}|-) output=(\d+\.\d{4}|-) cacheRead=(\d+\.\d{4}|-) cacheWrite=(\d+\.\d{4}|-) model=\S+ pricing=\S+$/u;
+  const priced = {
+    kind: 'priced' as const,
+    litellmKey: 'global.anthropic.claude-sonnet-5',
+    rates: { inputCostPerToken: 2e-6, outputCostPerToken: 1e-5, cacheReadInputTokenCost: 2e-7, cacheCreationInputTokenCost: 2.5e-6 },
+  };
+  const costLine = formatHeadlessCost(
+    { inputTokens: 1_000_000, outputTokens: 100_000, cacheReadInputTokens: 500_000, cacheWriteInputTokens: 10_000 },
+    usageConfig('bedrock'),
+    priced,
+  );
+  assert.equal(
+    costLine,
+    'cost: total=3.1250 input=2.0000 output=1.0000 cacheRead=0.1000 cacheWrite=0.0250' +
+      ' model=global.anthropic.claude-opus-5 pricing=global.anthropic.claude-sonnet-5',
+  );
+  assert.match(costLine, costPattern);
+  countedAssert('a fully reported, priced run renders every bucket and the total in four-decimal USD', true);
+
+  // An unreported bucket is `-`, and so is the total: a floor in `total=` would be read as the total.
+  const partialCost = formatHeadlessCost({ inputTokens: 1_000_000, outputTokens: 100_000 }, usageConfig('openai', 'chat'), priced);
+  assert.equal(
+    partialCost,
+    'cost: total=- input=2.0000 output=1.0000 cacheRead=- cacheWrite=- model=openai.gpt-5.6-sol pricing=global.anthropic.claude-sonnet-5',
+  );
+  assert.match(partialCost, costPattern);
+  countedAssert('an unreported bucket keeps its field and the total at `-`, never 0', true);
+
+  const unavailableCost = formatHeadlessCost({ inputTokens: 5, outputTokens: 7 }, usageConfig('bedrock'), { kind: 'unavailable' });
+  assert.equal(unavailableCost, 'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=global.anthropic.claude-opus-5 pricing=unavailable');
+  const noPriceCost = formatHeadlessCost({ inputTokens: 5, outputTokens: 7 }, usageConfig('bedrock'), { kind: 'none' });
+  assert.equal(noPriceCost, 'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=global.anthropic.claude-opus-5 pricing=none');
+  for (const line of [costLine, partialCost, unavailableCost, noPriceCost]) {
+    assert.match(line, costPattern);
+    assert.doesNotMatch(line, /\n/u);
+  }
+  countedAssert('unavailable and no-price runs say why in `pricing=` with every figure `-`', true);
+  // The usage record is untouched by the existence of the cost record.
+  assert.equal(full, 'usage: input=123 output=456 cacheRead=789 cacheWrite=12');
+  countedAssert('the anchored usage record stays byte-identical beside the cost record', true);
 }
 
 async function usageProcessContract(): Promise<void> {
@@ -632,7 +676,8 @@ async function pipedStdinProcessContracts(): Promise<void> {
     'permission-mode: default\n' +
     'tool bash — bash: printf fixture\n' +
     'tool bash — ok\n' +
-    'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n',
+    'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
+    'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=fake.headless pricing=unavailable\n',
     'ignore stderr',
   );
   assert.deepEqual(sendInputs(ignored), ['fixture prompt']);

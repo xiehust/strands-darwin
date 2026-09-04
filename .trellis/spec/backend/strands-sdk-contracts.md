@@ -3266,6 +3266,62 @@ the one asked for just before (measured in `spike/verify-tui.ts usage`, which re
 while a 60-line answer is still streaming). Anything that shows these numbers while a turn is
 in flight has to say so — an unchanged counter next to a visibly working agent reads as broken.
 
+### Contract: cost accounting is a projection over the buckets, priced from a fetch-once cache
+
+Decided by the user (2026-09-04); offline checks `spike/verify-cost.ts`, `spike/verify-model-prices.ts`,
+plus the surface suites (`verify-status-command.ts`, `verify-usage.ts`, `verify-headless.ts`,
+`verify-headless-structured.ts`), all in `pnpm test`.
+
+- **One arithmetic, three surfaces.** `src/agent/cost.ts` (no `Agent`/`Model`/I/O import) computes
+  cost = Σ `usageBuckets` bucket × per-token rate and renders it; `/status`, `/usage` and the
+  headless `cost:` record all call it, so they cannot disagree. Every rendering names its basis:
+  `≈ $0.0123 (base rates, LiteLLM)` — four-decimal USD, LiteLLM's base tier only (no
+  `*_above_200k_tokens` / `*_above_1hr` rates), the *live* model's rates over the cumulative
+  per-process meter, summarization calls excluded because the meter excludes them. It is an
+  estimate and says so; it is never an invoice.
+- **Unknown is never 0.** An `undefined` bucket (unreported, or an unsplittable Responses input)
+  is excluded and named, and the total becomes a floor: `≥ $0.0030 (cacheRead not reported,
+  cacheWrite not reported; base rates, LiteLLM)`. A counted bucket whose rate LiteLLM does not list
+  is `unpriced` the same way; a zero count is a measured `$0` whatever the rate. No price for the
+  id → `unknown (no price for <model id>)`; table not fetched → `unknown (price unavailable)`.
+  Headless: `cost: total=<usd|-> input=<usd|-> output=<usd|-> cacheRead=<usd|-> cacheWrite=<usd|->
+  model=<id> pricing=<litellmKey|unavailable|none>` — `total=-` whenever *any* bucket is unknown,
+  because a floor written into `total=` would be read as the total. It is its own record, written
+  in text mode after `usage:` (and after `usage-children:`/`usage-total:` when present), before
+  `model-calls:`; the anchored `usage:` line stays byte-identical. Structured modes are unchanged.
+- **The cache is the only I/O and the only network.** `~/.darwin/model-prices.json`
+  (`userModelPricesFile()`, derived from the home directory, never `process.cwd()`), schema
+  `version: 1`, `source` URL, and `models`: darwin model id → `{ litellmKey, inputCostPerToken,
+  outputCostPerToken, cacheReadInputTokenCost?, cacheCreationInputTokenCost?, fetchedAt }`. Only
+  the resolved mapping is stored, never the 2 MB table. Written atomically (sibling temp +
+  `rename`) into a fresh re-read, so two processes filling different ids cannot erase each other.
+  A missing, unparsable, foreign-version or non-object file reads as empty; a malformed entry is
+  skipped. Nothing in the module throws to a caller.
+- **A mapped id is never refetched.** `ModelPriceStore.ensure(config)` reads the file; a present
+  entry returns without a fetch. An absent id fetches **once per process** (concurrent callers
+  share the promise; a failed attempt is remembered and not retried until the next launch), then
+  records the resolution — or `litellmKey: null` when LiteLLM lists no key, so an unpriced model
+  is also fetched once, not on every launch. `/model` to another id follows the same rule. The
+  fetch is `globalThis.fetch` (no dependency) with a 10 s `AbortController` timeout (unref'd
+  timer) and an 8 MiB cap enforced by `content-length` *and* by counting streamed bytes; non-2xx,
+  over-cap, invalid JSON or a non-object root are "unavailable" and write nothing.
+- **Key resolution order** (recorded as `litellmKey` so the mapping is auditable): exact darwin id,
+  then `bedrock/<id>` (bedrock), `bedrock_mantle/<id>` (openai with `bedrockMantle`),
+  `anthropic/<id>` (anthropic), `openai/<id>` (direct openai). The first candidate with numeric,
+  non-negative `input_cost_per_token` and `output_cost_per_token` wins; cache rates are optional.
+  Verified live 2026-09-04: `global.anthropic.claude-sonnet-5` is an exact key,
+  `openai.gpt-5.6-sol` exists only as `bedrock_mantle/openai.gpt-5.6-sol`.
+- **Startup fires and forgets; reads never fetch.** `AgentRuntime`'s constructor calls
+  `void store.ensure(liveConfig)` (so `create()` and the `/clear` successor both do), `changeModel`
+  repeats it for the new id; nothing awaits it — not startup, not the first turn — and it cannot
+  reject, warn or reach the Ink frame. `runtime.modelPrice` is `store.lookup(liveConfig)`: a
+  synchronous file read, never a fetch or a write, which is what keeps `/status` byte-zero
+  mutation. The store is one process-wide instance (`defaultModelPriceStore()`), shared by `/clear`
+  successors; children (subagents, workflow nodes) never touch it — they report tokens, the parent
+  prices them at its own live rates. `DARWIN_MODEL_PRICES_FETCH=off` makes the store cache-only;
+  `spike/run-tests.ts` and `spike/verify-tui.ts` set it so their private HOMEs never trigger the
+  download, and an air-gapped user can set it for the same reason.
+
 ### Contract: a serialized `AgentResult` carries no metrics, but its last message does
 
 Measured on `@strands-agents/sdk@1.12.0`, on a real recorded `trajectory.jsonl` and re-asserted

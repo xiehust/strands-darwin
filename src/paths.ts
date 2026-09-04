@@ -81,6 +81,15 @@ export function projectMemoryDir(projectRoot: string): string {
   return path.join(userProjectDir(projectRoot), 'memory');
 }
 
+/**
+ * `~/.darwin/model-prices.json` — the user-global cache of resolved per-model
+ * token prices (darwin model id → LiteLLM rates). Global, not project-scoped:
+ * a model's price does not depend on the repository it is used in.
+ */
+export function userModelPricesFile(): string {
+  return path.join(userDarwinDir(), 'model-prices.json');
+}
+
 /** Files that can change Darwin's own authorization or executable policy. */
 export function sensitiveDarwinPaths(projectRoot: string): string[] {
   return [

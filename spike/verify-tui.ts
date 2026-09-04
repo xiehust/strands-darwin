@@ -93,6 +93,10 @@ const HOME_CONFIG_LABEL = `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}`;
 
 const REAL_HOME = os.homedir();
 process.env['HOME'] = OWNED_HOME;
+// The owned HOME has no price cache, so every pty child would start the background
+// LiteLLM download; the free scenarios promise no network, and the live ones test
+// the model, not the price table. Inherited by every child through the environment.
+process.env['DARWIN_MODEL_PRICES_FETCH'] = 'off';
 // This suite makes real model calls, and an owned HOME hides `~/.aws` from the
 // credential chain. Pointed back at the developer's own files (harmless when they
 // do not exist, as on an instance role) so isolation cannot cost authentication.

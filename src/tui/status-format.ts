@@ -19,6 +19,7 @@ import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import type { ThinkingPlan } from '../agent/thinking.js';
 import { formatUsageValue, sumUsage, usageBuckets } from '../agent/usage.js';
+import { describeCost, type ModelPriceLookup } from '../agent/cost.js';
 import { describeCallEfficiency, type SessionCallStats } from '../agent/call-stats.js';
 import type { AppConfig } from '../config.js';
 import type { McpServerStatus } from '../mcp/registry.js';
@@ -63,6 +64,12 @@ export interface StatusFacts {
   /** `runtime.usage` — the SDK's per-process meter. */
   usage: UsageTotals;
   /**
+   * `runtime.modelPrice` — what the price cache says about the live model. A read
+   * of the cache file, never a fetch or a write: `/status` prices what it already
+   * knows and says `unavailable` otherwise.
+   */
+  modelPrice: ModelPriceLookup;
+  /**
    * `runtime.childUsage` — subagent/workflow child spend summed over the
    * dispatch registry, or undefined when no dispatch ever reported usage.
    */
@@ -104,6 +111,9 @@ export function formatStatusReport(facts: StatusFacts): string {
     ['trajectory', describeTrajectory(facts.trajectory)],
     ['diagnostics', describeDiagnostics(facts.diagnostics)],
     ['tokens', describeTokens(facts)],
+    // Directly beside the tokens it prices, through the one shared `describeCost`
+    // projection (`/usage` and the headless `cost:` record use the same arithmetic).
+    ['cost', describeCost(facts.modelPrice, facts.usage, facts.config)],
     [
       'context',
       facts.context === undefined
@@ -113,26 +123,32 @@ export function formatStatusReport(facts: StatusFacts): string {
   ];
   const labelWidth = Math.max(...rows.map(([label]) => label.length));
   const lines = rows.map(([label, value]) => `  ${label.padEnd(labelWidth)}  ${value}`);
-  // Child spend rides directly under the tokens row as `label: value` lines
-  // rather than table rows, so today's aligned block stays byte-identical when
-  // no dispatch reported usage — the additive-everywhere contract.
+  // Child spend rides directly under the cost row as `label: value` lines rather
+  // than table rows, so today's aligned block stays byte-identical when no
+  // dispatch reported usage — the additive-everywhere contract. Each child usage
+  // line is followed by its cost line, priced at the live model's rates like the
+  // parent's (children run the parent's model config).
   if (facts.childUsage !== undefined) {
     const { dispatches, usage } = facts.childUsage;
-    const tokensIndex = rows.findIndex(([label]) => label === 'tokens');
+    const total = sumUsage([facts.usage, usage]);
+    const plural = `${dispatches} dispatch${dispatches === 1 ? '' : 'es'}`;
+    const costIndex = rows.findIndex(([label]) => label === 'cost');
     lines.splice(
-      tokensIndex + 1,
+      costIndex + 1,
       0,
-      `  usage (subagents, ${dispatches} dispatch${dispatches === 1 ? '' : 'es'}): ${describeCounters(usage, facts.config)}`,
-      `  usage (session total): ${describeCounters(sumUsage([facts.usage, usage]), facts.config)}`,
+      `  usage (subagents, ${plural}): ${describeCounters(usage, facts.config)}`,
+      `  cost (subagents, ${plural}): ${describeCost(facts.modelPrice, usage, facts.config)}`,
+      `  usage (session total): ${describeCounters(total, facts.config)}`,
+      `  cost (session total): ${describeCost(facts.modelPrice, total, facts.config)}`,
     );
   }
   // Per-call efficiency rides the same additive convention, one bounded line from
   // the shared `describeCallEfficiency` renderer (the same arithmetic the /usage
-  // efficiency section derives from), directly under the token block.
+  // efficiency section derives from), directly under the token/cost block.
   if (facts.callStats !== undefined) {
-    const tokensIndex = rows.findIndex(([label]) => label === 'tokens');
+    const costIndex = rows.findIndex(([label]) => label === 'cost');
     lines.splice(
-      tokensIndex + 1 + (facts.childUsage === undefined ? 0 : 2),
+      costIndex + 1 + (facts.childUsage === undefined ? 0 : 4),
       0,
       `  model calls: ${describeCallEfficiency(facts.callStats, facts.config)}`,
     );

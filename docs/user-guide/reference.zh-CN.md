@@ -90,10 +90,10 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/model [name]` | 列出/切换已配置模型，会话不断开 |
 | `/permissions` | 当前放行规则及来源 |
 | `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘规则 |
-| `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/费用/上下文 |
+| `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/费用/成本/上下文 |
 | `/tasks` | 后台任务及其最近三行非空输出；忙碌时也可用；读取不会移动模型的 `output`/`wait` 游标 |
 | `/trajectory` | 当前运行的本地记录状态 |
-| `/usage` | 当前进程 token 分桶；未报告不等于零 |
+| `/usage` | 当前进程 token 分桶及近似美元成本；未报告不等于零 |
 | `/workflow <task>` | 请模型把任务编排为一次 `workflow` DAG 调用；不带参数时打印用法 |
 | `/skill-name [request]` | 显式加载并发送一个 skill |
 | `/developer <requirement>` | 监督一个完整、可持续的无头 worker |
@@ -138,6 +138,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 ## 报告命令约定
 
 - `/status` 只读已有 accessor，不产生任何修改；未知指标显示为 `not reported`；名称列表用 `… N more` 控制长度。
+- `/status` 与 `/usage` 的 `cost` 行是当前模型的 Σ token 分桶 × LiteLLM 基础单价，始终标注 `≈ … (base rates, LiteLLM)`；某个分桶未报告时显示为下限（`≥ $x.xxxx (cacheWrite not reported; …)`），绝不冒充零；`unknown (no price for <model>)` / `unknown (price unavailable)` 说明没有数字的原因。读取它不会触发下载或写入。单价缓存在 `~/.darwin/model-prices.json`，每个模型 id 只在启动时（以及 `/model` 切到新 id 时）后台从 LiteLLM 公开价目表获取一次；环境变量 `DARWIN_MODEL_PRICES_FETCH=off` 可让 darwin 完全不联网，只使用文件里已有的价格。
 - `/help` 只写一条有界历史通知，在忙碌队列判断前处理，不调用模型/工具/网络，也不改配置或会话。
 - `/mcp` 不探测、不重连；工具名只来自已经注册的状态。
 - `/context` 及阈值提醒只是建议。已知比例跨过阈值后，回合结束时只提醒一次 `/compact`；只有确认比例下降后才重新触发；未知估算保持安静。

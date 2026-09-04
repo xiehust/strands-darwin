@@ -17,6 +17,7 @@ import {
   formatHeadlessTrajectoryProblem,
   formatHeadlessCallStats,
   formatHeadlessChildUsage,
+  formatHeadlessCost,
   formatHeadlessTotalUsage,
   formatHeadlessUsage,
   headlessField,
@@ -314,6 +315,17 @@ export async function runHeadlessProcess(
         }
       } catch {
         // Child meters are observers too; a failed read costs the records, not the run.
+      }
+      if (!structured) {
+        try {
+          // The cost record follows the usage records (parent, then children/total when
+          // present) as its own line, so the anchored `usage:` record never changes
+          // shape. A price the cache cannot supply is `-`/`unavailable`, not an error;
+          // the structured protocols stay unchanged (out of scope, additive later).
+          target.stderr.write(`${formatHeadlessCost(runtime.usage, runtime.config, runtime.modelPrice)}\n`);
+        } catch {
+          // A price is a projection over an observer; a failed read costs the record, not the run.
+        }
       }
       try {
         // Same additive contract as the child records: the `model-calls:` record and

@@ -27,6 +27,7 @@ import {
 import { compactFocusRefusal, normalizeCompactFocus } from '../agent/compact.js';
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
+import { describeCost, type ModelPriceLookup } from '../agent/cost.js';
 import { averageRequestInputTokens, type SessionCallStats } from '../agent/call-stats.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from '../agent/stream-resumption.js';
 import { contextOverflowErrorMessage } from '../context-overflow-error.js';
@@ -1004,7 +1005,7 @@ export function App({
         dispatch({ type: 'userInput', text });
         dispatch({
           type: 'notice',
-          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage, runtime.childUsage, runtime.callStats),
+          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage, runtime.childUsage, runtime.callStats, runtime.modelPrice),
         });
         return;
       }
@@ -1253,6 +1254,7 @@ export function App({
             trajectory: runtime.trajectoryStatus,
             diagnostics: runtime.diagnosticsStatus,
             usage: runtime.usage,
+            modelPrice: runtime.modelPrice,
             childUsage: runtime.childUsage,
             callStats: runtime.callStats,
             turnInFlight: status === 'streaming',
@@ -2664,6 +2666,7 @@ export function formatUsageReport(
   lastTurn?: UsageTotals,
   children?: { dispatches: number; usage: UsageTotals },
   callStats?: SessionCallStats,
+  modelPrice?: ModelPriceLookup,
 ): string {
   const rows = usageRows(usage, config);
   const derived = cacheEffectivenessRows(usage, config);
@@ -2672,6 +2675,13 @@ export function formatUsageReport(
     ...rows.map(({ label, value }) => ({ label, rendered: formatUsageValue(value) })),
     ...derived.map(({ label, value }) => ({ label, rendered: value ?? 'not reported' })),
   ].map(({ label, rendered }) => `  ${label.padEnd(labelWidth)}  ${rendered.padStart(12)}`);
+  // The cost line closes the block — the same `describeCost` projection `/status`
+  // prints, over the same buckets, so the two cannot disagree. Present only when
+  // the caller has a price lookup (the runtime always does; a formatter-only caller
+  // that passes none renders the pre-cost report byte for byte).
+  if (modelPrice !== undefined) {
+    lines.push(`  ${'cost'.padEnd(labelWidth)}  ${describeCost(modelPrice, usage, config)}`);
+  }
 
   // "This run" is the honest scope: the SDK's meter is per-process, so a resumed
   // session's earlier spend is simply not knowable here.

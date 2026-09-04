@@ -79,6 +79,8 @@ const suites = [
   'verify-working-context.ts',
   'verify-prompt-cache.ts',
   'verify-usage.ts',
+  'verify-cost.ts',
+  'verify-model-prices.ts',
   'verify-call-stats.ts',
   'verify-compact.ts',
   'verify-trajectory.ts',
@@ -106,7 +108,10 @@ for (const suite of suites) {
   try {
     const result = spawnSync(process.execPath, ['--import', 'tsx', path.join(import.meta.dirname, suite)], {
       cwd: path.resolve(import.meta.dirname, '..'),
-      env: { ...process.env, HOME: home },
+      // The private HOME means no suite finds a price cache, so every real-runtime
+      // suite would otherwise start the background LiteLLM download: keep the fast
+      // suites off the network (the pricing suite injects its own fetch stub).
+      env: { ...process.env, HOME: home, DARWIN_MODEL_PRICES_FETCH: 'off' },
       stdio: 'inherit',
     });
     if (result.error !== undefined) throw result.error;
