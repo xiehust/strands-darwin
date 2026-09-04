@@ -792,7 +792,16 @@ async function researchDocs(): Promise<void> {
   // this migration. New/edited fixture records receive no exception.
   const productionBacklogErrors = await validateBacklog(backlog, pages, REPO_ROOT, new Map([['SER-023', '13:4:5:4:3:3']]));
   if (productionBacklogErrors.length > 0) console.log(`  backlog errors: ${JSON.stringify(productionBacklogErrors)}`);
-  assert('all 88 production records pass paged-backlog validation', productionBacklogErrors.length === 0 && pages.reduce((count, page) => count + [...page.content.matchAll(BACKLOG_SECTION_PATTERN)].length, 0) === 88);
+  // The record total is derived from the routed pages, never hard-coded: every `## SER-/SRF-`
+  // heading must be a record `validateBacklog` parsed (the section count), so research and
+  // reflection appends stay green while a heading with a broken metadata block still fails.
+  const productionHeadingCount = pages.reduce((count, page) => count + [...page.content.matchAll(BACKLOG_DIRECTION_HEADING_PATTERN)].length, 0);
+  const productionRecordCount = pages.reduce((count, page) => count + [...page.content.matchAll(BACKLOG_SECTION_PATTERN)].length, 0);
+  console.log(`  production backlog records: ${productionRecordCount} (${productionHeadingCount} direction headings)`);
+  assert(
+    'every production record passes paged-backlog validation and every direction heading is a parsed record',
+    productionBacklogErrors.length === 0 && productionHeadingCount > 0 && productionRecordCount === productionHeadingCount,
+  );
 
   const fixtureIndex = '- [Priorities 001–020](./backlog/directions-001-020.md)\n';
   const fixturePage = (content: string, fileName = 'directions-001-020.md'): BacklogPage => ({ fileName, content });
@@ -814,6 +823,7 @@ async function researchDocs(): Promise<void> {
   assert('validator rejects incomplete fields', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord().replace('- Risk: 3\n', ''))])).some((error) => error.includes('Risk field')));
   assert('validator continues after one malformed record and catches a later duplicate ID', (await fixtureErrors(fixtureIndex, [fixturePage(`${fixtureRecord().replace('- Risk: 3\n', '')}\n${fixtureRecord({ priority: 2 })}\n${fixtureRecord({ priority: 3 })}`)])).some((error) => error.includes('duplicate ID')));
   assert('validator rejects malformed direction headings instead of silently dropping them', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord().replace('## SER-001 —', '## SER-001 -'))])).some((error) => error.includes('malformed direction heading')));
+  assert('validator rejects a heading whose metadata block is broken, so the derived record count cannot hide it', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord().replace('## SER-001 — Fixture direction\n\n- Status:', '## SER-001 — Fixture direction\n- Status:'))])).some((error) => error.includes('malformed direction heading(s)')));
   assert('validator rejects broken local origin links', (await fixtureErrors(fixtureIndex, [fixturePage(fixtureRecord({ originTarget: '../missing-report.md' }))])).some((error) => error.includes('broken Origin report')));
   assert('research template targets dated append-only reports', template.includes('research_<YYYY-MM-DD>.md') && template.includes('append another timestamped `## Run` section') && template.includes('Never overwrite an earlier run'));
   assert(
