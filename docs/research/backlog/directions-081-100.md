@@ -134,7 +134,7 @@ Original requirement: `workflowInputSchema` nodes gain optional `writeScopes: st
 
 ## SER-066 — Darwin-owned model retry policy: one `AfterModelCallEvent` hook on the parent and every recipe child replaces the SDK default strategy (`retryStrategy: null`), keeps a bounded schedule, makes the backoff wait resolve early on the agent's cancel signal without spending another model call, also retries a Bedrock pre-stream `ThrottlingException` (`ModelError` cause), and exposes the current wait as bounded runtime state
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 87
 - Score: 12
 - Importance: 4
@@ -146,7 +146,7 @@ Original requirement: `workflowInputSchema` nodes gain optional `writeScopes: st
 
 ### Implementation / acceptance evidence
 
-_(empty until accepted)_
+Accepted 2026-09-04 in `b52e061` (child session `session-20260904-113546097`, managed task `bg-8b8f9c66-370c-4b00-8bb4-15232e67a55f`, exit 0, no correction turn; launched from repository source at `97a21ac`). New `src/agent/model-retry.ts`: `installModelRetry(agent, schedule?)` registers one `AfterModelCallEvent` hook that only *decides* — `isRetryableModelError` (`ModelThrottledError`, or a `ModelError` whose `cause` is an `Error` named `ThrottlingException`; never `ContextWindowOverflowError`, `MaxTokensError` or the stream-interruption text via `isRetryableStreamInterruption`), the SDK default numbers through the SDK's exported `ExponentialBackoff` (6 attempts, 4 s base, 240 s cap, full jitter; per-budget timing reset at `attemptCount === 1`), a frozen `RetryWaitState` (`attempt`, `maxAttempts`, `waitMs`, `until`, `reason` ≤ 200 code points) and `event.retry = true` at once — plus an `InvokeModelStage` wrap middleware that performs the pending wait before `next()` racing `event.agent.cancelSignal`, clears the timer on both paths and on abort rethrows the failed attempt's own error without a provider call; `AfterInvocationEvent` clears state; `setModelRetryScheduleForTest` is the test seam. `runtime.ts` passes `retryStrategy: null`, installs the hook and exposes parent-only `retryWait()`; `child-recipe.ts` does the same per child (state private). **Accepted deviation**: the requirement placed the sleep inside the hook, but the report's own R3 (`_streamCore` awaits hook callbacks before yielding) makes acceptance 1a impossible there; the middleware is an SDK-designed extension point, so § SDK reuse holds. Consequence: a wait cancelled by Esc ends the turn with the last throttle error (the TUI's `turnAborted` still yields a `cancelled` lifecycle outcome; the notice reads `turn failed: <message>`) — phrasing handed to SER-067. Host acceptance, independently re-run at `b52e061`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 (98 suites, 0 `FAIL`); `pnpm build` exit 0; `spike/verify-model-retry.ts` 47/47 — failed `afterModelCallEvent`s reached the driver 1 ms/0 ms after failure against a 300 ms wait and the next call started 301 ms later; `cancel()` inside a 5 s wait settled `send()` in 2 ms with one model call and 0 live timers; `ThrottlingException` cause retried (the real `Model.streamAggregated` did the wrapping), `ValidationException` cause failed on attempt 1 with cause intact; cap → exactly `maxAttempts` calls, the original error object thrown, `turnEnded.failure` recorded, no invented `modelCall`; a recipe child retried both throttle shapes honouring 604 ms of waits, and a targeted dispatch cancel settled in 2 ms with no further child call; `verify-stream-resumption.ts` 16/16, `verify-subagent-heartbeats.ts` 36/36. Docs: new load-bearing § "Model retry — darwin-owned cancellable wait", `AGENTS.md` row (30,501 B < 32,768; SDK-reuse row now names hooks/middleware), `using-darwin.md` + `zh-CN` paragraph. Not proven: a live Bedrock throttle. Logged as [`Batch 91`](../../iteration-log.md).
 
 ### Notes / blockers / abandonment reason
 
@@ -154,7 +154,7 @@ Requirement: darwin owns model-call retry through the SDK's designed extension p
 
 ## SER-067 — Surface the retry wait: one bounded phrase on the existing busy-row suffix, one additive headless `model.retrying` event, a `waiting-on-model` safe phase on the child heartbeat row, and a failed turn that names the attempts made — all read from SER-066's runtime state, never a new row, tick source or channel
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 88
 - Score: 9
 - Importance: 3
@@ -169,6 +169,8 @@ Requirement: darwin owns model-call retry through the SDK's designed extension p
 _(empty until accepted)_
 
 ### Notes / blockers / abandonment reason
+
+Premise adjustment from SER-066's acceptance (2026-09-04, `b52e061`): the retry state is `AgentRuntime.retryWait()` (frozen `RetryWaitState` from `src/agent/model-retry.ts`; a child's state is private to its installer, so the child phase must be published from inside the recipe/dispatch, not read from the parent), and a wait cancelled by Esc ends the turn with the last throttle error rather than a `cancelled` stop reason — the TUI notice currently reads `turn failed: <provider message>`; this direction should phrase that outcome honestly (e.g. `cancelled during retry wait (attempt N/M)`) alongside the attempts-made wording for the cap.
 
 Depends on SER-066 (the runtime retry state). Requirement: `src/tui/busy-suffix.ts` gains an optional retry-state input rendered as one bounded phrase after the existing elapsed/token suffix (e.g. `· throttled, retry 3/6 in 12s`), absent when there is no wait, read on the busy row's existing tick in `src/tui/App.tsx` — no new frame row, tick source or channel (§ The busy rows). `src/headless-protocol.ts` emits one additive `model.retrying` event (`attempt`, `maxAttempts`, `waitMs`, `reason`) when a wait begins, alongside the `turn.continuing` precedent; schema v1 readers ignore unknown types. A recipe child in a wait publishes a `waiting-on-model` safe phase through the existing `setPhase` so the heartbeat row and `subagent.progress` show it. When the cap is reached, the driver's `turn failed:` notice states the attempts made (e.g. `after 6 attempts`). Trajectory records are unchanged (failed attempts remain visible as `modelCall.attempt` gaps); `/export` and `formatReplay` stay byte-identical. Acceptance: `spike/verify-busy-suffix.ts` (phrase present/absent/bounded), `spike/verify-headless-structured.ts` (event shape and ordering), `spike/verify-subagent-heartbeats.ts` (phase), a free pty fixture or scenario showing the phrase on the busy row without a second row, `spike/verify-export-command.ts` unchanged; `pnpm typecheck`, `pnpm test`, `pnpm build`; docs (`reference.md` + `zh-CN`, load-bearing section from SER-066 extended).
 
