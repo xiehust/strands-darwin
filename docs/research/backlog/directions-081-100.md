@@ -131,3 +131,44 @@ Accepted 2026-09-03 in `0db9b14` (child session `session-20260903-173610646`, ma
 Accepted as designed: scope denial holds in every mode including yolo — declared scopes are a structural fact of the DAG the parent itself declared, not a confirmation policy (stated in the gate comment, spec and docs). Bash is uncovered by design (a command's write set is not statically knowable; the description says so). Three identical out-of-scope retries in one child reach the retry guard's stop-and-report path (intended, not separately tested). AGENTS.md now has 45 B of headroom — future rows must go to the load-bearing doc.
 
 Original requirement: `workflowInputSchema` nodes gain optional `writeScopes: string[]` (1–8 entries, each a relative path prefix normalized against the project root; absolute, `..`-escaping or empty entries are a bounded validation error). Validation, alongside the existing cycle/duplicate/unknown checks and before any dispatch or model, refuses a DAG in which two nodes with overlapping scopes (one prefix contains the other) are not connected by a directed edge path in either direction — the "serialize writes by edges" rule made checkable. At run time the dispatch record carries the node's scopes; the permission gate, which already resolves `source` from `BeforeToolCallEvent.agent.id`, denies (`deny(...)`, never `confirm()`) a `fileEditor` `create`/`str_replace`/`insert` whose resolved path is outside the caller's declared scopes with one bounded reason naming the scopes. `view`, other tools, unscoped nodes, `subagent` dispatches and the parent are unchanged; bash is explicitly out of scope and the tool description says so. Peer evidence: DeepSeek `writeScopes` "normalized advisory path prefixes rather than locks" with overlap warnings (S3), Claude Code "each teammate owns a different set of files" (S1). Darwin evidence: `WorkflowTool` refuses invalid DAGs before dispatch; the same-path race is measured in load-bearing § Same-path fileEditor ordering. Acceptance: `spike/verify-workflow-tool.ts` proves unordered overlap is refused before any child, ordered overlap is accepted, bad prefixes are refused, and an in-scope/out-of-scope write from a scoped node is allowed/denied by the existing gate with the dispatch `source` in the reason; `spike/verify-permissions-command.ts` and `verify-workflow-command.ts` unchanged; `pnpm typecheck`, `pnpm test`, `pnpm build`.
+
+## SER-066 — Darwin-owned model retry policy: one `AfterModelCallEvent` hook on the parent and every recipe child replaces the SDK default strategy (`retryStrategy: null`), keeps a bounded schedule, makes the backoff wait resolve early on the agent's cancel signal without spending another model call, also retries a Bedrock pre-stream `ThrottlingException` (`ModelError` cause), and exposes the current wait as bounded runtime state
+
+- Status: `not-started`
+- Priority: 87
+- Score: 12
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-09-04.md`](../research_2026-09-04.md) (run `11:14:57Z`, rolled `open` path)
+
+### Implementation / acceptance evidence
+
+_(empty until accepted)_
+
+### Notes / blockers / abandonment reason
+
+Requirement: darwin owns model-call retry through the SDK's designed extension points, never by intercepting the loop. `src/agent/runtime.ts` passes `retryStrategy: null` to `new Agent({...})` and installs one darwin hook (new module, e.g. `src/agent/model-retry.ts`, in the shape of `installMaxTokensRecovery`: `agent.addHook(AfterModelCallEvent, ...)`) on the parent; `src/agents/child-recipe.ts` installs the same on every recipe child. The hook acts only when `event.error` is set and `event.retry` is not already true. Retryable: `ModelThrottledError` (the SDK's current set) plus a `ModelError` whose `cause` is an `Error` named `ThrottlingException` (the AWS SDK's pre-stream Bedrock 429, re-thrown as-is by `bedrock.js` and wrapped by `model.js`); everything else — including `CancelledError`, `ContextWindowOverflowError`, `MaxTokensError` and the exact stream-interruption `ModelError` owned by `src/agent/stream-resumption.ts` — is left untouched. Schedule: bounded, the SDK default numbers unless a recorded reason changes them (6 attempts, `ExponentialBackoff({ baseMs: 4_000, maxMs: 240_000 })` from the SDK's own exported class, full jitter); attempt state resets when `event.attemptCount === 1`. The wait is a promise that resolves on the timer **or** on `event.agent.cancelSignal` abort; on abort the hook returns without setting `event.retry` so the loop throws/settles `cancelled` with no further model call. Before sleeping, the hook publishes bounded state readable by the runtime (`attempt`, `maxAttempts`, `waitMs`, `until`, `reason` ≤ 200 code points), cleared when the wait ends, on the next `beforeModelCallEvent`, and at turn end; SER-067 renders it. Evidence for the gap: the origin report's R2–R5 (offline probe: the driver saw attempt 1's throttle only at 2.90 s after a 2.8 s hidden sleep; `cancel()` at 1.6 s took effect at 3.2 s and still cost one more model call). Acceptance: new `spike/verify-model-retry.ts` in `pnpm test` (fake `Model` through `AgentRuntime.create` + `setRuntimeModelFactoryForTest`) proving success on attempt 3 with each failed `afterModelCallEvent` delivered before its wait, cancel-during-wait settling promptly with no extra model call, `ThrottlingException`-cause retried while another `ModelError` is not, cap reached → original error thrown and `turnEnded.failure` recorded, a recipe child behaving identically and dispatch cancellation not delayed; `spike/verify-stream-resumption.ts`, `verify-subagents`-adjacent offline suites and `verify-trajectory.ts` unchanged; `docs/architecture/load-bearing-decisions.md` gains one section and `AGENTS.md` one table row (under the 32 KiB cap); `pnpm typecheck`, `pnpm test`, `pnpm build`.
+
+## SER-067 — Surface the retry wait: one bounded phrase on the existing busy-row suffix, one additive headless `model.retrying` event, a `waiting-on-model` safe phase on the child heartbeat row, and a failed turn that names the attempts made — all read from SER-066's runtime state, never a new row, tick source or channel
+
+- Status: `not-started`
+- Priority: 88
+- Score: 9
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 3
+- Risk: 2
+- Origin report: [`research_2026-09-04.md`](../research_2026-09-04.md) (run `11:14:57Z`, rolled `open` path)
+
+### Implementation / acceptance evidence
+
+_(empty until accepted)_
+
+### Notes / blockers / abandonment reason
+
+Depends on SER-066 (the runtime retry state). Requirement: `src/tui/busy-suffix.ts` gains an optional retry-state input rendered as one bounded phrase after the existing elapsed/token suffix (e.g. `· throttled, retry 3/6 in 12s`), absent when there is no wait, read on the busy row's existing tick in `src/tui/App.tsx` — no new frame row, tick source or channel (§ The busy rows). `src/headless-protocol.ts` emits one additive `model.retrying` event (`attempt`, `maxAttempts`, `waitMs`, `reason`) when a wait begins, alongside the `turn.continuing` precedent; schema v1 readers ignore unknown types. A recipe child in a wait publishes a `waiting-on-model` safe phase through the existing `setPhase` so the heartbeat row and `subagent.progress` show it. When the cap is reached, the driver's `turn failed:` notice states the attempts made (e.g. `after 6 attempts`). Trajectory records are unchanged (failed attempts remain visible as `modelCall.attempt` gaps); `/export` and `formatReplay` stay byte-identical. Acceptance: `spike/verify-busy-suffix.ts` (phrase present/absent/bounded), `spike/verify-headless-structured.ts` (event shape and ordering), `spike/verify-subagent-heartbeats.ts` (phase), a free pty fixture or scenario showing the phrase on the busy row without a second row, `spike/verify-export-command.ts` unchanged; `pnpm typecheck`, `pnpm test`, `pnpm build`; docs (`reference.md` + `zh-CN`, load-bearing section from SER-066 extended).
+
