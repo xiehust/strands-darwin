@@ -29,7 +29,7 @@ import {
 } from './background-delegation.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
 import { installModelCallBudget } from './model-call-budget.js';
-import { installModelRetry, type ModelRetryHandle, type RetryWaitState } from './model-retry.js';
+import { installModelRetry, type ModelRetryHandle, type ModelRetryOutcome, type RetryWaitState } from './model-retry.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
 import { concurrencyCap } from '../agents/concurrency-limit.js';
 import {
@@ -1540,6 +1540,15 @@ export class AgentRuntime {
    */
   retryWait(): RetryWaitState | undefined {
     return this.modelRetry.retryWait();
+  }
+
+  /**
+   * How the parent's last turn ended when retry played a part — the cap reached, or
+   * a wait cancelled — for the driver's failure notice; `undefined` otherwise and
+   * once the next turn begins (SER-067). Parent only, like {@link retryWait}.
+   */
+  retryOutcome(): ModelRetryOutcome | undefined {
+    return this.modelRetry.retryOutcome();
   }
 
   /**

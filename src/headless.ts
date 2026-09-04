@@ -2,6 +2,7 @@ import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { classify, type ApprovalMode, type PermissionBridge } from './agent/permission.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/stream-resumption.js';
+import { describeRetryWait, type RetryWaitState } from './agent/model-retry.js';
 import { isRefusalStop, REFUSAL_EMPTY_REPLY_ERROR, REFUSAL_NOTICE } from './agent/refusal.js';
 import type { AgentRuntime } from './agent/runtime.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
@@ -11,7 +12,26 @@ import type { AppConfig } from './config.js';
 
 const FIELD_LIMIT = 240;
 
-export type HeadlessRuntime = Pick<AgentRuntime, 'send' | 'expandSlashCommand'>;
+/**
+ * What a headless turn needs from the runtime. `retryWait` is optional so test
+ * doubles built from `send` alone keep working; a real `AgentRuntime` always has it.
+ */
+export type HeadlessRuntime = Pick<AgentRuntime, 'send' | 'expandSlashCommand'> &
+  Partial<Pick<AgentRuntime, 'retryWait'>>;
+
+/**
+ * The parent's pending model-retry wait (SER-067), read where a failed
+ * `afterModelCallEvent` arrives — the runtime publishes it before that event reaches the
+ * driver. `undefined` when there is none, when the runtime cannot say, or when reading
+ * throws: progress reporting never fails the turn it reports on.
+ */
+export function pendingRetryWait(runtime: HeadlessRuntime): RetryWaitState | undefined {
+  try {
+    return typeof runtime.retryWait === 'function' ? runtime.retryWait() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Stable startup diagnostic for the effective post-override permission mode. */
 export function formatHeadlessPermissionMode(mode: ApprovalMode): string {
@@ -190,9 +210,19 @@ async function runOneHeadlessTurn(
   let completed = false;
   let cancelled = false;
   let refused = false;
+  // Same channel the tool lines use, one bounded record per wait (SER-067); the state
+  // object is unique per decided wait, so identity dedupes it.
+  let announcedWait: RetryWaitState | undefined;
 
   for await (const event of runtime.send(input, userInput)) {
     consumeEvent(event, answer, writeStderr);
+    if (event.type === 'afterModelCallEvent' && event.error !== undefined) {
+      const wait = pendingRetryWait(runtime);
+      if (wait !== undefined && wait !== announcedWait) {
+        announcedWait = wait;
+        writeStderr(`model ${describeRetryWait(wait, Date.now())} — ${headlessField(wait.reason)}\n`);
+      }
+    }
     if (event.type === 'agentResultEvent') {
       completed = true;
       cancelled = event.result.stopReason === 'cancelled';

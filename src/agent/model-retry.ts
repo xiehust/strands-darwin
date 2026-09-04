@@ -29,6 +29,7 @@
 import {
   AfterInvocationEvent,
   AfterModelCallEvent,
+  BeforeInvocationEvent,
   ContextWindowOverflowError,
   ExponentialBackoff,
   InvokeModelStage,
@@ -67,9 +68,77 @@ export interface RetryWaitState {
   readonly reason: string;
 }
 
+/**
+ * How the last turn's retry budget ended, when it ended badly (SER-067). `exhausted`:
+ * every one of `attempts` calls was throttled and the last error propagated.
+ * `cancelled`: the wait before `attempt` (the attempt that was about to be made, out of
+ * `maxAttempts`) was aborted by `cancel()`, so the turn ended with the previous attempt's
+ * error and no further model call. Cleared when the next invocation begins.
+ */
+export type ModelRetryOutcome =
+  | { readonly kind: 'exhausted'; readonly attempts: number }
+  | { readonly kind: 'cancelled'; readonly attempt: number; readonly maxAttempts: number };
+
 export interface ModelRetryHandle {
   /** The wait in progress (or decided and about to start), `undefined` otherwise. */
   retryWait(): RetryWaitState | undefined;
+  /** The last invocation's bad retry ending, until the next invocation begins. */
+  retryOutcome(): ModelRetryOutcome | undefined;
+}
+
+/**
+ * Optional observer for one installer's waits — how a recipe child publishes its
+ * (otherwise private) wait as a dispatch phase. Callbacks run synchronously inside the
+ * hook/middleware and must not throw; a throw is swallowed so it cannot alter the loop.
+ */
+export interface ModelRetryObserver {
+  /** A wait was decided and is about to begin. */
+  waitStarted?(state: RetryWaitState): void;
+  /**
+   * The wait ended: `completed` is true when the timer elapsed and the next attempt
+   * begins, false when it was cancelled (or abandoned before it ran).
+   */
+  waitEnded?(state: RetryWaitState, completed: boolean): void;
+}
+
+/**
+ * The attempt a wait leads to — `state.attempt` is the one that failed, so the next
+ * is one more. Every SER-067 surface (busy row, headless event, child phase, notices)
+ * names *this* number: "retry 3/6" is the third call of six about to be made.
+ */
+export function retryNextAttempt(state: RetryWaitState): number {
+  return state.attempt + 1;
+}
+
+/**
+ * `throttled, retry 3/6 in 12s` — the one bounded phrase every live surface appends.
+ * Remaining seconds are `until` against `nowMs`, rounded up so `0s` appears only once
+ * the deadline has passed, and never negative. No `reason`: the row is bounded and
+ * provider text may be long.
+ */
+export function describeRetryWait(state: RetryWaitState, nowMs: number): string {
+  const remainingSeconds = Math.max(0, Math.ceil((state.until - nowMs) / 1000));
+  return `throttled, retry ${retryNextAttempt(state)}/${state.maxAttempts} in ${remainingSeconds}s`;
+}
+
+/**
+ * The failed turn's notice, with the retry ending named when there is one:
+ * `turn failed after 6 attempts: <message>` at the cap, `cancelled during retry wait
+ * (attempt 2/6): <message>` after a cancelled wait, plain `turn failed: <message>`
+ * otherwise. Shared by the TUI and headless drivers so the two cannot drift.
+ */
+export function retryFailureNotice(outcome: ModelRetryOutcome | undefined, message: string): string {
+  const heading = retryFailureHeading(outcome);
+  return `${heading ?? 'turn failed'}: ${message}`;
+}
+
+/** The heading alone (`turn failed after 6 attempts`), or `undefined` when retry played no part. */
+export function retryFailureHeading(outcome: ModelRetryOutcome | undefined): string | undefined {
+  if (outcome === undefined) return undefined;
+  if (outcome.kind === 'exhausted') {
+    return `turn failed after ${outcome.attempts} ${outcome.attempts === 1 ? 'attempt' : 'attempts'}`;
+  }
+  return `cancelled during retry wait (attempt ${outcome.attempt}/${outcome.maxAttempts})`;
 }
 
 /** A fresh SDK-default schedule: 6 attempts, exponential 4 s base / 240 s cap, full jitter. */
@@ -165,6 +234,7 @@ function waitUntilOrAbort(until: number, signal: AbortSignal): Promise<boolean> 
 export function installModelRetry(
   agent: LocalAgent,
   schedule: ModelRetrySchedule = scheduleFactoryForTest?.() ?? defaultModelRetrySchedule(),
+  observer: ModelRetryObserver = {},
 ): ModelRetryHandle {
   if (!Number.isInteger(schedule.maxAttempts) || schedule.maxAttempts < 1) {
     throw new RangeError(`Model retry maxAttempts must be an integer >= 1, got ${schedule.maxAttempts}.`);
@@ -174,11 +244,28 @@ export function installModelRetry(
   let lastDelayMs: number | undefined;
   let pending: PendingWait | undefined;
   let current: RetryWaitState | undefined;
+  let outcome: ModelRetryOutcome | undefined;
 
-  const clear = (): void => {
+  const notify = (callback: (() => void) | undefined): void => {
+    try {
+      callback?.();
+    } catch {
+      // An observer is presentation; it cannot be allowed to change the loop's course.
+    }
+  };
+
+  /** Ends the published wait (if any) and tells the observer how it ended. */
+  const endWait = (completed: boolean): void => {
+    const ended = current;
     pending = undefined;
     current = undefined;
+    if (ended !== undefined) notify(() => observer.waitEnded?.(ended, completed));
   };
+
+  // A fresh invocation starts with no story to tell about the previous one.
+  agent.addHook(BeforeInvocationEvent, () => {
+    outcome = undefined;
+  });
 
   agent.addHook(AfterModelCallEvent, (event) => {
     if (event.attemptCount === 1) {
@@ -187,11 +274,14 @@ export function installModelRetry(
     }
     // A wait that was decided but never consumed (another hook redirected the loop)
     // must not leak into a later, unrelated call.
-    clear();
+    endWait(false);
     if (event.retry === true || event.error === undefined) return;
     if (event.agent.cancelSignal.aborted) return;
     if (!isRetryableModelError(event.error)) return;
-    if (event.attemptCount >= schedule.maxAttempts) return;
+    if (event.attemptCount >= schedule.maxAttempts) {
+      outcome = Object.freeze({ kind: 'exhausted', attempts: event.attemptCount });
+      return;
+    }
 
     const now = Date.now();
     if (firstFailureAt === undefined) firstFailureAt = now;
@@ -214,10 +304,11 @@ export function installModelRetry(
     current = state;
     pending = { state, error: event.error };
     event.retry = true;
+    notify(() => observer.waitStarted?.(state));
   });
 
   // Turn end or failure, whichever way the loop left: nothing is waiting any more.
-  agent.addHook(AfterInvocationEvent, clear);
+  agent.addHook(AfterInvocationEvent, () => endWait(false));
 
   const waitBeforeModelCall: MiddlewareHandlerOf<typeof InvokeModelStage> = async function* (context, next) {
     const wait = pending;
@@ -227,7 +318,14 @@ export function installModelRetry(
       try {
         completed = await waitUntilOrAbort(wait.state.until, context.agent.cancelSignal);
       } finally {
-        current = undefined;
+        if (!completed) {
+          outcome = Object.freeze({
+            kind: 'cancelled',
+            attempt: retryNextAttempt(wait.state),
+            maxAttempts: wait.state.maxAttempts,
+          });
+        }
+        endWait(completed);
       }
       // Cancelled mid-wait: the attempt that was scheduled never asks the provider.
       // Rethrowing the failed attempt's own error keeps what `send()` reports exactly
@@ -239,5 +337,5 @@ export function installModelRetry(
   };
   agent.addMiddleware(InvokeModelStage, waitBeforeModelCall);
 
-  return { retryWait: () => current };
+  return { retryWait: () => current, retryOutcome: () => outcome };
 }

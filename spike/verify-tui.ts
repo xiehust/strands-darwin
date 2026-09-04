@@ -17,18 +17,20 @@
  * developer's — see the note there before adding a scenario that reads one.
  *
  * Free scenarios (no model call): model | mode | clear | completion | pathCompletion | recall |
- * recallEmpty | bang | queue | wordNav | undo | mcp | resume | copy | rewind | escRewind — `copy`
+ * recallEmpty | bang | queue | wordNav | undo | mcp | resume | copy | rewind | escRewind | modelRetry — `copy`
  * (SER-057) seeds a completed answer through a local fixture model and `--resume`, then proves
  * the OSC 52 sequence in the raw pty output decodes to the exact committed answer text;
  * `escRewind` (SER-059) drives the seeded `rewind` fixture with two separate Escape pty events
- * and proves the chord opens the `/rewind` chooser only on an empty idle composer.
+ * and proves the chord opens the `/rewind` chooser only on an empty idle composer; `modelRetry`
+ * (SER-067) drives an always-throttled fixture model behind darwin's own retry and proves the
+ * wait phrase rides the busy row and the failed turn names how retry ended.
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | contextOverflow | cursor | completion |
  *                 pathCompletion | historySearch | recall | recallEmpty | resume | copy | bang | queue | clear | mcpStderr | mcp |
  *                 rewind | escRewind | toolDetails |
- *                 agentsMd | usage | tasks | effort | model | plan | longAnswer | tallDraft |
+ *                 agentsMd | usage | tasks | effort | model | plan | updatePlan | modelRetry | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
  */
 import { createHash } from 'node:crypto';
@@ -2818,6 +2820,57 @@ async function updatePlanChecklist(): Promise<void> {
   }
 }
 
+/**
+ * Free pty proof for SER-067 — no model call reaches a provider: the fixture model is
+ * throttled on every call behind darwin's own retry (two attempts, 2.5 s wait). What only
+ * a pty can show is here: the retry phrase rides the existing `working…` row (one row
+ * carries it, none is added, the provider reason stays off the frame), ctrl+c inside the
+ * wait ends the turn with the honest `cancelled during retry wait` notice and no further
+ * model call, and running the budget out names the attempts made.
+ */
+async function modelRetryBusyRow(): Promise<void> {
+  header('TUI — the model-retry wait on the busy row, then the cancelled and exhausted notices');
+  await resetWorkDir();
+  await writeHomeConfig({ permissionMode: 'yolo', trajectory: true });
+  const entry = path.join(REPO_ROOT, 'spike/fixtures/model-retry-cli.ts');
+  const calls = path.join(WORK_DIR, 'model-retry-model-calls');
+  const tui = startTui({ cwd: WORK_DIR, entry, cols: 120, rows: 30 });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
+
+    const firstTurn = tui.mark();
+    tui.submit('throttle me');
+    await tui.waitFor('throttled, retry 2/2 in', { timeoutMs: 30_000, from: firstTurn, settleMs: 100 });
+    const frameRows = tui.frame.split('\n');
+    const phraseRows = frameRows.filter((row) => row.includes('throttled'));
+    assert('exactly one live row carries the retry phrase, and it is the existing working… row',
+      phraseRows.length === 1 && phraseRows[0]!.includes('working…') && /working…[^\n]*throttled, retry 2\/2 in \d+s/u.test(phraseRows[0]!));
+    assert('the provider reason stays off the frame', !tui.frame.includes('Rate exceeded'));
+    assert('one model call has been made while the wait is pending', (await readFile(calls, 'utf8')).trim() === '1');
+
+    const beforeCancel = tui.mark();
+    tui.send('\u0003');
+    await tui.waitFor('cancelled during retry wait (attempt 2/2): Rate exceeded', { timeoutMs: 30_000, from: beforeCancel });
+    await waitForIdle(tui, 30_000);
+    assert('the cancelled wait is named instead of a bare turn failed',
+      tui.screen.slice(beforeCancel).includes('cancelled during retry wait (attempt 2/2): Rate exceeded') &&
+      !tui.screen.slice(beforeCancel).includes('turn failed:'));
+    assert('cancelling the wait spent no further model call', (await readFile(calls, 'utf8')).trim() === '1');
+    assert('the phrase left the frame with the turn', !tui.frame.includes('throttled'));
+
+    const secondTurn = tui.mark();
+    tui.submit('throttle again');
+    await tui.waitFor('turn failed after 2 attempts: Rate exceeded', { timeoutMs: 30_000, from: secondTurn });
+    await waitForIdle(tui, 30_000);
+    assert('running the budget out names the attempts made', (await readFile(calls, 'utf8')).trim() === '3');
+
+    tui.submit('/exit');
+    assert('modelRetry pty exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 /** Free local-model pty proof for the live-tail to Static terminal handoff. */
 async function finalReplyHandoff(): Promise<void> {
   header('TUI — the final live tail is erased before it enters Static');
@@ -4399,6 +4452,7 @@ const SCENARIOS = {
   mode: modeCommand,
   plan: planHeader,
   updatePlan: updatePlanChecklist,
+  modelRetry: modelRetryBusyRow,
   finalReplyHandoff,
   longAnswer,
   tallDraft,

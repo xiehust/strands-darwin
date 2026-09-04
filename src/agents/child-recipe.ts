@@ -23,7 +23,7 @@ import type { InterventionHandler, Model, Tool } from '@strands-agents/sdk';
 import type { ProjectInstructions } from '../agent/instructions.js';
 import { composeSystemPrompt } from '../agent/instructions.js';
 import { installMaxTokensRecovery } from '../agent/max-tokens-recovery.js';
-import { installModelRetry } from '../agent/model-retry.js';
+import { installModelRetry, retryNextAttempt } from '../agent/model-retry.js';
 import type { AppConfig } from '../config.js';
 import type { SubagentDispatchHandle } from './dispatch-registry.js';
 import type { AgentDefinition } from './loader.js';
@@ -70,9 +70,26 @@ export function buildRecipeChild(options: ChildRecipeOptions): Agent {
     retryStrategy: null,
   });
   installMaxTokensRecovery(child);
-  // One private retry state per child; its wait is not published anywhere yet (SER-066).
-  installModelRetry(child);
-  child.addHook(BeforeModelCallEvent, () => dispatch?.setPhase({ kind: 'model' }));
+  // One private retry state per child. Its wait is published only as a closed dispatch
+  // phase (SER-067): two integers through the same `setPhase` every other phase uses,
+  // never the provider's reason text. `AfterModelCallEvent` hooks run in reverse
+  // registration order, so the `starting` hook below fires *before* the retry hook
+  // decides a wait — the observer, not hook order, is what puts the phase right.
+  const retry = installModelRetry(child, undefined, {
+    waitStarted: (state) => {
+      dispatch?.setPhase({ kind: 'waiting-on-model', attempt: retryNextAttempt(state), maxAttempts: state.maxAttempts });
+    },
+    // The timer elapsed and the next call begins now; a cancelled wait rethrows into
+    // the ordinary `AfterModelCallEvent`, whose hook below sets `starting` itself.
+    waitEnded: (_state, completed) => {
+      if (completed) dispatch?.setPhase({ kind: 'model' });
+    },
+  });
+  // `BeforeModelCallEvent` precedes the middleware that performs the wait, so while a
+  // wait is pending the honest phase is still the wait, not `model`.
+  child.addHook(BeforeModelCallEvent, () => {
+    if (retry.retryWait() === undefined) dispatch?.setPhase({ kind: 'model' });
+  });
   child.addHook(AfterModelCallEvent, () => dispatch?.setPhase({ kind: 'starting' }));
   child.addHook(BeforeToolCallEvent, (event) => {
     dispatch?.setPhase({ kind: 'tool', toolName: event.toolUse.name });

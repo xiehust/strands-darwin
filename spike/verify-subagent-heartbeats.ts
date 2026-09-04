@@ -13,6 +13,7 @@ import type { AgentDefinitionRegistry } from '../src/agents/loader.js';
 import { SubagentTool } from '../src/agents/subagent-tool.js';
 import { StructuredHeadlessWriter } from '../src/headless-protocol.js';
 import { ActiveToolCalls } from '../src/tui/ToolCallPanel.js';
+import { formatDispatchPhase } from '../src/tui/subagent-format.js';
 import { initialTurnState, turnReducer } from '../src/tui/turn-state.js';
 import { assert, header, report } from './shared.js';
 import { stripAnsi } from './tui-driver.js';
@@ -153,7 +154,7 @@ const heartbeats = progress.filter((event) => event.heartbeat);
 // monotonic clock, so a 25 ms tick can legitimately measure 24 ms — a 1 ms rounding
 // artefact, not an early heartbeat. Anything shorter would be a real bug.
 assert('active dispatches emit periodic stable-id increasing elapsed heartbeats', heartbeats.length >= 2 && heartbeats.every((event) => event.elapsedMs >= 24) && heartbeats.some((event, index) => index > 0 && event.elapsedMs > heartbeats[index - 1]!.elapsedMs));
-assert('phase metadata is closed and bounded', progress.every((event) => event.phase.kind === 'starting' || event.phase.kind === 'model' || (event.phase.kind === 'tool' && /^[a-zA-Z0-9_.-]{1,64}$/.test(event.phase.toolName))));
+assert('phase metadata is closed and bounded', progress.every((event) => event.phase.kind === 'starting' || event.phase.kind === 'model' || (event.phase.kind === 'tool' && /^[a-zA-Z0-9_.-]{1,64}$/.test(event.phase.toolName)) || (event.phase.kind === 'waiting-on-model' && Number.isInteger(event.phase.attempt) && Number.isInteger(event.phase.maxAttempts))));
 assert('progress contains no reasoning, payload, result, or transcript canaries', CANARIES.every((canary) => !JSON.stringify(progress).includes(canary)));
 const settledCount = progress.length;
 await wait(55);
@@ -250,6 +251,44 @@ const rendered = stripAnsi(renderToString(React.createElement(ActiveToolCalls, {
   maxRows: 1,
 })));
 assert('TUI reuses one granted live tool row with id, elapsed, and safe phase', rendered.split('\n').length === 1 && rendered.includes(uiProgress.dispatchId) && rendered.includes('model'));
+// A child's throttled retry wait (SER-067) is one more closed phase on the same row:
+// two integers, the attempt about to be made — never the provider's reason text.
+const waitingProgress: SubagentDispatchProgress = { ...uiProgress, phase: { kind: 'waiting-on-model', attempt: 3, maxAttempts: 6 } };
+const waitingState = turnReducer(state, { type: 'subagentProgress', progress: waitingProgress });
+const waitingRendered = stripAnsi(renderToString(React.createElement(ActiveToolCalls, {
+  tools: waitingState.activeTools,
+  frame: 0,
+  toolDetailsExpanded: false,
+  columns: 100,
+  maxRows: 1,
+}), { columns: 100 }));
+assert('the waiting-on-model phase renders on the same single row as `waiting on model, retry 3/6`',
+  waitingRendered.split('\n').length === 1 && waitingRendered.includes(uiProgress.dispatchId) && waitingRendered.includes('waiting on model, retry 3/6'));
+const narrowWaiting = stripAnsi(renderToString(React.createElement(ActiveToolCalls, {
+  tools: waitingState.activeTools,
+  frame: 0,
+  toolDetailsExpanded: false,
+  columns: 60,
+  maxRows: 1,
+}), { columns: 60 }));
+assert('on a narrow terminal the phase truncates at the row end instead of wrapping to a second row',
+  narrowWaiting.split('\n').length === 1 && narrowWaiting.endsWith('…'));
+assert('formatDispatchPhase keeps the existing phases byte-identical and the new one bounded',
+  formatDispatchPhase({ kind: 'starting' }) === 'starting' && formatDispatchPhase({ kind: 'model' }) === 'model' &&
+  formatDispatchPhase({ kind: 'tool', toolName: 'bash' }) === 'tool bash' &&
+  formatDispatchPhase({ kind: 'waiting-on-model', attempt: 6, maxAttempts: 6 }) === 'waiting on model, retry 6/6');
+const registryForPhase = new SubagentDispatchRegistry({ heartbeatIntervalMs: 60_000 });
+const phaseSeen: SubagentDispatchProgress[] = [];
+registryForPhase.subscribeProgress((event) => phaseSeen.push(event));
+const phaseHandle = registryForPhase.begin({ agentName: 'general', task: 'phase', toolUseId: 'phase001' });
+phaseHandle.setPhase({ kind: 'waiting-on-model', attempt: 2.9, maxAttempts: Number.NaN });
+assert('the registry publishes the waiting phase at once as closed non-negative integers',
+  phaseSeen.length === 1 && !phaseSeen[0]!.heartbeat &&
+  JSON.stringify(phaseSeen[0]!.phase) === JSON.stringify({ kind: 'waiting-on-model', attempt: 2, maxAttempts: 0 }) &&
+  registryForPhase.list()[0]?.phase.kind === 'waiting-on-model');
+phaseHandle.setPhase({ kind: 'model' });
+assert('the phase reverts through the same setPhase when the wait ends', registryForPhase.list()[0]?.phase.kind === 'model');
+phaseHandle.finish('succeeded');
 const hidden = stripAnsi(renderToString(React.createElement(ActiveToolCalls, {
   tools: [...state.activeTools, ...state.activeTools.map((entry) => ({ ...entry, id: `${entry.id}2` }))],
   frame: 0,

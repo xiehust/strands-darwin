@@ -30,6 +30,7 @@ import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectiveness
 import { describeModelCosts, type ModelUsageShare } from '../agent/cost.js';
 import { averageRequestInputTokens, type SessionCallStats } from '../agent/call-stats.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from '../agent/stream-resumption.js';
+import { retryFailureNotice, type ModelRetryOutcome, type RetryWaitState } from '../agent/model-retry.js';
 import { isRefusalStop, REFUSAL_NOTICE } from '../agent/refusal.js';
 import { contextOverflowErrorMessage } from '../context-overflow-error.js';
 
@@ -635,13 +636,16 @@ export function App({
   // wall clock from the turn's start ref, spend from `runtime.usage` — a synchronous
   // in-memory read of the SDK's accumulator, which counts a model call when it
   // finishes (the same reading mid-turn `/usage` reports as "not counted yet").
-  // No second interval, no I/O, and nothing of it while idle or compacting.
+  // No second interval, no I/O, and nothing of it while idle or compacting. A pending
+  // model-retry wait (`runtime.retryWait()`, SER-067) rides the same read as one more
+  // phrase on the same rows — never a row of its own.
   const busyElapsedMs = effectiveStatus === 'streaming' && turnStartedAt.current !== undefined
     ? Date.now() - turnStartedAt.current
     : undefined;
+  const busyRetryWait = busyElapsedMs === undefined ? undefined : liveRetryWait(runtime);
   const streamingHint = hintForStatus(
     effectiveStatus,
-    busyElapsedMs === undefined ? undefined : busySuffix(busyElapsedMs, liveSpend(runtime)),
+    busyElapsedMs === undefined ? undefined : busySuffix(busyElapsedMs, liveSpend(runtime), busyRetryWait),
     queued.length,
   );
   const activeToolClaims = state.activeTools.map((tool) => ({
@@ -869,9 +873,11 @@ export function App({
         // retry loops start, so the queue is returned to the editor below.
         lifecycleOutcome = turnAborted.current ? 'cancelled' : 'failure';
         turnAborted.current = true;
+        // A throttled turn names how retry ended — the cap (`after N attempts`) or a
+        // wait Esc cut short — from the runtime's own outcome, never the message text.
         dispatch({
           type: 'notice',
-          text: `turn failed: ${contextOverflowErrorMessage(error)}`,
+          text: retryFailureNotice(lastRetryOutcome(runtime), contextOverflowErrorMessage(error)),
           severity: 'error',
         });
       } finally {
@@ -2380,7 +2386,7 @@ export function App({
             states the spend. Truncated, never wrapped, so its counted `thinkingRows`
             of 1 stays true at every width with the suffix on it. */}
         {state.thinking && effectiveStatus === 'streaming' && (
-          <Text dimColor wrap="truncate-end">{`thinking…${busyElapsedMs === undefined ? '' : busySuffix(busyElapsedMs, undefined)}`}</Text>
+          <Text dimColor wrap="truncate-end">{`thinking…${busyElapsedMs === undefined ? '' : busySuffix(busyElapsedMs, undefined, busyRetryWait)}`}</Text>
         )}
         <ActiveToolCalls
           tools={state.activeTools}
@@ -2450,6 +2456,24 @@ function hintForStatus(status: Status, busyReadout?: string, queuedCount = 0): s
 function liveSpend(runtime: AgentRuntime): UsageBuckets | undefined {
   try {
     return usageBuckets(runtime.usage, runtime.config);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The parent's pending model-retry wait, under the same cannot-throw rule as {@link liveSpend}. */
+function liveRetryWait(runtime: AgentRuntime): RetryWaitState | undefined {
+  try {
+    return runtime.retryWait();
+  } catch {
+    return undefined;
+  }
+}
+
+/** The retry ending of the turn that just failed, or `undefined`; never throws into a notice. */
+function lastRetryOutcome(runtime: AgentRuntime): ModelRetryOutcome | undefined {
+  try {
+    return runtime.retryOutcome();
   } catch {
     return undefined;
   }

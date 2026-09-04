@@ -87,7 +87,15 @@ export function formatDispatchCompletion(dispatch: SubagentDispatchStatus): stri
 
 /** Closed phase text shared by live rows and headless heartbeat projections. */
 export function formatDispatchPhase(phase: SubagentDispatchPhase): string {
-  return phase.kind === 'tool' ? `tool ${phase.toolName}` : phase.kind;
+  switch (phase.kind) {
+    case 'tool':
+      return `tool ${phase.toolName}`;
+    case 'waiting-on-model':
+      // The child's own throttled retry wait (SER-067): the attempt about to be made.
+      return `waiting on model, retry ${phase.attempt}/${phase.maxAttempts}`;
+    default:
+      return phase.kind;
+  }
 }
 
 /** Bounded local response for `/agents cancel <id>`. */

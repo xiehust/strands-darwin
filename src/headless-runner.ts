@@ -3,6 +3,7 @@ import process from 'node:process';
 import type { DiagnosticLevel } from './agent/diagnostics.js';
 import type { RuntimeOptions } from './agent/runtime.js';
 import { AgentRuntime } from './agent/runtime.js';
+import { retryFailureHeading, type ModelRetryOutcome } from './agent/model-retry.js';
 import { HEADLESS_AUTONOMY_SECTION } from './agent/system-prompt.js';
 import { classify } from './agent/permission.js';
 import { dispatchLabel } from './agents/dispatch-registry.js';
@@ -198,20 +199,24 @@ export async function runHeadlessProcess(
 
     unsubscribeSubagentProgress = runtime.subscribeToSubagentProgress((progress) => {
       if (!progress.heartbeat) return;
+      const phase = progress.phase;
       if (structured) {
         protocol?.subagentProgress({
           dispatchId: progress.dispatchId,
           agentName: progress.agentName,
           elapsedMs: progress.elapsedMs,
-          phase: progress.phase.kind,
-          ...(progress.phase.kind === 'tool' ? { toolName: progress.phase.toolName } : {}),
+          phase: phase.kind,
+          ...(phase.kind === 'tool' ? { toolName: phase.toolName } : {}),
+          ...(phase.kind === 'waiting-on-model' ? { attempt: phase.attempt, maxAttempts: phase.maxAttempts } : {}),
         });
       } else {
-        const phase = progress.phase.kind === 'tool'
-          ? `tool ${progress.phase.toolName}`
-          : progress.phase.kind;
+        const text = phase.kind === 'tool'
+          ? `tool ${phase.toolName}`
+          : phase.kind === 'waiting-on-model'
+            ? `waiting on model, retry ${phase.attempt}/${phase.maxAttempts}`
+            : phase.kind;
         // Heartbeats are transient user visibility, not diagnostics persistence.
-        target.stderr.write(`subagent ${dispatchLabel(progress)} running ${Math.floor(progress.elapsedMs / 1000)}s · ${phase}\n`);
+        target.stderr.write(`subagent ${dispatchLabel(progress)} running ${Math.floor(progress.elapsedMs / 1000)}s · ${text}\n`);
       }
     });
 
@@ -238,10 +243,16 @@ export async function runHeadlessProcess(
       cancelled = true;
     } else {
       failed = true;
+      // How retry ended, when it did (SER-067): the cap or a cancelled wait, read from
+      // the runtime's own outcome — the `error:` line and the failure record keep the
+      // provider's message byte for byte.
+      const retry = runtime !== undefined && turnStarted ? lastRetryOutcome(runtime) : undefined;
       if (structured) {
-        errors.push(structuredFailure(runtime === undefined || !turnStarted ? 'runtime' : 'turn', error));
+        errors.push(structuredFailure(runtime === undefined || !turnStarted ? 'runtime' : 'turn', error, retry));
         if (runtime !== undefined && turnStarted) turnFailure = error;
       } else {
+        const heading = retryFailureHeading(retry);
+        if (heading !== undefined) note(`notice: ${heading}\n`, 'error');
         note(`error: ${errorMessage(error)}\n`, 'error');
       }
     }
@@ -413,4 +424,17 @@ function isInterruptedError(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
   return contextOverflowErrorMessage(error);
+}
+
+/**
+ * The parent's retry ending for the failure notice, or `undefined`. Guarded: the
+ * runtime may be a test double without the accessor, and a notice must never throw
+ * out of the failure path it is describing.
+ */
+function lastRetryOutcome(runtime: AgentRuntime): ModelRetryOutcome | undefined {
+  try {
+    return typeof runtime.retryOutcome === 'function' ? runtime.retryOutcome() : undefined;
+  } catch {
+    return undefined;
+  }
 }

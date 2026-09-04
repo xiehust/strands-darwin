@@ -9,8 +9,10 @@ import path from 'node:path';
 
 import {
   Agent,
+  ConstantBackoff,
   Message,
   Model,
+  ModelThrottledError,
   type AgentStreamEvent,
   type BaseModelConfig,
   type ModelStreamEvent,
@@ -24,6 +26,7 @@ import {
   structuredUsage,
 } from '../src/headless-protocol.js';
 import { installMaxTokensRecovery } from '../src/agent/max-tokens-recovery.js';
+import { installModelRetry } from '../src/agent/model-retry.js';
 import type { AppConfig } from '../src/config.js';
 import { assert, header, report } from './shared.js';
 
@@ -437,6 +440,126 @@ async function sdkProjectionPrivacy(): Promise<void> {
   assert('max-token recovery keeps each retained part exactly once', true);
 }
 
+/** Throttles the first `failures` calls with the SDK's own error class, then answers. */
+class ThrottlingModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.throttle', contextWindowLimit: 200_000 };
+  calls = 0;
+  constructor(private readonly failures: number) { super(); }
+  override updateConfig(config: BaseModelConfig): void { this.config = { ...this.config, ...config }; }
+  override getConfig(): BaseModelConfig { return this.config; }
+  override async *stream(_messages: Message[], _options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    this.calls += 1;
+    if (this.calls <= this.failures) throw new ModelThrottledError('Rate exceeded');
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    yield { type: 'modelContentBlockStartEvent' };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'after throttling' } };
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+  }
+}
+
+/**
+ * SER-067: one additive `model.retrying` per wait, read from the runtime's published
+ * state at the failed attempt's event — through a real Agent carrying darwin's retry
+ * installer for shape and ordering, then through the real runner for the failure notes.
+ */
+async function modelRetryProtocols(): Promise<void> {
+  header('structured headless — one bounded model.retrying per wait, and a failure that names retry');
+  const model = new ThrottlingModel(2);
+  const agent = new Agent({ model, printer: false, systemPrompt: 'test', retryStrategy: null });
+  const retry = installModelRetry(agent, { maxAttempts: 6, backoff: new ConstantBackoff({ delayMs: 40 }) });
+  const output: string[] = [];
+  const writer = new StructuredHeadlessWriter('stream-json', (text) => output.push(text));
+  const result = await runStructuredHeadlessTurn({
+    send: (input) => agent.stream(input),
+    expandSlashCommand: async () => null,
+    retryWait: () => retry.retryWait(),
+  }, 'go', writer, () => 'summary');
+  nodeAssert.equal(result.reply, 'after throttling');
+  nodeAssert.equal(model.calls, 3);
+  const records = lines(output.join(''));
+  const retrying = records.filter((record) => record.type === 'model.retrying');
+  nodeAssert.equal(retrying.length, 2, 'exactly one event per wait');
+  nodeAssert.deepEqual(
+    retrying.map((record) => [record.attempt, record.maxAttempts, record.waitMs, record.reason]),
+    [[2, 6, 40, 'ModelThrottledError: Rate exceeded'], [3, 6, 40, 'ModelThrottledError: Rate exceeded']],
+  );
+  for (const record of retrying) {
+    nodeAssert.deepEqual(
+      Object.keys(record).sort(),
+      ['attempt', 'maxAttempts', 'reason', 'schemaVersion', 'sequence', 'sessionId', 'timestamp', 'type', 'waitMs'],
+    );
+  }
+  const answerIndex = records.findIndex((record) => record.type === 'assistant.message');
+  const lastRetryIndex = records.map((record) => record.type).lastIndexOf('model.retrying');
+  nodeAssert.ok(answerIndex > lastRetryIndex, 'both waits are announced before the retried attempt answers');
+  nodeAssert.ok(retrying.every((record, index) => index === 0 || (record.sequence as number) > (retrying[index - 1]!.sequence as number)));
+  assert('a real throttled Agent yields one bounded model.retrying per wait, in order, before the answer', true);
+
+  // A double without the accessor (every pre-SER-067 caller) still runs and emits nothing new.
+  const plainModel = new ThrottlingModel(1);
+  const plainAgent = new Agent({ model: plainModel, printer: false, systemPrompt: 'test', retryStrategy: null });
+  installModelRetry(plainAgent, { maxAttempts: 6, backoff: new ConstantBackoff({ delayMs: 5 }) });
+  const plainOutput: string[] = [];
+  await runStructuredHeadlessTurn({
+    send: (input) => plainAgent.stream(input),
+    expandSlashCommand: async () => null,
+  }, 'go', new StructuredHeadlessWriter('stream-json', (text) => plainOutput.push(text)), () => 'summary');
+  nodeAssert.equal(lines(plainOutput.join('')).filter((record) => record.type === 'model.retrying').length, 0);
+  assert('a runtime without retryWait emits no model.retrying and still completes', true);
+
+  // The real runner: the wait line in text mode, the event in JSONL, and the failure
+  // that names how retry ended — while `error:` and the failure record stay the provider's.
+  const exhaustedText = await cli('retry-exhausted', 'text');
+  nodeAssert.equal(exhaustedText.code, 1);
+  nodeAssert.equal(exhaustedText.stdout, '');
+  nodeAssert.match(exhaustedText.stderr, /^model throttled, retry 2\/2 in \ds — ModelThrottledError: Rate exceeded$/mu);
+  nodeAssert.equal(exhaustedText.stderr.match(/^model throttled/gmu)?.length, 1);
+  nodeAssert.match(exhaustedText.stderr, /^notice: turn failed after 2 attempts\nerror: Rate exceeded$/mu);
+  assert('text mode writes one wait line per wait and a notice naming the attempts before the unchanged error line', true);
+
+  const cancelledText = await cli('retry-cancelled', 'text');
+  nodeAssert.match(cancelledText.stderr, /^notice: cancelled during retry wait \(attempt 2\/2\)\nerror: Rate exceeded$/mu);
+  assert('text mode names a cancelled wait honestly', true);
+
+  const exhaustedStream = await cli('retry-exhausted', 'stream-json');
+  const exhaustedRecords = lines(exhaustedStream.stdout);
+  const streamRetrying = exhaustedRecords.filter((record) => record.type === 'model.retrying');
+  nodeAssert.equal(streamRetrying.length, 1);
+  nodeAssert.deepEqual(
+    [streamRetrying[0]?.attempt, streamRetrying[0]?.maxAttempts, streamRetrying[0]?.waitMs, streamRetrying[0]?.reason],
+    [2, 2, 5, 'ModelThrottledError: Rate exceeded'],
+  );
+  const terminal = exhaustedRecords.at(-1)!;
+  nodeAssert.equal(terminal.outcome, 'failure');
+  const failure = (terminal.errors as Record<string, unknown>[])[0]!;
+  nodeAssert.equal(failure.stage, 'turn');
+  nodeAssert.equal(failure.name, 'ModelThrottledError');
+  nodeAssert.equal(failure.message, 'Rate exceeded');
+  nodeAssert.deepEqual(failure.retry, { kind: 'exhausted', attempts: 2 });
+  nodeAssert.ok(!('turn.failed' === terminal.type));
+  nodeAssert.equal(exhaustedRecords.filter((record) => record.type === 'turn.failed').length, 0, 'no continuation for a throttle');
+  assert('JSONL dedupes the repeated failed event to one model.retrying and the turn failure carries retry: exhausted', true);
+
+  const cancelledJson = await cli('retry-cancelled', 'json');
+  const cancelledFailure = ((lines(cancelledJson.stdout)[0]?.errors as Record<string, unknown>[])[0])!;
+  nodeAssert.deepEqual(cancelledFailure.retry, { kind: 'cancelled', attempt: 2, maxAttempts: 2 });
+  nodeAssert.equal(cancelledFailure.message, 'Rate exceeded');
+  const ordinary = await cli('turn-failure', 'json');
+  const ordinaryFailure = ((lines(ordinary.stdout)[0]?.errors as Record<string, unknown>[])[0])!;
+  nodeAssert.equal('retry' in ordinaryFailure, false);
+  assert('final JSON carries retry: cancelled for a cut-short wait and no retry key for an ordinary failure', true);
+
+  const jsonl: string[] = [];
+  new StructuredHeadlessWriter('stream-json', (text) => jsonl.push(text), 'session').subagentProgress({
+    dispatchId: 'alpha001', agentName: 'general', elapsedMs: 30_000, phase: 'waiting-on-model', attempt: 3, maxAttempts: 6,
+  });
+  const progress = JSON.parse(jsonl.join('')) as Record<string, unknown>;
+  nodeAssert.equal(progress.phase, 'waiting-on-model');
+  nodeAssert.deepEqual([progress.attempt, progress.maxAttempts, 'toolName' in progress], [3, 6, false]);
+  assert('subagent.progress carries the waiting-on-model phase as two integers', true);
+}
+
 function usageContract(): void {
   header('structured headless — usage unknown versus zero');
   const config: AppConfig = {
@@ -585,6 +708,7 @@ await contextOverflowGuidance();
 await phaseControls();
 await terminalLifecycle();
 await sdkProjectionPrivacy();
+await modelRetryProtocols();
 usageContract();
 await childUsageProtocols();
 await callStatsProtocols();

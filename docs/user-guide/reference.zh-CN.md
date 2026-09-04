@@ -143,6 +143,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 - `/mcp` 不探测、不重连；工具名只来自已经注册的状态。
 - `/context` 及阈值提醒只是建议。已知比例跨过阈值后，回合结束时只提醒一次 `/compact`；只有确认比例下降后才重新触发；未知估算保持安静。
 - `/compact` 不会自动执行。SDK conversation manager 在溢出时仍可能按 `summaryRatio` 和 `preserveRecentMessages` 做摘要。
+- 忙碌行（`working…` 提示行与 `thinking…` 行）以一个追加短语显示模型重试等待：` · throttled, retry 3/6 in 12s`——`3/6` 是即将发起的那次尝试，剩余秒数向上取整、最低 `0s`，供应商的原因文本绝不上行，也不会新增任何一行；没有等待时这些行逐字节不变。子代理自己的等待表现为实时行/心跳上的阶段 `waiting on model, retry 3/6`。因重试次数用尽而失败的回合显示 `turn failed after N attempts: <消息>`；在等待中被取消的回合显示 `cancelled during retry wait (attempt N/M): <消息>`。无头模式对应：文本模式在 stderr 写 `model throttled, retry 3/6 in 12s — <原因>`（每次等待一行），失败时在原样不变的 `error:` 行前多一行 `notice: <标题>`；`stream-json` 每次等待发出一条新增的 `model.retrying` 事件（`attempt`、`maxAttempts`、`waitMs`、`reason` ≤ 240 码点），`subagent.progress` 可能带 `phase: "waiting-on-model"` 及 `attempt`/`maxAttempts`；终态记录中 turn 阶段的 `errors[]` 条目新增可选的 `retry` 对象（`{ kind: "exhausted", attempts }` 或 `{ kind: "cancelled", attempt, maxAttempts }`），`name`/`message`/`cause` 仍是供应商原文。轨迹记录、`/export` 与 replay 均不变。
 - `/export` 与离线 replay 使用完全相同的 formatter。
 - `/copy` 复制的正是转录中显示、`/export` 写出的纯文本回答；回合进行中复制的是上一条已完成回答，尚无回答时（或刚 `/clear`/`/rewind` 之后）提示 `nothing to copy`。它不调用模型，也不写入任何记录。SSH 下需要终端接受 OSC 52 剪贴板写入（tmux 需 `set-clipboard on`）。
 

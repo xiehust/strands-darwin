@@ -110,16 +110,48 @@ settles it after a provider call reports the abort, and the alternatives are one
 a hook throwing control-flow errors. The TUI already reads an error after Esc as a cancelled
 outcome (`turnAborted`); headless reports the error as the turn's failure.
 
-`AgentRuntime.retryWait()` exposes the parent's state for the driver's existing tick (SER-067
-renders it); it is cleared when the wait ends, when the next model call actually begins, and at
-`AfterInvocationEvent`. A child's state stays behind its own installer. Trajectory records are
-unchanged: failed attempts remain visible only as `modelCall.attempt` gaps and `turnEnded.failure`
-carries the last attempt's original error at the cap. No config key tunes this. The schedule's only
-seam is `setModelRetryScheduleForTest`, used by the offline suite; production never sets it.
-Required check: `spike/verify-model-retry.ts` (in `pnpm test`) — failures delivered before the
-wait, cancel settling in milliseconds with no further call, the Bedrock cause retried and another
-cause not, exactly `maxAttempts` calls at the cap with the failure recorded, the state accessor
-populated then cleared, and a recipe child behaving the same under `dispatches.cancel`.
+`AgentRuntime.retryWait()` exposes the parent's state for the driver's existing tick; it is cleared
+when the wait ends, when the next model call actually begins, and at `AfterInvocationEvent`. A
+child's state stays behind its own installer. Trajectory records are unchanged: failed attempts
+remain visible only as `modelCall.attempt` gaps and `turnEnded.failure` carries the last attempt's
+original error at the cap. No config key tunes this. The schedule's only seam is
+`setModelRetryScheduleForTest`, used by the offline suite; production never sets it. Required
+check: `spike/verify-model-retry.ts` (in `pnpm test`) — failures delivered before the wait, cancel
+settling in milliseconds with no further call, the Bedrock cause retried and another cause not,
+exactly `maxAttempts` calls at the cap with the failure recorded, the state accessor populated then
+cleared, and a recipe child behaving the same under `dispatches.cancel`.
+
+**Rendering (SER-067) reads that state and adds no row, tick source or channel.** Every surface
+names the *attempt about to be made* (`retryNextAttempt`, `state.attempt + 1` of `maxAttempts`) —
+"retry 3/6" is the third call of six — and never the provider's `reason` on a live row. The TUI
+busy rows (`working…` hint and `thinking…`) append one phrase through the existing `busySuffix`
+(`src/tui/busy-suffix.ts`): ` · throttled, retry 3/6 in 12s`, seconds left from `until` against
+now rounded up and floored at 0, read on the spinner tick already there (`liveRetryWait`, a
+cannot-throw read like `liveSpend`); with no wait the suffix is byte-identical. Headless emits one
+additive `model.retrying` event per wait (`attempt`, `maxAttempts`, `waitMs`, `reason` under the
+tool-field cap) where the failed `afterModelCallEvent` arrives, deduped on the frozen state object
+— the same object is readable on a repeated event and announced once — and text mode writes one
+`model throttled, retry 3/6 in 12s — <reason>` stderr line on the channel the tool lines use;
+`HeadlessRuntime.retryWait` is optional so doubles built from `send` alone emit nothing new. A
+recipe child's wait is published only as the closed dispatch phase `waiting-on-model`
+(`attempt`, `maxAttempts` as bounded integers) through the same `setPhase` every other phase uses,
+wired from inside `buildRecipeChild` by the installer's `ModelRetryObserver` (`waitStarted` /
+`waitEnded`) — never read from the parent: `After*` hooks run in reverse registration order and
+`BeforeModelCallEvent` precedes the waiting middleware, so the observer sets the phase and the
+`BeforeModelCallEvent` hook leaves it alone while `retryWait()` is defined; a completed wait
+returns to `model`, a cancelled one falls to `starting` through the ordinary failed event. The
+heartbeat row and `subagent.progress` render it as `waiting on model, retry 3/6`. A failed turn
+names how retry ended from `retryOutcome()` (`{ kind: 'exhausted', attempts }` set when the cap
+is reached, `{ kind: 'cancelled', attempt, maxAttempts }` set by the middleware on abort, cleared at
+`BeforeInvocationEvent`), through the one shared `retryFailureNotice`: `turn failed after 6
+attempts: <message>` / `cancelled during retry wait (attempt 2/6): <message>`, plain `turn failed:`
+otherwise. Headless text mode adds one `notice: <heading>` line before its unchanged `error:` line;
+the structured turn-stage failure gains an additive optional `retry` object; `turn.failed`,
+`turnEnded.failure`, `/export` and `formatReplay` are untouched. Required checks:
+`spike/verify-busy-suffix.ts`, `spike/verify-headless-structured.ts`,
+`spike/verify-subagent-heartbeats.ts` and `spike/verify-model-retry.ts` (all in `pnpm test`), plus
+the free pty scenario `spike/verify-tui.ts modelRetry` (one row carries the phrase, ctrl+c inside
+the wait yields the cancelled notice with no further call, the cap yields the attempts-made notice).
 
 
 ## Clipboard image input — one transient SDK content-block invocation
@@ -949,8 +981,12 @@ when it *finishes*, the same lagging reading mid-turn `/usage` reports as "not c
 Honesty is the `usageBuckets` rule: an unreported metric is absent, never 0; a zero accumulator
 renders `↑0 ↓0`; a meter read that throws degrades to elapsed-only. The per-turn start ref is
 cleared in `runTurn`'s `finally`, so cancelled and failed turns stop the readout with the tick.
-Free check: `spike/verify-busy-suffix.ts` (in `pnpm test`); the live `verify-tui.ts usage`
-scenario asserts the readout is present mid-turn and ticks while the turn runs.
+The second read the same tick makes is `runtime.retryWait()` (SER-067): a pending model-retry wait
+appends ` · throttled, retry 3/6 in 12s` after the spend on both rows through the same `busySuffix`
+(the rules above hold: no row, no tick, the reason never on the row, byte-identical without a wait —
+see § Model retry). Free check: `spike/verify-busy-suffix.ts` (in `pnpm test`) and the free
+`verify-tui.ts modelRetry` scenario (the phrase on the `working…` row and nowhere else); the live
+`verify-tui.ts usage` scenario asserts the readout is present mid-turn and ticks while the turn runs.
 
 ## Cost accounting
 

@@ -30,6 +30,8 @@
 
 模型调用被限流时（供应商返回 429，包括 Bedrock 在任何流事件之前抛出的 `Too many requests`），会在同一回合内按 SDK 默认节奏重试：最多 6 次尝试，指数退避，基数 4 秒，上限 240 秒，带抖动。等待由 darwin 自己掌管：期间按 `Esc` / `Ctrl+C` 立即生效，回合以该次尝试的错误结束，不会再发起任何模型调用。若每次尝试都被限流，回合以最后一次供应商错误失败。其他模型错误不会重试。
 
+等待期间，忙碌行会就地说明——`working… · 12s · ↑1.2k ↓318 tokens · throttled, retry 3/6 in 12s`——其中 `3/6` 是即将发起的那次尝试，剩余秒数随该行原有的刷新节拍倒数；不会多出一行，供应商的错误文本也不会出现在那里。处于同样状态的子代理会在其实时工具行和心跳上显示 `waiting on model, retry 3/6`。因预算用尽而结束的回合显示 `turn failed after 6 attempts: <供应商消息>`；在等待中被你用 `Esc` / `Ctrl+C` 打断的回合显示 `cancelled during retry wait (attempt 3/6): <供应商消息>`，而不是笼统的 `turn failed:`。`-p` 文本模式下，同一次等待在 stderr 上是一行 `model throttled, retry 3/6 in 12s — <原因>`，失败时会在原样不变的 `error:` 行之前多一行 `notice:`；`--output-format stream-json` 每次等待发出一条 `model.retrying` 事件，失败记录新增一个 `retry` 对象（见[参考](reference.zh-CN.md#报告命令约定)）。
+
 ## 用户 shell 命令
 
 输入以 `!` 开头的内容，会运行一个由用户主动授权的 `bash -c` 进程组；包括 `plan` 在内的所有权限模式都可使用：

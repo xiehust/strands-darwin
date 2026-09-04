@@ -14,6 +14,7 @@
  * the SDK accumulates a model call when it finishes, so mid-call the totals lag on purpose.
  */
 import type { UsageBuckets } from '../agent/usage.js';
+import { describeRetryWait, type RetryWaitState } from '../agent/model-retry.js';
 import { formatTaskDuration } from './task-format.js';
 
 /**
@@ -34,16 +35,25 @@ export function formatTokenCount(count: number): string {
 }
 
 /**
- * ` · 12s · ↑1.2k ↓318 tokens` — or less, when a metric is unknown.
+ * ` · 12s · ↑1.2k ↓318 tokens` — or less, when a metric is unknown — plus
+ * ` · throttled, retry 3/6 in 12s` while a model-retry wait is pending (SER-067).
  *
  * `spend === undefined` (the meter could not be read, or the row wants the reduced
  * elapsed-only form) keeps just the duration; an undefined input bucket drops only the
  * `↑` part. Output is always a number in {@link UsageBuckets}, so `↓` is always stated
- * when spend is.
+ * when spend is. The retry phrase is the runtime's published wait state read on the same
+ * tick (`retryWait()`), rendered through the one shared {@link describeRetryWait}; with no
+ * wait (`undefined`) the suffix is byte-identical to what it was before the phrase existed.
  */
-export function busySuffix(elapsedMs: number, spend: UsageBuckets | undefined): string {
+export function busySuffix(
+  elapsedMs: number,
+  spend: UsageBuckets | undefined,
+  retryWait?: RetryWaitState,
+  nowMs: number = Date.now(),
+): string {
   const elapsed = ` · ${formatTaskDuration(elapsedMs)}`;
-  if (spend === undefined) return elapsed;
+  const retry = retryWait === undefined ? '' : ` · ${describeRetryWait(retryWait, nowMs)}`;
+  if (spend === undefined) return `${elapsed}${retry}`;
   const input = spend.input === undefined ? '' : `↑${formatTokenCount(spend.input)} `;
-  return `${elapsed} · ${input}↓${formatTokenCount(spend.output)} tokens`;
+  return `${elapsed} · ${input}↓${formatTokenCount(spend.output)} tokens${retry}`;
 }

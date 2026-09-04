@@ -1,7 +1,8 @@
 import { appendFileSync, writeFileSync } from 'node:fs';
 
-import { ContextWindowOverflowError, ModelError, type AgentStreamEvent } from '@strands-agents/sdk';
+import { ContextWindowOverflowError, ModelError, ModelThrottledError, type AgentStreamEvent } from '@strands-agents/sdk';
 
+import type { ModelRetryOutcome, RetryWaitState } from '../../src/agent/model-retry.js';
 import { NEVER_WITHDRAWN } from '../../src/agent/permission.js';
 import type { AgentRuntime, RuntimeOptions } from '../../src/agent/runtime.js';
 import type { ModelPriceLookup, ModelUsageShare } from '../../src/agent/cost.js';
@@ -49,6 +50,11 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
   options.onSessionResolved?.(sessionId);
   let cancelled = false;
   let sends = 0;
+  // The retry modes (SER-067) play the runtime's published wait state and its ending
+  // exactly as `AgentRuntime.retryWait()` / `retryOutcome()` would: one frozen wait
+  // object while attempt 2 is pending, then the outcome the failed turn leaves behind.
+  let retryWait: RetryWaitState | undefined;
+  let retryOutcome: ModelRetryOutcome | undefined;
 
 
   const readyFile = process.env['DARWIN_HEADLESS_FIXTURE_READY'];
@@ -119,6 +125,8 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
     diagnostics: undefined,
     expandSlashCommand: async () => null,
     subscribeToSubagentProgress: () => () => undefined,
+    retryWait: () => retryWait,
+    retryOutcome: () => retryOutcome,
     async compact() {
       if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'compact' })}\n`);
       if (mode === 'compact-failure') throw new Error('fixture compact failed');
@@ -185,6 +193,21 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
         throw new ContextWindowOverflowError(
           'prompt tokens (1416135) exceed model maximum (1050000) for openai.gpt-5.6-sol',
         );
+      }
+      if (mode === 'retry-exhausted' || mode === 'retry-cancelled') {
+        // Attempt 1 throttled: the wait is published *before* the failed event reaches
+        // the driver, and the same frozen object is readable on a second event too —
+        // the driver must announce it exactly once.
+        const throttle = new ModelThrottledError('Rate exceeded');
+        retryWait = Object.freeze({ attempt: 1, maxAttempts: 2, waitMs: 5, until: Date.now() + 5, reason: 'ModelThrottledError: Rate exceeded' });
+        const failed = event({ type: 'afterModelCallEvent', attemptCount: 1, error: throttle, retry: true });
+        yield failed;
+        yield failed;
+        retryWait = undefined;
+        retryOutcome = mode === 'retry-exhausted'
+          ? { kind: 'exhausted', attempts: 2 }
+          : { kind: 'cancelled', attempt: 2, maxAttempts: 2 };
+        throw throttle;
       }
 
       if (mode === 'interrupt' || mode === 'interrupt-cleanup') {

@@ -31,7 +31,13 @@ export type TerminalSubagentDispatchState = Exclude<SubagentDispatchState, 'runn
 export type SubagentDispatchPhase =
   | { readonly kind: 'starting' }
   | { readonly kind: 'model' }
-  | { readonly kind: 'tool'; readonly toolName: string };
+  | { readonly kind: 'tool'; readonly toolName: string }
+  /**
+   * The child's model call was throttled and its darwin-owned retry wait is pending
+   * (SER-067): `attempt` is the call about to be made, out of `maxAttempts`. Two
+   * integers from the child's own retry state — never the provider's reason text.
+   */
+  | { readonly kind: 'waiting-on-model'; readonly attempt: number; readonly maxAttempts: number };
 
 export interface SubagentDispatchStatus {
   /**
@@ -294,7 +300,9 @@ export class SubagentDispatchRegistry {
     if (record.state !== 'running') return;
     record.phase = phase.kind === 'tool'
       ? { kind: 'tool', toolName: boundedToolName(phase.toolName) }
-      : phase;
+      : phase.kind === 'waiting-on-model'
+        ? { kind: 'waiting-on-model', attempt: boundedCount(phase.attempt), maxAttempts: boundedCount(phase.maxAttempts) }
+        : phase;
     this.publishProgress(record, false);
   }
 
@@ -404,4 +412,9 @@ function boundedAgentName(name: string): string {
 function boundedToolName(name: string): string {
   const normalized = name.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 64);
   return normalized === '' ? 'tool' : normalized;
+}
+
+/** A retry attempt counter as a closed non-negative integer; anything else degrades to 0. */
+function boundedCount(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }

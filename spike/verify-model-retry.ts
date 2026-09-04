@@ -43,19 +43,22 @@ import {
   defaultModelRetrySchedule,
   installModelRetry,
   isRetryableModelError,
+  retryFailureNotice,
   retryReason,
   setModelRetryScheduleForTest,
+  type ModelRetryOutcome,
   type RetryWaitState,
 } from '../src/agent/model-retry.js';
 import { allowAllBridge, PermissionGate } from '../src/agent/permission.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { trajectoryPath } from '../src/agent/session.js';
-import { SubagentDispatchRegistry } from '../src/agents/dispatch-registry.js';
+import { SubagentDispatchRegistry, type SubagentDispatchPhase } from '../src/agents/dispatch-registry.js';
 import type { AgentDefinitionRegistry } from '../src/agents/loader.js';
 import { SubagentTool, SUBAGENT_TOOL_NAME } from '../src/agents/subagent-tool.js';
 import { configPath } from '../src/config.js';
 import { readTrajectory } from '../src/trajectory/reader.js';
 import type { TurnEndedRecord } from '../src/trajectory/record.js';
+import { formatDispatchPhase } from '../src/tui/subagent-format.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 ownPrivateHome('model-retry');
@@ -312,7 +315,12 @@ try {
     );
 
     const other = new ScriptedModel(['validation', 'ok']);
-    const failed = await withRuntime(other, (runtime) => drive(runtime, 'bad input'));
+    let otherOutcome: ModelRetryOutcome | undefined | 'unread' = 'unread';
+    const failed = await withRuntime(other, async (runtime) => {
+      const seen = await drive(runtime, 'bad input');
+      otherOutcome = runtime.retryOutcome();
+      return seen;
+    });
     assert(
       'a ModelError with a ValidationException cause fails the turn on attempt 1',
       failed.error instanceof ModelError && failed.stopReason === undefined && other.callsAt.length === 1,
@@ -321,6 +329,10 @@ try {
       'the error reaching send() is the SDK-wrapped ModelError of that attempt, cause intact',
       failed.error instanceof ModelError && failed.error.cause === other.thrown[0] && failed.waitAtFailure[0] === undefined,
     );
+    assert(
+      'a failure retry played no part in leaves no retry outcome and the plain notice (SER-067)',
+      otherOutcome === undefined && retryFailureNotice(otherOutcome, 'Malformed input') === 'turn failed: Malformed input',
+    );
   }
 
   header('model retry — (d) every attempt throttles: exactly maxAttempts calls, original error, failure recorded');
@@ -328,9 +340,14 @@ try {
     shortSchedule(3, WAIT_MS);
     const model = new ScriptedModel(['throttle']);
     let sessionId = '';
+    let outcome: ModelRetryOutcome | undefined | 'unread' = 'unread';
+    let notice = '';
     const observed = await withRuntime(model, async (runtime) => {
       sessionId = runtime.info.sessionId;
-      return drive(runtime, 'always throttled');
+      const seen = await drive(runtime, 'always throttled');
+      outcome = runtime.retryOutcome();
+      notice = retryFailureNotice(runtime.retryOutcome(), (seen.error as Error).message);
+      return seen;
     });
     assert('exactly maxAttempts (3) model calls were made', model.callsAt.length === 3);
     assert(
@@ -339,6 +356,14 @@ try {
     );
     assert('the driver saw every failed attempt, including the last', JSON.stringify(observed.attempts) === '[1,2,3]');
     assert('no wait was decided for the last attempt', observed.waitAtFailure[2] === undefined);
+    assert(
+      'retryOutcome() reports the exhausted budget with the attempts made (SER-067)',
+      JSON.stringify(outcome) === JSON.stringify({ kind: 'exhausted', attempts: 3 }),
+    );
+    assert(
+      'the shared failure notice names the attempts before the provider message',
+      notice === 'turn failed after 3 attempts: Rate exceeded',
+    );
     const read = await readTrajectory(trajectoryPath(root, sessionId));
     const ended = read.records.find((record): record is TurnEndedRecord => record.type === 'turnEnded');
     assert(
@@ -362,6 +387,7 @@ try {
     let settledAt = 0;
     let midWait: RetryWaitState | undefined;
     let afterCancel: RetryWaitState | undefined | 'unread' = 'unread';
+    let cancelOutcome: ModelRetryOutcome | undefined | 'unread' = 'unread';
     const timeoutsBefore = activeTimeouts();
     const observed = await withRuntime(model, async (runtime) => {
       const seen = await drive(runtime, 'cancel me', (event) => {
@@ -375,6 +401,7 @@ try {
       });
       settledAt = Date.now();
       afterCancel = runtime.retryWait();
+      cancelOutcome = runtime.retryOutcome();
       return seen;
     });
     assert('the cancel landed inside a published wait', midWait !== undefined && midWait.attempt === 1 && midWait.waitMs === LONG_WAIT_MS);
@@ -388,6 +415,15 @@ try {
       observed.error === model.thrown[0] && observed.stopReason === undefined,
     );
     assert('the retry-wait state is cleared by the cancel', afterCancel === undefined);
+    assert(
+      'retryOutcome() reports the cancelled wait as the attempt it was leading to (SER-067)',
+      JSON.stringify(cancelOutcome) === JSON.stringify({ kind: 'cancelled', attempt: 2, maxAttempts: 6 }),
+    );
+    assert(
+      'the shared failure notice says the wait was cancelled, not a bare turn failed',
+      retryFailureNotice(cancelOutcome === 'unread' ? undefined : cancelOutcome, (observed.error as Error).message) ===
+        'cancelled during retry wait (attempt 2/6): Rate exceeded',
+    );
     assert(
       'the aborted attempt is reported once more and never retried',
       JSON.stringify(observed.attempts) === '[1,2]' && observed.waitAtFailure[1] === undefined,
@@ -405,8 +441,10 @@ try {
     const model = new ScriptedModel(['throttle', 'throttle', 'throttle', 'ok']);
     const results = await withRuntime(model, async (runtime) => {
       const first = await drive(runtime, 'first');
+      const outcomeAfterFirst = runtime.retryOutcome();
       const second = await drive(runtime, 'second');
-      return { first, second };
+      const outcomeAfterSecond = runtime.retryOutcome();
+      return { first, second, outcomeAfterFirst, outcomeAfterSecond };
     });
     assert(
       'turn 1 fails at the cap (2 calls) and turn 2 retries once more before succeeding (2 calls)',
@@ -414,6 +452,12 @@ try {
         results.second.stopReason === 'endTurn' &&
         model.callsAt.length === 4 &&
         JSON.stringify(results.second.attempts) === '[1]',
+    );
+    assert(
+      'the exhausted outcome survives the failed turn and is cleared by the next turn (SER-067)',
+      results.outcomeAfterFirst?.kind === 'exhausted' &&
+        results.outcomeAfterFirst.attempts === 2 &&
+        results.outcomeAfterSecond === undefined,
     );
   }
 
@@ -450,6 +494,10 @@ try {
     shortSchedule(6, WAIT_MS);
     const childModel = new ScriptedModel(['throttle', 'bedrock-throttle', 'ok']);
     const ok = fixture([childModel]);
+    // Every phase change with its time: the wait must be published as its own closed
+    // phase, and `model` must not reappear until the wait has actually elapsed.
+    const phases: { phase: SubagentDispatchPhase; at: number; heartbeat: boolean }[] = [];
+    ok.dispatches.subscribeProgress((progress) => phases.push({ phase: progress.phase, at: Date.now(), heartbeat: progress.heartbeat }));
     const parent = await host(ok.tool);
     const startedAt = Date.now();
     const result = (await parent.tool[SUBAGENT_TOOL_NAME]!.invoke({ task: 'retry inside' } as never, {
@@ -462,10 +510,42 @@ try {
     );
     assert(`the child honoured both waits (${elapsed} ms ≥ ${2 * WAIT_MS} ms)`, elapsed >= 2 * WAIT_MS - 20);
     assert('the child dispatch settled succeeded', ok.dispatches.list().every((entry) => entry.state === 'succeeded'));
+    const changes = phases.filter((entry) => !entry.heartbeat);
+    const kinds = changes.map((entry) => entry.phase.kind);
+    const waits = changes.filter((entry) => entry.phase.kind === 'waiting-on-model');
+    assert(
+      'the child published waiting-on-model for each wait, naming the attempt about to be made (SER-067)',
+      JSON.stringify(waits.map((entry) => entry.phase)) ===
+        JSON.stringify([
+          { kind: 'waiting-on-model', attempt: 2, maxAttempts: 6 },
+          { kind: 'waiting-on-model', attempt: 3, maxAttempts: 6 },
+        ]),
+    );
+    assert(
+      'phase order per attempt: model → starting → waiting-on-model → model, ending starting after the answer',
+      JSON.stringify(kinds) ===
+        JSON.stringify(['model', 'starting', 'waiting-on-model', 'model', 'starting', 'waiting-on-model', 'model', 'starting']),
+    );
+    const modelAfterWait = waits.map((wait) => changes.find((entry) => entry.at >= wait.at && entry.phase.kind === 'model' && changes.indexOf(entry) > changes.indexOf(wait)));
+    assert(
+      `the phase returned to model only once each wait had elapsed (${modelAfterWait.map((entry, index) => entry === undefined ? '?' : entry.at - waits[index]!.at).join(', ')} ms)`,
+      modelAfterWait.every((entry, index) => entry !== undefined && entry.at - waits[index]!.at >= WAIT_MS - 20),
+    );
+    assert(
+      'heartbeats carry the same closed phases and never the provider reason',
+      phases.every((entry) => ['starting', 'model', 'tool', 'waiting-on-model'].includes(entry.phase.kind)) &&
+        !JSON.stringify(phases).includes('Rate exceeded') && !JSON.stringify(phases).includes(BEDROCK_THROTTLE_MESSAGE),
+    );
+    assert(
+      'the heartbeat row renders the waiting phase as a bounded fixed text',
+      formatDispatchPhase({ kind: 'waiting-on-model', attempt: 3, maxAttempts: 6 }) === 'waiting on model, retry 3/6',
+    );
 
     shortSchedule(6, LONG_WAIT_MS);
     const stuckModel = new ScriptedModel(['throttle']);
     const stuck = fixture([stuckModel]);
+    const stuckPhases: SubagentDispatchPhase[] = [];
+    stuck.dispatches.subscribeProgress((progress) => { if (!progress.heartbeat) stuckPhases.push(progress.phase); });
     const parent2 = await host(stuck.tool);
     const invocation = parent2.tool[SUBAGENT_TOOL_NAME]!.invoke({ task: 'wait forever' } as never, {
       recordDirectToolCall: false,
@@ -475,6 +555,10 @@ try {
     while (stuckModel.callsAt.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
     await new Promise((r) => setTimeout(r, 100));
     const running = stuck.dispatches.list().find((entry) => entry.state === 'running');
+    assert(
+      'a waiting child\'s live snapshot shows the waiting-on-model phase (what the heartbeat row reads)',
+      running?.phase.kind === 'waiting-on-model' && running.phase.attempt === 2 && running.phase.maxAttempts === 6,
+    );
     const cancelAt = Date.now();
     const cancelOutcome = running === undefined ? undefined : stuck.dispatches.cancel(running.dispatchId).outcome;
     const settled = await invocation;
@@ -490,6 +574,10 @@ try {
       settled.status === 'error' &&
         (settled.content ?? []).some((b) => b.text?.includes('Rate exceeded')) &&
         stuck.dispatches.list().every((entry) => entry.state !== 'running'),
+    );
+    assert(
+      'a cancelled wait leaves the waiting phase for starting, never a model phase in between',
+      JSON.stringify(stuckPhases.map((phase) => phase.kind)) === JSON.stringify(['model', 'starting', 'waiting-on-model', 'starting']),
     );
   }
 } finally {

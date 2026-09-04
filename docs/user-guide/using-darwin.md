@@ -30,6 +30,8 @@ A turn that fails with the exact retryable `ModelError: Stream ended without com
 
 A throttled model call (a provider 429, including Bedrock's `Too many requests` raised before any stream event) is retried inside the turn with the SDK's default schedule — up to 6 attempts with exponential backoff, 4 s base, 240 s cap, jittered. The wait is darwin's own: `Esc` / `Ctrl+C` during it takes effect at once, ends the turn with that attempt's error and makes no further model call. When every attempt is throttled, the turn fails with the last provider error. Other model errors are not retried.
 
+While a wait is pending, the busy row says so in place — `working… · 12s · ↑1.2k ↓318 tokens · throttled, retry 3/6 in 12s` — where `3/6` is the attempt about to be made and the seconds count down on the row's existing tick; no extra row appears, and the provider's message is not shown there. A subagent in the same situation shows `waiting on model, retry 3/6` on its live tool row and heartbeat. A turn that ends because the budget ran out reads `turn failed after 6 attempts: <provider message>`; one you cut short with `Esc` / `Ctrl+C` during the wait reads `cancelled during retry wait (attempt 3/6): <provider message>` instead of a bare `turn failed:`. In `-p` text mode the same wait is one `model throttled, retry 3/6 in 12s — <reason>` stderr line and the failure adds one `notice:` line before the unchanged `error:` line; `--output-format stream-json` emits one `model.retrying` event per wait and the failure record gains a `retry` object (see the [reference](reference.md#report-contracts)).
+
 ## User shell commands
 
 A prompt beginning with `!` runs one user-authorized `bash -c` process group, in every permission mode including `plan`:

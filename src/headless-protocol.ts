@@ -2,8 +2,9 @@ import { MaxTokensError, type AgentStreamEvent, type Message } from '@strands-ag
 
 import type { ApprovalMode, AssessedPermissionRequest, PermissionSource } from './agent/permission.js';
 import { runWithStreamResumption } from './agent/stream-resumption.js';
+import { retryNextAttempt, type ModelRetryOutcome, type RetryWaitState } from './agent/model-retry.js';
 import { isRefusalStop, REFUSAL_EMPTY_REPLY_ERROR } from './agent/refusal.js';
-import type { HeadlessRuntime } from './headless.js';
+import { pendingRetryWait, type HeadlessRuntime } from './headless.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
@@ -49,6 +50,13 @@ export interface StructuredFailure {
   message: string;
   cause?: string;
   truncated?: true;
+  /**
+   * Additive (SER-067), turn stage only: how darwin's model retry ended when it
+   * played a part — `exhausted` after `attempts` throttled calls, or `cancelled`
+   * during the wait before `attempt` of `maxAttempts`. Absent otherwise; `name`,
+   * `message` and `cause` stay the provider's own.
+   */
+  retry?: ModelRetryOutcome;
 }
 
 export interface StructuredWarning {
@@ -149,6 +157,24 @@ export class StructuredHeadlessWriter {
     });
   }
 
+  /**
+   * One additive event per model-retry wait (SER-067), emitted when the wait begins:
+   * `attempt` is the call about to be made (so `attempt - 1` calls were throttled),
+   * `waitMs` the decided delay, `reason` the runtime's already-bounded throttle text
+   * under the tool-field cap. Schema v1 readers ignore unknown types.
+   */
+  modelRetrying(state: RetryWaitState): void {
+    const reason = bound(state.reason.replace(/\s+/gu, ' ').trim(), TOOL_FIELD_LIMIT);
+    this.event({
+      type: 'model.retrying',
+      attempt: retryNextAttempt(state),
+      maxAttempts: state.maxAttempts,
+      waitMs: Math.max(0, Math.floor(state.waitMs)),
+      reason: reason.value,
+      ...(reason.truncated ? { truncated: true } : {}),
+    });
+  }
+
   assistantMessage(messageIndex: number, text: string): void {
     const parts = splitCodePoints(text, STRUCTURED_FIELD_LIMIT);
     for (let index = 0; index < parts.length; index += 1) {
@@ -210,8 +236,11 @@ export class StructuredHeadlessWriter {
     dispatchId: string;
     agentName: string;
     elapsedMs: number;
-    phase: 'starting' | 'model' | 'tool';
+    phase: 'starting' | 'model' | 'tool' | 'waiting-on-model';
     toolName?: string;
+    /** `waiting-on-model` only (SER-067): the child's call about to be made, of `maxAttempts`. */
+    attempt?: number;
+    maxAttempts?: number;
   }): void {
     if (this.format !== 'stream-json') return;
     const dispatchId = bound(input.dispatchId, TOOL_FIELD_LIMIT);
@@ -224,6 +253,8 @@ export class StructuredHeadlessWriter {
       elapsedMs: Math.max(0, Math.floor(input.elapsedMs)),
       phase: input.phase,
       ...(toolName === undefined ? {} : { toolName: toolName.value }),
+      ...(input.attempt === undefined ? {} : { attempt: Math.max(0, Math.floor(input.attempt)) }),
+      ...(input.maxAttempts === undefined ? {} : { maxAttempts: Math.max(0, Math.floor(input.maxAttempts)) }),
       ...(dispatchId.truncated || agentName.truncated || toolName?.truncated === true ? { truncated: true } : {}),
     });
   }
@@ -271,7 +302,11 @@ export class StructuredHeadlessWriter {
   }
 }
 
-export function structuredFailure(stage: StructuredFailureStage, error: unknown): StructuredFailure {
+export function structuredFailure(
+  stage: StructuredFailureStage,
+  error: unknown,
+  retry?: ModelRetryOutcome,
+): StructuredFailure {
   const failure = failureFromError(error);
   const name = bound(failure.name, STRUCTURED_FIELD_LIMIT);
   const message = bound(contextOverflowErrorMessage(error), STRUCTURED_FIELD_LIMIT);
@@ -282,6 +317,7 @@ export function structuredFailure(stage: StructuredFailureStage, error: unknown)
     message: message.value,
     ...(cause === undefined ? {} : { cause: cause.value }),
     ...(name.truncated || message.truncated || cause?.truncated === true ? { truncated: true } : {}),
+    ...(retry === undefined ? {} : { retry: { ...retry } }),
   };
 }
 
@@ -367,6 +403,10 @@ async function runOneStructuredHeadlessTurn(
   let cancelled = false;
   let refused = false;
   let messageIndex = 0;
+  // One `model.retrying` per wait: the state object is frozen and unique per decision,
+  // so identity is the dedupe key. Read right where the failed attempt's event arrives —
+  // the runtime sets the state before that event reaches this loop (SER-066).
+  let announcedWait: RetryWaitState | undefined;
 
   for await (const event of runtime.send(input, userInput)) {
     switch (event.type) {
@@ -376,6 +416,13 @@ async function runOneStructuredHeadlessTurn(
       case 'afterModelCallEvent':
         if (event.error instanceof MaxTokensError) {
           appendSafeMessage(event.error.partialMessage, answer, writer, () => ++messageIndex);
+        }
+        if (event.error !== undefined) {
+          const wait = pendingRetryWait(runtime);
+          if (wait !== undefined && wait !== announcedWait) {
+            announcedWait = wait;
+            writer.modelRetrying(wait);
+          }
         }
         break;
       case 'beforeToolCallEvent':
