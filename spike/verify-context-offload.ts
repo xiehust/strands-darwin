@@ -4,6 +4,10 @@
  * No model calls and no network: a fake model asks for one tool call whose result
  * is deliberately larger than the offload threshold, and the assertions are on
  * what ends up in the conversation and in the tool catalogue.
+ *
+ * `excludeTools` (SRF-024): a tool named in the option is never offloaded — live or
+ * during the restored-history repair — and the runtime names exactly `load_skill`,
+ * so a skill body always reaches the model whole in one round.
  */
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
@@ -28,12 +32,16 @@ import { z } from 'zod';
 
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { classify } from '../src/agent/permission.js';
+import { sessionPaths } from '../src/agent/session.js';
 import { configPath } from '../src/config.js';
 import { darwinDir } from '../src/paths.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-context-offload-test';
 const HUGE = 'x'.repeat(40_000);
+// A skill body well above the runtime's 5,000-token threshold (chars/4 heuristic) and
+// distinct from HUGE, so a whole body and a repaired sibling are told apart by content.
+const SKILL_BODY = `# skill body\n${'s'.repeat(30_000)}\n`;
 ownPrivateHome('context-offload-runtime');
 
 class RuntimeOverflowModel extends Model<BaseModelConfig> {
@@ -57,7 +65,9 @@ class RuntimeOverflowModel extends Model<BaseModelConfig> {
         ? block.content.flatMap((content) => content.type === 'textBlock' ? [content.text] : [])
         : [],
     )).join('');
-    if (resultText.length > 10_000) throw new ContextWindowOverflowError('fixture runtime overflow');
+    // An unrepaired legacy HUGE result is what overflows; a repaired preview plus a
+    // whole excluded skill body must not.
+    if (resultText.includes(HUGE)) throw new ContextWindowOverflowError('fixture runtime overflow');
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     yield { type: 'modelContentBlockStartEvent' };
     yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'bounded runtime resume' } };
@@ -68,9 +78,14 @@ class RuntimeOverflowModel extends Model<BaseModelConfig> {
 
 class OneToolCallModel extends Model<BaseModelConfig> {
   private config: BaseModelConfig = { modelId: 'fake.offload', contextWindowLimit: 200_000 };
+  private readonly toolNames: readonly string[];
+  /** What the last request carried — the model's view, after every hook ran. */
+  seen: Message[] = [];
 
-  constructor(private readonly toolName = 'bigOutput') {
+  // One tool call per round, in order, until every named tool has a result.
+  constructor(toolName: string | readonly string[] = 'bigOutput') {
     super();
+    this.toolNames = typeof toolName === 'string' ? [toolName] : toolName;
   }
 
   override updateConfig(config: BaseModelConfig): void {
@@ -82,14 +97,14 @@ class OneToolCallModel extends Model<BaseModelConfig> {
   }
 
   override async *stream(messages: Message[]): AsyncIterable<ModelStreamEvent> {
-    const hasResult = messages.some((message) =>
-      message.content.some((block) => block.type === 'toolResultBlock'),
-    );
+    this.seen = messages.map((message) => message.clone());
+    const results = messages.reduce((count, message) =>
+      count + message.content.filter((block) => block.type === 'toolResultBlock').length, 0);
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
-    if (!hasResult) {
+    if (results < this.toolNames.length) {
       yield {
         type: 'modelContentBlockStartEvent',
-        start: { type: 'toolUseStart', name: this.toolName, toolUseId: 'offload-1' },
+        start: { type: 'toolUseStart', name: this.toolNames[results] as string, toolUseId: `offload-${results + 1}` },
       };
       yield {
         type: 'modelContentBlockDeltaEvent',
@@ -134,6 +149,14 @@ const bashShaped = tool({
   description: 'returns a bash-shaped json result with a 300-line output field',
   inputSchema: z.object({}),
   callback: () => BASH_JSON,
+});
+
+// Named exactly like the skills plugin's tool: the exclusion is by name, not identity.
+const loadSkillShaped = tool({
+  name: 'load_skill',
+  description: 'returns an oversized skill body as one text block',
+  inputSchema: z.object({}),
+  callback: () => SKILL_BODY,
 });
 
 /** The documented rendering rule, applied by hand to the bash-shaped fixture. */
@@ -182,7 +205,13 @@ function unframeStored(frame: Uint8Array): { contentType: string; content: strin
 }
 
 /** Mirrors the runtime's own assembly: plugin present only when the flag is on. */
-function makeAgent(offload: boolean, directory: string, fixture: { name: string; tool: Tool } = { name: 'bigOutput', tool: bigOutput }): Agent {
+function makeAgent(
+  offload: boolean,
+  directory: string,
+  fixture: { name: string; tool: Tool } | { name: string; tool: Tool }[] = { name: 'bigOutput', tool: bigOutput },
+  excludeTools?: readonly string[],
+): { agent: Agent; model: OneToolCallModel } {
+  const fixtures = Array.isArray(fixture) ? fixture : [fixture];
   const offloader = offload
     ? new ContextOffloader({
         storage: new LocalFileStorage(directory),
@@ -191,14 +220,17 @@ function makeAgent(offload: boolean, directory: string, fixture: { name: string;
         // the fixture sets both rather than leaning on the 1000-token default.
         maxResultTokens: 200,
         previewTokens: 50,
+        ...(excludeTools !== undefined && { excludeTools }),
       })
     : undefined;
-  return new Agent({
-    model: new OneToolCallModel(fixture.name),
-    tools: [fixture.tool],
+  const model = new OneToolCallModel(fixtures.map((entry) => entry.name));
+  const agent = new Agent({
+    model,
+    tools: fixtures.map((entry) => entry.tool),
     plugins: offloader === undefined ? [] : [offloader],
     printer: false,
   });
+  return { agent, model };
 }
 
 function toolResultText(agent: Agent): string {
@@ -218,7 +250,7 @@ function toolResultText(agent: Agent): string {
 await rm(ROOT, { recursive: true, force: true });
 
 header('context offload — flag on');
-const on = makeAgent(true, path.join(ROOT, 'on'));
+const { agent: on } = makeAgent(true, path.join(ROOT, 'on'));
 await on.initialize();
 assert('the retrieval tool is registered when offloading is on',
   on.tools.some((entry) => entry.name === 'retrieve_offloaded_content'));
@@ -229,7 +261,7 @@ assert('an oversized result is not carried verbatim in the conversation',
 assert('…and something is left behind as a preview or reference', onText.trim() !== '');
 
 header('context offload — flag off');
-const off = makeAgent(false, path.join(ROOT, 'off'));
+const { agent: off } = makeAgent(false, path.join(ROOT, 'off'));
 await off.initialize();
 assert('the retrieval tool is absent when offloading is off',
   !off.tools.some((entry) => entry.name === 'retrieve_offloaded_content'));
@@ -247,7 +279,7 @@ const { readdir } = await import('node:fs/promises');
 const storedKeys = await readdir(path.join(ROOT, 'on', 'offloader'));
 const firstKey = storedKeys[0] as string;
 assert('the first process left at least one stored block behind', storedKeys.length > 0);
-const resumed = makeAgent(true, path.join(ROOT, 'on'));
+const { agent: resumed } = makeAgent(true, path.join(ROOT, 'on'));
 await resumed.initialize();
 const resumedRetrieval = resumed.tool['retrieve_offloaded_content'];
 assert('a fresh agent over the same storage registers the retrieval tool', resumedRetrieval !== undefined);
@@ -264,7 +296,7 @@ header('context offload — json results are searched through a line-preserving 
 // patch projects the parsed JSON per call — multi-line string fields expanded onto real
 // lines — for search only; the bytes, the preview and full retrieval are unchanged.
 const jsonDir = path.join(ROOT, 'json');
-const jsonAgent = makeAgent(true, jsonDir, { name: 'bashShaped', tool: bashShaped });
+const { agent: jsonAgent } = makeAgent(true, jsonDir, { name: 'bashShaped', tool: bashShaped });
 await jsonAgent.initialize();
 await jsonAgent.invoke('go');
 const jsonKeys = await readdir(path.join(jsonDir, 'offloader'));
@@ -339,6 +371,63 @@ assert('the retrieval tool description states the json projection in one bounded
   retrievalDescription.includes('For json content, line-based search operates on a readable projection in which multi-line string fields')
     && retrievalDescription.includes('pattern/line_range/context_lines only work on text content.'));
 
+header('context offload — excludeTools keeps a named tool result whole (SRF-024)');
+// The runtime excludes exactly `load_skill`: a skill body must reach the model whole in
+// one round, because the 1,000-token preview is not the skill and a retrieval round
+// replays the entire context. The same agent still offloads every other oversized result.
+const excludeDir = path.join(ROOT, 'exclude');
+const { agent: excludeAgent, model: excludeModel } = makeAgent(
+  true,
+  excludeDir,
+  [{ name: 'load_skill', tool: loadSkillShaped }, { name: 'bashShaped', tool: bashShaped }],
+  ['load_skill'],
+);
+await excludeAgent.initialize();
+await excludeAgent.invoke('go');
+const excludeResults = excludeAgent.messages.flatMap((message) =>
+  message.content.filter((block): block is ToolResultBlock => block instanceof ToolResultBlock));
+const skillResult = excludeResults.find((block) => block.toolUseId === 'offload-1');
+const bashResult = excludeResults.find((block) => block.toolUseId === 'offload-2');
+assert('both tool calls ran and left one result each in the conversation',
+  excludeResults.length === 2 && skillResult !== undefined && bashResult !== undefined);
+assert('the oversized load_skill result is one text block byte-identical to the skill body — no [Offloaded marker',
+  skillResult!.content.length === 1
+    && skillResult!.content[0] instanceof TextBlock
+    && (skillResult!.content[0] as TextBlock).text === SKILL_BODY
+    && !textOf(skillResult!).includes('[Offloaded'));
+const excludeSeenSkill = excludeModel.seen.flatMap((message) => message.content.flatMap((block) =>
+  block instanceof ToolResultBlock && block.toolUseId === 'offload-1'
+    ? block.content.flatMap((content) => content instanceof TextBlock ? [content.text] : [])
+    : [],
+)).join('');
+assert('…and the model\'s final request carried that whole body, not a preview', excludeSeenSkill === SKILL_BODY);
+assert('the same-size bash-shaped result in the same agent is still offloaded',
+  textOf(bashResult!).startsWith('[Offloaded: 1 blocks') && textOf(bashResult!).includes('[Stored references:]'));
+const excludeKeys = await readdir(path.join(excludeDir, 'offloader'));
+assert('exactly one block is stored — the bash result; no reference exists for the excluded load_skill result',
+  excludeKeys.length === 1 && excludeKeys[0]!.startsWith('offload-2') && !excludeKeys.some((key) => key.startsWith('offload-1')));
+
+const excludeStorage = () => new LocalFileStorage(path.join(ROOT, 'exclude-validation'));
+function offloaderThrows(excludeTools: unknown): string | undefined {
+  try {
+    new ContextOffloader({ storage: excludeStorage(), excludeTools: excludeTools as readonly string[] });
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+assert('the constructor rejects an empty tool name with a clear error',
+  offloaderThrows(['']) === 'excludeTools must be an array of non-empty tool names');
+assert('…and a non-string entry', offloaderThrows([42]) === 'excludeTools must be an array of non-empty tool names');
+assert('…and a bare string instead of an array', offloaderThrows('load_skill') !== undefined);
+assert('an empty array and an omitted option both mean no exclusion and construct fine',
+  offloaderThrows([]) === undefined && offloaderThrows(undefined) === undefined);
+const { agent: noExclusion } = makeAgent(true, path.join(ROOT, 'no-exclusion'), { name: 'load_skill', tool: loadSkillShaped }, []);
+await noExclusion.initialize();
+await noExclusion.invoke('go');
+assert('with excludeTools: [] an oversized load_skill result is offloaded like any other',
+  toolResultText(noExclusion).startsWith('[Offloaded: 1 blocks') && !toolResultText(noExclusion).includes(SKILL_BODY));
+
 header('context offload — default main runtime repairs a resumable legacy snapshot');
 const resumeRoot = path.join(ROOT, 'runtime-resume-project');
 await mkdir(resumeRoot, { recursive: true });
@@ -355,6 +444,7 @@ try {
   const sessionId = seededRuntime.info.sessionId;
   const agent = (seededRuntime as unknown as { agent: Agent }).agent;
   const toolUseId = 'runtime-legacy-tool-use';
+  const skillToolUseId = 'runtime-legacy-load-skill';
   agent.messages.push(
     new Message({
       role: 'user',
@@ -372,6 +462,20 @@ try {
         content: [new TextBlock(HUGE)],
       })],
     }),
+    // A historical oversized `load_skill` result sits beside the legacy one: the repair
+    // scan must skip it by tool-use name exactly as it skips delegation/retrieval ids.
+    new Message({
+      role: 'assistant',
+      content: [new ToolUseBlock({ name: 'load_skill', toolUseId: skillToolUseId, input: { name: 'developer' } })],
+    }),
+    new Message({
+      role: 'user',
+      content: [new ToolResultBlock({
+        toolUseId: skillToolUseId,
+        status: 'success',
+        content: [new TextBlock(SKILL_BODY)],
+      })],
+    }),
   );
   await agent.sessionManager!.saveSnapshot({ target: agent, isLatest: true });
   await seededRuntime.shutdown();
@@ -385,13 +489,20 @@ try {
   for await (const _event of resumedRuntime.send('resume through the real runtime')) {
     // Consume the ordinary runtime stream so invocation autosave completes.
   }
-  const seenText = legacyRuntimeModel.seen.flatMap((message) => message.content.flatMap((block) =>
-    block instanceof ToolResultBlock
-      ? block.content.flatMap((content) => content instanceof TextBlock ? [content.text] : [])
-      : [],
-  )).join('');
+  const seenResults = legacyRuntimeModel.seen.flatMap((message) =>
+    message.content.filter((block): block is ToolResultBlock => block instanceof ToolResultBlock));
+  const seenText = seenResults.flatMap((block) =>
+    block.content.flatMap((content) => content instanceof TextBlock ? [content.text] : [])).join('');
   assert('the real resumed runtime repairs legacy history before its first provider request',
     legacyRuntimeModel.calls === 1 && seenText.includes('[Stored references:]') && !seenText.includes(HUGE));
+  const seenSkill = seenResults.find((block) => block.toolUseId === skillToolUseId);
+  assert('…while the historical oversized load_skill result reaches the provider whole, untouched by the repair',
+    seenSkill !== undefined && seenSkill.content.length === 1
+      && (seenSkill.content[0] as TextBlock).text === SKILL_BODY
+      && !textOf(seenSkill).includes('[Offloaded'));
+  const resumeOffloadKeys = await readdir(path.join(sessionPaths(resumeRoot).sessionsDir, sessionId, 'offload', 'offloader'));
+  assert('the repair stored exactly the legacy block and nothing for load_skill',
+    resumeOffloadKeys.length === 1 && resumeOffloadKeys[0]!.startsWith(toolUseId));
 } finally {
   await seededRuntime?.shutdown();
   await resumedRuntime?.shutdown();
@@ -430,6 +541,12 @@ try {
   assert('child definitions cannot request the parent session retrieval capability',
     defaultRuntime.info.agentProblems.some((problem) =>
       problem.file.endsWith('retrieval-child.md') && problem.reason.includes('unknown tool')));
+  const runtimeSource = await readFile(new URL('../src/agent/runtime.ts', import.meta.url), 'utf8');
+  const childRecipeSource = await readFile(new URL('../src/agents/child-recipe.ts', import.meta.url), 'utf8');
+  assert('the parent runtime passes exactly one exclusion, load_skill, to its ContextOffloader',
+    runtimeSource.split("excludeTools: ['load_skill']").length === 2 && runtimeSource.split('excludeTools: [').length === 2);
+  assert('children construct no ContextOffloader, so no exclusion is theirs to configure',
+    !childRecipeSource.includes('ContextOffloader'));
 } finally {
   await defaultRuntime.shutdown();
 }

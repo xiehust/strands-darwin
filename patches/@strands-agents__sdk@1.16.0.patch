@@ -88,18 +88,29 @@ index 25091ff4351eaa61dc370382a251285ed6f3a629..8d342dc7be28c63b7f609bd3c9cca00f
  }
  function createResponsesStreamError(message, code) {
 diff --git a/dist/src/vended-plugins/context-offloader/plugin.d.ts b/dist/src/vended-plugins/context-offloader/plugin.d.ts
-index b0223555c1f0410441546be860dbae824ac9857c..0cefd600f9b2324d23033f07c7b44f74fceb123f 100644
+index b0223555c1f0410441546be860dbae824ac9857c..92ab47f4c8c1f5225c13dfd8a5e37324846bdfc2 100644
 --- a/dist/src/vended-plugins/context-offloader/plugin.d.ts
 +++ b/dist/src/vended-plugins/context-offloader/plugin.d.ts
-@@ -70,6 +70,7 @@ export declare class ContextOffloader implements Plugin {
+@@ -34,6 +34,8 @@ export interface ContextOffloaderConfig {
+      * Defaults to 20. Set to `null` to disable eviction.
+      */
+     evictAfterCycles?: number | null;
++    /** Tool names whose results are never offloaded (kept whole in context). Defaults to none. */
++    excludeTools?: readonly string[];
+ }
+ /**
+  * Plugin that offloads oversized tool results to reduce context consumption.
+@@ -69,7 +71,9 @@ export declare class ContextOffloader implements Plugin {
+     private readonly _previewTokens;
      private readonly _includeRetrievalTool;
      private readonly _evictAfterCycles;
++    private readonly _excludeTools;
      private readonly _storageByAgent;
 +    private readonly _scannedAgents;
      private readonly _keyStoredAt;
      private _retrievalTool;
      constructor(config: ContextOffloaderConfig);
-@@ -82,6 +83,9 @@ export declare class ContextOffloader implements Plugin {
+@@ -82,6 +86,9 @@ export declare class ContextOffloader implements Plugin {
      private _createRetrievalTool;
      private _storeBlock;
      private _buildPreviewText;
@@ -111,7 +122,7 @@ index b0223555c1f0410441546be860dbae824ac9857c..0cefd600f9b2324d23033f07c7b44f74
  //# sourceMappingURL=plugin.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-plugins/context-offloader/plugin.js b/dist/src/vended-plugins/context-offloader/plugin.js
-index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd4cc3129f 100644
+index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..440965bdc2879f7c2755ace3cda9ab70b17c53e6 100644
 --- a/dist/src/vended-plugins/context-offloader/plugin.js
 +++ b/dist/src/vended-plugins/context-offloader/plugin.js
 @@ -1,5 +1,5 @@
@@ -214,15 +225,36 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd
  /**
   * Plugin that offloads oversized tool results to reduce context consumption.
   *
-@@ -164,6 +243,7 @@ export class ContextOffloader {
+@@ -163,7 +242,9 @@ export class ContextOffloader {
+     _previewTokens;
      _includeRetrievalTool;
      _evictAfterCycles;
++    _excludeTools;
      _storageByAgent = new WeakMap();
 +    _scannedAgents = new WeakSet();
      _keyStoredAt = new Map();
      _retrievalTool;
      constructor(config) {
-@@ -208,7 +288,8 @@ export class ContextOffloader {
+@@ -179,6 +260,10 @@ export class ContextOffloader {
+         if (evictAfterCycles !== null && (!Number.isInteger(evictAfterCycles) || evictAfterCycles < 1)) {
+             throw new Error('evictAfterCycles must be a positive integer');
+         }
++        const excludeTools = config.excludeTools ?? [];
++        if (!Array.isArray(excludeTools) || excludeTools.some((name) => typeof name !== 'string' || name.length === 0)) {
++            throw new Error('excludeTools must be an array of non-empty tool names');
++        }
+         if (config.storage) {
+             this._resolveAndSetStorage(config.storage);
+         }
+@@ -186,6 +271,7 @@ export class ContextOffloader {
+         this._previewTokens = previewTokens;
+         this._includeRetrievalTool = config.includeRetrievalTool ?? true;
+         this._evictAfterCycles = evictAfterCycles;
++        this._excludeTools = new Set(excludeTools);
+     }
+     _resolveAndSetStorage(storage) {
+         if (isOffloaderStorage(storage)) {
+@@ -208,7 +294,8 @@ export class ContextOffloader {
          }
          this._storageForAgent(agent);
          agent.addHook(AfterToolCallEvent, (event) => this._handleToolResult(event));
@@ -232,7 +264,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd
              const cycleCount = agent.metrics.cycleCount;
              if (this._storage instanceof LegacyInMemoryStorage) {
                  this._storage._evict(cycleCount);
-@@ -277,6 +358,7 @@ export class ContextOffloader {
+@@ -277,6 +364,7 @@ export class ContextOffloader {
                  '  - Without pattern/line_range: the full original content (use sparingly — re-injects all tokens)\n\n' +
                  'Constraints:\n' +
                  '  - pattern/line_range/context_lines only work on text content. For binary content, omit them.\n' +
@@ -240,7 +272,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd
                  '  - Line numbers in results are 1-indexed and can be used in follow-up line_range calls.\n\n' +
                  'Examples:\n' +
                  '  { reference: "ref_1", pattern: "error" } → lines containing "error" with 5 lines context\n' +
-@@ -294,7 +376,12 @@ export class ContextOffloader {
+@@ -294,7 +382,12 @@ export class ContextOffloader {
                      if (!isSearchableContent(result.contentType)) {
                          return `Error: cannot search binary content (${result.contentType}). Omit pattern/line_range/context_lines to retrieve the full content.`;
                      }
@@ -254,7 +286,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd
                      const contextLines = input.context_lines ?? 5;
                      const lineRange = input.line_range ?? (!input.pattern ? { start: 1, end: Math.max(1, contextLines) } : undefined);
                      return searchContent(text, { pattern: input.pattern, line_range: lineRange, context_lines: contextLines }, maxChars);
-@@ -339,40 +426,130 @@ export class ContextOffloader {
+@@ -339,40 +432,135 @@ export class ContextOffloader {
              .filter((r) => r.ref)
              .map((r) => `  ${r.ref} (${r.description})`)
              .join('\n');
@@ -367,6 +399,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd
 +        this._scannedAgents.add(agent);
 +        const delegationToolUseIds = new Set();
 +        const retrievalToolUseIds = new Set();
++        const excludedToolUseIds = new Set();
 +        for (const message of agent.messages) {
 +            for (const block of message.content) {
 +                if (!(block instanceof ToolUseBlock))
@@ -378,13 +411,17 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd
 +                if (this._includeRetrievalTool && block.name === RETRIEVAL_TOOL_NAME) {
 +                    retrievalToolUseIds.add(block.toolUseId);
 +                }
++                if (this._excludeTools.has(block.name)) {
++                    excludedToolUseIds.add(block.toolUseId);
++                }
 +            }
 +        }
 +        for (const message of agent.messages) {
 +            for (let index = 0; index < message.content.length; index += 1) {
 +                const block = message.content[index];
 +                if (!(block instanceof ToolResultBlock) || block.status !== 'success' ||
-+                    delegationToolUseIds.has(block.toolUseId) || retrievalToolUseIds.has(block.toolUseId))
++                    delegationToolUseIds.has(block.toolUseId) || retrievalToolUseIds.has(block.toolUseId) ||
++                    excludedToolUseIds.has(block.toolUseId))
 +                    continue;
 +                try {
 +                    if (await this._isStoredOffloadPlaceholder(agent, block))
@@ -412,7 +449,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd
          // Extract text preview from text/JSON blocks
          const textParts = [];
          for (const block of content) {
-@@ -382,22 +559,28 @@ export class ContextOffloader {
+@@ -382,22 +570,28 @@ export class ContextOffloader {
                  textParts.push(JSON.stringify(block.json, null, 2));
          }
          const fullText = textParts.join('\n');
@@ -453,7 +490,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd
          }
          logger.debug(`tool_use_id=<${toolUseId}>, blocks=<${references.length}>, tokens=<${tokenCount}> | tool result offloaded`);
          // Build replacement content: preview text + media placeholders
-@@ -422,11 +605,28 @@ export class ContextOffloader {
+@@ -422,11 +616,32 @@ export class ContextOffloader {
                  newContent.push(new TextBlock(`[${label}, ${size} bytes${ref ? ` | ref: ${ref}` : ''}]`));
              }
          }
@@ -477,6 +514,10 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd
 +            return;
 +        // Skip results from the retrieval tool to prevent circular offloading
 +        if (this._includeRetrievalTool && event.toolUse.name === RETRIEVAL_TOOL_NAME)
++            return;
++        // Skip tools excluded by name: their results must reach the model whole
++        // (a preview is not the content), so they are never stored or replaced.
++        if (this._excludeTools.has(event.toolUse.name))
 +            return;
 +        const replacement = await this._offloadToolResult(event.agent, event.result);
 +        if (replacement)

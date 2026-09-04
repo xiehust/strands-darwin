@@ -674,7 +674,10 @@ export class AgentRuntime {
     // bound is manual — delete a finished session's directories, as documented
     // on `contextOffload` in config.ts. Do not add per-session cleanup here: a
     // fresh session id is timestamp-unique, so its offload dir never pre-exists,
-    // and any other session's dir may still be resumed.
+    // and any other session's dir may still be resumed. `excludeTools` (SRF-024):
+    // a `load_skill` body must reach the model whole in one round — the preview is
+    // not the skill, and a retrieval round replays the whole context — so that one
+    // name is never offloaded; no other tool is excluded.
     const contextOffload = options.contextOffloadOverride === true || config.contextOffload;
     const offloader =
       contextOffload
@@ -683,6 +686,7 @@ export class AgentRuntime {
               path.join(sessionPaths(options.projectRoot).sessionsDir, session.sessionId, 'offload'),
             ),
             evictAfterCycles: null,
+            excludeTools: ['load_skill'],
             ...(config.maxResultTokens !== undefined && { maxResultTokens: config.maxResultTokens }),
           })
         : undefined;
