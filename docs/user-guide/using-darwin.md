@@ -103,7 +103,7 @@ The model-facing `bash` tool has these modes:
 | `list` | — | all current-runtime tasks in launch order |
 | `status` | `taskId` | command, state, timing, exit, log, byte count |
 | `output` | `taskId` | next complete UTF-8 chunk from shared cursor, at most 64 KiB plus final-character bytes |
-| `wait` | `taskId`, `waitMs`, optional `wakeOnOutput` | wait 1–30,000 ms by default; terminal-focused waits allow up to 300,000 ms |
+| `wait` | `taskId`, `waitMs`, optional `wakeOnOutput` | wait 1–30,000 ms by default; terminal-focused waits allow up to 1,800,000 ms (thirty minutes) |
 | `stop` | `taskId` | TERM→KILL whole process group |
 
 States are `running`, `succeeded`, `failed`, `stopped`. `wakeOnOutput: false` aggregates terminal-focused incremental output until terminal state, cancellation, shutdown, or timeout; omitted/true wakes on output. If a terminal-focused timeout is still running, its result tells the model to wait again before ending when later work depends on completion, because background completion does not resume the agent. All readers share the cursor; no wait automatically continues the turn.

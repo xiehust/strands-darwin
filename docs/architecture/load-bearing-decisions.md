@@ -892,7 +892,8 @@ syntax fails open, and the diagnostic is non-mutating and names both locations. 
 provider `timeout` on `start` is ignored after policy observation and never becomes a background
 lifetime. Their provider-facing `wait` observes cancellation and shutdown and consumes output
 only through the existing serialized byte cursor. Output-sensitive wakeup stays bounded at 1–30000 ms and is the
-compatibility default; explicit `wakeOnOutput: false` accepts a finite 1–300000 ms, advances and
+compatibility default; explicit `wakeOnOutput: false` accepts a finite 1–1800000 ms (thirty minutes,
+so a supervised headless child that runs 20–30 minutes costs one wake, not six), advances and
 retains up to the ordinary output cap, and waits only for terminal state, cancellation, shutdown, or
 timeout. Only its still-running timeout adds bounded model-visible wait-again guidance stating that
 background completion does not resume the agent; it never continues or calls the model itself.

@@ -103,7 +103,7 @@ V1 流式输出的是经过最终脱敏的完整助手文本，不是 token delt
 | `list` | — | 按启动顺序列出当前 runtime 的全部任务 |
 | `status` | `taskId` | 命令、状态、耗时、退出信息、日志、字节数 |
 | `output` | `taskId` | 从共享游标读取下一段完整 UTF-8，最多 64 KiB，允许补齐末尾字符 |
-| `wait` | `taskId`、`waitMs`，可选 `wakeOnOutput` | 默认等待 1–30,000 ms；终态聚合等待最长 300,000 ms |
+| `wait` | `taskId`、`waitMs`，可选 `wakeOnOutput` | 默认等待 1–30,000 ms；终态聚合等待最长 1,800,000 ms（三十分钟） |
 | `stop` | `taskId` | 对整个进程组执行 TERM→KILL |
 
 状态值为 `running`、`succeeded`、`failed`、`stopped`。`wakeOnOutput: false` 会聚合输出，直到终态、取消、关闭或超时；省略或设为 true 时，有输出即可唤醒。若终态聚合等待超时后任务仍在运行，结果会提醒模型：后续工作依赖完成时，应在结束回合前再次等待，因为后台完成不会自动恢复代理。所有读取操作共享同一个游标；等待不会自动继续回合。

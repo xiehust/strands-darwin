@@ -435,13 +435,14 @@ async function waitContracts(): Promise<void> {
 
     const terminalCancellable = await manager.start("printf 'before-cancel'; sleep 1000");
     const terminalController = new AbortController();
-    const terminalCancelledPromise = manager.wait(terminalCancellable.taskId, 30_000, terminalController.signal, false);
+    const terminalCancelBefore = Date.now();
+    const terminalCancelledPromise = manager.wait(terminalCancellable.taskId, TERMINAL_FOCUSED_WAIT_MAX_MS, terminalController.signal, false);
     setTimeout(() => terminalController.abort(), 60);
     const terminalCancelled = await terminalCancelledPromise;
     assert(
-      'terminal-focused cancellation returns retained output promptly without stopping the task',
+      'terminal-focused cancellation ends a full-cap multi-minute wait promptly, returning retained output without stopping the task',
       terminalCancelled.reason === 'cancelled' && terminalCancelled.output.output === 'before-cancel' &&
-        terminalCancelled.instruction === undefined && exists(terminalCancellable.pid),
+        terminalCancelled.instruction === undefined && Date.now() - terminalCancelBefore < 300 && exists(terminalCancellable.pid),
     );
 
     for (const badWait of [0, OUTPUT_SENSITIVE_WAIT_MAX_MS + 1, 1.5, Number.NaN]) {
@@ -622,11 +623,35 @@ async function wrapperAndPermissionContracts(): Promise<void> {
     }
     assert(
       'provider description states the exact bounded and terminal-focused wait semantics',
-      managementWrapped.description.includes('1-30000 ms') &&
-        managementWrapped.description.includes('up to 300000 ms') &&
+      managementWrapped.description.includes(`1-${OUTPUT_SENSITIVE_WAIT_MAX_MS} ms`) &&
+        managementWrapped.description.includes(`up to ${TERMINAL_FOCUSED_WAIT_MAX_MS} ms`) &&
         managementWrapped.description.includes('aggregates intermediate output') &&
         managementWrapped.description.includes('wakeOnOutput:false') &&
         managementWrapped.description.includes('background completion does not resume the agent'),
+    );
+    // SRF-025 pins the cap itself: thirty minutes for the explicit terminal-focused form, the
+    // output-sensitive default untouched, so the literals below never drift from the constants.
+    assert(
+      'terminal-focused wait cap is thirty minutes while the output-sensitive default stays 30 s',
+      TERMINAL_FOCUSED_WAIT_MAX_MS === 1_800_000 && OUTPUT_SENSITIVE_WAIT_MAX_MS === 30_000,
+    );
+    const callsBeforeCap = managementCalls.length;
+    await managementWrapped.invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 1_800_000, wakeOnOutput: false }, waitContext);
+    assert(
+      'bash wait accepts waitMs 1800000 with wakeOnOutput:false and hands it to the manager unchanged',
+      managementCalls.length === callsBeforeCap + 1 && managementCalls[callsBeforeCap]?.mode === 'wait' &&
+        managementCalls[callsBeforeCap]?.waitMs === 1_800_000 && managementCalls[callsBeforeCap]?.wakeOnOutput === false,
+    );
+    let overCapError = '';
+    try { await managementWrapped.invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 1_800_001, wakeOnOutput: false }); }
+    catch (error) { overCapError = String(error); }
+    let unfocusedOverDefaultError = '';
+    try { await managementWrapped.invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 30_001 }); }
+    catch (error) { unfocusedOverDefaultError = String(error); }
+    assert(
+      'bash wait rejects waitMs 1800001 and still refuses 30001 without wakeOnOutput:false with the unchanged message',
+      overCapError.includes('waitMs') && managementCalls.length === callsBeforeCap + 1 &&
+        unfocusedOverDefaultError.includes('waitMs above 30000 requires wakeOnOutput:false'),
     );
     const waitPermission = classify('bash', { mode: 'wait', taskId: expectedTaskId, waitMs: 123, wakeOnOutput: false, command: redundantCommand });
     assert('terminal-focused wait is permission-safe and cannot become command execution', waitPermission.kind === 'read' && waitPermission.summary.includes('bash wait') && assessRisk(waitPermission, root).risk === 'safe');
