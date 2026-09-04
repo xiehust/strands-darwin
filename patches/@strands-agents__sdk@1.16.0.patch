@@ -111,7 +111,7 @@ index b0223555c1f0410441546be860dbae824ac9857c..0cefd600f9b2324d23033f07c7b44f74
  //# sourceMappingURL=plugin.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-plugins/context-offloader/plugin.js b/dist/src/vended-plugins/context-offloader/plugin.js
-index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..8a6410ee3181d605dcf1be5f862cd3e22aab48d8 100644
+index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..0031ead74284a455227d6e29b1ce5edd4cc3129f 100644
 --- a/dist/src/vended-plugins/context-offloader/plugin.js
 +++ b/dist/src/vended-plugins/context-offloader/plugin.js
 @@ -1,5 +1,5 @@
@@ -143,7 +143,78 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..8a6410ee3181d605dcf1be5f862cd3e2
  const retrievalInputSchema = z.object({
      reference: z.string().describe('The reference string from the offload placeholder (e.g. "mem_1_tool-123_0").'),
      pattern: z
-@@ -164,6 +179,7 @@ export class ContextOffloader {
+@@ -129,6 +144,70 @@ function decodeStoredContent(content, contentType, reference) {
+     }
+     return new TextDecoder('utf-8', { fatal: false }).decode(content);
+ }
++/**
++ * Line-addressable projection of stored JSON for pattern/line_range retrieval.
++ *
++ * Stored `application/json` blocks are `JSON.stringify(json, null, 2)`, so a string
++ * field holding a 300-line command output is one escaped line and grep-style search
++ * sees a handful of lines. Searching runs over this projection instead. It is built
++ * per call from the stored bytes and never persisted; stored bytes, preview and full
++ * retrieval are untouched. Rendering rule (deterministic, so line numbers from one
++ * call stay valid in the next):
++ *   - Objects, arrays, numbers, booleans, null and strings without "\n" render exactly
++ *     as pretty JSON: 2-space indent, stored key order, commas between members.
++ *   - A string containing "\n" is expanded: an object member renders `<indent>"key":`
++ *     (an array item `<indent>[index]:`, a top-level string no header) on its own line,
++ *     followed by the string's lines split on "\n" verbatim, each on a real line at
++ *     column 0 — no quotes, no escaping, no trailing comma — so `^`-anchored patterns
++ *     written for the command's own output match as grep would.
++ * Returns undefined when the bytes are not JSON; the caller then searches the raw text.
++ */
++function projectJsonForSearch(text) {
++    let value;
++    try {
++        value = JSON.parse(text);
++    }
++    catch {
++        return undefined;
++    }
++    const out = [];
++    const emit = (node, indent, memberKey, positionLabel, comma) => {
++        if (typeof node === 'string' && node.includes('\n')) {
++            if (positionLabel !== undefined)
++                out.push(`${indent}${positionLabel}:`);
++            out.push(...node.split('\n'));
++            return;
++        }
++        const lead = memberKey === undefined ? indent : `${indent}${memberKey}: `;
++        if (Array.isArray(node)) {
++            if (node.length === 0) {
++                out.push(`${lead}[]${comma}`);
++                return;
++            }
++            out.push(`${lead}[`);
++            node.forEach((item, index) => emit(item, `${indent}  `, undefined, `[${index}]`, index < node.length - 1 ? ',' : ''));
++            out.push(`${indent}]${comma}`);
++            return;
++        }
++        if (node !== null && typeof node === 'object') {
++            const keys = Object.keys(node);
++            if (keys.length === 0) {
++                out.push(`${lead}{}${comma}`);
++                return;
++            }
++            out.push(`${lead}{`);
++            keys.forEach((key, index) => {
++                const quoted = JSON.stringify(key);
++                emit(node[key], `${indent}  `, quoted, quoted, index < keys.length - 1 ? ',' : '');
++            });
++            out.push(`${indent}}${comma}`);
++            return;
++        }
++        out.push(`${lead}${JSON.stringify(node)}${comma}`);
++    };
++    emit(value, '', undefined, undefined, '');
++    return out.join('\n');
++}
+ /**
+  * Plugin that offloads oversized tool results to reduce context consumption.
+  *
+@@ -164,6 +243,7 @@ export class ContextOffloader {
      _includeRetrievalTool;
      _evictAfterCycles;
      _storageByAgent = new WeakMap();
@@ -151,7 +222,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..8a6410ee3181d605dcf1be5f862cd3e2
      _keyStoredAt = new Map();
      _retrievalTool;
      constructor(config) {
-@@ -208,7 +224,8 @@ export class ContextOffloader {
+@@ -208,7 +288,8 @@ export class ContextOffloader {
          }
          this._storageForAgent(agent);
          agent.addHook(AfterToolCallEvent, (event) => this._handleToolResult(event));
@@ -161,7 +232,29 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..8a6410ee3181d605dcf1be5f862cd3e2
              const cycleCount = agent.metrics.cycleCount;
              if (this._storage instanceof LegacyInMemoryStorage) {
                  this._storage._evict(cycleCount);
-@@ -339,40 +356,130 @@ export class ContextOffloader {
+@@ -277,6 +358,7 @@ export class ContextOffloader {
+                 '  - Without pattern/line_range: the full original content (use sparingly — re-injects all tokens)\n\n' +
+                 'Constraints:\n' +
+                 '  - pattern/line_range/context_lines only work on text content. For binary content, omit them.\n' +
++                '  - For json content, line-based search operates on a readable projection in which multi-line string fields (e.g. a command\'s output) are expanded onto real lines.\n' +
+                 '  - Line numbers in results are 1-indexed and can be used in follow-up line_range calls.\n\n' +
+                 'Examples:\n' +
+                 '  { reference: "ref_1", pattern: "error" } → lines containing "error" with 5 lines context\n' +
+@@ -294,7 +376,12 @@ export class ContextOffloader {
+                     if (!isSearchableContent(result.contentType)) {
+                         return `Error: cannot search binary content (${result.contentType}). Omit pattern/line_range/context_lines to retrieve the full content.`;
+                     }
+-                    const text = new TextDecoder().decode(result.content);
++                    const rawText = new TextDecoder().decode(result.content);
++                    // Stored json is one escaped line per string field; search its readable
++                    // projection instead (see projectJsonForSearch). Non-JSON bytes keep the raw text.
++                    const text = result.contentType === 'application/json'
++                        ? (projectJsonForSearch(rawText) ?? rawText)
++                        : rawText;
+                     const contextLines = input.context_lines ?? 5;
+                     const lineRange = input.line_range ?? (!input.pattern ? { start: 1, end: Math.max(1, contextLines) } : undefined);
+                     return searchContent(text, { pattern: input.pattern, line_range: lineRange, context_lines: contextLines }, maxChars);
+@@ -339,40 +426,130 @@ export class ContextOffloader {
              .filter((r) => r.ref)
              .map((r) => `  ${r.ref} (${r.description})`)
              .join('\n');
@@ -319,7 +412,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..8a6410ee3181d605dcf1be5f862cd3e2
          // Extract text preview from text/JSON blocks
          const textParts = [];
          for (const block of content) {
-@@ -382,22 +489,28 @@ export class ContextOffloader {
+@@ -382,22 +559,28 @@ export class ContextOffloader {
                  textParts.push(JSON.stringify(block.json, null, 2));
          }
          const fullText = textParts.join('\n');
@@ -360,7 +453,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..8a6410ee3181d605dcf1be5f862cd3e2
          }
          logger.debug(`tool_use_id=<${toolUseId}>, blocks=<${references.length}>, tokens=<${tokenCount}> | tool result offloaded`);
          // Build replacement content: preview text + media placeholders
-@@ -422,11 +535,28 @@ export class ContextOffloader {
+@@ -422,11 +605,28 @@ export class ContextOffloader {
                  newContent.push(new TextBlock(`[${label}, ${size} bytes${ref ? ` | ref: ${ref}` : ''}]`));
              }
          }

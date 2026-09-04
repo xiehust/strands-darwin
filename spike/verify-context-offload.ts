@@ -5,7 +5,8 @@
  * is deliberately larger than the offload threshold, and the assertions are on
  * what ends up in the conversation and in the tool catalogue.
  */
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import path from 'node:path';
 
 import {
@@ -19,6 +20,7 @@ import {
   tool,
   type BaseModelConfig,
   type ModelStreamEvent,
+  type Tool,
 } from '@strands-agents/sdk';
 import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
@@ -67,6 +69,10 @@ class RuntimeOverflowModel extends Model<BaseModelConfig> {
 class OneToolCallModel extends Model<BaseModelConfig> {
   private config: BaseModelConfig = { modelId: 'fake.offload', contextWindowLimit: 200_000 };
 
+  constructor(private readonly toolName = 'bigOutput') {
+    super();
+  }
+
   override updateConfig(config: BaseModelConfig): void {
     this.config = { ...this.config, ...config };
   }
@@ -83,7 +89,7 @@ class OneToolCallModel extends Model<BaseModelConfig> {
     if (!hasResult) {
       yield {
         type: 'modelContentBlockStartEvent',
-        start: { type: 'toolUseStart', name: 'bigOutput', toolUseId: 'offload-1' },
+        start: { type: 'toolUseStart', name: this.toolName, toolUseId: 'offload-1' },
       };
       yield {
         type: 'modelContentBlockDeltaEvent',
@@ -107,8 +113,76 @@ const bigOutput = tool({
   callback: () => HUGE,
 });
 
+// The shape darwin's `bash` tool returns: a json block whose `output` field holds the
+// whole multi-line command output. Stored as `JSON.stringify(json, null, 2)`, that field
+// is one escaped line — the case the retrieval projection exists for. Three `## heading`
+// lines sit before `line 1`, `line 101` and `line 201`, so headings and numbered lines
+// interleave and the projected line numbers are not the `line N` numbers.
+const BASH_OUTPUT_LINES: string[] = [];
+for (let n = 1; n <= 300; n++) {
+  if ((n - 1) % 100 === 0) BASH_OUTPUT_LINES.push(`## heading ${(n - 1) / 100 + 1}`);
+  BASH_OUTPUT_LINES.push(`line ${n}`);
+}
+const BASH_JSON = {
+  cwd: '/tmp/darwin-context-offload-test/json',
+  error: '',
+  exitCode: 0,
+  output: BASH_OUTPUT_LINES.join('\n'),
+};
+const bashShaped = tool({
+  name: 'bashShaped',
+  description: 'returns a bash-shaped json result with a 300-line output field',
+  inputSchema: z.object({}),
+  callback: () => BASH_JSON,
+});
+
+/** The documented rendering rule, applied by hand to the bash-shaped fixture. */
+const EXPECTED_PROJECTION: string[] = [
+  '{',
+  `  "cwd": ${JSON.stringify(BASH_JSON.cwd)},`,
+  '  "error": "",',
+  '  "exitCode": 0,',
+  '  "output":',
+  ...BASH_OUTPUT_LINES,
+  '}',
+];
+
+/** Parses `searchContent` rows (`> 12| text` / `  12| text`) into their parts. */
+function parseSearchRows(text: string): { line: number; matched: boolean; text: string }[] {
+  const rows: { line: number; matched: boolean; text: string }[] = [];
+  for (const row of text.split('\n')) {
+    const match = /^([> ]) +(\d+)\| (.*)$/.exec(row);
+    if (match) rows.push({ line: Number(match[2]), matched: match[1] === '>', text: match[3] as string });
+  }
+  return rows;
+}
+
+function textOf(result: { content: readonly unknown[] }): string {
+  return (result.content as readonly { text?: string }[]).map((block) => block.text ?? '').join('');
+}
+
+/** The offloader's framed on-disk format for unified Storage: [2-byte BE length][contentType][content]. */
+function frameStored(content: string, contentType: string): Uint8Array {
+  const ctBytes = new TextEncoder().encode(contentType);
+  const bodyBytes = new TextEncoder().encode(content);
+  const frame = new Uint8Array(2 + ctBytes.length + bodyBytes.length);
+  frame[0] = (ctBytes.length >> 8) & 0xff;
+  frame[1] = ctBytes.length & 0xff;
+  frame.set(ctBytes, 2);
+  frame.set(bodyBytes, 2 + ctBytes.length);
+  return frame;
+}
+
+function unframeStored(frame: Uint8Array): { contentType: string; content: string } {
+  const ctLen = ((frame[0] as number) << 8) | (frame[1] as number);
+  return {
+    contentType: new TextDecoder().decode(frame.subarray(2, 2 + ctLen)),
+    content: new TextDecoder().decode(frame.subarray(2 + ctLen)),
+  };
+}
+
 /** Mirrors the runtime's own assembly: plugin present only when the flag is on. */
-function makeAgent(offload: boolean, directory: string): Agent {
+function makeAgent(offload: boolean, directory: string, fixture: { name: string; tool: Tool } = { name: 'bigOutput', tool: bigOutput }): Agent {
   const offloader = offload
     ? new ContextOffloader({
         storage: new LocalFileStorage(directory),
@@ -120,8 +194,8 @@ function makeAgent(offload: boolean, directory: string): Agent {
       })
     : undefined;
   return new Agent({
-    model: new OneToolCallModel(),
-    tools: [bigOutput],
+    model: new OneToolCallModel(fixture.name),
+    tools: [fixture.tool],
     plugins: offloader === undefined ? [] : [offloader],
     printer: false,
   });
@@ -183,6 +257,87 @@ const retrievedText = (retrieved.content as readonly { text?: string }[])
   .join('');
 assert('the stored reference resolves to the full offloaded content',
   retrieved.status !== 'error' && retrievedText.includes(HUGE));
+
+header('context offload — json results are searched through a line-preserving projection');
+// Stored json is `JSON.stringify(json, null, 2)`, so a bash result's 300-line `output`
+// is one escaped line and pattern/line_range used to see a six-line document. The pinned
+// patch projects the parsed JSON per call — multi-line string fields expanded onto real
+// lines — for search only; the bytes, the preview and full retrieval are unchanged.
+const jsonDir = path.join(ROOT, 'json');
+const jsonAgent = makeAgent(true, jsonDir, { name: 'bashShaped', tool: bashShaped });
+await jsonAgent.initialize();
+await jsonAgent.invoke('go');
+const jsonKeys = await readdir(path.join(jsonDir, 'offloader'));
+const jsonKey = jsonKeys[0] as string;
+assert('the bash-shaped json result was offloaded to exactly one stored block', jsonKeys.length === 1);
+const storedFrame = unframeStored(new Uint8Array(await readFile(path.join(jsonDir, 'offloader', jsonKey))));
+assert('the stored bytes on disk are still JSON.stringify(json, null, 2) under application/json',
+  storedFrame.contentType === 'application/json' && storedFrame.content === JSON.stringify(BASH_JSON, null, 2));
+assert('the offload marker preview is still cut from the stored pretty JSON, not the projection',
+  toolResultText(jsonAgent).includes('{\n  "cwd": ') && !toolResultText(jsonAgent).includes('"output":\n'));
+const jsonRetrieval = jsonAgent.tool['retrieve_offloaded_content']!;
+
+const ranged = await jsonRetrieval.invoke({ reference: jsonKey, line_range: { start: 100, end: 120 } }, { recordDirectToolCall: false });
+const rangedText = textOf(ranged);
+const rangedRows = parseSearchRows(rangedText);
+assert('line_range {100,120} on the projection reports the projected line count in its header',
+  rangedText.startsWith(`[Lines 100-120 of ${EXPECTED_PROJECTION.length}]`));
+assert('…returns exactly projected lines 100–120 and nothing else',
+  rangedRows.length === 21 && rangedRows.every((row, i) => row.line === 100 + i));
+assert('…whose text is the output lines the rendering rule places there (line 94 … line 100, ## heading 2, line 101 … line 113)',
+  rangedRows.every((row) => row.text === EXPECTED_PROJECTION[row.line - 1])
+    && rangedRows[0]!.text === 'line 94'
+    && rangedRows.some((row) => row.text === '## heading 2')
+    && rangedRows[20]!.text === 'line 113'
+    && !rangedText.includes('line 93') && !rangedText.includes('line 114'));
+const rangedAgain = textOf(await jsonRetrieval.invoke({ reference: jsonKey, line_range: { start: 100, end: 120 } }, { recordDirectToolCall: false }));
+assert('the projection is rebuilt identically per call, so line numbers stay valid across calls', rangedAgain === rangedText);
+
+const headingsOnly = await jsonRetrieval.invoke({ reference: jsonKey, pattern: '^## ', context_lines: 0 }, { recordDirectToolCall: false });
+const headingRows = parseSearchRows(textOf(headingsOnly));
+assert('pattern ^## reports the three heading matches on the projection',
+  textOf(headingsOnly).startsWith('[3 matches for /^## /]'));
+assert('…and with zero context returns only the heading lines, each marked as a match',
+  headingRows.length === 3 && headingRows.every((row) => row.matched && row.text.startsWith('## heading '))
+    && headingRows.map((row) => row.line).join(',') === '6,107,208');
+const headingsCtx = parseSearchRows(textOf(await jsonRetrieval.invoke({ reference: jsonKey, pattern: '^## ', context_lines: 2 }, { recordDirectToolCall: false })));
+assert('…and with context the extra rows are the neighbouring projected lines, unmatched',
+  headingsCtx.filter((row) => row.matched).length === 3
+    && headingsCtx.filter((row) => !row.matched).length === 12
+    && headingsCtx.filter((row) => !row.matched).every((row) =>
+      row.text === EXPECTED_PROJECTION[row.line - 1] && [6, 107, 208].some((match) => Math.abs(match - row.line) <= 2))
+    && headingsCtx.some((row) => row.line === 106 && row.text === 'line 100' && !row.matched));
+
+const beyond = textOf(await jsonRetrieval.invoke({ reference: jsonKey, line_range: { start: 1000, end: 1010 } }, { recordDirectToolCall: false }));
+assert('a line_range past the end errors with the projected line count, not the six stored lines',
+  beyond === `Error: line_range.start (1000) is beyond content length (${EXPECTED_PROJECTION.length} lines).`
+    && EXPECTED_PROJECTION.length > 300);
+
+const full = await jsonRetrieval.invoke({ reference: jsonKey }, { recordDirectToolCall: false });
+const fullBlock = full.content[0] as { type?: string; json?: unknown };
+assert('a full retrieval (no pattern/range/context) is still the parsed JSON, deepEqual to the original value',
+  full.status !== 'error' && fullBlock.type === 'jsonBlock' && isDeepStrictEqual(fullBlock.json, BASH_JSON));
+
+const rawJsonKey = 'raw-json-ref';
+await writeFile(path.join(jsonDir, 'offloader', rawJsonKey), frameStored('first\nsecond {not json\nthird', 'application/json'));
+const rawSearch = textOf(await jsonRetrieval.invoke({ reference: rawJsonKey, pattern: 'second', context_lines: 0 }, { recordDirectToolCall: false }));
+const rawBeyond = textOf(await jsonRetrieval.invoke({ reference: rawJsonKey, line_range: { start: 9, end: 9 } }, { recordDirectToolCall: false }));
+assert('an application/json reference holding non-JSON bytes still searches the raw text line by line',
+  rawSearch.startsWith('[1 match for /second/]') && parseSearchRows(rawSearch).map((row) => `${row.line}:${row.text}`).join() === '2:second {not json'
+    && rawBeyond === 'Error: line_range.start (9) is beyond content length (3 lines).');
+
+const plainKey = 'plain-text-ref';
+const plainJsonLooking = JSON.stringify({ output: 'alpha\nbeta' }, null, 2);
+await writeFile(path.join(jsonDir, 'offloader', plainKey), frameStored(plainJsonLooking, 'text/plain'));
+const plainRange = textOf(await jsonRetrieval.invoke({ reference: plainKey, line_range: { start: 1, end: 10 } }, { recordDirectToolCall: false }));
+const plainSearch = textOf(await jsonRetrieval.invoke({ reference: plainKey, pattern: 'beta', context_lines: 0 }, { recordDirectToolCall: false }));
+assert('a text/plain result is never projected, even when its text happens to be JSON with an escaped newline',
+  plainRange.startsWith('[Lines 1-3 of 3]') && parseSearchRows(plainRange).map((row) => row.text).join('\n') === plainJsonLooking
+    && parseSearchRows(plainSearch).map((row) => `${row.line}:${row.text}`).join() === '2:  "output": "alpha\\nbeta"');
+const retrievalDescription = jsonAgent.tools.find((entry) => entry.name === 'retrieve_offloaded_content')!.description;
+assert('the retrieval tool description states the json projection in one bounded sentence',
+  retrievalDescription.includes('For json content, line-based search operates on a readable projection in which multi-line string fields')
+    && retrievalDescription.includes('pattern/line_range/context_lines only work on text content.'));
 
 header('context offload — default main runtime repairs a resumable legacy snapshot');
 const resumeRoot = path.join(ROOT, 'runtime-resume-project');
