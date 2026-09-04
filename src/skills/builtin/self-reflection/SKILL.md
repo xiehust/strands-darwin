@@ -109,12 +109,12 @@ darwin itself: system prompt, tool descriptions, multi-agent orchestration, cont
 management, execution time, token spend, or anything else the record supports. Every finding
 names its evidence records and ends in a concrete, implementable suggestion.
 
-**Scored directions and the gate** — apply the `self-evolution-research` ranking to every
-suggestion: rate **Importance**, **Architecture fit**, **Evidence confidence**,
-**Implementation difficulty** and **Implementation risk** on 1–5 scales, compute
+**Scored directions and the gate** — apply the `docs/research/backlog_index.md` ranking
+contract to every suggestion: rate **Importance**, **Architecture fit**, **Evidence
+confidence**, **Difficulty** and **Risk** on 1–5 scales, compute
 `Score = 2 × Importance + Architecture fit + Evidence confidence − Difficulty − Risk`, and
 apply the same gate, `MINIMUM_IMPLEMENTATION_SCORE = 6`. Propose zero to five new,
-non-duplicate directions; read `docs/research/backlog_index.md` first, search the routed pages'
+non-duplicate directions; read the index first, search the routed pages'
 headings and ID/Priority metadata, and never re-propose a direction that already exists in any
 status. Qualitative rationale rides along, and the formula
 never overrides a documented safety or dependency concern. Directions below the gate stay in

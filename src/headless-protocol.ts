@@ -2,6 +2,7 @@ import { MaxTokensError, type AgentStreamEvent, type Message } from '@strands-ag
 
 import type { ApprovalMode, AssessedPermissionRequest, PermissionSource } from './agent/permission.js';
 import { runWithStreamResumption } from './agent/stream-resumption.js';
+import { isRefusalStop, REFUSAL_EMPTY_REPLY_ERROR } from './agent/refusal.js';
 import type { HeadlessRuntime } from './headless.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
@@ -364,6 +365,7 @@ async function runOneStructuredHeadlessTurn(
   const answer: string[] = [];
   let completed = false;
   let cancelled = false;
+  let refused = false;
   let messageIndex = 0;
 
   for await (const event of runtime.send(input, userInput)) {
@@ -393,6 +395,7 @@ async function runOneStructuredHeadlessTurn(
       case 'agentResultEvent':
         completed = true;
         cancelled = event.result.stopReason === 'cancelled';
+        refused = isRefusalStop(event.result.stopReason);
         break;
       default:
         break;
@@ -403,6 +406,9 @@ async function runOneStructuredHeadlessTurn(
   if (cancelled) return { outcome: 'cancelled' };
 
   const reply = answer.join('').replace(/\n+$/u, '');
+  // A refusal with partial text still returns that text as the reply; only the
+  // no-reply case is an error, and it names the refusal instead of a generic gap.
+  if (refused && reply.trim() === '') throw new Error(REFUSAL_EMPTY_REPLY_ERROR);
   if (reply.trim() === '') throw new Error('The agent turn completed without an assistant reply.');
   return { outcome: 'success', reply };
 }

@@ -211,6 +211,13 @@ export interface RuntimeOptions {
   contextOffloadOverride?: true;
   /** Refuses the next parent-Agent SDK model call after this many in the process. */
   maxModelCalls?: number;
+  /**
+   * One driver-owned section appended to the base prompt, before project instructions.
+   * Headless runs pass `HEADLESS_AUTONOMY_SECTION` (system-prompt.ts); the interactive TUI passes
+   * nothing. Only the base is user-overridable, so a `.darwin/system-prompt.md`
+   * override still receives it.
+   */
+  systemPromptSuffix?: string;
   /** Internal source checkpoint used only by a fresh `/rewind` successor. */
   rewindRestore?: {
     readonly sourceSessionId: string;
@@ -577,6 +584,9 @@ export class AgentRuntime {
     const loadedInstructions = await loadProjectInstructions(options.projectRoot);
     const instructions = loadedInstructions.instructions;
     const basePrompt = await loadSystemPrompt(options.projectRoot, config.systemPrompt);
+    const basePromptText = options.systemPromptSuffix === undefined
+      ? basePrompt.prompt
+      : `${basePrompt.prompt}\n\n${options.systemPromptSuffix}`;
     const mcp = options.inherit?.mcp ?? await loadMcpClients(options.projectRoot, {
       quietStdioStderr: options.quietMcpStderr === true,
     });
@@ -694,7 +704,7 @@ export class AgentRuntime {
       // AGENTS.md is folded in here. Official AgentSkills injects its catalogue
       // before each invocation; the post-plugin hook below restores Darwin's fixed
       // order. Only the base is user-overridable: project instructions stay additive.
-      systemPrompt: composeSystemPrompt(basePrompt.prompt, instructions),
+      systemPrompt: composeSystemPrompt(basePromptText, instructions),
       // McpClient instances act as tool sources: the SDK discovers and registers
       // their tools during initialize().
       tools: [...ordinaryTools, ...mcp.clients],

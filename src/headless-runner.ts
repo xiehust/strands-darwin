@@ -3,6 +3,7 @@ import process from 'node:process';
 import type { DiagnosticLevel } from './agent/diagnostics.js';
 import type { RuntimeOptions } from './agent/runtime.js';
 import { AgentRuntime } from './agent/runtime.js';
+import { HEADLESS_AUTONOMY_SECTION } from './agent/system-prompt.js';
 import { classify } from './agent/permission.js';
 import { dispatchLabel } from './agents/dispatch-registry.js';
 import { routeSdkLogs, type SdkLogEntry } from './agent/sdk-logging.js';
@@ -150,6 +151,9 @@ export async function runHeadlessProcess(
     runtime = await dependencies.createRuntime({
       projectRoot: options.projectRoot,
       session: options.session,
+      // No one answers a question mid-turn in a headless run: the base prompt's
+      // interactive "ask before guessing" rule is overridden for exactly that case.
+      systemPromptSuffix: HEADLESS_AUTONOMY_SECTION,
       ...(options.session.kind !== 'id' && {
         onSessionResolved: (sessionId: string) => {
           if (structured) protocol?.sessionResolved(sessionId);

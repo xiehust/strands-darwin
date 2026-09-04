@@ -22,13 +22,13 @@ Model-call budgets are opt-in. Do not add `--max-model-calls` to a child command
 
 ## 2. Launch the complete child worker
 
-Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Run the first worker with `--yolo --context-offload`: offload is already default-on for ordinary runs, and this compatible process-only override deliberately force-enables it even if persistent config opted out. Do not set `DARWIN_PLANNING_ONLY` and do not use `--compact-before` on a fresh child: this one turn owns the complete repository workflow. Add `--max-model-calls <n>` only for an explicit user/Host ceiling.
+Construct a shell-safe command for the target root and launch it with the `bash` tool in **`start` mode**. Every child invocation must be a managed background task; never run `darwin -p ...` with foreground `execute`. Run the first worker with `--yolo --context-offload`: offload is already default-on for ordinary runs, and this compatible process-only override deliberately force-enables it even if persistent config opted out. Do not use `--compact-before` on a fresh child: there is no prior transcript to summarize, and this one turn owns the complete repository workflow. Add `--max-model-calls <n>` only for an explicit user/Host ceiling.
 
 The first prompt must give the child the requirement, evidence, repository scope, acceptance criteria, and authorized mutation/command scope. Tell it to derive, before implementing, a concise requirement-to-test checklist — each externally observable requirement (exact routes, contracts, flags) paired with the check that proves it — and to verify every entry before reporting completion: an entry no test covers is a gap to close, not a line to drop. Tell it to proceed autonomously through the repository's own configured workflow: load any relevant non-developer skills, create or maintain task/planning/research artifacts when those skills require them, implement, run focused and final checks, update specs, and commit when authorized. It must not load the `developer` skill, start another darwin, or delegate the supervision task again. Do not make the child wait for Host plan approval; unresolved product, scope, or authorization questions are the only reason to stop and ask.
 
 ### Tool batching and verification economy
 
-Tell every child turn to batch mutually independent read-only work in one assistant message: file reads, symbol searches, status/output checks, and independent offline checks may run together. Writes, commits, and commands whose inputs depend on an earlier result stay serial. The child must never repeat a file read or a green check merely to reconfirm it.
+The child's own system prompt already states the round-trip rules (batch independent reads, consolidate known edits, verification in the message after the edits); do not restate them. Add only the supervision-specific rule: the child must never repeat a file read or a green check merely to reconfirm it.
 
 Use a verification pyramid. While editing, run the smallest reproduction and focused suite, then typecheck. After source settles, the child runs the complete project gate once before commit. A commit with no source change is followed only by commit/diff/status checks, not another full suite. The Host independently runs the complete acceptance gate once. A failed check is fixed and rerun; this rule removes duplicate green runs, not failure diagnosis.
 
@@ -41,7 +41,7 @@ From the first task's combined output, capture only the exact stderr record matc
 ^session: ([a-z0-9_-]+)$
 ```
 
-That captured value is the **child conversation session id**. It is not the `bg-*` task id. Never use a background id as a session id, and never recover identity from `--continue` or `.darwin/last-session.json`.
+That captured value is the **child conversation session id**. It is not the `bg-*` task id. Never use a background id as a session id, and never recover identity from `--continue` or the resume pointer (`last-session.json` under `~/.darwin/sessions/<project-key>/`): both resolve to whichever session most recently finished, which may not be this child.
 
 From **every** child task's drained output — initial worker, correction, and retry alike — also capture the exact stderr record matching:
 
@@ -73,7 +73,7 @@ For each task, retain its new `bg-*` id, monitor with `status`, consume output i
 
 ### Retry transient child server failures
 
-If the drained child output contains a transient provider failure such as `turn failed: The server had an error while processing your request. Sorry about that!`, retry the same requested turn automatically. Use another managed `bash start` invocation with the same target root, prompt, yolo/context-offload flags and any explicit user/Host ceiling; when a child session id has been captured, include the same explicit `--session <captured-id>`. Preserve the prior turn's compact-before decision; an explicit ceiling exhaustion requires renewed authorization rather than an automatic retry. If the first worker attempt failed before emitting an exact session record, start a fresh worker attempt and capture its new record instead of guessing an id.
+If the drained child stderr ends the turn with a provider-side server error — the headless driver prints it as `error: <message>`, for example `error: The server had an error while processing your request. Sorry about that!` (an HTTP 5xx/overloaded answer from the provider, not a darwin error) — retry the same requested turn automatically. Use another managed `bash start` invocation with the same target root, prompt, yolo/context-offload flags and any explicit user/Host ceiling; when a child session id has been captured, include the same explicit `--session <captured-id>`. Preserve the prior turn's compact-before decision; an explicit ceiling exhaustion requires renewed authorization rather than an automatic retry. If the first worker attempt failed before emitting an exact session record, start a fresh worker attempt and capture its new record instead of guessing an id.
 
 Retry at most two times after the original attempt. Drain and record every retry task normally. Do not retry deterministic failures such as invalid configuration, denied scope, failed tests, or rejected tool input under this rule. If the transient server failure persists after two retries, report it as a blocker rather than looping or implementing in the Host.
 

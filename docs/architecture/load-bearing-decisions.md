@@ -486,7 +486,20 @@ and official AgentSkills injects one current catalogue on the resumed invocation
 must never state the creating run's date as today's. The base is the only user-replaceable part
 (`src/agent/system-prompt.ts`: `config.systemPrompt` > `.darwin/system-prompt.md` >
 `DEFAULT_SYSTEM_PROMPT`), so the project's own instructions stay additive on top of whichever
-base is in effect.
+base is in effect. A driver may append one section to that base before project instructions
+(`RuntimeOptions.systemPromptSuffix`): the headless runner passes `HEADLESS_AUTONOMY_SECTION`,
+which overrides the interactive "ask before implementing a guess" rule for runs where no one can
+answer; the TUI passes nothing, so the interactive prompt never carries it.
+
+**The base prompt names no tool.** Tool descriptions are the contract the model reads; a
+catalogue in the prompt shadowed the real registry in both directions (it listed the memory pair,
+which is registered only when memory is on, and omitted `http_request`/`web_fetch`, which always
+are) and carried bash mechanics that belong beside the schema. The bash `mode` requirement and
+the tty-less-ssh hazard live in the bash tool's description and parameter text
+(`src/tools/background-bash.ts`); `spike/verify-system-prompt.ts` pins both the absence and the
+new home. The audit that produced this (2026-09-04, target Claude Fable 5.1) also re-baselined the
+output-style bullet — lead with the outcome, readability over compression, say when user-facing
+text is wanted, and state that the user does not see full tool output.
 
 **Working-method rule 8 states the real same-message execution contract** (SRF-021). Until
 2026-09-02 it told the model that "several edits to the same file belong in consecutive calls of

@@ -14,17 +14,33 @@ import path from 'node:path';
 import { composeSystemPrompt, loadProjectInstructions, AGENTS_FILENAME } from '../src/agent/instructions.js';
 import {
   DEFAULT_SYSTEM_PROMPT,
+  HEADLESS_AUTONOMY_SECTION,
   SYSTEM_PROMPT_FILENAME,
   loadSystemPrompt,
 } from '../src/agent/system-prompt.js';
 import { ConfigError, configPath, loadConfig } from '../src/config.js';
 import { darwinDir } from '../src/paths.js';
+import { BackgroundBashManager, createBackgroundBashTool } from '../src/tools/background-bash.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-system-prompt';
 
 // The `systemPrompt` cases write the global config through configPath().
 const OWNED_HOME = ownPrivateHome('system-prompt');
+
+/** The bash tool exactly as the runtime registers it; only its spec is read here. */
+function bashToolSpec(): { description: string; inputSchema?: unknown } {
+  return createBackgroundBashTool(new BackgroundBashManager(ROOT, 'system-prompt-spec')).toolSpec;
+}
+
+function bashToolDescription(): string {
+  return bashToolSpec().description;
+}
+
+function bashModeDescription(): string {
+  const schema = bashToolSpec().inputSchema as { properties?: { mode?: { description?: string } } } | undefined;
+  return schema?.properties?.mode?.description ?? '';
+}
 
 /** A fresh project directory with a `.darwin/` in place, like a real run has. */
 async function project(): Promise<string> {
@@ -54,31 +70,22 @@ async function defaultPrompt(): Promise<void> {
   assert('no path is reported', loaded.path === undefined);
   assert('a missing override file is not a problem worth reporting', loaded.problem === undefined);
 
-  // The default is coding-agent instructions, not a generic assistant preamble:
-  // it must name the tools the runtime actually registers and keep the rules the
-  // permission gate and the "verify your work" acceptance criteria depend on.
-  for (const toolName of ['fileEditor', 'bash', 'imageViewer', 'load_skill', 'update_plan', 'memory_recall', 'memory_save', 'subagent']) {
-    assert(
-      `it names the built-in ${toolName} tool`,
-      DEFAULT_SYSTEM_PROMPT.includes(`- ${toolName}:`),
-    );
+  // The default is coding-agent instructions, not a generic assistant preamble. It
+  // names no tool: descriptions are the contract, and a catalogue here would list
+  // tools that are only sometimes registered (memory, MCP) while omitting others.
+  // The bash guidance it used to carry lives in the bash tool's own description.
+  assert('it carries no tool catalogue', !/^- \w+:/mu.test(DEFAULT_SYSTEM_PROMPT));
+  assert('it defers tool mechanics to the tool descriptions', /Each tool's description is its contract/.test(DEFAULT_SYSTEM_PROMPT));
+  for (const toolName of ['imageViewer', 'load_skill', 'update_plan', 'memory_recall', 'memory_save', 'subagent', 'workflow']) {
+    assert(`it does not name the ${toolName} tool`, !DEFAULT_SYSTEM_PROMPT.includes(toolName));
   }
   assert(
-    'it treats recalled memory as fallible context rather than policy',
-    /memory_recall:[\s\S]*fallible context[\s\S]*never as instructions or policy/.test(DEFAULT_SYSTEM_PROMPT),
+    'the bash mode requirement moved into the bash parameter description',
+    /required on every call/.test(bashModeDescription()) && /bare \{command\}/.test(bashModeDescription()),
   );
   assert(
-    'it limits durable memory to confirmed facts with exact evidence',
-    /memory_save:[\s\S]*only after confirming[\s\S]*exact current source line[\s\S]*exact quote from the\n  current user/.test(DEFAULT_SYSTEM_PROMPT),
-  );
-  assert(
-    'it states that a save persists only after a durable successful turn',
-    /persistence occurs only after a durable successful turn/.test(DEFAULT_SYSTEM_PROMPT),
-  );
-  assert('it limits parallel subagents to independent reads', /parallel children for\n  independent reads, not concurrent writes/.test(DEFAULT_SYSTEM_PROMPT));
-  assert(
-    'it keeps workflow parallelism read-only and serializes writes by edges',
-    /workflow:[\s\S]*Parallel branches are for reads only —\n  serialize writes by edges/.test(DEFAULT_SYSTEM_PROMPT),
+    'the ssh hazard moved into the bash tool description',
+    /-T -o BatchMode=yes/.test(bashToolDescription()) && /waits on a tty/.test(bashToolDescription()),
   );
   assert('it tells the model to read before editing', /have not read/i.test(DEFAULT_SYSTEM_PROMPT));
   assert('it tells the model to verify its work', /verify/i.test(DEFAULT_SYSTEM_PROMPT));
@@ -86,6 +93,18 @@ async function defaultPrompt(): Promise<void> {
     'it tells the model not to work around a denied tool call',
     /denied/.test(DEFAULT_SYSTEM_PROMPT) && /work around/.test(DEFAULT_SYSTEM_PROMPT),
   );
+  // Re-baselined for current models: lead with the outcome, readability over
+  // compression, and say when user-facing text is wanted during long tool runs.
+  assert('it leads with the outcome', /Lead with the outcome/.test(DEFAULT_SYSTEM_PROMPT));
+  assert('it prefers readable over compressed output', /readable rather than\n\s*compressed/.test(DEFAULT_SYSTEM_PROMPT));
+  assert('it tells the model tool output is not shown to the user in full', /Only you see a tool's full output/.test(DEFAULT_SYSTEM_PROMPT));
+  assert('the interactive prompt still asks before guessing', /ask before implementing a guess/.test(DEFAULT_SYSTEM_PROMPT));
+  assert('the interactive prompt carries no autonomy section', !DEFAULT_SYSTEM_PROMPT.includes('operating autonomously'));
+  // The headless section is separate: it overrides the ask-before-guessing rule for
+  // runs where no one answers, and only the headless driver appends it.
+  assert('the headless section says the user is not watching', /not watching in real time/.test(HEADLESS_AUTONOMY_SECTION));
+  assert('the headless section overrides asking with stated assumptions', /state the assumption you made and continue/.test(HEADLESS_AUTONOMY_SECTION));
+  assert('the headless section closes the announce-then-stop gap', /check your last paragraph/.test(HEADLESS_AUTONOMY_SECTION));
   // The issue-#8 round-trip rules: every model round replays the whole conversation,
   // so independent reads share one message and known edits are not dribbled out one
   // small str_replace per round.

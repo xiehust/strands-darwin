@@ -668,7 +668,7 @@ function errorMessage(error: unknown): string {
 // mode-specific shape in refinement instead.
 const inputSchema = z.object({
   mode: z.enum(['execute', 'restart', 'start', 'list', 'status', 'output', 'wait', 'stop'])
-    .describe('Operation mode'),
+    .describe('Operation mode — required on every call; execute runs one foreground command in the persistent shell (a bare {command} without mode is rejected)'),
   command: z.string().optional().describe('Command required by execute and start; ignored by status, output, wait, and stop'),
   timeout: z.number().positive().optional().describe('Timeout in seconds for execute mode; ignored by start'),
   taskId: z.string().optional().describe('Session-local task id required by status, output, wait, and stop'),
@@ -735,7 +735,8 @@ export function createBackgroundBashTool(
       'do other work, then use wait with taskId and waitMs. ' +
       `Output-sensitive waits use 1-${OUTPUT_SENSITIVE_WAIT_MAX_MS} ms and return {reason, status, output}; by default they wake on output or another consumer changing the cursor. ` +
       `Set wakeOnOutput:false for a terminal-focused wait up to ${TERMINAL_FOCUSED_WAIT_MAX_MS} ms that aggregates intermediate output and wakes only on terminal state, cancellation, shutdown, or timeout. ` +
-      'A still-running terminal-focused timeout tells you to call wait again before ending when later work depends on completion; background completion does not resume the agent.',
+      'A still-running terminal-focused timeout tells you to call wait again before ending when later work depends on completion; background completion does not resume the agent. ' +
+      'A plain ssh in execute mode waits on a tty and hangs the call: pass -T -o BatchMode=yes and run it as a background task (start, then wait).',
     inputSchema,
     callback: (input, context?: ToolContext) => {
       switch (input.mode) {

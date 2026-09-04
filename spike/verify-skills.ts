@@ -176,16 +176,16 @@ async function missingDirectory(): Promise<void> {
   assert('developer frames requirement, acceptance, repository, and authorization', ['exact requirement', 'acceptance checks', 'absolute target repository root', 'authorized mutation'].every((term) => workflow.includes(term)));
   assert('developer requires managed launch and complete output consumption', workflow.includes('`start` mode') && workflow.includes('bash status') && workflow.includes('call `bash output` at least once') && workflow.includes('until `hasMore: false`'));
   assert('developer forbids recursive delegation and target-root drift', workflow.includes('must not load the `developer` skill') && workflow.includes('Do not substitute the Host\'s source repository'));
-  assert('developer launches one complete worker rather than a planning-only child', workflow.includes('Launch the complete child worker') && workflow.includes('Do not set `DARWIN_PLANNING_ONLY`') && workflow.includes('one turn owns the complete repository workflow'));
+  assert('developer launches one complete worker rather than a planning-only child', workflow.includes('Launch the complete child worker') && !workflow.includes('DARWIN_PLANNING_ONLY') && workflow.includes('one turn owns the complete repository workflow'));
   assert('developer lets the child own configured skills and repository lifecycle', workflow.includes('load any relevant non-developer skills') && workflow.includes('create or maintain task/planning/research artifacts') && workflow.includes('update specs, and commit'));
   assert('developer makes model-call budgets explicit opt-in only', workflow.includes('Model-call budgets are opt-in') && workflow.includes('Do not add `--max-model-calls`') && workflow.includes('explicit user/Host ceiling'));
   assert('developer keeps the process force-on override while stating ordinary default safety',
     workflow.includes('Run the first worker with `--yolo --context-offload`') &&
     workflow.includes('offload is already default-on for ordinary runs') &&
     workflow.includes('force-enables it even if persistent config opted out'));
-  assert('developer does not compact a fresh direct worker', workflow.includes('do not use `--compact-before` on a fresh child'));
+  assert('developer does not compact a fresh direct worker', workflow.includes('Do not use `--compact-before` on a fresh child: there is no prior transcript to summarize'));
   assert('developer compacts only broad corrections and keeps budgets opt-in', workflow.includes('prior worker turn left a broad implementation/check transcript') && workflow.includes('narrow correction') && workflow.includes('Add `--max-model-calls <n>` only'));
-  assert('developer batches independent tools but serializes dependent writes', workflow.includes('batch mutually independent read-only work') && workflow.includes('Writes, commits, and commands whose inputs depend on an earlier result stay serial'));
+  assert('developer defers round-trip rules to the child prompt and adds only the no-reconfirm rule', workflow.includes('do not restate them') && workflow.includes('never repeat a file read or a green check merely to reconfirm it'));
   assert('developer enforces the focused-child/full-child/full-Host test pyramid', workflow.includes('smallest reproduction and focused suite') && workflow.includes('complete project gate once before commit') && workflow.includes('Host independently runs the complete acceptance gate once'));
   assert('developer separates task and conversation ids', workflow.includes('not the `bg-*` task id') && workflow.includes('^session: ([a-z0-9_-]+)$'));
   assert('developer reserves explicit same-session continuation for correction', workflow.includes('Continue the exact child session only for correction') && workflow.includes('`--session <captured-id> --yolo --context-offload') && workflow.includes('Never use `--continue` or `--resume`'));
@@ -204,7 +204,8 @@ async function missingDirectory(): Promise<void> {
 
   assert(
     'developer retries transient child server failures without looping',
-    workflow.includes('turn failed: The server had an error while processing your request. Sorry about that!') &&
+    workflow.includes('error: The server had an error while processing your request. Sorry about that!') &&
+      !workflow.includes('turn failed:') &&
       workflow.includes('Retry at most two times') &&
       workflow.includes('same explicit `--session <captured-id>`'),
   );
@@ -222,10 +223,10 @@ async function missingDirectory(): Promise<void> {
       researchWorkflow.includes('Once per research run, before any source'),
   );
   assert(
-    'the five paths and their weights are stated',
-    researchWorkflow.includes('`tui=2 observability=0.5 sdk=1 open=1.5 peer=5`') &&
-      ['`tui`', '`observability`', '`sdk`', '`open`', '`peer`'].every((id) => researchWorkflow.includes(id)) &&
-      researchWorkflow.includes('20% TUI, 15% open, 10% SDK, 5% observability, and 50% peer research'),
+    'the five paths are stated and the weights are deferred to the script',
+    ['`tui`', '`observability`', '`sdk`', '`open`', '`peer`'].every((id) => researchWorkflow.includes(id)) &&
+      researchWorkflow.includes("printed in the script's own output and `--help`") &&
+      !researchWorkflow.includes('tui=2'),
   );
   assert(
     'an unappealing roll cannot be re-rolled or self-overridden',

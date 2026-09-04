@@ -36,6 +36,7 @@ import { z } from 'zod';
 import type { ProjectInstructions } from '../agent/instructions.js';
 import { backgroundDelegationDescriptionClause } from '../agent/background-delegation.js';
 import { withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
+import { CHILD_REFUSAL_ERROR, isRefusalStop } from '../agent/refusal.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
 import { buildRecipeChild, stopBashSession } from './child-recipe.js';
@@ -352,6 +353,8 @@ export class WorkflowTool {
         ...(options?.cancelSignal === undefined ? {} : { cancelSignal: options.cancelSignal }),
       };
       const result = yield* child.stream(input, invokeOptions);
+      // A refused node is a node failure, not terminus content (see SubagentTool).
+      if (isRefusalStop(result.stopReason)) throw new Error(CHILD_REFUSAL_ERROR);
       const outcome = result.stopReason === 'cancelled' ? 'cancelled' : 'succeeded';
       dispatch?.finish(outcome);
       // Child assistant text is private until it flows as bounded node content.

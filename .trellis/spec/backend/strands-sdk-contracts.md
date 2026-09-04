@@ -817,6 +817,31 @@ Cancellation is checked once per model stream event, so cancelling from inside a
 ends that turn cleanly rather than throwing. Never treat cancel as an error path, and never infer
 cancellation from a throw.
 
+### Contract: a model-side refusal is a *normal* end of turn — the drivers name it
+
+Claude Fable 5.1 (and the Mythos line) can end a turn with `stop_reason: refusal` when a safety
+classifier declines the request; the Anthropic model maps it to `'refusal'` directly and the
+Bedrock model falls through its `STOP_REASON_MAP` to the same `'refusal'` string (plus one SDK
+`unknown stop reason` warn). The agent loop treats every non-`toolUse` stop as a normal end, so an
+`AgentResult{stopReason:'refusal'}` arrives as an ordinary `agentResultEvent` with possibly empty
+text — nothing throws, and `runtime.send()`'s `completed` (which tests `'endTurn'`) stays false, so
+memory is not sealed and no rewind checkpoint is catalogued. `src/agent/refusal.ts` holds the one
+predicate and the fixed texts; the loop is never touched:
+
+- TUI (`App.tsx` `runTurn`): one `warn` notice, `REFUSAL_NOTICE`, dispatched when the result event
+  carries the refusal, so the transcript never shows an unexplained empty answer.
+- Headless text (`headless.ts`) and structured (`headless-protocol.ts`): a refusal with no reply
+  fails the turn with `REFUSAL_EMPTY_REPLY_ERROR` instead of the generic "completed without an
+  assistant reply"; with partial text the text is still the reply and the text driver writes the
+  notice to stderr.
+- Delegation (`SubagentTool`, `WorkflowTool`): a refused child throws `CHILD_REFUSAL_ERROR` before
+  the outcome is settled, so the dispatch settles `failed` (never `succeeded`) and the child's
+  bounded last text follows through `withFailedChildText` like any other failure.
+- Never a retry, fallback model, or re-prompt: the SDK owns the stop, darwin only names it.
+
+Offline checks: `spike/verify-headless.ts` (both headless shapes) and `spike/verify-failed-child-text.ts`
+(both delegation tools) drive `stopReason: 'refusal'` through scripted models.
+
 ### Contract: `Model.streamAggregated` wraps any non-`ModelError` throw, keeping only the message
 
 Measured on 1.12.0 (`models/model.js`): a `ModelError` (and its subclasses) is rethrown untouched;

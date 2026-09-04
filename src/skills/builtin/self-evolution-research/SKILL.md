@@ -25,14 +25,12 @@ A lower numeric **Priority** wins; use the earlier stable ID to break a tie. If 
 
 ## 2. Apply the score gate before spending an iteration
 
-`MINIMUM_IMPLEMENTATION_SCORE = 6`. Every dimension is rated 1–5, so a direction that is merely average on all of them scores exactly 6; the gate therefore drops anything below across-the-board average without touching any direction that has a real argument for it.
+The ranking dimensions, the `Score` formula, `MINIMUM_IMPLEMENTATION_SCORE = 6`, and the two constraints that keep the gate honest (never restate a rating to cross the gate; a below-gate direction survives only with a recorded safety, correctness, or dependency reason) are defined once in `docs/research/backlog_index.md` — apply them as written there.
 
 Apply the gate twice, with the same threshold:
 
 - **when proposing** — a direction scoring below the gate is not added as `not-started`. Record it in the research report as considered and rejected, with its score.
 - **when selecting** — a backlog record scoring below the gate is set to `abandoned` with the reason `below score gate (Score = <n> < 6)` and skipped. Continue the loop with the next direction; a gated record never halts the batch.
-
-Two constraints keep the gate honest. Never restate a dimension rating to move a direction across the gate — if a rating was wrong, correct it in a research run and say that the correction is what changed. And a below-gate direction survives only when the run records an explicit safety, correctness, or dependency reason in its Notes; the reason, not the score, then justifies it.
 
 ## 3. Research only when the backlog has no unfinished work
 
@@ -44,15 +42,15 @@ Before reading a single source — repository or product — run the bundled scr
 node <skill-directory>/scripts/roll-research-path.mjs
 ```
 
-It draws one of five paths on the weights `tui=2 observability=0.5 sdk=1 open=1.5 peer=5` (so 20% TUI, 15% open, 10% SDK, 5% observability, and 50% peer research; the draw runs over half-units, so those shares are exact) and prints a `research-path`/`focus`/`share`/`draw`/`path-source`/`rolled-at`/`weights` block.
+It draws one of five weighted paths (the current weights and each path's share are printed in the script's own output and `--help`) and prints a `research-path`/`focus`/`share`/`draw`/`path-source`/`rolled-at`/`weights` block.
 
-| Path | Share | What the run looks for |
-|---|---:|---|
-| `tui` | 20% | TUI interaction and visual polish: the live frame, streaming and history rendering, prompts and completion, colour and severity, small-terminal layout, keyboard editing. |
-| `observability` | 5% | Logging and observability: notices and diagnostics, the trajectory record, usage and cost reporting, background-job and subagent visibility, what a failure leaves behind. |
-| `sdk` | 10% | Strands SDK capability darwin has not adopted — hooks, plugins, interventions, conversation managers, model and tool features — measured against what darwin hand-rolls or lives without. |
-| `open` | 15% | Anything else worth improving; deliberately unscoped. |
-| `peer` | 50% | The sourced comparable-product analysis in 3.3. |
+| Path | What the run looks for |
+|---|---|
+| `tui` | TUI interaction and visual polish: the live frame, streaming and history rendering, prompts and completion, colour and severity, small-terminal layout, keyboard editing. |
+| `observability` | Logging and observability: notices and diagnostics, the trajectory record, usage and cost reporting, background-job and subagent visibility, what a failure leaves behind. |
+| `sdk` | Strands SDK capability darwin has not adopted — hooks, plugins, interventions, conversation managers, model and tool features — measured against what darwin hand-rolls or lives without. |
+| `open` | Anything else worth improving; deliberately unscoped. |
+| `peer` | The sourced comparable-product analysis in 3.3. |
 
 The roll is binding, and these rules are what make it worth running at all:
 
@@ -103,7 +101,7 @@ Propose zero to five new, non-duplicate iteration directions. Use the routed-pag
 - **Implementation difficulty** — higher is harder;
 - **Implementation risk** — higher is riskier.
 
-Compute `Score = 2 × Importance + Architecture fit + Evidence confidence − Implementation difficulty − Implementation risk`. Rank by score, but include qualitative rationale and do not let the formula override a documented safety or dependency concern. Apply the section 2 gate: append every accepted direction as a complete `not-started` section to the current priority-range page, with a stable ID, priority, dimensions, source report, empty-or-explicit evidence, and notes; record gated directions only in the report. Order accepted directions so dependencies come first — that order is the batch's implementation sequence, not a suggestion.
+Score each direction with the index's formula. Rank by score, but include qualitative rationale and do not let the formula override a documented safety or dependency concern. Apply the section 2 gate: append every accepted direction as a complete `not-started` section to the current priority-range page, with a stable ID, priority, dimensions, source report, empty-or-explicit evidence, and notes; record gated directions only in the report. Order accepted directions so dependencies come first — that order is the batch's implementation sequence, not a suggestion.
 
 The current page owns at most 20 priorities. If the next Priority falls outside its range, create the next zero-padded `directions-NNN-NNN.md` page for the next 20-priority range and add exactly one route to `backlog_index.md`; never rebalance a closed page or duplicate mutable direction state in the index.
 

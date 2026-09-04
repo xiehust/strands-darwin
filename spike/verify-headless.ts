@@ -234,6 +234,26 @@ async function outputContracts(): Promise<void> {
       throw new Error('turn failed');
     },
   }, 'x', () => undefined), /turn failed/u);
+
+  // A refusal ends the SDK turn normally. With no reply it is an error that names the
+  // refusal; with partial text the text is still the reply and stderr states why it
+  // stopped short. Neither is the generic "completed without an assistant reply".
+  await assert.rejects(() => runHeadlessTurn({
+    expandSlashCommand: async () => null,
+    async *send(): AsyncIterable<AgentStreamEvent> {
+      yield event({ type: 'agentResultEvent', result: { stopReason: 'refusal' } });
+    },
+  }, 'x', () => undefined), /declined this request \(stop_reason: refusal\)/u);
+  const refusalStderr: string[] = [];
+  const refusedReply = await runHeadlessTurn({
+    expandSlashCommand: async () => null,
+    async *send(): AsyncIterable<AgentStreamEvent> {
+      yield event({ type: 'contentBlockEvent', contentBlock: { type: 'textBlock', text: 'I can help with' } });
+      yield event({ type: 'agentResultEvent', result: { stopReason: 'refusal' } });
+    },
+  }, 'x', (text) => refusalStderr.push(text));
+  assert.equal(refusedReply, 'I can help with');
+  assert.match(refusalStderr.join(''), /model declined this request \(stop_reason: refusal\)/u);
 }
 
 async function sessionContracts(): Promise<void> {

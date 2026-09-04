@@ -9,6 +9,7 @@ import type { BaseModelConfig, ModelStreamEvent } from '@strands-agents/sdk';
 import { z } from 'zod';
 
 import { PermissionGate } from '../src/agent/permission.js';
+import { CHILD_REFUSAL_ERROR } from '../src/agent/refusal.js';
 import { SubagentDispatchRegistry } from '../src/agents/dispatch-registry.js';
 import {
   FAILED_CHILD_NOTE,
@@ -46,7 +47,7 @@ const ORIGINAL = 'child model exploded';
 
 type Step =
   | { kind: 'text-then-tool'; text: string }
-  | { kind: 'text'; text: string; stopReason: 'endTurn' | 'maxTokens' }
+  | { kind: 'text'; text: string; stopReason: 'endTurn' | 'maxTokens' | 'refusal' }
   | { kind: 'throw'; message?: string; delayMs?: number };
 
 /** Plays one scripted step per model call. */
@@ -301,6 +302,43 @@ header('failed child — workflow node: the graph failure surfaces the node\'s r
   const list = f.dispatches.list();
   assert('both failed nodes settle failed; the unstarted dependant settles cancelled',
     list[0]?.state === 'failed' && list[1]?.state === 'failed' && list[2]?.state === 'cancelled');
+  await f.tool.shutdown();
+}
+
+// A model-side refusal ends the child's turn normally in the SDK: without the
+// explicit check it would be reported as a succeeded delegation with an empty or
+// cut-short report. It is a failure that names the refusal and carries the text.
+header('refused child — subagent tool: a refusal stop is a failed delegation, not a report');
+{
+  const f = subagentFixture([new ScriptedModel([{ kind: 'text', text: 'I can start but', stopReason: 'refusal' }])]);
+  const parent = await host(f.tool);
+  const result = (await parent.tool[SUBAGENT_TOOL_NAME]!.invoke({ task: 'x' } as never, { recordDirectToolCall: false })) as DirectResult;
+  const text = resultText(result);
+  assert('the refused child is an error naming the refusal',
+    result.status === 'error' && text.includes(CHILD_REFUSAL_ERROR));
+  assert('its partial text follows the fixed note through the ordinary projection',
+    text.endsWith(`${FAILED_CHILD_NOTE}\nI can start but`));
+  assert('the dispatch record settles failed, never succeeded', f.dispatches.list()[0]?.state === 'failed');
+  await f.tool.shutdown();
+}
+
+header('refused child — workflow node: a refusal stop is a node failure');
+{
+  const f = workflowFixture([
+    new ScriptedModel([{ kind: 'text', text: '', stopReason: 'refusal' }]),
+    new ScriptedModel([{ kind: 'text', text: 'never', stopReason: 'endTurn' }]),
+  ]);
+  const parent = await host(f.tool);
+  const result = (await parent.tool[WORKFLOW_TOOL_NAME]!.invoke(
+    { nodes: [{ id: 'a', task: 'refused' }, { id: 'b', task: 'never runs' }], edges: [['a', 'b']] } as never,
+    { recordDirectToolCall: false },
+  )) as DirectResult;
+  const text = resultText(result);
+  assert('the workflow result is an error naming the refused node',
+    result.status === 'error' && text.includes(`a: ${CHILD_REFUSAL_ERROR}`));
+  const list = f.dispatches.list();
+  assert('the refused node settles failed; its dependant settles cancelled',
+    list[0]?.state === 'failed' && list[1]?.state === 'cancelled');
   await f.tool.shutdown();
 }
 

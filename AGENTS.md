@@ -49,23 +49,10 @@ pnpm tsx spike/probe-model-switch.ts                          # what survives ha
 pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-tall live frame costs: whole-screen clears per render
 ```
 
-`spike/verify-model-command.ts` without `--live`, `spike/verify-tui.ts model`,
-`spike/verify-tui.ts mode`, `spike/verify-tui.ts clear`, `spike/verify-tui.ts completion`,
-`spike/verify-tui.ts pathCompletion`, `spike/verify-tui.ts recall`,
-`spike/verify-tui.ts recallEmpty`, `spike/verify-tui.ts bang`, `spike/verify-tui.ts queue`,
-`spike/verify-tui.ts wordNav`, `spike/verify-tui.ts undo` and
-`spike/verify-tui.ts mcp` make no model calls at all, so all thirteen are free to run;
-`completion` is the scenario to re-run after touching the built-in slash commands, since the menu row
-count (`MAX_COMPLETIONS`) has to keep every built-in visible, `pathCompletion` is its `@`
-counterpart, `recall` is the one that keeps `Up`/`Down` shared between the menu, the cursor and
-prompt history (its history is seeded straight into a trajectory record, which is why it costs
-nothing), `bang` proves a real `!` command runs, streams and records without the model, `queue`
-proves the SER-027 prompt queue (listing, `Up` take-back, cancel return, `/clear`-family refusal)
-against a `!` busy state, `wordNav` proves the Alt/Ctrl word-jump and word-delete chords act on a
-real pty draft without disturbing the other key owners, `undo` proves Ctrl+_ (raw byte 0x1f)
-restores the drafts those kill/word-delete chords destroy and that a submit clears the undo
-stack, and `mcp`
-proves the `/mcp` report over a real broken-plus-healthy server pair with in-repo fixtures only.
+`spike/verify-model-command.ts` without `--live`, and every scenario the header comment of
+`spike/verify-tui.ts` lists as free, make no model calls. `completion` is the one to re-run after
+touching the built-in slash commands (the `MAX_COMPLETIONS` menu row count has to keep every
+built-in visible); `pathCompletion` is its `@` counterpart.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
 calls. `spike/` is the test suite, not scratch space.
@@ -131,7 +118,7 @@ in `pnpm test`. All checks listed here are free (no model call) unless marked *l
 | `@` path completion | Inserts the path text, never file content — the module opens no file (grepped for read APIs); bounded, exclusion-first, cached async scan never awaited by a keystroke; no-match draws no menu; `computeCompletions` wins when it has candidates | `src/tui/path-completion.ts` | `frontend/prompt-completion.md`; `verify-path-completion.ts`†, `tui pathCompletion` |
 | Prompt recall and reverse search | One bounded project-only reader over `userInput` trajectory lines — no history store, write, model or network; sequential `Up` starts only from an empty draft after menu/queue ownership; `Ctrl+R` snapshots the exact draft/cursor, filters newest-first duplicate-collapsed entries, navigates and accepts, while Escape restores exactly; reader omissions stay visible and search rows are counted | `src/trajectory/prompt-history.ts`, `src/tui/prompt-recall.ts`, `src/tui/prompt-history-search.ts` | `frontend/prompt-recall.md`; `verify-prompt-recall.ts`†, `verify-prompt-history-search.ts`†, `tui historySearch` / `recall` / `recallEmpty` |
 | `!` shell commands | User-authorized, never through the gate (its subject is model tool calls) — runs in every mode including plan; one-shot `bash -c` process group with TERM→KILL timeout/cancel, never the runtime's persistent shell; one bounded projection (SER-009 vocabulary, under the record's field cap) feeds transcript row, `shellCommand` record and the report prepended to the *next* prompt; mid-turn it queues like a prompt (SER-027) and runs at drain time; live output borrows the tool panel — no new frame surface; never a `userInput` line, so recall never offers it; replay prints it via the same reducer | `src/tui/shell-command.ts` | `frontend/live-frame.md`, `backend/session-trajectory.md`; `verify-shell-command.ts`†, `tui bang` |
-| The prompt queue | Supersedes SER-010 by explicit user decision (2026-08-19): busy submissions queue — listed as counted budget rows (after tools, floor 0), counted on the busy hint; drained one entry per idle through the ordinary `submit()` path (next-turn-only, never mid-stream injection); `/clear`/`/compact`/`/model`/`/exit`/`/quit` refuse instead; `Up` from the first draft row takes the queue back (menu > take-back > recall); cancel/failure returns it unsent, permission pending holds it, `/clear` drops it; recorded only at send time | `src/tui/prompt-queue.ts`, `src/tui/QueuedMessages.tsx` | `frontend/live-frame.md`, `frontend/prompt-recall.md`; `verify-prompt-queue.ts`†, `tui queue` / `bang`, `tui usage` (*live*) |
+| The prompt queue | Busy submissions queue (SER-027) — listed as counted budget rows (after tools, floor 0), counted on the busy hint; drained one entry per idle through the ordinary `submit()` path (next-turn-only, never mid-stream injection); `/clear`/`/compact`/`/model`/`/exit`/`/quit` refuse instead; `Up` from the first draft row takes the queue back (menu > take-back > recall); cancel/failure returns it unsent, permission pending holds it, `/clear` drops it; recorded only at send time | `src/tui/prompt-queue.ts`, `src/tui/QueuedMessages.tsx` | `frontend/live-frame.md`, `frontend/prompt-recall.md`; `verify-prompt-queue.ts`†, `tui queue` / `bang`, `tui usage` (*live*) |
 
 ## Project conventions worth knowing before editing
 
@@ -145,18 +132,14 @@ in `pnpm test`. All checks listed here are free (no model call) unless marked *l
 - Keep this file under 32 KiB: darwin preloads only the first `MAX_INSTRUCTIONS_BYTES` of it
   into its own system prompt, so anything past the cap is silently invisible to the agent.
   Long-form architecture rationale goes to `docs/architecture/load-bearing-decisions.md`.
-- This repo is Trellis-managed (see `AGENTS.md`): non-trivial work goes through a task under
+- This repo is Trellis-managed (see `.trellis/workflow.md`): non-trivial work goes through a task under
   `.trellis/tasks/` with PRD → implement → check → spec update → commit.
 - The installed `darwin` command runs `dist/`, not `src/`: after any commit that touches
   `src/` or the built-in skills, run `pnpm build` before reporting done — typecheck and
-  tests do not refresh `dist`, and an unbuilt fix is invisible to the next `darwin` launch
-  (a stale dist is how a "fixed" bug reappears in the very next session). The developer
-  skill already requires this after every accepted iteration; this applies to interactive
-  sessions too.
+  tests do not refresh `dist`, so an unbuilt fix is invisible to the next `darwin` launch.
 - Every `/developer` (developer-skill) supervision run must append its batch record to
   `docs/iteration-log.md` before reporting completion — child session id, one milestone table
-  row per accepted commit, and what the Host re-ran for acceptance. The log is part of the
-  paper trail; README's "How darwin develops darwin" only points there.
+  row per accepted commit, and what the Host re-ran for acceptance. The log is the paper trail.
 - Keep `devEngines` out of `package.json` — it makes every `npx`-launched MCP server die
   with an opaque `Connection closed`.
 - pnpm's `minimumReleaseAge` may hold back very fresh `@strands-agents/sdk` releases; don't

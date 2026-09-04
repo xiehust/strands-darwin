@@ -2,6 +2,7 @@ import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { classify, type ApprovalMode, type PermissionBridge } from './agent/permission.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/stream-resumption.js';
+import { isRefusalStop, REFUSAL_EMPTY_REPLY_ERROR, REFUSAL_NOTICE } from './agent/refusal.js';
 import type { AgentRuntime } from './agent/runtime.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import { describePricingSource, modelCostFields, type ModelUsageShare } from './agent/cost.js';
@@ -188,12 +189,14 @@ async function runOneHeadlessTurn(
   const answer: string[] = [];
   let completed = false;
   let cancelled = false;
+  let refused = false;
 
   for await (const event of runtime.send(input, userInput)) {
     consumeEvent(event, answer, writeStderr);
     if (event.type === 'agentResultEvent') {
       completed = true;
       cancelled = event.result.stopReason === 'cancelled';
+      refused = isRefusalStop(event.result.stopReason);
     }
   }
 
@@ -201,6 +204,8 @@ async function runOneHeadlessTurn(
   if (cancelled) throw new Error('Interrupted.');
 
   const reply = answer.join('').replace(/\n+$/u, '');
+  if (refused && reply.trim() === '') throw new Error(REFUSAL_EMPTY_REPLY_ERROR);
+  if (refused) writeStderr(`${REFUSAL_NOTICE}\n`);
   if (reply.trim() === '') throw new Error('The agent turn completed without an assistant reply.');
   return reply;
 }

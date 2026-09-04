@@ -30,6 +30,7 @@ import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectiveness
 import { describeModelCosts, type ModelUsageShare } from '../agent/cost.js';
 import { averageRequestInputTokens, type SessionCallStats } from '../agent/call-stats.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from '../agent/stream-resumption.js';
+import { isRefusalStop, REFUSAL_NOTICE } from '../agent/refusal.js';
 import { contextOverflowErrorMessage } from '../context-overflow-error.js';
 
 import { routeSdkLogs } from '../agent/sdk-logging.js';
@@ -841,6 +842,11 @@ export function App({
               dispatch({ type: 'streamEvent', event });
               if (event.type === 'contentBlockEvent' && event.contentBlock.type === 'textBlock') {
                 answerTailLive = false;
+              }
+              // The SDK ends a refused turn normally, so the transcript would show an
+              // empty (or cut-short) answer with no reason. Name it once, as a notice.
+              if (event.type === 'agentResultEvent' && isRefusalStop(event.result.stopReason)) {
+                dispatch({ type: 'notice', text: REFUSAL_NOTICE, severity: 'warn' });
               }
             }
           },
