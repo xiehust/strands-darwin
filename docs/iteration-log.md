@@ -2398,6 +2398,7 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Docs: `development.md` + `zh-CN` “Cutting a release”, load-bearing § The npm package names the workflow. No README change (the user-facing install did not move).
 - Commits: `ca0daa8` workflow; `b8afbda` CI unset + docs; `528600e` test race; plus this entry.
 - Still to do by the user: configure the trusted publisher on npmjs.com (package `strands-darwin` → Settings → Trusted Publisher → GitHub Actions: `xiehust` / `strands-darwin` / `publish.yml`, allow `npm publish`), or add `NPM_TOKEN` as a repository secret. Until one of those exists, a tag push passes the gate and fails at the publish step.
+- First real run, same day: the user configured the trusted publisher, chose version `0.0.31` (and the rule that versions now count `0.0.31 → 0.0.32 → …`), the Host bumped `package.json` (`49f1a4e chore(release): v0.0.31`) and pushed tag `v0.0.31`; run `33960824974` (event `push`) went `success` on every step including `Publish to npm` and the release step. Registry afterwards: `dist-tags.latest = 0.0.31`, published by `GitHub Actions` via `trustedPublisher: github` (OIDC — no token involved), provenance attestation at `registry.npmjs.org/-/npm/v1/attestations/strands-darwin@0.0.31`; GitHub release `v0.0.31` created by `github-actions[bot]` with generated notes. Clean clone-less install from the registry: `npm install -g strands-darwin` 14 s, `darwin 0.0.31`, SDK markers `1/7`, `darwin doctor` exit 0.
 
 
 
