@@ -37,6 +37,7 @@ task history.
 | 2026-08-14 | `18bec63` | Add `/tasks` background-job monitoring |
 | 2026-08-14 | `12aa7d8` | Add one-shot headless mode with persistent session continuation |
 | 2026-08-14 | `3a189fd` | Add the built-in `/developer` Host-supervisor workflow |
+| 2026-09-05 | `ed34514`, tag `v0.0.2` | First release built by darwin itself — 630 commits after the Claude Code baseline |
 
 ## Supervised iteration batches
 
@@ -2363,6 +2364,17 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 | Direction | Accepted commits | Host acceptance |
 |---|---|---|
 | SRF-025 | `6dc908a` constant + suite + docs | Host read the six-file diff: `background-wait-contract.ts` `TERMINAL_FOCUSED_WAIT_MAX_MS = 1_800_000` with a why-comment, `OUTPUT_SENSITIVE_WAIT_MAX_MS`/instruction untouched, `background-bash.ts` unchanged because every consumer interpolates the constants; `verify-background-bash.ts` description pin derived from the constants, constants pinned, `1_800_000` accepted and forwarded, `1_800_001` rejected, `30_001` without `wakeOnOutput:false` still refused with the old message, full-cap terminal-focused wait cancelled in 60 ms settles under 300 ms with the task alive. Independently re-run at `6dc908a`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 (0 `FAIL`); `verify-background-bash.ts` 193/193; `verify-skills.ts` 159/159; `pnpm build` exit 0 and `dist/src/tools/background-wait-contract.js` carries `1_800_000`; `spike/probe-cancel-exit.ts` unchanged; stale-bound grep (`300000|300_000|300,000|five minutes`) empty across `src/`, the suite, architecture/user-guide docs, `AGENTS.md`, READMEs. Docs: load-bearing paragraph, `AGENTS.md` row (31,162 B), `using-darwin.md` + `zh-CN` `wait` row; README/reference never named the cap. External untracked items (`Darwin Note.md`, `attachments/`, `docs/blog/`) kept appearing in the tree during this batch — user-created, never staged. |
+
+## Release v0.0.2 — first release built by darwin itself
+
+- Not a `/developer` batch: one interactive darwin session (`session-20260905-025305703`) did the release directly on the user's instruction "tag v0.0.2 and release", with the user approving the log entry afterwards.
+- Starting point: HEAD `8f89bf2` (SRF-025 accepted, image-viewer 2000px cap; one commit ahead of `origin/main`), 628 commits after the `v0.0.1` baseline `fcad031`.
+- Tree state found: 826 staged `.trellis/` deletions plus a matching `.gitignore` line. `git log` showed `5c2ded4` had removed the trellis layer and the Batch 95 docs commit `717d542` had staged the whole tree and re-added every file; the staged removal was the fix in progress. Committed as `a848086 chore(repo): finish removing the trellis workflow layer` so the tag would not ship the stale scaffolding. Untracked `Darwin Note.md`, `attachments/`, `docs/blog/` left alone.
+- Version: `package.json` `0.0.1` → `0.0.2` in `ed34514 chore(release): v0.0.2`; the only version source, since `src/version.ts` reads it at runtime (`pnpm tsx src/cli.ts --version` and `node dist/src/cli.js --version` both print `darwin 0.0.2`). README/AGENTS.md references to `v0.0.1` describe the baseline and stay true.
+- Gate at `ed34514`: `pnpm typecheck` exit 0; full `pnpm test` exit 0 with zero `FAIL` lines (rerun once because the first pass piped through `tail` and lost the runner's exit code); `pnpm build` exit 0.
+- Tag: annotated `v0.0.2` ("v0.0.2 — first release built by darwin itself") on `ed34514`; `main` and the tag pushed to `origin`.
+- GitHub release: <https://github.com/xiehust/strands-darwin/releases/tag/v0.0.2>, created with `gh release create --verify-tag --latest`, title "v0.0.2 — built by darwin". Notes follow the v0.0.1 format: self-development framing (630 commits, 128 `feat`, 76 `fix` since the baseline, by `git log` subject prefix), then what's new grouped by TUI, permissions, sessions/trajectories/memory, delegation/automation, models/providers, tools/extensions, and install steps pinned to the tag. Command names checked against `BUILTIN_COMMAND_NAMES` and tool names against the registered `name:` fields before publishing (two corrections: `/trajectory` added, `imageViewer` spelled as registered).
+- Commits: `a848086`, `ed34514`, plus this log entry.
 
 
 
