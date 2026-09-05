@@ -27,6 +27,7 @@ const suites = [
   'verify-headless.ts',
   'verify-headless-structured.ts',
   'verify-cli-args.ts',
+  'verify-npm-patch-format.ts',
   'verify-background-bash.ts',
   'verify-image-viewer.ts',
   'verify-clipboard-image.ts',

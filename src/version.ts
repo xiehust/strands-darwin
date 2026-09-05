@@ -1,6 +1,13 @@
-/** Darwin's own package version, for records that have to say what wrote them. */
+/** Darwin's own package identity, for records that have to say what wrote them. */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
+/**
+ * The published package name (`npm install -g strands-darwin`). The executable
+ * stays `darwin`; only the registry name carries the prefix, because bare `darwin`
+ * is taken on npm. The walk-up below keys on it, so a rename must change it here.
+ */
+export const DARWIN_PACKAGE_NAME = 'strands-darwin';
 
 /**
  * The version from darwin's `package.json`, or `'unknown'`.
@@ -19,7 +26,7 @@ function readVersion(): string {
         name?: unknown;
         version?: unknown;
       };
-      if (parsed.name === 'darwin' && typeof parsed.version === 'string') return parsed.version;
+      if (parsed.name === DARWIN_PACKAGE_NAME && typeof parsed.version === 'string') return parsed.version;
     } catch {
       // Not this directory: keep walking. A missing package.json is expected here.
     }

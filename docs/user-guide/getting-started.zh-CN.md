@@ -4,25 +4,37 @@
 
 ## 环境要求与安装
 
-- Node.js `>=20.3.0`。
-- pnpm。npm 也能安装依赖，但本仓库提交的是 pnpm lockfile。
+- Node.js `>=20.11.0`。
+- npm，用于下面的全局安装。开发 darwin 本身使用 pnpm（仓库提交的是 pnpm lockfile）。
 - 所选供应商的凭证；默认供应商是 AWS。
+
+```bash
+npm install -g strands-darwin
+darwin --version      # darwin <version>
+darwin doctor         # 离线只读诊断；发现问题时退出码 1
+```
+
+npm 包名是 `strands-darwin`，命令是 `darwin`。包的 `postinstall` 脚本会运行 `patch-package`，应用 darwin 固定的 Strands SDK 补丁（随包发布为 `dist/patches/@strands-agents+sdk+1.16.0.patch`），所以安装时必须允许脚本运行。如果脚本被跳过——`npm install --ignore-scripts`，或使用了不受支持的安装器——`darwin` 会在任何模型调用之前拒绝启动，只打印一条消息，说明缺失的补丁和修复方式：`npm install -g strands-darwin`。
+
+不支持 `pnpm add -g strands-darwin`：pnpm 默认拦截依赖的构建脚本（`postinstall` 会进入 `ignoredBuilds`），即便加上 `--allow-build`，它的隔离目录布局也会把 SDK 放在包的旁边，而不是 `patch-package` 能找到的位置。SDK 的可选依赖 `@tobilu/qmd`（darwin 从不引用的原生搜索存储）在 npm 下会被一并安装；它自上而下都是可选的，没有预编译包的平台会跳过它，而不会让安装失败。
+
+### 开发路径：从克隆目录运行
 
 ```bash
 git clone https://github.com/xiehust/strands-darwin.git
 cd strands-darwin
-pnpm install
-pnpm start
+pnpm install          # 通过 pnpm-workspace.yaml 的 patchedDependencies 应用 SDK 补丁
+pnpm start            # 直接运行 TypeScript 源码，无需构建
 ```
 
 `node-pty` 是真实 PTY 测试所需的原生开发依赖。pnpm 只构建工作区白名单中的原生包，`pnpm-workspace.yaml` 已经包含它。若增加其他原生依赖，需要同步扩充白名单。
 
-### 全局 `darwin` 命令
+### 从克隆目录安装全局 `darwin` 命令
 
-`pnpm start` 直接运行 TypeScript 源码，无需构建。若想让 `darwin` 可执行文件进入 `PATH`，请先构建再全局安装：
+若想让 `PATH` 上的 `darwin` 跟随克隆目录，请先构建再全局链接：
 
 ```bash
-pnpm build            # 产物写入 dist/；bin 指向 dist/src/cli.js
+pnpm build            # 输出 dist/：CLI（bin 指向 dist/src/cli.js）、内置 skill 和 dist/patches/
 pnpm add --global .
 ```
 
@@ -30,10 +42,10 @@ pnpm add --global .
 
 ### 全局命令排障
 
-如果 `darwin` 启动时报 `Error: Cannot find module '.../pnpm/global/v11/<hash>/node_modules/darwin/dist/src/cli.js'`，说明全局 shim 指向了一个已失效的 pnpm store 条目——通常发生在克隆目录被移动、重装被中断，或全局 store 被清理之后。判断特征是：`pnpm build` 成功、`node dist/src/cli.js` 也能跑，但 `darwin` shim 失败。针对当前克隆目录重新注册全局包即可：
+如果 `darwin` 启动时报 `Error: Cannot find module '.../pnpm/global/v11/<hash>/node_modules/strands-darwin/dist/src/cli.js'`，说明全局 shim 指向了一个已失效的 pnpm store 条目——通常发生在克隆目录被移动、重装被中断，或全局 store 被清理之后。判断特征是：`pnpm build` 成功、`node dist/src/cli.js` 也能跑，但 `darwin` shim 失败。针对当前克隆目录重新注册全局包即可：
 
 ```bash
-pnpm remove --global darwin   # 若提示 "not found in global packages" 可忽略，shim 已失效
+pnpm remove --global strands-darwin   # 若提示 "not found in global packages" 可忽略，shim 已失效
 pnpm build
 pnpm add --global .
 darwin doctor                 # 验证：离线只读诊断，不创建任何文件，发现问题时退出码 1

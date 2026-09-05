@@ -3,7 +3,7 @@
   <p>一款在终端中运行的编程代理：每次通过验收的版本，都会成为开发下一版的工具。</p>
   <p><a href="README.md">English</a> · <strong>简体中文</strong></p>
   <p>
-    <a href="https://nodejs.org/"><img alt="Node.js >=20.3.0" src="https://img.shields.io/badge/Node.js-%3E%3D20.3.0-339933?logo=nodedotjs&amp;logoColor=white"></a>
+    <a href="https://nodejs.org/"><img alt="Node.js >=20.11.0" src="https://img.shields.io/badge/Node.js-%3E%3D20.11.0-339933?logo=nodedotjs&amp;logoColor=white"></a>
     <a href="https://www.typescriptlang.org/"><img alt="TypeScript 7.0.2" src="https://img.shields.io/badge/TypeScript-7.0.2-3178C6?logo=typescript&amp;logoColor=white"></a>
     <a href="https://www.npmjs.com/package/@strands-agents/sdk"><img alt="Strands Agents SDK 1.16.0" src="https://img.shields.io/badge/Strands_Agents_SDK-1.16.0-5E4AE3"></a>
     <a href="https://spdx.org/licenses/ISC.html"><img alt="ISC License" src="https://img.shields.io/badge/License-ISC-blue.svg"></a>
@@ -47,17 +47,13 @@ darwin 不会另写一套代理循环。它沿用 Strands SDK 的循环，只负
 
 ## 安装与启动
 
-需要 Node.js 20.3+、pnpm，以及所选模型供应商的凭证（默认使用 AWS）。
+需要 Node.js 20.11+、npm，以及所选模型供应商的凭证（默认使用 AWS）。
 
 ```bash
-git clone https://github.com/xiehust/strands-darwin.git
-cd strands-darwin
-pnpm install
-pnpm build
-pnpm add --global .
+npm install -g strands-darwin
 ```
 
-构建产物会写入 `dist/`；全局安装会根据 `package.json` 注册 `darwin` 命令。请确保 pnpm 的全局可执行文件目录已加入 `PATH`；如果 pnpm 提示尚未配置，请运行 `pnpm setup`。全局安装会链接到当前源码目录，因此安装后请保留克隆下来的目录。
+npm 包名是 `strands-darwin`，安装后的命令是 `darwin`。包的 `postinstall` 脚本会用 `patch-package` 应用 darwin 固定的 Strands SDK 补丁，因此不要加 `--ignore-scripts`——跳过了这一步的安装会在启动时被拒绝，并给出指向这条修复路径的提示。不支持 `pnpm add -g`：pnpm 默认拦截依赖的构建脚本，即便放行，它的隔离目录布局也会把 SDK 放在 `patch-package` 找不到的位置。
 
 此后可以在任意目标仓库中直接运行 darwin；当前工作目录会被视为项目根目录：
 
@@ -71,9 +67,19 @@ darwin doctor               # 离线只读诊断：配置、MCP、技能、hook�
 darwin --help               # 用法语法；darwin --version 打印版本
 ```
 
-开发 darwin 本身时，仍可使用 `pnpm start` 直接运行 TypeScript 源码，无需全局安装。
+### 开发 darwin 本身
 
-TUI 测试使用的 `node-pty` 是原生开发依赖，已列入 `pnpm-workspace.yaml` 的构建白名单。若添加新的原生依赖，也要更新这份白名单。
+克隆仓库并使用 pnpm（lockfile 是 pnpm 的；`pnpm install` 会自行应用 SDK 补丁）：
+
+```bash
+git clone https://github.com/xiehust/strands-darwin.git
+cd strands-darwin
+pnpm install
+pnpm start                  # 直接运行 TypeScript 源码，无需构建
+pnpm build                  # 输出 dist/（CLI、内置 skill 和生成的 patch-package 补丁文件）
+```
+
+`pnpm build` 之后运行 `pnpm add --global .` 可以把全局 `darwin` 链接到当前克隆目录；之后请保留该目录，修改源码后重新运行 `pnpm build`。TUI 测试使用的 `node-pty` 是原生开发依赖，已列入 `pnpm-workspace.yaml` 的构建白名单。若添加新的原生依赖，也要更新这份白名单。
 
 ## 配置模型
 

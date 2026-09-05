@@ -23,7 +23,7 @@ darwin --help                               # usage grammar, exit 0
 darwin --version                            # darwin <version>, exit 0
 ```
 
-`darwin --help` (or `-h`) prints the grammar below to stdout and exits 0; `darwin --version` (or `-V`) prints `darwin <version>` from `package.json`. Both are answered locally before any argument parsing, runtime, config or model work — no file is written — and either flag anywhere in argv wins over everything else (help before version). The block is quoted from `CLI_USAGE` in `src/cli-usage.ts` and pinned by `spike/verify-cli-args.ts`:
+`darwin --help` (or `-h`) prints the grammar below to stdout and exits 0; `darwin --version` (or `-V`) prints `darwin <version>` from `package.json` (the package is `strands-darwin`; the printed name is the command's). Both are answered locally before any argument parsing, runtime, config or model work — no file is written — and either flag anywhere in argv wins over everything else (help before version). One check precedes even these: if the installed `@strands-agents/sdk` lacks darwin's pinned patch (an install that skipped `postinstall`/`patch-package`, e.g. `npm install --ignore-scripts` or the unsupported `pnpm add -g`), every invocation prints one five-line refusal on stderr naming `npm install -g strands-darwin` as the fix and exits 1 (`spike/verify-npm-patch-format.ts`, `spike/verify-npm-package.ts`). The block is quoted from `CLI_USAGE` in `src/cli-usage.ts` and pinned by `spike/verify-cli-args.ts`:
 
 ```text
 Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]

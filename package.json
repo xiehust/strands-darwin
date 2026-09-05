@@ -1,17 +1,27 @@
 {
-  "name": "darwin",
+  "name": "strands-darwin",
   "version": "0.0.2",
   "description": "TUI coding agent built on the Strands TypeScript SDK",
   "type": "module",
   "engines": {
-    "node": ">=20.3.0"
+    "node": ">=20.11.0"
   },
   "bin": {
     "darwin": "./dist/src/cli.js"
   },
+  "files": [
+    "dist/src",
+    "dist/patches",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "tsc && node -e \"const fs=require('node:fs');fs.cpSync('src/skills/builtin','dist/src/skills/builtin',{recursive:true})\"",
+    "build": "tsc && node -e \"const fs=require('node:fs');fs.cpSync('src/skills/builtin','dist/src/skills/builtin',{recursive:true})\" && node dist/src/npm-package/generate-patch.js",
+    "prepack": "npm run build",
+    "postinstall": "patch-package --patch-dir dist/patches",
     "start": "tsx src/cli.ts",
     "dev-repl": "tsx src/dev-repl.ts",
     "test": "tsx spike/run-tests.ts"
@@ -35,6 +45,7 @@
     "gray-matter": "^4.0.3",
     "ink": "^7.1.1",
     "openai": "^6.49.0",
+    "patch-package": "^8.0.1",
     "react": "^19.2.8",
     "sharp": "^0.34.5",
     "zod": "^4.4.3"

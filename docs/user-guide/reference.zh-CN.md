@@ -23,7 +23,7 @@ darwin --help                               # 用法语法，退出码 0
 darwin --version                            # darwin <version>，退出码 0
 ```
 
-`darwin --help`（或 `-h`）把下面的语法原文打印到 stdout 并以 0 退出；`darwin --version`（或 `-V`）打印取自 `package.json` 的 `darwin <version>`。两者都在解析其余参数、加载运行时、配置或模型之前就地回答，不写任何文件；只要 argv 里出现其中一个，它就优先于其他所有参数（help 又优先于 version）。下面这段引自 `src/cli-usage.ts` 的 `CLI_USAGE`，由 `spike/verify-cli-args.ts` 锁定：
+`darwin --help`（或 `-h`）把下面的语法原文打印到 stdout 并以 0 退出；`darwin --version`（或 `-V`）打印取自 `package.json` 的 `darwin <version>`（包名是 `strands-darwin`，打印的是命令名）。两者都在解析其余参数、加载运行时、配置或模型之前就地回答，不写任何文件；只要 argv 里出现其中一个，它就优先于其他所有参数（help 又优先于 version）。有一项检查比它们更早：如果安装的 `@strands-agents/sdk` 缺少 darwin 固定的补丁（安装时跳过了 `postinstall`/`patch-package`，例如 `npm install --ignore-scripts` 或不受支持的 `pnpm add -g`），任何调用都只在 stderr 打印一条五行的拒绝消息，指明修复方式 `npm install -g strands-darwin`，并以 1 退出（`spike/verify-npm-patch-format.ts`、`spike/verify-npm-package.ts`）。下面这段引自 `src/cli-usage.ts` 的 `CLI_USAGE`，由 `spike/verify-cli-args.ts` 锁定：
 
 ```text
 Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]

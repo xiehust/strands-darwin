@@ -24,11 +24,13 @@ For implementation-level invariants, read [load-bearing decisions](../architectu
 ```bash
 pnpm typecheck    # tsc --noEmit; the static quality gate
 pnpm test         # all fast suites, no model/network calls
-pnpm build        # emit dist/ and copy built-in skill assets
+pnpm build        # emit dist/: the CLI, the built-in skill assets and dist/patches/ (the patch-package copy of the pinned SDK patch the npm package's postinstall applies)
 pnpm dev-repl     # line-oriented driver over the same AgentRuntime
 ```
 
 No linter is configured. The REPL predates Ink and helps separate runtime faults from terminal-rendering faults.
+
+The npm package (`npm install -g strands-darwin`) is `npm pack` of a built tree: the `files` whitelist ships `dist/src`, `dist/patches` and the README only, `prepack` rebuilds, and `postinstall` runs `patch-package --patch-dir dist/patches`. `spike/verify-npm-patch-format.ts` (in `pnpm test`) pins the pnpm→patch-package conversion, the manifest facts and the startup preflight; `spike/verify-npm-package.ts` packs, installs into a temporary prefix and runs the installed binary — it needs the registry, so run it standalone. Publishing is a release step, not part of any suite.
 
 The test layer uses real files, sessions, process groups, SDK objects, and PTYs rather than mocks. `spike/` is the test suite, not scratch space. Files named `verify-*` assert and exit nonzero on failure. `pnpm test` runs the fast subset.
 

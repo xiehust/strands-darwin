@@ -3,7 +3,7 @@
   <p>A terminal coding agent that improves by using each accepted revision to build the next one.</p>
   <p><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
   <p>
-    <a href="https://nodejs.org/"><img alt="Node.js >=20.3.0" src="https://img.shields.io/badge/Node.js-%3E%3D20.3.0-339933?logo=nodedotjs&amp;logoColor=white"></a>
+    <a href="https://nodejs.org/"><img alt="Node.js >=20.11.0" src="https://img.shields.io/badge/Node.js-%3E%3D20.11.0-339933?logo=nodedotjs&amp;logoColor=white"></a>
     <a href="https://www.typescriptlang.org/"><img alt="TypeScript 7.0.2" src="https://img.shields.io/badge/TypeScript-7.0.2-3178C6?logo=typescript&amp;logoColor=white"></a>
     <a href="https://www.npmjs.com/package/@strands-agents/sdk"><img alt="Strands Agents SDK 1.16.0" src="https://img.shields.io/badge/Strands_Agents_SDK-1.16.0-5E4AE3"></a>
     <a href="https://spdx.org/licenses/ISC.html"><img alt="ISC License" src="https://img.shields.io/badge/License-ISC-blue.svg"></a>
@@ -47,17 +47,13 @@ The agent loop remains the Strands SDK loop. darwin assembles SDK models, interv
 
 ## Install and start
 
-Requirements: Node.js 20.3+, pnpm, and credentials for your configured provider (AWS by default).
+Requirements: Node.js 20.11+, npm, and credentials for your configured provider (AWS by default).
 
 ```bash
-git clone https://github.com/xiehust/strands-darwin.git
-cd strands-darwin
-pnpm install
-pnpm build
-pnpm add --global .
+npm install -g strands-darwin
 ```
 
-The build emits the CLI to `dist/`; the global install registers the `darwin` executable from `package.json`. Ensure pnpm's global bin directory is on `PATH` (run `pnpm setup` if pnpm reports otherwise). Keep the cloned directory after installation because the global package is linked to it.
+The registry package is `strands-darwin`; the command it installs is `darwin`. Its `postinstall` script applies darwin's pinned Strands SDK patch with `patch-package`, so do not pass `--ignore-scripts` — an install that skipped it is refused at startup with a message naming this fix. `pnpm add -g` is unsupported: pnpm blocks dependency build scripts by default and, with them allowed, its isolated layout keeps the SDK where `patch-package` cannot find it.
 
 You can now run darwin directly from any repository; its current working directory becomes the project root:
 
@@ -71,9 +67,19 @@ darwin doctor               # offline read-only diagnostics: config, MCP, skills
 darwin --help               # usage grammar; darwin --version prints the version
 ```
 
-When developing darwin itself, `pnpm start` still runs the TypeScript source without a global installation.
+### Developing darwin itself
 
-`node-pty`, used by the TUI tests, is a native dev dependency already allow-listed in `pnpm-workspace.yaml`. Add any new native dependencies to that allow-list.
+Clone the repository and use pnpm (the lockfile is pnpm's; `pnpm install` applies the SDK patch itself):
+
+```bash
+git clone https://github.com/xiehust/strands-darwin.git
+cd strands-darwin
+pnpm install
+pnpm start                  # runs the TypeScript source, no build needed
+pnpm build                  # emits dist/ (the CLI, the built-in skills and the generated patch-package file)
+```
+
+`pnpm build` followed by `pnpm add --global .` links a global `darwin` to the clone; keep the directory afterwards and re-run `pnpm build` after source changes. `node-pty`, used by the TUI tests, is a native dev dependency already allow-listed in `pnpm-workspace.yaml`. Add any new native dependencies to that allow-list.
 
 ## Configure a model
 

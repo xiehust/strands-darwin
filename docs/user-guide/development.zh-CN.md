@@ -24,11 +24,13 @@
 ```bash
 pnpm typecheck    # tsc --noEmit；静态质量门
 pnpm test         # 全部快速套件，不调用模型/网络
-pnpm build        # 输出 dist/ 并复制内置 skill 资源
+pnpm build        # 输出 dist/：CLI、内置 skill 资源和 dist/patches/（固定 SDK 补丁的 patch-package 版本，npm 包的 postinstall 用它打补丁）
 pnpm dev-repl     # 使用同一 AgentRuntime 的逐行驱动器
 ```
 
 项目没有配置 linter。REPL 早于 Ink TUI 保留至今，可帮助判断问题来自 runtime 还是终端渲染。
+
+npm 包（`npm install -g strands-darwin`）就是对构建好的目录执行 `npm pack`：`files` 白名单只发布 `dist/src`、`dist/patches` 和 README，`prepack` 会重新构建，`postinstall` 运行 `patch-package --patch-dir dist/patches`。`spike/verify-npm-patch-format.ts`（属于 `pnpm test`）锁定 pnpm→patch-package 的转换、manifest 事实和启动预检；`spike/verify-npm-package.ts` 打包、安装到临时 prefix 并运行安装后的命令——它需要访问 registry，请单独运行。发布属于发版步骤，不在任何套件之内。
 
 测试不依赖 mock，而是使用真实文件、会话、进程组、SDK 对象和 PTY。`spike/` 就是测试套件，不是临时目录。`verify-*` 文件会执行断言，失败时返回非零。`pnpm test` 运行快速子集。
 

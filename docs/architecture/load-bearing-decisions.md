@@ -863,6 +863,43 @@ the trajectory records no child event.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything
 else takes an explicit `projectRoot`.
 
+## The npm package — one pinned patch, generated at build, refused when missing
+
+**`npm install -g strands-darwin` is the supported install; the pnpm patch stays the single
+source.** The registry name is `strands-darwin` (bare `darwin` is taken); the command stays
+`darwin` and `--version` still prints `darwin <version>`, with `src/version.ts` keyed on the
+exported `DARWIN_PACKAGE_NAME`. `engines.node` is `>=20.11.0` because `import.meta.dirname` is
+used. The tarball is `npm pack` of a built tree: `files` whitelists `dist/src`, `dist/patches`
+and `README.md` (npm adds every `README*` itself), so `dist/spike/`, `src/`, `spike/`, `docs/`,
+`patches/` and `attachments/` never ship; `prepack` runs the build. The SDK patch exists once,
+as the pnpm patch `pnpm patch-commit` writes and `pnpm-workspace.yaml` `patchedDependencies`
+applies; `pnpm build` ends with `node dist/src/npm-package/generate-patch.js`, which rewrites
+it into patch-package's dialect (`src/npm-package/patch-package-format.ts`: only the
+`diff --git`/`---`/`+++` paths gain `node_modules/@strands-agents/sdk/`, the file name becomes
+`@strands-agents+sdk+1.16.0.patch`, idempotent) under `dist/patches/` — a gitignored build
+artifact, never a second hand-maintained copy. `postinstall` is
+`patch-package --patch-dir dist/patches`, and both edges of the developer path hold by
+patch-package's own behaviour: an absent directory (fresh clone, `postinstall` runs before any
+build) is "No patch files found", exit 0; the generated file against an SDK pnpm already
+patched is "already applied", exit 0, nothing rewritten. `pnpm add -g` is unsupported and
+documented so: pnpm blocks dependency build scripts by default and, allowed, its isolated
+layout puts the SDK where patch-package cannot address it. The unpatched case is refused at
+startup rather than crashing: ESM links an entry module's whole static import graph before
+running a statement, and `cli-main.ts` → `agent/runtime.ts` → `agent/compact.ts` imports
+`DEFAULT_SUMMARIZATION_PROMPT`, a name only the patch exports — so `cli.ts` is a bootstrap
+whose static imports are node built-ins plus `sdk-patch-preflight.ts` (node built-ins plus
+`version.ts`), reads two marker files next to the resolved SDK entry (`DEFAULT_SUMMARIZATION_PROMPT`
+in `index.js`, `excludeTools` in `vended-plugins/context-offloader/plugin.js`), prints one
+five-line refusal naming `patch-package`/`postinstall`, `--ignore-scripts`, `pnpm add -g` as
+unsupported and `npm install -g strands-darwin` as the fix, exits 1, and only otherwise
+`import()`s `cli-main.ts`. The check precedes even `--help`/`--version`; it evaluates no SDK
+module and never wraps the loop. `spike/verify-npm-patch-format.ts` (in `pnpm test`, offline)
+pins the conversion, the generator, the manifest facts, the notice and the import-graph
+placement, and runs patch-package on both developer-path edges; `spike/verify-npm-package.ts`
+(standalone: it needs the registry) builds, packs, asserts the entry list, installs into a
+temporary prefix, checks the installed SDK markers, runs `--version`/`--help`/`doctor`, and
+proves the `--ignore-scripts` refusal. Publishing is the Host's release step, never a suite's.
+
 ## Process exit
 
 **Process exit is engineered, not assumed.** The vended bash tool's persistent shell is

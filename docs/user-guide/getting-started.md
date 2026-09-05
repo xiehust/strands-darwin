@@ -4,25 +4,37 @@
 
 ## Requirements and installation
 
-- Node.js `>=20.3.0`.
-- pnpm. npm can install the package, but this repository's lockfile is pnpm's.
+- Node.js `>=20.11.0`.
+- npm, for the global install below. Developing darwin itself uses pnpm (the repository's lockfile is pnpm's).
 - Credentials for the selected provider; AWS is the default.
+
+```bash
+npm install -g strands-darwin
+darwin --version      # darwin <version>
+darwin doctor         # offline read-only diagnostics; exit 1 on problems
+```
+
+The registry package is `strands-darwin`; the command is `darwin`. The package's `postinstall` script runs `patch-package` to apply darwin's pinned Strands SDK patch (shipped as `dist/patches/@strands-agents+sdk+1.16.0.patch`), so install with scripts enabled. If they were skipped — `npm install --ignore-scripts`, or an unsupported installer — `darwin` refuses to start before any model call, with one message that names the missing patch and this fix: `npm install -g strands-darwin`.
+
+`pnpm add -g strands-darwin` is unsupported: pnpm blocks a dependency's build scripts by default (the `postinstall` lands in `ignoredBuilds`), and even with `--allow-build` its isolated layout places the SDK beside the package, where `patch-package` cannot find it. The SDK's optional `@tobilu/qmd` dependency (a native search store darwin never imports) is installed under npm; it is optional all the way down, so a platform without prebuilds skips it rather than failing the install.
+
+### Developer path: run from a clone
 
 ```bash
 git clone https://github.com/xiehust/strands-darwin.git
 cd strands-darwin
-pnpm install
-pnpm start
+pnpm install          # applies the SDK patch through pnpm-workspace.yaml patchedDependencies
+pnpm start            # runs the TypeScript source in place, no build needed
 ```
 
 `node-pty` is a native dev dependency used for real PTY tests. pnpm builds only native packages allowed by the workspace, and it is already listed in `pnpm-workspace.yaml`. Extend that list if you add another native dependency.
 
-### Global `darwin` command
+### Global `darwin` command from a clone
 
-`pnpm start` runs the TypeScript source in place and needs no build. To get the `darwin` executable on your `PATH`, build first and then install globally:
+To get a `darwin` on your `PATH` that tracks the clone, build first and then link it globally:
 
 ```bash
-pnpm build            # emits the CLI to dist/; bin points at dist/src/cli.js
+pnpm build            # emits dist/: the CLI (bin points at dist/src/cli.js), the built-in skills, dist/patches/
 pnpm add --global .
 ```
 
@@ -30,10 +42,10 @@ The global package is linked to this clone, so keep the directory after installi
 
 ### Troubleshooting the global command
 
-If `darwin` fails to start with `Error: Cannot find module '.../pnpm/global/v11/<hash>/node_modules/darwin/dist/src/cli.js'`, the global shim is pointing at a stale pnpm store entry — usually after the clone was moved, an interrupted reinstall, or a pruned global store. `pnpm build` succeeding and `node dist/src/cli.js` running fine while the `darwin` shim fails is the tell. Re-register the global package against the current clone:
+If `darwin` fails to start with `Error: Cannot find module '.../pnpm/global/v11/<hash>/node_modules/strands-darwin/dist/src/cli.js'`, the global shim is pointing at a stale pnpm store entry — usually after the clone was moved, an interrupted reinstall, or a pruned global store. `pnpm build` succeeding and `node dist/src/cli.js` running fine while the `darwin` shim fails is the tell. Re-register the global package against the current clone:
 
 ```bash
-pnpm remove --global darwin   # ignore "not found in global packages"; the shim is stale
+pnpm remove --global strands-darwin   # ignore "not found in global packages"; the shim is stale
 pnpm build
 pnpm add --global .
 darwin doctor                 # verify: offline read-only diagnostics, creates nothing, exit 1 on problems
