@@ -32,6 +32,10 @@ No linter is configured. The REPL predates Ink and helps separate runtime faults
 
 The npm package (`npm install -g strands-darwin`) is `npm pack` of a built tree: the `files` whitelist ships `dist/src`, `dist/patches` and the README only, `prepack` rebuilds, and `postinstall` runs `patch-package --patch-dir dist/patches`. `spike/verify-npm-patch-format.ts` (in `pnpm test`) pins the pnpm→patch-package conversion, the manifest facts and the startup preflight; `spike/verify-npm-package.ts` packs, installs into a temporary prefix and runs the installed binary — it needs the registry, so run it standalone. Publishing is a release step, not part of any suite.
 
+### Cutting a release
+
+Releases are cut by tag. Bump `version` in `package.json` (the only place it lives; `src/version.ts` reads it), commit, then push an annotated tag `vX.Y.Z` whose number equals that version. The `publish` workflow (`.github/workflows/publish.yml`) runs on the tag: `pnpm install`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `spike/verify-npm-package.ts`, then refuses if the tag and `package.json` disagree, publishes to npm and creates the GitHub release with generated notes unless one already exists — write the notes first with `gh release create` if you want your own. npm authentication is trusted publishing (OIDC): npmjs.com → package settings → Trusted Publisher → GitHub Actions, owner `xiehust`, repository `strands-darwin`, workflow filename `publish.yml`; a repository secret `NPM_TOKEN` (granular token with 2FA bypass) is the fallback. `gh workflow run publish.yml --ref main` rehearses the gate on a runner without publishing.
+
 The test layer uses real files, sessions, process groups, SDK objects, and PTYs rather than mocks. `spike/` is the test suite, not scratch space. Files named `verify-*` assert and exit nonzero on failure. `pnpm test` runs the fast subset.
 
 ## Focused and live checks

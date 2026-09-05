@@ -56,8 +56,13 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # GitHub sets CI=true, and Ink (via `is-in-ci`) then renders non-interactively —
+      # no live frames — so the real-pty suites never see the startup motion or busy rows
+      # they assert on (`verify-startup-pty.ts` times out waiting for `initializing`).
+      # The suites test darwin as a person runs it, so the test step unsets CI; the
+      # runner is still a runner in every other respect.
       - name: Test (free suites, no model calls)
-        run: pnpm test
+        run: env -u CI -u CONTINUOUS_INTEGRATION pnpm test
 
       - name: Build (emits dist/ and the generated patch-package file)
         run: pnpm build

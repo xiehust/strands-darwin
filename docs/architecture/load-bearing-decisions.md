@@ -898,7 +898,11 @@ pins the conversion, the generator, the manifest facts, the notice and the impor
 placement, and runs patch-package on both developer-path edges; `spike/verify-npm-package.ts`
 (standalone: it needs the registry) builds, packs, asserts the entry list, installs into a
 temporary prefix, checks the installed SDK markers, runs `--version`/`--help`/`doctor`, and
-proves the `--ignore-scripts` refusal. Publishing is the Host's release step, never a suite's.
+proves the `--ignore-scripts` refusal. Publishing is the Host's release step, never a suite's:
+`.github/workflows/publish.yml` runs on a `v*` tag, repeats the whole gate plus the npm-package
+suite on a fresh runner, refuses a tag whose version differs from `package.json`, publishes
+through npm trusted publishing (OIDC, `NPM_TOKEN` secret as fallback) and creates the GitHub
+release only when none exists; `workflow_dispatch` rehearses the gate without publishing.
 
 ## Process exit
 

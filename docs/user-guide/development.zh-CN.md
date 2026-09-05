@@ -32,6 +32,10 @@ pnpm dev-repl     # 使用同一 AgentRuntime 的逐行驱动器
 
 npm 包（`npm install -g strands-darwin`）就是对构建好的目录执行 `npm pack`：`files` 白名单只发布 `dist/src`、`dist/patches` 和 README，`prepack` 会重新构建，`postinstall` 运行 `patch-package --patch-dir dist/patches`。`spike/verify-npm-patch-format.ts`（属于 `pnpm test`）锁定 pnpm→patch-package 的转换、manifest 事实和启动预检；`spike/verify-npm-package.ts` 打包、安装到临时 prefix 并运行安装后的命令——它需要访问 registry，请单独运行。发布属于发版步骤，不在任何套件之内。
 
+### 发版
+
+发版由 tag 驱动。先把 `package.json` 的 `version` 改成新版本（版本号只存在这一处，`src/version.ts` 运行时读取它）并提交，再推送一个数字与之相同的附注 tag `vX.Y.Z`。`publish` 工作流（`.github/workflows/publish.yml`）在 tag 上运行：`pnpm install`、`pnpm typecheck`、`pnpm test`、`pnpm build`、`spike/verify-npm-package.ts`，然后在 tag 与 `package.json` 版本不一致时拒绝，否则发布到 npm，并在 GitHub release 不存在时用自动生成的说明创建一个——想自己写说明，就先用 `gh release create` 建好。npm 认证使用 trusted publishing（OIDC）：在 npmjs.com 的包设置 → Trusted Publisher → GitHub Actions 中填写 owner `xiehust`、仓库 `strands-darwin`、工作流文件名 `publish.yml`；仓库 secret `NPM_TOKEN`（带 2FA 绕过的 granular token）是回退方案。`gh workflow run publish.yml --ref main` 会在 runner 上演练整个门禁而不发布。
+
 测试不依赖 mock，而是使用真实文件、会话、进程组、SDK 对象和 PTY。`spike/` 就是测试套件，不是临时目录。`verify-*` 文件会执行断言，失败时返回非零。`pnpm test` 运行快速子集。
 
 ## 聚焦检查与在线检查
