@@ -1,0 +1,95 @@
+# Release: publish `strands-darwin` to npm and create the GitHub release.
+#
+# Trigger: push a tag `vX.Y.Z` whose version equals `package.json`'s (the job refuses a
+# mismatch before anything is published). The whole quality gate runs first — typecheck,
+# the full free suite, the build, and `spike/verify-npm-package.ts`, which packs the real
+# tarball and installs it into a temporary prefix — so a tag that does not pass is never
+# published. Nothing here calls a model.
+#
+# Authentication: npm trusted publishing (OIDC, `id-token: write`) — configure it once on
+# npmjs.com under the package's settings → Trusted Publisher → GitHub Actions with
+# owner `xiehust`, repository `strands-darwin`, workflow filename `publish.yml`. The npm
+# CLI tries OIDC first; a repository secret `NPM_TOKEN` (a granular token with 2FA
+# bypass) is the fallback when no trusted publisher is configured. Provenance
+# attestations are generated automatically under OIDC.
+#
+# `workflow_dispatch` is a rehearsal: it runs the same gate on the chosen ref and stops
+# before the version check, publish and release, so the pipeline can be exercised
+# without cutting a version.
+name: publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # gh release create
+  id-token: write   # npm trusted publishing (OIDC)
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      # Node 24 ships npm 11 (trusted publishing needs npm >= 11.5.1); the package itself
+      # supports Node >= 20.11, which `engines` states and the npm suite installs against.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install (pnpm applies the pinned SDK patch)
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test (free suites, no model calls)
+        run: pnpm test
+
+      - name: Build (emits dist/ and the generated patch-package file)
+        run: pnpm build
+
+      - name: Verify the npm package end to end
+        run: pnpm tsx spike/verify-npm-package.ts
+
+      - name: Tag must equal package.json version
+        if: github.event_name == 'push'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag v$tag does not match package.json version $version"
+            exit 1
+          fi
+          echo "releasing strands-darwin@$version"
+
+      - name: Publish to npm
+        if: github.event_name == 'push'
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create the GitHub release if none exists
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists; leaving its notes alone"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+              --title "$GITHUB_REF_NAME" --latest
+          fi
