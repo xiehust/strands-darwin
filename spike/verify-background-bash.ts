@@ -1298,13 +1298,17 @@ async function shutdownAndExitContracts(): Promise<void> {
     });
     let stdout = '';
     child.stdout.on('data', (chunk) => { stdout += String(chunk); });
+    // Subscribe before READY: the `exit` probe calls process.exit(0) right after printing
+    // it, and on a fast machine the child's exit event fires before the READY poll below
+    // returns — a listener attached only afterwards waits for an event already gone.
+    const exited = new Promise<void>((resolve) => { child.once('exit', () => resolve()); });
     await eventually(async () => stdout, (value) => value.includes('READY'), 3_000);
     const leader = Number((await readFile(path.join(probeRoot, 'leader.pid'), 'utf8')).trim());
     const descendant = Number((await readFile(path.join(probeRoot, 'child.pid'), 'utf8')).trim());
     if (scenario === 'SIGINT' || scenario === 'SIGTERM') child.kill(scenario);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`probe ${scenario} did not exit`)); }, 3_000);
-      child.once('exit', () => { clearTimeout(timer); resolve(); });
+      void exited.then(() => { clearTimeout(timer); resolve(); });
     });
     await eventually(async () => exists(leader) || exists(descendant), (alive) => !alive, 2_000);
     assert(`${scenario} leaves neither registered leader nor descendant`, !exists(leader) && !exists(descendant));
