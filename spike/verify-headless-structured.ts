@@ -21,8 +21,10 @@ import {
 
 import { parseCliArgs } from '../src/cli-args.js';
 import {
+  STRUCTURED_FIELD_LIMIT,
   StructuredHeadlessWriter,
   runStructuredHeadlessTurn,
+  structuredThinking,
   structuredUsage,
 } from '../src/headless-protocol.js';
 import { installMaxTokensRecovery } from '../src/agent/max-tokens-recovery.js';
@@ -684,6 +686,79 @@ async function callStatsProtocols(): Promise<void> {
   assert('a run without completed calls emits no callStats field and an identical usage', true);
 }
 
+async function thinkingProtocols(): Promise<void> {
+  header('structured headless — a clamped or disabled thinking plan is reported, not silent (issue #10)');
+
+  // Text mode: one `thinking:` line right after the permission mode, only when the plan
+  // carries a problem. Every other exact-stderr assertion in this suite runs the
+  // fixture's unclamped default plan, so together they prove the line is absent then.
+  const clamped = await cli('thinking-clamped', 'text');
+  nodeAssert.deepEqual(clamped, {
+    code: 0,
+    stdout: 'fixture answer\n',
+    stderr:
+      'session: session-fixture\n' +
+      'permission-mode: default\n' +
+      'thinking: provider "openai" has no xhigh reasoning effort — using high\n' +
+      'tool bash — bash: printf fixture\n' +
+      'tool bash — ok\n' +
+      'usage: input=12 output=3 cacheRead=0 cacheWrite=-\n' +
+      'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=fake.headless pricing=unavailable\n',
+  });
+  assert('text mode writes the clamp as one `thinking:` startup record after permission-mode', true);
+
+  // Structured: `run.started` carries the resolved plan unconditionally — a harness
+  // asserts `effective` instead of trusting what it asked for — and the terminal record
+  // lists the problem among the warnings with its own source.
+  const stream = await cli('thinking-clamped', 'stream-json');
+  const records = lines(stream.stdout);
+  const started = records.find((record) => record.type === 'run.started')!;
+  nodeAssert.deepEqual(started['thinking'], {
+    enabled: true,
+    requested: 'xhigh',
+    effective: 'high',
+    problem: 'provider "openai" has no xhigh reasoning effort — using high',
+  });
+  const terminal = records.at(-1)!;
+  nodeAssert.deepEqual(terminal['warnings'], [
+    { source: 'thinking', level: 'warn', message: 'provider "openai" has no xhigh reasoning effort — using high' },
+  ]);
+  nodeAssert.equal(stream.stderr, '');
+  assert('stream-json run.started carries requested/effective/problem and the terminal record warns with source thinking', true);
+
+  const disabled = await cli('thinking-disabled', 'json');
+  const disabledRecord = lines(disabled.stdout)[0]!;
+  nodeAssert.deepEqual(disabledRecord['warnings'], [
+    { source: 'thinking', level: 'warn', message: 'fake.headless does not support adaptive thinking — Claude Sonnet 4.6 / Opus 4.6 and later do' },
+  ]);
+  assert('thinking disabled despite a configured level is a warning in the json result too', true);
+  const disabledStream = lines((await cli('thinking-disabled', 'stream-json')).stdout);
+  const disabledStarted = disabledStream.find((record) => record.type === 'run.started')!;
+  nodeAssert.deepEqual(disabledStarted['thinking'], {
+    enabled: false,
+    requested: 'high',
+    problem: 'fake.headless does not support adaptive thinking — Claude Sonnet 4.6 / Opus 4.6 and later do',
+  });
+  assert('a disabled plan has enabled=false and no effective key — absent, never a placeholder level', true);
+
+  // The unclamped plan: the fact is still there (so a harness can always assert it),
+  // with no problem key and no thinking warning.
+  const plain = lines((await cli('success', 'stream-json')).stdout);
+  const plainStarted = plain.find((record) => record.type === 'run.started')!;
+  nodeAssert.deepEqual(plainStarted['thinking'], { enabled: true, requested: 'low', effective: 'low' });
+  nodeAssert.equal('warnings' in plain.at(-1)!, false);
+  assert('an unclamped run states requested = effective on run.started and adds no warning', true);
+
+  // Pure projection: `structuredThinking` collapses whitespace and bounds the problem
+  // like every other field (exactly STRUCTURED_FIELD_LIMIT code points, then `truncated`).
+  const long = structuredThinking({ enabled: true, requested: 'max', effective: 'high', problem: `x  ${'y'.repeat(9_000)}` });
+  nodeAssert.deepEqual(long, {
+    enabled: true, requested: 'max', effective: 'high',
+    problem: `x ${'y'.repeat(STRUCTURED_FIELD_LIMIT - 2)}`, truncated: true,
+  });
+  assert('an over-long problem is whitespace-collapsed, cut at the field limit and flagged truncated', true);
+}
+
 function boundsAndEscaping(): void {
   header('structured headless — bounds and one-line escaping');
   const output: string[] = [];
@@ -712,5 +787,6 @@ await modelRetryProtocols();
 usageContract();
 await childUsageProtocols();
 await callStatsProtocols();
+await thinkingProtocols();
 boundsAndEscaping();
 report();

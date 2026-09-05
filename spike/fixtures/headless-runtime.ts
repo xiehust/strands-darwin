@@ -6,6 +6,7 @@ import type { ModelRetryOutcome, RetryWaitState } from '../../src/agent/model-re
 import { NEVER_WITHDRAWN } from '../../src/agent/permission.js';
 import type { AgentRuntime, RuntimeOptions } from '../../src/agent/runtime.js';
 import type { ModelPriceLookup, ModelUsageShare } from '../../src/agent/cost.js';
+import type { ThinkingPlan } from '../../src/agent/thinking.js';
 import type { AppConfig } from '../../src/config.js';
 
 const config: AppConfig = {
@@ -94,6 +95,25 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
       diagnosticsFile: undefined,
     },
     config,
+    // The resolved thinking plan (issue #10). The default mirrors `thinkingEffort: 'low'`
+    // served as asked, so every existing exact-output assertion doubles as proof that
+    // an unclamped run adds no line; the two problem modes are the three `planThinking`
+    // problem shapes — a clamp (openai `xhigh` → `high`) and thinking off entirely.
+    thinking: (mode === 'thinking-clamped'
+      ? {
+          enabled: true,
+          requested: 'xhigh',
+          effective: 'high',
+          problem: 'provider "openai" has no xhigh reasoning effort — using high',
+        }
+      : mode === 'thinking-disabled'
+        ? {
+            enabled: false,
+            requested: 'high',
+            effective: undefined,
+            problem: 'fake.headless does not support adaptive thinking — Claude Sonnet 4.6 / Opus 4.6 and later do',
+          }
+        : { enabled: true, requested: 'low', effective: 'low', problem: undefined }) satisfies ThinkingPlan,
     usage,
     // The real runtime's childUsage is undefined until a dispatch reports usage;
     // every mode but child-usage keeps that zero-dispatch shape so the exact

@@ -8,6 +8,7 @@ import { pendingRetryWait, type HeadlessRuntime } from './headless.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
+import type { ThinkingEffort, ThinkingPlan } from './agent/thinking.js';
 import { contextOverflowErrorMessage } from './context-overflow-error.js';
 import { failureFromError } from './trajectory/record.js';
 
@@ -60,9 +61,24 @@ export interface StructuredFailure {
 }
 
 export interface StructuredWarning {
-  source: 'sdk' | 'trajectory' | 'diagnostics' | 'memory' | 'hook';
+  source: 'sdk' | 'trajectory' | 'diagnostics' | 'memory' | 'hook' | 'thinking';
   level: 'warn' | 'error';
   message: string;
+  truncated?: true;
+}
+
+/**
+ * The resolved thinking plan as a run-scoped fact (issue #10): what was asked for
+ * and what is actually sent, so a harness can assert the effective effort instead of
+ * trusting its own request. `effective` is absent when nothing is sent (`enabled:
+ * false`); `problem` is present exactly when the two differ or thinking is off despite
+ * a level being set — the same rule `ThinkingPlan.problem` states.
+ */
+export interface StructuredThinking {
+  enabled: boolean;
+  requested: ThinkingEffort;
+  effective?: ThinkingEffort;
+  problem?: string;
   truncated?: true;
 }
 
@@ -128,6 +144,8 @@ export class StructuredHeadlessWriter {
     permissionMode: ApprovalMode;
     resumed: boolean;
     diagnosticsFile?: string;
+    /** Additive (issue #10): the resolved thinking plan; absent only when the runtime cannot say. */
+    thinking?: StructuredThinking;
   }): void {
     const diagnosticsFile = input.diagnosticsFile === undefined
       ? undefined
@@ -138,6 +156,7 @@ export class StructuredHeadlessWriter {
       resumed: input.resumed,
       ...(diagnosticsFile === undefined ? {} : { diagnosticsFile: diagnosticsFile.value }),
       ...(diagnosticsFile?.truncated === true ? { truncated: true } : {}),
+      ...(input.thinking === undefined ? {} : { thinking: input.thinking }),
     });
   }
 
@@ -332,6 +351,20 @@ export function structuredWarning(
     level,
     message: bounded.value,
     ...(bounded.truncated ? { truncated: true } : {}),
+  };
+}
+
+/** The resolved thinking plan projected for `run.started`; the problem text is bounded like every other field. */
+export function structuredThinking(plan: ThinkingPlan): StructuredThinking {
+  const problem = plan.problem === undefined
+    ? undefined
+    : bound(plan.problem.replace(/\s+/gu, ' ').trim(), STRUCTURED_FIELD_LIMIT);
+  return {
+    enabled: plan.enabled,
+    requested: plan.requested,
+    ...(plan.effective === undefined ? {} : { effective: plan.effective }),
+    ...(problem === undefined ? {} : { problem: problem.value }),
+    ...(problem?.truncated === true ? { truncated: true } : {}),
   };
 }
 

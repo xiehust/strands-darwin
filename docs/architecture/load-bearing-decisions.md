@@ -658,7 +658,18 @@ acceptance matrix is measured rather than read, because the AWS page is wrong ab
 reconfigures the live model via
 `Model.updateConfig()` rather than rebuilding the agent — the conversation must survive a change
 of thinking depth — with the config write reported, not awaited, exactly like an accepted
-allow-rule.
+allow-rule. "Reported" has to hold on every driver, not just the ones with a header (issue #10):
+`ThinkingPlan.problem` was read by the TUI header, `/status`, the dev REPL and `doctor`, while a
+headless run — the one an evaluation harness uses, and the one that cannot look at a header —
+clamped in silence, so a benchmark labelled `xhigh` could really be running `high` with no trace
+in any artifact. Headless now treats the resolved plan as a run-scoped fact beside the permission
+mode: text mode writes one `thinking: <problem>` stderr line after `permission-mode:` only when
+intent and reality differ; `run.started` carries `thinking: { enabled, requested, effective?,
+problem? }` unconditionally so a harness asserts `effective` instead of trusting its own request,
+and the terminal record repeats the problem in `warnings` with `source: "thinking"`. The runtime
+accessor is read guardedly (a test double without it adds no field), all additive, schema
+version unchanged. Checks: `verify-headless-structured.ts` (clamped and disabled fixtures in all
+three protocols, unclamped run adds nothing).
 
 ## Subagents
 

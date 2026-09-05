@@ -5,6 +5,7 @@ import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/str
 import { describeRetryWait, type RetryWaitState } from './agent/model-retry.js';
 import { isRefusalStop, REFUSAL_EMPTY_REPLY_ERROR, REFUSAL_NOTICE } from './agent/refusal.js';
 import type { AgentRuntime } from './agent/runtime.js';
+import type { ThinkingPlan } from './agent/thinking.js';
 import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import { describePricingSource, modelCostFields, type ModelUsageShare } from './agent/cost.js';
 import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
@@ -178,6 +179,33 @@ export function formatHeadlessDiagnosticsProblem(
 ): string | undefined {
   if (status?.problem === undefined) return undefined;
   return `diagnostics: ${headlessField(status.problem)}`;
+}
+
+/**
+ * The thinking plan's gap between intent and reality — a clamped level, or thinking
+ * disabled despite a configured level — as one startup record, or `undefined` when the
+ * request carries exactly what was asked for (issue #10). The interactive drivers have
+ * always shown this line; headless callers are the ones who cannot look at a header,
+ * so the record is the only place a harness can learn that its `xhigh` ran as `high`.
+ */
+export function formatHeadlessThinkingProblem(
+  plan: { problem: string | undefined } | undefined,
+): string | undefined {
+  if (plan?.problem === undefined) return undefined;
+  return `thinking: ${headlessField(plan.problem)}`;
+}
+
+/**
+ * The runtime's live thinking plan, or `undefined` when the runtime cannot say (a test
+ * double without the accessor) or reading it throws — a startup fact never fails the run.
+ */
+export function headlessThinkingPlan(runtime: { thinking?: unknown }): ThinkingPlan | undefined {
+  try {
+    const plan = runtime.thinking;
+    return typeof plan === 'object' && plan !== null && 'requested' in plan ? (plan as ThinkingPlan) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

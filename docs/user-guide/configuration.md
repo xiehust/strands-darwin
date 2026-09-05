@@ -143,7 +143,7 @@ Claude 4.6+ uses adaptive thinking:
 | `xhigh` | extended depth; Opus only |
 | `max` | no depth constraint |
 
-Unsupported levels clamp instead of causing every request to fail: for example Sonnet `xhigh` becomes `high`. Older Claude models report no adaptive thinking. OpenAI receives `reasoning_effort`; `xhigh` and `max` clamp to `high`, and non-reasoning models may reject the field.
+Unsupported levels clamp instead of causing every request to fail: for example Sonnet `xhigh` becomes `high`. Older Claude models report no adaptive thinking. OpenAI receives `reasoning_effort`; `xhigh` and `max` clamp to `high`, and non-reasoning models may reject the field. A clamp is always reported, never silent: the interactive header and `/status` show it, `darwin doctor` notes it, and a headless run writes a `thinking:` stderr line (text) or carries `thinking.requested`/`effective`/`problem` on `run.started` plus a `thinking` warning (json/stream-json).
 
 ```text
 /effort

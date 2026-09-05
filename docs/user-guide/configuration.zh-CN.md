@@ -143,7 +143,7 @@ Claude 4.6+ 使用 adaptive thinking：
 | `xhigh` | 更深的思考；仅 Opus 支持 |
 | `max` | 不限制深度 |
 
-不受支持的级别会降级，而不会让每次请求都失败。例如 Sonnet 的 `xhigh` 会降为 `high`。较旧 Claude 模型会显示不支持 adaptive thinking。OpenAI 接收 `reasoning_effort`；`xhigh` 和 `max` 都会降为 `high`，非推理模型可能拒绝该字段。
+不受支持的级别会降级，而不会让每次请求都失败。例如 Sonnet 的 `xhigh` 会降为 `high`。较旧 Claude 模型会显示不支持 adaptive thinking。OpenAI 接收 `reasoning_effort`；`xhigh` 和 `max` 都会降为 `high`，非推理模型可能拒绝该字段。降级一定会被报告，不会静默发生：交互模式头部和 `/status` 会显示，`darwin doctor` 会注明，无头运行则在 stderr 写一行 `thinking:`（text），或在 `run.started` 上携带 `thinking.requested`/`effective`/`problem` 并附一条 `thinking` warning（json/stream-json）。
 
 ```text
 /effort

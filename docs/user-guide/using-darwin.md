@@ -61,6 +61,8 @@ session: session-20260814-160833123
 
 The session ID uses lowercase letters, numbers, hyphens, or underscores and must name an existing snapshot for strict selection. `--continue` follows the last-session pointer and is headless-only; with no pointer it starts fresh.
 
+After `permission-mode:`, a run whose thinking effort could not be served as configured writes one `thinking: <problem>` line — for example `thinking: provider "openai" has no xhigh reasoning effort — using high`, or that the model does not support adaptive thinking at all — the same sentence the interactive header shows; a run that got exactly what it asked for writes no such line.
+
 Before exit, text mode writes the anchored `usage:` token record (`input`/`output`/`cacheRead`/`cacheWrite`, `-` for unreported), the optional `usage-children:`/`usage-total:` records when children ran, then one `cost:` record pricing the parent buckets at the model's LiteLLM base rates (`total=… … model=<id> pricing=<litellmKey|unavailable|none>`, `-` for anything unknown — see [Sessions and state § Cost](./sessions-and-state.md#cost)), then `model-calls:` when calls were observed.
 
 Headless mode cannot prompt. Static-safe calls and persisted allow rules run; any call reaching the default bridge is immediately denied. Use `--permission-mode auto`, `--permission-mode yolo`, or `--yolo` only when those semantics fit the automation. A denial is not necessarily process failure if the model handles it. Success requires the turn, snapshot, resume pointer, and strict cleanup to succeed. SIGINT is cancellation and exits nonzero.
@@ -88,6 +90,8 @@ darwin -p "inspect the project" --output-format stream-json
 Every valid record has `schemaVersion: 1`, monotonic process `sequence` from 1, ISO `timestamp`, and resolved/requested `sessionId` (or `null` only before startup resolution). Structured stderr is empty after valid parsing; CLI usage errors still use stderr and exit 2.
 
 Terminal `outcome` is `success`, `failure`, or `cancelled`. Success is written only after runtime shutdown and pointer persistence. `errors` contains turn/cleanup/persistence errors in order; observer/SDK degradations are `warnings`. Usage has mutually exclusive `input`, `output`, `cacheRead`, and `cacheWrite`; missing means unreported and measured zero stays `0`.
+
+`run.started` also carries the resolved thinking plan as `thinking: { enabled, requested, effective?, problem? }` — `effective` is the level actually sent (absent when thinking is off), `problem` appears only when it differs from `requested` or thinking is disabled despite a configured level — so a harness can assert the effort a run really used instead of trusting its own config. The same `problem` is repeated in the terminal record's `warnings` with `source: "thinking"`.
 
 V1 streams completed post-redaction assistant text, not token deltas. It is an allowlisted projection: no reasoning text/signatures, guardrail-redacted content, raw tool inputs/results, traces, metrics, or live invocation objects. Bounded fields say when truncated; long assistant messages split into numbered records, while a successful terminal result remains complete. `SIGKILL` and broken stdout (`EPIPE`) cannot guarantee the terminal record. `--output-format` may appear once, only with print mode; it adds no daemon, server, SDK API, or checkpoint mechanism.
 

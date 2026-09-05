@@ -16,6 +16,7 @@ import {
   createHeadlessPermissionBridge,
   formatHeadlessDiagnosticsProblem,
   formatHeadlessPermissionMode,
+  formatHeadlessThinkingProblem,
   formatHeadlessTrajectoryProblem,
   formatHeadlessCallStats,
   formatHeadlessChildUsage,
@@ -23,6 +24,7 @@ import {
   formatHeadlessTotalUsage,
   formatHeadlessUsage,
   headlessField,
+  headlessThinkingPlan,
   runHeadlessTurn,
 } from './headless.js';
 import {
@@ -30,6 +32,7 @@ import {
   runStructuredHeadlessTurn,
   structuredCallStats,
   structuredFailure,
+  structuredThinking,
   structuredUsage,
   structuredWarning,
   type StructuredFailure,
@@ -187,11 +190,17 @@ export async function runHeadlessProcess(
       protocol?.sessionResolved(runtime.info.sessionId);
     }
     if (interrupted) throw new Error('Interrupted.');
+    // The resolved thinking plan is a run-scoped fact like the permission mode (issue
+    // #10): the interactive drivers show a clamp in their header, so headless must say
+    // it too — structured as a `run.started` field a harness can assert, text as one
+    // startup line that exists only when intent and reality differ.
+    const thinking = headlessThinkingPlan(runtime);
     if (structured) {
       protocol?.runStarted({
         permissionMode: runtime.info.permissionMode,
         resumed: runtime.info.resumed,
         ...(runtime.info.diagnosticsFile === undefined ? {} : { diagnosticsFile: runtime.info.diagnosticsFile }),
+        ...(thinking === undefined ? {} : { thinking: structuredThinking(thinking) }),
       });
     }
     if (options.compactBefore) await runtime.compact();
@@ -236,6 +245,8 @@ export async function runHeadlessProcess(
       if (runtime.info.diagnosticsFile !== undefined) {
         note(`diagnostics: ${runtime.info.diagnosticsFile}\n`);
       }
+      const thinkingProblem = formatHeadlessThinkingProblem(thinking);
+      if (thinkingProblem !== undefined) note(`${thinkingProblem}\n`, 'warn');
       reply = await runHeadlessTurn(runtime, prompt, (text) => note(text));
     }
   } catch (error) {
@@ -387,6 +398,12 @@ export async function runHeadlessProcess(
         }
       } catch {
         // Derived memory is advisory and must not change the exit path.
+      }
+      // Structured only: text mode already wrote the `thinking:` line at startup, and
+      // the terminal record is where a structured caller looks for every degradation.
+      if (structured) {
+        const problem = headlessThinkingPlan(runtime)?.problem;
+        if (problem !== undefined) warnings.push(structuredWarning('thinking', 'warn', problem));
       }
     }
 

@@ -61,6 +61,8 @@ session: session-20260814-160833123
 
 严格选择会话时，ID 只能含小写字母、数字、连字符或下划线，并且必须对应已有快照。`--continue` 仅用于无头模式，跟随最近会话指针；指针不存在时新建会话。
 
+在 `permission-mode:` 之后，如果配置的思考强度无法按原样生效，会写出一行 `thinking: <problem>`——例如 `thinking: provider "openai" has no xhigh reasoning effort — using high`，或者模型根本不支持 adaptive thinking——与交互模式头部显示的是同一句话；按原样生效的运行不会写这一行。
+
 退出前，文本模式会写出锚定的 `usage:` token 记录（`input`/`output`/`cacheRead`/`cacheWrite`，未报告为 `-`），有子代理时再写 `usage-children:`/`usage-total:`，然后写一条 `cost:` 记录，按模型的 LiteLLM 基础单价为父级分桶计价（`total=… … model=<id> pricing=<litellmKey|unavailable|none>`，未知一律为 `-`，见 [会话与状态 § 成本](./sessions-and-state.zh-CN.md#成本)），最后在观察到模型调用时写 `model-calls:`。
 
 无头模式无法弹出审批框。静态安全调用和已保存的放行规则仍能执行；其余调用到达默认 bridge 后会立即拒绝。只有确认自动化场景适合时，才使用 `--permission-mode auto`、`--permission-mode yolo` 或 `--yolo`。工具被拒绝不一定导致进程失败，模型可以处理拒绝后正常结束。只有回合、快照、最近会话指针和严格清理全部成功，进程才返回成功。SIGINT 属于取消，状态码非零。
@@ -88,6 +90,8 @@ darwin -p "inspect the project" --output-format stream-json
 每条有效记录都包含 `schemaVersion: 1`、从 1 开始且在当前进程递增的 `sequence`、ISO `timestamp`，以及请求或解析后的 `sessionId`。只有启动解析前失败时，`sessionId` 才可能是 `null`。参数解析成功后，结构化模式的 stderr 为空；CLI 参数错误仍写 stderr，并返回 2。
 
 终态 `outcome` 只有 `success`、`failure`、`cancelled`。只有 runtime 严格关闭且最近会话指针落盘后，才会输出成功。`errors` 按顺序保存回合、清理和持久化错误；`warnings` 保存观察器或 SDK 降级。`usage` 的 `input`、`output`、`cacheRead`、`cacheWrite` 互斥计量；字段缺失表示未报告，实测为零才写 `0`。
+
+`run.started` 还带有实际生效的思考计划 `thinking: { enabled, requested, effective?, problem? }`——`effective` 是真正发送的级别（思考关闭时缺失），`problem` 只在它与 `requested` 不同、或配置了级别但思考被禁用时出现——这样自动化框架可以断言运行实际使用的强度，而不是相信自己的配置。同一个 `problem` 也会以 `source: "thinking"` 出现在终态记录的 `warnings` 里。
 
 V1 流式输出的是经过最终脱敏的完整助手文本，不是 token delta。公开格式采用字段白名单，不含思考文本/签名、被 guardrail 替换的内容、原始工具输入/结果、trace、内部 metrics 或实时 invocation 对象。受限字段会标注截断；长回复拆成带序号的多条记录，但成功终态结果仍保持完整。`SIGKILL` 与 stdout 断管（`EPIPE`）无法保证写出终态记录。`--output-format` 只能出现一次且只用于 print 模式；它不会额外启动 daemon、server、SDK API 或 checkpoint。
 
