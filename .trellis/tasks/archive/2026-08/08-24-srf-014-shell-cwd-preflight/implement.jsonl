@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for the runtime/tool boundary."}
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Authoritative vended bash, serialization, session, and process cleanup contracts."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Required tool refusal and degradation semantics."}

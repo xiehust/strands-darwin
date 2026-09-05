@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Owns Agent assembly, conversation-manager, session persistence, token counting, and resume contracts."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Defines per-domain degradation and rollback behavior for local commands."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Defines pty coverage and slash-completion assertion rules."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The command spans TUI, runtime, SDK conversation mutation, and session storage."}

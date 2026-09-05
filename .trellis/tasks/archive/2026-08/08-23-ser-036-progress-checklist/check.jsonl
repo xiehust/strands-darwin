@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"verify parent-only SDK tool assembly"}
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"verify no new durable evidence channel"}
-{"file":".trellis/spec/frontend/live-frame.md","reason":"verify counted live and final Static projection"}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"verify free pty scenario quality"}

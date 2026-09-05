@@ -1,5 +1,0 @@
-{"file":"docs/research/research_2026-08-17.md","reason":"SER-011 origin, peer evidence and acceptance contract"}
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Measured headless, stream serialization, failure, cancellation and usage contracts"}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Load-bearing CLI, cleanup, persistence and unknown-metric behavior"}
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"Existing safe event/privacy/bounds vocabulary to inform but not expose directly"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Central owner required for versioned JSON event contracts"}

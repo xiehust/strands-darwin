@@ -1,5 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Check memory validation, prompt order, config, and factory invariants."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Check fail-closed degradation and bounded surfaced errors."}
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"Check observer/source immutability constraints."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Check local command tests and bounded transcript behavior."}
-{"file":"docs/research/research_2026-08-22.md","reason":"Check implementation against SER-033 source evidence and comparison."}

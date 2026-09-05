@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Verify background lifecycle compact-mode behavior, diagnostics, expanded mode, and required test commands."}
-{"file":".trellis/spec/frontend/live-frame.md","reason":"Verify no new redrawn frame surface and preserve Static history invariants."}

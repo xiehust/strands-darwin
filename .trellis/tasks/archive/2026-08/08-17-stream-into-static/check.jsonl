@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Required checks, including that the longAnswer notice assertion is re-expressed rather than deleted"}
-{"file": ".trellis/spec/backend/session-trajectory.md", "reason": "Replay must render the same transcript as the live run"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality gate"}

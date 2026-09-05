@@ -1,7 +1,0 @@
-{"file":".trellis/tasks/08-19-srf-001-stream-resumption/prd.md","reason":"acceptance criteria and lifecycle ownership"}
-{"file":".trellis/tasks/08-19-srf-001-stream-resumption/design.md","reason":"cross-layer seam, classification, visibility, and queue semantics"}
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"verify no SDK loop fork and identical runtime error semantics"}
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"verify failed turn remains append-only and distinct"}
-{"file":".trellis/spec/backend/structured-headless-output.md","reason":"verify all three protocol outcomes and privacy"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"verify one busy owner across continuation"}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"verify deterministic focused coverage"}

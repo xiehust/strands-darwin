@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Verify the new SER contract sits under the bash section, matrix rows added, SER-054 message/fields unchanged"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality gate expectations for spike suites and typecheck"}
-{"file": ".trellis/tasks/09-04-bash-stdin-noninteractive/prd.md", "reason": "Acceptance criteria to check one by one"}

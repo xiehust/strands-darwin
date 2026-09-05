@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend verification and change-quality requirements"}
-{"file": ".trellis/spec/backend/strands-sdk-contracts.md", "reason": "Review permission, isolation, cancellation, and process cleanup invariants"}
-{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "Review any startup diagnostic and cancellation PTY coverage"}
-{"file": ".trellis/tasks/08-14-subagent-capability/research/sdk-agents-as-tools.md", "reason": "Check implementation against measured SDK adapter behavior"}

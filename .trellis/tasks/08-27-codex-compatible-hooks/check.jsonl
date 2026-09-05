@@ -1,9 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Audit the implementation against every affected load-bearing SDK/runtime contract."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Verify executable-policy failures, Pre fail-closed behavior, and observation-only degradation."}
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"Prove injected/advisory hook data never becomes durable trajectory or corrupts literal-input guarantees."}
-{"file":".trellis/spec/backend/structured-headless-output.md","reason":"Verify no hook subprocess output leaks into versioned automation stdout."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Select and evaluate real PTY coverage without frame or assertion regressions."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Trace each event/config field through decoder, runtime seam, output projection, and visible behavior."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that shared payload/process/normalization logic has one owner and exhaustive event handling."}
-{"file":".trellis/tasks/08-27-codex-compatible-hooks/research/codex-hooks-official-contract.md","reason":"Compare claimed compatibility to the official Codex release behavior."}
-{"file":".trellis/tasks/08-27-codex-compatible-hooks/research/darwin-seams-and-compatibility-map.md","reason":"Check that implementation stays on verified seams and preserves recorded deliberate limitations."}

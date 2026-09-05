@@ -1,5 +1,0 @@
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"Check recap remains a tolerant read-only replay derivative."}
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Check no agent-message, snapshot or pointer mutation."}
-{"file":".trellis/spec/frontend/live-frame.md","reason":"Check recap is startup Static history and frame baseline stays unchanged."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Check offline pty acceptance and state-exclusive assertions."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check reuse of replay/reducer and existing presentation conventions."}

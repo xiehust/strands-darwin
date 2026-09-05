@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Defines the official AgentSkills boundary, subagent discovery/permission invariants, and global/project state contracts changed by the new layers."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Defines fail-closed hook configuration and isolated skill/agent/command degradation behavior."}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Defines custom command discovery/completion and startup warning verification requirements."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The change crosses filesystem discovery, runtime metadata, permission policy, and TUI reporting."}

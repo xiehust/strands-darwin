@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Verify the final lifecycle/memory contract and named offline check."}
-{"file":".trellis/spec/backend/session-trajectory.md","reason":"Check observer-only and no-buffering behavior."}
-{"file":".trellis/spec/frontend/live-frame.md","reason":"Check that timer/frame behavior remains bounded and unchanged."}

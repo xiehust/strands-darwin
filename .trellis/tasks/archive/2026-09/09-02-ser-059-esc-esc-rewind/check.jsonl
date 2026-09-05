@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/frontend/prompt-recall.md", "reason": "Verify the rewind section states the chord, its window, its owners and its reset conditions"}
-{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "pty scenario conventions: anchored waits, settle for no-op keys, exitedWithin, separate control-byte writes"}

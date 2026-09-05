@@ -1,5 +1,0 @@
-{"file":"docs/research/research_2026-08-23.md","reason":"verify implementation stays within accepted SER-037 direction"}
-{"file":".trellis/spec/frontend/prompt-completion.md","reason":"verify completion dismissal and re-arm behavior"}
-{"file":".trellis/spec/frontend/prompt-recall.md","reason":"verify recall dismissal and precedence"}
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"verify pty assertions and input ownership"}
-{"file":".trellis/spec/frontend/live-frame.md","reason":"verify frame budget and no new surface"}

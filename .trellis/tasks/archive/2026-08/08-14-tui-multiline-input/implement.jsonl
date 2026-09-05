@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/tui-testing.md","reason":"Defines real-pty verification, anchored waits, exclusive assertions, and cheap rendering scenario conventions."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Guides terminal input through state and rendering boundary analysis."}

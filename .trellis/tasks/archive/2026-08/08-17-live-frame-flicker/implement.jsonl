@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/frontend/tui-testing.md", "reason": "The frame-height contract this change extends, plus the pty-testing rules (anchored waits, state-exclusive assertions, exitedWithin) the new scenario must follow"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "Degradation shape: a bounded live view must state what it is not showing rather than silently dropping it"}

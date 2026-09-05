@@ -1,5 +1,0 @@
-{"file": ".trellis/tasks/08-13-tui-coding-agent-mvp/research/strands-ts-sdk-findings.md", "reason": "核对实现是否复用了 SDK 原生能力而非自建轮子（PRD 核心原则）"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端/核心模块质量检查基准"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "TUI (Ink/React) 组件质量检查基准"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查错误路径：MCP 断连、权限拒绝后 loop 不中断、坏 skill 容错"}
-{"file": ".trellis/tasks/08-13-tui-coding-agent-mvp/research/spike-results.md", "reason": "核对实现是否遵循 spike 定案（interventions 而非裸 hook、deny 而非 confirm、printer:false）"}

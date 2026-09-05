@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Defines Agent assembly, MCP sharing, retry ordering, and executable SDK contracts."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Defines which external/provider failures must remain errors and degradation boundaries."}
-{"file":".trellis/tasks/08-26-srf-018-empty-web-search/research/ownership-seam.md","reason":"Records verified external ownership, exact no-hit signature, and Darwin's actual registration seam."}

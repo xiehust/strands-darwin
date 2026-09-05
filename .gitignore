@@ -3,6 +3,9 @@
 /.codegraph/
 /.codex/
 /.kiro/
+# Trellis workflow layer was removed on 2026-09-04; darwin's own skills keep the
+# iteration record (docs/iteration-log.md, docs/research/, docs/reflections/).
+/.trellis/
 node_modules/
 dist/
 .darwin/sessions/

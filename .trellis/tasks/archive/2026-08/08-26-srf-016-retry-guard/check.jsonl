@@ -1,3 +1,0 @@
-{"file":".trellis/spec/backend/strands-sdk-contracts.md","reason":"Check the implementation against SDK-loop, intervention-order, permission, child isolation, and prompt contracts."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify bounds and data ownership across result observation, state, and model guidance."}
-{"file":"docs/reflections/reflection_2026-08-25_session-20260825-023511752.md","reason":"Verify acceptance coverage addresses the evidenced repeated-failure loop."}
