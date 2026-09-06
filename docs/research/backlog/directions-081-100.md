@@ -289,7 +289,7 @@ Decisions taken 2026-09-05 before handoff (user, in the Host session): package n
 
 ## SER-069 — Background-task completion wakes the agent: a terminal `bash start` job, while the session is idle, enqueues exactly one bounded session-originated prompt into the existing prompt queue as a distinct non-user entry drained through ordinary `submit()`; on terminal state only, suppressed when the model already consumed that state via `wait`/`status`; a new trajectory record type (never `userInput`) with its own replay reducer; dropped by `/clear`; one config key to disable
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 94
 - Score: 12
 - Importance: 4
