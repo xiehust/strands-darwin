@@ -23,12 +23,18 @@ import {
   OUTPUT_SENSITIVE_WAIT_MAX_MS,
   TERMINAL_FOCUSED_WAIT_MAX_MS,
   TERMINAL_WAIT_TIMEOUT_INSTRUCTION,
+  TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE,
   createBackgroundBashTool,
   createForegroundBashTool,
   type BackgroundStartResult,
   type BackgroundTaskStatus,
   type BackgroundWaitResult,
 } from '../src/tools/background-bash.js';
+import {
+  backgroundCompletionSentence,
+  isTerminalWaitTimeoutInstruction,
+  terminalWaitTimeoutInstruction,
+} from '../src/tools/background-wait-contract.js';
 import { assert, header, report } from './shared.js';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -628,6 +634,61 @@ async function wrapperAndPermissionContracts(): Promise<void> {
         managementWrapped.description.includes('aggregates intermediate output') &&
         managementWrapped.description.includes('wakeOnOutput:false') &&
         managementWrapped.description.includes('background completion does not resume the agent'),
+    );
+    // SER-069: the still-running-timeout sentence is per runtime. The default (headless,
+    // children, `backgroundTaskWake: false`) is byte-identical to the pre-wake text; only
+    // a wrapper built with `completionWakes: true` tells the model that ending the turn is
+    // followed by one `<task-notification>` turn, and `wait` stays right inside the turn.
+    const noWakeSentence = backgroundCompletionSentence(false);
+    const wakeSentence = backgroundCompletionSentence(true);
+    const wakingWrapped = createBackgroundBashTool(managementManager, foreground, { completionWakes: true });
+    const explicitNoWake = createBackgroundBashTool(managementManager, foreground, { completionWakes: false });
+    assert(
+      'the no-wake completion sentence is the pre-wake text and is the default, explicit false and absent alike',
+      noWakeSentence === 'A still-running terminal-focused timeout tells you to call wait again before ending when later work depends on completion; background completion does not resume the agent.' &&
+        managementWrapped.description.includes(noWakeSentence) && !managementWrapped.description.includes('<task-notification>') &&
+        explicitNoWake.description === managementWrapped.description,
+    );
+    assert(
+      'the wake variant replaces exactly that sentence: <task-notification> after idle, wait still right inside the turn',
+      wakingWrapped.description.includes(wakeSentence) && !wakingWrapped.description.includes(noWakeSentence) &&
+        wakeSentence.includes('you may end the turn') && wakeSentence.includes('once the session is idle, one <task-notification> turn') &&
+        wakeSentence.includes('wait is still right when you need the result inside this turn') &&
+        wakingWrapped.description.replace(wakeSentence, noWakeSentence) === managementWrapped.description &&
+        [...wakeSentence].length < 300 && [...TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE].length < 240,
+    );
+    assert(
+      'the two timeout instructions are the two variants and the pre-wake constant is unchanged',
+      terminalWaitTimeoutInstruction(false) === TERMINAL_WAIT_TIMEOUT_INSTRUCTION &&
+        terminalWaitTimeoutInstruction(true) === TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE &&
+        TERMINAL_WAIT_TIMEOUT_INSTRUCTION === 'The task is still running. If later work depends on its completion, call bash wait again before ending this turn; background completion does not resume the agent.' &&
+        TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE.includes('You may end this turn') &&
+        TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE.includes('one <task-notification> turn') &&
+        TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE.includes('Call bash wait again only when you need the result inside this turn') &&
+        isTerminalWaitTimeoutInstruction(TERMINAL_WAIT_TIMEOUT_INSTRUCTION) &&
+        isTerminalWaitTimeoutInstruction(TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE) &&
+        !isTerminalWaitTimeoutInstruction('The task is still running.'),
+    );
+    // The manager is shared by parent and children and always emits the no-wake constant;
+    // the wrapper rewrites only a present `instruction`, never adds one.
+    const instructedManager = {
+      ...managementManager,
+      wait: async (taskId: string) => ({
+        reason: 'timeout' as const, status: managementStatus, instruction: TERMINAL_WAIT_TIMEOUT_INSTRUCTION,
+        output: { taskId, output: '', startOffset: 0, endOffset: 0, hasMore: false, outputPath: '/owned/output.log' },
+      }),
+    } as unknown as BackgroundBashManager;
+    const rewrittenWait = await createBackgroundBashTool(instructedManager, foreground, { completionWakes: true })
+      .invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 10, wakeOnOutput: false }) as BackgroundWaitResult;
+    const keptWait = await createBackgroundBashTool(instructedManager, foreground)
+      .invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 10, wakeOnOutput: false }) as BackgroundWaitResult;
+    const uninstructedWait = await wakingWrapped.invoke({ mode: 'wait', taskId: expectedTaskId, waitMs: 10, wakeOnOutput: false }) as BackgroundWaitResult;
+    assert(
+      'a waking wrapper rewrites the still-running timeout instruction to the wake variant and changes nothing else',
+      rewrittenWait.instruction === TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE && rewrittenWait.reason === 'timeout' &&
+        rewrittenWait.status.taskId === expectedTaskId && rewrittenWait.status.state === 'running' && rewrittenWait.output.output === '' &&
+        keptWait.instruction === TERMINAL_WAIT_TIMEOUT_INSTRUCTION &&
+        !Object.hasOwn(uninstructedWait, 'instruction'),
     );
     // SRF-025 pins the cap itself: thirty minutes for the explicit terminal-focused form, the
     // output-sensitive default untouched, so the literals below never drift from the constants.

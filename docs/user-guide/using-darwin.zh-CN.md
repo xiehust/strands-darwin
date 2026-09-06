@@ -112,7 +112,7 @@ V1 流式输出的是经过最终脱敏的完整助手文本，不是 token delt
 | `wait` | `taskId`、`waitMs`，可选 `wakeOnOutput` | 默认等待 1–30,000 ms；终态聚合等待最长 1,800,000 ms（三十分钟） |
 | `stop` | `taskId` | 对整个进程组执行 TERM→KILL |
 
-状态值为 `running`、`succeeded`、`failed`、`stopped`。`wakeOnOutput: false` 会聚合输出，直到终态、取消、关闭或超时；省略或设为 true 时，有输出即可唤醒。若终态聚合等待超时后任务仍在运行，结果会提醒模型：后续工作依赖完成时，应在结束回合前再次等待，因为后台完成不会自动恢复代理。所有读取操作共享同一个游标；等待不会自动继续回合。
+状态值为 `running`、`succeeded`、`failed`、`stopped`。`wakeOnOutput: false` 会聚合输出，直到终态、取消、关闭或超时；省略或设为 true 时，有输出即可唤醒。若终态聚合等待超时后任务仍在运行，结果会如实告知模型其运行环境的行为：在 TUI 中且 `backgroundTaskWake` 开启（默认）时，模型可以结束回合，会话空闲后会跟进一个 `<task-notification>` 回合；在 `-p` 无头运行、dev REPL、子代理中或该键关闭时，后台完成不会自动恢复代理，后续工作依赖完成时必须在结束回合前再次等待。所有读取操作共享同一个游标；等待不会自动继续回合。
 
 `/tasks` 是本地命令，流式输出期间也能使用，不会调用模型。每个任务行下方会显示最近最多三行非空输出（去掉 ANSI、末尾截断），直接从日志文件尾部读取，不经过共享游标——因此查看 `/tasks` 不会改变模型下一次 `output`/`wait` 的返回；尚无输出的任务会如实标注。重复成功轮询会保持紧凑；显式输出和失败仍会留在历史中。stdout/stderr 合并日志保存在 `~/.darwin/sessions/<project-key>/<session-id>/background/<task-id>.log`，不会自动清理。
 

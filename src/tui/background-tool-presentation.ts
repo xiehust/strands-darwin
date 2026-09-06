@@ -1,4 +1,4 @@
-import { TERMINAL_WAIT_TIMEOUT_INSTRUCTION } from '../tools/background-wait-contract.js';
+import { isTerminalWaitTimeoutInstruction } from '../tools/background-wait-contract.js';
 import { formatTaskId, summarizeTaskCommand } from './task-format.js';
 
 export const BACKGROUND_BASH_MODES = ['start', 'list', 'status', 'output', 'wait', 'stop'] as const;
@@ -184,7 +184,7 @@ function isWaitResult(value: unknown, input: unknown): value is {
     if (value.reason === 'terminal') return !hasInstruction && value.status.state !== 'running';
     if (value.reason === 'timeout') {
       return value.status.state === 'running' && hasInstruction &&
-        value.instruction === TERMINAL_WAIT_TIMEOUT_INSTRUCTION;
+        isTerminalWaitTimeoutInstruction(value.instruction);
     }
     return !hasInstruction && value.status.state === 'running';
   }

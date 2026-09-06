@@ -188,6 +188,11 @@ async function runInteractive(options: CliOptions): Promise<void> {
       // warnings must not write directly into the TUI frame.
       quietMcpStderr: true,
       permissionBridge: permissions.bridge,
+      // The TUI drains SER-069 task wakes at idle, so the `bash` tool may say that
+      // ending the turn is followed by one `<task-notification>` turn (the runtime
+      // still requires config `backgroundTaskWake !== false`). Headless and the dev
+      // REPL have no queue and leave this unset.
+      backgroundCompletionWakes: true,
       ...(options.permissionModeOverride !== undefined && {
         permissionModeOverride: options.permissionModeOverride,
       }),

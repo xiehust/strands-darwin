@@ -20,6 +20,10 @@
  * 6. **config off** — (third session, `backgroundTaskWake: false`) the completion notice
  *                     appears and nothing else: no queue row, no wake turn, no record.
  *
+ * Every model request also carries the `bash` tool spec, so the log doubles as proof of
+ * the per-runtime wording: the wake variant of the still-running-timeout sentence in the
+ * sessions above, the no-wake variant (byte-identical to the pre-wake text) with the key off.
+ *
  * Waits are anchored with `mark()` (see `spike/verify-tui.ts`): Ink redraws the whole
  * frame constantly, so an unanchored wait matches an older frame. Idle is detected as
  * the newest `you>` after the newest `working…`, settled for 400 ms. The model-call log
@@ -37,6 +41,7 @@ import { readTrajectory } from '../src/trajectory/reader.js';
 import { formatReplay, replayRead } from '../src/trajectory/replay.js';
 import type { TaskNotificationRecord, TrajectoryRecord } from '../src/trajectory/record.js';
 import { QUEUED_MARKER } from '../src/tui/prompt-queue.js';
+import { backgroundCompletionSentence } from '../src/tools/background-wait-contract.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 import { REPO_ROOT, startTui, type TuiSession } from './tui-driver.js';
 
@@ -70,7 +75,7 @@ async function resetProject(): Promise<void> {
   await rm(sessionPaths(ROOT).sessionsDir, { recursive: true, force: true });
 }
 
-interface ModelCall { call: number; userText: string }
+interface ModelCall { call: number; userText: string; bashDescription?: string }
 
 async function modelCalls(): Promise<ModelCall[]> {
   try {
@@ -78,6 +83,14 @@ async function modelCalls(): Promise<ModelCall[]> {
   } catch {
     return [];
   }
+}
+
+/** True when every request's `bash` spec carries exactly the per-runtime completion sentence. */
+function bashSpecsSay(calls: readonly ModelCall[], completionWakes: boolean): boolean {
+  const expected = backgroundCompletionSentence(completionWakes);
+  const other = backgroundCompletionSentence(!completionWakes);
+  return calls.length > 0 && calls.every((call) =>
+    call.bashDescription !== undefined && call.bashDescription.includes(expected) && !call.bashDescription.includes(other));
 }
 
 /** The wake calls (model requests whose newest user text is a `<task-notification>`) naming `marker`'s job. */
@@ -169,6 +182,8 @@ async function mainSession(): Promise<void> {
     assert('the wake notice names the job as sent to the model',
       /task wake · bg-[0-9a-f]{8} succeeded — sleep 2; echo idle-marker-alpha → sent to the model as this turn/.test(idleScreen));
     assert('the wake never appeared as a typed `you>` row', !idleScreen.includes('you> <task-notification'));
+    assert('every request so far carried the wake variant of the bash completion sentence, never the no-wake one',
+      bashSpecsSay(calls, true));
 
     // --- 2. suppressed: the model already consumed the terminal state via `wait`. ---
     const waitMark = tui.mark();
@@ -328,6 +343,8 @@ async function configOffSession(): Promise<void> {
     assert('no wake row and no wake notice', !screen.includes(WAKE_ROW) && !screen.includes(WAKE_NOTICE));
     const calls = await modelCalls();
     assert('the model was called for the start turn only', calls.length === 2 && wakeCallsFor(calls, 'off-marker-zeta').length === 0);
+    assert('with the key off every request carried the no-wake bash completion sentence, never the wake one',
+      bashSpecsSay(calls, false));
     tui.submit('/exit');
     assert('the config-off session exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
   } finally {

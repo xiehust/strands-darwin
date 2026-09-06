@@ -212,6 +212,14 @@ export interface RuntimeOptions {
   permissionModeOverride?: ApprovalMode;
   /** Process-local force-on override for ContextOffloader; never persisted. */
   contextOffloadOverride?: true;
+  /**
+   * The driver drains SER-069 task wakes at idle (the interactive TUI). The `bash` tool
+   * then tells the model, truthfully, that ending the turn is followed by one
+   * `<task-notification>` turn — effective only with config `backgroundTaskWake !== false`.
+   * Headless drivers have no queue and leave this unset. Children never wake, so their
+   * catalogue keeps the no-wake wording whatever the parent says.
+   */
+  backgroundCompletionWakes?: boolean;
   /** Refuses the next parent-Agent SDK model call after this many in the process. */
   maxModelCalls?: number;
   /**
@@ -656,15 +664,24 @@ export class AgentRuntime {
     startupLifecycleHooks = lifecycleHooks;
 
     const sessionManager = createSessionManager(options.projectRoot, session.sessionId);
-    // One manager and wrapper are shared by the main Agent and every child tool
-    // catalogue. Foreground calls still delegate with the caller's ToolContext.
+    // One manager is shared by the main Agent and every child tool catalogue; the
+    // wrapper differs only in wording (see `childBash`). Foreground calls still
+    // delegate with the caller's ToolContext.
     // Across `/clear` the manager is inherited, not rebuilt: its jobs are running
     // processes owned by this process, and a second manager would leave them
     // unlistable and unreaped.
     const backgroundBash =
       options.inherit?.backgroundBash ?? new BackgroundBashManager(options.projectRoot, session.sessionId);
     if (options.inherit === undefined) startupBackgroundBash = backgroundBash;
-    const bash = createBackgroundBashTool(backgroundBash, createForegroundBashTool(options.projectRoot));
+    const foregroundBash = createForegroundBashTool(options.projectRoot);
+    // The parent's wording states the runtime truth: only a driver that drains SER-069
+    // task wakes, with the config key on, may tell the model that ending the turn is
+    // followed by a `<task-notification>` turn. Children get the same manager and
+    // foreground tool behind the no-wake wording (`childBash` below): a child's job
+    // wakes the parent TUI, never the child.
+    const completionWakes = options.backgroundCompletionWakes === true && config.backgroundTaskWake !== false;
+    const bash = createBackgroundBashTool(backgroundBash, foregroundBash, { completionWakes });
+    const childBash = completionWakes ? createBackgroundBashTool(backgroundBash, foregroundBash) : bash;
     const imageViewer = createImageViewerTool(options.projectRoot);
     const conversationManager = new SummarizingConversationManager({
       summaryRatio: config.summaryRatio,
@@ -811,7 +828,8 @@ export class AgentRuntime {
     // plugin/storage contract, so never hand them a dangling retrieval tool.
     // Network access (`http_request`, `web_fetch`) stays parent-only too: the
     // documented invariant is that children work on reads inside the workspace.
-    const childTools = agent.tools.filter((tool) => !PARENT_ONLY_TOOL_NAMES.has(tool.name));
+    const childTools = agent.tools.filter((tool) => !PARENT_ONLY_TOOL_NAMES.has(tool.name))
+      .map((tool) => (tool.name === 'bash' ? childBash : tool));
     const agentDefinitions = await loadAgentDefinitions(
       options.projectRoot,
       childTools.map((tool) => tool.name),

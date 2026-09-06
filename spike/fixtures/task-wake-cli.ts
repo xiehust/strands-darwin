@@ -26,7 +26,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { Model } from '@strands-agents/sdk';
-import type { BaseModelConfig, Message, ModelStreamEvent } from '@strands-agents/sdk';
+import type { BaseModelConfig, Message, ModelStreamEvent, StreamOptions } from '@strands-agents/sdk';
 
 import { setRuntimeModelFactoryForTest } from '../../src/agent/runtime.js';
 
@@ -88,10 +88,13 @@ class TaskWakeModel extends Model<BaseModelConfig> {
   override updateConfig(config: BaseModelConfig): void { this.config = { ...this.config, ...config }; }
   override getConfig(): BaseModelConfig { return this.config; }
 
-  override async *stream(messages: Message[]): AsyncIterable<ModelStreamEvent> {
+  override async *stream(messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     this.calls += 1;
     const prompt = latestPrompt(messages);
-    appendFileSync(CALLS, `${JSON.stringify({ call: this.calls, userText: prompt.text })}\n`);
+    // The `bash` description travels in every request: the suite asserts the per-runtime
+    // wording (wake variant with the key on, no-wake variant with `backgroundTaskWake: false`).
+    const bashDescription = options?.toolSpecs?.find((spec) => spec.name === 'bash')?.description;
+    appendFileSync(CALLS, `${JSON.stringify({ call: this.calls, userText: prompt.text, bashDescription })}\n`);
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
 
     const [verb, marker = 'marker'] = prompt.text.trim().split(/\s+/, 2) as [string, string?];

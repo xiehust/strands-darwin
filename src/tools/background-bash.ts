@@ -15,12 +15,15 @@ import {
   OUTPUT_SENSITIVE_WAIT_MAX_MS,
   TERMINAL_FOCUSED_WAIT_MAX_MS,
   TERMINAL_WAIT_TIMEOUT_INSTRUCTION,
+  backgroundCompletionSentence,
+  terminalWaitTimeoutInstruction,
 } from './background-wait-contract.js';
 
 export {
   OUTPUT_SENSITIVE_WAIT_MAX_MS,
   TERMINAL_FOCUSED_WAIT_MAX_MS,
   TERMINAL_WAIT_TIMEOUT_INSTRUCTION,
+  TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE,
 } from './background-wait-contract.js';
 
 const OUTPUT_LIMIT = 64 * 1024;
@@ -722,10 +725,22 @@ export function createForegroundBashTool(projectRoot: string): InvokableTool<Bas
   return createBash({ cwd: projectRoot, projectRoot });
 }
 
+export interface BackgroundBashToolOptions {
+  /**
+   * The driver drains SER-069 task wakes at idle, so a job's completion really does reach
+   * the model as a `<task-notification>` turn. Only the interactive TUI with
+   * `backgroundTaskWake` on says so; headless runs and children keep the no-wake wording
+   * (a child's job wakes the parent, not the child). Default false.
+   */
+  completionWakes?: boolean;
+}
+
 export function createBackgroundBashTool(
   manager: BackgroundBashManager,
   foreground: InvokableTool<BashInput, BashOutput | string> = sdkBash,
+  options: BackgroundBashToolOptions = {},
 ): InvokableTool<BackgroundBashInput, BackgroundBashOutput> {
+  const completionWakes = options.completionWakes === true;
   return tool<typeof inputSchema, BackgroundBashOutput>({
     name: 'bash',
     description:
@@ -735,7 +750,7 @@ export function createBackgroundBashTool(
       'do other work, then use wait with taskId and waitMs. ' +
       `Output-sensitive waits use 1-${OUTPUT_SENSITIVE_WAIT_MAX_MS} ms and return {reason, status, output}; by default they wake on output or another consumer changing the cursor. ` +
       `Set wakeOnOutput:false for a terminal-focused wait up to ${TERMINAL_FOCUSED_WAIT_MAX_MS} ms that aggregates intermediate output and wakes only on terminal state, cancellation, shutdown, or timeout. ` +
-      'A still-running terminal-focused timeout tells you to call wait again before ending when later work depends on completion; background completion does not resume the agent. ' +
+      `${backgroundCompletionSentence(completionWakes)} ` +
       'A plain ssh in execute mode waits on a tty and hangs the call: pass -T -o BatchMode=yes and run it as a background task (start, then wait). ' +
       'Foreground execute runs with stdin from /dev/null: anything that prompts or reads stdin gets EOF at once and fails, so pass the command\'s non-interactive flags (-y, --yes, --force, --no-input).',
     inputSchema,
@@ -753,7 +768,12 @@ export function createBackgroundBashTool(
         case 'output':
           return manager.output(input.taskId!);
         case 'wait':
-          return manager.wait(input.taskId!, input.waitMs!, context?.agent.cancelSignal, input.wakeOnOutput);
+          // The manager is shared by the parent and every child, so the per-runtime
+          // wording of its one still-running-timeout instruction is chosen here.
+          return manager.wait(input.taskId!, input.waitMs!, context?.agent.cancelSignal, input.wakeOnOutput)
+            .then((result) => result.instruction === undefined
+              ? result
+              : { ...result, instruction: terminalWaitTimeoutInstruction(completionWakes) });
         case 'stop':
           return manager.stop(input.taskId!);
       }

@@ -44,6 +44,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
       type: 'create',
       maxModelCalls: options.maxModelCalls,
       contextOffloadOverride: options.contextOffloadOverride,
+      backgroundCompletionWakes: options.backgroundCompletionWakes,
     })}\n`);
   }
 

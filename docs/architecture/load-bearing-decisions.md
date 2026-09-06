@@ -949,8 +949,12 @@ only through the existing serialized byte cursor. Output-sensitive wakeup stays 
 compatibility default; explicit `wakeOnOutput: false` accepts a finite 1–1800000 ms (thirty minutes,
 so a supervised headless child that runs 20–30 minutes costs one wake, not six), advances and
 retains up to the ordinary output cap, and waits only for terminal state, cancellation, shutdown, or
-timeout. Only its still-running timeout adds bounded model-visible wait-again guidance stating that
-background completion does not resume the agent; it never continues or calls the model itself.
+timeout. Only its still-running timeout adds bounded model-visible wait-again guidance; that sentence,
+like the `bash` description's, is per runtime (`createBackgroundBashTool(..., { completionWakes })`
+from `RuntimeOptions.backgroundCompletionWakes && config.backgroundTaskWake !== false`, set only by
+the TUI driver): the parent TUI says one `<task-notification>` turn follows once idle, while headless,
+the dev REPL, children and the key off keep the byte-identical "background completion does not
+resume the agent" — the manager itself never continues or calls the model.
 Neither form owns or delays process cleanup. A cancelled model stream's socket has no public cleanup,
 so `cli.ts` arms an unref'd 500ms `process.exit` fallback *after* shutdown completes. Don't change these paths
 without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`,
@@ -1343,9 +1347,16 @@ command label (never the model-facing text); the busy hint counts wakes under th
 (` · 1 task wake`) beside ` · N queued`; the send-time transcript row is a `<Static>` notice. **One
 config key**, `backgroundTaskWake` (session-scoped, default on, validated like `contextOffload`);
 `false` leaves the notice-only behaviour byte-identical. Headless drivers have no queue and never
-wake. Children never enqueue (the observer is the parent TUI's); note that the shared `bash` tool
-does let a child `start` a job, whose completion then wakes the *parent* with the command and tail —
-and a child's own `wait` is not in the parent stream, so it cannot suppress. Free checks:
+wake. **The model is told the truth per runtime**: the TUI driver sets
+`RuntimeOptions.backgroundCompletionWakes`, and with the key on the parent's `bash` wrapper
+(`createBackgroundBashTool(..., { completionWakes: true })`) states in its description and in the
+still-running `wait` timeout instruction that ending the turn is followed by one
+`<task-notification>` turn once idle — every other runtime keeps the byte-identical "background
+completion does not resume the agent". The record's premise that `start` is parent-only was wrong —
+`bash` is in the child catalogue, so a child can `start` a job — and what actually holds is that only
+the parent TUI's observer enqueues wakes: a child-started job's completion wakes the *parent* with
+the command and tail, a child's own `wait` is not in the parent stream so it cannot suppress, and
+the child catalogue's `bash` wrapper keeps the no-wake wording whatever the parent's says. Free checks:
 `spike/verify-task-wake.ts` (pty, in `pnpm test`: idle, suppressed, mid-turn, `/clear` window,
 permission-prompt race, config off, record and replay), `spike/verify-prompt-queue.ts`,
 `spike/verify-prompt-recall.ts`, `spike/verify-prompt-history-search.ts`, `spike/verify-config.ts`.
