@@ -74,6 +74,7 @@ export type TrajectoryRecordType =
   | 'forkedFrom'
   | 'recordingStopped'
   | 'shellCommand'
+  | 'taskNotification'
   | RecordedEventType;
 
 /** Fields every record carries, whatever its type. */
@@ -328,6 +329,40 @@ export interface ShellCommandRecord extends RecordEnvelope {
   output: string;
 }
 
+/**
+ * The fields that identify a finished background `bash start` job in a wake
+ * (SER-069), shared by the queue entry, the live transcript row, the record and
+ * the replay reducer so the four surfaces cannot disagree about the task.
+ */
+export interface TaskNotificationFields {
+  taskId: string;
+  command: string;
+  state: 'succeeded' | 'failed' | 'stopped';
+  /** Process exit code; `null` when it died to a signal. */
+  exitCode: number | null;
+  /** Signal that ended it, `null` for a plain exit. */
+  signal: string | null;
+}
+
+/**
+ * A background-task wake (SER-069): the session-originated prompt that opened a
+ * turn because a `bash start` job reached a terminal state while nothing else
+ * would have started one. It opens its turn exactly where a `userInput` would —
+ * appended before invocation, behind the same durability barrier — but is
+ * deliberately **not** a `userInput` record: the user typed nothing, and
+ * `userInput` is the one line prompt recall and `Ctrl+R` read, so a wake is never
+ * offered back as a prompt.
+ *
+ * `text` is exactly what was handed to `agent.stream()` (the bounded
+ * `<task-notification>` block, already under the field cap); the structured
+ * fields are what the reducer composes the transcript row from, so replay prints
+ * the row the live session showed without re-deriving it from the text.
+ */
+export interface TaskNotificationRecord extends RecordEnvelope, TaskNotificationFields {
+  type: 'taskNotification';
+  text: string;
+}
+
 export type TrajectoryRecord =
   | RunStartedRecord
   | UserInputRecord
@@ -336,7 +371,8 @@ export type TrajectoryRecord =
   | ModelCallRecord
   | ForkedFromRecord
   | RecordingStoppedRecord
-  | ShellCommandRecord;
+  | ShellCommandRecord
+  | TaskNotificationRecord;
 
 /**
  * A thrown value as the fields the record keeps.
@@ -551,6 +587,9 @@ export function searchableText(record: TrajectoryRecord): string[] {
       // Content the record already holds: "which session ran that migration"
       // is a question `!` makes real.
       return [record.command, record.output];
+    case 'taskNotification':
+      // Search, not recall: `trajectory search` may find the job, `Up` never offers it.
+      return [record.command, record.text];
     default:
       return [];
   }

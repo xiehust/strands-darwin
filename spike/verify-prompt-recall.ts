@@ -458,4 +458,33 @@ header('prompt recall — the one row it draws');
       noted.includes('2 long prompt(s) skipped'));
 }
 
+header('prompt history — a background-task wake is never offered back (SER-069)');
+
+await resetProject();
+{
+  // A wake turn opens with a `taskNotification` record instead of a `userInput` line,
+  // exactly as the recorder writes it. The reader selects `userInput` only, so the
+  // model-facing `<task-notification>` text — a prompt the user never typed — must not
+  // come back on `Up`, while the typed prompts around it do.
+  const first = userInput('start the job', '2026-01-03T00:00:01.000Z');
+  seq += 1;
+  const wakeText = '<task-notification task="bg-1a2b3c4d-0000-4000-8000-000000000000" state="succeeded" exitCode="0">\nwake body\n</task-notification>';
+  const wakeLine = `${JSON.stringify({
+    v: 1, seq, t: '2026-01-03T00:00:02.000Z', turn: 2, type: 'taskNotification',
+    taskId: 'bg-1a2b3c4d-0000-4000-8000-000000000000', command: 'sleep 1; echo wake body',
+    state: 'succeeded', exitCode: 0, signal: null, text: wakeText,
+  })}\n`;
+  await seed(
+    'session-20260103-000001',
+    first + wakeLine + userInput('what did the job print', '2026-01-03T00:00:03.000Z'),
+  );
+  const reading = await readPromptHistory(ROOT);
+  assert('the two typed prompts come back, newest first',
+    reading.entries[0] === 'what did the job print' && reading.entries[1] === 'start the job' && reading.entries.length === 2);
+  assert('the wake text is not among them',
+    !reading.entries.some((entry) => entry.includes('task-notification') || entry.includes('wake body')));
+  assert('and the wake is not counted as an available prompt either', reading.available === 2);
+  assert('the record with a wake in it reads without a problem', reading.problem === undefined && reading.sessionsRead === 1);
+}
+
 report();

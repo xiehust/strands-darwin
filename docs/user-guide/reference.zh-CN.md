@@ -172,3 +172,31 @@ Strands SDK 的 `backgroundTasks` 插件只为 `subagent` 与 `workflow` 附加�
 | 工具 | 权限 |
 |---|---|
 | `strands_manage_background_task` | `mode: list` / `get` 为读取；`mode: cancel` 是默认关闭的 `execute`（`default` 模式下询问，`plan` 模式下拒绝）；`/agents cancel <id>` 仍是仅用户可用的取消路径 |
+
+## 后台任务唤醒（仅交互式 TUI、仅主代理）
+
+`bash start` 启动的后台任务进入终态（`succeeded`、`failed`、`stopped`）时，转录区照旧显示完成通知；
+在 `backgroundTaskWake` 开启（默认）的情况下，还会有一条唤醒条目进入提示词队列。它和排队的提示词一样
+在空闲时出队，经由普通 `submit()` 成为一个普通回合（hooks、权限门、轨迹屏障和 `TurnComplete` 都照常触发），
+交给模型的是一段有界文本：
+
+```
+<task-notification task="bg-…" state="succeeded" exitCode="0" signal="" elapsed="12s">
+A background bash job you started with `bash start` finished successfully. …
+command: …
+output tail (last N line(s); `bash output` with taskId "bg-…" reads the full log from your cursor):
+…
+</task-notification>
+```
+
+- 每个任务恰好一次唤醒，只来自终态快照——绝不因输出活动触发，也不会在回合结束时重复触发。
+  若模型已在某个*已完成*回合中通过 `bash wait`/`status`/`stop`/`list` 的结果拿到该任务的终态，则不再唤醒。
+- 忙碌时它像提示词一样留在队列中（只在下一回合发送，绝不注入正在进行的流）；权限框打开期间入队的唤醒，
+  会在权限决定之后、当前回合结束时发送。
+- 队列行显示为 `queued · [task bg-xxxxxxxx succeeded] <command>`，忙碌提示以 ` · N task wake(s)` 单独计数，
+  与 ` · N queued` 分开。`Up` 取回和取消退回只把用户输入放回编辑器，唤醒条目留在队列中。自身回合被取消或
+  失败的唤醒不会重发（一条 `not delivered` 通知说明任务）。`/clear` 会丢弃待发的唤醒。
+- 记录类型 `taskNotification`（字段 `taskId`、`command`、`state`、`exitCode`、`signal`、`text`）在
+  `trajectory.jsonl` 中代替 `userInput` 行开启该回合，因此提示词回看和 `Ctrl+R` 永不提供它；`trajectory search`
+  仍能搜到，`trajectory replay` / `/export` 以与实时会话相同的 `task wake · …` 通知行打印。
+- 无头驱动没有队列，永不唤醒；子代理永不入队。

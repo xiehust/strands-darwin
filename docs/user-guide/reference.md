@@ -176,3 +176,35 @@ parent's next model call in the same turn. Children never see the flag or the to
 | Tool | Gating |
 |---|---|
 | `strands_manage_background_task` | `mode: list` / `get` are reads; `mode: cancel` is a fail-closed `execute` (prompts in `default`, denied in `plan`); `/agents cancel <id>` is the user-only path |
+
+## Background-task wake (interactive TUI, parent agent only)
+
+When a `bash start` job reaches a terminal state (`succeeded`, `failed`, `stopped`), the transcript
+shows the completion notice as before and — with `backgroundTaskWake` on (the default) — one wake
+entry joins the prompt queue. It drains like any queued prompt (at idle, one ordinary turn through
+`submit()`: hooks, permission gate, trajectory barrier and `TurnComplete` all fire) and hands the
+model one bounded block:
+
+```
+<task-notification task="bg-…" state="succeeded" exitCode="0" signal="" elapsed="12s">
+A background bash job you started with `bash start` finished successfully. …
+command: …
+output tail (last N line(s); `bash output` with taskId "bg-…" reads the full log from your cursor):
+…
+</task-notification>
+```
+
+- Exactly one wake per job, from the terminal snapshot only — never from output activity, never
+  re-fired at a turn end. A job whose terminal state the model already received through a
+  `bash wait`/`status`/`stop`/`list` result in a *completed* turn produces no wake.
+- Busy sessions hold it in the queue like a prompt (next turn only, never mid-stream); a wake queued
+  while a permission prompt is open is sent after the prompt resolves and the turn ends.
+- The queue row reads `queued · [task bg-xxxxxxxx succeeded] <command>`, and the busy hint counts
+  wakes as ` · N task wake(s)` apart from ` · N queued`. `Up` take-back and a cancel's return move
+  only typed entries into the editor; wakes stay queued. A wake whose own turn was cancelled or
+  failed is not re-sent (one `not delivered` notice names the job). `/clear` drops pending wakes.
+- Record type `taskNotification` (fields `taskId`, `command`, `state`, `exitCode`, `signal`, `text`)
+  opens the wake's turn in `trajectory.jsonl` in place of a `userInput` line, so prompt recall and
+  `Ctrl+R` never offer it; `trajectory search` still finds it, and `trajectory replay` / `/export`
+  print it as the same `task wake · …` notice row the live session showed.
+- Headless drivers have no queue and never wake; children never enqueue.

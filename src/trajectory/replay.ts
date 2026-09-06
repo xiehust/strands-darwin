@@ -152,6 +152,20 @@ export function replayRecords(
         });
         continue;
 
+      case 'taskNotification':
+        // A background-task wake (SER-069) replays as the one notice row the live
+        // session showed at send time, composed by the same reducer case from the
+        // same recorded fields — never as a `you>` row, because nobody typed it.
+        state = turnReducer(state, {
+          type: 'taskNotification',
+          taskId: record.taskId,
+          command: record.command,
+          state: record.state,
+          exitCode: record.exitCode,
+          signal: record.signal,
+        });
+        continue;
+
       case 'contentBlockEvent':
       case 'beforeToolCallEvent':
       case 'afterToolCallEvent':

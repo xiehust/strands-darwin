@@ -47,8 +47,9 @@ import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from '../commands/workflow-command.js';
 import { MCP_CONFIG_FILENAME, mcpConfigCandidates } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
-import { readBackgroundTails } from '../tools/background-tail.js';
+import { readBackgroundTail, readBackgroundTails } from '../tools/background-tail.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
+import type { TaskNotificationFields } from '../trajectory/record.js';
 import { exportTranscript } from '../trajectory/export.js';
 import {
   readPromptHistory,
@@ -139,7 +140,16 @@ import {
   type RewindSearch,
 } from './rewind-search.js';
 import { clipboardImageFact, readClipboardImage } from './clipboard-image.js';
-import { hasQueuedImage, queuedCountHint, refusesToQueue, takeBackDraft, type QueuedPrompt } from './prompt-queue.js';
+import {
+  hasQueuedImage,
+  isTaskWake,
+  partitionQueue,
+  queuedCountHint,
+  refusesToQueue,
+  takeBackDraft,
+  type QueuedPrompt,
+  type QueuedTaskWake,
+} from './prompt-queue.js';
 import {
   composeShellReport,
   parseShellCommand,
@@ -149,6 +159,12 @@ import {
 } from './shell-command.js';
 
 import { formatTaskCompletion, formatTasksReport } from './task-format.js';
+import {
+  TASK_WAKE_TAIL_LINES,
+  formatTaskNotification,
+  formatTaskWakeUndelivered,
+  taskNotificationFields,
+} from './task-wake.js';
 import {
   formatDispatchCancellation,
   formatDispatchCompletion,
@@ -643,10 +659,12 @@ export function App({
     ? Date.now() - turnStartedAt.current
     : undefined;
   const busyRetryWait = busyElapsedMs === undefined ? undefined : liveRetryWait(runtime);
+  const queuedCounts = partitionQueue(queued);
   const streamingHint = hintForStatus(
     effectiveStatus,
     busyElapsedMs === undefined ? undefined : busySuffix(busyElapsedMs, liveSpend(runtime), busyRetryWait),
-    queued.length,
+    queuedCounts.user.length,
+    queuedCounts.wakes.length,
   );
   const activeToolClaims = state.activeTools.map((tool) => ({
     detailRows: toolDetailsVisible(tool.name, state.toolDetailsExpanded)
@@ -746,12 +764,40 @@ export function App({
   // Terminal task events are transcript-only observers: they never alter turn
   // status, active tools, permissions, or the agent loop. React dispatch also
   // causes an immediate idle render; cleanup prevents shutdown notices after exit.
-  useEffect(
-    () => runtime.subscribeToBackgroundTasks((task) => {
+  //
+  // With `backgroundTaskWake` on (the default), the same terminal snapshot — and
+  // only that snapshot: never output activity, never a turn end — also leaves one
+  // wake entry in the prompt queue (SER-069), so the model learns of the completion
+  // as one ordinary drained turn instead of by polling `wait`. Exactly once per
+  // task: the manager publishes one snapshot, and a task already queued or already
+  // delivered to the model through a completed turn's `wait`/`status` result is not
+  // queued again. Independent of busy state: mid-turn it waits like any prompt
+  // (SER-027, next-turn-only). The tail read is the one async step; a subscription
+  // that ended before it resolved (`/clear` replaced the runtime) drops the wake
+  // rather than handing a predecessor's job to the successor's queue.
+  useEffect(() => {
+    let live = true;
+    const unsubscribe = runtime.subscribeToBackgroundTasks((task) => {
       dispatch({ type: 'notice', text: formatTaskCompletion(task) });
-    }),
-    [runtime],
-  );
+      if (runtime.config.backgroundTaskWake === false) return;
+      const fields = taskNotificationFields(task);
+      if (fields === undefined) return;
+      void readBackgroundTail(task.outputPath, { lines: TASK_WAKE_TAIL_LINES }).then((tail) => {
+        if (!live || runtime.terminalStateDelivered(task.taskId)) return;
+        if (queuedRef.current.some((entry) => isTaskWake(entry) && entry.taskId === task.taskId)) return;
+        const wake: QueuedTaskWake = {
+          kind: 'taskNotification',
+          ...fields,
+          text: formatTaskNotification(task, tail),
+        };
+        setQueued([...queuedRef.current, wake]);
+      });
+    });
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, [dispatch, runtime, setQueued]);
 
   // Same observer-only contract for finished delegations: a notice, never a status
   // change. Concurrent children finish in an order nobody scripted, so a dispatch
@@ -774,18 +820,20 @@ export function App({
   );
 
   /**
-   * Puts every queued entry back into the editor, unsent — ahead of any typed
-   * text, one per line, cursor at the end — and says so. The take-back gesture
+   * Puts every queued **user** entry back into the editor, unsent — ahead of any
+   * typed text, one per line, cursor at the end — and says so. The take-back gesture
    * and the post-abort return share this so "what a cancel does to the queue"
    * and "what `Up` does to the queue" cannot drift apart; `withNotice` is the
-   * only difference (the gesture explains itself).
+   * only difference (the gesture explains itself). Background-task wakes (SER-069)
+   * have nothing to edit and stay in the queue, in order: a cancel re-queues them
+   * rather than dropping them, and the drain sends them once the session is idle.
    */
   const returnQueuedToEditor = useCallback((withNotice: boolean): boolean => {
-    const entries = queuedRef.current;
+    const { user: entries, wakes } = partitionQueue(queuedRef.current);
     if (entries.length === 0) return false;
     const text = takeBackDraft(entries, editorRef.current.text);
     const returnedImage = entries.find((entry) => entry.image !== undefined)?.image;
-    setQueued([]);
+    setQueued(wakes);
     if (returnedImage !== undefined) setAttachedImage(returnedImage);
     // The queue's entries replace the draft wholesale; the drafts destroyed by
     // earlier chords are no longer what Ctrl+_ should bring back.
@@ -803,7 +851,12 @@ export function App({
   }, [dispatch, setAttachedImage, setEditor, setQueued]);
 
   const runTurn = useCallback(
-    async (text: string, userInput = text, image?: ImageBlock): Promise<boolean> => {
+    async (
+      text: string,
+      userInput = text,
+      image?: ImageBlock,
+      origin?: TaskNotificationFields,
+    ): Promise<boolean> => {
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
       let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
@@ -817,6 +870,7 @@ export function App({
               turnInput,
               userInput,
               turnInput === text ? image : undefined,
+              origin,
             )) {
               if (
                 event.type === 'modelStreamUpdateEvent' &&
@@ -972,6 +1026,29 @@ export function App({
       // that retain the draft: clearing there only loses undo history — the
       // failure mode this guards against is resurrecting a sent prompt.
       undoStack.current = [];
+
+      // A drained background-task wake (SER-069): one ordinary turn through the
+      // same `runTurn` a prompt uses — hooks, permission gate, trajectory barrier
+      // and `TurnComplete` all fire — but nothing above the model applies: no
+      // slash expansion, no `!`, no local command, and no held `!` reports, so the
+      // `taskNotification` record's text is exactly what the model received. The
+      // drain only calls this at idle; a busy session re-queues defensively.
+      // The wake's own turn is final: cancelled or failed, it is not re-sent
+      // (auto-resending into an error is how retry loops start — the SER-027 rule),
+      // and one notice says the job's output is still readable.
+      if (queuedEntry !== undefined && isTaskWake(queuedEntry)) {
+        if (status !== 'idle') {
+          setQueued([...queuedRef.current, queuedEntry]);
+          return;
+        }
+        const { kind: _kind, text: _text, image: _image, ...fields } = queuedEntry;
+        dispatch({ type: 'taskNotification', ...fields });
+        const completed = await runTurn(text, text, undefined, fields);
+        if (!completed) {
+          dispatch({ type: 'notice', text: formatTaskWakeUndelivered(fields), severity: 'warn' });
+        }
+        return;
+      }
 
       // A bounded pure projection of canonical commands and fixed input controls.
       // It owns every whitespace-separated /help form before the busy guard, so an
@@ -1470,7 +1547,9 @@ export function App({
         // successor starts empty, and the old session's record still has them.
         pendingShellReports.current = [];
         // The queue dies with the conversation it was typed at (SER-027): nothing
-        // was sent, so nothing is recorded — the entries simply never existed.
+        // was sent, so nothing is recorded — the entries simply never existed. A
+        // pending background-task wake (SER-069) dies with it too: the job it
+        // names belongs to the conversation just set aside.
         setQueued([]);
         clipboardReadGeneration.current += 1;
         setAttachedImage(undefined);
@@ -1607,17 +1686,32 @@ export function App({
   // effect after an entry — a local command, say — that left every other dep
   // unchanged. Never while a permission decision is pending (the queue is held
   // untouched under a prompt) and never while `/clear` is assembling a successor.
+  //
+  // Background-task wakes (SER-069) are entries of this same queue, so they are a
+  // dependency of this effect through `queued`, never a side effect of a render: a
+  // wake enqueued while a permission prompt is open is held here and sent once the
+  // prompt resolves and the turn ends. Suppression is decided here, at drain time,
+  // because only now is it known whether the turn that was running when the job
+  // finished *completed* after carrying its terminal state to the model through
+  // `wait`/`status`; such a wake is dropped silently — the conversation already
+  // holds the fact — and the next entry drains in its place.
   useEffect(() => {
     if (draining.current || status !== 'idle' || pendingPermission !== undefined || clearing.current) return;
-    const next = queuedRef.current[0];
-    if (next === undefined) return;
+    const entries = queuedRef.current.filter(
+      (entry) => !(isTaskWake(entry) && runtime.terminalStateDelivered(entry.taskId)),
+    );
+    const next = entries[0];
+    if (next === undefined) {
+      if (entries.length !== queuedRef.current.length) setQueued(entries);
+      return;
+    }
     draining.current = true;
-    setQueued(queuedRef.current.slice(1));
+    setQueued(entries.slice(1));
     void submit(next.text, next).finally(() => {
       draining.current = false;
       setDrainCycle((cycle) => cycle + 1);
     });
-  }, [drainCycle, pendingPermission, queued, setQueued, status, submit]);
+  }, [drainCycle, pendingPermission, queued, runtime, setQueued, status, submit]);
 
   /**
    * Answers the pending confirmation and, when the user picked an "always allow"
@@ -1727,7 +1821,7 @@ export function App({
    * takes the whole queue back — entries one per line, ahead of any typed text.
    */
   const takeBackQueued = useCallback((): boolean => {
-    if (queuedRef.current.length === 0 || recallRef.current !== undefined) return false;
+    if (partitionQueue(queuedRef.current).user.length === 0 || recallRef.current !== undefined) return false;
     const value = editorRef.current;
     const shape = layoutEditor(value.text, columns, value.cursor);
     if (shape.cursor.row !== 0) return false;
@@ -2434,16 +2528,22 @@ export function App({
 }
 
 /** The hint row under the draft, or nothing when the session is idle. */
-function hintForStatus(status: Status, busyReadout?: string, queuedCount = 0): string | undefined {
+function hintForStatus(
+  status: Status,
+  busyReadout?: string,
+  queuedCount = 0,
+  queuedWakeCount = 0,
+): string | undefined {
   if (status === 'streaming') {
     // The live readout rides directly behind `working…`, ahead of the static command
     // hints: the row is one truncated <Text>, so on a narrow terminal the tail is what
     // goes missing, and the tail should be the part that never changes. The queue
-    // count (SER-027) rides with it: even a listing cut to nothing stays counted here.
-    return `working…${busyReadout ?? ''}${queuedCountHint(queuedCount)} /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn`;
+    // count (SER-027) rides with it: even a listing cut to nothing stays counted here,
+    // typed entries and background-task wakes (SER-069) each under their own word.
+    return `working…${busyReadout ?? ''}${queuedCountHint(queuedCount, queuedWakeCount)} /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn`;
   }
   // Elapsed lives on the command's own panel row, so this row can stay static.
-  if (status === 'shell') return `running ! command…${queuedCountHint(queuedCount)} ctrl+c cancels it`;
+  if (status === 'shell') return `running ! command…${queuedCountHint(queuedCount, queuedWakeCount)} ctrl+c cancels it`;
   return status === 'compacting' ? 'compacting conversation…' : undefined;
 }
 

@@ -33,6 +33,7 @@ import {
   parseRecordLine,
   projectEvent,
   type CallSpendProjector,
+  type TaskNotificationFields,
   type TrajectoryRecord,
   type Truncation,
   type TurnFailure,
@@ -123,9 +124,10 @@ export interface TrajectoryStatus {
 }
 
 /**
- * One turn's observer. The opening `userInput` is appended before invocation; later
- * records accumulate during the stream and append together at the end, so nothing
- * between two events touches the disk.
+ * One turn's observer. The opening `userInput` (or, for a background-task wake, the
+ * `taskNotification` that stands in its place — SER-069) is appended before
+ * invocation; later records accumulate during the stream and append together at
+ * the end, so nothing between two events touches the disk.
  */
 export class TurnRecording {
   private readonly recorded = new Map<string, number>();
@@ -153,9 +155,32 @@ export class TurnRecording {
      * `spend` — the call lines still exist, priced unknown rather than zero.
      */
     private readonly callSpend?: CallSpendProjector,
+    /**
+     * Present when the turn was opened by a background-task wake rather than the
+     * user: the opening record is then a `taskNotification` carrying these fields
+     * and `input` as its `text`, and no `userInput` line is written for the turn.
+     */
+    origin?: TaskNotificationFields,
   ) {
     const { value, trunc } = capField(input, 'text');
-    this.recorder.buffer({ turn, type: 'userInput', text: value }, trunc);
+    if (origin === undefined) {
+      this.recorder.buffer({ turn, type: 'userInput', text: value }, trunc);
+      return;
+    }
+    const command = capField(origin.command, 'command');
+    this.recorder.buffer(
+      {
+        turn,
+        type: 'taskNotification',
+        taskId: origin.taskId,
+        command: command.value,
+        state: origin.state,
+        exitCode: origin.exitCode,
+        signal: origin.signal,
+        text: value,
+      },
+      [...command.trunc, ...trunc],
+    );
   }
 
   /**
@@ -443,10 +468,15 @@ export class TrajectoryRecorder {
    * object answers the record here, so the record and the live last-turn report cannot
    * be two different readings of one turn.
    */
-  beginTurn(input: string, spend?: TurnSpendMeter, callSpend?: CallSpendProjector): TurnRecording | undefined {
+  beginTurn(
+    input: string,
+    spend?: TurnSpendMeter,
+    callSpend?: CallSpendProjector,
+    origin?: TaskNotificationFields,
+  ): TurnRecording | undefined {
     if (!this.active) return undefined;
     this.turns += 1;
-    return new TurnRecording(this, this.turns, input, spend, callSpend);
+    return new TurnRecording(this, this.turns, input, spend, callSpend, origin);
   }
 
   /** The next turn identity without opening or writing a turn. */

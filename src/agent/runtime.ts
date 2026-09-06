@@ -92,12 +92,14 @@ import { createMemoryTools } from '../memory/tools.js';
 import type { MemoryStatus } from '../memory/store.js';
 
 import { recordStream } from '../trajectory/stream.js';
+import type { TaskNotificationFields } from '../trajectory/record.js';
 import {
   TrajectoryRecorder,
   type RecorderOptions,
   type TrajectoryStatus,
 } from '../trajectory/writer.js';
 import { DARWIN_VERSION } from '../version.js';
+import { TerminalDeliveryLedger } from './task-terminal-delivery.js';
 import {
   composeSystemPrompt,
   loadProjectInstructions,
@@ -456,6 +458,14 @@ export class AgentRuntime {
    * `/context` to the plain heuristic line rather than to a wrong number.
    */
   private contextAnchorBroken = false;
+
+  /**
+   * Which background jobs' terminal states completed turns already carried to the
+   * model through `wait`/`status` results (SER-069): the interactive drain asks it
+   * before sending a wake, so a job the model already saw finish never starts a
+   * duplicate turn. Session-scoped like the anchor; a `/clear` successor starts empty.
+   */
+  private readonly terminalDelivery = new TerminalDeliveryLedger();
 
   /** Serializes the bounded list/save/list critical section across concurrent callers. */
   private rewindCaptureTail: Promise<void> = Promise.resolve();
@@ -1003,8 +1013,20 @@ export class AgentRuntime {
    *
    * One `before` snapshot feeds both the meter and `lastTurnDelta`, so what the record
    * says a turn cost and what `/usage` says it cost cannot be two different readings.
+   *
+   * `origin` marks a turn the session started rather than the user (SER-069, a
+   * background-task wake): the opening record is then a `taskNotification` carrying
+   * the literal `userInput` text, no `userInput` line is written, no rewind
+   * checkpoint is catalogued (the chooser lists the user's prompts) and memory gets
+   * no user quote to anchor to. Everything else — hooks, gate, recording, delivery
+   * ledger — is the ordinary turn.
    */
-  async *send(input: string, userInput = input, image?: ImageBlock): AsyncIterable<AgentStreamEvent> {
+  async *send(
+    input: string,
+    userInput = input,
+    image?: ImageBlock,
+    origin?: TaskNotificationFields,
+  ): AsyncIterable<AgentStreamEvent> {
     const before = this.usage;
     // The config this turn is attributed to, for the recorded spend and the in-process
     // per-model tally alike. `/model` is refused while a turn is busy, so the live
@@ -1018,7 +1040,7 @@ export class AgentRuntime {
     const modelInput = injectCodexContext(input, submitted?.context);
     let checkpointId: string | undefined;
     // A text-only checkpoint cannot truthfully reproduce a multimodal boundary.
-    if (image === undefined && rewindPromptEligible(input)) {
+    if (image === undefined && origin === undefined && rewindPromptEligible(input)) {
       checkpointId = await this.captureRewindCheckpoint();
     }
 
@@ -1035,11 +1057,13 @@ export class AgentRuntime {
         // reason: the `modelCall` record needs the live provider/model config, which
         // `src/trajectory/**` must never import.
         startCallSpend(turnConfig),
+        origin,
       );
       // The model may receive an expanded skill/custom-command prompt, but
       // preference/identity provenance is allowed to quote only what the user
-      // actually submitted. Drivers pass that raw text as the second argument.
-      this.memoryController?.openTurn(recording?.turn, userInput);
+      // actually submitted. Drivers pass that raw text as the second argument. A
+      // session-originated wake has no user text to quote from at all.
+      this.memoryController?.openTurn(recording?.turn, origin === undefined ? userInput : '');
       // The current input is the one exception to fire-and-forget recording: make it
       // readable to offline observers before Agent.stream() can invoke a provider or
       // tool. The recorder owns the bound and resolves on write failure/timeout, so
@@ -1063,6 +1087,7 @@ export class AgentRuntime {
         // calls that completed. Cannot throw — see {@link observeCallStats}.
         this.observeCallStats(event);
         this.observeContextAnchor(event);
+        this.terminalDelivery.observe(event);
         yield event;
       }
       this.memoryController?.seal(
@@ -1083,6 +1108,9 @@ export class AgentRuntime {
       // Seeing an endTurn event is not enough when the consumer abandons this
       // generator before natural completion: only the natural path above seals.
       if (!sealed) this.memoryController?.discard();
+      // Only a turn that ran to `endTurn` commits what its `wait`/`status` results
+      // delivered; an abandoned or failed turn forgets them, so the wake still fires.
+      this.terminalDelivery.closeTurn(sealed && completed);
       this.lastTurnDelta = deltaUsage(before, this.usage);
       this.tallyTurnUsage(turnConfig, this.lastTurnDelta);
     }
@@ -1652,6 +1680,17 @@ export class AgentRuntime {
   /** Publishes future terminal task snapshots until the returned closure is called. */
   subscribeToBackgroundTasks(listener: BackgroundTaskListener): () => void {
     return this.backgroundBash.subscribe(listener);
+  }
+
+  /**
+   * True once a *completed* turn of this session carried the task's terminal state
+   * to the model through a `wait`/`status`/`stop`/`list` result (SER-069). The
+   * interactive drain drops a queued wake for such a task instead of sending it: the
+   * conversation already knows, and a second turn about it would be the duplicate
+   * the peer design produces. Synchronous, no I/O.
+   */
+  terminalStateDelivered(taskId: string): boolean {
+    return this.terminalDelivery.has(taskId);
   }
 
   /**

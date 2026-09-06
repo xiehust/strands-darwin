@@ -36,6 +36,8 @@ import {
   subagentCallSummary,
 } from './subagent-format.js';
 import { compactEditDiff, expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
+import { formatTaskWakeNotice } from './task-wake.js';
+import type { TaskNotificationFields } from '../trajectory/record.js';
 
 export type HistoryItem =
   | { kind: 'user'; id: string; text: string }
@@ -196,7 +198,13 @@ export type TurnAction =
    * finished row from them, which is what lets replay dispatch the identical action
    * from a `shellCommand` record and reproduce the identical history.
    */
-  | ({ type: 'shellCommand'; output: string } & ShellOutcome);
+  | ({ type: 'shellCommand'; output: string } & ShellOutcome)
+  /**
+   * A background-task wake was sent (SER-069): one notice row composed from the
+   * recorded fields only, so replaying a `taskNotification` record dispatches the
+   * identical action and reproduces the identical history. Not a `userInput`.
+   */
+  | ({ type: 'taskNotification' } & TaskNotificationFields);
 
 export function turnReducer(state: TurnState, action: TurnAction): TurnState {
   switch (action.type) {
@@ -204,6 +212,15 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       return {
         ...state,
         history: [...state.history, { kind: 'user', id: nextId('user'), text: action.text }],
+      };
+
+    case 'taskNotification':
+      return {
+        ...state,
+        history: [
+          ...state.history,
+          { kind: 'notice', id: nextId('notice'), text: formatTaskWakeNotice(action), severity: 'info' },
+        ],
       };
 
     case 'notice':

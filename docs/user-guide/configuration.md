@@ -79,6 +79,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `memoryHorizonDays` | `28` | generated-memory age, integer `0–365`; `0` disables age only |
 | `maxConcurrentSubagents` | `8` | ceiling on running child dispatches (`subagent` calls plus `workflow` nodes); positive integer; a call over it is refused before any model or child exists |
 | `terminalBell` | `false` | ring the terminal bell on permission prompts and turn completion (interactive TUI only) |
+| `backgroundTaskWake` | `true` | a finished `bash start` job queues one `<task-notification>` prompt that wakes the agent as its own turn (interactive TUI only); `false` keeps the transcript notice only |
 | `systemPrompt` | built-in | replaces the base prompt and wins over project file |
 | `hooks` | — | legacy embedded fallback; prefer layered `hooks/*.json` |
 

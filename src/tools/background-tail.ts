@@ -42,9 +42,10 @@ export function sanitizeTailLine(line: string): string {
  */
 export async function readBackgroundTail(
   outputPath: string,
-  options: { readonly windowBytes?: number } = {},
+  options: { readonly windowBytes?: number; readonly lines?: number } = {},
 ): Promise<BackgroundTail> {
   const windowBytes = Math.max(1, Math.floor(options.windowBytes ?? TASK_TAIL_WINDOW_BYTES));
+  const lineLimit = Math.max(1, Math.floor(options.lines ?? TASK_TAIL_LINES));
 
   let handle: FileHandle | undefined;
   let text: string;
@@ -73,7 +74,7 @@ export async function readBackgroundTail(
   if (!startedAtByteZero && segments.length > 1) segments.shift();
   const lines = segments.map(sanitizeTailLine).filter((line) => line.trim() !== '');
   if (lines.length === 0) return { kind: 'empty', bytesRead };
-  return { kind: 'lines', lines: lines.slice(Math.max(0, lines.length - TASK_TAIL_LINES)), bytesRead };
+  return { kind: 'lines', lines: lines.slice(Math.max(0, lines.length - lineLimit)), bytesRead };
 }
 
 /** One tail per task, keyed by id, all settled before the caller composes its single notice. */

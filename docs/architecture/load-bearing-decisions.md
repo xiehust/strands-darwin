@@ -1287,3 +1287,65 @@ Nothing is recorded at enqueue time: a drained entry becomes a `userInput` at se
 entry taken back or dropped was never sent — trajectory honesty by construction, which is also why
 prompt recall needed no change. Free checks: `spike/verify-prompt-queue.ts`,
 `spike/verify-tui.ts queue` / `bang`; live: the `usage` scenario's mid-turn half.
+
+## Background-task wake — one queued session-originated turn, never a second channel
+
+**A finished `bash start` job wakes the agent through the prompt queue: exactly one bounded
+`<task-notification>` entry per task, from the terminal snapshot only, drained at idle through the
+ordinary `submit()` as one ordinary turn** (SER-069; `src/tui/task-wake.ts`, `src/tui/prompt-queue.ts`,
+`src/agent/task-terminal-delivery.ts`, the App's subscription and drain effects, `taskNotification`
+in `src/trajectory/record.ts`). Before this, `BackgroundBashManager.subscribe()`'s one immutable
+terminal snapshot reached only the transcript (`formatTaskCompletion`): the user saw a job finish,
+the model learned of it only by polling `wait` — SRF-025's evidence measured that gap at ten 300 s
+waits and 1.9 M prompt tokens for 1.6 K output in one session. The peer design
+(`docs/research/research_2026-09-06.md`, sources S1/S2/S4/S5) shows both the right shape and every
+way it fails: notifications are just another entry of one command queue (kept), but the peer fires
+on stdout and re-fires per turn end (#74982), keeps a `notified` flag race with an idle drain that
+has no retry (#88742 — a lost reply or a permanent stall), and decouples the notification from
+`TaskOutput` so a task the model already read produces a duplicate turn (#52786). Darwin writes
+each failure into a constraint: **terminal state only** — the enqueue is the manager's single
+terminal snapshot, never output activity, never a turn end; **exactly once** — the manager
+publishes once, the App refuses a second entry for a queued id, and the ledger below refuses one
+for a delivered id; **a dependency of the drain, not a side effect of a render** — the wake is an
+entry of `queued`, which the SER-027 drain effect already depends on, so a wake enqueued while a
+permission prompt owns the frame is held (`pendingPermission`) and sent when the prompt resolves
+and the turn ends, with no separate timer or retry to lose; **suppressed when already known** —
+the runtime's `TerminalDeliveryLedger` observes `afterToolCallEvent`s at the same synchronous,
+non-throwing point the recorder does, remembers task ids whose non-running `state` a successful
+`bash` `wait`/`status`/`stop`/`list` result carried, and commits them only when the turn reaches
+`endTurn`; the drain drops a queued wake for a committed id silently (a row may show for the rest
+of the turn that consumed the state, then leaves without a notice — the conversation already holds
+the fact). Suppression is decided at drain time because at snapshot time the turn holding the
+`wait` has not completed. **Next-turn-only** stands (deliberate non-parity with the peer's mid-turn
+fold): busy, the wake waits in the FIFO like a prompt. **Ownership**: a wake is not the user's
+to edit — take-back and the post-cancel return (`partitionQueue`) move only typed entries into the
+editor and leave wakes queued in order; a wake whose *own* turn was cancelled or failed is **not**
+re-sent (the SER-027 rule against auto-resending into an error; one `not delivered` notice names
+the job, whose output stays readable) — the record's "re-queued unless its turn completed" is read
+as applying to wakes queued *behind* the interrupted turn, because re-queueing a wake after the
+user's own Esc would redrain it at once and trap the user in a cancel loop; `/clear` drops pending
+wakes with the queue (the one window is the successor's assembly, where the predecessor's
+subscription still enqueues and `setQueued([])` then drops); a subscription that ended before its
+tail read resolved drops the wake rather than handing a predecessor's job to the successor. **The
+turn is ordinary**: `runTurn` → `AgentRuntime.send(text, text, undefined, origin)`, so hooks, the
+permission gate, the trajectory barrier and `TurnComplete` fire as for a prompt; only what sits
+*above* the model is skipped (no slash expansion, no `!`, no held `!` reports), so the recorded
+text is exactly what the model received; no rewind checkpoint is catalogued (the chooser lists the
+user's prompts) and memory gets no user quote. **The record is `taskNotification`, never
+`userInput`** (precedent: `shellCommand`): opened where `userInput` would be, behind the same
+durability barrier, carrying the job fields plus the literal text; `prompt-history.ts` selects
+`userInput` only, so `Up` and `Ctrl+R` never offer a wake back, while `trajectory search` still
+finds it; replay dispatches the same `taskNotification` reducer action the live send dispatched,
+so `formatReplay` and `/export` print the one `task wake ·` notice row — never a `you>` row, because
+nobody typed it. **Rendering adds no surface**: the queue row is the existing counted
+`queued ·` row with a `[task bg-… state]` tag in the `[image]` attachment's vocabulary and the
+command label (never the model-facing text); the busy hint counts wakes under their own word
+(` · 1 task wake`) beside ` · N queued`; the send-time transcript row is a `<Static>` notice. **One
+config key**, `backgroundTaskWake` (session-scoped, default on, validated like `contextOffload`);
+`false` leaves the notice-only behaviour byte-identical. Headless drivers have no queue and never
+wake. Children never enqueue (the observer is the parent TUI's); note that the shared `bash` tool
+does let a child `start` a job, whose completion then wakes the *parent* with the command and tail —
+and a child's own `wait` is not in the parent stream, so it cannot suppress. Free checks:
+`spike/verify-task-wake.ts` (pty, in `pnpm test`: idle, suppressed, mid-turn, `/clear` window,
+permission-prompt race, config off, record and replay), `spike/verify-prompt-queue.ts`,
+`spike/verify-prompt-recall.ts`, `spike/verify-prompt-history-search.ts`, `spike/verify-config.ts`.

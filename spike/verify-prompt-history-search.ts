@@ -1,5 +1,14 @@
-/** Pure bounded reverse-search behavior; no terminal, disk, model, network, or writes. */
-import type { PromptHistory } from '../src/trajectory/prompt-history.js';
+/**
+ * Pure bounded reverse-search behavior; no terminal, model or network. One case
+ * (SER-069) seeds a real record under a private HOME and reads it back, because
+ * "a background-task wake is never offered" is a property of the reader plus the
+ * search, not of the search alone.
+ */
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+
+import { trajectoryPath } from '../src/agent/session.js';
+import { readPromptHistory, type PromptHistory } from '../src/trajectory/prompt-history.js';
 import {
   MAX_PROMPT_SEARCH_QUERY_CODE_POINTS,
   acceptPromptHistorySearch,
@@ -13,7 +22,7 @@ import {
   resolvePromptHistorySearch,
 } from '../src/tui/prompt-history-search.js';
 import type { EditorValue } from '../src/tui/prompt-editor.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const draft: EditorValue = {
   text: 'draft 🧬 text',
@@ -106,5 +115,39 @@ assert('one batched input event is capped in code points without splitting Unico
 unicode = clearPromptHistorySearchQuery(unicode);
 assert('query clear reopens the complete bounded snapshot and resets selection',
   unicode.query === '' && unicode.matches.length === 2 && unicode.selected === 0);
+
+header('prompt history search — a background-task wake is never offered (SER-069)');
+
+{
+  // The one seeded read in this suite: `Ctrl+R` searches exactly what the reader
+  // returns, so the proof that a wake never surfaces has to start from a real record
+  // holding a `taskNotification` line beside typed prompts, under a private HOME.
+  const OWNED_HOME = ownPrivateHome('prompt-history-search');
+  const root = path.join(OWNED_HOME, 'project');
+  const file = trajectoryPath(root, 'session-20260103-000001');
+  await mkdir(path.dirname(file), { recursive: true });
+  const wakeText = '<task-notification task="bg-1a2b3c4d-0000-4000-8000-000000000000" state="failed" exitCode="1">\nwake body\n</task-notification>';
+  await writeFile(file, [
+    { v: 1, seq: 1, t: '2026-01-03T00:00:01.000Z', turn: 1, type: 'userInput', text: 'start the notification job' },
+    {
+      v: 1, seq: 2, t: '2026-01-03T00:00:02.000Z', turn: 2, type: 'taskNotification',
+      taskId: 'bg-1a2b3c4d-0000-4000-8000-000000000000', command: 'sleep 1; echo wake body',
+      state: 'failed', exitCode: 1, signal: null, text: wakeText,
+    },
+    { v: 1, seq: 3, t: '2026-01-03T00:00:03.000Z', turn: 3, type: 'userInput', text: 'why did the job fail' },
+  ].map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf8');
+
+  const reading = await readPromptHistory(root);
+  let wakeSearch = openPromptHistorySearch(draft, 10, reading);
+  assert('the search opens over the two typed prompts only', wakeSearch.matches.length === 2);
+  wakeSearch = appendPromptHistorySearchQuery(wakeSearch, 'notification');
+  assert('a query that would match the wake text finds only the typed prompt containing the word',
+    wakeSearch.matches.join('|') === 'start the notification job');
+  wakeSearch = clearPromptHistorySearchQuery(wakeSearch);
+  wakeSearch = appendPromptHistorySearchQuery(wakeSearch, 'wake body');
+  assert('the wake body matches nothing — it was never a prompt', wakeSearch.matches.length === 0);
+  assert('and accepting an empty match list offers nothing', acceptPromptHistorySearch(wakeSearch) === undefined);
+  await rm(OWNED_HOME, { recursive: true, force: true });
+}
 
 report();

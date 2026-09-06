@@ -29,6 +29,7 @@ const suites = [
   'verify-cli-args.ts',
   'verify-npm-patch-format.ts',
   'verify-background-bash.ts',
+  'verify-task-wake.ts',
   'verify-image-viewer.ts',
   'verify-clipboard-image.ts',
   'verify-runtime-image-input.ts',

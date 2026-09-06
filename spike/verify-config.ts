@@ -1176,6 +1176,41 @@ async function terminalBellField(): Promise<void> {
   assert('a /model switch preserves the bell', switched.terminalBell === true);
 }
 
+async function backgroundTaskWakeField(): Promise<void> {
+  header('config — background-task wake (SER-069)');
+  const def = await loadConfig(await writeConfig('{}'));
+  // On by default: a finished `bash start` job wakes the agent unless the user opts out.
+  assert('backgroundTaskWake is on by default', def.backgroundTaskWake === true);
+
+  const off = await loadConfig(await writeConfig('{ "backgroundTaskWake": false }'));
+  assert('explicit false opts out (notice only, as before the feature)', off.backgroundTaskWake === false);
+  const on = await loadConfig(await writeConfig('{ "backgroundTaskWake": true }'));
+  assert('explicit true is accepted', on.backgroundTaskWake === true);
+
+  const bad = await expectConfigError('a non-boolean backgroundTaskWake value is refused', async () =>
+    loadConfig(await writeConfig('{ "backgroundTaskWake": "yes" }')),
+  );
+  assert('…and the error names the field', bad.includes('backgroundTaskWake'));
+
+  // Session-scoped like contextOffload: it survives /model and is refused inside a models entry.
+  const withModels = await loadConfig(
+    await writeConfig(
+      '{ "backgroundTaskWake": false, "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5" }] }',
+    ),
+  );
+  assert('backgroundTaskWake survives the models array form', withModels.backgroundTaskWake === false);
+  const switched = withModelChoice(withModels, withModels.modelChoices[0]!);
+  assert('a /model switch preserves the opt-out', switched.backgroundTaskWake === false);
+  const misplaced = await expectConfigError('backgroundTaskWake inside a models entry is refused', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "backgroundTaskWake": false }] }',
+      ),
+    ),
+  );
+  assert('…and that error names the key', misplaced.includes('backgroundTaskWake'));
+}
+
 /**
  * Unknown keys are refused, not ignored (SER-049). A key in neither half of the
  * schema is never read, so before this a misspelled `thinkingEfort` loaded
@@ -1409,6 +1444,7 @@ async function documentedKeys(): Promise<void> {
     contextOffload: true,
     maxResultTokens: 2000,
     terminalBell: false,
+    backgroundTaskWake: true,
     trajectory: true,
     diagnostics: false,
     memory: true,
@@ -1467,6 +1503,7 @@ async function main(): Promise<void> {
   await trajectoryField();
   await diagnosticsField();
   await terminalBellField();
+  await backgroundTaskWakeField();
   await permissionModes();
   await permissionRules();
   await toolHooks();

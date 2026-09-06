@@ -8,8 +8,12 @@
  * which submissions refuse to queue, how an entry projects to one counted row,
  * what a take-back puts in the editor, how the listing shares the frame budget,
  * and that what Ink draws for the listing is never taller than its grant. The
+ * background-task wake (SER-069) is the queue's second entry kind and is pinned
+ * here too: its distinct row, its own busy-hint word, and that take-back and
+ * `partitionQueue` leave it out of the editor. The
  * state machine end to end (enqueue while busy, drain order, cancel return,
- * /clear drop) is `spike/verify-tui.ts queue` — a real pty, still free.
+ * /clear drop) is `spike/verify-tui.ts queue` — a real pty, still free — and the
+ * wake's end-to-end path is `spike/verify-task-wake.ts`.
  */
 import { strict as nodeAssert } from 'node:assert';
 
@@ -25,10 +29,13 @@ import {
 import {
   QUEUED_MARKER,
   hasQueuedImage,
+  isTaskWake,
+  partitionQueue,
   queueRowText,
   queuedCountHint,
   refusesToQueue,
   takeBackDraft,
+  type QueuedTaskWake,
 } from '../src/tui/prompt-queue.js';
 import { QueuedMessages } from '../src/tui/QueuedMessages.js';
 import { assert, header, report } from './shared.js';
@@ -113,6 +120,55 @@ check('zero queued adds nothing to the hint', () => {
 check('a non-empty queue is counted on the hint', () => {
   nodeAssert.equal(queuedCountHint(1), ' · 1 queued');
   nodeAssert.equal(queuedCountHint(12), ' · 12 queued');
+});
+
+header('prompt queue — a background-task wake is a second entry kind (SER-069)');
+
+const wake: QueuedTaskWake = {
+  kind: 'taskNotification',
+  taskId: 'bg-1a2b3c4d-0000-4000-8000-000000000000',
+  command: 'pnpm test\n  --filter core',
+  state: 'failed',
+  exitCode: 1,
+  signal: null,
+  text: '<task-notification task="bg-1a2b3c4d-0000-4000-8000-000000000000" state="failed">\nbody\n</task-notification>',
+};
+
+check('a wake row is distinct from a typed row: marker, bracketed task tag, command label — never the model-facing text', () => {
+  const row = queueRowText(wake);
+  nodeAssert.equal(row, `${QUEUED_MARKER} [task bg-1a2b3c4d failed] pnpm test --filter core`);
+  nodeAssert.equal(row.includes('<task-notification'), false);
+  nodeAssert.equal(row.includes('\n'), false);
+});
+check('a typed entry that merely looks like a wake stays a typed row', () => {
+  nodeAssert.equal(isTaskWake({ text: '[task bg-1a2b3c4d failed] pnpm test' }), false);
+  nodeAssert.equal(queueRowText({ text: '<task-notification>' }), `${QUEUED_MARKER} <task-notification>`);
+});
+check('partitionQueue splits ownership in order: typed entries to the user, wakes to the drain', () => {
+  const { user, wakes } = partitionQueue([{ text: 'a' }, wake, { text: 'b' }]);
+  nodeAssert.deepEqual(user.map((entry) => entry.text), ['a', 'b']);
+  nodeAssert.deepEqual(wakes, [wake]);
+});
+check('take-back excludes wakes: only typed entries reach the draft', () => {
+  nodeAssert.equal(takeBackDraft([{ text: 'first' }, wake, { text: 'second' }], 'typed'), 'first\nsecond\ntyped');
+});
+check('a queue of wakes alone leaves the draft untouched — nothing to edit', () => {
+  nodeAssert.equal(takeBackDraft([wake], 'typed'), 'typed');
+  nodeAssert.equal(takeBackDraft([wake], ''), '');
+});
+check('a wake carries no image and never occupies the clipboard slot', () => {
+  nodeAssert.equal(hasQueuedImage([wake]), false);
+});
+check('the busy hint counts wakes under their own word, apart from typed entries', () => {
+  nodeAssert.equal(queuedCountHint(0, 1), ' · 1 task wake');
+  nodeAssert.equal(queuedCountHint(2, 3), ' · 2 queued · 3 task wakes');
+  nodeAssert.equal(queuedCountHint(0, 0), '');
+});
+check('a wake is a queued row like any other in the listing', () => {
+  const output = renderToString(React.createElement(QueuedMessages, { entries: [{ text: 'typed' }, wake], maxRows: 5 }), { columns: 120 });
+  const rows = output.split('\n').filter((row) => row.trim() !== '');
+  nodeAssert.equal(rows.length, 2);
+  nodeAssert.equal(rows[1]?.includes('[task bg-1a2b3c4d failed]'), true);
 });
 
 header('prompt queue — the listing plan is bounded and states its cuts');

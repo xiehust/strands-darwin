@@ -229,6 +229,19 @@ export interface SessionFields {
    */
   terminalBell?: boolean;
   /**
+   * Wake the agent when a background `bash start` job reaches a terminal state
+   * (SER-069): the interactive TUI enqueues one bounded `<task-notification>`
+   * prompt per finished job into the ordinary prompt queue, drained at idle as one
+   * ordinary turn, so the model learns of the completion without polling `wait`.
+   * **On by default.** `false` keeps the transcript notice only — the behaviour
+   * before the feature existed, byte-identical. Headless drivers have no queue and
+   * never wake; child agents never enqueue regardless of this value.
+   *
+   * Optional in the type for hand-built configs; {@link loadConfig} always stores
+   * the resolved boolean.
+   */
+  backgroundTaskWake?: boolean;
+  /**
    * Record an append-only trajectory of every turn to
    * `~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl`, powering
    * `darwin trajectory search|replay|fork` and `/trajectory`. On by default.
@@ -342,6 +355,7 @@ export const SESSION_KEYS = [
   'contextOffload',
   'maxResultTokens',
   'terminalBell',
+  'backgroundTaskWake',
   'trajectory',
   'diagnostics',
   'memory',
@@ -392,6 +406,7 @@ const DEFAULTS = {
   contextWarnRatio: 0.8,
   contextOffload: true,
   terminalBell: false,
+  backgroundTaskWake: true,
   memory: true,
   memoryHorizonDays: 28,
   maxConcurrentSubagents: DEFAULT_MAX_CONCURRENT_SUBAGENTS,
@@ -1087,6 +1102,8 @@ function validateSessionFields(
       booleanField(input, 'contextOffload', configPath) ?? DEFAULTS.contextOffload,
     terminalBell:
       booleanField(input, 'terminalBell', configPath) ?? DEFAULTS.terminalBell,
+    backgroundTaskWake:
+      booleanField(input, 'backgroundTaskWake', configPath) ?? DEFAULTS.backgroundTaskWake,
     memoryHorizonDays:
       integerField(input, 'memoryHorizonDays', configPath, { min: 0, max: 365 }) ??
       DEFAULTS.memoryHorizonDays,
