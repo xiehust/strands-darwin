@@ -37,6 +37,12 @@ export interface SubagentToolOptions {
   codexHooks?: CodexHookRunner;
   /** Test/diagnostic observer; receives the real child after initialization. */
   onChildInitialized?: ChildAgentObserver;
+  /**
+   * The parent runtime wakes on a background child's settlement (SER-070), so the
+   * description says the report arrives in the next turn; unset keeps the same-turn
+   * sentence a non-waking runtime can honour.
+   */
+  backgroundCompletionWakes?: boolean;
 }
 
 /**
@@ -71,7 +77,7 @@ export class SubagentTool {
       description:
         'Delegate a self-contained task to a fresh child agent with an independent context. ' +
         `Only the final report is returned. ${concurrencyDescriptionClause(concurrencyCap(options.config))} ` +
-        `${backgroundDelegationDescriptionClause()} ` +
+        `${backgroundDelegationDescriptionClause(options.backgroundCompletionWakes === true)} ` +
         `Available agents: ${catalogue}`,
       inputSchema: z.object({
         task: z.string().min(1).describe('A complete, self-contained task for the child agent'),

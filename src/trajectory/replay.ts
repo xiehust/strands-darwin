@@ -163,6 +163,7 @@ export function replayRecords(
           state: record.state,
           exitCode: record.exitCode,
           signal: record.signal,
+          ...(record.source === undefined ? {} : { source: record.source }),
         });
         continue;
 

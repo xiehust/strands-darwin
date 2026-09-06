@@ -22,6 +22,12 @@
  *   queue listing and the `<Static>` transcript print, distinct from user text.
  */
 
+import {
+  BACKGROUND_EXECUTION_FLAG,
+  BACKGROUND_TASK_RESULT_TOOL_NAME,
+  shortBackgroundTaskId,
+  type BackgroundDelegationStatus,
+} from '../agent/background-delegation.js';
 import type { BackgroundTaskStatus } from '../tools/background-bash.js';
 import type { BackgroundTail } from '../tools/background-tail.js';
 import type { TaskNotificationFields } from '../trajectory/record.js';
@@ -131,13 +137,74 @@ function outcomeDetail(fields: TaskNotificationFields): string {
   return parts.length === 0 ? '' : ` (${parts.join(', ')})`;
 }
 
+/** The id as the rows print it: `bg-1a2b3c4d` for a job, the first eight UUID characters for a delegation. */
+function rowTaskId(fields: TaskNotificationFields): string {
+  return fields.source === 'delegation' ? shortBackgroundTaskId(fields.taskId) : formatTaskId(fields.taskId);
+}
+
+/**
+ * The identifying fields of one settled background delegation (SER-070): the
+ * delegation label the transcript row carries stands where a job's command would,
+ * so the queue row, the notice and the record read the same way for both sources.
+ * `running` is never a wake.
+ */
+export function delegationNotificationFields(
+  delegation: BackgroundDelegationStatus,
+  label: string,
+): TaskNotificationFields | undefined {
+  if (delegation.state === 'running') return undefined;
+  return {
+    source: 'delegation',
+    taskId: delegation.taskId,
+    command: label,
+    state: delegation.state,
+    exitCode: null,
+    signal: null,
+  };
+}
+
+/**
+ * The model-facing text of one delegation wake. Deliberately **not** the report: the
+ * SDK's own `_deliverReady` attaches the `strands_background_task_result` pair to
+ * this very turn's request, so the block only says which delegation ended, how, and
+ * where to read the result — a second copy would double the report in context and
+ * make two sources of one truth.
+ */
+export function formatDelegationNotification(
+  delegation: BackgroundDelegationStatus,
+  label: string,
+  nowMs = Date.now(),
+): string {
+  const fields = delegationNotificationFields(delegation, label) ?? {
+    taskId: delegation.taskId, command: label, state: 'failed' as const, exitCode: null, signal: null,
+  };
+  const started = Date.parse(delegation.startedAt);
+  const settled = delegation.settledAt === null ? nowMs : Date.parse(delegation.settledAt);
+  const elapsedMs = Number.isFinite(started) && Number.isFinite(settled) ? Math.max(0, settled - started) : 0;
+  const attributes = [
+    `task="${fields.taskId}"`,
+    `tool="${delegation.toolName}"`,
+    `state="${fields.state}"`,
+    `elapsed="${formatTaskDuration(elapsedMs)}"`,
+  ].join(' ');
+  const body = [
+    `A background ${delegation.toolName} delegation you dispatched with ${BACKGROUND_EXECUTION_FLAG}: true ` +
+      `${fields.state === 'succeeded' ? 'finished' : 'failed'}. This turn was started by that settlement, not by the user.`,
+    `delegation: ${capCodePoints(fields.command.replace(/\s*\n\s*/g, ' '), TASK_WAKE_COMMAND_CODE_POINTS)}`,
+    `Its report is in this turn's ${BACKGROUND_TASK_RESULT_TOOL_NAME} tool result for task "${fields.taskId}" — read it there; it is not repeated here.`,
+    'If work you planned depends on this result, continue it now; otherwise reply briefly with what the result means.',
+  ].join('\n');
+  return `<${TASK_NOTIFICATION_TAG} ${attributes}>\n${neutraliseClosingTag(body)}\n</${TASK_NOTIFICATION_TAG}>`;
+}
+
 /**
  * The bracketed tag a queued wake row carries after the `queued ·` marker, in the
- * `[image]` attachment's vocabulary: `[task bg-1a2b3c4d succeeded]`. A user cannot
- * type it into the queue — user rows never start with `[task `.
+ * `[image]` attachment's vocabulary: `[task bg-1a2b3c4d succeeded]`, or
+ * `[delegation 1a2b3c4d succeeded]` for a background `subagent`/`workflow`. A user
+ * cannot type it into the queue — user rows never start with `[task ` or `[delegation `.
  */
 export function taskWakeQueueTag(fields: TaskNotificationFields): string {
-  return `[task ${formatTaskId(fields.taskId)} ${fields.state}]`;
+  return `[${fields.source === 'delegation' ? 'delegation' : 'task'} ${rowTaskId(fields)} ${fields.state}]`;
 }
 
 /**
@@ -146,10 +213,16 @@ export function taskWakeQueueTag(fields: TaskNotificationFields): string {
  * row. Deliberately a notice and not a `you>` row: the user typed nothing.
  */
 export function formatTaskWakeNotice(fields: TaskNotificationFields): string {
+  if (fields.source === 'delegation') {
+    return `delegation wake · ${rowTaskId(fields)} ${fields.state} — ${summarizeTaskCommand(fields.command)} → sent to the model as this turn; the report arrives with it`;
+  }
   return `task wake · ${formatTaskId(fields.taskId)} ${fields.state}${outcomeDetail(fields)} — ${summarizeTaskCommand(fields.command)} → sent to the model as this turn`;
 }
 
 /** The notice a wake that could not be delivered leaves behind (its turn was cancelled or failed). */
 export function formatTaskWakeUndelivered(fields: TaskNotificationFields): string {
+  if (fields.source === 'delegation') {
+    return `delegation wake · ${rowTaskId(fields)} not delivered — its turn was cancelled or failed and is not re-sent; the SDK still holds the report and attaches it to the next turn that runs`;
+  }
   return `task wake · ${formatTaskId(fields.taskId)} not delivered — its turn was cancelled or failed and is not re-sent; the job's output is still readable via /tasks or bash output`;
 }

@@ -715,7 +715,14 @@ function finishTurn(state: TurnState): TurnState {
   return {
     ...flushed,
     thinking: false,
-    activeTools: [],
+    // A delegation the SDK still runs in the background outlives the turn that
+    // dispatched it (SER-070): its row stays live — heartbeats keep updating it —
+    // until the forwarded after-event or the delivered pair finishes it in a later
+    // turn. Kept by the `backgroundDelegation` mark alone, not by a task id: replay
+    // never sees the ack (`toolResultEvent` is not recorded), and a live row whose
+    // ack failed was already finished by that result. Every other row belongs to
+    // this turn and leaves with it.
+    activeTools: state.activeTools.filter((tool) => tool.backgroundDelegation !== undefined),
     livePlan: [],
     history: state.livePlan.length === 0
       ? flushed.history

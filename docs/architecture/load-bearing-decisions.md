@@ -710,23 +710,58 @@ same projection; a text-less failure is the unchanged error object and cancellat
 (`spike/verify-failed-child-text.ts`).
 
 **Background delegation is the SDK's `backgroundTasks` plugin, never a darwin scheduler**
-(SER-064, `src/agent/background-delegation.ts`). The parent Agent — and only the parent; children
-from `buildRecipeChild` never get the option — is constructed with `agentic: ['subagent',
-'workflow']`, every ordinary tool plus `'*'` under `never`, `waitForCompletion: true` and
-`maxConcurrency` equal to the SER-061 cap. The SDK adds the optional `_background_execution` flag
-to the two delegation specs, and its executor honours `BeforeToolCallEvent` — the retry guard, the
-hooks and the permission gate — *before* `routeToolCall`, so a background-marked call is gated
-exactly like a foreground one and a denial leaves no task, ack or dispatch. The ack is that call's
-tool result; the finished task is delivered as one synthetic `strands_background_task_result` pair
-before the parent's next model call in the *same* invocation (`waitForCompletion`), so a report never
-crosses into a later user turn. The one thing darwin adds is observation: the background run's
+(SER-064, SER-070; `src/agent/background-delegation.ts`). The parent Agent — and only the parent;
+children from `buildRecipeChild` never get the option — is constructed with `agentic: ['subagent',
+'workflow']`, every ordinary tool plus `'*'` under `never`, `maxConcurrency` equal to the SER-061 cap,
+and `waitForCompletion` chosen per runtime: `false` when the driver drains completion wakes
+(`RuntimeOptions.backgroundCompletionWakes`, the TUI with `backgroundTaskWake` on), `true` otherwise.
+The SDK adds the optional `_background_execution` flag to the two delegation specs, and its executor
+honours `BeforeToolCallEvent` — the retry guard, the hooks and the permission gate — *before*
+`routeToolCall`, so a background-marked call is gated exactly like a foreground one and a denial
+leaves no task, ack or dispatch. **The invariant (SER-070): the ack ends the turn; the report arrives in
+the next turn that runs, through the SDK's own delivery, started by a wake when the session is idle;
+never a darwin copy of the report; `/clear` and `/rewind` refuse while a delegation is live.** In a
+waking runtime the dispatching turn ends after the ack with the child still running and the user
+keeps prompting. The SDK plugin delivers a finished task as one synthetic
+`strands_background_task_result` tool-use/tool-result pair from two hooks — `_beforeModelCall` before
+every model call and `_afterInvocation` at every invocation end (with `waitForCompletion: false` it
+delivers only what is already terminal and lets the invocation end) — so a child that settles
+*during* a later user turn is delivered in that turn and no wake is owed; a child that settles while
+the session is idle would wait for the next prompt, and that is the one case the wake exists for:
+the observer publishes the settlement (its `AfterToolCallEvent` hook fires once per background run,
+exactly when the run's body returns — the dispatch registry fires per *child* and knows dispatch
+ids, not task ids, so it is not the trigger), the App enqueues one SER-069 `taskNotification` entry
+with `source: 'delegation'` whose text names the tool, task id, state and elapsed time and points at
+the pair — never the report — and the wake turn's own first `BeforeModelCallEvent` attaches the pair
+to that request. Exactly one wake per task: the App remembers every id it queued, the idle sweep
+(`delegationWakeEntries`, run at settlement and whenever the session returns to idle, which closes
+the microtask window between the run's hook and the engine marking the task terminal) never offers
+a running or already-queued task, and the drain drops a wake whose task the SDK no longer tracks.
+Headless drivers have no queue and no later turn, so they leave the option unset and keep
+`waitForCompletion: true` — the whole result stays inside the one `run.*` cycle, with no darwin
+waiter and no new event; children never receive the option. **Observation**: the background run's
 `AfterToolCallEvent` reaches hook callbacks only, so `BackgroundDelegationObserver` forwards that
-same SDK event object into `send()`'s stream ahead of the next SDK event — recorder and drivers see
-an ordinary before/after pair, the trajectory gains no record type, replay shows the delegation row
-with its report as for a foreground call, and the live-only ack row (`… · delegated in background
-(task <id>)`) is a `toolResultEvent` projection. `strands_manage_background_task` is parent-only
+same SDK event object into `send()`'s stream ahead of the next SDK event; its ledger is not reset per
+stream (a between-turns after-event is buffered and yielded at the next stream's start), so recorder
+and drivers see exactly one before/after pair per delegation — before in the dispatching turn, after
+in the turn that runs next — the trajectory gains no record type beyond `taskNotification`'s
+discriminator, replay shows the delegation row with its report as for a foreground call, and the
+live row (`… · background`) survives `turnEnded` until the forwarded after-event or the delivered
+pair closes it as `… · background result`; the ack row (`… · delegated in background (task <id>)`)
+is a `toolResultEvent` projection. The ledger (`listBackgroundDelegations()`: dispatched, not yet
+delivered — the `messageAddedEvent` whose tool result carries the task id removes an entry, which is
+also when the SDK stops tracking it) is what `/clear` and `/rewind` consult: the SDK's
+`assertCanLoadSnapshot` throws while tasks are tracked and `retire()` would cancel the children
+through `subagents.shutdown()`, so both are **local refusals** (`liveBackgroundDelegationRefusal`,
+in the App before any work and in the runtime before any release) naming the task ids and the two
+exits — `/agents cancel <id>` or wait for the completion wake — never a partial restore, never an
+implicit cancel; `/exit`/`shutdown()` still cancels tracked children, and Esc still cancels every
+active child with the turn (unchanged). `strands_manage_background_task` is parent-only
 (`PARENT_ONLY_TOOL_NAMES`), `list`/`get` read, `cancel` fail-closed `execute`; `/agents cancel <id>`
-stays the user-only path (`spike/verify-background-delegation.ts`).
+stays the user-only path. The delegation tool descriptions state the per-runtime truth (next turn
+for a waking runtime; the pre-SER-070 same-turn sentence byte for byte otherwise). Free checks:
+`spike/verify-background-delegation.ts` (both runtimes, in `pnpm test`), `spike/verify-task-wake.ts`
+(pty: the delegation session), `spike/verify-headless-structured.ts` (the headless decision).
 
 
 Long-running dispatch visibility stays inside that same observer boundary. The registry owns one
@@ -1341,14 +1376,21 @@ durability barrier, carrying the job fields plus the literal text; `prompt-histo
 `userInput` only, so `Up` and `Ctrl+R` never offer a wake back, while `trajectory search` still
 finds it; replay dispatches the same `taskNotification` reducer action the live send dispatched,
 so `formatReplay` and `/export` print the one `task wake ·` notice row — never a `you>` row, because
-nobody typed it. **Rendering adds no surface**: the queue row is the existing counted
+nobody typed it. The same record carries a settled background delegation's wake (SER-070) behind one
+discriminator, `source: 'delegation'` — absent means a `bash start` job, so SER-069 records read
+unchanged — with the delegation label where a job's command sits, `null` exit metadata, `state` from
+the run's tool result, and a text that names the pair and never repeats the report; the reducer
+prints it as the `delegation wake ·` notice and the queue row tags it `[delegation <id8> state]`.
+**Rendering adds no surface**: the queue row is the existing counted
 `queued ·` row with a `[task bg-… state]` tag in the `[image]` attachment's vocabulary and the
 command label (never the model-facing text); the busy hint counts wakes under their own word
 (` · 1 task wake`) beside ` · N queued`; the send-time transcript row is a `<Static>` notice. **One
 config key**, `backgroundTaskWake` (session-scoped, default on, validated like `contextOffload`);
 `false` leaves the notice-only behaviour byte-identical. Headless drivers have no queue and never
 wake. **The model is told the truth per runtime**: the TUI driver sets
-`RuntimeOptions.backgroundCompletionWakes`, and with the key on the parent's `bash` wrapper
+`RuntimeOptions.backgroundCompletionWakes` (the one promise "this driver drains completion wakes";
+SER-070 reads the same option to make background delegation non-blocking — see § "Background
+delegation …"), and with the key on the parent's `bash` wrapper
 (`createBackgroundBashTool(..., { completionWakes: true })`) states in its description and in the
 still-running `wait` timeout instruction that ending the turn is followed by one
 `<task-notification>` turn once idle — every other runtime keeps the byte-identical "background

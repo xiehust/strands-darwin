@@ -330,18 +330,29 @@ export interface ShellCommandRecord extends RecordEnvelope {
 }
 
 /**
- * The fields that identify a finished background `bash start` job in a wake
- * (SER-069), shared by the queue entry, the live transcript row, the record and
- * the replay reducer so the four surfaces cannot disagree about the task.
+ * The fields that identify a finished background job in a wake, shared by the queue
+ * entry, the live transcript row, the record and the replay reducer so the four
+ * surfaces cannot disagree about the task. Two sources share the shape (the
+ * discriminator is `source`; absent means `bash`, so SER-069 records read unchanged):
+ *
+ * - a `bash start` job (SER-069): `command` is the shell command, `exitCode`/`signal`
+ *   its exit metadata;
+ * - a background delegation (SER-070, `source: 'delegation'`): `command` is the
+ *   delegation label the transcript row shows (`subagent general#bg1: count things`),
+ *   `taskId` the SDK task id, `exitCode`/`signal` always `null`, and `state` is
+ *   `succeeded`/`failed` from the run's tool result — the report itself is never here,
+ *   it reaches the model only as the SDK's own `strands_background_task_result` pair.
  */
 export interface TaskNotificationFields {
   taskId: string;
   command: string;
   state: 'succeeded' | 'failed' | 'stopped';
-  /** Process exit code; `null` when it died to a signal. */
+  /** Process exit code; `null` when it died to a signal (and for a delegation). */
   exitCode: number | null;
-  /** Signal that ended it, `null` for a plain exit. */
+  /** Signal that ended it, `null` for a plain exit (and for a delegation). */
   signal: string | null;
+  /** Absent for a `bash start` job; `'delegation'` for a background `subagent`/`workflow`. */
+  source?: 'delegation';
 }
 
 /**

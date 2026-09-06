@@ -25,7 +25,10 @@ import { DiagnosticsLog, type DiagnosticsStatus } from './diagnostics.js';
 import {
   BackgroundDelegationObserver,
   backgroundDelegationConfig,
+  liveBackgroundDelegationRefusal,
   MANAGE_BACKGROUND_TASK_TOOL_NAME,
+  type BackgroundDelegationListener,
+  type BackgroundDelegationStatus,
 } from './background-delegation.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
 import { installModelCallBudget } from './model-call-budget.js';
@@ -216,8 +219,12 @@ export interface RuntimeOptions {
    * The driver drains SER-069 task wakes at idle (the interactive TUI). The `bash` tool
    * then tells the model, truthfully, that ending the turn is followed by one
    * `<task-notification>` turn — effective only with config `backgroundTaskWake !== false`.
-   * Headless drivers have no queue and leave this unset. Children never wake, so their
-   * catalogue keeps the no-wake wording whatever the parent says.
+   * The same promise switches background delegation to non-blocking (SER-070): the
+   * SDK `backgroundTasks` option gets `waitForCompletion: false`, the dispatching turn
+   * ends after the ack, and the child's settlement is delivered by a wake turn.
+   * Headless drivers have no queue and leave this unset, so their one run keeps the
+   * SDK waiting and the report inside it. Children never wake, so their catalogue keeps
+   * the no-wake wording whatever the parent says.
    */
   backgroundCompletionWakes?: boolean;
   /** Refuses the next parent-Agent SDK model call after this many in the process. */
@@ -729,7 +736,9 @@ export class AgentRuntime {
     // SDK's background executor; everything else — the ordinary tools by name, and by
     // wildcard whatever `initialize()` discovers later — stays foreground. Cap and
     // delegation tools are the parent's; children are built by `buildRecipeChild`
-    // and never receive this option.
+    // and never receive this option. SER-070: only a waking driver lets the dispatching
+    // turn end with the child running (`waitForCompletion: false`); headless keeps the
+    // SDK's in-invocation wait so its one run still contains the report.
     const backgroundDelegationTools = [SUBAGENT_TOOL_NAME, WORKFLOW_TOOL_NAME];
     const backgroundDelegation = new BackgroundDelegationObserver(backgroundDelegationTools);
     const agent = new Agent({
@@ -750,6 +759,7 @@ export class AgentRuntime {
         delegationTools: backgroundDelegationTools,
         ordinaryToolNames: ordinaryTools.map((tool) => tool.name),
         maxConcurrency: concurrencyCap(config),
+        completionWakes,
       }),
       // Required: the SDK's own printer writes to stdout and would interleave
       // with our rendering (and fight Ink for the terminal in step 5).
@@ -850,6 +860,7 @@ export class AgentRuntime {
       config,
       createModel: createChildModel,
       dispatches: subagentDispatches,
+      backgroundCompletionWakes: completionWakes,
       ...(codexHooks === undefined ? {} : { codexHooks }),
     });
     agent.toolRegistry.add(subagents.tool);
@@ -863,6 +874,7 @@ export class AgentRuntime {
       config,
       createModel: createChildModel,
       dispatches: subagentDispatches,
+      backgroundCompletionWakes: completionWakes,
       ...(codexHooks === undefined ? {} : { codexHooks }),
     });
     agent.toolRegistry.add(workflows.tool);
@@ -1743,6 +1755,29 @@ export class AgentRuntime {
   }
 
   /**
+   * Every background delegation the SDK still tracks (SER-070): dispatched with
+   * `_background_execution` and not yet delivered to the model as its result pair —
+   * running, or settled and waiting for the next model call. Synchronous, no I/O: the
+   * observer's ledger, fed by the parent's own stream and hook. Non-empty means
+   * `/clear` and `/rewind` must refuse (the SDK's `assertCanLoadSnapshot` would throw,
+   * and a successor would orphan the children).
+   */
+  listBackgroundDelegations(): BackgroundDelegationStatus[] {
+    return this.backgroundDelegation.list();
+  }
+
+  /** Publishes each background delegation's one settlement snapshot until the closure is called. */
+  subscribeToBackgroundDelegations(listener: BackgroundDelegationListener): () => void {
+    return this.backgroundDelegation.subscribe(listener);
+  }
+
+  /** Synchronous, before any release: the same sentence the TUI's local check prints. */
+  private refuseWhileDelegationsTracked(command: '/clear' | '/rewind'): void {
+    const tracked = this.backgroundDelegation.list();
+    if (tracked.length > 0) throw new Error(liveBackgroundDelegationRefusal(command, tracked));
+  }
+
+  /**
    * Asks the agent to stop the current turn at its next safe point. The stream
    * ends with `stopReason: 'cancelled'` rather than throwing.
    */
@@ -1804,6 +1839,7 @@ export class AgentRuntime {
    * fresh successor id receives a latest snapshot.
    */
   async startRewind(checkpoint: RewindCheckpoint): Promise<AgentRuntime> {
+    this.refuseWhileDelegationsTracked('/rewind');
     const catalogue = await readRewindCatalogue(this.projectRoot, this.info.sessionId);
     if (catalogue.problem !== undefined) throw new Error(catalogue.problem);
     const current = catalogue.checkpoints.find((entry) => entry.snapshotId === checkpoint.snapshotId);
@@ -1872,8 +1908,14 @@ export class AgentRuntime {
    * If assembling the successor fails, this runtime stays fully usable: nothing it owns
    * has been released yet, and the diagnostics tap it installed at startup is put back
    * (the failed successor's unwind clears the process-global sink).
+   *
+   * Refused while a background delegation is tracked (SER-070): `retire()` would cancel
+   * the children through `subagents.shutdown()`, destroying their work silently, and
+   * the result pair the SDK still owes would be orphaned. The user decided the exits are
+   * `/agents cancel <id>` or waiting for the completion wake — never an implicit cancel.
    */
   async startNewSession(): Promise<AgentRuntime> {
+    this.refuseWhileDelegationsTracked('/clear');
     let successor: AgentRuntime;
     try {
       successor = await AgentRuntime.create({

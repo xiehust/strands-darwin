@@ -30,8 +30,10 @@
 
 import type { ImageBlock } from '@strands-agents/sdk';
 
+import type { BackgroundDelegationStatus } from '../agent/background-delegation.js';
 import type { TaskNotificationFields } from '../trajectory/record.js';
-import { taskWakeQueueTag } from './task-wake.js';
+import { delegationWakeLabel } from './subagent-format.js';
+import { delegationNotificationFields, formatDelegationNotification, taskWakeQueueTag } from './task-wake.js';
 
 /** One live-only queued user submission; image bytes never enter any durable record. */
 export interface QueuedUserPrompt {
@@ -58,6 +60,30 @@ export type QueuedPrompt = QueuedUserPrompt | QueuedTaskWake;
 
 export function isTaskWake(entry: QueuedPrompt): entry is QueuedTaskWake {
   return entry.kind === 'taskNotification';
+}
+
+/**
+ * The delegation wakes (SER-070) an idle session owes right now: one entry per
+ * background delegation the SDK still tracks whose run has settled and which has
+ * not been queued before. Pure — the App calls it at settlement (when idle) and
+ * whenever the session returns to idle, adds the returned ids to `alreadySent`, and
+ * appends the entries to the queue. A running delegation is never a wake; a settled
+ * one the SDK already delivered is no longer tracked and so never appears.
+ */
+export function delegationWakeEntries(
+  tracked: readonly BackgroundDelegationStatus[],
+  alreadySent: ReadonlySet<string>,
+  nowMs = Date.now(),
+): QueuedTaskWake[] {
+  const entries: QueuedTaskWake[] = [];
+  for (const delegation of tracked) {
+    if (delegation.state === 'running' || alreadySent.has(delegation.taskId)) continue;
+    const label = delegationWakeLabel(delegation);
+    const fields = delegationNotificationFields(delegation, label);
+    if (fields === undefined) continue;
+    entries.push({ kind: 'taskNotification', ...fields, text: formatDelegationNotification(delegation, label, nowMs) });
+  }
+  return entries;
 }
 
 /** The queue split by ownership: what the user may take back, and what only drains. */

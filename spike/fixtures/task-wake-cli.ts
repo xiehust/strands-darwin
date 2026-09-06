@@ -15,11 +15,14 @@
  *                                  (`sleep 0.1; …`) that asks for permission in `default` mode, then text.
  * - `start-clear-window <marker>`→ `bash start` (`sleep 2.5; …`), then text; the *second*
  *                                  runtime creation (`/clear`) blocks on a release file.
+ * - `delegate-idle <marker>`     → `subagent` with `_background_execution: true` (task `count <marker>`),
+ *                                  then text; the child (no `subagent` spec) sleeps 3 s and answers.
  * - a `<task-notification …>` message → text acknowledging the wake.
  *
- * Every model call appends `{ call, userText }` to `wake-model-calls.jsonl` in the
- * working directory, where `userText` is the newest typed user message the request
- * carried — that file is the suite's proof of what the model was actually asked.
+ * Every model call appends `{ call, userText, role, pairTaskIds }` to `wake-model-calls.jsonl`
+ * in the working directory, where `userText` is the newest typed user message the request
+ * carried and `pairTaskIds` the SDK-delivered result pairs it held — that file is the
+ * suite's proof of what the model was actually asked.
  */
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -34,6 +37,7 @@ const CALLS = path.join(process.cwd(), 'wake-model-calls.jsonl');
 const BLOCK_CHECKPOINT = path.join(process.cwd(), 'wake-block-checkpoint');
 const BLOCK_RELEASE = path.join(process.cwd(), 'wake-block-release');
 const CLEAR_RELEASE = path.join(process.cwd(), 'wake-clear-release');
+const CLEAR_ARM = path.join(process.cwd(), 'wake-clear-arm');
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -94,7 +98,13 @@ class TaskWakeModel extends Model<BaseModelConfig> {
     // The `bash` description travels in every request: the suite asserts the per-runtime
     // wording (wake variant with the key on, no-wake variant with `backgroundTaskWake: false`).
     const bashDescription = options?.toolSpecs?.find((spec) => spec.name === 'bash')?.description;
-    appendFileSync(CALLS, `${JSON.stringify({ call: this.calls, userText: prompt.text, bashDescription })}\n`);
+    // A child never sees the delegation tools (SER-064); the parent does. The SDK's
+    // delivered `strands_background_task_result` pairs are logged so the suite can prove
+    // which request carried a delegation's report (SER-070).
+    const isParent = options?.toolSpecs?.some((spec) => spec.name === 'subagent') === true;
+    const pairTaskIds = messages.flatMap((message) => message.content.flatMap((block) =>
+      block.type === 'toolUseBlock' && block.name === 'strands_background_task_result' ? [block.toolUseId] : []));
+    appendFileSync(CALLS, `${JSON.stringify({ call: this.calls, userText: prompt.text, bashDescription, role: isParent ? 'parent' : 'child', pairTaskIds })}\n`);
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
 
     const [verb, marker = 'marker'] = prompt.text.trim().split(/\s+/, 2) as [string, string?];
@@ -118,6 +128,15 @@ class TaskWakeModel extends Model<BaseModelConfig> {
     if (prompt.text.includes('<task-notification')) {
       const task = /task="([^"]+)"/.exec(prompt.text)?.[1] ?? 'unknown';
       text = `acknowledged wake for ${task}`;
+    } else if (!isParent && verb === 'count') {
+      // The background child (SER-070): long enough for the dispatching turn to end and
+      // for the suite to try `/clear` while the delegation is tracked.
+      await delay(3_000);
+      text = `child counted ${marker}`;
+    } else if (verb === 'delegate-idle') {
+      if (step === 0) {
+        events = toolCall('subagent', `deleg-${this.calls}`, { task: `count ${marker}`, _background_execution: true });
+      } else text = `dispatched ${marker}`;
     } else if (verb === 'start-idle') {
       if (step === 0) events = start(`sleep 2; echo ${marker}`);
       else text = `started idle job ${marker}`;
@@ -171,9 +190,11 @@ const model = new TaskWakeModel();
 let creations = 0;
 setRuntimeModelFactoryForTest(async () => {
   creations += 1;
-  // The second runtime of the process is the `/clear` successor: hold its assembly
-  // so a job can finish — and its wake be queued — while `/clear` is in flight.
-  if (creations === 2) await waitForFile(CLEAR_RELEASE, 30_000);
+  // The second model creation of the process is the `/clear` successor's — when the
+  // suite has armed the window: hold its assembly so a job can finish, and its wake be
+  // queued, while `/clear` is in flight. Unarmed (the delegation session), a background
+  // child's model is the second creation and must not be held.
+  if (creations === 2 && existsSync(CLEAR_ARM)) await waitForFile(CLEAR_RELEASE, 30_000);
   return model;
 });
 await import('../../src/cli.js');

@@ -279,7 +279,16 @@ async function phaseControls(): Promise<void> {
   nodeAssert.equal(traced[0]?.contextOffloadOverride, true);
   // SER-069: headless has no queue to drain a task wake, so it never asks the runtime for
   // the wake wording — its `bash` spec keeps "background completion does not resume the agent".
+  // SER-070 rides the same option: unset means the runtime builds `backgroundTasks` with
+  // `waitForCompletion: true`, so a background delegation's report is delivered inside the
+  // one `run.*` cycle (spike/verify-background-delegation.ts (f)) — a headless run has no
+  // later turn for a report to arrive in, and darwin adds no waiter of its own. The
+  // decision is pinned at the source too: the headless runner never names the option.
   nodeAssert.equal(Object.hasOwn(traced[0] ?? {}, 'backgroundCompletionWakes'), false);
+  nodeAssert.equal(
+    (await readFile(path.join(import.meta.dirname, '../src/headless-runner.ts'), 'utf8')).includes('backgroundCompletionWakes'),
+    false,
+  );
   nodeAssert.deepEqual(lines(tuned.stdout).slice(0, 3).map((record) => record.type), [
     'session.resolved', 'run.started', 'turn.started',
   ]);

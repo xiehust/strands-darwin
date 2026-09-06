@@ -12,7 +12,8 @@
  */
 import { SUBAGENT_TOOL_NAME } from '../agents/subagent-tool.js';
 import { WORKFLOW_TOOL_NAME } from '../agents/workflow-tool.js';
-import { backgroundExecutionRequested } from '../agent/background-delegation.js';
+import { backgroundExecutionRequested, type BackgroundDelegationStatus } from '../agent/background-delegation.js';
+import { classify } from '../agent/permission.js';
 import {
   dispatchLabel,
   shortDispatchId,
@@ -177,6 +178,19 @@ export function backgroundDelegationAckSummary(baseSummary: string, taskId: stri
 /** The finished result row, carrying the child's report like a foreground call. */
 export function backgroundDelegationResultSummary(baseSummary: string): string {
   return `${baseSummary} · background result`;
+}
+
+/**
+ * The label a delegation wake (SER-070) carries where a job wake carries its command:
+ * the same base summary the live row showed (`subagent general#bg1: count things`,
+ * or the classifier's summary for `workflow`), so the queue row, the notice and the
+ * record name the delegation exactly as the transcript did.
+ */
+export function delegationWakeLabel(delegation: BackgroundDelegationStatus): string {
+  return (
+    subagentCallSummary(delegation.toolName, delegation.input, delegation.toolUseId) ??
+    classify(delegation.toolName, delegation.input).summary
+  );
 }
 
 export { backgroundAckTaskId } from '../agent/background-delegation.js';

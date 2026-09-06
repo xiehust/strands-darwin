@@ -165,8 +165,15 @@ Parallelism is for read-heavy work. Children share one working tree with no file
 locking, transaction, merge, or conflict detection. Concurrent writes can interleave. Searches,
 reads, and analysis may run in parallel; mutation should remain on one agent at a time.
 
-Dispatches are concurrent but not detached background jobs. Each tool promise resolves only after
-its child finishes, and the parent model receives the tool results before continuing its turn.
+Dispatches are concurrent but not detached background jobs by default. Each tool promise resolves
+only after its child finishes, and the parent model receives the tool results before continuing its
+turn. The one exception is a call the model marks `_background_execution: true` (SER-064/SER-070):
+the SDK's `backgroundTasks` plugin returns an acknowledgement at once and, in the interactive TUI,
+the dispatching turn ends with the child still running; the report reaches the model in the next turn
+that runs — the SDK attaches it as a `strands_background_task_result` pair, and a completion wake
+starts that turn when the session is idle. `/clear` and `/rewind` refuse while such a delegation is
+tracked. Headless runs keep the SDK waiting inside the invocation, so their one run still contains the
+report. See `docs/architecture/load-bearing-decisions.md` § "Background delegation …".
 
 ## Permissions and source attribution
 

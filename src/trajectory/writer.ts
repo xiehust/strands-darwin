@@ -177,6 +177,9 @@ export class TurnRecording {
         state: origin.state,
         exitCode: origin.exitCode,
         signal: origin.signal,
+        // The discriminator rides only when set, so a bash wake's record bytes are
+        // exactly SER-069's.
+        ...(origin.source === undefined ? {} : { source: origin.source }),
         text: value,
       },
       [...command.trunc, ...trunc],

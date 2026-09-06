@@ -104,6 +104,8 @@ export interface WorkflowToolOptions {
   codexHooks?: CodexHookRunner;
   /** Test/diagnostic observer; receives each real child after initialization. */
   onChildInitialized?: (agent: Agent) => void;
+  /** As for `subagent`: the parent wakes on settlement, so the description says next turn. */
+  backgroundCompletionWakes?: boolean;
 }
 
 /** Everything one node owns for one workflow run. */
@@ -154,7 +156,7 @@ export class WorkflowTool {
         'refused, and a scoped node\u2019s fileEditor write outside its scopes is denied ' +
         '(bash is not covered). Only bounded terminus reports are returned. ' +
         `${concurrencyDescriptionClause(concurrencyCap(options.config))} ` +
-        `${backgroundDelegationDescriptionClause()} ` +
+        `${backgroundDelegationDescriptionClause(options.backgroundCompletionWakes === true)} ` +
         `Available agents: ${catalogue}`,
       inputSchema: workflowInputSchema,
       callback: (input, context) => this.track(input, context),

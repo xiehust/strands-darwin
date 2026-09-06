@@ -19,6 +19,12 @@
  *                     and the turn ends — the drain-race pin.
  * 6. **config off** — (third session, `backgroundTaskWake: false`) the completion notice
  *                     appears and nothing else: no queue row, no wake turn, no record.
+ * 7. **delegation** — (fourth session, SER-070) a background `subagent` outlives its
+ *                     dispatching turn; `/clear` is refused locally while it is tracked; its
+ *                     settlement while idle yields exactly one `delegation wake ·` turn whose
+ *                     request carries the SDK's `strands_background_task_result` pair (the
+ *                     notification never repeats the report); one `taskNotification` record
+ *                     with `source: 'delegation'`; `/clear` succeeds once nothing is tracked.
  *
  * Every model request also carries the `bash` tool spec, so the log doubles as proof of
  * the per-runtime wording: the wake variant of the still-running-timeout sentence in the
@@ -52,9 +58,11 @@ const CALLS = path.join(ROOT, 'wake-model-calls.jsonl');
 const BLOCK_CHECKPOINT = path.join(ROOT, 'wake-block-checkpoint');
 const BLOCK_RELEASE = path.join(ROOT, 'wake-block-release');
 const CLEAR_RELEASE = path.join(ROOT, 'wake-clear-release');
+const CLEAR_ARM = path.join(ROOT, 'wake-clear-arm');
 const EXIT_TIMEOUT_MS = 30_000;
 const WAKE_ROW = `${QUEUED_MARKER} [task bg-`;
 const WAKE_NOTICE = 'task wake · bg-';
+const DELEGATION_WAKE_NOTICE = 'delegation wake · ';
 
 async function writeConfig(extra: Record<string, unknown>): Promise<void> {
   await mkdir(path.join(HOME, '.darwin'), { recursive: true });
@@ -75,7 +83,15 @@ async function resetProject(): Promise<void> {
   await rm(sessionPaths(ROOT).sessionsDir, { recursive: true, force: true });
 }
 
-interface ModelCall { call: number; userText: string; bashDescription?: string }
+interface ModelCall {
+  call: number;
+  userText: string;
+  bashDescription?: string;
+  /** `parent` sees the delegation tools; a background child (SER-070) does not. */
+  role: 'parent' | 'child';
+  /** Task ids of the SDK's delivered `strands_background_task_result` pairs in the request. */
+  pairTaskIds: string[];
+}
 
 async function modelCalls(): Promise<ModelCall[]> {
   try {
@@ -228,6 +244,7 @@ async function mainSession(): Promise<void> {
 
     // --- 4. /clear: a wake queued during successor assembly is dropped. ---
     await runPrompt(tui, 'start-clear-window clear-marker-delta');
+    await writeFile(CLEAR_ARM, 'arm\n');
     const clearSubmit = tui.mark();
     tui.submit('/clear');
     await tui.waitFor(WAKE_ROW, { timeoutMs: 20_000, from: clearSubmit, settleMs: 300 });
@@ -355,11 +372,92 @@ async function configOffSession(): Promise<void> {
     sessions.length === 1 && sessions[0]!.records.every((record) => record.type !== 'taskNotification'));
 }
 
+async function delegationSession(): Promise<void> {
+  header('task wake — a background delegation settles while idle: one wake, the SDK attaches the report (SER-070)');
+  await resetProject();
+  await writeConfig({});
+  const tui = startTui({ cwd: ROOT, entry: ENTRY, cols: 120, rows: 40 });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
+    const mark = await runPrompt(tui, 'delegate-idle deleg-marker-eta');
+    let calls = await modelCalls();
+    const parentCalls = calls.filter((call) => call.role === 'parent');
+    assert('the dispatching turn ended after the ack: two parent calls (subagent, text), the child still running',
+      parentCalls.length === 2 && parentCalls[1]?.pairTaskIds.length === 0 && tui.screen.slice(mark).includes('dispatched deleg-marker-eta'));
+    assert('the ack row names the task and the live delegation row survives the turn',
+      /delegated in background \(task [0-9a-f-]{8,}/.test(tui.screen.slice(mark))
+      && /count deleg-marker-eta · background \(\d+s/.test(tui.frame));
+
+    // `/clear` while the delegation is tracked is a local refusal, not a new session.
+    const clearMark = tui.mark();
+    tui.submit('/clear');
+    await tui.waitFor('/clear refused', { timeoutMs: 10_000, from: clearMark, settleMs: 200 });
+    // Word-wrapped at 120 columns: rejoin the wrapped lines before matching the sentence.
+    const refusal = tui.screen.slice(clearMark).replace(/\s*\r?\n\s*/g, ' ');
+    assert('/clear is refused locally, naming the task, the dispatch id and both exits',
+      /\/clear refused — a background delegation is still tracked: subagent #deleg\d+ \(task [0-9a-f-]{36}, running\)/.test(refusal)
+      && refusal.includes('/agents cancel <id>') && refusal.includes('wait for the completion wake'));
+    await settle(300);
+    assert('the session is unchanged: no "cleared — new session", the same child still runs',
+      !refusal.includes('cleared — new session') && (await modelCalls()).length === calls.length);
+
+    // The child settles while idle → exactly one delegation wake → one turn carrying the pair.
+    await tui.waitFor(DELEGATION_WAKE_NOTICE, { timeoutMs: 20_000, from: mark, settleMs: 200 });
+    await tui.waitFor('acknowledged wake for ', { timeoutMs: 20_000, from: mark });
+    await waitForIdle(tui, mark);
+    await settle(1_500);
+    calls = await modelCalls();
+    const wakeCalls = calls.filter((call) => call.role === 'parent' && call.userText.includes('<task-notification'));
+    const childCalls = calls.filter((call) => call.role === 'child');
+    assert('exactly one child ran and exactly one wake request was made', childCalls.length === 1 && wakeCalls.length === 1);
+    assert('no further model call followed the wake turn', calls.length === 4);
+    const wakeText = wakeCalls[0]?.userText ?? '';
+    const taskId = /task="([0-9a-f-]{36})"/.exec(wakeText)?.[1];
+    assert('the notification names the delegation, its state and elapsed time, and points at the SDK pair — never the report',
+      taskId !== undefined && /<task-notification task="[0-9a-f-]{36}" tool="subagent" state="succeeded" elapsed="\d+s">/.test(wakeText)
+      && wakeText.includes('delegation: subagent general#deleg') && wakeText.includes('strands_background_task_result')
+      && !wakeText.includes('child counted') && wakeText.endsWith('</task-notification>'));
+    assert('the wake turn\'s request carried the SDK\'s result pair for that task — attached by the SDK, not copied by darwin',
+      taskId !== undefined && wakeCalls[0]?.pairTaskIds.length === 1 && wakeCalls[0].pairTaskIds[0] === taskId);
+    const screen = tui.screen.slice(mark);
+    assert('exactly one delegation wake notice row was written', screen.split(DELEGATION_WAKE_NOTICE).length - 1 === 1);
+    assert('the wake notice names the delegation as sent to the model',
+      /delegation wake · [0-9a-f]{8} succeeded — subagent general#deleg\d+: count deleg-marker-eta → sent to the model as this turn/
+        .test(screen.replace(/\s*\r?\n\s*/g, ' ')));
+    assert('the delegation row closed as the background result row with the child\'s report',
+      screen.includes('· background result') && screen.includes('child counted deleg-marker-eta'));
+    assert('the wake never appeared as a typed `you>` row', !screen.includes('you> <task-notification'));
+    assert('no live delegation row is left', !/count deleg-marker-eta · background \(\d+s/.test(tui.frame));
+
+    // Nothing tracked any more: `/clear` now succeeds (the window is not armed here).
+    const clearAgain = tui.mark();
+    tui.submit('/clear');
+    await tui.waitFor('cleared — new session', { timeoutMs: 30_000, from: clearAgain, settleMs: 300 });
+    tui.submit('/exit');
+    assert('the delegation session exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+  const sessions = await sessionRecords();
+  const records = sessions[0]?.records ?? [];
+  const wakes = records.filter((record): record is TaskNotificationRecord => record.type === 'taskNotification');
+  assert('one taskNotification record with source: delegation, the label as command, null exit metadata',
+    wakes.length === 1 && wakes[0]?.source === 'delegation' && /^[0-9a-f-]{36}$/.test(wakes[0].taskId)
+    && wakes[0].command.startsWith('subagent general#deleg') && wakes[0].state === 'succeeded'
+    && wakes[0].exitCode === null && wakes[0].signal === null && wakes[0].text.startsWith('<task-notification '));
+  assert('the wake turn has no userInput of its own', !records.some((record) => record.type === 'userInput' && record.turn === wakes[0]?.turn));
+  const replay = formatReplay(replayRead(await readTrajectory(trajectoryPath(ROOT, sessions[0]?.id ?? ''))));
+  assert('replay prints the delegation wake notice and the background result row through the same reducer',
+    replay.split('\n').filter((line) => line.startsWith(`  note ${DELEGATION_WAKE_NOTICE}`)).length === 1
+    && replay.includes('· background result') && replay.includes('child counted deleg-marker-eta'));
+}
+
 async function main(): Promise<void> {
   try {
     await mainSession();
     await permissionSession();
     await configOffSession();
+    await delegationSession();
   } finally {
     await rm(HOME, { recursive: true, force: true });
   }

@@ -166,8 +166,13 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 ## 后台委派（仅主代理）
 
 Strands SDK 的 `backgroundTasks` 插件只为 `subagent` 与 `workflow` 附加可选的 `_background_execution`
-标志；其他工具一律前台执行。带标志的调用与前台调用经过完全相同的权限检查，立即返回带任务 id 的确认，
-其报告会在父代理同一回合的下一次模型调用之前交付。子代理看不到该标志，也没有下面这个工具。
+标志；其他工具一律前台执行。带标志的调用与前台调用经过完全相同的权限检查，立即返回带任务 id 的确认。
+报告在哪里交付取决于运行时：在交互式 TUI 中（`backgroundTaskWake` 开启时），发起委派的回合在确认后即结束，
+子代理继续运行，你可以继续提问；报告在下一个实际运行的回合中到达——SDK 会在该回合的模型调用之前把它作为
+`strands_background_task_result` 工具调用/结果对附上，而当会话空闲时，由一条**委派唤醒**（见下文）启动
+那个回合；在无头模式或 `backgroundTaskWake: false` 下，SDK 在同一次调用内等待，报告在父代理同一回合的下一次
+模型调用之前交付。子代理看不到该标志，也没有下面这个工具。只要还有后台委派在跟踪中，`/clear` 与 `/rewind`
+会被拒绝，并以一条通知点名任务和两条出路（`/agents cancel <id>`，或等待完成唤醒）；`/exit` 仍会取消子代理。
 
 | 工具 | 权限 |
 |---|---|
@@ -189,6 +194,19 @@ output tail (last N line(s); `bash output` with taskId "bg-…" reads the full l
 </task-notification>
 ```
 
+已结束的后台委派使用同一种条目，标记为 `[delegation <id8> state]`，用委派标签（`subagent general#…: <task>`）
+代替任务命令，文本只点名工具、任务 id、状态和耗时，并指向 SDK 附在同一请求里的 `strands_background_task_result`
+结果对——报告本身绝不重复：
+
+```
+<task-notification task="<uuid>" tool="subagent" state="succeeded" elapsed="1m 2s">
+A background subagent delegation you dispatched with _background_execution: true finished. …
+delegation: subagent general#…: <task>
+Its report is in this turn's strands_background_task_result tool result for task "<uuid>" — read it there; it is not repeated here.
+…
+</task-notification>
+```
+
 - 每个任务恰好一次唤醒，只来自终态快照——绝不因输出活动触发，也不会在回合结束时重复触发。
   若模型已在某个*已完成*回合中通过 `bash wait`/`status`/`stop`/`list` 的结果拿到该任务的终态，则不再唤醒。
 - 忙碌时它像提示词一样留在队列中（只在下一回合发送，绝不注入正在进行的流）；权限框打开期间入队的唤醒，
@@ -196,7 +214,8 @@ output tail (last N line(s); `bash output` with taskId "bg-…" reads the full l
 - 队列行显示为 `queued · [task bg-xxxxxxxx succeeded] <command>`，忙碌提示以 ` · N task wake(s)` 单独计数，
   与 ` · N queued` 分开。`Up` 取回和取消退回只把用户输入放回编辑器，唤醒条目留在队列中。自身回合被取消或
   失败的唤醒不会重发（一条 `not delivered` 通知说明任务）。`/clear` 会丢弃待发的唤醒。
-- 记录类型 `taskNotification`（字段 `taskId`、`command`、`state`、`exitCode`、`signal`、`text`）在
+- 记录类型 `taskNotification`（字段 `taskId`、`command`、`state`、`exitCode`、`signal`、`text`；委派唤醒
+  另带 `source: "delegation"`，以委派标签作为 `command`，退出元数据为 `null`）在
   `trajectory.jsonl` 中代替 `userInput` 行开启该回合，因此提示词回看和 `Ctrl+R` 永不提供它；`trajectory search`
-  仍能搜到，`trajectory replay` / `/export` 以与实时会话相同的 `task wake · …` 通知行打印。
-- 无头驱动没有队列，永不唤醒；子代理永不入队。
+  仍能搜到，`trajectory replay` / `/export` 以与实时会话相同的 `task wake · …` / `delegation wake · …` 通知行打印。
+- 无头驱动没有队列，永不唤醒；子代理永不入队。无头运行会把后台委派保留在它唯一的回合内（SDK 在运行结束前等待子代理）。

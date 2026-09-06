@@ -141,6 +141,7 @@ import {
 } from './rewind-search.js';
 import { clipboardImageFact, readClipboardImage } from './clipboard-image.js';
 import {
+  delegationWakeEntries,
   hasQueuedImage,
   isTaskWake,
   partitionQueue,
@@ -170,6 +171,7 @@ import {
   formatDispatchCompletion,
   formatDispatchesReport,
 } from './subagent-format.js';
+import { liveBackgroundDelegationRefusal } from '../agent/background-delegation.js';
 import { createContextWarnLatch, formatContextReport } from './context-format.js';
 import { COPY_COMMAND_USAGE, runCopyCommand } from './copy-command.js';
 import { formatHelpReport } from './help-format.js';
@@ -278,6 +280,10 @@ export function App({
   const historyRef = useRef(state.history);
   historyRef.current = state.history;
   const [status, setStatus] = useState<Status>('idle');
+  // Mirror for subscription callbacks that must read the live status without being
+  // rebuilt per status change (the delegation-settlement listener, SER-070).
+  const statusRef = useRef(status);
+  statusRef.current = status;
   const [workspacePaths, setWorkspacePaths] = useState<WorkspacePaths>(NO_WORKSPACE_PATHS);
   const commandNames = useMemo(
     () => [
@@ -558,6 +564,14 @@ export function App({
       dispatch({ type: 'notice', text: '/rewind is not available in this driver', severity: 'warn' });
       return false;
     }
+    // The SDK's `assertCanLoadSnapshot` throws while a background task is tracked, so a
+    // live delegation (SER-070) is refused here, before the chooser opens: no partial
+    // restore, no model call — the notice names the tasks and the two exits.
+    const liveDelegations = runtime.listBackgroundDelegations();
+    if (liveDelegations.length > 0) {
+      dispatch({ type: 'notice', text: liveBackgroundDelegationRefusal('/rewind', liveDelegations), severity: 'warn' });
+      return false;
+    }
     const catalogue = await runtime.listRewindCheckpoints();
     if (catalogue.problem !== undefined) {
       dispatch({ type: 'notice', text: `rewind unavailable: ${catalogue.problem}`, severity: 'warn' });
@@ -809,6 +823,34 @@ export function App({
     }),
     [runtime],
   );
+
+  // A background delegation's settlement (SER-070) wakes the agent through the same
+  // queue as a finished job — but only when nothing else would start a turn. Busy,
+  // the SDK itself attaches the result pair before the running turn's next model call
+  // (or at its end), so a wake would be a second turn about a delivered report; idle,
+  // one wake entry names the delegation (never its report — the SDK attaches that to
+  // the wake turn's own request). Exactly once per task: `delegationWakesSent`
+  // remembers every id ever queued, and the drain drops a wake whose task the SDK no
+  // longer tracks. The idle sweep below closes the one gap the settlement listener
+  // cannot see — a run that settled in the last microtasks of a turn, too late for
+  // the SDK's end-of-invocation delivery, is still tracked when the turn ends.
+  const delegationWakesSent = useRef(new Set<string>());
+  const enqueueDelegationWakes = useCallback(() => {
+    if (runtime.config.backgroundTaskWake === false) return;
+    const additions = delegationWakeEntries(runtime.listBackgroundDelegations(), delegationWakesSent.current);
+    if (additions.length === 0) return;
+    for (const entry of additions) delegationWakesSent.current.add(entry.taskId);
+    setQueued([...queuedRef.current, ...additions]);
+  }, [runtime, setQueued]);
+  useEffect(
+    () => runtime.subscribeToBackgroundDelegations(() => {
+      if (statusRef.current === 'idle') enqueueDelegationWakes();
+    }),
+    [enqueueDelegationWakes, runtime],
+  );
+  useEffect(() => {
+    if (status === 'idle') enqueueDelegationWakes();
+  }, [enqueueDelegationWakes, status]);
 
   // Safe phase changes and periodic heartbeats update only the existing live tool
   // row. They never append transcript history or enter the model/trajectory.
@@ -1506,6 +1548,14 @@ export function App({
           dispatch({ type: 'notice', text: '/clear is not available in this driver', severity: 'warn' });
           return;
         }
+        // A tracked background delegation (SER-070) makes `/clear` a local refusal: a
+        // successor would cancel the children unasked and orphan the report the SDK
+        // still owes. The notice names the tasks and the two exits; nothing is released.
+        const liveDelegations = runtime.listBackgroundDelegations();
+        if (liveDelegations.length > 0) {
+          dispatch({ type: 'notice', text: liveBackgroundDelegationRefusal('/clear', liveDelegations), severity: 'warn' });
+          return;
+        }
         // The switch awaits an assembly (skills, tools, a new Agent), and `status` stays
         // idle throughout — so without this latch a second enter could start a second
         // successor and leak the first.
@@ -1697,8 +1747,12 @@ export function App({
   // holds the fact — and the next entry drains in its place.
   useEffect(() => {
     if (draining.current || status !== 'idle' || pendingPermission !== undefined || clearing.current) return;
+    // A delegation wake (SER-070) is dropped once the SDK no longer tracks its task:
+    // an intervening turn already carried the result pair, so the report is known.
     const entries = queuedRef.current.filter(
-      (entry) => !(isTaskWake(entry) && runtime.terminalStateDelivered(entry.taskId)),
+      (entry) => !(isTaskWake(entry) && (entry.source === 'delegation'
+        ? !runtime.listBackgroundDelegations().some((delegation) => delegation.taskId === entry.taskId)
+        : runtime.terminalStateDelivered(entry.taskId))),
     );
     const next = entries[0];
     if (next === undefined) {
