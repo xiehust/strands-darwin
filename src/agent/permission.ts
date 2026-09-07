@@ -20,6 +20,7 @@ import { MANAGE_BACKGROUND_TASK_TOOL_NAME } from './background-delegation.js';
 import {
   hasShellMetacharacters,
   matchesAnyRule,
+  sensitiveReadPath,
   splitBashSegments,
   suggestRules,
   type RuleSuggestion,
@@ -31,7 +32,7 @@ import {
  */
 type InterventionAction = Awaited<ReturnType<InterventionHandler['beforeToolCall']>>;
 
-/** How a tool call is classified. `read` calls run without asking. */
+/** How a tool call is classified. `read` calls run without asking unless they target a sensitive path. */
 export type PermissionKind = 'read' | 'write' | 'execute';
 
 /**
@@ -912,6 +913,21 @@ const ENV_FILE = /^\.env(\..+)?$/;
  * — including every unknown and MCP tool.
  */
 export function assessRisk(request: PermissionRequest, projectRoot: string): RiskAssessment {
+  // Before the read short-circuit (SER-071): a read into the sensitive set is
+  // `dangerous` whatever its kind, so `cat ~/.ssh/id_rsa` (execute) and
+  // `fileEditor view ~/.aws/credentials` (read) both reach the prompt. The kind
+  // itself is untouched, which is what lets plan mode prompt instead of deny.
+  const sensitive = sensitiveReadPath(request.toolName, request.input, projectRoot);
+  if (sensitive !== undefined) {
+    const shown = firstLine(sensitive);
+    return {
+      risk: 'dangerous',
+      riskReason: `reads a sensitive path: ${
+        shown.length > SCOPE_PATH_DISPLAY_LIMIT ? `${shown.slice(0, SCOPE_PATH_DISPLAY_LIMIT)}…` : shown
+      }`,
+    };
+  }
+
   if (request.kind === 'read') {
     return { risk: 'safe', riskReason: `${request.toolName} is read-only` };
   }

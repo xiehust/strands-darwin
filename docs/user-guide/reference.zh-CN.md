@@ -147,6 +147,10 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 - `/export` 与离线 replay 使用完全相同的 formatter。
 - `/copy` 复制的正是转录中显示、`/export` 写出的纯文本回答；回合进行中复制的是上一条已完成回答，尚无回答时（或刚 `/clear`/`/rewind` 之后）提示 `nothing to copy`。它不调用模型，也不写入任何记录。SSH 下需要终端接受 OSC 52 剪贴板写入（tmux 需 `set-clipboard on`）。
 
+## 敏感路径读取
+
+读取目标解析后落入固定敏感集合时永不静默：`~/.ssh/`、`~/.aws/`、`~/.gnupg/` 之下的任何内容；`~/.netrc`、`~/.kube/config`、`~/.docker/config.json`、`/etc/shadow`；任何名为 `.env` / `.env.*` 的文件；darwin 自身的配置、hook 和权限规则文件。判定目标是 `fileEditor view` 的 `path`，以及 `cat`、`head`、`tail`、`grep`、`rg`、`find`、`ls`、`wc` 的每个非选项参数（`~`、`$HOME`、`${HOME}`、相对路径和 `..` 形式都会解析）。权限框显示 `reads a sensitive path: <path>`；在 `default`、`auto` 以及——对 `fileEditor view` 而言——`plan` 中都会询问，无头模式下拒绝，且没有任何放行规则能覆盖它，也不会提供规则选项。其余读取仍然静态安全。由 `spike/verify-permission-modes.ts` 锁定。
+
 ## 文件编辑
 
 `fileEditor str_replace` 要求 `old_str` 在文件中只出现一次；出现多次时会拒绝并列出行号。传入

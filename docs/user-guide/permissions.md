@@ -20,6 +20,7 @@ Classification uses `(toolName, input)`, because one tool can read and write. Un
 | Call | Statically safe? |
 |---|---|
 | `fileEditor view`, `load_skill`, bash lifecycle inspection/restart | yes |
+| a read whose target resolves into the sensitive set below — `fileEditor view`, or any non-option argument of `cat`/`head`/`tail`/`grep`/`rg`/`find`/`ls`/`wc` | no — the prompt names the path; asked in every mode including `plan`; no allow rule can cover it or is offered |
 | `fileEditor` writes inside project, except `.git/`, `.env*`, sensitive Darwin policy/config | yes in ordinary modes; denied in `plan` |
 | bash whose every segment starts with an allowlisted read-only command (`git status/log/diff/show/branch`, `ls`, `cat`, `grep`, `rg`, `find`, …), with no redirection/substitution | yes |
 | an allowlisted command carrying a known mutating option — `find` with `-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`/`-fprint*`/`-fls`; `git branch` with `-d`/`-D`/`-m`/`-M`/`-c`/`-C`/`-u` (also inside combined flags such as `-Df`), `--delete`/`--move`/`--copy`/`--set-upstream-to[=…]`/`--unset-upstream`/`--edit-description`; `git log`/`diff`/`show` with `--output[=…]` | no — the prompt names the option |
@@ -28,6 +29,10 @@ Classification uses `(toolName, input)`, because one tool can read and write. Un
 The allowlist is judged per segment: `git status && git branch -D main` prompts because of the second half. This is whitelist-only: parser uncertainty costs a prompt, never silent approval. `plan` allows reads, skill loading, job inspection, and delegation; denies file mutation, command-bearing bash, and unknown/MCP tools. It denies before `PreToolUse`, so a blocked operation cannot trigger project hook commands. Stored rules remain on disk but are ignored and stated as such.
 
 Denying is not a tool error. The model receives a user-declined result and is instructed not to retry or work around it.
+
+### Sensitive-path reads
+
+Reads are whitelisted too, but a fixed set of paths is never read silently: anything under `~/.ssh/`, `~/.aws/` or `~/.gnupg/` (the directory itself included), `~/.netrc`, `~/.kube/config`, `~/.docker/config.json`, `/etc/shadow`, any file named `.env` or `.env.*` anywhere, and Darwin's own config, hook and permission-rule files. Paths are resolved as the shell would (`~`, `~/`, `$HOME`, `${HOME}`, relative and absolute forms, `..` normalised), so `cat ~/.ssh/id_rsa`, `head $HOME/.aws/credentials` and `fileEditor view ../../.netrc` all prompt with `reads a sensitive path: <path>`. `plan` mode prompts for a sensitive `fileEditor view` rather than denying it, because the call is still a read (command-bearing bash stays plan-denied as before); in headless runs the prompt is a `permission denied`. Everything else — `cat README.md`, `ls ~/.ssh/../`, `.envrc`, `/etc/os-release` — stays silent as before. `echo` is not treated as a reader: with redirection and substitution refused it can only print its arguments. The criterion is this fixed set, not "outside the project", because Darwin legitimately reads `/tmp`, `/etc/os-release` and global skill roots.
 
 ## Classifier-assisted `auto`
 
@@ -75,7 +80,7 @@ Rules are checked after static safety and before classifier. A written rule ther
 
 ## Rule safety and revocation
 
-A bash pattern must match every chained segment: `pnpm build && rm -rf /` does not match `bash:pnpm *`. Rules never match redirection or substitution. No rule can cover writes to `~/.darwin/config.json`, project permission files, active hook files/directories, or `.env*`; otherwise the agent could broaden its own authority. Calls already safe are offered no meaningless rule.
+A bash pattern must match every chained segment: `pnpm build && rm -rf /` does not match `bash:pnpm *`. Rules never match redirection or substitution. No rule can cover writes to `~/.darwin/config.json`, project permission files, active hook files/directories, or `.env*`, nor reads into the sensitive-path set above; otherwise the agent could broaden its own authority. Calls already safe are offered no meaningless rule.
 
 Nothing is remembered implicitly. `/permissions` lists live rules and whether each came from disk or this session. `/permissions revoke <n|rule|all>` synchronously removes it from the gate and file so the next matching call prompts and a restart cannot resurrect it. The command only narrows; new rules still come exclusively from permission prompts. Manual JSON edits work, but an invalid rule is a startup error.
 

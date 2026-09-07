@@ -21,7 +21,15 @@ import {
   type PermissionGateOptions,
   type SafetyClassifier,
 } from '../src/agent/permission.js';
-import { isValidRule, matchesAnyRule, suggestRules } from '../src/agent/permission-rules.js';
+import {
+  isSensitiveReadPath,
+  isValidRule,
+  matchesAnyRule,
+  resolveReadTarget,
+  sensitiveReadPath,
+  suggestRules,
+} from '../src/agent/permission-rules.js';
+import { createHeadlessPermissionBridge } from '../src/headless.js';
 import { isSensitiveDarwinPath } from '../src/paths.js';
 import { assert, header, report } from './shared.js';
 
@@ -164,6 +172,106 @@ function staticRules(): void {
     !JSON.stringify({ summary: memoryRequest.summary, details: memoryRequest.details }).includes('sensitive evidence quote'));
   assert('memory save can never match or suggest an allow rule',
     matchesAnyRule(['memory_save'], memoryRequest, ROOT) === undefined && suggestRules(memoryRequest, ROOT).length === 0);
+}
+
+/**
+ * Sensitive-path reads are never silent (SER-071): the fixed set, every spelling
+ * the model may use, and the near-misses that must stay exactly as safe as before.
+ */
+function sensitiveReads(): void {
+  header('static risk rules — sensitive-path reads (SER-071)');
+
+  const home = os.homedir();
+  const view = (filePath: string) => riskOf('fileEditor', { command: 'view', path: filePath });
+  const bash = (command: string) => riskOf('bash', { command });
+
+  // [path as the model would write it, why it is in the set]
+  const sensitivePaths = [
+    ['~/.ssh/id_rsa', '~/.ssh'],
+    ['~/.aws/credentials', '~/.aws'],
+    ['~/.gnupg/secring.gpg', '~/.gnupg'],
+    ['~/.netrc', '~/.netrc'],
+    ['~/.kube/config', '~/.kube/config'],
+    ['~/.docker/config.json', '~/.docker/config.json'],
+    ['/etc/shadow', '/etc/shadow'],
+    ['.env', '.env basename'],
+    [`${ROOT}/config/.env.production`, '.env.* basename anywhere'],
+    ['~/.darwin/config.json', "darwin's own config"],
+    [`${ROOT}/.darwin/hooks/policy.json`, 'project hook policy'],
+  ] as const;
+  for (const [filePath, why] of sensitivePaths) {
+    const viewed = view(filePath);
+    assert(
+      `fileEditor view is dangerous and names the path (${why}): ${filePath}`,
+      viewed.risk === 'dangerous' && viewed.riskReason === `reads a sensitive path: ${filePath}`,
+    );
+    const request = classify('fileEditor', { command: 'view', path: filePath });
+    assert(`fileEditor view keeps kind read: ${filePath}`, request.kind === 'read');
+  }
+
+  // Every whitelisted reader, in every spelling of the home directory.
+  const readers = ['cat', 'head', 'tail', 'grep -n password', 'rg password', 'ls -la', 'find', 'wc -l'];
+  const spellings = ['~/.ssh/id_rsa', '$HOME/.ssh/id_rsa', '${HOME}/.ssh/id_rsa', `${home}/.ssh/id_rsa`];
+  for (const reader of readers) {
+    for (const spelling of spellings) {
+      const command = `${reader} ${spelling}`;
+      const assessed = bash(command);
+      assert(
+        `bash reader is dangerous and names the path: ${command}`,
+        assessed.risk === 'dangerous' && assessed.riskReason === `reads a sensitive path: ${spelling}`,
+      );
+    }
+  }
+  assert('a bare ~ directory listing of ~/.ssh is dangerous', bash('ls ~/.ssh').riskReason === 'reads a sensitive path: ~/.ssh');
+  assert('$HOME alone resolves to the home directory, which is not in the set', bash('ls $HOME').risk === 'safe');
+  assert(
+    'a ..-escaping relative form reaches the home set',
+    bash(`cat ${path.relative(ROOT, path.join(home, '.aws', 'credentials'))}`).risk === 'dangerous',
+  );
+  assert(
+    'a ..-escaping relative fileEditor view reaches the home set',
+    view(`../${path.relative(path.dirname(ROOT), path.join(home, '.ssh', 'id_rsa'))}`).risk === 'dangerous',
+  );
+  assert('a quoted path still counts', bash('cat "$HOME/.aws/credentials"').risk === 'dangerous');
+  assert('the sensitive segment of a chain is found', bash('ls src && cat ~/.netrc').riskReason === 'reads a sensitive path: ~/.netrc');
+  assert('the first sensitive argument is the one named', bash('cat README.md ~/.ssh/id_rsa').riskReason === 'reads a sensitive path: ~/.ssh/id_rsa');
+  assert('the set is exported as a predicate', isSensitiveReadPath(ROOT, path.join(home, '.ssh', 'known_hosts')) && !isSensitiveReadPath(ROOT, home));
+  assert('the pure function returns the path as written', sensitiveReadPath('bash', { command: 'head -5 ~/.aws/config' }, ROOT) === '~/.aws/config');
+  assert('resolveReadTarget expands ${HOME}', resolveReadTarget('${HOME}/.ssh', ROOT) === path.join(home, '.ssh'));
+  assert('resolveReadTarget normalises ..', resolveReadTarget('~/.ssh/../.aws/credentials', ROOT) === path.join(home, '.aws', 'credentials'));
+
+  header('static risk rules — near misses stay safe with unchanged reasons (SER-071)');
+
+  const safeReads = [
+    'cat README.md',
+    'ls ~/.ssh/../',
+    'ls ~',
+    'cat .envrc',
+    'cat src/environment.ts',
+    'rg secret src/',
+    'rg password ~/.gnupg/../notes',
+    'find . -name "*.ts"',
+    'wc -l src/cli.ts',
+    // `echo` prints its arguments and, with `<`/`$(` refused, can open no file.
+    'echo ~/.ssh/id_rsa',
+    // `pwd`/`which` take no paths; `git` reads the repository, not credentials.
+    'which cat ~/.ssh/id_rsa',
+    'git log -- ~/.ssh/id_rsa',
+  ];
+  for (const command of safeReads) {
+    const assessed = bash(command);
+    assert(`safe, reason unchanged: ${command}`, assessed.risk === 'safe' && assessed.riskReason === 'read-only command');
+  }
+  for (const filePath of ['src/cli.ts', `${ROOT}/README.md`, `${home}/.ssh/../notes.txt`, '.envrc', 'src/environment.ts', '/etc/os-release', '/tmp/scratch.txt']) {
+    const viewed = view(filePath);
+    assert(`fileEditor view safe, reason unchanged: ${filePath}`, viewed.risk === 'safe' && viewed.riskReason === 'fileEditor is read-only');
+  }
+  assert('an unrelated dangerous reason is unchanged', bash('pnpm typecheck').riskReason === '`pnpm` is not on the safe-command list');
+  assert('a write to a sensitive read path keeps its write reason',
+    riskOf('fileEditor', { command: 'create', path: `${ROOT}/.env`, file_text: 'x' }).riskReason === 'path is an environment file');
+  assert('sensitiveReadPath ignores non-view fileEditor commands',
+    sensitiveReadPath('fileEditor', { command: 'create', path: '~/.ssh/id_rsa' }, ROOT) === undefined);
+  assert('sensitiveReadPath ignores tools it cannot see into', sensitiveReadPath('mcp__server__read', { path: '~/.ssh/id_rsa' }, ROOT) === undefined);
 }
 
 /**
@@ -567,12 +675,112 @@ async function gateProvenance(): Promise<void> {
   assert('an unknown agent id stays parent rather than guessing', unresolved.asked[0]?.source.kind === 'parent');
 }
 
+/**
+ * The gate side of SER-071: a sensitive read prompts in every asking mode — plan
+ * included, where it is asked rather than denied — no rule silences it, none is
+ * offered, and the headless bridge turns the prompt into `permission denied`.
+ */
+async function gateSensitiveReads(): Promise<void> {
+  header('gate — sensitive-path reads prompt in every asking mode (SER-071)');
+
+  const SENSITIVE_VIEW = { command: 'view', path: '~/.ssh/id_rsa' };
+  const SENSITIVE_CAT = { command: 'cat ~/.aws/credentials' };
+
+  let run = await runGate({ mode: 'default' }, 'fileEditor', SENSITIVE_VIEW, true);
+  assert('default: a sensitive view asks and approval proceeds', run.action.type === 'proceed' && run.asked.length === 1);
+  assert(
+    'default: the prompt names the path and keeps kind read',
+    run.asked[0]?.riskReason === 'reads a sensitive path: ~/.ssh/id_rsa' && run.asked[0]?.kind === 'read',
+  );
+  assert('default: no allow rule is offered for a sensitive view', run.asked[0]?.suggestions.length === 0);
+
+  run = await runGate({ mode: 'default' }, 'bash', SENSITIVE_CAT, false);
+  assert('default: a sensitive cat asks and refusal denies', run.action.type === 'deny' && run.asked.length === 1);
+  assert('default: no allow rule is offered for a sensitive cat', run.asked[0]?.suggestions.length === 0);
+  assert('default: the refusal is the user denial, not a plan denial', actionReason(run.action).includes('The user denied permission'));
+
+  run = await runGate({ mode: 'default', allowRules: ['bash:cat *', 'bash'] }, 'bash', SENSITIVE_CAT, false);
+  assert('default: bash:cat * and a whole-tool rule do not silence a sensitive cat', run.action.type === 'deny' && run.asked.length === 1);
+  run = await runGate({ mode: 'default', allowRules: ['fileEditor:**', 'fileEditor'] }, 'fileEditor', SENSITIVE_VIEW, false);
+  assert('default: fileEditor:** and a whole-tool rule do not silence a sensitive view', run.action.type === 'deny' && run.asked.length === 1);
+  run = await runGate({ mode: 'default', allowRules: ['bash:cat *'] }, 'bash', { command: 'cat README.md ~/.ssh/config' }, false);
+  assert('default: a covered reader with one sensitive argument still asks', run.asked.length === 1);
+  assert(
+    'matchesAnyRule never covers a sensitive read',
+    matchesAnyRule(['bash', 'bash:cat *'], { toolName: 'bash', input: SENSITIVE_CAT }, ROOT) === undefined &&
+      matchesAnyRule(['fileEditor', 'fileEditor:**'], { toolName: 'fileEditor', input: SENSITIVE_VIEW }, ROOT) === undefined,
+  );
+  assert(
+    'suggestRules offers nothing for a sensitive read',
+    suggestRules({ toolName: 'bash', input: SENSITIVE_CAT }, ROOT).length === 0 &&
+      suggestRules({ toolName: 'fileEditor', input: SENSITIVE_VIEW }, ROOT).length === 0,
+  );
+  assert(
+    'suggestRules still offers rules for an ordinary read-shaped call',
+    suggestRules({ toolName: 'bash', input: { command: 'cat README.md' } }, ROOT).length === 2,
+  );
+
+  run = await runGate({ mode: 'plan' }, 'fileEditor', SENSITIVE_VIEW, true);
+  assert('plan: a sensitive view is prompted, not denied', run.asked.length === 1 && run.action.type === 'proceed');
+  run = await runGate({ mode: 'plan' }, 'fileEditor', SENSITIVE_VIEW, false);
+  assert(
+    'plan: refusing the sensitive view is the user denial, not the plan denial',
+    run.action.type === 'deny' && !actionReason(run.action).includes('Plan mode blocked'),
+  );
+  run = await runGate({ mode: 'plan' }, 'bash', SENSITIVE_CAT);
+  assert('plan: a sensitive cat is still an execute and stays plan-denied before any prompt',
+    run.action.type === 'deny' && run.asked.length === 0 && actionReason(run.action).includes('Plan mode blocked'));
+  run = await runGate({ mode: 'plan' }, 'fileEditor', { command: 'view', path: `${ROOT}/README.md` });
+  assert('plan: an ordinary view still proceeds without asking', run.action.type === 'proceed' && run.asked.length === 0);
+
+  let classifierCalls = 0;
+  const saysSafe: SafetyClassifier = async () => {
+    classifierCalls += 1;
+    return { safe: true, reason: 'looks fine' };
+  };
+  run = await runGate({ mode: 'auto' }, 'fileEditor', SENSITIVE_VIEW, false);
+  assert('auto without a classifier asks about a sensitive view', run.asked.length === 1 && run.action.type === 'deny');
+  run = await runGate({ mode: 'auto', classifier: saysSafe, allowRules: ['fileEditor'] }, 'fileEditor', SENSITIVE_VIEW, false);
+  assert('auto: the rule is skipped and the classifier judges it like any dangerous call', classifierCalls === 1);
+
+  run = await runGate({ mode: 'yolo' }, 'fileEditor', SENSITIVE_VIEW);
+  assert('yolo still approves everything', run.action.type === 'proceed' && run.asked.length === 0);
+
+  header('gate — headless denies a sensitive read (SER-071)');
+
+  const stderr: string[] = [];
+  run = await runGate(
+    { mode: 'default', ask: createHeadlessPermissionBridge((text) => stderr.push(text)) },
+    'bash',
+    SENSITIVE_CAT,
+  );
+  assert('the headless bridge denies the sensitive read', run.action.type === 'deny');
+  assert('and writes one permission denied line naming the call',
+    stderr.length === 1 && stderr[0] === 'permission denied — bash: cat ~/.aws/credentials\n');
+
+  const childId = 'darwin-subagent-explorer-0000';
+  run = await runGate(
+    {
+      mode: 'default',
+      dispatchSource: (agentId) =>
+        agentId === childId ? { dispatchId: 'a1b2c3d4', agentName: 'explorer', label: 'explorer#a1b2c3d4' } : undefined,
+    },
+    'fileEditor',
+    SENSITIVE_VIEW,
+    false,
+    childId,
+  );
+  assert('a child agent is held to the same gate', run.asked.length === 1 && run.asked[0]?.source.kind === 'child');
+}
+
 async function main(): Promise<void> {
   staticRules();
+  sensitiveReads();
   allowRules();
   await gateModes();
   await gateRules();
   await gateProvenance();
+  await gateSensitiveReads();
   report();
 }
 

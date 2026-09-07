@@ -20,6 +20,7 @@
 | 调用 | 静态安全？ |
 |---|---|
 | `fileEditor view`、`load_skill`、bash 生命周期查询/restart | 是 |
+| 目标解析后落入下文敏感路径集合的读取——`fileEditor view`，或 `cat`/`head`/`tail`/`grep`/`rg`/`find`/`ls`/`wc` 的任一非选项参数 | 否——权限框会指出该路径；包括 `plan` 在内的所有模式都会询问；没有任何放行规则能覆盖它，也不会提供规则选项 |
 | 项目内 `fileEditor` 写入，但不包括 `.git/`、`.env*` 和敏感 Darwin 策略/配置 | 普通模式下是；`plan` 中拒绝 |
 | 每个命令段都以只读白名单命令开头（`git status/log/diff/show/branch`、`ls`、`cat`、`grep`、`rg`、`find` 等），且无重定向/替换的 bash | 是 |
 | 白名单命令带有已知的写操作选项——`find` 带 `-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`/`-fprint*`/`-fls`；`git branch` 带 `-d`/`-D`/`-m`/`-M`/`-c`/`-C`/`-u`（包括 `-Df` 这类合并短选项）、`--delete`/`--move`/`--copy`/`--set-upstream-to[=…]`/`--unset-upstream`/`--edit-description`；`git log`/`diff`/`show` 带 `--output[=…]` | 否——权限框会指出该选项 |
@@ -28,6 +29,10 @@
 白名单按命令段逐段判定：`git status && git branch -D main` 会因为后半段而询问。这是纯白名单：解析不确定时多问一次，不会静默放行。`plan` 允许读文件、加载 skill、查询后台任务和委派；拒绝文件修改、带命令的 bash 以及未知/MCP 工具。它在 `PreToolUse` 之前拒绝，因此被拦截的操作不会触发项目 hook 命令。磁盘上的规则仍保留，但会显示为已忽略。
 
 拒绝不算工具错误。模型收到的是用户拒绝结果，并被要求不要重试或绕过。
+
+### 敏感路径读取
+
+读取同样走白名单，但有一组固定路径永远不会被静默读取：`~/.ssh/`、`~/.aws/`、`~/.gnupg/` 之下的任何内容（目录本身也算）、`~/.netrc`、`~/.kube/config`、`~/.docker/config.json`、`/etc/shadow`、任何位置上名为 `.env` 或 `.env.*` 的文件，以及 Darwin 自身的配置、hook 和权限规则文件。路径按 shell 的方式解析（`~`、`~/`、`$HOME`、`${HOME}`、相对与绝对形式、`..` 会被归一化），因此 `cat ~/.ssh/id_rsa`、`head $HOME/.aws/credentials` 和 `fileEditor view ../../.netrc` 都会以 `reads a sensitive path: <path>` 询问。`plan` 模式下敏感的 `fileEditor view` 是询问而非拒绝，因为它仍然是读操作（带命令的 bash 仍像以前一样在 `plan` 中被拒绝）；无头运行中该询问表现为 `permission denied`。其余读取——`cat README.md`、`ls ~/.ssh/../`、`.envrc`、`/etc/os-release`——和以前一样静默放行。`echo` 不算读取器：重定向和命令替换已被拒绝，它只能打印参数。判定标准是这组固定集合，而不是「项目之外」，因为 Darwin 会合法地读取 `/tmp`、`/etc/os-release` 和全局 skill 目录。
 
 ## 分类器辅助的 `auto`
 
@@ -75,7 +80,7 @@ allow? y n always: a=curl * A=all bash esc=deny
 
 ## 规则安全与撤销
 
-bash pattern 必须匹配每个串联命令段；`pnpm build && rm -rf /` 不匹配 `bash:pnpm *`。带重定向或命令替换的内容永不匹配规则。任何规则都不能覆盖 `~/.darwin/config.json`、项目权限文件、启用中的 hook 文件/目录或 `.env*` 写入，否则代理可能扩大自身权限。已经静态安全的调用不会显示一个实际无效的规则选项。
+bash pattern 必须匹配每个串联命令段；`pnpm build && rm -rf /` 不匹配 `bash:pnpm *`。带重定向或命令替换的内容永不匹配规则。任何规则都不能覆盖 `~/.darwin/config.json`、项目权限文件、启用中的 hook 文件/目录或 `.env*` 写入，也不能覆盖对上文敏感路径集合的读取，否则代理可能扩大自身权限。已经静态安全的调用不会显示一个实际无效的规则选项。
 
 普通 `y` 不会暗中保存规则。`/permissions` 会列出所有生效规则，并区分来自磁盘还是当前会话。`/permissions revoke <n|rule|all>` 会同步从 gate 和文件中删除，下次调用重新询问，重启后也不会复活。该命令只能收紧权限；新增规则仍只能来自权限框。可以手工编辑 JSON，但非法规则会导致启动错误。
 

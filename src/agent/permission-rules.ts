@@ -13,6 +13,7 @@
  * are: anything it cannot reason about does not match, and a non-match only costs
  * a prompt.
  */
+import os from 'node:os';
 import path from 'node:path';
 
 import { isSensitiveDarwinPath } from '../paths.js';
@@ -40,6 +41,109 @@ const SHELL_METACHARACTERS = /[><`]|\$\(/;
 
 /** Sensitive file basenames no rule may cover. */
 const ENV_FILE = /^\.env(\..+)?$/;
+
+/**
+ * Whitelisted bash readers whose non-option arguments name files (SER-071).
+ * `echo` is on the static safe list but deliberately absent here: with `<` and
+ * `$(` refused as metacharacters it can only print its arguments, never open a
+ * file, so `echo ~/.ssh/id_rsa` reveals a path string and nothing else. `pwd`
+ * and `which` take no file paths.
+ */
+const BASH_PATH_READERS = new Set(['cat', 'head', 'tail', 'grep', 'rg', 'find', 'ls', 'wc']);
+
+/**
+ * Home-relative directories whose every entry is a credential. The directory
+ * itself counts too: listing `~/.ssh` names the keys that exist.
+ */
+export const SENSITIVE_READ_DIRECTORIES: readonly string[] = ['.ssh', '.aws', '.gnupg'];
+
+/** Home-relative files that hold credentials. */
+export const SENSITIVE_READ_HOME_FILES: readonly string[] = [
+  '.netrc',
+  path.join('.kube', 'config'),
+  path.join('.docker', 'config.json'),
+];
+
+/** Absolute files that hold credentials. */
+export const SENSITIVE_READ_ABSOLUTE_FILES: readonly string[] = ['/etc/shadow'];
+
+/**
+ * The fixed sensitive-read set (SER-071): a resolved absolute path that is under
+ * one of {@link SENSITIVE_READ_DIRECTORIES}, is one of the home or absolute
+ * credential files, has a `.env` / `.env.*` basename anywhere, or is one of
+ * darwin's own policy files ({@link isSensitiveDarwinPath}).
+ *
+ * A fixed set rather than "outside the project": darwin legitimately reads
+ * `/tmp`, `/etc/os-release` and the global skill roots, and a one-line list is
+ * something a prompt can explain.
+ */
+export function isSensitiveReadPath(projectRoot: string, resolved: string): boolean {
+  const home = os.homedir();
+  if (SENSITIVE_READ_DIRECTORIES.some((directory) => isInside(path.join(home, directory), resolved))) return true;
+  if (SENSITIVE_READ_HOME_FILES.some((file) => samePath(path.join(home, file), resolved))) return true;
+  if (SENSITIVE_READ_ABSOLUTE_FILES.some((file) => samePath(file, resolved))) return true;
+  if (ENV_FILE.test(path.basename(resolved))) return true;
+  return isSensitiveDarwinPath(projectRoot, resolved);
+}
+
+/**
+ * One path argument as the shell (or the model) would resolve it: `~`, `~/…`,
+ * `$HOME…` and `${HOME}…` against the home directory, relative forms against
+ * the project root, `..` segments normalised. Surrounding quotes are dropped
+ * first — bash would not expand a quoted `~`, so this over-approximates, which
+ * for a read costs a prompt and never a silent approval.
+ */
+export function resolveReadTarget(argument: string, projectRoot: string): string {
+  const unquoted = argument.replace(/^(["'])([\s\S]*)\1$/, '$2');
+  const home = os.homedir();
+  let expanded = unquoted;
+  if (unquoted === '~') expanded = home;
+  else if (unquoted.startsWith('~/')) expanded = path.join(home, unquoted.slice(2));
+  else if (/^\$(HOME|\{HOME\})(\/|$)/.test(unquoted)) expanded = path.join(home, unquoted.replace(/^\$(HOME|\{HOME\})/, ''));
+  return path.resolve(projectRoot, expanded);
+}
+
+/**
+ * The first read target of this call that falls in the sensitive set, as the
+ * model wrote it, or undefined when the call reads nothing sensitive (SER-071).
+ *
+ * Targets are the `path` of `fileEditor view` and every non-option argument of
+ * every {@link BASH_PATH_READERS} segment of a bash command — a pattern
+ * argument (`rg password ~/.gnupg`) is resolved like a path and simply misses.
+ * Any other tool or command reads nothing this function can see.
+ */
+export function sensitiveReadPath(toolName: string, input: unknown, projectRoot: string): string | undefined {
+  if (toolName === 'fileEditor') {
+    if (readString(input, 'command') !== 'view') return undefined;
+    const filePath = readString(input, 'path');
+    if (filePath === undefined || filePath === '') return undefined;
+    return isSensitiveReadPath(projectRoot, resolveReadTarget(filePath, projectRoot)) ? filePath : undefined;
+  }
+
+  if (toolName === 'bash') {
+    const command = readString(input, 'command');
+    if (command === undefined) return undefined;
+    for (const segment of splitBashSegments(command)) {
+      const [word = '', ...args] = segment.split(/\s+/);
+      if (!BASH_PATH_READERS.has(word)) continue;
+      for (const arg of args) {
+        if (arg.startsWith('-')) continue;
+        if (isSensitiveReadPath(projectRoot, resolveReadTarget(arg, projectRoot))) return arg;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function samePath(left: string, right: string): boolean {
+  return path.relative(left, right) === '';
+}
+
+function isInside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
 
 /**
  * Commands whose first word is only a dispatcher: `git push` and `git status`
@@ -137,11 +241,13 @@ export function matchesAnyRule(
 
 /**
  * Calls no rule may ever cover: darwin's own config (a rule there lets the agent
- * grant itself more rules) and environment files. Both are also `dangerous`
- * statically, so the effect is that they always ask.
+ * grant itself more rules), environment files, and — the read side of the same
+ * exemption (SER-071) — any read into the sensitive set. All are also
+ * `dangerous` statically, so the effect is that they always ask.
  */
 export function isRuleExempt(target: RuleTarget, projectRoot: string): boolean {
   if (target.toolName === 'memory_save') return true;
+  if (sensitiveReadPath(target.toolName, target.input, projectRoot) !== undefined) return true;
   if (target.toolName !== 'fileEditor') return false;
 
   const filePath = readString(target.input, 'path');

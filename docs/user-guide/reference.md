@@ -147,6 +147,17 @@ Permission and compaction views own keyboard/paste while active. The completion 
 - `/export` is byte-for-byte the same formatter as offline replay.
 - `/copy` copies the same plain answer text the transcript shows and `/export` writes; while a turn runs it copies the previous completed answer, and before any answer (or right after `/clear`/`/rewind`) it says `nothing to copy`. It makes no model call and records nothing. Over SSH the OSC 52 sequence needs a terminal that accepts clipboard writes (and tmux `set-clipboard on`).
 
+## Sensitive-path reads
+
+A read is never silent when its target resolves into the fixed sensitive set: anything under
+`~/.ssh/`, `~/.aws/`, `~/.gnupg/`; `~/.netrc`, `~/.kube/config`, `~/.docker/config.json`,
+`/etc/shadow`; any `.env` / `.env.*` basename; darwin's own config, hook and permission-rule files.
+Targets are the `path` of `fileEditor view` and every non-option argument of `cat`, `head`, `tail`,
+`grep`, `rg`, `find`, `ls` and `wc` (`~`, `$HOME`, `${HOME}`, relative and `..` forms resolved). The
+prompt reads `reads a sensitive path: <path>`; it is asked in `default`, `auto` and — for
+`fileEditor view` — `plan`, denied in headless, and no allow-rule covers it or is offered. Every
+other read stays statically safe. Pinned by `spike/verify-permission-modes.ts`.
+
 ## File edits
 
 `fileEditor str_replace` requires `old_str` to occur exactly once; a repeated match is refused with

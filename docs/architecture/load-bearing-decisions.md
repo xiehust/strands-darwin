@@ -233,6 +233,27 @@ bash safety is a whitelist on the first word of every segment *and* on its argum
 whitelisted `find`/`git branch`/`git log|diff|show` carrying a known mutating option
 (`-delete`, `-exec…`, `-D`, `--move`, `--output=…`, …) is `dangerous` with the option named
 (spec: `backend/strands-sdk-contracts.md` § Static bash safety).
+**Reads are not exempt from the whitelist** (SER-071, `sensitiveReadPath` in
+`src/agent/permission-rules.ts`): the `path` of `fileEditor view` and every non-option argument of
+a whitelisted bash reader (`cat`, `head`, `tail`, `grep`, `rg`, `find`, `ls`, `wc` — not `echo`,
+which with `<` and `$(` already refused can only print its arguments) are resolved (`~`, `~/`,
+`$HOME`, `${HOME}`, relative and absolute forms, `..` normalised), and a target in the fixed
+sensitive set — anything under `~/.ssh/`, `~/.aws/`, `~/.gnupg/` (the directory itself included,
+a listing names the keys); `~/.netrc`, `~/.kube/config`, `~/.docker/config.json`, `/etc/shadow`;
+any `.env` / `.env.*` basename anywhere; every path `isSensitiveDarwinPath` already protects on
+the write side — is `dangerous` with the path named as the model wrote it (`reads a sensitive
+path: …`), exempt from every allow-rule through the same `isRuleExempt` that guards `.env*` and
+config writes, and offered no rule; every other read stays `safe` with its old reason byte for
+byte. The criterion is a fixed set, not the peer's "outside the working directory": darwin
+legitimately reads `/tmp`, `/etc/os-release` and the global skill roots, and a set is explainable
+in one prompt line. The check changes the *risk*, never the `kind`, so `plan` mode — whose guard
+runs on kind alone — lets a sensitive `fileEditor view` reach the prompt rather than denying it
+(command-bearing bash is an `execute` and stays plan-denied as before): the honest
+cost of a credential path is a prompt every time, not a hard block and not a silent read whose
+bytes then enter the provider request *and* the trajectory record on disk. Headless has nobody to
+answer, so its bridge denies it like every other prompt; children share the gate; the user's `!`
+shell is untouched because its subject is user commands, not model tool calls. Free check:
+`spike/verify-permission-modes.ts` (in `pnpm test`).
 `plan` mode is enforced before risk, allow rules, classifier, bridge, and configured Pre hooks:
 reads proceed, while writes/executes deterministically deny. The same composed intervention
 protects child agents. Denial uses `InterventionActions.deny(...)`, never `confirm()`. The UI
