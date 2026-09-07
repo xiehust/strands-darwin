@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { BedrockModel } from '@strands-agents/sdk';
-import type { Model } from '@strands-agents/sdk';
+import type { JSONValue, Model } from '@strands-agents/sdk';
 
 import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
 import { darwinDir, userDarwinDir } from './paths.js';
@@ -48,6 +48,11 @@ export interface AppConfig {
    * a cheap default. Bedrock ids must be inference profiles, like `model`.
    */
   classifierModel?: string;
+  /**
+   * Reasoning effort. Absent means the provider's own default, which for a
+   * thinking-capable Claude model is not "off".
+   */
+  thinkingEffort?: ThinkingEffort;
 }
 
 export const CONFIG_FILENAME = 'config.json';
@@ -84,6 +89,41 @@ const DEFAULT_REGION = 'us-west-2';
  */
 export function supportsPromptCache(modelId: string): boolean {
   return CACHEABLE_MODEL_PATTERNS.some((pattern) => modelId.includes(pattern));
+}
+
+export const THINKING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ThinkingEffort = (typeof THINKING_EFFORTS)[number];
+
+/**
+ * Whether this model takes Anthropic-style adaptive thinking.
+ *
+ * Same substring test as {@link supportsPromptCache}, and deliberately a separate
+ * function: the two happen to coincide for every model this build can reach, but
+ * they are different provider capabilities and collapsing them would make a future
+ * cacheable-but-not-thinking model silently send fields Bedrock rejects.
+ */
+export function supportsThinking(modelId: string): boolean {
+  return CACHEABLE_MODEL_PATTERNS.some((pattern) => modelId.includes(pattern));
+}
+
+/**
+ * The Bedrock `additionalModelRequestFields` for an effort level.
+ *
+ * `effort` sits in its own `output_config` object rather than inside `thinking`:
+ * Bedrock answers a `ValidationException` when it is nested there.
+ *
+ * `type: 'adaptive'` is the only mode used — never `enabled`/`budget_tokens`. The
+ * newer models reject the old form outright, and switching between modes
+ * invalidates the conversation cache breakpoint, which on this branch would throw
+ * away the prompt caching that is the whole point of it.
+ */
+export function claudeThinkingFields(effort: ThinkingEffort | undefined): JSONValue | undefined {
+  if (effort === undefined) return undefined;
+  return { thinking: { type: 'adaptive' }, output_config: { effort } };
+}
+
+function isThinkingEffort(value: unknown): value is ThinkingEffort {
+  return typeof value === 'string' && (THINKING_EFFORTS as readonly string[]).includes(value);
 }
 
 /** The substrings the SDK itself treats as Anthropic-style cacheable. */
@@ -206,6 +246,20 @@ function validate(parsed: unknown, configPath: string): AppConfig {
   const classifierModel = stringField(input, 'classifierModel', configPath);
   if (classifierModel !== undefined) config.classifierModel = classifierModel;
 
+  // Validated rather than ignored, unlike the keys this build does not implement:
+  // now that effort reaches the provider, a typo must not silently downgrade the
+  // run to the default while the config still reads as deliberate.
+  const thinkingEffort = input['thinkingEffort'];
+  if (thinkingEffort !== undefined) {
+    if (!isThinkingEffort(thinkingEffort)) {
+      throw new ConfigError(
+        `${configPath}: unknown thinkingEffort ${JSON.stringify(thinkingEffort)}. ` +
+          `Expected one of ${THINKING_EFFORTS.join(', ')}.`,
+      );
+    }
+    config.thinkingEffort = thinkingEffort;
+  }
+
   return config;
 }
 
@@ -236,10 +290,21 @@ function createBedrockModel(config: AppConfig): Model {
         `aws bedrock list-inference-profiles --region ${resolveRegion(config.region)}`,
     );
   }
+  if (config.thinkingEffort !== undefined && !supportsThinking(config.model)) {
+    throw new ConfigError(
+      `Bedrock model ${JSON.stringify(config.model)} does not take a thinkingEffort. ` +
+        `Remove the key, or use an Anthropic-style model.`,
+    );
+  }
+  const thinking = claudeThinkingFields(config.thinkingEffort);
   return new BedrockModel({
     region: resolveRegion(config.region),
     modelId: config.model,
     maxTokens: config.maxTokens,
+    // Adaptive thinking plus its effort. The SDK drops the `thinking` key itself
+    // on a request that forces tool use, which Bedrock refuses to combine with
+    // thinking, so setting it once for the session is safe.
+    ...(thinking !== undefined && { additionalRequestFields: thinking }),
     // Names the strategy instead of asking for 'auto', so the SDK's unsupported-model
     // warning can never reach the terminal. Omitted entirely for a model that cannot
     // cache: the SDK treats an absent cacheConfig as "inject no cache points".
@@ -250,6 +315,15 @@ function createBedrockModel(config: AppConfig): Model {
 }
 
 async function createAnthropicModel(config: AppConfig): Promise<Model> {
+  if (config.thinkingEffort !== undefined) {
+    // Loud on purpose. This build only wires effort to Bedrock's
+    // additionalModelRequestFields; accepting the key here would leave a
+    // config that reads as deliberate driving a run at the provider default.
+    throw new ConfigError(
+      'thinkingEffort is only supported on the bedrock provider in this build; '
+        + 'remove it or switch provider.',
+    );
+  }
   // Config is validated before the import: a mistake in the user's own file is
   // reported whether or not the optional peer dependency happens to be installed.
   const apiKey = readApiKey(config);
@@ -266,6 +340,15 @@ async function createAnthropicModel(config: AppConfig): Promise<Model> {
 }
 
 async function createOpenAIModel(config: AppConfig): Promise<Model> {
+  if (config.thinkingEffort !== undefined) {
+    // Loud on purpose. This build only wires effort to Bedrock's
+    // additionalModelRequestFields; accepting the key here would leave a
+    // config that reads as deliberate driving a run at the provider default.
+    throw new ConfigError(
+      'thinkingEffort is only supported on the bedrock provider in this build; '
+        + 'remove it or switch provider.',
+    );
+  }
   const apiKey = readApiKey(config);
   const { OpenAIModel } = await importProviderModule<typeof import('@strands-agents/sdk/models/openai')>(
     '@strands-agents/sdk/models/openai',

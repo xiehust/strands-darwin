@@ -14,7 +14,14 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { ConfigError, configPath, loadConfig, userConfigPath } from '../src/config.js';
+import {
+  ConfigError,
+  claudeThinkingFields,
+  configPath,
+  createModelFromConfig,
+  loadConfig,
+  userConfigPath,
+} from '../src/config.js';
 import { assert, header, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-headless-test';
@@ -124,11 +131,57 @@ async function unknownKeysTolerated(): Promise<void> {
     assert('an unknown key does not fail the load', config.model === 'global.anthropic.claude-opus-5');
     assert('a key this build does know is still applied', config.maxTokens === 64_000);
     assert('permissionMode is applied', config.permissionMode === 'yolo');
-    assert(
-      'thinkingEffort is silently absent — this build has no such setting',
-      !Object.prototype.hasOwnProperty.call(config, 'thinkingEffort'),
-    );
+    assert('thinkingEffort is now a real setting and is applied', config.thinkingEffort === 'high');
   });
+}
+
+
+async function thinkingEffort(): Promise<void> {
+  header('thinking effort — the request shape Bedrock actually validates');
+
+  // Probed live against global.anthropic.claude-opus-5: a bogus effort answers
+  // 400 "unknown variant, expected one of low, medium, high, xhigh, max", and
+  // nesting effort inside thinking answers 400 "Extra inputs are not permitted".
+  // So both the ladder and the placement below are the provider's contract, not a
+  // preference — these assertions are what keeps a refactor from silently
+  // downgrading every run to the default.
+  const fields = claudeThinkingFields('high') as Record<string, Record<string, unknown>>;
+  assert('thinking mode is adaptive', fields['thinking']?.['type'] === 'adaptive');
+  assert('effort rides in its own output_config', fields['output_config']?.['effort'] === 'high');
+  assert('effort is NOT nested inside thinking', fields['thinking']?.['effort'] === undefined);
+  assert('no effort means no request fields at all', claudeThinkingFields(undefined) === undefined);
+
+  const proj = path.join(ROOT, 'proj-effort');
+  await mkdir(proj, { recursive: true });
+
+  await writeJson(
+    configPath(proj),
+    JSON.stringify({ provider: 'bedrock', model: 'global.anthropic.claude-opus-5', thinkingEffort: 'wrong' }),
+  );
+  try {
+    await loadConfig(proj);
+    assert('an unknown effort is rejected', false);
+  } catch (error) {
+    assert('an unknown effort is a ConfigError', error instanceof ConfigError);
+    assert(
+      'the error lists the ladder Bedrock accepts',
+      error instanceof Error && error.message.includes('xhigh'),
+    );
+  }
+
+  // Effort only reaches Bedrock in this build. Accepting it elsewhere would leave a
+  // config that reads as deliberate driving a run at the provider default.
+  await writeJson(
+    configPath(proj),
+    JSON.stringify({ provider: 'openai', model: 'gpt-5.6', thinkingEffort: 'high' }),
+  );
+  const openaiConfig = await loadConfig(proj);
+  try {
+    await createModelFromConfig(openaiConfig);
+    assert('effort on a non-bedrock provider is refused', false);
+  } catch (error) {
+    assert('effort on a non-bedrock provider is a ConfigError', error instanceof ConfigError);
+  }
 }
 
 /** Runs the real CLI and resolves with its exit code and stderr. */
@@ -176,5 +229,6 @@ async function flagsAreCheckedBeforeSpending(): Promise<void> {
 await configPrecedence();
 await malformedIsLoud();
 await unknownKeysTolerated();
+await thinkingEffort();
 await flagsAreCheckedBeforeSpending();
 report();

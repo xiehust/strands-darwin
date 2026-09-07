@@ -109,6 +109,10 @@ export async function runHeadless(options: HeadlessOptions): Promise<number> {
     maxTokens: runtime.info.config.maxTokens,
     permissionMode: runtime.info.permissionMode,
     promptCache: supportsPromptCache(runtime.info.config.model),
+    // Absent means the provider's own default, which for a thinking-capable
+    // Claude model is not "off" — so this records the distinction rather than
+    // leaving a default run indistinguishable from an unset one.
+    thinkingEffort: runtime.info.config.thinkingEffort ?? null,
     sessionId: runtime.info.sessionId,
     resumed: runtime.info.resumed,
   });
