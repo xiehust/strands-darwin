@@ -244,7 +244,17 @@ any `.env` / `.env.*` basename anywhere; every path `isSensitiveDarwinPath` alre
 the write side — is `dangerous` with the path named as the model wrote it (`reads a sensitive
 path: …`), exempt from every allow-rule through the same `isRuleExempt` that guards `.env*` and
 config writes, and offered no rule; every other read stays `safe` with its old reason byte for
-byte. The criterion is a fixed set, not the peer's "outside the working directory": darwin
+byte. Two boundaries were set at acceptance: `auto` never consults the classifier for a sensitive
+read — the request carries `sensitiveRead: true` and goes straight to the prompt, with no
+`Classifier` row, because consent to a credential path is not a harmlessness verdict a model can
+give (scoped to this flag: `.env*`/config writes and `memory_save` keep the ordinary auto flow);
+and for the two recursive *content* readers `grep` and `rg` only, a start path that is an ancestor
+of a credential location (`~`, `/home/<user>`, `/`, `/etc`, `~/.kube`, `~/.docker`) counts as
+reading it — `reads a sensitive path: ~ (searches above ~/.ssh)` — since `grep -r AKIA ~` reads
+`~/.aws/credentials` without naming it; `.env*` basenames are excluded from that ancestor rule (or
+`grep -r foo .` would prompt in every project with a `.env`) and `cat`/`head`/`tail`/`wc` read one
+named file while `find`/`ls -R` reveal names only, never contents. The criterion is a fixed set,
+not the peer's "outside the working directory": darwin
 legitimately reads `/tmp`, `/etc/os-release` and the global skill roots, and a set is explainable
 in one prompt line. The check changes the *risk*, never the `kind`, so `plan` mode — whose guard
 runs on kind alone — lets a sensitive `fileEditor view` reach the prompt rather than denying it

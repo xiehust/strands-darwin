@@ -81,6 +81,12 @@ export interface RiskAssessment {
   risk: PermissionRisk;
   /** Human-readable, shown in the confirmation prompt. */
   riskReason: string;
+  /**
+   * Set only by the sensitive-read branch (SER-071): the one `dangerous` class
+   * `auto` must hand to the user without consulting the classifier, because a
+   * credential read is a question of consent, not of harmlessness.
+   */
+  sensitiveRead?: true;
 }
 
 /**
@@ -499,7 +505,12 @@ export class PermissionGate extends InterventionHandler {
       return InterventionActions.proceed({ reason: `allowed by rule ${matched}` });
     }
 
-    if (this.currentMode === 'auto') {
+    // A sensitive read (SER-071) skips the classifier: `auto` may only skip the
+    // *prompt* for calls a model judges harmless, and whether the user consents
+    // to a credential path being read is not that kind of question. Scoped to
+    // this one flag — `.env*`/config writes and `memory_save` keep the ordinary
+    // auto flow. No `Classifier` row is added, because there was no verdict.
+    if (this.currentMode === 'auto' && request.sensitiveRead !== true) {
       const verdict = await raceWithdrawal(this.classifierVerdict(request), withdrawn);
       // The verdict answers "may auto mode skip the prompt", so a mode change
       // makes it moot — discarded, exactly as the peer product documents.
@@ -917,6 +928,9 @@ export function assessRisk(request: PermissionRequest, projectRoot: string): Ris
   // `dangerous` whatever its kind, so `cat ~/.ssh/id_rsa` (execute) and
   // `fileEditor view ~/.aws/credentials` (read) both reach the prompt. The kind
   // itself is untouched, which is what lets plan mode prompt instead of deny.
+  // `sensitive` is the path as the model wrote it, plus a bounded
+  // ` (searches above …)` note when a recursive `grep`/`rg` starts from an
+  // ancestor of a credential location.
   const sensitive = sensitiveReadPath(request.toolName, request.input, projectRoot);
   if (sensitive !== undefined) {
     const shown = firstLine(sensitive);
@@ -925,6 +939,7 @@ export function assessRisk(request: PermissionRequest, projectRoot: string): Ris
       riskReason: `reads a sensitive path: ${
         shown.length > SCOPE_PATH_DISPLAY_LIMIT ? `${shown.slice(0, SCOPE_PATH_DISPLAY_LIMIT)}…` : shown
       }`,
+      sensitiveRead: true,
     };
   }
 

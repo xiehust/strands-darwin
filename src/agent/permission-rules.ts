@@ -52,6 +52,15 @@ const ENV_FILE = /^\.env(\..+)?$/;
 const BASH_PATH_READERS = new Set(['cat', 'head', 'tail', 'grep', 'rg', 'find', 'ls', 'wc']);
 
 /**
+ * The two readers that recurse into file *contents*: `grep -r AKIA ~` or
+ * `rg -uu password /` reads `~/.aws/credentials` without ever naming it, so for
+ * these a start directory that is an ancestor of a credential location counts
+ * too. Deliberately not `cat`/`head`/`tail`/`wc` (one file each, named) and not
+ * `find`/`ls -R`, which reveal names only, never contents.
+ */
+const RECURSIVE_CONTENT_READERS = new Set(['grep', 'rg']);
+
+/**
  * Home-relative directories whose every entry is a credential. The directory
  * itself counts too: listing `~/.ssh` names the keys that exist.
  */
@@ -87,6 +96,24 @@ export function isSensitiveReadPath(projectRoot: string, resolved: string): bool
 }
 
 /**
+ * The credential location a recursive content search started at `resolved`
+ * would descend into — `~/.ssh` for `~`, `/home/<user>` or `/`; `/etc/shadow`
+ * for `/etc` — or undefined. Only the fixed home/absolute locations qualify:
+ * `.env*` basenames are excluded on purpose, or `grep -r foo .` would prompt in
+ * every project that has a `.env`. Returned `~`-abbreviated for the prompt.
+ */
+export function sensitiveLocationBelow(resolved: string): string | undefined {
+  const home = os.homedir();
+  for (const directory of SENSITIVE_READ_DIRECTORIES) {
+    if (isInside(resolved, path.join(home, directory))) return `~/${directory}`;
+  }
+  for (const file of SENSITIVE_READ_HOME_FILES) {
+    if (isInside(resolved, path.join(home, file))) return `~/${file.split(path.sep).join('/')}`;
+  }
+  return SENSITIVE_READ_ABSOLUTE_FILES.find((file) => isInside(resolved, file));
+}
+
+/**
  * One path argument as the shell (or the model) would resolve it: `~`, `~/…`,
  * `$HOME…` and `${HOME}…` against the home directory, relative forms against
  * the project root, `..` segments normalised. Surrounding quotes are dropped
@@ -110,7 +137,10 @@ export function resolveReadTarget(argument: string, projectRoot: string): string
  * Targets are the `path` of `fileEditor view` and every non-option argument of
  * every {@link BASH_PATH_READERS} segment of a bash command — a pattern
  * argument (`rg password ~/.gnupg`) is resolved like a path and simply misses.
- * Any other tool or command reads nothing this function can see.
+ * For the {@link RECURSIVE_CONTENT_READERS} an argument that is an ancestor of a
+ * credential location also counts, returned as
+ * `<arg> (searches above <location>)`. Any other tool or command reads nothing
+ * this function can see.
  */
 export function sensitiveReadPath(toolName: string, input: unknown, projectRoot: string): string | undefined {
   if (toolName === 'fileEditor') {
@@ -126,9 +156,15 @@ export function sensitiveReadPath(toolName: string, input: unknown, projectRoot:
     for (const segment of splitBashSegments(command)) {
       const [word = '', ...args] = segment.split(/\s+/);
       if (!BASH_PATH_READERS.has(word)) continue;
+      const recursive = RECURSIVE_CONTENT_READERS.has(word);
       for (const arg of args) {
         if (arg.startsWith('-')) continue;
-        if (isSensitiveReadPath(projectRoot, resolveReadTarget(arg, projectRoot))) return arg;
+        const resolved = resolveReadTarget(arg, projectRoot);
+        if (isSensitiveReadPath(projectRoot, resolved)) return arg;
+        if (recursive) {
+          const below = sensitiveLocationBelow(resolved);
+          if (below !== undefined) return `${arg} (searches above ${below})`;
+        }
       }
     }
   }

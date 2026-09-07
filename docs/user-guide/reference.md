@@ -154,9 +154,12 @@ A read is never silent when its target resolves into the fixed sensitive set: an
 `/etc/shadow`; any `.env` / `.env.*` basename; darwin's own config, hook and permission-rule files.
 Targets are the `path` of `fileEditor view` and every non-option argument of `cat`, `head`, `tail`,
 `grep`, `rg`, `find`, `ls` and `wc` (`~`, `$HOME`, `${HOME}`, relative and `..` forms resolved). The
-prompt reads `reads a sensitive path: <path>`; it is asked in `default`, `auto` and — for
-`fileEditor view` — `plan`, denied in headless, and no allow-rule covers it or is offered. Every
-other read stays statically safe. Pinned by `spike/verify-permission-modes.ts`.
+prompt reads `reads a sensitive path: <path>`; it is asked in `default`, `auto` (the classifier is
+never consulted for it) and — for `fileEditor view` — `plan`, denied in headless, and no allow-rule
+covers it or is offered. For `grep` and `rg` only, a search started from an ancestor of a credential
+location (`~`, `/home/<user>`, `/`, `/etc`, `~/.kube`, `~/.docker`) counts too and reads
+`reads a sensitive path: <arg> (searches above <location>)`; `.env*` is outside that ancestor rule.
+Every other read stays statically safe. Pinned by `spike/verify-permission-modes.ts`.
 
 ## File edits
 

@@ -7,6 +7,7 @@
  *
  * Run: pnpm tsx spike/verify-permission-modes.ts
  */
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -26,6 +27,7 @@ import {
   isValidRule,
   matchesAnyRule,
   resolveReadTarget,
+  sensitiveLocationBelow,
   sensitiveReadPath,
   suggestRules,
 } from '../src/agent/permission-rules.js';
@@ -239,6 +241,56 @@ function sensitiveReads(): void {
   assert('the pure function returns the path as written', sensitiveReadPath('bash', { command: 'head -5 ~/.aws/config' }, ROOT) === '~/.aws/config');
   assert('resolveReadTarget expands ${HOME}', resolveReadTarget('${HOME}/.ssh', ROOT) === path.join(home, '.ssh'));
   assert('resolveReadTarget normalises ..', resolveReadTarget('~/.ssh/../.aws/credentials', ROOT) === path.join(home, '.aws', 'credentials'));
+
+  header('static risk rules — grep/rg searching above a credential location (SER-071)');
+
+  // [command, the argument and location the reason must name]
+  const ancestorSearches = [
+    ['grep -r AKIA ~', '~ (searches above ~/.ssh)'],
+    [`grep -r x ${home}`, `${home} (searches above ~/.ssh)`],
+    ['rg --hidden s ~', '~ (searches above ~/.ssh)'],
+    ['rg -uu p /', '/ (searches above ~/.ssh)'],
+    ['grep -r k /etc', '/etc (searches above /etc/shadow)'],
+    ['rg token ~/.kube', '~/.kube (searches above ~/.kube/config)'],
+    ['grep -r auth $HOME/.docker', '$HOME/.docker (searches above ~/.docker/config.json)'],
+  ] as const;
+  for (const [command, named] of ancestorSearches) {
+    const assessed = bash(command);
+    assert(`dangerous, names the location: ${command}`, assessed.risk === 'dangerous' && assessed.riskReason === `reads a sensitive path: ${named}`);
+  }
+  assert('sensitiveLocationBelow abbreviates the home directory', sensitiveLocationBelow(home) === '~/.ssh' && sensitiveLocationBelow('/etc') === '/etc/shadow');
+  assert('sensitiveLocationBelow ignores unrelated trees', sensitiveLocationBelow('/usr/share') === undefined && sensitiveLocationBelow(path.join(home, 'src')) === undefined);
+
+  // Only the two recursive content readers: name-only and single-file readers
+  // starting at an ancestor stay exactly as safe as before.
+  for (const command of ['ls -R ~', 'find ~ -name id_rsa', 'cat /etc', 'wc -l ~', 'head ~', 'tail /']) {
+    const assessed = bash(command);
+    assert(`ancestor rule does not apply: ${command}`, assessed.risk === 'safe' && assessed.riskReason === 'read-only command');
+  }
+  // `/tmp` is deliberately absent from the fixed list: `spike/run-tests.ts` gives
+  // every suite a private HOME under `os.tmpdir()`, where `/tmp` really is an
+  // ancestor of `~/.ssh` — so it is asserted relative to the home in force.
+  for (const command of ['rg secret src/', 'grep -r foo .', 'rg foo /var/log', 'grep -r foo /usr/share', 'rg -n pattern src/agent']) {
+    const assessed = bash(command);
+    assert(`safe, reason unchanged: ${command}`, assessed.risk === 'safe' && assessed.riskReason === 'read-only command');
+  }
+  const tmpSearch = bash('rg foo /tmp');
+  assert(
+    'rg foo /tmp is judged by whether /tmp is above the home in force',
+    sensitiveLocationBelow('/tmp') === undefined
+      ? tmpSearch.risk === 'safe' && tmpSearch.riskReason === 'read-only command'
+      : tmpSearch.riskReason === 'reads a sensitive path: /tmp (searches above ~/.ssh)',
+  );
+  // `.env*` is deliberately outside the ancestor rule: a project root that holds
+  // a real `.env` still searches silently.
+  const envProject = mkdtempSync(path.join(os.tmpdir(), 'darwin-ser071-env-'));
+  writeFileSync(path.join(envProject, '.env'), 'SECRET=1\n');
+  for (const command of ['grep -r foo .', `rg foo ${envProject}`, 'grep -rn TODO src']) {
+    const assessed = assessRisk(classify('bash', { command }), envProject);
+    assert(`a project with .env still searches silently: ${command}`, assessed.risk === 'safe' && assessed.riskReason === 'read-only command');
+  }
+  assert('naming the .env itself still prompts in that project',
+    assessRisk(classify('bash', { command: 'grep SECRET .env' }), envProject).riskReason === 'reads a sensitive path: .env');
 
   header('static risk rules — near misses stay safe with unchanged reasons (SER-071)');
 
@@ -740,8 +792,27 @@ async function gateSensitiveReads(): Promise<void> {
   };
   run = await runGate({ mode: 'auto' }, 'fileEditor', SENSITIVE_VIEW, false);
   assert('auto without a classifier asks about a sensitive view', run.asked.length === 1 && run.action.type === 'deny');
-  run = await runGate({ mode: 'auto', classifier: saysSafe, allowRules: ['fileEditor'] }, 'fileEditor', SENSITIVE_VIEW, false);
-  assert('auto: the rule is skipped and the classifier judges it like any dangerous call', classifierCalls === 1);
+  run = await runGate({ mode: 'auto', classifier: saysSafe, allowRules: ['fileEditor'] }, 'fileEditor', { command: 'view', path: '~/.aws/credentials' }, false);
+  assert(
+    'auto: a sensitive view prompts and the always-safe classifier is never called',
+    run.asked.length === 1 && run.action.type === 'deny' && classifierCalls === 0,
+  );
+  assert('auto: no Classifier detail row is added when there was no verdict',
+    run.asked[0]?.details.every((detail) => detail.label !== 'Classifier') === true);
+  run = await runGate({ mode: 'auto', classifier: saysSafe, allowRules: ['bash:cat *'] }, 'bash', { command: 'cat ~/.ssh/id_rsa' }, true);
+  assert(
+    'auto: a sensitive cat prompts and the classifier is never called; approval proceeds',
+    run.asked.length === 1 && run.action.type === 'proceed' && classifierCalls === 0,
+  );
+  assert('auto: the prompt carries the sensitive-read flag and reason',
+    run.asked[0]?.sensitiveRead === true && run.asked[0]?.riskReason === 'reads a sensitive path: ~/.ssh/id_rsa');
+  run = await runGate({ mode: 'auto', classifier: saysSafe }, 'bash', { command: 'grep -r AKIA ~' }, false);
+  assert('auto: an ancestor search is a sensitive read too — prompted, classifier untouched', run.asked.length === 1 && classifierCalls === 0);
+  // Scope check: the other rule-exempt dangerous writes keep the ordinary auto flow.
+  run = await runGate({ mode: 'auto', classifier: saysSafe }, 'fileEditor', { command: 'create', path: `${ROOT}/.env`, file_text: 'x' });
+  assert('auto: a .env write still consults the classifier as before', classifierCalls === 1 && run.action.type === 'proceed' && run.asked.length === 0);
+  run = await runGate({ mode: 'auto', classifier: saysSafe }, 'bash', DANGEROUS_BASH);
+  assert('auto: an ordinary dangerous call still consults the classifier', classifierCalls === 2 && run.action.type === 'proceed');
 
   run = await runGate({ mode: 'yolo' }, 'fileEditor', SENSITIVE_VIEW);
   assert('yolo still approves everything', run.action.type === 'proceed' && run.asked.length === 0);

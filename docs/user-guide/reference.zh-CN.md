@@ -149,7 +149,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 
 ## 敏感路径读取
 
-读取目标解析后落入固定敏感集合时永不静默：`~/.ssh/`、`~/.aws/`、`~/.gnupg/` 之下的任何内容；`~/.netrc`、`~/.kube/config`、`~/.docker/config.json`、`/etc/shadow`；任何名为 `.env` / `.env.*` 的文件；darwin 自身的配置、hook 和权限规则文件。判定目标是 `fileEditor view` 的 `path`，以及 `cat`、`head`、`tail`、`grep`、`rg`、`find`、`ls`、`wc` 的每个非选项参数（`~`、`$HOME`、`${HOME}`、相对路径和 `..` 形式都会解析）。权限框显示 `reads a sensitive path: <path>`；在 `default`、`auto` 以及——对 `fileEditor view` 而言——`plan` 中都会询问，无头模式下拒绝，且没有任何放行规则能覆盖它，也不会提供规则选项。其余读取仍然静态安全。由 `spike/verify-permission-modes.ts` 锁定。
+读取目标解析后落入固定敏感集合时永不静默：`~/.ssh/`、`~/.aws/`、`~/.gnupg/` 之下的任何内容；`~/.netrc`、`~/.kube/config`、`~/.docker/config.json`、`/etc/shadow`；任何名为 `.env` / `.env.*` 的文件；darwin 自身的配置、hook 和权限规则文件。判定目标是 `fileEditor view` 的 `path`，以及 `cat`、`head`、`tail`、`grep`、`rg`、`find`、`ls`、`wc` 的每个非选项参数（`~`、`$HOME`、`${HOME}`、相对路径和 `..` 形式都会解析）。权限框显示 `reads a sensitive path: <path>`；在 `default`、`auto`（绝不会为它咨询分类器）以及——对 `fileEditor view` 而言——`plan` 中都会询问，无头模式下拒绝，且没有任何放行规则能覆盖它，也不会提供规则选项。仅对 `grep` 和 `rg`，从凭据位置的上级目录（`~`、`/home/<user>`、`/`、`/etc`、`~/.kube`、`~/.docker`）开始的搜索同样计入，显示为 `reads a sensitive path: <arg> (searches above <location>)`；`.env*` 不在这条上级目录规则之内。其余读取仍然静态安全。由 `spike/verify-permission-modes.ts` 锁定。
 
 ## 文件编辑
 

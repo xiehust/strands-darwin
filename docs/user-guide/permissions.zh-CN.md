@@ -32,7 +32,7 @@
 
 ### 敏感路径读取
 
-读取同样走白名单，但有一组固定路径永远不会被静默读取：`~/.ssh/`、`~/.aws/`、`~/.gnupg/` 之下的任何内容（目录本身也算）、`~/.netrc`、`~/.kube/config`、`~/.docker/config.json`、`/etc/shadow`、任何位置上名为 `.env` 或 `.env.*` 的文件，以及 Darwin 自身的配置、hook 和权限规则文件。路径按 shell 的方式解析（`~`、`~/`、`$HOME`、`${HOME}`、相对与绝对形式、`..` 会被归一化），因此 `cat ~/.ssh/id_rsa`、`head $HOME/.aws/credentials` 和 `fileEditor view ../../.netrc` 都会以 `reads a sensitive path: <path>` 询问。`plan` 模式下敏感的 `fileEditor view` 是询问而非拒绝，因为它仍然是读操作（带命令的 bash 仍像以前一样在 `plan` 中被拒绝）；无头运行中该询问表现为 `permission denied`。其余读取——`cat README.md`、`ls ~/.ssh/../`、`.envrc`、`/etc/os-release`——和以前一样静默放行。`echo` 不算读取器：重定向和命令替换已被拒绝，它只能打印参数。判定标准是这组固定集合，而不是「项目之外」，因为 Darwin 会合法地读取 `/tmp`、`/etc/os-release` 和全局 skill 目录。
+读取同样走白名单，但有一组固定路径永远不会被静默读取：`~/.ssh/`、`~/.aws/`、`~/.gnupg/` 之下的任何内容（目录本身也算）、`~/.netrc`、`~/.kube/config`、`~/.docker/config.json`、`/etc/shadow`、任何位置上名为 `.env` 或 `.env.*` 的文件，以及 Darwin 自身的配置、hook 和权限规则文件。路径按 shell 的方式解析（`~`、`~/`、`$HOME`、`${HOME}`、相对与绝对形式、`..` 会被归一化），因此 `cat ~/.ssh/id_rsa`、`head $HOME/.aws/credentials` 和 `fileEditor view ../../.netrc` 都会以 `reads a sensitive path: <path>` 询问。`plan` 模式下敏感的 `fileEditor view` 是询问而非拒绝，因为它仍然是读操作（带命令的 bash 仍像以前一样在 `plan` 中被拒绝）；`auto` 绝不会把它交给分类器，而是直接询问；无头运行中该询问表现为 `permission denied`。仅对 `grep` 和 `rg`，从凭据位置的上级目录开始搜索（`grep -r AKIA ~`、`rg -uu secret /`、`grep -r k /etc`）同样视为读取它，并以 `reads a sensitive path: ~ (searches above ~/.ssh)` 询问；`.env*` 文件不在这条上级目录规则之内，因此含有 `.env` 的项目里 `grep -r foo .` 仍然静默。其余读取——`cat README.md`、`ls ~/.ssh/../`、`.envrc`、`/etc/os-release`——和以前一样静默放行。`echo` 不算读取器：重定向和命令替换已被拒绝，它只能打印参数。判定标准是这组固定集合，而不是「项目之外」，因为 Darwin 会合法地读取 `/tmp`、`/etc/os-release` 和全局 skill 目录。
 
 ## 分类器辅助的 `auto`
 
