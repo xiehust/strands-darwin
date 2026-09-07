@@ -8,7 +8,11 @@
  * reported` and never 0 (the `usageBuckets` rule), long lists bounded with an
  * explicit remainder, a failed MCP server *stated* as failed exactly as `/mcp`
  * words it, and degradation (missing context estimate, recording off) as text
- * rather than an error. The `/status extra` argument degradation is a TUI
+ * rather than an error. The `hooks` row (SER-072) is asserted as a pure
+ * projection of `RuntimeInfo.hookSources`: `none`, project-relative and `~`
+ * paths, the shared `… N more` bound, the shadow count, and that its insertion
+ * leaves every other line of the baseline fixture byte-identical. The `/status
+ * extra` argument degradation is a TUI
  * handler concern, asserted in the free pty scenario (`verify-tui.ts
  * completion`); what belongs here is the menu-capacity invariant that keeps
  * every built-in visible.
@@ -130,6 +134,10 @@ function facts(overrides: Partial<StatusFacts> = {}): StatusFacts {
     allowRuleCount: 2,
     mcpServers: [server({ name: 'calc', toolNames: ['calc_alpha', 'calc_beta', 'calc_gamma'] })],
     skillNames: ['commit-message', 'developer'],
+    hookSources: [],
+    hookShadowNotices: [],
+    projectRoot: '/tmp/p',
+    homeDir: '/home/u',
     trajectory: RECORDING,
     diagnostics: LOGGING,
     usage: SPENT,
@@ -264,6 +272,72 @@ function testStatesAndDegradation(): void {
   const yolo = formatStatusReport(facts({ mode: 'yolo' }));
   assert('yolo mode uses the header\u2019s warning wording',
     yolo.includes('yolo — every tool call runs without confirmation'));
+}
+
+function testHooksRow(): void {
+  header('formatStatusReport — the hooks row is a projection of RuntimeInfo.hookSources (SER-072)');
+
+  // The pre-SER-072 report for the baseline fixture, line for line. The new row is
+  // an insertion: every existing line stays byte-identical, in the same order,
+  // and the label column does not widen (`hooks` is shorter than `diagnostics`).
+  const before = [
+    'status — this session',
+    '  model        bedrock/us.anthropic.claude-sonnet-4-6 · cache 5m · effort high',
+    '  session      session-20260819-000000000',
+    '  mode         default · 2 allow rule(s)',
+    '  mcp          1 server — calc connected (3 tools) (details: /mcp)',
+    '  skills       2 — commit-message, developer',
+    '  trajectory   recording — /tmp/p/.darwin/sessions/s-1/trajectory.jsonl',
+    '  diagnostics  logging — /tmp/p/.darwin/sessions/s-1/diagnostics.log',
+    '  tokens       input 1,234 · output 567 · cache read 9,000 · cache write 100 — this run',
+    '  cost         unknown (price unavailable)',
+    '  context      ~2,100 tokens · 1% of 200,000 window · 5 message(s)',
+  ];
+  const lines = formatStatusReport(facts()).split('\n');
+  const skillsIndex = before.findIndex((line) => line.startsWith('  skills'));
+  const expected = [...before.slice(0, skillsIndex + 1), '  hooks        none', ...before.slice(skillsIndex + 1)];
+  assert('the baseline fixture report is yesterday\u2019s output with exactly one hooks line inserted after skills',
+    lines.length === before.length + 1 && lines.every((line, i) => line === expected[i]));
+  assert('zero hook sources read `hooks  none`, a stated ordinary state', /^  hooks\s+none$/m.test(lines.join('\n')));
+  assert('the hooks row sits directly after the skills row', lines[skillsIndex + 1] === '  hooks        none');
+
+  const one = formatStatusReport(facts({ hookSources: ['/tmp/p/.darwin/hooks/pre.json'] }));
+  assert('a project source is shown project-relative', /^  hooks\s+1 — \.darwin\/hooks\/pre\.json$/m.test(one));
+  const home = formatStatusReport(facts({ hookSources: ['/home/u/.darwin/hooks/x.json'] }));
+  assert('a home-directory source is shown ~-abbreviated', /^  hooks\s+1 — ~\/\.darwin\/hooks\/x\.json$/m.test(home));
+  const elsewhere = formatStatusReport(facts({ hookSources: ['/srv/policy/hooks.json'] }));
+  assert('a source outside both roots stays absolute', /^  hooks\s+1 — \/srv\/policy\/hooks\.json$/m.test(elsewhere));
+  assert('a sibling of the project is not shown as if inside it',
+    /^  hooks\s+1 — \/tmp\/q\/hooks\.json$/m.test(formatStatusReport(facts({ hookSources: ['/tmp/q/hooks.json'] }))));
+  // Policy order is the runtime's (`hookSources` is "in Pre policy order"); the
+  // projection keeps it, mixing layers as they came.
+  const ordered = formatStatusReport(facts({
+    hookSources: ['/home/u/.agents/hooks.json', '/home/u/.darwin/hooks/a.json', '/tmp/p/.darwin/hooks/b.json'],
+  }));
+  assert('several sources keep policy order across layers',
+    ordered.includes('3 — ~/.agents/hooks.json, ~/.darwin/hooks/a.json, .darwin/hooks/b.json'));
+
+  const many = Array.from({ length: MAX_STATUS_NAMES + 2 }, (_, i) => `/tmp/p/.darwin/hooks/${String(i).padStart(2, '0')}.json`);
+  const bounded = formatStatusReport(facts({ hookSources: many }));
+  const hooksLine = bounded.split('\n').find((line) => line.startsWith('  hooks')) ?? '';
+  assert('more than MAX_STATUS_NAMES sources are bounded with the skills row\u2019s own remainder shape',
+    hooksLine.startsWith(`  hooks        ${many.length} — `) && hooksLine.endsWith(' … 2 more'));
+  assert('no source beyond the cap is dumped', !hooksLine.includes(`${String(MAX_STATUS_NAMES).padStart(2, '0')}.json`));
+
+  const shadowed = formatStatusReport(facts({
+    hookSources: ['/tmp/p/.darwin/hooks/pre.json'],
+    hookShadowNotices: [{ layer: 'project .darwin', directory: '/tmp/p/.darwin/hooks', shadowed: ['/tmp/p/.darwin/hooks.json'] }],
+  }));
+  assert('shadow notices are counted on the row', /^  hooks\s+1 — \.darwin\/hooks\/pre\.json · 1 shadowed$/m.test(shadowed));
+  assert('no shadow notice adds no suffix', !one.includes('shadowed'));
+  const shadowedOnly = formatStatusReport(facts({
+    hookShadowNotices: [
+      { layer: 'global .darwin', directory: '/home/u/.darwin/hooks', shadowed: ['/home/u/.darwin/hooks.json'] },
+      { layer: 'project .darwin', directory: '/tmp/p/.darwin/hooks', shadowed: ['/tmp/p/.darwin/hooks.json'] },
+    ],
+  }));
+  assert('shadow count rides on `none` too, so a shadowed-everything state is still visible',
+    /^  hooks\s+none · 2 shadowed$/m.test(shadowedOnly));
 }
 
 function testMenuCapacity(): void {
@@ -457,6 +531,7 @@ function main(): void {
   testUnknownStaysUnknown();
   testBoundedLists();
   testStatesAndDegradation();
+  testHooksRow();
   testChildUsage();
   testCallStats();
   testCost();

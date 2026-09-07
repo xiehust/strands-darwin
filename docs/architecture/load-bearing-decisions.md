@@ -420,8 +420,12 @@ channel** (`src/tui/status-format.ts`, on the `/mcp` precedent): model/provider 
 functions the header's model line uses — `formatPromptCache`/`formatThinking` live in
 `status-format.ts` so the two surfaces cannot diverge), permission mode and live allow-rule count
 (the header's own three-state wording), MCP server states (`runtime.listMcpServers()`, a failed
-server stated as failed exactly as `/mcp` words it), skills, trajectory/diagnostics state, process
+server stated as failed exactly as `/mcp` words it), skills, hooks, trajectory/diagnostics state, process
 token spend and the `/context` estimate (`formatContextValue`, shared with `formatContextReport`).
+The `hooks` row (SER-072) is a projection of `RuntimeInfo.hookSources` — the active hook source
+files `loadProjectPolicy` already loads, shown project-relative or `~`-abbreviated under the skills
+row's own `MAX_STATUS_NAMES` bound, plus the `hookShadowNotices` count — because hooks run commands
+on tool and lifecycle events and were previously visible only at startup and in `darwin doctor`.
 Four things are load-bearing. It is read-only to the byte: no config write, no pointer move, no
 connection attempt — states are reported as they are, and the awaited `contextEstimate()` is the
 same mid-turn-safe read `/context` performs, degraded to an `unavailable — <reason>` line on

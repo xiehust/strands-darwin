@@ -90,7 +90,7 @@ Rules and limits:
 | `/model [name]` | list/switch configured models, conversation intact |
 | `/permissions` | live allow rules and origins |
 | `/permissions revoke <n/rule/all>` | synchronously narrow live/disk rules |
-| `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/spend/cost/context report |
+| `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/hooks/spend/cost/context report |
 | `/tasks` | background jobs with their last three non-empty output lines, including while busy; reading them never moves the model's `output`/`wait` cursor |
 | `/trajectory` | this run's local record status |
 | `/usage` | process token buckets plus an approximate USD cost; unreported is not zero |
@@ -137,7 +137,7 @@ Permission and compaction views own keyboard/paste while active. The completion 
 
 ## Report contracts
 
-- `/status` reads existing accessors only, mutates nothing, displays unknown metrics as `not reported`, and bounds name lists with `… N more`.
+- `/status` reads existing accessors only, mutates nothing, displays unknown metrics as `not reported`, and bounds name lists with `… N more`. Its `hooks` row lists the active hook source files in policy order (project-relative inside the project, `~` under home; `none` when nothing is armed) and appends `· N shadowed` when legacy hook inputs were shadowed at startup.
 - The `cost` row of `/status` and `/usage` is Σ token bucket × LiteLLM base rate, **each model at its own rates** (after `/model` the row counts the models — `≈ … (2 models; …)` — and `/usage` adds one line per model), always labelled `≈ … (base rates, LiteLLM)`; an unreported bucket turns it into a floor (`≥ $x.xxxx (cacheWrite not reported; …)`), never 0, and so does a model in the mix without a price (`≥ … (2 models; no price for <id>; …)`); `unknown (no price for <model>)` / `unknown (price unavailable)` say why there is no figure. Reading it never fetches or writes. `trajectory list` appends the same clause as `cost: …` to each session row and `trajectory replay` prints `session cost:` plus a per-model figure, priced offline from the same file — never a fetch, never a write; `/export` carries no cost lines. Rates live in `~/.darwin/model-prices.json`, filled once per model id from LiteLLM's public price table in the background at startup (and on `/model` to a new id); `DARWIN_MODEL_PRICES_FETCH=off` in the environment keeps darwin off the network and prices only what the file already knows.
 - `/help` is one bounded transcript notice, works before busy queueing, and performs no model/tool/network/config/session work.
 - `/mcp` never probes or reconnects; tool names come from already registered state.

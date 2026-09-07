@@ -11,6 +11,7 @@
  * unfinished answer; a second press within a short window, or any press while
  * idle, exits. Ctrl+D always exits.
  */
+import os from 'node:os';
 import type { ImageBlock } from '@strands-agents/sdk';
 
 import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize, type DOMElement } from 'ink';
@@ -1382,6 +1383,10 @@ export function App({
             allowRuleCount: runtime.allowRuleCount,
             mcpServers: runtime.listMcpServers(),
             skillNames: runtime.info.skillNames,
+            hookSources: runtime.info.hookSources,
+            hookShadowNotices: runtime.info.hookShadowNotices,
+            projectRoot: runtime.info.projectRoot,
+            homeDir: os.homedir(),
             trajectory: runtime.trajectoryStatus,
             diagnostics: runtime.diagnosticsStatus,
             usage: runtime.usage,

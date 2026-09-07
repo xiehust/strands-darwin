@@ -14,6 +14,7 @@
  * so the header and `/status` cannot describe the same cache or effort state
  * differently.
  */
+import path from 'node:path';
 import type { ApprovalMode } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { ContextEstimate, UsageTotals } from '../agent/runtime.js';
@@ -57,6 +58,18 @@ export interface StatusFacts {
   mcpServers: readonly McpServerStatus[];
   /** `runtime.info.skillNames`. */
   skillNames: readonly string[];
+  /**
+   * `runtime.info.hookSources` — the active hook source files, in Pre policy
+   * order (SER-072). Hooks run commands on tool and lifecycle events, so what is
+   * armed is stated in-session; the paths are shown, never re-read.
+   */
+  hookSources: readonly string[];
+  /** `runtime.info.hookShadowNotices` — legacy hook inputs a `hooks/*.json` directory shadows. */
+  hookShadowNotices: readonly { layer: string; directory: string; shadowed: readonly string[] }[];
+  /** `runtime.info.projectRoot` — what a hook source path is shown relative to. */
+  projectRoot: string;
+  /** `os.homedir()` — the root `paths.ts` derives the global layers from; shown as `~`. */
+  homeDir: string;
   /** `runtime.trajectoryStatus`; undefined when recording is off. */
   trajectory: TrajectoryStatus | undefined;
   /** `runtime.diagnosticsStatus`; undefined when the log is off (the default). */
@@ -114,6 +127,7 @@ export function formatStatusReport(facts: StatusFacts): string {
     ['mode', describeMode(facts.mode, facts.allowRuleCount)],
     ['mcp', describeMcpServers(facts.mcpServers)],
     ['skills', describeNames(facts.skillNames)],
+    ['hooks', describeHooks(facts)],
     ['trajectory', describeTrajectory(facts.trajectory)],
     ['diagnostics', describeDiagnostics(facts.diagnostics)],
     ['tokens', describeTokens(facts)],
@@ -215,6 +229,30 @@ function describeNames(names: readonly string[]): string {
   const remainder = names.length - shown.length;
   const suffix = remainder > 0 ? ` … ${remainder} more` : '';
   return `${names.length} — ${shown.join(', ')}${suffix}`;
+}
+
+/**
+ * The armed hook source files (SER-072): the skills row's own bounding rule over
+ * the paths, shown project-relative inside the project and `~`-abbreviated under
+ * the home directory, plus how many legacy inputs a `hooks/*.json` directory
+ * shadows. `none` is the ordinary state, stated rather than omitted.
+ */
+function describeHooks(facts: StatusFacts): string {
+  const sources = describeNames(
+    facts.hookSources.map((file) => displayPath(file, facts.projectRoot, facts.homeDir)),
+  );
+  const shadowed = facts.hookShadowNotices.length;
+  return shadowed > 0 ? `${sources} · ${shadowed} shadowed` : sources;
+}
+
+/** A path as the user would type it: relative inside the project, `~` under home, else as is. */
+function displayPath(file: string, projectRoot: string, homeDir: string): string {
+  const relative = path.relative(projectRoot, file);
+  const inside = relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  if (inside) return relative;
+  if (file === homeDir) return '~';
+  if (file.startsWith(homeDir + path.sep)) return `~${file.slice(homeDir.length)}`;
+  return file;
 }
 
 /** `formatTrajectoryReport`'s states at line scale; the file is the useful fact. */
