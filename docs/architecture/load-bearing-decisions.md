@@ -1097,6 +1097,32 @@ light/dark terminal compatibility, and composer/completion focus uses text plus 
 inverse backgrounds. Checks: `verify-startup-screen.tsx`, `verify-startup-pty.ts`,
 `verify-visual-language.tsx`, and `verify-frame-budget.ts`.
 
+**Out-of-frame sequences: BEL, OSC 52, OSC 2 — written only on transitions, never a tick.**
+Three things darwin says to the terminal are not rows: the attention bell
+(`src/tui/terminal-bell.ts`, `\x07`, `terminalBell`), the `/copy` clipboard write
+(`src/tui/copy-command.ts`, `ESC ] 52 ; c ; base64 BEL`) and the window/tab title
+(`src/tui/terminal-title.ts`, `ESC ] 2 ; darwin · <project basename> · <state> BEL`,
+`terminalTitle`, SER-073). All three are non-printing control sequences that go through the
+one raw-write seam — the real `process.stdout` behind an injectable writer, never Ink's frame
+render path — so they cost the budget nothing, never appear in ANSI-stripped pty assertions
+(`stripAnsi` and `reconstructTerminalLines` skip OSC payloads), and leave `/export` and replay
+byte-identical. The title is the strictest of the three because it is *state*, and state
+invites polling: it is a fixed composition (state exactly one of `idle`, `working`,
+`waiting for approval`, `N queued`, precedence in that order, derived from the permission
+queue, `status` and the prompt queue the App already owns), a writer keeps the last title and
+writes only when the composed title *changes* — a streaming turn of hundreds of frames is two
+writes — and there is deliberately no spinner, because a spinner is a tick and this section
+forbids a new tick source. The title is an escape-sequence payload, so every control character
+is stripped from the project name before it is embedded and the whole title is capped at
+`MAX_TERMINAL_TITLE_CODE_POINTS`; it is written only when `process.stdout.isTTY` holds (a pipe
+gets nothing, and headless drivers never reach the module), every exit path restores the bare
+project name once through the App's unmount, and `/clear` — same tree, successor runtime —
+simply continues. The xterm title stack (`CSI 22;0 t`/`CSI 23;0 t`) is not used: nothing
+demonstrates every terminal without it ignores it harmlessly. Checks: `verify-terminal-bell.ts`
+(which counts BELs outside OSC sequences), `verify-copy-command.ts`, `verify-terminal-title.ts`
+(exact bytes per state, change-only, TTY/config guards, restore; pty layer over the bell fixture
+proves one write per transition and zero when disabled).
+
 
 ## The busy rows
 

@@ -28,6 +28,18 @@ export function reconstructTerminalLines(output: string, rows: number): string[]
 
   for (let index = 0; index < output.length; index += 1) {
     const character = output[index] as string;
+    if (character === ESC && output[index + 1] === ']') {
+      // OSC (window title, clipboard): a non-printing payload up to BEL or ST.
+      let end = index + 2;
+      while (end < output.length && output[end] !== '\u0007' && output[end] !== ESC) end += 1;
+      if (output[end] === ESC) {
+        // ST (`ESC \`) is consumed; any other ESC starts the next sequence and is re-read.
+        index = output[end + 1] === '\\' ? end + 1 : end - 1;
+      } else {
+        index = end;
+      }
+      continue;
+    }
     if (character === ESC && output[index + 1] === '[') {
       let end = index + 2;
       let raw = '';

@@ -21,8 +21,16 @@ export const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const ANSI =
   /[\u001B\u009B][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-ntqry=><~]))/g;
 
+/**
+ * OSC with a free-text payload (the OSC 2 window title carries spaces and `·`, which
+ * the generic pattern above does not admit), BEL- or ST-terminated. Stripped first so
+ * the title can never read as screen text.
+ */
+// eslint-disable-next-line no-control-regex
+const OSC_TEXT = /\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
+
 export function stripAnsi(value: string): string {
-  return value.replace(ANSI, '');
+  return value.replace(OSC_TEXT, '').replace(ANSI, '');
 }
 
 /** Ink's standard renderer clears the previous frame before writing the next. */

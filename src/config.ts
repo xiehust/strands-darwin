@@ -229,6 +229,19 @@ export interface SessionFields {
    */
   terminalBell?: boolean;
   /**
+   * Set the terminal window/tab title (one OSC 2 sequence, straight to stdout —
+   * never an Ink row) to `darwin · <project> · <state>` where state is `idle`,
+   * `working`, `waiting for approval` or `N queued`, written only when it changes
+   * and only when stdout is a TTY; the bare project name is restored on exit
+   * (SER-073). **On by default**: the title is the one surface visible from another
+   * tab. `false` writes nothing at all. Headless drivers and child agents never
+   * write a title regardless of this value.
+   *
+   * Optional in the type for hand-built configs; {@link loadConfig} always stores
+   * the resolved boolean.
+   */
+  terminalTitle?: boolean;
+  /**
    * Wake the agent when a background `bash start` job reaches a terminal state
    * (SER-069): the interactive TUI enqueues one bounded `<task-notification>`
    * prompt per finished job into the ordinary prompt queue, drained at idle as one
@@ -355,6 +368,7 @@ export const SESSION_KEYS = [
   'contextOffload',
   'maxResultTokens',
   'terminalBell',
+  'terminalTitle',
   'backgroundTaskWake',
   'trajectory',
   'diagnostics',
@@ -406,6 +420,7 @@ const DEFAULTS = {
   contextWarnRatio: 0.8,
   contextOffload: true,
   terminalBell: false,
+  terminalTitle: true,
   backgroundTaskWake: true,
   memory: true,
   memoryHorizonDays: 28,
@@ -1102,6 +1117,8 @@ function validateSessionFields(
       booleanField(input, 'contextOffload', configPath) ?? DEFAULTS.contextOffload,
     terminalBell:
       booleanField(input, 'terminalBell', configPath) ?? DEFAULTS.terminalBell,
+    terminalTitle:
+      booleanField(input, 'terminalTitle', configPath) ?? DEFAULTS.terminalTitle,
     backgroundTaskWake:
       booleanField(input, 'backgroundTaskWake', configPath) ?? DEFAULTS.backgroundTaskWake,
     memoryHorizonDays:

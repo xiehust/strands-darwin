@@ -146,6 +146,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 - 忙碌行（`working…` 提示行与 `thinking…` 行）以一个追加短语显示模型重试等待：` · throttled, retry 3/6 in 12s`——`3/6` 是即将发起的那次尝试，剩余秒数向上取整、最低 `0s`，供应商的原因文本绝不上行，也不会新增任何一行；没有等待时这些行逐字节不变。子代理自己的等待表现为实时行/心跳上的阶段 `waiting on model, retry 3/6`。因重试次数用尽而失败的回合显示 `turn failed after N attempts: <消息>`；在等待中被取消的回合显示 `cancelled during retry wait (attempt N/M): <消息>`。无头模式对应：文本模式在 stderr 写 `model throttled, retry 3/6 in 12s — <原因>`（每次等待一行），失败时在原样不变的 `error:` 行前多一行 `notice: <标题>`；`stream-json` 每次等待发出一条新增的 `model.retrying` 事件（`attempt`、`maxAttempts`、`waitMs`、`reason` ≤ 240 码点），`subagent.progress` 可能带 `phase: "waiting-on-model"` 及 `attempt`/`maxAttempts`；终态记录中 turn 阶段的 `errors[]` 条目新增可选的 `retry` 对象（`{ kind: "exhausted", attempts }` 或 `{ kind: "cancelled", attempt, maxAttempts }`），`name`/`message`/`cause` 仍是供应商原文。轨迹记录、`/export` 与 replay 均不变。
 - `/export` 与离线 replay 使用完全相同的 formatter。
 - `/copy` 复制的正是转录中显示、`/export` 写出的纯文本回答；回合进行中复制的是上一条已完成回答，尚无回答时（或刚 `/clear`/`/rewind` 之后）提示 `nothing to copy`。它不调用模型，也不写入任何记录。SSH 下需要终端接受 OSC 52 剪贴板写入（tmux 需 `set-clipboard on`）。
+- 终端窗口/标签页标题（`terminalTitle`，默认 `true`）为 `darwin · <项目目录名> · <状态>`，状态只会是 `idle`、`working`、`waiting for approval` 或 `N queued` 之一——一条 OSC 2 序列（`ESC ] 2 ; <标题> BEL`）直接写到 stdout，仅在 stdout 是 TTY 且组合后的标题发生变化时写入（只在状态转换时，绝不按时钟刷新），整体上限 80 个码点，项目目录名中的控制字符会被剥除；每条退出路径（`/exit`、`/quit`、Ctrl+C、Ctrl+D）恢复一次为项目目录名，`/clear` 保持同一项目、直接延续；`-p` 从不写标题。
 
 ## 敏感路径读取
 

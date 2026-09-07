@@ -22,8 +22,14 @@ const ROOT = path.join(HOME, 'project');
 const ENTRY = path.join(REPO_ROOT, 'spike/fixtures/terminal-bell-cli.ts');
 const EXIT_TIMEOUT_MS = 20_000;
 
-/** Counts raw BEL bytes; the driver's ANSI stripping never sees them. */
-const bells = (raw: string): number => raw.split('\u0007').length - 1;
+/**
+ * Counts raw BEL bytes; the driver's ANSI stripping never sees them. OSC sequences
+ * (the SER-073 window title, OSC 52) end in BEL too and are removed first, so only
+ * a bell rung as a bell is counted.
+ */
+// eslint-disable-next-line no-control-regex
+const OSC = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
+const bells = (raw: string): number => raw.replace(OSC, '').split('\u0007').length - 1;
 
 function unitContract(): void {
   header('terminal bell — unit contract');

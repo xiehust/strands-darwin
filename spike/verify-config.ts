@@ -1176,6 +1176,48 @@ async function terminalBellField(): Promise<void> {
   assert('a /model switch preserves the bell', switched.terminalBell === true);
 }
 
+async function terminalTitleField(): Promise<void> {
+  header('config — terminal window/tab title (SER-073)');
+  const def = await loadConfig(await writeConfig('{}'));
+  // On by default: the title is the one surface visible from another tab, and it
+  // is a non-printing sequence — nothing in the frame or the transcript changes.
+  assert('the title is on by default', def.terminalTitle === true);
+
+  const on = await loadConfig(await writeConfig('{ "terminalTitle": true }'));
+  assert('explicit true is accepted', on.terminalTitle === true);
+  const off = await loadConfig(await writeConfig('{ "terminalTitle": false }'));
+  assert('the title can be switched off', off.terminalTitle === false);
+
+  const bad = await expectConfigError('a non-boolean terminalTitle value is refused', async () =>
+    loadConfig(await writeConfig('{ "terminalTitle": "short" }')),
+  );
+  assert('…and the error names the field', bad.includes('terminalTitle'));
+  const typo = await expectConfigError('a misspelt key is an unknown key, never silently ignored', async () =>
+    loadConfig(await writeConfig('{ "terminalTitel": false }')),
+  );
+  assert('…and the unknown-key error suggests terminalTitle', typo.includes('terminalTitel') && typo.includes('terminalTitle'));
+
+  // Session-scoped like the bell: it survives /model, and a models entry carrying
+  // it is refused rather than ignored.
+  const withModels = await loadConfig(
+    await writeConfig(
+      '{ "terminalTitle": false, "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5" }] }',
+    ),
+  );
+  assert('terminalTitle survives the models array form', withModels.terminalTitle === false);
+  const misplaced = await expectConfigError('terminalTitle inside a models entry is refused', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "terminalTitle": false }] }',
+      ),
+    ),
+  );
+  assert('…and that error names the key', misplaced.includes('terminalTitle'));
+
+  const switched = withModelChoice(withModels, withModels.modelChoices[0]!);
+  assert('a /model switch preserves the title setting', switched.terminalTitle === false);
+}
+
 async function backgroundTaskWakeField(): Promise<void> {
   header('config — background-task wake (SER-069)');
   const def = await loadConfig(await writeConfig('{}'));
@@ -1444,6 +1486,7 @@ async function documentedKeys(): Promise<void> {
     contextOffload: true,
     maxResultTokens: 2000,
     terminalBell: false,
+    terminalTitle: true,
     backgroundTaskWake: true,
     trajectory: true,
     diagnostics: false,
@@ -1503,6 +1546,7 @@ async function main(): Promise<void> {
   await trajectoryField();
   await diagnosticsField();
   await terminalBellField();
+  await terminalTitleField();
   await backgroundTaskWakeField();
   await permissionModes();
   await permissionRules();

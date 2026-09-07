@@ -12,6 +12,7 @@
  * idle, exits. Ctrl+D always exits.
  */
 import os from 'node:os';
+import path from 'node:path';
 import type { ImageBlock } from '@strands-agents/sdk';
 
 import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize, type DOMElement } from 'ink';
@@ -185,6 +186,7 @@ import {
 } from './status-format.js';
 import { PlanChecklist } from './PlanChecklist.js';
 import { ringTerminalBell } from './terminal-bell.js';
+import { createTerminalTitleWriter, deriveTerminalTitleState } from './terminal-title.js';
 import { initialTurnState, turnReducer, type HistoryItem, type TurnAction } from './turn-state.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
@@ -754,6 +756,29 @@ export function App({
   // A `!` command must not outlive the TUI that ran it: on unmount (Ctrl+D, /exit,
   // a second Ctrl+C) the group gets the same TERM→KILL reaping a cancel gives it.
   useEffect(() => () => shellRun.current?.kill(), []);
+
+  // Terminal window/tab title (SER-073): `darwin · <project> · <state>`, one OSC 2
+  // sequence straight to the real stdout — the seam the bell uses, never Ink's
+  // frame path — and only when the composed title changes, so this is a
+  // transition write, not a tick. State is derived from what the App already owns:
+  // a published permission prompt outranks a running turn, which outranks a
+  // non-empty queue. `/clear` hands over a runtime for the same tree, so the title
+  // simply continues; unmount (every exit path) restores the bare project name once.
+  const [terminalTitle] = useState(() => createTerminalTitleWriter({ isTTY: process.stdout.isTTY === true }));
+  useEffect(() => {
+    terminalTitle.show(
+      {
+        projectBasename: path.basename(runtime.info.projectRoot),
+        state: deriveTerminalTitleState({
+          permissionPending: pendingPermission !== undefined,
+          busy: status !== 'idle',
+          queued: queued.length,
+        }),
+      },
+      runtime.config.terminalTitle !== false,
+    );
+  }, [pendingPermission, queued.length, runtime, status, terminalTitle]);
+  useEffect(() => () => terminalTitle.restore(), [terminalTitle]);
 
   // The SDK's default logger writes to the console, which tears this frame. It has
   // something to say now that `/model` exists: switching away from Claude with a
