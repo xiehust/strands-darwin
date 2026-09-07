@@ -77,7 +77,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/compact [focus]` | 摘要较旧对话；由用户主动触发。可选的 focus 文本（去除首尾空白后不超过 400 个码点，超出则提示拒绝且不执行）会作为一个固定小节追加到 SDK 默认摘要提示之后，要求摘要保留其所述内容；不带 focus 时摘要请求与以往完全一致 |
 | `/context` | 已知/估算的上下文大小；Bedrock 可能使用启发式 |
 | `/copy` | 把最近一条*已完成*回答的转录文本复制到剪贴板：先通过 OSC 52 写入终端（SSH 下可用），仅在存在显示环境时再调用 `wl-copy`/`xclip`/`pbcopy`；一条通知说明复制的字节数（超出上限时为 `N of M`）和工具失败；带参数会拒绝 |
-| `/effort [level]` | 查看或设置会持久化的模型思考强度 |
+| `/effort [level]` | 查看或设置会持久化的模型思考强度；缓存尚热时切换前先提示一次 |
 | `/exit`、`/quit` | 退出 |
 | `/export <path>` | 精确 replay 投影；不覆盖，也不写会话内部 |
 | `/help` | 有界本地命令、语法和按键；带参数会拒绝 |
@@ -87,13 +87,13 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/memory remember <note>` | 添加经过筛查的用户项目备注 |
 | `/memory forget <id/number/all>` | 删除/抑制条目并刷新当前 prompt |
 | `/mode [mode]` | 查看/设置仅用户可改的当前权限模式；不持久化 |
-| `/model [name]` | 列出/切换已配置模型，会话不断开 |
+| `/model [name]` | 列出/切换已配置模型，会话不断开；缓存尚热时切换前先提示一次 |
 | `/permissions` | 当前放行规则及来源 |
 | `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘规则 |
-| `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/hooks/费用/成本/上下文 |
+| `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/hooks/费用/成本/上下文；出现过缓存未命中后，模型行会注明最近一次未命中的可能原因 |
 | `/tasks` | 后台任务及其最近三行非空输出；忙碌时也可用；读取不会移动模型的 `output`/`wait` 游标 |
 | `/trajectory` | 当前运行的本地记录状态 |
-| `/usage` | 当前进程 token 分桶及近似美元成本；未报告不等于零 |
+| `/usage` | 当前进程 token 分桶及近似美元成本；未报告不等于零；出现过缓存未命中后，统计次数并注明最近一次的可能原因 |
 | `/workflow <task>` | 请模型把任务编排为一次 `workflow` DAG 调用；不带参数时打印用法 |
 | `/skill-name [request]` | 显式加载并发送一个 skill |
 | `/developer <requirement>` | 监督一个完整、可持续的无头 worker |
@@ -142,6 +142,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 - `/help` 只写一条有界历史通知，在忙碌队列判断前处理，不调用模型/工具/网络，也不改配置或会话。
 - `/mcp` 不探测、不重连；工具名只来自已经注册的状态。
 - `/context` 及阈值提醒只是建议。已知比例跨过阈值后，回合结束时只提醒一次 `/compact`；只有确认比例下降后才重新触发；未知估算保持安静。
+- Prompt 缓存未命中的提示同样只是建议，且仅限 Claude（OpenAI 由服务端自动缓存，darwin 没有放置 cache point，因此不做推断）。一次完成的模型调用若在前一次调用有缓存读取的情况下，从缓存读到的 token 少于本次请求总量的 20%，即视为未命中；darwin 只用已掌握的事实给出一个可能原因，按以下优先级取其一：`model switched`、`effort changed`（仅当实际发送的强度确实变了）、`compacted`（仅当 `/compact` 确实缩短了历史）、`idle past cache TTL (5m|1h)`、`first request of a resumed session`，否则 `unknown`。本会话出现过未命中后，`/usage` 顶部区块增加 `cache misses  N`，上一回合区块增加 `last miss  <cause>`，`/status` 的模型行追加 ` · last miss: <cause>`；从未出现时两份报告与以往逐字节一致。`/rewind`、文件编辑、权限模式切换和加载 skill 不会使缓存失效，也永远不会被归咎。计数器未报告、新会话预期冷启动的首次调用、缓存关闭时均保持安静。在缓存尚热（上次调用有缓存读取且距今不足 TTL）时执行 `/model <target>` 或改变实际发送强度的 `/effort <level>`，会先打印一条通知说明代价然后照常切换：`cache is warm (<age> ago, <N> tokens read last call): switching model|effort re-reads the conversation uncached`。没有确认对话框，不自动压缩，不新增实时行；不记录也不持久化。
 - `/compact` 不会自动执行。SDK conversation manager 在溢出时仍可能按 `summaryRatio` 和 `preserveRecentMessages` 做摘要。
 - 忙碌行（`working…` 提示行与 `thinking…` 行）以一个追加短语显示模型重试等待：` · throttled, retry 3/6 in 12s`——`3/6` 是即将发起的那次尝试，剩余秒数向上取整、最低 `0s`，供应商的原因文本绝不上行，也不会新增任何一行；没有等待时这些行逐字节不变。子代理自己的等待表现为实时行/心跳上的阶段 `waiting on model, retry 3/6`。因重试次数用尽而失败的回合显示 `turn failed after N attempts: <消息>`；在等待中被取消的回合显示 `cancelled during retry wait (attempt N/M): <消息>`。无头模式对应：文本模式在 stderr 写 `model throttled, retry 3/6 in 12s — <原因>`（每次等待一行），失败时在原样不变的 `error:` 行前多一行 `notice: <标题>`；`stream-json` 每次等待发出一条新增的 `model.retrying` 事件（`attempt`、`maxAttempts`、`waitMs`、`reason` ≤ 240 码点），`subagent.progress` 可能带 `phase: "waiting-on-model"` 及 `attempt`/`maxAttempts`；终态记录中 turn 阶段的 `errors[]` 条目新增可选的 `retry` 对象（`{ kind: "exhausted", attempts }` 或 `{ kind: "cancelled", attempt, maxAttempts }`），`name`/`message`/`cause` 仍是供应商原文。轨迹记录、`/export` 与 replay 均不变。
 - `/export` 与离线 replay 使用完全相同的 formatter。

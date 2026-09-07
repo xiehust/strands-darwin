@@ -133,6 +133,8 @@ Caching is enabled by default for Claude. Darwin marks the stable tool schemas/s
 
 Set `promptCache: false` to disable or `promptCacheTtl: "1h"` for a longer, more expensive write. Non-Claude models report caching unavailable. Summarization and changes to `AGENTS.md`, system prompt, or tool set naturally miss cache. Darwin keeps the AgentSkills catalogue before working context and the final cache point so fresh/resumed requests do not duplicate it.
 
+When a call misses after the cache was warm, `/usage` and `/status` name the likely cause from what darwin already knows — `model switched`, `effort changed`, `compacted`, `idle past cache TTL (5m|1h)` (the TTL is this key), `first request of a resumed session`, else `unknown` — and `/model`/`/effort` print one notice before a switch on a warm cache. Advisory only; see the reference's report contracts.
+
 ## Thinking effort
 
 Claude 4.6+ uses adaptive thinking:

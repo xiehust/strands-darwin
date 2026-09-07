@@ -31,6 +31,7 @@ import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '
 import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { describeModelCosts, type ModelUsageShare } from '../agent/cost.js';
 import { averageRequestInputTokens, type SessionCallStats } from '../agent/call-stats.js';
+import { describeCacheMissCause, warmCacheSwitchNotice, type CacheMissCause, type CacheMissReport } from '../agent/cache-miss.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from '../agent/stream-resumption.js';
 import { retryFailureNotice, type ModelRetryOutcome, type RetryWaitState } from '../agent/model-retry.js';
 import { isRefusalStop, REFUSAL_NOTICE } from '../agent/refusal.js';
@@ -1163,7 +1164,7 @@ export function App({
         dispatch({ type: 'userInput', text });
         dispatch({
           type: 'notice',
-          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage, runtime.childUsage, runtime.callStats, runtime.modelShares),
+          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage, runtime.childUsage, runtime.callStats, runtime.modelShares, runtime.cacheMissReport()),
         });
         return;
       }
@@ -1420,6 +1421,7 @@ export function App({
             modelShares: runtime.modelShares,
             childUsage: runtime.childUsage,
             callStats: runtime.callStats,
+            cacheMisses: runtime.cacheMissReport(),
             turnInFlight: status === 'streaming',
             context,
             ...(contextProblem !== undefined && { contextProblem }),
@@ -2883,13 +2885,27 @@ export function formatUsageReport(
   children?: { dispatches: number; usage: UsageTotals },
   callStats?: SessionCallStats,
   modelShares?: readonly ModelUsageShare[],
+  cacheMisses?: CacheMissReport,
 ): string {
   const rows = usageRows(usage, config);
   const derived = cacheEffectivenessRows(usage, config);
-  const labelWidth = Math.max(...rows.map(({ label }) => label.length), ...derived.map(({ label }) => label.length));
+  // The miss count is a fact only once a miss was observed (SER-074): a session
+  // without one renders byte-identically to before the tracker existed — the
+  // additive convention every optional section here follows. `misses: 0` is that
+  // absence, not a measured zero, because the tracker is silent when the cache
+  // counters are unreported or caching is off.
+  const missRows = cacheMisses !== undefined && cacheMisses.misses > 0
+    ? [{ label: 'cache misses', rendered: cacheMisses.misses.toLocaleString('en-US') }]
+    : [];
+  const labelWidth = Math.max(
+    ...rows.map(({ label }) => label.length),
+    ...derived.map(({ label }) => label.length),
+    ...missRows.map(({ label }) => label.length),
+  );
   const lines = [
     ...rows.map(({ label, value }) => ({ label, rendered: formatUsageValue(value) })),
     ...derived.map(({ label, value }) => ({ label, rendered: value ?? 'not reported' })),
+    ...missRows,
   ].map(({ label, rendered }) => `  ${label.padEnd(labelWidth)}  ${rendered.padStart(12)}`);
   // The cost line closes the block — the same per-model projection `/status`
   // prints, each model's share at its own rates, so the two cannot disagree.
@@ -2919,7 +2935,9 @@ export function formatUsageReport(
   // Last-turn section: only when a turn has completed. Mid-turn, lastTurn is the
   // previous completed turn, labelled clearly so it is not mistaken for the
   // in-flight one.
-  const lastTurnSection = lastTurn === undefined ? [] : formatLastTurnSection(lastTurn, config, labelWidth);
+  const lastTurnSection = lastTurn === undefined
+    ? []
+    : formatLastTurnSection(lastTurn, config, labelWidth, cacheMisses?.lastMiss?.cause);
 
   // Child sections: only when a dispatch reported spend (`runtime.childUsage`),
   // so a session that never delegated renders byte-identical to before children
@@ -2978,9 +2996,16 @@ function usageSection(heading: string, usage: UsageTotals, config: AppConfig, la
 
 /**
  * One-section "last turn (previous turn)" block, reusing the same label
- * width as the parent table for visual alignment.
+ * width as the parent table for visual alignment. With a `lastMiss` (SER-074, only
+ * once a miss was observed this session) one text row names its likely cause; the
+ * value is left as text rather than right-aligned like a count.
  */
-function formatLastTurnSection(lastTurn: UsageTotals, config: AppConfig, labelWidth: number): string[] {
+function formatLastTurnSection(
+  lastTurn: UsageTotals,
+  config: AppConfig,
+  labelWidth: number,
+  lastMiss?: CacheMissCause,
+): string[] {
   const lastRows = usageRows(lastTurn, config);
   const lastDerived = cacheEffectivenessRows(lastTurn, config);
   const allLastWidth = Math.max(
@@ -2992,6 +3017,9 @@ function formatLastTurnSection(lastTurn: UsageTotals, config: AppConfig, labelWi
     ...lastRows.map(({ label, value }) => ({ label, rendered: formatUsageValue(value) })),
     ...lastDerived.map(({ label, value }) => ({ label, rendered: value ?? 'not reported' })),
   ].map(({ label, rendered }) => `  ${label.padEnd(allLastWidth)}  ${rendered.padStart(12)}`);
+  if (lastMiss !== undefined) {
+    lastLines.push(`  ${'last miss'.padEnd(allLastWidth)}  ${describeCacheMissCause(lastMiss, config.promptCacheTtl)}`);
+  }
   return ['last turn (previous turn)', ...lastLines];
 }
 
@@ -3109,7 +3137,16 @@ function applyEffortCommand(
     return;
   }
 
-  const { plan, saved } = runtime.changeThinkingEffort(argument);
+  // Read before the switch so the age is the cache's, not the switch's; dispatched
+  // only when the level actually sent changes, because a clamped or repeated level
+  // leaves the request — and the cache — exactly as it was (SER-074). The switch
+  // is synchronous, so the notice still precedes every line the change earns.
+  const warmth = runtime.cacheWarmth(Date.now());
+  const { plan, saved, effectiveChanged } = runtime.changeThinkingEffort(argument);
+  if (effectiveChanged) {
+    const warmNotice = warmCacheSwitchNotice('effort', warmth);
+    if (warmNotice !== undefined) dispatch({ type: 'notice', text: warmNotice });
+  }
   const applied = `thinking effort: ${describeThinking(plan)}`;
   saved.then(
     () => {
@@ -3363,6 +3400,12 @@ async function applyModelCommand(
     dispatch({ type: 'notice', text: `already on ${target.name}\n${formatModelList(choices)}` });
     return;
   }
+
+  // States the cost of leaving a warm cache and proceeds — a notice, never a
+  // confirmation (SER-074). Before the switch, so it precedes the model line and
+  // reads the cache's age rather than the switch's.
+  const warmNotice = warmCacheSwitchNotice('model', runtime.cacheWarmth(Date.now()));
+  if (warmNotice !== undefined) dispatch({ type: 'notice', text: warmNotice });
 
   let result;
   try {

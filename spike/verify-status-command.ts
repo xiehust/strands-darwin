@@ -11,7 +11,9 @@
  * rather than an error. The `hooks` row (SER-072) is asserted as a pure
  * projection of `RuntimeInfo.hookSources`: `none`, project-relative and `~`
  * paths, the shared `… N more` bound, the shadow count, and that its insertion
- * leaves every other line of the baseline fixture byte-identical. The `/status
+ * leaves every other line of the baseline fixture byte-identical. The model row's
+ * ` · last miss: <cause>` clause (SER-074) is asserted as additive on the same
+ * terms: absent while no miss was observed, and the only change when one was. The `/status
  * extra` argument degradation is a TUI
  * handler concern, asserted in the free pty scenario (`verify-tui.ts
  * completion`); what belongs here is the menu-capacity invariant that keeps
@@ -144,6 +146,7 @@ function facts(overrides: Partial<StatusFacts> = {}): StatusFacts {
     modelPrice: UNAVAILABLE,
     childUsage: undefined,
     callStats: undefined,
+    cacheMisses: { lastMiss: undefined, misses: 0 },
     turnInFlight: false,
     context: ESTIMATE,
     ...overrides,
@@ -526,6 +529,34 @@ function testCost(): void {
     mixedChildren.includes(`cost (session total): ≈ $${(expected + solCost + 0.1).toFixed(4)} (2 models; base rates, LiteLLM)`));
 }
 
+function testCacheMiss(): void {
+  header('formatStatusReport — the last cache miss rides the model row, only once one was observed (SER-074)');
+
+  const base = formatStatusReport(facts());
+  assert('the empty miss report (the runtime\u2019s silent form) leaves the model row without a miss clause',
+    base === formatStatusReport(facts({ cacheMisses: { lastMiss: undefined, misses: 0 } })) && !base.includes('last miss'));
+
+  const withMiss = formatStatusReport(facts({
+    cacheMisses: { lastMiss: { cause: 'idle past cache TTL', at: 0, cacheRead: 0, requestInput: 120_000 }, misses: 3 },
+  }));
+  const baseLines = base.split('\n');
+  const missLines = withMiss.split('\n');
+  assert('the clause is appended to the model row after cache and effort, naming the TTL the row shows',
+    missLines[1] === `${baseLines[1]} · last miss: idle past cache TTL (5m)` &&
+    missLines[1]?.includes(' · cache 5m · effort high · last miss: idle past cache TTL (5m)') === true);
+  assert('no other line changes and no line is added',
+    missLines.length === baseLines.length && missLines.slice(2).join('\n') === baseLines.slice(2).join('\n'));
+  assert('the TTL follows the live cache plan',
+    formatStatusReport(facts({
+      promptCache: { ...CACHE_ON, ttl: '1h' },
+      cacheMisses: { lastMiss: { cause: 'idle past cache TTL', at: 0, cacheRead: 0, requestInput: 1 }, misses: 1 },
+    })).includes(' · last miss: idle past cache TTL (1h)'));
+  assert('other causes are their own text',
+    formatStatusReport(facts({
+      cacheMisses: { lastMiss: { cause: 'model switched', at: 0, cacheRead: 0, requestInput: 1 }, misses: 1 },
+    })).includes(' · last miss: model switched'));
+}
+
 function main(): void {
   testEveryFactPresent();
   testUnknownStaysUnknown();
@@ -535,6 +566,7 @@ function main(): void {
   testChildUsage();
   testCallStats();
   testCost();
+  testCacheMiss();
   testMenuCapacity();
   report();
 }

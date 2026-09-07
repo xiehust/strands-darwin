@@ -133,6 +133,8 @@ Claude 默认启用缓存。darwin 会给稳定的工具 schema、system prompt 
 
 设置 `promptCache: false` 可关闭；`promptCacheTtl: "1h"` 会延长缓存时间，但写入成本更高。非 Claude 模型会明确显示不支持。摘要会重写历史，修改 `AGENTS.md`、system prompt 或工具集合也会造成缓存未命中。darwin 把 AgentSkills 目录放在工作上下文和最终 cache point 之前，避免新建/恢复请求重复注入。
 
+当缓存已热却出现未命中时，`/usage` 与 `/status` 会用 darwin 已掌握的事实注明可能原因——`model switched`、`effort changed`、`compacted`、`idle past cache TTL (5m|1h)`（TTL 即此键）、`first request of a resumed session`，否则 `unknown`——`/model`/`/effort` 在缓存尚热时切换前会先打印一条通知。仅作提示；详见参考手册的报告约定。
+
 ## 思考强度
 
 Claude 4.6+ 使用 adaptive thinking：

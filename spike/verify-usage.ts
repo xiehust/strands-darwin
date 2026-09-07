@@ -8,6 +8,7 @@ import { formatUsageReport } from '../src/tui/App.js';
 import { cacheEffectivenessRows, deltaUsage, sumUsage, usageBuckets, usageRows, type UsageTotals } from '../src/agent/usage.js';
 import type { ModelPriceLookup, ModelUsageShare } from '../src/agent/cost.js';
 import type { SessionCallStats } from '../src/agent/call-stats.js';
+import type { CacheMissReport } from '../src/agent/cache-miss.js';
 import { assert, header, report } from './shared.js';
 
 function config(provider: 'bedrock' | 'anthropic' | 'openai', openaiApi?: 'chat' | 'responses'): AppConfig {
@@ -420,6 +421,50 @@ function costLineContracts(): void {
     mixedUnpriced.includes('    openai/openai.gpt-5.6-sol: unknown (price unavailable)'));
 }
 
+function cacheMissContracts(): void {
+  header('usage — /usage cache-miss rows (SER-074)');
+  const parent: UsageTotals = { inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 50, cacheWriteInputTokens: 5 };
+  const lastTurn: UsageTotals = { inputTokens: 800, outputTokens: 40, cacheReadInputTokens: 0, cacheWriteInputTokens: 800 };
+  // The widest label of the bedrock table, which every row of both blocks is padded to.
+  const WIDTH = 'served from cache'.length;
+  const none: CacheMissReport = { lastMiss: undefined, misses: 0 };
+  const idle: CacheMissReport = {
+    lastMiss: { cause: 'idle past cache TTL', at: 1_800_000_000_000, cacheRead: 0, requestInput: 1_600 },
+    misses: 2,
+  };
+
+  // No miss observed: byte-identical to the report before the tracker existed,
+  // whether the report is absent or the runtime's empty one.
+  const without = formatUsageReport(parent, config('bedrock'), false, false, lastTurn);
+  const withNone = formatUsageReport(parent, config('bedrock'), false, false, lastTurn, undefined, undefined, undefined, none);
+  assert('an empty miss report renders byte-identically to the pre-tracker report', without === withNone);
+  assert('the no-miss report carries neither row', !without.includes('cache misses') && !without.includes('last miss'));
+
+  const withMiss = formatUsageReport(parent, config('bedrock'), false, false, lastTurn, undefined, undefined, undefined, idle);
+  const lines = withMiss.split('\n');
+  assert('the top block gains one `cache misses` count row, aligned like the counters',
+    lines.includes(`  ${'cache misses'.padEnd(WIDTH)}  ${'2'.padStart(12)}`));
+  assert('the last-turn block gains one `last miss` text row naming the cause with the configured TTL',
+    lines.includes(`  ${'last miss'.padEnd(WIDTH)}  idle past cache TTL (5m)`));
+  assert('the last miss row sits inside the last-turn block',
+    lines.indexOf('last turn (previous turn)') < lines.findIndex((line) => line.includes('last miss')));
+  assert('every pre-existing line is unchanged',
+    without.split('\n').every((line) => lines.includes(line)) && lines.length === without.split('\n').length + 2);
+  assert('the TTL in the cause follows the config',
+    formatUsageReport(parent, { ...config('bedrock'), promptCacheTtl: '1h' }, false, false, lastTurn, undefined, undefined, undefined, idle)
+      .includes(`  ${'last miss'.padEnd(WIDTH)}  idle past cache TTL (1h)`));
+  assert('without a completed turn the count row still appears and the last-turn block does not',
+    (() => {
+      const report = formatUsageReport(parent, config('bedrock'), false, false, undefined, undefined, undefined, undefined, idle);
+      return report.includes('cache misses') && !report.includes('last miss') && !report.includes('last turn');
+    })());
+  assert('other causes render as their own text',
+    formatUsageReport(parent, config('bedrock'), false, false, lastTurn, undefined, undefined, undefined, {
+      lastMiss: { cause: 'model switched', at: 0, cacheRead: 0, requestInput: 100 },
+      misses: 1,
+    }).includes(`  ${'last miss'.padEnd(WIDTH)}  model switched`));
+}
+
 await adapterContract();
 projectionContracts();
 effectivenessContracts();
@@ -428,4 +473,5 @@ sumContracts();
 childSectionContracts();
 efficiencySectionContracts();
 costLineContracts();
+cacheMissContracts();
 report();

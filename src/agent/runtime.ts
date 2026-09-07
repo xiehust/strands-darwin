@@ -138,13 +138,15 @@ import {
   type RewindCatalogue,
   type RewindCheckpoint,
 } from './rewind.js';
-import { deltaUsage, startCallSpend, startTurnSpend, sumUsage, type UsageTotals } from './usage.js';
+import { deltaUsage, requestInputTokens, startCallSpend, startTurnSpend, sumUsage, usageBuckets, type UsageTotals } from './usage.js';
 import {
   emptyCallStats,
+  readCallUsage,
   recordCompletedCall,
   type CompletedModelCall,
   type SessionCallStats,
 } from './call-stats.js';
+import { CacheMissTracker, promptCacheTtlMs, type CacheMissReport, type CacheWarmth } from './cache-miss.js';
 import { anchorFromCall, resolveAnchor, type ContextAnchor } from './context-anchor.js';
 import type { ModelPriceLookup, ModelUsageShare } from './cost.js';
 import { defaultModelPriceStore, type ModelPriceStore } from '../pricing/model-prices.js';
@@ -288,6 +290,12 @@ export type { UsageTotals } from './usage.js';
 export interface ThinkingChangeResult {
   plan: ThinkingPlan;
   saved: Promise<void>;
+  /**
+   * True when the level actually sent changed — the only case that invalidates the
+   * conversation cache (a clamped or repeated level leaves the request as it was).
+   * The runtime marks its cache-miss tracker on the same fact (SER-074).
+   */
+  effectiveChanged: boolean;
 }
 
 /**
@@ -475,6 +483,20 @@ export class AgentRuntime {
   private contextAnchorBroken = false;
 
   /**
+   * Why the prompt cache missed, per completed call (SER-074): the same
+   * `afterModelCallEvent` counters the call stats fold, joined with the invalidating
+   * events this runtime performed (`/model`, `/effort`, `/compact`) and the TTL.
+   * Parent-only and session-scoped like the two observers above; built in the
+   * constructor so `/clear`'s successor starts empty. Read through
+   * {@link cacheMissReport} and {@link cacheWarmth}, both silent unless the live
+   * cache plan has Darwin-managed cache points.
+   */
+  private cacheMisses: CacheMissTracker;
+
+  /** Latched on the first tracker failure — its own latch, so it cannot break the others. */
+  private cacheMissesBroken = false;
+
+  /**
    * Which background jobs' terminal states completed turns already carried to the
    * model through `wait`/`status` results (SER-069): the interactive drain asks it
    * before sending a wake, so a job the model already saw finish never starts a
@@ -535,6 +557,7 @@ export class AgentRuntime {
     this.thinkingPlan = info.thinking;
     this.liveConfig = info.config;
     this.promptCachePlan = info.promptCache;
+    this.cacheMisses = new CacheMissTracker(() => promptCacheTtlMs(this.promptCachePlan.ttl), info.resumed);
     // Fire and forget: a mapped id costs one file read, an unmapped one starts the
     // single bounded background fetch. Nothing awaits it — not startup, not the
     // first turn — and it cannot reject, so it cannot become a startup failure.
@@ -1117,6 +1140,7 @@ export class AgentRuntime {
         // calls that completed. Cannot throw — see {@link observeCallStats}.
         this.observeCallStats(event);
         this.observeContextAnchor(event);
+        this.observeCacheMiss(event);
         this.terminalDelivery.observe(event);
         yield event;
       }
@@ -1268,6 +1292,8 @@ export class AgentRuntime {
         },
       });
       await this.codexHooks?.postCompact('manual');
+      // A rewritten history is a new cache prefix; a no-op pass left it as it was.
+      if (result.compacted) this.markCacheInvalidated('compact');
       return result;
     } catch (error) {
       // compactConversation has already restored the live messages. If saving the
@@ -1442,10 +1468,16 @@ export class AgentRuntime {
    * cache breakpoint (switching thinking *modes* would).
    */
   changeThinkingEffort(effort: ThinkingEffort): ThinkingChangeResult {
+    const before = this.thinkingPlan.effective;
     this.thinkingPlan = applyThinkingEffort(this.model, this.liveConfig, effort);
+    // Only a change in what is actually sent alters the request; a clamped or
+    // repeated level is a no-op for the cache and must not be blamed for a miss.
+    const effectiveChanged = this.thinkingPlan.effective !== before;
+    if (effectiveChanged) this.markCacheInvalidated('effort');
     return {
       plan: this.thinkingPlan,
       saved: saveThinkingEffort(this.projectRoot, effort),
+      effectiveChanged,
     };
   }
 
@@ -1553,6 +1585,8 @@ export class AgentRuntime {
     this.codexHooks?.updateConfig(next);
     this.thinkingPlan = thinkingPlan;
     this.promptCachePlan = promptCachePlan;
+    // A different model keys a different cache: the next call re-reads uncached.
+    this.markCacheInvalidated('model');
 
     const choice = next.modelChoices.find((entry) => entry.index === target.index) as ModelChoice;
     return {
@@ -1660,6 +1694,62 @@ export class AgentRuntime {
     } catch {
       this.contextAnchorBroken = true;
     }
+  }
+
+  /**
+   * Folds one completed call into the cache-miss tracker (SER-074): the call's cache
+   * read and request total through the same `usageBuckets`/`requestInputTokens`
+   * arithmetic `/usage` and `/context` use, stamped with the wall clock. Same
+   * observer discipline and its own latch, like the two above. Unreported counters
+   * are passed as unknown — the tracker returns no verdict for them.
+   */
+  private observeCacheMiss(event: AgentStreamEvent): void {
+    if (this.cacheMissesBroken || event.type !== 'afterModelCallEvent') return;
+    try {
+      const stopData = (event as { stopData?: CompletedModelCall }).stopData;
+      if (stopData === undefined) return;
+      const usage = readCallUsage(stopData.message?.metadata?.usage);
+      this.cacheMisses.observe({
+        at: Date.now(),
+        cacheRead: usage === undefined ? undefined : usageBuckets(usage, this.liveConfig).cacheRead,
+        requestInput: usage === undefined ? undefined : requestInputTokens(usage, this.liveConfig),
+      });
+    } catch {
+      this.cacheMissesBroken = true;
+    }
+  }
+
+  /** One invalidating event since the last completed call; a broken tracker ignores it. */
+  private markCacheInvalidated(event: 'model' | 'effort' | 'compact'): void {
+    if (this.cacheMissesBroken) return;
+    try {
+      this.cacheMisses.mark(event);
+    } catch {
+      this.cacheMissesBroken = true;
+    }
+  }
+
+  /**
+   * The likely causes of this session's prompt-cache misses, for `/usage` and
+   * `/status` — empty (`misses: 0`, no last miss) until one is observed, after a
+   * tracker failure, and whenever the live plan places no Darwin-managed cache
+   * point (caching off, an unsupported model, or OpenAI's provider-managed cache),
+   * so those reports stay byte-identical to before the feature existed.
+   */
+  cacheMissReport(): CacheMissReport {
+    if (this.cacheMissesBroken || !this.promptCachePlan.enabled) return { lastMiss: undefined, misses: 0 };
+    return this.cacheMisses.report();
+  }
+
+  /**
+   * Whether the last completed call's cache entries are still readable at `now` —
+   * warm iff that call read from the cache and finished less than the TTL ago. What
+   * `/model` and `/effort` consult before a switch. `undefined` until a call has
+   * completed, and under the same silence rule as {@link cacheMissReport}.
+   */
+  cacheWarmth(now: number): CacheWarmth | undefined {
+    if (this.cacheMissesBroken || !this.promptCachePlan.enabled) return undefined;
+    return this.cacheMisses.warmth(now);
   }
 
   /**

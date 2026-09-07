@@ -677,6 +677,32 @@ the Ink frame. The header states it on the model line, never a line of its own: 
 shares the live frame with the permission box, and one extra line pushes the box off a 50-row
 terminal (`spike/verify-tui.ts approve` catches it).
 
+**A cache miss gets a likely cause, never a remedy** (SER-074, `src/agent/cache-miss.ts`,
+`AgentRuntime.cacheMissReport()` / `cacheWarmth()`). `/usage` and `/status` always showed cache
+read/write counts and a hit ratio; nothing said *why* a call re-read the conversation uncached,
+although darwin holds every input: the per-call provider counters `observeCallStats` already
+folds, the invalidating events the session itself performed, the configured TTL, the wall clock
+and the resume flag. The derivation is pure and advisory on the context-pressure row's terms — a
+completed call that reads less than `CACHE_MISS_READ_FRACTION` (20%) of its request
+(`requestInputTokens`, shared with `/context`) after a call that did read is a miss, and exactly
+one cause is named in fixed precedence: `model switched` > `effort changed` (only when the level
+actually sent changed) > `compacted` (only when `compacted: true`) > `idle past cache TTL (<ttl>)`
+> `first request of a resumed session` > `unknown`. `/rewind` is deliberately not an invalidator:
+it restores an earlier prefix of the same conversation, whose entries stay readable until they
+expire — the same rule as file edits, permission-mode changes and skill loads, none of which touch
+a cached section. Three silences are load-bearing: unreported counters are unknown, never a miss;
+a fresh session's first call is expected cold and gets no verdict; and the tracker is silent
+whenever the live plan places no Darwin-managed cache point (caching off, an unsupported model,
+OpenAI's provider-managed cache), so those sessions' reports stay byte-identical to before. The
+surfaces are the existing ones — one `cache misses` row and one `last miss` row on `/usage`, one
+` · last miss:` clause on `/status`'s model row, only once a miss was observed — plus one notice
+`/model <target>` and `/effort <level>` print *before* a switch on a warm cache (last call read,
+less than the TTL ago), stating the uncached re-read and proceeding: no confirmation dialog, no
+auto-compaction, no second threshold, no frame row, tick, channel, trajectory record or config
+key. The tracker observes under the call-stats discipline (synchronous, non-throwing, its own
+latch) and `/clear`'s successor starts empty. Free coverage: `spike/verify-cache-miss.ts`
+(pure derivation plus a real offline runtime), `verify-usage.ts`, `verify-status-command.ts`.
+
 ## Thinking effort
 
 **Thinking effort** (`src/agent/thinking.ts`, `thinkingEffort` in config, `/effort` at

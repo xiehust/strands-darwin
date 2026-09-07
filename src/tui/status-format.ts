@@ -22,6 +22,7 @@ import type { ThinkingPlan } from '../agent/thinking.js';
 import { formatUsageValue, sumUsage, usageBuckets } from '../agent/usage.js';
 import { describeCost, describeModelCosts, withChildUsage, type ModelPriceLookup, type ModelUsageShare } from '../agent/cost.js';
 import { describeCallEfficiency, type SessionCallStats } from '../agent/call-stats.js';
+import { describeCacheMissCause, type CacheMissReport } from '../agent/cache-miss.js';
 import type { AppConfig } from '../config.js';
 import type { McpServerStatus } from '../mcp/registry.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
@@ -99,6 +100,13 @@ export interface StatusFacts {
    * byte-identical, the childUsage convention).
    */
   callStats: SessionCallStats | undefined;
+  /**
+   * `runtime.cacheMissReport()` — the likely cause of this session's last
+   * prompt-cache miss and how many were observed (SER-074). `misses: 0` keeps the
+   * model row byte-identical: the tracker is silent when counters are unreported
+   * or the live plan places no Darwin-managed cache point.
+   */
+  cacheMisses: CacheMissReport;
   /** True while a turn streams: the meter has not counted it yet, said out loud. */
   turnInFlight: boolean;
   /** The awaited `runtime.contextEstimate()`, or undefined when it failed. */
@@ -121,7 +129,8 @@ export function formatStatusReport(facts: StatusFacts): string {
     [
       'model',
       `${facts.config.provider}/${facts.config.model}` +
-        `${formatPromptCache(facts.promptCache)}${formatThinking(facts.thinking)}`,
+        `${formatPromptCache(facts.promptCache)}${formatThinking(facts.thinking)}` +
+        describeLastCacheMiss(facts),
     ],
     ['session', `${facts.sessionId}${facts.resumed ? ' (resumed)' : ''}`],
     ['mode', describeMode(facts.mode, facts.allowRuleCount)],
@@ -176,6 +185,17 @@ export function formatStatusReport(facts: StatusFacts): string {
     );
   }
   return ['status — this session', ...lines].join('\n');
+}
+
+/**
+ * ` · last miss: <cause>` on the model row (SER-074), only once a miss was observed
+ * this session — the cache the row already describes is what missed, and the TTL
+ * cause names the TTL the row shows. Empty otherwise, so the row stays byte-identical.
+ */
+function describeLastCacheMiss(facts: StatusFacts): string {
+  const { lastMiss, misses } = facts.cacheMisses;
+  if (misses <= 0 || lastMiss === undefined) return '';
+  return ` · last miss: ${describeCacheMissCause(lastMiss.cause, facts.promptCache.ttl)}`;
 }
 
 /**
