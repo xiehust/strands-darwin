@@ -338,7 +338,7 @@ Depends on SER-069 (wake entry kind, `taskNotification` record type, drain-race 
 
 ## SER-071 — Sensitive-path reads are never silent: `fileEditor view` and whitelisted bash readers whose path arguments resolve into a fixed sensitive set (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.kube/config`, `~/.docker/config.json`, `.env*`, darwin's own config via `isSensitiveDarwinPath`, `/etc/shadow`) become `dangerous` reads — prompted in `default`/`auto`/`plan`, denied in headless, no allow-rule offered — while every other read stays `safe` byte-identical
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 96
 - Score: 10
 - Importance: 4
