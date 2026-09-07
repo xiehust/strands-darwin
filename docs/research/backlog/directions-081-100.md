@@ -333,3 +333,118 @@ Original requirement. Today `src/agent/background-delegation.ts` builds the SDK 
 
 Depends on SER-069 (wake entry kind, `taskNotification` record type, drain-race pin). SDK support verified in the installed `@strands-agents/sdk@1.16.0`: `background-tasks.js:219` `while (this._config.waitForCompletion !== false && …)`, `:112` `agent.addHook(BeforeModelCallEvent, …)` → `_deliverReady`, `:186` `assertCanLoadSnapshot` throws while tasks are tracked. Peer evidence in the origin report: S2 (registry, `notified` flag, resume re-registration), S6 (tasks killed when the dispatching child returns — not applicable: delegation is parent-only), S9 (`Agent(run_in_background: true)` since v2.0.60). Risk is concentrated in the invariant rewrite: `verify-background-delegation.ts` asserts same-turn delivery today, and the observer's per-stream reset is what keeps a forwarded event inside the turn that dispatched it; both change together. Explicitly not adopted from the peer: mid-turn fold of the result into a running user turn (the SDK's before-model-call delivery is the bounded equivalent and happens only at a model-call boundary the SDK owns).
 
+
+---
+
+## SER-071 — Sensitive-path reads are never silent: `fileEditor view` and whitelisted bash readers whose path arguments resolve into a fixed sensitive set (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.kube/config`, `~/.docker/config.json`, `.env*`, darwin's own config via `isSensitiveDarwinPath`, `/etc/shadow`) become `dangerous` reads — prompted in `default`/`auto`/`plan`, denied in headless, no allow-rule offered — while every other read stays `safe` byte-identical
+
+- Status: `not-started`
+- Priority: 96
+- Score: 10
+- Importance: 4
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-09-07.md`](../research_2026-09-07.md) (run `09:36:39Z`, rolled `peer` path)
+
+### Implementation / acceptance evidence
+
+Requirement. Today `assessRisk` (`src/agent/permission.ts`) returns `safe` for every `kind: 'read'` request and `assessBashRisk` scans arguments only for `find`/`git` mutating options, so `fileEditor view /home/u/.aws/credentials`, `cat ~/.ssh/id_rsa`, `head .env`, `rg password ~/.gnupg` and `cat $HOME/.darwin/config.json` (`$HOME` is not a `SHELL_METACHARACTERS` match) run without a prompt in `default`, `auto` and `plan` (`permission.ts` `if (request.kind === 'read') return undefined;`), and the bytes then enter the provider request and the trajectory record. Change: one pure `sensitiveReadPath(toolName, input, projectRoot)` (or equivalent) in `permission.ts`/`permission-rules.ts` that resolves `fileEditor view` paths and every non-option argument of a whitelisted bash reader (`~`, `$HOME`, relative and absolute forms; `..` segments resolved) against a fixed exported set — `~/.ssh/**`, `~/.aws/**`, `~/.gnupg/**`, `~/.netrc`, `~/.kube/config`, `~/.docker/config.json`, `.env` / `.env.*` basenames anywhere, `/etc/shadow`, and `isSensitiveDarwinPath` — and returns `{ risk: 'dangerous', riskReason: 'reads a sensitive path: <path>' }` from `assessRisk` for a match. The request stays `kind: 'read'` so `plan` mode still lets it through to the prompt rather than denying (writes/executes keep their deterministic denial); `suggestRules` offers no rule (same exemption shape as `.env*` writes); headless denies it like every other prompt; children share the gate; the user `!` shell is untouched (its subject is not model tool calls). Every non-matching read — `cat README.md`, `ls ~/.ssh/../`, `rg secret src/` — stays `safe` with today's exact `riskReason`. Peer evidence: S1 (Claude Code 2.1.257 one-time prompt before the first read outside the working directories and `permissions.blockReadsOutsideWorkingDirectories`); darwin deliberately uses a fixed path set instead of "outside the project", because it legitimately reads `/tmp`, `/etc/os-release` and global skill roots. Acceptance: `spike/verify-permission-modes.ts` (in `pnpm test`) gains cases for each sensitive path in `fileEditor view` and in `cat`/`head`/`rg`/`grep`/`ls` forms including `~` and `$HOME`, asserting `dangerous` with the path named, a prompt (not a deny) in `plan`, no rule offered, and byte-identical `safe` results for the existing fixtures plus the near-miss forms; a headless run with a sensitive read reports `permission denied`; `pnpm typecheck`, `pnpm test`, `pnpm build`. Docs: load-bearing § Permissions gains the read-side sentence; `AGENTS.md` has 27 B of headroom — compress the existing gate row's wording rather than adding a row; `docs/user-guide/reference.md` names the set.
+
+### Notes / blockers / abandonment reason
+
+Evidence: origin report S1 and the darwin baseline row "Read classification". Safety rationale: the trajectory (`src/trajectory/`) records tool results, so a silent read persists the secret on disk beside the request that already sent it to the provider; exfiltration (`http_request`, `web_fetch`, non-whitelisted bash) is gated, the read itself was not. Explicitly not adopted: a per-directory "outside the working directory" criterion and a one-time-per-session prompt (Claude Code) — a fixed set is explainable in one line and a repeated prompt is the honest cost of reading a credential path.
+
+
+---
+
+## SER-072 — `/status` gains one `hooks` row: active hook source files from `RuntimeInfo.hookSources` (bounded by `MAX_STATUS_NAMES` + `… N more`), `none` when empty, plus the shadow-notice count — a pure projection over the existing accessor, no new channel
+
+- Status: `not-started`
+- Priority: 97
+- Score: 12
+- Importance: 2
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 1
+- Risk: 1
+- Origin report: [`research_2026-09-07.md`](../research_2026-09-07.md) (run `09:36:39Z`, rolled `peer` path)
+
+### Implementation / acceptance evidence
+
+Requirement. `RuntimeInfo.hookSources` ("Active hook source files, in Pre policy order", `src/agent/runtime.ts`) and `hookShadowNotices` are loaded by `loadProjectPolicy` but rendered by no in-session surface (`rg hookSources src/tui` is empty; only startup shadow notices and `darwin doctor` mention hooks). Hooks run commands on tool and lifecycle events, so the user must be able to see in-session what is armed. Change: `formatStatusReport` (`src/tui/status-format.ts`) gains one `hooks` row after `skills` — `none` when there are no sources, otherwise the source paths (project-relative when inside the project, `~`-abbreviated when under the home directory) bounded by the existing `MAX_STATUS_NAMES` + `… N more`, followed by `· N shadowed` only when `hookShadowNotices` is non-empty; `StatusFacts` carries the two existing fields; nothing else in the report changes byte for byte. Peer evidence: S2 (Codex `/hooks`), S5 (Gemini CLI `/hooks list`). Acceptance: `spike/verify-status-command.ts` asserts the row for zero, one and more-than-`MAX_STATUS_NAMES` sources and for a shadow count, and that every other row is unchanged against the existing fixtures; `pnpm typecheck`, `pnpm test`, `pnpm build`; `docs/user-guide/reference.md` `/status` row list updated; no `AGENTS.md` change (the `/status` decision row already covers "a formatter over existing accessors").
+
+### Notes / blockers / abandonment reason
+
+Evidence: origin report baseline row "Hooks visibility". Scope guard: no new `/hooks` command, no enable/disable verbs (Codex/Gemini) — darwin's hook policy "fails closed and stays un-ruleable" (AGENTS.md extension-layers row), so the only honest in-session verb is *show*.
+
+
+---
+
+## SER-073 — Terminal title: the TUI sets the window/tab title (OSC 2) to a bounded `darwin · <project basename> · <state>` (`idle`, `working`, `waiting for approval`, `N queued`), written only when stdout is a TTY through the same raw-write seam as BEL/OSC 52, on state transitions only, restored on exit, disabled by `terminalTitle: false`; headless never writes
+
+- Status: `not-started`
+- Priority: 98
+- Score: 10
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-07.md`](../research_2026-09-07.md) (run `09:36:39Z`, rolled `peer` path)
+
+### Implementation / acceptance evidence
+
+Requirement. darwin never writes a terminal title (`rg -e '\]0;' -e '\]2;' -e setTitle src spike docs` → no match). Users who run several darwin sessions in tabs or panes have no away-from-tab status; Codex composes its title from app name, project, spinner, status and task progress (S2 `/title`). Change: one pure `formatTerminalTitle(state)` in a new `src/tui/terminal-title.ts` producing `darwin · <project basename> · <state>` with state exactly one of `idle`, `working`, `waiting for approval` (a permission prompt is published), `N queued` (prompt queue non-empty while idle), truncated to a fixed code-point cap, plus `terminalTitleSequence(title)` = `\x1b]2;<title>\x07` and `terminalTitleRestore(projectBasename)`; `App.tsx` writes it through the existing raw-write path (`terminal-bell.ts` style injected writer, real `process.stdout` in production) only when `process.stdout.isTTY` and the config key `terminalTitle` (default `true`, validated like `terminalBell`) is on, and only when the composed title changes — no tick, no new frame row, no channel; exit (`/exit`, Ctrl+C, shutdown) and `/clear` handover write the restore title once; headless (`-p`) never writes. Acceptance: `spike/verify-terminal-title.ts` (in `pnpm test`) proves the exact bytes per state, the change-only rule, the TTY/config guards and the restore sequence with a fake writer; `spike/verify-config.ts` covers the key; `spike/verify-tui.ts completion` still green; `pnpm typecheck`, `pnpm test`, `pnpm build`; `/help` and `docs/user-guide/reference.md` state the key; load-bearing doc gains one paragraph under the TUI frame-budget section (out-of-frame sequences: BEL, OSC 52, OSC 2).
+
+### Notes / blockers / abandonment reason
+
+Evidence: origin report S2 and baseline row "Terminal title". Not adopted from the peer: a configurable item picker and a spinner (a spinner needs a tick; the frame-budget row forbids a new tick source) — fixed composition, one boolean. Restore is best-effort (`OSC 2` with the project basename); the xterm title stack (`CSI 22;0 t` / `CSI 23;0 t`) may be used only if the child proves it degrades harmlessly on terminals without it.
+
+
+---
+
+## SER-074 — Prompt-cache miss cause: per completed model call derive one bounded `likely cause` (`/model`, `/effort`, `/compact` since the last call, idle past the configured TTL, first call after resume, else `unknown`) shown on `/usage`'s last-turn block and `/status`, plus one bounded notice when `/model` or `/effort` runs while the cache is warm naming the uncached re-read that follows; Claude-only, silent when counters are unreported, no new row/tick/channel
+
+- Status: `not-started`
+- Priority: 99
+- Score: 9
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 3
+- Risk: 2
+- Origin report: [`research_2026-09-07.md`](../research_2026-09-07.md) (run `09:36:39Z`, rolled `peer` path)
+
+### Implementation / acceptance evidence
+
+Requirement. `/usage` and `/status` show cache read/write counts and a hit ratio (`cacheEffectivenessRows`, `usageBuckets` in `src/agent/usage.ts`; `lastTurnUsage` in `runtime.ts`), but nothing names why a call missed, and `/model`/`/effort` print no cache-cost notice although darwin holds every input: per-call counters (`recordCompletedCall`), the events it performed (`changeModel`, `changeThinkingEffort`, `compact`), the configured TTL (`promptCacheTtl`, `5m` default / `1h`), the wall clock and the resume flag. Change: a pure `cacheMissCause(previousCall, thisCall, eventsSinceLastCall, idleMs, ttl, firstCallOfSession)` in `usage.ts` (or `prompt-cache.ts`) that returns `undefined` when either call's cache counters are unreported or this call read a non-trivial cache share, and otherwise exactly one of `model switched`, `effort changed`, `compacted`, `idle past cache TTL (<ttl>)`, `first request of a resumed session`, `unknown`; the runtime records the per-call fact next to `callStats`; `/usage` prints `last miss: <cause>` in the last-turn block and `/status`'s `model` row appends `· last miss: <cause>` only when a miss was observed this session. Separately, `/model` and `/effort` print one bounded local notice — `cache is warm (<age> ago, <N> tokens read last call): switching re-reads the conversation uncached` — when the last call had cache reads and finished less than the TTL ago; the switch itself is unchanged. Peer evidence: S1 (2.1.260 likely cause on `/cost`/status line), S1b (invalidation list; warm-cache confirmation on `/model`). Acceptance: `spike/verify-usage.ts` (or a sibling in `pnpm test`) proves each cause from synthetic call sequences under a fake clock, the unreported/OpenAI silence, the `unknown` fallback and the byte-identical `/usage`/`/status` output when no miss was observed; `spike/verify-model-command.ts` (free form) proves the warm-cache notice text and its absence when cold; `pnpm typecheck`, `pnpm test`, `pnpm build`; `docs/user-guide/reference.md` `/usage` section updated.
+
+### Notes / blockers / abandonment reason
+
+Evidence: origin report S1/S1b and baseline row "Prompt-cache reporting"; SRF-025's recorded cost (ten 300 s waits, 1.9 M prompt tokens for 1.6 K output) is what an uncached re-read of a long conversation costs here. Not adopted: a confirmation dialog on `/model`/`/effort` (Claude Code) — darwin states the cost and proceeds; the `/model` decision keeps the switch an explicit user act. The `context-pressure` row's rule applies: advisory only, no auto-compaction, no second threshold.
+
+
+---
+
+## SER-075 — Continuable children: a settled `subagent` dispatch's `Agent` (conversation only; its bash session is stopped as today) is retained in a bounded per-runtime store (last `MAX_RETAINED_CHILDREN = 4`, dropped on `/clear`, `/rewind`, shutdown or eviction) and the parent-only `subagent` tool accepts `continue: "<dispatch id>"` to send a follow-up task into that conversation as a new dispatch record (`continuedFrom`, same cap, projection, heartbeats); unknown/evicted/running ids are one bounded error; `workflow` nodes never retained
+
+- Status: `not-started`
+- Priority: 100
+- Score: 8
+- Importance: 4
+- Architecture fit: 3
+- Evidence confidence: 4
+- Difficulty: 4
+- Risk: 3
+- Origin report: [`research_2026-09-07.md`](../research_2026-09-07.md) (run `09:36:39Z`, rolled `peer` path)
+
+### Implementation / acceptance evidence
+
+Requirement. `SubagentTool` (`src/agents/subagent-tool.ts`) builds a child with `buildRecipeChild`, awaits `child.invoke`, and drops the `Agent` in `finally` after `stopBashSession(child)`; a finished child's context is gone, so any follow-up ("now also check the tests you mentioned") costs a fresh brief and a full re-read. Codex lets the user "inspect or continue work in a spawned subagent thread" (S2 `/agent`) and Claude Code resumes background subagents (S1). Change: a bounded `RetainedChildStore` (new `src/agents/retained-children.ts`) keyed by dispatch id holding the settled child's `Agent` and definition name for the last `MAX_RETAINED_CHILDREN = 4` `succeeded`/`failed` dispatches of this runtime (`cancelled` not retained; `workflow` nodes never retained), evicted oldest-first, cleared by `startNewSession`, `startRewind` and `shutdown`. The `subagent` tool schema gains an optional `continue: string` (dispatch id as shown on `/agents` rows and in the returned report) that, instead of building a child, takes the retained `Agent`, gives it a fresh bash session through the recipe, registers a **new** dispatch record (new id, `continuedFrom: <id>`, same `agentName`, task = the follow-up), and runs `invoke(task)` through the existing path: concurrency cap, heartbeat rows, permission `source`, `projectChildReport`, failed-child text, background delegation — all unchanged. A `continue` naming an unknown, evicted or still-running id, or combined with a different `agent`, is one bounded tool error before any model call. Records still never carry transcript (the store holds the Agent object, not the record). Acceptance: `spike/verify-continuable-children.ts` (in `pnpm test`, stubbed model) proves a continuation's request contains the retained conversation, the new record's `continuedFrom`, eviction at 5, the three refusals, that `/clear`/`/rewind`/shutdown empty the store, and that `workflow` nodes are never retained; `spike/verify-subagents.ts` (live) still green once; `pnpm typecheck`, `pnpm test`, `pnpm build`; docs: load-bearing § Subagents and `docs/architecture/sub-agents.md` gain the retention paragraph; `AGENTS.md` subagent row compressed, not extended (27 B headroom).
+
+### Notes / blockers / abandonment reason
+
+Evidence: origin report S1/S2 and baseline row "Subagent lifecycle"; the 2026-09-03 run rated this direction 9 and deferred it "until SER-064" — SER-064 and SER-070 are `done`. Ordered last in the batch because it is the only direction that adds lifecycle state. Not adopted: steering a *running* child (Codex) — continuation is offered only after settlement, so the SDK loop is never interrupted; a mailbox/roster (Claude Code teams) remains excluded per the 2026-09-03 decision.
+
