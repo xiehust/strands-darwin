@@ -27,6 +27,7 @@ AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven T
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|completion|bashExit|cancelThenContinue|agentsMd)
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
+AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts [model]  # cache written on turn 1, read on turn 2
 ```
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
