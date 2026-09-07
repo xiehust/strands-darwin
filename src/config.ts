@@ -231,8 +231,9 @@ export interface SessionFields {
   /**
    * Set the terminal window/tab title (one OSC 2 sequence, straight to stdout —
    * never an Ink row) to `darwin · <project> · <state>` where state is `idle`,
-   * `working`, `waiting for approval` or `N queued`, written only when it changes
-   * and only when stdout is a TTY; the bare project name is restored on exit
+   * `working` or `waiting for approval`, plus ` · N queued` while prompts wait;
+   * written only when it changes and only when stdout is a TTY; the bare project
+   * name is restored on exit
    * (SER-073). **On by default**: the title is the one surface visible from another
    * tab. `false` writes nothing at all. Headless drivers and child agents never
    * write a title regardless of this value.

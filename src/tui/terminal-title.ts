@@ -3,8 +3,8 @@
  *
  * The title is the one surface a user sees while another tab is focused, so it
  * carries the session's project and coarse state: `darwin · <project> · <state>`
- * with state exactly one of `idle`, `working`, `waiting for approval` or
- * `N queued`. Fixed composition, one boolean config key (`terminalTitle`) — no
+ * with state `idle`/`working`/`waiting for approval`, plus ` · N queued` while
+ * prompts wait. Fixed composition, one boolean config key (`terminalTitle`) — no
  * spinner (a spinner needs a tick, and the frame-budget row forbids a new tick
  * source), no model/branch/token fields, no picker.
  *
@@ -33,7 +33,9 @@ export const TERMINAL_TITLE_SEPARATOR = ' · ';
 /** Whole-title cap in code points, `…` included; tabs show far less than this. */
 export const MAX_TERMINAL_TITLE_CODE_POINTS = 80;
 
-export type TerminalTitleState = 'idle' | 'working' | 'waiting for approval' | `${number} queued`;
+export type TerminalTitleBaseState = 'idle' | 'working' | 'waiting for approval';
+/** The base, plus ` · N queued` while prompts wait behind it. */
+export type TerminalTitleState = TerminalTitleBaseState | `${TerminalTitleBaseState} · ${number} queued`;
 
 export interface TerminalTitleInput {
   readonly projectBasename: string;
@@ -50,16 +52,20 @@ export interface TerminalTitleSignals {
 }
 
 /**
- * Fixed precedence: a published permission prompt outranks everything (the loop
- * is waiting on the user), then a running turn, then a non-empty queue while
- * idle, else idle. A queue behind a running turn reads `working` — the turn is
- * what the user is waiting on.
+ * Fixed precedence for the base: a published permission prompt outranks everything
+ * (the loop is waiting on the user), then a running turn, else idle. The queue is
+ * not a competing state but a suffix on whichever base holds — a queue waiting
+ * behind a running turn is exactly what a user in another tab wants to see, and
+ * the idle-with-queue moment (the drain has not fired yet) stays honest too.
  */
 export function deriveTerminalTitleState(signals: TerminalTitleSignals): TerminalTitleState {
-  if (signals.permissionPending) return 'waiting for approval';
-  if (signals.busy) return 'working';
-  if (signals.queued >= 1) return `${Math.floor(signals.queued)} queued`;
-  return 'idle';
+  const base: TerminalTitleBaseState = signals.permissionPending
+    ? 'waiting for approval'
+    : signals.busy
+      ? 'working'
+      : 'idle';
+  if (signals.queued >= 1) return `${base}${TERMINAL_TITLE_SEPARATOR}${Math.floor(signals.queued)} queued`;
+  return base;
 }
 
 /** Removes every control character (C0, DEL, C1): BEL and ESC would end or start a sequence. */

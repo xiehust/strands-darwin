@@ -79,7 +79,7 @@
 | `memoryHorizonDays` | `28` | 生成记忆的有效天数，整数 `0–365`；`0` 只关闭过期检查 |
 | `maxConcurrentSubagents` | `8` | 同时运行的子代理派发上限（`subagent` 调用加 `workflow` 节点）；正整数；超出的调用会在创建任何模型或子代理之前被拒绝 |
 | `terminalBell` | `false` | 在权限提示和回合结束时响一次终端铃（仅交互式 TUI） |
-| `terminalTitle` | `true` | 把终端窗口/标签页标题设为 `darwin · <项目目录名> · <状态>`（`idle`、`working`、`waiting for approval`、`N queued`），仅在标题变化且 stdout 是 TTY 时写入；退出时恢复为项目目录名（仅交互式 TUI）；`false` 完全不写 |
+| `terminalTitle` | `true` | 把终端窗口/标签页标题设为 `darwin · <项目目录名> · <状态>`（状态为 `idle`/`working`/`waiting for approval`，有提示词排队时再加 ` · N queued`），仅在标题变化且 stdout 是 TTY 时写入；退出时恢复为项目目录名（仅交互式 TUI）；`false` 完全不写 |
 | `backgroundTaskWake` | `true` | `bash start` 后台任务结束时，把一条 `<task-notification>` 提示排入队列，作为独立回合唤醒代理（仅交互式 TUI）；`false` 只保留转录通知 |
 | `systemPrompt` | 内置值 | 替换基础 prompt，并优先于项目文件 |
 | `hooks` | — | 旧版内嵌后备配置；建议使用分层 `hooks/*.json` |

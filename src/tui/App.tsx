@@ -761,8 +761,9 @@ export function App({
   // sequence straight to the real stdout — the seam the bell uses, never Ink's
   // frame path — and only when the composed title changes, so this is a
   // transition write, not a tick. State is derived from what the App already owns:
-  // a published permission prompt outranks a running turn, which outranks a
-  // non-empty queue. `/clear` hands over a runtime for the same tree, so the title
+  // a published permission prompt outranks a running turn, which outranks idle, and
+  // a non-empty queue is a ` · N queued` suffix on whichever base holds. `/clear`
+  // hands over a runtime for the same tree, so the title
   // simply continues; unmount (every exit path) restores the bare project name once.
   const [terminalTitle] = useState(() => createTerminalTitleWriter({ isTTY: process.stdout.isTTY === true }));
   useEffect(() => {

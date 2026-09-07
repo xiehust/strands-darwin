@@ -2,8 +2,10 @@
  * Free checks for the config-gated terminal window/tab title (SER-073).
  *
  * Two layers. The unit contract pins the pure module: the exact title text and
- * OSC 2 bytes for each of the four states and the restore, the precedence of the
- * state derivation, end-first truncation at the exported cap, control-character
+ * OSC 2 bytes for the base states (`idle`, `working`, `waiting for approval`), the
+ * ` · N queued` suffix a waiting queue adds to whichever base holds, and the
+ * restore; the precedence of the base derivation, end-first truncation at the
+ * exported cap, control-character
  * stripping (a project name can never inject a second sequence), and the writer's
  * change-only rule plus its TTY / config guards and single restore. The pty layer
  * launches the real CLI through the terminal-bell fixture (only model
@@ -12,13 +14,17 @@
  * sequences: with the title enabled (the default) exactly one write per state
  * transition — idle, working, waiting for approval, working, idle, then a plain
  * second turn and the restore at `/exit`; with `terminalTitle: false`, zero
- * sequences anywhere. No model or network calls.
+ * sequences anywhere. The queued suffix is not exercised in the pty: the fixture's
+ * turns are too short to type a second prompt into deterministically, and while
+ * its permission prompt is up the keyboard belongs to the prompt, not the
+ * composer — the pure and writer assertions carry it. No model or network calls.
  */
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
   MAX_TERMINAL_TITLE_CODE_POINTS,
+  TERMINAL_TITLE_SEPARATOR,
   createTerminalTitleWriter,
   deriveTerminalTitleState,
   formatTerminalTitle,
@@ -47,27 +53,37 @@ function unitContract(): void {
     formatTerminalTitle({ projectBasename: project, state: 'working' }) === 'darwin · strands-darwin · working');
   assert('a published permission prompt reads `waiting for approval`',
     formatTerminalTitle({ projectBasename: project, state: 'waiting for approval' }) === 'darwin · strands-darwin · waiting for approval');
-  assert('a non-empty queue reads `N queued`',
-    formatTerminalTitle({ projectBasename: project, state: '3 queued' }) === 'darwin · strands-darwin · 3 queued');
+  assert('a queue behind a running turn reads `working · N queued`',
+    formatTerminalTitle({ projectBasename: project, state: 'working · 2 queued' }) === 'darwin · strands-darwin · working · 2 queued');
+  assert('a queue behind a permission prompt reads `waiting for approval · N queued`',
+    formatTerminalTitle({ projectBasename: project, state: 'waiting for approval · 1 queued' }) === 'darwin · strands-darwin · waiting for approval · 1 queued');
+  assert('the transient idle-with-queue moment reads `idle · N queued`',
+    formatTerminalTitle({ projectBasename: project, state: 'idle · 1 queued' }) === 'darwin · strands-darwin · idle · 1 queued');
 
   assert('the sequence is OSC 2, BEL-terminated: ESC ] 2 ; <title> BEL',
     terminalTitleSequence('darwin · strands-darwin · idle') === '\u001b]2;darwin · strands-darwin · idle\u0007');
+  assert('the queued form is the same sequence shape',
+    terminalTitleSequence('darwin · strands-darwin · working · 2 queued') === '\u001b]2;darwin · strands-darwin · working · 2 queued\u0007');
   assert('restore is the bare project basename in the same sequence',
     terminalTitleRestore(project) === '\u001b]2;strands-darwin\u0007');
   assert('the sequence never uses OSC 0 (icon name) or a title stack',
     !terminalTitleSequence('x').includes(']0;') && !terminalTitleRestore('x').includes('[22;') && !terminalTitleRestore('x').includes('[23;'));
 
-  header('terminal title — state derivation precedence');
-  assert('a permission prompt outranks a running turn and a queue',
-    deriveTerminalTitleState({ permissionPending: true, busy: true, queued: 4 }) === 'waiting for approval');
-  assert('a running turn outranks the queue',
-    deriveTerminalTitleState({ permissionPending: false, busy: true, queued: 2 }) === 'working');
-  assert('an idle session with a queue counts it',
-    deriveTerminalTitleState({ permissionPending: false, busy: false, queued: 2 }) === '2 queued');
-  assert('one queued entry reads `1 queued`',
-    deriveTerminalTitleState({ permissionPending: false, busy: false, queued: 1 }) === '1 queued');
-  assert('nothing pending is idle',
+  header('terminal title — state derivation: base precedence, queue as suffix');
+  assert('a permission prompt outranks a running turn; the queue rides as a suffix',
+    deriveTerminalTitleState({ permissionPending: true, busy: true, queued: 4 }) === 'waiting for approval · 4 queued');
+  assert('a running turn with a queue reads `working · N queued`',
+    deriveTerminalTitleState({ permissionPending: false, busy: true, queued: 2 }) === 'working · 2 queued');
+  assert('a running turn without a queue reads `working`, no suffix',
+    deriveTerminalTitleState({ permissionPending: false, busy: true, queued: 0 }) === 'working');
+  assert('a permission prompt without a queue reads `waiting for approval`, no suffix',
+    deriveTerminalTitleState({ permissionPending: true, busy: true, queued: 0 }) === 'waiting for approval');
+  assert('an idle session with a queue reads `idle · N queued`',
+    deriveTerminalTitleState({ permissionPending: false, busy: false, queued: 1 }) === 'idle · 1 queued');
+  assert('nothing pending is idle, no suffix',
     deriveTerminalTitleState({ permissionPending: false, busy: false, queued: 0 }) === 'idle');
+  assert('the suffix reuses the title separator',
+    deriveTerminalTitleState({ permissionPending: false, busy: true, queued: 3 }) === `working${TERMINAL_TITLE_SEPARATOR}3 queued`);
 
   header('terminal title — bounded and sanitized');
   const long = 'p'.repeat(200);
@@ -102,22 +118,27 @@ function unitContract(): void {
     writer.show({ projectBasename: 'proj', state: 'working' }, true);
     writer.show({ projectBasename: 'proj', state: 'waiting for approval' }, true);
     writer.show({ projectBasename: 'proj', state: 'working' }, true);
-    writer.show({ projectBasename: 'proj', state: '2 queued' }, true);
+    writer.show({ projectBasename: 'proj', state: 'working · 1 queued' }, true);
+    writer.show({ projectBasename: 'proj', state: 'working · 1 queued' }, true);
+    writer.show({ projectBasename: 'proj', state: 'working · 2 queued' }, true);
+    writer.show({ projectBasename: 'proj', state: 'working' }, true);
     writer.show({ projectBasename: 'proj', state: 'idle' }, true);
-    assert('every transition is exactly one write, in order', JSON.stringify(writes) === JSON.stringify([
+    assert('every transition is exactly one write, in order — a queue growing 1 → 2 → 0 during a turn is three distinct writes', JSON.stringify(writes) === JSON.stringify([
       '\u001b]2;darwin · proj · idle\u0007',
       '\u001b]2;darwin · proj · working\u0007',
       '\u001b]2;darwin · proj · waiting for approval\u0007',
       '\u001b]2;darwin · proj · working\u0007',
-      '\u001b]2;darwin · proj · 2 queued\u0007',
+      '\u001b]2;darwin · proj · working · 1 queued\u0007',
+      '\u001b]2;darwin · proj · working · 2 queued\u0007',
+      '\u001b]2;darwin · proj · working\u0007',
       '\u001b]2;darwin · proj · idle\u0007',
     ]));
     assert('lastTitle reports the title, not the sequence', writer.lastTitle === 'darwin · proj · idle');
     writer.restore();
     writer.restore();
-    assert('restore writes the bare project name exactly once', writes.length === 7 && writes[6] === '\u001b]2;proj\u0007');
+    assert('restore writes the bare project name exactly once', writes.length === 9 && writes[8] === '\u001b]2;proj\u0007');
     writer.show({ projectBasename: 'proj', state: 'working' }, true);
-    assert('nothing is written after restore', writes.length === 7);
+    assert('nothing is written after restore', writes.length === 9);
   }
   {
     const writes: string[] = [];

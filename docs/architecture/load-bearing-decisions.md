@@ -1107,9 +1107,12 @@ one raw-write seam — the real `process.stdout` behind an injectable writer, ne
 render path — so they cost the budget nothing, never appear in ANSI-stripped pty assertions
 (`stripAnsi` and `reconstructTerminalLines` skip OSC payloads), and leave `/export` and replay
 byte-identical. The title is the strictest of the three because it is *state*, and state
-invites polling: it is a fixed composition (state exactly one of `idle`, `working`,
-`waiting for approval`, `N queued`, precedence in that order, derived from the permission
-queue, `status` and the prompt queue the App already owns), a writer keeps the last title and
+invites polling: it is a fixed composition (state `idle`/`working`/`waiting for approval` —
+a published permission prompt outranks a running turn, which outranks idle — plus ` · N queued`
+while prompts wait, a suffix on whichever base holds rather than a competing state, because a
+queue waiting behind a running turn is exactly what a user in another tab wants to see; derived
+from the permission queue, `status` and the prompt queue the App already owns), a writer keeps
+the last title and
 writes only when the composed title *changes* — a streaming turn of hundreds of frames is two
 writes — and there is deliberately no spinner, because a spinner is a tick and this section
 forbids a new tick source. The title is an escape-sequence payload, so every control character
