@@ -126,6 +126,30 @@ as `succeeded`, `failed`, or `cancelled`. Cleanup always removes the child from 
 restarts its persistent bash session if it used one. Shared MCP clients remain owned by the main
 runtime and are disconnected only during runtime shutdown.
 
+### Continuing a settled child
+
+The Agent object is dropped at settlement, but its *conversation* is not lost at once. `SubagentTool`
+keeps, in a private bounded store (`src/agents/retained-children.ts`), a deep copy of the child's
+`Agent.messages` plus the definition name and terminal state for the last `MAX_RETAINED_CHILDREN = 4`
+settled `subagent` dispatches, keyed by dispatch id and evicted oldest-first. `succeeded` dispatches are
+retained; `failed` ones only when the conversation ends in a complete assistant message with every tool
+use answered (a refusal stop qualifies; a stream that died after a tool result does not); `cancelled`
+never; `workflow` nodes never (they are built by `WorkflowTool`, not `SubagentTool.run`).
+
+The parent-only `subagent` tool accepts an optional `continue: "<dispatch id>"`. The follow-up `task`
+is then sent into that conversation: a fresh child is built by the same recipe with the retained
+messages as its `messages` seed, under a **new** dispatch record whose only extra field is
+`continuedFrom` (shown on the `/agents` row as ` — continues #<id>`), through the ordinary path —
+concurrency cap, heartbeats, permission source labels, report projection, failed-child text, hooks,
+background delegation. The continued dispatch is itself retained, so follow-ups chain within the
+four-entry bound. An unknown, still-running, cancelled, evicted or skipped id, a `workflow` node, or an
+`agent` naming a different definition is one bounded tool error before any model or child exists.
+
+Nothing about this survives the runtime: `/clear` and `/rewind` build a successor runtime with a new
+`SubagentTool` (the predecessor's store is cleared through `subagents.shutdown()`), and `shutdown()`
+clears it. No bash session or Agent is retained, and the retained messages never reach a dispatch
+record, `/agents` output or the trajectory.
+
 ## Context and result isolation
 
 Darwin deliberately does not use SDK `Agent.asTool()`, because that adapter forwards child stream
@@ -243,7 +267,9 @@ for an answer that can no longer arrive.
 
 The design intentionally does not provide:
 
-- persistent or resumable child conversations;
+- persistent or resumable child conversations beyond the in-session `continue` store (nothing is
+  written to disk; a process restart, `/clear`, `/rewind` or eviction ends continuability);
+- steering a child while it runs — continuation is offered only after settlement;
 - recursive child-to-child delegation;
 - a background scheduler or autonomous swarm;
 - parent access to the child's live transcript or tool stream;
@@ -260,6 +286,8 @@ The executable contracts are concentrated in:
 - `spike/verify-subagents.ts` — discovery, fresh histories, tool filters, permissions, lifecycle,
   cancellation, concurrency, provenance, and registry behavior;
 - `spike/verify-subagent-format.ts` — dispatch ids and bounded display projections;
+- `spike/verify-continuable-children.ts` — the retained-conversation store and `subagent continue`:
+  seeding, new record with `continuedFrom`, refusals, eviction, `/clear`/`/rewind` successors;
 - `spike/verify-permission-modes.ts` — parent/child provenance and plan-mode behavior;
 - `spike/verify-subagents-live.ts` — real main-to-child delegation and shared permission bridge;
 - `spike/verify-tui.ts agents` — `/agents` behavior without model calls;

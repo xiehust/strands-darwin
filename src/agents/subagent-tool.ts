@@ -15,8 +15,16 @@ import { withFailedChildText } from './failed-child-text.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME } from './loader.js';
 import { projectChildReport } from './report-projection.js';
+import { MAX_RETAINED_CHILDREN, RetainedChildStore, type RetainedChild } from './retained-children.js';
 
 export const SUBAGENT_TOOL_NAME = 'subagent';
+
+/** The one sentence the tool description spends on `continue` (SER-075). */
+export const CONTINUE_DESCRIPTION_CLAUSE =
+  `Pass continue: "<dispatch id>" (the 8-character id on the /agents row and in the live subagent row — the first 8 ` +
+  `alphanumeric characters of that call's tool_use id after any tooluse_ prefix) to send the task as a follow-up ` +
+  `into a finished child's retained conversation instead of briefing a fresh one; the last ` +
+  `${MAX_RETAINED_CHILDREN} settled children of this session are kept.`;
 
 type ChildAgentObserver = (agent: Agent) => void;
 
@@ -65,6 +73,12 @@ export class SubagentTool {
   private config: AppConfig;
   private readonly activeAgents = new Set<Agent>();
   private readonly activeExecutions = new Set<Promise<string>>();
+  /**
+   * Settled children's conversations for `continue` (SER-075). Per tool, so per
+   * runtime: `/clear` and `/rewind` build a successor tool and `shutdown()` clears
+   * this one. Conversations only — never the Agent or its bash session.
+   */
+  private readonly retained = new RetainedChildStore();
 
   constructor(private readonly options: SubagentToolOptions) {
     this.config = options.config;
@@ -78,12 +92,16 @@ export class SubagentTool {
         'Delegate a self-contained task to a fresh child agent with an independent context. ' +
         `Only the final report is returned. ${concurrencyDescriptionClause(concurrencyCap(options.config))} ` +
         `${backgroundDelegationDescriptionClause(options.backgroundCompletionWakes === true)} ` +
+        `${CONTINUE_DESCRIPTION_CLAUSE} ` +
         `Available agents: ${catalogue}`,
       inputSchema: z.object({
         task: z.string().min(1).describe('A complete, self-contained task for the child agent'),
         agent: z.string().optional().describe(`Agent name; defaults to ${DEFAULT_AGENT_NAME}`),
+        continue: z.string().optional().describe(
+          "Dispatch id of a finished child to continue; the follow-up `task` is sent into that child's retained conversation",
+        ),
       }),
-      callback: ({ task, agent }, context) => this.track(task, agent, context),
+      callback: ({ task, agent, continue: continued }, context) => this.track(task, agent, continued, context),
     });
   }
 
@@ -97,14 +115,25 @@ export class SubagentTool {
     for (const agent of this.activeAgents) agent.cancel();
   }
 
-  /** Cancels active children and waits for their per-dispatch cleanup to finish. */
+  /** Cancels active children, waits for their per-dispatch cleanup, and drops every retained conversation. */
   async shutdown(): Promise<void> {
     this.cancelActive();
     await Promise.allSettled([...this.activeExecutions]);
+    this.retained.clear();
   }
 
-  private track(task: string, requestedName: string | undefined, context?: ToolContext): Promise<string> {
-    const execution = this.dispatch(task, requestedName, context);
+  /** Ids of the settled children currently continuable, oldest first — ids only, never their conversations. */
+  retainedDispatchIds(): string[] {
+    return this.retained.ids();
+  }
+
+  private track(
+    task: string,
+    requestedName: string | undefined,
+    continued: string | undefined,
+    context?: ToolContext,
+  ): Promise<string> {
+    const execution = this.dispatch(task, requestedName, continued, context);
     this.activeExecutions.add(execution);
     void execution.then(
       () => this.activeExecutions.delete(execution),
@@ -116,9 +145,13 @@ export class SubagentTool {
   private async dispatch(
     task: string,
     requestedName: string | undefined,
+    continued: string | undefined,
     context?: ToolContext,
   ): Promise<string> {
-    const definition = this.find(requestedName ?? DEFAULT_AGENT_NAME);
+    // A continuation resolves its definition from the retained entry, and every
+    // refusal below happens before any model, dispatch record or child exists.
+    const continuation = continued === undefined ? undefined : this.resolveContinuation(continued, requestedName);
+    const definition = this.find(continuation?.agentName ?? requestedName ?? DEFAULT_AGENT_NAME);
     if (definition === undefined) {
       const available = this.options.registry.definitions.map((candidate) => candidate.name).join(', ');
       return `No subagent named ${JSON.stringify(requestedName)}. Available agents: ${available}.`;
@@ -141,14 +174,57 @@ export class SubagentTool {
       agentName: definition.name,
       task,
       toolUseId: context?.toolUse.toolUseId,
+      ...(continuation === undefined ? {} : { continuedFrom: continuation.dispatchId }),
     });
 
     try {
-      return await this.run(definition, task, dispatch, context);
+      return await this.run(definition, task, dispatch, context, continuation);
     } catch (error) {
       dispatch?.finish('failed');
       throw error;
     }
+  }
+
+  /**
+   * The retained entry for `continue=<id>`, or one bounded error naming why there
+   * is none: still running, cancelled, evicted, skipped (broken pair), settled
+   * outside this tool (a `workflow` node), unknown, or a different `agent`.
+   */
+  private resolveContinuation(continued: string, requestedName: string | undefined): RetainedChild {
+    const dispatchId = continued.trim();
+    const lookup = this.retained.lookup(dispatchId);
+    if (lookup.kind === 'retained') {
+      const { entry } = lookup;
+      if (requestedName !== undefined && requestedName.trim().toLowerCase() !== entry.agentName.toLowerCase()) {
+        throw new Error(
+          `Subagent dispatch ${dispatchId} ran agent ${entry.agentName}; continue it without agent or with agent=${entry.agentName}.`,
+        );
+      }
+      return entry;
+    }
+    const recorded = this.options.dispatches?.list().filter((status) => status.dispatchId === dispatchId) ?? [];
+    if (recorded.some((status) => status.state === 'running')) {
+      throw new Error(`Subagent dispatch ${dispatchId} is still running; wait for its result before continuing it.`);
+    }
+    if (lookup.kind === 'evicted') {
+      throw new Error(
+        `Subagent dispatch ${dispatchId} was evicted from the retained children ` +
+        `(only the last ${MAX_RETAINED_CHILDREN} settled dispatches are kept); brief a fresh child instead.`,
+      );
+    }
+    if (lookup.kind === 'skipped') {
+      throw new Error(`Subagent dispatch ${dispatchId} was not retained for continuation: ${lookup.reason}.`);
+    }
+    if (recorded.some((status) => status.state === 'cancelled')) {
+      throw new Error(`Subagent dispatch ${dispatchId} was not retained for continuation: cancelled children are not retained.`);
+    }
+    if (recorded.length > 0) {
+      throw new Error(
+        `Subagent dispatch ${dispatchId} was not retained for continuation: ` +
+        'only settled subagent dispatches are; workflow nodes never are.',
+      );
+    }
+    throw new Error(`No subagent dispatch ${dispatchId} to continue in this session.`);
   }
 
   private async run(
@@ -156,6 +232,7 @@ export class SubagentTool {
     task: string,
     dispatch: SubagentDispatchHandle | undefined,
     context?: ToolContext,
+    continuation?: RetainedChild,
   ): Promise<string> {
     // Snapshot the live config before the async model construction. A concurrent
     // /model switch affects the next dispatch, never a child already being built.
@@ -181,6 +258,9 @@ export class SubagentTool {
       projectInstructions: this.options.projectInstructions,
       idPrefix: 'subagent',
       dispatch,
+      // Fresh clones per continuation: the store's copy stays pristine, so the
+      // same settled child can be continued again after this one settles.
+      ...(continuation === undefined ? {} : { messages: continuation.messages.map((message) => message.clone()) }),
     });
 
     this.activeAgents.add(child);
@@ -201,6 +281,7 @@ export class SubagentTool {
       if (isRefusalStop(result.stopReason)) throw new Error(CHILD_REFUSAL_ERROR);
       const outcome = result.stopReason === 'cancelled' ? 'cancelled' : 'succeeded';
       dispatch?.finish(outcome);
+      this.retainSettled(dispatch, definition, child, outcome, continuation);
       // The one seam where child text becomes the parent's tool result: escape
       // imitation of darwin's own framing and mark it, never remove or reword.
       const report = projectChildReport(withRetainedMaxTokensText(result.toString(), invocationState));
@@ -213,6 +294,9 @@ export class SubagentTool {
       });
       return report;
     } catch (error) {
+      // The caller settles the dispatch `failed`; a cancelled child is not a failure
+      // and is never retained, a failed one only with a whole conversation.
+      this.retainSettled(dispatch, definition, child, child.cancelSignal.aborted ? 'cancelled' : 'failed', continuation);
       // Still an error (dispatch settles `failed` in the caller): only the message
       // grows, by the child's bounded last assistant text through the same projection.
       throw withFailedChildText(error, child, invocationState);
@@ -225,6 +309,29 @@ export class SubagentTool {
         childCodexHooks?.close() ?? Promise.resolve(),
       ]);
     }
+  }
+
+  /**
+   * Hands one settled child's conversation to the store (SER-075). Reads the SDK
+   * `Agent.messages` accessor once, at settlement; the Agent itself is dropped by
+   * the caller's `finally` as before. Without a dispatch record there is no id to
+   * continue by, so narrow registry-less fixtures retain nothing.
+   */
+  private retainSettled(
+    dispatch: SubagentDispatchHandle | undefined,
+    definition: AgentDefinition,
+    child: Agent,
+    state: 'succeeded' | 'failed' | 'cancelled',
+    continuation: RetainedChild | undefined,
+  ): void {
+    if (dispatch === undefined) return;
+    this.retained.retain({
+      dispatchId: dispatch.dispatchId,
+      agentName: definition.name,
+      state,
+      messages: child.messages,
+      ...(continuation === undefined ? {} : { continuedFrom: continuation.dispatchId }),
+    });
   }
 
   private find(name: string): AgentDefinition | undefined {

@@ -61,9 +61,18 @@ export function formatDispatchesReport(
       (dispatch) =>
         `  ${dispatchLabel(dispatch).padEnd(LABEL_COLUMN)}  ${dispatch.state.padEnd(STATE_COLUMN)}  ` +
         `${formatTaskDuration(dispatchElapsedMs(dispatch, nowMs)).padStart(7)}  ` +
-        `${summarizeTaskCommand(dispatch.task, TASK_SUMMARY_LIMIT)}${dispatchUsageSuffix(dispatch)}`,
+        `${summarizeTaskCommand(dispatch.task, TASK_SUMMARY_LIMIT)}${dispatchContinuationSuffix(dispatch)}${dispatchUsageSuffix(dispatch)}`,
     ),
   ].join('\n');
+}
+
+/**
+ * ` — continues #<id>` for a dispatch that ran inside a retained child's
+ * conversation (SER-075), nothing otherwise — an id only, never the conversation.
+ */
+function dispatchContinuationSuffix(dispatch: SubagentDispatchStatus): string {
+  if (dispatch.continuedFrom === undefined) return '';
+  return ` — continues #${dispatch.continuedFrom}`;
 }
 
 /**

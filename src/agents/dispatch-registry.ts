@@ -61,6 +61,13 @@ export interface SubagentDispatchStatus {
    * reader or its meter could not be read.
    */
   readonly usage?: UsageTotals;
+  /**
+   * The settled dispatch whose retained conversation this one continued
+   * (SER-075, `subagent continue=<id>`). An id only — the conversation itself
+   * lives in the tool's private store, never on a record. Absent for every
+   * ordinary dispatch, so existing rows are byte-identical.
+   */
+  readonly continuedFrom?: string;
 }
 
 export interface SubagentDispatchProgress {
@@ -139,6 +146,8 @@ interface DispatchRecord {
   heartbeat: ReturnType<typeof setInterval> | undefined;
   /** Frozen copy of the declared scopes; `undefined` when none were declared. */
   readonly writeScopes: readonly string[] | undefined;
+  /** The continued dispatch's id (SER-075); `undefined` for an ordinary dispatch. */
+  readonly continuedFrom: string | undefined;
 }
 
 export interface SubagentDispatchRegistryOptions {
@@ -171,6 +180,8 @@ export class SubagentDispatchRegistry {
     toolUseId?: string | undefined;
     /** `workflow` nodes only: normalized scopes the tool already validated. */
     writeScopes?: readonly string[] | undefined;
+    /** `subagent continue=<id>` only: the settled dispatch being continued. */
+    continuedFrom?: string | undefined;
   }): SubagentDispatchHandle {
     const key = randomUUID();
     const startedAtMs = this.now();
@@ -189,6 +200,7 @@ export class SubagentDispatchRegistry {
       usage: undefined,
       heartbeat: undefined,
       writeScopes: dispatch.writeScopes === undefined ? undefined : Object.freeze([...dispatch.writeScopes]),
+      continuedFrom: dispatch.continuedFrom,
     };
     this.records.set(key, record);
     record.heartbeat = setInterval(() => this.publishProgress(record, true), this.heartbeatIntervalMs);
@@ -360,6 +372,7 @@ function snapshot(record: DispatchRecord): SubagentDispatchStatus {
     startedAt: record.startedAt,
     finishedAt: record.finishedAt,
     ...(usage !== undefined && { usage }),
+    ...(record.continuedFrom !== undefined && { continuedFrom: record.continuedFrom }),
   };
 }
 

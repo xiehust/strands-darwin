@@ -18,7 +18,7 @@ import {
   BeforeToolCallEvent,
   SummarizingConversationManager,
 } from '@strands-agents/sdk';
-import type { InterventionHandler, Model, Tool } from '@strands-agents/sdk';
+import type { InterventionHandler, Message, Model, Tool } from '@strands-agents/sdk';
 
 import type { ProjectInstructions } from '../agent/instructions.js';
 import { composeSystemPrompt } from '../agent/instructions.js';
@@ -41,6 +41,14 @@ export interface ChildRecipeOptions {
   /** Part of the child agent id: `darwin-<idPrefix>-<name>-<uuid>`. */
   idPrefix: string;
   dispatch: SubagentDispatchHandle | undefined;
+  /**
+   * SER-075 continuation only: a settled child's retained conversation, seeded
+   * through the SDK constructor's `messages` option (`agent.d.ts`: "An initial
+   * set of messages to seed the agent's conversation history"). Everything else
+   * about the child — prompt, tools, gate, hooks, model — is built exactly as for
+   * a fresh one; omitted means the fresh, empty history every other child gets.
+   */
+  messages?: readonly Message[] | undefined;
 }
 
 /**
@@ -68,6 +76,8 @@ export function buildRecipeChild(options: ChildRecipeOptions): Agent {
     printer: false,
     // Same opt-out as the parent: darwin's cancellable retry replaces the SDK default.
     retryStrategy: null,
+    // A continuation's retained conversation (SER-075); absent for every fresh child.
+    ...(options.messages === undefined ? {} : { messages: [...options.messages] }),
   });
   installMaxTokensRecovery(child);
   // One private retry state per child. Its wait is published only as a closed dispatch

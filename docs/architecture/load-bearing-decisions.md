@@ -770,6 +770,34 @@ cut-off note and the child's last assistant text, capped at 4000 code points and
 same projection; a text-less failure is the unchanged error object and cancellation is never wrapped
 (`spike/verify-failed-child-text.ts`).
 
+**A settled child stays continuable — by its conversation, never by its process** (SER-075,
+`src/agents/retained-children.ts`). `SubagentTool.run` still drops the child `Agent` in `finally` after
+`stopBashSession`; what it keeps first, per tool and therefore per runtime, is a deep copy of the SDK
+`Agent.messages` array plus the definition name and terminal state, for the last
+`MAX_RETAINED_CHILDREN = 4` settled `subagent` dispatches, keyed by the dispatch id every surface
+already shows and evicted oldest-first. The Agent object and its bash shell are *not* retained: the
+conversation is what carries context, and a follow-up rebuilds a fresh Agent from it through the same
+`buildRecipeChild` recipe (the SDK constructor's `messages` seed option), so no process outlives a
+dispatch and a continuation runs with the current model, tools, gate and hooks. `succeeded` is retained;
+`failed` only when the conversation ends in a complete assistant message with every `toolUse` answered
+(a refusal stop qualifies, a stream that died after a tool result does not — a follow-up must never
+extend a broken pair); `cancelled` never; `workflow` nodes never, because they are built by
+`WorkflowTool` and never pass through `SubagentTool.run`. The parent-only `subagent` tool's optional
+`continue: "<dispatch id>"` resolves the entry and refuses — before any model, record or child exists,
+as one bounded error — an unknown, still-running, cancelled, evicted (named as evicted) or skipped id,
+a `workflow` node, and an `agent` naming a different definition; otherwise the follow-up `task` runs
+through the existing path unchanged: cap check first, a **new** dispatch record via `begin()` (new id,
+`continuedFrom: <id>` — the only field the record gains, an id, rendered as ` — continues #<id>` on the
+`/agents` row and absent byte-for-byte otherwise), heartbeats, permission `source`, report projection,
+failed-child text, codex hook fork, background delegation. The continued dispatch is itself retained,
+so a chain of follow-ups works inside the four-entry bound. The store is dropped by construction on
+`/clear` and `/rewind` (both create a successor runtime and a new `SubagentTool`; the predecessor's
+`retire()` also clears it through `subagents.shutdown()`) and on `shutdown()`; nothing is persisted,
+nothing crosses into a record, `/agents` output or the trajectory (children remain unrecorded). Not
+adopted: steering a *running* child, a mailbox or roster, retaining Agent objects or shells. Required
+check: `spike/verify-continuable-children.ts` (in `pnpm test`; tool level and `/clear`/`/rewind`
+successors at runtime level).
+
 **Background delegation is the SDK's `backgroundTasks` plugin, never a darwin scheduler**
 (SER-064, SER-070; `src/agent/background-delegation.ts`). The parent Agent — and only the parent;
 children from `buildRecipeChild` never get the option — is constructed with `agentic: ['subagent',
