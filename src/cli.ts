@@ -2,9 +2,12 @@
 /**
  * `darwin` entry point.
  *
- * Boots the agent runtime, then hands control to the Ink app.
+ * Boots the agent runtime, then hands control to the Ink app — or, when `-p` is
+ * given, to the headless driver, which runs one turn and exits without a
+ * terminal.
  *
  * Usage: darwin [--resume] [--permission-mode <default|auto|yolo>] [--yolo]
+ *        darwin -p <prompt> [--output-format <text|stream-json>] [--yolo]
  */
 import { render } from 'ink';
 import React from 'react';
@@ -13,8 +16,20 @@ import process from 'node:process';
 import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
 import { AgentRuntime } from './agent/runtime.js';
 import { ConfigError } from './config.js';
+import { runHeadless, type HeadlessOutputFormat } from './headless.js';
 import { App } from './tui/App.js';
 import { PermissionQueue } from './tui/permission-queue.js';
+
+const OUTPUT_FORMATS = ['text', 'stream-json'] as const satisfies readonly HeadlessOutputFormat[];
+
+/**
+ * Flags a newer darwin understands and this one does not.
+ *
+ * Rejected rather than ignored. `--max-model-calls` is a spend cap: a caller that
+ * passes it has asked to be protected, and a build that quietly runs uncapped
+ * would breach that in the one direction the caller cannot detect afterwards.
+ */
+const UNSUPPORTED_FLAGS = ['--max-model-calls'] as const;
 
 /** Grace period for a clean exit before the process is forced down. */
 const FORCE_EXIT_AFTER_MS = 500;
@@ -40,16 +55,97 @@ function parsePermissionMode(argv: readonly string[]): ApprovalMode | undefined 
   return value as ApprovalMode;
 }
 
+/**
+ * Reads `-p` / `--print`, the switch into headless mode. Undefined means the
+ * interactive app.
+ *
+ * An empty prompt is refused: the turn would consist of asking the model to act on
+ * nothing, which is never what the caller meant and costs a call to discover.
+ */
+function parsePrompt(argv: readonly string[]): string | undefined {
+  const flagIndex = argv.findIndex((arg) => arg === '-p' || arg === '--print');
+  if (flagIndex === -1) return undefined;
+
+  const value = argv[flagIndex + 1];
+  if (value === undefined || value.startsWith('-')) {
+    throw new ConfigError(
+      `${argv[flagIndex]} expects a prompt, got ${JSON.stringify(value ?? '(nothing)')}.`,
+    );
+  }
+  if (value.trim() === '') {
+    throw new ConfigError(`${argv[flagIndex]} expects a non-empty prompt.`);
+  }
+  return value;
+}
+
+/** Reads `--output-format`, defaulting to `text`. Only meaningful with `-p`. */
+function parseOutputFormat(argv: readonly string[], headless: boolean): HeadlessOutputFormat {
+  const flagIndex = argv.indexOf('--output-format');
+  if (flagIndex === -1) return 'text';
+  if (!headless) {
+    throw new ConfigError('--output-format only applies to headless runs; pass -p <prompt> too.');
+  }
+
+  const value = argv[flagIndex + 1];
+  if (value === undefined || !(OUTPUT_FORMATS as readonly string[]).includes(value)) {
+    throw new ConfigError(
+      `--output-format expects one of ${OUTPUT_FORMATS.join(', ')}, got ${JSON.stringify(value ?? '(nothing)')}.`,
+    );
+  }
+  return value as HeadlessOutputFormat;
+}
+
+/** Fails on a flag this build cannot honour, naming it so the caller can drop it. */
+function rejectUnsupportedFlags(argv: readonly string[]): void {
+  const found = UNSUPPORTED_FLAGS.filter((flag) => argv.includes(flag));
+  if (found.length === 0) return;
+  throw new ConfigError(
+    `${found.join(', ')} ${found.length === 1 ? 'is' : 'are'} not supported by this version of darwin.`,
+  );
+}
+
 async function main(): Promise<void> {
-  const resume = process.argv.includes('--resume');
+  const argv = process.argv.slice(2);
+  const resume = argv.includes('--resume');
   const projectRoot = process.cwd();
+
+  // Argument errors surface here, before either path starts: the interactive path
+  // must report them before Ink mounts and wipes them, and the headless path must
+  // report them before spending a model call.
+  let permissionModeOverride: ApprovalMode | undefined;
+  let prompt: string | undefined;
+  let outputFormat: HeadlessOutputFormat;
+  try {
+    rejectUnsupportedFlags(argv);
+    permissionModeOverride = parsePermissionMode(argv);
+    prompt = parsePrompt(argv);
+    outputFormat = parseOutputFormat(argv, prompt !== undefined);
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      process.stderr.write(`\nConfiguration problem:\n  ${error.message}\n\n`);
+      process.exitCode = 1;
+      return;
+    }
+    throw error;
+  }
+
+  if (prompt !== undefined) {
+    // Headless owns its own reporting, including failures, so nothing is thrown
+    // back here for the interactive error path to mishandle.
+    process.exitCode = await runHeadless({
+      prompt,
+      format: outputFormat,
+      resume,
+      ...(permissionModeOverride !== undefined && { permissionMode: permissionModeOverride }),
+    });
+    forceExitIfHung();
+    return;
+  }
+
   const permissions = new PermissionQueue();
 
   let runtime: AgentRuntime;
   try {
-    // Runs before Ink mounts, so a startup failure prints plainly instead of
-    // being wiped by the first frame.
-    const permissionModeOverride = parsePermissionMode(process.argv);
     runtime = await AgentRuntime.create({
       projectRoot,
       resume,

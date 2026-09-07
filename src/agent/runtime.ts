@@ -52,6 +52,21 @@ export interface RuntimeOptions {
   permissionBridge: PermissionBridge;
   /** Overrides the config's `permissionMode` (CLI flags win over the file). */
   permissionModeOverride?: ApprovalMode;
+  /**
+   * Allow `~/.darwin/config.json` as a fallback. Set by the headless path only —
+   * see {@link LoadConfigOptions.includeUserConfig}.
+   */
+  includeUserConfig?: boolean;
+}
+
+/** Cumulative token counts reported by the active model during this process. */
+export interface UsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  /** Undefined until the provider reports this metric. */
+  cacheReadInputTokens?: number;
+  /** Undefined until the provider reports this metric. */
+  cacheWriteInputTokens?: number;
 }
 
 export interface RuntimeInfo {
@@ -88,7 +103,11 @@ export class AgentRuntime {
   ) {}
 
   static async create(options: RuntimeOptions): Promise<AgentRuntime> {
-    const config = await loadConfig(options.projectRoot);
+    const config = await loadConfig(options.projectRoot, {
+      ...(options.includeUserConfig !== undefined && {
+        includeUserConfig: options.includeUserConfig,
+      }),
+    });
     const model = await createModelFromConfig(config);
     const session = await resolveSession(options.projectRoot, options.resume);
     const skills = await SkillsPlugin.load(options.projectRoot);
@@ -174,6 +193,34 @@ export class AgentRuntime {
   /** Messages restored from a resumed session, for showing prior context. */
   get messageCount(): number {
     return this.agent.messages.length;
+  }
+
+  /**
+   * Token totals for every model call this agent has made so far.
+   *
+   * Read live from the SDK's meter rather than tallied from stream events:
+   * `accumulatedUsage` is already a lifetime running total, and it stays readable
+   * after a turn that ended without a result event — including a cancelled one —
+   * so a headless run can still report what it spent when it failed.
+   *
+   * Counts this process only. Sessions persist messages, not metrics, so a
+   * `--resume`d session starts from zero however much it spent before.
+   */
+  get usage(): UsageTotals {
+    const usage = this.agent.metrics.accumulatedUsage;
+    return {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      // An absent counter and a measured zero are different provider statements:
+      // Bedrock reports cache metrics beside input, a provider without caching
+      // reports nothing at all. Collapsing the two would invent a cache miss.
+      ...(usage.cacheReadInputTokens !== undefined && {
+        cacheReadInputTokens: usage.cacheReadInputTokens,
+      }),
+      ...(usage.cacheWriteInputTokens !== undefined && {
+        cacheWriteInputTokens: usage.cacheWriteInputTokens,
+      }),
+    };
   }
 
   /**

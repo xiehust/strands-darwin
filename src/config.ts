@@ -11,7 +11,7 @@ import { BedrockModel } from '@strands-agents/sdk';
 import type { Model } from '@strands-agents/sdk';
 
 import { APPROVAL_MODES, type ApprovalMode } from './agent/permission.js';
-import { darwinDir } from './paths.js';
+import { darwinDir, userDarwinDir } from './paths.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
 export class ConfigError extends Error {
@@ -57,6 +57,11 @@ export function configPath(projectRoot: string): string {
   return path.join(darwinDir(projectRoot), CONFIG_FILENAME);
 }
 
+/** `~/.darwin/config.json` — the fallback when the project has no config. */
+export function userConfigPath(): string {
+  return path.join(userDarwinDir(), CONFIG_FILENAME);
+}
+
 const DEFAULTS = {
   provider: 'bedrock',
   model: 'us.anthropic.claude-sonnet-4-6',
@@ -96,21 +101,38 @@ export function resolveRegion(configured?: string): string {
   );
 }
 
-/**
- * Loads `.darwin/config.json` from `projectRoot`. A missing file is normal — the
- * defaults are a working Bedrock setup. A present but malformed file is an
- * error, since silently ignoring it would hide the user's intent.
- */
-export async function loadConfig(projectRoot: string): Promise<AppConfig> {
-  const file = configPath(projectRoot);
+export interface LoadConfigOptions {
+  /**
+   * Also consider `~/.darwin/config.json`, after the project's own file.
+   *
+   * Off by default, and deliberately not a global fallback: a developer's personal
+   * config must not start reconfiguring every repository they open darwin in. The
+   * headless path opts in because it has no alternative — it runs inside the
+   * repository it is editing, so it cannot be handed a project-local config
+   * without writing configuration into the user's tree.
+   */
+  includeUserConfig?: boolean;
+}
 
-  let raw: string;
-  try {
-    raw = await readFile(file, 'utf8');
-  } catch (error) {
-    if (isFileNotFound(error)) return { ...DEFAULTS };
-    throw new ConfigError(`Could not read ${file}: ${describe(error)}`);
-  }
+/**
+ * Loads `<projectRoot>/.darwin/config.json`, optionally falling back to
+ * `~/.darwin/config.json` (see {@link LoadConfigOptions.includeUserConfig}).
+ *
+ * A missing file is normal — the defaults are a working Bedrock setup. A present
+ * but malformed file is an error, since silently ignoring it would hide the user's
+ * intent. Only the file actually found is named in an error, so the message always
+ * points at a path the caller can go and fix.
+ */
+export async function loadConfig(
+  projectRoot: string,
+  options: LoadConfigOptions = {},
+): Promise<AppConfig> {
+  const candidates = options.includeUserConfig
+    ? [configPath(projectRoot), userConfigPath()]
+    : [configPath(projectRoot)];
+  const found = await readFirstPresent(candidates);
+  if (found === undefined) return { ...DEFAULTS };
+  const { file, raw } = found;
 
   let parsed: unknown;
   try {
@@ -120,6 +142,26 @@ export async function loadConfig(projectRoot: string): Promise<AppConfig> {
   }
 
   return validate(parsed, file);
+}
+
+/**
+ * Reads the first candidate that exists, in order. Only "not found" moves on to
+ * the next one: an unreadable file (bad permissions, a directory in its place) is
+ * a real problem with a real intent behind it, so it is raised rather than
+ * skipped over in favour of a lower-priority file the user did not mean.
+ */
+async function readFirstPresent(
+  candidates: readonly string[],
+): Promise<{ file: string; raw: string } | undefined> {
+  for (const file of candidates) {
+    try {
+      return { file, raw: await readFile(file, 'utf8') };
+    } catch (error) {
+      if (isFileNotFound(error)) continue;
+      throw new ConfigError(`Could not read ${file}: ${describe(error)}`);
+    }
+  }
+  return undefined;
 }
 
 function validate(parsed: unknown, configPath: string): AppConfig {
