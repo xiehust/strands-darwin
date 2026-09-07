@@ -5,6 +5,8 @@
  * directories and no merging of several files, so what reaches the model is
  * exactly the file sitting next to the repository the user is working in.
  */
+import { CachePointBlock, TextBlock } from '@strands-agents/sdk';
+import type { SystemPrompt } from '@strands-agents/sdk';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
@@ -153,4 +155,19 @@ function renderFragment(text: string, truncated: boolean): string {
       : []),
     '</project-instructions>',
   ].join('\n');
+}
+
+/**
+ * Seals the finished system prompt into blocks with a trailing cache point.
+ *
+ * Call this only once the prompt is complete — after SkillsPlugin has appended its
+ * catalogue. Two reasons, both load-bearing: the cache point has to sit at the end
+ * of the whole stable prefix to cover it, and the plugin refuses a block-array
+ * prompt outright, so sealing any earlier would break skill injection.
+ *
+ * The text is carried across unchanged, so what the model reads is byte for byte
+ * what the string form would have been.
+ */
+export function sealSystemPromptForCaching(prompt: string): SystemPrompt {
+  return [new TextBlock(prompt), new CachePointBlock({ cacheType: 'default' })];
 }

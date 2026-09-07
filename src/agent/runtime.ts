@@ -10,12 +10,13 @@ import type { AgentStreamEvent, McpClient } from '@strands-agents/sdk';
 import { bash } from '@strands-agents/sdk/vended-tools/bash';
 import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
-import { createModelFromConfig, loadConfig, type AppConfig } from '../config.js';
+import { createModelFromConfig, loadConfig, supportsPromptCache, type AppConfig } from '../config.js';
 import { disconnectAll, loadMcpClients } from '../mcp/registry.js';
 import { SkillsPlugin, expandSkillCommand, type ExpandedSkillCommand } from '../skills/plugin.js';
 import {
   composeSystemPrompt,
   loadProjectInstructions,
+  sealSystemPromptForCaching,
   type ProjectInstructionsSummary,
 } from './instructions.js';
 import { PermissionGate, type ApprovalMode, type PermissionBridge } from './permission.js';
@@ -133,6 +134,15 @@ export class AgentRuntime {
     // discovered here, and plugins inject their system prompt fragments — so
     // without this the resumed history and MCP tools would not exist yet.
     await agent.initialize();
+
+    // The catalogue is in place, so the prompt is final: seal it into blocks ending
+    // in a cache point, which is what makes the provider cache the whole prefix.
+    // The timing is the design — any earlier and SkillsPlugin would refuse the block
+    // array; any later and there is nothing left to seal.
+    const composedPrompt = agent.systemPrompt;
+    if (supportsPromptCache(config.model) && typeof composedPrompt === 'string') {
+      agent.systemPrompt = sealSystemPromptForCaching(composedPrompt);
+    }
 
     return new AgentRuntime(agent, options.projectRoot, mcp.clients, skills, {
       config,

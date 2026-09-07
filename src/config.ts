@@ -68,6 +68,22 @@ const DEFAULTS = {
 
 const DEFAULT_REGION = 'us-west-2';
 
+/**
+ * Whether prompt caching applies to this model.
+ *
+ * Mirrors the SDK's own notion of a cache-capable model (it looks for these same
+ * two substrings) so darwin never asks for caching on a model the provider would
+ * reject. Deciding here rather than delegating to `cacheConfig.strategy: 'auto'`
+ * is deliberate: on a miss, `'auto'` makes the SDK call `logger.warn`, which is
+ * `console.warn`, which lands in the middle of the Ink frame.
+ */
+export function supportsPromptCache(modelId: string): boolean {
+  return CACHEABLE_MODEL_PATTERNS.some((pattern) => modelId.includes(pattern));
+}
+
+/** The substrings the SDK itself treats as Anthropic-style cacheable. */
+const CACHEABLE_MODEL_PATTERNS = ['anthropic', 'claude'];
+
 /** Bedrock rejects bare model ids; only cross-region inference profiles work. */
 const BEDROCK_PROFILE_PREFIXES = ['us.', 'eu.', 'apac.', 'global.'];
 
@@ -182,6 +198,12 @@ function createBedrockModel(config: AppConfig): Model {
     region: resolveRegion(config.region),
     modelId: config.model,
     maxTokens: config.maxTokens,
+    // Names the strategy instead of asking for 'auto', so the SDK's unsupported-model
+    // warning can never reach the terminal. Omitted entirely for a model that cannot
+    // cache: the SDK treats an absent cacheConfig as "inject no cache points".
+    ...(supportsPromptCache(config.model) && {
+      cacheConfig: { strategy: 'anthropic' as const },
+    }),
   });
 }
 
