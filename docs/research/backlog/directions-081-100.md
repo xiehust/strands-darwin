@@ -363,7 +363,7 @@ Evidence: origin report S1 and the darwin baseline row "Read classification". Sa
 
 ## SER-072 — `/status` gains one `hooks` row: active hook source files from `RuntimeInfo.hookSources` (bounded by `MAX_STATUS_NAMES` + `… N more`), `none` when empty, plus the shadow-notice count — a pure projection over the existing accessor, no new channel
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 97
 - Score: 12
 - Importance: 2
@@ -375,7 +375,9 @@ Evidence: origin report S1 and the darwin baseline row "Read classification". Sa
 
 ### Implementation / acceptance evidence
 
-Requirement. `RuntimeInfo.hookSources` ("Active hook source files, in Pre policy order", `src/agent/runtime.ts`) and `hookShadowNotices` are loaded by `loadProjectPolicy` but rendered by no in-session surface (`rg hookSources src/tui` is empty; only startup shadow notices and `darwin doctor` mention hooks). Hooks run commands on tool and lifecycle events, so the user must be able to see in-session what is armed. Change: `formatStatusReport` (`src/tui/status-format.ts`) gains one `hooks` row after `skills` — `none` when there are no sources, otherwise the source paths (project-relative when inside the project, `~`-abbreviated when under the home directory) bounded by the existing `MAX_STATUS_NAMES` + `… N more`, followed by `· N shadowed` only when `hookShadowNotices` is non-empty; `StatusFacts` carries the two existing fields; nothing else in the report changes byte for byte. Peer evidence: S2 (Codex `/hooks`), S5 (Gemini CLI `/hooks list`). Acceptance: `spike/verify-status-command.ts` asserts the row for zero, one and more-than-`MAX_STATUS_NAMES` sources and for a shadow count, and that every other row is unchanged against the existing fixtures; `pnpm typecheck`, `pnpm test`, `pnpm build`; `docs/user-guide/reference.md` `/status` row list updated; no `AGENTS.md` change (the `/status` decision row already covers "a formatter over existing accessors").
+Accepted 2026-09-07 in `a7484fa` (6 files; child session `session-20260907-103853949`, managed task `bg-b3dd5909-8cf1-47da-bb3e-3016ed901c18`, exit 0, one attempt, no correction turn, 45 model calls; launched from repository source at `f7e4f79`). Shape: `StatusFacts` gains `hookSources`, `hookShadowNotices`, `projectRoot`, `homeDir` (passed from `os.homedir()` at the one `App.tsx` call site so the formatter stays a pure function of its facts); `describeHooks` reuses the skills row's `describeNames` bounding over `displayPath` (project-relative inside the project, `~` under home, else absolute) and appends `· N shadowed` only when notices exist; the row sits directly after `skills`. Lifecycle hook event names were **left out** by the child with evidence: the runner is built from `loadProjectPolicy(...)`'s merged `policy.hooks`, which no `RuntimeInfo` accessor exposes, and `facts.config.hooks` is the deprecated global fallback (a `{}` placeholder when shadowed) — rendering it would misstate what executes; a future direction may add the accessor. Host acceptance, independently re-run at `a7484fa`: `pnpm typecheck && pnpm test && pnpm build` exit 0, 0 `FAIL` lines, every suite `0 failed`; `spike/verify-status-command.ts` 83 assertions, including the pinned pre-change 11-line fixture output equal to the new output with exactly one `  hooks        none` line spliced after `skills`, `~`/project-relative/absolute forms, `… 2 more` at the cap, `· 1 shadowed` and `none · 2 shadowed`. Docs synced by the child: `reference.md` + `zh-CN` (`/status` row list and report-contract bullet), load-bearing § `/status` one sentence; README has no `/status` row enumeration; `AGENTS.md` untouched (32,765 B). Logged as [`Batch 101`](../../iteration-log.md).
+
+Original requirement. `RuntimeInfo.hookSources` ("Active hook source files, in Pre policy order", `src/agent/runtime.ts`) and `hookShadowNotices` are loaded by `loadProjectPolicy` but rendered by no in-session surface (`rg hookSources src/tui` is empty; only startup shadow notices and `darwin doctor` mention hooks). Hooks run commands on tool and lifecycle events, so the user must be able to see in-session what is armed. Change: `formatStatusReport` (`src/tui/status-format.ts`) gains one `hooks` row after `skills` — `none` when there are no sources, otherwise the source paths (project-relative when inside the project, `~`-abbreviated when under the home directory) bounded by the existing `MAX_STATUS_NAMES` + `… N more`, followed by `· N shadowed` only when `hookShadowNotices` is non-empty; `StatusFacts` carries the two existing fields; nothing else in the report changes byte for byte. Peer evidence: S2 (Codex `/hooks`), S5 (Gemini CLI `/hooks list`). Acceptance: `spike/verify-status-command.ts` asserts the row for zero, one and more-than-`MAX_STATUS_NAMES` sources and for a shadow count, and that every other row is unchanged against the existing fixtures; `pnpm typecheck`, `pnpm test`, `pnpm build`; `docs/user-guide/reference.md` `/status` row list updated; no `AGENTS.md` change (the `/status` decision row already covers "a formatter over existing accessors").
 
 ### Notes / blockers / abandonment reason
 
@@ -386,7 +388,7 @@ Evidence: origin report baseline row "Hooks visibility". Scope guard: no new `/h
 
 ## SER-073 — Terminal title: the TUI sets the window/tab title (OSC 2) to a bounded `darwin · <project basename> · <state>` (`idle`, `working`, `waiting for approval`, `N queued`), written only when stdout is a TTY through the same raw-write seam as BEL/OSC 52, on state transitions only, restored on exit, disabled by `terminalTitle: false`; headless never writes
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 98
 - Score: 10
 - Importance: 3

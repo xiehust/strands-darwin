@@ -2437,6 +2437,18 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 |---|---|---|
 | SER-071 | `418cced` (9 files) + `6d64f5d` (8 files) | Host read the diff of `permission-rules.ts` (`BASH_PATH_READERS`, three exported set constants, `isSensitiveReadPath`, `resolveReadTarget` handling `~`/`$HOME`/`${HOME}`/quotes/`..`, `sensitiveReadPath`, `RECURSIVE_CONTENT_READERS` + `sensitiveLocationBelow`, `isRuleExempt` read branch) and `permission.ts` (`assessRisk` sensitive branch before the read short-circuit with `sensitiveRead: true`; `auto` classifier gated on `request.sensitiveRead !== true`). Two gaps found on the first pass and corrected in the same session: `auto` could clear a sensitive read through the classifier; recursive `grep -r AKIA ~` bypassed the set. Gate at `6d64f5d`: `pnpm typecheck && pnpm test && pnpm build` exit 0, 0 `FAIL` lines, every suite `0 failed`; `verify-permission-modes.ts` 295 assertions; Host `pnpm tsx` probe: `cat ~/.aws/credentials`, `cat $HOME/.darwin/config.json`, `grep -r AKIA ~` (`searches above ~/.ssh`), `fileEditor view /etc/shadow` → `dangerous`, 0 rules offered; `rg secret src/`, `fileEditor view src/cli.ts` → `safe`, unchanged reasons, 2 rules offered. `AGENTS.md` 32,765 B. Docs synced by the child: load-bearing § Permissions, `permissions.md`/`reference.md` + `zh-CN`; README needed no change. |
 
+## Batch 101 — SER-072 `/status` hooks row
+
+- Origin: `docs/research/research_2026-09-07.md`, second direction of the same batch. Decision before handoff: show-only — no `/hooks` command or enable/disable verbs (hook policy is un-ruleable), no header row, `AGENTS.md` untouched (3 B of headroom).
+- Starting point: HEAD `f7e4f79` (SER-072 set `in-progress`); Host gate current from Batch 100 (only docs changed since `6d64f5d`).
+- Child session: `session-20260907-103853949`, launched from repository source (`pnpm tsx src/cli.ts -p … --yolo --context-offload`, no ceiling).
+- Managed task: `bg-b3dd5909-8cf1-47da-bb3e-3016ed901c18` (whole workflow: `StatusFacts` fields, `describeHooks`/`displayPath`, `App.tsx` call site, `verify-status-command.ts` cases incl. the pinned one-inserted-line fixture, `reference.md` + `zh-CN`, load-bearing sentence, commit `a7484fa`, build; succeeded, exit 0, 45 model calls; `usage: input=94 output=21832 cacheRead=3282285 cacheWrite=101689`; `cost: total=3.1842`). Host gate task `bg-0f50f18a-d3db-4c77-9290-a1355d7ef604`.
+- Token spend: `input=94 output=21,832 cacheRead=3,282,285 cacheWrite=101,689`, cost `3.1842` USD; Batches 100+101 together `input=290 output=84,276 cacheRead=16,248,698 cacheWrite=302,371`, cost `12.0585` USD (`global.anthropic.claude-fable-5-1`, LiteLLM base rates).
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SER-072 | `a7484fa` (6 files) | Host read the diff of `status-format.ts` (`hookSources`/`hookShadowNotices`/`projectRoot`/`homeDir` facts; `describeHooks` over `describeNames`; `displayPath`; row after `skills`) and `App.tsx` (four fields passed from `runtime.info` + `os.homedir()`). Gate at `a7484fa`: `pnpm typecheck && pnpm test && pnpm build` exit 0, 0 `FAIL`, every suite `0 failed`; `verify-status-command.ts` 83/83 standalone, including the fixture pin (pre-change 11 lines + exactly one `  hooks        none` after `skills`), `~`/relative/absolute forms, `… 2 more`, `· 1 shadowed`. Child's evidence-backed omission accepted: lifecycle hook event names are not rendered because no `RuntimeInfo` accessor exposes the merged `policy.hooks` and `config.hooks` is the deprecated fallback. Docs synced by the child: `reference.md` + `zh-CN`, load-bearing § `/status`; README enumerates no `/status` rows. |
+
 
 
 
