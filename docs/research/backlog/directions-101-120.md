@@ -104,7 +104,7 @@ Sources: kiro-cli `/context show` ("Context files 0.9% / Tools 0.5% / Kiro respo
 
 ## SER-078 — Terminal-mediated attention notification: config `terminalNotify` (default `false`) writes one documented OSC notification sequence (OSC 777 `notify` and/or OSC 9; the exact set chosen from terminal documentation and recorded) with a bounded, sanitized title/body (`darwin · <project>` / `waiting for approval` or `turn complete`) at exactly the bell's two driver moments through the same real-stdout seam; TTY only, never headless, never children, never per frame; README states the tmux passthrough and iTerm2 alert-setting requirements
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 106
 - Score: 10
 - Importance: 3
@@ -116,7 +116,7 @@ Sources: kiro-cli `/context show` ("Context files 0.9% / Tools 0.5% / Kiro respo
 
 ### Implementation / acceptance evidence
 
-Not started. Acceptance: `spike/verify-terminal-bell.ts` (or a sibling suite) proving that off performs no write, on writes exactly one sequence per moment, the body sanitizer strips ESC/BEL/`;`/newlines and bounds length, non-TTY stdout writes nothing, headless drivers never import the module; `spike/verify-config.ts` covers the new boolean key; grep proof that one module is the sole writer of the sequence; `pnpm typecheck`, `pnpm test`.
+Done — commit `878ca45` (`feat(tui): terminal-mediated attention notification`, 14 files), Batch 110 in `docs/iteration-log.md`. New `src/tui/terminal-notify.ts`: exactly one ST-terminated OSC 9 (`ESC ] 9 ; darwin · <project> · waiting for approval|turn complete ESC \`) per moment; sequence decision recorded in the module header with sources — iTerm2, kitty (legacy OSC 9), Ghostty, WezTerm and foot document OSC 9; Windows Terminal (`DoConEmuAction` returns when the first field is not an unsigned integer), ConEmu (`case '9'` digit sub-IDs only) and tmux (`input_osc_9` requires a leading `4`) shown ignorable from source, and the sanitizer strips `;` so a project name cannot forge a sub-command; OSC 777/99 deliberately omitted because every documented implementer also takes OSC 9 (two toasts otherwise); inside tmux (`TMUX` set) the sequence is wrapped in the documented passthrough DCS (`ESC P tmux ; … ESC \`, inner ESC doubled) so `allow-passthrough on` is a real instruction. `sanitizeNotifyText` strips every C0/DEL/C1 control and `;`; `boundTitle` caps at `MAX_TERMINAL_NOTIFY_CODE_POINTS = 120`; `notifyTerminal(enabled, input, seam)` writes nothing when off or non-TTY and swallows a throwing writer. Call sites: `src/cli-main.ts` permission publication (beside the bell and lifecycle hook) and `src/tui/App.tsx` turn completion (beside the bell). Config key `terminalNotify` (default `false`, `booleanField`, registered as a known key). Host acceptance at `878ca45`: `pnpm typecheck` 0, `pnpm test` 0 (5893 `PASS`, 0 `FAIL`), `verify-terminal-notify.ts` 65/65 (unit seam + pty `disabled`/`enabled`/`enabled-tmux` scenarios), `verify-config.ts` 378/378, grep proof — `]9;` written only in `terminal-notify.ts`, imported only by `App.tsx` and `cli-main.ts` (never headless/agents/hooks), `AGENTS.md` 32,753 B unchanged, `pnpm build` 0. Original acceptance text: `spike/verify-terminal-bell.ts` (or a sibling suite) proving that off performs no write, on writes exactly one sequence per moment, the body sanitizer strips ESC/BEL/`;`/newlines and bounds length, non-TTY stdout writes nothing, headless drivers never import the module; `spike/verify-config.ts` covers the new boolean key; grep proof that one module is the sole writer of the sequence; `pnpm typecheck`, `pnpm test`.
 
 ### Notes / blockers / abandonment reason
 
@@ -124,7 +124,7 @@ Sources: Claude Code `preferredNotifChannel` (`"auto"` "sends a desktop notifica
 
 ## SER-079 — Permission decision audit in the trajectory: `PermissionGateOptions.onDecision?` publishes one frozen decision per gate outcome (`toolUseId`, `toolName`, `kind`, `risk`, effective `mode`, `source` dispatch id, `outcome` ∈ `write-scope-denied` | `plan-denied` | `deny-rule` | `yolo` | `safe` | `allow-rule` | `classifier` | `user-approved` | `user-denied` | `restart-limit-denied`, matched/granted rule when any, `promptedUser`) — never tool input; the runtime records it as one bounded `permissionDecision` observer record; `trajectory replay` (and therefore `/export`) prints one line only for prompted or denied decisions; `trajectory list` unchanged; never model-visible; headless drivers unchanged
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 107
 - Score: 9
 - Importance: 3
