@@ -1397,6 +1397,10 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /export is listed', completed.includes('  /export — write this session’s transcript to a file'));
     assert('the built-in /help is listed with its description',
       completed.includes('  /help — commands, prompt syntax, and keys'));
+    // Matched with its description: the 21st built-in is exactly what MAX_COMPLETIONS
+    // (21) has to keep visible, so a bare-name match would not prove the row exists.
+    assert('the built-in /init is listed',
+      completed.includes('  /init — create or improve this project’s AGENTS.md'));
     // Matched with its description: the header's own mcp line also says 'mcp', so
     // the bare-name form could pass with the row missing.
     assert('the built-in /mcp is listed', completed.includes('  /mcp — MCP servers and their tools'));

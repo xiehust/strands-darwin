@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'status', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'status', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -35,6 +35,9 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // `darwin trajectory replay` cannot disagree.
   export: 'write this session\u2019s transcript to a file',
   help: 'commands, prompt syntax, and keys',
+  // A prompt expansion, not a generator: the model inspects the repository and
+  // writes AGENTS.md with the ordinary file editor, through the permission gate.
+  init: 'create or improve this project\u2019s AGENTS.md',
   // Configured servers with their connection state — a failed one is named as
   // failed here instead of silently contributing zero tools.
   mcp: 'MCP servers and their tools',

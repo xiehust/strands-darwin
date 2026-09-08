@@ -300,7 +300,9 @@ async function main(): Promise<void> {
               ? `  · loaded skill "${expanded.skill.name}"`
               : expanded.kind === 'workflow'
                 ? '  · delegating via the workflow tool'
-                : `  · loaded command "/${expanded.command.name}"`,
+                : expanded.kind === 'init'
+                  ? '  · writing project instructions with /init'
+                  : `  · loaded command "/${expanded.command.name}"`,
           );
           await renderTurn(runtime, expanded.message, input);
           continue;

@@ -35,6 +35,7 @@ async function buildFixture(): Promise<string> {
   await writeFile(path.join(COMMANDS_ROOT, 'notes.txt'), 'not a command\n', 'utf8');
   await writeFile(path.join(COMMANDS_ROOT, 'nested', 'hidden.md'), 'nested\n', 'utf8');
   await writeFile(path.join(COMMANDS_ROOT, 'exit.md'), 'shadow built-in\n', 'utf8');
+  await writeFile(path.join(COMMANDS_ROOT, 'init.md'), 'shadow the prompt-style built-in\n', 'utf8');
   await writeFile(path.join(COMMANDS_ROOT, 'quit.md'), 'shadow alias\n', 'utf8');
   await writeFile(path.join(COMMANDS_ROOT, 'PDF-FORMS.md'), 'shadow skill\n', 'utf8');
   await writeFile(path.join(COMMANDS_ROOT, 'bad name.md'), 'bad name\n', 'utf8');
@@ -70,6 +71,8 @@ async function discovery(): Promise<CustomCommandRegistry> {
   assert('ignores non-Markdown files', !names.includes('notes'));
   assert('ignores nested command files', !names.includes('hidden'));
   assert('reserves built-in names', reasons.some((reason) => reason.includes('built-in command /exit')));
+  assert('reserves the prompt-style built-in /init',
+    !names.includes('init') && reasons.some((reason) => reason.includes('built-in command /init')));
   assert('reserves the unadvertised /quit alias', reasons.some((reason) => reason.includes('built-in command /quit')));
   assert('skills win case-insensitive collisions', reasons.some((reason) => reason.includes('skill /pdf-forms')));
   assert('rejects names outside the slash grammar', reasons.some((reason) => reason.includes('must contain only')));

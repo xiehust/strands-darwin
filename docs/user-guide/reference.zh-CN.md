@@ -81,6 +81,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/exit`、`/quit` | 退出 |
 | `/export <path>` | 精确 replay 投影；不覆盖，也不写会话内部 |
 | `/help` | 有界本地命令、语法和按键；带参数会拒绝 |
+| `/init [focus]` | 展开为一条普通 prompt，请模型检查仓库后创建 `AGENTS.md`（已加载 `AGENTS.md` 时就地改进；已加载 `CLAUDE.md` 时把仍然成立的内容迁入新的 `AGENTS.md`，`CLAUDE.md` 保持不动），控制在 32 KiB 上限内，通过普通文件编辑器写入；不带参数即触发，附加的 focus 原样追加 |
 | `/mcp` | 只读服务器状态/工具/配置路径；不重连 |
 | `/memory`、`/memory list` | 含来源、证据、校验/过期原因的条目 |
 | `/memory show <id|number>` | 查看一个有界条目 |

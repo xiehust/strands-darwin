@@ -1736,7 +1736,9 @@ export function App({
                 ? `loaded skill "${expanded.skill.name}"`
                 : expanded.kind === 'workflow'
                   ? 'delegating via the workflow tool'
-                  : `loaded command "/${expanded.command.name}"`,
+                  : expanded.kind === 'init'
+                    ? 'writing project instructions with /init'
+                    : `loaded command "/${expanded.command.name}"`,
           });
           toSend = expanded.message;
         }

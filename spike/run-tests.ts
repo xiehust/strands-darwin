@@ -72,6 +72,7 @@ const suites = [
   'verify-agent-skills.ts',
   'verify-custom-commands.ts',
   'verify-workflow-command.ts',
+  'verify-init-command.ts',
   'verify-subagents.ts',
   'verify-subagent-limit.ts',
   'verify-report-projection.ts',

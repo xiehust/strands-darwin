@@ -81,6 +81,7 @@ Rules and limits:
 | `/exit`, `/quit` | quit |
 | `/export <path>` | exact replay projection; no overwrite/session-internal target |
 | `/help` | bounded local commands, syntax, and keys; rejects arguments |
+| `/init [focus]` | one ordinary prompt asking the model to inspect the repository and create `AGENTS.md` (or improve the loaded `AGENTS.md` in place; a loaded `CLAUDE.md` is carried into a new `AGENTS.md` and left untouched) under the 32 KiB cap, written through the ordinary file editor; bare form is the trigger, a focus is appended verbatim |
 | `/mcp` | read-only server states/tools/config paths; no reconnect |
 | `/memory`, `/memory list` | entries with origin, provenance, validation/expiry reason |
 | `/memory show <id|number>` | inspect one bounded entry |

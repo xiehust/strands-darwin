@@ -50,6 +50,7 @@ import {
   type CustomCommandRegistry,
   type ExpandedCustomCommand,
 } from '../commands/custom-commands.js';
+import { parseInitCommand } from '../commands/init-command.js';
 import { parseWorkflowCommand } from '../commands/workflow-command.js';
 import {
   appendAllowRule,
@@ -340,7 +341,8 @@ export interface ModelChangeResult {
 export type ExpandedSlashCommand =
   | ({ kind: 'skill' } & ExpandedSkillCommand)
   | ({ kind: 'command' } & ExpandedCustomCommand)
-  | { kind: 'workflow'; message: string };
+  | { kind: 'workflow'; message: string }
+  | { kind: 'init'; message: string };
 
 /** Estimated size of the next request's context, plus the model's window. */
 export interface ContextEstimate {
@@ -2218,10 +2220,14 @@ export class AgentRuntime {
 
   /**
    * Expands a built-in prompt command, a skill, or a project command into the
-   * prompt sent to the model. `/workflow` is checked first: built-in
+   * prompt sent to the model. `/workflow` and `/init` are checked first: built-in
    * reservation precedes skills and custom commands, so no extension can
-   * shadow it. Its bare form returns null — the drivers own that local usage
-   * notice, and the runtime never fabricates a turn. Skills are checked before
+   * shadow them. Bare `/workflow` returns null — the drivers own that local usage
+   * notice, and the runtime never fabricates a turn — while bare `/init` is the
+   * trigger itself. `/init` decides create-versus-improve from the instructions
+   * summary this runtime captured at startup (the header's own data), never from
+   * a fresh filesystem read, so every driver — TUI, dev-repl, headless — gets the
+   * same branch through this one seam. Skills are checked before
    * custom commands as a defensive backstop to the loader's collision
    * filtering. Unknown slash input remains ordinary user input.
    */
@@ -2229,6 +2235,12 @@ export class AgentRuntime {
     const workflow = parseWorkflowCommand(input);
     if (workflow === 'missing-task') return null;
     if (workflow !== null) return { kind: 'workflow', ...workflow };
+
+    const init = parseInitCommand(input, {
+      loaded: this.info.projectInstructions,
+      problemFile: this.info.projectInstructionsProblemFile,
+    });
+    if (init !== null) return { kind: 'init', ...init };
 
     const skill = await expandSkillCommand(this.skills, input);
     if (skill !== null) return { kind: 'skill', ...skill };
