@@ -1,0 +1,54 @@
+// Captions: one short paragraph per slide, in slide order.
+// Single source for both decks (build-deck.cjs and build-deck-portrait.cjs): each script writes
+// them into its slides' speaker notes; build-deck.cjs also writes slides/wechat-captions.zh-CN.md,
+// for publishing the deck as images with a caption under each one.
+const CAPTIONS = [
+  // 1 封面
+  "这是一个持续了三个星期的实验：让一个 coding agent 接手自己的开发。项目叫 darwin，基于 Strands Agents 的 TypeScript SDK。8 月 13 日用 Claude Code 搭出第一版之后，仓库里的每一次提交都由 darwin 自己写。下面按顺序讲它是怎么一步步走到今天的。",
+  // 2 起因
+  "想验证两件事。一是现在的模型和 agent 框架，够不够让 coding agent 从提需求、实现、测试、验收到提交整条链都自己跑，人只在边界上做决定；这个想法来自 Karpathy 的 autoresearch 和 Sakana 的 Darwin Gödel Machine 这类工作。二是顺带压测 Strands SDK：权限拦截、上下文压缩、子 agent 编排、多模型切换，它都声称支持，但没有一个足够复杂的项目同时压过。",
+  // 3 两层路线
+  "先看全貌。三周的迭代在回答两个问题。第一层：迭代方向从哪来。从我一条条提需求，到 Claude Code 替我提，到 darwin 能给自己派活，再到 darwin 自己研究、自己排优先级、用骰子跳出局部最优，方向来源一步步从人手里交出去。第二层：方向定了之后，每一轮怎么做好。反思自己的运行轨迹，踩坑后改流程，以及让循环三周不失控的几个机制。",
+  // 4 第一步
+  "第一步是用 Claude Code 搭一个基线。给它的提示词只有一句：用 Strands SDK 的 TS 版做一个 TUI 的单体 coding agent，支持 skills 和 MCP。两天、19 个 commit，约 3100 行 TypeScript，v0.0.1 出来了。能用 SDK 的都用 SDK，唯一自建的是当时 SDK 还没有的 skills 加载器。这个版本被固定为基线，之后每次提交都由当时最新的 darwin 写。",
+  // 5 分隔 第一层
+  "第一层：迭代方向从哪来。自我迭代最难的一步是决定下一步改什么。接下来的五步，讲的都是这件事怎么一步步从人手里交出去。",
+  // 6 第二、三步
+  "问题：方向全靠我一条条提，人成了瓶颈。第二步我在 darwin 仓库里启动 darwin 提需求，验证了改自己的源码不会把自己弄坏，但方向来源只有我一个。第三步把提需求交给 Claude Code：它扮演开发者，只提需求不改代码，每个需求用最新的 darwin 起新会话去做。方向来源从人换成了另一个 agent，但还在 darwin 外面。",
+  // 7 第四步
+  "问题：darwin 只能被别人驱动，不能给自己派活。解法是把 headless 模式、后台 bash、任务完成通知三样组装成 /developer skill：当前的 darwin 作为 Host，在后台起一个 headless 的 darwin 子进程做实现，Host 独立看 diff、独立跑测试，通过就提交、build，下一轮用新版本。这一步本身不产生方向，但它给了 darwin 执行方向的引擎，后面两步才成为可能。",
+  // 8 第五步
+  "问题：每一批还得我说一句这批做什么。解法是 /self-evolution-research skill：先看 backlog 有没有没做完的方向，有就先做；没有才研究同类产品，对照自己的代码提出最多 5 个方向。每个方向按重要性、架构契合、证据、难度、风险打分，公式是 2×重要性+契合+证据−难度−风险，低于 6 分不进 backlog。人只留下权重和门槛这几条规则。",
+  // 9 第六步 骰子
+  "问题：让模型自己选方向，会陷进局部最优。它每次都去看同类产品，提出来的总是别人已有的功能；让它自查，只挑最熟的那块。这和优化里的局部最优是一回事。解法借了随机梯度下降的思路：给选择加一点随机扰动。研究前先跑一个脚本按权重抽路径（同类产品 50%、TUI 20%、开放 15%、SDK 10%、可观测性 5%），摇出来算数，只摇一次、读资料前摇、不能重摇。",
+  // 10 骰子结果
+  "跳出局部最优之后看见了什么。TUI 路径找出 Esc 关弹层、按词移动光标这类交互细节；可观测性路径补上失败回合记录和每回合 token 花费；SDK 路径促成用官方 AgentSkills 替换手写核心，以及基于 SDK Graph 的 workflow 工具；开放路径查出 /compact 的死循环和模型限流时看不见、不能取消的问题。到这里，方向来源完成了从人到 darwin 的交接。",
+  // 11 分隔 第二层
+  "第二层：方向定了之后，每一轮怎么做好。有了方向，还要让执行越来越顺：弯路少一点、token 省一点、验收不被糊弄。这一层讲 darwin 怎么从自己的运行记录里找改进点，三周里踩过哪些坑，以及哪几件事让循环没有失控。",
+  // 12 第七步 反思
+  "问题：过程里的弯路没人看见，同样的错会一直犯。解法是让 darwin 读自己的运行轨迹。每个会话都有一份只追加的轨迹文件，记录每次工具调用、模型返回、token 和回合结束原因。/self-reflection 起一个新的 headless darwin 读它，打分（完美、高、中、低），找出哪些弯路能靠改 darwin 自己避免，再用同一套评分和门槛写进 backlog。第一次反思就找出两条，其中一条是流中断后卡死等人输 continue。",
+  // 13 闭环
+  "到这里循环就完整了：研究或反思产生方向，评分过门槛进 backlog，/developer 监督 headless 子进程实现，Host 独立验收后提交，build 出新版本，新版本回到起点继续研究下一个方向。人保留的是：给方向、产品取舍、安全边界、授权 push。其余的 darwin 自己跑。",
+  // 12 坑1 token
+  "最先碰到的问题是 token 消耗。8 月 17 日统计的一个批次：706 次模型调用，output 29.6 万，cache read 3.98 亿。原因是同一个子会话从规划一直续到第四轮修正，每次调用读取的缓存上下文从 23 万涨到 79 万；另外每次调用平均只发 1.11 个工具。改法：不再拆成规划和实现两段各审一次，一个完整 worker 自己走完，Host 只在最后独立验收；提示词里要求互不依赖的读取在一条消息里批量发出。",
+  // 13 坑2
+  "另外四个教训。监督子进程比子进程干活还贵：一个批次 390 次工具调用里 322 次是 Host 在轮询，每醒一次都是一轮全上下文的模型调用。先改成阻塞式等待，最后反过来，后台任务启动后立即返回，Host 可以先结束回合，任务结束时一条通知进入提示队列，会话空闲时再唤醒模型。反思要敢打低分，十次里四次是低，其中一条后来变成了新的改进方向。同一个错不换假设就别再试，一次服务端校验失败被连试了六种变体才被人取消，于是加了重试守卫，第二次要有新假设，第三次停。Trellis 工作流前三周有用，切到更强的模型后成了多出来的规则手册，整层移除。",
+  // 14 为什么能一直跑下去
+  "能跑三个星期不失控，靠四件事。该记的都写进文件：AGENTS.md 预载进系统提示，迭代日志每批追加。测试不用 mock：一百三十来个脚本跑真实的 pty、真的 git 仓库、真的模型。提前说好哪些事归人管，什么情况整批停下。最关键的是每一轮都用刚改出来的 darwin 做下一轮：改动一提交就进入实际工作，改好了下一轮更顺，改坏了下一轮就撞上。",
+  // 15 三个星期之后
+  "三个星期的数字：672 个 commit，99 个受监督的迭代批次，backlog 里 95 个方向、93 个已完成，约 37000 行 TypeScript，约 130 个验证脚本。基线之后的实现代码都是 darwin 写的。功能上它现在有流式 Markdown 和文件 diff、四种权限模式、可恢复会话和轨迹回放、subagent 和 workflow 委派、hook 和 MCP、多模型切换，以及三个自进化 skill。",
+  // 16 Strands SDK
+  "对 Strands SDK 的压测结论：扩展点够用，agent 循环一次都没有 fork 过。模型、工具、上下文管理、权限拦截、多 agent 编排全部走 SDK 原生能力，包括 ContextOffloader、Graph、backgroundTasks、AgentSkills。不够的地方集中在自带工具和插件的细节，用一个 pnpm patch 补齐：bash 的进程处理、ContextOffloader 的排除和搜索、fileEditor 的未命中提示和 replace_all。补丁都是 darwin 自己在迭代中撞到问题后写的。",
+  // 17 DeepSWE
+  "跟 Claude Code 跑同一批题。DeepSWE 前 20 题，同一个模型 Claude Opus 5、同一批任务，只换 agent，每题跑一次。effort high 下两边都是 12/20，18 题结果一致，分歧的两题方向相反、各赢一题，成本 darwin 低 7.5%。9 月 8 日又把 effort 降到 medium 各跑一轮：两边都变成 13/20，成本各降 40% 和 37%。省钱的结论在两个 harness 上复现了，多出的 1 分是噪声，同配置两跑本身就会翻 6 题。能说的是，两个 effort 档下换 harness 都不改变总分，而 high 比 medium 多花 1.6 倍成本，没有买到可测量的分数。",
+  // 18 RSI / autoresearch
+  "两个容易和这个项目混在一起的词。RSI 是 Good 1965 年的设想，系统改进自己，改进后的系统再做出更好的改进；今天的形态是模型改权重，或改训练流水线和部署系统。autoresearch 是 Karpathy 2026 年 3 月的做法，agent 只改一个训练脚本，5 分钟一轮，好了保留差了回滚。Darwin Gödel Machine 用档案库加选择让 coding agent 改自己。对照的坐标来自 Lilian Weng 2026 年 7 月的《Harness Engineering for Self-Improvement》：三个设计模式、一条优化对象的渐进线，以及 Self-Harness、AHE 这类自改进回路。",
+  // 19 darwin 落在哪里
+  "按 Weng 的坐标，darwin 是 harness 层的有界自我改进。相同的地方：三个设计模式都有，AHE 的七个可编辑组件都动过，连优化器 skill 本身也在被改，propose–evaluate–accept 的骨架一样。不同在评价器和边界：模型固定，harness 的上限就是模型的上限；验证器在回路内，测试和权限门跟代码在同一仓库，靠 Host 重跑和人审 diff 兜住；没有种群，git main 一条线，多样性靠骰子补。没有标量目标所以慢，autoresearch 一晚上百次实验，darwin 三周 99 个批次。",
+  // 20 下一步 Harbor
+  "下一步是给好坏一个数字。现在判断一个改动好坏的标准全是定性的、内生的：评分是主观评级，验收只看没有回归，反思的评价者和被评价者是同一个系统。准备用 Harbor 跑 Terminal-Bench 2.0 和 DeepSWE，每个候选 commit 在同一模型、同一参数下和 baseline 比 pass@1、成本和时长；触及 agent 核心的 commit 跑几题 smoke，每次 release 跑全量。这正好补上前一页的三个缺口：留外集、回路外的验证器、标量信号。目前到提案和 submodule，先跑通一题冒烟。",
+  // 21 结语
+  "它能不能叫自进化，我倾向于保守一点。它能在明确的边界内自己找方向、实现、验收、记录，并把学到的东西传给下一代；方向选得好不好、边界画在哪里，仍然由人判断。这个实验至少说明，在一个三万多行的仓库里、三个星期的尺度上，这些判断之外的活是可以交出去的。三周多体验下来，大概有 10% 到 20% 的方向还是要我明确指引；等它自己探索，也许也能走到我想要的地方，但要花更长的时间和更多的成本。想自己接着迭代，fork 这个 repo，然后运行 /self-evolution-research；想直接用，npm install -g strands-darwin。代码和全部记录在 github.com/xiehust/strands-darwin。",
+];
+
+module.exports = { CAPTIONS };
