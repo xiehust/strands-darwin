@@ -78,11 +78,26 @@ Rules are project-scoped at `~/.darwin/projects/<project-key>/permission-rules.j
 
 Rules are checked after static safety and before classifier. A written rule therefore also avoids a classifier call.
 
+## Deny rules
+
+The same file takes a second array, `deny`, in the same grammar. A deny rule is a prohibition you write down once: it holds in every mode — `yolo` included — for the main agent and for every subagent or workflow node, and it wins over any matching allow rule, whether configured or granted this session.
+
+```json
+{
+  "allow": ["bash:pnpm *"],
+  "deny": ["bash:git push --force*", "bash:*curl*", "fileEditor:dist/**", "http_request"]
+}
+```
+
+Deny rules are judged before anything that could widen a call — before the plan guard, `yolo`, the static safe list, allow rules and the classifier — so a denied call never prompts, never reaches the classifier and never runs a `PreToolUse` hook. Matching is the conservative inverse of allow: a bash deny matches when **any** chained segment matches (`git status && git push --force` is denied by `bash:git push --force*`), redirection and substitution never exempt it (`echo $(git push --force)`, `git push --force > log` and `(git push --force)` are all denied — their bodies count as segments), and the allow-side exemptions do not apply, so `.env*` writes, `memory_save` and Darwin's own policy files can be denied like anything else. A file pattern covers every `fileEditor` call on the path, `view` included. A pattern is anchored at the start of a segment, so write `bash:*curl*` to catch `curl` anywhere in a segment.
+
+The model receives one error naming the rule — `blocked by deny rule bash:git push --force*` — telling it not to retry or work around the call and to tell you instead. No prompt ever offers a deny rule and the session never grants one: the file is the only way a deny rule changes, and a new session picks the change up. An invalid entry is a startup error naming it, exactly as for `allow`.
+
 ## Rule safety and revocation
 
-A bash pattern must match every chained segment: `pnpm build && rm -rf /` does not match `bash:pnpm *`. Rules never match redirection or substitution. No rule can cover writes to `~/.darwin/config.json`, project permission files, active hook files/directories, or `.env*`, nor reads into the sensitive-path set above; otherwise the agent could broaden its own authority. Calls already safe are offered no meaningless rule.
+A bash pattern must match every chained segment: `pnpm build && rm -rf /` does not match `bash:pnpm *`. Rules never match redirection or substitution. No rule can cover writes to `~/.darwin/config.json`, project permission files, active hook files/directories, or `.env*`, nor reads into the sensitive-path set above; otherwise the agent could broaden its own authority. Calls already safe are offered no meaningless rule. (All of this is about allow rules; deny rules follow the inverse described above.)
 
-Nothing is remembered implicitly. `/permissions` lists live rules and whether each came from disk or this session. `/permissions revoke <n|rule|all>` synchronously removes it from the gate and file so the next matching call prompts and a restart cannot resurrect it. The command only narrows; new rules still come exclusively from permission prompts. Manual JSON edits work, but an invalid rule is a startup error.
+Nothing is remembered implicitly. `/permissions` lists live allow rules and whether each came from disk or this session, then every deny rule as `deny (configured)`. `/permissions revoke <n|rule|all>` synchronously removes an allow rule from the gate and file so the next matching call prompts and a restart cannot resurrect it; it refuses to revoke a deny rule, because that would widen what runs — edit the file instead. The command only narrows; new rules still come exclusively from permission prompts (allow) or the file (deny). `/status` counts allow and deny rules separately. Manual JSON edits work, but an invalid rule is a startup error.
 
 ## Headless behavior and local commands
 

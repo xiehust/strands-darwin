@@ -55,6 +55,8 @@ export interface StatusFacts {
   mode: ApprovalMode;
   /** `runtime.allowRuleCount` — config rules plus grants accepted this session. */
   allowRuleCount: number;
+  /** `runtime.denyRuleCount` — configured deny-rules (SER-076), counted apart from allow-rules. */
+  denyRuleCount: number;
   /** `runtime.listMcpServers()` — states as they are; this report connects nothing. */
   mcpServers: readonly McpServerStatus[];
   /** `runtime.info.skillNames`. */
@@ -133,7 +135,7 @@ export function formatStatusReport(facts: StatusFacts): string {
         describeLastCacheMiss(facts),
     ],
     ['session', `${facts.sessionId}${facts.resumed ? ' (resumed)' : ''}`],
-    ['mode', describeMode(facts.mode, facts.allowRuleCount)],
+    ['mode', describeMode(facts.mode, facts.allowRuleCount, facts.denyRuleCount)],
     ['mcp', describeMcpServers(facts.mcpServers)],
     ['skills', describeNames(facts.skillNames)],
     ['hooks', describeHooks(facts)],
@@ -200,18 +202,23 @@ function describeLastCacheMiss(facts: StatusFacts): string {
 
 /**
  * The header's own wording for the three mode states, so `/status` and the header
- * row cannot disagree about what the mode does — plus the live rule count, which
- * `/permissions` can expand.
+ * row cannot disagree about what the mode does — plus the live rule counts, which
+ * `/permissions` can expand. Exported so the header renders exactly this string.
+ *
+ * Deny-rules (SER-076) are counted apart from allow-rules and stated in every
+ * mode: they are what `yolo` still refuses and what `plan` does not ignore.
  */
-function describeMode(mode: ApprovalMode, allowRuleCount: number): string {
-  if (mode === 'yolo') return 'yolo — every tool call runs without confirmation';
+export function describeMode(mode: ApprovalMode, allowRuleCount: number, denyRuleCount: number): string {
+  const deny = denyRuleCount > 0 ? ` · ${denyRuleCount} deny rule(s)` : '';
+  if (mode === 'yolo') return `yolo — every tool call runs without confirmation${deny}`;
   if (mode === 'plan') {
     return (
       'plan — read-only; write and execute calls are denied' +
-      (allowRuleCount > 0 ? ` · ${allowRuleCount} allow rule(s) ignored` : '')
+      (allowRuleCount > 0 ? ` · ${allowRuleCount} allow rule(s) ignored` : '') +
+      deny
     );
   }
-  return `${mode}${allowRuleCount > 0 ? ` · ${allowRuleCount} allow rule(s)` : ''}`;
+  return `${mode}${allowRuleCount > 0 ? ` · ${allowRuleCount} allow rule(s)` : ''}${deny}`;
 }
 
 /**

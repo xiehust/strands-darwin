@@ -1,5 +1,6 @@
 /**
- * Wildcard allow-rules: "stop asking about calls like this one".
+ * Wildcard allow-rules: "stop asking about calls like this one" — and, in the
+ * same grammar, deny-rules: "never run calls like this one" (SER-076).
  *
  * A rule is a string, so it survives a round trip through `.darwin/config.json`
  * unchanged and stays readable in it:
@@ -9,9 +10,10 @@
  * - `bash` — no colon: every call of that tool. The only shape available for
  *   unknown and MCP tools, whose input has no structure we can reason about.
  *
- * The matcher is deliberately conservative in the same way the static risk rules
- * are: anything it cannot reason about does not match, and a non-match only costs
- * a prompt.
+ * The allow matcher is deliberately conservative in the same way the static risk
+ * rules are: anything it cannot reason about does not match, and a non-match only
+ * costs a prompt. The deny matcher ({@link matchesAnyDenyRule}) is conservative in
+ * the opposite direction: anything that *might* be the forbidden call is denied.
  */
 import os from 'node:os';
 import path from 'node:path';
@@ -276,6 +278,70 @@ export function matchesAnyRule(
 }
 
 /**
+ * The first deny-rule that forbids this call, or undefined when none does
+ * (SER-076). Same grammar as {@link matchesAnyRule}, inverted conservatism:
+ *
+ * - no exemptions — {@link isRuleExempt} exists so a rule cannot *widen*, and a
+ *   deny only ever narrows, so `memory_save`, `.env*` and darwin's own policy
+ *   files can be denied like anything else;
+ * - a bash pattern forbids the call when **any** segment matches, not every one
+ *   (`git status && git push --force` is a forced push), and the segments are
+ *   cut more finely than for allow — also at `$(`, backticks, parentheses, `&`
+ *   and redirection — so `echo $(git push --force)` and `(git push --force)`
+ *   expose the forbidden words as a segment of their own;
+ * - shell metacharacters never exempt the call — for allow they mean "the words
+ *   no longer say what will run", which for a prohibition is a reason to deny,
+ *   not to look away;
+ * - a file pattern applies to every `fileEditor` call on the path, `view`
+ *   included, exactly as an allow pattern would cover it.
+ *
+ * The allow matcher above is untouched: the two directions share the parser and
+ * the pattern primitives, not the decision.
+ */
+export function matchesAnyDenyRule(
+  rules: readonly string[],
+  target: RuleTarget,
+  projectRoot: string,
+): string | undefined {
+  for (const rule of rules) {
+    const parsed = parseRule(rule);
+    if (parsed === undefined) continue;
+    if (parsed.toolName !== target.toolName) continue;
+    if (parsed.pattern === undefined) return rule;
+    if (patternForbids(parsed.pattern, target, projectRoot)) return rule;
+  }
+  return undefined;
+}
+
+/**
+ * The deny-side cut of a command: {@link splitBashSegments}' operators plus
+ * substitution openers, grouping parentheses, `&` and redirection. Over-splitting
+ * is the safe direction here — a spurious segment can only match a deny pattern
+ * the user wrote, never clear one.
+ */
+export function splitDenySegments(command: string): string[] {
+  return command
+    .split(/&&|\|\||\$\(|[;|\n&`()<>]/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment !== '');
+}
+
+function patternForbids(pattern: string, target: RuleTarget, projectRoot: string): boolean {
+  if (target.toolName === 'bash') {
+    const command = readString(target.input, 'command') ?? '';
+    return splitDenySegments(command).some((segment) => commandMatches(pattern, segment));
+  }
+
+  if (target.toolName === 'fileEditor') {
+    const filePath = readString(target.input, 'path');
+    if (filePath === undefined) return false;
+    return pathMatches(pattern, toPosix(projectRelativeOrAbsolute(filePath, projectRoot)));
+  }
+
+  return false;
+}
+
+/**
  * Calls no rule may ever cover: darwin's own config (a rule there lets the agent
  * grant itself more rules), environment files, and — the read side of the same
  * exemption (SER-071) — any read into the sensitive set. All are also
@@ -416,6 +482,19 @@ function normalizeSpaces(value: string): string {
 /** Patterns are written with `/`, so Windows separators are folded to it. */
 function toPosix(value: string): string {
   return value.split(path.sep).join('/');
+}
+
+/**
+ * The path a file pattern is matched against: project-relative when the target
+ * lies inside the project, the resolved absolute path otherwise — the same view
+ * `patternCovers` takes for allow, so `fileEditor:dist/**` names the same files
+ * in both directions.
+ */
+function projectRelativeOrAbsolute(filePath: string, projectRoot: string): string {
+  const resolved = path.resolve(projectRoot, filePath);
+  const relative = path.relative(projectRoot, resolved);
+  const inside = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  return inside ? relative : resolved;
 }
 
 function escapeRegExp(value: string): string {

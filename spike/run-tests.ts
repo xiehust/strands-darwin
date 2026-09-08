@@ -53,6 +53,7 @@ const suites = [
   'verify-permission-modes.ts',
   'verify-permission-mode-switch.ts',
   'verify-permissions-command.ts',
+  'verify-deny-rules.ts',
   'verify-tool-hooks.ts',
   'verify-codex-hooks.ts',
   'verify-retry-guard.ts',

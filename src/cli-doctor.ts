@@ -400,7 +400,10 @@ function reportPermissionRules(report: Report, projectRoot: string, policy: Proj
     return;
   }
   const count = policy.allowRules.length;
-  const rules = `${count} allow rule${count === 1 ? '' : 's'}`;
+  const denied = policy.denyRules.length;
+  const rules =
+    `${count} allow rule${count === 1 ? '' : 's'}` +
+    (denied === 0 ? '' : `, ${denied} deny rule${denied === 1 ? '' : 's'}`);
   if (policy.legacyRules) {
     report.info(`${file} — absent; ${rules} read from the legacy project .darwin/config.json "permissionRules"`);
     return;

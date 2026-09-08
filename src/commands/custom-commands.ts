@@ -44,9 +44,9 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // the menu, so both descriptions have to say which is which.
   mode: 'set the permission mode',
   model: 'list or switch models',
-  // Allow-rules, not the mode: /permissions lists and revokes what runs silently,
-  // /mode moves how much everything else asks.
-  permissions: 'list or revoke allow-rules',
+  // Rules, not the mode: /permissions lists allow- and deny-rules and revokes
+  // allow-rules (what runs silently); /mode moves how much everything else asks.
+  permissions: 'list allow/deny rules, revoke allow-rules',
   // Conversation only: branches from an SDK checkpoint and never rolls back files.
   rewind: 'branch from an earlier completed prompt',
   // The consolidated read-only session report — configuration and live state in

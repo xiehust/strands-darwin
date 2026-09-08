@@ -124,7 +124,7 @@ Save 走普通写权限。项目事实必须提供一条精确的当前项目相
 ```text
 ~/.darwin/config.json                                  全局模型/会话配置
 ~/.darwin/sessions/<project-key>/                      快照、轨迹、诊断、任务、卸载结果
-~/.darwin/projects/<project-key>/permission-rules.json 项目放行规则
+~/.darwin/projects/<project-key>/permission-rules.json 项目放行与拒绝规则
 ~/.darwin/projects/<project-key>/memory/                项目记忆
 ```
 

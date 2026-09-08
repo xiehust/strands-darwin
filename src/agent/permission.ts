@@ -19,6 +19,7 @@ import type { BeforeToolCallEvent } from '@strands-agents/sdk';
 import { MANAGE_BACKGROUND_TASK_TOOL_NAME } from './background-delegation.js';
 import {
   hasShellMetacharacters,
+  matchesAnyDenyRule,
   matchesAnyRule,
   sensitiveReadPath,
   splitBashSegments,
@@ -244,6 +245,13 @@ export interface PermissionGateOptions {
   ask: PermissionBridge;
   /** Wildcard allow-rules from the config; see `./permission-rules.ts`. */
   allowRules?: readonly string[];
+  /**
+   * Wildcard deny-rules from the config (SER-076), same grammar. Judged before
+   * the mode, the static `safe` check, allow-rules and the classifier, so a deny
+   * holds in every mode — `yolo` included — and for every child sharing the gate.
+   * Configured only: nothing in the session can add or remove one.
+   */
+  denyRules?: readonly string[];
   /** Consulted for dangerous calls in `auto` mode; ignored otherwise. */
   classifier?: SafetyClassifier;
   /** How long `auto` waits for the classifier before falling back to asking. */
@@ -311,6 +319,13 @@ export class PermissionGate extends InterventionHandler {
   private readonly ruleOrigins = new Map<string, AllowRuleOrigin>();
 
   /**
+   * Configured deny-rules (SER-076). Frozen: there is no grant, revoke or
+   * suggestion path for a deny — the rules file is the only way one changes,
+   * and it is read at startup only.
+   */
+  private readonly denyRuleList: readonly string[];
+
+  /**
    * Live enforcement policy, not `options.mode`: `/mode` moves it mid-session and
    * every decision — parent and child, since they share this instance — reads it
    * from here.
@@ -327,6 +342,7 @@ export class PermissionGate extends InterventionHandler {
     super();
     this.rules = [...(options.allowRules ?? [])];
     for (const rule of this.rules) this.ruleOrigins.set(rule, 'configured');
+    this.denyRuleList = Object.freeze([...(options.denyRules ?? [])]);
     this.currentMode = options.mode;
   }
 
@@ -405,6 +421,16 @@ export class PermissionGate extends InterventionHandler {
   }
 
   /**
+   * The configured deny-rules, in the order they are consulted (SER-076). Every
+   * one is `configured` by construction — there is no session origin to state —
+   * and the array is frozen, so `/permissions` can show it but nothing can edit
+   * the enforcement surface through it.
+   */
+  get denyRules(): readonly string[] {
+    return this.denyRuleList;
+  }
+
+  /**
    * Denies plan-mode mutation before hooks, rules, classifiers, or prompts can
    * have side effects. Undefined means the ordinary permission flow still owns
    * the call; callers must not treat it as approval.
@@ -476,6 +502,14 @@ export class PermissionGate extends InterventionHandler {
     // not something a rule or a classifier verdict can widen.
     const scoped = this.writeScopeGuard(event.toolUse.name, event.toolUse.input, source);
     if (scoped !== undefined) return scoped;
+
+    // A deny-rule (SER-076) is judged next — before the plan guard, before
+    // `yolo`, before the static `safe` check, allow-rules and the classifier.
+    // It is the one stage a user-written prohibition can win at, so nothing
+    // that widens (a mode, a matching allow rule, a verdict, an approval) may
+    // run first, and children share the gate so it binds them identically.
+    const forbidden = this.denyRuleGuard(event.toolUse.name, event.toolUse.input);
+    if (forbidden !== undefined) return forbidden;
 
     const guarded = this.planGuard(event.toolUse.name, event.toolUse.input);
     if (guarded !== undefined) return guarded;
@@ -562,6 +596,29 @@ export class PermissionGate extends InterventionHandler {
   }
 
   /**
+   * Denies a call a configured deny-rule forbids (SER-076). Undefined means the
+   * ordinary flow owns the call. The reason names the rule so the model can
+   * report it precisely, and says in so many words not to retry or route around
+   * it: a deny is the user's standing instruction, not a transient failure. The
+   * rule text is bounded because it reaches the model verbatim.
+   *
+   * Public like {@link planGuard} and for the same reason: the hook wrapper runs
+   * it before any `PreToolUse` shell, so a forbidden call cannot trigger a policy
+   * hook either. Idempotent and side-effect free, so running it twice is safe.
+   */
+  denyRuleGuard(toolName: string, input: unknown): InterventionAction | undefined {
+    if (this.denyRuleList.length === 0) return undefined;
+    const rule = matchesAnyDenyRule(this.denyRuleList, { toolName, input }, this.options.projectRoot);
+    if (rule === undefined) return undefined;
+    return InterventionActions.deny(
+      `blocked by deny rule ${clipRule(rule)}: the user forbade this ${toolName} call in their ` +
+        `project's permission rules, and the rule holds in every permission mode. ` +
+        `Do not retry it, and do not attempt the same action another way. ` +
+        `Tell the user what you wanted to do and let them decide.`,
+    );
+  }
+
+  /**
    * Denies a scoped `workflow` node's `fileEditor` write that lands outside every
    * declared scope. Undefined means the ordinary flow owns the call — including
    * every parent call, every `subagent` dispatch, every unscoped node, `view`, and
@@ -597,6 +654,18 @@ export class PermissionGate extends InterventionHandler {
       return { safe: false, reason: `classifier unavailable (${cause}) — asking user` };
     }
   }
+}
+
+/**
+ * Longest deny-rule text the model-facing reason carries. A rule is one line the
+ * user typed, so this is unreachable in practice; it exists so the error is
+ * bounded by construction rather than by an argument about config files.
+ */
+const MAX_RULE_REASON_CHARS = 200;
+
+function clipRule(rule: string): string {
+  const chars = [...rule];
+  return chars.length <= MAX_RULE_REASON_CHARS ? rule : `${chars.slice(0, MAX_RULE_REASON_CHARS - 1).join('')}…`;
 }
 
 /**

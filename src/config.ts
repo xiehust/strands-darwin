@@ -312,7 +312,7 @@ export interface SessionFields {
   /** When the permission gate asks for confirmation. See {@link ApprovalMode}. */
   permissionMode: ApprovalMode;
   /** Deprecated policy fields retained on the type for migration fixtures only. */
-  permissionRules?: { readonly allow: readonly string[] };
+  permissionRules?: { readonly allow?: readonly string[]; readonly deny?: readonly string[] };
   hooks?: ToolHooksConfig;
 
   /**
@@ -1296,31 +1296,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Validates `permissionRules`. A typo here is not harmless in either direction:
  * an unparseable rule would silently never match (the user believes they are no
- * longer being asked), so it is rejected like every other bad config value.
+ * longer being asked — or, for `deny` (SER-076), that a call is forbidden when
+ * it is not), so it is rejected like every other bad config value.
  */
-function allowRulesField(value: unknown, configPath: string): string[] {
+function permissionRulesFields(value: unknown, configPath: string): { allow: string[]; deny: string[] } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new ConfigError(
       `${configPath}: "permissionRules" must be an object, e.g. { "allow": ["bash:pnpm *"] }.`,
     );
   }
+  const record = value as Record<string, unknown>;
+  return {
+    allow: ruleListField(record['allow'], 'allow', configPath),
+    deny: ruleListField(record['deny'], 'deny', configPath),
+  };
+}
 
-  const allow = (value as Record<string, unknown>)['allow'];
-  if (allow === undefined) return [];
-  if (!Array.isArray(allow)) {
-    throw new ConfigError(`${configPath}: "permissionRules.allow" must be an array of rule strings.`);
+/** One of the two rule arrays, absent meaning empty; same grammar for both. */
+function ruleListField(list: unknown, field: 'allow' | 'deny', configPath: string): string[] {
+  if (list === undefined) return [];
+  if (!Array.isArray(list)) {
+    throw new ConfigError(`${configPath}: "permissionRules.${field}" must be an array of rule strings.`);
   }
 
-  for (const entry of allow) {
+  for (const entry of list) {
     if (typeof entry !== 'string' || !isValidRule(entry)) {
       throw new ConfigError(
-        `${configPath}: ${JSON.stringify(entry)} is not a permission rule. ` +
+        `${configPath}: ${JSON.stringify(entry)} in "${field}" is not a permission rule. ` +
           `Use "<tool>" for a whole tool or "<tool>:<pattern>" for a wildcard, ` +
           `e.g. "bash:pnpm *" or "fileEditor:src/**".`,
       );
     }
   }
-  return [...(allow as string[])];
+  return [...(list as string[])];
 }
 
 export const PERMISSION_RULES_FILENAME = 'permission-rules.json';
@@ -1350,6 +1358,12 @@ export type ToolHookPolicyLayer =
 
 export interface ProjectPolicy {
   allowRules: string[];
+  /**
+   * Configured deny-rules (SER-076), same grammar as {@link allowRules}, from the
+   * same file's `deny` array. Absent means empty. Only the file writes them: the
+   * grant and revoke writers below carry them through unchanged.
+   */
+  denyRules: string[];
   hooks: ToolHooksConfig | undefined;
   codexHooks: CodexHooksConfig | undefined;
   toolHookLayers: readonly ToolHookPolicyLayer[];
@@ -1364,11 +1378,11 @@ export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPol
   const legacyProject = path.join(darwinDir(projectRoot), CONFIG_FILENAME);
   const primaryRecord = await readOptionalRecord(primaryRules);
   const legacyRecord = primaryRecord === undefined ? await readOptionalRecord(legacyProject) : undefined;
-  const allowRules = primaryRecord === undefined
+  const { allow: allowRules, deny: denyRules } = primaryRecord === undefined
     ? legacyRecord?.['permissionRules'] === undefined
-      ? []
-      : allowRulesField(legacyRecord['permissionRules'], legacyProject)
-    : allowRulesField(primaryRecord, primaryRules);
+      ? { allow: [], deny: [] }
+      : permissionRulesFields(legacyRecord['permissionRules'], legacyProject)
+    : permissionRulesFields(primaryRecord, primaryRules);
 
   // Load in policy order. Besides making failure selection deterministic when
   // several active files are invalid, this keeps diagnostics aligned with the
@@ -1399,6 +1413,7 @@ export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPol
   ) as CodexHooksConfig;
   return {
     allowRules,
+    denyRules,
     hooks,
     codexHooks,
     toolHookLayers: loaded.flatMap((layer) => [
@@ -1553,7 +1568,7 @@ export async function appendAllowRule(projectRoot: string, rule: string): Promis
   const policy = await loadProjectPolicy(projectRoot);
   const allow = [...policy.allowRules];
   if (!allow.includes(rule)) allow.push(rule);
-  await writeConfigRecord(permissionRulesPath(projectRoot), { allow });
+  await writeConfigRecord(permissionRulesPath(projectRoot), rulesRecord(allow, policy.denyRules));
 }
 
 /**
@@ -1563,12 +1578,22 @@ export async function appendAllowRule(projectRoot: string, rule: string): Promis
  * Filter-only by construction — what is written is the set the loader already
  * reported as in force, minus the revoked rules. There is no path through here
  * that can add or rewrite a rule, so a bug in a caller costs at most an extra
- * prompt, never a silent widening.
+ * prompt, never a silent widening. Deny-rules (SER-076) pass through untouched:
+ * this writer never sees them as a target.
  */
 export async function removeAllowRules(projectRoot: string, rules: readonly string[]): Promise<void> {
   const policy = await loadProjectPolicy(projectRoot);
   const allow = policy.allowRules.filter((rule) => !rules.includes(rule));
-  await writeConfigRecord(permissionRulesPath(projectRoot), { allow });
+  await writeConfigRecord(permissionRulesPath(projectRoot), rulesRecord(allow, policy.denyRules));
+}
+
+/**
+ * The rules file as written by the two session writers: the allow list, plus
+ * the loaded deny list when there is one. Omitted when empty so a file that never
+ * had a `deny` key is rewritten byte for byte as before SER-076.
+ */
+function rulesRecord(allow: readonly string[], deny: readonly string[]): Record<string, unknown> {
+  return deny.length === 0 ? { allow } : { allow, deny };
 }
 
 function hooksFromRecord(record: Record<string, unknown> | undefined, file: string): ToolHooksConfig | undefined {

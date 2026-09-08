@@ -10,15 +10,10 @@ directory**: `~/.darwin/config.json` (model/provider), `~/.darwin/skills/` plus 
 `.darwin/mcp.json` (falls back to root `.mcp.json`, Claude Code format), plus an `AGENTS.md`
 preloaded into the system prompt.
 
-This is an experimental project in self-hosted AI development.
-
 **v0.0.1 — the [baseline release](../../releases/tag/v0.0.1) — was built entirely with
 [Claude Code](https://claude.com/claude-code).** From this point on, darwin develops
 itself: every subsequent feature, fix, and release is made by running darwin inside its
-own repository (the git history and `docs/iteration-log.md` are the paper trail). The name
-is the thesis — evolution by iteration, with the tool as its own selection pressure. The
-baseline exists so there is always a fixed point to measure that evolution against.
-
+own repository (the git history and `docs/iteration-log.md` are the paper trail).
 
 ## Commands
 
@@ -36,7 +31,7 @@ inference-profile model ids, never bare `anthropic.*`):
 
 ```bash
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven TUI suite
-AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario (approve|deny|alwaysAllow|completion|agents|bashExit|cancelThenContinue|agentsMd|usage|effort|mode|model|longAnswer)
+AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario; the header comment of verify-tui.ts lists them all
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
@@ -85,7 +80,7 @@ free (no model call) unless marked *live*.
 
 | Permissions — the gate | Keyed on `(toolName, input)`, unknown tools fail closed (`execute`); `sensitiveReadPath` matches are `dangerous`, un-ruleable, prompted even in `plan`; `plan` denies writes first; `deny()`, never `confirm()`; children share it; cancel=`denyPending()`, `close()` latches | `src/agent/permission.ts` | doc § |
 | Permission mode — live session state | User-only, never persisted; `/clear` inherits the live mode; on switch, in-flight prompts/verdicts are withdrawn and re-decided from the top (bounded at 16); `mode:` stated once in the existing header row | `PermissionGate.setMode` | `tui mode`, `tui approve` (*live*) |
-| Wildcard allow-rules and `/permissions` | Rules sit after `safe`, before the `auto` classifier; a bash pattern must match every chained segment, never redirection/substitution; no rule may cover `~/.darwin/config.json` or `.env*`; `/permissions` only narrows — revoke is synchronous, additions stay with the prompt | `src/agent/permission-rules.ts` | `verify-permissions-command.ts`†, `tui completion` |
+| Wildcard allow-rules and `/permissions` | Allow: after `safe`, before the `auto` classifier; bash must match every chained segment, never redirection/substitution; none may cover `~/.darwin/config.json` or `.env*`. Deny (`permissionRules.deny`, same file/grammar): after the write-scope guard, before plan/`yolo`/`safe`/allow/classifier; any segment matches, metacharacters/exemptions never exempt, beats any allow, bounded reason names the rule. `/permissions` only narrows — revoke is synchronous, additions stay with the prompt, deny listed, never revoked or offered | `src/agent/permission-rules.ts`, `src/agent/permission.ts` | `verify-permissions-command.ts`†, `verify-deny-rules.ts`†, `tui completion` |
 | `/mcp` — a read-only projection | Never calls `listTools()` (names come from `_registeredToolNames`, degrade to "unavailable"); no reconnect verb; names, counts, states and paths only — never a second path for tool output into context | `src/mcp/registry.ts`, `src/tui/mcp-format.ts` | `verify-mcp-command.ts`†, `tui mcp` |
 | CodeGraph MCP preflight | Exact `codegraph` semantic readers only: cache read-only structural index checks per safe absolute target; unavailable returns one bounded successful shell/file fallback before MCP; usable delegates bytes unchanged; parent/child share wrappers | `src/mcp/codegraph-preflight.ts`, `src/agent/runtime.ts` | `verify-codegraph-preflight.ts`† |
 | Web-search zero hits | Exact `web-search`/server `search` only: delegate first; only verified MCP `-32602` no-results becomes successful query-preserving empty JSON; all successes/events and true errors unchanged; refresh + parent/child share wrapper | `src/mcp/web-search-empty-results.ts`, `src/agent/runtime.ts` | `verify-web-search-empty-results.ts`† |

@@ -180,9 +180,13 @@ export class ToolHookGate extends InterventionHandler {
   }
 
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<BeforeAction> {
-    // Enforced planning is stricter than ordinary Pre -> permission ordering: a
-    // blocked call must not cause even a policy hook shell to execute. The full
-    // gate still runs after Pre for every call this narrow guard does not deny.
+    // A user-written deny-rule (SER-076) and enforced planning are stricter than
+    // ordinary Pre -> permission ordering: a blocked call must not cause even a
+    // policy hook shell to execute. The full gate still runs after Pre for every
+    // call these narrow guards do not deny (and judges both again, harmlessly).
+    const forbidden = this.permissionGate.denyRuleGuard(event.toolUse.name, event.toolUse.input);
+    if (forbidden !== undefined) return forbidden;
+
     const guarded = this.permissionGate.planGuard(event.toolUse.name, event.toolUse.input);
     if (guarded !== undefined) return guarded;
 

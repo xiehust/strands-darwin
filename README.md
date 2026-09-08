@@ -37,7 +37,7 @@ This is a bounded workflow, not autonomous product authority. A dirty or unverif
 ## What it gives you
 
 - **A readable Ink TUI:** streaming Markdown answers, proposed file-edit diffs, elapsed time and token spend, slash/path completion, prompt recall and queueing, local `!` commands, and bounded reports.
-- **Safe approval modes:** `default`, classifier-assisted `auto`, read-only `plan`, and explicit `yolo`, with narrow project-scoped allow rules that can be revoked in-session.
+- **Safe approval modes:** `default`, classifier-assisted `auto`, read-only `plan`, and explicit `yolo`, with narrow project-scoped allow rules that can be revoked in-session and deny rules that hold in every mode, `yolo` included.
 - **Durable work:** resumable project-scoped sessions, append-only trajectories, replay/search/fork/export, cost records, optional diagnostics, background jobs, and parent-managed on-demand project memory with exact evidence and durable-turn commit.
 - **Extension layers:** built-in and project/global skills, custom commands, child agents with workflow-DAG delegation, tool hooks, and stdio/HTTP MCP servers, with portable `.agents/` discovery.
 - **Automation:** one-shot text output or versioned JSON/JSONL, strict session selection, bounded model-call and context-offload controls, and nonzero cancellation/failure exits.

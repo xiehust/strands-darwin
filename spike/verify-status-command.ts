@@ -134,6 +134,7 @@ function facts(overrides: Partial<StatusFacts> = {}): StatusFacts {
     thinking: THINKING_HIGH,
     mode: 'default',
     allowRuleCount: 2,
+    denyRuleCount: 0,
     mcpServers: [server({ name: 'calc', toolNames: ['calc_alpha', 'calc_beta', 'calc_gamma'] })],
     skillNames: ['commit-message', 'developer'],
     hookSources: [],
@@ -275,6 +276,19 @@ function testStatesAndDegradation(): void {
   const yolo = formatStatusReport(facts({ mode: 'yolo' }));
   assert('yolo mode uses the header\u2019s warning wording',
     yolo.includes('yolo — every tool call runs without confirmation'));
+
+  // SER-076: deny-rules are counted apart from allow-rules, in every mode — they
+  // are what yolo still refuses and what plan does not ignore. Zero is silent.
+  assert('no deny-rules adds nothing to the mode row', !bare.includes('deny rule'));
+  const denied = formatStatusReport(facts({ denyRuleCount: 1 }));
+  assert('deny-rules are counted apart from allow-rules',
+    denied.includes('default · 2 allow rule(s) · 1 deny rule(s)'));
+  const yoloDenied = formatStatusReport(facts({ mode: 'yolo', denyRuleCount: 2 }));
+  assert('yolo states the deny-rules it still honours',
+    yoloDenied.includes('yolo — every tool call runs without confirmation · 2 deny rule(s)'));
+  const planDenied = formatStatusReport(facts({ mode: 'plan', allowRuleCount: 3, denyRuleCount: 1 }));
+  assert('plan states ignored allow-rules and the deny-rules it does not ignore',
+    planDenied.includes('denied · 3 allow rule(s) ignored · 1 deny rule(s)'));
 }
 
 function testHooksRow(): void {

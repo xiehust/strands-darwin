@@ -280,8 +280,9 @@ async function commandHandler(): Promise<void> {
         { rule: 'fileEditor:src/**', origin: 'session' },
       ],
       rulesFile,
+      [],
     ).includes('configured') &&
-      formatPermissionRulesReport([{ rule: RULE, origin: 'session' }], rulesFile).includes('granted this session'),
+      formatPermissionRulesReport([{ rule: RULE, origin: 'session' }], rulesFile, []).includes('granted this session'),
   );
 }
 

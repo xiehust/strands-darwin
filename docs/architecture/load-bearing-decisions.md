@@ -330,6 +330,37 @@ mid-turn is the point) and has no add form at all — additions stay exclusively
 permission prompt. Adding the twelfth built-in grew `MAX_COMPLETIONS` with it; the free checks
 are `spike/verify-permissions-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`.
 
+**Deny-rules (SER-076) are the one permission expression the allow side cannot make: a
+prohibition the user writes down once and that holds with nobody watching.** They live in the
+same project-scoped file as a second array, `permissionRules.deny`, in exactly the allow grammar
+(`bash:git push --force*`, `fileEditor:dist/**`, a bare tool name), validated at load by the same
+parser (an invalid entry is a `ConfigError` naming the entry and the field; the global config keeps
+refusing `permissionRules` whole), and an absent `deny` is byte-identical to before — the two
+session writers (`appendAllowRule`, `removeAllowRules`) carry the loaded `deny` through and omit the
+key when it is empty. Four things are load-bearing. **Stage order**: `PermissionGate.decideOnce`
+judges deny-rules right after the `workflow` write-scope guard and *before* the plan guard, `yolo`,
+the static `safe` check, allow-rules and the classifier — it is the one stage a user-written rule
+can *fail*, so nothing that widens (a mode, a matching allow rule, a verdict, an approval) may run
+first; a deny therefore holds in every mode, `yolo` included, and binds every child sharing the
+gate identically, and a deny wins over any matching allow rule, configured or granted this session.
+The hook wrapper (`ToolHookGate`) hoists the same public `denyRuleGuard` ahead of `PreToolUse`
+exactly as it hoists `planGuard`, so a forbidden call runs no policy hook shell either.
+**Inverted conservatism** (`matchesAnyDenyRule` beside the untouched allow matcher): a bash deny
+matches when *any* segment matches, the segments are cut more finely than for allow (also at `$(`,
+backticks, parentheses, `&` and redirection), shell metacharacters never exempt it, `isRuleExempt`
+does not apply (the exemptions exist so a rule cannot widen; a deny only narrows, so `.env*`,
+darwin's own policy files and `memory_save` can be denied), and a file pattern covers every
+`fileEditor` call on the path, `view` included. **One bounded model-facing reason**:
+`InterventionActions.deny(...)` naming the rule (`blocked by deny rule <rule>`, rule text clipped)
+and saying not to retry or route around it and to tell the user — the same `DENIED:` tool result
+shape as every other denial, so headless drivers print nothing new. **Configured only**: the gate's
+list is frozen, no prompt offers a deny, the session never grants one, `/permissions` lists them
+unnumbered as `deny (configured)` and *refuses* `revoke` by name (revocation would widen — the
+notice says so and names the file), so "only narrows" is intact; `/status` and the header mode row
+(one shared `describeMode`) count deny-rules apart from allow-rules in every mode, `yolo` included,
+because they are what `yolo` still refuses. Free checks: `spike/verify-deny-rules.ts` (in
+`pnpm test`), plus the status and config suites.
+
 ## `/mcp` — a read-only projection
 
 **`/mcp` is a read-only projection of the MCP clients the runtime already holds, and reading

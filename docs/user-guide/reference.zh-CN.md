@@ -88,8 +88,8 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/memory forget <id/number/all>` | 删除/抑制条目并刷新当前 prompt |
 | `/mode [mode]` | 查看/设置仅用户可改的当前权限模式；不持久化 |
 | `/model [name]` | 列出/切换已配置模型，会话不断开；缓存尚热时切换前先提示一次 |
-| `/permissions` | 当前放行规则及来源 |
-| `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘规则 |
+| `/permissions` | 当前放行规则及来源，随后是已配置的拒绝规则 |
+| `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘上的放行规则；拒绝规则不能在此撤销 |
 | `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/hooks/费用/成本/上下文；出现过缓存未命中后，模型行会注明最近一次未命中的可能原因 |
 | `/tasks` | 后台任务及其最近三行非空输出；忙碌时也可用；读取不会移动模型的 `output`/`wait` 游标 |
 | `/trajectory` | 当前运行的本地记录状态 |
@@ -162,7 +162,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 
 ## 网络访问工具（仅主代理）
 
-两者都是普通的受权限管控工具：`default` 模式会询问，`plan` 模式直接拒绝，也可以用放行规则覆盖。子代理和 workflow 节点都拿不到它们。
+两者都是普通的受权限管控工具：`default` 模式会询问，`plan` 模式直接拒绝，也可以用放行规则覆盖或用拒绝规则禁止。子代理和 workflow 节点都拿不到它们。
 
 | 工具 | 返回什么 |
 |---|---|

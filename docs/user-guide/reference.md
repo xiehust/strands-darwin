@@ -88,8 +88,8 @@ Rules and limits:
 | `/memory forget <id/number/all>` | remove/suppress entries and refresh live prompt |
 | `/mode [mode]` | show/set user-only live permission mode; not persisted |
 | `/model [name]` | list/switch configured models, conversation intact; a warm-cache notice precedes a switch |
-| `/permissions` | live allow rules and origins |
-| `/permissions revoke <n/rule/all>` | synchronously narrow live/disk rules |
+| `/permissions` | live allow rules and origins, then configured deny rules |
+| `/permissions revoke <n/rule/all>` | synchronously narrow live/disk allow rules; deny rules are never revoked here |
 | `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/hooks/spend/cost/context report; the model row names the last cache miss's likely cause once one was observed |
 | `/tasks` | background jobs with their last three non-empty output lines, including while busy; reading them never moves the model's `output`/`wait` cursor |
 | `/trajectory` | this run's local record status |
@@ -175,7 +175,7 @@ the input, never from the file). Other commands ignore the flag.
 ## Web access tools (parent agent only)
 
 Both are ordinary gated tools: they prompt in `default`, are denied in `plan`, and may be covered by
-allow-rules. Subagents and workflow nodes never receive them.
+allow-rules or forbidden by deny-rules. Subagents and workflow nodes never receive them.
 
 | Tool | What comes back |
 |---|---|

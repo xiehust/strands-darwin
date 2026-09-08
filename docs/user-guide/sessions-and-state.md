@@ -124,7 +124,7 @@ Bounds: 8,000 code points per line, 8 MiB per session, 1 MiB pending writes. Rea
 ```text
 ~/.darwin/config.json                                  global model/session config
 ~/.darwin/sessions/<project-key>/                      snapshots, trajectories, diagnostics, jobs, offload
-~/.darwin/projects/<project-key>/permission-rules.json project allow rules
+~/.darwin/projects/<project-key>/permission-rules.json project allow and deny rules
 ~/.darwin/projects/<project-key>/memory/                learned project memory
 ```
 

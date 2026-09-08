@@ -655,6 +655,7 @@ export class AgentRuntime {
       projectRoot: options.projectRoot,
       ask: options.permissionBridge,
       allowRules: policy.allowRules,
+      denyRules: policy.denyRules,
       dispatchSource: (agentId) => subagentDispatches.sourceFor(agentId),
       // Built for every run, not only an `auto` one: `/mode auto` can arrive
       // mid-session and the gate must have a classifier to consult. Costs nothing
@@ -1414,6 +1415,21 @@ export class AgentRuntime {
    */
   listAllowRules(): readonly AllowRuleEntry[] {
     return this.gate.listAllowRules();
+  }
+
+  /**
+   * The configured deny-rules (SER-076), for `/permissions` and `/status`. Read
+   * from the gate like {@link listAllowRules}; the gate's list is frozen and the
+   * session has no grant or revoke path for a deny, so this is exactly what the
+   * rules file said at startup.
+   */
+  listDenyRules(): readonly string[] {
+    return this.gate.denyRules;
+  }
+
+  /** How many deny-rules are in force — counted apart from allow-rules. */
+  get denyRuleCount(): number {
+    return this.gate.denyRules.length;
   }
 
   /**

@@ -180,6 +180,7 @@ import { COPY_COMMAND_USAGE, runCopyCommand } from './copy-command.js';
 import { formatHelpReport } from './help-format.js';
 import { formatMcpReport } from './mcp-format.js';
 import {
+  describeMode,
   formatPromptCache,
   formatPromptCacheState,
   formatStatusReport,
@@ -1408,6 +1409,7 @@ export function App({
             thinking: runtime.thinking,
             mode: runtime.permissionMode,
             allowRuleCount: runtime.allowRuleCount,
+            denyRuleCount: runtime.denyRuleCount,
             mcpServers: runtime.listMcpServers(),
             skillNames: runtime.info.skillNames,
             hookSources: runtime.info.hookSources,
@@ -2704,21 +2706,17 @@ export function Header({
       </Text>
       {mode === 'yolo' ? (
         // Yellow: yolo disables a safety layer, same convention as other warnings.
-        <Text color={visualColor.warning}>mode: yolo — every tool call runs without confirmation</Text>
+        // The wording is `/status`'s own (`describeMode`), so the two cannot drift;
+        // deny-rules (SER-076) ride the same row in every mode.
+        <Text color={visualColor.warning}>mode: {describeMode(mode, runtime.allowRuleCount, runtime.denyRuleCount)}</Text>
       ) : mode === 'plan' ? (
         // One existing row, not a new one: the header competes with permission and
         // tool detail for frame height. Rules remain stored but cannot bypass plan.
-        <Text color={visualColor.warning}>
-          mode: plan — read-only; write and execute calls are denied
-          {runtime.allowRuleCount > 0 ? ` · ${runtime.allowRuleCount} allow rule(s) ignored` : ''}
-        </Text>
+        <Text color={visualColor.warning}>mode: {describeMode(mode, runtime.allowRuleCount, runtime.denyRuleCount)}</Text>
       ) : (
-        // Rule count rides along on this line rather than taking one of its own:
+        // Rule counts ride along on this line rather than taking one of their own:
         // see the frame-height comment below.
-        <Text dimColor>
-          mode: {mode}
-          {runtime.allowRuleCount > 0 ? ` · ${runtime.allowRuleCount} allow rule(s)` : ''}
-        </Text>
+        <Text dimColor>mode: {describeMode(mode, runtime.allowRuleCount, runtime.denyRuleCount)}</Text>
       )}
       {instructions !== undefined &&
         (instructions.truncated ? (
@@ -3233,31 +3231,40 @@ function applyModeCommand(
 }
 
 /**
- * The `/permissions` listing: every live allow-rule, numbered, with its origin.
+ * The `/permissions` listing: every live allow-rule, numbered, with its origin,
+ * then every configured deny-rule (SER-076), labelled as deny and unnumbered.
  *
  * Origin is stated per rule because the two kinds answer different questions —
  * a `configured` rule was a deliberate entry in the project's permission-rules
  * file, a `granted this session` rule is minutes old and the more likely
- * revocation target. Exported for the free spike, like `formatUsageReport`.
+ * revocation target. Deny-rules carry no number on purpose: the numbers are
+ * `revoke` targets, and a deny is never one. Exported for the free spike, like
+ * `formatUsageReport`.
  */
 export function formatPermissionRulesReport(
   entries: readonly AllowRuleEntry[],
   rulesFile: string,
+  denyRules: readonly string[],
 ): string {
-  if (entries.length === 0) {
-    return (
-      'no allow-rules in effect — every non-safe call asks\n' +
-      `  rules come from the permission prompt\u2019s "always allow" options, or from ${rulesFile}`
-    );
-  }
-  const rows = entries.map(
-    (entry, index) =>
-      `  ${index + 1}. ${entry.rule} — ${entry.origin === 'configured' ? 'configured' : 'granted this session'}`,
-  );
+  const allowSection =
+    entries.length === 0
+      ? [
+          'no allow-rules in effect — every non-safe call asks',
+          `  rules come from the permission prompt\u2019s "always allow" options, or from ${rulesFile}`,
+        ]
+      : [
+          `allow-rules in effect (${entries.length}) — configured rules load from ${rulesFile}`,
+          ...entries.map(
+            (entry, index) =>
+              `  ${index + 1}. ${entry.rule} — ${entry.origin === 'configured' ? 'configured' : 'granted this session'}`,
+          ),
+          '  /permissions revoke <n|rule|all> revokes; new rules come only from the permission prompt',
+        ];
+  if (denyRules.length === 0) return allowSection.join('\n');
   return [
-    `allow-rules in effect (${entries.length}) — configured rules load from ${rulesFile}`,
-    ...rows,
-    '  /permissions revoke <n|rule|all> revokes; new rules come only from the permission prompt',
+    ...allowSection,
+    `deny-rules in effect (${denyRules.length}) — hold in every mode, for every agent; edit ${rulesFile} to change them`,
+    ...denyRules.map((rule) => `  - ${rule} — deny (configured)`),
   ].join('\n');
 }
 
@@ -3280,12 +3287,16 @@ export function applyPermissionsCommand(
   dispatch: (action: TurnAction) => void,
 ): void {
   const argument = text.slice('/permissions'.length).trim();
-  const usage = 'usage: /permissions — list allow-rules · /permissions revoke <n|rule|all>';
+  const usage = 'usage: /permissions — list allow- and deny-rules · /permissions revoke <n|rule|all> (allow-rules only)';
 
   if (argument === '') {
     dispatch({
       type: 'notice',
-      text: formatPermissionRulesReport(runtime.listAllowRules(), runtime.info.permissionRulesPath),
+      text: formatPermissionRulesReport(
+        runtime.listAllowRules(),
+        runtime.info.permissionRulesPath,
+        runtime.listDenyRules(),
+      ),
     });
     return;
   }
@@ -3314,6 +3325,18 @@ export function applyPermissionsCommand(
       return;
     }
   } else {
+    // A deny-rule (SER-076) is refused by name before the allow lookup: revoking
+    // it would *widen* what runs, which this command can never do. The file is
+    // the only way a deny changes, and the notice says so.
+    if (runtime.listDenyRules().includes(target)) {
+      dispatch({
+        type: 'notice',
+        text:
+          `${target} is a deny-rule — /permissions never revokes deny-rules, because that would widen what runs\n` +
+          `  edit ${runtime.info.permissionRulesPath} and start a new session to change it`,
+      });
+      return;
+    }
     // An index from the listing, or the exact rule string. Index wins for a
     // purely numeric target: rules carry a tool name, so none is all digits.
     const index = /^\d+$/.test(target) ? Number(target) : undefined;
@@ -3329,10 +3352,11 @@ export function applyPermissionsCommand(
   }
 
   const { removed, saved } = runtime.revokeAllowRules(targets);
+  const denyRulesStay = runtime.denyRuleCount === 0 ? '' : ' — deny-rules stay in force';
   const headline =
     removed.length === 1
-      ? `revoked ${removed[0]} — the next matching call will ask again`
-      : `revoked ${removed.length} allow-rules — the next matching calls will ask again`;
+      ? `revoked ${removed[0]} — the next matching call will ask again${denyRulesStay}`
+      : `revoked ${removed.length} allow-rules — the next matching calls will ask again${denyRulesStay}`;
   saved.then(
     () => {
       dispatch({ type: 'notice', text: `${headline}\n  removed from ${runtime.info.permissionRulesPath}` });

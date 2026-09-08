@@ -78,11 +78,26 @@ allow? y n always: a=curl * A=all bash esc=deny
 
 规则在静态安全判定之后、分类器之前检查，因此命中后也能省去分类器调用。
 
+## 拒绝规则
+
+同一文件还可以有第二个数组 `deny`，语法完全相同。拒绝规则是你写下一次就一直生效的禁令：在所有模式下（包括 `yolo`）、对主 agent 及每个子代理和 workflow 节点都生效，并优先于任何匹配的放行规则——无论该放行规则来自配置还是本会话内授予。
+
+```json
+{
+  "allow": ["bash:pnpm *"],
+  "deny": ["bash:git push --force*", "bash:*curl*", "fileEditor:dist/**", "http_request"]
+}
+```
+
+拒绝规则在一切可能放宽调用的环节之前判定——先于 plan 守卫、`yolo`、静态安全名单、放行规则和分类器——因此被拒绝的调用不会弹出询问、不会进入分类器，也不会触发 `PreToolUse` hook。匹配方式是放行规则的保守反向：bash 拒绝规则只要**任一**串联命令段匹配即生效（`bash:git push --force*` 会拒绝 `git status && git push --force`）；重定向和命令替换永不豁免（`echo $(git push --force)`、`git push --force > log`、`(git push --force)` 都会被拒绝——其内部内容同样算作命令段）；放行侧的例外不适用，所以 `.env*` 写入、`memory_save` 以及 darwin 自身的策略文件同样可以被拒绝。文件 pattern 覆盖该路径上的所有 `fileEditor` 调用，包括 `view`。pattern 锚定在命令段开头，要在命令段任意位置捕获 `curl`，写 `bash:*curl*`。
+
+模型会收到一条指明规则的错误——`blocked by deny rule bash:git push --force*`——要求它不要重试或绕过，而是告诉你。权限框永远不会提供拒绝规则，会话内也永远不会授予：修改拒绝规则只能编辑文件，并在新会话中生效。非法条目会像 `allow` 一样成为指明该条目的启动错误。
+
 ## 规则安全与撤销
 
-bash pattern 必须匹配每个串联命令段；`pnpm build && rm -rf /` 不匹配 `bash:pnpm *`。带重定向或命令替换的内容永不匹配规则。任何规则都不能覆盖 `~/.darwin/config.json`、项目权限文件、启用中的 hook 文件/目录或 `.env*` 写入，也不能覆盖对上文敏感路径集合的读取，否则代理可能扩大自身权限。已经静态安全的调用不会显示一个实际无效的规则选项。
+bash pattern 必须匹配每个串联命令段；`pnpm build && rm -rf /` 不匹配 `bash:pnpm *`。带重定向或命令替换的内容永不匹配规则。任何规则都不能覆盖 `~/.darwin/config.json`、项目权限文件、启用中的 hook 文件/目录或 `.env*` 写入，也不能覆盖对上文敏感路径集合的读取，否则代理可能扩大自身权限。已经静态安全的调用不会显示一个实际无效的规则选项。（以上均指放行规则；拒绝规则按上文所述反向处理。）
 
-普通 `y` 不会暗中保存规则。`/permissions` 会列出所有生效规则，并区分来自磁盘还是当前会话。`/permissions revoke <n|rule|all>` 会同步从 gate 和文件中删除，下次调用重新询问，重启后也不会复活。该命令只能收紧权限；新增规则仍只能来自权限框。可以手工编辑 JSON，但非法规则会导致启动错误。
+普通 `y` 不会暗中保存规则。`/permissions` 会列出所有生效的放行规则并区分来自磁盘还是当前会话，随后以 `deny (configured)` 列出每条拒绝规则。`/permissions revoke <n|rule|all>` 会同步把放行规则从 gate 和文件中删除，下次调用重新询问，重启后也不会复活；它拒绝撤销拒绝规则，因为那会放宽权限——请改文件。该命令只能收紧权限；新增规则仍只能来自权限框（放行）或文件（拒绝）。`/status` 分别统计放行与拒绝规则数。可以手工编辑 JSON，但非法规则会导致启动错误。
 
 ## 无头模式与本地命令
 
