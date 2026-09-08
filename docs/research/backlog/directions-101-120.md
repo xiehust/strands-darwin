@@ -64,7 +64,7 @@ Evidence: session `session-20260905-014347068` seq 0 `runStarted { resumed: fals
 
 ## SER-076 — User-written deny rules: `permissionRules.deny` in the same project-scoped `permission-rules.json` and rule grammar as `allow` (`bash:git push --force*`, `fileEditor:dist/**`, bare tool name), validated at load; judged in `PermissionGate.beforeToolCall` right after the write-scope guard and before the plan guard, `yolo`, `safe`, allow-rules and the classifier, so it holds in every mode and for every child sharing the gate; a bash deny matches when any chained segment matches and shell metacharacters never exempt it; the model receives one bounded `DENIED` error naming the rule; `/permissions` lists deny rules as `deny (configured)` and refuses to revoke them; no prompt ever offers a deny rule; `/status` counts them separately
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 104
 - Score: 11
 - Importance: 4
@@ -76,7 +76,7 @@ Evidence: session `session-20260905-014347068` seq 0 `runStarted { resumed: fals
 
 ### Implementation / acceptance evidence
 
-Not started. Acceptance: `pnpm typecheck`, `pnpm test`; a free suite (`spike/verify-deny-rules.ts`, or an extension of `spike/verify-permissions-command.ts`) proving that a `bash:git push --force*` deny blocks `git status && git push --force` in `default`, `auto`, `plan` and `yolo`; a command with redirection/substitution whose segment matches a deny is denied; a deny wins over a matching allow rule; the model-facing error names the rule; `/permissions` lists it with origin `configured` and refuses to revoke it; an invalid deny string is a `ConfigError` naming the entry; `spike/verify-config.ts` stays green; `tui completion` re-run if `/permissions` help text changes.
+Done — commit `6bd5cdb` (`feat(permission): add user-written deny rules to permission-rules`, 25 files), Batch 108 in `docs/iteration-log.md`. `matchesAnyDenyRule`/`splitDenySegments` (`src/agent/permission-rules.ts`) beside the untouched allow matcher: any chained segment matches, segments also cut at `$(`, backticks, parentheses, `&`, `<`, `>`, no `isRuleExempt`, a file pattern covers every `fileEditor` call on the path; `PermissionGate.denyRuleGuard` judged in `decideOnce` right after `writeScopeGuard` and before `planGuard`/`yolo`/`safe`/allow/classifier, hoisted ahead of `PreToolUse` in `src/hooks/tool-hooks.ts` like `planGuard`; reason `blocked by deny rule <rule>: …` (rule clipped at 200 code points) tells the model not to retry or route around; `permissionRulesFields`/`ruleListField` (`src/config.ts`) validate `allow` and `deny` with the field named in the `ConfigError`, `rulesRecord` omits `deny` when empty so pre-existing files rewrite byte-identically, both session writers carry `deny` through; runtime `listDenyRules()`/`denyRuleCount`; `/permissions` lists deny rules unnumbered as `<rule> — deny (configured)` and refuses `revoke <deny-rule>` ("would widen what runs", names the file), `revoke all` says deny-rules stay; `describeMode` (shared header/`/status`) appends ` · N deny rule(s)`; doctor line. Suite `spike/verify-deny-rules.ts` (95) registered in `run-tests.ts`. Host acceptance at `6bd5cdb`: `pnpm typecheck` 0, `pnpm test` 0 (5784 `PASS`, 0 `FAIL`), `verify-deny-rules.ts` 95/95, `verify-tui.ts completion` 69/69, `AGENTS.md` 32,691 B, `pnpm build` 0. Original acceptance text: `pnpm typecheck`, `pnpm test`; a free suite proving that a `bash:git push --force*` deny blocks `git status && git push --force` in `default`, `auto`, `plan` and `yolo`; a command with redirection/substitution whose segment matches a deny is denied; a deny wins over a matching allow rule; the model-facing error names the rule; `/permissions` lists it with origin `configured` and refuses to revoke it; an invalid deny string is a `ConfigError` naming the entry; `spike/verify-config.ts` stays green; `tui completion` re-run if `/permissions` help text changes.
 
 ### Notes / blockers / abandonment reason
 
@@ -84,7 +84,7 @@ Sources: Claude Code `permissions.md` ("Rules are evaluated in order: deny, then
 
 ## SER-077 — `/context` breakdown: `ContextEstimate` gains an optional `breakdown` computed on demand (only when `/context` runs, never per turn) by `model.countTokens` per component — system prompt by section (base, `<project-instructions>`, skills catalogue, working context), tool specs grouped by origin (darwin built-ins, each MCP server by name), conversation messages — printed as bounded rows (`~N tokens · P%` when the window is known) under the existing total line; a component whose count fails reads `not reported`; the total line and `/status` stay byte-identical
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 105
 - Score: 11
 - Importance: 4
