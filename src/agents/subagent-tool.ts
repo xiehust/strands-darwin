@@ -1,11 +1,12 @@
 import { Agent, tool } from '@strands-agents/sdk';
-import type { InterventionHandler, Model, Tool, ToolContext } from '@strands-agents/sdk';
+import type { AgentResult, InterventionHandler, InvocationState, Model, Tool, ToolContext } from '@strands-agents/sdk';
 import { z } from 'zod';
 
 import type { ProjectInstructions } from '../agent/instructions.js';
 import { backgroundDelegationDescriptionClause } from '../agent/background-delegation.js';
 import { withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import { CHILD_REFUSAL_ERROR, isRefusalStop } from '../agent/refusal.js';
+import { isRetryableStreamInterruption, STREAM_CONTINUATION_PROMPT } from '../agent/stream-resumption.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
 import { buildRecipeChild, stopBashSession } from './child-recipe.js';
@@ -25,6 +26,28 @@ export const CONTINUE_DESCRIPTION_CLAUSE =
   `alphanumeric characters of that call's tool_use id after any tooluse_ prefix) to send the task as a follow-up ` +
   `into a finished child's retained conversation instead of briefing a fresh one; the last ` +
   `${MAX_RETAINED_CHILDREN} settled children of this session are kept.`;
+
+/** The one clause the tool description spends on the child's stream continuation (SRF-026). */
+export const STREAM_CONTINUATION_DESCRIPTION_CLAUSE =
+  'A child whose model stream is interrupted mid-answer is continued once from its own conversation; ' +
+  'a second failure is reported as the original error.';
+
+/** The fixed line joining the interruption and the failed continuation in the rethrown message. */
+export const CONTINUATION_FAILED_NOTE = 'one continuation on the same child also failed:';
+
+/**
+ * The error `SubagentTool` rethrows when the one continuation after a stream
+ * interruption fails too (SRF-026). The interruption stays the error: its `name`
+ * and, as `cause`, the object itself are preserved, so the retry guard's failure
+ * class and `turnEnded.failure` keep their shape; the message names both
+ * failures so nothing about the second is lost.
+ */
+export function continuationFailure(interruption: Error, second: unknown): Error {
+  const secondMessage = second instanceof Error ? second.message : String(second);
+  const wrapped = new Error(`${interruption.message}\n${CONTINUATION_FAILED_NOTE} ${secondMessage}`, { cause: interruption });
+  wrapped.name = interruption.name;
+  return wrapped;
+}
 
 type ChildAgentObserver = (agent: Agent) => void;
 
@@ -93,6 +116,7 @@ export class SubagentTool {
         `Only the final report is returned. ${concurrencyDescriptionClause(concurrencyCap(options.config))} ` +
         `${backgroundDelegationDescriptionClause(options.backgroundCompletionWakes === true)} ` +
         `${CONTINUE_DESCRIPTION_CLAUSE} ` +
+        `${STREAM_CONTINUATION_DESCRIPTION_CLAUSE} ` +
         `Available agents: ${catalogue}`,
       inputSchema: z.object({
         task: z.string().min(1).describe('A complete, self-contained task for the child agent'),
@@ -275,7 +299,13 @@ export class SubagentTool {
         id: child.id,
         name: definition.name,
       });
-      const result = await child.invoke(injectCodexContext(task, hookContext), { invocationState });
+      const result = await this.invokeWithStreamContinuation(
+        child,
+        injectCodexContext(task, hookContext),
+        invocationState,
+        dispatch,
+        context,
+      );
       // A refused child is a failed delegation, not a report: the SDK ends the turn
       // normally, so the outcome has to be named here before it reads as success.
       if (isRefusalStop(result.stopReason)) throw new Error(CHILD_REFUSAL_ERROR);
@@ -308,6 +338,46 @@ export class SubagentTool {
         stopBashSession(child),
         childCodexHooks?.close() ?? Promise.resolve(),
       ]);
+    }
+  }
+
+  /**
+   * The child's counterpart of the driver's `runWithStreamResumption` (SRF-026):
+   * one ordinary `invoke` on the same live child after the exact stream-interruption
+   * `ModelError`, at this call site only — never inside the SDK loop, the model, the
+   * recipe or the runtime. The child's in-memory conversation ends at its last tool
+   * result, so the bounded anti-repeat prompt is an ordinary user-role message and
+   * the original task is not resent. A cancelled child (its own signal, the parent's
+   * or a targeted `/agents cancel`) and every other error class are rethrown as
+   * they are; a second failure of any class is the interruption with the second
+   * message appended (`continuationFailure`). At most one continuation per dispatch:
+   * a `continue=<id>` follow-up is its own dispatch with its own single attempt.
+   * `workflow` nodes never pass through here.
+   */
+  private async invokeWithStreamContinuation(
+    child: Agent,
+    input: string,
+    invocationState: InvocationState,
+    dispatch: SubagentDispatchHandle | undefined,
+    context: ToolContext | undefined,
+  ): Promise<AgentResult> {
+    try {
+      return await child.invoke(input, { invocationState });
+    } catch (error) {
+      if (!isRetryableStreamInterruption(error)) throw error;
+      if (
+        child.cancelSignal.aborted
+        || context?.agent.cancelSignal.aborted === true
+        || dispatch?.cancellationRequested() === true
+      ) throw error;
+      dispatch?.setPhase({ kind: 'continuing-after-stream-interruption' });
+      try {
+        return await child.invoke(STREAM_CONTINUATION_PROMPT, { invocationState });
+      } catch (second) {
+        // A continuation cancelled mid-turn is still a cancellation, never wrapped.
+        if (child.cancelSignal.aborted) throw second;
+        throw continuationFailure(error, second);
+      }
     }
   }
 

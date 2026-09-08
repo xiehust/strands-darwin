@@ -103,6 +103,9 @@ export function formatDispatchPhase(phase: SubagentDispatchPhase): string {
     case 'waiting-on-model':
       // The child's own throttled retry wait (SER-067): the attempt about to be made.
       return `waiting on model, retry ${phase.attempt}/${phase.maxAttempts}`;
+    case 'continuing-after-stream-interruption':
+      // The child's one continuation after the exact stream interruption (SRF-026).
+      return 'continuing after stream interruption';
     default:
       return phase.kind;
   }

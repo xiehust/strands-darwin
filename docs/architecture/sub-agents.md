@@ -121,7 +121,14 @@ Every dispatch therefore gets:
 A `/model` change updates the factory for future dispatches. An active child keeps the model from
 its dispatch-time configuration snapshot.
 
-After `child.initialize()`, Darwin invokes the task with `child.invoke(task)`. The dispatch settles
+After `child.initialize()`, Darwin invokes the task with `child.invoke(task)`. If that call rejects with
+the exact stream-interruption `ModelError` (`Stream ended without completing a message`) and the child is
+not cancelled, `SubagentTool` runs exactly one `child.invoke(STREAM_CONTINUATION_PROMPT)` on the same live
+child — the same predicate and prompt the parent's driver uses, publishing the closed phase
+`continuing-after-stream-interruption` — and a second failure of any class is rethrown as the original
+interruption (`name`/`cause` preserved, the second message appended) through the failed-child-text
+wrapper. This lives at the tool's call site only, never in the SDK loop or the recipe; `workflow` nodes
+are not continued. The dispatch settles
 as `succeeded`, `failed`, or `cancelled`. Cleanup always removes the child from the active set and
 restarts its persistent bash session if it used one. Shared MCP clients remain owned by the main
 runtime and are disconnected only during runtime shutdown.

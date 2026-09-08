@@ -71,10 +71,14 @@ bounded anti-repeat continuation prompt once. Because the original user request 
 model is directed to inspect retained conversation and work before acting, reducing duplicate side
 effects. The busy/queue owner spans both attempts, while every attempt still gets ordinary SDK,
 permission, usage, cancellation, and trajectory semantics. Headless protocols disclose that recovery
-occurred without exposing the private control prompt. Authoritative contracts:
+occurred without exposing the private control prompt. A `subagent` child gets the same single
+continuation (SRF-026), owned by `SubagentTool` at its `invoke` call site with the same predicate and
+the same prompt — on the live child, never inside the SDK loop, the recipe or the runtime; see
+§ Subagents. The parent's own `runWithStreamResumption` and `workflow` nodes are unchanged.
+Authoritative contracts:
 `backend/strands-sdk-contracts.md`, `backend/session-trajectory.md`, and
-`backend/structured-headless-output.md`. Required checks: `spike/verify-stream-resumption.ts` and
-`spike/verify-headless-structured.ts` (both in `pnpm test`).
+`backend/structured-headless-output.md`. Required checks: `spike/verify-stream-resumption.ts`,
+`spike/verify-headless-structured.ts` and `spike/verify-subagent-continuation.ts` (all in `pnpm test`).
 
 ## Model retry — darwin-owned cancellable wait
 
@@ -769,6 +773,43 @@ dispatch `failed`, retry guard counting, original kept as `cause` with its `name
 cut-off note and the child's last assistant text, capped at 4000 code points and passed through the
 same projection; a text-less failure is the unchanged error object and cancellation is never wrapped
 (`spike/verify-failed-child-text.ts`).
+
+**A child whose stream is interrupted gets the same one continuation the parent gets — on the live
+child, at the tool's `invoke` seam, never in the loop** (SRF-026). One session lost ~21 minutes of two
+children that died mid-stream with the bare `Stream ended without completing a message` after their
+last tool result: neither had last text (the failed message is never stored), neither was continuable
+(the conversation ended in a tool result), and the parent redid the work — while the parent's own
+interruption in the same session was continued 49 ms later and delivered. So
+`SubagentTool.invokeWithStreamContinuation` wraps exactly the `child.invoke(task)` call: when it rejects
+with an error for which `isRetryableStreamInterruption` (the driver's own predicate, exported from
+`src/agent/stream-resumption.ts`) is true and neither the child's `cancelSignal`, the parent's, nor the
+dispatch's `cancellationRequested()` says cancelled, it publishes the closed phase
+`continuing-after-stream-interruption` through the existing `setPhase` (the child's ordinary
+`model`/`tool` phases take over as the continuation proceeds; rows and heartbeats render `continuing
+after stream interruption`, `subagent.progress` carries the kind) and runs one
+`child.invoke(STREAM_CONTINUATION_PROMPT)` on the *same live child* — its retained in-memory
+conversation ends at the last tool result, so the bounded anti-repeat prompt is an ordinary user-role
+message and the original task is not resent. A successful continuation's result flows through the
+unchanged refusal check, `projectChildReport` and `withRetainedMaxTokensText` exactly like a
+first-attempt result and settles `succeeded` (and is retained for `continue=<id>`). A second failure of
+any class is rethrown as `continuationFailure(interruption, second)` — a new error whose `name` is the
+interruption's and whose `cause` is the interruption object, message `<original>\n<fixed note>
+<second message>` — through the unchanged `withFailedChildText`, so the retry guard's class and
+`turnEnded.failure` keep their shape and the second failure's message is not lost; the dispatch settles
+`failed`. A cancelled child is never continued and a continuation cancelled mid-turn is never wrapped
+(the SDK converts a post-cancel provider error into `stopReason: 'cancelled'`, and the signal guards
+cover the race); a non-interruption error is never continued; the continuation is attempted at most
+once per dispatch — a `continue=<id>` follow-up is its own dispatch with its own single attempt;
+`workflow` Graph nodes are untouched (they never pass through `SubagentTool.run`). Nothing lives in the
+SDK loop, the model, `buildRecipeChild` or `runtime.ts`, and the parent's `runWithStreamResumption` is
+not touched. The tool description spends one bounded clause on it
+(`STREAM_CONTINUATION_DESCRIPTION_CLAUSE`). Required check: `spike/verify-subagent-continuation.ts`
+(in `pnpm test`) — the fake model ends its stream without a stop event so the SDK's own aggregator
+throws the exact `ModelError`; interrupted once then answers (report, `succeeded`, phase observed,
+prompt byte-exact, three model calls), twice (original message, `cause`, `failed`, no third call),
+another class after the continuation (chain preserved through the failed-child wrapper), cancel during
+the first attempt (`cancelActive` and targeted registry cancel), cancel during the continuation,
+non-interruption error, `continue=<id>` follow-up, and an interrupted `workflow` node.
 
 **A settled child stays continuable — by its conversation, never by its process** (SER-075,
 `src/agents/retained-children.ts`). `SubagentTool.run` still drops the child `Agent` in `finally` after

@@ -223,7 +223,9 @@ export async function runHeadlessProcess(
           ? `tool ${phase.toolName}`
           : phase.kind === 'waiting-on-model'
             ? `waiting on model, retry ${phase.attempt}/${phase.maxAttempts}`
-            : phase.kind;
+            : phase.kind === 'continuing-after-stream-interruption'
+              ? 'continuing after stream interruption'
+              : phase.kind;
         // Heartbeats are transient user visibility, not diagnostics persistence.
         target.stderr.write(`subagent ${dispatchLabel(progress)} running ${Math.floor(progress.elapsedMs / 1000)}s · ${text}\n`);
       }

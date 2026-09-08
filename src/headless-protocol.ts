@@ -255,7 +255,7 @@ export class StructuredHeadlessWriter {
     dispatchId: string;
     agentName: string;
     elapsedMs: number;
-    phase: 'starting' | 'model' | 'tool' | 'waiting-on-model';
+    phase: 'starting' | 'model' | 'tool' | 'waiting-on-model' | 'continuing-after-stream-interruption';
     toolName?: string;
     /** `waiting-on-model` only (SER-067): the child's call about to be made, of `maxAttempts`. */
     attempt?: number;

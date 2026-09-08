@@ -37,7 +37,14 @@ export type SubagentDispatchPhase =
    * (SER-067): `attempt` is the call about to be made, out of `maxAttempts`. Two
    * integers from the child's own retry state — never the provider's reason text.
    */
-  | { readonly kind: 'waiting-on-model'; readonly attempt: number; readonly maxAttempts: number };
+  | { readonly kind: 'waiting-on-model'; readonly attempt: number; readonly maxAttempts: number }
+  /**
+   * The child's first `invoke` died with the exact stream-interruption `ModelError`
+   * and `SubagentTool` is running its one continuation on the same live child
+   * (SRF-026). Set at the continuation's start; the child's ordinary `model`/`tool`
+   * phases take over as the continuation proceeds.
+   */
+  | { readonly kind: 'continuing-after-stream-interruption' };
 
 export interface SubagentDispatchStatus {
   /**
