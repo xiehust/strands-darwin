@@ -28,7 +28,7 @@ import process from 'node:process';
 
 import type { McpServerConfig } from '@strands-agents/sdk';
 
-import { AGENTS_FILENAME, loadProjectInstructions, MAX_INSTRUCTIONS_BYTES } from './agent/instructions.js';
+import { AGENTS_FILENAME, CLAUDE_FILENAME, loadProjectInstructions, MAX_INSTRUCTIONS_BYTES } from './agent/instructions.js';
 import { planPromptCache } from './agent/prompt-cache.js';
 import { listSessionIds, readLastSessionId, sessionPaths } from './agent/session.js';
 import { loadSystemPrompt } from './agent/system-prompt.js';
@@ -245,18 +245,18 @@ async function reportInstructions(report: Report, projectRoot: string): Promise<
   report.section('project instructions');
   const load = await loadProjectInstructions(projectRoot);
   if (load.problem !== undefined) {
-    report.problem(`${AGENTS_FILENAME} could not be used: ${load.problem}`);
+    report.problem(`${load.problemFile ?? AGENTS_FILENAME} could not be used: ${load.problem}`);
     return;
   }
   if (load.instructions === undefined) {
-    report.info(`${path.join(projectRoot, AGENTS_FILENAME)} — absent or empty (nothing preloaded)`);
+    report.info(`${path.join(projectRoot, AGENTS_FILENAME)} / ${CLAUDE_FILENAME} — absent or empty (nothing preloaded)`);
     return;
   }
-  const { path: file, bytes, truncated } = load.instructions;
+  const { filename, path: file, bytes, truncated } = load.instructions;
   report.info(`${file}   ${bytes.toLocaleString('en-US')} bytes (cap ${MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')})`);
   if (truncated) {
     report.problem(
-      `${AGENTS_FILENAME} is over the cap: only the first ${MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')} bytes are preloaded, ` +
+      `${filename} is over the cap: only the first ${MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')} bytes are preloaded, ` +
         `${(bytes - MAX_INSTRUCTIONS_BYTES).toLocaleString('en-US')} bytes are invisible to the agent`,
     );
   }

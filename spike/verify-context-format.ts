@@ -230,7 +230,7 @@ assert('the caption names the rows as an estimate over the current request shape
   BREAKDOWN_CAPTION.includes('the total above is authoritative'));
 assert('a known window renders `<label> ~N tokens · P%` per component, indented under the total',
   withRows[2] === '  system prompt · base ~4,200 tokens · 2%' &&
-  withRows[3] === '  system prompt · project instructions (AGENTS.md) ~8,900 tokens · 4%' &&
+  withRows[3] === '  system prompt · project instructions ~8,900 tokens · 4%' &&
   withRows[6] === '  tools · darwin built-ins ~9,000 tokens · 5%' &&
   withRows[9] === '  conversation · user prompts and tool results ~90,000 tokens · 45%');
 assert('a nonzero share below one percent reads <1% on a row too, never 0%',

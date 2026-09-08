@@ -11,7 +11,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { composeSystemPrompt, loadProjectInstructions, AGENTS_FILENAME } from '../src/agent/instructions.js';
+import { composeSystemPrompt, loadProjectInstructions, AGENTS_FILENAME, CLAUDE_FILENAME } from '../src/agent/instructions.js';
 import {
   DEFAULT_SYSTEM_PROMPT,
   HEADLESS_AUTONOMY_SECTION,
@@ -215,6 +215,18 @@ async function composesWithProjectInstructions(): Promise<void> {
     'the instructions come after the base, not before',
     composed.indexOf('<project-instructions') > composed.indexOf('CUSTOM BASE'),
   );
+
+  // The CLAUDE.md fallback takes the same slot: same order, its own source label.
+  const fallbackDir = await project();
+  await writeOverride(fallbackDir, 'CUSTOM BASE');
+  await writeFile(path.join(fallbackDir, CLAUDE_FILENAME), '# Claude rules\n\nPrefer small commits.\n', 'utf8');
+  const fallback = composeSystemPrompt(
+    (await loadSystemPrompt(fallbackDir)).prompt,
+    (await loadProjectInstructions(fallbackDir)).instructions,
+  );
+  assert('a CLAUDE.md fallback is appended after the override in the same slot',
+    fallback.startsWith('CUSTOM BASE') && fallback.indexOf(`<project-instructions source="${CLAUDE_FILENAME}"`) > fallback.indexOf('CUSTOM BASE')
+      && fallback.includes('Prefer small commits'));
 }
 
 async function main(): Promise<void> {

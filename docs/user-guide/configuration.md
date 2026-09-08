@@ -95,7 +95,7 @@ Every request uses this fixed order, followed by the final cache point:
 
 ```text
 <base prompt>                                  built-in or your replacement
-<project-instructions source="AGENTS.md">…    repository rules
+<project-instructions source="AGENTS.md">…    repository rules (source names the file: AGENTS.md, or CLAUDE.md when there is none)
 <available_skills>…                            official AgentSkills catalogue
 <working-context>…                             current run facts
 <cache point>
@@ -112,9 +112,9 @@ Base override precedence:
 
 A blank config `systemPrompt` is a startup error. An empty/unreadable project file degrades to the built-in prompt and is reported in the header.
 
-## `AGENTS.md`
+## `AGENTS.md` (or `CLAUDE.md`)
 
-Only `AGENTS.md` in the run directory is loaded; darwin neither walks upward nor merges files. Missing, empty, or whitespace-only content is silently absent. Read failure is visible in the header. Content over 32 KiB is cut at the last complete line before the cap and marked truncated to the user and model.
+Only the run directory's own instructions file is loaded; darwin neither walks upward nor merges files. `AGENTS.md` is read first; when — and only when — no `AGENTS.md` exists at all, `CLAUDE.md` is read instead. An `AGENTS.md` that exists but cannot be read is reported and never falls through to `CLAUDE.md`; when both files exist, `CLAUDE.md` is not opened. The header row, `darwin doctor` and the fragment's `source="…"` attribute name the file actually loaded. Claude Code's `@path` import lines are not expanded — they stay literal text, and the `CLAUDE.md` fragment tells the model so. Missing, empty, or whitespace-only content is silently absent. Read failure is visible in the header. Content over 32 KiB is cut at the last complete line before the cap and marked truncated to the user and model; both files follow the same rules.
 
 ## Working context
 

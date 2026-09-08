@@ -39,7 +39,7 @@ import {
   runDoctorCommand,
 } from '../src/cli-doctor.js';
 import { CLI_HELP_HINT, CLI_USAGE } from '../src/cli-usage.js';
-import { MAX_INSTRUCTIONS_BYTES } from '../src/agent/instructions.js';
+import { AGENTS_FILENAME, CLAUDE_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../src/agent/instructions.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 // Owned HOME before any path is derived: every in-process run below reads
@@ -301,6 +301,44 @@ async function main(): Promise<void> {
       problemLines(run.out).some((line) => line.includes('system prompt override skipped')));
     rmSync(path.join(project, '.darwin', 'system-prompt.md'), { recursive: true });
     write(path.join(project, 'AGENTS.md'), '# Fixture\n\nRules.\n');
+  }
+
+  header('doctor — project instructions name the file actually loaded (AGENTS.md or its CLAUDE.md fallback)');
+  {
+    const instructionProblems = (out: string): string[] =>
+      problemLines(out).filter((line) => line.includes(AGENTS_FILENAME) || line.includes(CLAUDE_FILENAME));
+    const claudeOnly = freshProject('claude-only');
+    write(path.join(claudeOnly, CLAUDE_FILENAME), '# Claude fixture\n\nRules.\n');
+    const run = await doctor(claudeOnly);
+    assert('a CLAUDE.md-only project reports the CLAUDE.md path against the cap',
+      run.out.includes(`${path.join(claudeOnly, CLAUDE_FILENAME)}   `) && run.out.includes(`(cap ${MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')})`));
+    assert('and never mentions an AGENTS.md path', !run.out.includes(path.join(claudeOnly, AGENTS_FILENAME)));
+    assert('a loaded CLAUDE.md is not a problem', run.code === 0 && instructionProblems(run.out).length === 0);
+
+    write(path.join(claudeOnly, CLAUDE_FILENAME), `# Big\n${'x'.repeat(MAX_INSTRUCTIONS_BYTES)}\n`);
+    const big = await doctor(claudeOnly);
+    assert('an over-cap CLAUDE.md is a problem naming CLAUDE.md',
+      instructionProblems(big.out).some((line) => line.includes(`${CLAUDE_FILENAME} is over the cap`)));
+
+    const both = freshProject('both');
+    write(path.join(both, AGENTS_FILENAME), '# Fixture\n');
+    mkdirSync(path.join(both, CLAUDE_FILENAME));
+    const precedence = await doctor(both);
+    assert('with both present AGENTS.md is reported and the unreadable CLAUDE.md is never opened',
+      precedence.out.includes(`${path.join(both, AGENTS_FILENAME)}   `) && !precedence.out.includes(CLAUDE_FILENAME)
+        && instructionProblems(precedence.out).length === 0);
+
+    const brokenClaude = freshProject('broken-claude');
+    mkdirSync(path.join(brokenClaude, CLAUDE_FILENAME));
+    const broken = await doctor(brokenClaude);
+    assert('an unreadable lone CLAUDE.md is a problem naming CLAUDE.md',
+      instructionProblems(broken.out).some((line) => line.trimStart().startsWith(`${PROBLEM_MARKER}${CLAUDE_FILENAME} could not be used:`)) && broken.code === 1);
+
+    const neither = freshProject('neither');
+    const none = await doctor(neither);
+    assert('with neither file the report states both names as absent',
+      none.out.includes(`${path.join(neither, AGENTS_FILENAME)} / ${CLAUDE_FILENAME} — absent or empty (nothing preloaded)`)
+        && instructionProblems(none.out).length === 0);
   }
 
   header('doctor — every report line is bounded');

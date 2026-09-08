@@ -69,7 +69,8 @@ export interface BreakdownInputs {
 }
 
 export const BASE_PROMPT_LABEL = 'system prompt · base';
-export const PROJECT_INSTRUCTIONS_LABEL = 'system prompt · project instructions (AGENTS.md)';
+/** The `<project-instructions>` block — AGENTS.md or its CLAUDE.md fallback; the fragment's own `source` names which. */
+export const PROJECT_INSTRUCTIONS_LABEL = 'system prompt · project instructions';
 /** A restored prompt whose base block no longer equals the current composition. */
 export const RESTORED_PROMPT_LABEL = 'system prompt · base + project instructions (restored)';
 /** A prompt array in a shape Darwin does not own: counted whole rather than guessed at. */

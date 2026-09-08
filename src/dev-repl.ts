@@ -192,7 +192,7 @@ async function main(): Promise<void> {
       console.log(`  agents   : ${agentsPath} (${bytes} bytes${truncated ? ', truncated' : ''})`);
     }
     if (info.projectInstructionsProblem !== undefined) {
-      console.warn(`  agents   : ${AGENTS_FILENAME} skipped — ${info.projectInstructionsProblem}`);
+      console.warn(`  agents   : ${info.projectInstructionsProblemFile ?? AGENTS_FILENAME} skipped — ${info.projectInstructionsProblem}`);
     }
     if (info.systemPromptSource !== 'default') {
       const origin = info.systemPromptPath ?? `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}`;

@@ -95,7 +95,7 @@
 
 ```text
 <base prompt>                                  内置值或你的替换内容
-<project-instructions source="AGENTS.md">…    仓库规则
+<project-instructions source="AGENTS.md">…    仓库规则（source 标明实际文件：AGENTS.md，不存在时为 CLAUDE.md）
 <available_skills>…                            官方 AgentSkills 目录
 <working-context>…                             当前运行事实
 <cache point>
@@ -112,9 +112,9 @@
 
 配置里的空白 `systemPrompt` 会导致启动错误。项目文件为空或无法读取时，darwin 会退回内置 prompt，并在标题区说明原因。
 
-## `AGENTS.md`
+## `AGENTS.md`（或 `CLAUDE.md`）
 
-darwin 只读取启动目录中的 `AGENTS.md`，不会向父目录查找，也不会合并多份文件。文件不存在、为空或只有空白时直接忽略；读取失败会显示在标题区。超过 32 KiB 的内容会在上限前最后一个完整行处截断，并同时向用户和模型标明。
+darwin 只读取启动目录中自己的指令文件，不会向父目录查找，也不会合并多份文件。先读 `AGENTS.md`；只有在 `AGENTS.md` 完全不存在时，才改读 `CLAUDE.md`。`AGENTS.md` 存在但无法读取时会如实报告，绝不会退回到 `CLAUDE.md`；两份文件都存在时，`CLAUDE.md` 根本不会被打开。标题区那一行、`darwin doctor` 以及片段的 `source="…"` 属性都会标明实际加载的文件。Claude Code 的 `@path` 导入行不会被展开——它们保持为字面文本，`CLAUDE.md` 片段也会向模型说明这一点。文件不存在、为空或只有空白时直接忽略；读取失败会显示在标题区。超过 32 KiB 的内容会在上限前最后一个完整行处截断，并同时向用户和模型标明；两份文件遵循同样的规则。
 
 ## 工作上下文
 

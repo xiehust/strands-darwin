@@ -45,7 +45,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 
 ### `darwin doctor`
 
-一份离线、只读的诊断报告，由会话启动时使用的同一批加载器拼成：`~/.darwin/config.json`（provider、模型、region 或 base URL、所指定的 API key 环境变量是否已设置——从不打印它的值——effort、prompt cache、context offload、trajectory / memory / diagnostics、权限模式）、系统提示词来源、`AGENTS.md` 大小与 32 KiB 预载上限的对比、生效的 MCP 配置文件（哪个被读取、哪个被忽略）及每个已配置的 server——stdio `command` 只在 `PATH` 上查找，`http`/`sse` server 标为 `not connected (doctor never connects)`——各层技能目录的数量与每个被跳过的条目及原因、hook 文件及其方言（native 或 Codex 适配器）、permission-rules 文件、会话存储目录和版本。会让 TUI 拒绝启动的加载器错误（`ConfigError`）在这里变成一行问题：问题行以 `! ` 开头，末尾汇总计数，并决定退出码——没有问题为 0，至少一个为 1。`doctor` 不启动会话、不调用模型、不 spawn 或连接任何 MCP server、不联网、在任何位置都不创建或移动任何东西（连 `~/.darwin` 也不会创建）；它不接受参数（动词之后的任何内容都以用法错误退出 2）。由 `spike/verify-doctor-command.ts` 锁定。
+一份离线、只读的诊断报告，由会话启动时使用的同一批加载器拼成：`~/.darwin/config.json`（provider、模型、region 或 base URL、所指定的 API key 环境变量是否已设置——从不打印它的值——effort、prompt cache、context offload、trajectory / memory / diagnostics、权限模式）、系统提示词来源、项目指令文件（`AGENTS.md`，或回退的 `CLAUDE.md`）及其大小与 32 KiB 预载上限的对比、生效的 MCP 配置文件（哪个被读取、哪个被忽略）及每个已配置的 server——stdio `command` 只在 `PATH` 上查找，`http`/`sse` server 标为 `not connected (doctor never connects)`——各层技能目录的数量与每个被跳过的条目及原因、hook 文件及其方言（native 或 Codex 适配器）、permission-rules 文件、会话存储目录和版本。会让 TUI 拒绝启动的加载器错误（`ConfigError`）在这里变成一行问题：问题行以 `! ` 开头，末尾汇总计数，并决定退出码——没有问题为 0，至少一个为 1。`doctor` 不启动会话、不调用模型、不 spawn 或连接任何 MCP server、不联网、在任何位置都不创建或移动任何东西（连 `~/.darwin` 也不会创建）；它不接受参数（动词之后的任何内容都以用法错误退出 2）。由 `spike/verify-doctor-command.ts` 锁定。
 
 ### `-p` 与管道 stdin
 

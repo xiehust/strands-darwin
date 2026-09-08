@@ -690,6 +690,11 @@ activation, Darwin rejects resource symlinks/outside-root resolution and caps ho
 **System prompt composition order is fixed** on every actual model request: base prompt →
 `<project-instructions>` (AGENTS.md, `src/agent/instructions.ts`) → official
 `<available_skills>` → `<working-context>` (`src/agent/working-context.ts`) → final cache point.
+The instructions block is exactly one file from the run directory, never walked up to or merged:
+`AGENTS.md`, or — only when no `AGENTS.md` exists at all — the fixed fallback `CLAUDE.md`
+(`CLAUDE_FILENAME`); an unreadable `AGENTS.md` is reported and never falls through, both present
+means `CLAUDE.md` is not opened, the block's `source="…"` attribute names the file actually loaded,
+and the `CLAUDE.md` case carries one fixed line saying `@path` imports are not expanded.
 Official AgentSkills injects before each invocation; Darwin registers a later hook that moves that
 exact catalogue TextBlock ahead of current working context and cache. Repeated/resumed invocations
 remove the previous official block via persisted appState before reordering, so the catalogue is

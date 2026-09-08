@@ -107,6 +107,7 @@ import { measureContextBreakdown, type ContextBreakdown } from './context-breakd
 import {
   composeSystemPrompt,
   loadProjectInstructions,
+  type InstructionsFilename,
   type ProjectInstructionsSummary,
 } from './instructions.js';
 import { PermissionGate, type AllowRuleEntry, type ApprovalMode, type PermissionBridge, type PermissionDecisionRecord, type PermissionModeChange } from './permission.js';
@@ -387,10 +388,12 @@ export interface RuntimeInfo {
   agentNames: string[];
   /** Project agent files that were skipped, with the reason. */
   agentProblems: { file: string; reason: string }[];
-  /** AGENTS.md preloaded from the run directory, or undefined when there is none. */
+  /** AGENTS.md (or the CLAUDE.md fallback) preloaded from the run directory, or undefined when there is none. */
   projectInstructions: ProjectInstructionsSummary | undefined;
-  /** Why a present AGENTS.md was skipped; undefined when there is no such file. */
+  /** Why a present instructions file was skipped; undefined when there is no such file. */
   projectInstructionsProblem: string | undefined;
+  /** Which file `projectInstructionsProblem` is about; undefined exactly when it is. */
+  projectInstructionsProblemFile: InstructionsFilename | undefined;
   /** Where the base system prompt came from: built-in, config, or override file. */
   systemPromptSource: SystemPromptSource;
   /** Path of the system prompt override file, when one is in effect. */
@@ -1041,8 +1044,14 @@ export class AgentRuntime {
         projectInstructions:
           instructions === undefined
             ? undefined
-            : { path: instructions.path, bytes: instructions.bytes, truncated: instructions.truncated },
+            : {
+                filename: instructions.filename,
+                path: instructions.path,
+                bytes: instructions.bytes,
+                truncated: instructions.truncated,
+              },
         projectInstructionsProblem: loadedInstructions.problem,
+        projectInstructionsProblemFile: loadedInstructions.problemFile,
         systemPromptSource: basePrompt.source,
         systemPromptPath: basePrompt.path,
         systemPromptProblem: basePrompt.problem,

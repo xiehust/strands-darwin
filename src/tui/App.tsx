@@ -17,7 +17,7 @@ import type { ImageBlock } from '@strands-agents/sdk';
 
 import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize, type DOMElement } from 'ink';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
-import { AGENTS_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../agent/instructions.js';
+import { AGENTS_FILENAME } from '../agent/instructions.js';
 import type { DiagnosticsLog } from '../agent/diagnostics.js';
 import {
   APPROVAL_MODES,
@@ -66,6 +66,7 @@ import {
   type CompletionKind,
 } from './InputBox.js';
 import { busySuffix } from './busy-suffix.js';
+import { formatInstructionsLoadedRow, formatInstructionsProblemRow } from './instructions-format.js';
 import { LIVE_BLOCK_CHROME_ROWS, wrapToRows } from './live-text.js';
 import { fenceOpenAfter } from './markdown.js';
 import {
@@ -2735,18 +2736,13 @@ export function Header({
       )}
       {instructions !== undefined &&
         (instructions.truncated ? (
-          <Text color={visualColor.warning}>
-            {AGENTS_FILENAME}: loaded ({formatBytes(instructions.bytes)}, truncated to{' '}
-            {MAX_INSTRUCTIONS_BYTES / 1024} KB)
-          </Text>
+          <Text color={visualColor.warning}>{formatInstructionsLoadedRow(instructions)}</Text>
         ) : (
-          <Text dimColor>
-            {AGENTS_FILENAME}: loaded ({formatBytes(instructions.bytes)})
-          </Text>
+          <Text dimColor>{formatInstructionsLoadedRow(instructions)}</Text>
         ))}
       {info.projectInstructionsProblem !== undefined && (
         <Text color={visualColor.warning}>
-          {AGENTS_FILENAME}: skipped — {info.projectInstructionsProblem}
+          {formatInstructionsProblemRow(info.projectInstructionsProblemFile ?? AGENTS_FILENAME, info.projectInstructionsProblem)}
         </Text>
       )}
       {/* Silent only for the built-in prompt: a replaced prompt changes how the
@@ -2877,11 +2873,6 @@ function formatCapabilities(info: AgentRuntime['info']): string {
 
 function capabilityCount(count: number, label: string): string | undefined {
   return count > 0 ? `${count} ${label}${count === 1 ? '' : 's'}` : undefined;
-}
-
-/** Sizes are shown so an accidentally huge AGENTS.md is visible at a glance. */
-function formatBytes(bytes: number): string {
-  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
 
 /**

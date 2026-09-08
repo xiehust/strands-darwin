@@ -61,8 +61,8 @@ const info: RuntimeInfo = {
   skillNames: ['commit-message', 'review', 'trellis-before-dev'], skillProblems: [],
   commandNames: ['release', 'doctor'], commandProblems: [],
   agentNames: ['general', 'research'], agentProblems: [],
-  projectInstructions: { path: '/workspace/AGENTS.md', bytes: 4096, truncated: false },
-  projectInstructionsProblem: undefined, systemPromptSource: 'default', systemPromptPath: undefined,
+  projectInstructions: { filename: 'AGENTS.md', path: '/workspace/AGENTS.md', bytes: 4096, truncated: false },
+  projectInstructionsProblem: undefined, projectInstructionsProblemFile: undefined, systemPromptSource: 'default', systemPromptPath: undefined,
   systemPromptProblem: undefined, promptSections: { base: 'BASE', instructions: undefined }, workingContextProblem: undefined,
   promptCache: {
     enabled: true,
