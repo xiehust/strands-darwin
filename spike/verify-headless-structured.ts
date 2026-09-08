@@ -274,7 +274,14 @@ async function phaseControls(): Promise<void> {
   });
   const traced = (await readFile(traceFile, 'utf8'))
     .trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
-  nodeAssert.deepEqual(traced.map((record) => record.type), ['create', 'compact', 'send', 'turnComplete']);
+  nodeAssert.deepEqual(traced.map((record) => record.type), [
+    'create', 'contextEstimate', 'compact', 'recordContextCompacted', 'send', 'turnComplete',
+  ]);
+  // SRF-027: the headless compaction leaves the same record the TUI's would — the
+  // counts from the result, the runtime's own pre-compaction estimate, unfocused.
+  nodeAssert.deepEqual(traced[3], {
+    type: 'recordContextCompacted', messagesBefore: 12, messagesAfter: 5, estimatedTokensBefore: 9_876, focused: false,
+  });
   nodeAssert.equal(traced[0]?.maxModelCalls, 20);
   nodeAssert.equal(traced[0]?.contextOffloadOverride, true);
   // SER-069: headless has no queue to drain a task wake, so it never asks the runtime for
@@ -301,7 +308,8 @@ async function phaseControls(): Promise<void> {
   const failedTrace = (await readFile(traceFile, 'utf8'))
     .trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
   const failedRecords = lines(failed.stdout);
-  nodeAssert.deepEqual(failedTrace.map((record) => record.type), ['create', 'compact']);
+  nodeAssert.deepEqual(failedTrace.map((record) => record.type), ['create', 'contextEstimate', 'compact']);
+  nodeAssert.ok(!failedTrace.some((record) => record.type === 'recordContextCompacted'));
   nodeAssert.ok(!failedRecords.some((record) => record.type === 'turn.started'));
   nodeAssert.equal((failedRecords.at(-1)?.errors as { stage: string }[])[0]?.stage, 'runtime');
   nodeAssert.equal(failedRecords.at(-1)?.outcome, 'failure');

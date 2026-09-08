@@ -64,20 +64,23 @@ import {
   MAX_FAILURE_SUMMARY_CHARS,
   MAX_FIELD_CHARS,
   MAX_RECORD_BYTES,
+  contextCompactedOf,
   failureFromError,
   formatTurnFailure,
   modelCallOf,
   parseRecordLine,
+  searchableText,
   turnFailureOf,
   turnOutcome,
   turnSpendOf,
   type CallSpendProjector,
+  type ContextCompactedRecord,
   type ModelCallRecord,
   type TrajectoryRecord,
   type TurnEndedRecord,
   type TurnSpendMeter,
 } from '../src/trajectory/record.js';
-import { formatReplay, historyWithoutIds, replayRecords } from '../src/trajectory/replay.js';
+import { formatContextCompacted, formatReplay, historyWithoutIds, replayRecords } from '../src/trajectory/replay.js';
 import {
   MAX_MODEL_LABEL_CHARS,
   formatSpendSummary,
@@ -1680,6 +1683,150 @@ async function modelCallRecords(): Promise<void> {
     junk.stopReason === undefined && junk.contextTokens === undefined && junk.spend === undefined);
 }
 
+/**
+ * SRF-027: a successful `/compact` leaves one bounded `contextCompacted` record —
+ * counts and a flag, never summary or focus text — and readers treat it as the anchor
+ * drop that makes the next `modelCall.contextTokens` stale.
+ */
+async function contextCompactedRecords(): Promise<void> {
+  header('trajectory — a successful /compact leaves one bounded contextCompacted record');
+
+  const dir = path.join(ROOT, 'compacted');
+  await rm(dir, { recursive: true, force: true });
+  const file = path.join(dir, 'trajectory.jsonl');
+  const rec = recorder(file);
+
+  // Synchronous like `recordShellCommand`: composed and buffered before any I/O.
+  let settledBeforeReturn = true;
+  const pending = new Promise<void>((resolve) => setImmediate(() => { settledBeforeReturn = false; resolve(); }));
+  rec.recordContextCompacted({ messagesBefore: 12, messagesAfter: 5, estimatedTokensBefore: 705408, focused: true });
+  assert('recordContextCompacted returns synchronously — no await on the record path', settledBeforeReturn);
+  await pending;
+  rec.recordContextCompacted({ messagesBefore: 8, messagesAfter: 3, focused: false });
+  // Malformed counts are refused at the writer: the message counts are the record's
+  // whole claim, so none of these produces a line.
+  rec.recordContextCompacted({ messagesBefore: -1, messagesAfter: 3, focused: false });
+  rec.recordContextCompacted({ messagesBefore: 2.5, messagesAfter: 3, focused: false });
+  rec.recordContextCompacted({ messagesBefore: 1e300, messagesAfter: 3, focused: false });
+  rec.recordContextCompacted({ messagesBefore: Number.NaN, messagesAfter: 3, focused: false });
+  // An estimate that is 0, negative, fractional or huge is unknown: an absent key.
+  rec.recordContextCompacted({ messagesBefore: 9, messagesAfter: 4, estimatedTokensBefore: 0, focused: false });
+  rec.recordContextCompacted({ messagesBefore: 9, messagesAfter: 4, estimatedTokensBefore: -5, focused: false });
+  rec.recordContextCompacted({ messagesBefore: 9, messagesAfter: 4, estimatedTokensBefore: 1e300, focused: false });
+  await rec.close();
+  assert('recording compactions reports no problem', rec.status.problem === undefined);
+
+  const raw = await readFile(file, 'utf8');
+  const lines = raw.split('\n').filter((line) => line.includes('"contextCompacted"'));
+  const read = await readTrajectory(file);
+  const compactions = read.records.filter((r): r is ContextCompactedRecord => r.type === 'contextCompacted');
+  assert('one line per accepted compaction and none for a refused count', compactions.length === 5 && lines.length === 5);
+  assert('every compaction line parses through the envelope validator',
+    lines.every((line) => parseRecordLine(line)?.type === 'contextCompacted'));
+  assert('the record carries the last closed turn ordinal, like shellCommand (0 before any turn)',
+    compactions.every((record) => record.turn === 0));
+
+  const [focusedOne, plain, zero, negative, huge] = compactions.map((record) => contextCompactedOf(record));
+  assert('the record round-trips writer → reader → normalizer',
+    focusedOne?.messagesBefore === 12 && focusedOne.messagesAfter === 5 &&
+    focusedOne.estimatedTokensBefore === 705408 && focusedOne.focused === true);
+  assert('an unfocused compaction reads focused: false with the estimate absent',
+    plain?.messagesBefore === 8 && plain.messagesAfter === 3 && plain.focused === false &&
+    plain.estimatedTokensBefore === undefined);
+  assert('an absent estimate is an absent key in the bytes, never 0',
+    lines[1] !== undefined && !lines[1].includes('estimatedTokens') && lines[1].includes('"before":{"messages":8}'));
+  assert('a 0, negative or huge estimate is written as absence, and reads back absent',
+    [zero, negative, huge].every((reading) => reading !== undefined && reading.estimatedTokensBefore === undefined) &&
+    lines.slice(2).every((line) => !line.includes('estimatedTokens')));
+  assert('the record holds exactly the envelope plus before/after/focused — no text field at all',
+    compactions.every((record) =>
+      Object.keys(record).sort().join(',') === 'after,before,focused,seq,t,turn,type,v'));
+
+  // The reader on damaged or foreign payloads: reject the claim, never half-read it.
+  const damaged = (payload: Record<string, unknown>) =>
+    contextCompactedOf({ v: 1, seq: 9, t: 'now', turn: 2, type: 'contextCompacted', ...payload } as unknown as ContextCompactedRecord);
+  assert('a negative or non-integer count rejects the record',
+    damaged({ before: { messages: -1 }, after: { messages: 3 }, focused: false }) === undefined &&
+    damaged({ before: { messages: 2.5 }, after: { messages: 3 }, focused: false }) === undefined);
+  assert('a huge or stringy count rejects the record',
+    damaged({ before: { messages: 1e300 }, after: { messages: 3 }, focused: false }) === undefined &&
+    damaged({ before: { messages: '12' }, after: { messages: 3 }, focused: false }) === undefined);
+  assert('a missing before/after object rejects the record',
+    damaged({ before: null, after: { messages: 3 }, focused: false }) === undefined &&
+    damaged({ before: { messages: 3 }, focused: false }) === undefined);
+  const foreign = damaged({
+    before: { messages: 12, estimatedTokens: 'lots' }, after: { messages: 5 }, focused: 'yes',
+    summary: 'a summary nobody should have written', focus: 'nor this',
+  });
+  assert('a foreign payload keeps the counts, degrades the estimate to absence and a non-boolean focused to false',
+    foreign !== undefined && foreign.messagesBefore === 12 && foreign.messagesAfter === 5 &&
+    foreign.estimatedTokensBefore === undefined && foreign.focused === false && foreign.turn === 2);
+  assert('extra text fields are not carried into the reading',
+    foreign !== undefined && !('summary' in foreign) && !('focus' in foreign));
+  assert('a zero estimate reads as absent, never 0',
+    damaged({ before: { messages: 12, estimatedTokens: 0 }, after: { messages: 5 }, focused: true })?.estimatedTokensBefore === undefined);
+  assert('the record contributes no searchable text — there are no words in it',
+    searchableText(compactions[0] as TrajectoryRecord).length === 0);
+
+  // Replay and spend: the notice in transcript order, and the anchor drop on the
+  // first call after it — the second call is labelled normally again.
+  const at = '2026-09-05T07:00:00.000Z';
+  const call = (seq: number, turn: number, contextTokens: number): TrajectoryRecord =>
+    ({ v: 1, seq, t: at, turn, type: 'modelCall', attempt: 1, ms: 10, stopReason: 'endTurn', contextTokens }) as TrajectoryRecord;
+  const closing = (seq: number, turn: number): TrajectoryRecord =>
+    ({ v: 1, seq, t: at, turn, type: 'turnEnded', stopReason: 'endTurn', ms: 20, recorded: {}, dropped: {} }) as TrajectoryRecord;
+  const compaction = { ...(compactions[0] as ContextCompactedRecord), seq: 4, turn: 1 };
+  const session: TrajectoryRecord[] = [
+    { v: 1, seq: 1, t: at, turn: 1, type: 'userInput', text: 'first prompt' } as TrajectoryRecord,
+    call(2, 1, 100),
+    closing(3, 1),
+    compaction,
+    { v: 1, seq: 5, t: at, turn: 2, type: 'userInput', text: 'second prompt' } as TrajectoryRecord,
+    call(6, 2, 705408),
+    call(7, 2, 46647),
+    closing(8, 2),
+  ];
+  const replayed = replayRecords(session);
+  const transcript = formatReplay({ ...replayed, damage: undefined });
+  const noteLine = '  note context compacted: 12 → 5 messages · ~705408 tokens before · focused';
+  assert('formatReplay prints the compaction as one bounded notice line',
+    transcript.split('\n').includes(noteLine));
+  assert('the notice sits in transcript order — after the first turn, before the second prompt',
+    transcript.indexOf('you> first prompt') < transcript.indexOf(noteLine) &&
+    transcript.indexOf(noteLine) < transcript.indexOf('you> second prompt'));
+  assert('an unfocused compaction without an estimate prints only the counts',
+    formatContextCompacted({ turn: 0, messagesBefore: 8, messagesAfter: 3, focused: false }) === 'context compacted: 8 → 3 messages');
+  const [before, stale, fresh] = replayed.modelCalls;
+  assert('the call before the compaction keeps its estimate',
+    before?.contextTokens === 100 && before.contextReset === undefined);
+  assert('the first call after the compaction drops the stale SDK projection and says why',
+    stale?.contextReset === 'compaction' && stale.contextTokens === undefined);
+  assert('the second call after the compaction is labelled normally',
+    fresh?.contextTokens === 46647 && fresh.contextReset === undefined);
+  const callLines = transcript.split('\n').filter((line) => line.includes('model call (attempt'));
+  assert('the call lines say `context: reset by compaction` exactly once, and never print the stale number',
+    callLines.length === 3 &&
+    callLines.filter((line) => line.includes('context: reset by compaction')).length === 1 &&
+    callLines.some((line) => line.includes('context ~100 tokens')) &&
+    callLines.some((line) => line.includes('context ~46647 tokens')) &&
+    callLines.every((line) => !line.includes('705408')));
+
+  // A record whose counts do not validate neither prints nor drops the anchor.
+  const unreadable = { ...compaction, before: { messages: -1 } } as unknown as TrajectoryRecord;
+  const withUnreadable = replayRecords(session.map((record) => (record === compaction ? unreadable : record)));
+  assert('an unreadable compaction record prints nothing and leaves every call labelled normally',
+    !formatReplay({ ...withUnreadable, damage: undefined }).includes('context compacted') &&
+    withUnreadable.modelCalls.every((entry) => entry.contextReset === undefined && entry.contextTokens !== undefined));
+  // Files without the record keep their transcript byte for byte.
+  const without = replayRecords(session.filter((record) => record !== compaction));
+  assert('a file without the record renders formatReplay byte-identically to before the type existed',
+    !formatReplay({ ...without, damage: undefined }).includes('compact') &&
+    without.modelCalls.every((entry) => entry.contextReset === undefined));
+  assert('a --turn replay of the turn the compaction closed shows its line; other turns do not',
+    formatReplay({ ...replayRecords(session, { turn: 1 }), damage: undefined }).includes(noteLine) &&
+    !formatReplay({ ...replayRecords(session, { turn: 2 }), damage: undefined }).includes('context compacted'));
+}
+
 async function replayFidelity(): Promise<void> {
   header('trajectory — replay reconstructs the live history with no model call');
 
@@ -2399,6 +2546,7 @@ async function main(): Promise<void> {
     await turnSpend();
     await turnSpendReadPaths();
     await modelCallRecords();
+    await contextCompactedRecords();
     await replayFidelity();
     await searchContracts();
     await forkContracts();

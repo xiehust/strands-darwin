@@ -184,6 +184,40 @@ async function main(): Promise<void> {
     assert('an absolute path is written where it points', absoluteOutcome.written === absolute && existsSync(absolute));
   }
 
+  header('/export — a recorded /compact shows as the one replay line, byte-identical to formatReplay');
+  {
+    // SRF-027: the `contextCompacted` record between two turns, exactly as the
+    // recorder writes it (turn = the last closed turn's ordinal), then a second turn
+    // whose first model call carries the SDK's stale projection.
+    const compacted = await seed(
+      'compacted',
+      runStarted() +
+        recordedTurn('before compaction', 'first answer') +
+        line({ turn: 1, type: 'contextCompacted', before: { messages: 12, estimatedTokens: 705408 }, after: { messages: 5 }, focused: true }) +
+        line({ turn: 2, type: 'userInput', text: 'after compaction' }) +
+        line({ turn: 2, type: 'modelCall', attempt: 1, ms: 10, stopReason: 'endTurn', contextTokens: 705408 }) +
+        line({ turn: 2, type: 'contentBlockEvent', data: { contentBlock: { text: 'second answer' } } }) +
+        line({ turn: 2, type: 'turnEnded', stopReason: 'endTurn', ms: 12, recorded: { contentBlockEvent: 1 }, dropped: {} }),
+    );
+    const outcome = await exportTranscript({
+      argument: 'compacted.md', projectRoot: ROOT, sessionId: 'compacted', recordFile: compacted,
+    });
+    assert('a record with a compaction exports', outcome.written === path.join(ROOT, 'compacted.md'));
+    const written = await readFile(path.join(ROOT, 'compacted.md'), 'utf8');
+    const body = written.slice(written.indexOf('\n\n') + 2);
+    const expected = formatReplay(replayRead(await readTrajectory(compacted)));
+    assert('the body is still byte-identical to formatReplay — no second formatter for the new line',
+      body === `${expected}\n`);
+    const bodyLines = body.split('\n');
+    const noteAt = bodyLines.indexOf('  note context compacted: 12 → 5 messages · ~705408 tokens before · focused');
+    assert('the compaction is exactly one line, in transcript order between the two prompts',
+      noteAt !== -1 &&
+      bodyLines.indexOf('you> before compaction') < noteAt && noteAt < bodyLines.indexOf('you> after compaction'));
+    assert('the first model call after it is labelled `context: reset by compaction`, never with the stale number',
+      bodyLines.some((candidate) => candidate.includes('model call (attempt 1') && candidate.includes('context: reset by compaction')) &&
+      !body.includes('context ~705408 tokens'));
+  }
+
   header('/export — reading mid-turn tolerates the damage the reader already tolerates');
   {
     // A partial trailing line is exactly what a read-during-append can see.

@@ -16,8 +16,11 @@ import { contentBlockFromData, type AgentStreamEvent } from '@strands-agents/sdk
 import { initialTurnState, turnReducer, type HistoryItem } from '../tui/turn-state.js';
 import { describeDamage, type TrajectoryReadResult } from './reader.js';
 import {
+  contextCompactedOf,
   formatTurnFailure,
   turnFailureOf,
+  type ContextCompactedReading,
+  type ContextCompactedRecord,
   type ModelCallReading,
   type ModelCallRecord,
   type TrajectoryRecord,
@@ -109,8 +112,10 @@ export function replayRecords(
   // covering turns it did not show would describe a different report.
   const closed: TurnEndedRecord[] = [];
   // Same collection discipline as `closed`: a `--turn` replay reports only the calls
-  // of the turn it shows.
-  const modelCalls: ModelCallRecord[] = [];
+  // of the turn it shows. `contextCompacted` records travel in the same list, in file
+  // order, because `modelCallEntries` reads them as the anchor drop that makes the
+  // next call's recorded `contextTokens` stale (SRF-027).
+  const modelCalls: (ModelCallRecord | ContextCompactedRecord)[] = [];
   let droppedRecords = 0;
 
   for (const record of records) {
@@ -217,6 +222,19 @@ export function replayRecords(
         modelCalls.push(record);
         continue;
 
+      case 'contextCompacted': {
+        // A successful `/compact` (SRF-027) replays as one bounded notice row in
+        // transcript order — where the live session showed its own compaction
+        // notice — composed from the validated reading only, so the line can never
+        // carry a summary or a focus (the record holds neither). A line whose counts
+        // do not validate is skipped: nothing is printed from a claim nobody can read.
+        const reading = contextCompactedOf(record);
+        if (reading === undefined) continue;
+        state = turnReducer(state, { type: 'notice', text: formatContextCompacted(reading) });
+        modelCalls.push(record);
+        continue;
+      }
+
       case 'forkedFrom':
       case 'recordingStopped':
         continue;
@@ -240,6 +258,23 @@ export function replayRecords(
 /** Replays a file the reader has already opened, carrying its damage report along. */
 export function replayRead(read: TrajectoryReadResult, options: ReplayOptions = {}): ReplayResult {
   return { ...replayRecords(read.records, options), damage: describeDamage(read) };
+}
+
+/**
+ * The one line a successful `/compact` contributes to the transcript (SRF-027):
+ * `context compacted: 12 → 5 messages`, then ` · ~N tokens before` only when the
+ * record carries a usable estimate and ` · focused` only when a focus was given.
+ * Bounded by construction — three validated integers and a flag — and the same
+ * text lands in `trajectory replay`, `/export` and the resume recap because all
+ * three read it through the notice `replayRecords` dispatches.
+ */
+export function formatContextCompacted(reading: ContextCompactedReading): string {
+  const parts = [
+    `context compacted: ${reading.messagesBefore} → ${reading.messagesAfter} messages`,
+    ...(reading.estimatedTokensBefore === undefined ? [] : [`~${reading.estimatedTokensBefore} tokens before`]),
+    ...(reading.focused ? ['focused'] : []),
+  ];
+  return parts.join(' · ');
 }
 
 /**

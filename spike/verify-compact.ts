@@ -24,6 +24,7 @@ import {
   COMPACT_FOCUS_HEADING,
   MAX_COMPACT_FOCUS_CODE_POINTS,
   SWALLOWED_SUMMARIZATION_FAILURE,
+  compactAndRecord,
   compactConversation,
   compactFocusRefusal,
   compactionManagerConfig,
@@ -32,7 +33,12 @@ import {
   focusedSummarizationPrompt,
   normalizeCompactFocus,
   stripReasoningFromUserMessages,
+  type CompactionHost,
+  type CompactResult,
 } from '../src/agent/compact.js';
+import { readTrajectory } from '../src/trajectory/reader.js';
+import { contextCompactedOf, type ContextCompactedRecord } from '../src/trajectory/record.js';
+import { TrajectoryRecorder } from '../src/trajectory/writer.js';
 import { assert, header, report } from './shared.js';
 
 class DeterministicModel extends Model<BaseModelConfig> {
@@ -507,6 +513,115 @@ async function main(): Promise<void> {
     assert('clean user messages are untouched', cleanUser.content.length === 1 && cleanUser.content[0]?.type === 'textBlock');
     assert('an all-reasoning user message is left intact rather than emptied', allReasoning.content.length === 1);
     assert('a clean list reports zero repairs', stripReasoningFromUserMessages([cleanUser, assistantThinking]) === 0);
+
+    // SRF-027: the driver helper appends one `contextCompacted` trajectory record per
+    // shrinking compaction and nothing otherwise — proved with a scripted host and a
+    // real recorder, so the bytes on disk are the bytes a session would write.
+    header('compact — the contextCompacted trajectory record: one per shrinking compaction, never text');
+    {
+      const file = path.join(root, 'records', 'trajectory.jsonl');
+      const recorder = new TrajectoryRecorder({
+        file,
+        run: {
+          session: 'compact-record', agentId: 'darwin', darwinVersion: 'test', provider: 'bedrock',
+          model: 'fake.compact', permissionMode: 'default', thinkingEffort: undefined, resumed: false, restoredMessages: 0,
+        },
+      });
+      const summaryText = 'SUMMARY-TEXT-the-model-wrote';
+      const focusText = 'FOCUS-TEXT keep the auth paths';
+      const shrink = (messagesBefore: number, messagesAfter: number): CompactResult => ({
+        messagesBefore, messagesAfter, estimatedTokensBefore: 9_000, estimatedTokensAfter: 1_000,
+        estimatedTokensSaved: 8_000, compacted: true,
+      });
+      const scripted: { estimate: number | Error; result: CompactResult | Error }[] = [];
+      let compactCalls = 0;
+      const compactFocuses: (string | undefined)[] = [];
+      const host: CompactionHost = {
+        contextEstimate: async () => {
+          const next = scripted[compactCalls];
+          if (next === undefined) throw new Error('unscripted estimate');
+          if (next.estimate instanceof Error) throw next.estimate;
+          return { estimatedTokens: next.estimate };
+        },
+        compact: async (focus) => {
+          const next = scripted[compactCalls];
+          compactCalls += 1;
+          compactFocuses.push(focus);
+          if (next === undefined) throw new Error('unscripted compaction');
+          if (next.result instanceof Error) throw next.result;
+          // The "summary" only ever lives in the conversation, never in the result.
+          void summaryText;
+          return next.result;
+        },
+        recordContextCompacted: (entry) => recorder.recordContextCompacted(entry),
+      };
+
+      // 1: focused, estimate known → one record, focused: true, estimate carried.
+      scripted.push({ estimate: 705_408, result: shrink(12, 5) });
+      const focusedResult = await compactAndRecord(host, `  ${focusText} `);
+      // 2: unfocused, estimate read fails → one record, no estimate key.
+      scripted.push({ estimate: new Error('CountTokens refused'), result: shrink(8, 3) });
+      await compactAndRecord(host);
+      // 3: blank focus is no focus; estimate 0 → absent.
+      scripted.push({ estimate: 0, result: shrink(20, 6) });
+      await compactAndRecord(host, '   ');
+      // 4: no-shrink pass → nothing recorded.
+      scripted.push({
+        estimate: 4_000,
+        result: { messagesBefore: 2, messagesAfter: 2, estimatedTokensBefore: 4_000, estimatedTokensAfter: 4_000, estimatedTokensSaved: 0, compacted: false },
+      });
+      const noShrink = await compactAndRecord(host, focusText);
+      // 5: a failure rethrows the identical error and records nothing.
+      const failure = new Error(SWALLOWED_SUMMARIZATION_FAILURE);
+      scripted.push({ estimate: 4_000, result: failure });
+      let thrown: unknown;
+      try {
+        await compactAndRecord(host, focusText);
+      } catch (error) {
+        thrown = error;
+      }
+      await recorder.close();
+
+      assert('the helper returns the host result unchanged', focusedResult.compacted && focusedResult.messagesBefore === 12 && !noShrink.compacted);
+      assert('the host sees exactly the focus the driver passed — the helper trims nothing on the way in',
+        compactFocuses[0] === `  ${focusText} ` && compactFocuses[1] === undefined && compactFocuses[2] === '   ');
+      assert('a failure is rethrown as the identical object', thrown === failure);
+      assert('recording reports no problem', recorder.status.problem === undefined);
+
+      const raw = await readFile(file, 'utf8');
+      const lines = raw.split('\n').filter((line) => line.includes('"contextCompacted"'));
+      assert('exactly one record per shrinking compaction — none for the no-shrink pass or the failure', lines.length === 3);
+      const readings = (await readTrajectory(file)).records
+        .filter((record): record is ContextCompactedRecord => record.type === 'contextCompacted')
+        .map((record) => contextCompactedOf(record));
+      assert('a focused compaction reads focused: true with the pre-compaction estimate',
+        readings[0]?.focused === true && readings[0].messagesBefore === 12 && readings[0].messagesAfter === 5 &&
+        readings[0].estimatedTokensBefore === 705_408);
+      assert('a failed estimate read is absence, never 0, and the compaction still recorded',
+        readings[1]?.focused === false && readings[1].messagesBefore === 8 && readings[1].estimatedTokensBefore === undefined &&
+        lines[1] !== undefined && !lines[1].includes('estimatedTokens'));
+      assert('a blank focus is no focus; a 0 estimate is absent',
+        readings[2]?.focused === false && readings[2].estimatedTokensBefore === undefined);
+      assert('neither the focus text nor the summary text appears anywhere in the record bytes',
+        !raw.includes('FOCUS-TEXT') && !raw.includes(summaryText) && !raw.includes('auth paths'));
+      assert('the record bytes carry no string payload at all — only the envelope strings',
+        lines.every((line) => {
+          const parsed = JSON.parse(line) as Record<string, unknown>;
+          return Object.entries(parsed).every(([key, value]) => typeof value !== 'string' || key === 't' || key === 'type');
+        }));
+
+      // The drivers: the TUI's one `/compact` site and headless `--compact-before`
+      // both go through the helper, and nothing else in src/ composes the record.
+      const appSource = await readFile(new URL('../src/tui/App.tsx', import.meta.url), 'utf8');
+      const headlessSource = await readFile(new URL('../src/headless-runner.ts', import.meta.url), 'utf8');
+      assert('App.tsx runs /compact through compactAndRecord exactly once and never calls runtime.compact directly',
+        appSource.split('compactAndRecord(runtime, focus)').length === 2 && !appSource.includes('runtime.compact('));
+      assert('headless --compact-before runs through the same helper',
+        headlessSource.includes('compactAndRecord(runtime)') && !headlessSource.includes('runtime.compact('));
+      assert('App.tsx never composes the record itself', !appSource.includes('recordContextCompacted'));
+      const helperBody = compactSource.slice(compactSource.indexOf('export async function compactAndRecord'));
+      assert('the helper records only under result.compacted', /if \(result\.compacted\) \{\s*host\.recordContextCompacted/u.test(helperBody));
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

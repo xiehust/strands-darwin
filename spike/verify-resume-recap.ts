@@ -96,6 +96,7 @@ const records = [
   record(1, 'turnEnded', { stopReason: 'endTurn', ms: 1, recorded: {}, dropped: {} }),
   ...turn(2, 'older request', 'older answer'),
   record(0, 'shellCommand', { command: 'echo shell-history', exitCode: 0, signal: null, timedOut: false, durationMs: 3, output: 'shell-history' }),
+  record(2, 'contextCompacted', { before: { messages: 12, estimatedTokens: 705408 }, after: { messages: 5 }, focused: false }),
   record(3, 'userInput', { text: 'unfinished request' }),
   runStarted(true, 2, 2),
   ...turn(1, 'last completed request', 'last completed answer'),
@@ -118,6 +119,10 @@ assert('tool rows from an earlier run replay too',
   projectedText.includes('tool output from the first run'));
 assert('a recorded `!` shell command replays as its user and finished rows',
   projectedText.includes('!echo shell-history') && projectedText.includes('$ echo shell-history (exit 0'));
+assert('a recorded /compact replays as its one notice row, in order, with no summary or focus text',
+  projected.some((item) => item.kind === 'notice' && item.text === 'context compacted: 12 → 5 messages · ~705408 tokens before') &&
+  projectedText.indexOf('older answer') < projectedText.indexOf('context compacted') &&
+  projectedText.indexOf('context compacted') < projectedText.indexOf('unfinished request'));
 assert('open turns replay as the transcript the session actually showed',
   projectedText.includes('unfinished request') && projectedText.includes('new unfinished request'));
 assert('the omission and truncation notices are gone',

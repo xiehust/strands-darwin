@@ -26,6 +26,7 @@ import {
   MAX_FIELD_CHARS,
   MAX_FILE_BYTES,
   SCHEMA_VERSION,
+  boundedCount,
   capField,
   encodeRecord,
   failureFromError,
@@ -33,6 +34,7 @@ import {
   parseRecordLine,
   projectEvent,
   type CallSpendProjector,
+  type ContextCompactedEntry,
   type TaskNotificationFields,
   type TrajectoryRecord,
   type Truncation,
@@ -520,6 +522,40 @@ export class TrajectoryRecorder {
         },
         [...command.trunc, ...output.trunc],
       );
+      this.flush();
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  /**
+   * Records one successful `/compact` (SRF-027). Between turns by nature — the TUI
+   * refuses `/compact` while a turn streams and headless runs `--compact-before`
+   * ahead of its one turn — so, like {@link recordShellCommand}, this is never on the
+   * streaming path: composing and buffering are synchronous and non-throwing, and
+   * the flush is the same fire-and-forget append chain. Numbers pass through
+   * `boundedCount` — a count that is not a non-negative safe integer is not written
+   * (the message counts are the record's whole claim, so both are required), and an
+   * estimate that is unknown or 0 is an absent key. No string field exists to cap:
+   * the caller decides `focused`, and neither the focus nor the summary reaches here.
+   */
+  recordContextCompacted(entry: ContextCompactedEntry): void {
+    if (!this.active) return;
+    try {
+      const messagesBefore = boundedCount(entry.messagesBefore);
+      const messagesAfter = boundedCount(entry.messagesAfter);
+      if (messagesBefore === undefined || messagesAfter === undefined) return;
+      const estimatedTokens = boundedCount(entry.estimatedTokensBefore);
+      this.buffer({
+        turn: this.turns,
+        type: 'contextCompacted',
+        before: {
+          messages: messagesBefore,
+          ...(estimatedTokens === undefined || estimatedTokens === 0 ? {} : { estimatedTokens }),
+        },
+        after: { messages: messagesAfter },
+        focused: entry.focused === true,
+      });
       this.flush();
     } catch (error) {
       this.fail(error);

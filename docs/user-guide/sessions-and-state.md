@@ -43,7 +43,7 @@ darwin trajectory replay <id> --turn 3 --json
 darwin trajectory fork <id>
 ```
 
-These make no model call, network request, or tool execution. `replay` reconstructs user prompts, assistant replies, tool statuses/result previews, failures, and spend; it does not recreate token timing, reasoning, capped bytes, or terminal colours. Reading a recorded failed turn succeeds (exit 0). Search no-hit in a readable record prints `no matches` and exits 0; no trajectory for that session exits 1.
+These make no model call, network request, or tool execution. `replay` reconstructs user prompts, assistant replies, tool statuses/result previews, failures, spend, and each successful `/compact` as one `context compacted: 12 → 5 messages` note (counts and an optional pre-compaction estimate — never the summary or focus text; the first model call after it reads `context: reset by compaction` instead of the SDK's stale estimate); it does not recreate token timing, reasoning, capped bytes, or terminal colours. Reading a recorded failed turn succeeds (exit 0). Search no-hit in a readable record prints `no matches` and exits 0; no trajectory for that session exits 1.
 
 `fork` copies snapshot, offloaded files, and trajectory prefix to a new ID while leaving source bytes and resume pointer unchanged:
 

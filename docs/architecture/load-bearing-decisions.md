@@ -227,6 +227,17 @@ The default prompt is reached only through the package root: the SDK declares it
 
 **The reduce loop terminates on evidence and treats a swallowed failure as failure (SER-052).** `compactConversation` used to loop `while (messages.length > preserveRecentMessages + 1)` on `reduce()`, assuming every `true` shrank the list; but the SDK summarizes at most 80% of the list (`summaryRatio` clamped to `[0.1, 0.8]`), so a 2-message history can only ever become "a summary of the oldest message plus the newest" — same count, less fidelity, forever (a Host probe made 26 paid, uncancellable summarizer calls). Now every pass keeps a shallow snapshot; a pass that returns `true` without lowering the count is undone (identity kept) and ends the loop, so `compacted` is true only when the count really dropped. The guard is observational rather than a copy of the SDK's split arithmetic, so it stays right if the SDK changes; the recorded consequence is that with `preserveRecentMessages: 0` the floor is two messages and finding it costs one summarizer call, and 2 messages / preserve 0 is an honest `already compact` after exactly one call. Separately, darwin calls `reduce()` without `error`, so the SDK's proactive path swallows any summarization error and returns `false`; inside the loop the SDK has no other `false`, so it is thrown as `SWALLOWED_SUMMARIZATION_FAILURE` and everything is restored — never `compacted: true` from an earlier pass, never a partial result. A sentinel `error` was rejected because it must be a `ContextWindowOverflowError`, the SDK writes it into the thrown error's `.cause`, and `failureFromError` would print that fabricated cause in structured headless output; the real cause already reaches the user through the routed `sdk warn` line. The bug was masked from `780ec93` until `f4e3271` scrubbed reasoning blocks from the summary: the provider rejection that used to fail the second pass had been terminating the loop by accident. Spec: `backend/strands-sdk-contracts.md` § explicit `/compact` scenario, `backend/error-handling.md`. Checks: `verify-compact.ts` (2 messages / preserve 0 → one call, no-op; 16 / preserve 0 → three calls, pass 3 undone; second- and first-pass failure reject and restore; focused manager shares both), live `tui compacting` (seeds two turns, `preserveRecentMessages: 1`, waits for a real `4 → 2`).
 
+**A shrinking compaction leaves one trajectory record, and the drivers share its composer (SRF-027).**
+Both `/compact` in the TUI and headless `--compact-before` run `compactAndRecord` (`src/agent/compact.ts`)
+rather than `AgentRuntime.compact()` directly: it reads `contextEstimate()` best-effort first (the
+anchor is gone once the history is rewritten), runs the compaction, and on `compacted: true` — never on a
+no-shrink pass, never on a rolled-back failure — hands `AgentRuntime.recordContextCompacted` the message
+counts, that estimate when known, and whether a focus was given. The summary and the focus text never
+reach the recorder. What the record is, how replay prints it and why `spend.ts` treats it as an anchor
+drop is § Session trajectory. Checks: `verify-compact.ts` (scripted host + real recorder: three
+shrinking compactions → three lines, no-shrink and failure → none, bytes free of focus/summary text, both
+driver sources go through the helper).
+
 
 ## Permissions — the gate
 
@@ -1011,6 +1022,32 @@ selects current-or-named without fallback, and hands off the inclusive turn/seq 
 `turnEnded`; a later open `userInput` may identify the Host but is never graded, and no closed turn is
 a refusal. The locator and child never repair, append, or move session state. No subagent event is
 recorded anywhere; child streams never pass through `send`.
+
+**A successful `/compact` is recorded, as numbers only (SRF-027, `contextCompacted`).** The record
+used to go silent across the one event that rewrites the history every later `modelCall.contextTokens`
+is projected from: session `session-20260905-014347068` compacted between seq 1245 and 1246 with no
+line between, and the next call's `contextTokens: 705408` was the SDK's stale baseline (its
+`_estimateInputTokens` reads the last assistant message carrying usage metadata, and a preserved
+recent message still carries its pre-compaction number) on a call that billed ≈44k. Now the driver
+that ran the compaction appends one out-of-turn record on `shellCommand`'s terms — synchronous,
+non-throwing, flushed on the ordinary append chain, `turn` = the last closed turn's ordinal — carrying
+`before.messages`, `after.messages`, optional `before.estimatedTokens` (the driver's own
+`AgentRuntime.contextEstimate()` read *before* the compaction, since the anchor drops with the
+rewritten history; absent when unknown or 0, never 0) and the boolean `focused`. Never the summary,
+never the focus text: `spike/verify-compact.ts` asserts over the bytes. The one composer is
+`compactAndRecord` (`src/agent/compact.ts`), called by the TUI's `/compact` site and by headless
+`--compact-before`; it records only under `compacted: true`, so a no-shrink pass or a rolled-back
+failure leaves the file untouched. Both the writer and the reader (`contextCompactedOf`) accept a
+count only as a non-negative safe integer (`boundedCount`): the writer refuses to write a line whose
+message counts fail it, the reader rejects one it finds. Readers: `formatReplay` prints one notice
+row in transcript order (`context compacted: 12 → 5 messages · ~705408 tokens before · focused`, the
+optional parts only when present) through the ordinary reducer, so `/export` and the resume recap
+show the same line; `spend.ts` treats a valid record as an **anchor drop** — the first `modelCall`
+after it loses its `contextTokens` and prints `context: reset by compaction` (the chosen treatment:
+say why rather than silently omit), the second is labelled normally; `searchableText` is empty
+(there are no words to find); `fork` copies it as bytes; recall and `sessions` filter on
+`userInput` and never see it. Files without the record render byte-identically. Checks:
+`verify-trajectory.ts`, `verify-compact.ts`, `verify-export-command.ts`, `verify-resume-recap.ts`.
 
 ## Session diagnostics
 

@@ -160,6 +160,16 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
         compacted: true,
       };
     },
+    // SRF-027: `--compact-before` reads the estimate before compacting and records a
+    // shrinking compaction; both are traced so the phase suite can pin the order
+    // (estimate → compact → record → send) and prove a failed compaction records nothing.
+    async contextEstimate() {
+      if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'contextEstimate' })}\n`);
+      return { estimatedTokens: 9_876, messageCount: 12, windowTokens: 200_000 };
+    },
+    recordContextCompacted(entry: Record<string, unknown>) {
+      if (traceFile !== undefined) appendFileSync(traceFile, `${JSON.stringify({ type: 'recordContextCompacted', ...entry })}\n`);
+    },
     cancel() {
       cancelled = true;
     },

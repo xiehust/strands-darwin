@@ -95,7 +95,7 @@ import { createMemoryTools } from '../memory/tools.js';
 import type { MemoryStatus } from '../memory/store.js';
 
 import { recordStream } from '../trajectory/stream.js';
-import type { TaskNotificationFields } from '../trajectory/record.js';
+import type { ContextCompactedEntry, TaskNotificationFields } from '../trajectory/record.js';
 import {
   TrajectoryRecorder,
   type RecorderOptions,
@@ -1217,6 +1217,18 @@ export class AgentRuntime {
     output: string;
   }): void {
     this.trajectory?.recordShellCommand(entry);
+  }
+
+  /**
+   * Records one successful `/compact` (SRF-027) in the session's trajectory.
+   *
+   * A passthrough on {@link recordShellCommand}'s terms: the driver that ran the
+   * compaction reports what it already knows (the `CompactResult` counts, its own
+   * pre-compaction estimate, whether a focus was given) and nothing else — never the
+   * summary, never the focus text. No-op when recording is off or has latched off.
+   */
+  recordContextCompacted(entry: ContextCompactedEntry): void {
+    this.trajectory?.recordContextCompacted(entry);
   }
 
   /**

@@ -26,7 +26,7 @@ import {
   type AllowRuleEntry,
   type PermissionDecision,
 } from '../agent/permission.js';
-import { compactFocusRefusal, normalizeCompactFocus } from '../agent/compact.js';
+import { compactAndRecord, compactFocusRefusal, normalizeCompactFocus } from '../agent/compact.js';
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { describeModelCosts, type ModelUsageShare } from '../agent/cost.js';
@@ -1661,7 +1661,10 @@ export function App({
         }
         setStatus('compacting');
         try {
-          const result = await runtime.compact(focus);
+          // The one TUI compaction site: a shrinking pass also appends the
+          // `contextCompacted` trajectory record (SRF-027); no-shrink and failure
+          // paths leave the record file untouched.
+          const result = await compactAndRecord(runtime, focus);
           dispatch({ type: 'notice', text: formatCompactReport(result) });
         } catch (error) {
           dispatch({

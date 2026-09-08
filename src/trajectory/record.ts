@@ -75,6 +75,7 @@ export type TrajectoryRecordType =
   | 'recordingStopped'
   | 'shellCommand'
   | 'taskNotification'
+  | 'contextCompacted'
   | RecordedEventType;
 
 /** Fields every record carries, whatever its type. */
@@ -374,6 +375,45 @@ export interface TaskNotificationRecord extends RecordEnvelope, TaskNotification
   text: string;
 }
 
+/**
+ * The fields a driver hands the recorder after `AgentRuntime.compact()` reported
+ * `compacted: true` (SRF-027). Numbers only, on purpose: the summary the SDK wrote and
+ * the focus the user typed are never recorded — one is the conversation (the snapshot
+ * holds it), the other is a prompt fragment that would make this a second `userInput`.
+ */
+export interface ContextCompactedEntry {
+  messagesBefore: number;
+  messagesAfter: number;
+  /**
+   * `AgentRuntime.contextEstimate().estimatedTokens` read just before compaction, when
+   * that read succeeded. Absent when unknown — never 0.
+   */
+  estimatedTokensBefore?: number;
+  /** Whether a non-empty focus was given. The focus text itself is never recorded. */
+  focused: boolean;
+}
+
+/**
+ * A successful `/compact` (SRF-027): the one event between turns that rewrites the
+ * history every later `modelCall.contextTokens` is projected from. Written by the
+ * driver from the `CompactResult` it already has, between turns like `shellCommand`
+ * (the envelope's `turn` is the last *closed* turn's ordinal), and only when the
+ * message count really dropped — a no-shrink pass or a rolled-back failure leaves
+ * the record file exactly as it was.
+ *
+ * Readers treat it as an **anchor drop**: the first `modelCall` after it must not be
+ * labelled with the SDK's request-size projection, because that baseline is the last
+ * assistant message carrying usage metadata and a preserved recent message still
+ * carries its pre-compaction number (measured: `contextTokens: 705408` on a call that
+ * billed ≈44k). See {@link contextCompactedOf} for the reading.
+ */
+export interface ContextCompactedRecord extends RecordEnvelope {
+  type: 'contextCompacted';
+  before: { messages: number; estimatedTokens?: number };
+  after: { messages: number };
+  focused: boolean;
+}
+
 export type TrajectoryRecord =
   | RunStartedRecord
   | UserInputRecord
@@ -383,7 +423,8 @@ export type TrajectoryRecord =
   | ForkedFromRecord
   | RecordingStoppedRecord
   | ShellCommandRecord
-  | TaskNotificationRecord;
+  | TaskNotificationRecord
+  | ContextCompactedRecord;
 
 /**
  * A thrown value as the fields the record keeps.
@@ -601,6 +642,10 @@ export function searchableText(record: TrajectoryRecord): string[] {
     case 'taskNotification':
       // Search, not recall: `trajectory search` may find the job, `Up` never offers it.
       return [record.command, record.text];
+    case 'contextCompacted':
+      // Numbers only by construction — there is no text to match, and inventing a
+      // sentence here would make search find words nobody recorded.
+      return [];
     default:
       return [];
   }
@@ -699,6 +744,12 @@ export interface ModelCallReading {
   ms: number;
   stopReason?: string;
   contextTokens?: number;
+  /**
+   * Set by `spend.ts` (never by {@link modelCallOf}) on the first call after a
+   * `contextCompacted` record: the recorded `contextTokens` is the SDK's stale
+   * pre-compaction baseline, so the reading drops the number and says why instead.
+   */
+  contextReset?: 'compaction';
   spend?: TurnSpend;
 }
 
@@ -722,6 +773,53 @@ export function modelCallOf(record: ModelCallRecord): ModelCallReading {
     ...(typeof stopReason === 'string' && stopReason !== '' ? { stopReason } : {}),
     ...(contextTokens === undefined ? {} : { contextTokens }),
     ...(spend === undefined ? {} : { spend }),
+  };
+}
+
+/** A {@link ContextCompactedRecord} as readers consume it, numbers validated. */
+export interface ContextCompactedReading {
+  turn: number;
+  messagesBefore: number;
+  messagesAfter: number;
+  /** Absent when the record carries no usable estimate — never 0. */
+  estimatedTokensBefore?: number;
+  focused: boolean;
+}
+
+/**
+ * A finite, non-negative safe integer, or `undefined`: the one shape a recorded count
+ * may take. Shared by the writer (what gets written) and the reader (what gets
+ * believed), so a `-1`, a `2.5`, a `1e300` or a `"12"` is refused identically on both
+ * sides rather than rounded, clamped or coerced into a number nobody measured.
+ */
+export function boundedCount(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * A record's compaction payload as a reader can trust it, defensive on
+ * {@link modelCallOf}'s terms. The two message counts are the record's whole claim,
+ * so a line without both as {@link boundedCount}s is **rejected** (`undefined`) rather
+ * than half-read; the estimate degrades to absence, never to 0; `focused` is `true`
+ * only when written as the boolean `true`. Fields this reader does not know — a newer
+ * darwin's, or a hand-edited line's — are not carried into the reading.
+ */
+export function contextCompactedOf(record: ContextCompactedRecord): ContextCompactedReading | undefined {
+  const before = (record as { before?: unknown }).before;
+  const after = (record as { after?: unknown }).after;
+  if (before === null || typeof before !== 'object' || after === null || typeof after !== 'object') {
+    return undefined;
+  }
+  const messagesBefore = boundedCount((before as { messages?: unknown }).messages);
+  const messagesAfter = boundedCount((after as { messages?: unknown }).messages);
+  if (messagesBefore === undefined || messagesAfter === undefined) return undefined;
+  const estimatedTokensBefore = boundedCount((before as { estimatedTokens?: unknown }).estimatedTokens);
+  return {
+    turn: boundedCount(record.turn) ?? 0,
+    messagesBefore,
+    messagesAfter,
+    ...(estimatedTokensBefore === undefined || estimatedTokensBefore === 0 ? {} : { estimatedTokensBefore }),
+    focused: (record as { focused?: unknown }).focused === true,
   };
 }
 

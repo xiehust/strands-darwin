@@ -33,10 +33,10 @@
  * *unpriced* and named, its money unknown rather than zero.
  */
 import {
+  contextCompactedOf,
   modelCallOf,
   turnSpendOf,
   type ModelCallReading,
-  type ModelCallRecord,
   type TrajectoryRecord,
   type TurnEndedRecord,
   type TurnSpend,
@@ -208,11 +208,39 @@ export function formatTurnSpend(entry: TurnSpendEntry): string {
   return `turn ${entry.turn} spend: ${formatSpendFields(one)} · ${formatModelLabel(modelLabel(entry.spend))}`;
 }
 
-/** Every `modelCall` record in file order, read defensively like the turn entries. */
+/**
+ * Every `modelCall` record in file order, read defensively like the turn entries.
+ *
+ * A `contextCompacted` record between two calls is an **anchor drop** (SRF-027): the
+ * SDK's `contextTokens` baseline is the last assistant message carrying usage
+ * metadata, and after summarization a preserved recent message still carries its
+ * pre-compaction number (measured: `705408` projected on a call that billed ≈44k). So
+ * the first call after a valid compaction record loses that number and gains
+ * `contextReset: 'compaction'` — the chosen treatment is to *say why* rather than
+ * silently omit the suffix — and the second call is read normally, because its
+ * baseline is then a message the compacted conversation really produced. Only a
+ * record whose counts validate drops the anchor; a claim nobody can read changes
+ * nothing.
+ */
 export function modelCallEntries(records: readonly TrajectoryRecord[]): ModelCallReading[] {
-  return records
-    .filter((record): record is ModelCallRecord => record.type === 'modelCall')
-    .map((record) => modelCallOf(record));
+  const entries: ModelCallReading[] = [];
+  let reset: ModelCallReading['contextReset'];
+  for (const record of records) {
+    if (record.type === 'contextCompacted') {
+      if (contextCompactedOf(record) !== undefined) reset = 'compaction';
+      continue;
+    }
+    if (record.type !== 'modelCall') continue;
+    const reading = modelCallOf(record);
+    if (reset === undefined) {
+      entries.push(reading);
+      continue;
+    }
+    const { contextTokens: _stale, ...rest } = reading;
+    entries.push({ ...rest, contextReset: reset });
+    reset = undefined;
+  }
+  return entries;
 }
 
 /**
@@ -231,7 +259,11 @@ export function formatModelCall(call: ModelCallReading): string {
   const parts = [
     `turn ${call.turn} model call (attempt ${call.attempt}, ${call.ms}ms)`,
     ...(call.stopReason === undefined ? [] : [`stop ${boundedWord(call.stopReason, MAX_STOP_REASON_CHARS)}`]),
-    ...(call.contextTokens === undefined ? [] : [`context ~${call.contextTokens} tokens`]),
+    ...(call.contextReset === 'compaction'
+      ? ['context: reset by compaction']
+      : call.contextTokens === undefined
+        ? []
+        : [`context ~${call.contextTokens} tokens`]),
     call.spend === undefined
       ? 'spend unknown'
       : `${formatSpendFields(asMetrics(call.spend))} · ${formatModelLabel(modelLabel(call.spend))}`,

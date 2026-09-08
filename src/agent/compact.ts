@@ -13,6 +13,8 @@ import type { Agent, Message, Model, SummarizingConversationManagerConfig } from
 // no focus is given.
 import { DEFAULT_SUMMARIZATION_PROMPT, SummarizingConversationManager } from '@strands-agents/sdk';
 
+import type { ContextCompactedEntry } from '../trajectory/record.js';
+
 /**
  * `/compact` collapses every reducible old message in one command, leaving one
  * summary plus the recent window. 0.8 is the SDK's maximum ratio and minimizes
@@ -199,6 +201,52 @@ export async function compactConversation({
     agent.messages.splice(0, agent.messages.length, ...original);
     throw error;
   }
+}
+
+/**
+ * What a driver needs from the runtime to run one `/compact` and record it: the
+ * structural slice of `AgentRuntime` the TUI and headless drivers already hold.
+ * Typed structurally so `spike/verify-compact.ts` can prove the recording rules with
+ * a scripted host and a real recorder, without an `Agent`.
+ */
+export interface CompactionHost {
+  contextEstimate(): Promise<{ estimatedTokens: number }>;
+  compact(focus?: string): Promise<CompactResult>;
+  recordContextCompacted(entry: ContextCompactedEntry): void;
+}
+
+/**
+ * Runs one `/compact` through the host and appends the SRF-027 `contextCompacted`
+ * trajectory record when — and only when — the result says `compacted: true`.
+ *
+ * The one place that composes the record, shared by both drivers so the TUI and
+ * `--compact-before` cannot describe the same compaction two ways. The pre-compaction
+ * estimate is the host's own `contextEstimate()` read **before** the compaction (the
+ * anchor it rests on drops with the rewritten history), taken best-effort: a failed or
+ * non-positive read is absence, never 0, and never a reason not to compact. A
+ * no-shrink pass records nothing; a failure records nothing and rethrows untouched.
+ * `focused` is whether a non-empty focus was given — the focus text stays with the
+ * summarizer request and is not handed to the recorder.
+ */
+export async function compactAndRecord(host: CompactionHost, focus?: string): Promise<CompactResult> {
+  let estimatedTokensBefore: number | undefined;
+  try {
+    const estimate = await host.contextEstimate();
+    const tokens = estimate.estimatedTokens;
+    estimatedTokensBefore = Number.isFinite(tokens) && tokens > 0 ? Math.round(tokens) : undefined;
+  } catch {
+    estimatedTokensBefore = undefined;
+  }
+  const result = await host.compact(focus);
+  if (result.compacted) {
+    host.recordContextCompacted({
+      messagesBefore: result.messagesBefore,
+      messagesAfter: result.messagesAfter,
+      ...(estimatedTokensBefore === undefined ? {} : { estimatedTokensBefore }),
+      focused: normalizeCompactFocus(focus) !== undefined,
+    });
+  }
+  return result;
 }
 
 /**

@@ -1,6 +1,7 @@
 import process from 'node:process';
 
 import type { DiagnosticLevel } from './agent/diagnostics.js';
+import { compactAndRecord } from './agent/compact.js';
 import type { RuntimeOptions } from './agent/runtime.js';
 import { AgentRuntime } from './agent/runtime.js';
 import { retryFailureHeading, type ModelRetryOutcome } from './agent/model-retry.js';
@@ -203,7 +204,9 @@ export async function runHeadlessProcess(
         ...(thinking === undefined ? {} : { thinking: structuredThinking(thinking) }),
       });
     }
-    if (options.compactBefore) await runtime.compact();
+    // `--compact-before` is the headless `/compact`: the same helper, so a shrinking
+    // pass leaves the same `contextCompacted` trajectory record (SRF-027).
+    if (options.compactBefore) await compactAndRecord(runtime);
     turnStarted = true;
 
     unsubscribeSubagentProgress = runtime.subscribeToSubagentProgress((progress) => {
