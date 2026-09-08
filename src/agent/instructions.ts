@@ -99,7 +99,7 @@ export async function loadProjectInstructions(
  */
 export function composeSystemPrompt(
   basePrompt: string,
-  instructions: ProjectInstructions | undefined,
+  instructions: Pick<ProjectInstructions, 'fragment'> | undefined,
 ): string {
   if (instructions === undefined) return basePrompt;
   return `${basePrompt}\n\n${instructions.fragment}`;

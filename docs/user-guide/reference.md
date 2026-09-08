@@ -75,7 +75,7 @@ Rules and limits:
 | `/agents` | bounded dispatch list for this run; metadata only |
 | `/clear` | new successor session; live mode inherited; queue dropped |
 | `/compact [focus]` | summarize older conversation; user controlled. Optional focus text (≤400 code points after trimming, longer is refused with a notice and nothing runs) is appended to the SDK's default summarizer prompt as one fixed section the summary must keep; without it the summarizer request is unchanged |
-| `/context` | known/estimated context size; Bedrock may use heuristic |
+| `/context` | known/estimated context size (Bedrock may use heuristic), then a breakdown estimated over the current request shape: system prompt by section (base, project instructions, skills catalogue, working context), tools by origin (darwin built-ins, each MCP server), conversation by role — `~N tokens · P%` per row when the window is known; a failed count reads `not reported`; counted only when you run the command |
 | `/copy` | last *completed* answer's transcript text to the clipboard: OSC 52 to the terminal first (works over SSH), then `wl-copy`/`xclip`/`pbcopy` only when a display is present; one notice states bytes copied (`N of M` when over the cap) and any tool failure; rejects arguments |
 | `/effort [level]` | show or set persisted model effort; a warm-cache notice precedes a level change |
 | `/exit`, `/quit` | quit |

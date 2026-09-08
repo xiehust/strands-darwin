@@ -24,7 +24,8 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   clear: 'start a new session',
   // `/compact <focus>` steers one summary; bare `/compact` is the SDK default prompt.
   compact: 'summarize older conversation, optionally around a focus',
-  context: 'estimated context size',
+  // The total line plus per-component rows; the rows are counted only when asked.
+  context: 'context size and what it is made of',
   // The last *completed* answer's transcript text, over OSC 52 — so it works over SSH.
   copy: 'copy the last answer to the clipboard',
   effort: 'set thinking depth',

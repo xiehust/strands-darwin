@@ -522,6 +522,35 @@ the pre-anchor wording, byte for byte. `/status` renders the same value through 
 `formatContextValue`, and the context-pressure latch consumes the same estimate, so it gets more
 accurate without gaining a second threshold.
 
+**The breakdown under the total line is computed on demand, by `/context` alone, and never feeds the
+estimate** (SER-077; `src/agent/context-breakdown.ts`, `AgentRuntime.contextBreakdown()`,
+`formatContextBreakdown`). The total says how big the request is; the breakdown says what it is made
+of, so the user can tell a 30-tool MCP catalogue from a long AGENTS.md from accumulated tool
+results before reaching for `/compact`. It counts one component at a time through the same
+`model.countTokens` the total uses: the system prompt by section as Darwin composes it — base prompt,
+`<project-instructions>`, the official `<available_skills>` catalogue, `<working-context>` — with
+the base/instructions split taken from the composition seam strings the runtime keeps
+(`RuntimeInfo.promptSections`) and the catalogue/working-context blocks read from the live prompt
+array through the same conservative parser that orders them (`knownPromptSections`, never a re-split
+of joined text; a restored prompt that no longer equals the current composition is counted whole and
+labelled `restored`, a foreign shape is counted whole); tool specs grouped by origin — darwin's own
+tools as one group, then one row per MCP server attributed by `mcpServerStatuses`' registered names
+(never `listTools()`), a server whose names cannot be read getting `not reported` while the built-in
+row admits the unattributed tools; and the conversation by role over whole messages. The rows are
+labelled an *estimate over the current request shape*: the anchor-measured total above them stays the
+authoritative line, and the two are not reconciled. Presentation follows `usageBuckets`: a component
+whose count failed reads `not reported`, never 0; a catalogue not yet injected is a stated absence;
+MCP-server rows are capped at `/mcp`'s own `MAX_MCP_TOOL_NAMES` with `… N more servers`; the share
+is present only when the window is known. It is a separate accessor, not an option on
+`contextEstimate()`, on purpose: the estimate is read after every turn by the pressure latch and by
+`/status` and must stay at most one `countTokens` call, whereas the breakdown makes one call per
+component and a provider-native counter may reach the provider's counting API. `/context` is its
+only caller, the total line and `formatContextValue` are byte-identical with and without it, and a
+failed breakdown costs the rows, never the line. Free coverage: `spike/verify-context-format.ts`
+(rows, bounds, measurement over an injected counter) and `spike/verify-context-anchor.ts` (the
+default estimate stays one call before and after a breakdown; `App.tsx` asks exactly once, inside
+the `/context` handler).
+
 Rejected, and recorded so it is not re-proposed: fitting a `measured / heuristic` correction factor
 and scaling future heuristics by it. That trades one unknown for another — the ratio is provider-,
 tokenizer- and content-dependent (images, reasoning blocks and JSON tool specs each carry their own
@@ -541,7 +570,9 @@ preserved, `0` disables). There is deliberately no SRF-010-specific second thres
 one bounded `<Static>` transcript notice that recommends the user consider `/compact` before the next
 broad implementation or verification turn. Remaining above does not repeat it; only a later known
 below-threshold estimate re-arms it, and `/clear` installs a fresh latch with the successor session.
-An unknown/invalid model window or failed estimate is absence, never pressure. The notice neither
+An unknown/invalid model window or failed estimate is absence, never pressure. The latch consumes
+`contextEstimate()` only — the SER-077 breakdown is never computed here, so the advisory adds no
+per-component counting to the end of a turn. The notice neither
 calls `/compact` nor mutates messages, and adds no timer, channel or live-frame row. Free coverage:
 `spike/verify-context-format.ts`; unchanged gates include `verify-compact.ts`,
 `verify-status-command.ts`, `verify-frame-budget.ts`, `verify-prompt-queue.ts`,

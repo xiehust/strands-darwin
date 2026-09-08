@@ -17,7 +17,7 @@
  *
  * Run: pnpm tsx spike/verify-context-anchor.ts
  */
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -32,10 +32,12 @@ import {
 } from '@strands-agents/sdk';
 
 import { anchorFromCall, resolveAnchor, type ContextAnchor } from '../src/agent/context-anchor.js';
+import { BASE_PROMPT_LABEL, SKILLS_CATALOGUE_LABEL, WORKING_CONTEXT_LABEL } from '../src/agent/context-breakdown.js';
 import { allowAllBridge } from '../src/agent/permission.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { requestInputTokens } from '../src/agent/usage.js';
 import { configPath, type AppConfig, type ModelChoice } from '../src/config.js';
+import { formatContextReport, formatContextReportWithBreakdown, formatContextValue } from '../src/tui/context-format.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const OWNED_HOME = ownPrivateHome('context-anchor');
@@ -268,6 +270,51 @@ async function runtimeEstimate(): Promise<void> {
     const afterSwitch = await runtime.contextEstimate();
     assert('a /model switch retires the previous model\'s measurement',
       afterSwitch.measuredTokens === undefined && afterSwitch.tailTokens === undefined);
+
+    // SER-077: the breakdown is a separate, on-demand accessor. The default
+    // estimate must not grow a single countTokens call because it exists, and
+    // asking for the breakdown must leave the estimate — and the total line
+    // `/context` and `/status` print — byte-identical.
+    header('/context — the breakdown is on demand and leaves the estimate untouched');
+    const callsBefore = model.countTokenCalls.length;
+    const plain = await runtime.contextEstimate();
+    assert('the default estimate is still exactly one countTokens call',
+      model.countTokenCalls.length === callsBefore + 1);
+    const breakdown = await runtime.contextBreakdown();
+    const breakdownCalls = model.countTokenCalls.length - callsBefore - 1;
+    const rows = [...breakdown.systemPrompt, breakdown.builtinTools, ...breakdown.mcpServers, ...breakdown.conversation];
+    assert('the breakdown is the only path that counts components — one call per counted row',
+      breakdownCalls === rows.filter((row) => row.absent === undefined).length && breakdownCalls > 1);
+    const again = await runtime.contextEstimate();
+    assert('the default estimate after a breakdown is one call and the same result',
+      model.countTokenCalls.length === callsBefore + breakdownCalls + 2 &&
+      JSON.stringify(again) === JSON.stringify(plain));
+    assert('the total line and /status\'s context value are byte-identical with and without the breakdown',
+      formatContextReportWithBreakdown(again, breakdown).split('\n')[0] === formatContextReport(plain) &&
+      formatContextValue(again) === formatContextValue(plain));
+    assert('the offline runtime\'s prompt is counted by section in composition order (no AGENTS.md in the fixture)',
+      breakdown.systemPrompt.map((row) => row.label).join('|') ===
+        [BASE_PROMPT_LABEL, SKILLS_CATALOGUE_LABEL, WORKING_CONTEXT_LABEL].join('|') &&
+      breakdown.systemPrompt.every((row) => row.tokens !== undefined && row.tokens > 0) &&
+      breakdown.systemPrompt[0]!.tokens === await model.countTokens([], { systemPrompt: runtime.info.promptSections.base }));
+    assert('built-in tools are one counted group and the fixture has no MCP servers',
+      breakdown.builtinTools.tokens !== undefined && breakdown.builtinTools.tokens > 0 && breakdown.mcpServers.length === 0);
+    assert('the conversation rows are the user and assistant halves of the live messages',
+      breakdown.conversation.length === 2 &&
+      breakdown.conversation.every((row) => row.tokens !== undefined && row.tokens > 0));
+    model.failCount = true;
+    const degradedBreakdown = await runtime.contextBreakdown();
+    model.failCount = false;
+    assert('a refused count is an absent row on every component, never 0 and never a thrown report',
+      [...degradedBreakdown.systemPrompt, degradedBreakdown.builtinTools, ...degradedBreakdown.conversation]
+        .every((row) => row.tokens === undefined));
+    const appSource = await readFile(new URL('../src/tui/App.tsx', import.meta.url), 'utf8');
+    assert('App.tsx asks for the breakdown exactly once — inside the /context handler, never the post-turn advisory or /status',
+      appSource.split('runtime.contextBreakdown()').length === 2 &&
+      appSource.indexOf('runtime.contextBreakdown()') > appSource.indexOf("/^\\/context(?:\\s|$)/") &&
+      appSource.indexOf('runtime.contextBreakdown()') < appSource.indexOf("/^\\/status(?:\\s|$)/"));
+    const formatSource = await readFile(new URL('../src/tui/status-format.ts', import.meta.url), 'utf8');
+    assert('/status never touches the breakdown', !formatSource.includes('Breakdown'));
   } finally {
     await runtime.shutdown();
     setRuntimeModelFactoryForTest(undefined);

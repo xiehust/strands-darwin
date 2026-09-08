@@ -63,7 +63,7 @@ const info: RuntimeInfo = {
   agentNames: ['general', 'research'], agentProblems: [],
   projectInstructions: { path: '/workspace/AGENTS.md', bytes: 4096, truncated: false },
   projectInstructionsProblem: undefined, systemPromptSource: 'default', systemPromptPath: undefined,
-  systemPromptProblem: undefined, workingContextProblem: undefined,
+  systemPromptProblem: undefined, promptSections: { base: 'BASE', instructions: undefined }, workingContextProblem: undefined,
   promptCache: {
     enabled: true,
     automatic: false,

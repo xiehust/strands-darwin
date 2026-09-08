@@ -43,6 +43,34 @@ export function orderOfficialSkillsPrompt(agent: LocalAgent): boolean {
   return true;
 }
 
+/** The text of each Darwin-owned section of a live prompt array, for `/context`. */
+export interface KnownPromptSections {
+  /** Base prompt plus project instructions — the one block `composeSystemPrompt` produced. */
+  base: string;
+  /** The official `<available_skills>` block, absent until the plugin's first injection. */
+  catalogue: string | undefined;
+  workingContext: string | undefined;
+}
+
+/**
+ * Reads the sections of a prompt Darwin itself assembled, without changing it.
+ *
+ * The same conservative parser that orders the catalogue and refreshes working
+ * context, exposed read-only: `/context` counts each section it returns rather than
+ * re-splitting the joined text. `undefined` means the shape is not Darwin's, and the
+ * caller must fall back to counting the prompt whole instead of guessing.
+ */
+export function knownPromptSections(prompt: SystemPrompt | undefined): KnownPromptSections | undefined {
+  if (prompt === undefined || !Array.isArray(prompt)) return undefined;
+  const parsed = parseKnownPrompt(prompt);
+  if (parsed === undefined) return undefined;
+  return {
+    base: parsed.base,
+    catalogue: parsed.catalogue?.text,
+    workingContext: parsed.workingContext?.text,
+  };
+}
+
 /**
  * Replaces current working context while preserving a separate official catalogue
  * and removes the prior cache point so the runtime can apply the current plan.

@@ -103,6 +103,7 @@ import {
 } from '../trajectory/writer.js';
 import { DARWIN_VERSION } from '../version.js';
 import { TerminalDeliveryLedger } from './task-terminal-delivery.js';
+import { measureContextBreakdown, type ContextBreakdown } from './context-breakdown.js';
 import {
   composeSystemPrompt,
   loadProjectInstructions,
@@ -374,6 +375,14 @@ export interface RuntimeInfo {
   systemPromptPath: string | undefined;
   /** Why a present system prompt override was skipped; undefined when there is none. */
   systemPromptProblem: string | undefined;
+  /**
+   * The section strings `composeSystemPrompt` joined for this run — the base prompt
+   * (suffix included) and the `<project-instructions>` fragment. Kept from the
+   * composition seam so `/context` can count each section as composed instead of
+   * re-splitting the joined text; a restored prompt that no longer matches them is
+   * counted whole. Read by nothing else.
+   */
+  promptSections: { readonly base: string; readonly instructions: string | undefined };
   /**
    * Why the working context carries no directory listing. Undefined in the normal
    * case: the rest of the block (directory, platform, date) is always sent.
@@ -1007,6 +1016,7 @@ export class AgentRuntime {
         systemPromptSource: basePrompt.source,
         systemPromptPath: basePrompt.path,
         systemPromptProblem: basePrompt.problem,
+        promptSections: { base: basePromptText, instructions: instructions?.fragment },
         workingContextProblem: workingContext.problem,
         promptCache,
         // Recomputed rather than returned from createModelFromConfig: the model
@@ -1386,6 +1396,30 @@ export class AgentRuntime {
       measuredTokens: anchor.requestTokens,
       ...(tailTokens === undefined ? {} : { tailTokens }),
     };
+  }
+
+  /**
+   * What the next request is made of, component by component — the `/context`
+   * breakdown (SER-077, `src/agent/context-breakdown.ts`).
+   *
+   * Deliberately a separate accessor rather than an option on
+   * {@link contextEstimate}: the estimate is read after every turn by the pressure
+   * advisory and by `/status`, and must stay one `countTokens` call at most. This one
+   * makes one call per component through the same `model.countTokens`, so it runs only
+   * when the user asks — `/context` is its sole caller. Reads live state, mutates
+   * nothing, and never throws for a component: a failed count is an absent row.
+   */
+  contextBreakdown(): Promise<ContextBreakdown> {
+    return measureContextBreakdown(
+      {
+        systemPrompt: this.agent.systemPrompt,
+        composed: this.info.promptSections,
+        tools: this.agent.tools,
+        servers: this.listMcpServers(),
+        messages: this.agent.messages,
+      },
+      (messages, options) => this.model.countTokens(messages, options),
+    );
   }
 
   /**

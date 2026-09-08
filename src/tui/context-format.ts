@@ -10,12 +10,58 @@
  * is the pre-anchor wording, unchanged: a whole-request character heuristic.
  * An unknown window is said out loud rather than silently guessed.
  */
+import type { ContextBreakdown, ContextComponent } from '../agent/context-breakdown.js';
 import type { ContextEstimate } from '../agent/runtime.js';
+import { MAX_MCP_TOOL_NAMES } from './mcp-format.js';
 
 /** One transcript line: tokens, window share, and message count. */
 export function formatContextReport(estimate: ContextEstimate): string {
   const label = estimate.measuredTokens === undefined ? 'estimated context' : 'context';
   return `${label} — ${formatContextValue(estimate)}`;
+}
+
+/** The row every breakdown component uses; fixed so the eye can scan the numbers. */
+const BREAKDOWN_INDENT = '  ';
+/** Says what the rows are — an estimate of the shape, not a second total. */
+export const BREAKDOWN_CAPTION =
+  `${BREAKDOWN_INDENT}breakdown — estimated over the current request shape; the total above is authoritative`;
+/** How many MCP-server rows are shown before `… N more` — `/mcp`'s own bound for MCP lists. */
+export const MAX_BREAKDOWN_SERVER_ROWS = MAX_MCP_TOOL_NAMES;
+
+/**
+ * The `/context` report with its breakdown (SER-077): the total line first, byte for
+ * byte what {@link formatContextReport} prints alone, then the caption and one bounded
+ * row per component — `  <label> ~N tokens · P%`, the share only when the window is
+ * known. A failed count reads `not reported`, never 0; a stated absence reads its
+ * reason. MCP-server rows are capped at {@link MAX_BREAKDOWN_SERVER_ROWS} with the
+ * remainder counted, so a large configuration cannot dump into the transcript.
+ */
+export function formatContextReportWithBreakdown(estimate: ContextEstimate, breakdown: ContextBreakdown): string {
+  return [formatContextReport(estimate), ...formatContextBreakdown(breakdown, estimate.windowTokens)].join('\n');
+}
+
+/** The breakdown rows alone, caption first; each entry is one transcript line. */
+export function formatContextBreakdown(breakdown: ContextBreakdown, windowTokens: number | undefined): string[] {
+  const row = (component: ContextComponent) =>
+    `${BREAKDOWN_INDENT}${component.label} ${formatComponentValue(component, windowTokens)}`;
+  const servers = breakdown.mcpServers.slice(0, MAX_BREAKDOWN_SERVER_ROWS);
+  const remainder = breakdown.mcpServers.length - servers.length;
+  return [
+    BREAKDOWN_CAPTION,
+    ...breakdown.systemPrompt.map(row),
+    row(breakdown.builtinTools),
+    ...servers.map(row),
+    ...(remainder > 0 ? [`${BREAKDOWN_INDENT}… ${remainder} more server${remainder === 1 ? '' : 's'}`] : []),
+    ...breakdown.conversation.map(row),
+  ];
+}
+
+/** `~N tokens · P%`, `~N tokens` without a window, a stated absence, or `not reported`. */
+function formatComponentValue(component: ContextComponent, windowTokens: number | undefined): string {
+  if (component.absent !== undefined) return component.absent;
+  if (component.tokens === undefined) return 'not reported';
+  const tokens = `~${groupDigits(component.tokens)} tokens`;
+  return windowTokens === undefined ? tokens : `${tokens} · ${formatWindowShare(component.tokens, windowTokens)}`;
 }
 
 /**

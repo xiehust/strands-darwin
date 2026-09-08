@@ -1,7 +1,5 @@
 # AGENTS.md
 
-This file provides guidance to Agent when working with code in this repository.
-
 ## What this is
 
 **darwin** — a TUI coding agent built on `@strands-agents/sdk` (Strands TypeScript SDK) and Ink.
@@ -31,23 +29,23 @@ inference-profile model ids, never bare `anthropic.*`):
 
 ```bash
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven TUI suite
-AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario; the header comment of verify-tui.ts lists them all
+AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario; the header comment lists them all
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
-AWS_REGION=us-west-2 pnpm tsx spike/verify-thinking-live.ts   # effort levels the service really accepts, and that high reasons
+AWS_REGION=us-west-2 pnpm tsx spike/verify-thinking-live.ts   # effort levels the service accepts, and that high reasons
 pnpm tsx spike/verify-mantle-live.ts                          # openai.* over Bedrock Mantle: tool calls, multi-turn, live /effort
 pnpm tsx spike/verify-anthropic-live.ts [model]               # anthropic provider through ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY: tool calls, multi-turn
-pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2    # which models Mantle actually serves, per region
+pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2    # which models Mantle serves, per region
 pnpm tsx spike/verify-model-command.ts --live                  # /model: switch provider mid-session, conversation intact
 pnpm tsx spike/probe-model-switch.ts                          # what survives handing a conversation to another provider
 pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-tall live frame costs: whole-screen clears per render
 ```
 
 `spike/verify-model-command.ts` without `--live`, and every scenario the header comment of
-`spike/verify-tui.ts` lists as free, make no model calls. `completion` is the one to re-run after
-touching the built-in slash commands (the `MAX_COMPLETIONS` menu row count has to keep every
-built-in visible); `pathCompletion` is its `@` counterpart.
+`spike/verify-tui.ts` lists as free, make no model calls. Re-run `completion` after touching the
+built-in slash commands (`MAX_COMPLETIONS` has to keep every built-in visible); `pathCompletion`
+is its `@` counterpart.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
 calls. `spike/` is the test suite, not scratch space.
@@ -58,8 +56,8 @@ Index only. Each row is the invariant you must not break; the full rationale for
 lives in `docs/architecture/load-bearing-decisions.md` under a heading of the same name —
 **read that doc section before changing that area**. In the checks column, `tui <name>` means
 `spike/verify-tui.ts <name>` and a bare filename lives under `spike/`; `†` marks suites already
-in `pnpm test`; `doc §` means the doc section is the only reference. All checks listed here are
-free (no model call) unless marked *live*.
+in `pnpm test`; `doc §` means the doc section is the only reference. Checks are free (no model
+call) unless marked *live*.
 
 | Decision (doc §) | Load-bearing invariant | Code | Checks |
 | --- | --- | --- | --- |
@@ -87,7 +85,7 @@ free (no model call) unless marked *live*.
 | `/export` — the replay projection | Body is `formatReplay(replayRead(...))` byte for byte, never a second formatter; observer rules (no repair, no pointer moves); refuses existing targets (`wx`) and `~/.darwin/sessions/`; nothing-to-export is a notice, never an error | `src/trajectory/export.ts` | `verify-export-command.ts`†, `tui completion` |
 | `/status` — the consolidated projection | A formatter over existing accessors, never a new information channel: byte-zero mutation (no connect, no write, no pointer move); unknown metrics `not reported`, never 0 (`usageBuckets`); lists bounded at `MAX_STATUS_NAMES` + `… N more`; header's own cache/effort/mode renderers shared, so the surfaces cannot diverge; transcript history only — no new frame row | `src/tui/status-format.ts` | `verify-status-command.ts`†, `tui completion` / `mcp` |
 | `/help` — bounded local discoverability | Pure projection of canonical built-in names/descriptions plus fixed prompt/key facts; handled before busy queueing, rejects arguments locally; one bounded transcript notice, never model/tool/network/config/session work or a new live-frame surface | `src/tui/help-format.ts` | `verify-help-command.ts`†, `tui completion` |
-| Context pressure — advise, never auto-compact | `contextEstimate()` is the last completed call's provider-reported prompt total plus a counted tail, whole-request heuristic when no anchor (dropped by rewritten/shortened history or `/model`); advisory is post-turn only, through the existing configurable `contextWarnRatio` latch and `<Static>` notice; one bounded `/compact` recommendation per known-window crossing, re-arm only after a known drop, fresh on `/clear`; unknown/failed estimates are silent; no second threshold, mutation, timer/channel or live row | `src/agent/context-anchor.ts`, `src/tui/context-format.ts`, `src/tui/App.tsx` | `verify-context-anchor.ts`†, `verify-context-format.ts`† |
+| Context pressure — advise, never auto-compact | `contextEstimate()` = last completed call's provider-reported prompt total + counted tail, whole-request heuristic with no anchor (dropped by rewritten/shortened history or `/model`); advisory post-turn only via the `contextWarnRatio` latch and `<Static>` notice — one bounded `/compact` recommendation per known-window crossing, re-arm after a known drop, fresh on `/clear`; unknown/failed estimates silent; no second threshold, mutation, timer/channel or live row. `/context` breakdown on demand only — never per turn, in the latch or `/status`; one `countTokens` per component (prompt sections, tools by origin, messages by role); failed count `not reported`; server rows bounded; total line byte-identical | `src/agent/context-anchor.ts`, `src/agent/context-breakdown.ts`, `src/tui/context-format.ts`, `src/tui/App.tsx` | `verify-context-anchor.ts`†, `verify-context-format.ts`† |
 | `darwin sessions` and `--resume <id>` — resume by choice | Listing is a read-only projection of the snapshot store (no SDK import, no write API, store byte-identical); rows are only what `--resume <id>` can reopen — absence reads `(not recorded)`, skips are stated; a bogus/other-project id is a refusal, never a fallback; bare `--resume` grammar unchanged | `src/cli-sessions.ts`, `src/agent/session.ts` | `verify-sessions-command.ts`† |
 | Resumed-session full transcript | Restored interactive sessions read the exact trajectory and seed the full replayed transcript (`replayRecords`, one projection, uncapped) as startup `<Static>` history after the recap header; missing/disabled/damaged/dropped state is explicit; no model call, synthetic message, file mutation or pointer move; fresh/headless unchanged | `src/trajectory/resume-recap.ts`, `src/cli.ts`, `src/tui/App.tsx` | `verify-resume-recap.ts`†, `tui resume` |
 | Extension layers + portable Codex hooks | Skills/agents/commands: built-in reservation → project `.darwin` → project `.agents` → global `.darwin` → global `.agents`; native hooks keep glob/source behavior; only direct global/project `.agents/hooks.json` uses the bounded 11-event Codex regex/command adapter, never `.codex`; active policy fails closed and stays un-ruleable | `src/paths.ts`, `src/config.ts`, `src/hooks/codex-*.ts` | `verify-codex-hooks.ts`† |
@@ -125,8 +123,8 @@ free (no model call) unless marked *live*.
   suites — a pty test's own comment explains its anchored waits, idle detection and
   state-exclusive assertion strings. Read the relevant one before changing that area.
 - Keep this file under 32 KiB: darwin preloads only the first `MAX_INSTRUCTIONS_BYTES` of it
-  into its own system prompt, so anything past the cap is silently invisible to the agent.
-  Long-form architecture rationale goes to `docs/architecture/load-bearing-decisions.md`.
+  into its own system prompt, so anything past the cap is invisible to the agent. Long-form
+  architecture rationale goes to `docs/architecture/load-bearing-decisions.md`.
 - Non-trivial work: understand the area (doc section + relevant `spike/` suite) before editing,
   verify with `pnpm typecheck` + `pnpm test` plus the row's listed checks, then commit.
 - The installed `darwin` command runs `dist/`, not `src/`: after any commit that touches

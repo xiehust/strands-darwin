@@ -175,7 +175,7 @@ import {
   formatDispatchesReport,
 } from './subagent-format.js';
 import { liveBackgroundDelegationRefusal } from '../agent/background-delegation.js';
-import { createContextWarnLatch, formatContextReport } from './context-format.js';
+import { createContextWarnLatch, formatContextReport, formatContextReportWithBreakdown } from './context-format.js';
 import { COPY_COMMAND_USAGE, runCopyCommand } from './copy-command.js';
 import { formatHelpReport } from './help-format.js';
 import { formatMcpReport } from './mcp-format.js';
@@ -1290,7 +1290,9 @@ export function App({
 
       // Free like /usage: the count is the SDK's character heuristic, so asking
       // costs nothing, sends nothing, and can be answered mid-turn — the moment
-      // a long turn makes "how big has this grown" worth asking.
+      // a long turn makes "how big has this grown" worth asking. The breakdown
+      // (SER-077) is asked for here and nowhere else: it counts one component at a
+      // time, so the post-turn advisory and /status keep the single-count estimate.
       if (/^\/context(?:\s|$)/.test(text)) {
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
@@ -1300,7 +1302,14 @@ export function App({
           return;
         }
         try {
-          dispatch({ type: 'notice', text: formatContextReport(await runtime.contextEstimate()) });
+          const estimate = await runtime.contextEstimate();
+          try {
+            dispatch({ type: 'notice', text: formatContextReportWithBreakdown(estimate, await runtime.contextBreakdown()) });
+          } catch (error) {
+            // The total line is the report; a failed breakdown costs the rows, never the line.
+            const reason = error instanceof Error ? error.message : String(error);
+            dispatch({ type: 'notice', text: `${formatContextReport(estimate)}\n  breakdown unavailable — ${reason}` });
+          }
         } catch (error) {
           dispatch({
             type: 'notice',
