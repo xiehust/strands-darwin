@@ -1,6 +1,6 @@
 {
   "name": "strands-darwin",
-  "version": "0.0.33",
+  "version": "0.0.34",
   "description": "TUI coding agent built on the Strands TypeScript SDK",
   "type": "module",
   "engines": {
