@@ -15,3 +15,6 @@ dist/
 .darwin/mcp.json
 # /.claude/ and /.codex/ above are per-platform local layers; only .darwin/config.json
 # and the repo's own skills are tracked.
+# Blog slide decks are generated from docs/blog/slides/*.cjs; only the sources are tracked.
+docs/blog/*.pptx
+docs/blog/slides/mobile/
