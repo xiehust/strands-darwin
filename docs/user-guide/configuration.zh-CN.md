@@ -79,6 +79,7 @@
 | `memoryHorizonDays` | `28` | 生成记忆的有效天数，整数 `0–365`；`0` 只关闭过期检查 |
 | `maxConcurrentSubagents` | `8` | 同时运行的子代理派发上限（`subagent` 调用加 `workflow` 节点）；正整数；超出的调用会在创建任何模型或子代理之前被拒绝 |
 | `terminalBell` | `false` | 在权限提示和回合结束时响一次终端铃（仅交互式 TUI） |
+| `terminalNotify` | `false` | 在同样两个时刻请终端弹出一条桌面通知——一条 OSC 9 序列（`ESC ] 9 ; darwin · <项目目录名> · waiting for approval\|turn complete ESC \`）直接写到 stdout，仅在 stdout 是 TTY 时写入（仅交互式 TUI；`-p` 和子代理从不写）。是否显示由终端决定：iTerm2（需开启 Settings → Profiles → Terminal → "Notification Center Alerts" → Filter Alerts → "Send escape sequence-generated alerts"）、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端会静默吞掉该序列。在 tmux 内，序列会包在 tmux 的 passthrough DCS 中，需要在 `~/.tmux.conf` 里设置 `set -g allow-passthrough on`。SSH 下同样有效——通知出现在运行终端的那台机器上。`false` 完全不写 |
 | `terminalTitle` | `true` | 把终端窗口/标签页标题设为 `darwin · <项目目录名> · <状态>`（状态为 `idle`/`working`/`waiting for approval`，有提示词排队时再加 ` · N queued`），仅在标题变化且 stdout 是 TTY 时写入；退出时恢复为项目目录名（仅交互式 TUI）；`false` 完全不写 |
 | `backgroundTaskWake` | `true` | `bash start` 后台任务结束时，把一条 `<task-notification>` 提示排入队列，作为独立回合唤醒代理（仅交互式 TUI）；`false` 只保留转录通知 |
 | `systemPrompt` | 内置值 | 替换基础 prompt，并优先于项目文件 |

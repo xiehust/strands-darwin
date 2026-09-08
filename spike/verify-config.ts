@@ -1176,6 +1176,52 @@ async function terminalBellField(): Promise<void> {
   assert('a /model switch preserves the bell', switched.terminalBell === true);
 }
 
+async function terminalNotifyField(): Promise<void> {
+  header('config — terminal-mediated attention notification (SER-078)');
+  const def = await loadConfig(await writeConfig('{}'));
+  // Off by default: a toast nobody asked for is an annoyance, and the default path
+  // must stay byte-identical to before the feature existed.
+  assert('the notification is off by default', def.terminalNotify === false);
+
+  const on = await loadConfig(await writeConfig('{ "terminalNotify": true }'));
+  assert('the notification can be switched on', on.terminalNotify === true);
+  const off = await loadConfig(await writeConfig('{ "terminalNotify": false }'));
+  assert('explicit false is accepted', off.terminalNotify === false);
+
+  const bad = await expectConfigError('a non-boolean terminalNotify value is refused', async () =>
+    loadConfig(await writeConfig('{ "terminalNotify": "toast" }')),
+  );
+  assert('…and the error names the field', bad.includes('terminalNotify'));
+  const typo = await expectConfigError('a misspelt key is an unknown key, never silently ignored', async () =>
+    loadConfig(await writeConfig('{ "terminalNotifiy": true }')),
+  );
+  assert('…and the unknown-key error suggests terminalNotify', typo.includes('terminalNotifiy') && typo.includes('terminalNotify'));
+
+  // Independent of the bell: either may be on without the other.
+  const notifyOnly = await loadConfig(await writeConfig('{ "terminalNotify": true, "terminalBell": false }'));
+  assert('notify on with the bell off is accepted as written', notifyOnly.terminalNotify === true && notifyOnly.terminalBell === false);
+
+  // Session-scoped like the bell: it survives /model, and a models entry carrying
+  // it is refused rather than ignored.
+  const withModels = await loadConfig(
+    await writeConfig(
+      '{ "terminalNotify": true, "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5" }] }',
+    ),
+  );
+  assert('terminalNotify survives the models array form', withModels.terminalNotify === true);
+  const misplaced = await expectConfigError('terminalNotify inside a models entry is refused', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "terminalNotify": true }] }',
+      ),
+    ),
+  );
+  assert('…and that error names the key', misplaced.includes('terminalNotify'));
+
+  const switched = withModelChoice(withModels, withModels.modelChoices[0]!);
+  assert('a /model switch preserves the notification setting', switched.terminalNotify === true);
+}
+
 async function terminalTitleField(): Promise<void> {
   header('config — terminal window/tab title (SER-073)');
   const def = await loadConfig(await writeConfig('{}'));
@@ -1486,6 +1532,7 @@ async function documentedKeys(): Promise<void> {
     contextOffload: true,
     maxResultTokens: 2000,
     terminalBell: false,
+    terminalNotify: false,
     terminalTitle: true,
     backgroundTaskWake: true,
     trajectory: true,
@@ -1546,6 +1593,7 @@ async function main(): Promise<void> {
   await trajectoryField();
   await diagnosticsField();
   await terminalBellField();
+  await terminalNotifyField();
   await terminalTitleField();
   await backgroundTaskWakeField();
   await permissionModes();

@@ -113,6 +113,8 @@ For multiple switchable models, provider-specific fields, Bedrock Mantle, cachin
 
 Use `Ctrl+R` to search this project's prompt history (type to filter, `Ctrl+R`/`Up`/`Down` to navigate, `Enter`/`Tab` to accept, `Escape` to cancel), `Ctrl+C` to cancel busy work, `Ctrl+B` to expand or compact tool details, and `/exit` or `Ctrl+D` to quit. In the composer, `Alt/Ctrl+Left/Right` or `Alt+B`/`Alt+F` moves by word, `Alt+Backspace`/`Alt+D` deletes the word before/after the cursor, and `Ctrl+_` (or `Ctrl+-`) undoes the last `Ctrl+K`/`Ctrl+U`, `Ctrl+W` or `Alt` word deletion. On an empty idle composer, `Esc` `Esc` (the second within 500 ms) opens the `/rewind` chooser — the same thing typing `/rewind` does; a single `Esc` there does nothing. Model tool calls still pass through the active permission mode; `!` commands are commands you authorize by typing them yourself.
 
+To be called back when you have switched away, set `"terminalBell": true` (one BEL) and/or `"terminalNotify": true` (one OSC 9 desktop-notification sequence, shown by iTerm2, kitty, Ghostty, WezTerm and foot, silently ignored elsewhere) in `~/.darwin/config.json`; both fire when a permission prompt waits and when a turn completes, and both are off by default. iTerm2 needs "Send escape sequence-generated alerts" enabled; tmux needs `set -g allow-passthrough on`. Details in [Configuration and context](docs/user-guide/configuration.md).
+
 For non-interactive use:
 
 ```bash

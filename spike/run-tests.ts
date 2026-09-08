@@ -23,6 +23,7 @@ const suites = [
   'verify-stream-into-static.ts',
   'verify-config.ts',
   'verify-terminal-bell.ts',
+  'verify-terminal-notify.ts',
   'verify-terminal-title.ts',
   'verify-state-layers.ts',
   'verify-headless.ts',

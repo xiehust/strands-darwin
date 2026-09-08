@@ -9,6 +9,7 @@
  * `darwin --help` prints and what `docs/user-guide/reference.md` quotes, so it is not
  * repeated here.
  */
+import path from 'node:path';
 import process from 'node:process';
 
 import { AgentRuntime } from './agent/runtime.js';
@@ -35,6 +36,7 @@ import { ConfigError } from './config.js';
 import { productionHeadlessDependencies, runHeadlessProcess } from './headless-runner.js';
 import { withProductionReactImports } from './tui/react-environment.js';
 import { ringTerminalBell } from './tui/terminal-bell.js';
+import { notifyTerminal } from './tui/terminal-notify.js';
 
 const FORCE_EXIT_AFTER_MS = 500;
 
@@ -218,14 +220,18 @@ async function runInteractive(options: CliOptions): Promise<void> {
   }
   /**
    * One observer wiring shared by the initial session and every `/clear`/rewind
-   * successor: lifecycle-hook publication plus the config-gated attention bell,
-   * both fired at the moment the prompt is published to the user (the queue
-   * de-duplicates re-asks of the same prompt identity).
+   * successor: lifecycle-hook publication plus the config-gated attention bell and
+   * terminal notification, all fired at the moment the prompt is published to the
+   * user (the queue de-duplicates re-asks of the same prompt identity).
    */
   const observePermissionPublication = (rt: AgentRuntime): void => {
     permissions.setObserver((request) => {
       rt.observePermissionRequest({ source: request.source.label, toolName: request.toolName, toolInput: request.input });
       ringTerminalBell(rt.config.terminalBell === true);
+      notifyTerminal(rt.config.terminalNotify === true, {
+        projectBasename: path.basename(rt.info.projectRoot),
+        moment: 'permission',
+      });
     });
   };
   observePermissionPublication(runtime);

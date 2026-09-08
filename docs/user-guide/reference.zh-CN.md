@@ -148,6 +148,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 - `/export` 与离线 replay 使用完全相同的 formatter。
 - `/copy` 复制的正是转录中显示、`/export` 写出的纯文本回答；回合进行中复制的是上一条已完成回答，尚无回答时（或刚 `/clear`/`/rewind` 之后）提示 `nothing to copy`。它不调用模型，也不写入任何记录。SSH 下需要终端接受 OSC 52 剪贴板写入（tmux 需 `set-clipboard on`）。
 - 终端窗口/标签页标题（`terminalTitle`，默认 `true`）为 `darwin · <项目目录名> · <状态>`，状态为 `idle`/`working`/`waiting for approval`，有提示词排队时再加 ` · N queued`（权限提示优先于进行中的回合，回合优先于空闲；排队数跟在当前状态之后）——一条 OSC 2 序列（`ESC ] 2 ; <标题> BEL`）直接写到 stdout，仅在 stdout 是 TTY 且组合后的标题发生变化时写入（只在状态转换时，绝不按时钟刷新），整体上限 80 个码点，项目目录名中的控制字符会被剥除；每条退出路径（`/exit`、`/quit`、Ctrl+C、Ctrl+D）恢复一次为项目目录名，`/clear` 保持同一项目、直接延续；`-p` 从不写标题。
+- 终端转发的注意力通知（`terminalNotify`，默认 `false`）在与终端铃完全相同的两个时刻请终端弹出桌面通知——权限提示被发布时（`darwin · <项目目录名> · waiting for approval`）和回合结束时，无论结果如何（`darwin · <项目目录名> · turn complete`）——一条 OSC 9 序列（`ESC ] 9 ; <文本> ESC \`，以 ST 结尾，绝不用 BEL）直接写到 stdout，仅在 stdout 是 TTY 时写入。项目目录名中的控制字符和 `;` 会被剥除，整体上限 120 个码点。iTerm2（需开启 "Send escape sequence-generated alerts"）、kitty、Ghostty、WezTerm 和 foot 会显示；其他终端静默吞掉。在 tmux 内（设置了 `TMUX`）会包在 `ESC P tmux ; … ESC \` passthrough 中，需要 `allow-passthrough on`。因为它随字节流传输，SSH 下同样有效；`-p`、子代理和生命周期 hook 从不写它，关闭时完全不写。
 
 ## 敏感路径读取
 

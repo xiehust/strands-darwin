@@ -229,6 +229,21 @@ export interface SessionFields {
    */
   terminalBell?: boolean;
   /**
+   * Ask the terminal for a desktop notification (one OSC 9 sequence, ST-terminated,
+   * straight to stdout — never an Ink row; wrapped in tmux's passthrough DCS inside
+   * tmux) reading `darwin · <project> · waiting for approval` when the interactive
+   * TUI publishes a permission prompt and `darwin · <project> · turn complete` when
+   * a turn completes (SER-078). The terminal decides whether to show it: iTerm2,
+   * kitty, Ghostty, WezTerm and foot do; others consume the sequence silently.
+   * **Off by default**, and off must stay byte-identical to before the feature
+   * existed. Written only when stdout is a TTY. Headless drivers and child agents
+   * never notify regardless of this value.
+   *
+   * Optional in the type for hand-built configs; {@link loadConfig} always stores
+   * the resolved boolean, so an absent key reads back as `false`.
+   */
+  terminalNotify?: boolean;
+  /**
    * Set the terminal window/tab title (one OSC 2 sequence, straight to stdout —
    * never an Ink row) to `darwin · <project> · <state>` where state is `idle`,
    * `working` or `waiting for approval`, plus ` · N queued` while prompts wait;
@@ -369,6 +384,7 @@ export const SESSION_KEYS = [
   'contextOffload',
   'maxResultTokens',
   'terminalBell',
+  'terminalNotify',
   'terminalTitle',
   'backgroundTaskWake',
   'trajectory',
@@ -421,6 +437,7 @@ const DEFAULTS = {
   contextWarnRatio: 0.8,
   contextOffload: true,
   terminalBell: false,
+  terminalNotify: false,
   terminalTitle: true,
   backgroundTaskWake: true,
   memory: true,
@@ -1118,6 +1135,8 @@ function validateSessionFields(
       booleanField(input, 'contextOffload', configPath) ?? DEFAULTS.contextOffload,
     terminalBell:
       booleanField(input, 'terminalBell', configPath) ?? DEFAULTS.terminalBell,
+    terminalNotify:
+      booleanField(input, 'terminalNotify', configPath) ?? DEFAULTS.terminalNotify,
     terminalTitle:
       booleanField(input, 'terminalTitle', configPath) ?? DEFAULTS.terminalTitle,
     backgroundTaskWake:

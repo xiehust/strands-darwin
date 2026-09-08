@@ -1306,16 +1306,16 @@ light/dark terminal compatibility, and composer/completion focus uses text plus 
 inverse backgrounds. Checks: `verify-startup-screen.tsx`, `verify-startup-pty.ts`,
 `verify-visual-language.tsx`, and `verify-frame-budget.ts`.
 
-**Out-of-frame sequences: BEL, OSC 52, OSC 2 — written only on transitions, never a tick.**
-Three things darwin says to the terminal are not rows: the attention bell
+**Out-of-frame sequences: BEL, OSC 52, OSC 2, OSC 9 — written only on transitions, never a tick.**
+Four things darwin says to the terminal are not rows: the attention bell
 (`src/tui/terminal-bell.ts`, `\x07`, `terminalBell`), the `/copy` clipboard write
 (`src/tui/copy-command.ts`, `ESC ] 52 ; c ; base64 BEL`) and the window/tab title
 (`src/tui/terminal-title.ts`, `ESC ] 2 ; darwin · <project basename> · <state> BEL`,
-`terminalTitle`, SER-073). All three are non-printing control sequences that go through the
+`terminalTitle`, SER-073), plus the attention notification described at the end of this section. All four are non-printing control sequences that go through the
 one raw-write seam — the real `process.stdout` behind an injectable writer, never Ink's frame
 render path — so they cost the budget nothing, never appear in ANSI-stripped pty assertions
 (`stripAnsi` and `reconstructTerminalLines` skip OSC payloads), and leave `/export` and replay
-byte-identical. The title is the strictest of the three because it is *state*, and state
+byte-identical. The title is the strictest of the four because it is *state*, and state
 invites polling: it is a fixed composition (state `idle`/`working`/`waiting for approval` —
 a published permission prompt outranks a running turn, which outranks idle — plus ` · N queued`
 while prompts wait, a suffix on whichever base holds rather than a competing state, because a
@@ -1330,10 +1330,20 @@ is stripped from the project name before it is embedded and the whole title is c
 gets nothing, and headless drivers never reach the module), every exit path restores the bare
 project name once through the App's unmount, and `/clear` — same tree, successor runtime —
 simply continues. The xterm title stack (`CSI 22;0 t`/`CSI 23;0 t`) is not used: nothing
-demonstrates every terminal without it ignores it harmlessly. Checks: `verify-terminal-bell.ts`
+demonstrates every terminal without it ignores it harmlessly. The fourth out-of-frame sequence,
+the terminal-mediated attention notification (`src/tui/terminal-notify.ts`,
+`ESC ] 9 ; darwin · <project basename> · waiting for approval|turn complete ESC \`, `terminalNotify`,
+SER-078), fires at exactly the bell's two driver moments through the same seam and guards (TTY only,
+never headless/children/hooks, off performs no write), is ST-terminated so the bell count cannot see
+it, is one OSC 9 rather than OSC 9 plus OSC 777 because every documented OSC 777 terminal but
+rxvt-unicode also shows OSC 9 (two toasts otherwise), strips `;` as well as controls from the
+project name so a directory cannot masquerade as a ConEmu `9;4` sub-command, and is wrapped in
+tmux's passthrough DCS when `TMUX` is set — the module header records the sources. Checks: `verify-terminal-bell.ts`
 (which counts BELs outside OSC sequences), `verify-copy-command.ts`, `verify-terminal-title.ts`
 (exact bytes per state, change-only, TTY/config guards, restore; pty layer over the bell fixture
-proves one write per transition and zero when disabled).
+proves one write per transition and zero when disabled), `verify-terminal-notify.ts` (exact bytes,
+sanitizer and cap, TTY/config guards, tmux wrapper, sole-writer grep; pty layer proves one
+sequence per moment bare and wrapped, zero when disabled).
 
 
 ## The busy rows
