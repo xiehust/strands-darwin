@@ -164,7 +164,7 @@ Sources: OpenCode Rules ("Project rules: CLAUDE.md in your project directory (us
 
 ## SER-081 — `/init` — a prompt-style built-in in the `/workflow` shape (`src/commands/init-command.ts`, pure, parse grammar mirrored from `expandCustomCommand`): expands to one fixed ordinary prompt asking the model to inspect the repository (build, test and typecheck commands, layout, conventions, existing `CLAUDE.md`, `.cursorrules`, `.github/copilot-instructions.md`) and create `AGENTS.md`, or improve it in place when it exists, under `MAX_INSTRUCTIONS_BYTES`, stating that darwin preloads it into every request (falling back to `CLAUDE.md`, per SER-080); `/init <focus>` embeds the focus verbatim under a `Focus:` marker; the write is an ordinary `fileEditor` call through the permission gate (prompted in `default`, denied in `plan`); reserved in `BUILTIN_COMMAND_NAMES` with a one-phrase description, listed by `/help`, offered by completion with every built-in still visible; while busy it queues like any turn-producing prompt; never a tool, never a second channel
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 109
 - Score: 13
 - Importance: 3
@@ -176,7 +176,7 @@ Sources: OpenCode Rules ("Project rules: CLAUDE.md in your project directory (us
 
 ### Implementation / acceptance evidence
 
-_(none yet)_
+Done — commit `f6bb5c6` (`feat(commands): add /init to create or improve AGENTS.md`, 17 files), Batch 113 in `docs/iteration-log.md`. New pure `src/commands/init-command.ts` (`INIT_COMMAND_NAME`, `InitCommandContext`, `parseInitCommand`; grammar mirrored from `parseWorkflowCommand`; four variants from the runtime's own `ProjectInstructionsSummary`: create, improve-in-place (+ "bring it back under the cap" when truncated), migrate a loaded `CLAUDE.md` into a new `AGENTS.md` leaving `CLAUDE.md` untouched, and present-but-unreadable → inspect, never delete/replace; imported `MAX_INSTRUCTIONS_BYTES` stated as the hard cap; `/init <focus>` → `Focus:` verbatim). Wired at the one `expandSlashCommand` seam (`kind: 'init'`) so TUI, dev-repl and headless share the branch with no filesystem read — the child's recorded deviation from "the driver decides", accepted because the intent (no new read at expansion time) holds and headless `-p "/init"` works; `init` in `BUILTIN_COMMAND_NAMES` (21 built-ins, `MAX_COMPLETIONS` 21 still shows all), `/help` via the canonical list, `.darwin/commands/init.md` reserved, queues while busy like `/workflow`. Host acceptance at `f6bb5c6`: diff read; `verify-init-command.ts` 48/48, `verify-help-command.ts` 36/36, `verify-workflow-command.ts` 21/21, `verify-custom-commands.ts` 27/27, `verify-tui.ts completion` 70/70 incl. "the built-in /init is listed"; live headless `/init --yolo` in a scratch repo (`package.json` + `.cursorrules` + `src/index.js`) → `AGENTS.md` 2,033 B via `fileEditor create`, content reflecting the manifest and the rule (exit 0, $0.31); live `/init --permission-mode plan` → `fileEditor — denied`, no file written (exit 0, $0.22); `pnpm typecheck` 0; `pnpm test` 0 (6085 PASS, 0 FAIL); `pnpm build` 0; `AGENTS.md` 32,753 B untouched. Docs synced by the child: `reference.md`/`.zh-CN.md` row, `using-darwin.md`/`.zh-CN.md` paragraph, `configuration.md`/`.zh-CN.md` sentence, README/README.zh-CN "Use it" block.
 
 ### Notes / blockers / abandonment reason
 
@@ -184,7 +184,7 @@ Sources: Claude Code `memory.md` ("Run `/init` to generate a starting CLAUDE.md 
 
 ## SER-082 — Withhold credential-shaped environment variables from model-spawned shells: a pure `scrubShellEnv(env, passthrough)` in `src/tools/shell-env.ts` drops names matching one fixed case-insensitive pattern (`KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `CREDENTIAL`) from the environment handed to the persistent SDK shell (new optional `env` in the pinned patch's `CreateBashOptions`, threaded into `BashSession.start`'s `spawn`) and to `background-bash.ts` job spawns; `PATH`, `HOME`, locale and proxy names always survive; config `shellEnv.passthrough: string[]` (exact names or `PREFIX_*`, validated like every other config key) restores named variables; `/status` gains one `shell env` row (`N credential-shaped variables withheld`, bounded passthrough names) and one startup notice line when N > 0; recipe children share the same builder; user `!` commands, hooks and MCP servers keep `process.env` unchanged
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 110
 - Score: 11
 - Importance: 4
