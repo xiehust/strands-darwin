@@ -48,7 +48,7 @@ It draws one of five weighted paths (the current weights and each path's share a
 |---|---|
 | `tui` | TUI interaction and visual polish: the live frame, streaming and history rendering, prompts and completion, colour and severity, small-terminal layout, keyboard editing. |
 | `observability` | Logging and observability: notices and diagnostics, the trajectory record, usage and cost reporting, background-job and subagent visibility, what a failure leaves behind. |
-| `sdk` | Strands SDK capability darwin has not adopted — hooks, plugins, interventions, conversation managers, model and tool features — measured against what darwin hand-rolls or lives without. |
+| `sdk` | Strands SDK capability darwin has not adopted — hooks, plugins, interventions, conversation managers, model and tool features — measured against what darwin hand-rolls or lives without. Starts with the release check in 3.4: a newer SDK release is upgraded first, and its release notes are the first place to look for capability worth adopting. |
 | `open` | Anything else worth improving; deliberately unscoped. |
 | `peer` | The sourced comparable-product analysis in 3.3. |
 
@@ -83,6 +83,17 @@ Research all of these scopes:
 Prefer primary product documentation, release notes, and source repositories. Record a URL, access date, source type, and the specific claim each source supports. Separate sourced fact from inference. If source access is unavailable or a named product cannot be verified, record the limitation and make no claim about it; never fabricate coverage to complete the list.
 
 Capture notable product features and innovations, then compare each relevant item with Darwin's present functionality, SDK-extension architecture, permission model, sessions, skills, MCP, subagents, TUI, and verification approach as applicable.
+
+### 3.4 SDK release check — the `sdk` path
+
+Before surveying capability, establish which SDK the run is surveying. In this order:
+
+1. **Read the installed version** from `node_modules/@strands-agents/sdk/package.json` (`version`) and the pin in `package.json` / `pnpm-workspace.yaml` (`patchedDependencies`). Never take the version from memory.
+2. **Read the release list** at https://github.com/strands-agents/harness-sdk/releases (the `@strands-agents/sdk` repository). Record the newest release tag, its date and the access date in the source table, as 3.3 requires of any URL. If the page cannot be reached, say so and continue against the installed version — never guess what a release contains.
+3. **A newer release makes the upgrade the batch's first direction.** Record it with the release URL as evidence, ordered before every other direction in the batch (section 4's dependency rule: capability findings from the release notes depend on it). Its notes must name what the upgrade touches in darwin: the pinned SDK patch (`patches/@strands-agents__sdk@<version>.patch`, referenced from `pnpm-workspace.yaml` and regenerated into `dist/patches/` by `pnpm build`) has to be re-based onto the new version and every `pnpm test` suite plus the load-bearing rows that cite "pinned SDK patch" re-verified; pnpm's `minimumReleaseAge` may still hold a very fresh release back, and the direction waits rather than bypassing it.
+4. **Read the release notes between the installed and newest versions** for capability darwin hand-rolls or lives without. Each candidate is an ordinary direction under section 4's gate, with the release note as its source and the repository file or symbol it would replace or extend as its evidence. A release that changes nothing darwin uses is a legitimate finding: record the check and propose nothing from it.
+
+When the installed version is already the newest release, the check is one line in the report and the path proceeds as before. The check never replaces the repository survey in 3.2 — it tells the run which SDK's documentation to hold darwin against.
 
 ## 4. Persist the research run safely
 

@@ -229,6 +229,14 @@ async function missingDirectory(): Promise<void> {
       !researchWorkflow.includes('tui=2'),
   );
   assert(
+    'the sdk path checks the SDK release page first, upgrades before surveying and re-bases the pinned patch',
+    researchWorkflow.includes('https://github.com/strands-agents/harness-sdk/releases') &&
+      researchWorkflow.includes('node_modules/@strands-agents/sdk/package.json') &&
+      researchWorkflow.includes("A newer release makes the upgrade the batch's first direction") &&
+      researchWorkflow.includes('re-based onto the new version') &&
+      researchWorkflow.includes('`minimumReleaseAge`'),
+  );
+  assert(
     'an unappealing roll cannot be re-rolled or self-overridden',
     researchWorkflow.includes('Never re-roll an unappealing outcome') &&
       researchWorkflow.includes('use the first') &&
