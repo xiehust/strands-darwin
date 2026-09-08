@@ -64,7 +64,7 @@ Evidence: session `session-20260905-014347068` seq 0 `runStarted { resumed: fals
 
 ## SER-076 — User-written deny rules: `permissionRules.deny` in the same project-scoped `permission-rules.json` and rule grammar as `allow` (`bash:git push --force*`, `fileEditor:dist/**`, bare tool name), validated at load; judged in `PermissionGate.beforeToolCall` right after the write-scope guard and before the plan guard, `yolo`, `safe`, allow-rules and the classifier, so it holds in every mode and for every child sharing the gate; a bash deny matches when any chained segment matches and shell metacharacters never exempt it; the model receives one bounded `DENIED` error naming the rule; `/permissions` lists deny rules as `deny (configured)` and refuses to revoke them; no prompt ever offers a deny rule; `/status` counts them separately
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 104
 - Score: 11
 - Importance: 4
