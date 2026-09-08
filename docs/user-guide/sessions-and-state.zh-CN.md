@@ -26,7 +26,7 @@ TUI 恢复时，会在输入框出现前从该会话的原始轨迹中显示一�
 ~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl
 ```
 
-内容包括本次运行的模型/模式（由 `/rewind` 分支出的会话，其运行记录还会写明来源会话和快照 id；`replay` 在该运行的标题行打印为 `rewound from <session> snapshot <id>`，恢复摘要也会重复这一句）、模型调用前持久化的用户输入、助手内容块、带上限的工具输入/结果、shell 命令记录，以及 `turnEnded` 中的结束/失败/取消状态、耗时、费用和未保存事件数。失败会保留错误类、消息和被包装的供应商错误类。子代理的对话和事件不会写入。
+内容包括本次运行的模型/模式（由 `/rewind` 分支出的会话，其运行记录还会写明来源会话和快照 id；`replay` 在该运行的标题行打印为 `rewound from <session> snapshot <id>`，恢复摘要也会重复这一句）、模型调用前持久化的用户输入、助手内容块、带上限的工具输入/结果、权限门每判定一次工具调用就写入的一条 `permissionDecision`（由哪一级裁定——`safe`、`allow-rule`、`classifier`、`yolo`、`user-approved`、`user-denied`、`deny-rule`、`plan-denied`、`write-scope-denied`、`restart-limit-denied`——当时生效的模式、是否向你发起了确认、匹配或授予的规则、子代理发起时的子代理标签，以及该调用的 `toolUseId`；绝不含工具输入，因为该调用自己的记录已经保存了它）、shell 命令记录，以及 `turnEnded` 中的结束/失败/取消状态、耗时、费用和未保存事件数。失败会保留错误类、消息和被包装的供应商错误类。子代理的对话和事件不会写入（唯一例外是子代理的权限判定，会带上其派发标签）。权限记录只写日志：模型和屏幕看到的内容完全不变。
 
 限制为：字符串最多 8,000 个 Unicode code point；单条记录最多 64 KiB；单会话文件最多 64 MiB。每次截断都会明确记录。思考内容只记录是否存在，不保存正文。已写入字节永不重写；中断只会留下有效前缀，读取器会报告末尾半行。记录失败时会放行主流程，并只提示一次。设置 `trajectory: false` 可完全关闭。
 
@@ -43,7 +43,7 @@ darwin trajectory replay <id> --turn 3 --json
 darwin trajectory fork <id>
 ```
 
-这些命令不调用模型、不访问网络，也不重新执行工具。`replay` 会重建用户提示、助手回复、工具状态/结果预览、失败信息、费用，以及每次成功的 `/compact`——一行 `context compacted: 12 → 5 messages` 提示（只有消息数和可选的压缩前估算值，绝不含摘要或 focus 文本；其后的第一次模型调用显示 `context: reset by compaction`，而不是 SDK 过时的估算）；不会还原 token 时序、思考内容、已截断字节或终端颜色。轨迹中包含失败回合并不代表读取失败，正常返回 0。可读记录中没有搜索结果时输出 `no matches` 并返回 0；会话根本没有轨迹时返回 1。
+这些命令不调用模型、不访问网络，也不重新执行工具。`replay` 会重建用户提示、助手回复、工具状态/结果预览、失败信息、费用，每次成功的 `/compact`——一行 `context compacted: 12 → 5 messages` 提示（只有消息数和可选的压缩前估算值，绝不含摘要或 focus 文本；其后的第一次模型调用显示 `context: reset by compaction`，而不是 SDK 过时的估算），以及每一次向你发起确认或拒绝调用的权限判定——紧挨在被判定的工具行之前的一行提示：`permission · bash · denied by deny rule bash:git push --force*`、`permission · fileEditor · approved by user (rule granted fileEditor:src/**)`，子代理的调用则如 `permission · bash · denied by user · explorer#d1`；静默放行（`safe`、`allow-rule`、`classifier`、`yolo`）不打印任何内容，因此没有确认也没有拒绝的会话重放结果与以前完全一致；不会还原 token 时序、思考内容、已截断字节或终端颜色。轨迹中包含失败回合并不代表读取失败，正常返回 0。搜索可按工具名、判定结果或规则找到权限判定。可读记录中没有搜索结果时输出 `no matches` 并返回 0；会话根本没有轨迹时返回 1。
 
 `fork` 会把快照、卸载文件和轨迹前缀复制到新 ID，源文件与最近会话指针保持不变：
 

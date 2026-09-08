@@ -16,14 +16,17 @@ import { contentBlockFromData, type AgentStreamEvent } from '@strands-agents/sdk
 import { initialTurnState, turnReducer, type HistoryItem } from '../tui/turn-state.js';
 import { describeDamage, type TrajectoryReadResult } from './reader.js';
 import {
+  SILENT_PERMISSION_OUTCOMES,
   contextCompactedOf,
   formatTurnFailure,
+  permissionDecisionOf,
   rewindOriginOf,
   turnFailureOf,
   type ContextCompactedReading,
   type ContextCompactedRecord,
   type ModelCallReading,
   type ModelCallRecord,
+  type PermissionDecisionReading,
   type RewindOrigin,
   type TrajectoryRecord,
   type TurnEndedRecord,
@@ -250,6 +253,19 @@ export function replayRecords(
         continue;
       }
 
+      case 'permissionDecision': {
+        // A settled permission decision (SER-079) replays as one bounded notice row in
+        // transcript order — only when the user was prompted or the call was denied.
+        // The four silent approvals print nothing, so a session with no prompt and no
+        // denial renders exactly as it did before the type existed. An unreadable line
+        // (unknown outcome, no tool name) prints nothing either; the line's whole
+        // meaning is the stage it names, and replay never invents one.
+        const reading = permissionDecisionOf(record);
+        if (reading === undefined || !isVisiblePermissionDecision(reading)) continue;
+        state = turnReducer(state, { type: 'notice', text: formatPermissionDecision(reading) });
+        continue;
+      }
+
       case 'forkedFrom':
       case 'recordingStopped':
         continue;
@@ -288,6 +304,82 @@ export function formatContextCompacted(reading: ContextCompactedReading): string
     `context compacted: ${reading.messagesBefore} → ${reading.messagesAfter} messages`,
     ...(reading.estimatedTokensBefore === undefined ? [] : [`~${reading.estimatedTokensBefore} tokens before`]),
     ...(reading.focused ? ['focused'] : []),
+  ];
+  return parts.join(' · ');
+}
+
+/**
+ * Whether a permission decision earns a transcript line (SER-079): the user was
+ * prompted, or the call was denied. Everything else is a silent approval the live
+ * session never showed either, so replay shows nothing for it.
+ */
+export function isVisiblePermissionDecision(reading: PermissionDecisionReading): boolean {
+  return reading.promptedUser || !SILENT_PERMISSION_OUTCOMES.includes(reading.outcome);
+}
+
+/**
+ * Longest tool name, rule or source label one permission line repeats, in code
+ * points. The record itself keeps up to the field cap; a transcript row is one line.
+ */
+const MAX_PERMISSION_PART_CHARS = 200;
+
+function clipPart(text: string): string {
+  // One row by construction: a name or rule with a line break would split the notice.
+  const points = [...text.replace(/\r?\n/g, ' ')];
+  return points.length <= MAX_PERMISSION_PART_CHARS ? points.join('') : `${points.slice(0, MAX_PERMISSION_PART_CHARS - 1).join('')}…`;
+}
+
+/**
+ * The one line a prompted or denied permission decision contributes (SER-079):
+ * `permission · bash · denied by deny rule bash:git push --force*`,
+ * `permission · fileEditor · approved by user (rule granted fileEditor:src/**)`.
+ * A child's decision ends in ` · <agent>#<dispatchId>`; a silent outcome that is
+ * printed only because a withdrawn prompt preceded it says ` · prompted`. Composed
+ * from the validated reading alone — never the tool input, which the record does not
+ * hold — and the same text lands in `trajectory replay`, `/export` and the resume
+ * recap because all three read it through the notice `replayRecords` dispatches.
+ */
+export function formatPermissionDecision(reading: PermissionDecisionReading): string {
+  const rule = reading.rule === undefined ? undefined : clipPart(reading.rule);
+  let verdict: string;
+  switch (reading.outcome) {
+    case 'write-scope-denied':
+      verdict = 'denied by workflow write scope';
+      break;
+    case 'deny-rule':
+      verdict = `denied by deny rule${rule === undefined ? '' : ` ${rule}`}`;
+      break;
+    case 'plan-denied':
+      verdict = 'denied by plan mode';
+      break;
+    case 'user-denied':
+      verdict = 'denied by user';
+      break;
+    case 'restart-limit-denied':
+      verdict = 'denied after repeated mode changes';
+      break;
+    case 'user-approved':
+      verdict = `approved by user${rule === undefined ? '' : ` (rule granted ${rule})`}`;
+      break;
+    case 'allow-rule':
+      verdict = `approved by allow rule${rule === undefined ? '' : ` ${rule}`}`;
+      break;
+    case 'classifier':
+      verdict = 'approved by classifier';
+      break;
+    case 'yolo':
+      verdict = 'approved by yolo mode';
+      break;
+    case 'safe':
+      verdict = 'approved as statically safe';
+      break;
+  }
+  const parts = [
+    'permission',
+    clipPart(reading.toolName),
+    verdict,
+    ...(reading.promptedUser && SILENT_PERMISSION_OUTCOMES.includes(reading.outcome) ? ['prompted'] : []),
+    ...(reading.source === 'parent' ? [] : [clipPart(reading.source)]),
   ];
   return parts.join(' · ');
 }

@@ -184,11 +184,11 @@ export class ToolHookGate extends InterventionHandler {
     // ordinary Pre -> permission ordering: a blocked call must not cause even a
     // policy hook shell to execute. The full gate still runs after Pre for every
     // call these narrow guards do not deny (and judges both again, harmlessly).
-    const forbidden = this.permissionGate.denyRuleGuard(event.toolUse.name, event.toolUse.input);
+    // One gate call for the pair, because it also publishes the denial to the
+    // permission audit (SER-079): returning here means `permissionGate.beforeToolCall`
+    // never sees this call, so the record stays at one line per tool call.
+    const forbidden = this.permissionGate.guardBeforeHooks(event);
     if (forbidden !== undefined) return forbidden;
-
-    const guarded = this.permissionGate.planGuard(event.toolUse.name, event.toolUse.input);
-    if (guarded !== undefined) return guarded;
 
     const repeated = await this.retryGuard.beforeToolCall(event);
     if (repeated.type !== 'proceed') return repeated;

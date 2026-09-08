@@ -104,3 +104,7 @@ Nothing is remembered implicitly. `/permissions` lists live allow rules and whet
 Headless mode has no interactive bridge: unresolved calls are immediately denied, while static safety and persisted rules still apply. Choose `auto`/`yolo` explicitly if suitable.
 
 `!<command>` is outside this gate because it is user-authored, not model-issued. It runs even in `plan`; see [Using darwin](using-darwin.md). The gate still protects any later command the model requests.
+
+## Audit trail
+
+Every decision the gate settles is written to the session trajectory as one `permissionDecision` record (see [Sessions and state](sessions-and-state.md)): which stage settled it (`safe`, `allow-rule`, `classifier`, `yolo`, `user-approved`, `user-denied`, `deny-rule`, `plan-denied`, `write-scope-denied`, `restart-limit-denied`), the mode in force, whether you were prompted, the matched or granted rule, the child label when a subagent asked, and the call's `toolUseId` — never the tool input, which the call's own record already holds. It is log-only: the model, the tool result, the screen and headless output are unchanged, and there is no setting. `darwin trajectory replay` and `/export` print one `permission · <tool> · …` note only for a call that prompted you or was denied; silent approvals print nothing. Reading the record needs no model call.

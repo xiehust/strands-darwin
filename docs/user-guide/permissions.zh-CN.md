@@ -104,3 +104,7 @@ bash pattern 必须匹配每个串联命令段；`pnpm build && rm -rf /` 不匹
 无头模式没有交互 bridge：未被静态安全或持久规则放行的调用会立即拒绝。需要时应显式选择 `auto`/`yolo`。
 
 `!<command>` 由用户直接输入，不属于模型调用，因此不经过该 gate，并可在 `plan` 中运行；详见[使用 darwin](using-darwin.zh-CN.md)。模型后续请求的命令仍受 gate 保护。
+
+## 审计记录
+
+gate 每裁定一次调用，都会在会话轨迹中写入一条 `permissionDecision` 记录（见[会话与状态](sessions-and-state.zh-CN.md)）：由哪一级裁定（`safe`、`allow-rule`、`classifier`、`yolo`、`user-approved`、`user-denied`、`deny-rule`、`plan-denied`、`write-scope-denied`、`restart-limit-denied`）、当时生效的模式、是否向你发起了确认、匹配或授予的规则、子代理发起时的子代理标签，以及该调用的 `toolUseId`——绝不含工具输入，因为该调用自己的记录已经保存了它。它只写日志：模型、工具结果、屏幕和无头输出都不变，也没有任何配置项。`darwin trajectory replay` 与 `/export` 只为向你发起过确认或被拒绝的调用打印一行 `permission · <tool> · …` 提示；静默放行不打印任何内容。读取记录不需要调用模型。

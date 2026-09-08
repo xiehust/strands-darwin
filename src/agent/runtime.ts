@@ -95,7 +95,7 @@ import { createMemoryTools } from '../memory/tools.js';
 import type { MemoryStatus } from '../memory/store.js';
 
 import { recordStream } from '../trajectory/stream.js';
-import type { ContextCompactedEntry, TaskNotificationFields } from '../trajectory/record.js';
+import type { ContextCompactedEntry, PermissionDecisionFields, TaskNotificationFields } from '../trajectory/record.js';
 import {
   TrajectoryRecorder,
   type RecorderOptions,
@@ -109,7 +109,7 @@ import {
   loadProjectInstructions,
   type ProjectInstructionsSummary,
 } from './instructions.js';
-import { PermissionGate, type AllowRuleEntry, type ApprovalMode, type PermissionBridge, type PermissionModeChange } from './permission.js';
+import { PermissionGate, type AllowRuleEntry, type ApprovalMode, type PermissionBridge, type PermissionDecisionRecord, type PermissionModeChange } from './permission.js';
 import {
   applySystemPromptCachePoint,
   canUpdateSystemPromptCache,
@@ -187,6 +187,28 @@ export function setRuntimeRecorderOverridesForTest(
  * previous snapshots from `--resume`.
  */
 const AGENT_ID = 'darwin';
+
+/**
+ * The gate's published decision as the recorder's structural record fields (SER-079).
+ *
+ * The two shapes are spelled independently on purpose — `src/trajectory/**` imports
+ * no gate type — and this is the one seam where they meet, so a field the gate adds
+ * tomorrow does not reach the file until someone names it here. Copies exactly the
+ * audit fields; there is no input on the gate's object to leave out.
+ */
+function permissionDecisionEntry(decision: PermissionDecisionRecord): PermissionDecisionFields {
+  return {
+    toolUseId: decision.toolUseId,
+    toolName: decision.toolName,
+    kind: decision.kind,
+    risk: decision.risk,
+    mode: decision.mode,
+    source: decision.source,
+    outcome: decision.outcome,
+    ...(decision.rule === undefined ? {} : { rule: decision.rule }),
+    promptedUser: decision.promptedUser,
+  };
+}
 
 /**
  * Parent-registered tools that never enter the child catalogue: the offloader's
@@ -659,6 +681,10 @@ export class AgentRuntime {
     // children that do not exist yet, and only the narrow resolver crosses over —
     // the permission layer never learns about the delegation tool itself.
     const subagentDispatches = new SubagentDispatchRegistry();
+    // The recorder is built last (below), after the Agent, so the gate's audit
+    // observer binds to it late: a decision published before the binding — none
+    // can be, since no turn runs during assembly — or with recording off is dropped.
+    let trajectoryAudit: TrajectoryRecorder | undefined;
     const gate = new PermissionGate({
       mode: permissionMode,
       projectRoot: options.projectRoot,
@@ -670,6 +696,9 @@ export class AgentRuntime {
       // mid-session and the gate must have a classifier to consult. Costs nothing
       // until it is used — the closure defers building its model to the first call.
       classifier: createModelClassifier(config, options.projectRoot),
+      // SER-079: one bounded `permissionDecision` record per settled decision. The
+      // adapter below is the only place the gate's object meets the record's shape.
+      onDecision: (decision) => trajectoryAudit?.recordPermissionDecision(permissionDecisionEntry(decision)),
     });
 
     const codexHooks = policy.codexHooks === undefined ? undefined : new CodexHookRunner({
@@ -973,6 +1002,7 @@ export class AgentRuntime {
             ...runtimeRecorderOverrides,
             ...(memoryController === undefined ? {} : { onTurnSettled: (settlement) => memoryController.settle(settlement) }),
           });
+    trajectoryAudit = trajectory;
 
     const runtime = new AgentRuntime(
       agent,

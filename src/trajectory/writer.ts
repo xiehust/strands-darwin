@@ -36,6 +36,7 @@ import {
   rewindOriginOf,
   type CallSpendProjector,
   type ContextCompactedEntry,
+  type PermissionDecisionFields,
   type RewindOrigin,
   type TaskNotificationFields,
   type TrajectoryRecord,
@@ -224,6 +225,43 @@ export class TurnRecording {
   }
 
   /**
+   * Buffers one settled permission decision (SER-079) in observation order, beside
+   * the call's own `beforeToolCallEvent`. Same rules as {@link record}: synchronous,
+   * no I/O, swallows its own failures — the gate has already answered the SDK by the
+   * time this runs, and nothing here may become a second way a turn dies. The four
+   * user-influenced strings pass the field cap; the enum names and the flag are
+   * bounded by construction. Nothing after {@link end} is written.
+   */
+  recordPermissionDecision(entry: PermissionDecisionFields): void {
+    if (this.ended) return;
+    try {
+      const toolUseId = capField(entry.toolUseId, 'toolUseId');
+      const toolName = capField(entry.toolName, 'toolName');
+      const mode = capField(entry.mode, 'mode');
+      const source = capField(entry.source, 'source');
+      const rule = entry.rule === undefined ? undefined : capField(entry.rule, 'rule');
+      this.recorder.buffer(
+        {
+          turn: this.turn,
+          type: 'permissionDecision',
+          toolUseId: toolUseId.value,
+          toolName: toolName.value,
+          kind: entry.kind,
+          risk: entry.risk,
+          mode: mode.value,
+          source: source.value,
+          outcome: entry.outcome,
+          ...(rule === undefined ? {} : { rule: rule.value }),
+          promptedUser: entry.promptedUser === true,
+        },
+        [...toolUseId.trunc, ...toolName.trunc, ...mode.trunc, ...source.trunc, ...(rule?.trunc ?? [])],
+      );
+    } catch (error) {
+      this.recorder.fail(error);
+    }
+  }
+
+  /**
    * Buffers one bounded `modelCall` record per **completed** model call (issue #8
    * follow-up A). Synchronous and I/O-free like every other observation — it rides
    * the turn's ordinary closing append.
@@ -306,6 +344,7 @@ export class TurnRecording {
   end(): void {
     if (this.ended) return;
     this.ended = true;
+    this.recorder.turnClosed(this);
     // Read before the record is composed, and outside the composition's own try: a
     // meter that throws must cost the *spend field only*, not the whole closing record,
     // and must never latch recording off — the turn's outcome and counters are worth
@@ -462,6 +501,13 @@ export class TrajectoryRecorder {
   private bytesThisRun = 0;
   private fileBytes = 0;
   private readonly onTurnSettled: ((settlement: TurnSettlement) => void) | undefined;
+  /**
+   * The turn currently streaming, if any: the one a permission decision belongs to
+   * (SER-079). Set by {@link beginTurn}, cleared by the turn's own `end()`. Decisions
+   * that arrive while nothing is open — a background child working between turns —
+   * are dropped, because no turn could own them.
+   */
+  private openTurn: TurnRecording | undefined;
 
   constructor(options: RecorderOptions) {
     this.file = options.file;
@@ -489,7 +535,26 @@ export class TrajectoryRecorder {
   ): TurnRecording | undefined {
     if (!this.active) return undefined;
     this.turns += 1;
-    return new TurnRecording(this, this.turns, input, spend, callSpend, origin);
+    const turn = new TurnRecording(this, this.turns, input, spend, callSpend, origin);
+    this.openTurn = turn;
+    return turn;
+  }
+
+  /** The turn's own `end()` reports here; a stale or foreign turn changes nothing. */
+  turnClosed(turn: TurnRecording): void {
+    if (this.openTurn === turn) this.openTurn = undefined;
+  }
+
+  /**
+   * Routes one settled permission decision (SER-079) to the open turn, which buffers
+   * it in observation order. With no turn open it is dropped silently — the decision
+   * belongs to a background child working between turns, and inventing a turn ordinal
+   * for it would put a line in the file no `userInput` explains. Off, or latched off,
+   * like every other record.
+   */
+  recordPermissionDecision(entry: PermissionDecisionFields): void {
+    if (!this.active) return;
+    this.openTurn?.recordPermissionDecision(entry);
   }
 
   /** The next turn identity without opening or writing a turn. */

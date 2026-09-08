@@ -70,6 +70,7 @@ import {
   formatTurnFailure,
   modelCallOf,
   parseRecordLine,
+  permissionDecisionOf,
   rewindOriginOf,
   searchableText,
   turnFailureOf,
@@ -78,12 +79,19 @@ import {
   type CallSpendProjector,
   type ContextCompactedRecord,
   type ModelCallRecord,
+  type PermissionDecisionRecord,
   type RunStartedRecord,
   type TrajectoryRecord,
   type TurnEndedRecord,
   type TurnSpendMeter,
 } from '../src/trajectory/record.js';
-import { formatContextCompacted, formatReplay, historyWithoutIds, replayRecords } from '../src/trajectory/replay.js';
+import {
+  formatContextCompacted,
+  formatPermissionDecision,
+  formatReplay,
+  historyWithoutIds,
+  replayRecords,
+} from '../src/trajectory/replay.js';
 import {
   MAX_MODEL_LABEL_CHARS,
   formatSpendSummary,
@@ -1830,6 +1838,202 @@ async function contextCompactedRecords(): Promise<void> {
     !formatReplay({ ...replayRecords(session, { turn: 2 }), damage: undefined }).includes('context compacted'));
 }
 
+/**
+ * SER-079: one bounded `permissionDecision` record per settled gate decision — inside
+ * the turn, keyed to the call by `toolUseId`, never the input; replay prints one line
+ * for a prompted or denied decision and nothing for a silent approval.
+ */
+async function permissionDecisionRecords(): Promise<void> {
+  header('trajectory — a settled permission decision leaves one bounded permissionDecision record');
+
+  // Writer level: the record rides the open turn, caps its strings, drops out of turn.
+  const dir = path.join(ROOT, 'permission');
+  await rm(dir, { recursive: true, force: true });
+  const file = path.join(dir, 'trajectory.jsonl');
+  const rec = recorder(file);
+  const base = {
+    toolUseId: 'call-a', toolName: 'bash', kind: 'execute', risk: 'dangerous', mode: 'default', source: 'parent',
+  } as const;
+  const longRule = `bash:${'x'.repeat(MAX_FIELD_CHARS + 1000)}`;
+
+  rec.recordPermissionDecision({ ...base, toolUseId: 'before-any-turn', outcome: 'safe', promptedUser: false });
+  const turn = rec.beginTurn('a prompt');
+  let settledBeforeReturn = true;
+  const pending = new Promise<void>((resolve) => setImmediate(() => { settledBeforeReturn = false; resolve(); }));
+  rec.recordPermissionDecision({ ...base, outcome: 'user-approved', rule: 'bash:pnpm *', promptedUser: true });
+  assert('recordPermissionDecision returns synchronously — no await on the record path', settledBeforeReturn);
+  await pending;
+  turn?.recordPermissionDecision({ ...base, toolUseId: 'call-b', outcome: 'deny-rule', rule: longRule, promptedUser: false });
+  rec.recordPermissionDecision({ ...base, toolUseId: 'call-c', toolName: 'fileEditor', kind: 'read', risk: 'safe', outcome: 'safe', promptedUser: false });
+  rec.recordPermissionDecision({
+    ...base, toolUseId: 'call-d', source: 'explorer#d1', outcome: 'user-denied', promptedUser: true,
+  });
+  turn?.end();
+  rec.recordPermissionDecision({ ...base, toolUseId: 'after-the-turn', outcome: 'yolo', promptedUser: false });
+  await rec.close();
+  assert('recording decisions reports no problem', rec.status.problem === undefined);
+
+  const raw = await readFile(file, 'utf8');
+  const read = await readTrajectory(file);
+  const decisions = read.records.filter((r): r is PermissionDecisionRecord => r.type === 'permissionDecision');
+  assert('one line per in-turn decision; the two that arrived with no open turn were dropped',
+    decisions.length === 4 && !raw.includes('before-any-turn') && !raw.includes('after-the-turn'));
+  assert('every decision line parses through the envelope validator and carries the turn ordinal',
+    decisions.every((record) => parseRecordLine(JSON.stringify(record))?.type === 'permissionDecision' && record.turn === 1));
+  assert('the decisions sit inside the turn, between userInput and turnEnded, in observation order',
+    read.records.findIndex((r) => r.type === 'userInput') < read.records.findIndex((r) => r.type === 'permissionDecision') &&
+    read.records.findLastIndex((r) => r.type === 'permissionDecision') < read.records.findIndex((r) => r.type === 'turnEnded') &&
+    decisions.map((r) => r.toolUseId).join() === 'call-a,call-b,call-c,call-d');
+  const [approved, ruleDenied, silent, childDenied] = decisions;
+  assert('the record round-trips writer → reader → validator',
+    permissionDecisionOf(approved!)?.outcome === 'user-approved' && permissionDecisionOf(approved!)?.rule === 'bash:pnpm *' &&
+    permissionDecisionOf(approved!)?.promptedUser === true && permissionDecisionOf(approved!)?.mode === 'default');
+  assert('the rule field is capped at MAX_FIELD_CHARS with the truncation written down',
+    [...(ruleDenied?.rule ?? '')].length === MAX_FIELD_CHARS &&
+    ruleDenied?.trunc?.some((t) => t.path === 'rule' && t.kept === MAX_FIELD_CHARS && t.chars === [...longRule].length) === true);
+  assert('a decision without a rule has no rule key; a child decision keeps its source label',
+    !('rule' in silent!) && childDenied?.source === 'explorer#d1' && childDenied.outcome === 'user-denied');
+  assert('the record holds exactly the envelope plus the audit fields — no input, arguments, command or path',
+    decisions.every((record) => {
+      const keys = Object.keys(record).filter((key) => key !== 'rule' && key !== 'trunc').sort().join(',');
+      return keys === 'kind,mode,outcome,promptedUser,risk,seq,source,t,toolName,toolUseId,turn,type,v';
+    }) && !raw.includes('"input"') && !raw.includes('"command"'));
+  assert('the record contributes its tool name, outcome and rule to search — nothing else',
+    searchableText(approved!).join('|') === 'bash|user-approved|bash:pnpm *' &&
+    searchableText(silent!).join('|') === 'fileEditor|safe');
+
+  // The reader on damaged or foreign payloads: reject the claim, never half-read it.
+  const damaged = (payload: Record<string, unknown>) =>
+    permissionDecisionOf({ v: 1, seq: 9, t: 'now', turn: 2, type: 'permissionDecision', ...payload } as unknown as PermissionDecisionRecord);
+  const full = { toolUseId: 'x', toolName: 'bash', kind: 'execute', risk: 'dangerous', mode: 'default', source: 'parent', outcome: 'user-denied', promptedUser: true };
+  assert('an unknown outcome or a missing tool name rejects the record',
+    damaged({ ...full, outcome: 'bogus' }) === undefined && damaged({ ...full, outcome: 7 }) === undefined &&
+    damaged({ ...full, toolName: '' }) === undefined && damaged({ ...full, toolName: undefined }) === undefined);
+  const foreign = damaged({ ...full, kind: 'delete', risk: 'meh', mode: 3, source: '', rule: 12, promptedUser: 'yes', input: { command: 'rm' } });
+  assert('a foreign payload degrades kind/risk/mode/source fail-closed, drops a non-string rule and a non-boolean flag',
+    foreign !== undefined && foreign.kind === 'execute' && foreign.risk === 'dangerous' && foreign.mode === 'unknown' &&
+    foreign.source === 'parent' && !('rule' in foreign) && foreign.promptedUser === false && foreign.turn === 2);
+  assert('extra fields are not carried into the reading', foreign !== undefined && !('input' in foreign));
+  assert('searchableText of an unreadable decision is empty',
+    searchableText({ v: 1, seq: 1, t: 'now', turn: 1, type: 'permissionDecision', outcome: 'bogus', toolName: 'bash' } as unknown as TrajectoryRecord).length === 0);
+
+  // Replay: one line for a prompted or denied decision, nothing for a silent one.
+  const at = '2026-09-08T07:00:00.000Z';
+  const decision = (seq: number, turn: number, fields: Record<string, unknown>): TrajectoryRecord =>
+    ({ v: 1, seq, t: at, turn, type: 'permissionDecision', ...full, toolUseId: `c${seq}`, ...fields }) as TrajectoryRecord;
+  const closing = (seq: number, turn: number): TrajectoryRecord =>
+    ({ v: 1, seq, t: at, turn, type: 'turnEnded', stopReason: 'endTurn', ms: 20, recorded: {}, dropped: {} }) as TrajectoryRecord;
+  const silentOnes = [
+    decision(2, 1, { outcome: 'safe', risk: 'safe', kind: 'read', toolName: 'fileEditor', promptedUser: false }),
+    decision(3, 1, { outcome: 'yolo', mode: 'yolo', promptedUser: false }),
+    decision(4, 1, { outcome: 'allow-rule', rule: 'bash:pnpm *', promptedUser: false }),
+    decision(5, 1, { outcome: 'classifier', mode: 'auto', promptedUser: false }),
+  ];
+  const visibleOnes = [
+    decision(6, 1, { outcome: 'user-approved', rule: 'fileEditor:src/**', toolName: 'fileEditor', kind: 'write', promptedUser: true }),
+    decision(7, 1, { outcome: 'deny-rule', rule: 'bash:git push --force*', promptedUser: false }),
+    decision(8, 1, { outcome: 'user-denied', source: 'explorer#d1', promptedUser: true }),
+    decision(9, 1, { outcome: 'plan-denied', mode: 'plan', promptedUser: false }),
+    decision(10, 1, { outcome: 'write-scope-denied', toolName: 'fileEditor', kind: 'write', source: 'general#n1', promptedUser: false }),
+    decision(11, 1, { outcome: 'restart-limit-denied', promptedUser: true }),
+    decision(12, 1, { outcome: 'yolo', mode: 'yolo', promptedUser: true }),
+    decision(13, 1, { outcome: 'user-approved', promptedUser: true }),
+  ];
+  const unreadable = [
+    decision(14, 1, { outcome: 'bogus' }),
+    decision(15, 1, { toolName: 7 }),
+  ];
+  const prompt: TrajectoryRecord = { v: 1, seq: 1, t: at, turn: 1, type: 'userInput', text: 'first prompt' } as TrajectoryRecord;
+  const second: TrajectoryRecord = { v: 1, seq: 17, t: at, turn: 2, type: 'userInput', text: 'second prompt' } as TrajectoryRecord;
+  const session = [prompt, ...silentOnes, ...visibleOnes, ...unreadable, closing(16, 1), second, closing(18, 2)];
+  const transcript = formatReplay({ ...replayRecords(session), damage: undefined });
+  const lines = transcript.split('\n');
+  const expected = [
+    '  note permission · fileEditor · approved by user (rule granted fileEditor:src/**)',
+    '  note permission · bash · denied by deny rule bash:git push --force*',
+    '  note permission · bash · denied by user · explorer#d1',
+    '  note permission · bash · denied by plan mode',
+    '  note permission · fileEditor · denied by workflow write scope · general#n1',
+    '  note permission · bash · denied after repeated mode changes',
+    '  note permission · bash · approved by yolo mode · prompted',
+    '  note permission · bash · approved by user',
+  ];
+  assert('formatReplay prints one bounded note per prompted or denied decision, in transcript order',
+    expected.every((line) => lines.includes(line)) &&
+    expected.map((line) => lines.indexOf(line)).every((index, i, all) => i === 0 || index > all[i - 1]!));
+  assert('exactly the eight visible decisions print — silent approvals and unreadable lines print nothing',
+    lines.filter((line) => line.includes('permission ·')).length === 8 &&
+    !transcript.includes('statically safe') && !transcript.includes('allow rule') && !transcript.includes('classifier') &&
+    !transcript.includes('bogus'));
+  assert('the notes sit inside their turn — after the first prompt, before the second',
+    lines.indexOf('you> first prompt') < lines.indexOf(expected[0]!) &&
+    lines.indexOf(expected[7]!) < lines.indexOf('you> second prompt'));
+  const withoutAny = formatReplay({ ...replayRecords([prompt, closing(16, 1), second, closing(18, 2)]), damage: undefined });
+  const silentOnly = formatReplay({ ...replayRecords([prompt, ...silentOnes, ...unreadable, closing(16, 1), second, closing(18, 2)]), damage: undefined });
+  assert('a session with only silent approvals renders byte-identically to one with no decision records',
+    silentOnly === withoutAny && !withoutAny.includes('permission'));
+  assert('a --turn replay shows only that turn\u2019s decisions',
+    formatReplay({ ...replayRecords(session, { turn: 1 }), damage: undefined }).includes(expected[1]!) &&
+    !formatReplay({ ...replayRecords(session, { turn: 2 }), damage: undefined }).includes('permission ·'));
+  assert('replay counted nothing as dropped for the decision lines', replayRecords(session).droppedRecords === 0);
+  assert('a silent outcome formats without the prompted marker; a long rule and a line break are bounded to one row',
+    formatPermissionDecision({ turn: 1, toolUseId: 'x', toolName: 'bash', kind: 'execute', risk: 'dangerous', mode: 'default', source: 'parent', outcome: 'allow-rule', rule: 'bash:pnpm *', promptedUser: false })
+      === 'permission · bash · approved by allow rule bash:pnpm *' &&
+    (() => {
+      const line = formatPermissionDecision({ turn: 1, toolUseId: 'x', toolName: 'bash', kind: 'execute', risk: 'dangerous', mode: 'default', source: 'parent', outcome: 'deny-rule', rule: `bash:${'y'.repeat(500)}\nmore`, promptedUser: false });
+      return !line.includes('\n') && [...line].length < 260 && line.endsWith('…');
+    })());
+
+  // Runtime level: a real offline runtime, a prompted call, and the record's toolUseId
+  // equal to the recorded beforeToolCallEvent's for the same call.
+  const projectDir = path.join(ROOT, 'permission-runtime');
+  await mkdir(projectDir, { recursive: true });
+  let sessionId = '';
+  // `true` is not on the safe-command list, so `default` mode prompts and the
+  // allow-all bridge answers: the outcome is `user-approved`, `promptedUser` true.
+  setRuntimeModelFactoryForTest(async () => new ScriptedModel('ran it', { name: 'bash', input: { mode: 'execute', command: 'true' } }));
+  let runtime: AgentRuntime | undefined;
+  try {
+    runtime = await AgentRuntime.create({
+      projectRoot: projectDir,
+      session: { kind: 'new' },
+      permissionBridge: allowAllBridge,
+      onSessionResolved: (resolved) => { sessionId = resolved; },
+    });
+    const seen: AgentStreamEvent[] = [];
+    for await (const event of runtime.send('run true')) seen.push(event);
+    await runtime.shutdown();
+    runtime = undefined;
+
+    const recorded = await readTrajectory(trajectoryPath(projectDir, sessionId));
+    const before = recorded.records.find((r) => r.type === 'beforeToolCallEvent');
+    const beforeId = ((before as { data?: { toolUse?: { toolUseId?: unknown } } } | undefined)?.data?.toolUse?.toolUseId);
+    const audits = recorded.records.filter((r): r is PermissionDecisionRecord => r.type === 'permissionDecision');
+    assert('the real runtime recorded exactly one permissionDecision for its one tool call',
+      audits.length === 1 && recorded.records.filter((r) => r.type === 'beforeToolCallEvent').length === 1);
+    assert('its toolUseId equals the recorded beforeToolCallEvent\u2019s for the same call',
+      typeof beforeId === 'string' && beforeId !== '' && audits[0]?.toolUseId === beforeId);
+    assert('the runtime decision reads user-approved, prompted, parent, bash/execute/dangerous, mode default',
+      audits[0]?.outcome === 'user-approved' && audits[0].promptedUser === true && audits[0].source === 'parent' &&
+      audits[0].toolName === 'bash' && audits[0].kind === 'execute' && audits[0].risk === 'dangerous' && audits[0].mode === 'default');
+    assert('the record sits in the turn the call belongs to', audits[0]?.turn === before?.turn);
+    const modelVisible = JSON.stringify(seen.map((event) => (event as { toJSON?: () => unknown }).toJSON?.() ?? event));
+    assert('nothing the model or driver saw mentions the audit — it is log-only',
+      !modelVisible.includes('permissionDecision') && !modelVisible.includes('user-approved'));
+    const realTranscript = formatReplay({ ...replayRecords(recorded.records), damage: undefined });
+    assert('trajectory replay of the real session prints the one permission line',
+      realTranscript.includes('  note permission · bash · approved by user'));
+    // The gate runs inside the SDK's hook dispatch, before the stream yields the
+    // `beforeToolCallEvent`, so the note lands just ahead of the tool row it judged.
+    assert('the note precedes the tool row it belongs to, and the tool really ran',
+      realTranscript.indexOf('note permission · bash') < realTranscript.indexOf('tool bash [') &&
+      realTranscript.includes('tool bash [ok]'));
+  } finally {
+    await runtime?.shutdown();
+    setRuntimeModelFactoryForTest(undefined);
+  }
+}
+
 async function rewindOriginRecords(): Promise<void> {
   header('trajectory — a /rewind successor\u2019s runStarted names its origin; every other header is byte-identical');
 
@@ -2004,7 +2208,7 @@ async function replayFidelity(): Promise<void> {
   // correct with the AWS environment sabotaged, so nothing it does can be reaching
   // a provider.
   const sources = await Promise.all(
-    ['record.ts', 'reader.ts', 'replay.ts', 'search.ts', 'spend.ts', 'fork.ts', 'writer.ts', 'stream.ts', 'prompt-history.ts'].map(
+    ['record.ts', 'reader.ts', 'replay.ts', 'search.ts', 'spend.ts', 'fork.ts', 'writer.ts', 'stream.ts', 'prompt-history.ts', 'export.ts', 'resume-recap.ts'].map(
       async (name) => ({ name, text: stripComments(await readFile(path.join('src', 'trajectory', name), 'utf8')) }),
     ),
   );
@@ -2012,10 +2216,12 @@ async function replayFidelity(): Promise<void> {
     ({ text }) =>
       /\bnew Agent\b|\bnew BedrockModel\b|\bnew OpenAIModel\b|\bnew AnthropicModel\b/.test(text) ||
       /createModelFromConfig|\.stream\(|\.invoke\(/.test(text) ||
-      /from '\.\.\/agent\/runtime\.js'/.test(text),
+      /from '\.\.\/agent\/runtime\.js'/.test(text) ||
+      // SER-079: the permission record is spelled structurally; the gate stays out.
+      /from '\.\.\/agent\/permission\.js'|from '\.\.\/hooks\//.test(text),
   );
   assert(
-    'the read side constructs no agent or model and never invokes one',
+    'the read side constructs no agent or model, never invokes one, and imports no gate',
     offending.length === 0,
   );
   assert(
@@ -2655,6 +2861,7 @@ async function main(): Promise<void> {
     await turnSpendReadPaths();
     await modelCallRecords();
     await contextCompactedRecords();
+    await permissionDecisionRecords();
     await rewindOriginRecords();
     await replayFidelity();
     await searchContracts();

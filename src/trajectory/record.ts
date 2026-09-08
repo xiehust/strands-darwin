@@ -76,6 +76,7 @@ export type TrajectoryRecordType =
   | 'shellCommand'
   | 'taskNotification'
   | 'contextCompacted'
+  | 'permissionDecision'
   | RecordedEventType;
 
 /** Fields every record carries, whatever its type. */
@@ -437,6 +438,68 @@ export interface ContextCompactedRecord extends RecordEnvelope {
   focused: boolean;
 }
 
+/**
+ * The stages a permission decision can settle at (SER-079), spelled here as plain
+ * strings rather than imported from the gate: `src/trajectory/**` reads the file
+ * without constructing an `Agent`, a `Model` or a gate, and a record type that
+ * imported one would be the first crack in that property. The gate's own union has
+ * the same ten members; the runtime adapts one to the other, and a value outside
+ * this list reads as damage (see {@link permissionDecisionOf}).
+ */
+export const PERMISSION_OUTCOMES = [
+  'write-scope-denied',
+  'deny-rule',
+  'plan-denied',
+  'yolo',
+  'safe',
+  'allow-rule',
+  'classifier',
+  'user-approved',
+  'user-denied',
+  'restart-limit-denied',
+] as const;
+
+export type PermissionOutcomeName = (typeof PERMISSION_OUTCOMES)[number];
+
+/** The four outcomes that approved a call without asking anyone; replay prints nothing for them. */
+export const SILENT_PERMISSION_OUTCOMES: readonly PermissionOutcomeName[] = ['yolo', 'safe', 'allow-rule', 'classifier'];
+
+/**
+ * What the runtime hands the recorder for one settled permission decision (SER-079).
+ * Everything is a bounded string, an enum name or a boolean — **never the tool input**:
+ * the `beforeToolCallEvent` recorded under the same `toolUseId` already carries the
+ * command or the file body, and this record is the audit of the *decision*, keyed to
+ * that call the way the DeepSeek harness keys `approval/decided` to its `callId`.
+ */
+export interface PermissionDecisionFields {
+  toolUseId: string;
+  toolName: string;
+  kind: 'read' | 'write' | 'execute';
+  risk: 'safe' | 'dangerous';
+  /** The permission mode in force when the decision settled. */
+  mode: string;
+  /** `parent`, or a child's `<agent>#<dispatchId>` label — children share the gate. */
+  source: string;
+  outcome: PermissionOutcomeName;
+  /** The deny/allow rule that matched, or the rule granted at the prompt, when any. */
+  rule?: string;
+  /** True only when the bridge was actually asked for this call. */
+  promptedUser: boolean;
+}
+
+/**
+ * One settled permission decision (SER-079), written inside the turn it belongs to,
+ * in observation order beside the call's own `beforeToolCallEvent`. Log-only: it
+ * never reaches the model, a tool result or a driver — the trajectory is where a
+ * grader or the user learns which calls were prompted, which ran silently and why,
+ * and which were denied. Replay prints one bounded note for a prompted or denied
+ * decision and nothing for a silent approval, so a session with neither renders
+ * byte-identically to a file that predates the type.
+ */
+export interface PermissionDecisionRecord extends RecordEnvelope, PermissionDecisionFields {
+  type: 'permissionDecision';
+}
+
 export type TrajectoryRecord =
   | RunStartedRecord
   | UserInputRecord
@@ -447,7 +510,8 @@ export type TrajectoryRecord =
   | RecordingStoppedRecord
   | ShellCommandRecord
   | TaskNotificationRecord
-  | ContextCompactedRecord;
+  | ContextCompactedRecord
+  | PermissionDecisionRecord;
 
 /**
  * A thrown value as the fields the record keeps.
@@ -669,6 +733,14 @@ export function searchableText(record: TrajectoryRecord): string[] {
       // Numbers only by construction — there is no text to match, and inventing a
       // sentence here would make search find words nobody recorded.
       return [];
+    case 'permissionDecision': {
+      // The words the record holds and nothing derived: "which session denied a
+      // force-push" is a question the audit exists to answer, and the rule text is
+      // what the user would search for. Never the input — it is not in the record.
+      const reading = permissionDecisionOf(record);
+      if (reading === undefined) return [];
+      return [reading.toolName, reading.outcome, ...(reading.rule === undefined ? [] : [reading.rule])];
+    }
     default:
       return [];
   }
@@ -866,6 +938,45 @@ export function contextCompactedOf(record: ContextCompactedRecord): ContextCompa
     messagesAfter,
     ...(estimatedTokensBefore === undefined || estimatedTokensBefore === 0 ? {} : { estimatedTokensBefore }),
     focused: (record as { focused?: unknown }).focused === true,
+  };
+}
+
+/** A `permissionDecision` record as the validated fields a reader may print (SER-079). */
+export interface PermissionDecisionReading extends PermissionDecisionFields {
+  turn: number;
+}
+
+/**
+ * The permission decision a record claims, or `undefined` when it cannot be read.
+ *
+ * Strict where the claim lives — `toolName` and `outcome` are the line's whole
+ * meaning, so an unknown outcome or a non-string tool name rejects the record rather
+ * than printing a stage nobody named — and forgiving everywhere else: `kind`/`risk`
+ * outside their sets, a missing `mode` or `source`, a non-string `rule` degrade to
+ * `execute`/`dangerous` (the gate's own fail-closed defaults), `'unknown'`, `'parent'`
+ * and absence. `promptedUser` is true only when the record says exactly `true`, so a
+ * damaged flag never claims a prompt happened. A record with a `toolUseId` that is
+ * not a string is still a decision; the id reads as `''` and stays unmatched.
+ */
+export function permissionDecisionOf(record: PermissionDecisionRecord): PermissionDecisionReading | undefined {
+  const fields = record as Partial<Record<keyof PermissionDecisionFields, unknown>>;
+  if (typeof fields.toolName !== 'string' || fields.toolName === '') return undefined;
+  if (typeof fields.outcome !== 'string' || !(PERMISSION_OUTCOMES as readonly string[]).includes(fields.outcome)) {
+    return undefined;
+  }
+  const kind = fields.kind === 'read' || fields.kind === 'write' || fields.kind === 'execute' ? fields.kind : 'execute';
+  const risk = fields.risk === 'safe' || fields.risk === 'dangerous' ? fields.risk : 'dangerous';
+  return {
+    turn: boundedCount(record.turn) ?? 0,
+    toolUseId: typeof fields.toolUseId === 'string' ? fields.toolUseId : '',
+    toolName: fields.toolName,
+    kind,
+    risk,
+    mode: typeof fields.mode === 'string' && fields.mode !== '' ? fields.mode : 'unknown',
+    source: typeof fields.source === 'string' && fields.source !== '' ? fields.source : 'parent',
+    outcome: fields.outcome as PermissionOutcomeName,
+    ...(typeof fields.rule === 'string' && fields.rule !== '' ? { rule: fields.rule } : {}),
+    promptedUser: fields.promptedUser === true,
   };
 }
 

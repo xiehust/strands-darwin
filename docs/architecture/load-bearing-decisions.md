@@ -287,6 +287,28 @@ implements it today; `allowAllBridge` exists for non-interactive runs. On turn c
 release prompts with `denyPending()` — `close()` latches shut and silently denies everything
 afterward.
 
+**The gate publishes every settled decision, and publication is all it does (SER-079,
+`PermissionGateOptions.onDecision`).** One frozen `PermissionDecisionRecord` per tool call the
+gate judged — `toolUseId`, `toolName`, `kind`, `risk`, the `mode` in force when it settled, the
+`source` label (`parent` or `<agent>#<dispatchId>`; children share the gate, so their decisions
+are published with their label), the `outcome` (ten names, one per `proceed`/`deny` return:
+`write-scope-denied`, `deny-rule`, `plan-denied`, `yolo`, `safe`, `allow-rule`, `classifier`,
+`user-approved`, `user-denied`, `restart-limit-denied`), the matched or granted `rule` when one
+exists, and `promptedUser` — true only when the bridge was actually invoked for the call, a
+withdrawn prompt included. **Never the tool input**: the recorded `beforeToolCallEvent` under the
+same `toolUseId` already carries it, so an audit line that repeated a command would be a second
+copy of the one thing the record already bounds. A `WITHDRAWN` restart is not an outcome; only the
+final settled decision is published, after it is final. A throwing observer is swallowed and
+changes neither the action nor its wording (measured against a twin gate with a quiet observer).
+The one-record-per-call guarantee rests on where the hook wrapper enters: `ToolHookGate` runs the
+deny-rule and plan guards ahead of any `PreToolUse` shell through one gate method,
+`guardBeforeHooks(event)`, which publishes the denial itself and returns it — so the gate's
+`beforeToolCall` never sees that call; a call that passes there and is denied by the same guards
+inside `beforeToolCall` (the mode moved to `plan` while Pre hooks ran) is published there
+instead. `denyRuleGuard`/`planGuard` stay pure and publish nothing. The runtime is the only
+consumer; it adapts the object to the trajectory's structural record (below). Free check:
+`spike/verify-permission-audit.ts` (in `pnpm test`).
+
 ## Permission mode — live session state
 
 **The mode is live session state, and only the user moves it** (`/mode`, `PermissionGate.setMode`,
@@ -1110,6 +1132,45 @@ say why rather than silently omit), the second is labelled normally; `searchable
 (there are no words to find); `fork` copies it as bytes; recall and `sessions` filter on
 `userInput` and never see it. Files without the record render byte-identically. Checks:
 `verify-trajectory.ts`, `verify-compact.ts`, `verify-export-command.ts`, `verify-resume-recap.ts`.
+
+**Every settled permission decision is recorded, as the decision only (SER-079,
+`permissionDecision`).** Before it, the record could show a tool call and its result but not
+*why it ran*: a grader reading the file could not tell a prompt the user answered from a silent
+`safe` approval, and a deny-rule refusal read like any other error result. Now the gate's observer
+(`PermissionGateOptions.onDecision`, § Permissions — the gate) is pointed by `create()` at the
+recorder, and each published decision becomes one record **inside the open turn**, buffered in
+observation order like a stream event — synchronous, no I/O, non-throwing, flushed with the turn's
+ordinary closing append. It lands just ahead of the `beforeToolCallEvent` it judged, because the
+gate runs inside the SDK's hook dispatch before the stream yields that event, and it carries the
+same `toolUseId`, so the two lines pair the way the DeepSeek harness pairs `approval/decided` to a
+`callId`. Fields: `toolUseId`, `toolName`, `kind`, `risk`, `mode`, `source` (`parent`, or the
+child's `<agent>#<dispatchId>` — children share the gate, so their decisions are recorded with
+their label; no child transcript content is involved), `outcome`, optional `rule`, `promptedUser`.
+**Never the input**: the call's own recorded event holds it, and the record's key set is asserted
+over the bytes. Every string passes the field cap with its truncation written down. The shape is
+spelled structurally in `record.ts` (`PermissionDecisionFields`, the ten outcome names as string
+literals) and the runtime adapts the gate's object to it in one function — `src/trajectory/**`
+still imports no `Agent`, `Model`, gate or hook module, and the structural scan in
+`verify-trajectory.ts` now names `permission.js` and `hooks/` as forbidden imports. A decision that
+arrives with no open turn (a background child working between turns) or with recording off or
+latched off is dropped silently: inventing a turn ordinal would put a line in the file no
+`userInput` explains. Readers: `permissionDecisionOf` is strict where the claim lives (an unknown
+`outcome` or a missing `toolName` rejects the record — replay prints nothing, never a stage nobody
+named) and fail-closed elsewhere (`kind`/`risk` outside their sets read `execute`/`dangerous`, a
+non-boolean `promptedUser` reads `false`); `formatReplay` prints one bounded notice row, through
+the ordinary reducer, **only for a prompted or denied decision** — `permission · bash · denied by
+deny rule bash:git push --force*`, `permission · fileEditor · approved by user (rule granted
+fileEditor:src/**)`, ` · <agent>#<dispatchId>` for a child, ` · prompted` when a silent outcome
+is shown only because a withdrawn prompt preceded it — and **nothing for `yolo`, `safe`,
+`allow-rule`, `classifier`**, so a session with no prompt and no denial renders byte-identically
+to a file that predates the type (asserted). The same row reaches `/export` and the resumed-session
+transcript because both read it through `replayRecords`; the live TUI draws nothing new, headless
+drivers keep their `permission.denied`/stderr line, tool results and messages are untouched (the
+real-runtime check asserts the audit vocabulary appears in no event the driver saw), and there is
+no config key. `searchableText` is the tool name, the outcome and the rule — words the record
+holds; `trajectory list`, `spend.ts`, recall and `sessions` never see it; `fork` copies it as
+bytes. Checks: `verify-permission-audit.ts` (gate), `verify-trajectory.ts` (writer, reader,
+replay, real offline runtime).
 
 **A `/rewind` successor's `runStarted` names where its messages came from (SRF-028, `rewindFrom`).**
 The header is composed from `session.restoreRequested` and `agent.messages.length`, so a successor —

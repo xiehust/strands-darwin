@@ -237,6 +237,54 @@ export interface SafetyVerdict {
  */
 export type SafetyClassifier = (request: AssessedPermissionRequest) => Promise<SafetyVerdict>;
 
+/**
+ * Which stage of the gate settled a call (SER-079). One name per `proceed`/`deny`
+ * return in the decision path, in the order the stages run:
+ *
+ * - `write-scope-denied`: a `workflow` node's declared `writeScopes` (SER-065);
+ * - `deny-rule`: a configured deny-rule (SER-076);
+ * - `plan-denied`: plan mode refusing a write/execute;
+ * - `yolo`, `safe`, `allow-rule`, `classifier`: the four silent approvals;
+ * - `user-approved`, `user-denied`: what the bridge answered;
+ * - `restart-limit-denied`: {@link MAX_MODE_CHANGE_RESTARTS} reached.
+ */
+export type PermissionOutcome =
+  | 'write-scope-denied'
+  | 'deny-rule'
+  | 'plan-denied'
+  | 'yolo'
+  | 'safe'
+  | 'allow-rule'
+  | 'classifier'
+  | 'user-approved'
+  | 'user-denied'
+  | 'restart-limit-denied';
+
+/**
+ * One settled decision, as the gate publishes it to {@link PermissionGateOptions.onDecision}.
+ *
+ * Deliberately **never** the tool input or any argument text: the recorded
+ * `beforeToolCallEvent` under the same `toolUseId` already carries it, and an audit
+ * line that repeated a command or a file body would be a second copy of the one thing
+ * the record already bounds. Plain strings and booleans only, frozen, so an observer
+ * cannot relabel a decision another observer will read.
+ */
+export interface PermissionDecisionRecord {
+  toolUseId: string;
+  toolName: string;
+  kind: PermissionKind;
+  risk: PermissionRisk;
+  /** The mode in force when the decision settled. */
+  mode: ApprovalMode;
+  /** `PermissionSource.label`: `parent`, or `<agent>#<dispatchId>` for a child. */
+  source: string;
+  outcome: PermissionOutcome;
+  /** The deny-rule or allow-rule that matched, or the rule granted at the prompt. */
+  rule?: string;
+  /** True only when the bridge was actually asked for this call (a withdrawn prompt counts). */
+  promptedUser: boolean;
+}
+
 export interface PermissionGateOptions {
   /** Where enforcement starts. `PermissionGate.setMode` moves it, user-only. */
   mode: ApprovalMode;
@@ -261,6 +309,14 @@ export interface PermissionGateOptions {
    * reads as the parent's, which is only true for a runtime with no delegation.
    */
   dispatchSource?: DispatchSourceResolver;
+  /**
+   * Observes every settled decision (SER-079): called exactly once per tool call
+   * the gate judged, after the outcome is final — a `WITHDRAWN` restart is not an
+   * outcome. Publication only: the object is frozen and carries no input, and a
+   * throwing observer is swallowed, so nothing here can change or delay what the
+   * model gets. The runtime points it at the trajectory recorder.
+   */
+  onDecision?: (decision: PermissionDecisionRecord) => void;
 }
 
 const DEFAULT_CLASSIFIER_TIMEOUT_MS = 5000;
@@ -276,6 +332,23 @@ const MAX_MODE_CHANGE_RESTARTS = 16;
 
 /** A decision abandoned because the mode changed while it was pending. */
 const WITHDRAWN = Symbol('withdrawn');
+
+/**
+ * One pass's final verdict with the stage that produced it, so the publication in
+ * {@link PermissionGate.beforeToolCall} names the outcome without re-deriving it
+ * from the action's wording. `rule` rides only for the three rule-bearing outcomes.
+ */
+interface SettledDecision {
+  action: InterventionAction;
+  outcome: PermissionOutcome;
+  rule?: string;
+}
+
+/** Per-call audit state that survives mode-change restarts of one logical decision. */
+interface DecisionAudit {
+  /** Set the moment the bridge is invoked; a later withdrawal does not unset it. */
+  prompted: boolean;
+}
 
 /**
  * Where a live allow-rule came from. `configured` means it was loaded from the
@@ -450,30 +523,65 @@ export class PermissionGate extends InterventionHandler {
   }
 
   /**
+   * The two guards the hook wrapper runs ahead of any `PreToolUse` shell — deny-rule,
+   * then plan — as one call that also **publishes** the denial (SER-079). Undefined
+   * means the ordinary flow owns the call and nothing was published.
+   *
+   * This is what keeps the audit at one record per tool call: the wrapper returns a
+   * denial from here without ever reaching {@link beforeToolCall}, so that path never
+   * sees the call; a call that passes here and is later denied by the same guards
+   * inside {@link beforeToolCall} (the mode moved to `plan` while Pre hooks ran) is
+   * published there instead. {@link denyRuleGuard} and {@link planGuard} themselves
+   * stay pure and unpublished, so calling them directly (tests, other callers)
+   * records nothing.
+   */
+  guardBeforeHooks(event: BeforeToolCallEvent): InterventionAction | undefined {
+    const { name, input } = event.toolUse;
+    const denied = this.earlyDenial(name, input);
+    if (denied === undefined) return undefined;
+    this.publish(event, this.sourceOf(event.agent.id), denied, false);
+    return denied.action;
+  }
+
+  /**
    * Decides one call, restarting whenever the user changes the mode underneath it.
    *
    * The loop is the whole in-flight contract: a withdrawn decision is discarded,
    * never applied, and the call is judged again from the top — plan guard first —
-   * by whatever mode is in force now.
+   * by whatever mode is in force now. Whatever settles it — a pass, or the restart
+   * limit — is published exactly once, after it is final.
    */
   override async beforeToolCall(event: BeforeToolCallEvent): Promise<InterventionAction> {
     const promptIdentity = {};
+    const audit: DecisionAudit = { prompted: false };
+    // Resolved for every call, not only the ones that prompt: a classifier or a
+    // bridge that wants to know whose work it is judging should not have to
+    // reconstruct it from the tool input.
+    const source = this.sourceOf(event.agent.id);
     for (let attempt = 1; ; attempt += 1) {
       const withdrawal = new AbortController();
       this.waiting.add(withdrawal);
-      let action: InterventionAction | typeof WITHDRAWN;
+      let settled: SettledDecision | typeof WITHDRAWN;
       try {
-        action = await this.decideOnce(event, withdrawal.signal, promptIdentity);
+        settled = await this.decideOnce(event, source, withdrawal.signal, promptIdentity, audit);
       } finally {
         this.waiting.delete(withdrawal);
       }
-      if (action !== WITHDRAWN) return action;
+      if (settled !== WITHDRAWN) {
+        this.publish(event, source, settled, audit.prompted);
+        return settled.action;
+      }
 
       if (attempt >= MAX_MODE_CHANGE_RESTARTS) {
-        return InterventionActions.deny(
-          `The permission mode changed ${attempt} times while ${event.toolUse.name} was waiting for a decision, ` +
-            `so darwin stopped re-asking. Tell the user, and try again once they have settled on a mode.`,
-        );
+        const limit: SettledDecision = {
+          outcome: 'restart-limit-denied',
+          action: InterventionActions.deny(
+            `The permission mode changed ${attempt} times while ${event.toolUse.name} was waiting for a decision, ` +
+              `so darwin stopped re-asking. Tell the user, and try again once they have settled on a mode.`,
+          ),
+        };
+        this.publish(event, source, limit, audit.prompted);
+        return limit.action;
       }
     }
   }
@@ -488,31 +596,28 @@ export class PermissionGate extends InterventionHandler {
    */
   private async decideOnce(
     event: BeforeToolCallEvent,
+    source: PermissionSource,
     withdrawn: AbortSignal,
     promptIdentity: object,
-  ): Promise<InterventionAction | typeof WITHDRAWN> {
-    // Resolved for every call, not only the ones that prompt: a classifier or a
-    // bridge that wants to know whose work it is judging should not have to
-    // reconstruct it from the tool input.
-    const source = this.sourceOf(event.agent.id);
-
+    audit: DecisionAudit,
+  ): Promise<SettledDecision | typeof WITHDRAWN> {
     // A `workflow` node's declared write scopes (SER-065) are judged first: they
     // are a structural fact of the DAG the parent declared, not a confirmation
     // policy, so they hold in every mode (yolo included), never prompt, and are
     // not something a rule or a classifier verdict can widen.
     const scoped = this.writeScopeGuard(event.toolUse.name, event.toolUse.input, source);
-    if (scoped !== undefined) return scoped;
+    if (scoped !== undefined) return { action: scoped, outcome: 'write-scope-denied' };
 
     // A deny-rule (SER-076) is judged next — before the plan guard, before
     // `yolo`, before the static `safe` check, allow-rules and the classifier.
     // It is the one stage a user-written prohibition can win at, so nothing
     // that widens (a mode, a matching allow rule, a verdict, an approval) may
     // run first, and children share the gate so it binds them identically.
-    const forbidden = this.denyRuleGuard(event.toolUse.name, event.toolUse.input);
-    if (forbidden !== undefined) return forbidden;
-
-    const guarded = this.planGuard(event.toolUse.name, event.toolUse.input);
-    if (guarded !== undefined) return guarded;
+    // The plan guard follows. Both are the pair `guardBeforeHooks` already ran
+    // for the wrapper; judging them again here is harmless and covers the mode
+    // moving while Pre hooks were running.
+    const early = this.earlyDenial(event.toolUse.name, event.toolUse.input);
+    if (early !== undefined) return early;
 
     const base = classify(event.toolUse.name, event.toolUse.input);
     const request: AssessedPermissionRequest = {
@@ -525,18 +630,22 @@ export class PermissionGate extends InterventionHandler {
     };
 
     if (this.currentMode === 'yolo') {
-      return InterventionActions.proceed({ reason: 'yolo mode approves everything' });
+      return { action: InterventionActions.proceed({ reason: 'yolo mode approves everything' }), outcome: 'yolo' };
     }
 
     if (request.risk === 'safe') {
-      return InterventionActions.proceed({ reason: request.riskReason });
+      return { action: InterventionActions.proceed({ reason: request.riskReason }), outcome: 'safe' };
     }
 
     // Before the classifier, not after: a rule the user wrote down should save the
     // model call too, not just the prompt.
     const matched = matchesAnyRule(this.rules, base, this.options.projectRoot);
     if (matched !== undefined) {
-      return InterventionActions.proceed({ reason: `allowed by rule ${matched}` });
+      return {
+        action: InterventionActions.proceed({ reason: `allowed by rule ${matched}` }),
+        outcome: 'allow-rule',
+        rule: matched,
+      };
     }
 
     // A sensitive read (SER-071) skips the classifier: `auto` may only skip the
@@ -550,7 +659,10 @@ export class PermissionGate extends InterventionHandler {
       // makes it moot — discarded, exactly as the peer product documents.
       if (verdict === WITHDRAWN) return WITHDRAWN;
       if (verdict.safe) {
-        return InterventionActions.proceed({ reason: `classifier: ${verdict.reason}` });
+        return {
+          action: InterventionActions.proceed({ reason: `classifier: ${verdict.reason}` }),
+          outcome: 'classifier',
+        };
       }
       // Escalating to the human: show them why the classifier balked. The details
       // array is our own copy (classify builds a fresh one per call), so pushing
@@ -558,12 +670,19 @@ export class PermissionGate extends InterventionHandler {
       request.details.push({ label: 'Classifier', value: verdict.reason });
     }
 
+    // Marked before the await, not after: a prompt the user saw and the mode
+    // change withdrew was still a prompt.
+    audit.prompted = true;
     const decision = await raceWithdrawal(this.options.ask(request), withdrawn);
     if (decision === WITHDRAWN) return WITHDRAWN;
     if (decision.allowed) {
       // Only on approval: a rule attached to a refusal would be a contradiction.
       if (decision.rule !== undefined) this.addAllowRule(decision.rule);
-      return InterventionActions.proceed({ reason: 'approved by user' });
+      return {
+        action: InterventionActions.proceed({ reason: 'approved by user' }),
+        outcome: 'user-approved',
+        ...(decision.rule === undefined ? {} : { rule: decision.rule }),
+      };
     }
 
 
@@ -571,11 +690,62 @@ export class PermissionGate extends InterventionHandler {
     // `CONFIRMATION_FAILED: <prompt>`, which models misread as a system failure
     // and retry. deny() controls the wording, and the SDK turns it into an error
     // tool result that ends up in history as `DENIED: <reason>`.
-    return InterventionActions.deny(
-      `The user denied permission to run ${request.toolName}. ` +
-        `Do not retry it or attempt the same action another way. ` +
-        `Tell the user what you wanted to do and ask how to proceed.`,
-    );
+    return {
+      outcome: 'user-denied',
+      action: InterventionActions.deny(
+        `The user denied permission to run ${request.toolName}. ` +
+          `Do not retry it or attempt the same action another way. ` +
+          `Tell the user what you wanted to do and ask how to proceed.`,
+      ),
+    };
+  }
+
+  /**
+   * The deny-rule and plan guards as one settled denial, or undefined when neither
+   * applies. Shared by {@link guardBeforeHooks} and {@link decideOnce} so the two
+   * cannot disagree about which stage a call fell at.
+   */
+  private earlyDenial(toolName: string, input: unknown): SettledDecision | undefined {
+    const rule = this.matchedDenyRule(toolName, input);
+    if (rule !== undefined) return { action: denyRuleAction(rule, toolName), outcome: 'deny-rule', rule };
+    const guarded = this.planGuard(toolName, input);
+    if (guarded !== undefined) return { action: guarded, outcome: 'plan-denied' };
+    return undefined;
+  }
+
+  /**
+   * Hands one settled decision to the observer (SER-079). Publication only: the
+   * object is composed from what the gate already knows — never the input — and
+   * frozen, and an observer that throws costs nothing but its own record. `kind`
+   * and `risk` are re-derived here because the early guards settle a call before
+   * the request exists; `classify`/`assessRisk` are pure, so the reading is the one
+   * the decision path would have made.
+   */
+  private publish(
+    event: BeforeToolCallEvent,
+    source: PermissionSource,
+    settled: SettledDecision,
+    promptedUser: boolean,
+  ): void {
+    const observer = this.options.onDecision;
+    if (observer === undefined) return;
+    try {
+      const base = classify(event.toolUse.name, event.toolUse.input);
+      const decision: PermissionDecisionRecord = Object.freeze({
+        toolUseId: event.toolUse.toolUseId,
+        toolName: event.toolUse.name,
+        kind: base.kind,
+        risk: assessRisk(base, this.options.projectRoot).risk,
+        mode: this.currentMode,
+        source: source.label,
+        outcome: settled.outcome,
+        ...(settled.rule === undefined ? {} : { rule: settled.rule }),
+        promptedUser,
+      });
+      observer(decision);
+    } catch {
+      // An observer must never become a second way a decision changes or fails.
+    }
   }
 
   /**
@@ -607,15 +777,14 @@ export class PermissionGate extends InterventionHandler {
    * hook either. Idempotent and side-effect free, so running it twice is safe.
    */
   denyRuleGuard(toolName: string, input: unknown): InterventionAction | undefined {
+    const rule = this.matchedDenyRule(toolName, input);
+    return rule === undefined ? undefined : denyRuleAction(rule, toolName);
+  }
+
+  /** The first configured deny-rule the call matches, or undefined. Pure. */
+  private matchedDenyRule(toolName: string, input: unknown): string | undefined {
     if (this.denyRuleList.length === 0) return undefined;
-    const rule = matchesAnyDenyRule(this.denyRuleList, { toolName, input }, this.options.projectRoot);
-    if (rule === undefined) return undefined;
-    return InterventionActions.deny(
-      `blocked by deny rule ${clipRule(rule)}: the user forbade this ${toolName} call in their ` +
-        `project's permission rules, and the rule holds in every permission mode. ` +
-        `Do not retry it, and do not attempt the same action another way. ` +
-        `Tell the user what you wanted to do and let them decide.`,
-    );
+    return matchesAnyDenyRule(this.denyRuleList, { toolName, input }, this.options.projectRoot);
   }
 
   /**
@@ -666,6 +835,16 @@ const MAX_RULE_REASON_CHARS = 200;
 function clipRule(rule: string): string {
   const chars = [...rule];
   return chars.length <= MAX_RULE_REASON_CHARS ? rule : `${chars.slice(0, MAX_RULE_REASON_CHARS - 1).join('')}…`;
+}
+
+/** The model-facing denial for a matched deny-rule; wording shared by every caller. */
+function denyRuleAction(rule: string, toolName: string): InterventionAction {
+  return InterventionActions.deny(
+    `blocked by deny rule ${clipRule(rule)}: the user forbade this ${toolName} call in their ` +
+      `project's permission rules, and the rule holds in every permission mode. ` +
+      `Do not retry it, and do not attempt the same action another way. ` +
+      `Tell the user what you wanted to do and let them decide.`,
+  );
 }
 
 /**
