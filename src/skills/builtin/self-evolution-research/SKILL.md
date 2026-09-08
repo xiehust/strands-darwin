@@ -75,6 +75,8 @@ Research all of these scopes:
 - Claude Code;
 - Codex;
 - DeepSeek harness;
+- Opencode;
+- kiro-cli;
 - PenguinHarness; and
 - at least one additional relevant coding-agent product.
 
