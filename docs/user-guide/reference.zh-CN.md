@@ -91,7 +91,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/model [name]` | 列出/切换已配置模型，会话不断开；缓存尚热时切换前先提示一次 |
 | `/permissions` | 当前放行规则及来源，随后是已配置的拒绝规则 |
 | `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘上的放行规则；拒绝规则不能在此撤销 |
-| `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/hooks/费用/成本/上下文；出现过缓存未命中后，模型行会注明最近一次未命中的可能原因 |
+| `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/hooks/shell 环境变量/费用/成本/上下文；出现过缓存未命中后，模型行会注明最近一次未命中的可能原因 |
 | `/tasks` | 后台任务及其最近三行非空输出；忙碌时也可用；读取不会移动模型的 `output`/`wait` 游标 |
 | `/trajectory` | 当前运行的本地记录状态 |
 | `/usage` | 当前进程 token 分桶及近似美元成本；未报告不等于零；出现过缓存未命中后，统计次数并注明最近一次的可能原因 |
@@ -138,7 +138,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 
 ## 报告命令约定
 
-- `/status` 只读已有 accessor，不产生任何修改；未知指标显示为 `not reported`；名称列表用 `… N more` 控制长度。其 `hooks` 行按策略顺序列出当前生效的 hook 源文件（项目内显示相对路径，家目录下用 `~`；没有任何 hook 时显示 `none`），启动时有旧式 hook 输入被遮蔽则追加 `· N shadowed`。
+- `/status` 只读已有 accessor，不产生任何修改；未知指标显示为 `not reported`；名称列表用 `… N more` 控制长度。其 `hooks` 行按策略顺序列出当前生效的 hook 源文件（项目内显示相对路径，家目录下用 `~`；没有任何 hook 时显示 `none`），启动时有旧式 hook 输入被遮蔽则追加 `· N shadowed`。其 `shell env` 行说明模型启动的 shell 没有继承什么——`nothing withheld`，或 `N credential-shaped variables withheld (NAME, … N more)`——仅在配置了 `shellEnv.passthrough` 时追加 `· passthrough: A, B_* … N more`；只列名字，绝不显示值。N > 0 时 TUI 启动时还会在转录中打印一行 `shell env: … — see /status`（文本模式 `-p`：stderr 上一行 `shell-env:`；结构化 `--output-format json` 没有对应字段）。
 - `/status` 与 `/usage` 的 `cost` 行是 Σ token 分桶 × LiteLLM 基础单价，**每个模型按各自单价**（`/model` 切换后该行标出模型数——`≈ … (2 models; …)`——`/usage` 并为每个模型各加一行），始终标注 `≈ … (base rates, LiteLLM)`；某个分桶未报告时显示为下限（`≥ $x.xxxx (cacheWrite not reported; …)`），绝不冒充零，混合中没有价格的模型同样使其成为下限（`≥ … (2 models; no price for <id>; …)`）；`unknown (no price for <model>)` / `unknown (price unavailable)` 说明没有数字的原因。读取它不会触发下载或写入。`trajectory list` 在每行会话后追加同样的 `cost: …` 子句，`trajectory replay` 打印 `session cost:` 及每个模型的金额，全部离线读取同一文件计价——绝不下载、绝不写入；`/export` 不含成本行。单价缓存在 `~/.darwin/model-prices.json`，每个模型 id 只在启动时（以及 `/model` 切到新 id 时）后台从 LiteLLM 公开价目表获取一次；环境变量 `DARWIN_MODEL_PRICES_FETCH=off` 可让 darwin 完全不联网，只使用文件里已有的价格。
 - `/help` 只写一条有界历史通知，在忙碌队列判断前处理，不调用模型/工具/网络，也不改配置或会话。
 - `/mcp` 不探测、不重连；工具名只来自已经注册的状态。

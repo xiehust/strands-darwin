@@ -528,10 +528,10 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..440965bdc2879f7c2755ace3cda9ab70
  //# sourceMappingURL=plugin.js.map
 \ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/bash.d.ts b/dist/src/vended-tools/bash/bash.d.ts
-index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..8907d109ce2866e376df312ebc0bae1a68acec3d 100644
+index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..aeef5bc02bb459333de75e2c93d97a4bf92ebdf7 100644
 --- a/dist/src/vended-tools/bash/bash.d.ts
 +++ b/dist/src/vended-tools/bash/bash.d.ts
-@@ -1,12 +1,19 @@
+@@ -1,12 +1,25 @@
 -import type { BashOutput } from './types.js';
 +import type { InvokableTool } from '../../index.js';
 +import type { BashInput, BashOutput } from './types.js';
@@ -540,6 +540,12 @@ index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..8907d109ce2866e376df312ebc0bae1a
 +    cwd?: string;
 +    /** Session project root used only for conservative wrong-root path preflight. */
 +    projectRoot?: string;
++    /**
++     * Environment for every persistent shell this tool starts (replacements after
++     * restart/exit included); `PS1`/`PS2` are still cleared on top. Absent means
++     * `process.env`, byte-identical to the behaviour without the option.
++     */
++    env?: Record<string, string>;
 +}
 +/**
 + * Create a host-only bash tool with configured persistent-shell path context.
@@ -559,7 +565,7 @@ index a0a5b0e40e22e6108df5d832e9b1ba051e2f99cd..8907d109ce2866e376df312ebc0bae1a
  //# sourceMappingURL=bash.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-tools/bash/bash.js b/dist/src/vended-tools/bash/bash.js
-index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fac7a100e9 100644
+index 44fb775853169dab0fde7aee5e7cc275a060de9c..7f3389ddd3e39704bb0ba5728dcf2c113b66efdf 100644
 --- a/dist/src/vended-tools/bash/bash.js
 +++ b/dist/src/vended-tools/bash/bash.js
 @@ -1,8 +1,64 @@
@@ -685,7 +691,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
  /**
   * Internal class for managing a bash session.
   */
-@@ -18,9 +125,21 @@ class BashSession {
+@@ -18,9 +125,25 @@ class BashSession {
      _started = false;
      _timeout;
      _sentinel;
@@ -696,8 +702,12 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
 +    _initialCwd;
 +    _projectRoot;
 +    _cwd;
-+    constructor(timeout = 120, initialCwd = process.cwd(), projectRoot = null) {
++    _env;
++    constructor(timeout = 120, initialCwd = process.cwd(), projectRoot = null, env = null) {
          this._timeout = timeout;
++        // The environment every shell this session starts inherits; null keeps the
++        // process's own, exactly as before the option existed.
++        this._env = env;
          this._sentinel = `__BASH_DONE_${Date.now()}_${Math.random().toString(36).slice(2)}__`;
 +        this._stderrSentinel = `${this._sentinel}_STDERR`;
 +        this._exitCodeSentinel = `${this._sentinel}_EXIT`;
@@ -708,7 +718,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
      }
      /**
       * Starts the bash process if not already started.
-@@ -30,17 +149,28 @@ class BashSession {
+@@ -30,17 +153,28 @@ class BashSession {
              return;
          }
          try {
@@ -716,8 +726,9 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
 +            // timed-out foreground child down with it instead of orphaning it to pid 1.
              this._process = spawn('bash', [], {
 -                cwd: process.cwd(),
+-                env: { ...process.env, PS1: '', PS2: '' },
 +                cwd: this._initialCwd,
-                 env: { ...process.env, PS1: '', PS2: '' },
++                env: { ...(this._env ?? process.env), PS1: '', PS2: '' },
 +                detached: true,
              });
              if (!this._process.stdin || !this._process.stdout || !this._process.stderr) {
@@ -740,7 +751,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
                  this._process = null;
                  this._started = false;
              });
-@@ -54,16 +184,43 @@ class BashSession {
+@@ -54,16 +188,43 @@ class BashSession {
       */
      stop() {
          if (this._process) {
@@ -787,7 +798,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
          this.start();
          if (!this._process || !this._process.stdin || !this._process.stdout || !this._process.stderr) {
              throw new BashSessionError('Bash session not properly initialized');
-@@ -72,33 +229,90 @@ class BashSession {
+@@ -72,33 +233,90 @@ class BashSession {
          let stdoutData = '';
          let stderrData = '';
          let timeoutHandle = null;
@@ -888,7 +899,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
                  }
              };
              // Handler for process errors
-@@ -107,13 +321,14 @@ class BashSession {
+@@ -107,13 +325,14 @@ class BashSession {
                  this.stop();
                  reject(new BashSessionError(`Bash process error: ${err.message}`));
              };
@@ -905,7 +916,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
                  stdout.off('data', onStdoutData);
                  stderr.off('data', onStderrData);
                  // Check if process still exists before removing listeners
-@@ -122,27 +337,77 @@ class BashSession {
+@@ -122,27 +341,77 @@ class BashSession {
                      this._process.off('error', onError);
                  }
              };
@@ -987,7 +998,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
          });
      }
  }
-@@ -151,6 +416,16 @@ class BashSession {
+@@ -151,6 +420,16 @@ class BashSession {
   */
  // eslint-disable-next-line @typescript-eslint/no-explicit-any
  const sessions = new WeakMap();
@@ -1004,7 +1015,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
  /**
   * Track all active sessions for cleanup on process exit.
   */
-@@ -221,42 +496,50 @@ const DEFAULT_DESCRIPTION = 'Executes bash shell commands in a persistent sessio
+@@ -221,42 +500,53 @@ const DEFAULT_DESCRIPTION = 'Executes bash shell commands in a persistent sessio
   * State (variables, working directory) persists within the session.
   * Node.js only.
   */
@@ -1031,6 +1042,9 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
 +    const initialCwd = path.resolve(options.cwd ?? process.cwd());
 +    const projectRoot = options.projectRoot === undefined ? null : path.resolve(options.projectRoot);
 +    const reportRestartCwd = options.cwd !== undefined || options.projectRoot !== undefined;
++    // Copied once: the caller's map is the environment for every shell this tool
++    // starts, including replacements after restart/exit; absent means process.env.
++    const env = options.env === undefined ? null : { ...options.env };
 +    return tool({
 +        name: 'bash',
 +        description: DEFAULT_DESCRIPTION,
@@ -1071,7 +1085,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
 +                        sessions.delete(agent);
 +                    }
 +                    // Create new session (will be added to activeSessions when started)
-+                    const newSession = new BashSession(120, initialCwd, projectRoot);
++                    const newSession = new BashSession(120, initialCwd, projectRoot, env);
 +                    sessions.set(agent, newSession);
 +                    sessionFinalizer.register(agent, newSession);
 +                    return reportRestartCwd ? `Bash session restarted\ncwd: ${initialCwd}` : 'Bash session restarted';
@@ -1080,7 +1094,7 @@ index 44fb775853169dab0fde7aee5e7cc275a060de9c..b8b3a1f3f9541de7d671e0a5df9261fa
 +                // Get or create session
 +                let session = sessions.get(agent);
 +                if (!session) {
-+                    session = new BashSession(input.timeout ?? 120, initialCwd, projectRoot);
++                    session = new BashSession(input.timeout ?? 120, initialCwd, projectRoot, env);
 +                    sessions.set(agent, session);
 +                    sessionFinalizer.register(agent, session);
 +                }

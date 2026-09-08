@@ -1318,6 +1318,37 @@ rejects — a missing or replaced log is `(output unavailable)`, a readable one 
 line `(no output yet)` — and every tail settles before the one `<Static>` notice is dispatched, so
 the report stays a single bounded transcript block with no live row or timer.
 
+**Model-spawned shells never inherit credential-shaped names (SER-082).** `assessRisk` is right
+to call `echo $ANTHROPIC_API_KEY` and `cat /proc/self/environ` read-only, so the gate cannot be
+the defence: in `default` mode the model printed darwin's own API key without a prompt and the
+value landed in the tool result, the trajectory and `/export`. The defence is upstream of the
+shell. `src/tools/shell-env.ts` is one pure decision — `scrubShellEnv(process.env, passthrough)`
+drops every variable whose *name* matches the fixed case-insensitive
+`KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL` pattern, keeps `PATH`/`HOME`/`USER`/`LOGNAME`/`SHELL`/
+`TERM`/`LANG`/`LC_*`/`TMPDIR`/`TZ` and the proxy names unconditionally, restores what
+`shellEnv.passthrough` names (exact or one trailing `*`, case-sensitive; the grammar is the
+module's own `passthroughEntryProblem`, which config validation calls, so the loader cannot accept
+what the scrub ignores) and returns the withheld *names*, sorted — never a value. `runtime.ts`
+computes it exactly once per `create()` and hands the same map to both spawn seams: the pinned
+patch's `CreateBashOptions.env`, threaded `createBash` → `BashSession` constructor → `spawn` (so
+the shell after `restart` or an exit-0 replacement is scrubbed too, and an absent option is
+byte-identical to before), and `BackgroundBashManager.start(command, env)` through the
+`createBackgroundBashTool` `env` option. Children inherit it for free: `childBash` wraps the same
+`foregroundBash` and manager. Nothing else is routed through it, by design — user `!` commands
+(`shell-command.ts`), hooks (`src/hooks/*`) and MCP servers (`registry.ts`, env from config
+interpolation) keep `process.env`, because their subject is the user's own authority, not the
+model's. There is no off switch; the passthrough list is the only knob. What was withheld is
+reported as names only: `RuntimeInfo.shellEnv`, one transcript notice at startup (TUI and dev
+REPL, text-mode headless `shell-env:` beside `thinking:`; structured mode has no counterpart) and
+the `/status` `shell env` row under `MAX_STATUS_NAMES`. The SDK `bash` tool stays the SDK's: an
+option through the existing `createBash` seam, no execution wrapper, no `toolExecutor`. One
+stated gap: a `start` job is `bash -lc`, so the user's own `~/.profile` may re-export a name — the
+suite runs its background cases under an empty HOME for that reason. Checks:
+`spike/verify-shell-env.ts` (pure rules, the real foreground shell and its replacements against a
+`spawnSync` control and an option-less control, the `start` path, a real `SubagentTool` child),
+`verify-config.ts` (`shellEnv` grammar), `verify-status-command.ts` (the row), and
+`verify-npm-patch-format.ts` for the regenerated patch.
+
 ## TUI — production React owns the long-turn memory bound
 
 **The interactive React/Ink graph is first imported under the production condition**

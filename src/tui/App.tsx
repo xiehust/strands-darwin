@@ -51,6 +51,7 @@ import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from '../commands/workfl
 import { MCP_CONFIG_FILENAME, mcpConfigCandidates } from '../mcp/registry.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import { readBackgroundTail, readBackgroundTails } from '../tools/background-tail.js';
+import { formatShellEnvNotice } from '../tools/shell-env.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
 import type { TaskNotificationFields } from '../trajectory/record.js';
 import { exportTranscript } from '../trajectory/export.js';
@@ -806,6 +807,16 @@ export function App({
     dispatch({ type: 'notice', text: `diagnostics: recording SDK debug/info to ${file}` });
   }, [dispatch, runtime]);
 
+  // SER-082: what model-spawned shells did not inherit, said once in the transcript
+  // on the same terms as the diagnostics line above — a frame row is not an option,
+  // and a clean environment adds no line. Names only, a few of them; `/status` has
+  // the bounded full list. Per runtime, so a `/clear` successor states it again.
+  useEffect(() => {
+    const notice = formatShellEnvNotice(runtime.info.shellEnv.withheld);
+    if (notice === undefined) return;
+    dispatch({ type: 'notice', text: `shell env: ${notice} — see /status` });
+  }, [dispatch, runtime]);
+
   // Terminal task events are transcript-only observers: they never alter turn
   // status, active tools, permissions, or the agent loop. React dispatch also
   // causes an immediate idle render; cleanup prevents shutdown notices after exit.
@@ -1430,6 +1441,7 @@ export function App({
             skillNames: runtime.info.skillNames,
             hookSources: runtime.info.hookSources,
             hookShadowNotices: runtime.info.hookShadowNotices,
+            shellEnv: runtime.info.shellEnv,
             projectRoot: runtime.info.projectRoot,
             homeDir: os.homedir(),
             trajectory: runtime.trajectoryStatus,

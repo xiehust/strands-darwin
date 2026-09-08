@@ -10,6 +10,7 @@ import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import { describePricingSource, modelCostFields, type ModelUsageShare } from './agent/cost.js';
 import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
+import { formatShellEnvNotice } from './tools/shell-env.js';
 
 const FIELD_LIMIT = 240;
 
@@ -203,6 +204,28 @@ export function headlessThinkingPlan(runtime: { thinking?: unknown }): ThinkingP
   try {
     const plan = runtime.thinking;
     return typeof plan === 'object' && plan !== null && 'requested' in plan ? (plan as ThinkingPlan) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The SER-082 startup fact on the `thinking:` line's terms: one text-mode stderr
+ * line, `shell-env: <notice>`, only when the runtime withheld something from
+ * model-spawned shells — names, never values. Undefined for a clean environment or
+ * a runtime that cannot say (a test double without `info.shellEnv`), so no run
+ * gains a line it did not earn. Structured mode carries no counterpart: `run.started`
+ * is a closed envelope and this fact is not a degradation.
+ */
+export function formatHeadlessShellEnv(runtime: { info?: unknown }): string | undefined {
+  try {
+    const info = runtime.info;
+    if (typeof info !== 'object' || info === null || !('shellEnv' in info)) return undefined;
+    const shellEnv = (info as { shellEnv?: { withheld?: unknown } }).shellEnv;
+    const withheld = shellEnv?.withheld;
+    if (!Array.isArray(withheld) || !withheld.every((name) => typeof name === 'string')) return undefined;
+    const notice = formatShellEnvNotice(withheld as string[]);
+    return notice === undefined ? undefined : `shell-env: ${headlessField(notice)}`;
   } catch {
     return undefined;
   }

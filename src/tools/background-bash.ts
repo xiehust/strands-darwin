@@ -127,12 +127,12 @@ export class BackgroundBashManager {
     installExitCleanup();
   }
 
-  start(command: string): Promise<BackgroundStartResult> {
+  start(command: string, env: NodeJS.ProcessEnv = process.env): Promise<BackgroundStartResult> {
     if (this.closing) return Promise.reject(new Error('Background bash manager is shutting down'));
 
     // Register the whole launch before its first asynchronous setup completes. shutdown()
     // latches `closing`, waits this set, and only then takes its stop snapshot.
-    const launch = this.launch(command);
+    const launch = this.launch(command, env);
     this.launches.add(launch);
     void launch.then(
       () => this.launches.delete(launch),
@@ -327,7 +327,7 @@ export class BackgroundBashManager {
     await Promise.allSettled(running.map((task) => this.stop(task.id)));
   }
 
-  private async launch(command: string): Promise<BackgroundStartResult> {
+  private async launch(command: string, env: NodeJS.ProcessEnv): Promise<BackgroundStartResult> {
     const id = `bg-${randomUUID()}`;
     await mkdir(this.outputDirectory, { recursive: true });
 
@@ -347,9 +347,12 @@ export class BackgroundBashManager {
       // setup either prevents spawn here or waits for this launch and then sees the task.
       if (this.closing) throw new Error('Background bash manager is shutting down');
 
+      // `env` is what the runtime handed the tool (SER-082: the scrubbed map, the
+      // same one the persistent foreground shell inherits); a bare `start` keeps
+      // `process.env`. `-l` still reads the user's own profile files.
       child = spawn('/bin/bash', ['-lc', command], {
         cwd: this.projectRoot,
-        env: process.env,
+        env,
         detached: true,
         stdio: ['ignore', handle.fd, handle.fd],
       });
@@ -720,9 +723,18 @@ const inputSchema = z.object({
 type BackgroundBashInput = z.infer<typeof inputSchema>;
 type BackgroundBashOutput = BashOutput | string | BackgroundStartResult | BackgroundTaskStatus | BackgroundTaskStatus[] | BackgroundOutputResult | BackgroundWaitResult;
 
-/** Configures the pinned SDK foreground tool from Darwin's verified project root. */
-export function createForegroundBashTool(projectRoot: string): InvokableTool<BashInput, BashOutput | string> {
-  return createBash({ cwd: projectRoot, projectRoot });
+/**
+ * Configures the pinned SDK foreground tool from Darwin's verified project root and,
+ * when given, the environment its persistent shells inherit (SER-082: the runtime
+ * passes `scrubShellEnv(...).env`, computed once per `create()`). Omitted, the
+ * SDK keeps `process.env` exactly as before — the option is the only seam touched;
+ * execution stays the SDK's.
+ */
+export function createForegroundBashTool(
+  projectRoot: string,
+  env?: Record<string, string>,
+): InvokableTool<BashInput, BashOutput | string> {
+  return createBash({ cwd: projectRoot, projectRoot, ...(env !== undefined && { env }) });
 }
 
 export interface BackgroundBashToolOptions {
@@ -733,6 +745,12 @@ export interface BackgroundBashToolOptions {
    * (a child's job wakes the parent, not the child). Default false.
    */
   completionWakes?: boolean;
+  /**
+   * Environment for `start` jobs — the same scrubbed map the foreground tool was built
+   * with, so a background job cannot see what the persistent shell cannot (SER-082).
+   * Absent keeps `process.env`, as before the scrub existed.
+   */
+  env?: Record<string, string>;
 }
 
 export function createBackgroundBashTool(
@@ -741,6 +759,7 @@ export function createBackgroundBashTool(
   options: BackgroundBashToolOptions = {},
 ): InvokableTool<BackgroundBashInput, BackgroundBashOutput> {
   const completionWakes = options.completionWakes === true;
+  const jobEnv = options.env;
   return tool<typeof inputSchema, BackgroundBashOutput>({
     name: 'bash',
     description:
@@ -760,7 +779,7 @@ export function createBackgroundBashTool(
         case 'restart':
           return foreground.invoke(input as BashInput, context);
         case 'start':
-          return manager.start(input.command!);
+          return jobEnv === undefined ? manager.start(input.command!) : manager.start(input.command!, jobEnv);
         case 'list':
           return manager.list();
         case 'status':

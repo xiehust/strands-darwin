@@ -1299,6 +1299,70 @@ async function backgroundTaskWakeField(): Promise<void> {
   assert('…and that error names the key', misplaced.includes('backgroundTaskWake'));
 }
 
+async function shellEnvField(): Promise<void> {
+  header('config — shellEnv.passthrough (SER-082)');
+  const def = await loadConfig(await writeConfig('{}'));
+  // The scrub is unconditional and has no key; an absent shellEnv means no passthrough.
+  assert('shellEnv is absent by default (no passthrough, scrub still on)', def.shellEnv === undefined);
+
+  const valid = await loadConfig(await writeConfig('{ "shellEnv": { "passthrough": ["NPM_TOKEN", "STRIPE_*"] } }'));
+  assert('a valid passthrough list is stored as written',
+    JSON.stringify(valid.shellEnv) === JSON.stringify({ passthrough: ['NPM_TOKEN', 'STRIPE_*'] }));
+  const empty = await loadConfig(await writeConfig('{ "shellEnv": {} }'));
+  assert('an empty shellEnv object is an empty passthrough list', JSON.stringify(empty.shellEnv) === JSON.stringify({ passthrough: [] }));
+
+  const notObject = await expectConfigError('shellEnv: 5 is refused', async () =>
+    loadConfig(await writeConfig('{ "shellEnv": 5 }')),
+  );
+  assert('…and the error names the key', notObject.includes('shellEnv'));
+  const badEntry = await expectConfigError('a non-string passthrough entry is refused', async () =>
+    loadConfig(await writeConfig('{ "shellEnv": { "passthrough": ["A", 3] } }')),
+  );
+  assert('…and the error names shellEnv.passthrough and the index', badEntry.includes('shellEnv') && badEntry.includes('passthrough[1]'));
+  const notArray = await expectConfigError('a non-array passthrough is refused', async () =>
+    loadConfig(await writeConfig('{ "shellEnv": { "passthrough": "NPM_TOKEN" } }')),
+  );
+  assert('…and that error names shellEnv.passthrough', notArray.includes('"shellEnv".passthrough'));
+  const unknownSub = await expectConfigError('an unknown shellEnv sub-key is refused', async () =>
+    loadConfig(await writeConfig('{ "shellEnv": { "other": true } }')),
+  );
+  assert('…and the error names shellEnv.other', unknownSub.includes('"shellEnv".other'));
+  const midStar = await expectConfigError('a pattern with "*" anywhere but the end is refused', async () =>
+    loadConfig(await writeConfig('{ "shellEnv": { "passthrough": ["A_*_B"] } }')),
+  );
+  assert('…and the error quotes the entry under shellEnv.passthrough', midStar.includes('passthrough[0]') && midStar.includes('A_*_B'));
+  const twoStars = await expectConfigError('two trailing stars are refused (only one trailing "*")', async () =>
+    loadConfig(await writeConfig('{ "shellEnv": { "passthrough": ["A**"] } }')),
+  );
+  assert('…naming the entry', twoStars.includes('A**'));
+  const blank = await expectConfigError('an empty passthrough entry is refused', async () =>
+    loadConfig(await writeConfig('{ "shellEnv": { "passthrough": [""] } }')),
+  );
+  assert('…naming shellEnv', blank.includes('shellEnv'));
+  const bareStar = await expectConfigError('a bare "*" (which would restore everything) is refused', async () =>
+    loadConfig(await writeConfig('{ "shellEnv": { "passthrough": ["*"] } }')),
+  );
+  assert('…naming shellEnv', bareStar.includes('shellEnv'));
+
+  // Session-scoped: survives the models array form and /model, refused inside an entry.
+  const withModels = await loadConfig(
+    await writeConfig(
+      '{ "shellEnv": { "passthrough": ["NPM_TOKEN"] }, "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5" }] }',
+    ),
+  );
+  assert('shellEnv survives the models array form', JSON.stringify(withModels.shellEnv) === JSON.stringify({ passthrough: ['NPM_TOKEN'] }));
+  const switched = withModelChoice(withModels, withModels.modelChoices[0]!);
+  assert('a /model switch preserves the passthrough', JSON.stringify(switched.shellEnv) === JSON.stringify({ passthrough: ['NPM_TOKEN'] }));
+  const misplaced = await expectConfigError('shellEnv inside a models entry is refused', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "shellEnv": {} }] }',
+      ),
+    ),
+  );
+  assert('…and that error names the key', misplaced.includes('shellEnv'));
+}
+
 /**
  * Unknown keys are refused, not ignored (SER-049). A key in neither half of the
  * schema is never read, so before this a misspelled `thinkingEfort` loaded
@@ -1535,6 +1599,7 @@ async function documentedKeys(): Promise<void> {
     terminalNotify: false,
     terminalTitle: true,
     backgroundTaskWake: true,
+    shellEnv: { passthrough: ['NPM_TOKEN', 'STRIPE_*'] },
     trajectory: true,
     diagnostics: false,
     memory: true,
@@ -1596,6 +1661,7 @@ async function main(): Promise<void> {
   await terminalNotifyField();
   await terminalTitleField();
   await backgroundTaskWakeField();
+  await shellEnvField();
   await permissionModes();
   await permissionRules();
   await toolHooks();

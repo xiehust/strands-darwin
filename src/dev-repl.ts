@@ -26,6 +26,7 @@ import { CONFIG_FILENAME, ConfigError } from './config.js';
 import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from './commands/workflow-command.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
 import { DARWIN_DIRNAME } from './paths.js';
+import { formatShellEnvNotice } from './tools/shell-env.js';
 
 const DETAIL_MAX_LINES = 12;
 const DETAIL_MAX_CHARS = 800;
@@ -226,6 +227,11 @@ async function main(): Promise<void> {
     }
     for (const notice of info.hookShadowNotices) {
       console.warn(`  hooks    : ${notice.layer} ${notice.directory} shadows ${notice.shadowed.join(', ')}`);
+    }
+    // SER-082: names only, the TUI's startup notice minus its `/status` pointer.
+    const shellEnvNotice = formatShellEnvNotice(info.shellEnv.withheld);
+    if (shellEnvNotice !== undefined) {
+      console.log(`  shell env: ${shellEnvNotice}`);
     }
 
     if (info.skillNames.length > 0) {

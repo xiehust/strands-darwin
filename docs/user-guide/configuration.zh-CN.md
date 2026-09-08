@@ -82,6 +82,7 @@
 | `terminalNotify` | `false` | 在同样两个时刻请终端弹出一条桌面通知——一条 OSC 9 序列（`ESC ] 9 ; darwin · <项目目录名> · waiting for approval\|turn complete ESC \`）直接写到 stdout，仅在 stdout 是 TTY 时写入（仅交互式 TUI；`-p` 和子代理从不写）。是否显示由终端决定：iTerm2（需开启 Settings → Profiles → Terminal → "Notification Center Alerts" → Filter Alerts → "Send escape sequence-generated alerts"）、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端会静默吞掉该序列。在 tmux 内，序列会包在 tmux 的 passthrough DCS 中，需要在 `~/.tmux.conf` 里设置 `set -g allow-passthrough on`。SSH 下同样有效——通知出现在运行终端的那台机器上。`false` 完全不写 |
 | `terminalTitle` | `true` | 把终端窗口/标签页标题设为 `darwin · <项目目录名> · <状态>`（状态为 `idle`/`working`/`waiting for approval`，有提示词排队时再加 ` · N queued`），仅在标题变化且 stdout 是 TTY 时写入；退出时恢复为项目目录名（仅交互式 TUI）；`false` 完全不写 |
 | `backgroundTaskWake` | `true` | `bash start` 后台任务结束时，把一条 `<task-notification>` 提示排入队列，作为独立回合唤醒代理（仅交互式 TUI）；`false` 只保留转录通知 |
+| `shellEnv` | — | `{ "passthrough": [...] }`：允许模型启动的 shell 继承的变量名（`NPM_TOKEN`）或带一个结尾 `*` 的前缀（`STRIPE_*`，大小写敏感），即使名字形似凭据——见 [Shell 环境变量](#shell-环境变量)。其他子键、非字符串条目、或 `*` 不在末尾都会导致启动失败，错误信息会指出 `shellEnv`。过滤本身没有关闭开关 |
 | `systemPrompt` | 内置值 | 替换基础 prompt，并优先于项目文件 |
 | `hooks` | — | 旧版内嵌后备配置；建议使用分层 `hooks/*.json` |
 
@@ -121,6 +122,10 @@ darwin 只读取启动目录中自己的指令文件，不会向父目录查找�
 `<working-context>` 包含工作目录、操作系统与内核、shell、Node 版本、当前 UTC 日期/时区，以及当前目录第一层内容。目录排在前面，符号链接标记为 `@`。列表最多 200 项，其余数量会写明。目录无法列出不会阻止启动，但会显示原因。
 
 每次新建或恢复运行都会重新生成该块。恢复会话时，只有工作上下文刷新；基础 prompt、`AGENTS.md` 和 skill 目录仍沿用会话创建时捕获的版本。该块明确说明自己只是快照，并要求模型重新检查可能变化的事实。
+
+## Shell 环境变量
+
+由*模型*启动的 shell——持久的 `bash` 工具 shell 和 `bash start` 后台任务，父代理和每个子代理都一样——永远不会继承形似凭据的环境变量：名字中含有 `KEY`、`SECRET`、`TOKEN`、`PASSWORD` 或 `CREDENTIAL`（不区分大小写：`ANTHROPIC_API_KEY`、`AWS_SECRET_ACCESS_KEY`、`NPM_TOKEN`、`DB_PASSWORD`、`GOOGLE_APPLICATION_CREDENTIALS`、`my_api_key`）的变量在 shell 启动前就被扣下，因此 `echo $ANTHROPIC_API_KEY` 只会输出空行，而不会把 darwin 自己的密钥写进工具结果、轨迹和 `/export`。`PATH`、`HOME`、`USER`、`LOGNAME`、`SHELL`、`TERM`、`LANG`、`LC_*`、`TMPDIR`、`TZ` 以及 `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`（大小写两种写法）始终保留；其余变量（`DATABASE_URL`、`NODE_ENV`……）原样传递。判定在每个会话开始时依据 darwin 自身的环境做一次，没有关闭开关。若确实需要让任务看到某个被模式命中的变量，把它列入 `shellEnv.passthrough`——精确名字，或带一个结尾 `*` 的 `PREFIX_*` 模式，大小写敏感（`STRIPE_*` 会恢复 `STRIPE_SECRET_KEY`，但不会恢复 `stripe_key`）。有变量被扣下时，TUI 启动时打印一行 `shell env: N credential-shaped variables withheld from model shells (…) — see /status`，`/status` 新增一行 `shell env`（只列名字，绝不显示值）；文本模式的 `-p` 运行在 stderr 上按同样规则打印一行 `shell-env:`。你自己的 `!` 命令、hook 和 MCP 服务器不受影响——它们按你的环境和配置运行。后台任务是登录 shell，所以你自己的 `~/.profile` 仍会导出它本来导出的内容。
 
 ## Prompt 缓存
 

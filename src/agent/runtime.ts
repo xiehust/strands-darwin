@@ -75,6 +75,7 @@ import {
 } from '../tools/background-bash.js';
 import { SerializedFileEditorTool } from '../tools/file-editor-serial.js';
 import { createImageViewerTool, normalizeRestoredImages } from '../tools/image-viewer.js';
+import { scrubShellEnv } from '../tools/shell-env.js';
 import { createUpdatePlanTool } from '../tools/update-plan.js';
 import { webFetch } from '../tools/web-fetch.js';
 import {
@@ -437,6 +438,13 @@ export interface RuntimeInfo {
   hookSources: string[];
   /** Legacy .darwin hook inputs shadowed by authoritative hooks/*.json directories. */
   hookShadowNotices: { layer: string; directory: string; shadowed: string[] }[];
+  /**
+   * What model-spawned shells were denied at startup (SER-082): the sorted names
+   * withheld from the persistent shell and background jobs, plus the configured
+   * passthrough entries. Names only — no value is ever stored or shown. Read by the
+   * startup notice and `/status`; the map itself lives in the bash tools.
+   */
+  shellEnv: { withheld: string[]; passthrough: string[] };
 
   mcpIgnoredConfigPath: string | undefined;
   /** Number of MCP servers configured (some may have failed to connect). */
@@ -747,15 +755,23 @@ export class AgentRuntime {
     const backgroundBash =
       options.inherit?.backgroundBash ?? new BackgroundBashManager(options.projectRoot, session.sessionId);
     if (options.inherit === undefined) startupBackgroundBash = backgroundBash;
-    const foregroundBash = createForegroundBashTool(options.projectRoot);
+    // SER-082: what a model-spawned shell inherits, decided once per runtime from
+    // this process's environment and the config passthrough list — the persistent
+    // foreground shell and every `start` job, parent and children alike (children
+    // reuse `foregroundBash` and the manager through `childBash`), get this map.
+    // Names only are kept for `/status` and the startup notice; values never leave
+    // `shellEnv.env`. User `!` commands, hooks and MCP servers are not routed here.
+    const shellPassthrough = config.shellEnv?.passthrough ?? [];
+    const shellEnv = scrubShellEnv(process.env, shellPassthrough);
+    const foregroundBash = createForegroundBashTool(options.projectRoot, shellEnv.env);
     // The parent's wording states the runtime truth: only a driver that drains SER-069
     // task wakes, with the config key on, may tell the model that ending the turn is
     // followed by a `<task-notification>` turn. Children get the same manager and
     // foreground tool behind the no-wake wording (`childBash` below): a child's job
     // wakes the parent TUI, never the child.
     const completionWakes = options.backgroundCompletionWakes === true && config.backgroundTaskWake !== false;
-    const bash = createBackgroundBashTool(backgroundBash, foregroundBash, { completionWakes });
-    const childBash = completionWakes ? createBackgroundBashTool(backgroundBash, foregroundBash) : bash;
+    const bash = createBackgroundBashTool(backgroundBash, foregroundBash, { completionWakes, env: shellEnv.env });
+    const childBash = completionWakes ? createBackgroundBashTool(backgroundBash, foregroundBash, { env: shellEnv.env }) : bash;
     const imageViewer = createImageViewerTool(options.projectRoot);
     const conversationManager = new SummarizingConversationManager({
       summaryRatio: config.summaryRatio,
@@ -1073,6 +1089,7 @@ export class AgentRuntime {
           ...notice,
           shadowed: [...notice.shadowed],
         })),
+        shellEnv: { withheld: [...shellEnv.withheld], passthrough: [...shellPassthrough] },
         mcpIgnoredConfigPath: mcp.ignoredConfigPath,
         mcpServerCount: mcp.clients.length,
         toolNames: agent.tools.map((tool) => tool.name).sort(),

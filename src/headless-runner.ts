@@ -17,6 +17,7 @@ import {
   createHeadlessPermissionBridge,
   formatHeadlessDiagnosticsProblem,
   formatHeadlessPermissionMode,
+  formatHeadlessShellEnv,
   formatHeadlessThinkingProblem,
   formatHeadlessTrajectoryProblem,
   formatHeadlessCallStats,
@@ -252,6 +253,9 @@ export async function runHeadlessProcess(
       }
       const thinkingProblem = formatHeadlessThinkingProblem(thinking);
       if (thinkingProblem !== undefined) note(`${thinkingProblem}\n`, 'warn');
+      // SER-082: the same startup-facts block; absent when nothing was withheld.
+      const shellEnvLine = formatHeadlessShellEnv(runtime);
+      if (shellEnvLine !== undefined) note(`${shellEnvLine}\n`);
       reply = await runHeadlessTurn(runtime, prompt, (text) => note(text));
     }
   } catch (error) {

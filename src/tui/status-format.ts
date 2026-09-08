@@ -69,6 +69,12 @@ export interface StatusFacts {
   hookSources: readonly string[];
   /** `runtime.info.hookShadowNotices` — legacy hook inputs a `hooks/*.json` directory shadows. */
   hookShadowNotices: readonly { layer: string; directory: string; shadowed: readonly string[] }[];
+  /**
+   * `runtime.info.shellEnv` — the credential-shaped variable names withheld from
+   * model-spawned shells at startup and the configured passthrough entries
+   * (SER-082). Names, never values; the row counts and bounds them.
+   */
+  shellEnv: { readonly withheld: readonly string[]; readonly passthrough: readonly string[] };
   /** `runtime.info.projectRoot` — what a hook source path is shown relative to. */
   projectRoot: string;
   /** `os.homedir()` — the root `paths.ts` derives the global layers from; shown as `~`. */
@@ -139,6 +145,7 @@ export function formatStatusReport(facts: StatusFacts): string {
     ['mcp', describeMcpServers(facts.mcpServers)],
     ['skills', describeNames(facts.skillNames)],
     ['hooks', describeHooks(facts)],
+    ['shell env', describeShellEnv(facts.shellEnv)],
     ['trajectory', describeTrajectory(facts.trajectory)],
     ['diagnostics', describeDiagnostics(facts.diagnostics)],
     ['tokens', describeTokens(facts)],
@@ -270,6 +277,30 @@ function describeHooks(facts: StatusFacts): string {
   );
   const shadowed = facts.hookShadowNotices.length;
   return shadowed > 0 ? `${sources} · ${shadowed} shadowed` : sources;
+}
+
+/**
+ * What model-spawned shells did not inherit (SER-082): the count of withheld
+ * credential-shaped variable names with representative names under the shared
+ * `MAX_STATUS_NAMES` bound, then ` · passthrough: A, B_*` (same bound) only when the
+ * user configured one. `nothing withheld` is the ordinary clean state, stated
+ * rather than omitted. Names only — a value never reaches this formatter.
+ */
+function describeShellEnv(shellEnv: StatusFacts['shellEnv']): string {
+  const count = shellEnv.withheld.length;
+  const summary =
+    count === 0
+      ? 'nothing withheld'
+      : `${count} credential-shaped ${count === 1 ? 'variable' : 'variables'} withheld (${boundedNames(shellEnv.withheld)})`;
+  if (shellEnv.passthrough.length === 0) return summary;
+  return `${summary} · passthrough: ${boundedNames(shellEnv.passthrough)}`;
+}
+
+/** The `describeNames` bound without its count prefix: `a, b … N more`. */
+function boundedNames(names: readonly string[]): string {
+  const shown = names.slice(0, MAX_STATUS_NAMES);
+  const remainder = names.length - shown.length;
+  return `${shown.join(', ')}${remainder > 0 ? ` … ${remainder} more` : ''}`;
 }
 
 /** A path as the user would type it: relative inside the project, `~` under home, else as is. */

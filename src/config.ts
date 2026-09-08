@@ -34,6 +34,7 @@ import {
 import { decodeCodexHooks, CODEX_HOOK_EVENTS, type CodexHooksConfig } from './hooks/codex-hooks.js';
 import type { ToolHookCommand, ToolHookGroup, ToolHooksConfig } from './hooks/tool-hooks.js';
 import { darwinDir, hookExtensionRoots, userDarwinDir, userProjectDir, type ExtensionRoot } from './paths.js';
+import { passthroughEntryProblem } from './tools/shell-env.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
 export class ConfigError extends Error {
@@ -272,6 +273,17 @@ export interface SessionFields {
    */
   backgroundTaskWake?: boolean;
   /**
+   * Model-spawned shells — the persistent `bash` tool shell and `bash start` jobs,
+   * for the parent and every child — never inherit credential-shaped environment
+   * variables (SER-082): any name containing `KEY`, `SECRET`, `TOKEN`, `PASSWORD` or
+   * `CREDENTIAL`, case-insensitively, is withheld (`src/tools/shell-env.ts`). The
+   * scrub itself has no off switch; this key's `passthrough` list is the only knob,
+   * restoring the named variables — exact names or `PREFIX_*` with one trailing
+   * `*`, case-sensitive. User `!` commands, hooks and MCP servers are unaffected.
+   * Present only when configured; the runtime reads an absent key as no passthrough.
+   */
+  shellEnv?: { readonly passthrough: readonly string[] };
+  /**
    * Record an append-only trajectory of every turn to
    * `~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl`, powering
    * `darwin trajectory search|replay|fork` and `/trajectory`. On by default.
@@ -388,6 +400,7 @@ export const SESSION_KEYS = [
   'terminalNotify',
   'terminalTitle',
   'backgroundTaskWake',
+  'shellEnv',
   'trajectory',
   'diagnostics',
   'memory',
@@ -1165,6 +1178,12 @@ function validateSessionFields(
   const diagnostics = booleanField(input, 'diagnostics', configPath);
   if (diagnostics !== undefined) fields.diagnostics = diagnostics;
 
+  // Stored only when written: the scrub is unconditional, so an absent key and an
+  // empty passthrough list mean the same thing to the runtime, and `/status` says
+  // `passthrough:` only for names the user actually listed.
+  const shellEnv = shellEnvField(input['shellEnv'], configPath);
+  if (shellEnv !== undefined) fields.shellEnv = shellEnv;
+
   // On while its durable source is available. An explicit trajectory opt-out also
   // opts out of memory when `memory` is omitted, preserving previously valid private
   // configurations; an explicit request for memory without that source is still an
@@ -1239,6 +1258,40 @@ const HOOK_EVENTS = [
   'TurnComplete',
   'PermissionRequest',
 ] as const;
+
+/**
+ * `shellEnv` (SER-082): an object whose only key is `passthrough`, an array of
+ * variable names or `PREFIX_*` patterns. Every refusal names `shellEnv` and the
+ * offending sub-key or entry, and the entry grammar is the scrub module's own
+ * (`passthroughEntryProblem`), so config cannot accept what the scrub ignores.
+ */
+function shellEnvField(value: unknown, configPath: string): { passthrough: string[] } | undefined {
+  if (value === undefined) return undefined;
+  const where = `${configPath}: "shellEnv"`;
+  if (!isRecord(value)) throw new ConfigError(`${where} must be an object with an optional "passthrough" array.`);
+  for (const key of Object.keys(value)) {
+    if (key !== 'passthrough') {
+      throw new ConfigError(`${where}.${boundedKey(key)} is not supported. Expected passthrough.`);
+    }
+  }
+  const passthrough = value['passthrough'];
+  if (passthrough === undefined) return { passthrough: [] };
+  if (!Array.isArray(passthrough)) {
+    throw new ConfigError(`${where}.passthrough must be an array of environment variable names or PREFIX_* patterns.`);
+  }
+  const entries: string[] = [];
+  passthrough.forEach((entry, index) => {
+    if (typeof entry !== 'string') {
+      throw new ConfigError(`${where}.passthrough[${index}] must be a string (a variable name or PREFIX_* pattern).`);
+    }
+    const problem = passthroughEntryProblem(entry);
+    if (problem !== undefined) {
+      throw new ConfigError(`${where}.passthrough[${index}] (${JSON.stringify(boundedKey(entry))}) ${problem}.`);
+    }
+    entries.push(entry);
+  });
+  return { passthrough: entries };
+}
 
 type HookEvent = (typeof HOOK_EVENTS)[number];
 

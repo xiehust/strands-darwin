@@ -11,7 +11,10 @@
  * rather than an error. The `hooks` row (SER-072) is asserted as a pure
  * projection of `RuntimeInfo.hookSources`: `none`, project-relative and `~`
  * paths, the shared `… N more` bound, the shadow count, and that its insertion
- * leaves every other line of the baseline fixture byte-identical. The model row's
+ * leaves every other line of the baseline fixture byte-identical. The `shell env`
+ * row (SER-082) is asserted the same way over `RuntimeInfo.shellEnv`: `nothing
+ * withheld`, a count plus bounded names, and a bounded `passthrough:` clause only
+ * when one is configured — names, never values. The model row's
  * ` · last miss: <cause>` clause (SER-074) is asserted as additive on the same
  * terms: absent while no miss was observed, and the only change when one was. The `/status
  * extra` argument degradation is a TUI
@@ -139,6 +142,7 @@ function facts(overrides: Partial<StatusFacts> = {}): StatusFacts {
     skillNames: ['commit-message', 'developer'],
     hookSources: [],
     hookShadowNotices: [],
+    shellEnv: { withheld: [], passthrough: [] },
     projectRoot: '/tmp/p',
     homeDir: '/home/u',
     trajectory: RECORDING,
@@ -294,9 +298,10 @@ function testStatesAndDegradation(): void {
 function testHooksRow(): void {
   header('formatStatusReport — the hooks row is a projection of RuntimeInfo.hookSources (SER-072)');
 
-  // The pre-SER-072 report for the baseline fixture, line for line. The new row is
-  // an insertion: every existing line stays byte-identical, in the same order,
-  // and the label column does not widen (`hooks` is shorter than `diagnostics`).
+  // The pre-SER-072 report for the baseline fixture, line for line (plus the SER-082
+  // `shell env` row, which `testShellEnvRow` proves is itself an insertion). The
+  // hooks row is an insertion: every existing line stays byte-identical, in the same
+  // order, and the label column does not widen (`hooks` is shorter than `diagnostics`).
   const before = [
     'status — this session',
     '  model        bedrock/us.anthropic.claude-sonnet-4-6 · cache 5m · effort high',
@@ -304,6 +309,7 @@ function testHooksRow(): void {
     '  mode         default · 2 allow rule(s)',
     '  mcp          1 server — calc connected (3 tools) (details: /mcp)',
     '  skills       2 — commit-message, developer',
+    '  shell env    nothing withheld',
     '  trajectory   recording — /tmp/p/.darwin/sessions/s-1/trajectory.jsonl',
     '  diagnostics  logging — /tmp/p/.darwin/sessions/s-1/diagnostics.log',
     '  tokens       input 1,234 · output 567 · cache read 9,000 · cache write 100 — this run',
@@ -355,6 +361,45 @@ function testHooksRow(): void {
   }));
   assert('shadow count rides on `none` too, so a shadowed-everything state is still visible',
     /^  hooks\s+none · 2 shadowed$/m.test(shadowedOnly));
+}
+
+function testShellEnvRow(): void {
+  header('formatStatusReport — the shell env row is a projection of RuntimeInfo.shellEnv (SER-082)');
+
+  // Insertion, like the hooks row: removing the row from the baseline report leaves
+  // yesterday's output byte for byte, and `shell env` (9) does not widen the label
+  // column (`diagnostics` is 11).
+  const lines = formatStatusReport(facts()).split('\n');
+  const hooksIndex = lines.findIndex((line) => line.startsWith('  hooks'));
+  assert('the shell env row sits directly after the hooks row', lines[hooksIndex + 1] === '  shell env    nothing withheld');
+  assert('the clean state is stated, not omitted: `nothing withheld`, no passthrough clause',
+    /^  shell env\s+nothing withheld$/m.test(lines.join('\n')));
+
+  // Case 2: N withheld — count, noun agreement, names in the runtime's sorted order.
+  const withheld = ['ANTHROPIC_API_KEY', 'AWS_SECRET_ACCESS_KEY', 'NPM_TOKEN'];
+  const three = formatStatusReport(facts({ shellEnv: { withheld, passthrough: [] } }));
+  assert('N withheld names are counted and named',
+    /^  shell env\s+3 credential-shaped variables withheld \(ANTHROPIC_API_KEY, AWS_SECRET_ACCESS_KEY, NPM_TOKEN\)$/m.test(three));
+  const one = formatStatusReport(facts({ shellEnv: { withheld: ['DB_PASSWORD'], passthrough: [] } }));
+  assert('one withheld name uses the singular', /^  shell env\s+1 credential-shaped variable withheld \(DB_PASSWORD\)$/m.test(one));
+  assert('no passthrough configured means no passthrough clause', !three.includes('passthrough'));
+  const others = formatStatusReport(facts()).split('\n').filter((line) => !line.startsWith('  shell env'));
+  assert('the row changes nothing else in the report',
+    JSON.stringify(three.split('\n').filter((line) => !line.startsWith('  shell env'))) === JSON.stringify(others));
+
+  // Case 3: N withheld plus a passthrough list, both bounded by MAX_STATUS_NAMES.
+  const many = Array.from({ length: MAX_STATUS_NAMES + 2 }, (_, i) => `SECRET_${String(i).padStart(2, '0')}`);
+  const passthrough = Array.from({ length: MAX_STATUS_NAMES + 3 }, (_, i) => (i === 0 ? 'NPM_TOKEN' : `P${i}_*`));
+  const bounded = formatStatusReport(facts({ shellEnv: { withheld: many, passthrough } }));
+  const row = bounded.split('\n').find((line) => line.startsWith('  shell env')) ?? '';
+  assert('withheld names beyond MAX_STATUS_NAMES are bounded with the shared remainder shape',
+    row.includes(`${many.length} credential-shaped variables withheld (SECRET_00, `) && row.includes('SECRET_05 … 2 more)'));
+  assert('no withheld name beyond the cap is dumped', !row.includes('SECRET_06'));
+  assert('the passthrough clause lists exact names and PREFIX_* patterns under the same bound',
+    row.includes(' · passthrough: NPM_TOKEN, P1_*, P2_*, P3_*, P4_*, P5_* … 3 more') && !row.includes('P6_*'));
+  const passthroughOnly = formatStatusReport(facts({ shellEnv: { withheld: [], passthrough: ['STRIPE_*'] } }));
+  assert('a passthrough with nothing withheld is still shown beside the clean state',
+    /^  shell env\s+nothing withheld · passthrough: STRIPE_\*$/m.test(passthroughOnly));
 }
 
 function testMenuCapacity(): void {
@@ -577,6 +622,7 @@ function main(): void {
   testBoundedLists();
   testStatesAndDegradation();
   testHooksRow();
+  testShellEnvRow();
   testChildUsage();
   testCallStats();
   testCost();
