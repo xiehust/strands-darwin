@@ -58,7 +58,7 @@
 | `maxTokens` | `64000` | 最大输出 token 数 |
 | `contextWindowLimit` | SDK 内置模型表，否则未知 | 整数 token 数；覆盖内置表，用于 `/context`、`/status` 和上下文压力提示 |
 | `promptCache` | `true` | 仅 Claude 生效 |
-| `promptCacheTtl` | 供应商默认值（`5m`） | 每个 cache point 使用 `5m` 或 `1h`；Bedrock 与 Anthropic 均生效 |
+| `promptCacheTtl` | `1h` | 每个 cache point 使用 `1h` 或 `5m`（供应商默认值）；Bedrock 与 Anthropic 均生效 |
 | `thinkingEffort` | `high` | `low`、`medium`、`high`、`xhigh`、`max` |
 | `classifierModel` | 各供应商的低成本模型 | `auto` 权限模式使用的分类模型 |
 | `requestTimeoutMs` | `180000` | Bedrock 流式请求空闲超时；收到字节后重新计时 |
@@ -132,7 +132,7 @@ Claude 默认启用缓存。darwin 会给稳定的工具 schema、system prompt 
 | system prompt | 缓存 | 缓存 | — |
 | 会话 | 缓存 | 缓存 | — |
 
-设置 `promptCache: false` 可关闭；`promptCacheTtl: "1h"` 会延长缓存时间，但写入成本更高。非 Claude 模型会明确显示不支持。摘要会重写历史，修改 `AGENTS.md`、system prompt 或工具集合也会造成缓存未命中。darwin 把 AgentSkills 目录放在工作上下文和最终 cache point 之前，避免新建/恢复请求重复注入。
+设置 `promptCache: false` 可关闭。cache point 默认保留 `1h`：编码会话两轮之间常常停顿超过五分钟，`5m` 缓存每遇到这样的间隔就要重写整个前缀；短而密集的会话可设 `promptCacheTtl: "5m"` 回到供应商默认值，写入成本更低。非 Claude 模型会明确显示不支持。摘要会重写历史，修改 `AGENTS.md`、system prompt 或工具集合也会造成缓存未命中。darwin 把 AgentSkills 目录放在工作上下文和最终 cache point 之前，避免新建/恢复请求重复注入。
 
 当缓存已热却出现未命中时，`/usage` 与 `/status` 会用 darwin 已掌握的事实注明可能原因——`model switched`、`effort changed`、`compacted`、`idle past cache TTL (5m|1h)`（TTL 即此键）、`first request of a resumed session`，否则 `unknown`——`/model`/`/effort` 在缓存尚热时切换前会先打印一条通知。仅作提示；详见参考手册的报告约定。
 

@@ -226,12 +226,12 @@ async function providerSwitching(): Promise<void> {
     // The SDK's own cacheConfig carries the three cache points (tools, system
     // prompt, last user message); darwin only hands it the shared TTL.
     const anthropicCache = (anthropicModel.getConfig() as { cacheConfig?: unknown }).cacheConfig;
-    assert('anthropic gets a cacheConfig with no TTL by default', JSON.stringify(anthropicCache) === '{}');
+    assert('anthropic gets a cacheConfig on darwin\u2019s 1h default TTL', JSON.stringify(anthropicCache) === JSON.stringify({ ttl: '1h' }));
     const hourly = await loadConfig(
-      await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6", "promptCacheTtl": "1h" }'),
+      await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6", "promptCacheTtl": "5m" }'),
     );
     const hourlyCache = ((await createModelFromConfig(hourly)).getConfig() as { cacheConfig?: unknown }).cacheConfig;
-    assert('promptCacheTtl reaches the anthropic cacheConfig', JSON.stringify(hourlyCache) === JSON.stringify({ ttl: '1h' }));
+    assert('promptCacheTtl reaches the anthropic cacheConfig', JSON.stringify(hourlyCache) === JSON.stringify({ ttl: '5m' }));
     const uncached = await loadConfig(
       await writeConfig('{ "provider": "anthropic", "model": "claude-sonnet-4-6", "promptCache": false }'),
     );

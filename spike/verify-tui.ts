@@ -245,7 +245,7 @@ async function approvePath(): Promise<void> {
     assert('provider and session are shown', /bedrock\/(us|eu|apac|global)\.anthropic\./.test(tui.screen));
     // On the model line, not a line of its own: the header shares the frame with
     // the permission box, and one extra line pushes the box off a 50-row terminal.
-    assert('prompt caching is shown as on', tui.screen.includes('· cache on'));
+    assert('prompt caching is shown as on, with darwin\u2019s default 1h TTL', tui.screen.includes('· cache 1h'));
     assert('the permission mode is shown', tui.screen.includes('mode: default'));
 
     const turnStart = tui.mark();

@@ -68,7 +68,7 @@ async function configSurface(): Promise<void> {
 
   const defaults = await loadConfig(ROOT);
   assert('caching is on with no config file', defaults.promptCache);
-  assert('no TTL is set by default (provider default applies)', defaults.promptCacheTtl === undefined);
+  assert('no TTL is set in config by default (the plan supplies darwin\u2019s 1h)', defaults.promptCacheTtl === undefined);
 
   const off = await loadConfig(await writeConfig('{ "promptCache": false }'));
   assert('promptCache: false is honoured', off.promptCache === false);
@@ -139,13 +139,13 @@ function modelConfig(): void {
 
   const enabled = bedrockCacheConfig(planPromptCache(CLAUDE_CONFIG));
   assert('claude gets a cacheConfig', enabled?.strategy === 'auto');
-  assert('no TTL fields when none was configured', enabled?.toolsTTL === undefined);
+  assert('darwin\u2019s 1h default is stamped when none was configured', enabled?.toolsTTL === '1h' && enabled?.messagesTTL === '1h');
 
-  const ttl = bedrockCacheConfig(planPromptCache({ ...CLAUDE_CONFIG, promptCacheTtl: '1h' }));
+  const ttl = bedrockCacheConfig(planPromptCache({ ...CLAUDE_CONFIG, promptCacheTtl: '5m' }));
   // Bedrock rejects an increasing TTL across tools → system → messages, so the one
   // configured value has to be stamped on every checkpoint identically.
-  assert('a configured TTL reaches the tool checkpoint', ttl?.toolsTTL === '1h');
-  assert('…and the message checkpoint, at the same value', ttl?.messagesTTL === '1h');
+  assert('a configured TTL reaches the tool checkpoint', ttl?.toolsTTL === '5m');
+  assert('…and the message checkpoint, at the same value', ttl?.messagesTTL === '5m');
 
   assert(
     'a non-Claude model gets no cacheConfig at all (the SDK would warn to the console)',
@@ -170,12 +170,12 @@ function systemPromptCachePoint(): void {
   assert('the text comes first', blocks[0] instanceof TextBlock);
   assert('the whole assembled prompt is kept verbatim', (blocks[0] as TextBlock).text === prompt);
   assert('the cache point comes last, so everything is inside it', blocks[1] instanceof CachePointBlock);
-  assert('no TTL is stamped when none was configured', (blocks[1] as CachePointBlock).ttl === undefined);
+  assert('darwin\u2019s 1h default is stamped when none was configured', (blocks[1] as CachePointBlock).ttl === '1h');
 
   const withTtl: SystemPromptHolder = { systemPrompt: prompt };
-  applySystemPromptCachePoint(withTtl, planPromptCache({ ...CLAUDE_CONFIG, promptCacheTtl: '1h' }));
+  applySystemPromptCachePoint(withTtl, planPromptCache({ ...CLAUDE_CONFIG, promptCacheTtl: '5m' }));
   const ttlBlocks = Array.isArray(withTtl.systemPrompt) ? withTtl.systemPrompt : [];
-  assert('a configured TTL reaches the cache point', (ttlBlocks[1] as CachePointBlock).ttl === '1h');
+  assert('a configured TTL reaches the cache point', (ttlBlocks[1] as CachePointBlock).ttl === '5m');
 
   const untouched: SystemPromptHolder = { systemPrompt: prompt };
   assert('caching off reports no placement', !applySystemPromptCachePoint(untouched, planPromptCache({ ...CLAUDE_CONFIG, promptCache: false })));

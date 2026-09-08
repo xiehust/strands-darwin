@@ -152,9 +152,10 @@ export interface ModelFields {
    */
   promptCache: boolean;
   /**
-   * Lifetime of every cache point. Optional; unset means the provider's own
-   * default (5 minutes on Bedrock). `1h` costs more to write and suits long
-   * sessions with gaps between turns.
+   * Lifetime of every cache point: `1h` (darwin's default — a coding session
+   * routinely idles past five minutes between turns, and each such gap on a `5m`
+   * cache re-writes the whole prefix) or `5m` (the providers' own default; cheaper
+   * to write, suits short dense sessions). See `DEFAULT_PROMPT_CACHE_TTL`.
    */
   promptCacheTtl?: PromptCacheTtl;
   /**

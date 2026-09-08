@@ -33,11 +33,21 @@ import type { BedrockCacheConfig } from '@strands-agents/sdk/models/bedrock';
 import type { AppConfig } from '../config.js';
 
 /**
- * Cache lifetime. Bedrock and the Anthropic API both accept `5m` (the default)
- * and `1h`.
+ * Cache lifetime. Bedrock and the Anthropic API both accept `5m` (the providers'
+ * own default) and `1h`.
  */
 export const PROMPT_CACHE_TTLS = ['5m', '1h'] as const;
 export type PromptCacheTtl = (typeof PROMPT_CACHE_TTLS)[number];
+
+/**
+ * The TTL darwin stamps when `promptCacheTtl` is unset. `1h` rather than the
+ * providers' `5m`: an interactive coding session routinely pauses longer than five
+ * minutes between turns (reading output, thinking, a meeting), and every such gap
+ * on a `5m` cache re-writes the whole prefix — tools, system prompt and the entire
+ * conversation. The hourly write premium is paid once per hour of idle-free work;
+ * `promptCacheTtl: "5m"` restores the provider default for short, dense sessions.
+ */
+export const DEFAULT_PROMPT_CACHE_TTL: PromptCacheTtl = '1h';
 
 /** The three cacheable parts of a request, in the order they are sent. */
 export type PromptCachePart = 'tools' | 'system prompt' | 'conversation';
@@ -49,7 +59,7 @@ export interface PromptCachePlan {
   automatic: boolean;
   /** Which parts carry a Darwin-managed cache point. Empty when disabled or automatic. */
   parts: readonly PromptCachePart[];
-  /** TTL to stamp on every cache point, or undefined for the provider default. */
+  /** TTL stamped on every cache point; {@link DEFAULT_PROMPT_CACHE_TTL} when unconfigured, undefined when disabled or automatic. */
   ttl: PromptCacheTtl | undefined;
   /**
    * Why caching is off although the config asked for it. Undefined both when
@@ -84,7 +94,7 @@ const AUTOMATIC: PromptCachePlan = { ...DISABLED, automatic: true };
 export function planPromptCache(config: AppConfig): PromptCachePlan {
   if (!config.promptCache) return DISABLED;
 
-  const ttl = config.promptCacheTtl;
+  const ttl = config.promptCacheTtl ?? DEFAULT_PROMPT_CACHE_TTL;
 
   switch (config.provider) {
     case 'bedrock':

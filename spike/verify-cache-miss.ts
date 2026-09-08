@@ -87,8 +87,8 @@ function missThreshold(): void {
   assert('an unreported cache read is unknown, never a miss', !isCacheMiss(call(T0, undefined, 100_000)));
   assert('an unreported request total is unknown, never a miss', !isCacheMiss(call(T0, 0, undefined)));
   assert('an empty request is not a miss', !isCacheMiss(call(T0, 0, 0)));
-  assert('the TTL in ms: 5m default, 1h, unset falls back to the providers\u2019 5m',
-    promptCacheTtlMs('5m') === FIVE_MINUTES && promptCacheTtlMs('1h') === ONE_HOUR && promptCacheTtlMs(undefined) === FIVE_MINUTES);
+  assert('the TTL in ms: 5m, 1h, unset falls back to darwin\u2019s 1h default',
+    promptCacheTtlMs('5m') === FIVE_MINUTES && promptCacheTtlMs('1h') === ONE_HOUR && promptCacheTtlMs(undefined) === ONE_HOUR);
 }
 
 // ---------------------------------------------------------------- no verdict
@@ -160,7 +160,7 @@ function text(): void {
   assert('the TTL cause names the configured TTL',
     describeCacheMissCause('idle past cache TTL', '5m') === 'idle past cache TTL (5m)' &&
     describeCacheMissCause('idle past cache TTL', '1h') === 'idle past cache TTL (1h)');
-  assert('an unset TTL is the providers\u2019 5m default', describeCacheMissCause('idle past cache TTL', undefined) === 'idle past cache TTL (5m)');
+  assert('an unset TTL is darwin\u2019s 1h default', describeCacheMissCause('idle past cache TTL', undefined) === 'idle past cache TTL (1h)');
   assert('every other cause is its own text',
     describeCacheMissCause('model switched', '5m') === 'model switched' &&
     describeCacheMissCause('effort changed', '5m') === 'effort changed' &&
@@ -309,7 +309,7 @@ async function runtimeTracking(): Promise<void> {
     permissionBridge: allowAllBridge,
   });
   try {
-    assert('caching is on for the fixture\u2019s Claude model', runtime.promptCache.enabled && runtime.promptCache.ttl === undefined);
+    assert('caching is on for the fixture\u2019s Claude model, on darwin\u2019s 1h default', runtime.promptCache.enabled && runtime.promptCache.ttl === '1h');
     assert('before any call: no misses, no warmth',
       runtime.cacheMissReport().misses === 0 && runtime.cacheMissReport().lastMiss === undefined && runtime.cacheWarmth(Date.now()) === undefined);
 
@@ -323,7 +323,8 @@ async function runtimeTracking(): Promise<void> {
     const warmth = runtime.cacheWarmth(Date.now());
     assert('after a warm call the cache is warm, with that call\u2019s read',
       warmth?.warm === true && warmth.lastCacheRead === 50_000 && warmth.ageMs < 60_000);
-    assert('the warmth expires with the default 5m TTL', runtime.cacheWarmth(Date.now() + FIVE_MINUTES + 1_000)?.warm === false);
+    assert('the warmth outlives a 5m gap on the default 1h TTL', runtime.cacheWarmth(Date.now() + FIVE_MINUTES + 1_000)?.warm === true);
+    assert('the warmth expires with the default 1h TTL', runtime.cacheWarmth(Date.now() + ONE_HOUR + 1_000)?.warm === false);
     assert('the /model notice would print now',
       warmCacheSwitchNotice('model', warmth)?.endsWith('tokens read last call): switching model re-reads the conversation uncached') === true);
 

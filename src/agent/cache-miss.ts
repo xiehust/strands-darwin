@@ -8,7 +8,7 @@
  * provider counters `observeCallStats` folds (`afterModelCallEvent`
  * `stopData.message.metadata.usage`), the cache-invalidating events the session
  * itself performed (`/model`, `/effort`, `/compact`), the configured TTL
- * (`promptCacheTtl`: `5m` default, `1h`), the wall clock, and whether the session
+ * (`promptCacheTtl`: `1h` default, `5m`), the wall clock, and whether the session
  * was resumed. This module is the pure arithmetic over those facts; the runtime
  * feeds it through {@link CacheMissTracker} with the same synchronous,
  * non-throwing, latch-on-failure discipline the call stats observe under.
@@ -33,7 +33,7 @@
  * cache darwin did not configure — the tracker stays silent unless the live plan
  * has Darwin-managed cache points.
  */
-import type { PromptCacheTtl } from './prompt-cache.js';
+import { DEFAULT_PROMPT_CACHE_TTL, type PromptCacheTtl } from './prompt-cache.js';
 
 /** The one bounded verdict per missed call, in precedence order. */
 export type CacheMissCause =
@@ -54,9 +54,6 @@ export type CacheInvalidatingEvent = 'model' | 'effort' | 'compact';
  * or user message without calling an ordinary turn a miss.
  */
 export const CACHE_MISS_READ_FRACTION = 0.2;
-
-/** Both providers' default cache lifetime when `promptCacheTtl` is not set. */
-const DEFAULT_TTL: PromptCacheTtl = '5m';
 
 /** One completed call's cache facts, as the tracker needs them. */
 export interface CacheCallFacts {
@@ -79,9 +76,9 @@ export interface CacheMissInput {
   firstCallAfterResume: boolean;
 }
 
-/** The TTL in milliseconds; an unset TTL is the providers' `5m` default. */
+/** The TTL in milliseconds; an unset TTL is darwin's {@link DEFAULT_PROMPT_CACHE_TTL}. */
 export function promptCacheTtlMs(ttl: PromptCacheTtl | undefined): number {
-  return (ttl ?? DEFAULT_TTL) === '1h' ? 3_600_000 : 300_000;
+  return (ttl ?? DEFAULT_PROMPT_CACHE_TTL) === '1h' ? 3_600_000 : 300_000;
 }
 
 /**
@@ -125,7 +122,7 @@ export function cacheMissCause(input: CacheMissInput): CacheMissCause | undefine
 
 /** The cause as `/usage` and `/status` print it; the TTL cause names the configured TTL. */
 export function describeCacheMissCause(cause: CacheMissCause, ttl: PromptCacheTtl | undefined): string {
-  return cause === 'idle past cache TTL' ? `${cause} (${ttl ?? DEFAULT_TTL})` : cause;
+  return cause === 'idle past cache TTL' ? `${cause} (${ttl ?? DEFAULT_PROMPT_CACHE_TTL})` : cause;
 }
 
 /** What the reports read: the last observed miss, and how many there were. */
