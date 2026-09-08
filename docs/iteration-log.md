@@ -2490,3 +2490,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 
 
 
+## Batch 105 — SRF-026 child stream continuation
+
+- Origin: `docs/reflections/reflection_2026-09-08_session-20260905-014347068.md` (Score 14, first of three directions on the new page `directions-101-120.md`). The reflection run itself: child `session-20260908-012357892`, task `bg-e4a59305-d1ae-40eb-a894-5f67dda33ff9` (`usage: input=112 output=65148 cacheRead=5340689 cacheWrite=169533`; `cost: total=6.7129`), committed as `94d634f`. Decisions before handoff: implementation lives only at the `subagent` tool's `invoke` seam (never loop/model/recipe/runtime), one continuation per dispatch, cancellation never wrapped, `workflow` nodes untouched.
+- Starting point: HEAD `59632d4` (SRF-026 set `in-progress`); Host gate at `94d634f`: `pnpm typecheck` 0, `pnpm test` 0 (102 suites, 5559 passed, 0 failed).
+- Child session: `session-20260908-015749576`, launched from repository source (`pnpm tsx src/cli.ts -p … --yolo --context-offload`, no ceiling).
+- Managed task: `bg-a7fb0b2f-c7e8-46e9-ba3e-fc916a1f4841` (whole workflow: `invokeWithStreamContinuation` + `continuationFailure`, new phase kind and its three renderers, `verify-subagent-continuation.ts` (40), docs in both languages, `AGENTS.md` 32,761 → 32,696 B, commit `fb56661`, build; succeeded, exit 0, 70 model calls; `usage: input=142 output=44365 cacheRead=7150329 cacheWrite=155054`; `cost: total=5.9454`). Host gate task `bg-9f61debe-a309-483b-8cde-7f7d58071e03`.
+- Token spend: `input=142 output=44,365 cacheRead=7,150,329 cacheWrite=155,054`, cost `5.9454` USD (`global.anthropic.claude-fable-5-1`, LiteLLM base rates).
+
+| Direction | Accepted commits | Host acceptance |
+|---|---|---|
+| SRF-026 | `fb56661` (14 files) | Host read the `subagent-tool.ts` diff in full: the wrapper replaces exactly the `child.invoke(task)` call; predicate `isRetryableStreamInterruption`; three cancel guards (child signal, parent signal, `dispatch.cancellationRequested()`) rethrow the original; `setPhase({ kind: 'continuing-after-stream-interruption' })` then one `child.invoke(STREAM_CONTINUATION_PROMPT, { invocationState })`; a cancel during the continuation rethrows unwrapped; a second failure becomes `continuationFailure` (original `name`, original as `cause`, second message appended) and still passes the unchanged `withFailedChildText`. `git show --stat`: no change to `runtime.ts`, `child-recipe.ts`, `stream-resumption.ts`, `workflow-tool.ts`. Gate at `fb56661`: `pnpm typecheck && pnpm test && pnpm build` exit 0, 0 `FAIL`, 103 suites 5599 passed 0 failed; `dist/src/agents/subagent-tool.js` carries the phase. Suite headers verified: exact SDK `ModelError` reproduced by a stream with no stop event, interrupted once / twice, other-class second failure, cancel during first attempt / during continuation, non-interruption error, `continue=<id>` follow-up, `workflow` node. Process note: the child made room in `AGENTS.md` by dropping the Conventions bullet on `MAX_COMPLETIONS`; its content survives verbatim in the Commands section (line 54), accepted. Docs synced by the child: load-bearing § Stream interruption + § Subagents, `sub-agents.md`, `extensions.md`/`reference.md` + `zh-CN`. |
+
+
