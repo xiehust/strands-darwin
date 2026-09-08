@@ -84,7 +84,7 @@ Sources: Claude Code `permissions.md` ("Rules are evaluated in order: deny, then
 
 ## SER-077 — `/context` breakdown: `ContextEstimate` gains an optional `breakdown` computed on demand (only when `/context` runs, never per turn) by `model.countTokens` per component — system prompt by section (base, `<project-instructions>`, skills catalogue, working context), tool specs grouped by origin (darwin built-ins, each MCP server by name), conversation messages — printed as bounded rows (`~N tokens · P%` when the window is known) under the existing total line; a component whose count fails reads `not reported`; the total line and `/status` stay byte-identical
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 105
 - Score: 11
 - Importance: 4
@@ -96,7 +96,7 @@ Sources: Claude Code `permissions.md` ("Rules are evaluated in order: deny, then
 
 ### Implementation / acceptance evidence
 
-Not started. Acceptance: `spike/verify-context-format.ts` extended with breakdown rows (bounded row count, `not reported` on a failed component count, `P%` only when the window is known); a runtime-level check that the `/context` total line and `/status`'s context value are byte-identical with and without the breakdown; `spike/verify-context-anchor.ts` unchanged; `tui completion` unchanged; `pnpm typecheck`, `pnpm test`.
+Done — commit `19ef9ba` (`feat(context): break /context down by component on demand`, 14 files), Batch 109 in `docs/iteration-log.md`. New pure module `src/agent/context-breakdown.ts` (`measureContextBreakdown(inputs, countTokens)`, `groupToolsByOrigin`): one injected `countTokens` per component, sequential, a failed count is an absent row (`not reported`, never 0); system prompt by section from the composition seam (`RuntimeInfo.promptSections` keeps base + instructions fragment; `knownPromptSections()` in `src/skills/prompt.ts` exposes the existing conservative catalogue/working-context parser read-only; a restored prompt that no longer matches is counted whole, the catalogue before first injection reads `not yet injected`), tools grouped as darwin built-ins plus one row per MCP server via `mcpServerStatuses` names (never `listTools()`), conversation by role over whole messages. `AgentRuntime.contextBreakdown()` is a separate accessor — `contextEstimate()` untouched and still exactly one `countTokens` call; `/context` in `App.tsx` is its sole caller (a failed breakdown prints the total plus `breakdown unavailable — <reason>`). `formatContextBreakdown`/`formatContextReportWithBreakdown` (`src/tui/context-format.ts`): caption "estimated over the current request shape; the total above is authoritative", rows `  <label> ~N tokens · P%` (`P%` omitted when the window is unknown, `<1%` never `0%`), MCP rows capped at `MAX_MCP_TOOL_NAMES` with `… N more server(s)` (chosen over `MAX_STATUS_NAMES` to avoid an import cycle). Host acceptance at `19ef9ba`: `pnpm typecheck` 0, `pnpm test` 0 (5816 `PASS`, 0 `FAIL`), `verify-context-format.ts` 49/49, `verify-context-anchor.ts` 40/40 (default estimate still one `countTokens` call and same result after a breakdown; byte-identical total line), `verify-tui.ts completion` 69/69, `AGENTS.md` 32,753 B, `pnpm build` 0. Original acceptance text: `spike/verify-context-format.ts` extended with breakdown rows (bounded row count, `not reported` on a failed component count, `P%` only when the window is known); a runtime-level check that the `/context` total line and `/status`'s context value are byte-identical with and without the breakdown; `spike/verify-context-anchor.ts` unchanged; `tui completion` unchanged; `pnpm typecheck`, `pnpm test`.
 
 ### Notes / blockers / abandonment reason
 
@@ -104,7 +104,7 @@ Sources: kiro-cli `/context show` ("Context files 0.9% / Tools 0.5% / Kiro respo
 
 ## SER-078 — Terminal-mediated attention notification: config `terminalNotify` (default `false`) writes one documented OSC notification sequence (OSC 777 `notify` and/or OSC 9; the exact set chosen from terminal documentation and recorded) with a bounded, sanitized title/body (`darwin · <project>` / `waiting for approval` or `turn complete`) at exactly the bell's two driver moments through the same real-stdout seam; TTY only, never headless, never children, never per frame; README states the tmux passthrough and iTerm2 alert-setting requirements
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 106
 - Score: 10
 - Importance: 3
