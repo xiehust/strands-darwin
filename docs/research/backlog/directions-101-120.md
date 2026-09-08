@@ -144,7 +144,7 @@ Sources: DeepSeek harness `approval.md` (`approval/asked` → `approval/decided`
 
 ## SER-080 — Read `CLAUDE.md` when `AGENTS.md` is absent: `loadProjectInstructions` tries `AGENTS.md` first, then `CLAUDE.md`, and uses the first file that exists — an `AGENTS.md` that exists but cannot be read still reports its `problem` and never falls through; `ProjectInstructions` carries the filename actually loaded, the fragment's `<project-instructions source="…">` attribute, the TUI header row and `darwin doctor` name that file; when both exist only `AGENTS.md` is read, never merged; `@path` lines stay literal text and the fragment says so; the `instructions.ts` header comment extends its recorded decision (one file, no walking, no merging — now with one fallback name)
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 108
 - Score: 12
 - Importance: 3
@@ -156,7 +156,7 @@ Sources: DeepSeek harness `approval.md` (`approval/asked` → `approval/decided`
 
 ### Implementation / acceptance evidence
 
-_(none yet)_
+Done — commit `cfaff3e` (`feat(instructions): read CLAUDE.md when AGENTS.md is absent`, 17 files), Batch 112 in `docs/iteration-log.md`. `loadProjectInstructions` iterates the fixed `[AGENTS.md, CLAUDE.md]` order; only `isMissingFile` (`ENOENT`/`ENOTDIR`) moves on, any other error returns `problem` + new `problemFile` and never falls through; `ProjectInstructions.filename` drives `renderFragment`'s `source="…"` and the fixed `CLAUDE_IMPORT_NOTICE` line (CLAUDE.md case only); new pure `src/tui/instructions-format.ts` (`formatInstructionsLoadedRow`/`formatInstructionsProblemRow`) feeds the header; `darwin doctor`, `dev-repl` and the `/context` label name the loaded file; header comment records the extended decision. Host acceptance at `cfaff3e`: diff read (loader, fragment, header helper, doctor, docs); `verify-agents-md.ts` 59/59, `verify-doctor-command.ts` 78/78, `verify-system-prompt.ts` 50/50, `verify-context-format.ts` 49/49, `verify-visual-language.tsx` 74/74; real `dist/src/cli.js doctor` in three temp projects — CLAUDE.md-only → `…/CLAUDE.md 19 bytes (cap 32,768)`, AGENTS.md beside an unreadable (directory) CLAUDE.md → `…/AGENTS.md 9 bytes`, directory AGENTS.md beside CLAUDE.md → `! AGENTS.md could not be used: EISDIR…` (no fallthrough); a `tsx` probe of `loadProjectInstructions` showed `source="CLAUDE.md"` + the import notice, `source="AGENTS.md"` without it, and `problemFile: "AGENTS.md"`; `pnpm typecheck` 0; `pnpm test` 0 (6036 PASS, 0 FAIL); `pnpm build` 0; `AGENTS.md` 32,753 B untouched. Docs synced by the child: `docs/user-guide/configuration.md`/`.zh-CN.md` §AGENTS.md, `reference.md`/`.zh-CN.md` doctor row, `load-bearing-decisions.md` §System prompt composition; README needed nothing.
 
 ### Notes / blockers / abandonment reason
 
@@ -164,7 +164,7 @@ Sources: OpenCode Rules ("Project rules: CLAUDE.md in your project directory (us
 
 ## SER-081 — `/init` — a prompt-style built-in in the `/workflow` shape (`src/commands/init-command.ts`, pure, parse grammar mirrored from `expandCustomCommand`): expands to one fixed ordinary prompt asking the model to inspect the repository (build, test and typecheck commands, layout, conventions, existing `CLAUDE.md`, `.cursorrules`, `.github/copilot-instructions.md`) and create `AGENTS.md`, or improve it in place when it exists, under `MAX_INSTRUCTIONS_BYTES`, stating that darwin preloads it into every request (falling back to `CLAUDE.md`, per SER-080); `/init <focus>` embeds the focus verbatim under a `Focus:` marker; the write is an ordinary `fileEditor` call through the permission gate (prompted in `default`, denied in `plan`); reserved in `BUILTIN_COMMAND_NAMES` with a one-phrase description, listed by `/help`, offered by completion with every built-in still visible; while busy it queues like any turn-producing prompt; never a tool, never a second channel
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 109
 - Score: 13
 - Importance: 3
