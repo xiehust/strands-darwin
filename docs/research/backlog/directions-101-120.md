@@ -141,3 +141,83 @@ Done — commit `c8b89c3` (`feat(trajectory): record every permission decision a
 ### Notes / blockers / abandonment reason
 
 Sources: DeepSeek harness `approval.md` (`approval/asked` → `approval/decided` audit pair, log-only, "deliberately omits tool arguments … through `callId`", per-session policy as a logged event), Codex 0.153.0 "Guardian review history survives compaction, restarts, and user-created forks" (2026-09-07 S2c). Darwin evidence: `RECORDED_EVENT_TYPES` (`src/trajectory/record.ts:56–61`) and the observer records `shellCommand`/`taskNotification`/`contextCompacted` (`:69–78`) — the pattern to follow; `PermissionGateOptions` (`src/agent/permission.ts:239`) has no observer; the stage order at `:470–545` enumerates every outcome the vocabulary names; headless denial goes only to stderr/`permission.denied` (`src/headless.ts:147–152`). Follows SER-076 so `deny-rule` is a real outcome. The record must be composed from a plain frozen object the gate hands out (the gate keeps its `dispatchSource` resolver discipline: the observer learns nothing about the agent), and a throwing observer must never affect the decision.
+
+## SER-080 — Read `CLAUDE.md` when `AGENTS.md` is absent: `loadProjectInstructions` tries `AGENTS.md` first, then `CLAUDE.md`, and uses the first file that exists — an `AGENTS.md` that exists but cannot be read still reports its `problem` and never falls through; `ProjectInstructions` carries the filename actually loaded, the fragment's `<project-instructions source="…">` attribute, the TUI header row and `darwin doctor` name that file; when both exist only `AGENTS.md` is read, never merged; `@path` lines stay literal text and the fragment says so; the `instructions.ts` header comment extends its recorded decision (one file, no walking, no merging — now with one fallback name)
+
+- Status: `in-progress`
+- Priority: 108
+- Score: 12
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 1
+- Risk: 2
+- Origin report: [`research_2026-09-08.md`](../research_2026-09-08.md) (run `07:52:34Z`, `peer` path by roll)
+
+### Implementation / acceptance evidence
+
+_(none yet)_
+
+### Notes / blockers / abandonment reason
+
+Sources: OpenCode Rules ("Project rules: CLAUDE.md in your project directory (used if no AGENTS.md exists)"; "if you have both AGENTS.md and CLAUDE.md, only AGENTS.md is used"), Codex `project_doc_fallback_filenames` ("Additional filenames to try when `AGENTS.md` is missing"), Gemini CLI `context.fileName` list. Darwin evidence: `src/agent/instructions.ts:4–6` (recorded single-file decision), `:12` (`AGENTS_FILENAME`), `:66` (`ENOENT` → silent `undefined`), header row `src/tui/App.tsx:2739–2749`, `darwin doctor` `src/cli-doctor.ts:246–260`, `dev-repl.ts:195`. Constraints: exactly one file ever reaches the prompt; `AGENTS.md` present (readable or not) always decides; no configurable name list (a fixed fallback covers the observed convention); `MAX_INSTRUCTIONS_BYTES` and truncation apply identically. Dependency: SER-081's fixed prompt states which files darwin reads, so this lands first. Acceptance: new free spike in `pnpm test` covering fallback, precedence, the unreadable-`AGENTS.md` non-fallthrough, and the labelled fragment/header/doctor output; `pnpm typecheck`, `pnpm test` green.
+
+## SER-081 — `/init` — a prompt-style built-in in the `/workflow` shape (`src/commands/init-command.ts`, pure, parse grammar mirrored from `expandCustomCommand`): expands to one fixed ordinary prompt asking the model to inspect the repository (build, test and typecheck commands, layout, conventions, existing `CLAUDE.md`, `.cursorrules`, `.github/copilot-instructions.md`) and create `AGENTS.md`, or improve it in place when it exists, under `MAX_INSTRUCTIONS_BYTES`, stating that darwin preloads it into every request (falling back to `CLAUDE.md`, per SER-080); `/init <focus>` embeds the focus verbatim under a `Focus:` marker; the write is an ordinary `fileEditor` call through the permission gate (prompted in `default`, denied in `plan`); reserved in `BUILTIN_COMMAND_NAMES` with a one-phrase description, listed by `/help`, offered by completion with every built-in still visible; while busy it queues like any turn-producing prompt; never a tool, never a second channel
+
+- Status: `not-started`
+- Priority: 109
+- Score: 13
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 1
+- Origin report: [`research_2026-09-08.md`](../research_2026-09-08.md) (run `07:52:34Z`, `peer` path by roll)
+
+### Implementation / acceptance evidence
+
+_(none yet)_
+
+### Notes / blockers / abandonment reason
+
+Sources: Claude Code `memory.md` ("Run `/init` to generate a starting CLAUDE.md automatically … If a CLAUDE.md already exists, `/init` suggests improvements rather than overwriting it"; reads Cursor/Copilot rules), Codex slash-command reference ("`/init` — Generate an `AGENTS.md` scaffold in the current directory"), OpenCode Rules ("`/init` scans the important files in your repo … creates or updates AGENTS.md with concise project-specific guidance … If you already have an AGENTS.md, /init will improve it in place"). Darwin evidence: `src/commands/workflow-command.ts` (the prompt-trigger pattern, "never a second execution channel", bare form is a local usage notice — for `/init` the bare form *is* the trigger, so no usage notice), `src/tui/App.tsx:1709–1737` (wiring), `src/commands/custom-commands.ts:11` (`BUILTIN_COMMAND_NAMES`, 20 names — `init` becomes the 21st and `.darwin/commands/init.md` becomes reserved), `MAX_COMPLETIONS = 21` (`src/tui/InputBox.tsx:24` — re-run `tui completion`; raise the cap only if a built-in would otherwise be hidden), `MAX_HELP_COMMANDS = 24` (`src/tui/help-format.ts:8`), README line 9 (the `AGENTS.md` pitch). The template must not instruct the model to run anything a typed prompt could not; the whether-the-file-exists branch is decided by the driver from the same `ProjectInstructionsSummary` the header shows, not by a new filesystem read at expansion time. Depends on SER-080 (the template names the fallback). Acceptance: free `spike/verify-init-command.ts` in `pnpm test` (expansion text, focus embedding, create vs improve variants, reservation), `tui completion` re-run, `/help` listing, plus one live scratch-repo run producing a prompted `fileEditor create` in `default` mode and a denial in `plan` mode.
+
+## SER-082 — Withhold credential-shaped environment variables from model-spawned shells: a pure `scrubShellEnv(env, passthrough)` in `src/tools/shell-env.ts` drops names matching one fixed case-insensitive pattern (`KEY`, `SECRET`, `TOKEN`, `PASSWORD`, `CREDENTIAL`) from the environment handed to the persistent SDK shell (new optional `env` in the pinned patch's `CreateBashOptions`, threaded into `BashSession.start`'s `spawn`) and to `background-bash.ts` job spawns; `PATH`, `HOME`, locale and proxy names always survive; config `shellEnv.passthrough: string[]` (exact names or `PREFIX_*`, validated like every other config key) restores named variables; `/status` gains one `shell env` row (`N credential-shaped variables withheld`, bounded passthrough names) and one startup notice line when N > 0; recipe children share the same builder; user `!` commands, hooks and MCP servers keep `process.env` unchanged
+
+- Status: `not-started`
+- Priority: 110
+- Score: 11
+- Importance: 4
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-09-08.md`](../research_2026-09-08.md) (run `07:52:34Z`, `peer` path by roll)
+
+### Implementation / acceptance evidence
+
+_(none yet)_
+
+### Notes / blockers / abandonment reason
+
+Sources: DeepSeek harness `packages/subprocess/subprocess/src/index.ts` (`SENSITIVE_ENV_PATTERN = /KEY|PASSWORD|SECRET|TOKEN/i`; "Credential-shaped environment names are NOT forwarded to children … One heuristic for every in-repo spawner; a deliberately supplied entry survives"; `scrubbedParentEnv()` keeps `PATH`, `HOME`, locale, proxy), Codex `shell_environment_policy` (`inherit`, `filters`, automatic `KEY`/`SECRET`/`TOKEN` exclusion behind `ignore_default_excludes = false`). Darwin evidence: pinned SDK `vended-tools/bash/bash.js:156` (`env: { ...process.env, PS1: '', PS2: '' }`), `src/tools/background-bash.ts:350–352` (`env: process.env`) and `:725` (`createBash({ cwd, projectRoot })`), `src/agent/permission.ts:1117–1128` (`echo`, `cat` whitelisted) with `permission-rules.ts:42` (`$VAR` is not a metacharacter); reproduced in the report: `assessRisk` returns `safe` for `echo $ANTHROPIC_API_KEY` and `cat /proc/self/environ`, so in `default` mode the key darwin itself needs (`src/config.ts:1803`) prints without a prompt and lands in the tool result, the trajectory and `/export`. Load-bearing rows touched: "Process exit and persistent foreground cwd" (SDK patch — regenerate `dist/patches/` via `pnpm build`, re-run `verify-background-bash.ts`†, `tui bashExit`), "Paths"/config (`verify-config.ts`†). Constraints: never touch `src/tui/shell-command.ts`, `src/hooks/*` or `src/mcp/registry.ts` env handling (user-authorized/user-configured processes); the pattern is fixed, not configurable — only the passthrough is; the scrub is computed once per runtime `create()` (a passthrough change takes effect on the next session); withheld *names* may be reported, values never. Known cost: a project test that reads e.g. `STRIPE_API_KEY` fails until the user adds a passthrough — the startup notice and `/status` row exist so the cause is visible. Acceptance: `spike/verify-shell-env.ts`† (pattern, survivors, passthrough exact and prefix, invalid config refused), a real runtime `bash` call `echo "[$ANTHROPIC_API_KEY]"` → `[]` while `!echo "[$ANTHROPIC_API_KEY]"` still shows it, background job env scrubbed identically, `/status` row present, `pnpm build` regenerates the patch dialect, `pnpm test` green.
+
+## SER-083 — `/tangent` over the rewind machinery: bare `/tangent` while idle and outside a tangent marks the *next* completed prompt's rewind snapshot as the return point and shows `tangent` in the header state and busy rows; `/tangent` again (or `/tangent end`) runs the existing `AgentRuntime.startRewind` to that snapshot — same successor runtime, same omission notice (files, shell, hooks, MCP writes, subagents, jobs and memory are not undone) plus one line naming how many prompts were discarded; the restored prompt is not returned to the draft; `/clear`, `/rewind` and a skipped snapshot capture (rewind cap) end the tangent with a notice; nested `/tangent` is refused with a notice; `/status` states `tangent: since prompt N`
+
+- Status: `not-started`
+- Priority: 111
+- Score: 8
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-09-08.md`](../research_2026-09-08.md) (run `07:52:34Z`, `peer` path by roll)
+
+### Implementation / acceptance evidence
+
+_(none yet)_
+
+### Notes / blockers / abandonment reason
+
+Source: kiro-cli 3.0 `cli/v3/tangent.md` ("branches into a side-conversation … that inherits your conversation so far. Inside a tangent, goes back one level toward the parent"; "everything after stays isolated"; footer `↯ name` chip; use cases "Quick lookups without derailing", "Contain noisy debugging"). Darwin evidence: `src/agent/rewind.ts`, `AgentRuntime.startRewind`, load-bearing § `/rewind` (hard cap 100 snapshots, only completed bounded prompts catalogued, full cap skips capture — the tangent must say when no return point could be captured; selected prompt normally returns unsent — the tangent return suppresses that), `src/tui/rewind-search.ts` picker, SER-059 (Esc Esc opens it). Scope deliberately one level, unnamed, no picker: `/rewind`'s picker already lists every boundary, and nested/named tangents would duplicate it. The tangent is live TUI session state (like the permission mode): never persisted, dropped by `/clear`, not present in headless drivers. If the rewind successor path cannot suppress the returned draft without touching `startRewind`'s contract, do the suppression in `App.tsx` at the return seam and record why. Acceptance: free `spike/verify-tangent.ts`† (enter, two prompts, return → conversation equals the pre-tangent snapshot, no draft, notice names 2 discarded prompts and the omission list; nested refused; `/clear` ends it), `tui tangent` scenario for the header state, `verify-rewind.ts`† unchanged.
