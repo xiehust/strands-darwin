@@ -205,6 +205,7 @@ settings:
 
 patchedDependencies:
   '@strands-agents/sdk@1.16.0': 47be9fa6c3795cd34f36cc0895d530069340606eb79e908c9e8326e1f22027a1
+  ink@7.1.1: 7b7a5b41b349ec752f165991f44b21ee825ca371b8246f6fb20a33098e195323
 
 importers:
 
@@ -227,7 +228,7 @@ importers:
         version: 4.0.3
       ink:
         specifier: ^7.1.1
-        version: 7.1.1(@types/react@19.2.18)(react@19.2.8)
+        version: 7.1.1(patch_hash=7b7a5b41b349ec752f165991f44b21ee825ca371b8246f6fb20a33098e195323)(@types/react@19.2.18)(react@19.2.8)
       openai:
         specifier: ^6.49.0
         version: 6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3)
@@ -2916,7 +2917,7 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ink@7.1.1(@types/react@19.2.18)(react@19.2.8):
+  ink@7.1.1(patch_hash=7b7a5b41b349ec752f165991f44b21ee825ca371b8246f6fb20a33098e195323)(@types/react@19.2.18)(react@19.2.8):
     dependencies:
       '@alcalzone/ansi-tokenize': 0.3.0
       ansi-escapes: 7.3.0

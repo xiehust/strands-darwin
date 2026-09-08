@@ -1221,7 +1221,7 @@ the trajectory records no child event.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything
 else takes an explicit `projectRoot`.
 
-## The npm package — one pinned patch, generated at build, refused when missing
+## The npm package — pinned pnpm patches, generated at build, SDK refused when missing
 
 **`npm install -g strands-darwin` is the supported install; the pnpm patch stays the single
 source.** The registry name is `strands-darwin` (bare `darwin` is taken); the command stays
@@ -1229,12 +1229,13 @@ source.** The registry name is `strands-darwin` (bare `darwin` is taken); the co
 exported `DARWIN_PACKAGE_NAME`. `engines.node` is `>=20.11.0` because `import.meta.dirname` is
 used. The tarball is `npm pack` of a built tree: `files` whitelists `dist/src`, `dist/patches`
 and `README.md` (npm adds every `README*` itself), so `dist/spike/`, `src/`, `spike/`, `docs/`,
-`patches/` and `attachments/` never ship; `prepack` runs the build. The SDK patch exists once,
+`patches/` and `attachments/` never ship; `prepack` runs the build. Each patch exists once,
 as the pnpm patch `pnpm patch-commit` writes and `pnpm-workspace.yaml` `patchedDependencies`
-applies; `pnpm build` ends with `node dist/src/npm-package/generate-patch.js`, which rewrites
-it into patch-package's dialect (`src/npm-package/patch-package-format.ts`: only the
-`diff --git`/`---`/`+++` paths gain `node_modules/@strands-agents/sdk/`, the file name becomes
-`@strands-agents+sdk+1.16.0.patch`, idempotent) under `dist/patches/` — a gitignored build
+applies — the SDK patch and, since the terminal-narrowing redraw (see *TUI — the frame
+budget*), `patches/ink@7.1.1.patch`; `pnpm build` ends with `node dist/src/npm-package/generate-patch.js`, which rewrites
+every one of them into patch-package's dialect (`src/npm-package/patch-package-format.ts`: only the
+`diff --git`/`---`/`+++` paths gain `node_modules/<package>/`, the file name becomes
+`@strands-agents+sdk+1.16.0.patch` / `ink+7.1.1.patch`, idempotent) under `dist/patches/` — a gitignored build
 artifact, never a second hand-maintained copy. `postinstall` is
 `patch-package --patch-dir dist/patches`, and both edges of the developer path hold by
 patch-package's own behaviour: an absent directory (fresh clone, `postinstall` runs before any
@@ -1391,6 +1392,27 @@ out as flex items and wraps them independently); and `useBoxMetrics` is *parent*
 `useCursor` is frame-absolute, so `InputBox` is handed its parent's offset and adds the rows its
 own window hides. Required checks: `spike/verify-frame-budget.ts` and the `spike/verify-tui.ts`
 scenarios named above.
+
+**A narrower terminal redraws the frame once from a cleared screen** (`patches/ink@7.1.1.patch`).
+Ink's standard renderer repaints by erasing exactly the number of lines it wrote last time.
+Reflowing terminals (tmux, iTerm2, Terminal.app, kitty, xterm.js and VS Code) rewrap the rows
+of the frame already on screen when the window gets narrower, so the frame then occupies more
+rows than that count, and stock Ink 7.1.1's `resized` handler only `log.clear()`s the stale
+count: the top rows survive, once per resize event — in darwin the `◆ DARWIN · working` header
+and the model line stacked up, each frozen at a different shimmer letter (the 90 ms spinner
+tick meant several events during one drag). Widening does not reflow anything Ink drew (every
+row ends in a hard newline) and a height-only change reflows nothing, so those paths are
+untouched. The patch, applied by the same pnpm/patch-package pipeline as the SDK patch, makes
+the first interactive frame after a width decrease take Ink's own overflow path —
+`clearTerminal + fullStaticOutput + frame`, then `log.sync` — and cancels any throttled write of
+the pre-resize frame that would otherwise land after the redraw at the old width. This is the
+one whole-screen clear the frame budget otherwise exists to avoid, paid once per resize event
+rather than per render, and never from darwin code: the App cannot see Ink's last output or
+its static buffer, so an App-side erase would either leave the ghost rows or lose the
+transcript from the viewport. `spike/verify-resize-redraw.ts` (in `pnpm test`) pins the byte
+contract in a pty — one `clearTerminal` per width decrease, transcript before frame, the
+incremental erase again afterwards, no clear on widening or height change — and its fixture's
+header comment says how to watch the reflow itself in tmux.
 
 The ready-state brand is deliberately outside that budget: `WelcomeHeader` is the first
 presentation-only item in `MessageList`'s existing `<Static>` owner (adjacent Static owners do not

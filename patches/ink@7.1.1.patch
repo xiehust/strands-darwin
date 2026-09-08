@@ -1,0 +1,58 @@
+diff --git a/build/ink.js b/build/ink.js
+index 0082666b281ec2db77b875d6b8460bcc19a59ce7..dd772c834f77096cd3621f83bfa7d0fc0137ea47 100644
+--- a/build/ink.js
++++ b/build/ink.js
+@@ -155,6 +155,9 @@ export default class Ink {
+     lastOutputToRender;
+     lastOutputHeight;
+     lastTerminalWidth;
++    // Set by `resized` when the terminal got narrower: the next interactive frame
++    // redraws from a cleared screen instead of erasing by the stale line count.
++    redrawAfterNarrowing;
+     container;
+     rootNode;
+     // This variable is used only in debug mode to store full static output
+@@ -279,8 +282,17 @@ export default class Ink {
+     resized = () => {
+         const currentWidth = getWindowSize(this.options.stdout).columns;
+         if (currentWidth < this.lastTerminalWidth) {
+-            // We clear the screen when decreasing terminal width to prevent duplicate overlapping re-renders.
+-            this.log.clear();
++            // A narrower terminal reflows the rows of the previous frame that no
++            // longer fit, so the frame now occupies more rows than the line count
++            // `log.clear()` would erase, and the top rows survive as stale copies
++            // (one per resize event). Redraw the next frame from a cleared screen
++            // with the full static output, the way overflowing frames already do,
++            // and drop any throttled write of the pre-resize frame that would
++            // otherwise land after the redraw.
++            if (typeof this.throttledLog.cancel === 'function') {
++                this.throttledLog.cancel();
++            }
++            this.redrawAfterNarrowing = true;
+             this.lastOutput = '';
+             this.lastOutputToRender = '';
+         }
+@@ -753,13 +765,16 @@ export default class Ink {
+         const viewportRows = isTty ? getWindowSize(this.options.stdout).rows : 24;
+         const isFullscreen = isTty && outputHeight >= viewportRows;
+         const outputToRender = isFullscreen ? output : output + '\n';
+-        const shouldClearTerminal = shouldClearTerminalForFrame({
+-            isTty,
+-            viewportRows,
+-            previousOutputHeight: this.lastOutputHeight,
+-            nextOutputHeight: outputHeight,
+-            isUnmounting: this.isUnmounting,
+-        });
++        const redrawAfterNarrowing = this.redrawAfterNarrowing === true;
++        this.redrawAfterNarrowing = false;
++        const shouldClearTerminal = (isTty && redrawAfterNarrowing) ||
++            shouldClearTerminalForFrame({
++                isTty,
++                viewportRows,
++                previousOutputHeight: this.lastOutputHeight,
++                nextOutputHeight: outputHeight,
++                isUnmounting: this.isUnmounting,
++            });
+         if (shouldClearTerminal) {
+             const sync = this.shouldSync();
+             if (sync) {

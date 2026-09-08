@@ -11,6 +11,7 @@ const suites = [
   'verify-frame-budget.ts',
   'verify-startup-screen.tsx',
   'verify-startup-pty.ts',
+  'verify-resize-redraw.ts',
   'verify-react-production-memory.ts',
   'verify-visual-language.tsx',
   'verify-markdown.tsx',

@@ -10,18 +10,18 @@ preloaded into the system prompt.
 
 **v0.0.1 — the [baseline release](../../releases/tag/v0.0.1) — was built entirely with
 [Claude Code](https://claude.com/claude-code).** From this point on, darwin develops
-itself: every subsequent feature, fix, and release is made by running darwin inside its
-own repository (the git history and `docs/iteration-log.md` are the paper trail).
+itself: every later feature, fix and release is made by running darwin inside its own
+repository (the git history and `docs/iteration-log.md` are the paper trail).
 
 ## Commands
 
 ```bash
-pnpm typecheck        # tsc --noEmit — the quality gate (no lint is configured)
+pnpm typecheck        # tsc --noEmit — the quality gate (no lint)
 pnpm test             # fast suites only, no model calls, no network
-pnpm start            # run the TUI here; --resume reopens the last session, --resume <id>/--session <id> a named one
+pnpm start            # run the TUI here; --resume [id] / --session <id> reopen a session
 pnpm dev-repl         # readline fallback driver for debugging without Ink
-pnpm tsx src/cli.ts sessions             # resumable sessions: id, age, first prompt; read-only, no model call
-pnpm tsx src/cli.ts trajectory list      # recorded sessions; search|replay|fork read them, no model call
+pnpm tsx src/cli.ts sessions             # resumable sessions: id, age, first prompt; read-only
+pnpm tsx src/cli.ts trajectory list      # recorded sessions; search|replay|fork read them (no model call)
 ```
 
 Model-calling suites are run individually (they hit Bedrock via the EC2 instance role; use
@@ -29,22 +29,22 @@ inference-profile model ids, never bare `anthropic.*`):
 
 ```bash
 AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts            # full pty-driven TUI suite
-AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # single scenario; the header comment lists them all
+AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve    # one scenario; the header comment lists them
 AWS_REGION=us-west-2 pnpm tsx spike/acceptance-e2e.ts        # end-to-end: real git repo, fix a bug, prove it
 AWS_REGION=us-west-2 pnpm tsx spike/verify-step-1-2.ts       # agent core / permissions / resume
 AWS_REGION=us-west-2 pnpm tsx spike/verify-prompt-cache-live.ts  # cache tokens written on turn 1, read on turn 2
-AWS_REGION=us-west-2 pnpm tsx spike/verify-thinking-live.ts   # effort levels the service accepts, and that high reasons
+AWS_REGION=us-west-2 pnpm tsx spike/verify-thinking-live.ts   # accepted effort levels, and that high reasons
 pnpm tsx spike/verify-mantle-live.ts                          # openai.* over Bedrock Mantle: tool calls, multi-turn, live /effort
-pnpm tsx spike/verify-anthropic-live.ts [model]               # anthropic provider through ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY: tool calls, multi-turn
+pnpm tsx spike/verify-anthropic-live.ts [model]               # anthropic provider via ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY
 pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2    # which models Mantle serves, per region
 pnpm tsx spike/verify-model-command.ts --live                  # /model: switch provider mid-session, conversation intact
-pnpm tsx spike/probe-model-switch.ts                          # what survives handing a conversation to another provider
-pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-tall live frame costs: whole-screen clears per render
+pnpm tsx spike/probe-model-switch.ts                          # what survives a provider hand-off
+pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-tall live frame costs: clears per render
 ```
 
 `spike/verify-model-command.ts` without `--live`, and every scenario the header comment of
 `spike/verify-tui.ts` lists as free, make no model calls. Re-run `completion` after touching the
-built-in slash commands (`MAX_COMPLETIONS` has to keep every built-in visible); `pathCompletion`
+built-in slash commands (`MAX_COMPLETIONS` must keep every built-in visible); `pathCompletion`
 is its `@` counterpart.
 
 There is no mock-based test layer: verification is real pty sessions, real files, real model
@@ -52,12 +52,11 @@ calls. `spike/` is the test suite, not scratch space.
 
 ## Architecture — the load-bearing decisions
 
-Index only. Each row is the invariant you must not break; the full rationale for every entry
-lives in `docs/architecture/load-bearing-decisions.md` under a heading of the same name —
-**read that doc section before changing that area**. In the checks column, `tui <name>` means
-`spike/verify-tui.ts <name>` and a bare filename lives under `spike/`; `†` marks suites already
-in `pnpm test`; `doc §` means the doc section is the only reference. Checks are free (no model
-call) unless marked *live*.
+Index only. Each row is the invariant you must not break; the rationale for every entry lives
+in `docs/architecture/load-bearing-decisions.md` under a heading of the same name — **read that
+section before changing that area**. Checks: `tui <name>` means `spike/verify-tui.ts <name>`, a
+bare filename lives under `spike/`, `†` marks suites in `pnpm test`, `doc §` means the doc
+section is the only reference; all free (no model call) unless marked *live*.
 
 | Decision (doc §) | Load-bearing invariant | Code | Checks |
 | --- | --- | --- | --- |
@@ -103,9 +102,9 @@ call) unless marked *live*.
 | FileEditor recovery | Exact `str_replace` miss stays an error and zero-write; SDK-private bounded exact-seed search may return only advisory current context (≤5 numbered rows, ≤240 code points/row), deterministic earliest tie, explicit absence/cap, never fuzzy mutation; `replace_all: true` replaces every occurrence in one write, absent/false byte-identical | pinned SDK patch, `spike/verify-file-editor.ts` | doc § |
 | Same-path fileEditor ordering — serialize the mutation, never the executor | Wrapper substituted for the SDK singleton in `tools:` (same name/spec/bytes, SDK `stream()` delegated); `create`/`str_replace`/`insert` on one resolved absolute path await the previous one per Agent (`WeakMap` off `context.agent`), so each reads what the last wrote; `view`, other paths, other Agents/children stay concurrent; failures release, settled keys deleted; never `toolExecutor` | `src/tools/file-editor-serial.ts`, `src/agent/runtime.ts` | `verify-file-editor-serial.ts`† |
 | Paths | Every `.darwin/` location derived from the CLI's cwd here; `process.cwd()` only in `cli.ts` / `dev-repl.ts` | `src/paths.ts` | doc § |
-| The npm package — one pinned patch, generated at build, refused when missing | `npm install -g strands-darwin` is the supported install (`pnpm add -g` unsupported); the pnpm patch is the single source, `pnpm build` generates its patch-package dialect into gitignored `dist/patches/` and `postinstall` (`patch-package --patch-dir dist/patches`) exits 0 when the dir is absent or the SDK already patched; `files` ships only `dist/src`, `dist/patches`, README; `cli.ts` is a bootstrap whose static imports never reach the SDK — marker-file preflight, one five-line refusal + exit 1, then `import()` of `cli-main.ts` | `package.json`, `src/npm-package/`, `src/sdk-patch-preflight.ts`, `src/cli.ts` | `verify-npm-patch-format.ts`†, `verify-npm-package.ts` (*registry*) |
+| The npm package — pinned pnpm patches, generated at build, SDK refused when missing | `npm install -g strands-darwin` is the supported install (`pnpm add -g` unsupported); every pnpm patch in `patches/` (SDK, Ink) is the single source; `pnpm build` writes patch-package copies to gitignored `dist/patches/`; `postinstall` (`patch-package --patch-dir dist/patches`) exits 0 when the dir is absent or already applied; `files` ships only `dist/src`, `dist/patches`, README; `cli.ts` is a bootstrap whose static imports never reach the SDK — marker-file preflight, five-line refusal + exit 1, then `import()` of `cli-main.ts` | `package.json`, `src/npm-package/`, `src/sdk-patch-preflight.ts`, `src/cli.ts` | `verify-npm-patch-format.ts`†, `verify-npm-package.ts` (*registry*) |
 | Process exit and persistent foreground cwd | Each runtime reaps its own persistent shell (`retire()` on `/clear`); foreground calls serialize per Agent and report effective cwd; only narrow cwd-missing/project-root-existing relative paths are refused before launch; exit 0 returns captured output + restart notice, nonzero/signal stays failure; foreground children read `/dev/null` (prompts get EOF, sentinels unreachable), `stop()` kills the shell's process group, `cancelSignal` (Esc / headless Ctrl+C) kills the running command the same way; background jobs reaped as process groups (TERM→KILL); bounded `wait` shares the cursor, with opt-in terminal-focused aggregation up to 30 min plus running-timeout wait-again guidance; unref'd 500ms exit fallback | `runtime.shutdown()`, SDK patch, `cli.ts` | `verify-background-bash.ts`†, `probe-cancel-exit.ts`, `verify-clear-session.ts`†, `tui bashExit` / `cancelThenContinue` (*live*) |
-| TUI — the frame budget | `printer: false`; whatever is redrawn must fit the terminal; one budget in fixed priority with a share ceiling and a `modal` exemption; only the header is measured, everything else *counts* its visual rows; what is not shown is stated; one `<Text>` per counted row | `src/tui/frame-budget.ts` | doc § |
+| TUI — the frame budget | `printer: false`; whatever is redrawn must fit the terminal; one budget in fixed priority with a share ceiling and a `modal` exemption; only the header is measured, everything else *counts* its visual rows; what is not shown is stated; one `<Text>` per counted row; narrowing reflows the drawn frame, so the pinned Ink patch redraws once from a cleared screen (the overflow path), never an erase by the stale line count | `src/tui/frame-budget.ts`, `patches/ink@7.1.1.patch` | `verify-resize-redraw.ts`†, doc § |
 | The busy rows | Elapsed + token suffix on the existing one-`<Text>` truncate-end rows — no new row, tick source, or channel; unreported metric absent, never 0; readout stops with the turn | `src/tui/busy-suffix.ts` | `verify-busy-suffix.ts`†, `tui usage` (*live*) |
 | File-edit diffs | Diff of the tool *input*, never read from disk; `- `/`+ `/`  ` markers survive ANSI stripping and reconstruct old/new exactly; approving writes the untruncated input; tone scoped to `fileEditor`; finished rows (`<Static>`, written once) show the complete diff in both modes — only live surfaces (active panel, permission box) stay bounded; `+N -N` stat and intraline bold are marker-derived enhancements — never in `summary`, which replay prints verbatim | `src/tui/edit-diff.ts` | `verify-edit-diff.ts`†, `verify-visual-language.tsx`† |
 | Streaming answers into `<Static>` | Complete lines committed while the turn runs; last non-blank + trailing blanks held back; the authoritative `contentBlockEvent` reconciles, divergence is stated; `AnswerPart` decides labels at push time and `formatReplay` respects the same flags | `src/tui/turn-state.ts` | doc § |
@@ -121,10 +120,10 @@ call) unless marked *live*.
 - Deep documentation lives in `docs/architecture/load-bearing-decisions.md` (the rationale behind
   every row above), `docs/architecture/sub-agents.md`, and the header comments of the `spike/`
   suites — a pty test's own comment explains its anchored waits, idle detection and
-  state-exclusive assertion strings. Read the relevant one before changing that area.
+  assertion strings. Read the relevant one before changing that area.
 - Keep this file under 32 KiB: darwin preloads only the first `MAX_INSTRUCTIONS_BYTES` of it
   into its own system prompt, so anything past the cap is invisible to the agent. Long-form
-  architecture rationale goes to `docs/architecture/load-bearing-decisions.md`.
+  rationale goes to `docs/architecture/load-bearing-decisions.md`.
 - Non-trivial work: understand the area (doc section + relevant `spike/` suite) before editing,
   verify with `pnpm typecheck` + `pnpm test` plus the row's listed checks, then commit.
 - The installed `darwin` command runs `dist/`, not `src/`: after any commit that touches
