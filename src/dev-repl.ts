@@ -27,6 +27,7 @@ import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from './commands/workflo
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
 import { DARWIN_DIRNAME } from './paths.js';
 import { formatShellEnvNotice } from './tools/shell-env.js';
+import { TANGENT_TUI_ONLY_NOTICE, parseTangentCommand } from './tui/tangent.js';
 
 const DETAIL_MAX_LINES = 12;
 const DETAIL_MAX_CHARS = 800;
@@ -285,6 +286,13 @@ async function main(): Promise<void> {
       // one of the things worth exercising; nothing is written to the config.
       if (input === '/mode' || input.startsWith('/mode ')) {
         runModeCommand(runtime, input);
+        continue;
+      }
+
+      // Live TUI session state (SER-083): this driver has no rewind seam, so the
+      // command is a notice here rather than a prompt the model would see.
+      if (parseTangentCommand(input) !== undefined) {
+        console.log(`  ${TANGENT_TUI_ONLY_NOTICE}\n`);
         continue;
       }
 

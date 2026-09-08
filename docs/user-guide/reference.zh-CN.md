@@ -91,7 +91,9 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/model [name]` | 列出/切换已配置模型，会话不断开；缓存尚热时切换前先提示一次 |
 | `/permissions` | 当前放行规则及来源，随后是已配置的拒绝规则 |
 | `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘上的放行规则；拒绝规则不能在此撤销 |
-| `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/hooks/shell 环境变量/费用/成本/上下文；出现过缓存未命中后，模型行会注明最近一次未命中的可能原因 |
+| `/rewind` | 在本会话已完成提示词的检查点中选择；接受后把对话分支到一个新的后继会话，恢复到所选提示词之前的状态，该提示词回到编辑器但不发送；文件、shell 与 `!` 的效果、hooks、MCP 写入、子代理、后台任务和已学习记忆永不回滚 |
+| `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/hooks/shell 环境变量/费用/成本/上下文；出现过缓存未命中后，模型行会注明最近一次未命中的可能原因；只有在 tangent 已武装或进行中时才会多出一行 `tangent` |
+| `/tangent`、`/tangent start`、`/tangent end` | 建立在 rewind 路径之上的单层书签：裸 `/tangent` 先武装，下一条完成的提示词开始它（该提示词的检查点就是返回点）；再输入 `/tangent` 或 `/tangent end` 就沿着与 `/rewind` 相同的后继路径回到那里——同样的省略说明，外加 `returned from tangent — N prompt(s) discarded`——且不把提示词放回编辑器；进行中再 `/tangent start` 会被拒绝（不嵌套、不提供选择器：请用 `/rewind`）；`/clear` 或接受一次 `/rewind` 会以 `tangent ended by …` 结束它；仅为 TUI 当前会话状态 |
 | `/tasks` | 后台任务及其最近三行非空输出；忙碌时也可用；读取不会移动模型的 `output`/`wait` 游标 |
 | `/trajectory` | 当前运行的本地记录状态 |
 | `/usage` | 当前进程 token 分桶及近似美元成本；未报告不等于零；出现过缓存未命中后，统计次数并注明最近一次的可能原因 |
@@ -101,7 +103,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/self-evolution-research` | 内置 skill：待办/研究/评分/受监督迭代循环 |
 | `/self-reflection [session id]` | 内置 skill：基于轨迹复盘，达标建议进入 backlog |
 
-`/help`、`/mcp`、`/permissions`、`/status`、`/tasks`、`/trajectory`、`/usage`、记忆管理等报告命令读取本地状态，不会把报告发送给模型；只有文档明确说明会更新当前 prompt 的变更命令例外。忙碌时 `/clear`、`/compact`、`/model`、`/exit`、`/quit` 会拒绝，普通输入进入队列。
+`/help`、`/mcp`、`/permissions`、`/status`、`/tasks`、`/trajectory`、`/usage`、记忆管理等报告命令读取本地状态，不会把报告发送给模型；只有文档明确说明会更新当前 prompt 的变更命令例外。忙碌时 `/clear`、`/compact`、`/model`、`/rewind`、`/tangent`、`/exit`、`/quit` 会拒绝，普通输入进入队列。
 
 ## 输入语法
 

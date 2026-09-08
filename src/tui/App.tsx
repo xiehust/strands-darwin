@@ -28,6 +28,7 @@ import {
 } from '../agent/permission.js';
 import { compactAndRecord, compactFocusRefusal, normalizeCompactFocus } from '../agent/compact.js';
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
+import type { RewindCatalogue } from '../agent/rewind.js';
 import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { describeModelCosts, type ModelUsageShare } from '../agent/cost.js';
 import { averageRequestInputTokens, type SessionCallStats } from '../agent/call-stats.js';
@@ -144,6 +145,20 @@ import {
   rewindSearchView,
   type RewindSearch,
 } from './rewind-search.js';
+import {
+  TANGENT_COMMAND_USAGE,
+  armTangent,
+  captureReturnPoint,
+  discardedPromptCount,
+  parseTangentCommand,
+  rewindDraftAfterBranch,
+  tangentCommandOutcome,
+  tangentEndedByNotice,
+  tangentHeaderSuffix,
+  tangentReturnNotice,
+  tangentStatusFact,
+  type TangentState,
+} from './tangent.js';
 import { clipboardImageFact, readClipboardImage } from './clipboard-image.js';
 import {
   delegationWakeEntries,
@@ -558,6 +573,16 @@ export function App({
     rewindSearchRef.current = next;
     setRewindSearchState(next);
   }, []);
+  // `/tangent` (SER-083): live TUI session state like the permission mode — never
+  // persisted or recorded, dropped by `/clear`, absent in a resumed session. In
+  // state for the header/status projections and mirrored in a ref for the
+  // callbacks that read it after an await.
+  const [tangent, setTangentState] = useState<TangentState | undefined>(undefined);
+  const tangentRef = useRef(tangent);
+  const setTangent = useCallback((next: TangentState | undefined) => {
+    tangentRef.current = next;
+    setTangentState(next);
+  }, []);
   const updateRewindSearch = useCallback((update: (current: RewindSearch) => RewindSearch) => {
     const current = rewindSearchRef.current;
     if (current !== undefined) setRewindSearch(update(current));
@@ -609,6 +634,40 @@ export function App({
     setRewindSearch(openRewindSearch(opening, runtime.info.sessionId, catalogue.checkpoints));
     return true;
   }, [dispatch, runtime, setEditor, setHistorySearch, setRecall, setRewindSearch, startRewind]);
+  // The one way a rewind successor takes over the screen — `/rewind` acceptance and
+  // a `/tangent` return (SER-083) both land here, so the terminal clear, the editor
+  // hand-back rule, the per-session latches and the omission notice cannot drift.
+  // The only difference between the two is the draft: `rewindDraftAfterBranch`.
+  const adoptBranchSuccessor = useCallback((
+    next: AgentRuntime,
+    kind: 'rewind' | 'tangent',
+    selectedPrompt: string,
+    sourceSessionId: string,
+  ) => {
+    writeToTerminal(CLEAR_TERMINAL);
+    recordAction({ type: 'clear' });
+    setRuntime(next);
+    setRewindSearch(undefined);
+    // The restored session replaces the whole editor state; the selected prompt
+    // returns unsent (a tangent return hands back nothing — the user asked to
+    // return, not to resend), and undo must not reach across the session boundary.
+    undoStack.current = [];
+    const draft = rewindDraftAfterBranch(kind, selectedPrompt);
+    setEditor({ text: draft, cursor: { offset: draft.length, affinity: 'upstream' } });
+    setSelectedCompletion(0);
+    contextWarnLatch.current = createContextWarnLatch();
+    trajectoryWarned.current = false;
+    diagnosticsWarned.current = false;
+    pendingShellReports.current = [];
+    setQueued([]);
+    withNoticeDiagnostics(recordAction, next.diagnostics)({
+      type: 'notice',
+      severity: 'warn',
+      text:
+        `rewound conversation into new session ${next.info.sessionId}; source ${sourceSessionId} remains saved and resumable. ` +
+        'Workspace unchanged: workspace files, shell and ! effects, hooks, MCP writes, subagents, background jobs, and learned-memory files were not rewound.',
+    });
+  }, [recordAction, setEditor, setQueued, setRewindSearch, setSelectedCompletion, writeToTerminal]);
   // When the first no-op Escape landed on an empty idle composer; a second one
   // within ESCAPE_REWIND_CHORD_MS opens the chooser. Cleared by any other key or
   // owner, so the chord can never straddle a draft, a turn or a menu.
@@ -1052,6 +1111,24 @@ export function App({
         returnQueuedToEditor(true);
       }
 
+      // An armed `/tangent` (SER-083) resolves on the first prompt after it: the
+      // checkpoint `send()` captured before this prompt is the return point, read
+      // back from the catalogue the runtime already keeps — no snapshot of our own,
+      // no second listing shape. No growth means the tangent ends here, saying why.
+      const armed = tangentRef.current;
+      if (armed?.phase === 'armed') {
+        const facts = { image: image !== undefined, sessionOriginated: origin !== undefined, completed: !failed };
+        let catalogue: RewindCatalogue;
+        try {
+          catalogue = await runtime.listRewindCheckpoints();
+        } catch (error) {
+          catalogue = { checkpoints: [], capped: false, problem: error instanceof Error ? error.message : String(error) };
+        }
+        const outcome = captureReturnPoint(armed, catalogue, facts);
+        setTangent(outcome.kind === 'started' ? outcome.state : undefined);
+        dispatch({ type: 'notice', text: outcome.notice, ...(outcome.kind === 'ended' && { severity: 'warn' as const }) });
+      }
+
       // Post-turn context-pressure check: reuse the configurable warning latch
       // and existing Static transcript notice — no second threshold or live row.
       // Compaction remains an explicit user command. A failed estimate is silently
@@ -1100,7 +1177,7 @@ export function App({
 
       return !failed;
     },
-    [prepareAnswerClose, returnQueuedToEditor, runtime, waitUntilRenderFlush],
+    [prepareAnswerClose, returnQueuedToEditor, runtime, setTangent, waitUntilRenderFlush],
   );
 
   const submit = useCallback(
@@ -1437,6 +1514,7 @@ export function App({
             mode: runtime.permissionMode,
             allowRuleCount: runtime.allowRuleCount,
             denyRuleCount: runtime.denyRuleCount,
+            tangent: tangentStatusFact(tangentRef.current),
             mcpServers: runtime.listMcpServers(),
             skillNames: runtime.info.skillNames,
             hookSources: runtime.info.hookSources,
@@ -1594,6 +1672,79 @@ export function App({
         return;
       }
 
+      // `/tangent` (SER-083): a bookmark over the rewind path. Below the busy check
+      // like `/rewind` (it refuses to queue: arming is a statement about "the next
+      // prompt", and the return replaces the runtime). Arming only reads the
+      // catalogue; the return is `startRewind` on the captured row, adopted through
+      // the same successor path as `/rewind` — minus the draft hand-back.
+      const tangentCommand = parseTangentCommand(text);
+      if (tangentCommand !== undefined) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (tangentCommand === 'usage') {
+          dispatch({ type: 'notice', text: TANGENT_COMMAND_USAGE });
+          return;
+        }
+        if (startRewind === undefined) {
+          dispatch({ type: 'notice', text: '/tangent is not available in this driver', severity: 'warn' });
+          return;
+        }
+        const outcome = tangentCommandOutcome(tangentRef.current, tangentCommand);
+        if (outcome.action === 'notice' || outcome.action === 'disarm') {
+          if (outcome.action === 'disarm') setTangent(undefined);
+          dispatch({ type: 'notice', text: outcome.notice });
+          return;
+        }
+        if (outcome.action === 'arm') {
+          const armed = armTangent(await runtime.listRewindCheckpoints());
+          if (armed.kind === 'refused') {
+            dispatch({ type: 'notice', text: armed.notice, severity: 'warn' });
+            return;
+          }
+          setTangent(armed.state);
+          dispatch({ type: 'notice', text: armed.notice });
+          return;
+        }
+        // Return: the same refusals `/rewind` acceptance has, in the same order.
+        const liveDelegations = runtime.listBackgroundDelegations();
+        if (liveDelegations.length > 0) {
+          dispatch({ type: 'notice', text: liveBackgroundDelegationRefusal('/tangent', liveDelegations), severity: 'warn' });
+          return;
+        }
+        if (clearing.current) {
+          dispatch({ type: 'notice', text: 'still starting the new session — press enter again once it appears' });
+          return;
+        }
+        const sourceSessionId = runtime.info.sessionId;
+        clearing.current = true;
+        let next: AgentRuntime;
+        let discarded: number;
+        try {
+          // Counted before the branch, from the source's own catalogue; a listing
+          // failure costs precision, never the return.
+          let catalogue: RewindCatalogue | undefined;
+          try { catalogue = await runtime.listRewindCheckpoints(); } catch { catalogue = undefined; }
+          discarded = discardedPromptCount(outcome.state, catalogue);
+          next = await startRewind(outcome.state.returnPoint);
+        } catch (error) {
+          // Stale or unmapped row: the rewind path's own error, and the tangent stays
+          // armed — nothing was released, the user can still /rewind by hand.
+          dispatch({
+            type: 'notice',
+            text: `could not rewind; still in ${sourceSessionId}: ${error instanceof Error ? error.message : String(error)}`,
+            severity: 'error',
+          });
+          return;
+        } finally {
+          clearing.current = false;
+        }
+        adoptBranchSuccessor(next, 'tangent', outcome.state.returnPoint.prompt, sourceSessionId);
+        setTangent(undefined);
+        withNoticeDiagnostics(recordAction, next.diagnostics)({ type: 'notice', text: tangentReturnNotice(discarded) });
+        return;
+      }
+
       // the local reports above it: this replaces the conversation the running turn is
       // streaming into, and the SDK's session snapshot is written when that turn ends —
       // so a mid-turn switch would hand the old session's manager a conversation it no
@@ -1674,6 +1825,12 @@ export function App({
             `cleared — new session ${next.info.sessionId}. Previous session ${previousSessionId} is saved and ` +
             `resumable (darwin --session ${previousSessionId}); background jobs and MCP servers keep running.`,
         });
+        // The tangent bookmarked a conversation this session no longer holds
+        // (SER-083): it ends with one notice, and no rewind is performed for it.
+        if (tangentRef.current !== undefined) {
+          setTangent(undefined);
+          withNoticeDiagnostics(recordAction, next.diagnostics)({ type: 'notice', text: tangentEndedByNotice('/clear') });
+        }
         return;
       }
 
@@ -1792,7 +1949,7 @@ export function App({
         });
       }
     },
-    [dispatch, exit, openRewindChooser, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setEditor, setQueued, startNewSession, status, writeToTerminal],
+    [adoptBranchSuccessor, dispatch, exit, openRewindChooser, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setEditor, setQueued, setTangent, startNewSession, startRewind, status, writeToTerminal],
   );
 
   // The drain (SER-027): when the session is idle and nothing owns the keyboard,
@@ -2099,28 +2256,14 @@ export function App({
     } finally {
       clearing.current = false;
     }
-    writeToTerminal(CLEAR_TERMINAL);
-    recordAction({ type: 'clear' });
-    setRuntime(next);
-    setRewindSearch(undefined);
-    // The restored session replaces the whole editor state; the selected prompt
-    // returns unsent, and undo must not reach across the session boundary.
-    undoStack.current = [];
-    setEditor({ text: selected.prompt, cursor: { offset: selected.prompt.length, affinity: 'upstream' } });
-    setSelectedCompletion(0);
-    contextWarnLatch.current = createContextWarnLatch();
-    trajectoryWarned.current = false;
-    diagnosticsWarned.current = false;
-    pendingShellReports.current = [];
-    setQueued([]);
-    withNoticeDiagnostics(recordAction, next.diagnostics)({
-      type: 'notice',
-      severity: 'warn',
-      text:
-        `rewound conversation into new session ${next.info.sessionId}; source ${search.sourceSessionId} remains saved and resumable. ` +
-        'Workspace unchanged: workspace files, shell and ! effects, hooks, MCP writes, subagents, background jobs, and learned-memory files were not rewound.',
-    });
-  }, [dispatch, recordAction, runtime, setEditor, setQueued, setRewindSearch, startRewind, writeToTerminal]);
+    adoptBranchSuccessor(next, 'rewind', selected.prompt, search.sourceSessionId);
+    // A tangent bookmarked the conversation just left behind (SER-083): it ends
+    // with one notice, and the rewind the user chose is the only rewind performed.
+    if (tangentRef.current !== undefined) {
+      setTangent(undefined);
+      withNoticeDiagnostics(recordAction, next.diagnostics)({ type: 'notice', text: tangentEndedByNotice('/rewind') });
+    }
+  }, [adoptBranchSuccessor, dispatch, recordAction, runtime, setRewindSearch, setTangent, startRewind]);
 
   const handleRewindSearchKey = useCallback((typed: string, key: {
     readonly ctrl: boolean;
@@ -2585,7 +2728,7 @@ export function App({
   return (
     <Box flexDirection="column">
       <Box ref={headerRef} flexDirection="column">
-        <Header runtime={runtime} status={effectiveStatus} frame={frame} />
+        <Header runtime={runtime} status={effectiveStatus} frame={frame} tangent={tangent} />
       </Box>
       <MessageList
         history={state.history}
@@ -2705,11 +2848,14 @@ export function Header({
   runtime,
   status = 'idle',
   frame = 0,
+  tangent,
 }: {
   readonly runtime: AgentRuntime;
   readonly status?: Status;
   /** Existing App spinner tick; the header never owns a timer. */
   readonly frame?: number;
+  /** Live `/tangent` state (SER-083); a suffix on the state word, never a row. */
+  readonly tangent?: TangentState | undefined;
 }): React.JSX.Element {
   const info = runtime.info;
   const instructions = info.projectInstructions;
@@ -2724,6 +2870,7 @@ export function Header({
         <Text color={visualColor.identity} bold>{visualMarker.identity} DARWIN</Text>
         <Text dimColor>
           {' · '}{status === 'streaming' ? <WorkingStatus frame={frame} /> : headerStatus(status)}
+          {tangentHeaderSuffix(tangent)}
         </Text>
       </Text>
       <Text dimColor>

@@ -110,6 +110,7 @@ For multiple switchable models, provider-specific fields, Bedrock Mantle, cachin
 /init                   ask the model to create or improve this project's AGENTS.md
 /copy                   copy the last completed answer to the clipboard (OSC 52, works over SSH)
 /rewind                 branch conversation from a completed prompt (workspace unchanged)
+/tangent                bookmark the conversation for a side question; /tangent again returns
 ```
 
 Use `Ctrl+R` to search this project's prompt history (type to filter, `Ctrl+R`/`Up`/`Down` to navigate, `Enter`/`Tab` to accept, `Escape` to cancel), `Ctrl+C` to cancel busy work, `Ctrl+B` to expand or compact tool details, and `/exit` or `Ctrl+D` to quit. In the composer, `Alt/Ctrl+Left/Right` or `Alt+B`/`Alt+F` moves by word, `Alt+Backspace`/`Alt+D` deletes the word before/after the cursor, and `Ctrl+_` (or `Ctrl+-`) undoes the last `Ctrl+K`/`Ctrl+U`, `Ctrl+W` or `Alt` word deletion. On an empty idle composer, `Esc` `Esc` (the second within 500 ms) opens the `/rewind` chooser — the same thing typing `/rewind` does; a single `Esc` there does nothing. Model tool calls still pass through the active permission mode; `!` commands are commands you authorize by typing them yourself.

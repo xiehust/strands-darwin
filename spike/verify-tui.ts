@@ -17,11 +17,13 @@
  * developer's — see the note there before adding a scenario that reads one.
  *
  * Free scenarios (no model call): model | mode | clear | completion | pathCompletion | recall |
- * recallEmpty | bang | queue | wordNav | undo | mcp | resume | copy | rewind | escRewind | modelRetry — `copy`
+ * recallEmpty | bang | queue | wordNav | undo | mcp | resume | copy | rewind | escRewind | tangent | modelRetry — `copy`
  * (SER-057) seeds a completed answer through a local fixture model and `--resume`, then proves
  * the OSC 52 sequence in the raw pty output decodes to the exact committed answer text;
  * `escRewind` (SER-059) drives the seeded `rewind` fixture with two separate Escape pty events
- * and proves the chord opens the `/rewind` chooser only on an empty idle composer; `modelRetry`
+ * and proves the chord opens the `/rewind` chooser only on an empty idle composer; `tangent`
+ * (SER-083) drives a fresh session whose fixture model answers locally and proves the
+ * arm → prompt → return gesture rides the `/rewind` successor path with no draft handed back; `modelRetry`
  * (SER-067) drives an always-throttled fixture model behind darwin's own retry and proves the
  * wait phrase rides the busy row and the failed turn names how retry ended.
  *
@@ -29,7 +31,7 @@
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | contextOverflow | cursor | completion |
  *                 pathCompletion | historySearch | recall | recallEmpty | resume | copy | bang | queue | clear | mcpStderr | mcp |
- *                 rewind | escRewind | toolDetails |
+ *                 rewind | escRewind | tangent | toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | updatePlan | modelRetry | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
  */
@@ -1397,8 +1399,9 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /export is listed', completed.includes('  /export — write this session’s transcript to a file'));
     assert('the built-in /help is listed with its description',
       completed.includes('  /help — commands, prompt syntax, and keys'));
-    // Matched with its description: the 21st built-in is exactly what MAX_COMPLETIONS
-    // (21) has to keep visible, so a bare-name match would not prove the row exists.
+    // Matched with its description: the 22nd built-in (alphabetically /workflow) is
+    // exactly what MAX_COMPLETIONS (22) has to keep visible, so a bare-name match
+    // would not prove the row exists.
     assert('the built-in /init is listed',
       completed.includes('  /init — create or improve this project’s AGENTS.md'));
     // Matched with its description: the header's own mcp line also says 'mcp', so
@@ -1415,6 +1418,9 @@ async function slashCompletion(): Promise<void> {
     // Matched with its description: '  /status' could ride along in other transcript
     // text, and the description is what tells the built-in apart in the menu.
     assert('the built-in /status is listed', completed.includes('  /status — session configuration and state'));
+    // Matched with its description (SER-083): '  /tasks' shares its prefix.
+    assert('the built-in /tangent is listed',
+      completed.includes('  /tangent — branch a side conversation, /tangent again returns'));
     assert('the built-in /tasks is listed', completed.includes('  /tasks'));
     assert('the built-in /trajectory is listed', completed.includes('  /trajectory'));
     assert('the built-in /usage is listed', completed.includes('  /usage'));
@@ -1535,7 +1541,7 @@ async function pathCompletion(): Promise<void> {
   await symlink(outside, path.join(dir, 'escape'), 'dir');
   // Enough entries that the menu must drop some, so "what is not shown is stated" is
   // asserted on the real thing rather than on the helper that counts it. 19 pads make
-  // 24 candidates — far enough past MAX_COMPLETIONS (21) that a mid-list selection
+  // 24 candidates — far enough past MAX_COMPLETIONS (22) that a mid-list selection
   // truthfully hides rows on *both* sides of the window.
   for (let index = 1; index <= 19; index += 1) {
     await writeFile(path.join(dir, 'pad', `p${String(index).padStart(2, '0')}.md`), 'pad\n', 'utf8');
@@ -3159,6 +3165,19 @@ function headerSessionId(frame: string): string {
 }
 
 /**
+ * The most recently drawn `◆ DARWIN · <state>` row. Ink redraws only changed lines,
+ * so the frame since the last erase can still hold an older copy of the header —
+ * and a notice marker (`info · tangent …`) would collide with a `· tangent` search
+ * over the whole frame. The last occurrence is the live one.
+ */
+function headerStateRow(frame: string): string {
+  const start = frame.lastIndexOf('DARWIN');
+  if (start === -1) return '';
+  const end = frame.indexOf('\n', start);
+  return frame.slice(start, end === -1 ? undefined : end).trimEnd();
+}
+
+/**
  * `/clear` starts a new session; the one being left stays on disk.
  *
  * Free — no model call. What only a pty can show is here: the header moving to the
@@ -3449,6 +3468,106 @@ async function escapeEscapeRewind(): Promise<void> {
     assert('fresh escRewind session exits cleanly', (await fresh.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
   } finally {
     fresh.kill();
+  }
+}
+
+/**
+ * `/tangent` (SER-083), free: a fresh session with a fixture model that answers every
+ * prompt locally (`tangent-tui-fixture.ts`), so real rewind checkpoints are
+ * catalogued without a provider call. Proves the whole gesture on the production
+ * App path: arm/disarm notices and the header suffix, the first completed prompt
+ * becoming the return point (`since prompt 1`, the `/status` row), the nested-start
+ * refusal, the return through the `/rewind` successor path — the rewind notice's own
+ * omission wording, the fresh session id, the discarded count, and an empty editor
+ * (no draft handed back, the one thing that differs from `/rewind`) — and that
+ * `/clear` ends a tangent with its notice. Anchored on state-exclusive strings: every
+ * notice below is worded by `src/tui/tangent.ts` and appears for exactly one transition.
+ */
+async function tangentBookmark(): Promise<void> {
+  header('TUI — /tangent bookmarks the conversation and /tangent again returns through the rewind path');
+  await resetWorkDir();
+  await rm(sessionPaths(WORK_DIR).pointerFile, { force: true });
+  const tui = startTui({ cwd: WORK_DIR, entry: path.join(REPO_ROOT, 'spike/tangent-tui-fixture.ts') });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const sourceId = headerSessionId(tui.frame);
+    assert('the fixture starts a fresh session with no tangent', sourceId !== '' && headerStateRow(tui.frame) === 'DARWIN · ready');
+
+    let before = tui.mark();
+    tui.submit('/tangent end');
+    await tui.waitFor('not in a tangent', { timeoutMs: 30_000, from: before, settleMs: 200 });
+    assert('/tangent end outside a tangent is a notice and arms nothing', headerStateRow(tui.frame) === 'DARWIN · ready');
+
+    before = tui.mark();
+    tui.submit('/tangent');
+    await tui.waitFor('tangent armed — the next prompt starts it', { timeoutMs: 30_000, from: before, settleMs: 200 });
+    assert('arming rides the header state word, no new row', headerStateRow(tui.frame) === 'DARWIN · ready · tangent armed');
+    before = tui.mark();
+    tui.submit('/tangent');
+    await tui.waitFor('send a prompt to start it, or /tangent end to cancel', { timeoutMs: 30_000, from: before, settleMs: 200 });
+    before = tui.mark();
+    tui.submit('/tangent end');
+    await tui.waitFor('tangent disarmed', { timeoutMs: 30_000, from: before, settleMs: 200 });
+    assert('disarming clears the header suffix', headerStateRow(tui.frame) === 'DARWIN · ready');
+
+    // Arm for real: the next completed prompt is the return point.
+    before = tui.mark();
+    tui.submit('/tangent');
+    await tui.waitFor('tangent armed — the next prompt starts it', { timeoutMs: 30_000, from: before, settleMs: 200 });
+    before = tui.mark();
+    tui.submit('first inside the tangent');
+    await tui.waitFor('tangent started — since prompt 1', { timeoutMs: 60_000, from: before, settleMs: 300 });
+    assert('the first prompt completed and its checkpoint started the tangent',
+      tui.screen.slice(before).includes('answer to: first inside the tangent') &&
+      headerStateRow(tui.frame) === 'DARWIN · ready · tangent since prompt 1');
+    before = tui.mark();
+    tui.submit('/status');
+    await tui.waitFor('status — this session', { timeoutMs: 30_000, from: before, settleMs: 300 });
+    assert('/status gains a tangent row while the tangent is live',
+      /^\s*tangent\s+since prompt 1$/m.test(tui.screen.slice(before)));
+    before = tui.mark();
+    tui.submit('/tangent start');
+    await tui.waitFor('already in a tangent — /tangent again returns to prompt 1', { timeoutMs: 30_000, from: before, settleMs: 200 });
+    assert('a nested start changes nothing', headerStateRow(tui.frame) === 'DARWIN · ready · tangent since prompt 1' && headerSessionId(tui.frame) === sourceId);
+
+    before = tui.mark();
+    tui.submit('second inside the tangent');
+    await tui.waitFor('answer to: second inside the tangent', { timeoutMs: 60_000, from: before, settleMs: 300 });
+
+    // The return: `/rewind`'s own successor path, plus the one extra line.
+    before = tui.mark();
+    tui.submit('/tangent');
+    await tui.waitFor('returned from tangent', { timeoutMs: 60_000, from: before, settleMs: 500 });
+    const returned = tui.screen.slice(before);
+    const successor = headerSessionId(tui.frame);
+    assert('the return moves the header to a fresh session', successor !== '' && successor !== sourceId);
+    assert('the rewind path\u2019s own notice is printed, source preserved and workspace unchanged',
+      withoutWhitespace(returned).includes(withoutWhitespace(`source ${sourceId} remains saved and resumable`)) &&
+      ['workspace files', 'shell and ! effects', 'hooks', 'MCP writes', 'subagents', 'background jobs', 'learned-memory files']
+        .every((part) => withoutWhitespace(returned).includes(withoutWhitespace(part))));
+    assert('two prompts inside the tangent read `2 prompts discarded`', returned.includes('returned from tangent — 2 prompts discarded'));
+    assert('no draft is handed back and the header no longer says tangent',
+      /you>\s*$/.test(tui.frame.trimEnd()) && !tui.frame.includes('you> first inside') && headerStateRow(tui.frame) === 'DARWIN · ready');
+    assert('the return starts no turn', !returned.includes('working…'));
+
+    // `/clear` while in a tangent ends it with one notice and performs no rewind.
+    before = tui.mark();
+    tui.submit('/tangent');
+    await tui.waitFor('tangent armed — the next prompt starts it', { timeoutMs: 30_000, from: before, settleMs: 200 });
+    before = tui.mark();
+    tui.submit('after the return');
+    await tui.waitFor('tangent started — since prompt 1', { timeoutMs: 60_000, from: before, settleMs: 300 });
+    before = tui.mark();
+    tui.submit('/clear');
+    await tui.waitFor('tangent ended by /clear', { timeoutMs: 60_000, from: before, settleMs: 300 });
+    assert('/clear ends the tangent: cleared notice first, then the tangent notice, no rewind notice',
+      tui.screen.slice(before).indexOf('cleared — new session') < tui.screen.slice(before).indexOf('tangent ended by /clear') &&
+      !tui.screen.slice(before).includes('returned from tangent') && headerStateRow(tui.frame) === 'DARWIN · ready');
+
+    tui.submit('/exit');
+    assert('tangent scenario exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
   }
 }
 
@@ -4444,6 +4563,7 @@ const SCENARIOS = {
   clear: clearSession,
   rewind: rewindSession,
   escRewind: escapeEscapeRewind,
+  tangent: tangentBookmark,
   mcpStderr: mcpStderrIsolation,
   mcp: mcpReport,
   toolDetails: toolDetailsToggle,

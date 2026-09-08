@@ -109,6 +109,7 @@ const suites = [
   'verify-doctor-command.ts',
   'verify-clear-session.ts',
   'verify-rewind.ts',
+  'verify-tangent.ts',
   'verify-diagnostics.ts',
   'verify-max-tokens-recovery.ts',
   'verify-model-retry.ts',

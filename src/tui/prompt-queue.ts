@@ -116,9 +116,11 @@ export const QUEUED_MARKER = 'queued ·';
  * Commands that refuse to queue and keep the SER-010 refusal shape instead:
  * each replaces the session or the process, and running one minutes later,
  * unprompted, is worse than asking for a second Enter. Matched against the
- * trimmed submission's first word.
+ * trimmed submission's first word. `/tangent` (SER-083) rides the `/rewind`
+ * rule: its return is the rewind path, and its arming is a statement about
+ * "the next prompt", which a queued command could not truthfully make.
  */
-const BUSY_REFUSED_COMMANDS = new Set(['/clear', '/compact', '/model', '/rewind', '/exit', '/quit']);
+const BUSY_REFUSED_COMMANDS = new Set(['/clear', '/compact', '/model', '/rewind', '/tangent', '/exit', '/quit']);
 
 /** True when a busy submission must be refused (draft retained) rather than queued. */
 export function refusesToQueue(text: string): boolean {

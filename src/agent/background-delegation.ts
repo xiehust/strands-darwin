@@ -184,14 +184,14 @@ export function shortBackgroundTaskId(taskId: string): string {
 }
 
 /**
- * The one refusal `/clear` and `/rewind` give while a background delegation is
- * tracked (SER-070): the live task ids and the two ways out. Never a partial restore,
+ * The one refusal `/clear`, `/rewind` and a `/tangent` return give while a background
+ * delegation is tracked (SER-070): the live task ids and the two ways out. Never a partial restore,
  * never a silent cancel of minutes of child work — the same rule as the SER-027 busy
  * refusal. Shared by the TUI's local check and the runtime's own guard, so the two
  * cannot word it differently.
  */
 export function liveBackgroundDelegationRefusal(
-  command: '/clear' | '/rewind',
+  command: '/clear' | '/rewind' | '/tangent',
   tasks: readonly BackgroundDelegationStatus[],
 ): string {
   const named = tasks

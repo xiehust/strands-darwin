@@ -63,8 +63,8 @@ check('local report commands would queue here — they never reach the busy chec
   // predicate deciding "queue" for them is unreachable, asserted for the record.
   nodeAssert.equal(refusesToQueue('/usage'), false);
 });
-check('session-replacing commands refuse: /clear /compact /model /rewind /exit /quit', () => {
-  for (const command of ['/clear', '/compact', '/model', '/rewind', '/exit', '/quit']) {
+check('session-replacing commands refuse: /clear /compact /model /rewind /tangent /exit /quit', () => {
+  for (const command of ['/clear', '/compact', '/model', '/rewind', '/tangent', '/exit', '/quit']) {
     nodeAssert.equal(refusesToQueue(command), true, command);
   }
 });

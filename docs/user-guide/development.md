@@ -64,6 +64,7 @@ pnpm tsx spike/verify-copy-command.ts
 pnpm tsx spike/verify-tui.ts completion
 pnpm tsx spike/verify-tui.ts copy
 pnpm tsx spike/verify-tui.ts escRewind
+pnpm tsx spike/verify-tui.ts tangent
 pnpm tsx spike/verify-tui.ts pathCompletion
 pnpm tsx spike/verify-tui.ts recall
 pnpm tsx spike/verify-tui.ts bang

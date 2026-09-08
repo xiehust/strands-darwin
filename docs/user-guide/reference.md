@@ -91,7 +91,9 @@ Rules and limits:
 | `/model [name]` | list/switch configured models, conversation intact; a warm-cache notice precedes a switch |
 | `/permissions` | live allow rules and origins, then configured deny rules |
 | `/permissions revoke <n/rule/all>` | synchronously narrow live/disk allow rules; deny rules are never revoked here |
-| `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/hooks/shell env/spend/cost/context report; the model row names the last cache miss's likely cause once one was observed |
+| `/rewind` | chooser over this session's completed prompt checkpoints; accepting branches the conversation into a fresh successor session restored to the state before the selected prompt, which returns to the editor unsent; files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned memory are never rolled back |
+| `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/hooks/shell env/spend/cost/context report; the model row names the last cache miss's likely cause once one was observed; a `tangent` row appears only while a tangent is armed or active |
+| `/tangent`, `/tangent start`, `/tangent end` | one-level bookmark over the rewind path: bare `/tangent` arms it and the next completed prompt starts it (its checkpoint is the return point); `/tangent` again or `/tangent end` returns there through the same successor path as `/rewind` — same omission notice, plus `returned from tangent — N prompt(s) discarded` — with no draft handed back; `/tangent start` while active is refused (no nesting, no picker: use `/rewind`); `/clear` or an accepted `/rewind` ends it with `tangent ended by …`; live TUI state only |
 | `/tasks` | background jobs with their last three non-empty output lines, including while busy; reading them never moves the model's `output`/`wait` cursor |
 | `/trajectory` | this run's local record status |
 | `/usage` | process token buckets plus an approximate USD cost; unreported is not zero; counts cache misses and names the last one's likely cause once one was observed |
@@ -101,7 +103,7 @@ Rules and limits:
 | `/self-evolution-research` | bundled skill: backlog/research/scored supervised iteration loop |
 | `/self-reflection [session id]` | bundled skill: trajectory-based review feeding qualified backlog items |
 
-`/help`, `/mcp`, `/permissions`, `/status`, `/tasks`, `/trajectory`, `/usage`, memory management, and other report commands use local state and do not send their report to the model unless their documented mutation changes live prompt state. `/clear`, `/compact`, `/model`, `/exit`, and `/quit` refuse while busy; ordinary inputs queue.
+`/help`, `/mcp`, `/permissions`, `/status`, `/tasks`, `/trajectory`, `/usage`, memory management, and other report commands use local state and do not send their report to the model unless their documented mutation changes live prompt state. `/clear`, `/compact`, `/model`, `/rewind`, `/tangent`, `/exit`, and `/quit` refuse while busy; ordinary inputs queue.
 
 ## Prompt syntax
 

@@ -57,6 +57,12 @@ export interface StatusFacts {
   allowRuleCount: number;
   /** `runtime.denyRuleCount` — configured deny-rules (SER-076), counted apart from allow-rules. */
   denyRuleCount: number;
+  /**
+   * The live `/tangent` state (SER-083) as `tangentStatusFact` words it — `since
+   * prompt N`, or the armed phrase — and undefined when not in a tangent, which
+   * keeps the report byte-identical: the row exists only while the state does.
+   */
+  tangent?: string | undefined;
   /** `runtime.listMcpServers()` — states as they are; this report connects nothing. */
   mcpServers: readonly McpServerStatus[];
   /** `runtime.info.skillNames`. */
@@ -142,6 +148,8 @@ export function formatStatusReport(facts: StatusFacts): string {
     ],
     ['session', `${facts.sessionId}${facts.resumed ? ' (resumed)' : ''}`],
     ['mode', describeMode(facts.mode, facts.allowRuleCount, facts.denyRuleCount)],
+    // Live TUI state beside the other live row (mode), present only while it is.
+    ...(facts.tangent === undefined ? [] : [['tangent', facts.tangent] as [string, string]]),
     ['mcp', describeMcpServers(facts.mcpServers)],
     ['skills', describeNames(facts.skillNames)],
     ['hooks', describeHooks(facts)],

@@ -20,6 +20,7 @@ While a turn runs, the existing `working…`/`thinking…` row shows elapsed tim
 - Recall contains sent `userInput` records only, newest first, collapses consecutive duplicates, and excludes entries over 4,000 code points. No trajectory means no history, not an error.
 - `Escape` closes the current `/` or `@` completion menu without changing the draft or cursor. Editing the query opens completion again. During recall, `Escape` ends the walk but keeps the recalled prompt in the editor.
 - `Escape` twice within 500 ms on an empty, idle composer opens the same chooser as `/rewind` (conversation-only branch from an earlier completed prompt; files are never rolled back). A draft, a running turn, a queued message or a pending permission makes the second `Escape` an ordinary one.
+- `/tangent` bookmarks the conversation for a side question: the next prompt starts the tangent, `/tangent` again returns to the state before it through the same rewind path (one level, no picker, nothing put back into the editor; `N prompt(s) discarded` is stated). See [Sessions and state](sessions-and-state.md#rewind-and-tangents).
 - `Ctrl+J` or trailing `\` + `Enter` inserts a newline. Multiline paste does not send unexpectedly.
 
 ## Queueing while busy

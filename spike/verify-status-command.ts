@@ -616,6 +616,17 @@ function testCacheMiss(): void {
     })).includes(' · last miss: model switched'));
 }
 
+function testTangentRow(): void {
+  header('formatStatusReport — the /tangent row (SER-083) exists only while the state does');
+  const baseline = formatStatusReport(facts());
+  assert('no tangent fact: no tangent row, report byte-identical to the baseline',
+    !baseline.includes('tangent') && formatStatusReport(facts({ tangent: undefined })) === baseline);
+  const inTangent = formatStatusReport(facts({ tangent: 'since prompt 3' }));
+  assert('an active tangent adds one aligned row right under mode',
+    /^  mode .*\n  tangent\s+since prompt 3\n  mcp /m.test(inTangent));
+  assert('the row is the only change', inTangent.split('\n').filter((line) => !line.startsWith('  tangent')).join('\n') === baseline);
+}
+
 function main(): void {
   testEveryFactPresent();
   testUnknownStaysUnknown();
@@ -627,6 +638,7 @@ function main(): void {
   testCallStats();
   testCost();
   testCacheMiss();
+  testTangentRow();
   testMenuCapacity();
   report();
 }

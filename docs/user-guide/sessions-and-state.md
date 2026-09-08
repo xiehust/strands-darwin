@@ -18,6 +18,12 @@ TUI resume shows a bounded read-only recap of the last completed user request/as
 
 `/clear` creates a successor runtime through the same factory. It inherits live permission mode, retires the predecessor, rebuilds session-scoped state, and does not move on-disk pointers until the new session completes a turn. Changing the runtime `AGENT_ID` orphans snapshots because it participates in their path.
 
+### Rewind and tangents
+
+`/rewind` (or `Esc` `Esc` on an empty idle composer) lists this session's completed prompt checkpoints — one immutable SDK snapshot per completed text-only prompt, captured before the prompt ran, up to 100 per session — and accepting one branches the conversation into a fresh successor session restored to that boundary; the selected prompt returns to the editor unsent, and the source session stays on disk, resumable and byte-identical. Only the conversation moves: workspace files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned memory are not rolled back, and the notice says so.
+
+`/tangent` is a bookmark over that same path for the common case of "let me ask something on the side, then come back". Bare `/tangent` arms it; the next prompt you send starts it, and that prompt's checkpoint becomes the return point (the header reads `tangent since prompt N`, N being the prompt's ordinal among the session's catalogued prompts, and `/status` gains a `tangent` row). `/tangent` again (or `/tangent end`) returns: the same successor, the same omission notice, plus `returned from tangent — N prompt(s) discarded`, where N counts the catalogued prompts since arming with the return prompt included — after prompts A, B and C inside the tangent it reads `3 prompts discarded`. Nothing is put back into the editor: you asked to return, not to resend. One level only, no names, no picker (`/rewind` is the picker; `/tangent start` while active is refused). If the first prompt after arming could not be catalogued — an image attached, a background-task wake, a failed or cancelled turn, checkpoint capacity reached — the tangent ends at once with the reason. `/tangent end` before that first prompt simply disarms. The tangent is live TUI state like the permission mode: never persisted or recorded, ended by `/clear` or an accepted `/rewind` with one `tangent ended by …` notice, absent in a resumed session, and unavailable in headless mode and the dev REPL.
+
 ## Append-only trajectory
 
 When enabled (default), each turn appends JSONL at:
