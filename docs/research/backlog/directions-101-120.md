@@ -4,7 +4,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ## SRF-026 — Continue a `subagent` child once after the exact stream-interruption `ModelError`: when `child.invoke()` rejects with `isRetryableStreamInterruption` and the child is not cancelled, run one `invoke(STREAM_CONTINUATION_PROMPT)` on the same live child, publish a `continuing-after-stream-interruption` heartbeat phase, and on a second failure rethrow through `withFailedChildText` with the original error as `cause` — never inside the SDK loop, never a second attempt, `workflow` nodes unchanged
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 101
 - Score: 14
 - Importance: 4
