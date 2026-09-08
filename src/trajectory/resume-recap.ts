@@ -18,8 +18,8 @@
  */
 import type { HistoryItem } from '../tui/turn-state.js';
 import { describeDamage, readTrajectory } from './reader.js';
-import type { TrajectoryRecord } from './record.js';
-import { replayRecords } from './replay.js';
+import type { RewindOrigin, TrajectoryRecord } from './record.js';
+import { formatRewindOrigin, replayRecords } from './replay.js';
 
 export interface ResumeRecapOptions {
   /** Exact resolved session trajectory; path ownership stays in `agent/session.ts`. */
@@ -74,7 +74,12 @@ export function projectResumeRecap(
   // replay/export use. The recap adds notices around that history, never rows of
   // its own making.
   const replay = replayRecords(records);
-  const history = recapNotices(options, []);
+  // A session `/rewind` created names its origin on its first run's header (SRF-028);
+  // the recap repeats that one clause so a restored count is explained where the
+  // replay header would explain it. Read from the replay's validated runs, never
+  // from the raw record, so the recap cannot show what the header would not.
+  const rewindFrom = replay.runs.find((run) => run.rewindFrom !== undefined)?.rewindFrom;
+  const history = recapNotices({ ...options, ...(rewindFrom === undefined ? {} : { rewindFrom }) }, []);
 
   if (replay.history.length === 0) {
     history.push(notice('resume recap: the trajectory contains no replayable transcript', 'warn', 'empty'));
@@ -106,10 +111,15 @@ export function projectResumeRecap(
   return history;
 }
 
-function recapNotices(options: Pick<ProjectionOptions, 'restoredMessages' | 'trajectoryEnabled'>, tail: HistoryItem[]): HistoryItem[] {
+function recapNotices(
+  options: Pick<ProjectionOptions, 'restoredMessages' | 'trajectoryEnabled'> & { rewindFrom?: RewindOrigin },
+  tail: HistoryItem[],
+): HistoryItem[] {
   const history: HistoryItem[] = [
     notice(
-      `resume recap · ${options.restoredMessages} restored model message(s) · read-only trajectory projection`,
+      `resume recap · ${options.restoredMessages} restored model message(s)` +
+        `${options.rewindFrom === undefined ? '' : ` · ${formatRewindOrigin(options.rewindFrom)}`}` +
+        ' · read-only trajectory projection',
       'info',
       'title',
     ),

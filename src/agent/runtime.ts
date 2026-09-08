@@ -948,6 +948,17 @@ export class AgentRuntime {
               thinkingEffort: thinkingPlan.effective,
               resumed: session.restoreRequested && agent.messages.length > 0,
               restoredMessages: agent.messages.length,
+              // A rewind successor is `resumed: false` with a restored count the
+              // record could not otherwise explain (SRF-028): name the checkpoint
+              // it branched from. Absent — not undefined — for every other session.
+              ...(options.rewindRestore === undefined
+                ? {}
+                : {
+                    rewindFrom: {
+                      session: options.rewindRestore.sourceSessionId,
+                      snapshotId: options.rewindRestore.snapshotId,
+                    },
+                  }),
             },
             ...runtimeRecorderOverrides,
             ...(memoryController === undefined ? {} : { onTurnSettled: (settlement) => memoryController.settle(settlement) }),

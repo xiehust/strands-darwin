@@ -138,6 +138,36 @@ assert('every seeded history id is unique', new Set(projected.map((item) => item
   assert('a later live row gets an id no seeded row holds', !seeded.has(live.history[0]?.id ?? ''));
 }
 
+header('resume recap — a /rewind successor\u2019s origin is one clause on the title notice (SRF-028)');
+
+{
+  const TITLE = 'resume recap · 2 restored model message(s) · read-only trajectory projection';
+  const origin = { session: 'session-20260904-145930073', snapshotId: 'snap-source-checkpoint' };
+  const title = (records: TrajectoryRecord[]): string => {
+    const first = projectResumeRecap(records, { restoredMessages: 2, trajectoryEnabled: true })[0];
+    return first?.kind === 'notice' ? first.text : '';
+  };
+  const withOrigin = [
+    { ...runStarted(false, 2, 1), rewindFrom: origin } as TrajectoryRecord,
+    ...turn(1, 'branched request', 'branched answer'),
+  ];
+  assert('a record whose first run names an origin says so on the title, between the count and the projection clause',
+    title(withOrigin) === 'resume recap · 2 restored model message(s) · rewound from session-20260904-145930073 snapshot snap-source-checkpoint · read-only trajectory projection');
+  assert('the clause is on the title only — no extra notice row is added for it',
+    projectResumeRecap(withOrigin, { restoredMessages: 2, trajectoryEnabled: true })
+      .filter((item) => item.kind === 'notice' && item.text.includes('rewound from')).length === 1);
+  assert('a record without the field keeps today\u2019s title byte for byte',
+    title([runStarted(false, 2, 1), ...turn(1, 'plain request', 'plain answer')]) === TITLE);
+  assert('a malformed or oversize origin reads as absent — the recap shows nothing the replay header would not',
+    title([{ ...runStarted(false, 2, 1), rewindFrom: { session: 'session-source' } } as TrajectoryRecord, ...turn(1, 'r', 'a')]) === TITLE &&
+    title([{ ...runStarted(false, 2, 1), rewindFrom: { ...origin, snapshotId: 'x'.repeat(129) } } as TrajectoryRecord, ...turn(1, 'r', 'a')]) === TITLE);
+  assert('a later resumed run does not hide the first run\u2019s origin',
+    title([...withOrigin, runStarted(true, 2, 2), ...turn(1, 'after resume', 'answer')]).includes('rewound from session-20260904-145930073'));
+  assert('the body is still replayRecords over the same records, ids aside',
+    JSON.stringify(historyWithoutIds(projectResumeRecap(withOrigin, { restoredMessages: 2, trajectoryEnabled: true }).slice(1))) ===
+      JSON.stringify(historyWithoutIds(replayRecords(withOrigin).history)));
+}
+
 header('resume recap — long texts replay verbatim, unbounded');
 
 const long = `${'🙂'.repeat(900)}\n${Array.from({ length: 12 }, (_, i) => `line-${i}`).join('\n')}`;

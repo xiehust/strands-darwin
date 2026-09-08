@@ -33,8 +33,10 @@ import {
   isRecordedEventType,
   parseRecordLine,
   projectEvent,
+  rewindOriginOf,
   type CallSpendProjector,
   type ContextCompactedEntry,
+  type RewindOrigin,
   type TaskNotificationFields,
   type TrajectoryRecord,
   type Truncation,
@@ -73,6 +75,12 @@ export interface RecorderRunInfo {
   thinkingEffort: string | undefined;
   resumed: boolean;
   restoredMessages: number;
+  /**
+   * Set only by a `/rewind` successor (SRF-028). Written as the `runStarted` key of the
+   * same name when {@link rewindOriginOf} accepts it; otherwise the key is absent, so
+   * every other session's header stays byte-identical to a record without the option.
+   */
+  rewindFrom?: RewindOrigin;
 }
 
 export const INPUT_DURABILITY_TIMEOUT_MS = 2000;
@@ -733,9 +741,19 @@ export class TrajectoryRecorder {
   private header(): BufferedRecord[] {
     if (!this.headerPending) return [];
     this.headerPending = false;
+    // The origin is destructured out so a malformed or absent one leaves no key at
+    // all — not `rewindFrom: undefined` — and the pre-SRF-028 bytes stay identical.
+    const { rewindFrom, ...run } = this.run;
+    const origin = rewindOriginOf(rewindFrom);
     return [
       {
-        record: { turn: 0, type: 'runStarted', ...this.run, pid: process.pid } as PendingRecord,
+        record: {
+          turn: 0,
+          type: 'runStarted',
+          ...run,
+          ...(origin === undefined ? {} : { rewindFrom: origin }),
+          pid: process.pid,
+        } as PendingRecord,
         at: this.startedAt,
       },
     ];

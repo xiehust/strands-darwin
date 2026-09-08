@@ -93,6 +93,27 @@ export interface RecordEnvelope {
   trunc?: Truncation[];
 }
 
+/**
+ * Cap on each {@link RewindOrigin} string, in code points — the bound
+ * `src/agent/rewind.ts` already puts on a catalogued snapshot id
+ * (`MAX_SNAPSHOT_ID_CODE_POINTS`); a session id is far shorter still. An identifier
+ * over it is dropped whole rather than truncated: a shortened id names nothing.
+ */
+export const MAX_REWIND_ORIGIN_CHARS = 128;
+
+/**
+ * Where a `/rewind` successor's restored history came from (SRF-028).
+ *
+ * A successor is created fresh (`resumed: false`) and yet starts with the source
+ * checkpoint's messages, which the record alone could not explain. Both ids are
+ * the exact strings `startRewind` handed `AgentRuntime.create`; nothing here is
+ * read back from disk or used to reconstruct anything.
+ */
+export interface RewindOrigin {
+  readonly session: string;
+  readonly snapshotId: string;
+}
+
 export interface RunStartedRecord extends RecordEnvelope {
   type: 'runStarted';
   session: string;
@@ -105,6 +126,8 @@ export interface RunStartedRecord extends RecordEnvelope {
   resumed: boolean;
   restoredMessages: number;
   pid: number;
+  /** Present only on a `/rewind` successor's first run; see {@link RewindOrigin}. */
+  rewindFrom?: RewindOrigin;
 }
 
 export interface UserInputRecord extends RecordEnvelope {
@@ -794,6 +817,29 @@ export interface ContextCompactedReading {
  */
 export function boundedCount(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+/**
+ * A `runStarted` record's rewind origin as far as it can be believed, or `undefined`.
+ *
+ * Shared by the writer (whether the key is written at all) and the readers (whether
+ * it is shown), on {@link boundedCount}'s terms: both ids must be non-empty strings
+ * within {@link MAX_REWIND_ORIGIN_CHARS}, and a half-valid pair is rejected whole —
+ * a session without its snapshot, or the reverse, does not name a checkpoint.
+ * Fields this reader does not know are not carried into the reading.
+ */
+export function rewindOriginOf(value: unknown): RewindOrigin | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const session = boundedOriginId((value as { session?: unknown }).session);
+  const snapshotId = boundedOriginId((value as { snapshotId?: unknown }).snapshotId);
+  if (session === undefined || snapshotId === undefined) return undefined;
+  return { session, snapshotId };
+}
+
+function boundedOriginId(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' && [...value].length <= MAX_REWIND_ORIGIN_CHARS
+    ? value
+    : undefined;
 }
 
 /**

@@ -18,11 +18,13 @@ import { describeDamage, type TrajectoryReadResult } from './reader.js';
 import {
   contextCompactedOf,
   formatTurnFailure,
+  rewindOriginOf,
   turnFailureOf,
   type ContextCompactedReading,
   type ContextCompactedRecord,
   type ModelCallReading,
   type ModelCallRecord,
+  type RewindOrigin,
   type TrajectoryRecord,
   type TurnEndedRecord,
   type TurnFailure,
@@ -49,7 +51,15 @@ export interface ReplayResult {
   /** Turn ordinals the record contains. */
   turns: number[];
   /** Runs the record covers — one per process that appended to it. */
-  runs: { turn: number; session: string; model: string; at: string; resumed: boolean }[];
+  runs: {
+    turn: number;
+    session: string;
+    model: string;
+    at: string;
+    resumed: boolean;
+    /** The `/rewind` checkpoint a successor run branched from, when its record names one. */
+    rewindFrom?: RewindOrigin;
+  }[];
   /** Damage the reader tolerated, ready to report; `undefined` when the file was clean. */
   damage: string | undefined;
   /** Records the replay skipped because a cap had removed their payload. */
@@ -125,15 +135,20 @@ export function replayRecords(
     }
 
     switch (record.type) {
-      case 'runStarted':
+      case 'runStarted': {
+        // Read through the shared validator, so a hand-edited or oversize origin is
+        // absent here exactly as the writer would have left it absent.
+        const rewindFrom = rewindOriginOf(record.rewindFrom);
         runs.push({
           turn: record.turn,
           session: record.session,
           model: `${record.provider}/${record.model}`,
           at: record.t,
           resumed: record.resumed,
+          ...(rewindFrom === undefined ? {} : { rewindFrom }),
         });
         continue;
+      }
 
       case 'userInput':
         state = turnReducer(state, { type: 'userInput', text: record.text });
@@ -339,11 +354,23 @@ export function historyWithoutIds(history: readonly HistoryItem[]): unknown[] {
   });
 }
 
+/**
+ * The one wording for a run's rewind origin, shared by the replay header and the
+ * resume recap's title so the two surfaces cannot drift.
+ */
+export function formatRewindOrigin(origin: RewindOrigin): string {
+  return `rewound from ${origin.session} snapshot ${origin.snapshotId}`;
+}
+
 /** Plain-text transcript: content, deliberately not an imitation of the Ink frame. */
 export function formatReplay(result: ReplayResult): string {
   const lines: string[] = [];
   for (const run of result.runs) {
-    lines.push(`--- run ${run.at} · ${run.model}${run.resumed ? ' · resumed' : ''}`);
+    // Still one header line per run: the origin is a clause on it, never a row of its own.
+    lines.push(
+      `--- run ${run.at} · ${run.model}${run.resumed ? ' · resumed' : ''}` +
+        `${run.rewindFrom === undefined ? '' : ` · ${formatRewindOrigin(run.rewindFrom)}`}`,
+    );
   }
 
   for (const item of result.history) {

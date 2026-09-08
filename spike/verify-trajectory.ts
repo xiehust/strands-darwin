@@ -64,11 +64,13 @@ import {
   MAX_FAILURE_SUMMARY_CHARS,
   MAX_FIELD_CHARS,
   MAX_RECORD_BYTES,
+  MAX_REWIND_ORIGIN_CHARS,
   contextCompactedOf,
   failureFromError,
   formatTurnFailure,
   modelCallOf,
   parseRecordLine,
+  rewindOriginOf,
   searchableText,
   turnFailureOf,
   turnOutcome,
@@ -76,6 +78,7 @@ import {
   type CallSpendProjector,
   type ContextCompactedRecord,
   type ModelCallRecord,
+  type RunStartedRecord,
   type TrajectoryRecord,
   type TurnEndedRecord,
   type TurnSpendMeter,
@@ -88,7 +91,7 @@ import {
 } from '../src/trajectory/spend.js';
 import { searchTrajectories, UnknownSessionError } from '../src/trajectory/search.js';
 import { recordStream } from '../src/trajectory/stream.js';
-import { TrajectoryRecorder } from '../src/trajectory/writer.js';
+import { TrajectoryRecorder, type RecorderRunInfo } from '../src/trajectory/writer.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 // Every path below resolves under `~/.darwin/sessions/<project-key>/`, so the suite
@@ -1827,6 +1830,111 @@ async function contextCompactedRecords(): Promise<void> {
     !formatReplay({ ...replayRecords(session, { turn: 2 }), damage: undefined }).includes('context compacted'));
 }
 
+async function rewindOriginRecords(): Promise<void> {
+  header('trajectory — a /rewind successor\u2019s runStarted names its origin; every other header is byte-identical');
+
+  const dir = path.join(ROOT, 'rewind-origin');
+  await rm(dir, { recursive: true, force: true });
+  const baseRun = {
+    session: 'session-successor',
+    agentId: AGENT_ID,
+    darwinVersion: 'test',
+    provider: 'bedrock',
+    model: 'fake.trajectory',
+    permissionMode: 'default',
+    thinkingEffort: 'high',
+    resumed: false,
+    restoredMessages: 2,
+  };
+  // One header per recorder: an out-of-turn record is the cheapest way to make the
+  // writer emit it without an Agent, exactly as `/compact` before any turn would.
+  async function headerLine(name: string, extra: { rewindFrom?: unknown } = {}): Promise<string> {
+    const file = path.join(dir, name, 'trajectory.jsonl');
+    const rec = new TrajectoryRecorder({ file, run: { ...baseRun, ...extra } as RecorderRunInfo });
+    rec.recordContextCompacted({ messagesBefore: 2, messagesAfter: 1, focused: false });
+    await rec.close();
+    const first = (await readFile(file, 'utf8')).split('\n')[0] ?? '';
+    if (!first.includes('"type":"runStarted"')) throw new Error(`${name}: the first line is not the run header`);
+    return first;
+  }
+  const withoutTimestamp = (line: string): string => line.replace(/"t":"[^"]*"/, '"t":"<t>"');
+  const keysOf = (line: string): string => Object.keys(JSON.parse(line) as object).join(',');
+  const BASE_KEYS = 'v,seq,t,turn,type,session,agentId,darwinVersion,provider,model,permissionMode,thinkingEffort,resumed,restoredMessages,pid';
+
+  const origin = { session: 'session-source', snapshotId: 'snap-0123456789abcdef' };
+  const plain = await headerLine('plain');
+  const explicitlyAbsent = await headerLine('explicit-undefined', { rewindFrom: undefined });
+  const rewound = await headerLine('rewound', { rewindFrom: origin });
+  assert('a header written without the option has no rewindFrom key at all — its key set is today\u2019s',
+    !plain.includes('rewindFrom') && keysOf(plain) === BASE_KEYS);
+  assert('an option passed as undefined writes the same bytes as no option (timestamp aside)',
+    withoutTimestamp(explicitlyAbsent) === withoutTimestamp(plain));
+  assert('a successor header carries the origin as one nested object, before pid',
+    rewound.includes('"restoredMessages":2,"rewindFrom":{"session":"session-source","snapshotId":"snap-0123456789abcdef"},"pid":') &&
+    keysOf(rewound) === BASE_KEYS.replace('restoredMessages,pid', 'restoredMessages,rewindFrom,pid'));
+  const parsedRewound = parseRecordLine(rewound) as RunStartedRecord;
+  assert('the record round-trips writer → parser → validator',
+    parsedRewound.type === 'runStarted' && parsedRewound.rewindFrom !== undefined &&
+    JSON.stringify(rewindOriginOf(parsedRewound.rewindFrom)) === JSON.stringify(origin));
+  assert('resumed/restoredMessages semantics are untouched: a successor is still resumed: false with its restored count',
+    parsedRewound.resumed === false && parsedRewound.restoredMessages === 2);
+
+  // Malformed origins are dropped whole at the writer; the rest of the header is intact.
+  const malformed: Record<string, unknown> = {
+    'empty-session': { session: '', snapshotId: 'snap' },
+    'missing-snapshot': { session: 'session-source' },
+    'oversize-snapshot': { session: 'session-source', snapshotId: 'x'.repeat(MAX_REWIND_ORIGIN_CHARS + 1) },
+    'oversize-session': { session: 's'.repeat(MAX_REWIND_ORIGIN_CHARS + 1), snapshotId: 'snap' },
+    'numeric-session': { session: 7, snapshotId: 'snap' },
+    'string-origin': 'session-source/snap',
+    'array-origin': ['session-source', 'snap'],
+    'null-origin': null,
+  };
+  for (const [name, value] of Object.entries(malformed)) {
+    const line = await headerLine(name, { rewindFrom: value });
+    assert(`a malformed origin (${name}) is dropped and the header is otherwise today\u2019s bytes`,
+      withoutTimestamp(line) === withoutTimestamp(plain));
+  }
+  const atCap = { session: '🙂'.repeat(MAX_REWIND_ORIGIN_CHARS), snapshotId: 's' };
+  assert('the bound is counted in code points and inclusive: exactly the cap is accepted, one more is not',
+    JSON.stringify(rewindOriginOf(atCap)) === JSON.stringify(atCap) &&
+    rewindOriginOf({ ...atCap, session: '🙂'.repeat(MAX_REWIND_ORIGIN_CHARS + 1) }) === undefined);
+  assert('the reader carries only the two ids, never a foreign field',
+    JSON.stringify(rewindOriginOf({ ...origin, prompt: 'never recorded' })) === JSON.stringify(origin));
+  assert('the reader rejects a half-valid pair whole rather than half-reading it',
+    rewindOriginOf({ session: 'session-source', snapshotId: '' }) === undefined &&
+    rewindOriginOf({ snapshotId: 'snap' }) === undefined && rewindOriginOf(undefined) === undefined);
+
+  // Replay: the origin is a clause on the existing header line, never a new line.
+  const at = '2026-09-05T01:43:47.068Z';
+  const run = (fields: Record<string, unknown>): TrajectoryRecord =>
+    ({ v: 1, seq: 0, t: at, turn: 0, type: 'runStarted', ...baseRun, pid: 1, ...fields }) as TrajectoryRecord;
+  const body: TrajectoryRecord[] = [
+    { v: 1, seq: 1, t: at, turn: 1, type: 'userInput', text: 'branched prompt' } as TrajectoryRecord,
+    { v: 1, seq: 2, t: at, turn: 1, type: 'turnEnded', stopReason: 'endTurn', ms: 20, recorded: {}, dropped: {} } as TrajectoryRecord,
+  ];
+  const transcriptOf = (first: TrajectoryRecord): string[] =>
+    formatReplay({ ...replayRecords([first, ...body]), damage: undefined }).split('\n');
+  const plainHeader = `--- run ${at} · bedrock/fake.trajectory`;
+  assert('a header without the field prints exactly as before',
+    transcriptOf(run({}))[0] === plainHeader && transcriptOf(run({}))[1] === 'you> branched prompt');
+  assert('a successor header prints the origin as one clause on the same line',
+    transcriptOf(run({ rewindFrom: origin }))[0] === `${plainHeader} · rewound from session-source snapshot snap-0123456789abcdef` &&
+    transcriptOf(run({ rewindFrom: origin }))[1] === 'you> branched prompt');
+  assert('the clause follows ` · resumed` in the header\u2019s own style when both are set',
+    transcriptOf(run({ resumed: true, rewindFrom: origin }))[0] === `${plainHeader} · resumed · rewound from session-source snapshot snap-0123456789abcdef`);
+  assert('a hand-edited malformed origin prints as if absent — the reader and writer share one validator',
+    transcriptOf(run({ rewindFrom: { session: 'session-source' } }))[0] === plainHeader &&
+    transcriptOf(run({ rewindFrom: { session: 'session-source', snapshotId: 'x'.repeat(MAX_REWIND_ORIGIN_CHARS + 1) } }))[0] === plainHeader);
+  assert('replayRecords exposes the origin on the run, and omits the key when absent',
+    JSON.stringify(replayRecords([run({ rewindFrom: origin }), ...body]).runs[0]?.rewindFrom) === JSON.stringify(origin) &&
+    !('rewindFrom' in (replayRecords([run({}), ...body]).runs[0] ?? {})));
+  assert('a --turn replay keeps the origin on its header — runStarted is exempt from the turn filter',
+    formatReplay({ ...replayRecords([run({ rewindFrom: origin }), ...body], { turn: 1 }), damage: undefined }).split('\n')[0]?.endsWith('snapshot snap-0123456789abcdef') === true);
+  assert('the origin contributes no searchable text — ids are not words anyone searches the transcript for',
+    searchableText(run({ rewindFrom: origin })).length === 0);
+}
+
 async function replayFidelity(): Promise<void> {
   header('trajectory — replay reconstructs the live history with no model call');
 
@@ -2547,6 +2655,7 @@ async function main(): Promise<void> {
     await turnSpendReadPaths();
     await modelCallRecords();
     await contextCompactedRecords();
+    await rewindOriginRecords();
     await replayFidelity();
     await searchContracts();
     await forkContracts();

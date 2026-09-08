@@ -26,7 +26,7 @@ When enabled (default), each turn appends JSONL at:
 ~/.darwin/sessions/<project-key>/<session-id>/trajectory.jsonl
 ```
 
-Records include run model/mode, user input durably before invocation, assistant blocks, tool calls with bounded inputs/results, shell-command records, and `turnEnded` with stop/failure/cancel outcome, duration, spend, and omitted-event counts. Failures preserve error class/message and wrapped provider class. Child-agent transcripts/events are excluded.
+Records include run model/mode (a `/rewind` successor's run record also names its source session and snapshot id, which `replay` prints on that run's header as `rewound from <session> snapshot <id>` and the resume recap repeats), user input durably before invocation, assistant blocks, tool calls with bounded inputs/results, shell-command records, and `turnEnded` with stop/failure/cancel outcome, duration, spend, and omitted-event counts. Failures preserve error class/message and wrapped provider class. Child-agent transcripts/events are excluded.
 
 Bounds: strings 8,000 code points, one record 64 KiB, one file 64 MiB. Every truncation is explicit. Reasoning is presence-only, never text. Existing bytes are never rewritten; interrupted files keep a valid prefix and readers report a partial last line. Recorder failure degrades open with one notice. Set `trajectory: false` to record nothing.
 

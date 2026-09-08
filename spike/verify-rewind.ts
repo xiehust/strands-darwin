@@ -22,6 +22,9 @@ import {
 } from '../src/agent/rewind.js';
 import { sessionPaths, snapshotPath, trajectoryPath, writePointer } from '../src/agent/session.js';
 import { configPath } from '../src/config.js';
+import { readTrajectory } from '../src/trajectory/reader.js';
+import { parseRecordLine, rewindOriginOf, type RunStartedRecord } from '../src/trajectory/record.js';
+import { formatReplay, replayRead } from '../src/trajectory/replay.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 ownPrivateHome('rewind');
@@ -280,6 +283,99 @@ async function main(): Promise<void> {
       bounded.checkpoints.length === MAX_REWIND_CHECKPOINTS && bounded.capped && overflow.capped);
     assert('a full catalogue is not rewritten to make room',
       (await readFile(rewindCataloguePath(catalogueRoot, catalogueSession))).equals(unchanged));
+
+    header('/rewind — the successor\u2019s trajectory names its origin; the source record is untouched (SRF-028)');
+    // The same factory and the same fake model, with trajectory recording on this
+    // time: the successor's first record must explain its restored count itself.
+    await writeFile(configPath(), JSON.stringify({
+      permissionMode: 'yolo',
+      memory: false,
+      provider: 'bedrock',
+      model: 'fake.rewind',
+      region: 'us-west-2',
+    }));
+    const recordedRoot = await mkdtemp(path.join(os.tmpdir(), 'darwin-rewind-recorded-'));
+    await mkdir(path.join(recordedRoot, '.darwin'), { recursive: true });
+    let recordedSource: AgentRuntime | undefined = await AgentRuntime.create({
+      projectRoot: recordedRoot,
+      session: { kind: 'new' },
+      permissionBridge: allowAllBridge,
+    });
+    let recordedSuccessor: AgentRuntime | undefined;
+    let resumedSuccessor: AgentRuntime | undefined;
+    let cleared: AgentRuntime | undefined;
+    try {
+      const recordedSourceId = recordedSource.info.sessionId;
+      await consume(recordedSource, 'first');
+      await consume(recordedSource, 'second');
+      const sourceCheckpoint = (await recordedSource.listRewindCheckpoints()).checkpoints.find((entry) => entry.prompt === 'second');
+      if (sourceCheckpoint === undefined) throw new Error('missing recorded fixture checkpoint');
+      const sourceTrajectoryBefore = await readFile(trajectoryPath(recordedRoot, recordedSourceId));
+      const sourceHeader = parseRecordLine(sourceTrajectoryBefore.toString('utf8').split('\n')[0] ?? '') as RunStartedRecord;
+      assert('a fresh session\u2019s own header carries no rewindFrom key',
+        sourceHeader.type === 'runStarted' && !('rewindFrom' in sourceHeader) &&
+        !sourceTrajectoryBefore.toString('utf8').includes('rewindFrom'));
+
+      recordedSuccessor = await recordedSource.startRewind(sourceCheckpoint);
+      recordedSource = undefined;
+      const recordedSuccessorId = recordedSuccessor.info.sessionId;
+      assert('the successor has written nothing yet — its record appears with its first turn',
+        (await bytes(trajectoryPath(recordedRoot, recordedSuccessorId))) === undefined);
+      await consume(recordedSuccessor, 'branched');
+      const successorRead = await readTrajectory(trajectoryPath(recordedRoot, recordedSuccessorId));
+      const successorHeader = successorRead.records[0] as RunStartedRecord;
+      assert('the successor\u2019s first record is its runStarted',
+        successorHeader?.type === 'runStarted' && successorHeader.seq === 0);
+      assert('it names the source session and the selected snapshot id, exactly as startRewind passed them',
+        JSON.stringify(rewindOriginOf(successorHeader.rewindFrom)) ===
+          JSON.stringify({ session: recordedSourceId, snapshotId: sourceCheckpoint.snapshotId }));
+      assert('resumed/restoredMessages keep their meaning: a successor is a fresh run with the checkpoint\u2019s two messages',
+        successorHeader.resumed === false && successorHeader.restoredMessages === 2 &&
+        successorHeader.session === recordedSuccessorId);
+      assert('the source trajectory is byte-identical after the branch and the successor\u2019s turn',
+        (await readFile(trajectoryPath(recordedRoot, recordedSourceId))).equals(sourceTrajectoryBefore));
+      const successorTranscript = formatReplay(replayRead(successorRead)).split('\n');
+      assert('replay prints the origin on the successor\u2019s one run header line, then the branched prompt',
+        successorTranscript[0]?.endsWith(`· bedrock/fake.rewind · rewound from ${recordedSourceId} snapshot ${sourceCheckpoint.snapshotId}`) === true &&
+        successorTranscript[1] === 'you> branched');
+      const sourceTranscript = formatReplay(replayRead(await readTrajectory(trajectoryPath(recordedRoot, recordedSourceId))));
+      assert('the source\u2019s replay header is unchanged — no origin, nothing rewound',
+        !sourceTranscript.includes('rewound from'));
+
+      // A later `--resume <successor>` is an ordinary resumed run: its own header says
+      // `resumed`, and the origin stays on the first run's header only.
+      await recordedSuccessor.markResumable();
+      await recordedSuccessor.shutdown();
+      recordedSuccessor = undefined;
+      resumedSuccessor = await AgentRuntime.create({
+        projectRoot: recordedRoot,
+        session: { kind: 'id', sessionId: recordedSuccessorId },
+        permissionBridge: allowAllBridge,
+      });
+      await consume(resumedSuccessor, 'after-resume');
+      const resumedRead = await readTrajectory(trajectoryPath(recordedRoot, recordedSuccessorId));
+      const headers = resumedRead.records.filter((record): record is RunStartedRecord => record.type === 'runStarted');
+      assert('resuming the successor appends a second header that is resumed and carries no origin',
+        headers.length === 2 && headers[1]?.resumed === true && headers[1].restoredMessages === 4 &&
+        !('rewindFrom' in headers[1]) && rewindOriginOf(headers[0]?.rewindFrom) !== undefined);
+      const resumedTranscript = formatReplay(replayRead(resumedRead)).split('\n');
+      assert('the two run headers read: rewound-from on the first, resumed on the second',
+        resumedTranscript[0]?.includes('rewound from') === true && resumedTranscript[1]?.endsWith(' · resumed') === true);
+
+      // `/clear` is the other successor path through the same factory: no origin either.
+      cleared = await resumedSuccessor.startNewSession();
+      resumedSuccessor = undefined;
+      await consume(cleared, 'after-clear');
+      const clearedHeader = (await readTrajectory(trajectoryPath(recordedRoot, cleared.info.sessionId))).records[0] as RunStartedRecord;
+      assert('a /clear successor\u2019s header is a fresh run with no rewindFrom key',
+        clearedHeader?.type === 'runStarted' && clearedHeader.resumed === false &&
+        clearedHeader.restoredMessages === 0 && !('rewindFrom' in clearedHeader));
+    } finally {
+      await cleared?.shutdown();
+      await resumedSuccessor?.shutdown();
+      await recordedSuccessor?.shutdown();
+      await recordedSource?.shutdown();
+    }
   } finally {
     await successor?.shutdown();
     await source?.shutdown();
