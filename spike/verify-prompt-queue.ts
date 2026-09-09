@@ -9,7 +9,7 @@
  * what a take-back puts in the editor, how the listing shares the frame budget,
  * and that what Ink draws for the listing is never taller than its grant. The
  * background-task wake (SER-069) is the queue's second entry kind and is pinned
- * here too: its distinct row, its own busy-hint word, and that take-back and
+ * here too: its collapsed notification summary, its own busy-hint word, and that take-back and
  * `partitionQueue` leave it out of the editor. The
  * state machine end to end (enqueue while busy, drain order, cancel return,
  * /clear drop) is `spike/verify-tui.ts queue` — a real pty, still free — and the
@@ -32,6 +32,7 @@ import {
   isTaskWake,
   partitionQueue,
   queueRowText,
+  queueNotificationSummary,
   queuedCountHint,
   refusesToQueue,
   takeBackDraft,
@@ -159,23 +160,78 @@ check('a queue of wakes alone leaves the draft untouched — nothing to edit', (
 check('a wake carries no image and never occupies the clipboard slot', () => {
   nodeAssert.equal(hasQueuedImage([wake]), false);
 });
-check('the busy hint counts wakes under their own word, apart from typed entries', () => {
-  nodeAssert.equal(queuedCountHint(0, 1), ' · 1 task wake');
-  nodeAssert.equal(queuedCountHint(2, 3), ' · 2 queued · 3 task wakes');
+check('the busy hint counts pending notifications apart from typed entries', () => {
+  nodeAssert.equal(queuedCountHint(0, 1), ' · 1 notification pending');
+  nodeAssert.equal(queuedCountHint(2, 3), ' · 2 queued · 3 notifications pending');
   nodeAssert.equal(queuedCountHint(0, 0), '');
 });
-check('a wake is a queued row like any other in the listing', () => {
+check('notifications have their own summary, not another queued task row', () => {
   const output = renderToString(React.createElement(QueuedMessages, { entries: [{ text: 'typed' }, wake], maxRows: 5 }), { columns: 120 });
   const rows = output.split('\n').filter((row) => row.trim() !== '');
-  nodeAssert.equal(rows.length, 2);
-  nodeAssert.equal(rows[1]?.includes('[task bg-1a2b3c4d failed]'), true);
+  nodeAssert.deepEqual(rows, [
+    'notifications · 1 pending (1 failed) · after this turn · /tasks',
+    'queued · typed',
+  ]);
+});
+
+const manyWakes: QueuedTaskWake[] = Array.from({ length: 19 }, (_, index) => ({
+  ...wake,
+  taskId: `bg-${index}`,
+  state: index === 0 ? 'failed' : index < 3 ? 'stopped' : 'succeeded',
+}));
+check('nineteen finished jobs collapse to one row with failures first and no command or payload dump', () => {
+  nodeAssert.equal(queueNotificationSummary(manyWakes),
+    'notifications · 19 pending (1 failed, 2 stopped, 16 succeeded) · after this turn · /tasks');
+  nodeAssert.equal(queueNotificationSummary([]), undefined);
+  const output = renderToString(React.createElement(QueuedMessages, { entries: manyWakes, maxRows: 30 }), { columns: 120 });
+  nodeAssert.equal(output, queueNotificationSummary(manyWakes));
+  nodeAssert.equal(output.includes('queued'), false);
+  nodeAssert.equal(output.includes(wake.command), false);
+  nodeAssert.equal(output.includes('<task-notification'), false);
+});
+check('the summary points to the relevant existing detail reports for jobs and delegations', () => {
+  const delegation: QueuedTaskWake = { ...wake, source: 'delegation' };
+  nodeAssert.equal(queueNotificationSummary([delegation]),
+    'notifications · 1 pending (1 failed) · after this turn · /agents');
+  nodeAssert.equal(queueNotificationSummary([wake, delegation]),
+    'notifications · 2 pending (2 failed) · after this turn · /tasks · /agents');
+});
+check('a mixed queue preserves typed order and attachments without changing the underlying FIFO', () => {
+  const entries = Object.freeze([
+    Object.freeze({ text: 'first' }), manyWakes[0]!,
+    Object.freeze({ text: 'second\nline', image: { type: 'imageBlock' } as never }), ...manyWakes.slice(1),
+  ]);
+  const before = JSON.stringify(entries);
+  const output = renderToString(React.createElement(QueuedMessages, { entries, maxRows: 3 }), { columns: 120 });
+  nodeAssert.deepEqual(output.split('\n').slice(1), ['queued · first', 'queued · [image] second ⏎ line']);
+  nodeAssert.equal(JSON.stringify(entries), before);
+  nodeAssert.equal(takeBackDraft(entries, 'draft'), 'first\nsecond\nline\ndraft');
+});
+check('collapsed notifications respect zero, one and small grants at narrow and wide widths', () => {
+  const entries = [...manyWakes, { text: 'typed first' }, { text: 'typed second' }];
+  for (const columns of [20, 40, 80, 120]) {
+    for (const maxRows of [0, 1, 2, 3, 30]) {
+      const output = renderToString(React.createElement(QueuedMessages, { entries, maxRows }), { columns });
+      nodeAssert.ok((output === '' ? 0 : output.split('\n').length) <= maxRows);
+    }
+  }
+  const render = (maxRows: number) => renderToString(React.createElement(QueuedMessages, { entries, maxRows }), { columns: 160 });
+  nodeAssert.equal(render(0), '');
+  nodeAssert.equal(render(1), '2 queued · 19 notifications pending');
+  const narrow = renderToString(React.createElement(QueuedMessages, { entries, maxRows: 1 }), { columns: 20 });
+  nodeAssert.ok(narrow.startsWith('2 queued · 19 '));
+  nodeAssert.equal(render(2).split('\n')[1], '… 2 more queued');
+  nodeAssert.equal(render(3).split('\n')[1], 'queued · typed first');
 });
 
 header('prompt queue — the listing plan is bounded and states its cuts');
 
-check('the listing wants one row per entry', () => {
+check('the listing wants one row per typed entry and one for all notifications', () => {
   nodeAssert.equal(queueListWanted(0), 0);
   nodeAssert.equal(queueListWanted(5), 5);
+  nodeAssert.equal(queueListWanted(19, 19), 1);
+  nodeAssert.equal(queueListWanted(21, 19), 3);
+  nodeAssert.equal(queueListWanted(1, 1), 1);
 });
 check('entries that fit are all shown', () => {
   nodeAssert.deepEqual(planQueueList(3, 5), { shown: 3, hiddenEntries: 0 });

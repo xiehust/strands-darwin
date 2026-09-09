@@ -829,10 +829,9 @@ export function App({
       // One row still names the checklist and states its full item count.
       floor: state.livePlan.length === 0 ? 0 : 1,
     },
-    // The queued listing (SER-027): one row per entry, cut entries stated by the
-    // queue's own notice row. Floor 0 — the busy hint's count keeps a fully cut
-    // listing from going invisible.
-    queued: { wanted: queueListWanted(queued.length), floor: 0 },
+    // Typed entries keep their rows; settled-task notifications share one summary.
+    // Floor 0 — the busy hint counts both when the listing is fully cut.
+    queued: { wanted: queueListWanted(queued.length, queued.filter(isTaskWake).length), floor: 0 },
     // The answer yields first: it is the one participant whose content is already
     // guaranteed to reach `<Static>` history in full.
     live: { wanted: liveTextRows === 0 ? 0 : liveTextRows + LIVE_BLOCK_CHROME_ROWS, floor: 0 },

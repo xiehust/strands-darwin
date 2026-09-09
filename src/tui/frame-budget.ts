@@ -558,9 +558,9 @@ export interface QueueListPlan {
   readonly hiddenEntries: number;
 }
 
-/** Rows the queued listing would draw with nothing bounding it: one per entry. */
-export function queueListWanted(entries: number): number {
-  return entries;
+/** User entries cost one row each; all settled-task notifications share one row. */
+export function queueListWanted(entries: number, wakeCount = 0): number {
+  return entries - wakeCount + (wakeCount > 0 ? 1 : 0);
 }
 
 /**

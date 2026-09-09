@@ -11,6 +11,7 @@
  *                                  until it ends, then text — the model saw the terminal state.
  * - `start-then-block <marker>`  → `bash start` (`sleep 0.5; …`), then a text answer whose
  *                                  stream is held open until the release file appears.
+ * - `start-many-block <marker>` → 19 short jobs (one failure), then hold the answer open.
  * - `start-then-permission <m>`  → `bash start` (`sleep 1.5; …`), then a foreground `bash execute`
  *                                  (`sleep 0.1; …`) that asks for permission in `default` mode, then text.
  * - `start-clear-window <marker>`→ `bash start` (`sleep 2.5; …`), then text; the *second*
@@ -151,6 +152,12 @@ class TaskWakeModel extends Model<BaseModelConfig> {
       if (step === 0) events = start(`sleep 0.5; echo ${marker}`);
       else {
         text = `holding the answer open for ${marker}`;
+        holdOpen = true;
+      }
+    } else if (verb === 'start-many-block') {
+      if (step < 19) events = start(`echo ${marker}-${step}${step === 0 ? '; exit 1' : ''}`);
+      else {
+        text = `holding nineteen notifications for ${marker}`;
         holdOpen = true;
       }
     } else if (verb === 'start-then-permission') {

@@ -25,6 +25,8 @@
  *                     request carries the SDK's `strands_background_task_result` pair (the
  *                     notification never repeats the report); one `taskNotification` record
  *                     with `source: 'delegation'`; `/clear` succeeds once nothing is tracked.
+ * 8. **collapsed**  — 19 real completed jobs occupy one summary row, keep typed messages visible
+ *                     across resize, retain /tasks details and drain in unchanged FIFO order.
  *
  * Every model request also carries the `bash` tool spec, so the log doubles as proof of
  * the per-runtime wording: the wake variant of the still-running-timeout sentence in the
@@ -60,7 +62,7 @@ const BLOCK_RELEASE = path.join(ROOT, 'wake-block-release');
 const CLEAR_RELEASE = path.join(ROOT, 'wake-clear-release');
 const CLEAR_ARM = path.join(ROOT, 'wake-clear-arm');
 const EXIT_TIMEOUT_MS = 30_000;
-const WAKE_ROW = `${QUEUED_MARKER} [task bg-`;
+const WAKE_ROW = 'notifications · ';
 const WAKE_NOTICE = 'task wake · bg-';
 const DELEGATION_WAKE_NOTICE = 'delegation wake · ';
 
@@ -224,12 +226,12 @@ async function mainSession(): Promise<void> {
     await waitForFile(BLOCK_CHECKPOINT);
     await tui.waitFor(WAKE_ROW, { timeoutMs: 20_000, from: blockMark, settleMs: 300 });
     const busyFrame = tui.frame;
-    assert('the wake is listed as a queued row while the turn is still streaming',
+    assert('the notification summary is shown while the turn is still streaming',
       busyFrame.includes(WAKE_ROW) && busyFrame.includes('working…'));
-    assert('the busy hint counts it under its own word', busyFrame.includes('· 1 task wake'));
-    assert('the wake row names the job, not its model-facing text',
-      /queued · \[task bg-[0-9a-f]{8} succeeded\] sleep 0\.5; echo block-marker-gamma/.test(busyFrame) &&
-        !busyFrame.includes('<task-notification'));
+    assert('the busy hint names a pending notification, not a queued job', busyFrame.includes('· 1 notification pending'));
+    assert('the summary states the outcome, delivery timing and detail command without a payload dump',
+      busyFrame.includes('notifications · 1 pending (1 succeeded) · after this turn · /tasks') &&
+        !busyFrame.includes(`${QUEUED_MARKER} [task`) && !busyFrame.includes('<task-notification'));
     calls = await modelCalls();
     assert('nothing was injected mid-stream: no wake request while the turn is open',
       wakeCallsFor(calls, 'block-marker-gamma').length === 0 && calls.length === 8);
@@ -452,12 +454,60 @@ async function delegationSession(): Promise<void> {
     && replay.includes('· background result') && replay.includes('child counted deleg-marker-eta'));
 }
 
+async function collapsedNotificationsSession(): Promise<void> {
+  header('task wake — nineteen completions share one row without changing delivery');
+  await resetProject();
+  await writeConfig({});
+  const tui = startTui({ cwd: ROOT, entry: ENTRY, cols: 120, rows: 40 });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
+    tui.submit('start-many-block bulk-marker');
+    await waitForFile(BLOCK_CHECKPOINT);
+    await tui.waitUntil(() => tui.frame.includes('notifications · 19 pending'), {
+      timeoutMs: 20_000, label: 'nineteen collapsed notifications', settleMs: 300,
+    });
+    assert('nineteen settled jobs occupy exactly one live notification row, with failure first',
+      tui.frame.split('\n').filter((row) => row.startsWith(WAKE_ROW)).length === 1 &&
+      tui.frame.includes('(1 failed, 18 succeeded) · after this turn · /tasks') &&
+      !tui.frame.includes(`${QUEUED_MARKER} [task`));
+    tui.submit('after-bulk');
+    await tui.waitUntil(() => tui.frame.includes('queued · after-bulk'), {
+      timeoutMs: 10_000, label: 'typed prompt beside notifications', settleMs: 300,
+    });
+    tui.resize(60, 24);
+    await tui.waitUntil(() => tui.frame.includes('notifications · 19 pending') && tui.frame.includes('queued · after-bulk'), {
+      timeoutMs: 10_000, label: 'collapsed queue in a narrow terminal', settleMs: 300,
+    });
+    assert('the narrow frame retains the notification count and the typed message',
+      tui.frame.includes('notifications · 19 pending') && tui.frame.includes('queued · after-bulk'));
+    tui.resize(120, 40);
+    const detailsMark = tui.mark();
+    tui.submit('/tasks');
+    await tui.waitFor('bulk-marker-18', { from: detailsMark, timeoutMs: 10_000, settleMs: 300 });
+    assert('/tasks still exposes the collapsed jobs while busy without sending a model request',
+      (await modelCalls()).length === 20 && tui.frame.includes('notifications · 19 pending'));
+    await writeFile(BLOCK_RELEASE, 'go\n');
+    await tui.waitUntil(() => !tui.frame.includes('working…') && !tui.frame.includes(WAKE_ROW) &&
+      !tui.frame.includes('queued · after-bulk'), {
+      timeoutMs: 30_000, label: 'the notification queue fully drained', settleMs: 500,
+    });
+    const calls = await modelCalls();
+    assert('all nineteen notifications drain once and the queued user prompt keeps its FIFO position',
+      wakeCallsFor(calls, 'bulk-marker').length === 19 && calls.length === 40 && calls.at(-1)?.userText === 'after-bulk');
+    tui.submit('/exit');
+    assert('the collapsed-notification session exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
 async function main(): Promise<void> {
   try {
     await mainSession();
     await permissionSession();
     await configOffSession();
     await delegationSession();
+    await collapsedNotificationsSession();
   } finally {
     await rm(HOME, { recursive: true, force: true });
   }

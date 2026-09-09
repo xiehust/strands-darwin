@@ -145,6 +145,21 @@ export function queueRowText(value: QueuedPrompt | string): string {
   return `${QUEUED_MARKER} ${attachment}${entry.text.replace(/\n/g, ' ⏎ ')}`;
 }
 
+/** One live row for settled-task notifications, never a list of work waiting to run. */
+export function queueNotificationSummary(wakes: readonly QueuedTaskWake[]): string | undefined {
+  if (wakes.length === 0) return undefined;
+  const outcomes = (['failed', 'stopped', 'succeeded'] as const)
+    .map((state) => ({ state, count: wakes.filter((wake) => wake.state === state).length }))
+    .filter(({ count }) => count > 0)
+    .map(({ state, count }) => `${count} ${state}`)
+    .join(', ');
+  const commands = [
+    wakes.some((wake) => wake.source !== 'delegation') ? '/tasks' : undefined,
+    wakes.some((wake) => wake.source === 'delegation') ? '/agents' : undefined,
+  ].filter((command) => command !== undefined).join(' · ');
+  return `notifications · ${wakes.length} pending (${outcomes}) · after this turn · ${commands}`;
+}
+
 /**
  * The draft a take-back (or a cancel-return) composes: queued **user** entries one
  * per line, oldest first, **ahead of any typed text** — the Claude Code shape. The
@@ -166,11 +181,11 @@ export function takeBackDraft(entries: readonly (QueuedPrompt | string)[], draft
  * It rides behind the live elapsed/spend readout and ahead of the static
  * command hints, on the same one truncated `<Text>` row — the count is how the
  * queue stays visible even when the listing's rows were all cut. Wakes are
- * counted apart from typed entries (` · 1 task wake`), so the hint says what
- * kind of work is waiting.
+ * counted apart from typed entries (` · 1 notification pending`), so completed
+ * tasks cannot be mistaken for work still waiting to run.
  */
 export function queuedCountHint(count: number, wakeCount = 0): string {
   const typed = count > 0 ? ` · ${count} queued` : '';
-  const wakes = wakeCount > 0 ? ` · ${wakeCount} task wake${wakeCount === 1 ? '' : 's'}` : '';
+  const wakes = wakeCount > 0 ? ` · ${wakeCount} notification${wakeCount === 1 ? '' : 's'} pending` : '';
   return `${typed}${wakes}`;
 }

@@ -1820,8 +1820,9 @@ instead of queueing is a closed set (`refusesToQueue`): `/clear`, `/compact`, `/
 second Enter; they keep SER-010's refusal-with-retained-draft shape, stated as the deliberate
 exception. Local report commands stay above the busy check and keep answering mid-turn. The
 listing is a fourth **frame-budget participant** (after tools, before the answer, floor 0), one
-`queued ·` row per entry with the cut stated, and the busy hint carries ` · N queued` so a fully
-cut listing still cannot accumulate invisibly. `Up` from the draft's first visual row takes the
+`queued ·` row per user entry with the cut stated; settled-task notifications share one summary
+row (see below). The busy hint counts user entries and pending notifications separately so a
+fully cut listing still cannot accumulate invisibly. `Up` from the draft's first visual row takes the
 whole queue back into the editor ahead of typed text — the gesture joins the key chain between the
 completion menu and prompt recall. A **cancel or a
 failed turn returns the queue to the editor unsent** (auto-resending into an error is how retry
@@ -1884,11 +1885,17 @@ nobody typed it. The same record carries a settled background delegation's wake 
 discriminator, `source: 'delegation'` — absent means a `bash start` job, so SER-069 records read
 unchanged — with the delegation label where a job's command sits, `null` exit metadata, `state` from
 the run's tool result, and a text that names the pair and never repeats the report; the reducer
-prints it as the `delegation wake ·` notice and the queue row tags it `[delegation <id8> state]`.
-**Rendering adds no surface**: the queue row is the existing counted
-`queued ·` row with a `[task bg-… state]` tag in the `[image]` attachment's vocabulary and the
-command label (never the model-facing text); the busy hint counts wakes under their own word
-(` · 1 task wake`) beside ` · N queued`; the send-time transcript row is a `<Static>` notice. **One
+prints it as the `delegation wake ·` notice.
+**Rendering adds no surface**: all pending notifications share one counted row in the existing
+queue region: `notifications · N pending (F failed, S stopped, C succeeded) · after this turn · /tasks`.
+Zero outcome counts are omitted, failures come first, and delegation notifications point to
+`/agents` (mixed sources name both reports). This is a display-only summary above the user rows,
+not FIFO reordering or delivery: enqueue, suppression, drain, take-back and trajectory remain
+unchanged. The frame claim is user-entry count plus at most one notification row; a one-row grant
+for a mixed queue states the omitted user count inline. The busy hint says ` · N notifications
+pending` beside ` · N queued`, including when the listing is fully cut. Notifications never dump
+commands or model-facing text into the live frame; existing `/tasks` and `/agents` reports retain
+the details. The send-time transcript row remains the same `<Static>` notice. **One
 config key**, `backgroundTaskWake` (session-scoped, default on, validated like `contextOffload`);
 `false` leaves the notice-only behaviour byte-identical. Headless drivers have no queue and never
 wake. **The model is told the truth per runtime**: the TUI driver sets
