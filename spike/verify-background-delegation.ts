@@ -41,9 +41,14 @@
  *         byte-identical, Ctrl+C mid-background leaves no running dispatch and the next
  *         `send()` receives the pair, children see neither the flag nor the manage tool.
  *
+ * Trajectory assertions await the wake turn's closing record, not send() alone:
+ * later events append asynchronously, and wake turns do not await rewind capture.
+ * The wait is bounded and checks presence only (never a clean outcome). The exact
+ * read is retained in the fixture root, outside the auto-cleaned test HOME.
+ *
  * Run: pnpm tsx spike/verify-background-delegation.ts
  */
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -347,6 +352,37 @@ async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<bool
   return predicate();
 }
 
+/** Test-only observer barrier: do not change runtime streaming or require success. */
+async function readThroughTurnEnd(file: string, turn: number, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  let read = await readTrajectory(file);
+  while (!read.records.some((record) => record.type === 'turnEnded' && record.turn === turn)
+    && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    read = await readTrajectory(file);
+  }
+  return read;
+}
+
+/** Real delayed file append: a live input prefix is not a completed trajectory. */
+async function trajectoryReadBarrier(root: string): Promise<void> {
+  header('background delegation — bounded trajectory read barrier');
+  const file = path.join(root, 'delayed-trajectory.jsonl');
+  await writeFile(file, `${JSON.stringify({ type: 'taskNotification', seq: 1, turn: 3 })}\n`);
+  let returned = false;
+  const reading = readThroughTurnEnd(file, 3).then((read) => { returned = true; return read; });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert('a durable wake input alone does not satisfy the read barrier', !returned);
+  await appendFile(file, `${JSON.stringify({ type: 'turnEnded', seq: 2, turn: 3, failure: { name: 'Error', message: 'fixture failure' } })}\n`);
+  const closed = await reading;
+  const end = closed.records.find((record): record is TurnEndedRecord => record.type === 'turnEnded');
+  assert('the barrier returns a failed closing record unchanged, never waits for success',
+    end !== undefined && turnOutcome(end) === 'failed');
+  const timedOut = await readThroughTurnEnd(file, 4, 20);
+  assert('a missing closing record stays missing after the bounded wait',
+    !timedOut.records.some((record) => record.type === 'turnEnded' && record.turn === 4));
+}
+
 function specNames(specs: readonly ToolSpec[]): string[] {
   return specs.map((spec) => spec.name);
 }
@@ -426,6 +462,8 @@ async function main(): Promise<void> {
   assert('plan mode lets list through', planGate.planGuard(MANAGE_BACKGROUND_TASK_TOOL_NAME, { mode: 'list' }) === undefined);
 
   const root = await mkdtemp(path.join(os.tmpdir(), 'darwin-background-delegation-'));
+  console.log(`  (retained trajectory evidence: ${root})`);
+  await trajectoryReadBarrier(root);
   await mkdir(path.join(root, '.darwin'), { recursive: true });
   await writeFile(configPath(), JSON.stringify({
     permissionMode: 'yolo',
@@ -563,7 +601,15 @@ async function main(): Promise<void> {
       !specNames(childSpecs).some((name) => [MANAGE_BACKGROUND_TASK_TOOL_NAME, 'subagent', 'workflow'].includes(name)));
 
     header('background delegation — (b) the trajectory: before in the dispatching turn, after in the wake turn');
-    const read = await readTrajectory(trajectoryPath(root, sessionId));
+    const trajectoryFile = trajectoryPath(root, sessionId);
+    const initialRead = await readTrajectory(trajectoryFile);
+    const read = await readThroughTurnEnd(trajectoryFile, 3);
+    // ownPrivateHome cleans even failed runs. Retain these observations before
+    // assertions, without changing the trajectory or the production write chain.
+    await writeFile(path.join(root, 'wake-trajectory-evidence.json'), JSON.stringify({
+      initialRead, read, status: runtime.trajectoryStatus,
+      wakeStreamTypes: wakeTurn.events.map((event) => event.type),
+    }, null, 2));
     const turn1Records = read.records.filter((record) => record.turn === 1);
     assert('turn 1 records the before-event and no after-event for the delegation',
       turn1Records.some((record) => record.type === 'beforeToolCallEvent'
