@@ -313,7 +313,7 @@ Evidence: child session `session-20260908-145806494` (the reflection worker for 
 
 ## SER-084 — Ctrl+Y yanks the last killed text into the current draft: one bounded composer-local register fed by Ctrl+K/U/W and Alt word deletions, grapheme-aware insertion at the current cursor, never the system clipboard, never a model action
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 116
 - Score: 12
 - Importance: 3
@@ -325,7 +325,7 @@ Evidence: child session `session-20260908-145806494` (the reflection worker for 
 
 ### Implementation / acceptance evidence
 
-Not implemented. Acceptance: pure editor cases for exact deleted spans, repeated text, Unicode/ZWJ/combining marks, soft wraps, no-op kills, repeated yank and the cap; real offline pty proves cut/move/yank retains intervening edits, permission Ctrl+Y does not approve, search/compaction ownership stays intact, and submit/queue/recall/clear/rewind clear the register. Re-run editor/help/frame suites plus pty undo, wordNav, queue, historySearch, completion and the new yank scenario; final typecheck/test/build.
+Accepted `3857ba3` after Host diff review and independent gate, child `session-20260909-100117207`, task `bg-ef9880f3-09c5-44ce-aad5-c0550efc6f49` exit 0. Host ran `pnpm typecheck`, `pnpm test` (6,352 PASS lines, zero FAIL; includes editor 62, new real pty yank 14, help 37, frame 80), pty `undo` 7, `wordNav` 11, `queue` 17, `historySearch` 11, `completion` 71, and `pnpm build`: all exit 0. Exact cut span uses result cursor plus length loss; every undo ownership reset clears the register; modified y cannot approve. Cap tests justified a single-segmentation word-boundary scan, unchanged word rules. README/using-darwin/reference EN/zh-CN and architecture synced; AGENTS.md unchanged at 32,768 bytes. One extra blank line at test EOF was a nonblocking diff-check warning, not a functional failure. Evidence logs `/tmp/darwin-ser084-host-{gate,build,undo,wordNav,queue,historySearch,completion}.log`; supervision Batch 120 in `docs/iteration-log.md`.
 
 ### Notes / blockers / abandonment reason
 
