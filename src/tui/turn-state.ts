@@ -11,6 +11,7 @@
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { classify } from '../agent/permission.js';
+import { refusalTranscriptLine } from '../agent/refusal.js';
 import { parsePlanInput, UPDATE_PLAN_TOOL_NAME, type PlanItem } from '../tools/update-plan.js';
 import {
   backgroundBashMode,
@@ -204,7 +205,15 @@ export type TurnAction =
    * recorded fields only, so replaying a `taskNotification` record dispatches the
    * identical action and reproduces the identical history. Not a `userInput`.
    */
-  | ({ type: 'taskNotification' } & TaskNotificationFields);
+  | ({ type: 'taskNotification' } & TaskNotificationFields)
+  /**
+   * A recorded turn ended with a refusal-class stop (SRF-029): one bounded answer-slot
+   * row composed from the recorded stop reason alone, so replay dispatches it from the
+   * `agentResultEvent` record and `/export` inherits it. Replay only — the live session
+   * shows the `refusalNotice` warn notice at the same moment, whose remedy is advice
+   * for that moment, not a transcript fact.
+   */
+  | { type: 'refusalStop'; stopReason: string };
 
 export function turnReducer(state: TurnState, action: TurnAction): TurnState {
   switch (action.type) {
@@ -213,6 +222,17 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
         ...state,
         history: [...state.history, { kind: 'user', id: nextId('user'), text: action.text }],
       };
+
+    case 'refusalStop': {
+      // Written whole in the answer slot: the model's own text (if any) was already
+      // closed by its `contentBlockEvent`, and this line is darwin's, not the model's,
+      // so it never continues a committed answer.
+      const flushed = flushLiveText(state);
+      return {
+        ...flushed,
+        history: [...flushed.history, answerEntry(refusalTranscriptLine(action.stopReason), 'whole', false)],
+      };
+    }
 
     case 'taskNotification':
       return {

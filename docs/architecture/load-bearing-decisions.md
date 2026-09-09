@@ -181,6 +181,27 @@ invocation-scoped. Authoritative contracts: `backend/strands-sdk-contracts.md`,
 `spike/verify-stream-resumption.ts`, `spike/verify-headless-structured.ts`,
 `spike/verify-update-plan.tsx`, and free pty `spike/verify-tui.ts updatePlan`.
 
+**A refusal is a class of three SDK stop reasons, named as received, never one provider's word**
+(SRF-029, `src/agent/refusal.ts`). Claude's safety classifiers end a turn *successfully* from the
+SDK's point of view — a non-`toolUse` stop, an `AgentResult` whose text may be empty — so the
+drivers are the only place the outcome can be named. The direct Anthropic provider passes the API's
+`refusal` through; the Bedrock provider's `STOP_REASON_MAP` spells the same classifier block
+`contentFiltered` and a configured Guardrail `guardrailIntervened`; session
+`session-20260908-095403918` lost three turns to the second word while only the first was matched
+(one visible character, then nothing, and no notice). `REFUSAL_STOP_REASONS` is exactly that frozen
+triple — `maxTokens`, `stopSequence`, `cancelled`, `interrupt`, `checkpoint`, `endTurn` never
+qualify — and every notice, the headless empty-reply error and the child-failure note are functions
+of the stop reason received, so a classifier block and a Guardrail stay distinguishable and the
+`refusal` texts are byte-identical to before. The loop is untouched: no retry, no message removal.
+Replay is the one deliberate live/replay difference: the live TUI shows the warn notice with its
+moment-bound remedy, while `replayRecords` dispatches a replay-only `refusalStop` reducer action
+from the recorded `agentResultEvent.stopReason` — the reducer composes the bounded answer-slot
+line `(model declined this request — stop_reason: <reason>)` after whatever text the turn streamed,
+so `trajectory replay`, `/export` (`formatReplay(replayRead(...))`) and the resume recap inherit it
+from one projection and a record without a refusal-class stop replays byte for byte as before.
+Checks: `spike/verify-headless.ts`, `spike/verify-headless-structured.ts`,
+`spike/verify-failed-child-text.ts`, `spike/verify-trajectory.ts`.
+
 ## `/clear` — a successor runtime, never a reset
 
 **A session's identity is fixed at `Agent` construction, so `/clear` builds a successor rather

@@ -9,7 +9,7 @@ import type { BaseModelConfig, ModelStreamEvent } from '@strands-agents/sdk';
 import { z } from 'zod';
 
 import { PermissionGate } from '../src/agent/permission.js';
-import { CHILD_REFUSAL_ERROR } from '../src/agent/refusal.js';
+import { childRefusalError } from '../src/agent/refusal.js';
 import { SubagentDispatchRegistry } from '../src/agents/dispatch-registry.js';
 import {
   FAILED_CHILD_NOTE,
@@ -47,7 +47,7 @@ const ORIGINAL = 'child model exploded';
 
 type Step =
   | { kind: 'text-then-tool'; text: string }
-  | { kind: 'text'; text: string; stopReason: 'endTurn' | 'maxTokens' | 'refusal' }
+  | { kind: 'text'; text: string; stopReason: 'endTurn' | 'maxTokens' | 'refusal' | 'contentFiltered' }
   | { kind: 'throw'; message?: string; delayMs?: number };
 
 /** Plays one scripted step per model call. */
@@ -308,16 +308,37 @@ header('failed child — workflow node: the graph failure surfaces the node\'s r
 // A model-side refusal ends the child's turn normally in the SDK: without the
 // explicit check it would be reported as a succeeded delegation with an empty or
 // cut-short report. It is a failure that names the refusal and carries the text.
+// The `refusal` note is pinned byte for byte: it predates SRF-029 and must not move.
+const REFUSAL_NOTE = 'child model declined the delegated task (stop_reason: refusal)';
 header('refused child — subagent tool: a refusal stop is a failed delegation, not a report');
 {
+  assert('the refusal note is the pre-SRF-029 text, byte for byte', childRefusalError('refusal') === REFUSAL_NOTE);
   const f = subagentFixture([new ScriptedModel([{ kind: 'text', text: 'I can start but', stopReason: 'refusal' }])]);
   const parent = await host(f.tool);
   const result = (await parent.tool[SUBAGENT_TOOL_NAME]!.invoke({ task: 'x' } as never, { recordDirectToolCall: false })) as DirectResult;
   const text = resultText(result);
   assert('the refused child is an error naming the refusal',
-    result.status === 'error' && text.includes(CHILD_REFUSAL_ERROR));
+    result.status === 'error' && text.includes(REFUSAL_NOTE));
   assert('its partial text follows the fixed note through the ordinary projection',
     text.endsWith(`${FAILED_CHILD_NOTE}\nI can start but`));
+  assert('the dispatch record settles failed, never succeeded', f.dispatches.list()[0]?.state === 'failed');
+  await f.tool.shutdown();
+}
+
+// SRF-029: Bedrock spells the same classifier block `contentFiltered` (its
+// `STOP_REASON_MAP`), so the class — not one provider's word — is what fails the
+// child, and the note names the reason actually received.
+header('refused child — subagent tool: a contentFiltered stop is the same failure, naming contentFiltered');
+{
+  const f = subagentFixture([new ScriptedModel([{ kind: 'text', text: 'Partial before the block', stopReason: 'contentFiltered' }])]);
+  const parent = await host(f.tool);
+  const result = (await parent.tool[SUBAGENT_TOOL_NAME]!.invoke({ task: 'x' } as never, { recordDirectToolCall: false })) as DirectResult;
+  const text = resultText(result);
+  assert('the contentFiltered child is an error naming contentFiltered',
+    result.status === 'error' && text.includes('child model declined the delegated task (stop_reason: contentFiltered)'));
+  assert('and never the Anthropic word', !text.includes('stop_reason: refusal'));
+  assert('its partial text follows the fixed note through the ordinary projection',
+    text.endsWith(`${FAILED_CHILD_NOTE}\nPartial before the block`));
   assert('the dispatch record settles failed, never succeeded', f.dispatches.list()[0]?.state === 'failed');
   await f.tool.shutdown();
 }
@@ -335,7 +356,7 @@ header('refused child — workflow node: a refusal stop is a node failure');
   )) as DirectResult;
   const text = resultText(result);
   assert('the workflow result is an error naming the refused node',
-    result.status === 'error' && text.includes(`a: ${CHILD_REFUSAL_ERROR}`));
+    result.status === 'error' && text.includes(`a: ${REFUSAL_NOTE}`));
   const list = f.dispatches.list();
   assert('the refused node settles failed; its dependant settles cancelled',
     list[0]?.state === 'failed' && list[1]?.state === 'cancelled');

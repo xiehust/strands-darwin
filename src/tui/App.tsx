@@ -35,7 +35,7 @@ import { averageRequestInputTokens, type SessionCallStats } from '../agent/call-
 import { describeCacheMissCause, warmCacheSwitchNotice, type CacheMissCause, type CacheMissReport } from '../agent/cache-miss.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from '../agent/stream-resumption.js';
 import { retryFailureNotice, type ModelRetryOutcome, type RetryWaitState } from '../agent/model-retry.js';
-import { isRefusalStop, REFUSAL_NOTICE } from '../agent/refusal.js';
+import { isRefusalStop, refusalNotice } from '../agent/refusal.js';
 import { contextOverflowErrorMessage } from '../context-overflow-error.js';
 
 import { routeSdkLogs } from '../agent/sdk-logging.js';
@@ -1045,9 +1045,10 @@ export function App({
                 answerTailLive = false;
               }
               // The SDK ends a refused turn normally, so the transcript would show an
-              // empty (or cut-short) answer with no reason. Name it once, as a notice.
+              // empty (or cut-short) answer with no reason. Name it once, as a notice,
+              // with the stop reason actually received (SRF-029).
               if (event.type === 'agentResultEvent' && isRefusalStop(event.result.stopReason)) {
-                dispatch({ type: 'notice', text: REFUSAL_NOTICE, severity: 'warn' });
+                dispatch({ type: 'notice', text: refusalNotice(event.result.stopReason), severity: 'warn' });
               }
             }
           },

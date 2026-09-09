@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { ProjectInstructions } from '../agent/instructions.js';
 import { backgroundDelegationDescriptionClause } from '../agent/background-delegation.js';
 import { withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
-import { CHILD_REFUSAL_ERROR, isRefusalStop } from '../agent/refusal.js';
+import { childRefusalError, isRefusalStop } from '../agent/refusal.js';
 import { isRetryableStreamInterruption, STREAM_CONTINUATION_PROMPT } from '../agent/stream-resumption.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
@@ -307,8 +307,9 @@ export class SubagentTool {
         context,
       );
       // A refused child is a failed delegation, not a report: the SDK ends the turn
-      // normally, so the outcome has to be named here before it reads as success.
-      if (isRefusalStop(result.stopReason)) throw new Error(CHILD_REFUSAL_ERROR);
+      // normally, so the outcome has to be named here — with the stop reason actually
+      // received — before it reads as success.
+      if (isRefusalStop(result.stopReason)) throw new Error(childRefusalError(result.stopReason));
       const outcome = result.stopReason === 'cancelled' ? 'cancelled' : 'succeeded';
       dispatch?.finish(outcome);
       this.retainSettled(dispatch, definition, child, outcome, continuation);

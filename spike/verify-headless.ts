@@ -12,6 +12,7 @@ import type { AgentStreamEvent } from '@strands-agents/sdk';
 
 import { resolveSession, sessionPaths } from '../src/agent/session.js';
 import { NEVER_WITHDRAWN, PARENT_PERMISSION_SOURCE } from '../src/agent/permission.js';
+import { isRefusalStop, REFUSAL_STOP_REASONS } from '../src/agent/refusal.js';
 import { parseCliArgs, CliUsageError } from '../src/cli-args.js';
 import { usageErrorText } from '../src/cli-usage.js';
 import type { AppConfig } from '../src/config.js';
@@ -254,6 +255,50 @@ async function outputContracts(): Promise<void> {
   }, 'x', (text) => refusalStderr.push(text));
   assert.equal(refusedReply, 'I can help with');
   assert.match(refusalStderr.join(''), /model declined this request \(stop_reason: refusal\)/u);
+
+  // SRF-029: the refusal *class*, not one provider's word. Bedrock's Converse mapping
+  // spells the classifier block `contentFiltered` and a configured Guardrail
+  // `guardrailIntervened`; each is the same outcome as `refusal` and each names the
+  // reason actually received, so the two stay distinguishable. The set is exactly
+  // three and frozen; a `maxTokens` stop (the model finishing on its own terms) is
+  // never a refusal and keeps the generic empty-reply error.
+  assert.deepEqual([...REFUSAL_STOP_REASONS], ['refusal', 'contentFiltered', 'guardrailIntervened']);
+  assert.ok(Object.isFrozen(REFUSAL_STOP_REASONS));
+  for (const stopReason of ['contentFiltered', 'guardrailIntervened'] as const) {
+    await assert.rejects(() => runHeadlessTurn({
+      expandSlashCommand: async () => null,
+      async *send(): AsyncIterable<AgentStreamEvent> {
+        yield event({ type: 'agentResultEvent', result: { stopReason } });
+      },
+    }, 'x', () => undefined), new RegExp(`^Error: The model declined this request \\(stop_reason: ${stopReason}\\) and produced no reply\\.$`, 'u'));
+    const twinStderr: string[] = [];
+    const twinReply = await runHeadlessTurn({
+      expandSlashCommand: async () => null,
+      async *send(): AsyncIterable<AgentStreamEvent> {
+        yield event({ type: 'contentBlockEvent', contentBlock: { type: 'textBlock', text: 'I can help with' } });
+        yield event({ type: 'agentResultEvent', result: { stopReason } });
+      },
+    }, 'x', (text) => twinStderr.push(text));
+    assert.equal(twinReply, 'I can help with');
+    assert.equal(twinStderr.join(''), `model declined this request (stop_reason: ${stopReason}) — rephrase it or start a new turn\n`);
+  }
+  assert.equal(isRefusalStop('maxTokens'), false);
+  await assert.rejects(() => runHeadlessTurn({
+    expandSlashCommand: async () => null,
+    async *send(): AsyncIterable<AgentStreamEvent> {
+      yield event({ type: 'agentResultEvent', result: { stopReason: 'maxTokens' } });
+    },
+  }, 'x', () => undefined), /^Error: The agent turn completed without an assistant reply\.$/u);
+  const maxTokensStderr: string[] = [];
+  const maxTokensReply = await runHeadlessTurn({
+    expandSlashCommand: async () => null,
+    async *send(): AsyncIterable<AgentStreamEvent> {
+      yield event({ type: 'contentBlockEvent', contentBlock: { type: 'textBlock', text: 'cut short' } });
+      yield event({ type: 'agentResultEvent', result: { stopReason: 'maxTokens' } });
+    },
+  }, 'x', (text) => maxTokensStderr.push(text));
+  assert.equal(maxTokensReply, 'cut short');
+  assert.equal(maxTokensStderr.join('').includes('declined'), false);
 }
 
 async function sessionContracts(): Promise<void> {

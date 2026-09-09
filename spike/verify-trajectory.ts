@@ -90,6 +90,7 @@ import {
   formatPermissionDecision,
   formatReplay,
   historyWithoutIds,
+  replayRead,
   replayRecords,
 } from '../src/trajectory/replay.js';
 import {
@@ -118,6 +119,8 @@ class ScriptedModel extends Model<BaseModelConfig> {
     private readonly toolCall?: { name: string; input: unknown },
     /** Emitted as a reasoning block before the answer, to prove it is never stored. */
     private readonly reasoning?: string,
+    /** How the answer's message stops; a refusal-class reason models a provider block. */
+    private readonly stopReason: 'endTurn' | 'contentFiltered' | 'guardrailIntervened' | 'refusal' = 'endTurn',
   ) {
     super();
   }
@@ -166,7 +169,7 @@ class ScriptedModel extends Model<BaseModelConfig> {
       yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: chunk } };
     }
     yield { type: 'modelContentBlockStopEvent' };
-    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+    yield { type: 'modelMessageStopEvent', stopReason: this.stopReason };
   }
 }
 
@@ -2248,6 +2251,110 @@ async function replayFidelity(): Promise<void> {
   }
 }
 
+async function refusalReplay(): Promise<void> {
+  header('trajectory — a refusal-class turn replays with one answer-slot line naming the stop reason');
+
+  const dir = path.join(ROOT, 'refusal-replay');
+  await rm(dir, { recursive: true, force: true });
+  const file = path.join(dir, 'trajectory.jsonl');
+
+  // SRF-029: the real recorder over a real Agent whose provider ends the turn with
+  // Bedrock's `contentFiltered` after one visible character — the shape of session
+  // `session-20260908-095403918`, whose replay read `darwin> 直` and nothing else.
+  const filtered = newAgent(new ScriptedModel('直', undefined, undefined, 'contentFiltered'));
+  await filtered.initialize();
+  const rec = recorder(file);
+  await recordedTurn(filtered, rec, '用户A是否有可能访问到用户B的文件？');
+  await rec.close();
+
+  const read = await readTrajectory(file);
+  const resultRecord = read.records.find((record) => record.type === 'agentResultEvent') as unknown as {
+    data: { result: { stopReason: string } };
+  };
+  assert('the record carries the SDK stop reason as it arrived', resultRecord.data.result.stopReason === 'contentFiltered');
+
+  const replayed = replayRecords(read.records);
+  const text = formatReplay({ ...replayed, damage: undefined });
+  const lines = text.split('\n');
+  const partial = lines.indexOf('darwin> 直');
+  assert('the partial text the turn streamed is still there', partial > 0);
+  assert(
+    'the one refusal line follows it, in the answer slot, naming the reason actually received',
+    lines[partial + 1] === 'darwin> (model declined this request — stop_reason: contentFiltered)',
+  );
+  assert('exactly one refusal line', lines.filter((line) => line.includes('model declined this request')).length === 1);
+  assert('it never says refusal, the Anthropic word', !text.includes('stop_reason: refusal'));
+  assert(
+    'the model-call line still names the stop at the foot of the report',
+    lines.some((line) => line.startsWith('  turn 1 model call') && line.includes('stop contentFiltered')),
+  );
+  assert(
+    'the line is an assistant history item, not a note (the resume recap seeds it as one)',
+    replayed.history.some((item) => item.kind === 'assistant' && item.text === '(model declined this request — stop_reason: contentFiltered)'),
+  );
+
+  // `/export` is `formatReplay(replayRead(...))` byte for byte, so it inherits the line
+  // without a formatter of its own: prove it against the read result, not the records.
+  const exported = formatReplay(replayRead(read));
+  assert('the export projection carries the identical line', exported.split('\n')[partial + 1] === lines[partial + 1]);
+
+  // The same line for a Guardrail stop and for the Anthropic word, each naming its own
+  // reason — distinguishable by construction, from a synthetic record each.
+  for (const stopReason of ['guardrailIntervened', 'refusal'] as const) {
+    const synthetic = replayRecords([
+      parseRecordLine('{"v":1,"seq":1,"t":"2026-09-08T10:00:01.000Z","turn":1,"type":"userInput","text":"q"}') as TrajectoryRecord,
+      parseRecordLine(
+        `{"v":1,"seq":2,"t":"2026-09-08T10:00:02.000Z","turn":1,"type":"agentResultEvent","data":{"result":{"stopReason":"${stopReason}"}}}`,
+      ) as TrajectoryRecord,
+      parseRecordLine(
+        `{"v":1,"seq":3,"t":"2026-09-08T10:00:03.000Z","turn":1,"type":"turnEnded","stopReason":"${stopReason}","ms":5,"recorded":{"agentResultEvent":1},"dropped":{}}`,
+      ) as TrajectoryRecord,
+    ]);
+    assert(
+      `a ${stopReason} stop with no text at all replays as the user row and the one refusal line`,
+      formatReplay({ ...synthetic, damage: undefined }).startsWith(
+        `you> q\ndarwin> (model declined this request — stop_reason: ${stopReason})\n`,
+      ),
+    );
+  }
+
+  // An `endTurn` fixture is byte-identical to what replay printed before the line
+  // existed: the transcript below is the pre-SRF-029 output for these records, pinned.
+  const endTurnRecords = [
+    '{"v":1,"seq":0,"t":"2026-09-08T10:00:00.000Z","turn":0,"type":"runStarted","session":"session-20260908-000000000","agentId":"darwin","darwinVersion":"0.0.1","provider":"bedrock","model":"fake.trajectory","permissionMode":"default","thinkingEffort":"high","resumed":false,"restoredMessages":0,"pid":1}',
+    '{"v":1,"seq":1,"t":"2026-09-08T10:00:01.000Z","turn":1,"type":"userInput","text":"an ordinary question"}',
+    '{"v":1,"seq":2,"t":"2026-09-08T10:00:02.000Z","turn":1,"type":"contentBlockEvent","data":{"contentBlock":{"text":"an ordinary answer"}}}',
+    '{"v":1,"seq":3,"t":"2026-09-08T10:00:03.000Z","turn":1,"type":"agentResultEvent","data":{"result":{"stopReason":"endTurn"}}}',
+    '{"v":1,"seq":4,"t":"2026-09-08T10:00:04.000Z","turn":1,"type":"turnEnded","stopReason":"endTurn","ms":900,"recorded":{"contentBlockEvent":1,"agentResultEvent":1},"dropped":{}}',
+  ].map((line) => parseRecordLine(line) as TrajectoryRecord);
+  const endTurn = formatReplay({ ...replayRecords(endTurnRecords), damage: undefined });
+  assert(
+    'an endTurn turn replays byte-identically to before the refusal line existed',
+    endTurn ===
+      [
+        '--- run 2026-09-08T10:00:00.000Z · bedrock/fake.trajectory',
+        'you> an ordinary question',
+        'darwin> an ordinary answer',
+        '  turn 1 spend: unknown (not recorded)',
+        '  session spend: unknown over 1 turn(s)',
+      ].join('\n'),
+  );
+  // And a `maxTokens` stop — the model finishing on its own terms — earns no line either.
+  const maxTokens = formatReplay({
+    ...replayRecords(
+      endTurnRecords.map((record) =>
+        record.type === 'agentResultEvent'
+          ? (parseRecordLine(
+              '{"v":1,"seq":3,"t":"2026-09-08T10:00:03.000Z","turn":1,"type":"agentResultEvent","data":{"result":{"stopReason":"maxTokens"}}}',
+            ) as TrajectoryRecord)
+          : record,
+      ),
+    ),
+    damage: undefined,
+  });
+  assert('a maxTokens stop is not a refusal and adds nothing', !maxTokens.includes('declined') && maxTokens === endTurn);
+}
+
 async function searchContracts(): Promise<void> {
   header('trajectory — search finds a known event and reports a miss honestly');
 
@@ -2864,6 +2971,7 @@ async function main(): Promise<void> {
     await permissionDecisionRecords();
     await rewindOriginRecords();
     await replayFidelity();
+    await refusalReplay();
     await searchContracts();
     await forkContracts();
     await childIsolation();

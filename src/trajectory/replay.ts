@@ -13,6 +13,7 @@
  */
 import { contentBlockFromData, type AgentStreamEvent } from '@strands-agents/sdk';
 
+import { isRefusalStop } from '../agent/refusal.js';
 import { initialTurnState, turnReducer, type HistoryItem } from '../tui/turn-state.js';
 import { describeDamage, type TrajectoryReadResult } from './reader.js';
 import {
@@ -200,6 +201,12 @@ export function replayRecords(
           continue;
         }
         state = turnReducer(state, { type: 'streamEvent', event });
+        // A refusal-class stop (SRF-029) earns the one answer-slot line the live
+        // session's warn notice stood for, after whatever text the turn streamed —
+        // exactly where the live driver dispatched its notice. Read from the recorded
+        // result alone; every other stop reason replays as before, byte for byte.
+        const stopReason = refusalStopReasonOf(event);
+        if (stopReason !== undefined) state = turnReducer(state, { type: 'refusalStop', stopReason });
         continue;
       }
 
@@ -436,6 +443,20 @@ function asStreamEvent(record: TrajectoryRecord & { type: string }): AgentStream
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The refusal-class stop reason a rehydrated `agentResultEvent` carries, or
+ * `undefined` for any other event or stop. The wire payload is `{ result: { stopReason } }`
+ * (the SDK's own `toJSON()`); anything not shaped like that is not a refusal, because
+ * replay never invents a stop the record does not state.
+ */
+function refusalStopReasonOf(event: AgentStreamEvent): string | undefined {
+  if (event.type !== 'agentResultEvent') return undefined;
+  const result = (event as { result?: unknown }).result;
+  if (result === null || typeof result !== 'object') return undefined;
+  const stopReason = (result as { stopReason?: unknown }).stopReason;
+  return typeof stopReason === 'string' && isRefusalStop(stopReason) ? stopReason : undefined;
 }
 
 /** History with the process-local ids removed, for comparing a replay to a live run. */

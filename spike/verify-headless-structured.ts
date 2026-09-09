@@ -460,6 +460,32 @@ async function sdkProjectionPrivacy(): Promise<void> {
   }, 'go', maxWriter, () => 'summary');
   nodeAssert.equal(recovered.reply, 'partial finish');
   assert('max-token recovery keeps each retained part exactly once', true);
+
+  // SRF-029: a Bedrock classifier block ends the SDK turn normally as `contentFiltered`;
+  // with no reply the structured turn is the refusal error naming that reason, never
+  // the generic "completed without an assistant reply" and never the Anthropic word.
+  const filteredAgent = new Agent({ model: new StopOnlyModel('contentFiltered'), printer: false, systemPrompt: 'test' });
+  const filteredWriter = new StructuredHeadlessWriter('stream-json', () => undefined);
+  await nodeAssert.rejects(
+    () => runStructuredHeadlessTurn({
+      send: (input) => filteredAgent.stream(input),
+      expandSlashCommand: async () => null,
+    }, 'go', filteredWriter, () => 'summary'),
+    /^Error: The model declined this request \(stop_reason: contentFiltered\) and produced no reply\.$/u,
+  );
+  assert('an empty contentFiltered turn is the refusal error naming contentFiltered', true);
+}
+
+/** Ends the turn with the given stop reason and no text — a provider-side block. */
+class StopOnlyModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.stop', contextWindowLimit: 200_000 };
+  constructor(private readonly stopReason: 'contentFiltered' | 'guardrailIntervened') { super(); }
+  override updateConfig(config: BaseModelConfig): void { this.config = { ...this.config, ...config }; }
+  override getConfig(): BaseModelConfig { return this.config; }
+  override async *stream(_messages: Message[], _options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    yield { type: 'modelMessageStopEvent', stopReason: this.stopReason };
+  }
 }
 
 /** Throttles the first `failures` calls with the SDK's own error class, then answers. */
