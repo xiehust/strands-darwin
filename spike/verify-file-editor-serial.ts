@@ -5,7 +5,9 @@
  * `fileEditor` tool uses; the default `ConcurrentToolExecutor` races them, and
  * `SerializedFileEditorTool` decides only when each delegated call starts. The
  * real SDK singleton edits real temp files; a deliberately slow fake original
- * proves what stays concurrent and what waits.
+ * proves what stays concurrent and what waits. The runtime section checks the
+ * installed tool: `makeFileEditor({ description })` (SRF-032 payload bound on the
+ * SDK's own text, singleton schema and patched behaviour) behind the wrapper.
  */
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -21,13 +23,19 @@ import {
   type ModelStreamEvent,
   type Tool,
 } from '@strands-agents/sdk';
-import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
+import { DEFAULT_FILE_EDITOR_DESCRIPTION, fileEditor, makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import { z } from 'zod';
 
 import { buildRecipeChild } from '../src/agents/child-recipe.js';
 import { PermissionGate } from '../src/agent/permission.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
-import { MUTATING_FILE_EDITOR_COMMANDS, SerializedFileEditorTool, mutationKey } from '../src/tools/file-editor-serial.js';
+import {
+  FILE_EDITOR_DESCRIPTION,
+  FILE_EDITOR_PAYLOAD_GUIDANCE,
+  MUTATING_FILE_EDITOR_COMMANDS,
+  SerializedFileEditorTool,
+  mutationKey,
+} from '../src/tools/file-editor-serial.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 ownPrivateHome('file-editor-serial');
@@ -342,7 +350,7 @@ try {
   assert('the parent\'s own second edit still waited for its first', p1 !== undefined && p2 !== undefined && p2.start >= p1.end);
   assert('both Agents release their chains', sharedWrapper.pendingPaths(parent).length === 0 && sharedWrapper.pendingPaths(child).length === 0);
 
-  header('fileEditor serial — the runtime installs the wrapper in place of the singleton');
+  header('fileEditor serial — the runtime installs the wrapper in place of the vended tool');
   setRuntimeModelFactoryForTest(async () => new NoCallModel());
   runtime = await AgentRuntime.create({
     projectRoot: root,
@@ -355,7 +363,64 @@ try {
   assert('exactly one fileEditor is registered', runtimeAgent.tools.filter((candidate) => candidate.name === 'fileEditor').length === 1);
   assert('the runtime never sets toolExecutor (SDK default ConcurrentToolExecutor)',
     (runtimeAgent as unknown as { _toolExecutor: unknown })._toolExecutor instanceof ConcurrentToolExecutor);
-  assert('the wrapper keeps the SDK spec for the model', runtimeEditor?.toolSpec === fileEditor.toolSpec);
+  // SRF-032: the runtime wraps `makeFileEditor({ description })` — the singleton's own
+  // factory — so the schema is the singleton's and the description is the SDK's text
+  // followed by the payload bound. The wrapper itself stays a projection of what it
+  // wraps (asserted on a wrapped copy below, since the runtime keeps its original private).
+  assert('the runtime tool keeps the SDK input schema (same bytes as the singleton)',
+    JSON.stringify(runtimeEditor?.toolSpec.inputSchema) === JSON.stringify(fileEditor.toolSpec.inputSchema));
+  assert('the runtime tool description starts with the SDK default description',
+    runtimeEditor?.description.startsWith(DEFAULT_FILE_EDITOR_DESCRIPTION) === true
+      && runtimeEditor.description.length > DEFAULT_FILE_EDITOR_DESCRIPTION.length);
+  assert('the runtime tool description carries the payload bound for create/str_replace/insert',
+    runtimeEditor?.description === FILE_EDITOR_DESCRIPTION
+      && runtimeEditor.description.includes(FILE_EDITOR_PAYLOAD_GUIDANCE)
+      && /create's file_text and each str_replace\/insert new_str must stay within a few thousand words/.test(FILE_EDITOR_PAYLOAD_GUIDANCE)
+      && /skeleton/.test(FILE_EDITOR_PAYLOAD_GUIDANCE)
+      && /never as one whole-document payload/.test(FILE_EDITOR_PAYLOAD_GUIDANCE));
+  assert('the toolSpec the model reads agrees with the tool (name, description)',
+    runtimeEditor?.toolSpec.name === 'fileEditor' && runtimeEditor.toolSpec.description === runtimeEditor.description);
+  const described = makeFileEditor({ description: FILE_EDITOR_DESCRIPTION });
+  const describedWrapper = new SerializedFileEditorTool(described);
+  assert('a wrapper around the described tool is a pure projection of it (name, description bytes, toolSpec object)',
+    describedWrapper.name === described.name && describedWrapper.description === described.description
+      && describedWrapper.toolSpec === described.toolSpec && described.description === FILE_EDITOR_DESCRIPTION);
+  // The patched behaviour rides on the factory, not the singleton: replace_all and the
+  // exact-miss advisory produce the same result bytes through the runtime's tool.
+  const viaRuntime = path.join(root, 'via-runtime.txt');
+  await writeFile(viaRuntime, everywhereSeed);
+  const runtimeAllInput = { ...replaceAllInput, path: viaRuntime };
+  const runtimeMissInput = { command: 'str_replace', path: viaRuntime, old_str: 'TOKEN z', new_str: 'x' };
+  const { results: runtimeResults } = await runBatch(runtimeEditor as Tool, [
+    { id: 'r1', input: runtimeAllInput },
+    { id: 'r2', input: runtimeMissInput },
+  ]);
+  assert('replace_all through the runtime tool matches the singleton\'s result bytes (path aside)',
+    runtimeResults.get('r1')?.status === 'success'
+      && runtimeResults.get('r1')?.text === unwrappedAll.text.replaceAll(everywhere, viaRuntime)
+      && (await readFile(viaRuntime, 'utf8')) === 'TOKEN a\nkeep\nTOKEN b\nTOKEN c\n');
+  assert('an exact str_replace miss through the runtime tool is still an error with the advisory context',
+    runtimeResults.get('r2')?.status === 'error' && /No replacement was performed/.test(runtimeResults.get('r2')?.text ?? '')
+      && runtimeResults.get('r2')?.text.includes('Advisory context only') === true);
+  // Children share the parent's wrapper, so the payload bound reaches a child whose
+  // prompt omits the system-prompt rule.
+  const runtimeChild = buildRecipeChild({
+    definition: { name: 'probe', description: 'probe child', systemPrompt: 'probe', tools: undefined, file: undefined },
+    config: {
+      provider: 'bedrock', model: 'fake', region: 'us-west-2', maxTokens: 1000, permissionMode: 'yolo',
+      promptCache: false, thinkingEffort: 'high', summaryRatio: 0.8, contextWarnRatio: 0.8, contextOffload: true,
+      preserveRecentMessages: 4, modelChoices: [],
+    },
+    model: new NoCallModel(),
+    tools: runtimeAgent.tools,
+    intervention: gate,
+    projectInstructions: undefined,
+    idPrefix: 'serial-test',
+    dispatch: undefined,
+  });
+  const runtimeChildEditor = runtimeChild.tools.find((candidate) => candidate.name === 'fileEditor');
+  assert('a child built from the runtime catalogue gets the same wrapper, so the payload bound reaches it',
+    runtimeChildEditor === runtimeEditor && runtimeChildEditor?.description.includes(FILE_EDITOR_PAYLOAD_GUIDANCE) === true);
 } finally {
   await runtime?.shutdown();
   setRuntimeModelFactoryForTest(undefined);

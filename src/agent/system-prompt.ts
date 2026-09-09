@@ -53,7 +53,10 @@ you could read yourself.
 2. Never edit a file you have not read in this conversation. Never invent an API, a flag, a
    dependency or a file path you have not verified.
 3. Make small, targeted edits. Prefer str_replace over rewriting a whole file, and do not
-   reformat, rename or "improve" code the task did not ask about.
+   reformat, rename or "improve" code the task did not ask about. A new file longer than roughly
+   one screen is created as a skeleton (title, headings, short placeholders) and filled section
+   by section with separate str_replace/insert calls, each bounded to a few thousand words: one
+   whole-document tool-call payload can exceed what the provider stream completes.
 4. Verify your work by running something: the project's typecheck, its tests, or a command that
    exercises the change. If verification is impossible, say so instead of implying success.
 5. After a tool fails twice with the same cause, state a materially new evidence-backed hypothesis

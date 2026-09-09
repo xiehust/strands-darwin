@@ -5,10 +5,13 @@ const STREAM_INTERRUPTION_MESSAGE = 'Stream ended without completing a message';
 /**
  * A bounded internal instruction for the one continuation turn. It deliberately
  * contains none of the original request: the retained SDK conversation is the source
- * of truth, and replaying user text could replay completed side effects.
+ * of truth, and replaying user text could replay completed side effects. Its last
+ * clause (SRF-032) names the one cause the continuation cannot outlive on its own: a
+ * stream that died while emitting a tool call dies again on the same payload, so the
+ * model is told to split the call rather than re-emit it.
  */
 export const STREAM_CONTINUATION_PROMPT =
-  '[Darwin automatic continuation after an interrupted model stream] Inspect the retained conversation and work already completed. Continue from exactly where the interruption occurred. Do not repeat completed work, replay tool calls, or restart the original request. Briefly verify the current state before any further action.';
+  '[Darwin automatic continuation after an interrupted model stream] Inspect the retained conversation and work already completed. Continue from exactly where the interruption occurred. Do not repeat completed work, replay tool calls, or restart the original request. Briefly verify the current state before any further action. If the interruption happened while a tool call was being emitted, that call was too large for the stream: re-issue it as several smaller calls (skeleton plus per-section edits) — never as one call.';
 
 export const STREAM_CONTINUATION_NOTICE =
   'model stream interrupted; continuing once from retained conversation without repeating completed work';

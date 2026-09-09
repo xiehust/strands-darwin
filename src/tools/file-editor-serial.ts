@@ -22,9 +22,27 @@ import path from 'node:path';
 
 import { Tool } from '@strands-agents/sdk';
 import type { ToolContext, ToolSpec, ToolStreamGenerator } from '@strands-agents/sdk';
+import { DEFAULT_FILE_EDITOR_DESCRIPTION } from '@strands-agents/sdk/vended-tools/file-editor';
 
 /** The vended schema's commands that reach `sandbox.writeText`. */
 export const MUTATING_FILE_EDITOR_COMMANDS: ReadonlySet<string> = new Set(['create', 'str_replace', 'insert']);
+
+/**
+ * SRF-032: the payload bound the model reads beside the schema. One whole-document
+ * `create` (or one huge `new_str`) can exceed what the provider stream completes —
+ * measured twice on the same payload, so the interruption is deterministic and the
+ * one automatic continuation cannot help. The guidance lives on the tool, not only in
+ * the parent's system prompt, so a child whose prompt omits the rule still sees it.
+ */
+export const FILE_EDITOR_PAYLOAD_GUIDANCE =
+  "Keep every payload bounded: create's file_text and each str_replace/insert new_str must stay within a few thousand words, because one oversized tool-call payload can exceed what the model stream completes and the whole call is lost. Write a long document as a short skeleton (title, headings, placeholders) with create, then fill it section by section with separate str_replace/insert calls — never as one whole-document payload.";
+
+/**
+ * The description the runtime gives `makeFileEditor({ description })`: the SDK's own
+ * text first, so the tool reads as the vended one, then the payload bound. The
+ * wrapper below never touches it — it stays a projection of what it wraps.
+ */
+export const FILE_EDITOR_DESCRIPTION = `${DEFAULT_FILE_EDITOR_DESCRIPTION} ${FILE_EDITOR_PAYLOAD_GUIDANCE}`;
 
 type PathChains = Map<string, Promise<void>>;
 

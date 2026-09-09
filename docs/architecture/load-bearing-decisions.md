@@ -69,7 +69,13 @@ closes and appends the failed trajectory turn. The TUI and headless drivers comp
 `Stream ended without completing a message` `ModelError` qualifies, and the helper can invoke one
 bounded anti-repeat continuation prompt once. Because the original user request is not resent, a
 model is directed to inspect retained conversation and work before acting, reducing duplicate side
-effects. The busy/queue owner spans both attempts, while every attempt still gets ordinary SDK,
+effects. The prompt's last clause (SRF-032) names the one cause a continuation cannot outlive on its
+own: when the stream died while a tool call was being emitted, that call was too large for the
+stream, and re-emitting the same payload dies the same way (measured twice on one whole-document
+`fileEditor create`, `$5.88` and ~20 minutes for zero files written), so the model is told to
+re-issue it as several smaller calls — skeleton plus per-section edits — never as one; the
+predicate, the single continuation and the second-failure rethrow are unchanged, only what the
+model is told. The busy/queue owner spans both attempts, while every attempt still gets ordinary SDK,
 permission, usage, cancellation, and trajectory semantics. Headless protocols disclose that recovery
 occurred without exposing the private control prompt. A `subagent` child gets the same single
 continuation (SRF-026), owned by `SubagentTool` at its `invoke` call site with the same predicate and
@@ -1037,11 +1043,22 @@ concurrent executor above races every tool call of one assistant message. So six
 calls on one file in one message each read the original and the last write wins — while all six
 report `success` (measured 1/6 surviving unwrapped; session-20260902-054329719 lost 4/6 on
 `src/config.ts` and spent 13 % of the turn re-applying them). `src/tools/file-editor-serial.ts`
-fixes the write, not the executor: `SerializedFileEditorTool` takes the singleton's place in the
+fixes the write, not the executor: `SerializedFileEditorTool` takes the vended tool's place in the
 runtime `tools:` list (static tool, so no discovery window and no `addOrReplace` dance) and is a
-pure projection — same name, description and `toolSpec`, the SDK's own `stream()` with the
-untouched context, so result and error bytes, permission classification, edit-diff rows and
-trajectory records cannot differ. What it adds is *when*: `create`/`str_replace`/`insert` on one
+pure projection of what it wraps — same name, description and `toolSpec`, the SDK's own `stream()`
+with the untouched context, so result and error bytes, permission classification, edit-diff rows and
+trajectory records cannot differ. What it wraps is no longer the bare singleton but
+`makeFileEditor({ description })` (SRF-032) — the singleton's own factory, hence the same schema and
+the same patched `replace_all`/exact-miss behaviour — with `FILE_EDITOR_DESCRIPTION`: the SDK's
+`DEFAULT_FILE_EDITOR_DESCRIPTION` first, then `FILE_EDITOR_PAYLOAD_GUIDANCE`, the bound that
+`create`'s `file_text` and each `str_replace`/`insert` `new_str` stay within a few thousand words
+and that a long document is a short skeleton filled section by section, never one whole-document
+payload. The bound lives on the tool because two consecutive processes died mid-`create` on the
+same oversized payload and the one automatic continuation re-emitted it (see § Stream interruption);
+children get the parent's wrapper, so the guidance reaches a child whose prompt omits the
+system-prompt rule. The wrapper's own description is never edited — that would break the
+projection — and the pinned SDK patch is untouched. What the wrapper adds is *when*:
+`create`/`str_replace`/`insert` on one
 resolved absolute path await the previous mutation on that path for the same Agent
 (`WeakMap<Agent, Map<path, chain>>` off `context.agent`, the vended bash tool's precedent), so each
 call reads what the previous one wrote and an `insert_line` means the updated file. `view`,

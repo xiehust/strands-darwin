@@ -7,7 +7,7 @@
  */
 import { Agent, BeforeInvocationEvent, SummarizingConversationManager, TextBlock } from '@strands-agents/sdk';
 import type { AgentStreamEvent, ImageBlock, InterventionHandler, McpClient, Model, SessionManager } from '@strands-agents/sdk';
-import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
+import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request';
 import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
@@ -73,7 +73,7 @@ import {
   type BackgroundTaskListener,
   type BackgroundTaskStatus,
 } from '../tools/background-bash.js';
-import { SerializedFileEditorTool } from '../tools/file-editor-serial.js';
+import { FILE_EDITOR_DESCRIPTION, SerializedFileEditorTool } from '../tools/file-editor-serial.js';
 import { createImageViewerTool, normalizeRestoredImages } from '../tools/image-viewer.js';
 import { scrubShellEnv } from '../tools/shell-env.js';
 import { createUpdatePlanTool } from '../tools/update-plan.js';
@@ -811,11 +811,19 @@ export class AgentRuntime {
 
     const memoryController = config.memory === true ? new MemoryToolController(options.projectRoot, config.memoryHorizonDays ?? 28) : undefined;
     startupMemoryController = memoryController;
-    // The fileEditor is the SDK singleton behind a same-path ordering wrapper
-    // (SRF-020): substituted here rather than `addOrReplace`d after construction
-    // because it is static, so the raw tool is never registered, and `childTools`
-    // below hands children the same wrapper with per-Agent chains.
-    const ordinaryTools = [bash, new SerializedFileEditorTool(fileEditor), imageViewer, httpRequest, webFetch];
+    // The fileEditor is the SDK vended tool — `makeFileEditor({ description })`, the
+    // same factory as the singleton with the SDK's default text plus the SRF-032
+    // payload bound — behind a same-path ordering wrapper (SRF-020): substituted here
+    // rather than `addOrReplace`d after construction because it is static, so the raw
+    // tool is never registered, and `childTools` below hands children the same
+    // wrapper with per-Agent chains.
+    const ordinaryTools = [
+      bash,
+      new SerializedFileEditorTool(makeFileEditor({ description: FILE_EDITOR_DESCRIPTION })),
+      imageViewer,
+      httpRequest,
+      webFetch,
+    ];
     // SER-064: the two delegation tools are the only ones the model may route to the
     // SDK's background executor; everything else — the ordinary tools by name, and by
     // wildcard whatever `initialize()` discovers later — stays foreground. Cap and

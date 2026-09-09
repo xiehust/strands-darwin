@@ -104,10 +104,19 @@ async function realAgentTrajectoryContract(): Promise<void> {
       originalErrors.length === 1 && originalErrors[0]?.message === INTERRUPTION);
     assert('the continuation result comes from the second ordinary Agent stream',
       result.some((event) => event.type === 'agentResultEvent'));
+    // SRF-032 raised the bound from 500 to 600 code points: the prompt gained one
+    // clause naming the mid-tool-call cause (522 code points now).
     assert('the internal prompt is bounded and explicitly anti-repeat',
-      [...STREAM_CONTINUATION_PROMPT].length <= 500 &&
+      [...STREAM_CONTINUATION_PROMPT].length <= 600 &&
       STREAM_CONTINUATION_PROMPT.includes('Do not repeat completed work') &&
       STREAM_CONTINUATION_PROMPT.includes('Do not') &&
+      !STREAM_CONTINUATION_PROMPT.includes('PRIVATE-ORIGINAL-TEXT'));
+    // SRF-032: an interruption while a tool call was being emitted is deterministic —
+    // the same payload dies the same way — so the continuation must be told to split
+    // the call, not re-emit it. The policy (one continuation, same predicate) is unchanged.
+    assert('the internal prompt names the oversized-tool-call cause and orders smaller calls',
+      STREAM_CONTINUATION_PROMPT.includes('If the interruption happened while a tool call was being emitted, that call was too large for the stream') &&
+      STREAM_CONTINUATION_PROMPT.includes('re-issue it as several smaller calls (skeleton plus per-section edits) — never as one call') &&
       !STREAM_CONTINUATION_PROMPT.includes('PRIVATE-ORIGINAL-TEXT'));
     assert('trajectory records the bounded continuation prompt, not a replay of original private text',
       userInputs.length === 2 && userInputs[1]?.type === 'userInput' &&

@@ -118,6 +118,17 @@ async function defaultPrompt(): Promise<void> {
     /Consolidate edits/.test(DEFAULT_SYSTEM_PROMPT) &&
       /one small str_replace per round/.test(DEFAULT_SYSTEM_PROMPT),
   );
+  // SRF-032: one whole-document tool-call payload can exceed what the provider stream
+  // completes, and the same payload dies the same way on the continuation (measured:
+  // two processes, $5.88, zero files written), so rule 3 orders long new files as a
+  // skeleton filled section by section with bounded edits. Naming str_replace/insert
+  // here is consistent with rules 7/8, which already name fileEditor.
+  assert(
+    'it tells the model to create long new files as a skeleton filled per section (SRF-032)',
+    DEFAULT_SYSTEM_PROMPT.includes('is created as a skeleton (title, headings, short placeholders) and filled section') &&
+      DEFAULT_SYSTEM_PROMPT.includes('separate str_replace/insert calls, each bounded to a few thousand words') &&
+      DEFAULT_SYSTEM_PROMPT.includes('whole-document tool-call payload can exceed what the provider stream completes'),
+  );
 }
 
 async function fileOverride(): Promise<void> {
