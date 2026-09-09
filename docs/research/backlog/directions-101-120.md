@@ -333,7 +333,7 @@ Sources: report S7 (Aider Ctrl+Y); `src/tui/prompt-editor.ts` `killToRowEdge`, `
 
 ## SER-085 — Ctrl+S parks or restores one unsent draft with its exact cursor and transient image: an explicit one-slot composer stash, never queued or sent automatically, refuses overwrite and survives intervening submissions until restored or the session is replaced
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 117
 - Score: 10
 - Importance: 3
