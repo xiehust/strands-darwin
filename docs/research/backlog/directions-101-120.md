@@ -333,7 +333,7 @@ Sources: report S7 (Aider Ctrl+Y); `src/tui/prompt-editor.ts` `killToRowEdge`, `
 
 ## SER-085 — Ctrl+S parks or restores one unsent draft with its exact cursor and transient image: an explicit one-slot composer stash, never queued or sent automatically, refuses overwrite and survives intervening submissions until restored or the session is replaced
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 117
 - Score: 10
 - Importance: 3
@@ -345,7 +345,7 @@ Sources: report S7 (Aider Ctrl+Y); `src/tui/prompt-editor.ts` `killToRowEdge`, `
 
 ### Implementation / acceptance evidence
 
-Not implemented. Acceptance: pure state transitions (exact text/cursor/image identity, empty no-op, occupied refusal, size bound), offline pty stash/type/send/restore without model exposure of stashed text, occupied preservation, Unicode cursor restoration, busy usage and keyboard ownership, one-image protection including stale clipboard callbacks, clear/rewind drop and tiny-frame fit. Re-run yank/undo, queue/recall/historySearch, clipboard and frame checks plus new stash scenario; typecheck/test/build.
+Accepted `7ec524b` plus test-only correction `8f7b641` after second independent Host acceptance. Child `session-20260909-102800109`; initial task `bg-14f00500-c3a9-424f-98c5-e814fdd15075`, correction `bg-353a9f56-232a-4e34-80ac-5efb340d634f`, both exit 0/drained. First Host gate failed four existing background-delegation trajectory assertions: evidence showed a read before asynchronous closing append, not stash execution. Correction waits boundedly for closing-record presence, keeps all assertions, adds failed/missing/delayed-record checks; no runtime change. Second Host run: focused background delegation 102/102; `pnpm typecheck` + uninterrupted `pnpm test` 6,381 PASS/0 FAIL (includes stash pure 7, stash pty 19, yank/editor/help/frame/clipboard/queue/recall); additional pty undo 7, wordNav 11, queue 17, historySearch 11, recall 22, clipboardImage 14, clear 19, rewind 7, tangent 14, completion 71; `pnpm build` exit 0. Diff reviewed for exact slot/image ownership, no hidden input in model/records, cap/refusal, successor drops and modal guards. Layout clarification: idle has no InputBox hint, so occupied suffix uses existing idle header hint or busy input hint, never adds a row. README/using-darwin/reference/sessions-and-state EN/zh-CN and architecture synced; AGENTS.md unchanged. Logs `/tmp/darwin-ser085-host-*.log`; reproduced read race `/tmp/darwin-background-delegation-8Vab7q/wake-trajectory-evidence.json`; supervision Batch 121.
 
 ### Notes / blockers / abandonment reason
 
