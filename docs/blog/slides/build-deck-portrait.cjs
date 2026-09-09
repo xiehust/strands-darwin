@@ -512,17 +512,13 @@ async function main() {
     s.addText("同一个模型（Bedrock 上的 Claude Opus 5）、同一批任务，只换 agent：darwin 是 commit 2240a3c，Claude Code 是 2.1.261。9 月 8 日两个 harness 各自把 effort 从 high 降到 medium 再跑一轮，其余不变。",
       { x: M, y: 2.0, w: CW, h: 1.0, fontFace: HF, fontSize: 12, color: C.muted, margin: 0, valign: "top" });
     const half = (CW - 0.3) / 2;
-    [["darwin", C.cyan], ["Claude Code", C.ink]].forEach(([name, color], i) => {
+    [["effort high · 09-05", "12/20 vs 12/20", "darwin 成本低 7%", C.cyan], ["effort medium · 09-08", "13/20 vs 13/20", "darwin 成本低 11%", C.amber]].forEach(([name, score, note, color], i) => {
       const x = M + i * (half + 0.3);
       card(s, x, 3.1, half, 1.5);
       s.addShape(pres.shapes.RECTANGLE, { x, y: 3.1, w: 0.09, h: 1.5, fill: { color }, line: { color } });
-      s.addText(name, { x: x + 0.3, y: 3.2, w: half - 0.5, h: 0.35, fontFace: HF, fontSize: 13, color: C.muted, margin: 0 });
-      s.addText([
-        { text: "12/20", options: { fontFace: NF, fontSize: 28, bold: true, color } },
-        { text: " high", options: { fontFace: HF, fontSize: 10, color: C.muted, breakLine: true } },
-        { text: "13/20", options: { fontFace: NF, fontSize: 28, bold: true, color } },
-        { text: " medium", options: { fontFace: HF, fontSize: 10, color: C.muted } },
-      ], { x: x + 0.3, y: 3.5, w: half - 0.5, h: 1.05, margin: 0, valign: "top" });
+      s.addText(name, { x: x + 0.3, y: 3.2, w: half - 0.5, h: 0.35, fontFace: NF, fontSize: 11.5, color: C.muted, margin: 0 });
+      s.addText(score, { x: x + 0.3, y: 3.55, w: half - 0.5, h: 0.5, fontFace: NF, fontSize: 22, bold: true, color: C.ink, margin: 0, valign: "middle" });
+      s.addText(note, { x: x + 0.3, y: 4.08, w: half - 0.5, h: 0.4, fontFace: HF, fontSize: 13, bold: true, color, margin: 0, valign: "middle" });
     });
     const L = (t) => ({ text: t, options: { align: "left", color: C.muted } });
     const Hd = (t) => ({ text: t, options: { bold: true, align: "right" } });
@@ -538,14 +534,14 @@ async function main() {
       border: { type: "solid", pt: 0.5, color: C.line }, fill: { color: C.card }, margin: 0.06, align: "right", rowH: 0.42,
     });
     s.addText([
-      { text: "high：18 题结果一致。", options: { bold: true } },
-      { text: "分歧两题方向相反：darwin 过了 abs-stepped-slices，Claude Code 过了 bandit-structured-nosec-directives。两边都没过的 7 题是当前模型的能力边界。缓存命中两边都是 98%。", options: { breakLine: true } },
+      { text: "结论：能力差不多，darwin 更省。", options: { bold: true } },
+      { text: "high 和 medium 两个档下，darwin 与 Claude Code 得分都相同（12 vs 12、13 vs 13），成本分别低 7% 和 11%，差在 input token 上；缓存命中两边都是 98%。high 那轮 18 题结果一致，分歧两题方向相反：darwin 过了 abs-stepped-slices，Claude Code 过了 bandit-structured-nosec-directives。两边都没过的 7 题是当前模型的能力边界。", options: { breakLine: true } },
       { text: " ", options: { breakLine: true, fontSize: 6 } },
-      { text: "medium：省钱站得住，涨分不站。", options: { bold: true } },
-      { text: "成本各降 40% / 37%，在两个互不相关的 harness 上复现。+1 分是噪声：Claude Code 在两个 effort 档间翻转 7 题、darwin 翻转 3 题，同配置两跑的基线就翻 6 题。medium 下换 harness 仍是 13 vs 13。high 比 medium 多花约 1.6 倍，没买到可测量的分数。", options: { breakLine: true } },
+      { text: "附带发现：Opus 5 的 medium 性价比远高于 high。", options: { bold: true, color: C.amber } },
+      { text: "两个 harness 各自把 effort 从 high 降到 medium，成本降 40% / 37%，分数 12 → 13 都没有变差，同一方向和量级在两个互不相关的 harness 上复现。DeepSWE 这类任务上，high 多花约 1.6 倍成本，没有买到可测量的分数。", options: { breakLine: true } },
       { text: " ", options: { breakLine: true, fontSize: 6 } },
       { text: "局限：", options: { bold: true } },
-      { text: "pass@1 单次采样；字典序前 20 题，不是随机抽样。能说的只是：在这个样本上，两个 effort 档下 harness 的影响都没有超出单次采样的噪声。" },
+      { text: "pass@1 单次采样；字典序前 20 题，不是随机抽样；1–2 题的差距都在同配置两跑翻 6 题的噪声之内，harness 的影响没有超出单次采样的噪声。" },
     ], { x: M, y: 7.6, w: CW, h: 4.9, fontFace: HF, fontSize: 12, color: C.ink, margin: 0, valign: "top", lineSpacingMultiple: 1.15 });
   }
 
@@ -582,46 +578,50 @@ async function main() {
       { x: M, y: 10.35, w: CW, h: 2.2, fontFace: HF, fontSize: 11.5, color: C.muted, margin: 0, valign: "top", lineSpacingMultiple: 1.1 });
   }
 
-  // ==== 21. darwin 落在哪里 ====================================================
+  // ==== 21. darwin 与四类 RSI 模式 ==============================================
   {
-    const s = lightSlide("darwin 落在哪里：有界自我改进", "RSI · Auto Research · 对照 · harness 层");
-    // The landscape 5-column table, transposed: one card per row, four cells each.
-    const rows = [
-      ["改的对象", "一个训练脚本", "harness 的七个组件", "agent 自己的代码", "自己的代码库：七个组件都动过，含优化器 skill"],
-      ["弱点从哪来", "固定目标下提假设", "多条轨迹聚类失败模式", "benchmark 失败日志", "骰子 + 同类研究 + 单会话轨迹反思"],
-      ["评价", "一个标量 val_bpb", "留内 + 留外回归", "benchmark 分数", "typecheck + 130 真实测试 + Host 看 diff"],
-      ["验证器位置", "回路外", "回路外，只读", "沙箱 + 监督", "回路内，同一仓库；人工门控兜底"],
-      ["搜索结构", "单谱系爬山", "单 harness 逐轮合并", "档案库、多父代", "单谱系 git main，种群 1"],
-      ["回路闭合", "一晚上全闭合", "全自动", "闭合", "人在边界：产品取舍、授权、停止"],
+    const s = lightSlide("darwin 与四类 RSI 模式：区别和定位", "RSI · 四类模式 · 对照", { size: 24 });
+    const fams = [
+      ["01", "反思式文本进化", "GEPA · ACE · MCE", C.cyan, "改的只是提示词和上下文：便宜、样本高效，可编辑面小。", "不属于", "darwin 改的是代码，不只是自然语言。"],
+      ["02", "程序与工作流搜索", "ADAS · AFlow · AlphaEvolve · ShinkaEvolve", C.amber, "代码是搜索空间，能长出不显然的设计；需要快而客观的自动评价器。", "不属于", "没有候选池，也没有自动评价器。"],
+      ["03", "自修改 harness", "DGM · Self-Harness · AHE · Hyperagents", C.ink, "agent 改自己的 harness，收益最大；风险也最高：抽象边界被破、reward hacking。", "darwin 在这里", "改自己的 harness 代码，七个组件都动过；单谱系、人工门控的有界变体。"],
+      ["04", "元优化器", "STOP · Meta-Harness", "50808E", "优化改进者本身，最通用；最耗算力，质量受基础模型上限约束。", "沾一点边", "三个自进化 skill 就是优化器，也在被改；但没有候选 harness 池。"],
     ];
-    const heads = ["autoresearch", "Self-Harness / AHE", "DGM", "darwin"];
-    const rh = 1.22, rgap = 0.1, cellW = (CW - 0.5 - 0.2) / 2;
-    rows.forEach(([label, ...cells], i) => {
-      const y = 2.0 + i * (rh + rgap);
-      card(s, M, y, CW, rh);
-      s.addShape(pres.shapes.RECTANGLE, { x: M, y, w: 0.07, h: rh, fill: { color: C.cyan }, line: { color: C.cyan } });
-      s.addText(label, { x: M + 0.25, y: y + 0.08, w: CW - 0.5, h: 0.3, fontFace: HF, fontSize: 11.5, bold: true, color: C.muted, margin: 0 });
-      cells.forEach((cell, k) => {
-        const cx = M + 0.25 + (k % 2) * (cellW + 0.2), cy = y + 0.4 + Math.floor(k / 2) * 0.4;
-        const isDarwin = k === 3;
-        s.addText([
-          { text: heads[k] + "  ", options: { fontFace: NF, fontSize: 9.5, color: isDarwin ? C.cyan : C.muted, bold: isDarwin } },
-          { text: cell, options: { fontFace: HF, fontSize: 10.5, color: C.ink, bold: isDarwin } },
-        ], { x: cx, y: cy, w: cellW, h: 0.4, margin: 0, valign: "top" });
-      });
+    const ch = 1.5, gap = 0.15;
+    fams.forEach(([n, name, members, color, desc, rel, note], i) => {
+      const y = 2.0 + i * (ch + gap), here = i === 2;
+      s.addShape(pres.shapes.RECTANGLE, { x: M, y, w: CW, h: ch, fill: { color: here ? C.ink : C.card }, line: { color: here ? C.ink : C.line, width: 0.75 }, shadow: shadow() });
+      s.addShape(pres.shapes.RECTANGLE, { x: M, y, w: 0.08, h: ch, fill: { color: here ? C.cyanBright : color }, line: { color: here ? C.cyanBright : color } });
+      s.addText(n, { x: M + 0.3, y: y + 0.15, w: 0.6, h: 0.4, fontFace: NF, fontSize: 18, bold: true, color: here ? C.cyanBright : color, margin: 0 });
+      s.addText(name, { x: M + 0.9, y: y + 0.15, w: 3.0, h: 0.4, fontFace: HF, fontSize: 14, bold: true, color: here ? C.white : C.ink, margin: 0, valign: "middle" });
+      s.addText(members, { x: M + 3.6, y: y + 0.18, w: CW - 3.85, h: 0.36, fontFace: NF, fontSize: 9, color: here ? C.dim : C.muted, margin: 0, align: "right", valign: "middle" });
+      s.addText(desc, { x: M + 0.3, y: y + 0.6, w: CW - 0.55, h: 0.4, fontFace: HF, fontSize: 10.5, color: here ? C.dim : C.muted, margin: 0, valign: "top" });
+      s.addText([
+        { text: here ? "● " : i === 3 ? "◐ " : "○ ", options: { bold: true, color: here ? C.cyanBright : i === 3 ? C.amber : C.muted } },
+        { text: rel, options: { bold: true, color: here ? C.cyanBright : i === 3 ? C.amber : C.muted } },
+        { text: "  " },
+        { text: note, options: { color: here ? C.white : C.ink } },
+      ], { x: M + 0.3, y: y + 1.02, w: CW - 0.55, h: 0.42, fontFace: HF, fontSize: 10.5, margin: 0, valign: "top" });
     });
-    const diffs = [
-      ["模型固定", "RSI 是智能改进智能；darwin 改的是模型外面那层 harness。DeepSWE 对照：换 harness 分数没超出噪声，上限就是模型的上限。"],
-      ["验证器在回路内", "AHE 把 verifier 和模型配置设成只读；darwin 的测试和权限门在同一仓库里，靠 Host 重跑、人审 diff 兜住，没有从结构上解决。"],
-      ["没有种群", "DGM 有档案库和多父代；darwin 每个验收通过的 commit 是唯一父代。多样性靠骰子补，负面结果靠低分和被拒方向留下。"],
+    const ry = 2.0 + fams.length * (ch + gap) + 0.15;
+    s.addText("四类共用一套配方，darwin 走完了前两步，后两步差着：", { x: M, y: ry, w: CW, h: 0.35, fontFace: HF, fontSize: 12.5, bold: true, color: C.ink, margin: 0 });
+    const steps = [
+      ["自己轨迹里的证据", true, "trajectory.jsonl + 反思；单会话，不跨会话聚类"],
+      ["有界的编辑", true, "评分门槛、授权范围、承重决策表"],
+      ["留外效用门", false, "只有回归测试和人审 diff，没有留外任务集"],
+      ["评价器和权限在回路外", false, "测试和权限门在同一仓库，靠人工门控兜住"],
     ];
-    const dy0 = 2.0 + rows.length * (rh + rgap) + 0.15, dh = 0.82;
-    diffs.forEach(([h, b], i) => {
-      const y = dy0 + i * (dh + 0.08);
-      s.addShape(pres.shapes.RECTANGLE, { x: M, y, w: 0.07, h: dh, fill: { color: i === 2 ? C.amber : C.cyan }, line: { color: i === 2 ? C.amber : C.cyan } });
-      s.addText(h, { x: M + 0.25, y, w: CW - 0.25, h: 0.28, fontFace: HF, fontSize: 12, bold: true, color: C.ink, margin: 0 });
-      s.addText(b, { x: M + 0.25, y: y + 0.28, w: CW - 0.25, h: dh - 0.28, fontFace: HF, fontSize: 10.5, color: C.muted, margin: 0, valign: "top" });
+    const sh = 0.6, sgap = 0.08;
+    steps.forEach(([head, ok, body], i) => {
+      const y = ry + 0.45 + i * (sh + sgap), col = ok ? C.cyan : C.amber;
+      s.addShape(pres.shapes.RECTANGLE, { x: M, y, w: CW, h: sh, fill: { color: C.card }, line: { color: C.line, width: 0.75 } });
+      s.addShape(pres.shapes.RECTANGLE, { x: M, y, w: 0.07, h: sh, fill: { color: col }, line: { color: col } });
+      s.addText([{ text: ok ? "✓ " : "✗ ", options: { color: col, bold: true } }, { text: head, options: { bold: true, color: C.ink } }],
+        { x: M + 0.25, y, w: 2.6, h: sh, fontFace: HF, fontSize: 11.5, margin: 0, valign: "middle" });
+      s.addText(body, { x: M + 2.9, y, w: CW - 3.1, h: sh, fontFace: HF, fontSize: 10.5, color: C.muted, margin: 0, valign: "middle" });
     });
+    s.addText("定位：第三类里的有界、单谱系、人工门控变体——模型固定，harness 的上限就是模型的上限；缺的两步正是下一页 Harbor 要补的。",
+      { x: M, y: ry + 0.45 + steps.length * (sh + sgap) + 0.1, w: CW, h: 0.7, fontFace: HF, fontSize: 11.5, color: C.ink, margin: 0, italic: true, valign: "top" });
   }
 
   // ==== 22. 下一步：Harbor 作为 fitness function ===============================

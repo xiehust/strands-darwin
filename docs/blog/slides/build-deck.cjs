@@ -12,7 +12,33 @@ const {
 } = require("react-icons/fa");
 
 const IMG = (name) => path.join(__dirname, "..", "images", name);
-const OUT = path.join(__dirname, "..", "self-evolution-development.zh-CN.pptx");
+
+// `--lang=en` builds the English deck from the same layout code: every string that reaches
+// a slide (text runs, table cells, chart labels, notes) is looked up in strings.en.json;
+// strings missing from the dictionary are reported at the end so nothing ships untranslated.
+const LANG = process.argv.includes("--lang=en") ? "en" : "zh";
+const OUT = path.join(__dirname, "..", LANG === "en" ? "self-evolution-development.en.pptx" : "self-evolution-development.zh-CN.pptx");
+const DICT = LANG === "en" ? require("./strings.en.json") : null;
+const MISSING = new Set();
+const HAS_CJK = /[\u3400-\u9fff\uff00-\uffef\u3000-\u303f]/;
+const T = (t) => {
+  if (!DICT || typeof t !== "string") return t;
+  if (t in DICT) return DICT[t];
+  if (HAS_CJK.test(t)) MISSING.add(t);
+  return t;
+};
+// Every slide's text-bearing methods route their strings through T(). English runs about
+// 15% longer than the Chinese it replaces, so body type (below 20 pt) is scaled down a little.
+const scale = (o) => (DICT && o && typeof o.fontSize === "number" && o.fontSize < 20 ? { ...o, fontSize: Math.round(o.fontSize * 0.92 * 2) / 2 } : o);
+function translateSlide(s) {
+  const addText = s.addText.bind(s);
+  s.addText = (text, opts) => addText(Array.isArray(text) ? text.map((r) => ({ ...r, text: T(r.text), options: scale(r.options) })) : T(text), scale(opts));
+  const addTable = s.addTable.bind(s);
+  s.addTable = (rows, opts) => addTable(rows.map((row) => row.map((c) => (typeof c === "string" ? T(c) : c && typeof c.text === "string" ? { ...c, text: T(c.text) } : c))), scale(opts));
+  const addChart = s.addChart.bind(s);
+  s.addChart = (type, data, opts) => addChart(type, data.map((d) => ({ ...d, name: T(d.name), labels: d.labels && d.labels.map(T) })), opts);
+  return s;
+}
 
 // Palette: darwin's terminal (near-black + cyan + the yolo amber) on a warm paper.
 const C = {
@@ -50,8 +76,10 @@ const shadow = () => ({ type: "outer", color: "000000", blur: 6, offset: 2, angl
 
 async function main() {
   const pres = new pptxgen();
+  const addSlide = pres.addSlide.bind(pres);
+  pres.addSlide = (...a) => translateSlide(addSlide(...a));
   pres.layout = "LAYOUT_16x9";
-  pres.title = "Self Evolution Development —— 自进化迭代开发的实验";
+  pres.title = T("Self Evolution Development —— 自进化迭代开发的实验");
   pres.author = "darwin";
 
   // ---- shared pieces --------------------------------------------------------
@@ -526,19 +554,17 @@ async function main() {
     const s = lightSlide("跟 Claude Code 跑同一批题", "DeepSWE 前 20 题 · 2026-09-05 / 09-08");
     s.addText("同一个模型（Bedrock 上的 Claude Opus 5）、同一批任务，只换 agent：darwin 是 commit 2240a3c，Claude Code 是 2.1.261。9 月 8 日两个 harness 各自把 effort 从 high 降到 medium 再跑一轮，其余不变。",
       { x: M, y: 1.35, w: 9, h: 0.55, fontFace: HF, fontSize: 10.5, color: C.muted, margin: 0, valign: "top" });
-    // two scores, high → medium
+    // two headline cards: one per effort level — same score, darwin cheaper
     const half = (W - 2 * M - 0.3) / 2;
-    [["darwin", C.cyan], ["Claude Code", C.ink]].forEach(([name, color], i) => {
+    [["effort high · 09-05", "12/20 vs 12/20", "darwin 成本低 7%", C.cyan], ["effort medium · 09-08", "13/20 vs 13/20", "darwin 成本低 11%", C.amber]].forEach(([name, score, note, color], i) => {
       const x = M + i * (half + 0.3);
       card(s, x, 1.9, half, 0.85);
       s.addShape(pres.shapes.RECTANGLE, { x, y: 1.9, w: 0.08, h: 0.85, fill: { color }, line: { color } });
-      s.addText(name, { x: x + 0.3, y: 1.95, w: half - 0.5, h: 0.26, fontFace: HF, fontSize: 10.5, color: C.muted, margin: 0 });
+      s.addText(name, { x: x + 0.3, y: 1.95, w: half - 0.5, h: 0.26, fontFace: NF, fontSize: 10.5, color: C.muted, margin: 0 });
       s.addText([
-        { text: "12/20", options: { fontFace: NF, fontSize: 24, bold: true, color } },
-        { text: "  high", options: { fontFace: HF, fontSize: 9.5, color: C.muted } },
-        { text: "   →   ", options: { fontFace: NF, fontSize: 16, color: C.muted } },
-        { text: "13/20", options: { fontFace: NF, fontSize: 24, bold: true, color } },
-        { text: "  medium", options: { fontFace: HF, fontSize: 9.5, color: C.muted } },
+        { text: score, options: { fontFace: NF, fontSize: 22, bold: true, color: C.ink } },
+        { text: "   ", options: { fontFace: HF, fontSize: 12 } },
+        { text: note, options: { fontFace: HF, fontSize: 12, bold: true, color } },
       ], { x: x + 0.3, y: 2.18, w: half - 0.5, h: 0.5, margin: 0, valign: "middle" });
     });
     const L = (t) => ({ text: t, options: { align: "left", color: C.muted } });
@@ -554,14 +580,14 @@ async function main() {
       border: { type: "solid", pt: 0.5, color: C.line }, fill: { color: C.card }, margin: 0.04, align: "right", rowH: 0.24,
     });
     s.addText([
-      { text: "high：18 题结果一致。", options: { bold: true } },
-      { text: "分歧两题方向相反：darwin 过了 abs-stepped-slices，Claude Code 过了 bandit-structured-nosec-directives。两边都没过的 7 题是当前模型的能力边界。", options: { breakLine: true } },
+      { text: "结论：能力差不多，darwin 更省。", options: { bold: true } },
+      { text: "high 和 medium 两个档下，darwin 与 Claude Code 得分都相同（12 vs 12、13 vs 13），成本分别低 7% 和 11%，差在 input token 上。high 那轮 18 题结果一致，分歧两题方向相反、各赢一题。", options: { breakLine: true } },
       { text: "局限：", options: { bold: true } },
-      { text: "pass@1 单次采样；字典序前 20 题，不是随机抽样；分歧分不清是 harness 差异还是噪声。" },
+      { text: "pass@1 单次采样；字典序前 20 题，不是随机抽样；1–2 题的差距都在同配置两跑翻 6 题的噪声之内。" },
     ], { x: M, y: 4.3, w: 4.35, h: 0.85, fontFace: HF, fontSize: 9, color: C.ink, margin: 0, valign: "top", paraSpaceAfter: 3 });
     s.addText([
-      { text: "medium：省钱站得住，涨分不站。", options: { bold: true } },
-      { text: "成本各降 40% / 37%，在两个互不相关的 harness 上复现。+1 分是噪声：Claude Code 翻转 7 题、darwin 翻转 3 题，同配置两跑的基线就翻 6 题。medium 下换 harness 仍是 13 vs 13。high 比 medium 多花约 1.6 倍，没买到可测量的分数。" },
+      { text: "附带发现：Opus 5 的 medium 性价比远高于 high。", options: { bold: true, color: C.amber } },
+      { text: "两个 harness 各自把 effort 从 high 降到 medium，成本降 40% / 37%，分数 12 → 13 都没有变差；同一方向和量级在两个互不相关的 harness 上复现。DeepSWE 这类任务上，high 多花约 1.6 倍成本，没有买到可测量的分数。" },
     ], { x: 5.15, y: 4.3, w: 4.35, h: 0.85, fontFace: HF, fontSize: 9, color: C.ink, margin: 0, valign: "top" });
   }
 
@@ -599,36 +625,55 @@ async function main() {
       { x: M, y: 4.4, w: 9, h: 0.6, fontFace: HF, fontSize: 9.5, color: C.muted, margin: 0, valign: "top" });
   }
 
-  // ==== 18. darwin 落在哪里 ====================================================
+  // ==== 18. darwin 与四类 RSI 模式 ==============================================
+  // Four families of self-improving loops (Weng 2026; the "four families, one recipe"
+  // framing), each with darwin's relation to it; then the shared recipe with darwin's
+  // status on each of its four steps.
   {
-    const s = lightSlide("darwin 落在哪里：有界自我改进", "RSI · Auto Research · 对照 · harness 层");
-    const H1 = (t) => ({ text: t, options: { bold: true, color: C.ink, fill: { color: C.paper }, align: "left" } });
-    const L = (t) => ({ text: t, options: { color: C.muted, align: "left" } });
-    const D = (t) => ({ text: t, options: { color: C.ink, align: "left", bold: true } });
-    s.addTable([
-      [H1(""), H1("autoresearch"), H1("Self-Harness / AHE"), H1("DGM"), H1("darwin")],
-      [L("改的对象"), "一个训练脚本", "harness 的七个组件", "agent 自己的代码", D("自己的代码库：七个组件都动过，含优化器 skill")],
-      [L("弱点从哪来"), "固定目标下提假设", "多条轨迹聚类失败模式", "benchmark 失败日志", D("骰子 + 同类研究 + 单会话轨迹反思")],
-      [L("评价"), "一个标量 val_bpb", "留内 + 留外回归", "benchmark 分数", D("typecheck + 130 真实测试 + Host 看 diff")],
-      [L("验证器位置"), "回路外", "回路外，只读", "沙箱 + 监督", D("回路内，同一仓库；人工门控兜底")],
-      [L("搜索结构"), "单谱系爬山", "单 harness 逐轮合并", "档案库、多父代", D("单谱系 git main，种群 1")],
-      [L("回路闭合"), "一晚上全闭合", "全自动", "闭合", D("人在边界：产品取舍、授权、停止")],
-    ], {
-      x: M, y: 1.45, w: 9.0, colW: [1.25, 1.55, 1.9, 1.6, 2.7], fontFace: HF, fontSize: 9, color: C.ink,
-      border: { type: "solid", pt: 0.5, color: C.line }, fill: { color: C.card }, margin: 0.06, rowH: 0.36, align: "left",
-    });
-    const diffs = [
-      ["模型固定", "RSI 是智能改进智能；darwin 改的是模型外面那层 harness。DeepSWE 对照：换 harness 分数没超出噪声，上限就是模型的上限。"],
-      ["验证器在回路内", "AHE 把 verifier 和模型配置设成只读；darwin 的测试和权限门在同一仓库里，靠 Host 重跑、人审 diff 兜住，没有从结构上解决。"],
-      ["没有种群", "DGM 有档案库和多父代；darwin 每个验收通过的 commit 是唯一父代。多样性靠骰子补，负面结果靠低分和被拒方向留下。"],
+    const s = lightSlide("darwin 与四类 RSI 模式：区别和定位", "RSI · 四类模式 · 对照");
+    const fams = [
+      ["01", "反思式文本进化", "GEPA · ACE · MCE", C.cyan, "改的只是提示词和上下文：便宜、样本高效，可编辑面小。", "不属于", "darwin 改的是代码，不只是自然语言。"],
+      ["02", "程序与工作流搜索", "ADAS · AFlow · AlphaEvolve · ShinkaEvolve", C.amber, "代码是搜索空间，能长出不显然的设计；需要快而客观的自动评价器。", "不属于", "没有候选池，也没有自动评价器。"],
+      ["03", "自修改 harness", "DGM · Self-Harness · AHE", C.ink, "agent 改自己的 harness，收益最大；风险也最高：抽象边界被破、reward hacking。", "darwin 在这里", "改自己的 harness 代码，七个组件都动过；单谱系、人工门控的有界变体。"],
+      ["04", "元优化器", "STOP · Meta-Harness", "50808E", "优化改进者本身，最通用；最耗算力，质量受基础模型上限约束。", "沾一点边", "三个自进化 skill 就是优化器，也在被改；但没有候选 harness 池。"],
     ];
-    const gw = (W - 2 * M - 0.2 * 2) / 3;
-    diffs.forEach(([h, b], i) => {
-      const x = M + i * (gw + 0.2), y = 4.2;
-      s.addShape(pres.shapes.RECTANGLE, { x, y, w: 0.06, h: 0.85, fill: { color: i === 2 ? C.amber : C.cyan }, line: { color: i === 2 ? C.amber : C.cyan } });
-      s.addText(h, { x: x + 0.18, y, w: gw - 0.2, h: 0.25, fontFace: HF, fontSize: 11, bold: true, color: C.ink, margin: 0 });
-      s.addText(b, { x: x + 0.18, y: y + 0.26, w: gw - 0.2, h: 0.65, fontFace: HF, fontSize: 8.5, color: C.muted, margin: 0, valign: "top" });
+    const gap = 0.2, cw = (W - 2 * M - gap * 3) / 4, cy = 1.35, ch = 2.15;
+    fams.forEach(([n, name, members, color, desc, rel, note], i) => {
+      const x = M + i * (cw + gap), here = i === 2;
+      s.addShape(pres.shapes.RECTANGLE, { x, y: cy, w: cw, h: ch, fill: { color: here ? C.ink : C.card }, line: { color: here ? C.ink : C.line, width: 0.75 }, shadow: shadow() });
+      s.addShape(pres.shapes.RECTANGLE, { x, y: cy, w: cw, h: 0.08, fill: { color: here ? C.cyanBright : color }, line: { color: here ? C.cyanBright : color } });
+      s.addText(n, { x: x + 0.15, y: cy + 0.16, w: 0.7, h: 0.3, fontFace: NF, fontSize: 15, bold: true, color: here ? C.cyanBright : color, margin: 0 });
+      s.addText(name, { x: x + 0.15, y: cy + 0.44, w: cw - 0.3, h: 0.3, fontFace: HF, fontSize: 12.5, bold: true, color: here ? C.white : C.ink, margin: 0 });
+      s.addText(members, { x: x + 0.15, y: cy + 0.74, w: cw - 0.3, h: 0.3, fontFace: NF, fontSize: 8, color: here ? C.dim : C.muted, margin: 0, valign: "top" });
+      s.addText(desc, { x: x + 0.15, y: cy + 1.02, w: cw - 0.3, h: 0.6, fontFace: HF, fontSize: 8.5, color: here ? C.dim : C.muted, margin: 0, valign: "top" });
+      s.addShape(pres.shapes.LINE, { x: x + 0.15, y: cy + 1.62, w: cw - 0.3, h: 0, line: { color: here ? "2A3A4D" : C.line, width: 0.75 } });
+      s.addText([
+        { text: here ? "● " : i === 3 ? "◐ " : "○ ", options: { bold: true, color: here ? C.cyanBright : i === 3 ? C.amber : C.muted } },
+        { text: rel, options: { bold: true, color: here ? C.cyanBright : i === 3 ? C.amber : C.muted } },
+        { text: "  " },
+        { text: note, options: { color: here ? C.white : C.ink } },
+      ], { x: x + 0.15, y: cy + 1.66, w: cw - 0.3, h: 0.47, fontFace: HF, fontSize: 8.5, margin: 0, valign: "top" });
     });
+    // the shared recipe, with darwin's status on each step
+    s.addText("四类共用一套配方，darwin 走完了前两步，后两步差着：", { x: M, y: 3.65, w: 9, h: 0.28, fontFace: HF, fontSize: 10.5, bold: true, color: C.ink, margin: 0 });
+    const steps = [
+      ["自己轨迹里的证据", true, "trajectory.jsonl + 反思；单会话，不跨会话聚类"],
+      ["有界的编辑", true, "评分门槛、授权范围、承重决策表"],
+      ["留外效用门", false, "只有回归测试和人审 diff，没有留外任务集"],
+      ["评价器和权限在回路外", false, "测试和权限门在同一仓库，靠人工门控兜住"],
+    ];
+    const arrow = 0.28, bw = (W - 2 * M - arrow * 3) / 4, by = 3.98, bh = 0.78;
+    steps.forEach(([head, ok, body], i) => {
+      const x = M + i * (bw + arrow), col = ok ? C.cyan : C.amber;
+      s.addShape(pres.shapes.RECTANGLE, { x, y: by, w: bw, h: bh, fill: { color: C.card }, line: { color: C.line, width: 0.75 } });
+      s.addShape(pres.shapes.RECTANGLE, { x, y: by, w: 0.06, h: bh, fill: { color: col }, line: { color: col } });
+      s.addText([{ text: ok ? "✓ " : "✗ ", options: { color: col, bold: true } }, { text: head, options: { bold: true, color: C.ink } }],
+        { x: x + 0.16, y: by + 0.06, w: bw - 0.24, h: 0.26, fontFace: HF, fontSize: 10, margin: 0 });
+      s.addText(body, { x: x + 0.16, y: by + 0.33, w: bw - 0.24, h: 0.42, fontFace: HF, fontSize: 8.5, color: C.muted, margin: 0, valign: "top" });
+      if (i < steps.length - 1) s.addText("→", { x: x + bw, y: by + 0.2, w: arrow, h: 0.4, fontFace: NF, fontSize: 14, color: C.muted, align: "center", margin: 0 });
+    });
+    s.addText("定位：第三类里的有界、单谱系、人工门控变体——模型固定，harness 的上限就是模型的上限；缺的两步正是下一页 Harbor 要补的。",
+      { x: M, y: 4.88, w: 9, h: 0.32, fontFace: HF, fontSize: 10, color: C.ink, margin: 0, italic: true });
   }
 
   // ==== 18b. 下一步：Harbor 作为 fitness function ==============================
@@ -706,24 +751,32 @@ async function main() {
   // ---- captions: one short paragraph per slide, in slide order ----------------
   // Single-sourced in slides/captions.cjs (shared with build-deck-portrait.cjs). Written into
   // each slide's speaker notes and into slides/wechat-captions.zh-CN.md, for publishing the deck
-  // as images with a caption under each one.
-  const { CAPTIONS } = require("./captions.cjs");
+  // as images with a caption under each one. The English deck takes captions.en.cjs and writes
+  // no captions file.
+  const { CAPTIONS } = require(LANG === "en" ? "./captions.en.cjs" : "./captions.cjs");
   if (CAPTIONS.length !== pres.slides.length) {
     throw new Error(`captions (${CAPTIONS.length}) do not match slides (${pres.slides.length})`);
   }
   pres.slides.forEach((slide, i) => slide.addNotes(CAPTIONS[i]));
-  const captionsMd = [
-    "# 公众号图文配文",
-    "",
-    "每页幻灯片配一段文字，顺序与 `self-evolution-development.zh-CN.pptx` 一致。同样的文字也写在了每页的演讲者备注里。",
-    "",
-    ...CAPTIONS.map((c, i) => `## 第 ${i + 1} 页\n\n${c}\n`),
-  ].join("\n");
-  require("node:fs").writeFileSync(path.join(__dirname, "wechat-captions.zh-CN.md"), captionsMd);
+  if (LANG === "zh") {
+    const captionsMd = [
+      "# 公众号图文配文",
+      "",
+      "每页幻灯片配一段文字，顺序与 `self-evolution-development.zh-CN.pptx` 一致。同样的文字也写在了每页的演讲者备注里。",
+      "",
+      ...CAPTIONS.map((c, i) => `## 第 ${i + 1} 页\n\n${c}\n`),
+    ].join("\n");
+    require("node:fs").writeFileSync(path.join(__dirname, "wechat-captions.zh-CN.md"), captionsMd);
+  }
 
   await pres.writeFile({ fileName: OUT });
   console.log("wrote", OUT);
-  console.log("wrote", path.join(__dirname, "wechat-captions.zh-CN.md"));
+  if (MISSING.size) {
+    console.error(`untranslated strings (${MISSING.size}):`);
+    for (const m of MISSING) console.error("  " + JSON.stringify(m));
+    process.exitCode = 1;
+  }
+  if (LANG === "zh") console.log("wrote", path.join(__dirname, "wechat-captions.zh-CN.md"));
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

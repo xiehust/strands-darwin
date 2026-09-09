@@ -76,7 +76,7 @@
 
 ## 第 19 页
 
-跟 Claude Code 跑同一批题。DeepSWE 前 20 题，同一个模型 Claude Opus 5、同一批任务，只换 agent，每题跑一次。effort high 下两边都是 12/20，18 题结果一致，分歧的两题方向相反、各赢一题，成本 darwin 低 7.5%。9 月 8 日又把 effort 降到 medium 各跑一轮：两边都变成 13/20，成本各降 40% 和 37%。省钱的结论在两个 harness 上复现了，多出的 1 分是噪声，同配置两跑本身就会翻 6 题。能说的是，两个 effort 档下换 harness 都不改变总分，而 high 比 medium 多花 1.6 倍成本，没有买到可测量的分数。
+跟 Claude Code 跑同一批题。DeepSWE 前 20 题，同一个模型 Claude Opus 5、同一批任务，只换 agent，每题跑一次，effort high 和 medium 各跑一轮。结论是能力差不多、darwin 更省：两个档下得分都相同，high 12 对 12，medium 13 对 13，darwin 成本分别低 7% 和 11%。附带发现是 Opus 5 的 medium 性价比远高于 high：两个 harness 各自从 high 降到 medium，成本降 40% 和 37%，分数没有变差。局限是单次采样、非随机抽题，1–2 题的差距都在噪声之内。
 
 ## 第 20 页
 
@@ -84,7 +84,7 @@
 
 ## 第 21 页
 
-按 Weng 的坐标，darwin 是 harness 层的有界自我改进。相同的地方：三个设计模式都有，AHE 的七个可编辑组件都动过，连优化器 skill 本身也在被改，propose–evaluate–accept 的骨架一样。不同在评价器和边界：模型固定，harness 的上限就是模型的上限；验证器在回路内，测试和权限门跟代码在同一仓库，靠 Host 重跑和人审 diff 兜住；没有种群，git main 一条线，多样性靠骰子补。没有标量目标所以慢，autoresearch 一晚上百次实验，darwin 三周 99 个批次。
+自改进回路可以分成四类：反思式文本进化，只改提示词和上下文，GEPA、ACE、MCE 是代表；程序与工作流搜索，代码是搜索空间，ADAS、AFlow、AlphaEvolve 一族；自修改 harness，agent 改自己的 harness，DGM、Self-Harness、AHE；元优化器，优化改进者本身，STOP、Meta-Harness。darwin 落在第三类：改自己的 harness 代码，七个组件都动过，是单谱系、人工门控的有界变体；三个自进化 skill 本身也在被改，所以和第四类沾一点边。四类共用一套配方，darwin 走完了前两步，自己轨迹的证据和有界编辑；后两步差着，没有留外效用门，评价器和权限也还在回路内。
 
 ## 第 22 页
 

@@ -339,7 +339,7 @@ MINIMUM_IMPLEMENTATION_SCORE = 6</code></pre>
 
 <p>先看 9 月 5 日 effort high 那两轮。逐题看，20 题里 18 题结果一致。分歧的两题方向相反：darwin 过了 <code>abs-stepped-slices</code>，Claude Code 过了 <code>bandit-structured-nosec-directives</code>。两边都没过的有 7 题，其中 <code>anko-*</code> 两题属于同一个 Go 解释器项目。成本差的 7.5% 几乎全在 input token 上，output 两边只差 0.4%。</p>
 
-<p>9 月 8 日又补了两轮：两个 harness 各自把 effort 从 high 降到 medium，其余照 9 月 5 日那轮不变。Claude Code 的版本从 2.1.261 到 2.1.263，只差两个 patch 版本，effort 基本是唯一变量，是这组对照里最干净的一次。结果两边都从 12/20 变成 13/20，成本分别降了 40% 和 37%，input token 少 41% 和 36%，output token 少 39% 和 34%，单题中位耗时从 18 分钟降到 11 和 12 分钟。</p>
+<p>9 月 8 日又补了两轮：两个 harness 各自把 effort 从 high 降到 medium，其余照 9 月 5 日那轮不变。Claude Code 的版本从 2.1.261 到 2.1.263，只差两个 patch 版本，effort 基本是唯一变量，是这组对照里最干净的一次。结果两边都从 12/20 变成 13/20，成本分别降了 40% 和 37%，input token 少 41% 和 36%，output token 少 39% 和 34%，单题中位耗时从 18 分钟降到 11 和 12 分钟。两个档下 darwin 的成本都比 Claude Code 低，high 低 7%，medium 低 11%。</p>
 
 <p>省钱的结论站得住，涨分的不站。成本下降的方向和量级在两个互不相关的 harness 上各复现了一次，是这组对照里唯一有重复验证的结论。那多出来的 1 分是噪声：Claude Code 在两个 effort 档之间有 7 题结果翻转，darwin 翻转 3 题，而同一配置跑两次的噪声基线就是 6 题翻转，1 题的差距远在其中，只能说降到 medium 没有让分数变差，不能说更好。medium 下换 harness 同样不改变总分，13 对 13，4 题不同；一个"无差异"的结论在两个 effort 档上都成立，比任何"有差异"的结论都硬。对 DeepSWE 这类任务，在 Opus 5 上 high 相对 medium 没有买到可测量的分数，代价是约 1.6 倍的成本，两个 harness 一致。</p>
 
