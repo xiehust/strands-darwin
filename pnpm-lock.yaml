@@ -221,13 +221,13 @@ importers:
         specifier: ^1.30.0
         version: 1.30.0(supports-color@7.2.0)(zod@4.4.3)
       '@strands-agents/sdk':
-        specifier: ^1.16.0
+        specifier: 1.16.0
         version: 1.16.0(patch_hash=47be9fa6c3795cd34f36cc0895d530069340606eb79e908c9e8326e1f22027a1)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1(supports-color@7.2.0))(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
       ink:
-        specifier: ^7.1.1
+        specifier: 7.1.1
         version: 7.1.1(patch_hash=7b7a5b41b349ec752f165991f44b21ee825ca371b8246f6fb20a33098e195323)(@types/react@19.2.18)(react@19.2.8)
       openai:
         specifier: ^6.49.0
