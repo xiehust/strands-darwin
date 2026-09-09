@@ -130,7 +130,8 @@ Rules and limits:
 | `Alt`/`Ctrl` + `Left` / `Right`, `Alt+B` / `Alt+F` | move by word |
 | `Alt+Backspace` / `Alt+D` | delete the word before/after the cursor |
 | `Ctrl+_` (or `Ctrl+-`) | undo the last `Ctrl+K`/`Ctrl+U`, `Ctrl+W` or `Alt` word deletion in the draft |
-| `y` / `n` / `Esc` | answer permission prompt; Esc denies |
+| `Ctrl+Y` | insert the exact last cut at the cursor, repeatably within the draft; 65,536 code points max, not the clipboard; [limits/reset rules](using-darwin.md#prompt-editing-and-completion) |
+| `y` / `n` / `Esc` | answer permission prompt; Esc denies; Ctrl+Y never approves |
 | `a` / `A` | permission prompt narrow/tool-wide always-allow option |
 | `Ctrl+B` | compact/expanded tool details |
 | `Ctrl+C` | cancel busy work; press again within 2s to quit; idle quits |

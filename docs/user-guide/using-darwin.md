@@ -14,6 +14,10 @@ While a turn runs, the existing `working…`/`thinking…` row shows elapsed tim
 
 ## Prompt editing and completion
 
+`Ctrl+K`/`Ctrl+U` cuts to the visible row end/start; `Ctrl+W`, `Alt+Backspace` and `Alt+D`/`Alt+Delete` cut the word before/after the cursor. `Ctrl+Y` inserts the exact last cut at the current grapheme-safe cursor, and can repeat it after movement or typing. This is one draft-local slot, not the system clipboard or a model action. Each nonempty cut replaces it; no-op cuts and ordinary Backspace/Delete leave it alone. `Ctrl+_` (or `Ctrl+-`) still restores the whole draft snapshot from before a destructive chord, not just the cut; yank does not add an undo step.
+
+The slot holds at most 65,536 Unicode code points. A larger cut still deletes and can be undone, but clears the slot with a notice—no stale or truncated yank. Submission (including queueing and local commands), queue take-back/cancel return, recall/search acceptance, `/clear` and `/rewind` clear it wherever they clear undo. Search cancellation keeps it. Permission prompts and compaction take precedence: `Ctrl+Y` never approves a permission or edits through those modes.
+
 - `/` offers built-ins, skills, and custom commands. The bounded menu windows around the selected row and states omitted rows.
 - `@` scans the workspace asynchronously and inserts path text only. It never opens or injects the file; `.git`, `node_modules`, escaping symlinks, and large scans are bounded/excluded.
 - `Up`/`Down` first control an open menu; otherwise `Up` can take back the oldest queued message, then recall sent trajectory prompts from this project, or move in a multiline draft.

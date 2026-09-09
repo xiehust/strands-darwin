@@ -100,6 +100,8 @@ import {
   moveWordHorizontal,
   popUndo,
   pushUndo,
+  updateLastCut,
+  LAST_CUT_OVERFLOW_NOTICE,
   type EditorValue,
   type UndoStack,
 } from './prompt-editor.js';
@@ -363,6 +365,9 @@ export function App({
   // editor's ownership (submit, queue take-back, recall walk, search accept),
   // so Ctrl+_ can never resurrect a prompt that was already sent or recorded.
   const undoStack = useRef<UndoStack>([]);
+  // SER-084: one last cut, cleared at the same ownership seams as undo. Never
+  // clipboard/record/model state; typing, movement and undo leave it intact.
+  const lastCut = useRef('');
   /**
    * Applies one destructive editing chord: snapshots the exact draft it
    * destroys (only when it destroys anything — a no-op kill at an edge must
@@ -373,8 +378,11 @@ export function App({
     const current = editorRef.current;
     const next = edit(current);
     if (next.text !== current.text) undoStack.current = pushUndo(undoStack.current, current);
+    const cut = updateLastCut(lastCut.current, current, next);
+    lastCut.current = cut.text;
+    if (cut.overflow) dispatch({ type: 'notice', text: LAST_CUT_OVERFLOW_NOTICE, severity: 'warn' });
     setEditor(next);
-  }, [setEditor]);
+  }, [dispatch, setEditor]);
 
   // The frame's fixed furniture. Only the header is *measured*: its height depends
   // on nothing below it, so measuring it cannot oscillate. Everything else states
@@ -652,6 +660,7 @@ export function App({
     // returns unsent (a tangent return hands back nothing — the user asked to
     // return, not to resend), and undo must not reach across the session boundary.
     undoStack.current = [];
+    lastCut.current = '';
     const draft = rewindDraftAfterBranch(kind, selectedPrompt);
     setEditor({ text: draft, cursor: { offset: draft.length, affinity: 'upstream' } });
     setSelectedCompletion(0);
@@ -981,6 +990,7 @@ export function App({
     // The queue's entries replace the draft wholesale; the drafts destroyed by
     // earlier chords are no longer what Ctrl+_ should bring back.
     undoStack.current = [];
+    lastCut.current = '';
     setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
@@ -1195,6 +1205,7 @@ export function App({
       // that retain the draft: clearing there only loses undo history — the
       // failure mode this guards against is resurrecting a sent prompt.
       undoStack.current = [];
+      lastCut.current = '';
 
       // A drained background-task wake (SER-069): one ordinary turn through the
       // same `runTurn` a prompt uses — hooks, permission gate, trajectory barrier
@@ -2083,6 +2094,7 @@ export function App({
     // A recalled record entry replaces the draft: the recall walk keeps its own
     // snapshot behavior, and undo must not cross into a different prompt's text.
     undoStack.current = [];
+    lastCut.current = '';
     setEditor({ text, cursor: { offset: text.length, affinity: 'upstream' } });
     preferredColumn.current = undefined;
     // A recalled `/…` prompt reopens the command menu, so the selection has to start
@@ -2207,6 +2219,7 @@ export function App({
         // Escape-restore snapshot stays untouched, but undo must not reach
         // back into the pre-search draft from a different text.
         undoStack.current = [];
+        lastCut.current = '';
         setEditor(accepted);
         setSelectedCompletion(0);
         preferredColumn.current = undefined;
@@ -2376,7 +2389,8 @@ export function App({
 
     // Confirmations take the keyboard while one is pending.
     if (pendingPermission !== undefined) {
-      if (typed === 'y' || typed === 'Y') answerPermission({ allowed: true });
+      // Ctrl+Y is a composer chord, never plain approval.
+      if ((typed === 'y' || typed === 'Y') && !key.ctrl && !key.meta) answerPermission({ allowed: true });
       else if (typed === 'n' || typed === 'N' || key.escape) answerPermission({ allowed: false });
       // Lowercase takes the narrow offer, uppercase the whole tool — the more
       // sweeping choice costs the more deliberate keystroke.
@@ -2479,6 +2493,18 @@ export function App({
         cursor: moveToRowEdge(layoutEditor(current.text, columns, current.cursor), typed === 'a' ? 'start' : 'end'),
       }));
       preferredColumn.current = undefined;
+      return;
+    }
+
+    // Yank is insertion, not snapshot restoration: keep intervening edits and
+    // the cut for repeated use, without changing SER-044's destructive-only undo.
+    if (key.ctrl && typed === 'y') {
+      if (lastCut.current !== '') {
+        setEditor((current) => insertAtCursor(current, lastCut.current));
+        preferredColumn.current = undefined;
+        setSelectedCompletion(0);
+        endRecall();
+      }
       return;
     }
 

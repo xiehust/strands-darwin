@@ -16,6 +16,9 @@ import {
   popUndo,
   pushUndo,
   UNDO_CAP,
+  LAST_CUT_CAP,
+  LAST_CUT_OVERFLOW_NOTICE,
+  updateLastCut,
   type EditorValue,
 } from '../src/tui/prompt-editor.js';
 import { assert, header, report } from './shared.js';
@@ -312,6 +315,72 @@ check('pushing past the cap drops the oldest snapshot, never the newest', () => 
 });
 check('undo on an empty stack is a harmless no-op', () => {
   nodeAssert.equal(popUndo([]), undefined);
+});
+
+header('prompt editor — last cut and yank (SER-084)');
+const cutCases: readonly [string, number, (v: EditorValue) => EditorValue, string][] = [
+  ['abcabcabc', 3, (v) => killToRowEdge(v, layoutEditor(v.text, 40, v.cursor), 'end'), 'abcabc'],
+  ['abcabcabc', 6, (v) => killToRowEdge(v, layoutEditor(v.text, 40, v.cursor), 'start'), 'abcabc'],
+  ['same same same', 7, deleteWordBefore, 'sa'],
+  ['same same same', 7, deleteWordAfter, 'me'],
+  ['alpha\nbeta\n', 11, deleteWordBefore, 'beta\n'],
+  ['alpha\nbeta', 5, deleteWordAfter, '\nbeta'],
+  [`ok ${family}e\u0301`, 3, deleteWordAfter, `${family}e\u0301`],
+  [`ok ${family}e\u0301`, 3 + family.length + 2, deleteWordBefore, `${family}e\u0301`],
+  ['abcdef', 5, (v) => killToRowEdge(v, layoutEditor(v.text, 10, v.cursor), 'start'), 'e'],
+  ['abcdef', 5, (v) => killToRowEdge(v, layoutEditor(v.text, 10, v.cursor), 'end'), 'f'],
+];
+for (const [text, offset, edit, expected] of cutCases) {
+  check(`exact cut and round trip: ${JSON.stringify(text)} at ${offset}, ${JSON.stringify(expected)}`, () => {
+    const before = { text, cursor: { offset, affinity: 'downstream' as const } };
+    const after = edit(before);
+    const cut = updateLastCut('old', before, after);
+    nodeAssert.deepEqual(cut, { text: expected, overflow: false });
+    nodeAssert.equal(insertAtCursor(after, cut.text).text, before.text);
+  });
+}
+check('movement and typing survive repeated yank; undo still restores the destroyed snapshot', () => {
+  const before = atEnd('alpha beta');
+  const after = deleteWordBefore(before);
+  const cut = updateLastCut('', before, after).text;
+  let moved = insertAtCursor({ ...after, cursor: { offset: 0, affinity: 'downstream' } }, 'X');
+  moved = insertAtCursor(insertAtCursor(moved, cut), cut);
+  nodeAssert.equal(moved.text, 'Xbetabetaalpha ');
+  nodeAssert.deepEqual(popUndo(pushUndo([], before))?.value, before);
+});
+check('yank snaps an interior ZWJ cursor and advances past a newly merged combining grapheme', () => {
+  const snapped = insertAtCursor({ text: `${family}x`, cursor: { offset: 2, affinity: 'downstream' } }, 'cut');
+  nodeAssert.equal(snapped.text, `cut${family}x`);
+  const merged = insertAtCursor({ text: '\u0301x', cursor: { offset: 0, affinity: 'downstream' } }, 'e');
+  nodeAssert.deepEqual(merged, { text: 'e\u0301x', cursor: { offset: 2, affinity: 'upstream' } });
+});
+check('all no-op cuts retain the old register; nonempty cuts replace without coalescing', () => {
+  for (const edit of [deleteWordBefore, deleteWordAfter,
+    (v: EditorValue) => killToRowEdge(v, layoutEditor(v.text, 10, v.cursor), 'start'),
+    (v: EditorValue) => killToRowEdge(v, layoutEditor(v.text, 10, v.cursor), 'end')]) {
+    const empty = atEnd('');
+    nodeAssert.deepEqual(updateLastCut('old', empty, edit(empty)), { text: 'old', overflow: false });
+  }
+  const before = atEnd('one two');
+  const after = deleteWordBefore(before);
+  const first = updateLastCut('old', before, after).text;
+  nodeAssert.equal(updateLastCut(first, after, deleteWordBefore(after)).text, 'one ');
+});
+check('cap is code points: exact-cap astral cut survives; over-cap clears without truncating or losing undo', () => {
+  nodeAssert.equal(LAST_CUT_CAP, 65_536);
+  for (const count of [LAST_CUT_CAP, LAST_CUT_CAP + 1]) {
+    const before = atEnd('🙂'.repeat(count));
+    const after = deleteWordBefore(before);
+    const forward = { ...before, cursor: { offset: 0, affinity: 'downstream' as const } };
+    nodeAssert.deepEqual(deleteWordAfter(forward), after);
+    nodeAssert.equal(after.text, '');
+    const cut = updateLastCut('stale', before, after);
+    nodeAssert.deepEqual(cut, count === LAST_CUT_CAP
+      ? { text: before.text, overflow: false }
+      : { text: '', overflow: true });
+    nodeAssert.deepEqual(popUndo(pushUndo([], before))?.value, before);
+  }
+  nodeAssert.ok([...LAST_CUT_OVERFLOW_NOTICE].length < 160);
 });
 
 report();

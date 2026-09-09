@@ -113,7 +113,7 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 /tangent                为一次旁支提问给对话加书签；再输入 /tangent 即返回
 ```
 
-按 `Ctrl+R` 可搜索当前项目的提示历史（输入文字筛选，按 `Ctrl+R`/`Up`/`Down` 切换结果，按 `Enter`/`Tab` 接受，按 `Escape` 取消）；忙碌时按 `Ctrl+C` 取消，按 `Ctrl+B` 展开或收起工具详情，使用 `/exit` 或 `Ctrl+D` 退出。编辑输入时，`Alt/Ctrl+Left/Right` 或 `Alt+B`/`Alt+F` 按词移动光标，`Alt+Backspace`/`Alt+D` 删除光标前／后的一个词，`Ctrl+_`（或 `Ctrl+-`）可撤销最近一次 `Ctrl+K`/`Ctrl+U`、`Ctrl+W` 或 `Alt` 系列的删词操作。输入框为空且空闲时，连按两次 `Esc`（第二次在 500 ms 内）会打开 `/rewind` 选择器，效果与输入 `/rewind` 完全相同；此时单按一次 `Esc` 不做任何事。模型发起的工具调用仍会经过当前审批模式；`!` 命令由你亲自输入，因此不走模型工具审批。
+按 `Ctrl+R` 可搜索当前项目的提示历史（输入文字筛选，按 `Ctrl+R`/`Up`/`Down` 切换结果，按 `Enter`/`Tab` 接受，按 `Escape` 取消）；忙碌时按 `Ctrl+C` 取消，按 `Ctrl+B` 展开或收起工具详情，使用 `/exit` 或 `Ctrl+D` 退出。编辑输入时，`Alt/Ctrl+Left/Right` 或 `Alt+B`/`Alt+F` 按词移动光标，`Alt+Backspace`/`Alt+D` 删除光标前／后的一个词，`Ctrl+_`（或 `Ctrl+-`）可撤销最近一次 `Ctrl+K`/`Ctrl+U`、`Ctrl+W` 或 `Alt` 系列的删词操作。`Ctrl+Y` 会在当前光标处插入最近剪下的文本，同一草稿内可重复使用，不经过剪贴板；[剪切恢复的上限与清空规则](docs/user-guide/using-darwin.zh-CN.md#输入编辑与补全)见使用指南。输入框为空且空闲时，连按两次 `Esc`（第二次在 500 ms 内）会打开 `/rewind` 选择器，效果与输入 `/rewind` 完全相同；此时单按一次 `Esc` 不做任何事。模型发起的工具调用仍会经过当前审批模式；`!` 命令由你亲自输入，因此不走模型工具审批。
 
 想在切到别处时被叫回来，可在 `~/.darwin/config.json` 中设置 `"terminalBell": true`（响一次终端铃）和／或 `"terminalNotify": true`（写一条 OSC 9 桌面通知序列，iTerm2、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端静默忽略）；二者都在权限提示等待时和回合结束时触发，默认均为关闭。iTerm2 需开启 "Send escape sequence-generated alerts"；tmux 需要 `set -g allow-passthrough on`。详见[配置与上下文](docs/user-guide/configuration.zh-CN.md)。
 

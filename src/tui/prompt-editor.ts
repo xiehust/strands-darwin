@@ -80,6 +80,26 @@ export function layoutEditor(text: string, columns: number, cursor: EditorCursor
   };
 }
 
+/** One draft-local cut, not a kill ring. Count code points, not UTF-16 units. */
+export const LAST_CUT_CAP = 65_536;
+export const LAST_CUT_OVERFLOW_NOTICE = 'cut exceeds 65,536 code points; yank cleared — Ctrl+_ can still undo the deletion';
+
+/**
+ * Only for the contiguous kill/word-delete primitives below. Their resulting
+ * cursor is the exact deletion start; length loss gives its end. A prefix/suffix
+ * diff would pick the wrong span when text repeats. No-op cuts retain the slot.
+ */
+export function updateLastCut(lastCut: string, before: EditorValue, after: EditorValue): { text: string; overflow: boolean } {
+  const removed = before.text.length - after.text.length;
+  if (removed <= 0) return { text: lastCut, overflow: false };
+  const cut = before.text.slice(after.cursor.offset, after.cursor.offset + removed);
+  let points = 0;
+  for (const _point of cut) {
+    if (++points > LAST_CUT_CAP) return { text: '', overflow: true };
+  }
+  return { text: cut, overflow: false };
+}
+
 export function insertAtCursor(value: EditorValue, inserted: string): EditorValue {
   const cursor = snapCursor(value.text, value.cursor);
   const text = value.text.slice(0, cursor.offset) + inserted + value.text.slice(cursor.offset);
@@ -246,34 +266,24 @@ export function moveWordHorizontal(text: string, cursor: EditorCursor, direction
 
 /** Start of the word before `offset`: skip whitespace back, then the word. */
 function wordBoundaryBefore(text: string, offset: number): number {
-  let start = offset;
-  while (start > 0) {
-    const previous = previousBoundary(text, start);
-    if (!/^\s+$/.test(text.slice(previous, start))) break;
-    start = previous;
-  }
-  while (start > 0) {
-    const previous = previousBoundary(text, start);
-    if (/^\s+$/.test(text.slice(previous, start))) break;
-    start = previous;
-  }
-  return start;
+  // Segment once, not once per removed grapheme: a cap-sized cut must remain
+  // usable. Callers already snap offset, so it is one of these boundaries.
+  const boundaries = sourceBoundaries(text);
+  let index = boundaries.indexOf(offset);
+  const whitespaceBefore = () => /^\s+$/.test(text.slice(boundaries[index - 1], boundaries[index]));
+  while (index > 0 && whitespaceBefore()) index -= 1;
+  while (index > 0 && !whitespaceBefore()) index -= 1;
+  return boundaries[index]!;
 }
 
 /** End of the word after `offset`: skip whitespace forward, then the word. */
 function wordBoundaryAfter(text: string, offset: number): number {
-  let end = offset;
-  while (end < text.length) {
-    const next = nextBoundary(text, end);
-    if (!/^\s+$/.test(text.slice(end, next))) break;
-    end = next;
-  }
-  while (end < text.length) {
-    const next = nextBoundary(text, end);
-    if (/^\s+$/.test(text.slice(end, next))) break;
-    end = next;
-  }
-  return end;
+  const boundaries = sourceBoundaries(text);
+  let index = boundaries.indexOf(offset);
+  const whitespaceAfter = () => /^\s+$/.test(text.slice(boundaries[index], boundaries[index + 1]));
+  while (index < boundaries.length - 1 && whitespaceAfter()) index += 1;
+  while (index < boundaries.length - 1 && !whitespaceAfter()) index += 1;
+  return boundaries[index]!;
 }
 
 export function moveVertical(

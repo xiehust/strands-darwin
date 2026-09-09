@@ -1705,6 +1705,28 @@ row the menu already has**.
 
 ## Prompt recall
 
+**Composer cut/yank (SER-084) is draft-local, not recall or undo.** `App` keeps one
+last-cut string beside SER-044's destructive-edit undo stack. `updateLastCut` in
+`prompt-editor.ts` uses the deletion result's cursor offset and length loss to capture
+the exact contiguous span, never a prefix/suffix diff that can misidentify repeated
+text. Word-boundary scans segment once per operation so a cap-sized word cut is
+usable, rather than re-segmenting the whole draft for each removed grapheme.
+Ctrl+K/U/W and Alt word deletes feed it; nonempty cuts replace, no-op cuts retain,
+and ordinary Backspace/Delete do not feed it. At most 65,536 code points survive: an
+over-cap cut still deletes and pushes the original undo snapshot, but clears the slot
+and emits one fixed bounded Static notice, never stale/truncated yank. Ctrl+Y calls
+`insertAtCursor` at the current grapheme-safe cursor and retains the slot for repeat;
+movement, typing and undo leave the slot alone. Yank is insertion, so it does not add
+to the existing destructive-only undo stack. Every undo ownership reset also empties
+the slot: submission/queue/local commands, queue take-back/cancel return, recall and
+search acceptance, clear and rewind successors. Search cancellation preserves it.
+Permission/compaction/search handlers still precede composer chords; modified `y`/`Y`
+are ignored, so Ctrl+Y cannot masquerade as plain `y`. No clipboard, runtime,
+SDK, tool, record, network/file operation, timer or live-frame row is added. Free checks:
+`verify-prompt-editor.ts`, `verify-composer-yank.ts` (real CLI pty with local model,
+including reset seams and permission/search/compaction precedence), `verify-help-command.ts`
+and `verify-frame-budget.ts`; neighboring pty `undo`, `wordNav`, `queue`, `historySearch`, `completion`.
+
 **`Up`/`Down` recall previous prompts, read out of the record darwin already keeps — and they take no
 key that already had a meaning** (`src/trajectory/prompt-history.ts`, `src/tui/prompt-recall.ts`). There is no history store and there must never be
 one: every prompt a session sent is already a `userInput` line in
