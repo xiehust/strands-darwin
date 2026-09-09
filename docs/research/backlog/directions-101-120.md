@@ -313,7 +313,7 @@ Evidence: child session `session-20260908-145806494` (the reflection worker for 
 
 ## SER-084 — Ctrl+Y yanks the last killed text into the current draft: one bounded composer-local register fed by Ctrl+K/U/W and Alt word deletions, grapheme-aware insertion at the current cursor, never the system clipboard, never a model action
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 116
 - Score: 12
 - Importance: 3
