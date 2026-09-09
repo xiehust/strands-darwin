@@ -134,8 +134,10 @@ export function planThinking(config: AppConfig, effort = config.thinkingEffort):
       //
       // Mantle is exempt from the clamp because it was measured not to need it:
       // `openai.gpt-5.6-sol` accepts the whole ladder through `max` on the
-      // Responses API. Clamping it anyway would quietly think less than asked.
-      return config.bedrockMantle !== true && isAbove(effort, OPENAI_MAX_EFFORT)
+      // Responses API, and the Bedrock runtime endpoint the same for
+      // `global.openai.gpt-6-astra` (`probe-bedrock-runtime-openai.ts`).
+      // Clamping either anyway would quietly think less than asked.
+      return config.bedrockMantle !== true && config.bedrockRuntime !== true && isAbove(effort, OPENAI_MAX_EFFORT)
         ? {
             enabled: true,
             requested: effort,

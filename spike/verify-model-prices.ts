@@ -162,6 +162,8 @@ function resolutionContract(): void {
     priceCandidateKeys(bedrock('m')).join(' ') === 'm bedrock/m');
   assert('openai over Bedrock Mantle tries the bare id, then bedrock_mantle/',
     priceCandidateKeys({ provider: 'openai', model: 'm', bedrockMantle: true }).join(' ') === 'm bedrock_mantle/m');
+  assert('openai over the Bedrock runtime endpoint is a Bedrock profile: bare id, then bedrock/',
+    priceCandidateKeys({ provider: 'openai', model: 'm', bedrockRuntime: true }).join(' ') === 'm bedrock/m');
   assert('direct openai tries the bare id, then openai/',
     priceCandidateKeys({ provider: 'openai', model: 'm' }).join(' ') === 'm openai/m');
   assert('anthropic tries the bare id, then anthropic/',

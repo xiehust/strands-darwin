@@ -186,6 +186,7 @@ async function reportConfig(report: Report, projectRoot: string): Promise<AppCon
     }
     case 'openai':
       if (config.bedrockMantle === true) report.info(`bedrock mantle on   region ${resolveRegion(config.region)}`);
+      if (config.bedrockRuntime === true) report.info(`bedrock runtime on  region ${resolveRegion(config.region)}`);
       if (config.openaiApi !== undefined) report.info(`openai api ${config.openaiApi}`);
       break;
   }

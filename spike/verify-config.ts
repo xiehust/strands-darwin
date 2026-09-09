@@ -29,6 +29,7 @@ import {
   saveEnabledModel,
   saveThinkingEffort,
   openAIContextWindowLimit,
+  bedrockRuntimeOpenAIBaseUrl,
   resolveAnthropicBaseUrl,
   resolveRegion,
   withModelChoice,
@@ -99,11 +100,19 @@ async function defaults(): Promise<void> {
   // same one the flat fallbacks name.
   const names = config.modelChoices.map((choice) => choice.name);
   console.log(`  catalogue: ${names.join(', ')}`);
-  assert('the defaults offer the whole preset catalogue', config.modelChoices.length === 6);
+  assert('the defaults offer the whole preset catalogue', config.modelChoices.length === 7);
   assert(
     'the defaults include Claude Fable 5.1',
     config.modelChoices.some((choice) => choice.fields.model === 'global.anthropic.claude-fable-5-1'),
   );
+  const astra = config.modelChoices.find((choice) => choice.fields.model === 'global.openai.gpt-6-astra');
+  assert('the defaults include GPT-6 Astra', astra !== undefined);
+  assert(
+    'GPT-6 Astra rides the Bedrock runtime endpoint on the Responses API, region left to AWS_REGION',
+    astra?.fields.bedrockRuntime === true && astra.fields.bedrockMantle === undefined && astra.fields.openaiApi === 'responses' && astra.fields.region === undefined,
+  );
+  assert('GPT-6 Astra has a known context window', openAIContextWindowLimit('global.openai.gpt-6-astra') === 1_050_000);
+  assert('…and so does its Mantle id', openAIContextWindowLimit('openai.gpt-6-astra') === 1_050_000);
   assert(
     'exactly one preset entry is enabled…',
     config.modelChoices.filter((choice) => choice.enabled).length === 1,
@@ -144,18 +153,18 @@ async function defaults(): Promise<void> {
 
   // The first /model switch in a new installation must materialize the preset
   // catalogue rather than treating the still-missing file as an explicit flat config.
-  await saveEnabledModel(ROOT, 5);
+  await saveEnabledModel(ROOT, 6);
   const savedDefaults = JSON.parse(await readFile(configPath(ROOT), 'utf8')) as {
     models: { name?: string; model?: string; enable?: boolean }[];
   };
-  assert('the first preset switch creates the full models array', savedDefaults.models.length === 6);
-  assert('the selected preset is enabled in the new file', savedDefaults.models[5]?.enable === true);
+  assert('the first preset switch creates the full models array', savedDefaults.models.length === 7);
+  assert('the selected preset is enabled in the new file', savedDefaults.models[6]?.enable === true);
   assert(
     'every other preset is explicitly disabled in the new file',
-    savedDefaults.models.slice(0, 5).every((entry) => entry.enable === false),
+    savedDefaults.models.slice(0, 6).every((entry) => entry.enable === false),
   );
   const savedDefaultReload = await loadConfig(ROOT);
-  assert('the first preset switch survives a reload', savedDefaultReload.model === 'openai.gpt-5.6-sol');
+  assert('the first preset switch survives a reload', savedDefaultReload.model === 'global.openai.gpt-6-astra');
 
 }
 
@@ -374,6 +383,42 @@ async function providerSwitching(): Promise<void> {
     ),
   );
   assert('the error names both keys', mantleWithKey.includes('bedrockMantle') && mantleWithKey.includes('apiKeyEnv'));
+
+  // The runtime-endpoint sibling: same provider gate, same key conflict, plus the
+  // two Bedrock switches never both on — they name two different endpoints.
+  const runtimeOnBedrock = await expectConfigError('bedrockRuntime on provider bedrock is rejected', async () =>
+    loadConfig(
+      await writeConfig('{ "provider": "bedrock", "model": "global.openai.gpt-6-astra", "bedrockRuntime": true }'),
+    ),
+  );
+  assert('the error points at provider "openai"', runtimeOnBedrock.includes('"openai"'));
+  const runtimeWithKey = await expectConfigError('bedrockRuntime plus apiKeyEnv is rejected', async () =>
+    loadConfig(
+      await writeConfig('{ "provider": "openai", "model": "global.openai.gpt-6-astra", "bedrockRuntime": true, "apiKeyEnv": "X" }'),
+    ),
+  );
+  assert('the error names both keys', runtimeWithKey.includes('bedrockRuntime') && runtimeWithKey.includes('apiKeyEnv'));
+  const bothEndpoints = await expectConfigError('bedrockRuntime plus bedrockMantle is rejected', async () =>
+    loadConfig(
+      await writeConfig('{ "provider": "openai", "model": "global.openai.gpt-6-astra", "bedrockRuntime": true, "bedrockMantle": true }'),
+    ),
+  );
+  assert('the error names both switches', bothEndpoints.includes('bedrockRuntime') && bothEndpoints.includes('bedrockMantle'));
+  const runtimeOff = await loadConfig(
+    await writeConfig('{ "provider": "openai", "model": "global.openai.gpt-6-astra", "bedrockRuntime": false, "bedrockMantle": true, "region": "us-west-2" }'),
+  );
+  assert('an explicit bedrockRuntime: false does not conflict with Mantle', runtimeOff.bedrockRuntime === false && runtimeOff.bedrockMantle === true);
+  assert('the runtime base URL is the region\'s /openai/v1 surface',
+    bedrockRuntimeOpenAIBaseUrl('us-west-2') === 'https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1');
+  const badRegion = (() => {
+    try {
+      bedrockRuntimeOpenAIBaseUrl('us-west-2/evil.example#');
+      return '';
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  })();
+  assert('a malformed region cannot re-point the runtime URL', badRegion.includes('not an AWS region identifier'));
 
   const badApi = await expectConfigError('an unknown openaiApi is rejected', async () =>
     loadConfig(await writeConfig('{ "provider": "openai", "model": "gpt-5", "openaiApi": "grpc" }')),
@@ -1581,6 +1626,7 @@ async function documentedKeys(): Promise<void> {
     region: 'us-west-2',
     apiKeyEnv: 'UNUSED_KEY',
     bedrockMantle: false,
+    bedrockRuntime: false,
     maxTokens: 4096,
     contextWindowLimit: 250000,
     thinkingEffort: 'low',

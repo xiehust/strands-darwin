@@ -53,7 +53,8 @@
 | `region` | AWS 环境变量，其次 `us-west-2` | Bedrock/Mantle 区域 |
 | `apiKeyEnv` | 供应商惯例 | 保存直连 API key 的环境变量名 |
 | `baseUrl` | `ANTHROPIC_BASE_URL`，其次 `https://api.anthropic.com` | 仅 Anthropic；Messages API 兼容端点的 `http(s)` URL |
-| `bedrockMantle` | `false` | OpenAI provider 通过 AWS 调用；不可与 `apiKeyEnv` 同时使用 |
+| `bedrockMantle` | `false` | OpenAI provider 通过 AWS Mantle 端点调用（`openai.*` 目录 ID）；不可与 `apiKeyEnv`、`bedrockRuntime` 同时使用 |
+| `bedrockRuntime` | `false` | OpenAI provider 通过 Bedrock runtime 端点的 `/openai/v1` 接口调用（`us.openai.*` / `global.openai.*` 推理配置）；不可与 `apiKeyEnv`、`bedrockMantle` 同时使用 |
 | `openaiApi` | `chat` | `chat` 或 `responses` |
 | `maxTokens` | `64000` | 最大输出 token 数 |
 | `contextWindowLimit` | SDK 内置模型表，否则未知 | 整数 token 数；覆盖内置表，用于 `/context`、`/status` 和上下文压力提示 |

@@ -134,6 +134,8 @@ OpenAI 支持已经安装。直连时默认读取 `OPENAI_API_KEY`，也可用 `
 pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2
 ```
 
+当 `provider: "openai"` 且 `bedrockRuntime: true` 时，darwin 改走普通 Bedrock runtime 端点的 OpenAI 兼容接口（`https://bedrock-runtime.<region>.amazonaws.com/openai/v1`），同样使用 AWS 凭证。模型名填跨区域推理配置（`global.openai.gpt-6-astra`、`us.openai.gpt-6-astra`）；内置的 `gpt-6-astra` 预置走的就是这条路，价格低于 Mantle 的区域内价。`bedrockRuntime`、`bedrockMantle` 与 `apiKeyEnv` 三者互斥。
+
 ## 最小配置示例
 
 ```json

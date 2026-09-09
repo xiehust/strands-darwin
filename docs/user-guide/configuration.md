@@ -53,7 +53,8 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `region` | AWS env, then `us-west-2` | Bedrock/Mantle region |
 | `apiKeyEnv` | provider convention | environment variable containing direct API key |
 | `baseUrl` | `ANTHROPIC_BASE_URL`, then `https://api.anthropic.com` | Anthropic only; `http(s)` URL of a Messages API-compatible endpoint |
-| `bedrockMantle` | `false` | OpenAI provider via AWS; mutually exclusive with `apiKeyEnv` |
+| `bedrockMantle` | `false` | OpenAI provider via AWS's Mantle endpoint (`openai.*` catalogue ids); mutually exclusive with `apiKeyEnv` and `bedrockRuntime` |
+| `bedrockRuntime` | `false` | OpenAI provider via the Bedrock runtime endpoint's `/openai/v1` surface (`us.openai.*` / `global.openai.*` inference profiles); mutually exclusive with `apiKeyEnv` and `bedrockMantle` |
 | `openaiApi` | `chat` | `chat` or `responses` |
 | `maxTokens` | `64000` | maximum output tokens |
 | `contextWindowLimit` | SDK per-model table, else unknown | whole tokens; overrides the table for `/context`, `/status` and the context-pressure advice |

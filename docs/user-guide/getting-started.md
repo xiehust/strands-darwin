@@ -134,6 +134,8 @@ With `provider: "openai"` and `bedrockMantle: true`, darwin uses AWS credentials
 pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2
 ```
 
+With `provider: "openai"` and `bedrockRuntime: true`, darwin instead talks to the ordinary Bedrock runtime endpoint's OpenAI-compatible surface (`https://bedrock-runtime.<region>.amazonaws.com/openai/v1`) with the same AWS credentials. Name a cross-region inference profile as the model (`global.openai.gpt-6-astra`, `us.openai.gpt-6-astra`); the built-in `gpt-6-astra` preset uses this route, which is priced below Mantle's in-region rate. `bedrockRuntime`, `bedrockMantle` and `apiKeyEnv` are mutually exclusive.
+
 ## Minimal examples
 
 ```json

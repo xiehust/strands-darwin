@@ -49,7 +49,7 @@ export interface ModelPriceCache {
 type PriceTable = Record<string, unknown>;
 
 /** A `PriceConfig` is the part of the live config that decides which LiteLLM key applies. */
-export type PriceConfig = Pick<AppConfig, 'provider' | 'model' | 'bedrockMantle'>;
+export type PriceConfig = Pick<AppConfig, 'provider' | 'model' | 'bedrockMantle' | 'bedrockRuntime'>;
 
 export function emptyModelPriceCache(): ModelPriceCache {
   return { version: MODEL_PRICES_SCHEMA_VERSION, source: MODEL_PRICES_SOURCE_URL, models: {} };
@@ -122,6 +122,8 @@ export function writeModelPriceCache(file: string, cache: ModelPriceCache): void
  * exact id (Bedrock inference profiles such as `global.anthropic.claude-sonnet-5`
  * are listed bare), then the provider-prefixed form LiteLLM uses when the bare id
  * is ambiguous — `bedrock/`, `bedrock_mantle/` (OpenAI-compatible Bedrock), `anthropic/`, `openai/`.
+ * An OpenAI model on the Bedrock *runtime* endpoint is a Bedrock inference profile
+ * (`global.openai.*`), so it shares the `bedrock` provider's keys, not Mantle's.
  */
 export function priceCandidateKeys(config: PriceConfig): readonly string[] {
   const id = config.model;
@@ -131,7 +133,9 @@ export function priceCandidateKeys(config: PriceConfig): readonly string[] {
     case 'anthropic':
       return [id, `anthropic/${id}`];
     case 'openai':
-      return config.bedrockMantle === true ? [id, `bedrock_mantle/${id}`] : [id, `openai/${id}`];
+      if (config.bedrockMantle === true) return [id, `bedrock_mantle/${id}`];
+      if (config.bedrockRuntime === true) return [id, `bedrock/${id}`];
+      return [id, `openai/${id}`];
   }
 }
 

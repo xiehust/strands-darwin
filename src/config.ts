@@ -125,6 +125,20 @@ export interface ModelFields {
    */
   bedrockMantle?: boolean;
   /**
+   * `openai` provider only: route requests through the OpenAI-compatible surface
+   * of Amazon Bedrock's ordinary *runtime* endpoint
+   * (`https://bedrock-runtime.{region}.amazonaws.com/openai/v1`) with AWS
+   * credentials — the sibling of {@link bedrockMantle} for models Bedrock serves
+   * as cross-region inference profiles (`us.openai.*`, `global.openai.*`) rather
+   * than in Mantle's per-region catalog. Darwin derives the base URL from
+   * {@link region} and mints the same short-term bearer token per request, so
+   * {@link apiKeyEnv} must not be set alongside it, and the two Bedrock switches
+   * are mutually exclusive. Measured on `global.openai.gpt-6-astra` by
+   * `spike/probe-bedrock-runtime-openai.ts`: both `openaiApi` modes work, the
+   * Responses `reasoning.effort` ladder is accepted through `max`.
+   */
+  bedrockRuntime?: boolean;
+  /**
    * `openai` provider only: which OpenAI API to speak. `chat` (the default) is
    * Chat Completions; `responses` is the Responses API, which the newest models
    * require — `openai.gpt-5.6-*` on Mantle rejects `/v1/chat/completions`
@@ -372,6 +386,7 @@ export const MODEL_KEYS = [
   'apiKeyEnv',
   'baseUrl',
   'bedrockMantle',
+  'bedrockRuntime',
   'openaiApi',
   'maxTokens',
   'contextWindowLimit',
@@ -532,6 +547,22 @@ const DEFAULT_MODELS: readonly ModelFields[] = [
     promptCache: DEFAULTS.promptCache,
     thinkingEffort: DEFAULTS.thinkingEffort,
   },
+  {
+    name: 'gpt-6-astra',
+    provider: 'openai',
+    model: 'global.openai.gpt-6-astra',
+    // The Bedrock *runtime* endpoint rather than Mantle, on purpose: Astra's
+    // model card (GA 2026-09-08) prices the Global CRIS profile below Mantle's
+    // in-region rate, and the runtime endpoint takes the `global.` profile in
+    // every listed region — so, like the Bedrock entries, AWS_REGION decides.
+    // `responses` matches the sibling entry; `probe-bedrock-runtime-openai.ts`
+    // measured both API modes and the whole effort ladder as accepted.
+    bedrockRuntime: true,
+    openaiApi: 'responses',
+    maxTokens: DEFAULTS.maxTokens,
+    promptCache: DEFAULTS.promptCache,
+    thinkingEffort: DEFAULTS.thinkingEffort,
+  },
 ];
 
 const DEFAULT_REGION = 'us-west-2';
@@ -571,6 +602,7 @@ export const DEFAULT_MAX_RESULT_TOKENS = 5_000;
 
 /** Context windows the installed SDK knows only for unprefixed OpenAI IDs. */
 const OPENAI_CONTEXT_WINDOW_LIMITS: Readonly<Record<string, number>> = {
+  'gpt-6-astra': 1_050_000,
   'gpt-5.6': 1_050_000,
   'gpt-5.6-sol': 1_050_000,
   'gpt-5.6-terra': 1_050_000,
@@ -581,9 +613,16 @@ const OPENAI_CONTEXT_WINDOW_LIMITS: Readonly<Record<string, number>> = {
   'gpt-5.4-pro': 1_050_000,
 };
 
-/** Mantle catalog IDs carry `openai.`; normalize it before the metadata lookup. */
+/**
+ * Bedrock ids carry `openai.`, and runtime-endpoint inference profiles a `us.` /
+ * `global.` prefix before that; normalize both before the metadata lookup.
+ */
 export function openAIContextWindowLimit(modelId: string): number | undefined {
-  const normalized = modelId.startsWith('openai.') ? modelId.slice('openai.'.length) : modelId;
+  const unprofiled = BEDROCK_PROFILE_PREFIXES.reduce(
+    (id, prefix) => (id.startsWith(prefix) ? id.slice(prefix.length) : id),
+    modelId,
+  );
+  const normalized = unprofiled.startsWith('openai.') ? unprofiled.slice('openai.'.length) : unprofiled;
   return OPENAI_CONTEXT_WINDOW_LIMITS[normalized];
 }
 
@@ -1083,6 +1122,29 @@ function validateModelFields(input: Record<string, unknown>, where: string): Mod
       );
     }
     fields.bedrockMantle = bedrockMantle;
+  }
+
+  const bedrockRuntime = booleanField(input, 'bedrockRuntime', where);
+  if (bedrockRuntime !== undefined) {
+    if (bedrockRuntime && provider !== 'openai') {
+      throw new ConfigError(
+        `${where}: "bedrockRuntime" only applies to provider "openai" (this one sets ${JSON.stringify(provider)}). ` +
+          `Bedrock's own models are reached with provider "bedrock".`,
+      );
+    }
+    if (bedrockRuntime && apiKeyEnv !== undefined) {
+      throw new ConfigError(
+        `${where}: "bedrockRuntime" and "apiKeyEnv" are mutually exclusive — ` +
+          `the Bedrock runtime endpoint mints its own bearer token from AWS credentials. Remove "apiKeyEnv".`,
+      );
+    }
+    if (bedrockRuntime && bedrockMantle === true) {
+      throw new ConfigError(
+        `${where}: "bedrockRuntime" and "bedrockMantle" are mutually exclusive — ` +
+          `they name two different Bedrock endpoints. Keep one.`,
+      );
+    }
+    fields.bedrockRuntime = bedrockRuntime;
   }
 
   const openaiApi = input['openaiApi'];
@@ -1901,11 +1963,15 @@ async function createOpenAIModel(config: AppConfig): Promise<Model> {
   // resolved here rather than left to the SDK's own env lookup so a run cannot
   // use a different region than the rest of darwin reports: the Mantle catalog is
   // per-region (`openai.gpt-5.6-sol` is us-east-1 only) and a wrong region shows
-  // up as a 404 naming the model, never the region.
+  // up as a 404 naming the model, never the region. The runtime endpoint is the
+  // same shape built by darwin (the SDK has no switch for it): the region names
+  // the host, the credential is the same minted bearer token.
   const client =
     config.bedrockMantle === true
       ? { bedrockMantleConfig: { region: resolveRegion(config.region) } }
-      : optionalApiKey(readApiKey(config));
+      : config.bedrockRuntime === true
+        ? await bedrockRuntimeClient(resolveRegion(config.region))
+        : optionalApiKey(readApiKey(config));
 
   // The user's window beats darwin's Mantle table, which beats the SDK's own.
   const contextWindowLimit = config.contextWindowLimit ?? openAIContextWindowLimit(config.model);
@@ -1931,6 +1997,52 @@ function openaiApiMode(config: AppConfig): OpenAIApiMode {
 /** The `apiKey` option, or nothing — each provider SDK has its own env fallback. */
 function optionalApiKey(apiKey: string | undefined): { apiKey?: string } {
   return apiKey === undefined ? {} : { apiKey };
+}
+
+/**
+ * AWS region identifiers such as `us-east-1`, `ap-southeast-1`, `us-gov-east-1`.
+ * Anchored so a malformed region (`@`, `:`, `/`, `#`) cannot re-point the runtime
+ * URL below at a non-AWS host and leak the minted bearer token — the same guard
+ * the SDK applies to its Mantle URL, mirrored because darwin builds this one.
+ */
+const VALID_AWS_REGION = /^[a-z]{2}(-[a-z]+)+-[0-9]+$/;
+
+/** The OpenAI-compatible surface of the Bedrock runtime endpoint in `region`. */
+export function bedrockRuntimeOpenAIBaseUrl(region: string): string {
+  if (!VALID_AWS_REGION.test(region)) {
+    throw new ConfigError(`"region" ${JSON.stringify(region)} is not an AWS region identifier (expected e.g. us-west-2).`);
+  }
+  return `https://bedrock-runtime.${region}.amazonaws.com/openai/v1`;
+}
+
+/**
+ * The client options for {@link AppConfig.bedrockRuntime}: the runtime base URL
+ * plus an `apiKey` *setter* that mints a fresh short-term Bedrock bearer token per
+ * request from the standard AWS credential chain — the same generator the SDK's
+ * Mantle path loads, imported lazily for the same reason (a Claude-only install
+ * never pays for the credential providers at startup).
+ */
+async function bedrockRuntimeClient(region: string): Promise<{ apiKey: () => Promise<string>; clientConfig: { baseURL: string } }> {
+  const baseURL = bedrockRuntimeOpenAIBaseUrl(region);
+  const { getTokenProvider } = await importProviderModule<typeof import('@aws/bedrock-token-generator')>(
+    '@aws/bedrock-token-generator',
+    'openai',
+    '@aws/bedrock-token-generator',
+  );
+  const provideToken = getTokenProvider({ region });
+  return {
+    apiKey: async () => {
+      try {
+        return await provideToken();
+      } catch (cause) {
+        throw new Error(
+          `failed to mint a Bedrock bearer token for region '${region}' | verify your AWS credentials and network connectivity`,
+          { cause },
+        );
+      }
+    },
+    clientConfig: { baseURL },
+  };
 }
 
 /**
