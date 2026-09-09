@@ -319,11 +319,11 @@ Evidence: child session `session-20260908-145806494` (the reflection worker for 
 - Importance: 3
 - Architecture fit: 5
 - Evidence confidence: 5
-- Implementation difficulty: 2
-- Implementation risk: 2
+- Difficulty: 2
+- Risk: 2
 - Origin report: [`research_2026-09-09.md`](../research_2026-09-09.md) (run `09:48:25Z`, `peer` path by roll)
 
-### Implementation and acceptance evidence
+### Implementation / acceptance evidence
 
 Not implemented. Acceptance: pure editor cases for exact deleted spans, repeated text, Unicode/ZWJ/combining marks, soft wraps, no-op kills, repeated yank and the cap; real offline pty proves cut/move/yank retains intervening edits, permission Ctrl+Y does not approve, search/compaction ownership stays intact, and submit/queue/recall/clear/rewind clear the register. Re-run editor/help/frame suites plus pty undo, wordNav, queue, historySearch, completion and the new yank scenario; final typecheck/test/build.
 
@@ -339,11 +339,11 @@ Sources: report S7 (Aider Ctrl+Y); `src/tui/prompt-editor.ts` `killToRowEdge`, `
 - Importance: 3
 - Architecture fit: 5
 - Evidence confidence: 5
-- Implementation difficulty: 3
-- Implementation risk: 3
+- Difficulty: 3
+- Risk: 3
 - Origin report: [`research_2026-09-09.md`](../research_2026-09-09.md) (run `09:48:25Z`, `peer` path by roll)
 
-### Implementation and acceptance evidence
+### Implementation / acceptance evidence
 
 Not implemented. Acceptance: pure state transitions (exact text/cursor/image identity, empty no-op, occupied refusal, size bound), offline pty stash/type/send/restore without model exposure of stashed text, occupied preservation, Unicode cursor restoration, busy usage and keyboard ownership, one-image protection including stale clipboard callbacks, clear/rewind drop and tiny-frame fit. Re-run yank/undo, queue/recall/historySearch, clipboard and frame checks plus new stash scenario; typecheck/test/build.
 
