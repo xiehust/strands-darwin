@@ -310,3 +310,44 @@ Requirement as written: (1) `src/agent/system-prompt.ts` working-method rule 3 (
 
 Evidence: child session `session-20260908-145806494` (the reflection worker for this origin report), two consecutive processes with identical shape. Process 1: after 38 successful tool calls (last `modelCall` seq 214, 15:06:37) the model announced "Writing the reflection now" and started the whole-document `fileEditor create`; the stream died at 15:11:09 with `ModelError: Stream ended without completing a message` (`turnEnded` seq 220, `ms: 780373`, no `modelCall` record for the interrupted call), the automatic continuation (`userInput` seq 221 = `STREAM_CONTINUATION_PROMPT`) re-emitted the same payload and died the same way after 232 s with only 28 `modelStreamUpdateEvent`s (`turnEnded` seq 223); spend for the process `output=27160 cacheWrite=146180`, cost `$4.0482`, zero files written. Process 2 (Host retry, `--session`): same sequence — `modelCall` seq 228, "Writing the reflection now" at seq 233 (15:16:32), interruption at seq 234 (`ms: 241896`), continuation seq 235 died at seq 237 after 220 s / 25 stream updates; cost `$1.8349`, zero files written. Process 3 succeeded only because the Host prompt ordered "never emit one giant tool call; create a skeleton, then fill one section per `str_replace`": 20 model calls, 10 `fileEditor` calls, 433 s, `$2.9116`, a 39.9 KB document. Reading: the interruption was deterministic (same payload → same failure, continuation cannot help), so SRF-001/SRF-026's one-continuation rule is correctly bounded but the model must be told *why* it was interrupted, otherwise it repeats the failing call; the two failed processes cost `$5.88` and ~20 minutes for nothing. The exact provider-side cause (Bedrock stream idle/size limit on a single tool-use input) is a hypothesis, hence Evidence confidence 4 rather than 5; the fix does not depend on which limit it is. Independent of SRF-029–031.
 
+
+## SER-084 — Ctrl+Y yanks the last killed text into the current draft: one bounded composer-local register fed by Ctrl+K/U/W and Alt word deletions, grapheme-aware insertion at the current cursor, never the system clipboard, never a model action
+
+- Status: `not-started`
+- Priority: 116
+- Score: 12
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Implementation difficulty: 2
+- Implementation risk: 2
+- Origin report: [`research_2026-09-09.md`](../research_2026-09-09.md) (run `09:48:25Z`, `peer` path by roll)
+
+### Implementation and acceptance evidence
+
+Not implemented. Acceptance: pure editor cases for exact deleted spans, repeated text, Unicode/ZWJ/combining marks, soft wraps, no-op kills, repeated yank and the cap; real offline pty proves cut/move/yank retains intervening edits, permission Ctrl+Y does not approve, search/compaction ownership stays intact, and submit/queue/recall/clear/rewind clear the register. Re-run editor/help/frame suites plus pty undo, wordNav, queue, historySearch, completion and the new yank scenario; final typecheck/test/build.
+
+### Notes / blockers / abandonment reason
+
+Sources: report S7 (Aider Ctrl+Y); `src/tui/prompt-editor.ts` `killToRowEdge`, `deleteWordBefore/After`, `insertAtCursor`; `src/tui/App.tsx` `applyDestructive`/`useInput`; architecture § TUI frame budget and Prompt recall/The prompt queue. No duplicate: SER-044 restores whole snapshots, not cut text at another position. Use one last-cut string, no ring or coalescing: nonempty cuts replace it; no-op cuts leave it; regular Backspace/Delete do not populate it. Cap at 65,536 code points; an oversized cut still deletes/keeps existing undo semantics but clears the register and emits a bounded notice instead of retaining stale/truncated text. Ctrl+Y inserts via existing grapheme-aware helper; repeat repeats the exact same text, empty is inert. Clear the register wherever draft ownership clears undo (including submit/queue/recall/search accept/session replacement); undo itself remains unchanged. No extra row/timer, provider/SDK/tool/record/file/clipboard operation. Ctrl+Y under permission must not be mistaken for plain approval `y`. Sync `/help`, README and user-guide EN/zh-CN plus the existing architecture section. AGENTS.md is exactly 32 KiB: leave it untouched.
+
+## SER-085 — Ctrl+S parks or restores one unsent draft with its exact cursor and transient image: an explicit one-slot composer stash, never queued or sent automatically, refuses overwrite and survives intervening submissions until restored or the session is replaced
+
+- Status: `not-started`
+- Priority: 117
+- Score: 10
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Implementation difficulty: 3
+- Implementation risk: 3
+- Origin report: [`research_2026-09-09.md`](../research_2026-09-09.md) (run `09:48:25Z`, `peer` path by roll)
+
+### Implementation and acceptance evidence
+
+Not implemented. Acceptance: pure state transitions (exact text/cursor/image identity, empty no-op, occupied refusal, size bound), offline pty stash/type/send/restore without model exposure of stashed text, occupied preservation, Unicode cursor restoration, busy usage and keyboard ownership, one-image protection including stale clipboard callbacks, clear/rewind drop and tiny-frame fit. Re-run yank/undo, queue/recall/historySearch, clipboard and frame checks plus new stash scenario; typecheck/test/build.
+
+### Notes / blockers / abandonment reason
+
+Sources: report S1 (Claude Code Ctrl+S), `App.tsx` editor/image refs and `clipboardReadGeneration`, architecture §§ Clipboard image input/TUI frame budget/Prompt recall/The prompt queue. Dependency: implement after SER-084; stash/restore must clear its cut register alongside undo so hidden editor state never crosses ownership. One slot: nonempty draft or image with empty slot stores exact `EditorValue` and optional image then clears composer; empty composer with occupied slot restores and consumes it; both occupied refuses with a bounded notice (never swaps or overwrites); both empty is inert. Refuse stashing text above 65,536 code points without changing either state, never truncate. Available idle or busy wherever normal composer editing owns keys, not under permission/compaction/history or rewind search. Stash survives intervening submissions, queue take-back, recalls and `/model`/`/compact`, but drops with a notice on successful `/clear` or rewind/tangent successor and on exit; never persisted. Invalidate pending clipboard reads on stash/restore; a stashed image counts toward the existing one-image invariant and prevents another clipboard attachment. State indication is a short suffix on the existing composer hint row, no new row/timer; bounded notices say stored/restored/refused without draft content. No new slash command, model/tool call, SDK loop change or trajectory record; only an eventual ordinary submission records restored literal text. Sync help/README/user-guide EN/zh-CN and architecture; keep AGENTS.md untouched.
+
