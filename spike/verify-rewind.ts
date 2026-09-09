@@ -13,6 +13,7 @@ import {
 } from '@strands-agents/sdk';
 
 import { allowAllBridge } from '../src/agent/permission.js';
+import { refusalNotice, refusalNoticeWithRewind } from '../src/agent/refusal.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import {
   MAX_REWIND_CHECKPOINTS,
@@ -49,6 +50,17 @@ class RewindModel extends Model<BaseModelConfig> {
       .map((block) => block.type === 'textBlock' ? block.text : '')
       .join('') ?? '';
     if (prompt === 'fail') throw new Error('scripted failure');
+    // SRF-030: a refusal-class stop after partial text — the SDK loop ends normally
+    // and appends the truncated assistant message, exactly as Bedrock's classifier
+    // block arrives (`contentFiltered`).
+    if (prompt === 'refuse') {
+      yield { type: 'modelMessageStartEvent', role: 'assistant' };
+      yield { type: 'modelContentBlockStartEvent' };
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'I can help with' } };
+      yield { type: 'modelContentBlockStopEvent' };
+      yield { type: 'modelMessageStopEvent', stopReason: 'contentFiltered' };
+      return;
+    }
     const text = `answer:${prompt}`;
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     yield { type: 'modelContentBlockStartEvent' };
@@ -283,6 +295,81 @@ async function main(): Promise<void> {
       bounded.checkpoints.length === MAX_REWIND_CHECKPOINTS && bounded.capped && overflow.capped);
     assert('a full catalogue is not rewritten to make room',
       (await readFile(rewindCataloguePath(catalogueRoot, catalogueSession))).equals(unchanged));
+
+    header('/rewind — a refusal-class stop catalogues its prompt; failed and cancelled turns still do not (SRF-030)');
+    // The SDK ends a refused turn normally and appends both messages, so the checkpoint
+    // captured before the prompt is the one boundary that removes the declined exchange.
+    // `completed` keeps meaning `endTurn` for everything else (memory: verify-memory.ts;
+    // terminal delivery: verify-task-wake.ts); only the catalogue call widens.
+    const refusalRoot = await mkdtemp(path.join(os.tmpdir(), 'darwin-rewind-refusal-'));
+    await mkdir(path.join(refusalRoot, '.darwin'), { recursive: true });
+    let refusalSource: AgentRuntime | undefined = await AgentRuntime.create({
+      projectRoot: refusalRoot,
+      session: { kind: 'new' },
+      permissionBridge: allowAllBridge,
+    });
+    let refusalSuccessor: AgentRuntime | undefined;
+    const messagesOf = (runtime: AgentRuntime): unknown[] =>
+      (runtime as unknown as { agent: { messages: Array<{ toJSON(): unknown }> } }).agent.messages.map((message) => message.toJSON());
+    try {
+      await consume(refusalSource, 'first');
+      const refusalStops: string[] = [];
+      for await (const event of refusalSource.send('refuse')) {
+        if (event.type === 'agentResultEvent') refusalStops.push(event.result.stopReason);
+      }
+      const afterRefusalMessages = messagesOf(refusalSource);
+      assert('the refused turn ended the SDK loop normally with both messages appended and the partial text kept',
+        refusalStops.join('|') === 'contentFiltered' && afterRefusalMessages.length === 4 &&
+        JSON.stringify(afterRefusalMessages.at(-1)).includes('I can help with'));
+      const afterRefusal = await refusalSource.listRewindCheckpoints();
+      assert('a refusal-class stop catalogues its prompt beside the endTurn one, newest first',
+        afterRefusal.problem === undefined && afterRefusal.checkpoints.map((entry) => entry.prompt).join('|') === 'refuse|first');
+
+      let threw = false;
+      try { await consume(refusalSource, 'fail'); } catch { threw = true; }
+      const cancelStops: string[] = [];
+      for await (const event of refusalSource.send('cancel-me')) {
+        if (event.type === 'agentResultEvent') cancelStops.push(event.result.stopReason);
+        else refusalSource.cancel();
+      }
+      const afterFailAndCancel = await refusalSource.listRewindCheckpoints();
+      assert('a thrown model error and a cancelled turn still catalogue nothing',
+        threw && cancelStops.join('|') === 'cancelled' &&
+        afterFailAndCancel.checkpoints.map((entry) => entry.prompt).join('|') === 'refuse|first');
+
+      const refused = afterFailAndCancel.checkpoints.find((entry) => entry.prompt === 'refuse');
+      if (refused === undefined) throw new Error('missing refused fixture checkpoint');
+      refusalSuccessor = await refusalSource.startRewind(refused);
+      refusalSource = undefined;
+      const restored = JSON.stringify(messagesOf(refusalSuccessor));
+      assert('rewinding to the refused prompt restores the conversation before it — the declined reply is gone',
+        messagesOf(refusalSuccessor).length === 2 && restored.includes('answer:first') &&
+        !restored.includes('refuse') && !restored.includes('I can help with'));
+      assert('the selected row hands the exact refused prompt back to the editor unsent',
+        refused.prompt === 'refuse' && !restored.includes('cancel-me'));
+      await consume(refusalSuccessor, 'rephrased');
+      const continued = JSON.stringify(messagesOf(refusalSuccessor));
+      assert('the successor continues from the restored boundary with its own catalogue',
+        messagesOf(refusalSuccessor).length === 4 && continued.includes('answer:rephrased') && !continued.includes('I can help with') &&
+        (await refusalSuccessor.listRewindCheckpoints()).checkpoints.map((entry) => entry.prompt).join('|') === 'rephrased');
+    } finally {
+      await refusalSuccessor?.shutdown();
+      await refusalSource?.shutdown();
+    }
+
+    header('/rewind — the TUI refusal notice names the remedy; headless keeps the base line (SRF-030)');
+    // One source for the text: the TUI variant is composed from the shared base line, so
+    // headless stderr (pinned byte for byte in verify-headless.ts) cannot drift from it.
+    const base = refusalNotice('contentFiltered');
+    assert('the TUI notice is the shared base line plus one appended remedy clause',
+      refusalNoticeWithRewind('contentFiltered') ===
+        `${base} — the declined reply stays in the conversation; /rewind to this prompt removes it before you rephrase` &&
+      base === 'model declined this request (stop_reason: contentFiltered) — rephrase it or start a new turn');
+    const appSource = await readFile(new URL('../src/tui/App.tsx', import.meta.url), 'utf8');
+    const headlessSource = await readFile(new URL('../src/headless.ts', import.meta.url), 'utf8');
+    assert('App.tsx dispatches the rewind variant and never the bare line; headless.ts prints the bare line only',
+      appSource.includes('refusalNoticeWithRewind(event.result.stopReason)') && !appSource.includes('text: refusalNotice(') &&
+      headlessSource.includes('refusalNotice(refused)') && !headlessSource.includes('refusalNoticeWithRewind'));
 
     header('/rewind — the successor\u2019s trajectory names its origin; the source record is untouched (SRF-028)');
     // The same factory and the same fake model, with trajectory recording on this

@@ -43,6 +43,18 @@ export function refusalNotice(stopReason: string): string {
   return `model declined this request (stop_reason: ${stopReason}) — rephrase it or start a new turn`;
 }
 
+/**
+ * The TUI's variant of {@link refusalNotice}: the same line plus the remedy only the
+ * TUI can offer (SRF-030). A refused turn still appended the prompt and the declined
+ * reply to the SDK conversation, and `AgentRuntime.send` now catalogues its pre-prompt
+ * checkpoint, so `/rewind` to that prompt is the one user-chosen way to cut the
+ * exchange out before rephrasing — darwin never removes it on its own. Headless
+ * drivers have no `/rewind` and keep printing the base line.
+ */
+export function refusalNoticeWithRewind(stopReason: string): string {
+  return `${refusalNotice(stopReason)} — the declined reply stays in the conversation; /rewind to this prompt removes it before you rephrase`;
+}
+
 /** The error a headless run ends with when a refusal left no reply at all. */
 export function refusalEmptyReplyError(stopReason: string): string {
   return `The model declined this request (stop_reason: ${stopReason}) and produced no reply.`;

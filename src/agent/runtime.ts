@@ -119,6 +119,7 @@ import {
   planPromptCache,
   type PromptCachePlan,
 } from './prompt-cache.js';
+import { isRefusalStop } from './refusal.js';
 import { createModelClassifier } from './safety-classifier.js';
 import {
   createSessionManager,
@@ -1178,6 +1179,11 @@ export class AgentRuntime {
     }
 
     let completed = false;
+    // A refusal-class stop (SRF-030): the SDK loop still ran to its end and appended
+    // both messages, so the pre-prompt checkpoint is a valid rewind boundary — the
+    // one that removes the declined exchange. Read only by the catalogue call below;
+    // memory sealing and terminal delivery keep meaning `endTurn`.
+    let refused = false;
     let sealed = false;
     try {
       // A multimodal turn's durable text is the literal submitted prompt. Expanded
@@ -1215,6 +1221,7 @@ export class AgentRuntime {
       const stream = this.backgroundDelegation.observe(this.agent.stream(invocation));
       for await (const event of recordStream(stream, recording)) {
         if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
+        if (event.type === 'agentResultEvent' && isRefusalStop(event.result.stopReason)) refused = true;
         // Observed at the same point `recordStream` observes: synchronously, between
         // `stream()` and the `yield`, so `/usage` asked mid-turn already counts the
         // calls that completed. Cannot throw — see {@link observeCallStats}.
@@ -1228,7 +1235,7 @@ export class AgentRuntime {
         completed && this.trajectory?.status.active !== false,
       );
       sealed = true;
-      if (completed && checkpointId !== undefined) {
+      if ((completed || refused) && checkpointId !== undefined) {
         const catalogue = await appendRewindCheckpoint(this.projectRoot, this.info.sessionId, {
           snapshotId: checkpointId,
           prompt: input,
