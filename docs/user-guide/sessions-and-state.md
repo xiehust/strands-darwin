@@ -38,6 +38,8 @@ Bounds: strings 8,000 code points, one record 64 KiB, one file 64 MiB. Every tru
 
 The initial `userInput` append has a bounded fail-open durability barrier before model invocation; a timeout/write failure does not replace the provider call or error.
 
+The interactive `Ctrl+S` [draft stash](using-darwin.md#draft-stash) is live composer state, not a session snapshot or trajectory entry. Parked content is absent from resume, replay, export, recall and memory until restored and ordinarily submitted. It survives `/model` and `/compact`, but successful `/clear`, rewind/tangent successors and exit drop it with a notice.
+
 ## Offline trajectory commands
 
 ```bash

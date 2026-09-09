@@ -162,6 +162,7 @@ import {
   type TangentState,
 } from './tangent.js';
 import { clipboardImageFact, readClipboardImage } from './clipboard-image.js';
+import { DRAFT_STASH_DROP_NOTICE, stashHint, toggleDraftStash, type DraftStash } from './draft-stash.js';
 import {
   delegationWakeEntries,
   hasQueuedImage,
@@ -275,7 +276,7 @@ export function App({
   /** Fresh source-preserving conversation branch; the selected prompt is not sent. */
   readonly startRewind?: (checkpoint: import('../agent/rewind.js').RewindCheckpoint) => Promise<AgentRuntime>;
 }): React.JSX.Element {
-  const { exit, waitUntilRenderFlush } = useApp();
+  const { exit: inkExit, waitUntilRenderFlush } = useApp();
   const { columns, rows } = useWindowSize();
   const { write: writeToTerminal } = useStdout();
   // The live session. A prop at startup, state afterwards: `/clear` replaces the
@@ -357,6 +358,21 @@ export function App({
     attachedImageRef.current = next;
     setAttachedImageState(next);
   }, []);
+
+  // SER-085: one unsent composer snapshot, never passed to submit/runtime/records.
+  const [draftStash, setDraftStashState] = useState<DraftStash | undefined>(undefined);
+  const draftStashRef = useRef(draftStash);
+  const setDraftStash = useCallback((next: DraftStash | undefined) => {
+    draftStashRef.current = next;
+    setDraftStashState(next);
+  }, []);
+  const exit = useCallback(() => {
+    if (draftStashRef.current === undefined) { inkExit(); return; }
+    setDraftStash(undefined);
+    dispatch({ type: 'notice', text: DRAFT_STASH_DROP_NOTICE });
+    // Let the bounded notice reach Static before Ink unmounts the composer.
+    void waitUntilRenderFlush().finally(() => inkExit());
+  }, [dispatch, inkExit, setDraftStash, waitUntilRenderFlush]);
 
   const layout = layoutEditor(draft, columns, editor.cursor);
   const preferredColumn = useRef<number | undefined>(undefined);
@@ -655,6 +671,11 @@ export function App({
     writeToTerminal(CLEAR_TERMINAL);
     recordAction({ type: 'clear' });
     setRuntime(next);
+    clipboardReadGeneration.current += 1;
+    if (draftStashRef.current !== undefined) {
+      setDraftStash(undefined);
+      withNoticeDiagnostics(recordAction, next.diagnostics)({ type: 'notice', text: DRAFT_STASH_DROP_NOTICE });
+    }
     setRewindSearch(undefined);
     // The restored session replaces the whole editor state; the selected prompt
     // returns unsent (a tangent return hands back nothing — the user asked to
@@ -676,7 +697,7 @@ export function App({
         `rewound conversation into new session ${next.info.sessionId}; source ${sourceSessionId} remains saved and resumable. ` +
         'Workspace unchanged: workspace files, shell and ! effects, hooks, MCP writes, subagents, background jobs, and learned-memory files were not rewound.',
     });
-  }, [recordAction, setEditor, setQueued, setRewindSearch, setSelectedCompletion, writeToTerminal]);
+  }, [recordAction, setDraftStash, setEditor, setQueued, setRewindSearch, setSelectedCompletion, writeToTerminal]);
   // When the first no-op Escape landed on an empty idle composer; a second one
   // within ESCAPE_REWIND_CHORD_MS opens the chooser. Cleared by any other key or
   // owner, so the chord can never straddle a draft, a turn or a menu.
@@ -750,12 +771,13 @@ export function App({
     : undefined;
   const busyRetryWait = busyElapsedMs === undefined ? undefined : liveRetryWait(runtime);
   const queuedCounts = partitionQueue(queued);
-  const streamingHint = hintForStatus(
+  const statusHint = hintForStatus(
     effectiveStatus,
     busyElapsedMs === undefined ? undefined : busySuffix(busyElapsedMs, liveSpend(runtime), busyRetryWait),
     queuedCounts.user.length,
     queuedCounts.wakes.length,
   );
+  const streamingHint = statusHint === undefined ? undefined : stashHint(statusHint, draftStash !== undefined, columns);
   const activeToolClaims = state.activeTools.map((tool) => ({
     detailRows: toolDetailsVisible(tool.name, state.toolDetailsExpanded)
       ? toolInputRows(tool.input, columns, tool.name).length
@@ -1817,6 +1839,10 @@ export function App({
         writeToTerminal(CLEAR_TERMINAL);
         dispatch({ type: 'clear' });
         setRuntime(next);
+        if (draftStashRef.current !== undefined) {
+          setDraftStash(undefined);
+          withNoticeDiagnostics(recordAction, next.diagnostics)({ type: 'notice', text: DRAFT_STASH_DROP_NOTICE });
+        }
         // Per-session latches, reset with the session they were latched for.
         contextWarnLatch.current = createContextWarnLatch();
         trajectoryWarned.current = false;
@@ -1963,7 +1989,7 @@ export function App({
         });
       }
     },
-    [adoptBranchSuccessor, dispatch, exit, openRewindChooser, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setEditor, setQueued, setTangent, startNewSession, startRewind, status, writeToTerminal],
+    [adoptBranchSuccessor, dispatch, exit, openRewindChooser, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setDraftStash, setEditor, setQueued, setTangent, startNewSession, startRewind, status, writeToTerminal],
   );
 
   // The drain (SER-027): when the session is idle and nothing owns the keyboard,
@@ -2137,7 +2163,7 @@ export function App({
 
     if (current === undefined) {
       // Only from an empty draft: typed text is never replaced by a recalled prompt,
-      // which is why no stashed draft has to exist for this to be safe.
+      // independently of the explicit Ctrl+S stash.
       if (direction !== 'older' || value.text !== '') return false;
       // A reading that a finished turn has marked stale — or one still arriving — opens a
       // *pending* walk rather than offering last time's answer: the prompt a user wants
@@ -2426,6 +2452,33 @@ export function App({
       return;
     }
 
+    // Explicit stash owns no automatic send/queue path. Raw-mode Ctrl+S arrives
+    // here like the other composer chords, after every modal key owner.
+    if (key.ctrl && typed === 's') {
+      const result = toggleDraftStash(
+        { editor: editorRef.current, image: attachedImageRef.current },
+        draftStashRef.current,
+        imageTurnInFlight.current || hasQueuedImage(queuedRef.current),
+      );
+      if (result.action === 'inert') return;
+      if (result.action === 'refused') {
+        dispatch({ type: 'notice', text: result.notice, severity: 'warn' });
+        return;
+      }
+      clipboardReadGeneration.current += 1;
+      undoStack.current = [];
+      lastCut.current = '';
+      preferredColumn.current = undefined;
+      setRecall(undefined);
+      setDismissedCompletion(undefined);
+      setSelectedCompletion(0);
+      setDraftStash(result.slot);
+      setAttachedImage(result.composer.image);
+      setEditor(result.composer.editor);
+      dispatch({ type: 'notice', text: `draft ${result.action === 'stored' ? 'stashed' : 'restored'} — not sent` });
+      return;
+    }
+
     // Clipboard image attachment is editor ownership, below permission,
     // compaction and search modes. Ctrl+O toggles without editing draft text.
     if (key.ctrl && typed === 'o') {
@@ -2433,6 +2486,8 @@ export function App({
       if (attachedImageRef.current !== undefined) {
         setAttachedImage(undefined);
         dispatch({ type: 'notice', text: 'clipboard image removed from the next prompt' });
+      } else if (draftStashRef.current?.image !== undefined) {
+        dispatch({ type: 'notice', text: 'one clipboard image is stashed — restore it before attaching another' });
       } else if (imageTurnInFlight.current || hasQueuedImage(queuedRef.current)) {
         dispatch({ type: 'notice', text: 'one clipboard image is already queued or sending — take it back or let it finish first' });
       } else {
@@ -2757,7 +2812,8 @@ export function App({
   return (
     <Box flexDirection="column">
       <Box ref={headerRef} flexDirection="column">
-        <Header runtime={runtime} status={effectiveStatus} frame={frame} tangent={tangent} />
+        <Header runtime={runtime} status={effectiveStatus} frame={frame} tangent={tangent}
+          draftStashed={statusHint === undefined && draftStash !== undefined} />
       </Box>
       <MessageList
         history={state.history}
@@ -2878,6 +2934,7 @@ export function Header({
   status = 'idle',
   frame = 0,
   tangent,
+  draftStashed = false,
 }: {
   readonly runtime: AgentRuntime;
   readonly status?: Status;
@@ -2885,7 +2942,10 @@ export function Header({
   readonly frame?: number;
   /** Live `/tangent` state (SER-083); a suffix on the state word, never a row. */
   readonly tangent?: TangentState | undefined;
+  /** Idle has no InputBox hint: use the existing header hint, never add a row. */
+  readonly draftStashed?: boolean;
 }): React.JSX.Element {
+  const { columns } = useWindowSize();
   const info = runtime.info;
   const instructions = info.projectInstructions;
   // Live, not info.permissionMode: /mode moves it mid-session, and a header still
@@ -3008,7 +3068,7 @@ export function Header({
           comment above. `/trajectory` is deliberately not listed — the line is full,
           and the completion menu already advertises it with a description. */}
       <Text dimColor>
-        / for actions · @ for paths · ctrl+c cancels · /exit quits
+        {stashHint('/ for actions · @ for paths · ctrl+c cancels · /exit quits', draftStashed, columns)}
       </Text>
     </Box>
   );

@@ -7,6 +7,8 @@ import path from 'node:path';
 const suites = [
   'verify-prompt-editor.ts',
   'verify-composer-yank.ts',
+  'verify-draft-stash.ts',
+  'verify-composer-stash.ts',
   'verify-prompt-completion.ts',
   'verify-live-text.ts',
   'verify-frame-budget.ts',

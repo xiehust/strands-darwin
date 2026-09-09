@@ -131,6 +131,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `Alt+Backspace` / `Alt+D` | 删除光标前／后的一个词 |
 | `Ctrl+_`（或 `Ctrl+-`） | 撤销最近一次 `Ctrl+K`/`Ctrl+U`、`Ctrl+W` 或 `Alt` 系列删词 |
 | `Ctrl+Y` | 在光标处原样插入最近剪下的文本，同一草稿内可重复；最多 65,536 码点，不经过剪贴板；[上限与清空规则](using-darwin.zh-CN.md#输入编辑与补全) |
+| `Ctrl+S` | 暂存一份原样草稿／光标／附图；输入框为空时取回；拒绝覆盖和超过 65,536 码点的草稿，不自动发送（[保留与清空规则](using-darwin.zh-CN.md#草稿暂存)） |
 | `y` / `n` / `Esc` | 回答权限框；Esc 表示拒绝；Ctrl+Y 不会批准 |
 | `a` / `A` | 权限框中的窄规则/整工具永久放行 |
 | `Ctrl+B` | 收起/展开工具详情 |

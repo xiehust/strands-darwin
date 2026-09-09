@@ -170,6 +170,14 @@ the wait yields the cancelled notice with no further call, the cap yields the at
 
 Trajectory, replay/export, prompt recall, rewind labels, memory evidence and shell records remain text-only: image bytes, base64, clipboard contents and fabricated paths never enter them. Multimodal trajectory input is the literal user prompt, while model-only expansion/shell reports remain in the SDK content block. The free checks are `spike/verify-runtime-image-input.ts`, `spike/verify-clipboard-image.ts`, and `spike/verify-tui.ts clipboardImage`.
 
+The explicit Ctrl+S stash counts as an image owner too (SER-085): draft, queue,
+in-flight invocation and stash share one-image exclusivity. A stashed image blocks
+clipboard acquisition, both transfers invalidate `clipboardReadGeneration`, and an
+ambiguous conflicting transfer refuses without changing either owner. No notice
+contains image bytes. `verify-composer-stash.ts` drives delayed real clipboard helpers
+and queue/in-flight handoffs through the production CLI; `verify-draft-stash.ts`
+pins exact image object identity and defensive conflicts.
+
 **The shared normalizer caps every image at 2000px on either edge, not the 8000px single-image limit.** Anthropic applies the stricter per-image limit to every image in a request that carries more than 20 image blocks, and tool-result images from earlier turns are resent with each request — so a session that keeps calling `imageViewer` eventually crosses 20 and, with one 8000px-era image in history, fails every later turn (`image dimensions exceed max allowed size for many-image requests: 2000 pixels`). Anything past the cap becomes a ≤2000px WebP; 2000px itself passes through byte-identical. Because snapshots saved under the old cap still hold oversized bytes, `create()` runs `normalizeRestoredImages(agent.messages)` right after the reasoning repair: the same decoder/normalizer, applied in memory to `ImageBlock`s in user content and `toolResultBlock` content, compliant and undecodable blocks left as they are, block order and message identity preserved; the next ordinary save persists it and the trajectory is never rewritten. Required check: `spike/verify-image-viewer.ts` (in `pnpm test`).
 
 ## Direct driver streaming
@@ -1705,6 +1713,27 @@ row the menu already has**.
 
 ## Prompt recall
 
+**Explicit draft stash (SER-085) belongs only to the composer.** `draft-stash.ts`
+provides a pure one-slot transition over exact `EditorValue` plus optional `ImageBlock`;
+`App` owns its state and immediate ref, never the runtime. Ctrl+S stores/clears when
+only the composer is occupied, restores/consumes when only the stash is occupied,
+refuses both occupied, and is inert when both are empty. The text cap is 65,536 code
+points, checked without truncation or mutation. Both transfers clear undo/lastCut,
+recall, completion selection/dismissal and preferred column while preserving the
+saved text/cursor affinity/image identity. It survives ordinary submissions, queue
+transfers, recall, model switches and compaction; only successful clear/rewind/tangent
+successors and exit drop it, with a content-free notice. Exit flushes that notice
+before Ink unmounts. Modal permission/compaction/history/rewind handlers precede the
+chord. No slash command, tool, SDK-loop change, automatic send, queue entry, disk or
+trajectory/memory exposure exists. A fixed `stash: Ctrl+S` suffix uses the existing
+busy InputBox hint or idle header hint, reserving suffix width in that same row,
+never adding a component, row or timer. Raw TUI semantics
+already disable software flow control: the real pty check sends Ctrl+S and proves
+subsequent rendering without Ctrl+Q. Checks: `verify-draft-stash.ts` and
+`verify-composer-stash.ts` (both in `pnpm test`); the latter's S1–S7 checklist covers
+model-request/durable-file privacy, real clipboard callback races, key ownership,
+lifetime transitions and narrow-frame behavior with local transport only.
+
 **Composer cut/yank (SER-084) is draft-local, not recall or undo.** `App` keeps one
 last-cut string beside SER-044's destructive-edit undo stack. `updateLastCut` in
 `prompt-editor.ts` uses the deletion result's cursor offset and length loss to capture
@@ -1719,7 +1748,7 @@ and emits one fixed bounded Static notice, never stale/truncated yank. Ctrl+Y ca
 movement, typing and undo leave the slot alone. Yank is insertion, so it does not add
 to the existing destructive-only undo stack. Every undo ownership reset also empties
 the slot: submission/queue/local commands, queue take-back/cancel return, recall and
-search acceptance, clear and rewind successors. Search cancellation preserves it.
+search acceptance, explicit stash/restore, clear and rewind successors. Search cancellation preserves it.
 Permission/compaction/search handlers still precede composer chords; modified `y`/`Y`
 are ignored, so Ctrl+Y cannot masquerade as plain `y`. No clipboard, runtime,
 SDK, tool, record, network/file operation, timer or live-frame row is added. Free checks:
@@ -1737,7 +1766,7 @@ load-bearing. The **binding** is enforced by position, not by a predicate: the c
 `Up`/`Down` branches run first (so recall is unreachable with a `/` or `@` menu open), recall then
 fires only from an **empty draft** — or from the first visual row of a draft that *is* an open walk —
 and everything else falls through to `moveVertical`, which is what makes it *incapable* of replacing
-typed text and why no stashed draft exists. **History is what was sent**: local commands never reach
+typed text. Explicit Ctrl+S stash is separate from this automatic recall walk. **History is what was sent**: local commands never reach
 `AgentRuntime.send` and so are absent, and a skill expansion (recorded expanded) is excluded by a
 4000-code-point cap set deliberately *below* the record's own 8000 field cap, because offering back a
 prompt this file truncated would mean silently re-sending a shortened one. The **read is bounded and

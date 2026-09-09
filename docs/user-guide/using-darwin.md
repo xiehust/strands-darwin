@@ -16,7 +16,7 @@ While a turn runs, the existing `working…`/`thinking…` row shows elapsed tim
 
 `Ctrl+K`/`Ctrl+U` cuts to the visible row end/start; `Ctrl+W`, `Alt+Backspace` and `Alt+D`/`Alt+Delete` cut the word before/after the cursor. `Ctrl+Y` inserts the exact last cut at the current grapheme-safe cursor, and can repeat it after movement or typing. This is one draft-local slot, not the system clipboard or a model action. Each nonempty cut replaces it; no-op cuts and ordinary Backspace/Delete leave it alone. `Ctrl+_` (or `Ctrl+-`) still restores the whole draft snapshot from before a destructive chord, not just the cut; yank does not add an undo step.
 
-The slot holds at most 65,536 Unicode code points. A larger cut still deletes and can be undone, but clears the slot with a notice—no stale or truncated yank. Submission (including queueing and local commands), queue take-back/cancel return, recall/search acceptance, `/clear` and `/rewind` clear it wherever they clear undo. Search cancellation keeps it. Permission prompts and compaction take precedence: `Ctrl+Y` never approves a permission or edits through those modes.
+The slot holds at most 65,536 Unicode code points. A larger cut still deletes and can be undone, but clears the slot with a notice—no stale or truncated yank. Submission (including queueing and local commands), queue take-back/cancel return, recall/search acceptance, draft stash/restore, `/clear` and `/rewind` clear it wherever they clear undo. Search cancellation keeps it. Permission prompts and compaction take precedence: `Ctrl+Y` never approves a permission or edits through those modes.
 
 - `/` offers built-ins, skills, and custom commands. The bounded menu windows around the selected row and states omitted rows.
 - `@` scans the workspace asynchronously and inserts path text only. It never opens or injects the file; `.git`, `node_modules`, escaping symlinks, and large scans are bounded/excluded.
@@ -26,6 +26,14 @@ The slot holds at most 65,536 Unicode code points. A larger cut still deletes an
 - `Escape` twice within 500 ms on an empty, idle composer opens the same chooser as `/rewind` (conversation-only branch from an earlier completed prompt; files are never rolled back). A draft, a running turn, a queued message or a pending permission makes the second `Escape` an ordinary one.
 - `/tangent` bookmarks the conversation for a side question: the next prompt starts the tangent, `/tangent` again returns to the state before it through the same rewind path (one level, no picker, nothing put back into the editor; `N prompt(s) discarded` is stated). See [Sessions and state](sessions-and-state.md#rewind-and-tangents).
 - `Ctrl+J` or trailing `\` + `Enter` inserts a newline. Multiline paste does not send unexpectedly.
+
+## Draft stash
+
+`Ctrl+S` parks one unsent draft, preserving its exact text, cursor position (including soft-wrap affinity), and optional clipboard image. With an empty composer it restores and consumes that slot. If both contain text or an image, it refuses visibly without overwriting or swapping; if both are empty, nothing happens. Text over 65,536 Unicode code points is refused unchanged, never truncated. The existing hint row shows `stash: Ctrl+S` while occupied.
+
+The stash survives intervening submissions, queue take-back, recall, `/model` and `/compact`. Successful `/clear`, `/rewind` or `/tangent` return to a successor session drops it with a notice, as does exit; merely arming or cancelling a tangent does not. Stashing and restoring clear undo and the last-cut register, reset recall/completion navigation, and retain the saved cursor exactly. The chord works idle or busy wherever the composer owns keys, not inside permission prompts, compaction, history search or rewind search. The raw-mode TUI handles Ctrl+S without enabling terminal flow control.
+
+It never sends or queues automatically, writes to disk, or exposes parked content to the model, trajectory, prompt history or learned memory. Restore first, then submit normally to send and record it. The one-image limit includes the stash, draft, queue and current invocation: a parked image blocks another `Ctrl+O` attachment. Conflicting restoration is refused, and pending clipboard reads cannot attach after a stash/restore changes ownership.
 
 ## Queueing while busy
 

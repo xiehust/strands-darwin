@@ -131,6 +131,7 @@ Rules and limits:
 | `Alt+Backspace` / `Alt+D` | delete the word before/after the cursor |
 | `Ctrl+_` (or `Ctrl+-`) | undo the last `Ctrl+K`/`Ctrl+U`, `Ctrl+W` or `Alt` word deletion in the draft |
 | `Ctrl+Y` | insert the exact last cut at the cursor, repeatably within the draft; 65,536 code points max, not the clipboard; [limits/reset rules](using-darwin.md#prompt-editing-and-completion) |
+| `Ctrl+S` | stash one exact draft/cursor/image; restore into an empty composer; refuses overwrite or >65,536 code points; never sends ([lifetime/reset rules](using-darwin.md#draft-stash)) |
 | `y` / `n` / `Esc` | answer permission prompt; Esc denies; Ctrl+Y never approves |
 | `a` / `A` | permission prompt narrow/tool-wide always-allow option |
 | `Ctrl+B` | compact/expanded tool details |
