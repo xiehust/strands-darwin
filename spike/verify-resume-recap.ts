@@ -168,6 +168,42 @@ header('resume recap — a /rewind successor\u2019s origin is one clause on the 
       JSON.stringify(historyWithoutIds(replayRecords(withOrigin).history)));
 }
 
+header('resume recap — a resumed run\u2019s turns continue the file\u2019s numbering (SRF-031)');
+
+{
+  // The fixture above models a pre-SRF-031 file, whose second run restarted at turn 1;
+  // the reader stays tolerant of it (every turn of every run replayed). This one is the
+  // shape the writer produces now: run two continues at 3, the open turn is 5.
+  const continued = [
+    runStarted(false, 0, 1),
+    ...turn(1, 'first request', 'first answer'),
+    ...turn(2, 'second request', 'second answer'),
+    runStarted(true, 4, 2),
+    ...turn(3, 'third request', 'third answer'),
+    ...turn(4, 'fourth request', 'fourth answer'),
+    record(5, 'userInput', { text: 'fifth, still open' }),
+  ];
+  const replay = replayRecords(continued);
+  assert('replay lists turns 1..N once each, across both runs',
+    replay.turns.join(',') === '1,2,3,4,5' && new Set(replay.turns).size === replay.turns.length);
+  assert('every closed turn prices under its own number — no two spend lines share one',
+    replay.turnSpend.map((entry) => entry.turn).join(',') === '1,2,3,4');
+  const recap = text(projectResumeRecap(continued, { restoredMessages: 8, trajectoryEnabled: true }));
+  assert('the recap lists every turn of both runs, oldest first, with the open one last',
+    ['first request', 'second request', 'third request', 'fourth request', 'fifth, still open']
+      .map((marker) => recap.indexOf(marker))
+      .every((index, position, all) => index >= 0 && (position === 0 || index > (all[position - 1] ?? -1))));
+  const third = replayRecords(continued, { turn: 3 });
+  assert('a single-turn replay of the resumed run\u2019s first turn selects exactly that turn',
+    third.history.filter((item) => item.kind === 'user').length === 1 &&
+    third.history.some((item) => item.kind === 'user' && item.text === 'third request') &&
+    third.history.some((item) => item.kind === 'assistant' && item.text.includes('third answer')));
+  // The legacy shape, for contrast: the same selection over the pre-SRF-031 fixture
+  // yields both runs' "turn 1" — the ambiguity the writer change removes going forward.
+  assert('the legacy duplicate-numbered fixture still replays whole, and shows why the writer changed',
+    replayRecords(records, { turn: 1 }).history.filter((item) => item.kind === 'user').length === 2);
+}
+
 header('resume recap — long texts replay verbatim, unbounded');
 
 const long = `${'🙂'.repeat(900)}\n${Array.from({ length: 12 }, (_, i) => `line-${i}`).join('\n')}`;

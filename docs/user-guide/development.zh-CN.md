@@ -11,7 +11,7 @@
 - **并行子代理写入不安全。** 子代理共享没有隔离、锁或冲突检测的工作树。并发只应用于读取，写入需要串行。
 - **子代理结果可能带出思考内容。** 子对话不会按子事件写入轨迹，但当前 SDK 返回给父代理的终端渲染结果可能包含子代理思考；详情见子代理架构文档。
 - **Bedrock 上下文统计通常是估算。** 2026 年 8 月在 `us-east-1`/`us-west-2` 的实测显示，`CountTokens` 只接受裸 foundation-model ID，但真正调用 Claude 又必须使用 inference profile。`anthropic.claude-sonnet-4-6` 可以计数，同一模型的 `us.`/`global.` profile 或 ARN 会返回 `ValidationException: The provided model doesn't support counting tokens`；裸 4.5/4.6 可用，测试过的 `claude-opus-4-7`、`claude-opus-4-8`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5` 也不支持。darwin 不会只为旧模型擅自去掉前缀，在上游接受 profile ID 前统一退回 SDK 字符启发式。除非启用 diagnostics，这个降级只写入 debug 日志；IAM 缺少 `bedrock:CountTokens` 时，每个模型在每个进程中会警告一次。
-- **回合编号随进程重置。** 恢复后的轨迹可能有多个 `turn 1`；费用合计仍按真实结束记录计算。
+- **回合编号在同一份轨迹文件内唯一。** 恢复运行会从文件尾部读到的最大 `turn` 继续编号（读取方式与最后一个 `seq` 相同），因此 `replay --turn N` 只指向一个回合。在此之前写下的记录，或尾部没有可读记录时写下的记录，仍可能有多个 `turn 1`；费用合计无论如何都按真实结束记录计算。
 - **后台任务控制只属于当前进程。** 恢复会话保留日志，不保留 task 控制和游标。正常关闭会回收进程组；`SIGKILL` 或机器故障无法保证。
 - **`SIGKILL` 或 `EPIPE` 后，结构化输出无法保证终态记录。**
 - **诊断与卸载结果可能包含敏感会话/工具内容，并会一直保留。** diagnostics 需主动开启；超大结果卸载默认开启，除非显式关闭。目前没有自动会话垃圾回收。

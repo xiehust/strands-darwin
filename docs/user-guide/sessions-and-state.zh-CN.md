@@ -73,7 +73,7 @@ session cost: ≥ $0.0415 (cacheRead partly reported, cacheWrite partly reported
 
 `trajectory list` 与 `trajectory replay` 也会离线为记录计价，单价来自实时会话填充的同一个 `~/.darwin/model-prices.json`——每个模型按各自缓存的单价计算。`list` 在每行会话后追加一段 `cost: …`；`replay` 在 `session spend:` 下方打印 `session cost:`，若不止一个模型参与，还在每个模型的 token 行后给出该模型自己的金额。缓存不认识的模型视为*未计价*：合计变成指明该模型的下限（`≥ $3.1250 (2 models; no price for us.made-up.model; …)`），绝不算作 0，也绝不省略；只有部分轮次报告的分桶按已报告部分计价并标注 `partly reported`；没有记录 spend 的轮次同样让合计成为下限（`N turn(s) unknown`）。没有缓存文件时显示 `cost: unknown (price unavailable)`。读取记录绝不会下载或写入价格；`/export` 完全不含成本行——导出的文稿只取决于记录本身。
 
-这些数字来自 SDK 对回合的归因，不是账单。`/compact` 和溢出处理中的摘要调用绕过 meter，因此不会计入 `/usage` 或轨迹费用。回合编号会随进程重新从 1 开始，恢复后的记录可能包含多个 `turn 1`；合计按实际结束记录统计。
+这些数字来自 SDK 对回合的归因，不是账单。`/compact` 和溢出处理中的摘要调用绕过 meter，因此不会计入 `/usage` 或轨迹费用。回合编号在同一份轨迹文件内唯一：恢复运行会从文件中已有的最大 `turn` 继续编号，因此 `--turn N` 只选中一个回合（在此之前写下的记录仍可能包含多个 `turn 1`）；合计按实际结束记录统计。
 
 ### 成本
 

@@ -46,8 +46,18 @@ import {
   type TurnSpendMeter,
 } from './record.js';
 
-/** How much of the tail is read to recover the last sequence number. */
+/** How much of the tail is read to recover the last sequence number and the highest turn. */
 const TAIL_READ_BYTES = 64 * 1024;
+
+/** What one bounded read of an existing file's tail recovers (SRF-031 added `lastTurn`). */
+interface TailReading {
+  /** The sequence number the next record takes: last complete record's `seq` + 1, or 0. */
+  nextSeq: number;
+  /** The highest non-negative integer `turn` among the tail's parseable records, or 0. */
+  lastTurn: number;
+  bytes: number;
+  needsNewline: boolean;
+}
 
 /**
  * Everything about a record except the file-scoped fields the writer assigns.
@@ -491,7 +501,18 @@ export class TrajectoryRecorder {
 
   /** Next sequence number to assign; recovered from the file's tail on first append. */
   private seq = 0;
+  /**
+   * The last turn ordinal handed out. Seeded once from the same tail read that
+   * recovers `seq` (SRF-031), so a resumed process continues the file's numbering
+   * instead of restarting at 1; a fresh, missing or unreadable file seeds 0.
+   */
   private turns = 0;
+  /**
+   * The one tail read of this process, started by {@link open} or — for a caller
+   * that never opened — lazily by the first append. Shared so both take the same
+   * reading and the file is inspected once.
+   */
+  private tail: Promise<TailReading> | undefined;
   private opened = false;
   private headerPending = true;
   private active = true;
@@ -517,6 +538,37 @@ export class TrajectoryRecorder {
     this.inputDurabilityTimeoutMs =
       options.inputDurabilityTimeoutMs ?? INPUT_DURABILITY_TIMEOUT_MS;
     this.onTurnSettled = options.onTurnSettled;
+  }
+
+  /**
+   * Learns the file's tail — last `seq`, highest `turn` — before this process opens
+   * its first turn (SRF-031). Read-only: no directory or file is created here, so a
+   * session that never runs a turn still leaves nothing behind.
+   *
+   * This is the seam that makes a resumed run's first turn `max + 1` regardless of
+   * timing. {@link beginTurn} hands out the ordinal synchronously and its callers
+   * consume it at once (`memoryController.openTurn`, the buffered `userInput`), while
+   * the tail was only read inside {@link prepare} — i.e. asynchronously, on the first
+   * append, *after* that ordinal was already assigned. Deferring the number until the
+   * tail is known would have turned the turn's identity into a moving target; instead
+   * `AgentRuntime.create()` awaits this once, so no driver can reach `send()` before
+   * the seed is in place. Bounded like {@link inputDurable}, and resolving on any
+   * outcome: a stuck filesystem costs the seed (today's numbering, and the barrier
+   * that follows will state the problem), never the session's start.
+   */
+  async open(): Promise<void> {
+    const reading = this.tailReading();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      reading.then(
+        () => undefined,
+        () => undefined,
+      ),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, this.inputDurabilityTimeoutMs);
+      }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
   }
 
   /**
@@ -557,7 +609,10 @@ export class TrajectoryRecorder {
     this.openTurn?.recordPermissionDecision(entry);
   }
 
-  /** The next turn identity without opening or writing a turn. */
+  /**
+   * The next turn identity without opening or writing a turn — the same counter
+   * {@link beginTurn} increments, so it always agrees with what the record will carry.
+   */
   get nextTurn(): number | undefined {
     return this.active ? this.turns + 1 : undefined;
   }
@@ -834,23 +889,42 @@ export class TrajectoryRecorder {
     this.opened = true;
     await mkdir(path.dirname(this.file), { recursive: true });
 
-    const tail = await this.readTail();
+    const tail = await this.tailReading();
     this.fileBytes = tail.bytes;
     this.seq = tail.nextSeq;
     return tail.needsNewline ? '\n' : '';
   }
 
   /**
+   * Starts the one tail read on first call and returns the same promise after; when
+   * the reading lands, the turn counter is seeded from it — but only while no turn
+   * has been opened yet. A caller that skipped {@link open} and already numbered a
+   * turn keeps today's per-process numbering rather than having a later turn jump,
+   * and `nextTurn` always says what the next record will carry.
+   */
+  private tailReading(): Promise<TailReading> {
+    if (this.tail === undefined) {
+      this.tail = this.readTail().then((tail) => {
+        if (this.turns === 0) this.turns = tail.lastTurn;
+        return tail;
+      });
+    }
+    return this.tail;
+  }
+
+  /**
    * Reads at most the last {@link TAIL_READ_BYTES} to find the last complete
    * record's sequence number, so numbering continues across runs and a gap really
-   * does mean loss. A tail holding no complete record restarts at zero: inventing a
-   * number would be worse than a visible restart.
+   * does mean loss, and the highest turn ordinal among the tail's parseable records,
+   * so a resumed run's turns are unique within the file (SRF-031). A tail holding no
+   * complete record restarts both at zero: inventing a number would be worse than a
+   * visible restart.
    */
-  private async readTail(): Promise<{ nextSeq: number; bytes: number; needsNewline: boolean }> {
+  private async readTail(): Promise<TailReading> {
     let handle: FileHandle | undefined;
     try {
       const info = await stat(this.file);
-      if (info.size === 0) return { nextSeq: 0, bytes: 0, needsNewline: false };
+      if (info.size === 0) return { nextSeq: 0, lastTurn: 0, bytes: 0, needsNewline: false };
 
       handle = await this.openFile(this.file, 'r');
       const length = Math.min(TAIL_READ_BYTES, info.size);
@@ -859,21 +933,24 @@ export class TrajectoryRecorder {
       const text = buffer.toString('utf8');
       const needsNewline = !text.endsWith('\n');
 
-      let nextSeq = 0;
+      let nextSeq: number | undefined;
+      let lastTurn = 0;
       const lines = text.split('\n');
-      // Skip a trailing partial line, then walk back to the last parseable record.
+      // Skip a trailing partial line, then walk back: the last parseable record gives
+      // the sequence; every parseable record's well-formed `turn` competes for the max
+      // (the last record is usually the highest, but `runStarted` carries 0).
       for (let index = needsNewline ? lines.length - 2 : lines.length - 1; index >= 0; index -= 1) {
         const record = parseRecordLine(lines[index] ?? '');
-        if (record !== undefined) {
-          nextSeq = record.seq + 1;
-          break;
-        }
+        if (record === undefined) continue;
+        nextSeq ??= record.seq + 1;
+        const turn: unknown = record.turn;
+        if (typeof turn === 'number' && Number.isSafeInteger(turn) && turn > lastTurn) lastTurn = turn;
       }
-      return { nextSeq, bytes: info.size, needsNewline };
+      return { nextSeq: nextSeq ?? 0, lastTurn, bytes: info.size, needsNewline };
     } catch {
       // No file yet (the common case) or an unreadable one: start a fresh sequence.
       // A real permission problem surfaces on the append that follows.
-      return { nextSeq: 0, bytes: 0, needsNewline: false };
+      return { nextSeq: 0, lastTurn: 0, bytes: 0, needsNewline: false };
     } finally {
       await handle?.close().catch(() => {});
     }

@@ -513,8 +513,10 @@ async function appendOnly(): Promise<void> {
   );
 
   // A second *process* on the same file: numbering has to continue, not restart,
-  // because a restart would make a real gap indistinguishable from a new run.
+  // because a restart would make a real gap indistinguishable from a new run. The
+  // same holds for turn ordinals since SRF-031 (`open()` is the seam the runtime awaits).
   const second = recorder(file);
+  await second.open();
   const agent3 = newAgent(new ScriptedModel('third answer'));
   await agent3.initialize();
   await recordedTurn(agent3, second, 'turn three');
@@ -525,8 +527,173 @@ async function appendOnly(): Promise<void> {
     'a later process continues the sequence instead of restarting it',
     reread.records.map((r) => r.seq).every((seq, index) => seq === index),
   );
+  assert(
+    'a later process continues the turn ordinals instead of restarting them',
+    reread.records.filter((r) => r.type === 'userInput').map((r) => r.turn).join(',') === '1,2,3',
+  );
   assert('the later process wrote its own run header', count(reread.records, 'runStarted') === 2);
   assert('the earlier prefix is still byte-identical', sha256((await readFile(file)).subarray(0, afterSecond.byteLength)) === sha256(afterSecond));
+}
+
+/**
+ * A two-turn fresh file as the pre-SRF-031 writer produced it, with the fields that
+ * cannot be stable across runs (`t`, `pid`, `ms`, the SDK's random `trackingId`)
+ * replaced by fixed tokens. Captured from that writer, so a fresh session's records
+ * are provably byte-identical (stamps aside) after turn numbers started being seeded
+ * from the tail.
+ */
+const FRESH_TWO_TURN_GOLDEN = [
+  '{"v":1,"seq":0,"t":"T","turn":0,"type":"runStarted","session":"session-test","agentId":"darwin","darwinVersion":"test","provider":"bedrock","model":"fake.trajectory","permissionMode":"default","thinkingEffort":"high","resumed":false,"restoredMessages":0,"pid":0}',
+  '{"v":1,"seq":1,"t":"T","turn":1,"type":"userInput","text":"turn one"}',
+  '{"v":1,"seq":2,"t":"T","turn":1,"type":"contentBlockEvent","data":{"type":"contentBlockEvent","contentBlock":{"text":"first answer"}}}',
+  '{"v":1,"seq":3,"t":"T","turn":1,"type":"modelCall","attempt":1,"ms":0,"stopReason":"endTurn","contextTokens":104}',
+  '{"v":1,"seq":4,"t":"T","turn":1,"type":"agentResultEvent","data":{"type":"agentResultEvent","result":{"type":"agentResult","stopReason":"endTurn","lastMessage":{"role":"assistant","content":[{"text":"first answer"}],"trackingId":"·"}}}}',
+  '{"v":1,"seq":5,"t":"T","turn":1,"type":"turnEnded","stopReason":"endTurn","ms":0,"recorded":{"contentBlockEvent":1,"agentResultEvent":1},"dropped":{"beforeInvocationEvent":1,"messageAddedEvent":2,"beforeModelCallEvent":1,"modelStreamUpdateEvent":6,"modelMessageEvent":1,"afterModelCallEvent":1,"afterInvocationEvent":1}}',
+  '{"v":1,"seq":6,"t":"T","turn":2,"type":"userInput","text":"turn two"}',
+  '{"v":1,"seq":7,"t":"T","turn":2,"type":"contentBlockEvent","data":{"type":"contentBlockEvent","contentBlock":{"text":"second answer"}}}',
+  '{"v":1,"seq":8,"t":"T","turn":2,"type":"modelCall","attempt":1,"ms":0,"stopReason":"endTurn","contextTokens":104}',
+  '{"v":1,"seq":9,"t":"T","turn":2,"type":"agentResultEvent","data":{"type":"agentResultEvent","result":{"type":"agentResult","stopReason":"endTurn","lastMessage":{"role":"assistant","content":[{"text":"second answer"}],"trackingId":"·"}}}}',
+  '{"v":1,"seq":10,"t":"T","turn":2,"type":"turnEnded","stopReason":"endTurn","ms":0,"recorded":{"contentBlockEvent":1,"agentResultEvent":1},"dropped":{"beforeInvocationEvent":1,"messageAddedEvent":2,"beforeModelCallEvent":1,"modelStreamUpdateEvent":6,"modelMessageEvent":1,"afterModelCallEvent":1,"afterInvocationEvent":1}}',
+].map((line) => `${line}\n`).join('');
+
+function normalizeStamps(text: string): string {
+  return text
+    .replace(/"t":"[^"]*"/g, '"t":"T"')
+    .replace(/"pid":\d+/g, '"pid":0')
+    .replace(/"ms":\d+/g, '"ms":0')
+    .replace(/"trackingId":"[^"]*"/g, '"trackingId":"·"');
+}
+
+async function resumedTurnNumbers(): Promise<void> {
+  header('trajectory — turn numbers are unique within one file: a resumed run continues them (SRF-031)');
+
+  // A real session path, so the CLI readers can be pointed at the file below.
+  const sessionId = 'session-20260908-095403918';
+  const file = trajectoryPath(ROOT, sessionId);
+  await rm(path.dirname(file), { recursive: true, force: true });
+
+  const rec = recorder(file);
+  await rec.open();
+  assert('a fresh file seeds nothing: the first turn is still turn 1', rec.nextTurn === 1);
+  const first = newAgent(new ScriptedModel('first answer'));
+  await first.initialize();
+  await recordedTurn(first, rec, 'turn one');
+  await rec.close();
+  const second = newAgent(new ScriptedModel('second answer'));
+  await second.initialize();
+  await recordedTurn(second, rec, 'turn two');
+  await rec.close();
+  const twoTurns = await readFile(file, 'utf8');
+  assert(
+    'a fresh file is byte-identical to the pre-seeding writer\u2019s two-turn output (stamps aside)',
+    normalizeStamps(twoTurns) === FRESH_TWO_TURN_GOLDEN,
+  );
+  assert('the fresh two-turn file has no turn 0 record but the run header', (await readTrajectory(file)).records.every((r) => (r.turn === 0) === (r.type === 'runStarted')));
+
+  // The resumed process: the seam is `open()` awaited before the first turn. The
+  // ordinal is then assigned synchronously by `beginTurn`, *before* any append has
+  // flushed — the timing the Host flagged — and it is already `max + 1`.
+  const resumed = recorder(file);
+  assert('before open, the recorder cannot know the file and would number from 1', resumed.nextTurn === 1);
+  await resumed.open();
+  assert('after open, nextTurn reports the continuation', resumed.nextTurn === 3);
+  const recording = resumed.beginTurn('turn three');
+  assert(
+    'the first resumed turn is numbered max + 1 at beginTurn time, with nothing flushed yet',
+    recording?.turn === 3 && (await readFile(file, 'utf8')) === twoTurns,
+  );
+  assert('nextTurn moved with the counter the record carries', resumed.nextTurn === 4);
+  const third = newAgent(new ScriptedModel('third answer'));
+  await third.initialize();
+  for await (const _event of recordStream(third.stream('turn three'), recording)) {
+    // Drain the real agent turn through the pass-through observer.
+  }
+  await resumed.close();
+
+  const read = await readTrajectory(file);
+  assert('the earlier prefix is byte-identical', (await readFile(file, 'utf8')).startsWith(twoTurns));
+  assert('seq continues from the previous file end as before', read.records.every((r, index) => r.seq === index));
+  const headers = read.records.filter((r) => r.type === 'runStarted');
+  assert('the resumed run\u2019s header still carries turn 0', headers.length === 2 && headers.every((r) => r.turn === 0));
+  const thirdRun = read.records.slice(read.records.findIndex((r) => r.type === 'runStarted' && r.seq > 0) + 1);
+  assert(
+    'every record of the resumed turn carries turn 3',
+    thirdRun.length >= 3 && thirdRun.every((r) => r.turn === 3) && thirdRun.some((r) => r.type === 'userInput') && thirdRun.some((r) => r.type === 'turnEnded'),
+  );
+  const replayed = replayRecords(read.records);
+  assert('replay lists turns 1..3 with no duplicate', replayed.turns.join(',') === '1,2,3');
+  assert('replay prints one spend line per turn, not two for a turn number', replayed.turnSpend.map((entry) => entry.turn).join(',') === '1,2,3');
+  const only = replayRecords(read.records, { turn: 3 });
+  assert(
+    'replaying turn 3 selects exactly the resumed turn',
+    only.history.filter((item) => item.kind === 'user').length === 1 && only.history.some((item) => item.kind === 'user' && item.text === 'turn three'),
+  );
+  const cli = await runTrajectory({ verb: 'replay', sessionId, turn: 3, json: false });
+  assert(
+    '`trajectory replay --turn 3` selects exactly one turn on a two-run file',
+    cli.code === 0 && cli.out.includes('turn three') && !cli.out.includes('turn one') && !cli.out.includes('turn two'),
+  );
+  const listed = await runTrajectory({ verb: 'list' });
+  assert('`trajectory list` counts three distinct turns', (listed.out.split('\n').find((line) => line.startsWith(sessionId)) ?? '').includes('3 turn(s)'));
+
+  // A resumed recorder's `!` command between turns names the last closed turn of the
+  // file, not 0 — the ordinal the record type documents.
+  const between = recorder(file);
+  await between.open();
+  between.recordShellCommand({ command: 'echo between', exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: 'between' });
+  await between.close();
+  assert(
+    'a between-turns record on a resumed recorder carries the last closed turn',
+    (await readTrajectory(file)).records.findLast((r) => r.type === 'shellCommand')?.turn === 3,
+  );
+
+  // Degradation: a tail with no parseable record (garbage only) seeds nothing, so the
+  // run starts at turn 1 and seq restarts at 0 exactly as it does today; the garbage
+  // is preserved (never rewritten) and only the newline guard separates the runs.
+  const garbageFile = path.join(ROOT, 'garbage-tail', 'trajectory.jsonl');
+  await mkdir(path.dirname(garbageFile), { recursive: true });
+  const garbage = '{"v":1,"seq":\nnot json at all\n{"turn":7}\n\u0000\u0001binary';
+  await writeFile(garbageFile, garbage, 'utf8');
+  const degraded = recorder(garbageFile);
+  await degraded.open();
+  assert('a garbage tail seeds nothing: the run starts at turn 1', degraded.nextTurn === 1);
+  const after = newAgent(new ScriptedModel('answer after garbage'));
+  await after.initialize();
+  await recordedTurn(after, degraded, 'turn after garbage');
+  await degraded.close();
+  const damaged = await readTrajectory(garbageFile);
+  assert('the garbage bytes are untouched', (await readFile(garbageFile, 'utf8')).startsWith(`${garbage}\n`));
+  assert('seq restarts at 0 as today', damaged.records.map((r) => r.seq).join(',') === '0,1,2,3,4,5');
+  assert('the run header carries turn 0 and the turn carries 1', damaged.records[0]?.turn === 0 && damaged.records.slice(1).every((r) => r.turn === 1));
+  assert('the degradation costs no recording: the recorder has no problem', degraded.status.problem === undefined && degraded.status.active);
+  assert('the unreadable lines are counted by the reader, never repaired', damaged.unreadableLines === 4);
+
+  // A tail whose only well-formed record carries no numeric `turn` seeds nothing either.
+  const noTurnFile = path.join(ROOT, 'no-turn-tail', 'trajectory.jsonl');
+  await mkdir(path.dirname(noTurnFile), { recursive: true });
+  await writeFile(noTurnFile, '{"v":1,"seq":41,"t":"x","turn":"nine","type":"userInput","text":"legacy"}\n', 'utf8');
+  const noTurn = recorder(noTurnFile);
+  await noTurn.open();
+  assert('a non-numeric turn is ignored: turns start at 1, seq still continues', noTurn.nextTurn === 1);
+  const afterNoTurn = newAgent(new ScriptedModel('answer'));
+  await afterNoTurn.initialize();
+  await recordedTurn(afterNoTurn, noTurn, 'after a turn-less tail');
+  await noTurn.close();
+  assert('seq continued from the well-formed record\u2019s seq', (await readTrajectory(noTurnFile)).records.at(-1)?.seq === 47);
+
+  // A recorder that never opened (every pre-SRF-031 caller) behaves as today.
+  const unopened = recorder(file);
+  const fourth = unopened.beginTurn('turn opened before the tail is known');
+  assert('an unopened recorder numbers from 1 like today — never a jump mid-flight', fourth?.turn === 1);
+  const fourthAgent = newAgent(new ScriptedModel('fourth answer'));
+  await fourthAgent.initialize();
+  for await (const _event of recordStream(fourthAgent.stream('x'), fourth)) {
+    // Drain.
+  }
+  await unopened.close();
+  assert('and its next turn follows its own counter, as nextTurn said', unopened.nextTurn === 2);
+
+  await rm(path.dirname(file), { recursive: true, force: true });
 }
 
 async function damageTolerance(): Promise<void> {
@@ -560,6 +727,7 @@ async function damageTolerance(): Promise<void> {
   const agent2 = newAgent(new ScriptedModel('answer beta'));
   await agent2.initialize();
   const rec2 = recorder(file);
+  await rec2.open();
   await recordedTurn(agent2, rec2, 'second run after damage');
   await rec2.close();
 
@@ -570,6 +738,12 @@ async function damageTolerance(): Promise<void> {
   assert(
     'the record after the damage carries a usable sequence number',
     (repaired.records.at(-1)?.seq ?? -1) > (repaired.records[0]?.seq ?? 0),
+  );
+  // The complete records before the cut still name turn 1, so the run after the
+  // damage continues at turn 2 (SRF-031) — damage costs the partial line, not the seed.
+  assert(
+    'the run after a partial-line cut continues the turn numbering',
+    repaired.records.find((r) => r.type === 'userInput' && r.text === 'second run after damage')?.turn === 2,
   );
 
   // An entirely missing file is a distinct, named condition — not an empty record.
@@ -2709,6 +2883,17 @@ async function runtimeInputBarrier(): Promise<void> {
       currentTurn !== undefined &&
         read.records.some((record) => record.turn === currentTurn && record.type === 'turnEnded'),
     );
+    // SRF-031 through the production seam: `AgentRuntime.create()` awaited the
+    // recorder's `open()`, so the resumed process's first prompt — numbered before
+    // its own first append flushed — continues the file's turns instead of
+    // restarting at 1, and the resumed header keeps turn 0.
+    assert('the resumed runtime\u2019s first turn is numbered max + 1 (turn 2), not 1', currentTurn === 2);
+    const resumedHeader = read.records.find((record) => record.type === 'runStarted' && record.seq > 0);
+    assert(
+      'the resumed run header carries turn 0 and says resumed',
+      resumedHeader?.turn === 0 && (resumedHeader as { resumed?: unknown }).resumed === true,
+    );
+    assert('the two turns of the two runs carry distinct ordinals', new Set(read.records.filter((r) => r.type === 'userInput').map((r) => r.turn)).size === 2);
   } finally {
     await runtime?.shutdown();
     setRuntimeModelFactoryForTest(undefined);
@@ -2956,6 +3141,7 @@ async function main(): Promise<void> {
   await mkdir(ROOT, { recursive: true });
   try {
     await appendOnly();
+    await resumedTurnNumbers();
     await runtimeInputBarrier();
     await runtimeInputBarrierDegradation();
     await damageTolerance();

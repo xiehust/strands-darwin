@@ -990,9 +990,13 @@ export class AgentRuntime {
     runtimeCreateCheckpoint?.('after-initialize');
 
     // Built last and given nothing but facts: the recorder is an observer, so it
-    // must not be able to influence assembly. It opens no file here — the first
+    // must not be able to influence assembly. It creates no file here — the first
     // recorded turn creates it, so a session that never runs one leaves nothing
-    // behind, the same rule `markResumable()` follows for the resume pointer.
+    // behind, the same rule `markResumable()` follows for the resume pointer. It
+    // does *read* an existing file's tail (SRF-031): the seed that numbers a resumed
+    // run's first turn `max + 1` has to be in place before `send()` can hand out a
+    // turn ordinal, and `create()` is the one point no driver can get ahead of.
+    // The wait is bounded by the recorder itself.
     const thinkingPlan = planThinking(config);
     const trajectory =
       config.trajectory === false
@@ -1025,6 +1029,7 @@ export class AgentRuntime {
             ...(memoryController === undefined ? {} : { onTurnSettled: (settlement) => memoryController.settle(settlement) }),
           });
     trajectoryAudit = trajectory;
+    await trajectory?.open();
 
     const runtime = new AgentRuntime(
       agent,

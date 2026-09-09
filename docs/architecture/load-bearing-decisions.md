@@ -1127,7 +1127,16 @@ cannot capture the live `Agent` — and read back through `contentBlockFromData`
 (8k code points per string, 64 KiB per record, 64 MiB per file) and every truncation is written
 down; a failure latches, stops recording, and surfaces one notice after the turn. Bytes already
 written are never rewritten: a partial trailing line is tolerated, counted and reported, never
-repaired. `darwin trajectory list|search|replay|fork` reads it with **no model call and no
+repaired. Turn ordinals are unique within one file (SRF-031): the bounded tail read that recovers
+the last `seq` also yields the highest well-formed `turn`, and the recorder's counter is seeded from
+it — `runStarted` keeps `turn: 0`, a fresh file starts at 1, a tail with no readable record or no
+numeric `turn` degrades to per-process numbering exactly as `seq` restarts — so a resumed run's
+first prompt is `max + 1` and `replay --turn N` names one turn. The seed lands through one awaited
+seam, `TrajectoryRecorder.open()` in `AgentRuntime.create()`, because `beginTurn` hands the ordinal
+out synchronously (the memory controller and the buffered `userInput` consume it at once) while the
+tail was only ever read on the first append; `open()` is read-only, bounded by the input-durability
+timeout, creates nothing, and a recorder that was never opened numbers as before. Readers are
+unchanged and carry no first-turn-is-1 assumption. `darwin trajectory list|search|replay|fork` reads it with **no model call and no
 network** — `src/trajectory/**` constructs no `Agent` and no `Model` at all — and replay reuses
 `turnReducer` so live rendering and replay cannot drift into two projections. `fork` copies bytes
 (snapshot + `offload/` + the record as the fork's prefix) and never touches its source or the
