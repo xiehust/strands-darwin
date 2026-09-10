@@ -48,10 +48,12 @@ export function parseMemoryXml(text: string): XmlNode {
   return root;
 }
 function tags(node: XmlNode): string[] { return [node.tag, ...node.children.flatMap((child) => typeof child === 'string' ? [] : tags(child))]; }
-const preferenceSchema = z.array(z.object({
-  language: z.string().min(1).max(100), context: z.string().max(1000),
+const preferenceObject = z.object({
+  language: z.string().min(1).max(100).optional(), context: z.string().max(1000),
   preference: z.string().min(1).max(1000), categories: z.array(z.string().max(100)).max(16),
-}).strict()).min(1).max(10);
+}).strict();
+// Extraction returns a list; consolidation stores one object, often without language.
+const preferenceSchema = z.union([preferenceObject, z.array(preferenceObject).min(1).max(10)]);
 export function parsePreference(text: string): string {
   if (text.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) throw new Error('Preference content refused or too large to adopt');
   preferenceSchema.parse(JSON.parse(text));

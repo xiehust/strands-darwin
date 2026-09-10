@@ -2,6 +2,33 @@
 
 The checklist was derived before implementation; this table records its verification locations.
 
+## Narrow final Host corrections after d9b2b73
+
+Host's independent `pnpm typecheck` and full `pnpm test` at d9b2b73 passed (exit 0,
+`/tmp/darwin-agentcore-host-test.log`). This pass does not rerun that inventory.
+
+- AWS's documented consolidated `ExistingMemory` / `updated_memory` object is accepted,
+  with optional language; extraction arrays remain supported. Compact/multiline bytes and
+  hashes survive inspect/confirm/startup, corrected hashes invalidate old approval, malformed
+  required fields still fail closed. Generated context remains data, never quote evidence.
+- Per-command abort signals span filesystem awaits, atomic publication, capability preflight
+  and later CLI launches. Deterministic scheduling seams pause real state reads/writes (not
+  fabricated results): cancel before approval/attempt publication, after reservation and local
+  revocation, and before acknowledgement persistence. No new AWS mutation/approval follows
+  cancellation; already-issued effects and acknowledgements remain recorded. Cloud close
+  tracks management and drains up to two seconds, reports a timeout, and bars late mutation.
+- Runtime send/compact check the captured cancellation generation after local preparation
+  and before invocation. Paused local proof reads after completed startup yield zero model
+  calls on cancel, and the next turn succeeds without another cloud retrieval. Actual runtime
+  shutdown while idle management awaits publication is covered too.
+
+Focused verification: AgentCore **173**, clear-session **44**, rewind **39**, compact
+**84**, lifecycle-hooks **20** passed, each with zero failures; `pnpm typecheck` and
+`git diff --check` passed. Logs: `/tmp/agentcore-narrow-tests.log` and
+`/tmp/agentcore-narrow-verify-*.log`. No live AWS mutation, new dependency, full-suite rerun,
+or Host iteration-log change.
+
+
 ## Initial implementation verification (c36e90e, before Host corrections)
 
 These results describe the original pass, not acceptance of the Host review findings below.

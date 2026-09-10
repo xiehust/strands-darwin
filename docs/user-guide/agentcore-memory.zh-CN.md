@@ -60,7 +60,7 @@ AWS 说明：[命名空间](https://docs.aws.amazon.com/bedrock-agentcore/latest
 /cloud-memory delete <record-id> cloud
 ```
 
-Inspect 显示完整、有限长度的偏好和哈希；confirm 表示你亲自将可见内容采纳为长期、**跨项目的沟通或协作偏好**。不要确认推测、一次性要求、项目限制或权限指令。批准绑定 region、资源、actor、strategy、namespace、record ID 和内容；内容变化必须重新查看并确认。没有虚构 citation 或 proof 字段。每个 runtime 首次模型请求前只检索一次，缓存最多五条候选。后续请求（包括 compact）只重读本地批准和撤销，不重复联网。`preferences` 显式刷新缓存，`inspect` 更新对应记录。云端修改在刷新或新会话时发现，不宣称服务端即时推送；PreCompact 拒绝发生在任何云检索之前。检索或证据不可用时不应用记录。支持并保留紧凑或多行的 `{language, context, preference, categories}` JSON 数组；生成的 context 不是用户原话证据。查看与批准使用独立文件，并发 inspect 不会恢复已撤销的批准。
+Inspect 显示完整、有限长度的偏好和哈希；confirm 表示你亲自将可见内容采纳为长期、**跨项目的沟通或协作偏好**。不要确认推测、一次性要求、项目限制或权限指令。批准绑定 region、资源、actor、strategy、namespace、record ID 和内容；内容变化必须重新查看并确认。没有虚构 citation 或 proof 字段。每个 runtime 首次模型请求前只检索一次，缓存最多五条候选。后续请求（包括 compact）只重读本地批准和撤销，不重复联网。`preferences` 显式刷新缓存，`inspect` 更新对应记录。云端修改在刷新或新会话时发现，不宣称服务端即时推送；PreCompact 拒绝发生在任何云检索之前。检索或证据不可用时不应用记录。支持并原样保留紧凑或多行的 `{context, preference, categories}` JSON 对象或有限数组，`language` 可省略：[AWS 提取使用数组，合并后存储单个对象](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory-user-prompt.html)。批准哈希绑定原始字节；生成的 context 不是用户原话证据。查看与批准使用独立文件，并发 inspect 不会恢复已撤销的批准。
 
 Forget 立即撤销本地批准，其他活动项目下次调用前也会重新检查；它不删除历史回复或云数据。Delete 是独立、明确、先验证范围的远程删除操作；源事件可能再次生成记录，但新记录仍未获批准。纠正偏好时，先 forget，再查看云端改正后的内容并确认新哈希。
 
@@ -84,6 +84,6 @@ Send 必须对应已预览且未变化的字节。事件保留 Darwin session ID
 
 传输不使用 shell，JSON 走 stdin 而非 argv；单次 CLI 请求不自动重试；输入 32 KB、stdout 256 KiB、诊断 8 KiB；总时限和进程组取消受控，不输出服务端诊断中的潜在凭证。每次最多五条记录，每条最多 12,000 字符；XML 最多 500 个 token、16 层；不翻页下载历史。最多保存 64 条偏好的独立查看/批准文件，每次应用五条、每条最多 4,000 字符的已验证 JSON。每个项目/配置绑定的 outbox 最多 32 回合，每回合 24 个步骤，最多八个排队本地任务；trajectory 只读末尾 1 MiB，状态文件上限 64 KiB，目录最多 256 项。满额或降级会说明遗漏，不静默删除或淘汰；`/cloud-memory clear-accepted` 明确清除已接受的请求体、尝试和预览文件，释放 32 回合容量。discard/cleanup 先保存幂等回执或丢弃标记，禁止这些 token 再上传；回执账本最多 256 条，不自动淘汰，满后拒绝清理，需用户在 Darwin 外归档管理。未丢弃的 pending 仍保持顺序。send/discard/cleanup 用跨进程独占锁拒绝越过进行中的操作；崩溃遗留的 `active.json`（偏好状态有限写入也使用此锁）必须人工检查所有者后恢复，不自动抢锁。新状态先私有写入并 sync，再原子发布且不覆盖已有文件；中断的 `.tmp` 不计为事件或尝试，但占目录容量，后续运行不静默删除。旧版损坏的最终文件须人工检查，不猜测顺序。OTHER-only 旧请求体可预览、丢弃，但不能上传或自动转换。清理中断会明确报告，用户可重复命令，按回执或丢弃标记完成清理。
 
-偏好批准在 `~/.darwin/agentcore/<binding>/`；outbox 在 `~/.darwin/projects/<project-key>/agentcore/<binding>/<scope-binding>/`，均视为敏感用户策略路径，文件权限私有且拒绝符号链接。关闭功能不访问这些状态。`/clear`、`/rewind` 建立新控制器、刷新偏好，保留持久 outbox，不撤销 AWS 效果。退出取消 CLI，并等待有限的已接受本地投影任务；若进程在投影落盘前崩溃，该候选可能遗漏，不补扫历史。原始事件 TTL 或删除**不会**删除长期记录。
+偏好批准在 `~/.darwin/agentcore/<binding>/`；outbox 在 `~/.darwin/projects/<project-key>/agentcore/<binding>/<scope-binding>/`，均视为敏感用户策略路径，文件权限私有且拒绝符号链接。关闭功能不访问这些状态。`/clear`、`/rewind` 建立新控制器、刷新偏好，保留持久 outbox，不撤销 AWS 效果。取消按管理操作独立生效，即使刚结束磁盘等待，也不再发布新状态或启动 CLI；Esc 后的新命令仍可使用。已发出的操作不会被撤销，已收到的 AWS 确认仍保留。云控制器退出时取消并等待管理及本地投影任务，最多两秒；超时明确报告尚未完成的文件 I/O，取消的修改仍被禁止，锁可能到 I/O 返回后才释放。send/compact 在本地偏好准备完成后、调用模型前再次检查取消，不重新检索缓存；若进程在投影落盘前崩溃，该候选可能遗漏，不补扫历史。原始事件 TTL 或删除**不会**删除长期记录。
 
 离线验证：`pnpm tsx spike/verify-agentcore-memory.ts` 使用真实文件、子进程、runtime 和权限门，不调用 AWS。`pnpm tsx spike/verify-agentcore-memory-live.ts` 默认跳过；只有 `AGENTCORE_DISPOSABLE_CONFIG` 指向明确的一次性测试资源配置，且 `AGENTCORE_ALLOW_SYNTHETIC_UPLOAD=yes`，actor 以 `synthetic-` 开头，才上传合成事件。不创建或删除资源，清理由资源所有者负责；它检验传输接受，不保证提取时机。本次实现没有提供一次性资源，因此没有验证真实服务行为。

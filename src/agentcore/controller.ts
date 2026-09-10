@@ -12,6 +12,8 @@ const preferenceProof = z.object({ version: z.literal(1), inspected: hashSchema.
 const outboxSchema = z.object({ version: z.literal(1), binding: hashSchema, token: hashSchema, body: z.object({ memoryId: z.string(), actorId: z.string(), sessionId: z.string(), eventTimestamp: z.string(), clientToken: hashSchema, extractionConfig: z.object({ namespaceVariables: z.object({ projectid: z.string().max(64) }).strict() }).strict(), payload: z.array(z.object({ conversational: z.object({ role: z.enum(['USER', 'TOOL', 'OTHER']), content: z.object({ text: z.string().max(24000) }).strict() }).strict() }).strict()).min(1).max(25) }).strict() }).strict();
 const receiptsSchema = z.array(z.object({ token: hashSchema, disposition: z.enum(['accepted', 'discarded']) }).strict()).max(256);
 export interface CloudCommandResult { ok: boolean; text: string }
+export const CLOUD_CLOSE_TIMEOUT_MS = 2000;
+const cancelledManagement = () => new Error('Cloud management cancelled; no further action authorized. Already-issued effects are not undone; inspect status/receipts.');
 export const CLOUD_READ_USAGE = 'usage: darwin cloud-memory [status|preferences|inspect <record-id>|pending|preview <token>]';
 export function cloudReadArguments(input: string): boolean {
   return /^(?:(?:status|preferences|pending)|inspect [a-zA-Z0-9_-]{40,128}|preview [a-f0-9]{64})?$/.test(input);
@@ -24,6 +26,7 @@ export class CloudMemory {
   private chain: Promise<void> = Promise.resolve();
   private pendingJobs = 0;
   private closed = false;
+  private management = new Map<AbortController, Promise<CloudCommandResult>>();
   private approvedContext: ValidatedRecord[] = [];
   private started = false;
   constructor(readonly config: AgentCoreConfig, readonly root: string, readonly session: string) {
@@ -31,8 +34,24 @@ export class CloudMemory {
   }
   status(): string { return `AgentCore: enabled · ${this.config.region} · actor ${this.config.actorId} · project ${this.scope.projectId} · upload ${this.config.upload} · ${this.approvedContext.length} cached preference candidates (local approval rechecked per request)${this.problem ? ` · degraded: ${this.problem}` : ''}. Details: /cloud-memory`; }
   cancelGeneration = 0;
-  cancel(): void { this.cancelGeneration++; this.cli.cancel(); }
-  async close(): Promise<void> { this.closed = true; this.cancel(); await this.chain; }
+  cancel(): void {
+    this.cancelGeneration++;
+    for (const controller of this.management.keys()) controller.abort(cancelledManagement());
+    this.cli.cancel();
+  }
+  async close(): Promise<void> {
+    this.closed = true; this.cancel();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        Promise.allSettled([this.chain, ...this.management.values()]),
+        new Promise<void>(resolve => { timer = setTimeout(() => {
+          this.problem = 'Cloud shutdown drain timed out; cancelled operations remain barred from new effects. Pending filesystem work may still hold a lock.';
+          resolve();
+        }, CLOUD_CLOSE_TIMEOUT_MS); }),
+      ]);
+    } finally { if (timer !== undefined) clearTimeout(timer); }
+  }
   async recall(kind: RecordKind, query: string, limit: number, signal?: AbortSignal): Promise<{ records: ValidatedRecord[]; omitted: number; warning: string }> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 5 || publicProse(query) === undefined || query.length > 300) throw new Error('Memory query must be bounded task/context prose without sensitive material');
     const raw = await this.cli.call('retrieve-memory-records', {
@@ -53,8 +72,9 @@ export class CloudMemory {
     }));
     if (!ids.has(id) && ids.size >= 64) throw new Error('Preference state capacity reached (64 records)');
   }
-  private async preference(id: string): Promise<ValidatedRecord> {
-    const response = z.object({ memoryRecord: z.unknown() }).strict().parse(await this.cli.call('get-memory-record', { memoryId: this.config.memoryId, memoryRecordId: recordId.parse(id) }));
+  private async preference(id: string, signal?: AbortSignal): Promise<ValidatedRecord> {
+    const response = z.object({ memoryRecord: z.unknown() }).strict().parse(await this.cli.call('get-memory-record', { memoryId: this.config.memoryId, memoryRecordId: recordId.parse(id) }, signal));
+    signal?.throwIfAborted();
     const record = validateRecord(response.memoryRecord, 'preference', this.config, this.root);
     if (record.id !== id) throw new Error('Preference identity mismatch');
     return record;
@@ -65,9 +85,10 @@ export class CloudMemory {
     try { await this.refreshPreferences(); }
     catch { this.approvedContext = []; this.problem = 'Preference retrieval or approval unavailable; no cloud preferences applied'; }
   }
-  private async refreshPreferences() {
+  private async refreshPreferences(signal?: AbortSignal) {
     this.approvedContext = [];
-    const result = await this.recall('preference', 'General enduring communication and collaboration preferences across projects', 5);
+    const result = await this.recall('preference', 'General enduring communication and collaboration preferences across projects', 5, signal);
+    signal?.throwIfAborted();
     this.approvedContext = result.records;
     return result;
   }
@@ -114,7 +135,8 @@ export class CloudMemory {
     if (entry.binding !== this.binding() || entry.token !== token || body.clientToken !== token || body.memoryId !== this.config.memoryId || body.actorId !== this.config.actorId || body.extractionConfig.namespaceVariables.projectid !== this.scope.projectId || !/^[a-zA-Z0-9_-]{1,128}$/.test(body.sessionId)) throw new Error('Outbox scope mismatch');
     return entry;
   }
-  private async send(token: string, previewHash: string): Promise<string> {
+  private async send(token: string, previewHash: string, signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted();
     if (this.config.upload !== 'manual') throw new Error('Uploads disabled');
     hashSchema.parse(token);
     const receipt = (await this.receipts()).find(receipt => receipt.token === token);
@@ -133,23 +155,24 @@ export class CloudMemory {
       const other = await this.entry(otherToken); // A corrupt final entry needs manual repair; never guess its order.
       if (other.body.sessionId === entry.body.sessionId && JSON.parse(other.body.payload[0]!.conversational.content.text).turn < JSON.parse(entry.body.payload[0]!.conversational.content.text).turn && !names.includes(`${other.token}.accepted.json`)) throw new Error(`Send earlier pending token first: ${other.token}`);
     }
-    await this.cli.requireExtraction();
+    await this.cli.requireExtraction(signal);
     const currentNames = await stateNames(this.outbox());
     if (currentNames.includes(`${token}.accepted.json`)) return 'AWS event already accepted; episode generation not verified';
     const attempts = currentNames.filter((name) => [1, 2, 3].some(attempt => name === `${token}.attempt-${attempt}.json`)).length;
     if (attempts >= 3) throw new Error('Finite retry cap reached (3); no further upload attempted');
     // Exclusive durable reservation precedes network. Crashes consume an attempt;
     // every retry uses exactly the same body/token, including after restart.
-    try { await writeState(path.join(this.outbox(), `${token}.attempt-${attempts + 1}.json`), { hash: expected }, true); }
+    try { await writeState(path.join(this.outbox(), `${token}.attempt-${attempts + 1}.json`), { hash: expected }, true, signal); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('Another sender reserved this attempt; retry status later'); throw error; }
-    const raw = await this.cli.call('create-event', entry.body);
+    const raw = await this.cli.call('create-event', entry.body, signal);
     const response = z.object({ event: z.object({ memoryId: z.string(), actorId: z.string(), sessionId: z.string(), eventId: z.string().min(1).max(128) }).passthrough() }).strict().parse(raw);
     if (response.event.memoryId !== this.config.memoryId || response.event.actorId !== this.config.actorId || response.event.sessionId !== entry.body.sessionId) throw new Error('CreateEvent acknowledgement scope mismatch');
+    // Once AWS acknowledged, persist that evidence even if cancellation arrives now.
     await writeState(path.join(this.outbox(), `${token}.accepted.json`), { eventId: response.event.eventId });
     return 'AWS event accepted. Episode/reflection generation is asynchronous and NOT verified. Raw event TTL does not delete long-term memory.';
   }
   private async receipts() { return receiptsSchema.parse(await readState(path.join(this.outbox(), 'receipts.json')) ?? []); }
-  private async cleanup(token: string, disposition: 'accepted' | 'discarded'): Promise<void> {
+  private async cleanup(token: string, disposition: 'accepted' | 'discarded', signal: AbortSignal): Promise<void> {
     hashSchema.parse(token);
     const receipts = await this.receipts();
     const prior = receipts.find(receipt => receipt.token === token);
@@ -157,55 +180,65 @@ export class CloudMemory {
     if (!prior) {
       if (receipts.length >= 256) throw new Error('Receipt capacity reached (256); cleanup refused, no data removed');
       receipts.push({ token, disposition });
-      await writeState(path.join(this.outbox(), 'receipts.json'), receipts);
+      await writeState(path.join(this.outbox(), 'receipts.json'), receipts, false, signal);
     }
     for (const name of await stateNames(this.outbox())) {
-      if (name === `${token}.event.json` || name === `${token}.preview.json` || name === `${token}.accepted.json` || [1, 2, 3].some(attempt => name === `${token}.attempt-${attempt}.json`)) await removeState(path.join(this.outbox(), name));
+      if (name === `${token}.event.json` || name === `${token}.preview.json` || name === `${token}.accepted.json` || [1, 2, 3].some(attempt => name === `${token}.attempt-${attempt}.json`)) await removeState(path.join(this.outbox(), name), signal);
     }
   }
   async command(input: string, authority: 'read' | 'user' = 'read'): Promise<string> {
     return (await this.commandResult(input, authority)).text;
   }
   async commandResult(input: string, authority: 'read' | 'user' = 'read'): Promise<CloudCommandResult> {
-    try { return { ok: true, text: await this.runCommand(input, authority) }; }
-    catch (error) {
-      this.problem = error instanceof z.ZodError ? 'Cloud data/state failed validation; refused' : error instanceof Error ? error.message.slice(0, 240) : 'Cloud operation unavailable';
-      return { ok: false, text: `AgentCore: ${this.problem}` };
-    }
+    if (this.closed) return { ok: false, text: 'AgentCore: cloud memory controller closed' };
+    const controller = new AbortController();
+    const operation = Promise.resolve().then(async (): Promise<CloudCommandResult> => {
+      try {
+        const text = await this.runCommand(input, authority, controller.signal);
+        // Retain an already-completed effect's acknowledgement; never describe it as undone.
+        return controller.signal.aborted ? { ok: false, text: `${text}\n${cancelledManagement().message}` } : { ok: true, text };
+      } catch (error) {
+        this.problem = controller.signal.aborted ? cancelledManagement().message : error instanceof z.ZodError ? 'Cloud data/state failed validation; refused' : error instanceof Error ? error.message.slice(0, 240) : 'Cloud operation unavailable';
+        return { ok: false, text: `AgentCore: ${this.problem}` };
+      }
+    });
+    this.management.set(controller, operation); // Registered before the first operation await.
+    try { return await operation; } finally { this.management.delete(controller); }
   }
-  private async runCommand(input: string, authority: 'read' | 'user'): Promise<string> {
+  private async runCommand(input: string, authority: 'read' | 'user', signal: AbortSignal): Promise<string> {
+    signal.throwIfAborted();
     if (authority === 'read' && !cloudReadArguments(input)) throw new Error(`Headless mutations unavailable; only user-submitted TUI management can adopt/send/delete/discard. ${CLOUD_READ_USAGE}`);
     if (input.length > 500) throw new Error(CLOUD_USAGE);
     const [verb = 'status', id, hash, adoption, ...extra] = input.trim().split(/\s+/).filter(Boolean);
     if (extra.length) throw new Error(CLOUD_USAGE);
     if (verb === 'status' && id === undefined) return this.status();
     if (verb === 'preferences' && id === undefined) {
-      const result = await this.refreshPreferences();
+      const result = await this.refreshPreferences(signal);
       return JSON.stringify({ ...result, notice: 'Not automatically adopted. Inspect, then confirm only enduring cross-project communication/collaboration preferences. Inference or generated explicitness is not evidence.' }, null, 2);
     }
     if (verb === 'inspect' && id && hash === undefined) {
       this.approvedContext = this.approvedContext.filter(r => r.id !== id);
-      const record = await this.preference(id);
+      const record = await this.preference(id, signal);
       this.approvedContext = [...this.approvedContext, record].slice(-5);
       if (authority === 'read') return `${JSON.stringify(record, null, 2)}\nRead-only inspection: no adoption proof written. Use the TUI to inspect and confirm.`;
       const inspection = `${this.preferenceFile(id)}.inspection`;
       // Separate state: inspection can never copy or resurrect approval from a prior read.
       await withStateLock(cloudDirectory(this.config), async () => {
         await this.preferenceCapacity(id);
-        await writeState(inspection, { version: 1, inspected: record.hash });
-      });
+        await writeState(inspection, { version: 1, inspected: record.hash }, false, signal);
+      }, signal);
       return `${JSON.stringify(record, null, 2)}\nTo explicitly adopt this visible content as your enduring cross-project communication/collaboration preference: /cloud-memory confirm ${id} ${record.hash} global\nDo not adopt inferred, one-time or project-specific constraints. No cloud write.`;
     }
     if (verb === 'confirm' && id && hash && adoption === 'global') {
       this.approvedContext = this.approvedContext.filter(r => r.id !== id);
       const proof = preferenceProof.parse(await readState(`${this.preferenceFile(id)}.inspection`));
-      const record = await this.preference(id);
+      const record = await this.preference(id, signal);
       this.approvedContext = [...this.approvedContext, record].slice(-5);
       if (proof.inspected !== hash || record.hash !== hash) throw new Error('Content changed or not inspected; approval refused. Inspect again.');
       await withStateLock(cloudDirectory(this.config), async () => {
         await this.preferenceCapacity(id);
-        await writeState(this.preferenceFile(id), { version: 1, approved: hash });
-      });
+        await writeState(this.preferenceFile(id), { version: 1, approved: hash }, false, signal);
+      }, signal);
       return 'Visible preference explicitly adopted locally for cross-project use; no cloud write. Current request/project constraints take precedence.';
     }
     if ((verb === 'forget' && id && hash === undefined) || (verb === 'delete' && id && hash === 'cloud' && adoption === undefined)) {
@@ -213,11 +246,11 @@ export class CloudMemory {
       this.approvedContext = this.approvedContext.filter((record) => record.id !== id);
       await withStateLock(cloudDirectory(this.config), async () => {
         await this.preferenceCapacity(id);
-        await writeState(this.preferenceFile(id), { version: 1 });
-      });
+        await writeState(this.preferenceFile(id), { version: 1 }, false, signal);
+      }, signal);
       if (verb === 'delete') {
-        await this.preference(id); // Scope must validate before a destructive cloud request.
-        await this.cli.call('delete-memory-record', { memoryId: this.config.memoryId, memoryRecordId: id });
+        await this.preference(id, signal); // Scope must validate before a destructive cloud request.
+        await this.cli.call('delete-memory-record', { memoryId: this.config.memoryId, memoryRecordId: id }, signal);
         return 'Preference approval removed locally; explicit cloud record deletion accepted. Source events may regenerate records; new records remain unapproved.';
       }
       return 'Preference forgotten locally immediately; cloud record unchanged. Use explicit delete <id> cloud to delete it remotely.';
@@ -234,27 +267,27 @@ export class CloudMemory {
     if (verb === 'preview' && id && hash === undefined) {
       await this.chain; const entry = await this.entry(id); const previewHash = digest(entry);
       if (authority === 'read') return `${JSON.stringify(entry.body, null, 2)}\nRead-only preview: no authorization written. Hash ${previewHash}. Use TUI preview/send.`;
-      await writeState(path.join(this.outbox(), `${id}.preview.json`), { hash: previewHash });
+      await writeState(path.join(this.outbox(), `${id}.preview.json`), { hash: previewHash }, false, signal);
       return `${JSON.stringify(entry.body, null, 2)}\nReview for private material; this allowlist is NOT a confidentiality guarantee. No upload yet.\nAuthorize these exact bytes: /cloud-memory send ${id} ${previewHash}`;
     }
-    if (verb === 'send' && id && hash && adoption === undefined) return withStateLock(this.outbox(), () => this.send(id, hash));
+    if (verb === 'send' && id && hash && adoption === undefined) return withStateLock(this.outbox(), () => this.send(id, hash, signal), signal);
     if (verb === 'discard' && id && hash === undefined) return withStateLock(this.outbox(), async () => {
       hashSchema.parse(id);
       const receipt = (await this.receipts()).find(receipt => receipt.token === id);
       if (receipt?.disposition !== 'discarded') await this.entry(id);
       if ((await stateNames(this.outbox())).includes(`${id}.accepted.json`)) throw new Error('Already accepted; use clear-accepted instead');
-      await this.cleanup(id, 'discarded');
+      await this.cleanup(id, 'discarded', signal);
       return 'Pending event explicitly discarded; tombstone retained, later pending turns may proceed. AWS effects (if acknowledgement was lost) are not undone.';
-    });
+    }, signal);
     if (verb === 'clear-accepted' && id === undefined) return withStateLock(this.outbox(), async () => {
       const names = await stateNames(this.outbox()); let count = 0;
       const accepted = new Set([
         ...names.filter(name => name.endsWith('.accepted.json')).map(name => name.slice(0, -14)),
         ...(await this.receipts()).filter(receipt => receipt.disposition === 'accepted' && names.some(name => name.startsWith(receipt.token) && name.endsWith('.json'))).map(receipt => receipt.token),
       ]);
-      for (const token of accepted) { await this.cleanup(token, 'accepted'); count++; }
+      for (const token of accepted) { await this.cleanup(token, 'accepted', signal); count++; }
       return `Cleared ${count} accepted event bodies; idempotency receipts retained. No AWS deletion.`;
-    });
+    }, signal);
     throw new Error(CLOUD_USAGE);
   }
 }

@@ -10,7 +10,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { Agent, Model, BeforeToolCallEvent, AfterToolCallEvent, ToolUseBlock, ToolResultBlock, JsonBlock, TextBlock, ContentBlockEvent, AgentResultEvent, AgentResult, Message, ImageBlock, type BaseModelConfig, type ModelStreamEvent } from '@strands-agents/sdk';
-import { CloudMemory as ReadOnlyCloudMemory } from '../src/agentcore/controller.js';
+import { CLOUD_CLOSE_TIMEOUT_MS, CloudMemory as ReadOnlyCloudMemory } from '../src/agentcore/controller.js';
 // Explicit test-side user submission; production defaults remain read-only.
 class CloudMemory extends ReadOnlyCloudMemory {
   override command(input: string, authority: 'read' | 'user' = 'user') { return super.command(input, authority); }
@@ -18,7 +18,7 @@ class CloudMemory extends ReadOnlyCloudMemory {
 import { MemoryCli } from '../src/agentcore/transport.js';
 import { digest, parseAgentCoreConfig, scopeFor, type AgentCoreConfig } from '../src/agentcore/config.js';
 import { parseMemoryXml, validateRecord } from '../src/agentcore/records.js';
-import { cloudDirectory, readState, stateNames, withStateLock, writeState } from '../src/agentcore/state.js';
+import { cloudDirectory, readState, setCloudStateObserverForTest, stateNames, withStateLock, writeState } from '../src/agentcore/state.js';
 import { publicProse } from '../src/agentcore/projection.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { configPath, loadConfig, permissionRulesPath } from '../src/config.js';
@@ -437,6 +437,155 @@ const retryDir = outboxPath(config, retryRoot);
 await writeState(path.join(retryDir, `${firstToken}.preview.json`), { hash: firstHash });
 assert('user can finish interrupted discard from tombstone after body removed', (await discardRecovery.command(`discard ${firstToken}`)).includes('explicitly discarded') && !(await stateNames(retryDir)).includes(`${firstToken}.preview.json`));
 await receiptOnly.close(); await discardRecovery.close();
+header('Narrow Host corrections: documented consolidated objects');
+// AWS memory-user-prompt.html ExistingMemory1 / updated_memory, not invented quote evidence.
+const documentedPreference = { context: 'user has explicitly stated that he likes vegan', preference: 'prefers vegetarian options', categories: ['food', 'dietary'] };
+const documentedUpdate = { context: 'user has explicitly stated that he likes vegan and mentioned avoiding dairy products when discussing ice cream options', preference: 'prefers vegetarian options and dairy-free dessert alternatives', categories: ['food', 'dietary', 'desserts'] };
+for (const pretty of [false, true]) {
+  const text = JSON.stringify(documentedPreference, null, pretty ? 2 : undefined);
+  const objectRecord = record('preference', { content: { text } });
+  const objectHash = validateRecord(objectRecord, 'preference', config, root).hash;
+  const adopter = new CloudMemory({ ...config, preferences: true }, root, 'object-adopter');
+  await control({ records: [objectRecord] }); await adopter.command(`forget ${id}`); await adopter.startup();
+  assert('documented generated context never establishes approval', await adopter.context() === '');
+  assert('compact/multiline consolidated object inspection preserves bytes/hash', (await adopter.command(`inspect ${id}`)).includes(objectHash) && validateRecord(objectRecord, 'preference', config, root).content === text);
+  assert('documented stored object can be explicitly confirmed', (await adopter.command(`confirm ${id} ${objectHash} global`)).includes('explicitly adopted'));
+  const restoredObject = new CloudMemory({ ...config, preferences: true }, root, 'object-startup'); await restoredObject.startup();
+  assert('startup applies explicitly adopted consolidated object', (await restoredObject.context()).includes('vegetarian options'));
+  const changed = record('preference', { content: { text: JSON.stringify(documentedUpdate, null, pretty ? 2 : undefined) } });
+  await control({ records: [changed] });
+  const correctedHash = validateRecord(changed, 'preference', config, root).hash;
+  await restoredObject.command(`inspect ${id}`);
+  assert('corrected remote object invalidates old hash', correctedHash !== objectHash && await restoredObject.context() === '' && !(await restoredObject.commandResult(`confirm ${id} ${objectHash} global`, 'user')).ok);
+  await restoredObject.command(`confirm ${id} ${correctedHash} global`);
+  const correctedStartup = new CloudMemory({ ...config, preferences: true }, root, 'corrected-startup'); await correctedStartup.startup();
+  assert('corrected object hash survives next startup', (await correctedStartup.context()).includes('dairy-free dessert alternatives'));
+  await adopter.close(); await restoredObject.close(); await correctedStartup.close();
+}
+for (const value of [{ preference: 'x', categories: [] }, { context: 'x', categories: [] }, { context: 'x', preference: 'x' }, { ...documentedPreference, extra: true }, { ...documentedPreference, language: 7 }, { ...documentedPreference, categories: 'food' }, [], [null]]) {
+  await rejects('unsupported consolidated/extraction preference structure refused', () => validateRecord(record('preference', { content: { text: JSON.stringify(value) } }), 'preference', config, root));
+}
+
+// Deterministic scheduling only: production read/write implementations still perform real I/O.
+function pauseState(file: string, boundary: 'after-read' | 'before-publish' | 'after-publish') {
+  let reached!: () => void; let release!: () => void;
+  const entered = new Promise<void>(resolve => { reached = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let armed = true;
+  setCloudStateObserverForTest(async (current, at) => { if (armed && current === file && at === boundary) { armed = false; reached(); await held; } });
+  return { entered, release, clear: () => { release(); setCloudStateObserverForTest(undefined); } };
+}
+async function bounded<T>(promise: Promise<T>, ms = 5000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Regression await exceeded bound')), ms); })]); }
+  finally { if (timer !== undefined) clearTimeout(timer); }
+}
+const narrowConfig = { ...config, preferences: true, projectId: 'cancel-narrow' };
+const narrow = new CloudMemory(narrowConfig, root, 'cancel-narrow');
+const narrowProof = path.join(cloudDirectory(narrowConfig), `${id}.json`);
+await control({ records: [record('preference')] });
+await narrow.command(`forget ${id}`); await narrow.command(`inspect ${id}`);
+header('Narrow Host corrections: cancel during real state publication');
+let pause = pauseState(narrowProof, 'before-publish');
+try {
+  const confirming = narrow.commandResult(`confirm ${id} ${hash} global`, 'user'); await bounded(pause.entered);
+  const beforeCancel = (await calls()).length; narrow.cancel(); pause.release(); const result = await bounded(confirming);
+  assert('cancelled confirm publishes no approval after awaited capacity/lock/write', !result.ok && result.text.includes('cancelled') && (await readState(narrowProof) as { approved?: string }).approved === undefined && (await calls()).length === beforeCancel);
+  assert('cancelled confirmation cleans lock and temporary state', !(await stateNames(cloudDirectory(narrowConfig))).some(name => name === 'active.json' || name.endsWith('.tmp')));
+} finally { pause.clear(); }
+assert('fresh management command remains usable after Esc-style cancel', (await narrow.command(`confirm ${id} ${hash} global`)).includes('explicitly adopted'));
+pause = pauseState(narrowProof, 'after-publish');
+try {
+  const deleting = narrow.commandResult(`delete ${id} cloud`, 'user'); await bounded(pause.entered);
+  const beforeCancel = (await calls()).length; narrow.cancel(); pause.release(); const result = await bounded(deleting);
+  assert('cancel after local revocation starts neither get nor delete CLI', !result.ok && result.text.includes('not undone') && (await calls()).length === beforeCancel && (await readState(narrowProof) as { approved?: string }).approved === undefined);
+  assert('cancelled delete cleans preference lock', !(await stateNames(cloudDirectory(narrowConfig))).includes('active.json'));
+} finally { pause.clear(); }
+const narrowFile = path.join(home, 'cancel-narrow-trajectory.jsonl');
+const narrowRecorder = new TrajectoryRecorder({ file: narrowFile, run: { session: 'cancel-narrow', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => narrow.settle(settlement, narrowFile) });
+const narrowTurn = narrowRecorder.beginTurn('Synthetic cancellation goal'); await narrowTurn?.inputDurable();
+narrowTurn?.record(new AgentResultEvent({ agent: wireAgent, invocationState: {}, result: new AgentResult({ invocationState: {}, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) })); narrowTurn?.end(); await narrowRecorder.close();
+const narrowToken = (await narrow.command('pending')).split(' ')[0]!;
+const narrowPreview = await narrow.command(`preview ${narrowToken}`);
+const narrowHash = narrowPreview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)![1]!;
+const narrowBox = outboxPath(narrowConfig, root);
+const attemptFile = path.join(narrowBox, `${narrowToken}.attempt-1.json`);
+pause = pauseState(attemptFile, 'before-publish');
+try {
+  const sending = narrow.commandResult(`send ${narrowToken} ${narrowHash}`, 'user'); await bounded(pause.entered);
+  assert('send reached reservation only after real CLI capability check', (await calls()).at(-1).args.includes('--generate-cli-skeleton'));
+  const beforeCancel = (await calls()).length; narrow.cancel(); pause.release(); const result = await bounded(sending);
+  assert('cancel before attempt publication prevents reservation and AWS launch', !result.ok && result.text.includes('cancelled') && await readState(attemptFile) === undefined && (await calls()).length === beforeCancel);
+  assert('cancelled send cleans outbox lock and temporary reservation', !(await stateNames(narrowBox)).some(name => name === 'active.json' || name.endsWith('.tmp')));
+} finally { pause.clear(); }
+pause = pauseState(attemptFile, 'after-publish');
+try {
+  const sending = narrow.commandResult(`send ${narrowToken} ${narrowHash}`, 'user'); await bounded(pause.entered);
+  const beforeCancel = (await calls()).length; narrow.cancel(); pause.release(); const result = await bounded(sending);
+  assert('cancel during completed reservation await prevents network but preserves attempt evidence', !result.ok && await readState(attemptFile) !== undefined && (await calls()).length === beforeCancel);
+} finally { pause.clear(); }
+const ackFile = path.join(narrowBox, `${narrowToken}.accepted.json`);
+pause = pauseState(ackFile, 'before-publish');
+try {
+  const sending = narrow.commandResult(`send ${narrowToken} ${narrowHash}`, 'user'); await bounded(pause.entered);
+  const beforeCancel = (await calls()).length; narrow.cancel(); pause.release(); const result = await bounded(sending);
+  assert('already accepted synthetic AWS effect keeps acknowledgement after cancel', !result.ok && result.text.includes('AWS event accepted') && await readState(ackFile) !== undefined && (await calls()).length === beforeCancel);
+} finally { pause.clear(); }
+await narrow.close();
+// Cancellation reaches capability subprocesses too, not just CreateEvent.
+await control({ mode: 'hang' }); const capabilityAbort = new AbortController();
+const capability = new MemoryCli(config).requireExtraction(capabilityAbort.signal);
+capabilityAbort.abort(); await rejects('capability subprocess honors operation signal', () => capability);
+await control({ records: [record('preference')] });
+const closingMemory = new CloudMemory(narrowConfig, root, 'closing-management');
+await closingMemory.command(`inspect ${id}`);
+pause = pauseState(narrowProof, 'before-publish');
+try {
+  const confirming = closingMemory.commandResult(`confirm ${id} ${hash} global`, 'user'); await bounded(pause.entered);
+  let drained = false; const closing = closingMemory.close().then(() => { drained = true; });
+  await delay(30); assert('close tracks and waits for active local management rather than settlement alone', !drained);
+  pause.release(); await bounded(closing); const result = await bounded(confirming);
+  assert('close cancels pending approval and releases lock before normal drain returns', !result.ok && (await readState(narrowProof) as { approved?: string }).approved === undefined && !(await stateNames(cloudDirectory(narrowConfig))).includes('active.json'));
+} finally { pause.clear(); }
+const stuckMemory = new CloudMemory(narrowConfig, root, 'bounded-close');
+await stuckMemory.command(`inspect ${id}`);
+pause = pauseState(narrowProof, 'before-publish');
+try {
+  const confirming = stuckMemory.commandResult(`confirm ${id} ${hash} global`, 'user'); await bounded(pause.entered);
+  const start = Date.now(); await bounded(stuckMemory.close(), CLOUD_CLOSE_TIMEOUT_MS + 2000);
+  assert('close is bounded even while local I/O remains paused', Date.now() - start < CLOUD_CLOSE_TIMEOUT_MS + 1500 && stuckMemory.status().includes('drain timed out'));
+  pause.release(); const result = await bounded(confirming);
+  assert('late completion after drain timeout cannot publish approval or retain lock', !result.ok && (await readState(narrowProof) as { approved?: string }).approved === undefined && !(await stateNames(cloudDirectory(narrowConfig))).includes('active.json'));
+} finally { pause.clear(); }
+
+header('Narrow Host corrections: cancellation after cached startup during local preparation');
+await configure({ ...narrowConfig, upload: 'off' });
+for (const mode of ['send', 'compact'] as const) {
+  const model = new ScriptedModel(); const prepared = await runtime(model);
+  const cloud = (prepared as unknown as { cloudMemory: ReadOnlyCloudMemory }).cloudMemory;
+  await prepared.manageCloudMemory(`inspect ${id}`); await prepared.manageCloudMemory(`confirm ${id} ${hash} global`);
+  await cloud.startup(); // Completed once; pause only the subsequent local proof read.
+  const beforePrepare = (await calls()).length;
+  pause = pauseState(narrowProof, 'after-read');
+  try {
+    const outcome = (mode === 'send' ? drain(prepared) : prepared.compact()).then(() => false, () => true);
+    await bounded(pause.entered); prepared.cancel(); pause.release();
+    assert(`${mode} cancelled during local cloud preparation makes zero model calls`, await bounded(outcome) && model.calls === 0 && (await calls()).length === beforePrepare);
+  } finally { pause.clear(); }
+  await drain(prepared);
+  assert(`${mode} cancellation does not poison next ordinary turn or refetch cache`, model.calls === 1 && (await calls()).length === beforePrepare);
+  await prepared.shutdown();
+}
+// Actual TUI shutdown seam while a user command is awaiting preference publication.
+const shutdownModel = new ScriptedModel(); const shutdownRuntime = await runtime(shutdownModel);
+await shutdownRuntime.manageCloudMemory(`forget ${id}`); await shutdownRuntime.manageCloudMemory(`inspect ${id}`);
+pause = pauseState(narrowProof, 'before-publish');
+try {
+  const command = shutdownRuntime.manageCloudMemory(`confirm ${id} ${hash} global`);
+  await bounded(pause.entered); const stopping = shutdownRuntime.shutdown(); pause.release();
+  await bounded(stopping); await bounded(command);
+  assert('actual runtime shutdown drains cancelled idle management without approval or model work', (await readState(narrowProof) as { approved?: string }).approved === undefined && shutdownModel.calls === 0 && !(await stateNames(cloudDirectory(narrowConfig))).includes('active.json'));
+} finally { pause.clear(); }
 setRuntimeModelFactoryForTest(undefined);
 
 report();

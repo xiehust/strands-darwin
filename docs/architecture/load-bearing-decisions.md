@@ -794,7 +794,8 @@ User preferences are host-retrieved once per runtime before the first model requ
 Later sends/compaction only reread local approval/revocation; explicit preferences/inspect
 refresh cloud data, and successors reload. Remote edits are detected on refresh/new session,
 not pushed. Denied preCompact runs before retrieval. Compact/multiline preference JSON is
-bounded and validated; generated context is not user quote evidence. Only a locally inspected and user-confirmed
+bounded and validated (stored object or extraction array, optional language); original bytes
+bind approval, generated context is not user quote evidence. Only a locally inspected and user-confirmed
 content hash bound to resource/region/actor/record/strategy/namespace applies, as escaped
 untrusted data nested in the refreshed working-context block, before the existing final
 cache point. Callback replacement preserves literal dollar metacharacters; failed prompt
@@ -825,7 +826,12 @@ failure metadata as nonzero exit. Bootstrap routes this command before runtime i
 and exits nonzero without modifying global handlers. No proof mutation via CLI or development REPL. TUI user
 submissions own mutations; hashes bind content, not human origin. Arbitrary approved shell
 is not a sandbox. Clear/rewind preserve external effects/outboxes, rebuild controllers and refresh
-preferences; shutdown cancels CLI and drains accepted local work. Crash before candidate
+preferences. Management captures a fresh AbortSignal before its first await; publication
+and CLI launches check it, including capability preflight. Shutdown cancels and tracks
+management promises plus local work with a two-second drain cap; late cancelled work cannot
+publish approval/start AWS, while already-issued effects and received acknowledgements stay
+truthful. Runtime cancellation generation spans local context/proof reads through send/compact
+invocation, without resetting the preference cache. Crash before candidate
 persistence can omit a turn, deliberately without archive recovery.
 
 Transport uses `spawn` without shell, JSON stdin, fixed operations, host executable,

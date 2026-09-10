@@ -12,9 +12,10 @@ export class MemoryCli {
   async call(operation: MemoryOperation, input: object, signal?: AbortSignal): Promise<unknown> {
     return JSON.parse(await this.run(operation, input, false, signal));
   }
-  async requireExtraction(): Promise<void> {
+  async requireExtraction(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     if (this.extractionSupported === undefined) {
-      const skeleton = JSON.parse(await this.run('create-event', undefined, true));
+      const skeleton = JSON.parse(await this.run('create-event', undefined, true, signal));
       this.extractionSupported = skeleton.extractionConfig?.namespaceVariables !== undefined;
     }
     if (!this.extractionSupported) throw new Error('AWS CLI lacks CreateEvent extractionConfig.namespaceVariables; upgrade CLI before sending. Nothing uploaded.');

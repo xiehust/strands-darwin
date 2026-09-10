@@ -1197,7 +1197,7 @@ export class AgentRuntime {
     if (submitted !== undefined && !submitted.allowed) {
       throw new Error(submitted.reason ?? 'UserPromptSubmit hook blocked this prompt.');
     }
-    await this.prepareCloudPreferences();
+    const cloudGeneration = await this.prepareCloudPreferences();
     const modelInput = injectCodexContext(input, submitted?.context);
     let checkpointId: string | undefined;
     // A text-only checkpoint cannot truthfully reproduce a multimodal boundary.
@@ -1245,6 +1245,7 @@ export class AgentRuntime {
       // next SDK event, so the recorder and every driver see one ordinary
       // before/after pair for a delegation the model routed to the background.
       const invocation = image === undefined ? modelInput : [new TextBlock(modelInput), image];
+      this.checkCloudPreparation(cloudGeneration);
       const stream = this.backgroundDelegation.observe(this.agent.stream(invocation));
       for await (const event of recordStream(stream, recording)) {
         if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
@@ -1374,12 +1375,17 @@ export class AgentRuntime {
 
   /** Cloud status is a projection, never an implicit retrieval. */
   get cloudMemoryStatus(): string { return this.cloudMemory?.status() ?? 'AgentCore: disabled (local project memory unchanged)'; }
-  private async prepareCloudPreferences(): Promise<void> {
+  private checkCloudPreparation(generation: number | undefined): void {
+    if (generation !== this.cloudMemory?.cancelGeneration) throw new Error('AgentCore preparation cancelled before model invocation');
+  }
+  private async prepareCloudPreferences(): Promise<number | undefined> {
     if (this.cloudMemory === undefined) return;
     const generation = this.cloudMemory.cancelGeneration;
     await this.cloudMemory.startup(); // One cloud fetch per runtime; local revocations are checked on every request.
-    if (generation !== this.cloudMemory.cancelGeneration) throw new Error('AgentCore startup cancelled before model invocation');
+    this.checkCloudPreparation(generation);
     await this.applyCloudPreferences();
+    this.checkCloudPreparation(generation); // Includes working-context and local approval reads.
+    return generation;
   }
   async manageCloudMemory(input: string): Promise<string> {
     if (this.cloudMemory === undefined) return this.cloudMemoryStatus;
@@ -1427,7 +1433,8 @@ export class AgentRuntime {
     const manager = createCompactionManager(this.preserveRecentMessages, normalizeCompactFocus(focus));
     const pre = await this.codexHooks?.preCompact('manual');
     if (pre !== undefined && !pre.allowed) throw new Error(pre.reason ?? 'PreCompact hook blocked compaction.');
-    await this.prepareCloudPreferences();
+    const cloudGeneration = await this.prepareCloudPreferences();
+    this.checkCloudPreparation(cloudGeneration);
     try {
       const result = await compactConversation({
         agent: this.agent,
