@@ -48,18 +48,35 @@ export function parseMemoryXml(text: string): XmlNode {
   return root;
 }
 function tags(node: XmlNode): string[] { return [node.tag, ...node.children.flatMap((child) => typeof child === 'string' ? [] : tags(child))]; }
-export function validateRecord(raw: unknown, kind: RecordKind, config: AgentCoreConfig, root: string) {
+const preferenceSchema = z.array(z.object({
+  language: z.string().min(1).max(100), context: z.string().max(1000),
+  preference: z.string().min(1).max(1000), categories: z.array(z.string().max(100)).max(16),
+}).strict()).min(1).max(10);
+export function parsePreference(text: string): string {
+  if (text.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) throw new Error('Preference content refused or too large to adopt');
+  preferenceSchema.parse(JSON.parse(text));
+  return text; // Preserve the exact inspected JSON, including whitespace; context is not quote proof.
+}
+/** Validate the entire returned scope BEFORE filtering hierarchical results by kind. */
+export function validateRecordScope(raw: unknown, kind: RecordKind, config: AgentCoreConfig, root: string) {
   const record = recordSchema.parse(raw); const scope = scopeFor(config, root);
   const strategy = kind === 'preference' ? config.preferenceStrategyId : config.episodicStrategyId;
   if (record.memoryStrategyId !== strategy) throw new Error('Memory strategy mismatch');
-  const allowed = (ns: string): boolean => kind === 'preference' ? ns === scope.preferences : kind === 'reflection' ? ns === scope.project : ns.startsWith(scope.episodes) && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}\/$/.test(ns.slice(scope.episodes.length));
+  const episode = (ns: string) => ns.startsWith(scope.episodes) && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}\/$/.test(ns.slice(scope.episodes.length));
+  const allowed = (ns: string): boolean => kind === 'preference' ? ns === scope.preferences : ns === scope.project || episode(ns);
   if (!record.namespaces.every(allowed)) throw new Error('Memory namespace mismatch');
   // Metadata is data only, never proof. Conflicting identity hints fail closed too.
   for (const [key, expected] of Object.entries({ actorId: config.actorId, projectid: scope.projectId, memoryId: config.memoryId, memoryStrategyId: strategy })) {
     const value = record.metadata?.[key];
     if (value !== undefined && (!('stringValue' in value) || value.stringValue !== expected)) throw new Error('Memory metadata scope mismatch');
   }
-  const content = kind === 'preference' ? record.content.text : parseMemoryXml(record.content.text);
+  return record;
+}
+export function validateRecord(raw: unknown, kind: RecordKind, config: AgentCoreConfig, root: string) {
+  const record = validateRecordScope(raw, kind, config, root); const scope = scopeFor(config, root);
+  const strategy = kind === 'preference' ? config.preferenceStrategyId : config.episodicStrategyId;
+  if (kind !== 'preference' && !record.namespaces.every(ns => kind === 'reflection' ? ns === scope.project : ns.startsWith(scope.episodes))) throw new Error('Memory kind namespace mismatch');
+  const content = kind === 'preference' ? parsePreference(record.content.text) : parseMemoryXml(record.content.text);
   if (typeof content !== 'string') {
     const names = tags(content);
     if (kind === 'episode' && (!names.includes('intent') && !names.includes('user_intent') || !names.includes('assessment') && !names.includes('assessment_user'))) throw new Error('Not an episode');

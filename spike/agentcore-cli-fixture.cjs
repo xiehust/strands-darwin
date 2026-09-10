@@ -8,7 +8,15 @@ const args = process.argv.slice(2);
 let stdin = '';
 process.stdin.on('data', chunk => { stdin += chunk; });
 process.stdin.on('end', () => {
-  fs.appendFileSync(path.join(home, 'fixture-calls.jsonl'), JSON.stringify({ args, input: stdin ? JSON.parse(stdin) : null }) + '\n');
+  fs.appendFileSync(path.join(home, 'fixture-calls.jsonl'), JSON.stringify({ args, input: stdin ? JSON.parse(stdin) : null, env: control.captureEnv ? Object.fromEntries(['AWS_CONTAINER_AUTHORIZATION_TOKEN', 'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE', 'AWS_EC2_METADATA_DISABLED', 'AWS_ENDPOINT_URL', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'].map(key => [key, process.env[key]])) : undefined }) + '\n');
+  if (control.pauseGet && args[1] === 'get-memory-record') {
+    fs.writeFileSync(path.join(home, 'fixture-paused'), 'ready');
+    const timer = setInterval(() => {
+      if (!fs.existsSync(path.join(home, 'fixture-release'))) return;
+      clearInterval(timer); console.log(JSON.stringify({ memoryRecord: control.records[0] }));
+    }, 10);
+    return;
+  }
   if (control.mode === 'hang') { setInterval(() => {}, 1000); return; }
   if (control.mode === 'large') { process.stdout.write('x'.repeat(300000)); return; }
   if (control.mode === 'error') { process.stderr.write('secret service error not for model'); process.exitCode = 9; return; }

@@ -948,7 +948,6 @@ export class AgentRuntime {
     if (memoryController !== undefined) agent.toolRegistry.add(createMemoryTools(memoryController));
     if (cloudMemory !== undefined) {
       agent.toolRegistry.add(createCloudMemoryTools(cloudMemory));
-      if (agent.messages.length > 0) cloudMemory.markMemoryExposure(); // Restored context may already contain private tool/memory results.
     }
     // Children build their models through the same factory seam as the parent: in
     // production it *is* `createModelFromConfig`; offline suites can script a child
@@ -1253,7 +1252,6 @@ export class AgentRuntime {
         // Observed at the same point `recordStream` observes: synchronously, between
         // `stream()` and the `yield`, so `/usage` asked mid-turn already counts the
         // calls that completed. Cannot throw — see {@link observeCallStats}.
-        if (event.type === 'beforeToolCallEvent') this.cloudMemory?.markMemoryExposure();
         this.observeCallStats(event);
         this.observeContextAnchor(event);
         this.observeCacheMiss(event);
@@ -1379,20 +1377,25 @@ export class AgentRuntime {
   private async prepareCloudPreferences(): Promise<void> {
     if (this.cloudMemory === undefined) return;
     const generation = this.cloudMemory.cancelGeneration;
-    await this.cloudMemory.startup(); // One bounded query per invocation; changed cloud content cannot retain old approval.
+    await this.cloudMemory.startup(); // One cloud fetch per runtime; local revocations are checked on every request.
     if (generation !== this.cloudMemory.cancelGeneration) throw new Error('AgentCore startup cancelled before model invocation');
-    const context = await buildWorkingContext(this.projectRoot);
-    applyWorkingContext(this.agent, context.fragment.replace('</working-context>', `${await this.cloudMemory.context()}\n</working-context>`));
-    if (this.promptCache.parts.includes('system prompt')) applySystemPromptCachePoint(this.agent, this.promptCache);
+    await this.applyCloudPreferences();
   }
   async manageCloudMemory(input: string): Promise<string> {
     if (this.cloudMemory === undefined) return this.cloudMemoryStatus;
-    const result = await this.cloudMemory.command(input);
-    // Approval/forget affect the next request immediately without a cloud refresh.
-    const context = await buildWorkingContext(this.projectRoot);
-    applyWorkingContext(this.agent, context.fragment.replace('</working-context>', `${await this.cloudMemory.context()}\n</working-context>`));
-    if (this.promptCache.parts.includes('system prompt')) applySystemPromptCachePoint(this.agent, this.promptCache);
+    const result = await this.cloudMemory.command(input, 'user');
+    await this.applyCloudPreferences();
     return result;
+  }
+  private async applyCloudPreferences(): Promise<void> {
+    if (this.cloudMemory === undefined) return;
+    const context = await buildWorkingContext(this.projectRoot);
+    const preferences = await this.cloudMemory.context();
+    // Callback replacement preserves literal $&, $`, and $' in reviewed data.
+    if (!applyWorkingContext(this.agent, context.fragment.replace('</working-context>', () => `${preferences}\n</working-context>`))) {
+      throw new Error('AgentCore working-context refresh refused; model invocation blocked');
+    }
+    if (this.promptCache.parts.includes('system prompt')) applySystemPromptCachePoint(this.agent, this.promptCache);
   }
   async manageMemory(input: string): Promise<MemoryCommandResult> {
     if (this.liveConfig.memory !== true) {
@@ -1422,9 +1425,9 @@ export class AgentRuntime {
    */
   async compact(focus?: string): Promise<CompactResult> {
     const manager = createCompactionManager(this.preserveRecentMessages, normalizeCompactFocus(focus));
-    await this.prepareCloudPreferences();
     const pre = await this.codexHooks?.preCompact('manual');
     if (pre !== undefined && !pre.allowed) throw new Error(pre.reason ?? 'PreCompact hook blocked compaction.');
+    await this.prepareCloudPreferences();
     try {
       const result = await compactConversation({
         agent: this.agent,

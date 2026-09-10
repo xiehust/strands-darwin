@@ -1,20 +1,31 @@
-/** Offline real-files, real CLI subprocess and actual Agent/gate proofs. No AWS requests. */
-import { chmod, mkdir, readFile, writeFile, readdir, symlink, stat } from 'node:fs/promises';
+/** Offline real-files, SDK constructors, actual runtime/gates and CLI subprocess proofs.
+ * No AWS requests. The installed AWS CLI skeleton/service model is checked locally.
+ * Isolates HOME; generated events, credential markers and model responses are synthetic.
+ */
+process.env['DARWIN_MODEL_PRICES_FETCH'] = 'off';
+import { chmod, mkdir, readFile, writeFile, readdir, symlink, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { watch } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { Agent, Model, type BaseModelConfig, type Message, type ModelStreamEvent } from '@strands-agents/sdk';
-import { CloudMemory } from '../src/agentcore/controller.js';
+import { Agent, Model, BeforeToolCallEvent, AfterToolCallEvent, ToolUseBlock, ToolResultBlock, JsonBlock, TextBlock, ContentBlockEvent, AgentResultEvent, AgentResult, Message, ImageBlock, type BaseModelConfig, type ModelStreamEvent } from '@strands-agents/sdk';
+import { CloudMemory as ReadOnlyCloudMemory } from '../src/agentcore/controller.js';
+// Explicit test-side user submission; production defaults remain read-only.
+class CloudMemory extends ReadOnlyCloudMemory {
+  override command(input: string, authority: 'read' | 'user' = 'user') { return super.command(input, authority); }
+}
 import { MemoryCli } from '../src/agentcore/transport.js';
-import { parseAgentCoreConfig, scopeFor, type AgentCoreConfig } from '../src/agentcore/config.js';
+import { digest, parseAgentCoreConfig, scopeFor, type AgentCoreConfig } from '../src/agentcore/config.js';
 import { parseMemoryXml, validateRecord } from '../src/agentcore/records.js';
-import { cloudDirectory, writeState } from '../src/agentcore/state.js';
+import { cloudDirectory, readState, stateNames, withStateLock, writeState } from '../src/agentcore/state.js';
 import { publicProse } from '../src/agentcore/projection.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { configPath, loadConfig, permissionRulesPath } from '../src/config.js';
 import { classify } from '../src/agent/permission.js';
 import { TrajectoryRecorder } from '../src/trajectory/writer.js';
 import { isSensitiveDarwinPath } from '../src/paths.js';
+import { applyWorkingContext } from '../src/agent/working-context.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 const home = ownPrivateHome('agentcore'); const root = path.join(home, 'project'); await mkdir(root);
 const fixture = fileURLToPath(new URL('./agentcore-cli-fixture.cjs', import.meta.url)); await chmod(fixture, 0o755);
@@ -24,10 +35,11 @@ async function calls(): Promise<any[]> { try { return (await readFile(path.join(
 async function rejects(label: string, action: () => unknown | Promise<unknown>) { let caught = false; try { await action(); } catch { caught = true; } assert(label, caught); }
 const id = 'record-' + 'a'.repeat(40);
 const scope = scopeFor(config, root);
+function preferenceJson(preference: string, pretty = false) { return JSON.stringify([{ language: 'English', context: 'Communication across projects', preference, categories: ['communication'] }], null, pretty ? 2 : undefined); }
 function record(kind: 'preference' | 'episode' | 'reflection', overrides = {}) {
   return { memoryRecordId: id, memoryStrategyId: kind === 'preference' ? config.preferenceStrategyId : config.episodicStrategyId,
     namespaces: [kind === 'preference' ? scope.preferences : kind === 'reflection' ? scope.project : `${scope.episodes}session-test/`], createdAt: '2026-01-01T00:00:00Z',
-    content: { text: kind === 'preference' ? 'Use concise replies in all projects.' : kind === 'episode' ? '<episode><intent>Fix tests</intent><assessment>No</assessment><justification>Exit 1</justification><turns><turn><action>Run tests</action></turn><turn><action>Fix implementation</action></turn></turns></episode>' : '<reflection><use_cases>Failing tests</use_cases><hints>Check exit evidence</hints><confidence>0.8</confidence></reflection>' }, ...overrides };
+    content: { text: kind === 'preference' ? preferenceJson('Use concise replies in all projects.') : kind === 'episode' ? '<episode><intent>Fix tests</intent><assessment>No</assessment><justification>Exit 1</justification><turns><turn><action>Run tests</action></turn><turn><action>Fix implementation</action></turn></turns></episode>' : '<reflection><use_cases>Failing tests</use_cases><hints>Check exit evidence</hints><confidence>0.8</confidence></reflection>' }, ...overrides };
 }
 header('AgentCore config, scope, XML and transport');
 assert('disabled omitted and false have no config', parseAgentCoreConfig(undefined) === undefined && parseAgentCoreConfig(false) === undefined);
@@ -68,8 +80,8 @@ assert('adopted user preference crosses projects', (await crossProject.context()
 await preferences.command(`forget ${id}`);
 assert('forget immediate across live controllers', await preferences.context() === '' && await crossProject.context() === '');
 await preferences.command(`inspect ${id}`); await preferences.command(`confirm ${id} ${hash} global`);
-await control({ records: [record('preference', { content: { text: 'Changed preference' } })] });
-await preferences.startup(); assert('cloud content edits invalidate approval', await preferences.context() === '');
+await control({ records: [record('preference', { content: { text: preferenceJson('Changed preference') } })] });
+await preferences.command('preferences'); assert('cloud content edits invalidate approval on explicit refresh', await preferences.context() === '');
 await control({ records: [record('preference', { namespaces: ['/users/wrong/'] })] });
 const beforeDelete = (await calls()).length; await preferences.command(`delete ${id} cloud`);
 assert('wrong-scope delete never invokes DeleteMemoryRecord', !(await calls()).slice(beforeDelete).some(call => call.args[1] === 'delete-memory-record'));
@@ -79,18 +91,20 @@ header('Durable new-turn outbox and preview authorization');
 assert('privacy omissions reject dumps and secrets', publicProse('secret: abc') === undefined && publicProse('read /home/user/file') === undefined && publicProse('x'.repeat(1001)) === undefined);
 const file = path.join(home, 'trajectory.jsonl'); const uploader = new CloudMemory(config, root, 'session-upload');
 const recorder = new TrajectoryRecorder({ file, run: { session: 'session-upload', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'offline', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => uploader.settle(settlement, file) });
-const turn = recorder.beginTurn('Fix the synthetic test failure.'); await turn?.inputDurable();
-turn?.record({ type: 'contentBlockEvent', contentBlock: { text: 'Public synthetic statement before any tool.' } } as never);
-turn?.record({ type: 'beforeToolCallEvent', toolUse: { name: 'bash', toolUseId: 'test', input: { mode: 'execute', command: 'pnpm test' } } } as never);
-turn?.record({ type: 'afterToolCallEvent', toolUse: { toolUseId: 'test' }, result: { toolUseId: 'test', status: 'error', content: [{ json: { exitCode: 1, output: 'SECRET LOG DUMP' } }] } } as never);
+const wireAgent = new Agent({ model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' });
+const turn = recorder.beginTurn('Use concise replies across projects. Fix the synthetic test failure.'); await turn?.inputDurable();
+turn?.record(new ContentBlockEvent({ agent: wireAgent, invocationState: {}, contentBlock: new TextBlock('Public synthetic statement before any tool.') }));
+const testUse = new ToolUseBlock({ name: 'bash', toolUseId: 'test', input: { mode: 'execute', command: 'pnpm test' } });
+turn?.record(new BeforeToolCallEvent({ agent: wireAgent, invocationState: {}, tool: undefined, toolUse: testUse }));
+turn?.record(new AfterToolCallEvent({ agent: wireAgent, invocationState: {}, tool: undefined, toolUse: testUse, result: new ToolResultBlock({ toolUseId: 'test', status: 'error', content: [new JsonBlock({ json: { exitCode: 1, output: 'SECRET LOG DUMP' } })] }) }));
 turn?.failed(new Error('synthetic failure')); turn?.end(); await recorder.close();
 const pending = await uploader.command('pending'); const token = pending.split(' ')[0]!;
 assert('new durable failed turn queued without network', /^[a-f0-9]{64}$/.test(token) && pending.includes('pending; not uploaded'));
 const beforeSend = (await calls()).length;
-assert('send without preview authorization refused', (await uploader.command(`send ${token} ${'0'.repeat(64)}`)).includes('authorization'));
+assert('send without preview authorization refused', (await uploader.command(`send ${token} ${'0'.repeat(64)}`)).includes('Preview absent'));
 assert('no unauthorized subprocess', (await calls()).length === beforeSend);
 const preview = await uploader.command(`preview ${token}`); const previewHash = preview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)?.[1]!;
-assert('preview retains failure, command and exit evidence, excludes logs', preview.includes('Public synthetic statement') && preview.includes('failed') && preview.includes('pnpm test') && preview.includes('exitCode') && !preview.includes('SECRET LOG DUMP'));
+assert('preview retains failure, command and exit evidence, excludes logs', !preview.includes('Public synthetic statement') && preview.includes('failed') && preview.includes('pnpm test') && preview.includes('exitCode') && !preview.includes('SECRET LOG DUMP'));
 await control({});
 assert('manual upload acknowledges event not episode', (await uploader.command(`send ${token} ${previewHash}`)).includes('generation is asynchronous and NOT verified'));
 const createCall = (await calls()).at(-1);
@@ -104,12 +118,13 @@ header('Retry tokens, ordered turns, memory exclusion and state corruption');
 const retryRoot = path.join(home, 'retry-project'); await mkdir(retryRoot);
 const retry = new CloudMemory(config, retryRoot, 'session-retry'); const retryFile = path.join(home, 'retry-trajectory.jsonl');
 const retryRecorder = new TrajectoryRecorder({ file: retryFile, run: { session: 'session-retry', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => retry.settle(settlement, retryFile) });
-for (const stopReason of ['cancelled', 'endTurn']) {
+for (const stopReason of ['cancelled', 'endTurn'] as const) {
   const next = retryRecorder.beginTurn('Synthetic public goal'); await next?.inputDurable();
-  next?.record({ type: 'beforeToolCallEvent', toolUse: { name: 'memory_recall', toolUseId: 'private', input: { query: 'private' } } } as never);
-  next?.record({ type: 'afterToolCallEvent', toolUse: { toolUseId: 'private' }, result: { toolUseId: 'private', status: 'success', content: [{ text: 'RETRIEVED PRIVATE MEMORY' }] } } as never);
-  next?.record({ type: 'contentBlockEvent', contentBlock: { text: 'PARAPHRASED MEMORY' } } as never);
-  next?.record({ type: 'agentResultEvent', result: { stopReason, lastMessage: { role: 'assistant', content: [] } } } as never); next?.end();
+  const use = new ToolUseBlock({ name: 'memory_recall', toolUseId: 'private', input: { query: 'private' } });
+  next?.record(new BeforeToolCallEvent({ agent: wireAgent, invocationState: {}, tool: undefined, toolUse: use }));
+  next?.record(new AfterToolCallEvent({ agent: wireAgent, invocationState: {}, tool: undefined, toolUse: use, result: new ToolResultBlock({ toolUseId: 'private', status: 'success', content: [new TextBlock('RETRIEVED PRIVATE MEMORY')] }) }));
+  next?.record(new ContentBlockEvent({ agent: wireAgent, invocationState: {}, contentBlock: new TextBlock('PARAPHRASED MEMORY') }));
+  next?.record(new AgentResultEvent({ agent: wireAgent, invocationState: {}, result: new AgentResult({ invocationState: {}, stopReason, lastMessage: new Message({ role: 'assistant', content: [] }) }) })); next?.end();
 }
 await retryRecorder.close();
 const retryTokens = (await retry.command('pending')).split('\n').map(row => row.split(' ')[0]!);
@@ -133,7 +148,7 @@ await retry.close();
 header('Actual runtime startup, permission gate, disabled and lifecycle');
 class ScriptedModel extends Model<BaseModelConfig> {
   calls = 0; private config: BaseModelConfig = { modelId: 'offline', contextWindowLimit: 32000 };
-  constructor(readonly toolName?: string) { super(); }
+  constructor(readonly toolName?: string, readonly toolInput: object = { intent: 'Fix tests', limit: 2 }, readonly answer = 'Synthetic public answer.') { super(); }
   override updateConfig(config: BaseModelConfig): void { this.config = { ...this.config, ...config }; }
   override getConfig(): BaseModelConfig { return this.config; }
   override async *stream(messages: Message[]): AsyncIterable<ModelStreamEvent> {
@@ -141,11 +156,11 @@ class ScriptedModel extends Model<BaseModelConfig> {
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     if (this.toolName && !messages.some(message => message.content.some(block => block.type === 'toolResultBlock'))) {
       yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name: this.toolName, toolUseId: 'recall-test' } };
-      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify({ intent: 'Fix tests', limit: 2 }) } };
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify(this.toolInput) } };
       yield { type: 'modelContentBlockStopEvent' }; yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' }; return;
     }
     yield { type: 'modelContentBlockStartEvent' };
-    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'Synthetic public answer.' } };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: this.answer } };
     yield { type: 'modelContentBlockStopEvent' }; yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
   }
 }
@@ -208,5 +223,220 @@ await configure({ ...config, upload: 'off' });
 const beforeCli = (await calls()).length;
 const cliStatus = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), cliFile, 'cloud-memory', 'status'], { cwd: root, encoding: 'utf8', timeout: 10000 });
 assert('headless status starts no model and invokes no AWS', cliStatus.status === 0 && cliStatus.stdout.includes('AgentCore: enabled') && (await calls()).length === beforeCli);
+
+header('Host regressions: real schema, mixed records and literal runtime preference data');
+assert('64-character project ID accepted', parseAgentCoreConfig({ ...config, projectId: 'a'.repeat(64) })?.projectId?.length === 64);
+await rejects('65-character project ID refused', () => parseAgentCoreConfig({ ...config, projectId: 'a'.repeat(65) }));
+// CLI 2.36.42 service definitions are local schema data, not an AWS request.
+await new MemoryCli({ ...config, cliPath: '/usr/local/bin/aws', timeoutMs: 10000 }).requireExtraction();
+const createMemorySkeleton = spawnSync('/usr/local/bin/aws', ['bedrock-agentcore-control', 'create-memory', '--generate-cli-skeleton', 'input', '--region', config.region], { encoding: 'utf8', timeout: 10000 });
+assert('installed CreateMemory skeleton supports namespaceKeys', createMemorySkeleton.status === 0 && JSON.parse(createMemorySkeleton.stdout).namespaceKeys !== undefined);
+const service = JSON.parse(await readFile('/usr/local/aws-cli/v2/current/dist/awscli/botocore/data/bedrock-agentcore/2024-02-28/service-2.json', 'utf8'));
+function validateShape(name: string, value: any): void {
+  const shape = service.shapes[name];
+  if (shape.type === 'structure') {
+    for (const key of shape.required ?? []) if (value[key] === undefined) throw new Error(`Missing ${name}.${key}`);
+    if (shape.union && Object.keys(value).length !== 1) throw new Error(`Invalid union ${name}`);
+    for (const key of Object.keys(value)) { if (!shape.members[key]) throw new Error(`Unknown ${name}.${key}`); validateShape(shape.members[key].shape, value[key]); }
+  } else if (shape.type === 'list') { if (shape.max && value.length > shape.max) throw new Error(name); for (const entry of value) validateShape(shape.member.shape, entry); }
+  else if (shape.type === 'map') { for (const [key, entry] of Object.entries(value)) { validateShape(shape.key.shape, key); validateShape(shape.value.shape, entry); } }
+  else if (shape.type === 'string') { if (typeof value !== 'string' || (shape.min && value.length < shape.min) || (shape.max && value.length > shape.max) || (shape.enum && !shape.enum.includes(value)) || (shape.pattern && !new RegExp(`^(?:${shape.pattern})$`).test(value))) throw new Error(`Invalid ${name}`); }
+  else if (shape.type === 'timestamp' && !Number.isFinite(Date.parse(value))) throw new Error(name);
+}
+validateShape('CreateEventInput', createCall.input);
+assert('captured ingestion validates against installed service skeleton shapes', service.shapes.NamespaceVariableValue.max === 64);
+const payload = createCall.input.payload.map((entry: any) => entry.conversational);
+assert('literal user preference eligible as USER, actions/results TOOL, host metadata OTHER', payload[0].role === 'OTHER' && payload[1].role === 'USER' && payload[1].content.text.startsWith('Use concise replies') && payload[2].role === 'TOOL' && payload[3].role === 'TOOL' && JSON.parse(payload[3].content.text).result.exitCode === 1);
+const episodeFragment = '<language>English</language><summary><situation>Failing check</situation><user_intent>Fix tests</user_intent><assessment_user>No</assessment_user><justification>Exit 1</justification><turns><turn><action>Run tests</action></turn><turn><action>Fix implementation</action></turn></turns></summary>';
+const reflectionFragment = '<language>English</language><summary><use_cases>Failing checks</use_cases><hints>Check evidence</hints><reflection>Read exit status</reflection><confidence>0.8</confidence></summary>';
+await control({ records: [record('episode', { content: { text: episodeFragment } }), record('reflection', { content: { text: reflectionFragment } })] });
+const mixed = await memory.recall('reflection', 'Failing checks', 3);
+assert('hierarchical reflection query omits legitimate episode with honest underfill', mixed.records.length === 1 && mixed.omitted === 1 && mixed.warning.includes('underfill') && (await calls()).at(-1).input.namespacePath === scope.project);
+assert('documented sibling-root episode keeps action order', JSON.stringify(validateRecord(record('episode', { content: { text: episodeFragment } }), 'episode', config, root)).includes('assessment_user'));
+await control({ records: [record('reflection', { content: { text: reflectionFragment } }), record('episode', { namespaces: ['/users/other/'] })] });
+await rejects('wrong-scope other-kind record still fails entire recall', () => memory.recall('reflection', 'Failing checks', 3));
+for (const text of ['not JSON', '{}', '[{"preference":"missing fields"}]', '[null]']) await rejects('malformed preference JSON refused', () => validateRecord(record('preference', { content: { text } }), 'preference', config, root));
+const literal = "Keep literal $& $` $' and closing </working-context> examples.";
+const prettyRecord = record('preference', { content: { text: preferenceJson(literal, true) } });
+const literalHash = validateRecord(prettyRecord, 'preference', config, root).hash;
+await control({ records: [prettyRecord] }); await configure({ ...config, preferences: true, upload: 'off' });
+const literalRuntime = await runtime(new ScriptedModel()); const literalAgent = (literalRuntime as unknown as { agent: Agent }).agent;
+await literalRuntime.manageCloudMemory(`inspect ${id}`); await literalRuntime.manageCloudMemory(`confirm ${id} ${literalHash} global`);
+function cloudData(agent: Agent): any[] {
+  const prompt = typeof agent.systemPrompt === 'string' ? agent.systemPrompt : agent.systemPrompt?.map(block => block.type === 'textBlock' ? block.text : '').join('\n') ?? '';
+  const data = prompt.match(/Never re-upload as evidence\.\n([^\n]+)\n<\/cloud-preference-data>/)?.[1]; return data ? JSON.parse(data) : [];
+}
+assert('actual runtime preserves all reviewed replacement metacharacters and pretty JSON literally', cloudData(literalAgent)[0]?.content === prettyRecord.content.text);
+const cachedBefore = (await calls()).length; await drain(literalRuntime); await drain(literalRuntime); await literalRuntime.compact();
+assert('first send fetches once; second send and compact use cached cloud records', (await calls()).length === cachedBefore + 1);
+await literalRuntime.manageCloudMemory(`forget ${id}`);
+assert('actual runtime forget removes literal preference, leaves prompt refreshable', cloudData(literalAgent).length === 0 && applyWorkingContext(literalAgent, '<working-context>test</working-context>'));
+await literalRuntime.manageCloudMemory(`inspect ${id}`); await literalRuntime.manageCloudMemory(`confirm ${id} ${literalHash} global`);
+await control({ records: [record('preference', { content: { text: preferenceJson('Edited remote preference', true) } })] });
+await drain(literalRuntime); assert('remote edit is not falsely claimed to be pushed immediately', cloudData(literalAgent).length === 1);
+await literalRuntime.manageCloudMemory(`inspect ${id}`); assert('explicit runtime inspection removes edited approval immediately', cloudData(literalAgent).length === 0);
+await control({ records: [prettyRecord] }); await literalRuntime.manageCloudMemory(`inspect ${id}`); await literalRuntime.manageCloudMemory(`confirm ${id} ${literalHash} global`);
+const remoteRevoker = new CloudMemory({ ...config, preferences: true }, root + '-other', 'revoker'); await remoteRevoker.command(`forget ${id}`);
+const beforeRevoke = (await calls()).length; await drain(literalRuntime);
+assert('cross-project local revocation takes effect next request without AWS retrieval', cloudData(literalAgent).length === 0 && (await calls()).length === beforeRevoke);
+const malformedPrompt = literalAgent.systemPrompt;
+literalAgent.systemPrompt = [new TextBlock('unexpected prompt block'), new TextBlock('unexpected second block')];
+await rejects('actual runtime refuses model call if working-context cannot be refreshed', () => drain(literalRuntime));
+if (malformedPrompt === undefined) delete literalAgent.systemPrompt; else literalAgent.systemPrompt = malformedPrompt;
+await literalRuntime.shutdown(); await remoteRevoker.close();
+header('Host regressions: user authority, subprocess exits and inspection race');
+function cli(...args: string[]) { return spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), cliFile, 'cloud-memory', ...args], { cwd: root, encoding: 'utf8', timeout: 10000 }); }
+await configure({ ...config, preferences: true, upload: 'off' }); await control({ records: [prettyRecord] });
+const proofFile = path.join(cloudDirectory(config), `${id}.json`);
+const proofBefore = await readFile(proofFile, 'utf8');
+const readInspect = cli('inspect', id);
+assert('CLI inspect succeeds without proof mutation', readInspect.status === 0 && readInspect.stdout.includes('Read-only inspection') && await readFile(proofFile, 'utf8') === proofBefore);
+for (const args of [['confirm', id, literalHash, 'global'], ['send', token, previewHash], ['delete', id, 'cloud'], ['forget', id], ['discard', token], ['clear-accepted'], ['nonsense']]) {
+  const result = cli(...args); assert(`CLI ${args[0]} refusal is nonzero`, result.status === 1 && result.stderr.includes('Headless mutations unavailable'));
+}
+await configure({ ...config, cliPath: '/nonexistent/agentcore-cli', upload: 'off' });
+const missing = cli('preferences'); assert('CLI retrieval failure exits nonzero', missing.status === 1 && missing.stdout.includes('unavailable'));
+await configure({ ...config, preferences: false }); await control({});
+await writeFile(permissionRulesPath(root), JSON.stringify({ allow: ['bash:*'] }));
+for (const args of [['confirm', id, literalHash, 'global'], ['send', token, previewHash], ['delete', id, 'cloud']]) {
+  const command = [process.execPath, '--import', import.meta.resolve('tsx'), cliFile, 'cloud-memory', ...args].map(arg => `'${arg.replaceAll("'", "'\\''")}'`).join(' ');
+  const shellRuntime = await runtime(new ScriptedModel('bash', { mode: 'execute', command }));
+  const before = (await calls()).length; await drain(shellRuntime);
+  const transcript = JSON.stringify((shellRuntime as unknown as { agent: Agent }).agent.messages);
+  assert(`actual model bash broad allow cannot self-${args[0]} via CLI`, transcript.includes('Headless mutations unavailable') && transcript.includes('exitCode') && (await calls()).length === before && await readFile(proofFile, 'utf8') === proofBefore);
+  await shellRuntime.shutdown();
+}
+await writeFile(permissionRulesPath(root), JSON.stringify({ allow: [] }));
+await control({ records: [prettyRecord] });
+const inspector = new CloudMemory({ ...config, preferences: true, timeoutMs: 5000 }, root, 'inspector');
+const forgetter = new CloudMemory({ ...config, preferences: true }, root + '-other', 'forgetter');
+await inspector.command(`inspect ${id}`); await inspector.command(`confirm ${id} ${literalHash} global`);
+await control({ records: [prettyRecord], pauseGet: true });
+async function waitFile(file: string) { for (let n = 0; n < 300; n++) { try { await stat(file); return; } catch { await delay(10); } } throw new Error(`Timed out: ${file}`); }
+const inspecting = inspector.command(`inspect ${id}`); await waitFile(path.join(home, 'fixture-paused'));
+await forgetter.command(`forget ${id}`); await writeFile(path.join(home, 'fixture-release'), 'release'); await inspecting;
+assert('paused inspection cannot resurrect approval forgotten by another controller', (await readState(proofFile) as { approved?: string }).approved === undefined && await inspector.context() === '');
+await inspector.close(); await forgetter.close();
+await control({ mode: 'hang' });
+const cliCancel = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), cliFile, 'cloud-memory', 'preferences'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+let cancelledText = ''; cliCancel.stdout.on('data', chunk => { cancelledText += String(chunk); });
+const priorCalls = (await calls()).length;
+for (let n = 0; n < 300 && (await calls()).length === priorCalls; n++) await delay(10);
+const cancelledExit = new Promise<number | null>(resolve => cliCancel.once('close', resolve)); cliCancel.kill('SIGINT');
+const cancellationCode = await cancelledExit;
+assert('CLI cancellation exits nonzero with explicit failure', cancellationCode === 1 && cancelledText.includes('cancelled'));
+if (cancellationCode !== 1 || !cancelledText.includes('cancelled')) console.log({ cancellationCode, cancelledText });
+const credentialKeys = ['AWS_CONTAINER_AUTHORIZATION_TOKEN', 'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE', 'AWS_EC2_METADATA_DISABLED', 'AWS_ENDPOINT_URL'] as const;
+const originalEnv = credentialKeys.map(key => process.env[key]);
+try {
+  Object.assign(process.env, { AWS_CONTAINER_AUTHORIZATION_TOKEN: 'synthetic-not-a-secret', AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: '/synthetic/token-file', AWS_EC2_METADATA_DISABLED: 'true', AWS_ENDPOINT_URL: 'https://invalid.example' });
+  await control({ captureEnv: true, records: [] }); await new MemoryCli(config).call('retrieve-memory-records', {});
+  const env = (await calls()).at(-1).env;
+  assert('credential flags preserved, endpoint override excluded', env.AWS_CONTAINER_AUTHORIZATION_TOKEN === 'synthetic-not-a-secret' && env.AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE === '/synthetic/token-file' && env.AWS_EC2_METADATA_DISABLED === 'true' && env.AWS_ENDPOINT_URL === undefined && env.AWS_IGNORE_CONFIGURED_ENDPOINT_URLS === 'true');
+} finally { credentialKeys.forEach((key, index) => { const value = originalEnv[index]; if (value === undefined) delete process.env[key]; else process.env[key] = value; }); }
+header('Host regressions: actual runtime recorder privacy and failed command evidence');
+await control({});
+const runtimeConfig = { ...config, projectId: 'runtime-wire', preferences: false };
+await configure(runtimeConfig);
+// A real pnpm failure in a disposable repository, not a fabricated tool event.
+await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(1)"' } }));
+const commandRuntime = await runtime(new ScriptedModel('bash', { mode: 'execute', command: 'pnpm test' }), 'default', true);
+await drain(commandRuntime); const commandSession = commandRuntime.info.sessionId; await commandRuntime.shutdown();
+const runtimeOutbox = new CloudMemory(runtimeConfig, root, commandSession);
+const runtimeToken = (await runtimeOutbox.command('pending')).split(' ')[0]!;
+const readOnlyBox = new ReadOnlyCloudMemory(runtimeConfig, root, commandSession);
+const readPreview = await readOnlyBox.command(`preview ${runtimeToken}`);
+const readBoxDir = path.join(cloudDirectory(runtimeConfig, root), digest([runtimeConfig.region, runtimeConfig.memoryId, runtimeConfig.actorId, runtimeConfig.projectId, runtimeConfig.episodicStrategyId, runtimeConfig.preferenceStrategyId]));
+assert('read-only preview displays payload but writes no authorization proof', readPreview.includes('Read-only preview') && await readState(path.join(readBoxDir, `${runtimeToken}.preview.json`)) === undefined);
+assert('stale preview refusal has failure metadata independent of wording', !(await runtimeOutbox.commandResult(`send ${runtimeToken} ${'0'.repeat(64)}`, 'user')).ok);
+await readOnlyBox.close();
+const runtimePreview = await runtimeOutbox.command(`preview ${runtimeToken}`);
+const runtimeBody = JSON.parse(runtimePreview.slice(0, runtimePreview.indexOf('\nReview for private material')));
+const runtimeSteps = runtimeBody.payload.map((entry: any) => entry.conversational).filter((entry: any) => entry.role === 'TOOL').map((entry: any) => JSON.parse(entry.content.text));
+assert('actual runtime SDK wire retains pnpm test action before error exit evidence', runtimeSteps[0]?.arguments.command === 'pnpm test' && runtimeSteps[1]?.result.status === 'success' && runtimeSteps[1]?.result.commandOutcome === 'failed' && runtimeSteps[1]?.result.exitCode === 1 && runtimeSteps[0].seq < runtimeSteps[1].seq);
+assert('endTurn does not assert task success despite real command failure', runtimePreview.includes('not inferred'));
+for (const scenario of ['image', 'bang', 'custom'] as const) {
+  const privateText = `PRIVATE ${scenario.toUpperCase()} TRANSCRIPTION`;
+  const privacyConfig = { ...config, projectId: `privacy-${scenario}`, preferences: false }; await configure(privacyConfig);
+  const privacy = await runtime(new ScriptedModel(undefined, {}, privateText));
+  const image = scenario === 'image' ? new ImageBlock({ format: 'png', source: { bytes: Buffer.from([137, 80, 78, 71]) } }) : undefined;
+  if (scenario === 'bang') privacy.recordShellCommand({ command: 'synthetic report', exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: privateText });
+  for await (const _event of privacy.send(scenario === 'image' ? 'Describe the image' : `Expanded input ${privateText}`, scenario === 'custom' ? '/synthetic' : 'Describe this input', image)) {}
+  await privacy.shutdown();
+  const box = new CloudMemory(privacyConfig, root, privacy.info.sessionId); const candidate = (await box.command('pending')).split(' ')[0]!;
+  const text = await box.command(`preview ${candidate}`);
+  assert(`${scenario} paraphrase never enters actual runtime outbox with preferences false and no tools`, text.includes('omissions') && !text.includes(privateText) && !text.includes('Expanded input') && !text.includes('ASSISTANT'));
+  await box.close();
+}
+await unlink(path.join(root, 'package.json'));
+await configure({ ...config, preferences: true, upload: 'off' });
+await mkdir(path.join(root, '.agents'), { recursive: true });
+const hookFile = path.join(root, '.agents', 'hooks.json');
+await writeFile(hookFile, JSON.stringify({ hooks: { PreCompact: [{ hooks: [{ type: 'command', command: 'exit 2' }] }] } }));
+const blockedCompact = await runtime(new ScriptedModel()); const beforeCompact = (await calls()).length;
+await rejects('actual PreCompact refusal prevents preference network fetch', () => blockedCompact.compact());
+assert('denied compaction made no CLI request', (await calls()).length === beforeCompact);
+await blockedCompact.shutdown(); await unlink(hookFile);
+header('Host regressions: atomic no-clobber state and explicit bounded outbox lifecycle');
+function outboxPath(config: AgentCoreConfig, project: string) { return path.join(cloudDirectory(config, project), digest([config.region, config.memoryId, config.actorId, scopeFor(config, project).projectId, config.episodicStrategyId, config.preferenceStrategyId])); }
+const outboxDir = outboxPath(runtimeConfig, root);
+// Simulate kill before publication with real partial private staging files. Those are never final names.
+const interrupted = path.join(outboxDir, `${'f'.repeat(64)}.event.json.interrupted.tmp`);
+await writeFile(interrupted, '{"partial":');
+await writeFile(path.join(outboxDir, `${runtimeToken}.attempt-1.json.interrupted.tmp`), '{');
+const atomicFile = path.join(home, 'atomic.json');
+const contenders = await Promise.allSettled([writeState(atomicFile, { writer: 1 }, true), writeState(atomicFile, { writer: 2 }, true)]);
+assert('concurrent exclusive publish leaves exactly one complete no-clobber record', contenders.filter(result => result.status === 'fulfilled').length === 1 && [1, 2].includes((await readState(atomicFile) as { writer: number }).writer));
+const runtimeHash = runtimePreview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)![1]!;
+await control({}); const runtimeSent = await runtimeOutbox.command(`send ${runtimeToken} ${runtimeHash}`);
+assert('interrupted partial staging does not block other sessions or consume an attempt', runtimeSent.startsWith('AWS event accepted.') && (await stateNames(outboxDir)).includes(`${runtimeToken}.attempt-1.json`));
+assert('explicit accepted cleanup frees bodies and preserves no-repeat receipt', (await runtimeOutbox.command('clear-accepted')).includes('Cleared 1') && !(await stateNames(outboxDir)).includes(`${runtimeToken}.event.json`) && (await runtimeOutbox.command(`send ${runtimeToken} ${runtimeHash}`)).includes('already accepted'));
+await runtimeOutbox.close();
+// The old finite retry-cap scenario can be declined without permanently blocking turn two.
+const recoverRetry = new CloudMemory(config, retryRoot, 'cleanup');
+await withStateLock(path.join(cloudDirectory(config, retryRoot), (await stateNames(cloudDirectory(config, retryRoot)))[0]!), async () => {
+  assert('discard refuses while another controller/process owns outbox operation', !(await recoverRetry.commandResult(`discard ${firstToken}`, 'user')).ok);
+});
+assert('user discard releases earlier declined turn', (await recoverRetry.command(`discard ${firstToken}`)).includes('explicitly discarded'));
+assert('discard tombstone blocks later accidental re-send', !(await recoverRetry.commandResult(`send ${firstToken} ${firstHash}`, 'user')).ok);
+assert('later non-discarded turn can now send in order', (await recoverRetry.command(`send ${retryTokens[laterIndex]} ${laterHash}`)).startsWith('AWS event accepted.'));
+await recoverRetry.close();
+const lifecycleConfig = { ...config, projectId: 'capacity' }; const lifecycle = new CloudMemory(lifecycleConfig, root, 'capacity-session');
+const lifecycleFile = path.join(home, 'capacity-trajectory.jsonl');
+const lifecycleRecorder = new TrajectoryRecorder({ file: lifecycleFile, run: { session: 'capacity-session', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => lifecycle.settle(settlement, lifecycleFile) });
+for (let index = 1; index <= 33; index++) {
+  const next = lifecycleRecorder.beginTurn(`Synthetic capacity goal ${index}`); await next?.inputDurable();
+  next?.record(new AgentResultEvent({ agent: wireAgent, invocationState: {}, result: new AgentResult({ invocationState: {}, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) })); next?.end();
+  await lifecycleRecorder.close(); // Public flush barrier; no polling the detached settlement.
+  const rows = (await lifecycle.command('pending')).split('\n'); const pendingToken = rows.find(row => row.endsWith('pending; not uploaded'))?.split(' ')[0]!;
+  const preview = await lifecycle.command(`preview ${pendingToken}`); const hash = preview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)?.[1];
+  const result = await lifecycle.command(`send ${pendingToken} ${hash}`);
+  if (!result.startsWith('AWS event accepted.')) throw new Error(`capacity turn ${index}: ${result}`);
+  if (index === 32) assert('user cleanup frees all 32 accepted bodies with receipts retained', (await lifecycle.command('clear-accepted')).includes('Cleared 32'));
+  if (index === 33) assert('33rd durable turn persists and sends after authorized cleanup', rows.length === 1 && result.startsWith('AWS event accepted.'));
+}
+await lifecycleRecorder.close(); await lifecycle.close();
+header('Host regressions: actual killed writer and cleanup recovery');
+const crashDir = path.join(home, 'killed-writer'); await mkdir(crashDir);
+const stateModule = fileURLToPath(new URL('../src/agentcore/state.ts', import.meta.url));
+const crashWriter = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), '--input-type=module', '-e', `import { writeState } from ${JSON.stringify(stateModule)}; for(let i=0;i<128;i++) await writeState(${JSON.stringify(crashDir)}+'/'+i+'.event.json',{padding:'x'.repeat(60000)},true);`], { stdio: ['ignore', 'ignore', 'pipe'] });
+let sawStaging = false;
+const watcher = watch(crashDir, (_event, filename) => { if (filename?.endsWith('.tmp')) { sawStaging = true; crashWriter.kill('SIGKILL'); } });
+const crashed = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => crashWriter.once('close', (code, signal) => resolve({ code, signal })));
+watcher.close();
+const published = (await readdir(crashDir)).filter(name => name.endsWith('.event.json'));
+for (const name of published) await readState(path.join(crashDir, name));
+assert('real process killed at staging never publishes partial final JSON', sawStaging && crashed.signal === 'SIGKILL');
+await writeState(path.join(crashDir, 'successor.event.json'), { complete: true }, true);
+assert('killed writer staging does not block successor publication', (await readState(path.join(crashDir, 'successor.event.json')) as { complete: boolean }).complete);
+const receiptOnly = new CloudMemory(runtimeConfig, root, 'receipt-recovery');
+await writeState(path.join(outboxDir, `${runtimeToken}.attempt-1.json`), { hash: runtimeHash });
+assert('user can finish interrupted accepted cleanup from receipt after body/ack removed', (await receiptOnly.command('clear-accepted')).includes('Cleared 1') && !(await stateNames(outboxDir)).includes(`${runtimeToken}.attempt-1.json`));
+const discardRecovery = new CloudMemory(config, retryRoot, 'discard-recovery');
+const retryDir = outboxPath(config, retryRoot);
+await writeState(path.join(retryDir, `${firstToken}.preview.json`), { hash: firstHash });
+assert('user can finish interrupted discard from tombstone after body removed', (await discardRecovery.command(`discard ${firstToken}`)).includes('explicitly discarded') && !(await stateNames(retryDir)).includes(`${firstToken}.preview.json`));
+await receiptOnly.close(); await discardRecovery.close();
+setRuntimeModelFactoryForTest(undefined);
 
 report();

@@ -10,6 +10,7 @@ import { parseAgentCoreConfig } from '../src/agentcore/config.js';
 import { CloudMemory } from '../src/agentcore/controller.js';
 import { TrajectoryRecorder } from '../src/trajectory/writer.js';
 import { ownPrivateHome } from './shared.js';
+import { Agent, AgentResult, AgentResultEvent, Message } from '@strands-agents/sdk';
 const filename = process.env['AGENTCORE_DISPOSABLE_CONFIG'];
 if (!filename || !path.isAbsolute(filename) || process.env['AGENTCORE_ALLOW_SYNTHETIC_UPLOAD'] !== 'yes') {
   console.log('SKIP: no explicitly authorized disposable AgentCore resource; live behavior NOT verified.');
@@ -22,13 +23,14 @@ if (!filename || !path.isAbsolute(filename) || process.env['AGENTCORE_ALLOW_SYNT
   const file = path.join(home, 'synthetic-trajectory.jsonl');
   const recorder = new TrajectoryRecorder({ file, run: { session, agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => memory.settle(settlement, file) });
   const turn = recorder.beginTurn('Synthetic test: arrange three colored blocks.'); await turn?.inputDurable();
-  turn?.record({ type: 'agentResultEvent', result: { stopReason: 'endTurn', lastMessage: { role: 'assistant', content: [] } } } as never);
+  const agent = new Agent({ model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' });
+  turn?.record(new AgentResultEvent({ agent, invocationState: {}, result: new AgentResult({ invocationState: {}, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) }));
   turn?.end(); await recorder.close();
   try {
     const token = (await memory.command('pending')).split(' ')[0]!;
-    const preview = await memory.command(`preview ${token}`); console.log(preview);
+    const preview = await memory.command(`preview ${token}`, 'user'); console.log(preview);
     const hash = preview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)?.[1]; if (!hash) throw new Error('Synthetic preview unavailable');
-    const sent = await memory.command(`send ${token} ${hash}`); console.log(sent);
+    const sent = await memory.command(`send ${token} ${hash}`, 'user'); console.log(sent);
     if (!sent.startsWith('AWS event accepted.')) throw new Error('Synthetic event not accepted');
     console.log(JSON.stringify(await memory.recall('episode', 'Arrange three colored blocks', 2), null, 2));
     console.log(JSON.stringify(await memory.recall('reflection', 'Ordering synthetic colored blocks', 2), null, 2));

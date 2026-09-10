@@ -1359,6 +1359,7 @@ export function App({
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
         try { dispatch({ type: 'notice', text: await runtime.manageCloudMemory(text.slice('/cloud-memory'.length).trim()) }); }
+        catch (error) { dispatch({ type: 'notice', text: error instanceof Error ? error.message : 'Cloud memory context refresh failed' }); }
         finally { clearing.current = false; }
         return;
       }

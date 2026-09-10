@@ -790,11 +790,16 @@ changes. Tool parameters cannot set scopes. Every returned namespace and strateg
 validated; XML is a bounded dependency-free ordered tree with no DTD/attributes/entity
 expansion. Reflection confidence is usefulness, not correctness probability.
 
-User preferences are host-retrieved before each invocation (including the first and
-explicit compaction), one bounded general search. Only a locally inspected and user-confirmed
+User preferences are host-retrieved once per runtime before the first model request.
+Later sends/compaction only reread local approval/revocation; explicit preferences/inspect
+refresh cloud data, and successors reload. Remote edits are detected on refresh/new session,
+not pushed. Denied preCompact runs before retrieval. Compact/multiline preference JSON is
+bounded and validated; generated context is not user quote evidence. Only a locally inspected and user-confirmed
 content hash bound to resource/region/actor/record/strategy/namespace applies, as escaped
 untrusted data nested in the refreshed working-context block, before the existing final
-cache point. Generated explicitness/citation claims never establish proof. Missing/edited
+cache point. Callback replacement preserves literal dollar metacharacters; failed prompt
+refresh blocks the next invocation. Separate inspection/adoption files prevent stale inspection
+from resurrecting forgotten approval. Generated explicitness/citation claims never establish proof. Missing/edited
 proof fails closed; forgetting immediately drops approval and live context. No automatic
 promotion or local-memory migration. Cloud deletion is a distinct user command with a
 fresh scope check. Model provider and permission policy remain independent.
@@ -803,22 +808,34 @@ Uploads require trajectory plus `upload: manual`. The existing durable closing-a
 settlement callback schedules finite local projection work outside streaming; no observer
 awaits network. Only new turns, no backfill, a 1 MiB tail, 24 allowlisted steps, no arbitrary
 tool output/files/diffs/logs/skills/reasoning/images/child transcripts/memory results.
-Assistant prose is omitted after tool/memory exposure to prevent reinforcement through
-paraphrases. User goals remain potentially sensitive, so exact preview + hash authorization
+All assistant prose is omitted to prevent image, expanded driver input and memory
+paraphrases even without tool calls/preferences. Real SDK wire nesting supplies ordered
+USER goals and TOOL actions/results; host source/outcome/omissions are OTHER. User goals remain potentially sensitive, so exact preview + hash authorization
 is mandatory, never replaced by regex redaction. Immutable bounded outbox entries retain
 session/turn/order and truthful failed/cancelled/incomplete states; endTurn is not task
 success. Three durable reserved attempts maximum, stable CreateEvent clientToken/body
 across restart; event acceptance never claims episode generation. No eviction or automatic
-sender. Clear/rewind preserve external effects/outboxes, rebuild controllers and refresh
+sender. User-only discard/clear-accepted free bodies after durable bounded receipts (256),
+never silently evicted. No-clobber publication links synced private temporary files; incomplete
+staging cannot become an event/reservation. Cross-process outbox locks refuse in-flight work;
+crash-held locks/legacy corrupt final entries need manual repair, never silent order skipping.
+Standalone CLI permits only read-only status/preferences/inspect/pending/preview and reports
+failure metadata as nonzero exit. Bootstrap routes this command before runtime imports
+(the SDK bash module installs exit-zero signal handlers); cancellation therefore drains
+and exits nonzero without modifying global handlers. No proof mutation via CLI or development REPL. TUI user
+submissions own mutations; hashes bind content, not human origin. Arbitrary approved shell
+is not a sandbox. Clear/rewind preserve external effects/outboxes, rebuild controllers and refresh
 preferences; shutdown cancels CLI and drains accepted local work. Crash before candidate
 persistence can omit a turn, deliberately without archive recovery.
 
 Transport uses `spawn` without shell, JSON stdin, fixed operations, host executable,
 explicit region, bounded output/time, no CLI retries and process-group kill. CLI schema
 preflight requires `extractionConfig.namespaceVariables` before any upload. Installed
-2.36.21's input skeleton lacks it; output skeletons also fail on generated union/ID values,
-so installed `service-2.json` verifies retrieval/get fields and authoritative AWS docs
-verify the newer extraction config. No resource creation, dependencies, live repository
+2.36.42 passes this and CreateMemory namespaceKeys checks; captured synthetic CreateEvent
+payloads validate against its installed service model. Namespace values cap projectId at 64.
+Container authorization token/token-file and metadata-disable credential flags survive,
+endpoint overrides do not. Hierarchical recall validates all scopes before omitting in-scope
+other-kind results with underfill reporting; sibling-root XML fragments remain ordered. No resource creation, dependencies, live repository
 uploads or credentials changes. Guide: `docs/user-guide/agentcore-memory.md` (and Chinese).
 Checks: `verify-agentcore-memory.ts` (offline actual Agent/gates/files/subprocesses),
 local memory/trajectory/clear/rewind/status/help/config suites, free `tui completion`.
@@ -1355,7 +1372,8 @@ whose static imports are node built-ins plus `sdk-patch-preflight.ts` (node buil
 in `index.js`, `excludeTools` in `vended-plugins/context-offloader/plugin.js`), prints one
 five-line refusal naming `patch-package`/`postinstall`, `--ignore-scripts`, `pnpm add -g` as
 unsupported and `npm install -g strands-darwin` as the fix, exits 1, and only otherwise
-`import()`s `cli-main.ts`. The check precedes even `--help`/`--version`; it evaluates no SDK
+`import()`s `cli-main.ts` (or the read-only AgentCore CLI before runtime signal handlers).
+The check precedes even `--help`/`--version`; it evaluates no SDK
 module and never wraps the loop. `spike/verify-npm-patch-format.ts` (in `pnpm test`, offline)
 pins the conversion, the generator, the manifest facts, the notice and the import-graph
 placement, and runs patch-package on both developer-path edges; `spike/verify-npm-package.ts`

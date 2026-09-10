@@ -24,6 +24,13 @@ if (refusal !== undefined) {
   process.stderr.write(refusal);
   process.exitCode = SDK_PATCH_PREFLIGHT_EXIT_CODE;
 } else {
-  const { main } = await import('./cli-main.js');
-  await main();
+  const args = process.argv.slice(2);
+  if (args[0] === '--') args.shift();
+  if (args[0] === 'cloud-memory' && !args.some(arg => ['--help', '-h', '--version', '-V'].includes(arg))) {
+    const { runCloudMemoryCli } = await import('./agentcore/cli.js');
+    await runCloudMemoryCli(process.cwd(), args.slice(1));
+  } else {
+    const { main } = await import('./cli-main.js');
+    await main();
+  }
 }

@@ -129,9 +129,9 @@ Read [Using darwin](docs/user-guide/using-darwin.md) for TUI, headless, structur
 
 ## Optional cloud memory
 
-AgentCore Memory is default-off and independent of the model provider; existing local project memory is unchanged. It adds gated, parent-only episode/reflection recall, user-confirmed cross-project preferences, and separately enabled **manual preview/send** of conservative new-turn projections.
+AgentCore Memory is default-off and independent of the model provider; existing local project memory is unchanged. It adds gated, parent-only episode/reflection recall, user-confirmed cross-project preferences, and separately enabled **manual preview/send** of conservative new-turn projections. Mutation is user-submitted TUI-only; the standalone CLI is read-only. All assistant prose is omitted from uploads; explicit discard/clear-accepted frees outbox bodies while retaining bounded receipts.
 
-Provision one Memory resource yourself, with episodic and user-preference strategies, project-scoped episode/reflection templates, user-scoped preference templates, and lowercase `projectid` declared in `namespaceKeys`. Darwin creates no resources. A POSIX AWS CLI v2 is required; **2.36.21 lacks `extractionConfig.namespaceVariables` and uploads are refused until the CLI supports it**. See the [English guide](docs/user-guide/agentcore-memory.md) for exact templates, config, IAM, `/cloud-memory` commands, privacy limits and opt-in synthetic verification. No live Memory service test was run for this implementation.
+Provision one Memory resource yourself, with episodic and user-preference strategies, project-scoped episode/reflection templates, user-scoped preference templates, and lowercase `projectid` declared in `namespaceKeys`. Darwin creates no resources. A POSIX AWS CLI v2 is required; **local CLI 2.36.42 supports `extractionConfig.namespaceVariables` and `namespaceKeys`; older incompatible CLIs are refused**. See the [English guide](docs/user-guide/agentcore-memory.md) for exact templates, config, IAM, `/cloud-memory` commands, privacy limits and opt-in synthetic verification. No live Memory service test was run for this implementation.
 
 ## Documentation
 

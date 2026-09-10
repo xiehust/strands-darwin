@@ -4,7 +4,7 @@
 
 ## Optional cloud memory commands
 
-`/cloud-memory` (TUI) and `darwin cloud-memory` (no model) share: `status`, `preferences`, `inspect <record-id>`, `confirm <record-id> <hash> global`, `forget <record-id>`, `delete <record-id> cloud`, `pending`, `preview <token>`, `send <token> <preview-hash>`. No implicit uploads or deletions. Commands are user-owned, not model tools. [Configuration, provisioning, bounds and safety](agentcore-memory.md).
+`/cloud-memory` (user-submitted TUI) supports `status`, `preferences`, `inspect <record-id>`, `confirm <record-id> <hash> global`, `forget <record-id>`, `delete <record-id> cloud`, `pending`, `preview <token>`, `send <token> <preview-hash>`, `discard <token>`, `clear-accepted`. No implicit uploads/deletions. Standalone `darwin cloud-memory` is read-only: only `status`, `preferences`, `inspect`, `pending`, `preview`; no proof mutation, adoption, sending or deletion. Failures/invalid usage/cancel exit nonzero. Hashes bind content, not human identity; ordinary shell permission is not a sandbox. [Configuration, provisioning, bounds and safety](agentcore-memory.md).
 
 ## CLI
 
@@ -36,7 +36,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
        darwin doctor
-       darwin cloud-memory [status|preferences|inspect|confirm|forget|delete|pending|preview|send] …
+       darwin cloud-memory [status|preferences|inspect|pending|preview] …
        darwin trajectory <list|search|replay|fork> …
        darwin --help | -h
        darwin --version | -V

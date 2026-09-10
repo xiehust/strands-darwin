@@ -10,7 +10,7 @@ export const agentCoreConfigSchema = z.object({
   episodicStrategyId: segment,
   preferenceStrategyId: segment,
   actorId: segment,
-  projectId: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,127}$/).optional(),
+  projectId: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
   cliPath: z.string().regex(/^\//).max(1024).default('/usr/local/bin/aws'),
   timeoutMs: z.number().int().min(100).max(15000).default(5000),
   preferences: z.boolean().default(true),

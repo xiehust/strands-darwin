@@ -129,9 +129,9 @@ TUI、无头模式、结构化输出、消息队列、shell 命令和后台任�
 
 ## 可选云记忆
 
-AgentCore Memory 默认关闭，与模型供应商独立，原有本地项目记忆不变。它提供受权限控制、仅主代理可用的 episode/reflection 检索、用户明确确认的跨项目偏好，以及单独启用的**手动预览、发送**新回合保守投影。
+AgentCore Memory 默认关闭，与模型供应商独立，原有本地项目记忆不变。它提供受权限控制、仅主代理可用的 episode/reflection 检索、用户明确确认的跨项目偏好，以及单独启用的**手动预览、发送**新回合保守投影。修改仅限用户亲自提交的 TUI 命令，独立 CLI 只读。上传省略全部助手文本；显式 discard/clear-accepted 释放 outbox 请求体并保留有限幂等回执。
 
-请自行准备一个 Memory 资源及 episodic、user preference 两种策略；episode/reflection 按用户和项目隔离，偏好按用户隔离，`namespaceKeys` 必须声明小写 `projectid`。Darwin 不创建资源。需要 POSIX AWS CLI v2；**2.36.21 缺少 `extractionConfig.namespaceVariables`，升级至支持该字段的 CLI 前会拒绝上传**。[中文指南](docs/user-guide/agentcore-memory.zh-CN.md)列出了准确模板、配置、IAM、`/cloud-memory` 命令、隐私边界和可选合成数据验证。本次实现未运行真实 Memory 服务测试。
+请自行准备一个 Memory 资源及 episodic、user preference 两种策略；episode/reflection 按用户和项目隔离，偏好按用户隔离，`namespaceKeys` 必须声明小写 `projectid`。Darwin 不创建资源。需要 POSIX AWS CLI v2；**本地 CLI 2.36.42 支持 `extractionConfig.namespaceVariables` 和 `namespaceKeys`；仍会拒绝不兼容的旧 CLI**。[中文指南](docs/user-guide/agentcore-memory.zh-CN.md)列出了准确模板、配置、IAM、`/cloud-memory` 命令、隐私边界和可选合成数据验证。本次实现未运行真实 Memory 服务测试。
 
 ## 文档
 

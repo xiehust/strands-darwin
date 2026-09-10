@@ -2,7 +2,7 @@
 
 [English](using-darwin.md) · **简体中文** · [指南首页](README.zh-CN.md)
 
-可选云记忆使用 `/cloud-memory`，无模型管理使用 `darwin cloud-memory`；与本地 `/memory` 独立。配置资源、确认偏好或授权上传前，请阅读 [AgentCore Memory 指南](agentcore-memory.zh-CN.md)。
+可选云记忆使用 TUI `/cloud-memory`；独立 `darwin cloud-memory` 只读，不能批准偏好、上传或删除；与本地 `/memory` 独立。配置资源、确认偏好或授权上传前，请阅读 [AgentCore Memory 指南](agentcore-memory.zh-CN.md)。
 
 
 ## TUI 工作方式

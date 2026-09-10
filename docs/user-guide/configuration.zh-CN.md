@@ -2,7 +2,7 @@
 
 [English](configuration.md) · **简体中文** · [指南首页](README.zh-CN.md)
 
-`agentCoreMemory` 是根级配置对象（或 `false`），默认关闭，与本地 `memory` 和模型供应商独立。字段、命名空间和 CLI 要求见[可选 AgentCore Memory](agentcore-memory.zh-CN.md)。上传默认关闭，只支持明确的手动预览、发送。
+`agentCoreMemory` 是根级配置对象（或 `false`），默认关闭，与本地 `memory` 和模型供应商独立。字段、命名空间和 CLI 要求见[可选 AgentCore Memory](agentcore-memory.zh-CN.md)。上传默认关闭，只支持用户亲自提交的 TUI 预览、发送，独立 CLI 只读。显式 `projectId` 必须小写且为 1–64 字符；偏好每个 runtime 只检索一次，后续重查本地撤销。
 
 
 ## 文件形式与优先级

@@ -2,7 +2,7 @@
 
 **English** · [简体中文](configuration.zh-CN.md) · [Guide index](README.md)
 
-`agentCoreMemory` is a root-only, default-off object (or `false`), independent of local `memory` and the model provider. Its complete field/namespace/CLI contract is in [Optional AgentCore Memory](agentcore-memory.md). Upload defaults off; only explicit manual preview/send is supported.
+`agentCoreMemory` is a root-only, default-off object (or `false`), independent of local `memory` and the model provider. Its complete field/namespace/CLI contract is in [Optional AgentCore Memory](agentcore-memory.md). Upload defaults off; only user-submitted TUI preview/send is supported. Standalone CLI is read-only. Explicit `projectId` is lowercase, 1–64 characters; preferences are fetched once per runtime, then local revocations are rechecked.
 
 
 ## File forms and precedence

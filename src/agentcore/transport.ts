@@ -26,7 +26,7 @@ export class MemoryCli {
     return new Promise((resolve, reject) => {
       const env: NodeJS.ProcessEnv = {};
       for (const [key, value] of Object.entries(process.env)) {
-        if (['HOME', 'PATH', 'LANG', 'TMPDIR'].includes(key) || /^AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|CONFIG_FILE|SHARED_CREDENTIALS_FILE|CONTAINER_CREDENTIALS_RELATIVE_URI|CONTAINER_CREDENTIALS_FULL_URI|CONTAINER_AUTHORIZATION_TOKEN_FILE|WEB_IDENTITY_TOKEN_FILE|ROLE_ARN|ROLE_SESSION_NAME)$/.test(key)) env[key] = value;
+        if (['HOME', 'PATH', 'LANG', 'TMPDIR'].includes(key) || /^AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN|PROFILE|CONFIG_FILE|SHARED_CREDENTIALS_FILE|CONTAINER_CREDENTIALS_RELATIVE_URI|CONTAINER_CREDENTIALS_FULL_URI|CONTAINER_AUTHORIZATION_TOKEN_FILE|CONTAINER_AUTHORIZATION_TOKEN|EC2_METADATA_DISABLED|WEB_IDENTITY_TOKEN_FILE|ROLE_ARN|ROLE_SESSION_NAME)$/.test(key)) env[key] = value;
       }
       Object.assign(env, { AWS_PAGER: '', AWS_CLI_AUTO_PROMPT: 'off', AWS_MAX_ATTEMPTS: '1', AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'true' });
       const args = ['bedrock-agentcore', operation, '--region', this.config.region, '--output', 'json', '--no-cli-pager', '--no-cli-auto-prompt', '--cli-connect-timeout', '3', '--cli-read-timeout', '4', ...(skeleton ? ['--generate-cli-skeleton', 'input'] : ['--cli-input-json', 'file:///dev/stdin'])];

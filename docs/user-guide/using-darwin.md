@@ -2,7 +2,7 @@
 
 **English** · [简体中文](using-darwin.zh-CN.md) · [Guide index](README.md)
 
-Optional cloud recall and manually authorized uploads use `/cloud-memory`, or `darwin cloud-memory` without a model. They are separate from local `/memory`. Read the [AgentCore Memory guide](agentcore-memory.md) before configuring a resource or confirming preferences.
+Optional cloud recall and user-authorized uploads use TUI `/cloud-memory`; standalone `darwin cloud-memory` is read-only and cannot adopt preferences, upload or delete. They are separate from local `/memory`. Read the [AgentCore Memory guide](agentcore-memory.md) before configuring a resource or confirming preferences.
 
 
 ## TUI workflow

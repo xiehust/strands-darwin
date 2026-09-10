@@ -263,7 +263,7 @@ async function main(): Promise<void> {
       if (input === '') continue;
       if (input === '/exit' || input === '/quit') break;
       if (/^\/cloud-memory(?:\s|$)/.test(input)) {
-        console.log(await runtime.manageCloudMemory(input.slice('/cloud-memory'.length).trim()));
+        console.log('Cloud memory management is TUI-only in this version. Use darwin cloud-memory for read-only inspection.');
         continue;
       }
 

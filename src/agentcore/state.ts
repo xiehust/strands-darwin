@@ -1,4 +1,4 @@
-import { lstat, mkdir, open, opendir, rename } from 'node:fs/promises';
+import { link, lstat, mkdir, open, opendir, rename, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -30,11 +30,31 @@ export async function readState(file: string): Promise<unknown | undefined> {
 export async function writeState(file: string, value: unknown, exclusive = false): Promise<void> {
   await safeDirectory(path.dirname(file), true);
   const bytes = JSON.stringify(value); if (Buffer.byteLength(bytes) > 65536) throw new Error('AgentCore state exceeds bound');
-  const target = exclusive ? file : `${file}.${randomUUID()}.tmp`;
-  const handle = await open(target, 'wx', 0o600);
-  try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
-  if (!exclusive) await rename(target, file);
+  const target = `${file}.${randomUUID()}.tmp`;
+  try {
+    const handle = await open(target, 'wx', 0o600);
+    try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
+    // A hard link publishes complete synced bytes atomically without clobbering.
+    // An interrupted writer leaves only a .tmp, never a partial event/reservation.
+    if (exclusive) await link(target, file); else await rename(target, file);
+    const directory = await open(path.dirname(file), constants.O_RDONLY);
+    try { await directory.sync(); } finally { await directory.close(); }
+  } finally { await unlink(target).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; }); }
 }
+
+/** Cross-process exclusion for send/lifecycle changes. Never reclaim a crashed owner's lock silently. */
+export async function withStateLock<T>(directory: string, action: () => Promise<T>): Promise<T> {
+  const file = path.join(directory, 'active.json');
+  try { await writeState(file, { pid: process.pid }, true); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('Cloud state operation in flight or interrupted; do not skip it. Inspect active.json owner before manual recovery.'); throw error; }
+  try { return await action(); } finally { await unlink(file); }
+}
+/** Used only by explicit user cleanup, after a durable receipt exists. */
+export async function removeState(file: string): Promise<void> {
+  await readState(file); // Same symlink/size validation as readers; malformed state is not silently deleted.
+  await unlink(file).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
+}
+
 export async function stateNames(directory: string): Promise<string[]> {
   if (!await safeDirectory(directory)) return [];
   const names: string[] = [];
