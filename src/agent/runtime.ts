@@ -94,6 +94,8 @@ import { orderOfficialSkillsPrompt } from '../skills/prompt.js';
 import { runMemoryCommand, type MemoryCommandResult } from '../memory/command.js';
 import { MemoryToolController } from '../memory/controller.js';
 import { createMemoryTools } from '../memory/tools.js';
+import { CloudMemory } from '../agentcore/controller.js';
+import { createCloudMemoryTools } from '../agentcore/tools.js';
 import type { MemoryStatus } from '../memory/store.js';
 
 import { recordStream } from '../trajectory/stream.js';
@@ -225,6 +227,8 @@ const PARENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
   'retrieve_offloaded_content',
   httpRequest.name,
   webFetch.name,
+  'episodic_recall',
+  'reflection_recall',
   // Registered by the SDK's backgroundTasks plugin during initialize(); a child has
   // no plugin, so the tool would list nothing and could not cancel anything.
   MANAGE_BACKGROUND_TASK_TOOL_NAME,
@@ -592,6 +596,7 @@ export class AgentRuntime {
     private readonly diagnosticsLog: DiagnosticsLog | undefined,
     /** Undefined only when effective config disables derived project context. */
     private readonly memoryController: MemoryToolController | undefined,
+    private readonly cloudMemory: CloudMemory | undefined,
     readonly info: RuntimeInfo,
     /**
      * What this runtime was created with, so {@link startNewSession} can assemble its
@@ -811,6 +816,7 @@ export class AgentRuntime {
 
     const memoryController = config.memory === true ? new MemoryToolController(options.projectRoot, config.memoryHorizonDays ?? 28) : undefined;
     startupMemoryController = memoryController;
+    const cloudMemory = config.agentCoreMemory === undefined ? undefined : new CloudMemory(config.agentCoreMemory, options.projectRoot, session.sessionId);
     // The fileEditor is the SDK vended tool — `makeFileEditor({ description })`, the
     // same factory as the singleton with the SDK's default text plus the SRF-032
     // payload bound — behind a same-path ordering wrapper (SRF-020): substituted here
@@ -940,6 +946,10 @@ export class AgentRuntime {
     // and allowlists are fixed, so no child can author an unrelated checklist.
     agent.toolRegistry.add(createUpdatePlanTool());
     if (memoryController !== undefined) agent.toolRegistry.add(createMemoryTools(memoryController));
+    if (cloudMemory !== undefined) {
+      agent.toolRegistry.add(createCloudMemoryTools(cloudMemory));
+      if (agent.messages.length > 0) cloudMemory.markMemoryExposure(); // Restored context may already contain private tool/memory results.
+    }
     // Children build their models through the same factory seam as the parent: in
     // production it *is* `createModelFromConfig`; offline suites can script a child
     // (`spike/verify-background-delegation.ts`) without a provider.
@@ -1034,7 +1044,10 @@ export class AgentRuntime {
                   }),
             },
             ...runtimeRecorderOverrides,
-            ...(memoryController === undefined ? {} : { onTurnSettled: (settlement) => memoryController.settle(settlement) }),
+            ...((memoryController === undefined && cloudMemory === undefined) ? {} : { onTurnSettled: (settlement) => {
+              memoryController?.settle(settlement);
+              cloudMemory?.settle(settlement, trajectoryPath(options.projectRoot, session.sessionId));
+            } }),
           });
     trajectoryAudit = trajectory;
     await trajectory?.open();
@@ -1061,6 +1074,7 @@ export class AgentRuntime {
       trajectory,
       diagnosticsLog,
       memoryController,
+      cloudMemory,
       {
         config,
         projectRoot: options.projectRoot,
@@ -1184,6 +1198,7 @@ export class AgentRuntime {
     if (submitted !== undefined && !submitted.allowed) {
       throw new Error(submitted.reason ?? 'UserPromptSubmit hook blocked this prompt.');
     }
+    await this.prepareCloudPreferences();
     const modelInput = injectCodexContext(input, submitted?.context);
     let checkpointId: string | undefined;
     // A text-only checkpoint cannot truthfully reproduce a multimodal boundary.
@@ -1238,6 +1253,7 @@ export class AgentRuntime {
         // Observed at the same point `recordStream` observes: synchronously, between
         // `stream()` and the `yield`, so `/usage` asked mid-turn already counts the
         // calls that completed. Cannot throw — see {@link observeCallStats}.
+        if (event.type === 'beforeToolCallEvent') this.cloudMemory?.markMemoryExposure();
         this.observeCallStats(event);
         this.observeContextAnchor(event);
         this.observeCacheMiss(event);
@@ -1358,10 +1374,26 @@ export class AgentRuntime {
     return this.memoryController?.status;
   }
 
-  /**
-   * Runs the user-only local `/memory` command and refreshes the verified Darwin-owned
-   * prompt block before a successful mutation returns. No Agent invocation is made.
-   */
+  /** Cloud status is a projection, never an implicit retrieval. */
+  get cloudMemoryStatus(): string { return this.cloudMemory?.status() ?? 'AgentCore: disabled (local project memory unchanged)'; }
+  private async prepareCloudPreferences(): Promise<void> {
+    if (this.cloudMemory === undefined) return;
+    const generation = this.cloudMemory.cancelGeneration;
+    await this.cloudMemory.startup(); // One bounded query per invocation; changed cloud content cannot retain old approval.
+    if (generation !== this.cloudMemory.cancelGeneration) throw new Error('AgentCore startup cancelled before model invocation');
+    const context = await buildWorkingContext(this.projectRoot);
+    applyWorkingContext(this.agent, context.fragment.replace('</working-context>', `${await this.cloudMemory.context()}\n</working-context>`));
+    if (this.promptCache.parts.includes('system prompt')) applySystemPromptCachePoint(this.agent, this.promptCache);
+  }
+  async manageCloudMemory(input: string): Promise<string> {
+    if (this.cloudMemory === undefined) return this.cloudMemoryStatus;
+    const result = await this.cloudMemory.command(input);
+    // Approval/forget affect the next request immediately without a cloud refresh.
+    const context = await buildWorkingContext(this.projectRoot);
+    applyWorkingContext(this.agent, context.fragment.replace('</working-context>', `${await this.cloudMemory.context()}\n</working-context>`));
+    if (this.promptCache.parts.includes('system prompt')) applySystemPromptCachePoint(this.agent, this.promptCache);
+    return result;
+  }
   async manageMemory(input: string): Promise<MemoryCommandResult> {
     if (this.liveConfig.memory !== true) {
       return { changed: false, text: 'project memory is off — remove memory: false if set, and enable trajectory recording in ~/.darwin/config.json' };
@@ -1390,6 +1422,7 @@ export class AgentRuntime {
    */
   async compact(focus?: string): Promise<CompactResult> {
     const manager = createCompactionManager(this.preserveRecentMessages, normalizeCompactFocus(focus));
+    await this.prepareCloudPreferences();
     const pre = await this.codexHooks?.preCompact('manual');
     if (pre !== undefined && !pre.allowed) throw new Error(pre.reason ?? 'PreCompact hook blocked compaction.');
     try {
@@ -2023,6 +2056,7 @@ export class AgentRuntime {
    * ends with `stopReason: 'cancelled'` rather than throwing.
    */
   cancel(): void {
+    this.cloudMemory?.cancel();
     this.lifecycleHooks?.cancel();
     this.codexHooks?.cancel();
     this.subagents.cancelActive();
@@ -2209,7 +2243,7 @@ export class AgentRuntime {
     ]);
     // Closing trajectory first publishes the final settlement. The controller then
     // discards unresolved staging and waits only for commits already accepted.
-    await Promise.allSettled([Promise.resolve(ownedWork), this.memoryController?.close() ?? Promise.resolve()]);
+    await Promise.allSettled([Promise.resolve(ownedWork), this.memoryController?.close() ?? Promise.resolve(), this.cloudMemory?.close() ?? Promise.resolve()]);
     // SessionEnd is the final advisory boundary: all session-owned work above has
     // settled, while diagnostics remains open to retain a bounded hook problem.
     await Promise.allSettled([
@@ -2293,6 +2327,7 @@ export class AgentRuntime {
    * exiting.
    */
   async shutdown(options: { throwOnError?: boolean } = {}): Promise<void> {
+    this.cloudMemory?.cancel();
     const results = await Promise.allSettled([
       this.subagents.shutdown(),
       this.workflows.shutdown(),
@@ -2304,7 +2339,7 @@ export class AgentRuntime {
       // unawaited; cleanup only waits for a commit after durable acceptance.
       this.trajectory?.close() ?? Promise.resolve(),
     ]);
-    const memoryResults = await Promise.allSettled([this.memoryController?.close() ?? Promise.resolve()]);
+    const memoryResults = await Promise.allSettled([this.memoryController?.close() ?? Promise.resolve(), this.cloudMemory?.close() ?? Promise.resolve()]);
     results.push(...memoryResults);
     // SessionEnd is advisory but ordered after owned work. Keep diagnostics open
     // through it, then detach the process-global SDK tap before closing the file.

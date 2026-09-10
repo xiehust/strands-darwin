@@ -1241,6 +1241,11 @@ async function slashCompletion(): Promise<void> {
     // model call, in a project with no MCP configured at all — absence is a normal
     // state ('none configured'), never an error. The skills fixture above is what
     // makes the skills line countable.
+    const beforeCloud = tui.mark();
+    tui.submit('/cloud-memory status');
+    await tui.waitFor('AgentCore: disabled', { timeoutMs: 30_000, from: beforeCloud, settleMs: 400 });
+    assert('/cloud-memory disabled status starts no turn', !tui.screen.slice(beforeCloud).includes('working…'));
+
     const beforeStatusArgument = tui.mark();
     tui.submit('/status extra');
     await tui.waitFor('/status takes no arguments', { timeoutMs: 30_000, from: beforeStatusArgument, settleMs: 400 });

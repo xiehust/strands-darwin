@@ -2,6 +2,9 @@
 
 **English** · [简体中文](configuration.zh-CN.md) · [Guide index](README.md)
 
+`agentCoreMemory` is a root-only, default-off object (or `false`), independent of local `memory` and the model provider. Its complete field/namespace/CLI contract is in [Optional AgentCore Memory](agentcore-memory.md). Upload defaults off; only explicit manual preview/send is supported.
+
+
 ## File forms and precedence
 
 `~/.darwin/config.json` is the only active config. It may describe one model with fields at the root, or several models in `models`. In array form exactly one entry must have `"enable": true`; model fields live in each entry and session fields remain at the root. Names are case-insensitively unique. Custom entries replace the built-in catalogue.
@@ -78,6 +81,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `diagnostics` | `false` | per-session SDK/darwin debug log |
 | `memory` | true while trajectory is available | project memory; omitted follows `trajectory: false` |
 | `memoryHorizonDays` | `28` | generated-memory age, integer `0–365`; `0` disables age only |
+| `agentCoreMemory` | disabled | root-only cloud config or `false`; [IDs, namespaces, preferences, manual upload and CLI requirements](agentcore-memory.md) |
 | `maxConcurrentSubagents` | `8` | ceiling on running child dispatches (`subagent` calls plus `workflow` nodes); positive integer; a call over it is refused before any model or child exists |
 | `terminalBell` | `false` | ring the terminal bell on permission prompts and turn completion (interactive TUI only) |
 | `terminalNotify` | `false` | ask the terminal for a desktop notification at the same two moments — one OSC 9 sequence (`ESC ] 9 ; darwin · <project> · waiting for approval\|turn complete ESC \`) straight to stdout, only when stdout is a TTY (interactive TUI only; `-p` and child agents never write one). The terminal decides whether to show it: iTerm2 (enable Settings → Profiles → Terminal → "Notification Center Alerts" → Filter Alerts → "Send escape sequence-generated alerts"), kitty, Ghostty, WezTerm and foot show a toast; every other terminal consumes the sequence silently. Inside tmux the sequence is wrapped in tmux's passthrough DCS and needs `set -g allow-passthrough on` in `~/.tmux.conf`. Works over SSH — the notification appears on the machine running the terminal. `false` never writes it |

@@ -2,6 +2,9 @@
 
 [English](using-darwin.md) · **简体中文** · [指南首页](README.zh-CN.md)
 
+可选云记忆使用 `/cloud-memory`，无模型管理使用 `darwin cloud-memory`；与本地 `/memory` 独立。配置资源、确认偏好或授权上传前，请阅读 [AgentCore Memory 指南](agentcore-memory.zh-CN.md)。
+
+
 ## TUI 工作方式
 
 启动界面会显示模型、会话、缓存、思考强度、权限模式、已加载的项目指令和扩展，并提示本地帮助。助手回复的 Markdown 样式只影响显示：去掉 ANSI 后，文字仍逐字保留，replay/export 继续输出纯文本。文件修改 diff 来自模型提交的工具参数，不会重新读取磁盘；已经写入历史的 diff 保持完整，实时权限框和工具面板才会受尺寸限制。

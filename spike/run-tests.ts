@@ -103,6 +103,7 @@ const suites = [
   'verify-trajectory.ts',
   'verify-memory.ts',
   'verify-memory-tools.ts',
+  'verify-agentcore-memory.ts',
   'verify-memory-command.ts',
   'verify-memory-validation.ts',
   'verify-resume-recap.ts',

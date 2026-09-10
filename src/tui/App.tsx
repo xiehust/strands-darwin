@@ -433,6 +433,9 @@ export function App({
   const diagnosticsWarned = useRef(false);
   /** One bounded project-memory degradation notice per runtime. */
   const memoryWarned = useRef(false);
+  useEffect(() => {
+    if (runtime.config.agentCoreMemory !== undefined) dispatch({ type: 'notice', text: runtime.cloudMemoryStatus });
+  }, [runtime, dispatch]);
   /** True while `/clear` is assembling the successor runtime; see the handler. */
   const clearing = useRef(false);
   /** Kill handle of the running `!` command; undefined whenever none is running. */
@@ -1199,6 +1202,7 @@ export function App({
         dispatch({ type: 'notice', text: `diagnostics: ${diagnosticsProblem}`, severity: 'warn' });
       }
 
+      if (runtime.config.agentCoreMemory !== undefined) dispatch({ type: 'notice', text: runtime.cloudMemoryStatus });
       const memoryProblem = runtime.memoryStatus?.problem;
       if (memoryProblem !== undefined && !memoryWarned.current) {
         memoryWarned.current = true;
@@ -1217,6 +1221,7 @@ export function App({
   const submit = useCallback(
     async (raw: string, queuedEntry?: QueuedPrompt) => {
       const text = raw.trim();
+      if (clearing.current) { dispatch({ type: 'notice', text: 'Session management in progress; submit again when it finishes' }); return; }
       // A drained entry owns its optional image, including explicit absence. It
       // must never borrow a newer attachment still sitting beside the editor.
       const image = queuedEntry === undefined ? attachedImageRef.current : queuedEntry.image;
@@ -1345,6 +1350,18 @@ export function App({
       // narrows future context synchronously; remember is an explicit typed command,
       // never a model tool. Keep it idle-only so a running request cannot race a
       // system-prompt replacement.
+      if (/^\/cloud-memory(?:\s|$)/.test(text)) {
+        if (status !== 'idle' || clearing.current) {
+          dispatch({ type: 'notice', text: '/cloud-memory does not queue — run it after current work finishes' });
+          return;
+        }
+        clearing.current = true;
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        try { dispatch({ type: 'notice', text: await runtime.manageCloudMemory(text.slice('/cloud-memory'.length).trim()) }); }
+        finally { clearing.current = false; }
+        return;
+      }
       if (/^\/memory(?:\s|$)/.test(text)) {
         if (status !== 'idle') {
           dispatch({ type: 'notice', text: '/memory does not queue — run it after current work finishes' });
@@ -1550,6 +1567,7 @@ export function App({
             allowRuleCount: runtime.allowRuleCount,
             denyRuleCount: runtime.denyRuleCount,
             tangent: tangentStatusFact(tangentRef.current),
+            cloudMemory: runtime.cloudMemoryStatus,
             mcpServers: runtime.listMcpServers(),
             skillNames: runtime.info.skillNames,
             hookSources: runtime.info.hookSources,

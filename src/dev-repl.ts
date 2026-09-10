@@ -262,6 +262,10 @@ async function main(): Promise<void> {
       }
       if (input === '') continue;
       if (input === '/exit' || input === '/quit') break;
+      if (/^\/cloud-memory(?:\s|$)/.test(input)) {
+        console.log(await runtime.manageCloudMemory(input.slice('/cloud-memory'.length).trim()));
+        continue;
+      }
 
       // Read straight off the SDK's meter, so asking what a session cost does not
       // itself cost a turn.

@@ -2,6 +2,11 @@
 
 [English](reference.md) · **简体中文** · [指南首页](README.zh-CN.md)
 
+## 可选云记忆命令
+
+TUI 的 `/cloud-memory` 与不调用模型的 `darwin cloud-memory` 共用参数：`status`、`preferences`、`inspect <record-id>`、`confirm <record-id> <hash> global`、`forget <record-id>`、`delete <record-id> cloud`、`pending`、`preview <token>`、`send <token> <preview-hash>`。不会隐式上传或删除；这些是用户命令，不是模型工具。详见[配置、资源准备和安全边界](agentcore-memory.zh-CN.md)。
+
+
 ## CLI
 
 ```bash
@@ -32,6 +37,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
        darwin doctor
+       darwin cloud-memory [status|preferences|inspect|confirm|forget|delete|pending|preview|send] …
        darwin trajectory <list|search|replay|fork> …
        darwin --help | -h
        darwin --version | -V

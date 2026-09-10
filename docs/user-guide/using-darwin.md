@@ -2,6 +2,9 @@
 
 **English** · [简体中文](using-darwin.zh-CN.md) · [Guide index](README.md)
 
+Optional cloud recall and manually authorized uploads use `/cloud-memory`, or `darwin cloud-memory` without a model. They are separate from local `/memory`. Read the [AgentCore Memory guide](agentcore-memory.md) before configuring a resource or confirming preferences.
+
+
 ## TUI workflow
 
 The startup frame identifies the model, session, cache, effort, permission mode, loaded instructions, extensions, and local help. Assistant Markdown styling is presentation-only: ANSI-stripped output preserves every character and replay/export remain plain-text projections. File-edit diffs come from proposed tool input, not a reread of disk; finished transcript diffs are complete while live permission/tool panels remain bounded.

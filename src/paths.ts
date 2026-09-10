@@ -112,6 +112,8 @@ export function sensitiveHookDirectories(projectRoot: string): string[] {
 export function isSensitiveDarwinPath(projectRoot: string, candidate: string): boolean {
   const resolved = path.resolve(candidate);
   if (sensitiveDarwinPaths(projectRoot).some((file) => samePath(file, resolved))) return true;
+  // Cloud preference approvals and upload authorizations are user-owned policy.
+  if ([path.join(userDarwinDir(), 'agentcore'), path.join(userProjectDir(projectRoot), 'agentcore')].some((directory) => isInside(directory, resolved))) return true;
   return sensitiveHookDirectories(projectRoot).some((directory) => isInside(directory, resolved));
 }
 

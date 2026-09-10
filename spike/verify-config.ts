@@ -1650,6 +1650,7 @@ async function documentedKeys(): Promise<void> {
     diagnostics: false,
     memory: true,
     memoryHorizonDays: 7,
+    agentCoreMemory: false,
     maxConcurrentSubagents: 4,
     systemPrompt: 'You are terse.',
   };

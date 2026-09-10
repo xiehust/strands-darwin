@@ -22,6 +22,7 @@ export const CLI_USAGE = `Usage: darwin [--resume [<id>]|--session <id>] [--perm
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
        darwin doctor
+       darwin cloud-memory [status|preferences|inspect|confirm|forget|delete|pending|preview|send] …
        darwin trajectory <list|search|replay|fork> …
        darwin --help | -h
        darwin --version | -V

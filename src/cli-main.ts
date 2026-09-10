@@ -32,7 +32,8 @@ import {
   runTrajectoryCommand,
 } from './cli-trajectory.js';
 import { localCliAnswer, usageErrorText } from './cli-usage.js';
-import { ConfigError } from './config.js';
+import { ConfigError, loadConfig } from './config.js';
+import { CloudMemory } from './agentcore/controller.js';
 import { productionHeadlessDependencies, runHeadlessProcess } from './headless-runner.js';
 import { withProductionReactImports } from './tui/react-environment.js';
 import { ringTerminalBell } from './tui/terminal-bell.js';
@@ -53,6 +54,16 @@ export async function main(): Promise<void> {
   const localAnswer = localCliAnswer(argv);
   if (localAnswer !== undefined) {
     process.stdout.write(localAnswer);
+    return;
+  }
+  if (argv[0] === 'cloud-memory') {
+    const config = await loadConfig(process.cwd());
+    if (config.agentCoreMemory === undefined) { process.stdout.write('AgentCore: disabled (local project memory unchanged)\n'); return; }
+    const memory = new CloudMemory(config.agentCoreMemory, process.cwd(), 'management');
+    const cancel = () => memory.cancel();
+    process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
+    try { process.stdout.write(`${await memory.command(argv.slice(1).join(' '))}\n`); }
+    finally { process.off('SIGINT', cancel); process.off('SIGTERM', cancel); await memory.close(); }
     return;
   }
   if (isTrajectoryInvocation(argv)) {

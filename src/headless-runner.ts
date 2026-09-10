@@ -400,6 +400,10 @@ export async function runHeadlessProcess(
         // Reading an observer's own status must not change the exit path.
       }
       try {
+        if (runtime.config.agentCoreMemory !== undefined) {
+          if (structured) warnings.push(structuredWarning('memory', 'warn', runtime.cloudMemoryStatus));
+          else target.stderr.write(`${runtime.cloudMemoryStatus}\n`);
+        }
         const problem = runtime.memoryStatus?.problem;
         if (problem !== undefined) {
           if (structured) warnings.push(structuredWarning('memory', 'warn', problem));

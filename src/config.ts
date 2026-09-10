@@ -35,6 +35,7 @@ import { decodeCodexHooks, CODEX_HOOK_EVENTS, type CodexHooksConfig } from './ho
 import type { ToolHookCommand, ToolHookGroup, ToolHooksConfig } from './hooks/tool-hooks.js';
 import { darwinDir, hookExtensionRoots, userDarwinDir, userProjectDir, type ExtensionRoot } from './paths.js';
 import { passthroughEntryProblem } from './tools/shell-env.js';
+import { parseAgentCoreConfig, type AgentCoreConfig } from './agentcore/config.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
 export class ConfigError extends Error {
@@ -342,6 +343,8 @@ export interface SessionFields {
    * disable age expiry; current-source validation still applies.
    */
   memoryHorizonDays?: number;
+  /** Optional cloud memory; independent of model provider and local project memory. */
+  agentCoreMemory?: AgentCoreConfig;
   /**
    * Ceiling on concurrently running child dispatches (`subagent` calls plus
    * `workflow` nodes, counted on the one dispatch registry). A call that would
@@ -420,6 +423,7 @@ export const SESSION_KEYS = [
   'diagnostics',
   'memory',
   'memoryHorizonDays',
+  'agentCoreMemory',
   'maxConcurrentSubagents',
   'systemPrompt',
 ] as const;
@@ -1232,6 +1236,11 @@ function validateSessionFields(
   // that reports what a run is doing.
   const trajectory = booleanField(input, 'trajectory', configPath);
   if (trajectory !== undefined) fields.trajectory = trajectory;
+  try {
+    const cloud = parseAgentCoreConfig(input['agentCoreMemory']);
+    if (cloud?.upload === 'manual' && trajectory === false) throw new Error('agentCoreMemory uploads require trajectory recording.');
+    if (cloud !== undefined) fields.agentCoreMemory = cloud;
+  } catch (error) { throw new ConfigError(`${configPath}: ${(error as Error).message}`); }
 
   // Off unless asked for: unlike default-on oversized-result offload, the SDK's
   // debug output interpolates provider payloads, so a log the user did not ask

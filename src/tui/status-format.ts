@@ -63,6 +63,8 @@ export interface StatusFacts {
    * keeps the report byte-identical: the row exists only while the state does.
    */
   tangent?: string | undefined;
+  /** Existing cloud-memory accessor, no retrieval from this projection. */
+  cloudMemory?: string;
   /** `runtime.listMcpServers()` — states as they are; this report connects nothing. */
   mcpServers: readonly McpServerStatus[];
   /** `runtime.info.skillNames`. */
@@ -201,6 +203,7 @@ export function formatStatusReport(facts: StatusFacts): string {
       `  model calls: ${describeCallEfficiency(facts.callStats, facts.config)}`,
     );
   }
+  if (facts.cloudMemory !== undefined) lines.push(`  ${facts.cloudMemory}`);
   return ['status — this session', ...lines].join('\n');
 }
 

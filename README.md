@@ -127,6 +127,12 @@ darwin -p "inspect this project" --output-format stream-json
 
 Read [Using darwin](docs/user-guide/using-darwin.md) for TUI, headless, structured-output, queue, shell, and background-job contracts.
 
+## Optional cloud memory
+
+AgentCore Memory is default-off and independent of the model provider; existing local project memory is unchanged. It adds gated, parent-only episode/reflection recall, user-confirmed cross-project preferences, and separately enabled **manual preview/send** of conservative new-turn projections.
+
+Provision one Memory resource yourself, with episodic and user-preference strategies, project-scoped episode/reflection templates, user-scoped preference templates, and lowercase `projectid` declared in `namespaceKeys`. Darwin creates no resources. A POSIX AWS CLI v2 is required; **2.36.21 lacks `extractionConfig.namespaceVariables` and uploads are refused until the CLI supports it**. See the [English guide](docs/user-guide/agentcore-memory.md) for exact templates, config, IAM, `/cloud-memory` commands, privacy limits and opt-in synthetic verification. No live Memory service test was run for this implementation.
+
 ## Documentation
 
 - **[User guide](docs/user-guide/README.md):** installation, providers, daily use, configuration, state, safety, extensions, command reference, limitations, and development.

@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -43,6 +43,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   mcp: 'MCP servers and their tools',
   // Local inspection and explicit user management of enabled project memory.
   memory: 'list, show, remember, or forget project memory',
+  'cloud-memory': 'AgentCore status, preference adoption, and manual upload preview/send',
 
   // Session-scoped enforcement policy, not the model: /mode sits next to /model in
   // the menu, so both descriptions have to say which is which.
