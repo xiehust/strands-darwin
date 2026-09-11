@@ -4,6 +4,13 @@ Implementation scope: bundled-guide workflow refinement and offline command/skil
 provisioning or a deterministic wizard. Existing-first preflight reuses the real config loader,
 offline doctor and read-only cloud-memory commands; doctor has no network or write path.
 
+Host accepted the refinement at `ced186c` (2026-09-11): independent diff review, typecheck and
+one uninterrupted full `pnpm test` passed (6,649 counted PASS rows, zero FAIL), including the
+new preflight evidence fixtures, setup contract assertions and four runtime/pty recovery cases.
+Host build plus relocated `--dist` activation/npm dry-run checks passed. Artifacts:
+`/tmp/darwin-preflight-host-{typecheck,test,build,dist}.log`. Runtime/doctor/permission code,
+dependencies, AGENTS.md and real configuration are unchanged. No actual cloud setup ran.
+
 Preflight regression checklist:
 - Full guide → sensitive config read → doctor/local status/bounded SDK read → healthy stop →
   conditional actor/default or targeted repair questions. Arguments/yolo are never mutation consent.
