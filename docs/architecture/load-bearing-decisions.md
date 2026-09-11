@@ -844,7 +844,11 @@ would bypass the manual outbox. One direct runtime dependency, no CLI/CDK/privat
 Inputs cap at 32000 UTF-8 bytes. The public runtime extension wraps the SDK HTTP handler,
 checking cancellation immediately before launch and bounding streamed bodies before collection
 and SDK parsing (256 KiB success, 8 KiB error). Successful JSON has a 16-depth/10000-node guard;
-unknown structure fields that Smithy would drop are refused. SDK Dates normalize to ISO strings;
+unknown structure fields that Smithy would drop are refused. One exact exception is the live
+RetrieveMemoryRecords envelope `searchType`, absent from the pinned SDK model: require a nonempty
+string of at most 64 UTF-16 code units, reject controls/format/surrogate/line separators, then
+omit only that top-level hint before raw-versus-decoded checks. It is not record or policy data;
+other operations and nested fields remain strict. SDK Dates normalize to ISO strings;
 only the SDK top-level `$metadata` envelope is stripped, never memory metadata. Existing record,
 XML and scope guards still decide trust. Get/Delete carry the fixed preference namespace IAM
 condition, not new mutation authority.

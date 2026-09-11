@@ -2,6 +2,37 @@
 
 The checklist was derived before implementation; this table records its verification locations.
 
+## Host live-read compatibility correction after 262cb91
+
+Host observed a successful raw SDK read-only RetrieveMemoryRecords response with
+`memoryRecordSummaries: []` and a top-level string `searchType`. SDK 3.1127.0 drops that
+unmodeled envelope field, so Darwin's raw-versus-decoded comparison rejected the response.
+This is evidence of an empty live retrieval only, not extraction or nonempty live-record
+validation. No resource/account identifiers or record content were copied into this fixture.
+
+The compatibility exception is exact: only RetrieveMemoryRecords, only top-level
+`searchType`, nonempty string capped by `MAX_SEARCH_TYPE_CHARS = 64` (UTF-16 code units),
+without control/format/surrogate/line-separator characters. Omit this hint before comparing
+raw records with SDK-decoded records. It never becomes record data or policy; other unknown
+fields, nested content/metadata, scope, Date handling, bounded errors and all other operations
+remain unchanged. No SDK update, credential-chain, configuration or manual-policy changes.
+
+Verification:
+- The new default loopback retrieval envelope reproduced bounded-validation failure before
+  the fix: `/tmp/darwin-agentcore-search-type-before.log` (exit 1).
+- `pnpm tsx spike/verify-agentcore-memory.ts`: **253 passed, 0 failed**, isolated HOME and
+  synthetic signed loopback HTTP only. Empty/nonempty records, retained metadata named
+  `searchType`, exact length limit, malformed type/oversize/control characters, unrelated
+  top-level/nested fields, wrong namespace, and Get/Delete/CreateEvent exclusion covered.
+  Existing AssumeRole, timestamp-proof, runtime gate, cancellation and outbox tests pass.
+  Log: `/tmp/darwin-agentcore-search-type-regression.log`.
+- `pnpm typecheck` and `git diff --check`: passed. Full gate intentionally not run.
+
+Host owns repeat live read-only acceptance and the final full gate. This worker made no
+AWS calls, cloud mutations, global configuration edits or iteration-log changes; extraction
+remains unverified.
+
+
 ## Host correction after 414ab9b: credential isolation and timestamp re-review
 
 The focused offline reproduction failed the real AssumeRole chain and missing re-review

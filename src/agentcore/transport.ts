@@ -16,6 +16,15 @@ type MemoryInputs = {
 };
 class TransportError extends Error {}
 const refused = () => new TransportError('AgentCore response failed bounded validation; refused');
+const MAX_SEARCH_TYPE_CHARS = 64;
+/** Live RetrieveMemoryRecords adds this envelope hint before the pinned SDK models it.
+ * It is never record data or policy. No other operation, key or nesting is exempt. */
+function retrievalEnvelope(operation: MemoryOperation, raw: unknown): unknown {
+  if (operation !== 'retrieve-memory-records' || raw === null || typeof raw !== 'object' || Array.isArray(raw) || !Object.hasOwn(raw, 'searchType')) return raw;
+  const { searchType, ...payload } = raw as Record<string, unknown>;
+  if (typeof searchType !== 'string' || searchType.length === 0 || searchType.length > MAX_SEARCH_TYPE_CHARS || /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(searchType)) throw refused();
+  return payload;
+}
 
 /** Preserve memory metadata; only the SDK's top-level envelope is removed. */
 function normalize(value: unknown, depth = 0, budget = { count: 0 }): unknown {
@@ -159,7 +168,7 @@ export class MemoryTransport {
         }
         const output = await pending;
         state.check();
-        knownFields(state.raw, output);
+        knownFields(retrievalEnvelope(operation, state.raw), output);
         const normalized = normalize(output);
         state.check();
         return normalized;

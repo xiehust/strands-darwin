@@ -575,6 +575,40 @@ async function verifyTransport() {
   header('SDK transport bounds, normalization and manual compatibility');
   const get = { memoryId: config.memoryId, memoryRecordId: id, namespace: scope.preferences };
   const client = new MemoryTransport(config);
+  await control({ records: [] });
+  const retrieve = { memoryId: config.memoryId, namespacePath: scope.preferences, searchCriteria: { searchQuery: 'communication', topK: 1 } };
+  const empty = await client.call('retrieve-memory-records', retrieve);
+  assert('service empty retrieval with searchType becomes the existing plain envelope', JSON.stringify(empty) === JSON.stringify({ memoryRecordSummaries: [] }));
+  await control({ records: [record('preference', { metadata: { searchType: { stringValue: 'record metadata is retained' } } })] });
+  const nonempty = await client.call('retrieve-memory-records', retrieve) as any;
+  assert('searchType envelope omission preserves record metadata and Date normalization', !Object.hasOwn(nonempty, 'searchType') && nonempty.memoryRecordSummaries[0].metadata.searchType.stringValue === 'record metadata is retained' && nonempty.memoryRecordSummaries[0].createdAt === '2026-01-01T00:00:00.000Z');
+  assert('nonempty retrieval with searchType still passes strict scope policy', (await memory.recall('preference', 'communication', 1)).records.length === 1);
+  await control({ response: { memoryRecordSummaries: [], searchType: 's'.repeat(64) } });
+  assert('searchType exact 64-character bound accepted and omitted', !Object.hasOwn(await client.call('retrieve-memory-records', retrieve) as object, 'searchType'));
+  for (const searchType of [{ kind: 'search' }, [], null, 1, '', 's'.repeat(65), 'bad\nvalue', 'bad\u0000value', 'bad\u007fvalue', 'bad\u0085value', 'bad\u202evalue']) {
+    await control({ response: { memoryRecordSummaries: [], searchType } });
+    let error = '';
+    try { await client.call('retrieve-memory-records', retrieve); } catch (caught) { error = String(caught); }
+    assert('malformed searchType refused with fixed bounded error', error === 'Error: AgentCore response failed bounded validation; refused');
+  }
+  const wireRecord = { ...record('preference'), createdAt: 1767225600 };
+  for (const response of [
+    { memoryRecordSummaries: [], searchType: 'synthetic-search', differentUnknown: true },
+    { memoryRecordSummaries: [{ ...wireRecord, searchType: 'nested unknown' }], searchType: 'synthetic-search' },
+    { memoryRecordSummaries: [{ ...wireRecord, content: { ...wireRecord.content, searchType: 'nested unknown' } }], searchType: 'synthetic-search' },
+    { memoryRecordSummaries: [{ ...wireRecord, metadata: { searchType: { arbitrary: 'unknown metadata union' } } }], searchType: 'synthetic-search' },
+  ]) {
+    await control({ response });
+    await rejects('searchType exception does not allow other top-level or nested unknown fields', () => client.call('retrieve-memory-records', retrieve));
+  }
+  await control({ records: [record('preference', { namespaces: ['/users/other/'] })] });
+  await rejects('searchType envelope does not weaken record namespace validation', () => memory.recall('preference', 'communication', 1));
+  await control({ response: { memoryRecord: wireRecord, searchType: 'synthetic-search' } });
+  await rejects('GetMemoryRecord has no searchType compatibility exception', () => client.call('get-memory-record', get));
+  await control({ response: { memoryRecordId: id, searchType: 'synthetic-search' } });
+  await rejects('DeleteMemoryRecord has no searchType compatibility exception', () => client.call('delete-memory-record', get));
+  await control({ response: { event: { memoryId: config.memoryId, actorId: config.actorId, sessionId: 'synthetic-search', eventId: 'synthetic-event', eventTimestamp: 1767225600 }, searchType: 'synthetic-search' } });
+  await rejects('CreateEvent has no searchType compatibility exception', () => client.call('create-event', { memoryId: config.memoryId, actorId: config.actorId, sessionId: 'synthetic-search', eventTimestamp: '2026-01-01T00:00:00Z', clientToken: 's'.repeat(64), payload: [{ conversational: { role: 'OTHER', content: { text: 'synthetic' } } }] }));
   const legacy = new CloudMemory(parseAgentCoreConfig({ ...config, cliPath: '/nonexistent/ignored' })!, root, 'legacy');
   assert('legacy executable accepted with bounded notice, new config has no cliPath default', legacy.status().includes('deprecated and ignored') && !legacy.status().includes('/nonexistent/ignored') && config.cliPath === undefined);
   for (const cliPath of ['relative', 123, '/' + 'x'.repeat(1024)]) await rejects('malformed legacy path remains invalid', () => parseAgentCoreConfig({ ...config, cliPath }));

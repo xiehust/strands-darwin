@@ -43,7 +43,8 @@ const server = http.createServer(async (req, res) => {
   if (control.response !== undefined) { json(control.response); return; }
   const records = (control.records || []).map(record => ({ ...record, createdAt: Date.parse(record.createdAt) / 1000 }));
   switch (operation) {
-    case 'retrieve-memory-records': json({ memoryRecordSummaries: records }); break;
+    // Real service envelope includes searchType even when the pinned SDK drops it.
+    case 'retrieve-memory-records': json({ memoryRecordSummaries: records, searchType: 'synthetic-search' }); break;
     case 'get-memory-record': json({ memoryRecord: records[0] }); break;
     case 'create-event': {
       const { extractionConfig, clientToken, ...event } = input;

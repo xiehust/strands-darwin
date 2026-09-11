@@ -85,7 +85,7 @@ Send 必须对应已预览且未变化的字节。事件保留 Darwin session ID
 
 ## 边界、生命周期与验证
 
-传输使用四个官方 AWS SDK Command，不使用 shell、可执行文件、stdin 或临时请求文件。输入仍最多 **32,000 个 UTF-8 字节**。通过公开的 HTTP-handler 扩展，在收集和解析前限制成功响应体为 **256 KiB**、错误响应体为 **8 KiB**；成功 JSON 在 SDK 反序列化前还要通过有限深度、节点数检查。SDK Date 转成 ISO 字符串，仅移除顶层 SDK `$metadata`，不移除记忆 metadata。未知响应字段会被拒绝，不让 SDK 静默丢弃字段后绕过验证；记录和 XML 校验保持严格。
+传输使用四个官方 AWS SDK Command，不使用 shell、可执行文件、stdin 或临时请求文件。输入仍最多 **32,000 个 UTF-8 字节**。通过公开的 HTTP-handler 扩展，在收集和解析前限制成功响应体为 **256 KiB**、错误响应体为 **8 KiB**；成功 JSON 在 SDK 反序列化前还要通过有限深度、节点数检查。SDK Date 转成 ISO 字符串，仅移除顶层 SDK `$metadata`，不移除记忆 metadata。未知响应字段会被拒绝，不让 SDK 静默丢弃字段后绕过验证。唯一例外是 RetrieveMemoryRecords 顶层的 `searchType` 提示字段，固定版本 SDK 尚未建模：必须是非空、不含控制字符且最多 64 个 UTF-16 码元的字符串，在记录校验前省略。其他操作和嵌套字段均不豁免，记录及 XML 校验保持严格。
 
 `maxAttempts: 1` 将重试权留给手动 outbox。一个总时限覆盖凭证解析、签名、连接和响应读取。即使凭证提供器仍在等待，取消或超时也会返回；HTTP handler 的最终检查阻止迟到的凭证结果再发送请求。已发出的效果不能撤销。取消按控制器隔离，退出时销毁该 SDK 客户端及连接。服务诊断、凭证和请求 ID 不输出，可显示有限的 HTTP 状态。传输不创建或清理任何文件；原有持久 outbox 和状态文件仍为权限私有的明文，并非加密或安全擦除。
 
@@ -93,6 +93,6 @@ Send 必须对应已预览且未变化的字节。事件保留 Darwin session ID
 
 偏好批准在 `~/.darwin/agentcore/<binding>/`；outbox 在 `~/.darwin/projects/<project-key>/agentcore/<binding>/<scope-binding>/`，均视为敏感用户策略路径，文件权限私有且拒绝符号链接。关闭功能不访问这些状态。`/clear`、`/rewind` 建立新控制器、刷新偏好，保留持久 outbox，不撤销 AWS 效果。取消按管理操作独立生效，即使刚结束磁盘等待，也不再发布新状态或发送 SDK 请求；Esc 后的新命令仍可使用。已发出的操作不会被撤销，已收到的 AWS 确认仍保留。云控制器退出时取消并等待管理及本地投影任务，最多两秒；超时明确报告尚未完成的文件 I/O，取消的修改仍被禁止，锁可能到 I/O 返回后才释放。send/compact 在本地偏好准备完成后、调用模型前再次检查取消，不重新检索缓存；若进程在投影落盘前崩溃，该候选可能遗漏，不补扫历史。原始事件 TTL 或删除**不会**删除长期记录。
 
-离线验证：`pnpm tsx spike/verify-agentcore-memory.ts` 使用真实文件、SDK Command/序列化/签名、loopback HTTP、runtime/权限门和独立 Darwin CLI 进程。测试凭证及私有 HOME 隔离 AWS 和真实用户配置。覆盖 profile/容器凭证、endpoint 覆盖排除、输入/响应上限、凭证等待取消、磁盘发布取消窗口、明确偏好采纳和手动 outbox 回执。这不证明真实 IAM、检索或提取；Host 另做只读验收。
+离线验证：`pnpm tsx spike/verify-agentcore-memory.ts` 使用真实文件、SDK Command/序列化/签名、loopback HTTP、runtime/权限门和独立 Darwin CLI 进程。测试凭证及私有 HOME 隔离 AWS 和真实用户配置。覆盖 profile/容器凭证、endpoint 覆盖排除、输入/响应上限、凭证等待取消、磁盘发布取消窗口、明确偏好采纳和手动 outbox 回执。这些本地测试不证明真实 IAM 或提取。Host 已观察到原始 SDK 只读检索成功，结果为空，并带有额外的顶层 `searchType`；空结果不能证明提取成功。Host 将在此兼容修复后重做真实只读验收。
 
-`pnpm tsx spike/verify-agentcore-memory-live.ts` 默认跳过；只有 `AGENTCORE_DISPOSABLE_CONFIG` 指向明确的一次性测试资源配置，且 `AGENTCORE_ALLOW_SYNTHETIC_UPLOAD=yes`，actor 以 `synthetic-` 开头，才上传另行授权的合成事件。不创建或删除资源，清理由所有者负责；它检验传输接受，不保证提取时机。本次 SDK 迁移未授权或执行真实服务调用、合成事件上传。
+`pnpm tsx spike/verify-agentcore-memory-live.ts` 默认跳过；只有 `AGENTCORE_DISPOSABLE_CONFIG` 指向明确的一次性测试资源配置，且 `AGENTCORE_ALLOW_SYNTHETIC_UPLOAD=yes`，actor 以 `synthetic-` 开头，才上传另行授权的合成事件。不创建或删除资源，清理由所有者负责；它检验传输接受，不保证提取时机。实现 worker 未调用真实服务或上传合成事件；上述 Host 单独执行的只读观察不证明提取成功。
