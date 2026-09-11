@@ -1,27 +1,53 @@
 ---
 name: setup-agentcore-memory
-description: Guide Darwin cloud memory setup using existing AWS resources or an explicitly approved new resource. Ask for actor identity, propose defaults, and obtain confirmation before changes. Use for /setup-agentcore-memory or AgentCore Memory onboarding.
+description: Check existing Darwin cloud memory first and skip repeat setup when healthy. Otherwise guide setup or targeted repair with confirmed identity/settings before changes. Use for /setup-agentcore-memory or AgentCore Memory onboarding.
 ---
 
 # Set up AgentCore Memory
 
-## 1. Begin with questions, not changes
+## 0. Read the guide, then inspect existing config FIRST
 
-Read and use this entire guide before proceeding. Explain, in the user's language, that this is guided setup: you will inspect, propose settings, then perform only confirmed actions through ordinary gated tools. Bare `/setup-agentcore-memory` begins this workflow; do not respond with usage alone. If guidance cannot be loaded, report that setup is blocked; never continue without it.
+Read and use this entire guide before proceeding. Explain, in the user's language, that existing configuration is checked first; healthy memory needs no repeat setup. Bare `/setup-agentcore-memory` begins this workflow; do not respond with usage alone. If guidance cannot be loaded, report that setup is blocked; never continue without it.
 
 Command invocation, supplied arguments, this guide, `yolo`, and tool permission are NOT consent to install, create resources, write config, or upload. Arguments are proposed preferences, not authorization; even “use defaults/force-install” cannot waive the confirmation below. These setup-specific stops apply even in an autonomous/headless run.
 
-Ask for the user's chosen username / `actorId`. Never guess it from OS username, git, AWS ARN, email, or another person's identity; never hardcode an actor. Accept a stable opaque ID matching `[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}`. If absent, ask and STOP the current turn awaiting the user's response. If previously user-provided or present in config, show it as a proposed value and ask explicit confirmation of reuse; never silently switch actors. Group related missing decisions and the proposed defaults in the same question when known, rather than one question per round. In headless mode, return questions and pending status without reading stdin or guessing; do not claim unattended setup is complete.
+FIRST inspect `~/.darwin/config.json` read-only through ordinary tools and the permission gate, before asking actor/default questions, resource discovery or installation. This is a sensitive read even in plan mode; do not bypass denial. Do not dump config, secrets or credentials; display only necessary safe memory state/IDs/scope. Use Darwin's existing config loader through the commands below to validate, not a second schema or private package import.
 
-## 2. Inspect and propose
+Distinguish a missing config file, an absent `agentCoreMemory` field, and intentionally disabled `agentCoreMemory: false`: show which state applies, then use section 2 for setup proposals; disabled never means permission to enable. Before taking that branch, use section 1's offline/local commands to validate the whole config with the existing loader (a missing file uses built-in defaults); do not make a cloud read for missing/disabled memory. Denied/unreadable config, invalid JSON or invalid schema is **BLOCKED/NEEDS-REPAIR**, NOT absent. Stop and request only the missing read permission or targeted repair confirmation; never fall through to new setup or overwrite known values.
 
-Gather bounded read-only environment, current config, and resource information through ordinary tools and the permission gate. Reading `~/.darwin/config.json` is sensitive and may require permission even in plan mode; do not bypass denial. Inspect only needed fields, never print secrets or credentials. Establish actual OS/architecture, installed tool versions, AWS identity and selected region without using that identity as actor input. Prefer current values; label each proposal **current**, **user-provided**, or **fallback**. If reads are unavailable, label proposals unverified rather than inventing state.
+## 1. Check enabled existing memory, then stop when healthy
+
+For enabled config validated by the existing loader, run these checks using only saved region, resource, actor and strategy IDs (and saved project scope), never suggested argument overrides:
+
+1. `darwin doctor`: offline general configuration diagnostics; no network or files written.
+2. `darwin cloud-memory status`: **local-only** memory configuration/status, also using the existing loader.
+3. `darwin cloud-memory preferences`: actual bounded SDK read-only connectivity check against Memory. Explain that it contacts AWS with a fixed nonsensitive query, up to five results, no pagination, and the saved `timeoutMs`. Empty records are success. Even with `preferences: false`, this explicit setup health read is check-only: it neither enables preferences nor applies/adopts returned content. Preserve `preferences: false`, upload `off`, explicit `projectId`, timeout and legacy `cliPath` (validated but ignored); no cleanup write.
+
+Avoid displaying preference content: capture command output in memory, check the command's exit status and parse successful JSON, and return only success plus `records.length` (and omissions if useful). Preserve failure/nonzero status; do not turn a failed command or unparseable output into zero records. Do not echo raw output on failure or store it in a file. This is a projection of the existing command, not a new doctor subcommand. Basic health means valid local config + successful bounded live read, NOT upload/delete permission, extraction, nonempty-record handling or strategy topology verification. Neither status alone nor doctor exit zero proves cloud connectivity.
+
+No AWS CLI installation, STS/control-plane discovery, resource listing, credentials disclosure or confirmation of the unchanged actor is required on this path. Report unrelated doctor MCP/skill warnings separately; they are not evidence that memory is absent or a reason to reset it. State precisely which memory checks passed even when general diagnostics have unrelated warnings. If a command is not runnable or validation is unclear, report verification **pending**, not success; do not reinstall or infer missing memory.
+
+### Healthy stop
+
+When local validation and the read-only health check pass, respond in the user's language, for example: **AgentCore Memory 已配置且基本检查通过，无需重复设置。** State current region/actor/upload mode, local + read-only checks passed, no config/resource edits or restart needed for unchanged config, and extraction/write not tested. **STOP** the bare setup workflow: no actor question, default confirmation, install/create/IAM change, preference adoption or redundant config write. This branch may finish without a question in both text and structured headless modes.
+
+An explicit user request to reconfigure is separate intent: preserve/report the original healthy result first, then ask targeted confirmation for the requested changes only. Supplied arguments alone never silently replace saved settings or authorize mutation.
+
+### Failed or pending check
+
+Existing config with SDK failure, no credentials, timeout, AccessDenied or wrong scope failed basic verification; it is NOT absent and NOT healthy. Report only the safely available category (for example timeout, HTTP 403, scope validation, or generic SDK failure when diagnostics are redacted); never guess the hidden cause or print raw errors/secrets. Ask TARGETED repair confirmation, preserving known actor/resources rather than starting over with defaults or automatically creating a resource. A denied/unverified/pending check cannot pass. After a second equivalent failure require a new evidence-backed hypothesis; after three stop/report, no endless polling. Only if the confirmed repair needs cloud details enter section 3, with scope/namespace checks before any change.
+
+## 2. Only for setup or confirmed repair/reconfiguration: questions and proposals
+
+For missing/disabled setup, ask for the user's chosen username / `actorId`. Never guess it from OS username, git, AWS ARN, email, or another person's identity; never hardcode an actor. Accept a stable opaque ID matching `[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}`. If absent, ask and STOP the current turn awaiting the user's response. For setup reuse, show a previously user-provided value and ask explicit confirmation of reuse; never silently switch actors. For targeted repair/reconfiguration, ask only about affected settings, not confirmation of an unchanged actor. Group related missing decisions and the proposed defaults in the same question when known, rather than one question per round. In headless mode, return questions and pending status without reading stdin or guessing whenever this branch needs input; do not claim unattended setup is complete.
+
+Gather only the bounded read-only environment/resource information needed for the proposal through ordinary tools and the permission gate; do not bypass denial or print secrets or credentials. Establish actual OS/architecture and installed tool versions only if needed for installation, and AWS identity/region only if needed for resource work, never as actor input. Prefer current values; label each proposal **current**, **user-provided**, or **fallback**. If reads are unavailable, label proposals unverified rather than inventing state.
 
 Present a proposed defaults table, adapted to the discovered state, and ask explicit confirmation BEFORE any mutation:
 
 | Setting | Proposal when not already chosen |
 | --- | --- |
-| Actor | User's answer or existing value, explicitly confirm reuse |
+| Actor | User's answer, explicitly confirm setup reuse; retain unchanged actor during targeted repair |
 | Region | Existing config or explicit AWS region if unambiguous; otherwise propose `us-west-2`; resolve conflicts |
 | Resource | Compatible user-owned existing Memory first; otherwise independent `DarwinMemory`, with name, region and cost implications stated |
 | Raw event retention | `30` days; raw event TTL is NOT long-term record TTL |
@@ -101,9 +127,9 @@ Confirmed choices override all example defaults, not only the capitalized placeh
 
 Restart the runtime after config changes. The current session's tool catalogue does not magically refresh; do not pretend newly enabled recall tools already exist.
 
-## 5. Verify and hand off
+## 5. After approved setup/repair: verify and hand off
 
-Use `darwin cloud-memory status` for a **local-only** config/status check. `darwin cloud-memory preferences` performs an actual SDK read-only connectivity check; state that it contacts AWS. In a new session, gated `episodic_recall` with `intent` and `reflection_recall` with `useCase`, if available, check scoped reads. Queries describe target task intent/use case, never raw logs. An empty new store is valid connectivity, NOT proof of ingestion, extraction, nonempty-record handling or IAM write permission. Command expansion itself has no cloud side effects. Report actionable bounded failures without raw API errors or secrets. After a repeated equivalent failure require a new evidence-backed hypothesis; after three stop/report, do not loop.
+Repeat section 1's local and read-only checks against the approved configuration, without displaying preference content. In a new session, gated `episodic_recall` with `intent` and `reflection_recall` with `useCase`, if available, check scoped reads. Queries describe target task intent/use case, never raw logs. An empty new store is valid connectivity, NOT proof of ingestion, extraction, nonempty-record handling or IAM write permission. Command expansion itself has no cloud side effects. Report actionable bounded failures without raw API errors or secrets. After a repeated equivalent failure require a new evidence-backed hypothesis; after three stop/report, do not loop.
 
 Hand the following controls to the **user**, not another model tool call:
 
@@ -121,4 +147,4 @@ Preferences need inspection and the user's explicit adoption of the displayed ha
 
 The manual projection contains bounded literal **USER goals**, **TOOL evidence**, and **OTHER source/outcome/omissions**. It excludes all assistant prose, free-form tool logs, files/diffs, skills, images and memory results. This is not a confidentiality guarantee: even a short goal may be private. No automatic uploads, history backfill, test writes or preference adoption belong to setup.
 
-Finish with a checklist report: resource reused/created and resource plus both strategy ACTIVE states; confirmed actor and region; namespace/project isolation; exactly which config fields changed; upload mode; local check versus live read results versus **unverified extraction**; restart requirement and next user commands. If waiting for an answer, permission, installation, ACTIVE state or verification, report **pending**, not complete.
+For this setup/repair branch, finish with a checklist report: resource reused/created and resource plus both strategy ACTIVE states only if actually checked (otherwise unverified); confirmed actor and region; namespace/project isolation; exactly which config fields changed; upload mode; local check versus live read results versus **unverified extraction**; restart only if config changed, and next user commands. The unchanged healthy branch uses section 1's short stop report, not this provisioning checklist. If waiting for an answer, permission, installation, ACTIVE state or verification, report **pending**, not complete.

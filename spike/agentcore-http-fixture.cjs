@@ -39,6 +39,7 @@ const server = http.createServer(async (req, res) => {
   if (control.mode === 'diagnostics') { res.writeHead(500); res.end('x'.repeat(8193)); return; }
   if (control.mode === 'invalid-json') { res.end('not JSON'); return; }
   if (control.mode === 'error') { res.statusCode = 503; json({ message: 'secret service error not for model' }); return; }
+  if (control.mode === 'denied') { res.statusCode = 403; json({ __type: 'AccessDeniedException', message: 'secret denial not for model' }); return; }
   if (control.raw !== undefined) { res.end(control.raw); return; }
   if (control.response !== undefined) { json(control.response); return; }
   const records = (control.records || []).map(record => ({ ...record, createdAt: Date.parse(record.createdAt) / 1000 }));

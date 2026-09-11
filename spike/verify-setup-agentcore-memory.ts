@@ -1,7 +1,8 @@
 /** Offline setup contracts: real loaders/runtime/pty, private files, no AWS or provider calls.
  * Run: pnpm tsx spike/verify-setup-agentcore-memory.ts [--dist]
  * --dist runs only relocated built-skill activation and npm's dry-run package manifest.
- * Scripted questions prove delivery/streaming, not live-model consent compliance.
+ * Scripted branch replies prove delivery/streaming, not arbitrary model compliance.
+ * Preflight uses real config/doctor/readonly CLI and loopback SDK, never AWS.
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -22,6 +23,7 @@ import { runStructuredHeadlessTurn, StructuredHeadlessWriter } from '../src/head
 import { CaptureModel } from './offline-model.js';
 import { ownPrivateHome } from './shared.js';
 import { startTui } from './tui-driver.js';
+import { verifySetupPreflight } from './setup-memory-preflight.js';
 
 const home = ownPrivateHome('setup-agentcore-memory');
 const repo = path.resolve(import.meta.dirname, '..');
@@ -38,6 +40,17 @@ if (!process.argv.includes('--dist')) {
 // Pin safety-critical instructions as workflow content, separately from executable checks.
 for (const terms of [
   ['entire guide', "user's language", 'never continue without it'],
+  ['FIRST inspect `~/.darwin/config.json`', 'before asking actor/default questions', 'sensitive read even in plan mode', 'do not bypass denial'],
+  ['missing config file', 'absent `agentCoreMemory` field', 'intentionally disabled `agentCoreMemory: false`', 'BLOCKED/NEEDS-REPAIR', 'NOT absent'],
+  ['saved region, resource, actor and strategy IDs', 'never suggested argument overrides', 'darwin doctor', 'no network or files written'],
+  ['Empty records are success', 'check-only', 'neither enables preferences nor applies/adopts', 'explicit `projectId`', 'legacy `cliPath`', 'no cleanup write'],
+  ['Avoid displaying preference content', 'records.length', 'Preserve failure/nonzero status', 'unparseable output', 'not a new doctor subcommand'],
+  ['Neither status alone nor doctor exit zero', 'strategy topology', 'No AWS CLI installation, STS/control-plane discovery', 'confirmation of the unchanged actor'],
+  ['unrelated doctor MCP/skill warnings separately', 'command is not runnable', 'pending**, not success', 'do not reinstall'],
+  ['无需重复设置', '**STOP** the bare setup workflow', 'no actor question, default confirmation', 'no config/resource edits or restart needed', 'extraction/write not tested'],
+  ['explicit user request to reconfigure', 'original healthy result first', 'requested changes only'],
+  ['SDK failure, no credentials, timeout, AccessDenied or wrong scope', 'generic SDK failure when diagnostics are redacted', 'never guess the hidden cause', 'TARGETED repair confirmation', 'no endless polling'],
+  ['For missing/disabled setup, ask', 'For targeted repair/reconfiguration, ask only', 'both text and structured headless'],
   ['username / `actorId`', 'ask and STOP the current turn', 'explicit confirmation of reuse', 'never silently switch'],
   ['OS username, git, AWS ARN, email', 'never hardcode an actor', 'Group related missing decisions'],
   ['supplied arguments', '`yolo`', 'NOT consent', 'Arguments are proposed preferences', 'force-install'],
@@ -64,6 +77,15 @@ for (const terms of [
   ['**USER goals**', '**TOOL evidence**', '**OTHER source/outcome/omissions**', 'excludes all assistant prose', 'not a confidentiality guarantee'],
   ['resource reused/created', 'confirmed actor and region', 'config fields changed', 'upload mode', '**unverified extraction**', '**pending**, not complete'],
 ]) for (const term of terms) assert(guide.instructions.includes(term), `guide missing: ${term}`);
+const orderedSteps = ['Read and use this entire guide', 'FIRST inspect `~/.darwin/config.json`', '1. `darwin doctor`', '2. `darwin cloud-memory status`', '3. `darwin cloud-memory preferences`', '### Healthy stop', '**STOP** the bare setup workflow', '## 2. Only for setup', "ask for the user's chosen username", 'Present a proposed defaults table'];
+let previousStep = -1;
+for (const step of orderedSteps) {
+  const index = guide.instructions.indexOf(step);
+  assert(index > previousStep, `preflight order: ${step}`);
+  previousStep = index;
+}
+const preflight = guide.instructions.split('## 2. Only for setup')[0]!;
+assert(!/^(?:Ask for|Present a proposed defaults table)/m.test(preflight), 'no unconditional actor/default request before health check');
 assert(Buffer.byteLength(raw) < 24_000, 'full guide stays reasonably bounded');
 assert(!raw.includes('river-xie') && !raw.includes('arn:aws:'));
 assert(!raw.includes('docs/') && !raw.includes('process.cwd'), 'guide has no repository dependency');
@@ -109,6 +131,7 @@ await writeFile(configPath(), JSON.stringify({ ...baseConfig, trajectory: false,
 await assert.rejects(loadConfig(root), /trajectory/);
 await writeFile(configPath(), JSON.stringify(baseConfig));
 assert.equal((await stat(configPath())).mode & 0o777, 0o600);
+await verifySetupPreflight({ home, root, repo, baseConfig, config, instructions: guide.instructions });
 assert(REQUIRED_BUILTIN_SKILLS.includes(name));
 assert.equal(BUILTIN_COMMAND_NAMES.filter(item => item === name).length, 1);
 assert(MAX_COMPLETIONS >= BUILTIN_COMMAND_NAMES.length);
@@ -254,7 +277,8 @@ try {
   assert.equal(await readFile(configPath(), 'utf8'), JSON.stringify(baseConfig));
 } finally { tui.kill(); }
 for (const file of ['README.md', 'README.zh-CN.md', 'docs/user-guide/agentcore-memory.md', 'docs/user-guide/agentcore-memory.zh-CN.md', 'docs/user-guide/reference.md', 'docs/user-guide/reference.zh-CN.md']) {
-  assert((await readFile(path.join(repo, file), 'utf8')).includes('/setup-agentcore-memory'), `${file} discovery`);
+  const doc = await readFile(path.join(repo, file), 'utf8');
+  for (const term of ['/setup-agentcore-memory', '~/.darwin/config.json', 'darwin doctor', 'darwin cloud-memory status', 'darwin cloud-memory preferences']) assert(doc.includes(term), `${file} existing-first discovery: ${term}`);
 }
 assert((await stat(path.join(repo, 'AGENTS.md'))).size <= 32768);
 }

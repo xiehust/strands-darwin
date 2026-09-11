@@ -737,8 +737,14 @@ and held shell reports are untouched. Images are reserved across activation as w
 Completion deduplicates the built-in/skill name. Busy queue
 and literal trajectory semantics are unchanged. TUI/REPL and text/structured headless `-p`
 all call the same expansion seam; headless missing answers end as questions, not guessed setup.
-Consent is guide policy plus ordinary tool gates, not a new sandbox: actor/default confirmation is required even in yolo;
-cloud upload/adoption remain separate user-only controls. Verification checklist:
+The guide first reads sensitive existing config through the ordinary gate, then reuses offline
+`darwin doctor`, local `cloud-memory status` and bounded SDK `cloud-memory preferences` reads.
+Healthy unchanged memory stops without actor/default questions or mutation/restart; empty reads
+are connectivity, not extraction/write/topology proof. Missing/disabled setup asks questions;
+invalid/denied/failed checks need targeted repair, never reset. Reconfiguration preserves the
+saved health result and asks targeted consent. Doctor remains offline; no new production wizard.
+Consent is guide policy plus ordinary tool gates, not a new sandbox: setup actor/default and
+repair/change confirmation are required even in yolo; cloud upload/adoption remain user-only. Verification checklist:
 `setup-agentcore-memory-verification.md`; offline suite `verify-setup-agentcore-memory.ts`.
 
 ## System prompt composition
