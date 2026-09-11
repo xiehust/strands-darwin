@@ -1152,7 +1152,11 @@ async function cloudAuto(): Promise<void> {
     const record = JSON.parse(await readFile(HOME_CONFIG, 'utf8'));
     const policy = Object.values(record.projectOverrides)[0] as { agentCoreMemory: { upload: string; authorization: unknown } };
     assert('typed auto persists current project authorization', policy.agentCoreMemory.upload === 'auto' && !!policy.agentCoreMemory.authorization && record.agentCoreMemory.upload === 'off');
-    assert('auto notice warns about secrets and retention', tui.screen.slice(mark).includes('Content may include secrets') && tui.screen.slice(mark).includes('7 days'));
+    // Long scope identities wrap the warning across terminal rows. Await the
+    // notice's end (not only its prefix), then preserve words while joining wraps.
+    await tui.waitFor(/Details:\s+\/cloud-memory/, { from: mark });
+    const autoNotice = tui.screen.slice(mark).replace(/\s+/g, ' ');
+    assert('auto notice warns about secrets and retention', autoNotice.includes('Content may include secrets.') && autoNotice.includes('Auto-accepted local bodies retained 7 days;'));
     mark = tui.mark(); tui.submit('/cloud-memory manual');
     await tui.waitFor('manual persisted', { from: mark });
     const manual = Object.values(JSON.parse(await readFile(HOME_CONFIG, 'utf8')).projectOverrides)[0] as { agentCoreMemory: { upload: string } };

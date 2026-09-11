@@ -3,6 +3,25 @@
 Original implementation baseline: `e23ba1d`; consent/launch correction: `1f7966b`.
 Historical gates below apply only to those source sets, not the current A–G changes.
 
+## Post-d01ec71 free-TUI assertion correction
+
+Host reported uninterrupted `pnpm typecheck` and `pnpm test` passing on `d01ec71`
+(**7610 PASS, 0 FAIL**). Its subsequent free `cloudAuto` check failed 3/1; the chain
+stopped before completion/build. A diagnostic run captured the actual 120-column PTY:
+`Content may include \r\nsecrets.` followed by `Auto-accepted local bodies retained 7 days;`
+and the ready prompt. Both warnings were present; the exact substring assertion rejected
+the rendered line wrap after the long scope identities, not missing warning text.
+Capture task: `bg-da8309fa-95e3-4593-8e95-92d41e6ab4f3`.
+
+Only the test changes: wait for the anchored notice end, normalize rendered whitespace,
+and require the complete secrets and seven-day retention clauses. Temporary diagnostics
+were removed. No production wording or behavior changes, and no full gate rerun.
+Focused checks **2026-09-11 11:09:19–11:09:47 UTC**: free `cloudAuto` **4/0**, free
+`completion` **74/0**, then typecheck **exit 0**; task
+`bg-07222ded-f08d-4e62-9eca-a155ef64a623` records
+`FOCUSED cloudAuto=0 completion=0 typecheck=0`. No model/cloud calls or real config/outbox
+mutations; the PTY suites use their owned temporary HOME. Host's iteration log is untouched.
+
 ## Post-adf4252 held-read acceptance race
 
 Host review reproduced native manual acceptance completing while an automatic pass was
