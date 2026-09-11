@@ -604,7 +604,28 @@ async function verifyTransport() {
   await rejects('malicious metadata survives SDK boundary and fails policy validation', () => memory.recall('preference', 'communication', 1));
   const oldConfig = parseAgentCoreConfig({ ...config, cliPath: '/nonexistent/legacy' })!;
   assert('removing legacy cliPath preserves namespace and durable state binding', JSON.stringify(scopeFor(oldConfig, root)) === JSON.stringify(scopeFor(config, root)) && cloudDirectory(oldConfig, root) === cloudDirectory(config, root));
-  // Numeric service timestamps and SDK Dates must not change content/proof hashes.
+  // Legacy CLI timestamp metadata differs only in formatting, but evidence hashes
+  // must not be silently migrated. Preserve the stored proof and request re-review.
+  const legacyRecord = record('preference', { metadata: { at: { dateTimeValue: '2026-01-01T00:00:00+00:00' } } });
+  const legacyHash = validateRecord(legacyRecord, 'preference', config, root).hash;
+  const proofFile = path.join(cloudDirectory(config), `${id}.json`);
+  await writeState(proofFile, { version: 1, approved: legacyHash });
+  const proofBytes = await readFile(proofFile, 'utf8');
+  await control({ records: [record('preference', { metadata: { at: { dateTimeValue: 1767225600 } } })] });
+  const review = new CloudMemory({ ...config, preferences: true }, root, 'timestamp-review'); await review.startup();
+  assert('legacy datetime metadata approval is not applied or silently rewritten', await review.context() === '' && await readFile(proofFile, 'utf8') === proofBytes);
+  assert('metadata hash mismatch reports bounded inspect/confirm re-review guidance', review.status().includes('require re-review') && review.status().includes('/cloud-memory inspect') && review.status().includes('confirm') && !review.status().includes(legacyHash));
+  const reviewed = await review.command(`inspect ${id}`);
+  const sdkHash = validateRecord(record('preference', { metadata: { at: { dateTimeValue: '2026-01-01T00:00:00.000Z' } } }), 'preference', config, root).hash;
+  assert('format-only change still requires fresh inspection and explicit confirmation', sdkHash !== legacyHash && reviewed.includes(sdkHash) && (await review.command(`confirm ${id} ${sdkHash} global`)).includes('explicitly adopted'));
+  assert('fresh byte-identical metadata proof applies and clears re-review notice', (await review.context()).includes('concise') && !review.status().includes('require re-review'));
+  const restoredReview = new CloudMemory({ ...config, preferences: true }, root, 'timestamp-restored'); await restoredReview.startup();
+  assert('byte-identical datetime metadata approval survives new controller startup', (await restoredReview.context()).includes('concise') && !restoredReview.status().includes('require re-review'));
+  await restoredReview.close();
+  await review.command(`forget ${id}`); await review.context();
+  assert('revoked proof is not mislabeled as a changed approval', !review.status().includes('require re-review'));
+  await review.close(); await unlink(proofFile); await unlink(`${proofFile}.inspection`);
+  // Numeric service timestamps and SDK Dates must not change content/proof hashes without metadata.
   await control({ records: [record('preference')] });
   const dated = await client.call('get-memory-record', get) as any;
   assert('legacy preference content hash survives SDK Date/envelope normalization', validateRecord(dated.memoryRecord, 'preference', config, root).hash === validateRecord(record('preference'), 'preference', config, root).hash);
@@ -684,6 +705,48 @@ async function verifyTransport() {
   function chain(env: NodeJS.ProcessEnv) { return spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', preload, cliPath, 'cloud-memory', 'inspect', id], { cwd: root, env: { ...chainEnv, ...env }, encoding: 'utf8', timeout: 10000 }); }
   const profile = chain({ AWS_PROFILE: 'synthetic' });
   assert('official profile credentials sign, shared-config endpoints ignored, legacy path unused', profile.status === 0 && profile.stderr.includes('deprecated and ignored') && (await calls()).at(-1).headers.authorization.includes('Credential=AKIDPROFILE/') && !(await calls()).at(-1).headers.host.includes('invalid.example'));
+  // Standard source_profile/role_arn resolution must use STS's XML decoder and
+  // independent credential HTTP, never the AgentCore abort/body guard.
+  const roleConfig = path.join(home, 'synthetic-role-config');
+  const roleArn = 'arn:aws:iam::000000000000:role/synthetic-test'; // Deliberately fictitious account.
+  await writeFile(roleConfig, `[profile assumed]\nrole_arn = ${roleArn}\nsource_profile = synthetic\nrole_session_name = synthetic-session\nregion = us-west-2\nendpoint_url = https://invalid.example\nservices = synthetic\n[services synthetic]\nsts =\n  endpoint_url = https://invalid.example\nbedrock-agentcore =\n  endpoint_url = https://invalid.example\n`);
+  const roleEnv = { AWS_PROFILE: 'assumed', AWS_CONFIG_FILE: roleConfig, AWS_ENDPOINT_URL: 'https://invalid.example', AWS_ENDPOINT_URL_STS: 'https://invalid.example', AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'https://invalid.example', AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'false', AWS_MAX_ATTEMPTS: '4' };
+  const roleBefore = (await calls()).length;
+  const assumed = chain(roleEnv);
+  assert('real AssumeRole profile resolves STS XML then signs AgentCore with assumed credentials', assumed.status === 0 && (await calls()).length === roleBefore + 1 && (await calls()).at(-1).headers.authorization.includes('Credential=AKIDASSUMED/') && (await calls()).at(-1).headers['x-amz-security-token'] === 'synthetic-assumed-token');
+  async function stsCalls(): Promise<any[]> { try { return (await readFile(path.join(home, 'fixture-sts.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line)); } catch { return []; } }
+  const sts = (await stsCalls()).at(-1);
+  assert('AssumeRole uses synthetic source credentials and rejects configured STS/AgentCore endpoints', sts?.input.RoleArn === roleArn && sts?.input.RoleSessionName === 'synthetic-session' && sts?.headers.authorization.includes('Credential=AKIDPROFILE/') && sts?.headers.host === 'sts.us-west-2.amazonaws.com' && !(await calls()).at(-1).headers.host.includes('invalid.example'));
+  await control({ stsError: true }); const stsBefore = (await stsCalls()).length;
+  const roleFailure = chain(roleEnv);
+  assert('STS failure has one attempt despite env retry override and no memory request', roleFailure.status === 1 && (await stsCalls()).length === stsBefore + 1 && (await calls()).length === roleBefore + 1 && !roleFailure.stdout.includes('synthetic secret'));
+  const transportModule = fileURLToPath(new URL('../src/agentcore/transport.ts', import.meta.url));
+  for (const mode of ['abort', 'timeout'] as const) {
+    await control({ pauseSts: true, records: [record('preference')] });
+    const beforeMemory = (await calls()).length;
+    const probe = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', preload, '--input-type=module', '-e', `
+      import { MemoryTransport } from ${JSON.stringify(transportModule)};
+      const memory = new MemoryTransport(${JSON.stringify({ ...config, timeoutMs: 600 })});
+      const abort = new AbortController();
+      process.on('message', message => { if (message === 'abort') abort.abort(); if (message === 'finish') { memory.destroy(); process.disconnect(); } });
+      const result = await memory.call('get-memory-record', ${JSON.stringify(get)}, abort.signal).then(() => 'unexpected success', error => error.message);
+      process.send(result);
+    `], { env: { ...chainEnv, ...roleEnv }, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    const outcome = new Promise<string>(resolve => probe.once('message', result => resolve(String(result))));
+    const exited = new Promise<void>(resolve => probe.once('close', () => resolve()));
+    try {
+      for (let n = 0; n < 300; n++) { try { await stat(path.join(home, 'fixture-sts-paused')); break; } catch { await delay(10); } }
+      await stat(path.join(home, 'fixture-sts-paused'));
+      if (mode === 'abort') probe.send('abort');
+      const result = await bounded(outcome);
+      assert(`actual AssumeRole ${mode} settles while STS is still awaiting response`, result.includes(mode === 'abort' ? 'cancelled' : 'timed out'));
+      await writeFile(path.join(home, 'fixture-sts-release'), 'release');
+      await delay(200); // Let STS XML decoding and late signer continuation finish.
+      assert(`released AssumeRole after ${mode} never sends late AgentCore request`, (await calls()).length === beforeMemory);
+      probe.send('finish'); await bounded(exited);
+    } finally { probe.kill('SIGKILL'); await unlink(path.join(home, 'fixture-sts-paused')).catch(() => {}); await unlink(path.join(home, 'fixture-sts-release')).catch(() => {}); }
+  }
+  await control({ records: [record('preference')] });
   const tokenFile = path.join(home, 'synthetic-token'); await writeFile(tokenFile, 'synthetic-file-token');
   for (const auth of [{ AWS_CONTAINER_AUTHORIZATION_TOKEN: 'synthetic-direct-token' }, { AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: tokenFile }]) {
     const container = chain({ AWS_SHARED_CREDENTIALS_FILE: path.join(home, 'absent'), AWS_CONFIG_FILE: path.join(home, 'absent'), AWS_CONTAINER_CREDENTIALS_FULL_URI: `http://127.0.0.1:${port}/credentials`, ...auth });

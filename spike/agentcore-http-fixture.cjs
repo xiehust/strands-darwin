@@ -10,6 +10,18 @@ const server = http.createServer(async (req, res) => {
   }
   const chunks = []; for await (const chunk of req) chunks.push(chunk);
   const text = Buffer.concat(chunks).toString();
+  if (text.startsWith('Action=AssumeRole&')) {
+    fs.appendFileSync(path.join(home, 'fixture-sts.jsonl'), JSON.stringify({ input: Object.fromEntries(new URLSearchParams(text)), headers: req.headers }) + '\n');
+    const control = JSON.parse(fs.readFileSync(path.join(home, 'fixture-control.json'), 'utf8'));
+    if (control.pauseSts) {
+      fs.writeFileSync(path.join(home, 'fixture-sts-paused'), 'ready');
+      await new Promise(resolve => { const timer = setInterval(() => { if (fs.existsSync(path.join(home, 'fixture-sts-release')) || res.destroyed) { clearInterval(timer); resolve(); } }, 10); });
+    }
+    res.setHeader('content-type', 'text/xml');
+    if (control.stsError) { res.statusCode = 503; res.end('<ErrorResponse><Error><Code>ServiceUnavailable</Code><Message>synthetic secret error</Message></Error></ErrorResponse>'); return; }
+    res.end('<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult><Credentials><AccessKeyId>AKIDASSUMED</AccessKeyId><SecretAccessKey>synthetic</SecretAccessKey><SessionToken>synthetic-assumed-token</SessionToken><Expiration>2099-01-01T00:00:00Z</Expiration></Credentials></AssumeRoleResult><ResponseMetadata><RequestId>synthetic-sts</RequestId></ResponseMetadata></AssumeRoleResponse>');
+    return;
+  }
   const url = new URL(req.url, 'http://localhost');
   const parts = url.pathname.split('/').map(decodeURIComponent);
   const operation = req.method === 'DELETE' ? 'delete-memory-record' : req.method === 'GET' ? 'get-memory-record' : url.pathname.includes('retrieve') ? 'retrieve-memory-records' : 'create-event';

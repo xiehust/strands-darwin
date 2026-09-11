@@ -2,6 +2,40 @@
 
 The checklist was derived before implementation; this table records its verification locations.
 
+## Host correction after 414ab9b: credential isolation and timestamp re-review
+
+The focused offline reproduction failed the real AssumeRole chain and missing re-review
+notice on 414ab9b. Static-profile/container coverage at that revision did not prove role
+profiles. The prior full-suite result below remains a result for that revision, not acceptance
+of these corrections.
+
+- The official client's configured default-provider factory now builds an independent
+  credential chain/HTTP handler. Nested STS never inherits the memory abort/JSON guard;
+  the guard still rejects missing or unregistered memory signals. No deep or transitive
+  imports, additional dependency, global environment mutation or credential override.
+- Nested credential-client configuration excludes environment/shared-config service endpoint
+  URLs and sets one attempt, while preserving standard credential-service region selection.
+  Credential-source settings (container URIs, metadata disabling, SSO, credential processes)
+  retain standard SDK behavior. The owned credential handler is destroyed with the memory client.
+- A real `role_arn`/`source_profile` profile signs STS with synthetic source credentials;
+  loopback STS XML yields credentials that sign the AgentCore request. Adversarial global,
+  service-specific and profile endpoint URLs never become request hosts. STS 503 produces
+  one request despite `AWS_MAX_ATTEMPTS=4`. Paused STS requests released after cancel/total
+  timeout produce no late AgentCore HTTP. Existing profile/container/IMDS-disable checks remain.
+- A real private approval proof containing CLI `dateTimeValue: ...+00:00` is withheld when
+  SDK Date normalization produces `...000Z`. The stored proof is byte-identical, never migrated.
+  Local approval checking adds bounded status guidance to inspect and confirm the new hash.
+  Fresh matching metadata approval survives startup; revoked proofs do not trigger re-review.
+  No record schema/hash, outbox, namespace, Get/Delete condition or resource identity changed.
+
+Verification: focused `pnpm tsx spike/verify-agentcore-memory.ts --transport-only`:
+**88 passed, 0 failed**; `pnpm typecheck` and whitespace checks passed. **No full suite rerun**
+in this correction. Host owns the full
+acceptance gate and real read-only retrieval. Logs: `/tmp/darwin-agentcore-host-corrections-before.log`
+(reproduced failures), `/tmp/darwin-agentcore-host-corrections-final.log` (final focused result).
+No cloud mutation, resource/IAM change, global config edit or iteration-log edit was performed.
+
+
 ## Approved SDK data-plane migration from 16f8a9c
 
 The requirements map was established before transport edits. `verify-agentcore-memory.ts`

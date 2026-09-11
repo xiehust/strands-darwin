@@ -801,7 +801,11 @@ untrusted data nested in the refreshed working-context block, before the existin
 cache point. Callback replacement preserves literal dollar metacharacters; failed prompt
 refresh blocks the next invocation. Separate inspection/adoption files prevent stale inspection
 from resurrecting forgotten approval. Generated explicitness/citation claims never establish proof. Missing/edited
-proof fails closed; forgetting immediately drops approval and live context. No automatic
+proof fails closed; a stored approved hash differing from the fetched record hash is counted
+in bounded status as requiring inspect/confirm re-review after local context checks. This includes
+CLI-to-SDK metadata timestamp formatting differences, not just remote content changes. No
+hash weakening or automatic proof migration; byte-identical approvals survive. Forgetting
+immediately drops approval and live context. No automatic
 promotion or local-memory migration. Cloud deletion is a distinct user command with a
 fresh scope check. Model provider and permission policy remain independent.
 
@@ -854,10 +858,17 @@ also destroys its client/handler. Already-issued effects are not undone, and alr
 acknowledgements still persist through the existing management cancellation windows. Errors
 expose only bounded fixed text/HTTP status, never raw SDK messages, credentials or request IDs.
 
-The standard credential chain supports profiles, container authorization token/token-file,
-instance roles and metadata disabling. Region is host-fixed. The supported
-`ignoreConfiguredEndpointUrls: true` excludes configured endpoint URLs without process-global
-environment mutation. Legacy absolute `cliPath` is validated/accepted only for compatibility,
+The standard credential chain uses an independent official client configuration/default-provider
+factory and HTTP handler. Nested STS has no memory operation signal and returns XML, so it must
+never inherit the memory guard; missing-signal memory requests are still refused. `role_arn` plus
+`source_profile` is verified through actual STS XML and assumed-credential signing on loopback.
+Nested credential clients receive `maxAttempts: 1` and `ignoreConfiguredEndpointUrls: true`,
+with their normal profile/SSO region selection. Environment/profile/container credentials and
+metadata disabling remain unchanged; container URIs, IMDS, SSO and credential processes are
+trusted credential-source configuration, not arbitrary model endpoints. AgentCore region stays
+host-fixed. Configured service endpoint URLs are excluded without process-global environment
+mutation. Destroy closes both owned handlers; credential work may finish after cancel, but the
+memory guard prevents late AgentCore requests. Legacy absolute `cliPath` is validated/accepted only for compatibility,
 ignored with a bounded status/CLI notice, and omitted from new examples. No runtime subprocess,
 stdin, capability skeleton or temporary request-file path remains. Existing private durable
 outboxes, proofs, namespaces and actor identity are unchanged; no automatic migration or upload.

@@ -55,13 +55,26 @@ export function setMemoryTransportOptionsForTest(factory?: () => TransportTestOp
 /** Official v3 data client only; manual outbox policy owns all retry/authorization. */
 export class MemoryTransport {
   private readonly client: BedrockAgentCoreClient;
+  private readonly credentialClient: BedrockAgentCoreClient;
   private active = new Set<() => void>();
   private requests = new Map<AbortSignal, { check: () => void; raw?: unknown }>();
   private closed = false;
   constructor(readonly config: AgentCoreConfig) {
-    this.client = new BedrockAgentCoreClient({
+    const defaults = {
       region: config.region, maxAttempts: 1, ignoreConfiguredEndpointUrls: true,
       requestHandler: { connectionTimeout: Math.min(3000, config.timeoutMs), requestTimeout: config.timeoutMs, throwOnRequestTimeout: true },
+    };
+    // The SDK's nested STS clients inherit HTTP configuration but not the memory
+    // signal. Build the official chain with an independent, unguarded handler;
+    // do not teach the memory handler to accept unaffiliated requests or STS XML.
+    this.credentialClient = new BedrockAgentCoreClient({ ...defaults, ...testOptions?.() });
+    const credentials = this.credentialClient.config.credentialDefaultProvider({
+      // Credential services retain their standard profile/SSO region selection.
+      clientConfig: { maxAttempts: 1, ignoreConfiguredEndpointUrls: true, requestHandler: this.credentialClient.config.requestHandler },
+    });
+    this.client = new BedrockAgentCoreClient({
+      ...defaults,
+      credentials: () => credentials(), // Never forward the guarded callerClientConfig.
       ...testOptions?.(),
       extensions: [{ configure: extension => {
         const handler = extension.httpHandler();
@@ -105,7 +118,7 @@ export class MemoryTransport {
     });
   }
   cancel(): void { for (const cancel of this.active) cancel(); }
-  destroy(): void { this.closed = true; this.cancel(); this.client.destroy(); }
+  destroy(): void { this.closed = true; this.cancel(); this.client.destroy(); this.credentialClient.destroy(); }
   async call<K extends MemoryOperation>(operation: K, input: MemoryInputs[K], signal?: AbortSignal): Promise<unknown> {
     if (this.closed || signal?.aborted) throw new TransportError('AgentCore request cancelled');
     if (Buffer.byteLength(JSON.stringify(input)) > 32000) throw new TransportError('AgentCore input exceeds 32000 bytes');
