@@ -114,6 +114,21 @@ for (const columns of [14, 16, 20, 40, 80]) {
   assert(`working animation stays height-stable at ${columns} columns`, rows(first) === rows(next));
 }
 
+header('visual language — background activity stays in one header row');
+assert('no running tasks leaves the baseline unchanged', !headerOutput.includes('●') && !headerOutput.includes('/tasks'));
+for (const status of ['idle', 'streaming', 'awaiting-permission', 'compacting', 'shell'] as const) {
+  for (const columns of [14, 20, 30, 40, 80]) {
+    const base = plain(renderToString(<Header runtime={runtime} status={status} />, { columns }));
+    const active = plain(renderToString(<Header runtime={runtime} status={status} runningTaskCount={2} />, { columns }));
+    assert(`${status}: activity adds no rows at ${columns} columns`, rows(base) === rows(active));
+    if (columns === 80) assert(`${status}: foreground state and background count coexist`,
+      active.split('\n')[0]?.includes('● 2 tasks running · /tasks') === true);
+  }
+}
+const activeIdle = plain(renderToString(<Header runtime={runtime} runningTaskCount={1} />, { columns: 80 }));
+assert('idle with a job remains ready and shows a singular running label',
+  activeIdle.startsWith('◆ DARWIN · ready · ● 1 task running · /tasks'));
+
 const shadowRuntime = {
   ...runtime,
   info: {

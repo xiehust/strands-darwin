@@ -9,6 +9,17 @@ export const TASK_TAIL_PREFIX = '    │ ';
 export const TASK_TAIL_EMPTY_NOTICE = '(no output yet)';
 export const TASK_TAIL_UNAVAILABLE_NOTICE = '(output unavailable)';
 
+/** One header suffix: drop the hint, then shorten the label before truncating. */
+export function runningTasksHeader(count: number, availableColumns: number): { label: string; hint: string } {
+  if (count <= 0) return { label: '', hint: '' };
+  const label = ` · ● ${count} task${count === 1 ? '' : 's'} running`;
+  const hint = ' · /tasks';
+  if (label.length + hint.length <= availableColumns) return { label, hint };
+  if (label.length <= availableColumns) return { label, hint: '' };
+  const compact = ` · ● ${count} running`;
+  return { label: compact.length <= availableColumns ? compact : ` · ● ${count}`, hint: '' };
+}
+
 /** Keeps task ids recognizable without printing an entire UUID in every notice. */
 export function formatTaskId(taskId: string): string {
   const match = /^bg-([0-9a-f]{8})[0-9a-f-]*$/i.exec(taskId);

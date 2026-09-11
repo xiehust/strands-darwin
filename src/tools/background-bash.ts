@@ -114,6 +114,7 @@ export class BackgroundBashManager {
   private readonly tasks = new Map<string, ManagedTask>();
   private readonly launches = new Set<Promise<unknown>>();
   private readonly listeners = new Set<BackgroundTaskListener>();
+  private readonly activityListeners = new Set<() => void | Promise<void>>();
   private readonly outputDirectory: string;
   private readonly shutdownController = new AbortController();
   private closing = false;
@@ -157,6 +158,29 @@ export class BackgroundBashManager {
   subscribe(listener: BackgroundTaskListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Synchronous, metadata-only projection; never opens logs or advances a cursor. */
+  get runningCount(): number {
+    let count = 0;
+    for (const task of this.tasks.values()) if (task.state === 'running') count += 1;
+    return count;
+  }
+
+  /** Start/terminal changes only. Separate from the terminal-only wake subscription. */
+  subscribeActivity(listener: () => void | Promise<void>): () => void {
+    this.activityListeners.add(listener);
+    return () => this.activityListeners.delete(listener);
+  }
+
+  private publishActivity(): void {
+    for (const listener of [...this.activityListeners]) {
+      try {
+        Promise.resolve(listener()).catch(() => undefined);
+      } catch {
+        // A display observer must not fail a launch or process cleanup.
+      }
+    }
   }
 
   async output(taskId: string): Promise<BackgroundOutputResult> {
@@ -414,6 +438,7 @@ export class BackgroundBashManager {
       serial: Promise.resolve(),
     };
     this.tasks.set(id, task);
+    this.publishActivity();
 
     void closed.then(({ code, signal }) => {
       task.exitCode = code;
@@ -440,6 +465,7 @@ export class BackgroundBashManager {
     if (task.state !== 'running') return;
     task.state = state;
     task.finishedAt = new Date().toISOString();
+    this.publishActivity();
     // Notification delivery must survive diagnostic-file failures. snapshot()
     // already degrades open/stat problems to outputBytes:null; keep close errors in
     // that same domain instead of turning a completed task into a missing event.

@@ -6,6 +6,8 @@
  * The model is driven by the newest *typed* user message, so one TUI session can
  * run several scenarios in sequence:
  *
+ * - `start-activity[-block] <m>` → job held until `activity-release-<m>` exists;
+ *                                  optional held model stream for the activity header suite.
  * - `start-idle <marker>`        → `bash start` (`sleep 2; echo <marker>`), then text.
  * - `start-and-wait <marker>`    → `bash start` (`sleep 0.3; …`), `bash wait` terminal-focused
  *                                  until it ends, then text — the model saw the terminal state.
@@ -138,6 +140,13 @@ class TaskWakeModel extends Model<BaseModelConfig> {
       if (step === 0) {
         events = toolCall('subagent', `deleg-${this.calls}`, { task: `count ${marker}`, _background_execution: true });
       } else text = `dispatched ${marker}`;
+    } else if (verb === 'start-activity' || verb === 'start-activity-block') {
+      if (step === 0) {
+        events = start(`while [ ! -f activity-release-${marker} ]; do sleep .05; done; echo ${marker}; exit ${marker === 'failure' ? 7 : 0}`);
+      } else {
+        text = `started activity job ${marker}`;
+        holdOpen = verb === 'start-activity-block';
+      }
     } else if (verb === 'start-idle') {
       if (step === 0) events = start(`sleep 2; echo ${marker}`);
       else text = `started idle job ${marker}`;

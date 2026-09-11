@@ -2028,6 +2028,15 @@ export class AgentRuntime {
     return this.backgroundBash.list();
   }
 
+  /** Live in-memory activity for the TUI; no log reads or tool invocation. */
+  get runningBackgroundTaskCount(): number {
+    return this.backgroundBash.runningCount;
+  }
+
+  subscribeToBackgroundTaskActivity(listener: () => void): () => void {
+    return this.backgroundBash.subscribeActivity(listener);
+  }
+
   /** Publishes future terminal task snapshots until the returned closure is called. */
   subscribeToBackgroundTasks(listener: BackgroundTaskListener): () => void {
     return this.backgroundBash.subscribe(listener);

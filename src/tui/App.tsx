@@ -183,7 +183,7 @@ import {
   type RunningShellCommand,
 } from './shell-command.js';
 
-import { formatTaskCompletion, formatTasksReport } from './task-format.js';
+import { formatTaskCompletion, formatTasksReport, runningTasksHeader } from './task-format.js';
 import {
   TASK_WAKE_TAIL_LINES,
   formatTaskNotification,
@@ -523,6 +523,14 @@ export function App({
     permissions.getSnapshot,
     permissions.getSnapshot,
   );
+
+  // Background activity is independent of the foreground turn and its spinner.
+  // The manager publishes starts and terminal transitions, never output or ticks.
+  const subscribeTaskActivity = useCallback(
+    (onChange: () => void) => runtime.subscribeToBackgroundTaskActivity(onChange), [runtime],
+  );
+  const readRunningTaskCount = useCallback(() => runtime.runningBackgroundTaskCount, [runtime]);
+  const runningTaskCount = useSyncExternalStore(subscribeTaskActivity, readRunningTaskCount, readRunningTaskCount);
 
   // A pending confirmation outranks streaming: the loop is blocked on it.
   const effectiveStatus: Status = pendingPermission !== undefined ? 'awaiting-permission' : status;
@@ -2846,7 +2854,7 @@ export function App({
   return (
     <Box flexDirection="column">
       <Box ref={headerRef} flexDirection="column">
-        <Header runtime={runtime} status={effectiveStatus} frame={frame} tangent={tangent}
+        <Header runtime={runtime} status={effectiveStatus} frame={frame} tangent={tangent} runningTaskCount={runningTaskCount}
           draftStashed={statusHint === undefined && draftStash !== undefined} />
       </Box>
       <MessageList
@@ -2968,6 +2976,7 @@ export function Header({
   status = 'idle',
   frame = 0,
   tangent,
+  runningTaskCount = 0,
   draftStashed = false,
 }: {
   readonly runtime: AgentRuntime;
@@ -2976,6 +2985,8 @@ export function Header({
   readonly frame?: number;
   /** Live `/tangent` state (SER-083); a suffix on the state word, never a row. */
   readonly tangent?: TangentState | undefined;
+  /** Only running bash jobs; history stays in /tasks, never in this count. */
+  readonly runningTaskCount?: number;
   /** Idle has no InputBox hint: use the existing header hint, never add a row. */
   readonly draftStashed?: boolean;
 }): React.JSX.Element {
@@ -2986,15 +2997,20 @@ export function Header({
   // naming the startup policy would be worse than no header — this row is the only
   // place the effective mode is stated, and it must not gain a second one.
   const mode = runtime.permissionMode;
+  const stateLabel = status === 'streaming' ? 'working' : headerStatus(status);
+  const tangentSuffix = tangentHeaderSuffix(tangent);
+  const activity = runningTasksHeader(runningTaskCount, columns - `◆ DARWIN · ${stateLabel}${tangentSuffix}`.length);
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text>
+      <Text wrap="truncate-end">
         <Text color={visualColor.identity} bold>{visualMarker.identity} DARWIN</Text>
         <Text dimColor>
           {' · '}{status === 'streaming' ? <WorkingStatus frame={frame} /> : headerStatus(status)}
-          {tangentHeaderSuffix(tangent)}
+          {tangentSuffix}
         </Text>
+        <Text color={visualColor.active}>{activity.label}</Text>
+        <Text dimColor>{activity.hint}</Text>
       </Text>
       <Text dimColor>
         {/* Live, not info.config: /model changes both mid-session, and a header

@@ -1835,6 +1835,25 @@ sanitizer and cap, TTY/config guards, tmux wrapper, sole-writer grep; pty layer 
 sequence per moment bare and wrapped, zero when disabled).
 
 
+## Background activity in the header
+
+The first live header row keeps the foreground state (`ready`, `working`, permission,
+compaction or shell) and appends ` · ● N task(s) running · /tasks` for running background
+bash jobs only. Completed history is not counted. The active-colour label remains readable
+without colour; narrow widths drop the hint, shorten to `N running`, then keep the count.
+One `Text wrap="truncate-end"` prevents a second header row. There is no idle animation,
+new timer, log read, output-cursor movement, model call or trajectory record.
+
+`BackgroundBashManager.runningCount` projects its in-memory task states; a separate
+`subscribeActivity` invalidation fires on registration and terminal transition, with
+observer failures isolated. The terminal-snapshot subscription is unchanged: starts never
+become completion notices or wake entries. The runtime forwards this read-only surface;
+the App uses `useSyncExternalStore`, so starts from children, idle completions and runtime
+handoffs update without polling. `/clear` inherits the process-owned manager and therefore
+retains its running count. Tests: `verify-background-activity.ts` (real jobs and a real pty,
+including resize, draft preservation and clear), `verify-visual-language.tsx`, and the
+existing background-bash/task-wake suites.
+
 ## The busy rows
 
 **The busy rows are alive, and stay exactly the rows they were** (`src/tui/busy-suffix.ts`): while a turn streams,
