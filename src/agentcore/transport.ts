@@ -130,7 +130,8 @@ export class MemoryTransport {
   destroy(): void { this.closed = true; this.cancel(); this.client.destroy(); this.credentialClient.destroy(); }
   async call<K extends MemoryOperation>(operation: K, input: MemoryInputs[K], signal?: AbortSignal): Promise<unknown> {
     if (this.closed || signal?.aborted) throw new TransportError('AgentCore request cancelled');
-    if (Buffer.byteLength(JSON.stringify(input)) > 32000) throw new TransportError('AgentCore input exceeds 32000 bytes');
+    const inputLimit = operation === 'create-event' ? 262144 : 32000;
+    if (Buffer.byteLength(JSON.stringify(input)) > inputLimit) throw new TransportError(`AgentCore input exceeds ${inputLimit} bytes`);
     if (input.memoryId !== this.config.memoryId) throw new TransportError('AgentCore resource mismatch');
     const controller = new AbortController();
     let problem: TransportError | undefined;

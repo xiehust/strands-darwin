@@ -2,6 +2,11 @@
 
 The checklist was derived before implementation; this table records its verification locations.
 
+The sections below are historical SDK-migration results. The later upload-v2 redesign
+supersedes their sparse/memory-result exclusion and 32000-byte upload-input contract;
+non-upload request and preference policies are unchanged. Its current requirement map
+and measured results are in [upload projection verification](agentcore-upload-projection-verification.md).
+
 ## Final Host SDK migration acceptance (7b10466, 2026-09-11)
 
 Independent diff review and `pnpm typecheck` passed. One uninterrupted Host `pnpm test`

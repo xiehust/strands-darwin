@@ -2,7 +2,7 @@
 
 **English** · [简体中文](configuration.zh-CN.md) · [Guide index](README.md)
 
-`agentCoreMemory` is a root-only, default-off object (or `false`), independent of local `memory` and the model provider. Its complete field/namespace/SDK contract is in [Optional AgentCore Memory](agentcore-memory.md). Upload defaults off; only user-submitted TUI preview/send is supported. Standalone CLI is read-only. Explicit `projectId` is lowercase, 1–64 characters; preferences are fetched once per runtime, then local revocations are rechecked.
+`agentCoreMemory` is a root-only, default-off object (or `false`), independent of local `memory` and the model provider. Its complete field/namespace/SDK contract is in [Optional AgentCore Memory](agentcore-memory.md). Upload defaults off; only user-submitted TUI preview/send is supported. `upload: "manual"` requires trajectory and collects bounded original public tool text for future turns (all tool names, no secret-word/path filtering). Each paired action is at most 8 KiB; the serialized CreateEvent body is at most 256 KiB. Content can contain secrets: exact preview is required, not a confidentiality guarantee. Existing immutable outboxes are never regenerated. Standalone CLI is read-only. Explicit `projectId` is lowercase, 1–64 characters; preferences are fetched once per runtime, then local revocations are rechecked.
 
 
 ## File forms and precedence

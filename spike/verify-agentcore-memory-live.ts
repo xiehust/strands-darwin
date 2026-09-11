@@ -20,8 +20,9 @@ if (!filename || !path.isAbsolute(filename) || process.env['AGENTCORE_ALLOW_SYNT
   const home = ownPrivateHome('agentcore-live'); const root = path.join(home, 'synthetic-project'); await mkdir(root);
   const session = `synthetic-${Date.now()}`; const memory = new CloudMemory(config, root, session);
   const file = path.join(home, 'synthetic-trajectory.jsonl');
-  const recorder = new TrajectoryRecorder({ file, run: { session, agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => memory.settle(settlement, file) });
+  const recorder = new TrajectoryRecorder({ file, run: { session, agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => memory.settle(settlement) });
   const turn = recorder.beginTurn('Synthetic test: arrange three colored blocks.'); await turn?.inputDurable();
+  memory.uploadObserver!.begin(turn!.turn, 'Synthetic test: arrange three colored blocks.');
   const agent = new Agent({ model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' });
   turn?.record(new AgentResultEvent({ agent, invocationState: {}, result: new AgentResult({ invocationState: {}, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) }));
   turn?.end(); await recorder.close();

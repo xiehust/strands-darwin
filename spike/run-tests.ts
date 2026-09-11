@@ -106,6 +106,7 @@ const suites = [
   'verify-memory.ts',
   'verify-memory-tools.ts',
   'verify-agentcore-memory.ts',
+  'verify-agentcore-upload.ts',
   'verify-memory-command.ts',
   'verify-memory-validation.ts',
   'verify-resume-recap.ts',

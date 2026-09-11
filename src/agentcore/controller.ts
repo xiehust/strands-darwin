@@ -5,11 +5,12 @@ import { AGENTCORE_CLI_PATH_NOTICE, digest, scopeFor, type AgentCoreConfig } fro
 import { MemoryTransport } from './transport.js';
 import { recordId, validateRecord, validateRecordScope, type RecordKind, type ValidatedRecord } from './records.js';
 import { cloudDirectory, readState, removeState, stateNames, withStateLock, writeState } from './state.js';
-import { projectTurn, publicProse } from './projection.js';
+import { publicProse } from './projection.js';
+import { MAX_EVENT_BYTES, UploadObserver, uploadBody, uploadQuality } from './upload-projection.js';
 
 const hashSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const preferenceProof = z.object({ version: z.literal(1), inspected: hashSchema.optional(), approved: hashSchema.optional() }).strict();
-const outboxSchema = z.object({ version: z.literal(1), binding: hashSchema, token: hashSchema, body: z.object({ memoryId: z.string(), actorId: z.string(), sessionId: z.string(), eventTimestamp: z.string(), clientToken: hashSchema, extractionConfig: z.object({ namespaceVariables: z.object({ projectid: z.string().max(64) }).strict() }).strict(), payload: z.array(z.object({ conversational: z.object({ role: z.enum(['USER', 'TOOL', 'OTHER']), content: z.object({ text: z.string().max(24000) }).strict() }).strict() }).strict()).min(1).max(25) }).strict() }).strict();
+const outboxSchema = z.object({ version: z.literal(1), binding: hashSchema, token: hashSchema, body: z.object({ memoryId: z.string(), actorId: z.string(), sessionId: z.string(), eventTimestamp: z.string(), clientToken: hashSchema, extractionConfig: z.object({ namespaceVariables: z.object({ projectid: z.string().max(64) }).strict() }).strict(), payload: z.array(z.object({ conversational: z.object({ role: z.enum(['USER', 'TOOL', 'OTHER']), content: z.object({ text: z.string().refine(text => Buffer.byteLength(text) <= 100000) }).strict() }).strict() }).strict()).min(1).max(100) }).strict().refine(body => Buffer.byteLength(JSON.stringify(body)) <= MAX_EVENT_BYTES) }).strict();
 const receiptsSchema = z.array(z.object({ token: hashSchema, disposition: z.enum(['accepted', 'discarded']) }).strict()).max(256);
 export interface CloudCommandResult { ok: boolean; text: string }
 export const CLOUD_CLOSE_TIMEOUT_MS = 2000;
@@ -21,10 +22,12 @@ export function cloudReadArguments(input: string): boolean {
 export const CLOUD_USAGE = 'usage: /cloud-memory [status|preferences|inspect <record-id>|confirm <record-id> <hash> global|forget <record-id>|delete <record-id> cloud|pending|preview <token>|send <token> <preview-hash>|discard <token>|clear-accepted]';
 export class CloudMemory {
   readonly transport: MemoryTransport;
+  readonly uploadObserver: UploadObserver | undefined;
   readonly scope: ReturnType<typeof scopeFor>;
   problem: string | undefined;
   private chain: Promise<void> = Promise.resolve();
   private pendingJobs = 0;
+  private readonly projectionAbort: AbortController | undefined;
   private closed = false;
   private management = new Map<AbortController, Promise<CloudCommandResult>>();
   private approvedContext: ValidatedRecord[] = [];
@@ -32,8 +35,10 @@ export class CloudMemory {
   private started = false;
   constructor(readonly config: AgentCoreConfig, readonly root: string, readonly session: string) {
     this.transport = new MemoryTransport(config); this.scope = scopeFor(config, root);
+    this.uploadObserver = config.upload === 'manual' ? new UploadObserver() : undefined;
+    this.projectionAbort = this.uploadObserver === undefined ? undefined : new AbortController();
   }
-  status(): string { return `AgentCore: enabled · ${this.config.region} · actor ${this.config.actorId} · project ${this.scope.projectId} · upload ${this.config.upload} · ${this.approvedContext.length} cached preference candidates (local approval rechecked per request)${this.problem ? ` · degraded: ${this.problem}` : ''}${this.approvalsNeedingReview ? ` · ${this.approvalsNeedingReview} preference approval(s) require re-review: record or metadata hash changed; use /cloud-memory inspect <record-id>, then confirm the displayed hash` : ''}. Details: /cloud-memory${this.config.cliPath === undefined ? '' : ` · ${AGENTCORE_CLI_PATH_NOTICE}`}`; }
+  status(): string { return `AgentCore: enabled · ${this.config.region} · actor ${this.config.actorId} · project ${this.scope.projectId} · upload ${this.config.upload}${this.uploadObserver?.droppedTurns ? ` (${this.uploadObserver.droppedTurns} turns omitted: collector queue full)` : ''} · ${this.approvedContext.length} cached preference candidates (local approval rechecked per request)${this.problem ? ` · degraded: ${this.problem}` : ''}${this.approvalsNeedingReview ? ` · ${this.approvalsNeedingReview} preference approval(s) require re-review: record or metadata hash changed; use /cloud-memory inspect <record-id>, then confirm the displayed hash` : ''}. Details: /cloud-memory${this.config.cliPath === undefined ? '' : ` · ${AGENTCORE_CLI_PATH_NOTICE}`}`; }
   cancelGeneration = 0;
   cancel(): void {
     this.cancelGeneration++;
@@ -41,12 +46,13 @@ export class CloudMemory {
     this.transport.cancel();
   }
   async close(): Promise<void> {
-    this.closed = true; this.cancel(); this.transport.destroy();
+    this.closed = true; this.uploadObserver?.clear(); this.cancel(); this.transport.destroy();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         Promise.allSettled([this.chain, ...this.management.values()]),
         new Promise<void>(resolve => { timer = setTimeout(() => {
+          this.projectionAbort?.abort();
           this.problem = 'Cloud shutdown drain timed out; cancelled operations remain barred from new effects. Pending filesystem work may still hold a lock.';
           resolve();
         }, CLOUD_CLOSE_TIMEOUT_MS); }),
@@ -112,26 +118,23 @@ export class CloudMemory {
   private binding(): string { return digest([this.config.region, this.config.memoryId, this.config.actorId, this.scope.projectId, this.config.episodicStrategyId, this.config.preferenceStrategyId]); }
   private outbox(): string { return path.join(cloudDirectory(this.config, this.root), this.binding()); }
   /** Detached, finite local work only. The trajectory closing append has already settled. */
-  settle(settlement: TurnSettlement, file: string): void {
-    if (this.closed || this.config.upload !== 'manual' || !settlement.durable) return;
+  settle(settlement: TurnSettlement): void {
+    const projection = this.uploadObserver?.take(settlement.turn);
+    if (this.closed || !settlement.durable || projection === undefined) return;
     if (this.pendingJobs >= 8) { this.problem = 'Upload projection queue full; turn omitted'; return; }
     this.pendingJobs++;
     this.chain = this.chain.then(() => withStateLock(this.outbox(), async () => {
       const names = await stateNames(this.outbox());
       if (names.filter((name) => name.endsWith('.event.json')).length >= 32) throw new Error('Outbox full (32 turns); new turn omitted');
-      const projection = await projectTurn(file, settlement);
       const token = digest([this.binding(), settlement.session, settlement.turn, settlement.seq]);
       if ((await this.receipts()).some(receipt => receipt.token === token)) return;
-      const { steps, ...source } = projection;
-      const body = { memoryId: this.config.memoryId, actorId: this.config.actorId, sessionId: settlement.session, eventTimestamp: settlement.at, clientToken: token,
-        extractionConfig: { namespaceVariables: { projectid: this.scope.projectId } }, payload: [
-          { conversational: { role: 'OTHER', content: { text: JSON.stringify(source) } } },
-          ...steps.map(step => ({ conversational: { role: step.role, content: { text: step.role === 'USER' ? step.goal! : JSON.stringify(step) } } })),
-        ] };
+      const body = uploadBody({ memoryId: this.config.memoryId, actorId: this.config.actorId, sessionId: settlement.session, eventTimestamp: settlement.at, clientToken: token,
+        extractionConfig: { namespaceVariables: { projectid: this.scope.projectId } } }, projection, settlement);
+      if (body === undefined) return;
       const entry = outboxSchema.parse({ version: 1, binding: this.binding(), token, body });
-      try { await writeState(path.join(this.outbox(), `${token}.event.json`), entry, true); }
+      try { await writeState(path.join(this.outbox(), `${token}.event.json`), entry, true, this.projectionAbort?.signal); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-    })).catch((error) => { this.problem = error instanceof Error ? error.message.slice(0, 200) : 'Upload projection unavailable'; }).finally(() => { this.pendingJobs--; });
+    }, this.projectionAbort?.signal)).catch((error) => { this.problem = error instanceof Error ? error.message.slice(0, 200) : 'Upload projection unavailable'; }).finally(() => { this.pendingJobs--; });
   }
   private async entry(token: string) {
     hashSchema.parse(token);
@@ -264,17 +267,18 @@ export class CloudMemory {
     if (verb === 'pending' && id === undefined) {
       await this.chain; const names = await stateNames(this.outbox());
       const receipts = await this.receipts();
-      const rows = names.filter((n) => n.endsWith('.event.json')).map((name) => {
+      const rows = await Promise.all(names.filter((n) => n.endsWith('.event.json')).map(async (name) => {
         const token = name.slice(0, -11); const receipt = receipts.find(receipt => receipt.token === token);
-        return `${token} ${receipt ? `${receipt.disposition}; cleanup interrupted, repeat user cleanup` : names.includes(`${token}.accepted.json`) ? 'AWS event accepted (generation unknown)' : 'pending; not uploaded'}`;
-      });
+        const entry = await this.entry(token);
+        return `${token} ${receipt ? `${receipt.disposition}; cleanup interrupted, repeat user cleanup` : names.includes(`${token}.accepted.json`) ? 'AWS event accepted (generation unknown)' : 'pending; not uploaded'} · ${uploadQuality(entry.body.payload[0]!.conversational.content.text)}`;
+      }));
       return rows.length ? rows.join('\n') : 'No pending or accepted events in this bounded outbox';
     }
     if (verb === 'preview' && id && hash === undefined) {
       await this.chain; const entry = await this.entry(id); const previewHash = digest(entry);
-      if (authority === 'read') return `${JSON.stringify(entry.body, null, 2)}\nRead-only preview: no authorization written. Hash ${previewHash}. Use TUI preview/send.`;
+      if (authority === 'read') return `${JSON.stringify(entry.body, null, 2)}\nRead-only preview: no authorization written. Hash ${previewHash}. Use TUI preview/send. Tool content can include secrets; NOT a confidentiality guarantee.`;
       await writeState(path.join(this.outbox(), `${id}.preview.json`), { hash: previewHash }, false, signal);
-      return `${JSON.stringify(entry.body, null, 2)}\nReview for private material; this allowlist is NOT a confidentiality guarantee. No upload yet.\nAuthorize these exact bytes: /cloud-memory send ${id} ${previewHash}`;
+      return `${JSON.stringify(entry.body, null, 2)}\nReview for private material; tool content can include secrets. NOT a confidentiality guarantee. No upload yet.\nAuthorize these exact bytes: /cloud-memory send ${id} ${previewHash}`;
     }
     if (verb === 'send' && id && hash && adoption === undefined) return withStateLock(this.outbox(), () => this.send(id, hash, signal), signal);
     if (verb === 'discard' && id && hash === undefined) return withStateLock(this.outbox(), async () => {

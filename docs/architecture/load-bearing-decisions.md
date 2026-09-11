@@ -832,14 +832,39 @@ immediately drops approval and live context. No automatic
 promotion or local-memory migration. Cloud deletion is a distinct user command with a
 fresh scope check. Model provider and permission policy remain independent.
 
-Uploads require trajectory plus `upload: manual`. The existing durable closing-append
-settlement callback schedules finite local projection work outside streaming; no observer
-awaits network. Only new turns, no backfill, a 1 MiB tail, 24 allowlisted steps, no arbitrary
-tool output/files/diffs/logs/skills/reasoning/images/child transcripts/memory results.
-All assistant prose is omitted to prevent image, expanded driver input and memory
-paraphrases even without tool calls/preferences. Real SDK wire nesting supplies ordered
-USER goals and TOOL actions/results; host source/outcome/omissions are OTHER. User goals remain potentially sensitive, so exact preview + hash authorization
-is mandatory, never replaced by regex redaction. Immutable bounded outbox entries retain
+Uploads require trajectory plus `upload: manual`. New turns use `darwin-upload-v2`, not
+trajectory reconstruction: a synchronous/no-I/O/nonthrowing bounded observer reads public
+parent BeforeToolCallEvent (SDK_LAST) and AfterToolCallEvent (SDK_FIRST, before ContextOffloader).
+No SDK loop/executor change, event mutation or trajectory schema/bytes/order change. Only the
+existing durable closing-append settlement callback schedules detached local publication.
+Disabled upload installs no hooks or collector. Failure/early return closes collection; failed
+trajectory/pre-stream abort discards it, nondurable settlement consumes it, saturation refuses
+and counts turns, successor/shutdown clears it. Invocation-state identity rejects late results
+from another turn. No automatic upload, model summary, extra model call, backfill, path reads,
+child traversal or offload/archive hydration.
+
+Every tool name and textual argument/result is eligible, including arbitrary MCP, public
+subagent reports and memory tool output. No secret-word/path/name redaction: this can contain
+secrets and is NOT a confidentiality guarantee. Assistant prose/reasoning and binary/media
+blocks remain excluded; separate preference/local-memory publicProse policy is unchanged.
+USER is literal submitted text (bounded exact head/tail); one TOOL is an ordinal/SDK identity
+plus input and corresponding result; OTHER carries provenance, outcome and categorized loss.
+SDK status and structured bash exitCode remain separate; missing results are explicit and
+endTurn never means task success. Exact preview + hash authorization remains mandatory.
+
+Bounds: 8 KiB per full action, 256 KiB serialized CreateEvent including JSON escaping,
+100 payload messages, 100,000 UTF-8 bytes/message. At most eight transient turns, each 64
+full actions + 96 omitted-body summaries + an 8 KiB goal, and eight detached jobs. Reserve
+goal/closing metadata, favor newest 16 then failed/immediate recovery actions; render chosen
+pairs in original chronology. Summaries spill into counted aggregates. Content truncation,
+action bodies/summaries omitted, internal events, missing/unmatched results and source loss
+are distinct. No goal and no action means no metadata-only candidate. Text ranges are exact
+UTF-16 offsets at Unicode boundaries; retained/original bytes are UTF-8. Huge strings above
+262,144 UTF-16 units explicitly leave original byte length unknown, avoiding unbounded scans.
+JSON traversal caps at depth 8 / 128 values / 32 entries per container, four detailed losses
+plus aggregate. Engine object enumeration is not a hard real-time guarantee against hostile
+Proxies; production SDK inputs are JSON. Upstream loss indicators are marked, not hydrated;
+unmarked upstream loss cannot be recovered. See `agentcore-upload-projection-verification.md`. Immutable bounded outbox entries retain
 session/turn/order and truthful failed/cancelled/incomplete states; endTurn is not task
 success. Three durable reserved attempts maximum, stable CreateEvent clientToken/body
 across restart; event acceptance never claims episode generation. No eviction or automatic
@@ -864,7 +889,10 @@ persistence can omit a turn, deliberately without archive recovery.
 Transport is the official `@aws-sdk/client-bedrock-agentcore@3.1127.0` data client with four
 public Commands, never a generated Strands memory/session manager: automatic extraction upload
 would bypass the manual outbox. One direct runtime dependency, no CLI/CDK/private imports.
-Inputs cap at 32000 UTF-8 bytes. The public runtime extension wraps the SDK HTTP handler,
+CreateEvent inputs cap at 256 KiB serialized UTF-8 bytes; other inputs retain 32000 bytes.
+Only immutable event files allow 257 KiB (request plus envelope), while proofs/receipts and
+other state retain 64 KiB. Existing legacy body/hash/token/authorization bytes are never
+regenerated; OTHER-only legacy refusal remains. The public runtime extension wraps the SDK HTTP handler,
 checking cancellation immediately before launch and bounding streamed bodies before collection
 and SDK parsing (256 KiB success, 8 KiB error). Successful JSON has a 16-depth/10000-node guard;
 unknown structure fields that Smithy would drop are refused. One exact exception is the live

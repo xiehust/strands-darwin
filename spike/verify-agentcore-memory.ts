@@ -5,6 +5,7 @@
 process.env['DARWIN_MODEL_PRICES_FETCH'] = 'off';
 import { mkdir, readFile, writeFile, readdir, symlink, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { watch } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -95,13 +96,21 @@ assert('only explicit delete performs cloud delete', (await calls()).at(-1).oper
 header('Durable new-turn outbox and preview authorization');
 assert('privacy omissions reject dumps and secrets', publicProse('secret: abc') === undefined && publicProse('read /home/user/file') === undefined && publicProse('x'.repeat(1001)) === undefined);
 const file = path.join(home, 'trajectory.jsonl'); const uploader = new CloudMemory(config, root, 'session-upload');
-const recorder = new TrajectoryRecorder({ file, run: { session: 'session-upload', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'offline', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => uploader.settle(settlement, file) });
+const recorder = new TrajectoryRecorder({ file, run: { session: 'session-upload', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'offline', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => uploader.settle(settlement) });
 const wireAgent = new Agent({ model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' });
+const wireInvocation = {};
 const turn = recorder.beginTurn('Use concise replies across projects. Fix the synthetic test failure.'); await turn?.inputDurable();
-turn?.record(new ContentBlockEvent({ agent: wireAgent, invocationState: {}, contentBlock: new TextBlock('Public synthetic statement before any tool.') }));
+uploader.uploadObserver!.begin(turn!.turn, 'Use concise replies across projects. Fix the synthetic test failure.');
+const observeUpload = (owner: ReadOnlyCloudMemory, event: BeforeToolCallEvent | AfterToolCallEvent) => {
+  if (event.type === 'beforeToolCallEvent') owner.uploadObserver!.before(event);
+  else owner.uploadObserver!.after(event);
+};
+turn?.record(new ContentBlockEvent({ agent: wireAgent, invocationState: wireInvocation, contentBlock: new TextBlock('Public synthetic statement before any tool.') }));
 const testUse = new ToolUseBlock({ name: 'bash', toolUseId: 'test', input: { mode: 'execute', command: 'pnpm test' } });
-turn?.record(new BeforeToolCallEvent({ agent: wireAgent, invocationState: {}, tool: undefined, toolUse: testUse }));
-turn?.record(new AfterToolCallEvent({ agent: wireAgent, invocationState: {}, tool: undefined, toolUse: testUse, result: new ToolResultBlock({ toolUseId: 'test', status: 'error', content: [new JsonBlock({ json: { exitCode: 1, output: 'SECRET LOG DUMP' } })] }) }));
+const beforeUpload = new BeforeToolCallEvent({ agent: wireAgent, invocationState: wireInvocation, tool: undefined, toolUse: testUse });
+const afterUpload = new AfterToolCallEvent({ agent: wireAgent, invocationState: wireInvocation, tool: undefined, toolUse: testUse, result: new ToolResultBlock({ toolUseId: 'test', status: 'error', content: [new JsonBlock({ json: { exitCode: 1, output: 'SECRET LOG DUMP' } })] }) });
+await observeUpload(uploader, beforeUpload); turn?.record(beforeUpload);
+await observeUpload(uploader, afterUpload); turn?.record(afterUpload);
 turn?.failed(new Error('synthetic failure')); turn?.end(); await recorder.close();
 const pending = await uploader.command('pending'); const token = pending.split(' ')[0]!;
 assert('new durable failed turn queued without network', /^[a-f0-9]{64}$/.test(token) && pending.includes('pending; not uploaded'));
@@ -109,7 +118,7 @@ const beforeSend = (await calls()).length;
 assert('send without preview authorization refused', (await uploader.command(`send ${token} ${'0'.repeat(64)}`)).includes('Preview absent'));
 assert('no unauthorized SDK request', (await calls()).length === beforeSend);
 const preview = await uploader.command(`preview ${token}`); const previewHash = preview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)?.[1]!;
-assert('preview retains failure, command and exit evidence, excludes logs', !preview.includes('Public synthetic statement') && preview.includes('failed') && preview.includes('pnpm test') && preview.includes('exitCode') && !preview.includes('SECRET LOG DUMP'));
+assert('preview retains failure, command, exit evidence and original logs, excludes assistant prose', !preview.includes('Public synthetic statement') && preview.includes('failed') && preview.includes('pnpm test') && preview.includes('exitCode') && preview.includes('SECRET LOG DUMP'));
 await control({});
 assert('manual upload acknowledges event not episode', (await uploader.command(`send ${token} ${previewHash}`)).includes('generation is asynchronous and NOT verified'));
 const createCall = (await calls()).at(-1);
@@ -118,18 +127,62 @@ const restarted = new CloudMemory(config, root, 'different-session'); const coun
 assert('restart does not duplicate accepted upload', (await restarted.command(`send ${token} ${previewHash}`)).includes('already accepted') && (await calls()).length === count);
 const otherActor = new CloudMemory({ ...config, actorId: 'different' }, root, 'session');
 assert('actor cannot inspect another outbox', (await otherActor.command(`preview ${token}`)).includes('refused'));
+
+header('Large new-format event, immutable legacy and tight proof bounds');
+const largeConfig = { ...config, projectId: 'large-upload' };
+const large = new CloudMemory(largeConfig, root, 'large-session');
+large.uploadObserver!.begin(1, '/workflow literal goal\nsecret token /home/user/.env');
+for (let i = 0; i < 64; i++) {
+  const use = new ToolUseBlock({ name: 'arbitrary-mcp', toolUseId: `large-${i}`, input: { token: 'synthetic', text: 'i'.repeat(6000) } });
+  // Invocation state is shared by the real SDK across each turn.
+  const invocationState = {};
+  const before = new BeforeToolCallEvent({ agent: wireAgent, invocationState, tool: undefined, toolUse: use });
+  large.uploadObserver!.before(before);
+  large.uploadObserver!.after(new AfterToolCallEvent({ agent: wireAgent, invocationState, tool: undefined, toolUse: use, result: new ToolResultBlock({ toolUseId: use.toolUseId, status: 'success', content: [new TextBlock('r'.repeat(12000) + `LARGE-TAIL-${i}`)] }) }));
+}
+large.settle({ durable: true, session: 'large-session', turn: 1, seq: 999, at: '2026-01-01T00:00:00Z', stopReason: 'endTurn', failure: false, partial: false });
+const largeToken = (await large.command('pending')).split(' ')[0]!;
+const largeRead = await large.command(`preview ${largeToken}`, 'read');
+const largeBody = JSON.parse(largeRead.split('\nRead-only preview:')[0]!);
+assert('new CreateEvent body exceeds old 64KiB state cap but fits 256KiB escaped request', Buffer.byteLength(JSON.stringify(largeBody)) > 65536 && Buffer.byteLength(JSON.stringify(largeBody)) <= 262144);
+const largeDir = path.join(cloudDirectory(largeConfig, root), digest([largeConfig.region, largeConfig.memoryId, largeConfig.actorId, 'large-upload', largeConfig.episodicStrategyId, largeConfig.preferenceStrategyId]));
+const largeFile = path.join(largeDir, `${largeToken}.event.json`); const largeBytes = await readFile(largeFile);
+await mkdir(path.dirname(configPath(root)), { recursive: true });
+await writeFile(configPath(root), JSON.stringify({ provider: 'bedrock', model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', agentCoreMemory: largeConfig }));
+const largeCli = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), fileURLToPath(new URL('../src/cli.ts', import.meta.url)), 'cloud-memory', 'preview', largeToken], { cwd: root, encoding: 'utf8', timeout: 10000, maxBuffer: 1048576 });
+assert('standalone CLI previews >64KiB body read-only without event/proof mutation', largeCli.status === 0 && largeCli.stdout.includes('LARGE-TAIL-63') && (await readFile(largeFile)).equals(largeBytes) && await readState(path.join(largeDir, `${largeToken}.preview.json`)) === undefined);
+const callsBeforeLarge = (await calls()).length;
+assert('no large upload before exact user preview authorization', !(await large.commandResult(`send ${largeToken} ${digest(JSON.parse(largeBytes.toString()))}`, 'user')).ok && (await calls()).length === callsBeforeLarge);
+const largePreview = await large.command(`preview ${largeToken}`); const largeHash = largePreview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)![1]!;
+await control({});
+assert('manual signed loopback accepts large CreateEvent', (await large.command(`send ${largeToken} ${largeHash}`)).startsWith('AWS event accepted.'));
+assert('signed loopback payload is exactly previewed payload', isDeepStrictEqual((await calls()).at(-1).input.payload, largeBody.payload));
+await rejects('preference proof remains capped at 64KiB', () => writeState(path.join(home, 'proof.json'), { data: 'x'.repeat(65536) }));
+await rejects('non-upload request remains capped at 32000 bytes', () => large.transport.call('retrieve-memory-records', { memoryId: config.memoryId, namespacePath: scope.project, searchCriteria: { searchQuery: 'x'.repeat(32001) } }));
+// Synthetic immutable legacy body: no regeneration or migration during preview/send.
+const legacyBinding = digest([largeConfig.region, largeConfig.memoryId, largeConfig.actorId, 'large-upload', largeConfig.episodicStrategyId, largeConfig.preferenceStrategyId]);
+const legacyToken = digest([legacyBinding, 'legacy-session', 1, 1]);
+const legacyEntry = { version: 1, binding: legacyBinding, token: legacyToken, body: { ...largeBody, sessionId: 'legacy-session', clientToken: legacyToken, payload: [{ conversational: { role: 'OTHER', content: { text: JSON.stringify({ session: 'legacy-session', turn: 1, closingSeq: 1, steps: [] }) } } }] } };
+const legacyFile = path.join(largeDir, `${legacyToken}.event.json`); await writeState(legacyFile, legacyEntry, true);
+const legacyBytes = await readFile(legacyFile); const legacyPreview = await large.command(`preview ${legacyToken}`);
+assert('legacy OTHER-only refusal and immutable bytes/hash/token unchanged', legacyPreview.includes(digest(legacyEntry)) && (await large.command(`send ${legacyToken} ${digest(legacyEntry)}`)).includes('Legacy OTHER-only upload refused') && (await readFile(legacyFile)).equals(legacyBytes));
+await large.close();
+
 await uploader.close(); await restarted.close(); await preferences.close(); await crossProject.close();
 header('Retry tokens, ordered turns, memory exclusion and state corruption');
 const retryRoot = path.join(home, 'retry-project'); await mkdir(retryRoot);
 const retry = new CloudMemory(config, retryRoot, 'session-retry'); const retryFile = path.join(home, 'retry-trajectory.jsonl');
-const retryRecorder = new TrajectoryRecorder({ file: retryFile, run: { session: 'session-retry', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => retry.settle(settlement, retryFile) });
+const retryRecorder = new TrajectoryRecorder({ file: retryFile, run: { session: 'session-retry', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => retry.settle(settlement) });
 for (const stopReason of ['cancelled', 'endTurn'] as const) {
   const next = retryRecorder.beginTurn('Synthetic public goal'); await next?.inputDurable();
+  retry.uploadObserver!.begin(next!.turn, 'Synthetic public goal');
   const use = new ToolUseBlock({ name: 'memory_recall', toolUseId: 'private', input: { query: 'private' } });
-  next?.record(new BeforeToolCallEvent({ agent: wireAgent, invocationState: {}, tool: undefined, toolUse: use }));
-  next?.record(new AfterToolCallEvent({ agent: wireAgent, invocationState: {}, tool: undefined, toolUse: use, result: new ToolResultBlock({ toolUseId: 'private', status: 'success', content: [new TextBlock('RETRIEVED PRIVATE MEMORY')] }) }));
-  next?.record(new ContentBlockEvent({ agent: wireAgent, invocationState: {}, contentBlock: new TextBlock('PARAPHRASED MEMORY') }));
-  next?.record(new AgentResultEvent({ agent: wireAgent, invocationState: {}, result: new AgentResult({ invocationState: {}, stopReason, lastMessage: new Message({ role: 'assistant', content: [] }) }) })); next?.end();
+  const before = new BeforeToolCallEvent({ agent: wireAgent, invocationState: wireInvocation, tool: undefined, toolUse: use });
+  const after = new AfterToolCallEvent({ agent: wireAgent, invocationState: wireInvocation, tool: undefined, toolUse: use, result: new ToolResultBlock({ toolUseId: 'private', status: 'success', content: [new TextBlock('RETRIEVED PRIVATE MEMORY')] }) });
+  await observeUpload(retry, before); next?.record(before);
+  await observeUpload(retry, after); next?.record(after);
+  next?.record(new ContentBlockEvent({ agent: wireAgent, invocationState: wireInvocation, contentBlock: new TextBlock('PARAPHRASED MEMORY') }));
+  next?.record(new AgentResultEvent({ agent: wireAgent, invocationState: wireInvocation, result: new AgentResult({ invocationState: wireInvocation, stopReason, lastMessage: new Message({ role: 'assistant', content: [] }) }) })); next?.end();
 }
 await retryRecorder.close();
 const retryTokens = (await retry.command('pending')).split('\n').map(row => row.split(' ')[0]!);
@@ -137,7 +190,7 @@ const previews = await Promise.all(retryTokens.map(token => retry.command(`previ
 const firstIndex = previews.findIndex(text => text.includes('cancelled')); const firstToken = retryTokens[firstIndex]!; const firstPreview = previews[firstIndex]!;
 const firstHash = firstPreview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)![1]!;
 const laterIndex = 1 - firstIndex; const laterHash = previews[laterIndex]!.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)![1]!;
-assert('memory output and paraphrases omitted', !previews.join('').includes('PRIVATE MEMORY') && !previews.join('').includes('PARAPHRASED MEMORY'));
+assert('public memory tool text retained but assistant paraphrases omitted', previews.join('').includes('PRIVATE MEMORY') && !previews.join('').includes('PARAPHRASED MEMORY'));
 assert('cancel and closed are not task success', firstPreview.includes('cancelled') && previews[laterIndex]!.includes('not inferred'));
 assert('session turn order enforced', (await retry.command(`send ${retryTokens[laterIndex]} ${laterHash}`)).includes('earlier pending'));
 await control({ mode: 'error' });
@@ -235,7 +288,7 @@ await rejects('65-character project ID refused', () => parseAgentCoreConfig({ ..
 assert('real SDK CreateEvent serializes ISO outbox timestamp to epoch seconds', createCall.input.eventTimestamp === Date.parse(JSON.parse(preview.slice(0, preview.indexOf('\nReview for private material'))).eventTimestamp) / 1000);
 assert('SDK wire preserves custom project namespace value at its 64-character bound', createCall.input.extractionConfig.namespaceVariables.projectid.length === 64);
 const payload = createCall.input.payload.map((entry: any) => entry.conversational);
-assert('literal user preference eligible as USER, actions/results TOOL, host metadata OTHER', payload[0].role === 'OTHER' && payload[1].role === 'USER' && payload[1].content.text.startsWith('Use concise replies') && payload[2].role === 'TOOL' && payload[3].role === 'TOOL' && JSON.parse(payload[3].content.text).result.exitCode === 1);
+assert('literal user preference eligible as USER, actions/results TOOL, host metadata OTHER', payload[0].role === 'OTHER' && payload[1].role === 'USER' && payload[1].content.text.startsWith('Use concise replies') && payload.length === 3 && payload[2].role === 'TOOL' && JSON.parse(payload[2].content.text).result.exitCode === 1);
 const episodeFragment = '<language>English</language><summary><situation>Failing check</situation><user_intent>Fix tests</user_intent><assessment_user>No</assessment_user><justification>Exit 1</justification><turns><turn><action>Run tests</action></turn><turn><action>Fix implementation</action></turn></turns></summary>';
 const reflectionFragment = '<language>English</language><summary><use_cases>Failing checks</use_cases><hints>Check evidence</hints><reflection>Read exit status</reflection><confidence>0.8</confidence></summary>';
 await control({ records: [record('episode', { content: { text: episodeFragment } }), record('reflection', { content: { text: reflectionFragment } })] });
@@ -335,7 +388,7 @@ await readOnlyBox.close();
 const runtimePreview = await runtimeOutbox.command(`preview ${runtimeToken}`);
 const runtimeBody = JSON.parse(runtimePreview.slice(0, runtimePreview.indexOf('\nReview for private material')));
 const runtimeSteps = runtimeBody.payload.map((entry: any) => entry.conversational).filter((entry: any) => entry.role === 'TOOL').map((entry: any) => JSON.parse(entry.content.text));
-assert('actual runtime SDK wire retains pnpm test action before error exit evidence', runtimeSteps[0]?.arguments.command === 'pnpm test' && runtimeSteps[1]?.result.status === 'success' && runtimeSteps[1]?.result.commandOutcome === 'failed' && runtimeSteps[1]?.result.exitCode === 1 && runtimeSteps[0].seq < runtimeSteps[1].seq);
+assert('actual runtime SDK wire retains pnpm test action before error exit evidence', runtimeSteps.length === 1 && runtimeSteps[0]?.input.content.command === 'pnpm test' && runtimeSteps[0]?.result.status === 'success' && runtimeSteps[0]?.failed === true && runtimeSteps[0]?.result.exitCode === 1);
 assert('endTurn does not assert task success despite real command failure', runtimePreview.includes('not inferred'));
 for (const scenario of ['image', 'bang', 'custom'] as const) {
   const privateText = `PRIVATE ${scenario.toUpperCase()} TRANSCRIPTION`;
@@ -385,12 +438,13 @@ assert('later non-discarded turn can now send in order', (await recoverRetry.com
 await recoverRetry.close();
 const lifecycleConfig = { ...config, projectId: 'capacity' }; const lifecycle = new CloudMemory(lifecycleConfig, root, 'capacity-session');
 const lifecycleFile = path.join(home, 'capacity-trajectory.jsonl');
-const lifecycleRecorder = new TrajectoryRecorder({ file: lifecycleFile, run: { session: 'capacity-session', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => lifecycle.settle(settlement, lifecycleFile) });
+const lifecycleRecorder = new TrajectoryRecorder({ file: lifecycleFile, run: { session: 'capacity-session', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => lifecycle.settle(settlement) });
 for (let index = 1; index <= 33; index++) {
   const next = lifecycleRecorder.beginTurn(`Synthetic capacity goal ${index}`); await next?.inputDurable();
-  next?.record(new AgentResultEvent({ agent: wireAgent, invocationState: {}, result: new AgentResult({ invocationState: {}, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) })); next?.end();
+  lifecycle.uploadObserver!.begin(next!.turn, `Synthetic capacity goal ${index}`);
+  next?.record(new AgentResultEvent({ agent: wireAgent, invocationState: wireInvocation, result: new AgentResult({ invocationState: wireInvocation, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) })); next?.end();
   await lifecycleRecorder.close(); // Public flush barrier; no polling the detached settlement.
-  const rows = (await lifecycle.command('pending')).split('\n'); const pendingToken = rows.find(row => row.endsWith('pending; not uploaded'))?.split(' ')[0]!;
+  const rows = (await lifecycle.command('pending')).split('\n'); const pendingToken = rows.find(row => row.includes('pending; not uploaded'))?.split(' ')[0]!;
   const preview = await lifecycle.command(`preview ${pendingToken}`); const hash = preview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)?.[1];
   const result = await lifecycle.command(`send ${pendingToken} ${hash}`);
   if (!result.startsWith('AWS event accepted.')) throw new Error(`capacity turn ${index}: ${result}`);
@@ -484,9 +538,10 @@ try {
   assert('cancelled delete cleans preference lock', !(await stateNames(cloudDirectory(narrowConfig))).includes('active.json'));
 } finally { pause.clear(); }
 const narrowFile = path.join(home, 'cancel-narrow-trajectory.jsonl');
-const narrowRecorder = new TrajectoryRecorder({ file: narrowFile, run: { session: 'cancel-narrow', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => narrow.settle(settlement, narrowFile) });
+const narrowRecorder = new TrajectoryRecorder({ file: narrowFile, run: { session: 'cancel-narrow', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => narrow.settle(settlement) });
 const narrowTurn = narrowRecorder.beginTurn('Synthetic cancellation goal'); await narrowTurn?.inputDurable();
-narrowTurn?.record(new AgentResultEvent({ agent: wireAgent, invocationState: {}, result: new AgentResult({ invocationState: {}, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) })); narrowTurn?.end(); await narrowRecorder.close();
+narrow.uploadObserver!.begin(narrowTurn!.turn, 'Synthetic cancellation goal');
+narrowTurn?.record(new AgentResultEvent({ agent: wireAgent, invocationState: wireInvocation, result: new AgentResult({ invocationState: wireInvocation, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) })); narrowTurn?.end(); await narrowRecorder.close();
 const narrowToken = (await narrow.command('pending')).split(' ')[0]!;
 const narrowPreview = await narrow.command(`preview ${narrowToken}`);
 const narrowHash = narrowPreview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)![1]!;

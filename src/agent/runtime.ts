@@ -5,7 +5,7 @@
  * raw event stream to whatever is driving it. Callers (the dev REPL now, Ink
  * later) decide how to render.
  */
-import { Agent, BeforeInvocationEvent, SummarizingConversationManager, TextBlock } from '@strands-agents/sdk';
+import { Agent, AfterToolCallEvent, BeforeToolCallEvent, HookOrder, BeforeInvocationEvent, SummarizingConversationManager, TextBlock } from '@strands-agents/sdk';
 import type { AgentStreamEvent, ImageBlock, InterventionHandler, McpClient, Model, SessionManager } from '@strands-agents/sdk';
 import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request';
@@ -867,6 +867,12 @@ export class AgentRuntime {
       // Darwin's own hook + middleware below keep the same schedule (SER-066).
       retryStrategy: null,
     });
+    if (cloudMemory?.uploadObserver !== undefined) {
+      const observer = cloudMemory.uploadObserver;
+      agent.addHook(BeforeToolCallEvent, event => observer.before(event), { order: HookOrder.SDK_LAST });
+      // After hooks reverse registration order; explicit priority precedes offload.
+      agent.addHook(AfterToolCallEvent, event => observer.after(event), { order: HookOrder.SDK_FIRST });
+    }
     toolForName = (name) => agent.tools.find((candidate) => candidate.name === name);
     installMaxTokensRecovery(agent);
     const modelRetry = installModelRetry(agent);
@@ -1045,7 +1051,7 @@ export class AgentRuntime {
             ...runtimeRecorderOverrides,
             ...((memoryController === undefined && cloudMemory === undefined) ? {} : { onTurnSettled: (settlement) => {
               memoryController?.settle(settlement);
-              cloudMemory?.settle(settlement, trajectoryPath(options.projectRoot, session.sessionId));
+              cloudMemory?.settle(settlement);
             } }),
           });
     trajectoryAudit = trajectory;
@@ -1212,6 +1218,8 @@ export class AgentRuntime {
     // memory sealing and terminal delivery keep meaning `endTurn`.
     let refused = false;
     let sealed = false;
+    let uploadTurn: number | undefined;
+    let streamStarted = false;
     try {
       // A multimodal turn's durable text is the literal submitted prompt. Expanded
       // command text and held shell reports still reach the model, but image bytes
@@ -1230,6 +1238,10 @@ export class AgentRuntime {
       // actually submitted. Drivers pass that raw text as the second argument. A
       // session-originated wake has no user text to quote from at all.
       this.memoryController?.openTurn(recording?.turn, origin === undefined ? userInput : '');
+      if (recording !== undefined && this.cloudMemory?.uploadObserver !== undefined) {
+        uploadTurn = recording.turn;
+        this.cloudMemory.uploadObserver.begin(recording.turn, origin === undefined ? userInput : '');
+      }
       // The current input is the one exception to fire-and-forget recording: make it
       // readable to offline observers before Agent.stream() can invoke a provider or
       // tool. The recorder owns the bound and resolves on write failure/timeout, so
@@ -1246,8 +1258,10 @@ export class AgentRuntime {
       // before/after pair for a delegation the model routed to the background.
       const invocation = image === undefined ? modelInput : [new TextBlock(modelInput), image];
       this.checkCloudPreparation(cloudGeneration);
+      streamStarted = true;
       const stream = this.backgroundDelegation.observe(this.agent.stream(invocation));
       for await (const event of recordStream(stream, recording)) {
+        if (event.type !== 'beforeToolCallEvent' && event.type !== 'afterToolCallEvent') this.cloudMemory?.uploadObserver?.internal();
         if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
         if (event.type === 'agentResultEvent' && isRefusalStop(event.result.stopReason)) refused = true;
         // Observed at the same point `recordStream` observes: synchronously, between
@@ -1277,6 +1291,8 @@ export class AgentRuntime {
       // Seeing an endTurn event is not enough when the consumer abandons this
       // generator before natural completion: only the natural path above seals.
       if (!sealed) this.memoryController?.discard();
+      this.cloudMemory?.uploadObserver?.end();
+      if (uploadTurn !== undefined && (!streamStarted || this.trajectory?.status.active === false)) this.cloudMemory?.uploadObserver?.take(uploadTurn);
       // Only a turn that ran to `endTurn` commits what its `wait`/`status` results
       // delivered; an abandoned or failed turn forgets them, so the wake still fires.
       this.terminalDelivery.closeTurn(sealed && completed);

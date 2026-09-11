@@ -4,6 +4,10 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { userDarwinDir, userProjectDir } from '../paths.js';
 import { digest, type AgentCoreConfig } from './config.js';
+import { MAX_EVENT_STATE_BYTES } from './upload-projection.js';
+
+// Only immutable upload bodies get the larger bound; proofs/receipts stay tight.
+const stateLimit = (file: string) => /^[a-f0-9]{64}\.event\.json$/.test(path.basename(file)) ? MAX_EVENT_STATE_BYTES : 65536;
 
 type StateBoundary = 'after-read' | 'before-publish' | 'after-publish';
 let stateObserverForTest: ((file: string, boundary: StateBoundary) => Promise<void>) | undefined;
@@ -25,9 +29,9 @@ export async function readState(file: string): Promise<unknown | undefined> {
   if (!await safeDirectory(path.dirname(file))) return undefined;
   let handle;
   try {
-    const stat = await lstat(file); if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 65536) throw new Error('AgentCore state file refused');
-    handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW); const bytes = Buffer.alloc(65537); const read = await handle.read(bytes, 0, bytes.length, 0);
-    if (read.bytesRead > 65536) throw new Error('AgentCore state exceeds bound');
+    const stat = await lstat(file); if (!stat.isFile() || stat.isSymbolicLink() || stat.size > stateLimit(file)) throw new Error('AgentCore state file refused');
+    handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW); const bytes = Buffer.alloc(stateLimit(file) + 1); const read = await handle.read(bytes, 0, bytes.length, 0);
+    if (read.bytesRead > stateLimit(file)) throw new Error('AgentCore state exceeds bound');
     const value: unknown = JSON.parse(bytes.subarray(0, read.bytesRead).toString('utf8'));
     if (stateObserverForTest !== undefined) await stateObserverForTest(file, 'after-read');
     return value;
@@ -37,7 +41,7 @@ export async function readState(file: string): Promise<unknown | undefined> {
 export async function writeState(file: string, value: unknown, exclusive = false, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
   await safeDirectory(path.dirname(file), true);
-  const bytes = JSON.stringify(value); if (Buffer.byteLength(bytes) > 65536) throw new Error('AgentCore state exceeds bound');
+  const bytes = JSON.stringify(value); if (Buffer.byteLength(bytes) > stateLimit(file)) throw new Error('AgentCore state exceeds bound');
   const target = `${file}.${randomUUID()}.tmp`;
   try {
     const handle = await open(target, 'wx', 0o600);

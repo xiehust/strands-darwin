@@ -129,7 +129,7 @@ TUI、无头模式、结构化输出、消息队列、shell 命令和后台任�
 
 ## 可选云记忆
 
-AgentCore Memory 默认关闭，与模型供应商独立，原有本地项目记忆不变。它提供受权限控制、仅主代理可用的 episode/reflection 检索、用户明确确认的跨项目偏好，以及单独启用的**手动预览、发送**新回合保守投影。偏好采纳、上传和删除控制仅限用户亲自提交的 TUI 命令，独立 cloud-memory CLI 只读。上传省略全部助手文本；显式 discard/clear-accepted 释放 outbox 请求体并保留有限幂等回执。
+AgentCore Memory 默认关闭，与模型供应商独立，原有本地项目记忆不变。它提供受权限控制、仅主代理可用的 episode/reflection 检索、用户明确确认的跨项目偏好，以及单独启用的**手动预览、发送**新回合的有界原始工具内容，涵盖任意工具/MCP 的文本参数与结果；其中可能含有秘密，**不保证保密**。偏好采纳、上传和删除控制仅限用户亲自提交的 TUI 命令，独立 cloud-memory CLI 只读。上传省略全部助手文本；显式 discard/clear-accepted 释放 outbox 请求体并保留有限幂等回执。
 
 在 TUI 输入 **`/setup-agentcore-memory`** 开始引导配置。Darwin 会先读取完整指南，通过权限检查只读查看现有 `~/.darwin/config.json`，再运行离线 `darwin doctor`、本地 `darwin cloud-memory status` 和通过 SDK 有界只读检索的 `darwin cloud-memory preferences`。已配置且基本检查通过就无需重复设置、询问 actor 或重启；空记录也算读取成功，但不证明提取或写入权限。只有缺失/禁用后的配置分支才询问 actor 和默认值；检查失败或受阻时请求针对性修复确认，不自动重置。参数不代表修改授权。优先复用兼容资源；启动配置不代表授权上传或采纳偏好。运行时通过固定版本的官方 `@aws-sdk/client-bedrock-agentcore` 读写，不再依赖 AWS CLI 可执行文件。旧 `cliPath` 仍校验格式，但会忽略并提示移除。可选的 `agentcore` CLI 只用于独立的基础设施管理；其 schema/import 尚不能完整保留自定义命名空间键和模板，因此暂不导入现有资源。[中文指南](docs/user-guide/agentcore-memory.zh-CN.md)列出了准确模板、配置、IAM、`/cloud-memory` 命令、隐私边界和可选合成数据验证。本次实现未运行真实 Memory 服务测试。
 
