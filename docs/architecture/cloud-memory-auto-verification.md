@@ -1,7 +1,29 @@
 # Project-scoped cloud-memory auto verification
 
 Original implementation baseline: `e23ba1d`; consent/launch correction: `1f7966b`.
-Historical gates below apply only to those source sets, not the current A–G changes.
+Historical gates below apply only to those source sets, not the final source unless stated.
+
+## Final independent Host acceptance — 2026-09-11
+
+Accepted `fbd46cc`, `1f7966b`, `adf4252`, `d01ec71` and test-only `0f91ea9` together.
+Host independently ran `pnpm typecheck` and uninterrupted `pnpm test` on final production
+source: **7,610 PASS lines, zero FAIL**. This includes auto99, acceptance122, integrity303,
+lifecycle189, storage121, upload120 and AgentCore263. Managed task
+`bg-59cef082-e5fb-4329-900e-73b0d5819200` subsequently failed the extra free pty warning
+assertion described below; that failure is not hidden by the passing fast gate.
+
+After the test-only wrap correction, Host verified `src/` bytes unchanged, then independently
+ran `tui cloudAuto` **4/0**, `tui completion` **74/0**, and `pnpm build`, all exit 0 in
+`bg-26039afe-170c-4390-a9c2-242f5d9fdc8d`. Dist and built-in skills are refreshed. Diff
+checks are clean; AGENTS is 32,758 bytes. No production full-gate rerun was needed for the
+assertion-only change. Final reviewer reproduced the raced held-sidecar/manual-acceptance
+case; its signed-loopback regression is now part of storage121.
+
+No real project auto enablement, legacy deletion or live Memory upload was performed.
+Legacy cleanup and mode changes still require direct user TUI commands. Batch 128 in
+`docs/iteration-log.md` records milestones, pause/resume, each worker task/spend, the earlier
+Host typo that accidentally started then stopped model-calling TUI checks, and all relevant
+failure history. No live AWS IAM/extraction or guaranteed shutdown delivery claim.
 
 ## Post-d01ec71 free-TUI assertion correction
 
