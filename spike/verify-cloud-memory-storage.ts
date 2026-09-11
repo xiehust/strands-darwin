@@ -264,6 +264,47 @@ async function regressionD() {
   await close(fresh);
 }
 
+async function acceptedDuringHeldRead() {
+  header('D — manual acceptance during held-state read wins in the same earned pass');
+  const root = await configured('d-accepted-during-held-read');
+  const memory = controller(await policy(root), root, 'trigger');
+  const manual = controller(await policy(root), root, 'manual-review');
+  const first = syntheticEntry(memory, 'same-origin', 1);
+  const later = syntheticEntry(memory, 'same-origin', 2);
+  const unrelated = syntheticEntry(memory, 'unrelated-origin', 3);
+  await seed(memory, first, { proof: true, held: true });
+  await seed(memory, later, { proof: true }); await seed(memory, unrelated, { proof: true });
+  const fillers = Array.from({ length: 5 }, (_, index) => syntheticEntry(memory, `filler-${index}`, index + 4));
+  await seedMany(memory, fillers, { proof: true });
+  const overflow = syntheticEntry(memory, 'overflow', 101); await seed(memory, overflow, { proof: true });
+  const preserved = ['event', 'auto', 'auto-state'];
+  const originals = await Promise.all(preserved.map(suffix => readFile(stateFile(memory, first.token, suffix), 'utf8')));
+  const held = gate(); let paused = false;
+  setCloudStateObserverForTest(async (file, boundary) => {
+    if (!paused && file === stateFile(memory, first.token, 'auto-state') && boundary === 'after-read') {
+      paused = true; held.enter(); await held.wait;
+    }
+  });
+  const before = calls.length;
+  const activity = capture(memory, 100); void activity.catch(() => {});
+  try {
+    await bounded(held.reached, 'held sidecar read before blocking verdict', 15000);
+    await manualSend(manual, first.token);
+    assert('D racing manual ACK is durable before held verdict resumes', await readState(stateFile(memory, first.token, 'accepted')) !== undefined && same(requestedTokens(before), [first.token]) && (await quotaUsage(root, new Date(), memory.config)).events === 0);
+    const acknowledgement = await readFile(stateFile(memory, first.token, 'accepted'), 'utf8');
+    held.release(); const trigger = await bounded(activity, 'same earned pass completion', 30000);
+    const requests = requestedTokens(before);
+    assert('D racing manual ACK unblocks later same-session candidate in this pass', requests.includes(later.token) && (await tokenReceipt(box(memory), later.token))?.disposition === 'accepted');
+    assert('D racing manual ACK preserves unrelated-session progress', requests.includes(unrelated.token) && (await tokenReceipt(box(memory), unrelated.token))?.disposition === 'accepted');
+    assert('D racing manual acceptance consumes no slot and no request duplicates', same(requests, [first.token, later.token, unrelated.token, ...fillers.map(entry => entry.token), trigger]) && new Set(requests).size === requests.length);
+    assert('D only eight automatic slots, no self-rescheduled overflow pass', (await quotaUsage(root, new Date(), memory.config)).events === 8 && await readState(stateFile(memory, overflow.token, 'attempt-1')) === undefined && await readState(stateFile(memory, overflow.token, 'accepted')) === undefined);
+    assert('D manual body/hash/held sidecar and ACK remain unchanged', (await Promise.all(preserved.map(suffix => readFile(stateFile(memory, first.token, suffix), 'utf8')))).every((bytes, index) => bytes === originals[index]) && await readFile(stateFile(memory, first.token, 'accepted'), 'utf8') === acknowledgement && await readState(stateFile(memory, first.token, 'attempt-2')) === undefined);
+  } finally {
+    held.release(); setCloudStateObserverForTest(undefined); await activity;
+  }
+  await close(manual); await close(memory);
+}
+
 async function regressionE() {
   header('E — full body store expires on actual runtime activity, without eviction');
   const root = await configured('e-body-cap');
@@ -467,6 +508,7 @@ async function regressionG() {
 
 try {
   await regressionD();
+  await acceptedDuringHeldRead();
   await regressionE();
   await regressionF();
   await regressionG();

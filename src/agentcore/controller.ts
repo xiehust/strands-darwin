@@ -320,7 +320,16 @@ export class CloudMemory {
       if (sent >= 8 || blocked.has(proof.session)) continue;
       const stateFile = path.join(this.outbox(), `${token}.auto-state.json`);
       const prior = await readState(stateFile);
-      if (prior !== undefined && z.object({ state: z.enum(['held', 'paused']), reason: z.string().max(240) }).strict().parse(prior).state === 'held') { blocked.add(proof.session); continue; }
+      if (prior !== undefined && z.object({ state: z.enum(['held', 'paused']), reason: z.string().max(240) }).strict().parse(prior).state === 'held') {
+        // Manual acceptance may finish during the sidecar read. Revalidate and
+        // decide under its sender lock, so terminal evidence wins before blocking.
+        await withStateLock(this.outbox(), async () => {
+          if (await this.receipt(token) || await readState(path.join(this.outbox(), `${token}.accepted.json`))) return;
+          signal.throwIfAborted();
+          blocked.add(proof.session);
+        }, signal);
+        continue;
+      }
       sent++;
       for (let retry = 0; retry < 3; retry++) {
         try {

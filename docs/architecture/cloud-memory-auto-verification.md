@@ -3,7 +3,30 @@
 Original implementation baseline: `e23ba1d`; consent/launch correction: `1f7966b`.
 Historical gates below apply only to those source sets, not the current A–G changes.
 
-## Current A–G correction checklist and evidence
+## Post-adf4252 held-read acceptance race
+
+Host review reproduced native manual acceptance completing while an automatic pass was
+paused after reading a held sidecar. The stale verdict blocked a later same-session token
+for that earned pass, although unrelated sessions progressed. `drainAuto` now revalidates
+terminal receipts/accepted sidecars and decides whether to block under the existing outbox
+sender lock. The initial sidecar read stays outside that lock, so manual send can complete
+there. No extra pass, timer, state deletion, quota change or manual-body rewrite is added.
+
+The signed-loopback storage regression pauses that exact read, completes a peer controller's
+native preview/hash/send, then releases the pass. It verifies same-session and unrelated
+progress, exactly eight automatic slots, an untouched overflow candidate (no self-reschedule),
+no duplicate request, zero manual quota charge, and unchanged body/proof/held-sidecar/ACK.
+The initial regression reproduced starvation; its additional assumption that manual send
+writes an auto receipt was corrected to inspect the durable accepted sidecar instead.
+
+Focused checks, **2026-09-11 10:55:54–10:57:00 UTC**: storage **121 passed, 0 failed**,
+then `pnpm typecheck` **exit 0** (`FOCUSED storage=0 typecheck=0`, task
+`bg-0c2c5ea6-4cb1-408c-a579-861e5899231a`). No full gate was rerun for this narrow fix:
+the green full gate below belongs to `adf4252`; Host owns the next complete acceptance gate.
+The review probe was read only; all execution used repository tests/private fixtures.
+No real config/outbox/cloud mutation, dependency change or Host iteration-log edit occurred.
+
+## A–G correction checklist and evidence at adf4252
 
 Preserve `1f7966b`'s canonical local consent binding and config-lock launch linearization;
 manual stored body/hash/preview bytes remain unchanged. Initial isolated suites passed:
