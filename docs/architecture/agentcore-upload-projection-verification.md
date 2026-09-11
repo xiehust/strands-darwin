@@ -1,6 +1,15 @@
 # AgentCore upload projection redesign — acceptance checklist
 
-Only isolated HOME fixtures, public SDK events/runtime and signed loopback HTTP are used. No private outbox inspection, cloud calls, configuration migration or archive backfill.
+Implementation fixtures use isolated HOME, public SDK events/runtime and signed loopback HTTP. No cloud calls, configuration migration or archive backfill. Host acceptance additionally performed the user-requested read-only inspection/hash check of existing private outbox entries; no entry or authorization was modified.
+
+## Final independent Host acceptance (2026-09-11)
+
+- Accepted `e947ff7`, `1e77608` and `3b04a32` together after two concrete correction passes, not on the initial worker green claims alone.
+- Host uninterrupted `pnpm typecheck && pnpm test && pnpm build`: exit 0; **6,776 PASS lines, zero FAIL**, including **120 upload checks** and **263 AgentCore checks**. Managed task `bg-bc8ef167-71b9-49b5-a159-c13481d10705`; dist and bundled skills refreshed.
+- Extra Host in-memory reproductions now pass: exact 6 KiB small-result retention, descriptor-only array handling, ordinary textual image metadata, evicted failure recovery and zero-budget lone-surrogate clipping with valid ranges (40,001 UTF-16 units in 0.27 ms).
+- Final read-only reviewer found no blockers after Unicode range, late-background/cancellation/dedup and capacity probes. Earlier worker full-gate fixture failure remains recorded below; final Host acceptance was a separate uninterrupted green gate.
+- All nine user-listed immutable event-file SHA-256 values match pre-change values. Installed CLI read-only legacy preview preserved its original hash and wrote no proof. Sendable v1 authorization is separately proven with synthetic signed-loopback tests.
+- `git diff --check` clean; AGENTS.md is 32,748 bytes. No dependency or real config mutation, automatic sender, cloud upload or push. Worker tasks, token spend and milestone details are in `docs/iteration-log.md`, Batch 127. Live AWS IAM/extraction and unmarked upstream data loss remain unverified.
 
 ## Requirement-to-test checklist (before implementation)
 
