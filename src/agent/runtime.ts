@@ -1226,6 +1226,7 @@ export class AgentRuntime {
     // memory sealing and terminal delivery keep meaning `endTurn`.
     let refused = false;
     let sealed = false;
+    let naturallyCompleted = false;
     let uploadTurn: number | undefined;
     let streamStarted = false;
     try {
@@ -1296,7 +1297,9 @@ export class AgentRuntime {
           this.diagnosticsLog?.notice(`rewind checkpoint not catalogued: ${catalogue.problem}`, 'warn');
         }
       }
+      naturallyCompleted = true;
     } finally {
+      if (uploadTurn !== undefined) this.cloudMemory?.sealTurn(uploadTurn, naturallyCompleted && completed && cloudGeneration === this.cloudMemory.cancelGeneration);
       // Seeing an endTurn event is not enough when the consumer abandons this
       // generator before natural completion: only the natural path above seals.
       if (!sealed) this.memoryController?.discard();
@@ -2158,6 +2161,7 @@ export class AgentRuntime {
    */
   async startRewind(checkpoint: RewindCheckpoint): Promise<AgentRuntime> {
     this.refuseWhileDelegationsTracked('/rewind');
+    await this.cloudMemory?.stopAutoForSuccessor();
     await this.refreshCloudPolicy();
     const catalogue = await readRewindCatalogue(this.projectRoot, this.info.sessionId);
     if (catalogue.problem !== undefined) throw new Error(catalogue.problem);
@@ -2224,8 +2228,8 @@ export class AgentRuntime {
    * the user the conversation they just set aside. The successor claims the pointer on
    * its first finished turn, through the ordinary path.
    *
-   * If assembling the successor fails, this runtime stays fully usable: nothing it owns
-   * has been released yet, and the diagnostics tap it installed at startup is put back
+   * If assembling the successor fails, conversation/tools stay usable; predecessor auto
+   * uploads remain conservatively stopped (cloud status states it). The diagnostics tap is put back
    * (the failed successor's unwind clears the process-global sink).
    *
    * Refused while a background delegation is tracked (SER-070): `retire()` would cancel
@@ -2235,6 +2239,7 @@ export class AgentRuntime {
    */
   async startNewSession(): Promise<AgentRuntime> {
     this.refuseWhileDelegationsTracked('/clear');
+    await this.cloudMemory?.stopAutoForSuccessor();
     await this.refreshCloudPolicy();
     let successor: AgentRuntime;
     try {

@@ -32,12 +32,11 @@ export function autoHoldReason(turn: UploadTurn, settlement: TurnSettlement): st
   if (!settlement.durable) return 'Turn close not durable';
   if (settlement.failure || settlement.partial || settlement.stopReason !== 'endTurn') return 'Cancelled, incomplete or provider-failed turn; manual review required';
   if (turn.observerErrors || turn.unmatchedResults || turn.backgroundResultsDropped) return 'Serious collection loss or ambiguous pairing; manual review required';
-  if (turn.actions.some(action => action.sourceLoss.some(loss => /identity|attribution|corrupt/i.test(loss)))) return 'Source identity/attribution loss; manual review required';
-  if (turn.actions.some(action => [...action.input.losses, ...('content' in action.result ? action.result.content.losses : [])].some(loss => /Accessor or absent own value/.test(loss.reason)))) return 'Source collection unavailable; manual review required';
-  const actual = turn.actions.filter(action => 'status' in action.result && ['success', 'error'].includes(action.result.status));
-  const missing = turn.actions.filter(action => 'missing' in action.result);
-  if (missing.length || turn.summaries.some(summary => !['success', 'error'].includes(summary.status))) return 'Missing or ambiguous results; manual review required';
-  if (!actual.length && !turn.summaries.length) return 'No traceable action/result; management or acknowledgement-only turn';
-  if (!turn.goal.retainedBytes && !actual.some(action => action.original !== undefined)) return 'No goal or traceable original late result';
+  const integrity = turn.integrity;
+  if (integrity.identityAmbiguous || integrity.lateOriginsOverflow) return 'Source identity/attribution loss; manual review required';
+  if (integrity.sourceUnavailable) return 'Source collection unavailable; manual review required';
+  if (integrity.unresolvedResults || integrity.resultUnavailable) return 'Missing or ambiguous results; manual review required';
+  if (!integrity.completedResults) return 'No traceable action/result; management or acknowledgement-only turn';
+  if (!turn.goal.retainedBytes && !integrity.lateResults) return 'No goal or traceable original late result';
   return undefined;
 }

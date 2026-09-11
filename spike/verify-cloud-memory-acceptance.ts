@@ -62,7 +62,7 @@ function begin(memory: CloudMemory, turn: number) {
   memory.uploadObserver?.after(new AfterToolCallEvent({ agent, invocationState, tool: undefined, toolUse: use, result: new ToolResultBlock({ toolUseId: use.toolUseId, status: 'success', content: [new TextBlock('actual result')] }) }));
 }
 async function publish(memory: CloudMemory, turn: number) {
-  memory.uploadObserver?.end();
+  memory.uploadObserver?.end(); memory.sealTurn(turn, true);
   memory.settle({ durable: true, session: memory.session, turn, seq: turn + 10, at: new Date().toISOString(), stopReason: 'endTurn', failure: false, partial: false });
   await work(memory).chain;
 }

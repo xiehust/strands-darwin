@@ -1,8 +1,69 @@
 # Project-scoped cloud-memory auto verification
 
-Baseline: `e23ba1d`. Sole implementation worker; no live cloud/config/outbox operations.
+Original implementation baseline: `e23ba1d`; consent/launch correction: `1f7966b`.
+Historical gates below apply only to those source sets, not the current A–G changes.
 
-## Requirement-to-test checklist (before implementation)
+## Current A–G correction checklist and evidence
+
+Preserve `1f7966b`'s canonical local consent binding and config-lock launch linearization;
+manual stored body/hash/preview bytes remain unchanged. Initial isolated suites passed:
+`verify-cloud-memory-integrity.ts` **303**, lifecycle **140**, storage **114**.
+Review then added peer session-stop launch coordination, originating-signal ownership,
+cancelled-pass/fresh-activity handoff and persistent suspension notices. The extended lifecycle
+suite exposed an epoch-wide stop on a session-only refusal (182 passed/1 failed); the sender
+now holds only that origin. Adapted auto99, acceptance122 and upload120 passed. Initial
+typecheck found two fixture type errors (SDK ToolUseData versus block; durable union annotation),
+corrected without changing runtime behavior. Final focused/full-gate evidence is recorded below.
+
+| Finding | Required contract | Current regression evidence | Status |
+| --- | --- | --- | --- |
+| A | Semantic flags and 512-identity obligation ledger outlive both 64-body/96-summary windows; safely matched final result can resolve once after both evictions, before seal. Detection is bounded, not complete source discovery; media/truncation/unknown-length omissions alone do not veto. | Integrity suite: descriptors without getter evaluation, both evictions, delayed/duplicate completions, ambiguity/ledger overflow, late origins and no-veto controls; payload/preview facts and bounds agree. | Passed in final full gate (303) |
+| B | Durable settlement and natural driver-completion seal join in either order. Final SDK event alone, abandonment or cancellation stays manual; original `endTurn`, errors and stored evidence remain truthful. | Lifecycle suite: actual scripted runtime, real fileEditor/trajectory writes, final-yield abandonment, both append/seal orders and cancellation windows, exact provider-error identity; held bodies remain unchanged on later activity/restart. | Passed (189, shared with C) |
+| C | After the background-delegation guard, suspend predecessor synchronously before first await; durable origin-session `*.session-stop.json` bars successor/restart stale drains. Stale checkpoint/construction failure stays conservatively manual with cloud-status notice; tools remain usable, future successor sessions inherit project auto, received ACKs survive. | Lifecycle suite: paused successor factories, success/failure/stale checkpoint, restarted origin, real SDK background-delegation guard and delayed ACK publication, signed loopback requests. | Passed (189, shared with B) |
+| D | Skip accepted ACKs/receipts and tombstones before held/order/slot accounting; manual ACKs consume none of the eight request slots. | Storage suite: accepted/held/tombstone fixtures, same- and other-session progress, exact request/quota accounting. | Passed in final full gate (114, shared with E–G) |
+| E | Body/pending-capacity refusal still earns finite authorized uncancelled expiry/drain; omitted candidate never retries/backfills. Caps stay 4096/512; only auto-accepted bodies older than seven days expire, manual protected; no daemon. | Storage suite: actual runtime activity against seeded 4096-body/512-pending caps, receipt preservation, later ordinary activity, UTC budget rollover and cancellation/manual-stop controls. | Passed in final full gate (114, shared with D/F/G) |
+| F | `pending [accepted] [after <64hex>]`: default actionable includes held/cleanup, accepted separate; both counts, 64/page and next cursor. Stable token order, not snapshot; new earlier tokens require restart. Same CLI grammar, no network/write/proof. | Storage suite: more than 64 rows in both views, accepted prefix cannot hide pending, stopped origin/cleanup discoverability, exported CLI reader parity and malformed grammar refusals, byte-zero mutation/network. | Passed in final full gate (114, shared with D/E/G) |
+| G | Fresh reconsent resets HTTP 403 epoch stop, not held ordering barrier; explicitly discard first held token before later same-session drain. | Storage suite: signed 403, peer fresh epoch discovered by original controller, barrier before discard, later/new-epoch and restart progress, old stop bytes unchanged. | Passed in final full gate (114, shared with D–F) |
+
+Focused verification, 2026-09-11 10:19:24–10:20:54 UTC: lifecycle **183**, storage
+**114**, integrity **303**, acceptance **122**, followed by `pnpm typecheck`; all passed
+(exit 0). The earlier affected run also passed auto **99** and upload compatibility **120**.
+The final source set includes restored-session stop-state fail-closed handling. Full gate
+begun at 10:21:25 UTC was deliberately stopped at 10:22:23: final review found the earlier
+reservation-stage session-stop wording still triggered an epoch-wide stop. The message now
+matches the final-launch path; the peer regression covers both timings. Corrected lifecycle
+passed **189**, then typecheck passed at 10:22:59. The 10:23:04 restart was interrupted by
+user cancellation; its log has no final gate result and is not counted as passing.
+
+Resumed full gate, 10:32:50–10:40:01 UTC: **test=1, typecheck=0**. The existing
+`verify-agentcore-memory.ts` fixture parsed the new `pending` count header as a token.
+Token-row parsing restored 262 checks; a remaining capacity assertion still counted header
+and guidance lines. Filtering event rows preserved the same assertions without any further
+production change. Corrected focused suite, 10:41:31–10:42:06 UTC: **263 passed, 0 failed**,
+exit 0.
+
+**Final source-settled full gate, 2026-09-11 10:42:06–10:52:53 UTC: `pnpm test` exit 0,
+then `pnpm typecheck` exit 0.** Task `bg-a565620b-6607-446f-9709-a24f37be930b` records
+`FINAL_GATE test=0 typecheck=0`. All registered fast suites completed, including AgentCore
+**263**, upload **120**, auto **99**, acceptance **122**, integrity **303**, lifecycle
+**189**, storage **114**, each with zero failures. The tracked `src/`/`spike/` diff SHA256
+was `48ca800bd8bd743a766ee1902ce46f7f0f92fd5d61f5fca69341ec4a2202b688` before and after;
+all three new-suite SHA256 values also matched. No source changes followed, only this evidence
+record. `git diff --check` passed; `AGENTS.md` remains 32758 bytes. Commit and required
+post-commit build results are reported in the worker's completion report.
+
+Additional lifecycle coverage pauses a peer after its pre-coordination checks, commits the
+origin stop under the shared launch lock, then proves the peer cannot launch and future
+successor events still send. A late validated ACK cannot swallow a new turn's drain trigger;
+a cancelled delayed settlement cannot borrow an unfinished next turn's fresh signal or perform
+retention. Suspension stays explicit after local/peer reconsent and restored-session refresh.
+New CLI pagination proof calls the exported CLI reader in its private fixture. No extra green
+PTY suites are rerun merely for reconfirmation (`cloudAuto` and `completion` are the verified
+parser names). No live IAM/extraction verification. Required full suites retain their existing
+isolated subprocess fixtures. AGENTS and the Host-owned iteration log are untouched; no
+setup-skill change is needed.
+
+## Historical requirement-to-test checklist (original implementation)
 
 | ID | Requirement | Planned proof | Result |
 | --- | --- | --- | --- |
@@ -22,11 +83,14 @@ Baseline: `e23ba1d`. Sole implementation worker; no live cloud/config/outbox ope
 
 - Policy: explicit typed registry, max 1024 projects / 1 MiB config; canonical working-tree SHA256 override/consent key, separate from the unchanged cloud namespace/quota identity. Authorization v2 additionally binds the local key; v1 is held pending user reconfirmation, never migrated. No resource/actor/model/permission override. Root auto without a matching authorization falls back to manual with guidance.
 - Quota: 500 attempts / 104857600 exact wire-body bytes per UTC day by default; positive bounded overrides, max 100000 attempts / 107374182400 bytes. Reservations conservatively count unknown acknowledgements and cancellation, shared across explicit-ID checkouts.
-- Storage: 4096 bodies / 512 pending / 32768 outbox entries; 7-day expiry only for auto-accepted bodies. Permanent receipts: 256 hash-prefix partitions × 4096 files, plus unchanged legacy ledger. Full state refuses before removal, never evicts proof.
-- Work: publication uses a local-only lock, sender/cleanup the original outbox lock. At most eight candidates/pass, with publication-triggered coalesced followups and same-process session serialization; no held/budget/order self-retry. Three attempts/token, 250/500ms cancellable retry. No idle daemon or forced shutdown upload; cancellation/clear/shutdown stop owned requests with a two-second drain.
+- Integrity/lifecycle: semantic flags and a 512-key obligation ledger are independent of 64 action bodies/96 summaries. Detection is bounded; presentation loss is not itself a veto. An eight-turn join requires natural driver completion plus durable settlement, in either order. Predecessor suspension precedes the first transition await, after the background guard; durable per-origin-session stop markers keep old sessions manual across restart without revoking successor policy. Received ACKs remain truthful.
+- Storage: 4096 bodies / 512 pending / 32768 outbox entries; only auto-accepted bodies older than seven days expire. Permanent receipts: 256 hash-prefix partitions × 4096 files, plus unchanged legacy ledger. Full state refuses new publication visibly, never evicts proof/manual data. That uncancelled authorized activity still earns finite expiry/drain, not a retry/backfill of the omitted candidate.
+- Work: publication uses a local-only lock, sender/cleanup the original outbox lock. At most eight candidates/pass, with publication-triggered coalesced followups and same-process session serialization; terminal ACKs/receipts/tombstones are skipped before held/order/slots, including raced manual ACKs. No held/budget/order self-retry. Three attempts/token, 250/500ms cancellable retry. No idle daemon or forced shutdown upload; cancellation/clear/shutdown stop owned requests with a two-second drain.
+- Pending reader: `pending [accepted] [after <64hex>]`, same TUI/CLI grammar; actionable including held/cleanup by default, accepted separate, both counts and ≤64 rows/page with next cursor. No network/write/proof. Stable token order is not a snapshot; restart for newly added earlier tokens.
+- Permanent-stop recovery: fresh consent resets the old HTTP 403 epoch latch, not the held first entry. Explicit discard resolves that ordering barrier before later same-session auto drain; old stop bytes remain unchanged.
 - Legacy cleanup: at most 256 current-binding unaccepted non-v2 entries; locked manifest hash confirmation, all tombstones before any removal, restart-safe committed manifest. Implementation tests operate only on owned synthetic fixtures.
 
-## Host acceptance corrections after fbd46cc
+## Historical Host acceptance corrections after fbd46cc
 
 The original gate below passed but did not establish current-project isolation or native
 revocation linearization. Host review found four blockers; the new isolated

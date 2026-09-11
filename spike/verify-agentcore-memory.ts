@@ -16,6 +16,8 @@ import { CLOUD_CLOSE_TIMEOUT_MS, CloudMemory as ReadOnlyCloudMemory } from '../s
 class CloudMemory extends ReadOnlyCloudMemory {
   override command(input: string, authority: 'read' | 'user' = 'user') { return super.command(input, authority); }
 }
+// Pending includes count/cursor guidance; only token-prefixed lines are event rows.
+function pendingTokens(listing: string): string[] { return listing.match(/^[a-f0-9]{64}(?= )/gm) ?? []; }
 import { MemoryTransport, setMemoryTransportOptionsForTest } from '../src/agentcore/transport.js';
 import { loopbackHandler } from './agentcore-sdk-fixture.js';
 import { digest, parseAgentCoreConfig, scopeFor, type AgentCoreConfig } from '../src/agentcore/config.js';
@@ -112,7 +114,7 @@ const afterUpload = new AfterToolCallEvent({ agent: wireAgent, invocationState: 
 await observeUpload(uploader, beforeUpload); turn?.record(beforeUpload);
 await observeUpload(uploader, afterUpload); turn?.record(afterUpload);
 turn?.failed(new Error('synthetic failure')); turn?.end(); await recorder.close();
-const pending = await uploader.command('pending'); const token = pending.split(' ')[0]!;
+const pending = await uploader.command('pending'); const token = pendingTokens(pending)[0]!;
 assert('new durable failed turn queued without network', /^[a-f0-9]{64}$/.test(token) && pending.includes('pending; not uploaded'));
 const beforeSend = (await calls()).length;
 assert('send without preview authorization refused', (await uploader.command(`send ${token} ${'0'.repeat(64)}`)).includes('Preview absent'));
@@ -141,7 +143,7 @@ for (let i = 0; i < 64; i++) {
   large.uploadObserver!.after(new AfterToolCallEvent({ agent: wireAgent, invocationState, tool: undefined, toolUse: use, result: new ToolResultBlock({ toolUseId: use.toolUseId, status: 'success', content: [new TextBlock('r'.repeat(12000) + `LARGE-TAIL-${i}`)] }) }));
 }
 large.settle({ durable: true, session: 'large-session', turn: 1, seq: 999, at: '2026-01-01T00:00:00Z', stopReason: 'endTurn', failure: false, partial: false });
-const largeToken = (await large.command('pending')).split(' ')[0]!;
+const largeToken = pendingTokens(await large.command('pending'))[0]!;
 const largeRead = await large.command(`preview ${largeToken}`, 'read');
 const largeBody = JSON.parse(largeRead.split('\nRead-only preview:')[0]!);
 assert('new CreateEvent body exceeds old 64KiB state cap but fits 256KiB escaped request', Buffer.byteLength(JSON.stringify(largeBody)) > 65536 && Buffer.byteLength(JSON.stringify(largeBody)) <= 262144);
@@ -203,7 +205,7 @@ for (const stopReason of ['cancelled', 'endTurn'] as const) {
   next?.record(new AgentResultEvent({ agent: wireAgent, invocationState: wireInvocation, result: new AgentResult({ invocationState: wireInvocation, stopReason, lastMessage: new Message({ role: 'assistant', content: [] }) }) })); next?.end();
 }
 await retryRecorder.close();
-const retryTokens = (await retry.command('pending')).split('\n').map(row => row.split(' ')[0]!);
+const retryTokens = pendingTokens(await retry.command('pending'));
 const previews = await Promise.all(retryTokens.map(token => retry.command(`preview ${token}`)));
 const previewOutcome = (text: string) => JSON.parse(JSON.parse(text.split('\nReview for private material;')[0]!).payload[0].conversational.content.text).outcome;
 const firstIndex = previews.findIndex(text => previewOutcome(text) === 'cancelled'); const firstToken = retryTokens[firstIndex]!; const firstPreview = previews[firstIndex]!;
@@ -397,7 +399,7 @@ await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { tes
 const commandRuntime = await runtime(new ScriptedModel('bash', { mode: 'execute', command: 'pnpm test' }), 'default', true);
 await drain(commandRuntime); const commandSession = commandRuntime.info.sessionId; await commandRuntime.shutdown();
 const runtimeOutbox = new CloudMemory(runtimeConfig, root, commandSession);
-const runtimeToken = (await runtimeOutbox.command('pending')).split(' ')[0]!;
+const runtimeToken = pendingTokens(await runtimeOutbox.command('pending'))[0]!;
 const readOnlyBox = new ReadOnlyCloudMemory(runtimeConfig, root, commandSession);
 const readPreview = await readOnlyBox.command(`preview ${runtimeToken}`);
 const readBoxDir = path.join(cloudDirectory(runtimeConfig, root), digest([runtimeConfig.region, runtimeConfig.memoryId, runtimeConfig.actorId, runtimeConfig.projectId, runtimeConfig.episodicStrategyId, runtimeConfig.preferenceStrategyId]));
@@ -417,7 +419,7 @@ for (const scenario of ['image', 'bang', 'custom'] as const) {
   if (scenario === 'bang') privacy.recordShellCommand({ command: 'synthetic report', exitCode: 0, signal: null, timedOut: false, durationMs: 1, output: privateText });
   for await (const _event of privacy.send(scenario === 'image' ? 'Describe the image' : `Expanded input ${privateText}`, scenario === 'custom' ? '/synthetic' : 'Describe this input', image)) {}
   await privacy.shutdown();
-  const box = new CloudMemory(privacyConfig, root, privacy.info.sessionId); const candidate = (await box.command('pending')).split(' ')[0]!;
+  const box = new CloudMemory(privacyConfig, root, privacy.info.sessionId); const candidate = pendingTokens(await box.command('pending'))[0]!;
   const text = await box.command(`preview ${candidate}`);
   assert(`${scenario} paraphrase never enters actual runtime outbox with preferences false and no tools`, text.includes('omissions') && !text.includes(privateText) && !text.includes('Expanded input') && !text.includes('ASSISTANT'));
   await box.close();
@@ -463,7 +465,7 @@ for (let index = 1; index <= 33; index++) {
   lifecycle.uploadObserver!.begin(next!.turn, `Synthetic capacity goal ${index}`);
   next?.record(new AgentResultEvent({ agent: wireAgent, invocationState: wireInvocation, result: new AgentResult({ invocationState: wireInvocation, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) })); next?.end();
   await lifecycleRecorder.close(); // Public flush barrier; no polling the detached settlement.
-  const rows = (await lifecycle.command('pending')).split('\n'); const pendingToken = rows.find(row => row.includes('pending; not uploaded'))?.split(' ')[0]!;
+  const rows = (await lifecycle.command('pending')).split('\n').filter(row => /^[a-f0-9]{64} /.test(row)); const pendingToken = rows.find(row => row.includes('pending; not uploaded'))?.split(' ')[0]!;
   const preview = await lifecycle.command(`preview ${pendingToken}`); const hash = preview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)?.[1];
   const result = await lifecycle.command(`send ${pendingToken} ${hash}`);
   if (!result.startsWith('AWS event accepted.')) throw new Error(`capacity turn ${index}: ${result}`);
@@ -561,7 +563,7 @@ const narrowRecorder = new TrajectoryRecorder({ file: narrowFile, run: { session
 const narrowTurn = narrowRecorder.beginTurn('Synthetic cancellation goal'); await narrowTurn?.inputDurable();
 narrow.uploadObserver!.begin(narrowTurn!.turn, 'Synthetic cancellation goal');
 narrowTurn?.record(new AgentResultEvent({ agent: wireAgent, invocationState: wireInvocation, result: new AgentResult({ invocationState: wireInvocation, stopReason: 'endTurn', lastMessage: new Message({ role: 'assistant', content: [] }) }) })); narrowTurn?.end(); await narrowRecorder.close();
-const narrowToken = (await narrow.command('pending')).split(' ')[0]!;
+const narrowToken = pendingTokens(await narrow.command('pending'))[0]!;
 const narrowPreview = await narrow.command(`preview ${narrowToken}`);
 const narrowHash = narrowPreview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)![1]!;
 const narrowBox = outboxPath(narrowConfig, root);

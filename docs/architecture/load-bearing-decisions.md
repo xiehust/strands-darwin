@@ -848,18 +848,26 @@ traverses SDK synthetic history or child conversations, nor creates a USER goal/
 channel. Weak invocation keys plus at most 64 copied origins and 16 pending 8 KiB late
 bodies survive between turns; capacity/cancellation losses are counted in status. Cancellation
 revokes pending background correlations; shutdown and startup unwind close the collector.
-No SDK loop/executor change, event mutation or trajectory schema/bytes/order change. Only the
-existing durable closing-append settlement callback schedules detached local publication.
+No SDK loop/executor change, event mutation or trajectory schema/bytes/order change. The
+existing durable closing-append settlement callback is required for detached local publication;
+it joins the natural driver-completion seal described below, without observer I/O.
 Disabled upload installs no hooks or collector. Failure/early return closes collection; failed
 trajectory/pre-stream abort discards it, nondurable settlement consumes it, saturation refuses
 and counts turns, successor/shutdown clears it. Invocation-state identity plus SDK tool-use ID
 pairs results; local scope/attempt ordinals distinguish records. Reuse within one state lacks
 a public attempt token, so later attribution is refused, never guessed. A bounded 512-key
-identity ledger retains evicted-action tombstones and bounded summary correlation; an observed
-result updates status/exitCode/failure even when the body was evicted, and failure text can
-recover an action with explicitly absent input. Summaries include invocationScope; results
-whose summaries were also evicted have a separate counter. Excess identities are explicitly
-unmatched. Invocation-state identity rejects unrelated late results from another turn. No observer upload, model summary, extra model call, backfill, path reads,
+identity/obligation ledger retains evicted-action tombstones independently of the 64 bodies
+and 96 summaries. Monotonic semantic flags (`sourceUnavailable`, `identityAmbiguous`,
+`resultUnavailable`) record detected faults before projection/fitting, never by searching
+bounded explanatory strings. Unresolved obligations survive both retention windows; a safely
+matched final result resolves one exactly once before seal, even after body AND summary eviction.
+An acknowledgement never resolves it. Ledger exhaustion fails closed without dropping identity
+proof; `finish()` freezes unresolved totals and releases correlation. An observed result updates
+retained status/exitCode/failure; failure text can recover an action with explicitly absent input.
+Summaries include invocationScope; results whose summaries were also evicted have a separate
+counter, not a veto by themselves. Detection remains bounded, not complete source discovery:
+deliberate media exclusion, traversal/text truncation and unknown original byte length are not
+semantic faults. Excess identities are explicitly unmatched. Invocation-state identity rejects unrelated late results from another turn. No observer upload, model summary, extra model call, backfill, path reads,
 child traversal or offload/archive hydration.
 
 Every tool name and textual argument/result is eligible, including arbitrary MCP, public
@@ -939,21 +947,50 @@ malformed policy disables auto without failing the ordinary turn. Fully disabled
 controller-free. No programmatic consent tool.
 
 `begin` snapshots the active authorization for new turns, separately from immutable projection
-bytes. Durable close then event publication precede the separate hash/provenance record. Old
-manual/legacy/pre-enable turns are never eligible, including after re-enable; bounded original
-late-result identity must belong to the same epoch. Closed failed tool work can qualify; no
-success inference. Cancel/incomplete/provider failure, observer errors, ambiguity and missing
-results hold manual. Goal-only/ack-only management does not send; bounded truncation does not
-veto. Existing public observer hooks remain synchronous/nonthrowing/no I/O and SDK loop intact.
+bytes. A bounded eight-turn join waits for durable settlement and the driver's `sealTurn`
+completion verdict, in either order, before detached publication. Auto requires a true verdict
+from natural `AgentRuntime.send()` completion; a false verdict can only publish manual evidence.
+A final SDK `agentResultEvent`/`endTurn` alone is not that seal. Abandonment/cancellation holds manual even
+if settlement truthfully stored `endTurn`: never rewrite outcome, body, trajectory or errors to
+manufacture a cancellation. Event publication precedes the separate hash/provenance record. Old
+manual/legacy/pre-enable turns are never eligible, including after re-enable; all bounded copied
+late-result origins must belong to the same epoch, independently of retained action bodies.
+Closed failed tool work can qualify; no success inference. Cancel/incomplete/provider failure,
+observer errors, semantic source/result unavailability, identity ambiguity and unresolved
+obligations hold manual. Goal-only/ack-only management does not send; deliberate media exclusion,
+bounded truncation/traversal and unknown source byte length do not veto. Existing public observer
+hooks remain synchronous/nonthrowing/no I/O and SDK loop intact.
+
+Clear/rewind first run the existing background-delegation refusal guard, then call
+`stopAutoForSuccessor`: synchronous suspension/abort and false seals precede the first await.
+Before policy refresh, checkpoint validation or successor construction, upload-enabled or
+project-overridden controllers persist `${digest(session)}.session-stop.json` in the outbox,
+under the same config lock as request launch. Final locked launch validation rereads this
+marker, so peer senders cannot cross a completed stop. This origin-session marker bars stale
+proofs from successor/restart drains without revoking project consent. A stale checkpoint or
+construction failure conservatively leaves predecessor auto stopped, with a cloud-status notice;
+conversation/tools remain usable and old-session work remains manual. Future successor sessions
+inherit project auto for their new turns. Suspension stays visible across peer refresh and
+reconsent (which explicitly requires a new session); restored origins reread their stop marker.
+A session-stop refusal is not an epoch-wide transport stop. Guard refusals do not suspend auto. Already-issued
+requests cannot be undone; received acknowledgements remain durable and truthful.
 
 The manual sender core owns both gates, reservations, ordering, transport and acknowledgements.
 Auto passes are detached, serial, at most eight candidates per pass, no daemon/model/tick.
 New publications during an active pass coalesce into a finite followup; held/budget/order states
-never reschedule themselves. Same-process sessions queue behind the active outbox owner, with
+never reschedule themselves. Publication carries its originating turn's signal through delayed
+settlement, never borrowing a later turn's signal. A fresh activity arriving during a cancelled
+pass's late ACK owns a fresh-signal followup after old ownership releases. Same-process sessions queue behind the active outbox owner, with
 per-controller cancellation checked before their pass; cross-process contention remains fail-fast
 and needs later ordinary activity. Old epochs are excluded before candidate slot counting.
+Accepted ACKs/receipts and discard tombstones are skipped before held/order/slot accounting,
+both during proof collection and again while draining the snapshot. A raced manual ACK consumes
+no request slot, cannot block its session and cannot starve unrelated sessions.
 Publication has a separate bounded local lock so network work cannot block new event files;
-sends and retention/manual cleanup share the original outbox lock.
+sends and retention/manual cleanup share the original outbox lock. A body/pending-capacity
+publication refusal still earns a finite expiry/drain pass under live uncancelled authorization.
+The omitted candidate is not retried or backfilled; capacity/held/budget alone never creates a
+self-rescheduling loop. Existing 4096-body/512-pending bounds and manual-data protection remain.
 Earlier pending blocks only its session; other sessions retain request slots. Budget-paused
 candidates resume only on later ordinary activity with the same active authorization. Every
 attempt is reserved durably, counts exact Smithy wire-body UTF-8 bytes (including multibyte
@@ -961,9 +998,12 @@ JSON) against one UTC project ledger, and conservatively consumes quota on unkno
 Defaults 500 attempts/104857600 bytes; validated maxima 100000/107374182400. Outbox and quota
 locks prevent process/restart bypass, including checkouts sharing explicit project identity. Three stable token/body attempts total; 250/500ms cancellable
 backoff for network/429/5xx. Permanent transport/IAM failures persist an epoch-bound stop.
+Fresh user reconsent resets the HTTP 403 stop latch (also when discovered through peer policy
+refresh), not the held first token or same-session ordering barrier. Explicitly discard that held
+token before later automatic drain; old stop bytes and manual bodies/proofs are not rewritten.
 Launch linearization: after credentials/signing, stop reads and quota/attempt reservations, the
 pre-HTTP handler acquires the SAME config-write lock used by native commands. Within it, read
-fresh bounded local policy, validate v2 project/scope/epoch and cancellation, then synchronously
+fresh bounded local policy and the origin-session stop marker, validate v2 project/scope/epoch and cancellation, then synchronously
 invoke the underlying request handler, with no intervening await. Return a boxed pending response
 so the lock releases before awaiting network; response rejection is observed during release.
 Native manual publication completed first bars launch; launch first is an already-issued effect.
@@ -976,13 +1016,22 @@ at seven days during later authorized activity; pending/manual/failure/cloud dat
 Body cap 4096, pending cap 512, directory cap 32768 suit seven days at default throughput;
 capacity refuses new candidates visibly. Receipts use 256 prefix partitions, each ≤4096 files;
 lookup is per-token plus bounded legacy ledger, never whole archive. Full partition stops before
-network/removal, no proof eviction. Pending listing ≤64 with explicit omission. User-only
-`discard-legacy` previews ≤256 unaccepted non-v2 events in this exact binding, then requires
+network/removal, no proof eviction. `pending [accepted] [after <64hex>]` is a local read-only
+projection: actionable (including held/interrupted discard cleanup) by default, accepted bodies
+in a separate view; both counts, ≤64 rows/page and next cursor when needed. Strict lowercase
+64-hex cursors use stable token ordering, not a snapshot: newly added earlier tokens require
+restarting the listing. The standalone CLI uses the same grammar/projection without network,
+file writes or proof creation. User-only `discard-legacy` previews ≤256 unaccepted non-v2 events
+in this exact binding, then requires
 manifest hash under the outbox lock; TOCTOU refuses, all tombstones precede deletion, committed
 manifest allows restart-safe partial cleanup. Accepted/v2/foreign/cloud data never included.
-Checks: `verify-cloud-memory-auto.ts`, `verify-cloud-memory-acceptance.ts` (isolation, native
-linearization pauses, peer refresh and in-flight publication), existing upload/memory/config/doctor/setup suites, free
-`tui cloudAuto` and `tui completion`; requirement map in `cloud-memory-auto-verification.md`.
+Checks: `verify-cloud-memory-integrity.ts` (semantic obligations beyond both retention windows),
+`verify-cloud-memory-lifecycle.ts` (natural seal/durable join, predecessor stop and ACK truth),
+`verify-cloud-memory-storage.ts` (terminal skipping, capacity activity, pending cursor and 403
+reconsent), plus `verify-cloud-memory-auto.ts`, `verify-cloud-memory-acceptance.ts` (isolation,
+native linearization pauses, peer refresh and in-flight publication), existing
+upload/memory/config/doctor/setup suites, free `tui cloudAuto` and `tui completion`.
+Current versus historical verification status is recorded in `cloud-memory-auto-verification.md`.
 
 Transport is the official `@aws-sdk/client-bedrock-agentcore@3.1127.0` data client with four
 public Commands, never a generated Strands memory/session manager: automatic extraction upload

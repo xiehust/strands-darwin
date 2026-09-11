@@ -55,6 +55,22 @@ export function sliceText(text: string, limit: number): TextSlice {
 }
 interface Loss { path: string; reason: string; text?: Omit<TextSlice, 'parts'> }
 interface Captured { content: unknown; losses: Loss[] }
+interface SemanticFlags { sourceUnavailable: boolean; identityAmbiguous: boolean; resultUnavailable: boolean }
+export interface UploadIntegrity extends SemanticFlags {
+  obligations: number;
+  completedResults: number;
+  unresolvedResults: number;
+  lateResults: number;
+  lateOriginsOverflow: boolean;
+}
+const semanticFlags = (): SemanticFlags => ({ sourceUnavailable: false, identityAmbiguous: false, resultUnavailable: false });
+/** These facts are collected before projection/fitting, never inferred from bounded
+ * explanatory strings. Deliberate traversal/media/byte omissions are not failures. */
+function sourceOwn(value: unknown, key: string, flags: SemanticFlags): unknown {
+  const property = value !== null && typeof value === 'object' ? Object.getOwnPropertyDescriptor(value, key) : undefined;
+  if (!property || !('value' in property)) { flags.sourceUnavailable = true; return undefined; }
+  return property.value;
+}
 // Only descriptors: even array indices and SDK block fields can be accessors.
 function own(value: unknown, key: string): unknown {
   if (value === null || typeof value !== 'object') return undefined;
@@ -73,7 +89,7 @@ const childPath = (path: string, key: string) => `${path}/${key.replaceAll('~', 
  * The temporary snapshot has <=128 values, depth 8, <=32 entries/container and
  * <=8192 copied UTF-8 bytes/string. No source object or large backing string lives
  * beyond this call. Retained snapshots are pruned to the serialized action cap. */
-function snapshot(value: unknown): Snapshot {
+function snapshot(value: unknown, flags = semanticFlags()): Snapshot {
   let nodes = 0;
   const visit = (item: unknown, depth: number, ceiling = 128): Snapshot => {
     if (nodes >= ceiling || depth > 8) return omitted('Traversal budget: entire region omitted');
@@ -101,9 +117,11 @@ function snapshot(value: unknown): Snapshot {
     const entries: [string, Snapshot][] = [];
     // Reserve one visit for each discovered sibling; deeper trees share the rest.
     for (const [index, key] of keys.entries()) {
-      if (key.length > 128) { losses.push({ path: '', reason: 'Oversized property name and its value omitted' }); continue; }
       const property = Object.getOwnPropertyDescriptor(item, key);
-      entries.push([key, !property || !('value' in property) ? omitted('Accessor or absent own value omitted without evaluation') : visit(property.value, depth + 1, ceiling - (keys.length - index - 1))]);
+      const unavailable = !property || !('value' in property);
+      if (unavailable) flags.sourceUnavailable = true;
+      if (key.length > 128) { losses.push({ path: '', reason: 'Oversized property name and its value omitted' }); continue; }
+      entries.push([key, unavailable ? omitted('Accessor or absent own value omitted without evaluation') : visit(property.value, depth + 1, ceiling - (keys.length - index - 1))]);
     }
     return { entries, ...(length === undefined ? {} : { length }), losses };
   };
@@ -192,29 +210,40 @@ type Result = { status: string; evidence: string; exitCode?: number; content: Ca
 type Origin = { turn: number; ordinal: number; invocation: string; invocationScope: number; tool: string };
 type Action = { ordinal: number; invocation: string; invocationScope: number; attempt: number; tool: string; inputSource: string; input: Captured; result: Result | { missing: string }; acknowledgement?: Result; original?: Origin; failed: boolean; recovery: boolean; sourceLoss: string[] };
 type Summary = Pick<Action, 'ordinal' | 'invocation' | 'invocationScope' | 'tool' | 'failed' | 'recovery' | 'original'> & { status: string; exitCode?: number; bodyOmitted: true };
-type Call = { action?: Action; summary?: Summary; attempt: number; started: boolean; ambiguous: boolean; observed?: boolean; acknowledged?: boolean };
+type Call = { action?: Action; summary?: Summary; ordinal: number; attempt: number; started: boolean; ambiguous: boolean; unresolved: number; observed?: boolean; acknowledged?: boolean };
+type LateAction = Action & { integrity: Readonly<SemanticFlags> };
 function summary(action: Action): Summary {
   return { ordinal: action.ordinal, invocation: action.invocation, invocationScope: action.invocationScope, tool: action.tool, failed: action.failed, recovery: action.recovery, status: 'status' in action.result ? action.result.status : action.result.missing,
     ...('exitCode' in action.result ? { exitCode: action.result.exitCode } : {}), ...(action.original ? { original: action.original } : {}), bodyOmitted: true };
 }
 function priority(action: Action | Summary): number { return action.failed || action.recovery ? 1 : 0; }
 function comparePriority(a: Action | Summary, b: Action | Summary): number { return priority(a) - priority(b) || a.ordinal - b.ordinal; }
-function toolText(content: unknown): { value: unknown[]; loss: string[]; exitCode?: number } {
+function toolText(content: unknown, flags: SemanticFlags): { value: unknown[]; loss: string[]; exitCode?: number } {
   const value: unknown[] = []; const loss = new Set<string>(); let exitCode: number | undefined;
-  if (!Array.isArray(content)) return { value, loss: ['SDK result content unavailable'] };
+  if (!Array.isArray(content)) { flags.resultUnavailable = true; return { value, loss: ['SDK result content unavailable'] }; }
   const length = own(content, 'length') as number;
   value.length = length;
   for (const i of indices(length)) {
-    const block = own(content, String(i));
-    const kind = own(block, 'type'); const text = own(block, 'text');
-    if (kind === 'textBlock' && typeof text === 'string') {
-      value[i] = { text };
-      if (/\[.*(?:offload|truncat)|truncated:|retrieve_offloaded_content/i.test(text.slice(0, 1024))) loss.add('SDK text signals possible upstream truncation/offload; not hydrated');
-    } else if (kind === 'jsonBlock' && Object.getOwnPropertyDescriptor(block, 'json')?.get === undefined) {
-      const json = own(block, 'json'); value[i] = { json };
+    // An explicit placeholder for every selected index: deliberately excluded
+    // media must not become an absent descriptor when snapshot visits this array.
+    value[i] = null;
+    const block = sourceOwn(content, String(i), flags);
+    const kind = sourceOwn(block, 'type', flags);
+    if (kind === 'textBlock') {
+      const text = sourceOwn(block, 'text', flags);
+      if (typeof text === 'string') {
+        value[i] = { text };
+        if (/\[.*(?:offload|truncat)|truncated:|retrieve_offloaded_content/i.test(text.slice(0, 1024))) loss.add('SDK text signals possible upstream truncation/offload; not hydrated');
+        continue;
+      }
+      flags.resultUnavailable = true;
+    } else if (kind === 'jsonBlock') {
+      const json = sourceOwn(block, 'json', flags); value[i] = { json };
       const code = own(json, 'exitCode');
       if (typeof code === 'number' && Number.isInteger(code)) exitCode = code;
-    } else loss.add('Non-text/JSON SDK block or accessor omitted without evaluation (binary/image or unsupported)');
+      continue;
+    }
+    loss.add('Non-text/JSON SDK block or accessor omitted without evaluation (binary/image or unsupported)');
   }
   return { value, loss: [...loss], ...(exitCode === undefined ? {} : { exitCode }) };
 }
@@ -229,6 +258,31 @@ export class UploadTurn {
   private calls = new Map<string, Call>();
   private inputs = new WeakMap<Action, Snapshot>();
   private outputs = new WeakMap<Action, Snapshot>();
+  private readonly flags = semanticFlags();
+  private obligations = 0;
+  private completedResults = 0;
+  // Untrackable obligations (and, after finish, every remaining ledger obligation).
+  private sealedUnresolved = 0;
+  private finished = false;
+  private lateResults = 0;
+  private readonly originTurns = new Set<number>();
+  private lateOriginsOverflow = false;
+  get integrity(): Readonly<UploadIntegrity> {
+    let unresolvedResults = this.sealedUnresolved;
+    for (const call of this.calls.values()) unresolvedResults += call.unresolved;
+    return Object.freeze({ ...this.flags, obligations: this.obligations, completedResults: this.completedResults,
+      unresolvedResults, lateResults: this.lateResults, lateOriginsOverflow: this.lateOriginsOverflow });
+  }
+  /** Controller provenance must check every copied original turn, not the retained
+   * action window. Overflow fails closed; this never retains bodies or SDK state. */
+  lateOrigins(): { turns: readonly number[]; overflow: boolean } {
+    return { turns: [...this.originTurns], overflow: this.lateOriginsOverflow };
+  }
+  private mergeFlags(flags: Readonly<SemanticFlags>): void {
+    this.flags.sourceUnavailable ||= flags.sourceUnavailable;
+    this.flags.identityAmbiguous ||= flags.identityAmbiguous;
+    this.flags.resultUnavailable ||= flags.resultUnavailable;
+  }
   totalActions = 0;
   internalEvents = 0;
   batchEntriesOmitted = 0;
@@ -270,17 +324,20 @@ export class UploadTurn {
   }
   before(event: BeforeToolCallEvent): void { this.add(event.toolUse, event.invocationState, true); }
   private add(use: unknown, state: object, started: boolean): void {
-    const rawId = own(use, 'toolUseId'); const name = own(use, 'name');
-    const validId = typeof rawId === 'string' && rawId.length <= 256;
+    if (this.finished) return;
+    const rawId = sourceOwn(use, 'toolUseId', this.flags); const name = sourceOwn(use, 'name', this.flags);
+    const validId = typeof rawId === 'string' && rawId.length > 0 && rawId.length <= 256;
     const id = validId ? rawId : `unavailable-${this.totalActions + 1}`;
     const key = this.key(state, id, true)!;
-    const prior = this.calls.get(key);
-    // Intent is not a second attempt. Duplicate IDs otherwise lack a public
-    // attempt token: refuse pairing, even if an older result had already arrived.
-    const intent = started && prior && !prior.started && !prior.ambiguous ? prior.action : undefined;
-    const ordinal = intent?.ordinal ?? ++this.totalActions;
-    const input = snapshot(own(use, 'input'));
-    const action: Action = intent ?? { ordinal, invocation: id, invocationScope: this.scopes.get(state)!, attempt: (prior?.attempt ?? 0) + 1,
+    const prior = validId ? this.calls.get(key) : undefined;
+    // Intent is not a second attempt, even after both retention windows evict it.
+    // Completed/reused IDs otherwise lack a public attempt token: refuse pairing.
+    const intent = started && prior !== undefined && !prior.started && !prior.ambiguous && !prior.observed;
+    const retainedIntent = intent ? prior.action : undefined;
+    const ordinal = intent ? prior.ordinal : ++this.totalActions;
+    if (!intent) this.obligations++;
+    const input = snapshot(sourceOwn(use, 'input', this.flags), this.flags);
+    const action: Action = retainedIntent ?? { ordinal, invocation: id, invocationScope: this.scopes.get(state)!, attempt: intent ? prior.attempt : (prior?.attempt ?? 0) + 1,
       tool: '', inputSource: '', input: project(input), result: { missing: 'No corresponding result observed (cancelled, incomplete or still pending)' }, failed: false, recovery: this.lastFailed, sourceLoss: [] };
     action.tool = typeof name === 'string' ? sliceText(name, 256).parts.join('') : '(unavailable)';
     action.inputSource = started ? 'BeforeToolCall execution input' : 'BeforeTools requested input; execution not observed';
@@ -289,6 +346,7 @@ export class UploadTurn {
     if (typeof name === 'string' && (name.length > 512 || Buffer.byteLength(name.slice(0, 512)) > 256)) action.sourceLoss.push('Tool name head/tail truncated to 256 bytes');
     this.lastFailed = false;
     if (!intent && prior) {
+      this.flags.identityAmbiguous = true;
       action.sourceLoss.push('SDK ID reused within invocation state; result attribution refused');
       action.result = { missing: 'Ambiguous reused SDK ID; result attribution refused' };
       if (prior.action && 'missing' in prior.action.result) prior.action.result.missing = 'Ambiguous reused SDK ID; result attribution refused';
@@ -299,17 +357,20 @@ export class UploadTurn {
     // identities and risk attaching a delayed result to a reused ID.
     const track = validId && (prior !== undefined || this.calls.size < 512);
     if (!track) {
+      this.flags.identityAmbiguous = true; this.sealedUnresolved++;
       action.sourceLoss.push('Identity ledger unavailable/full (512 keys); results remain unmatched');
       action.result = { missing: 'Identity unavailable/full; observed results cannot be safely attributed' };
     }
     if (track) {
-      this.calls.set(key, { action, attempt: action.attempt, started, ambiguous: !intent && prior !== undefined || prior?.ambiguous === true });
+      this.calls.set(key, { action, ordinal, attempt: action.attempt, started, ambiguous: !intent && prior !== undefined || prior?.ambiguous === true,
+        unresolved: (prior?.unresolved ?? 0) + (intent ? 0 : 1) });
       if (!this.calls.get(key)!.ambiguous) this.pending.set(key, action);
     }
+    if (intent && prior.summary) this.summaries.splice(this.summaries.indexOf(prior.summary), 1);
     UploadTurn.fitAction(action, input);
     this.inputs.set(action, input);
-    if (!intent) this.actions.push(action);
-    this.boundActions();
+    if (!retainedIntent) this.actions.push(action);
+    this.actions.sort((a, b) => a.ordinal - b.ordinal); this.boundActions();
   }
   private boundActions(): void {
     if (this.actions.length > MAX_ACTIONS) {
@@ -338,13 +399,16 @@ export class UploadTurn {
     return this.result(event.invocationState, event.result, 'observed public ToolResultEvent fallback; no pre-after-hook snapshot available', true);
   }
   private result(state: object, result: unknown, evidence: string, fallback = false): Origin | undefined {
-    const id = own(result, 'toolUseId');
-    const key = typeof id === 'string' ? this.key(state, id) : undefined;
+    if (this.finished) return;
+    const id = sourceOwn(result, 'toolUseId', this.flags);
+    const key = typeof id === 'string' && id.length > 0 && id.length <= 256 ? this.key(state, id) : undefined;
     const record = key === undefined ? undefined : this.calls.get(key);
-    if (!record || record.ambiguous) { this.unmatchedResults++; return; }
+    if (!record || record.ambiguous) { this.flags.identityAmbiguous = true; this.unmatchedResults++; return; }
     let action = record.action;
-    const text = toolText(own(result, 'content'));
-    const status = own(result, 'status');
+    const flags = semanticFlags();
+    const text = toolText(sourceOwn(result, 'content', flags), flags);
+    const status = sourceOwn(result, 'status', flags);
+    if (status !== 'success' && status !== 'error') flags.resultUnavailable = true;
     const failed = status === 'error' || text.exitCode !== undefined && text.exitCode !== 0;
     const ack = fallback && status === 'success' && indices(text.value.length).some(index => {
       const value = own(text.value[index], 'text');
@@ -354,9 +418,10 @@ export class UploadTurn {
     if (ack) {
       if (record.acknowledged) return;
       record.acknowledged = true;
+      const captured = snapshot(text.value, flags); this.mergeFlags(flags);
       if (!retained) { this.resultsWithoutSummary++; return; }
       if (action && !action.acknowledgement) {
-        action.acknowledgement = { status: 'acknowledged', evidence, content: capture(text.value, 1024) };
+        action.acknowledgement = { status: 'acknowledged', evidence, content: fit(captured, 1024) };
         if (!record.observed) action.result = { missing: 'Background acknowledged; final result pending' };
         UploadTurn.fitAction(action, this.inputs.get(action) ?? snapshot(null), this.outputs.get(action));
       } else if (record.summary && !record.observed) record.summary.status = 'Background acknowledged; final result pending (body omitted)';
@@ -365,6 +430,11 @@ export class UploadTurn {
     }
     if (record.observed) return;
     record.observed = true;
+    // Traverse even when neither body nor summary survives. A matched arrival
+    // resolves its obligation once; unavailable evidence remains a separate flag.
+    const captured = snapshot(text.value, flags); this.mergeFlags(flags);
+    record.unresolved = 0;
+    if (status === 'success' || status === 'error') this.completedResults++;
     if (record.summary) {
       Object.assign(record.summary, { status: status === 'error' || status === 'success' ? status : 'not reported', failed,
         ...(text.exitCode === undefined ? {} : { exitCode: text.exitCode }) });
@@ -381,7 +451,6 @@ export class UploadTurn {
     this.lastFailed = failed;
     this.pending.delete(key!);
     if (!action) return;
-    const captured = snapshot(text.value);
     action.result = { status: status === 'success' || status === 'error' ? status : 'not reported', evidence,
       ...(text.exitCode === undefined ? {} : { exitCode: text.exitCode }), content: project(captured) };
     action.sourceLoss.push(...text.loss); action.failed = failed;
@@ -389,20 +458,34 @@ export class UploadTurn {
     this.outputs.set(action, captured);
     this.actions.sort((a, b) => a.ordinal - b.ordinal); this.boundActions();
   }
-  static late(original: Origin, result: unknown): Action {
-    const text = toolText(own(result, 'content')); const captured = snapshot(text.value);
-    const status = own(result, 'status');
-    const action: Action = { ordinal: Number.MAX_SAFE_INTEGER, invocation: original.invocation, invocationScope: 0, attempt: 1, tool: original.tool,
+  static late(original: Origin, result: unknown): LateAction {
+    const flags = semanticFlags();
+    const text = toolText(sourceOwn(result, 'content', flags), flags); const captured = snapshot(text.value, flags);
+    const status = sourceOwn(result, 'status', flags);
+    if (status !== 'success' && status !== 'error') flags.resultUnavailable = true;
+    const action: LateAction = { integrity: Object.freeze(flags), ordinal: Number.MAX_SAFE_INTEGER, invocation: original.invocation, invocationScope: 0, attempt: 1, tool: original.tool,
       original: { ...original }, inputSource: 'Late background result; input belongs to original turn/invocation', input: { content: null, losses: [] },
       result: { status: status === 'success' || status === 'error' ? status : 'not reported', evidence: 'pre-after-hook background execution evidence; received via ordinary parent forwarding', content: project(captured), ...(text.exitCode === undefined ? {} : { exitCode: text.exitCode }) },
       failed: status === 'error' || text.exitCode !== undefined && text.exitCode !== 0, recovery: false, sourceLoss: text.loss };
     UploadTurn.fitAction(action, snapshot(null), captured);
     return action;
   }
-  receiveLate(action: Action): void {
+  receiveLate(action: LateAction): void {
+    if (this.finished) return;
+    this.mergeFlags(action.integrity);
+    this.obligations++; this.lateResults++;
+    if ('status' in action.result && (action.result.status === 'success' || action.result.status === 'error')) this.completedResults++;
+    if (action.original && !this.originTurns.has(action.original.turn)) {
+      if (this.originTurns.size < 64) this.originTurns.add(action.original.turn);
+      else this.lateOriginsOverflow = true;
+    }
     this.actions.push({ ...action, ordinal: ++this.totalActions }); this.boundActions();
   }
-  finish(): void { this.pending.clear(); this.calls.clear(); this.inputs = new WeakMap(); this.outputs = new WeakMap(); this.scopes = new WeakMap(); }
+  finish(): void {
+    if (this.finished) return;
+    this.sealedUnresolved = this.integrity.unresolvedResults; this.finished = true;
+    this.pending.clear(); this.calls.clear(); this.inputs = new WeakMap(); this.outputs = new WeakMap(); this.scopes = new WeakMap();
+  }
 }
 
 /** Parent-only pre-after-hook execution capture plus public-result fallback.
@@ -414,7 +497,7 @@ export class UploadObserver {
   private scope = 0;
   // Weak state keys never retain Agent/invocation graphs. Only bounded copied
   // origins (64) and original result bodies (16 x 8KiB) survive a sealed turn.
-  private background = new Map<string, { original: Origin; ready?: Action }>();
+  private background = new Map<string, { original: Origin; ready?: LateAction }>();
   private seenAfter = new WeakSet<object>();
   private closed = false;
   private cancelledBackground = new Set<string>();
@@ -524,7 +607,7 @@ export function uploadBody(envelope: Envelope, turn: UploadTurn, settlement: Ext
     omissions: UPLOAD_NOTICE,
   };
   const render = (summaries: Summary[]) => {
-    const quality = { completeActions: selected.filter(a => 'status' in a.result).length, missingResults: selected.filter(a => 'missing' in a.result).length,
+    const quality = { integrity: turn.integrity, completeActions: selected.filter(a => 'status' in a.result).length, missingResults: selected.filter(a => 'missing' in a.result).length,
       contentTruncatedActions: selected.filter(a => a.input.losses.length || 'content' in a.result && a.result.content.losses.length).length,
       sourceLimitedActions: selected.filter(a => a.sourceLoss.length || a.input.losses.some(l => l.text?.sourceLoss.length) || 'content' in a.result && a.result.content.losses.some(l => l.text?.sourceLoss.length)).length,
       actionBodiesOmitted: turn.totalActions - selected.length, actionSummariesOmitted: turn.totalActions - selected.length - summaries.length,
@@ -554,5 +637,5 @@ export function uploadQuality(text: string): string {
   const source = JSON.parse(text);
   if (source.format !== 'darwin-upload-v2') return 'legacy projection (unchanged)';
   const q = source.quality;
-  return `goal ${source.goal.present ? 'present' : 'absent'}${source.goal.truncated ? ' (truncated)' : ''}; ${q.completeActions} complete actions; ${q.missingResults} missing results; ${q.contentTruncatedActions} content-truncated; ${q.actionBodiesOmitted} action bodies omitted; ${q.sourceLimitedActions} source-limited; task success not inferred`;
+  return `goal ${source.goal.present ? 'present' : 'absent'}${source.goal.truncated ? ' (truncated)' : ''}; ${q.completeActions} complete actions; ${q.missingResults} missing results; ${q.contentTruncatedActions} content-truncated; ${q.actionBodiesOmitted} action bodies omitted; ${q.sourceLimitedActions} source-limited; task success not inferred${q.integrity ? `; turn integrity ${JSON.stringify(q.integrity)}` : ''}`;
 }
