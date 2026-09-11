@@ -1,6 +1,15 @@
 # `/setup-agentcore-memory` verification checklist
 
-Implementation scope: offline command/skill integration, not provisioning. Host owns the iteration log.
+Implementation scope: offline command/skill integration, not provisioning.
+
+Host acceptance at `1b6362c` (2026-09-11): independent diff review, typecheck and one uninterrupted
+full `pnpm test` passed. The log contains 6,645 counted PASS rows, zero FAIL, plus the new setup
+contract assertions and four immediate/queued × text/image runtime/pty recovery cases.
+Additional Host checks passed: completion/help 74, path completion 27, build, relocated `dist`
+activation and npm dry-run package footprint. Logs: `/tmp/darwin-setup-host-{typecheck,test,
+completion,path-completion,build,dist}.log`. The bundled guide is 14,259 bytes; AGENTS.md is
+32,748 bytes. No cloud provisioning, installs or real user configuration changes were performed.
+Both accepted commits and worker spend are recorded in iteration-log Batch 125.
 
 | Contract | Independent check |
 | --- | --- |
