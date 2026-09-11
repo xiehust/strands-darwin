@@ -249,6 +249,7 @@ async function runInteractive(options: CliOptions): Promise<void> {
     initialHistory = runtime.info.resumed
       ? await import('./trajectory/resume-recap.js').then(({ loadResumeRecap }) =>
           loadResumeRecap({
+            projectRoot,
             file: trajectoryPath(projectRoot, runtime.info.sessionId),
             restoredMessages: runtime.messageCount,
             trajectoryEnabled: runtime.info.config.trajectory !== false,

@@ -13,6 +13,7 @@ import {
 } from '@strands-agents/sdk';
 
 import { allowAllBridge } from '../src/agent/permission.js';
+import { loadRewindHistory } from '../src/trajectory/rewind-history.js';
 import { refusalNotice, refusalNoticeWithRewind } from '../src/agent/refusal.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import {
@@ -405,6 +406,12 @@ async function main(): Promise<void> {
 
       recordedSuccessor = await recordedSource.startRewind(sourceCheckpoint);
       recordedSource = undefined;
+      assert('the runtime records the real trajectory turn on the checkpoint', sourceCheckpoint.trajectoryTurn === 2);
+      const rewoundHistory = await loadRewindHistory(recordedRoot, recordedSourceId, sourceCheckpoint);
+      assert('real-runtime rewind history contains only the exchange before the selected prompt',
+        rewoundHistory.some((item) => item.kind === 'user' && item.text === 'first') &&
+        rewoundHistory.some((item) => item.kind === 'assistant') &&
+        !rewoundHistory.some((item) => item.kind === 'user' && item.text === 'second'));
       const recordedSuccessorId = recordedSuccessor.info.sessionId;
       assert('the successor has written nothing yet — its record appears with its first turn',
         (await bytes(trajectoryPath(recordedRoot, recordedSuccessorId))) === undefined);
@@ -440,6 +447,8 @@ async function main(): Promise<void> {
         permissionBridge: allowAllBridge,
       });
       await consume(resumedSuccessor, 'after-resume');
+      const resumedCheckpoint = (await resumedSuccessor.listRewindCheckpoints()).checkpoints.find((entry) => entry.prompt === 'after-resume');
+      assert('a resumed runtime associates the checkpoint with the continued trajectory ordinal', resumedCheckpoint?.trajectoryTurn === 2);
       const resumedRead = await readTrajectory(trajectoryPath(recordedRoot, recordedSuccessorId));
       const headers = resumedRead.records.filter((record): record is RunStartedRecord => record.type === 'runStarted');
       assert('resuming the successor appends a second header that is resumed and carries no origin',

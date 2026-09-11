@@ -3322,12 +3322,21 @@ async function seedRewindSource(sourceId: string): Promise<void> {
   const manager = createSessionManager(WORK_DIR, sourceId);
   const agent = new Agent({
     id: 'darwin',
-    model: new ResumeFixtureModel(['last completed answer']),
+    model: new ResumeFixtureModel(['retained rewind answer', 'discarded rewind answer']),
     systemPrompt: DEFAULT_SYSTEM_PROMPT,
     sessionManager: manager,
     printer: false,
   });
   await agent.initialize();
+  const recorder = new TrajectoryRecorder({
+    file: trajectoryPath(WORK_DIR, sourceId),
+    run: {
+      session: sourceId, agentId: 'darwin', darwinVersion: 'test', provider: 'bedrock',
+      model: 'fake.rewind', permissionMode: 'default', thinkingEffort: 'high',
+      resumed: false, restoredMessages: 0,
+    },
+  });
+  for await (const _event of recordStream(agent.stream('retained rewind prompt'), recorder.beginTurn('retained rewind prompt'))) { /* drain */ }
   await manager.saveSnapshot({ target: agent, isLatest: false });
   const ids = await manager.listSnapshotIds({ target: agent, limit: 1 });
   const snapshotId = ids.at(-1);
@@ -3338,11 +3347,14 @@ async function seedRewindSource(sourceId: string): Promise<void> {
   for (let index = 1; index < MAX_REWIND_CHECKPOINTS; index += 1) {
     await manager.saveSnapshot({ target: agent, isLatest: false });
   }
+  for await (const _event of recordStream(agent.stream('selected prompt returns here'), recorder.beginTurn('selected prompt returns here'))) { /* drain */ }
+  await recorder.close();
   await manager.saveSnapshot({ target: agent, isLatest: true });
   await appendRewindCheckpoint(WORK_DIR, sourceId, {
     snapshotId,
     prompt: 'selected prompt returns here',
     completedAt: new Date().toISOString(),
+    trajectoryTurn: 2,
   });
   await writePointer(WORK_DIR, sourceId);
 }
@@ -3367,6 +3379,10 @@ async function rewindSession(): Promise<void> {
     await tui.waitFor('Workspace unchanged:', { timeoutMs: 60_000, from: before, settleMs: 500 });
     const successor = headerSessionId(tui.frame);
     assert('acceptance moves the header to a fresh session', successor !== '' && successor !== sourceId);
+    assert('the pre-checkpoint user and assistant history is redrawn after rewind',
+      tui.screen.slice(before).includes('retained rewind prompt') && tui.screen.slice(before).includes('retained rewind answer'));
+    assert('the discarded answer does not leak into the rewound transcript',
+      !tui.screen.slice(before).includes('discarded rewind answer'));
     assert('the selected prompt returns to the editor unsent',
       tui.frame.includes('you> selected prompt returns here') && !tui.screen.slice(before).includes('working…'));
     const notice = tui.screen.slice(before);

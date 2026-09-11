@@ -56,6 +56,7 @@ import { formatShellEnvNotice } from '../tools/shell-env.js';
 import type { TrajectoryStatus } from '../trajectory/writer.js';
 import type { TaskNotificationFields } from '../trajectory/record.js';
 import { exportTranscript } from '../trajectory/export.js';
+import { loadRewindHistory } from '../trajectory/rewind-history.js';
 import {
   readPromptHistory,
   type PromptHistory,
@@ -665,14 +666,17 @@ export function App({
   // a `/tangent` return (SER-083) both land here, so the terminal clear, the editor
   // hand-back rule, the per-session latches and the omission notice cannot drift.
   // The only difference between the two is the draft: `rewindDraftAfterBranch`.
-  const adoptBranchSuccessor = useCallback((
+  const adoptBranchSuccessor = useCallback(async (
     next: AgentRuntime,
     kind: 'rewind' | 'tangent',
-    selectedPrompt: string,
+    checkpoint: import('../agent/rewind.js').RewindCheckpoint,
     sourceSessionId: string,
   ) => {
+    // The predecessor is retired, so its closing trajectory append has settled.
+    // Display-only replay cannot alter the SDK-restored conversation.
+    const history = await loadRewindHistory(next.info.projectRoot, sourceSessionId, checkpoint);
     writeToTerminal(CLEAR_TERMINAL);
-    recordAction({ type: 'clear' });
+    recordAction({ type: 'clear', history });
     setRuntime(next);
     clipboardReadGeneration.current += 1;
     if (draftStashRef.current !== undefined) {
@@ -685,7 +689,7 @@ export function App({
     // return, not to resend), and undo must not reach across the session boundary.
     undoStack.current = [];
     lastCut.current = '';
-    const draft = rewindDraftAfterBranch(kind, selectedPrompt);
+    const draft = rewindDraftAfterBranch(kind, checkpoint.prompt);
     setEditor({ text: draft, cursor: { offset: draft.length, affinity: 'upstream' } });
     setSelectedCompletion(0);
     contextWarnLatch.current = createContextWarnLatch();
@@ -1782,6 +1786,7 @@ export function App({
           try { catalogue = await runtime.listRewindCheckpoints(); } catch { catalogue = undefined; }
           discarded = discardedPromptCount(outcome.state, catalogue);
           next = await startRewind(outcome.state.returnPoint);
+          await adoptBranchSuccessor(next, 'tangent', outcome.state.returnPoint, sourceSessionId);
         } catch (error) {
           // Stale or unmapped row: the rewind path's own error, and the tangent stays
           // armed — nothing was released, the user can still /rewind by hand.
@@ -1794,7 +1799,6 @@ export function App({
         } finally {
           clearing.current = false;
         }
-        adoptBranchSuccessor(next, 'tangent', outcome.state.returnPoint.prompt, sourceSessionId);
         setTangent(undefined);
         withNoticeDiagnostics(recordAction, next.diagnostics)({ type: 'notice', text: tangentReturnNotice(discarded) });
         return;
@@ -2318,6 +2322,7 @@ export function App({
     let next: AgentRuntime;
     try {
       next = await startRewind(selected);
+      await adoptBranchSuccessor(next, 'rewind', selected, search.sourceSessionId);
     } catch (error) {
       dispatch({
         type: 'notice',
@@ -2328,7 +2333,6 @@ export function App({
     } finally {
       clearing.current = false;
     }
-    adoptBranchSuccessor(next, 'rewind', selected.prompt, search.sourceSessionId);
     // A tangent bookmarked the conversation just left behind (SER-083): it ends
     // with one notice, and the rewind the user chose is the only rewind performed.
     if (tangentRef.current !== undefined) {

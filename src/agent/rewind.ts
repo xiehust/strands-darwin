@@ -21,6 +21,8 @@ export interface RewindCheckpoint {
   readonly snapshotId: string;
   readonly prompt: string;
   readonly completedAt: string;
+  /** Optional display-only trajectory boundary; the SDK snapshot remains authoritative. */
+  readonly trajectoryTurn?: number;
 }
 
 export interface RewindCatalogue {
@@ -81,7 +83,9 @@ export async function readRewindCatalogue(
     if (!isRecord(value) || typeof value.snapshotId !== 'string' || typeof value.prompt !== 'string' ||
         typeof value.completedAt !== 'string' || [...value.snapshotId].length === 0 ||
         [...value.snapshotId].length > MAX_SNAPSHOT_ID_CODE_POINTS || !rewindPromptEligible(value.prompt) ||
-        !Number.isFinite(Date.parse(value.completedAt)) || ids.has(value.snapshotId)) {
+        !Number.isFinite(Date.parse(value.completedAt)) || ids.has(value.snapshotId) ||
+        (value.trajectoryTurn !== undefined &&
+          (!Number.isSafeInteger(value.trajectoryTurn) || (value.trajectoryTurn as number) < 1))) {
       return { checkpoints: [], capped: false, problem: 'rewind checkpoint catalogue has an invalid entry' };
     }
     ids.add(value.snapshotId);
@@ -89,6 +93,7 @@ export async function readRewindCatalogue(
       snapshotId: value.snapshotId,
       prompt: value.prompt,
       completedAt: value.completedAt,
+      ...(value.trajectoryTurn === undefined ? {} : { trajectoryTurn: value.trajectoryTurn as number }),
     });
   }
   return { checkpoints, capped: checkpoints.length >= MAX_REWIND_CHECKPOINTS };

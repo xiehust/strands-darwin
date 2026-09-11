@@ -1292,6 +1292,7 @@ export class AgentRuntime {
           snapshotId: checkpointId,
           prompt: input,
           completedAt: new Date().toISOString(),
+          ...(recording === undefined ? {} : { trajectoryTurn: recording.turn }),
         });
         if (catalogue.problem !== undefined) {
           this.diagnosticsLog?.notice(`rewind checkpoint not catalogued: ${catalogue.problem}`, 'warn');

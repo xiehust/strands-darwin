@@ -1,7 +1,8 @@
 /**
  * Full human transcript for an interactively resumed session.
  *
- * This is a read-only derivative of trajectory replay: it opens one existing file,
+ * This is a read-only derivative of trajectory replay: it opens the exact session
+ * record (plus validated rewind ancestors when a project root is supplied), and
  * reconstructs the whole recorded transcript through the ordinary reducer
  * (`replayRecords`, the same projection `/export` and `trajectory replay` use), and
  * returns only display history. It imports no runtime, Agent, Model, session manager
@@ -20,8 +21,11 @@ import type { HistoryItem } from '../tui/turn-state.js';
 import { describeDamage, readTrajectory } from './reader.js';
 import type { RewindOrigin, TrajectoryRecord } from './record.js';
 import { formatRewindOrigin, replayRecords } from './replay.js';
+import { loadRewindOriginHistory } from './rewind-history.js';
 
 export interface ResumeRecapOptions {
+  /** Enables project-scoped, read-only rewind ancestry for interactive startup. */
+  projectRoot?: string;
   /** Exact resolved session trajectory; path ownership stays in `agent/session.ts`. */
   file: string;
   /** Number read from the already-restored Agent; reported, never modified. */
@@ -40,7 +44,10 @@ export async function loadResumeRecap(options: ResumeRecapOptions): Promise<Hist
   try {
     const read = await readTrajectory(options.file);
     const damage = describeDamage(read);
+    const inheritedHistory = options.projectRoot === undefined
+      ? [] : await loadRewindOriginHistory(options.projectRoot, read.records);
     return projectResumeRecap(read.records, {
+      inheritedHistory,
       restoredMessages: options.restoredMessages,
       trajectoryEnabled: options.trajectoryEnabled,
       ...(damage === undefined ? {} : { damage }),
@@ -63,6 +70,7 @@ interface ProjectionOptions {
   restoredMessages: number;
   trajectoryEnabled: boolean;
   damage?: string;
+  inheritedHistory?: readonly HistoryItem[];
 }
 
 /** Pure half of {@link loadResumeRecap}, exported for focused offline verification. */
@@ -81,7 +89,8 @@ export function projectResumeRecap(
   const rewindFrom = replay.runs.find((run) => run.rewindFrom !== undefined)?.rewindFrom;
   const history = recapNotices({ ...options, ...(rewindFrom === undefined ? {} : { rewindFrom }) }, []);
 
-  if (replay.history.length === 0) {
+  history.push(...(options.inheritedHistory ?? []));
+  if (replay.history.length === 0 && (options.inheritedHistory?.length ?? 0) === 0) {
     history.push(notice('resume recap: the trajectory contains no replayable transcript', 'warn', 'empty'));
   } else {
     history.push(...replay.history);

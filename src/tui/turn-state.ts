@@ -189,7 +189,7 @@ export type TurnAction =
   /** Clears mutable answer rows and identifies the React commit the driver must await. */
   | { type: 'prepareAnswerClose'; id: number }
   | { type: 'turnEnded' }
-  | { type: 'clear' }
+  | { type: 'clear'; history?: readonly HistoryItem[] }
   /** A `!` command started: one pseudo-tool row in the live panel (live only, never replayed). */
   | { type: 'shellStarted'; id: string; command: string }
   /** Fresh live tail for the running `!` command's detail rows (live only). */
@@ -302,6 +302,8 @@ export function turnReducer(state: TurnState, action: TurnAction): TurnState {
       // is how this *user* wants tool calls drawn, not part of any conversation.
       return {
         ...initialTurnState,
+        // A branch re-seeds only the transcript before its selected prompt.
+        history: [...(action.history ?? [])],
         toolDetailsExpanded: state.toolDetailsExpanded,
         staticEpoch: state.staticEpoch + 1,
       };
