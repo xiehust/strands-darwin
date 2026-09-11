@@ -73,6 +73,7 @@ const suites = [
   'verify-help-command.ts',
   'verify-copy-command.ts',
   'verify-skills.ts',
+  'verify-setup-agentcore-memory.ts',
   'verify-self-reflection.ts',
   'verify-agent-skills.ts',
   'verify-custom-commands.ts',

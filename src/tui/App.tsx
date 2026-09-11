@@ -312,11 +312,11 @@ export function App({
   statusRef.current = status;
   const [workspacePaths, setWorkspacePaths] = useState<WorkspacePaths>(NO_WORKSPACE_PATHS);
   const commandNames = useMemo(
-    () => [
+    () => [...new Set([
       ...BUILTIN_COMMAND_NAMES,
       ...runtime.info.commandNames,
       ...runtime.info.skillNames,
-    ],
+    ])],
     [runtime],
   );
   // Escape suppresses one computed query generation, not the draft. Mirrors are
@@ -1972,9 +1972,10 @@ export function App({
       } catch (error) {
         dispatch({
           type: 'notice',
-          text: `could not expand ${text}: ${error instanceof Error ? error.message : String(error)}`,
+          text: `could not expand ${text}: ${error instanceof Error ? error.message : String(error)}; prompt not sent`,
           severity: 'error',
         });
+        return;
       }
 
       // Reports from `!` commands run since the last turn ride ahead of this

@@ -11,7 +11,7 @@ This guide owns darwin's operational documentation. The [root README](../../READ
 | [Getting started and providers](getting-started.md) | requirements, installation, working-directory layout, model providers, first run, migration |
 | [Using darwin](using-darwin.md) | TUI, headless and structured output, prompt queue, local shell commands, background jobs |
 | [Configuration and context](configuration.md) | every config field, model switching, caching, effort, system prompt, `AGENTS.md`, working context |
-| [Optional AgentCore Memory](agentcore-memory.md) | provisioning, scoped recall, explicit preference adoption, manual upload preview/send |
+| [Optional AgentCore Memory](agentcore-memory.md) | guided setup, scoped recall, explicit preference adoption, manual upload preview/send |
 | [Sessions and state](sessions-and-state.md) | snapshots, resume, trajectory, cost, export/fork, memory, diagnostics, stored paths |
 | [Permissions](permissions.md) | four modes, static safety, classifier behavior, allow rules and revocation |
 | [Extensions](extensions.md) | discovery order, MCP, skills, bundled workflows, subagents, workflow DAGs, custom commands, hooks |

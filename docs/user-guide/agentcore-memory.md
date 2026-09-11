@@ -8,40 +8,29 @@ AgentCore Memory is **off by default**. Darwin's existing project-local `memory_
 
 Enabling cloud memory adds gated project episode/reflection retrieval and host-configured preference retrieval. Uploading is a separate opt-in, and only manual preview/send is supported. A configured cloud preference is still untrusted contextual data, never an instruction with policy or permission precedence.
 
+## Guided setup
+
+Run `/setup-agentcore-memory` in the TUI. Darwin loads the complete [bundled setup guide](../../src/skills/builtin/setup-agentcore-memory/SKILL.md) before an ordinary model turn, asks for your chosen username/actorId (or confirmation of an existing value), then proposes a table of settings. Optional arguments may supply preferences, but neither arguments nor yolo mode authorize changes. Missing answers end the turn with questions and pending status.
+
+Darwin prefers a compatible resource you own. Otherwise it proposes an independent DarwinMemory resource, explains region/cost/retention, and asks for explicit confirmation before creation or config changes. Installation, IAM expansion, uploads, deletion and infrastructure import are not implicit. The guide's defaults include automatic project isolation, a bounded startup preference read, and manual upload staging—not sending. Existing values are shown and preserved unless you confirm a change.
+
+This is model-driven guidance through ordinary permission-gated tools, not a deterministic provisioning wizard or a new sandbox. Expansion itself changes no config or cloud resource. The required built-in cannot be shadowed by project/global skills or custom commands; missing/corrupt guidance refuses startup and activation failures stop the prompt. Busy input queues until the next turn, and trajectory keeps the literal slash. The guide ships with installed Darwin; it does not depend on this repository's docs. It is the single source for exact namespace and request/config JSON templates.
+
+TUI, development REPL, and text/structured headless modes use the same prompt expansion. `darwin -p "/setup-agentcore-memory"` loads the guide too, but if user answers are absent it should return questions and pending status, not read stdin or guess. A successful headless turn means the questions were returned, not that setup is complete. Restart after a confirmed config change; the current runtime's tool catalogue is not refreshed in place.
+
 ## Provisioning and configuration
 
-Provision **outside Darwin** one existing Memory resource with exactly the intended episodic and user-preference strategies. Darwin never creates or updates resources/strategies. Use these namespace templates (AWS substitutes `{memoryStrategyId}` for each strategy):
-
-- Episodic: `/users/{actorId}/projects/{projectid}/strategy/{memoryStrategyId}/sessions/{sessionId}/`
-- Episodic reflection: `/users/{actorId}/projects/{projectid}/strategy/{memoryStrategyId}/`
-- User preference: `/users/{actorId}/strategy/{memoryStrategyId}/preferences/`
+Resource setup is separate from the runtime data client. Use the bundled guide's exact episodic, reflection and user-preference templates, whether provisioning manually or through confirmed guided setup.
 
 Declare the custom lowercase `projectid` in the resource's `namespaceKeys`. Every uploaded event supplies `extractionConfig.namespaceVariables.projectid`, with a lowercase value. Missing variables can allow CreateEvent to succeed while extraction is skipped: monitor AWS extraction logs/`NamespaceResolutionFailure`. Do not provision a broader reflection namespace; validating returned namespace labels cannot undo cross-user synthesis performed by a wrongly configured strategy. IAM must restrict the resource and appropriate operations (`RetrieveMemoryRecords`, `GetMemoryRecord`; `CreateEvent` only for uploads, `DeleteMemoryRecord` only for explicit deletion). Configure the resource's event expiry deliberately; it is not long-term record retention.
 
 Runtime access uses the official `@aws-sdk/client-bedrock-agentcore` **3.1127.0** package (Node >=20, within Darwin's supported Node range). It includes CreateEvent `extractionConfig.namespaceVariables`; no AWS CLI executable or capability subprocess is needed. Darwin uses the standard SDK credential chain, including environment, profiles, container credentials and instance roles, and respects `AWS_EC2_METADATA_DISABLED`. It neither changes credentials nor derives actor identity from them. The AgentCore region is explicit; SDK `ignoreConfiguredEndpointUrls: true` excludes environment/shared-config service endpoint URLs without changing process environment. Credential services use an independent SDK handler, not the per-memory abort/JSON guard. The standard `role_arn`/`source_profile` AssumeRole chain is covered by a local STS XML/signing fixture; nested credential clients also exclude configured service endpoint URLs and use one attempt. Credential-service regions still follow the standard profile/SSO selection. This does not disable credential sources such as container credential URIs, instance metadata, SSO, or user-configured credential processes; those remain trusted user credential configuration, not model inputs. Get/Delete forward the fixed preference namespace for IAM condition authorization, in addition to local scope validation.
 
-**Existing config:** remove only `agentCoreMemory.cliPath`. A legacy absolute string up to 1024 characters is still validated and accepted, but ignored with a bounded migration notice; it is never executed or printed. Preserve region, resource/strategy IDs, actor, automatic project identity (omit `projectId`), `preferences: true`, and your existing `upload: manual` choice. Darwin does not rewrite configuration, approvals, namespaces or outboxes. New unknown keys remain errors. **Some existing preference approvals need re-review:** metadata timestamps formerly formatted by CLI as `2026-01-01T00:00:00+00:00` become SDK ISO `2026-01-01T00:00:00.000Z`. Metadata bytes participate in the evidence hash, so even a format-only difference withholds that preference. After local approval checks, status reports changed approvals and asks for `/cloud-memory inspect <record-id>`, then confirmation of the displayed hash. The old proof is never silently rewritten; byte-identical proofs still apply.
+**Existing config:** after confirmation, remove only `agentCoreMemory.cliPath`. A legacy absolute string up to 1024 characters is still validated and accepted, but ignored with a bounded migration notice; it is never executed or printed. Preserve region, resource/strategy IDs, actor, automatic project identity (omit `projectId`), `preferences: true`, and your existing `upload: manual` choice. The runtime does not automatically rewrite configuration, approvals, namespaces or outboxes. New unknown keys remain errors. **Some existing preference approvals need re-review:** metadata timestamps formerly formatted by CLI as `2026-01-01T00:00:00+00:00` become SDK ISO `2026-01-01T00:00:00.000Z`. Metadata bytes participate in the evidence hash, so even a format-only difference withholds that preference. After local approval checks, status reports changed approvals and asks for `/cloud-memory inspect <record-id>`, then confirmation of the displayed hash. The old proof is never silently rewritten; byte-identical proofs still apply.
 
 The optional [`agentcore` infrastructure CLI](../architecture/agentcore-cli-memory-plan.md) is a separate lifecycle tool, not a runtime dependency. Keep the existing resource: the verified CLI schema drops `namespaceKeys`, and import filters templates containing `{memoryStrategyId}`. Resource import/deployment remains deferred until a lossless migration is separately verified and authorized.
 
-Add this object at the root of `~/.darwin/config.json`, alongside your existing model configuration:
-
-```json
-{
-  "agentCoreMemory": {
-    "enabled": true,
-    "region": "us-west-2",
-    "memoryId": "YourMemory-0123456789",
-    "episodicStrategyId": "YourEpisodes-0123456789",
-    "preferenceStrategyId": "YourPreferences-0123456789",
-    "actorId": "opaque-user-42",
-    "projectId": "my-project",
-    "timeoutMs": 5000,
-    "preferences": true,
-    "upload": "off"
-  }
-}
-```
+The [bundled guide's configuration section](../../src/skills/builtin/setup-agentcore-memory/SKILL.md#4-apply-only-the-approved-configuration) contains the canonical root `agentCoreMemory` JSON. Merge only confirmed fields into private `~/.darwin/config.json`, preserve all unrelated settings, and keep mode `0600`; never store credentials or commit the config. `trajectory: false` requires a decision before manual upload can be enabled.
 
 Use actual IDs; placeholders are not resources. `actorId` is your configured stable opaque user ID, shared across projects, never email or AWS credential identity. `projectId` is independent; omit it for a SHA-256 key of Darwin's canonical project key. An explicit project ID lets separate checkouts deliberately share project episodes. Actor/strategy IDs accept alphanumeric, `_`, `-` segments up to 128 characters; project ID is lowercase and at most 64 characters (the service namespace-value limit). Region is explicit. Unknown fields and traversal-like scope strings are refused. `timeoutMs` is 100–15000, default 5000; `preferences` defaults true *inside enabled config*; `upload` is `off` (default) or `manual`. Manual uploads require trajectory enabled. Omit `agentCoreMemory` or set it to `false` to disable: no cloud controller, tools, network, or cloud-state writes.
 
@@ -49,7 +38,7 @@ See AWS's [namespace organization](https://docs.aws.amazon.com/bedrock-agentcore
 
 ## Recall and preference adoption
 
-The parent model gets `episodic_recall({intent, limit?})` and `reflection_recall({useCase, limit?})`. Query length is 1–300 characters, limit 1–5 (default 3); secret-like queries are refused. Intent should describe the task goal; useCase should describe applicability/context. Both use `RetrieveMemoryRecords.searchCriteria.searchQuery` and the configured strategy ID. They are external network calls, not statically safe local memory: ordinary hooks, plan mode and deny rules run before the CLI. Children do not receive either tool. Startup preference retrieval is different: enabling `preferences` explicitly authorizes that bounded host behavior, including in plan mode.
+The parent model gets `episodic_recall({intent, limit?})` and `reflection_recall({useCase, limit?})`. Query length is 1–300 characters, limit 1–5 (default 3); secret-like queries are refused. Intent should describe the task goal; useCase should describe applicability/context. Both use `RetrieveMemoryRecords.searchCriteria.searchQuery` and the configured strategy ID. They are external network calls, not statically safe local memory: ordinary hooks, plan mode and deny rules run before the SDK request. Children do not receive either tool. Startup preference retrieval is different: enabling `preferences` explicitly authorizes that bounded host behavior, including in plan mode.
 
 `namespacePath` is hierarchical. Darwin first validates **every** returned namespace, strategy and bounded metadata value against the actor/project/resource binding. Wrong-scope records fail the whole response closed. In-scope episodes returned alongside reflections are omitted with explicit omission/underfill reporting; retrieval never broadens to compensate. No invented AWS type filter is used. Episode/reflection XML is projected into an ordered tree; evidence, assessment and action order remain data. Attributes, DTDs, processing instructions, unknown entities, malformed or oversized XML are refused. Reflection confidence estimates usefulness, not probability of correctness. A schema variation may be refused rather than guessed.
 

@@ -4,6 +4,8 @@
 
 ## 可选云记忆命令
 
+`/setup-agentcore-memory [偏好说明]` 通过随包 skill 启动引导配置，完整指南在普通模型回合之前加载。不带参数也会启动；命令名精确匹配且不区分大小写，参数不是授权。Darwin 先询问 actorId 并请求确认建议默认值，再执行修改。忙碌时排队到下一回合，trajectory 保留原始斜杠文本，补全和 `/help` 只列一次。与其他提示型命令一致，TUI、开发 REPL、文本及结构化无头 `-p` 都通过同一 runtime 路径展开它。没有回答时返回待确认问题，不宣称无人值守配置完成。见[配置指南](agentcore-memory.zh-CN.md)。
+
 用户亲自提交的 TUI `/cloud-memory` 支持 `status`、`preferences`、`inspect <record-id>`、`confirm <record-id> <hash> global`、`forget <record-id>`、`delete <record-id> cloud`、`pending`、`preview <token>`、`send <token> <preview-hash>`、`discard <token>`、`clear-accepted`，不会隐式上传或删除。运行时使用官方 AWS SDK，不依赖可执行文件；旧 `agentCoreMemory.cliPath` 被忽略并显示迁移提示。独立 CLI `darwin cloud-memory` 只读，仅支持 `status`、`preferences`、`inspect`、`pending`、`preview`，不写批准凭据，不确认、发送或删除。失败、错误用法和取消返回非零退出码。哈希绑定内容而非人类身份；shell 权限不是沙箱。详见[配置、资源准备和安全边界](agentcore-memory.zh-CN.md)。
 
 

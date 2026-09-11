@@ -58,7 +58,7 @@ function builtinsOf(skills: readonly Skill[]): Skill[] {
   return skills.filter((skill) => isUnder(skillDirectory(skill), BUILTIN_SKILLS_DIR));
 }
 
-/** Every shipped built-in: the three required ones plus the commit-message sample (moved from `.darwin/skills/` in 2da5a27). */
+/** Every shipped built-in: the required ones plus the commit-message sample (moved from `.darwin/skills/` in 2da5a27). */
 const SHIPPED_BUILTIN_SKILLS: readonly string[] = [...REQUIRED_BUILTIN_SKILLS, 'commit-message'];
 
 /** Builds a throwaway skills tree covering the good and broken cases. */

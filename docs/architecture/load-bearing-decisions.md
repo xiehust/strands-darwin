@@ -724,6 +724,19 @@ resource listing, explicitly capped at 20 files and three recursive levels. Befo
 activation, Darwin rejects resource symlinks/outside-root resolution and caps host preflight at
 200 entries because the SDK's host sandbox follows directory symlinks before applying its file cap.
 
+`/setup-agentcore-memory` is both a required/reserved bundled skill and a canonical built-in
+command name. The existing official activation expands its full guide inline for an ordinary
+turn; no provisioning executor, new SDK loop, cloud call or config write occurs in expansion.
+The catalogue carries metadata only; the sole agent-facing setup schema/workflow ships in
+`src/skills/builtin/setup-agentcore-memory/SKILL.md`, not repository docs. Loader failures
+(including empty bundled bodies) refuse startup; activation errors stop TUI submission rather
+than sending unguided slash text. Completion deduplicates the built-in/skill name. Busy queue
+and literal trajectory semantics are unchanged. TUI/REPL and text/structured headless `-p`
+all call the same expansion seam; headless missing answers end as questions, not guessed setup.
+Consent is guide policy plus ordinary tool gates, not a new sandbox: actor/default confirmation is required even in yolo;
+cloud upload/adoption remain separate user-only controls. Verification checklist:
+`setup-agentcore-memory-verification.md`; offline suite `verify-setup-agentcore-memory.ts`.
+
 ## System prompt composition
 
 **System prompt composition order is fixed** on every actual model request: base prompt →

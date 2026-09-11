@@ -1170,7 +1170,7 @@ async function slashCompletion(): Promise<void> {
     await tui.waitFor('skill /commit-message', { timeoutMs: 30_000, settleMs: 400 });
     assert(
       'loaded capabilities are summarized in the header',
-      tui.screen.includes('loaded: 4 skills · 1 command · 1 agent'),
+      tui.screen.includes('loaded: 5 skills · 1 command · 1 agent'),
     );
     assert(
       'a command colliding with a skill is warned and skipped',
@@ -1261,7 +1261,7 @@ async function slashCompletion(): Promise<void> {
     assert('/status states the session id', statusReport.includes('session-'));
     assert('/status states the permission mode', /mode\s+default/.test(statusReport));
     assert('/status states no-MCP as a normal state', statusReport.includes('none configured'));
-    assert('/status counts the loaded skills', /skills\s+4 — /.test(statusReport));
+    assert('/status counts the loaded skills', /skills\s+5 — /.test(statusReport));
     assert('/status states the trajectory file',
       statusReport.includes('recording — ') && withoutWhitespace(statusReport).includes('trajectory.jsonl'));
     assert('/status states diagnostics off', /diagnostics\s+off/.test(statusReport));
@@ -1280,6 +1280,8 @@ async function slashCompletion(): Promise<void> {
       help.includes(`commands (${BUILTIN_COMMAND_NAMES.length}/${BUILTIN_COMMAND_NAMES.length}):`) &&
       help.includes('Ctrl+J or trailing \\ + Enter') &&
       !help.includes('working…'));
+    assert('/help exposes the setup skill as a canonical built-in',
+      help.includes('/setup-agentcore-memory — guided cloud memory setup with confirmation'));
     assert('/help uses the existing transcript surface and leaves the live controls intact',
       tui.frame.includes('you>'));
 
@@ -1422,6 +1424,8 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /permissions is listed', completed.includes('  /permissions'));
     // Matched with its description: '  /status' could ride along in other transcript
     // text, and the description is what tells the built-in apart in the menu.
+    assert('the built-in /setup-agentcore-memory is listed',
+      completed.includes('  /setup-agentcore-memory — guided cloud memory setup with confirmation'));
     assert('the built-in /status is listed', completed.includes('  /status — session configuration and state'));
     // Matched with its description (SER-083): '  /tasks' shares its prefix.
     assert('the built-in /tangent is listed',
@@ -1545,10 +1549,10 @@ async function pathCompletion(): Promise<void> {
   await writeFile(path.join(outside, 'secret.txt'), 'OUTSIDE_TUI_SECRET\n', 'utf8');
   await symlink(outside, path.join(dir, 'escape'), 'dir');
   // Enough entries that the menu must drop some, so "what is not shown is stated" is
-  // asserted on the real thing rather than on the helper that counts it. 19 pads make
-  // 24 candidates — far enough past MAX_COMPLETIONS (22) that a mid-list selection
-  // truthfully hides rows on *both* sides of the window.
-  for (let index = 1; index <= 19; index += 1) {
+  // asserted on the real thing rather than on the helper that counts it. Keep two
+  // more candidates than MAX_COMPLETIONS so a mid-list selection truthfully hides
+  // rows on *both* sides of the window (five non-pad candidates).
+  for (let index = 1; index <= MAX_COMPLETIONS - 3; index += 1) {
     await writeFile(path.join(dir, 'pad', `p${String(index).padStart(2, '0')}.md`), 'pad\n', 'utf8');
   }
 
@@ -1598,24 +1602,24 @@ async function pathCompletion(): Promise<void> {
     await tui.waitFor('❯ notes.md', { timeoutMs: 30_000, settleMs: 400 });
 
     // Walk beyond the bounded prefix and accept the visibly selected path with Tab.
-    // 12 steps land mid-window (index 12 of 24), where rows hide on both sides.
+    // 13 steps land past the 24-row half-window, hiding rows on both sides.
     const beforePathWindow = tui.mark();
-    tui.send('\u001b[B'.repeat(12));
-    await tui.waitFor('❯ pad/p10.md', { timeoutMs: 30_000, from: beforePathWindow, settleMs: 400 });
+    tui.send('\u001b[B'.repeat(13));
+    await tui.waitFor('❯ pad/p11.md', { timeoutMs: 30_000, from: beforePathWindow, settleMs: 400 });
     assert('Down windows an overflowing path menu around the selected candidate',
-      tui.frame.includes('❯ pad/p10.md') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
+      tui.frame.includes('❯ pad/p11.md') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
     assert('the path window states omissions above and below truthfully',
       /… \d+ more not shown \(\d+ above, \d+ below\)/.test(tui.frame));
     const beforePathTab = tui.mark();
     tui.send('\t');
-    await tui.waitFor('you> pad/p10.md', { timeoutMs: 30_000, from: beforePathTab, settleMs: 400 });
+    await tui.waitFor('you> pad/p11.md', { timeoutMs: 30_000, from: beforePathTab, settleMs: 400 });
     assert('Tab accepts exactly the visibly selected path candidate',
-      tui.frame.includes('you> pad/p10.md') && !tui.frame.includes('files ('));
+      tui.frame.includes('you> pad/p11.md') && !tui.frame.includes('files ('));
 
     // Reopen and wrap upward to the final full-list path. Enter accepts the same row
     // the marker names, without starting a turn.
     tui.send('\u0015');
-    await tui.waitUntil(() => !tui.frame.includes('files (') && !tui.frame.includes('you> pad/p10.md'), {
+    await tui.waitUntil(() => !tui.frame.includes('files (') && !tui.frame.includes('you> pad/p11.md'), {
       timeoutMs: 10_000,
       label: 'path draft cleared before reopening completion',
     });

@@ -8,40 +8,29 @@ AgentCore Memory **默认关闭**。原有项目本地记忆工具 `memory_recal
 
 启用后，主代理可通过权限检查检索项目 episode 和 reflection；宿主按配置检索用户偏好。上传需要单独开启，而且只支持手动预览、明确发送。云端偏好只是未经信任的上下文数据，不高于当前请求、项目约束或权限策略。
 
+## 引导配置
+
+在 TUI 输入 `/setup-agentcore-memory`。Darwin 会先完整加载[随包配置指南](../../src/skills/builtin/setup-agentcore-memory/SKILL.md)，再通过普通模型回合询问你选择的用户名/actorId，或请你确认复用现有值，并展示建议设置表。参数可以提供偏好，但参数、命令本身和 yolo 模式都不代表授权修改。缺少回答时，本回合提出问题并标记待确认，不自行猜测。
+
+优先复用你拥有且兼容的资源；否则建议独立的 DarwinMemory，说明区域、费用和保留期，在明确确认后才创建或修改配置。工具安装、IAM 扩权、上传、删除和基础设施导入不会隐式执行。默认建议采用自动项目隔离、有限的启动偏好读取和手动上传候选暂存，不自动发送；现有值会展示并保留，修改需要确认。
+
+这是通过普通权限工具执行的模型引导流程，不是确定性的配置向导，也不是新沙箱。展开本身不修改配置或云资源。内置指南不能被项目或全局扩展覆盖，缺失或损坏会拒绝启动，激活失败不会发送无指南提示。忙碌时排队到下一回合，trajectory 保留原始斜杠文本。指南随安装包分发，不依赖目标项目或仓库 docs，也是 namespace、资源请求和配置 JSON 的唯一模板来源。
+
+TUI、开发 REPL、文本及结构化无头模式使用相同的展开路径。`darwin -p "/setup-agentcore-memory"` 也会加载指南，但缺少用户回答时应返回问题和待确认状态，而非读取 stdin 或猜测。无头回合成功只表示问题已返回，不表示配置完成。确认修改配置后需要重启，当前 runtime 不会自动刷新工具列表。
+
 ## 资源准备与配置
 
-请在 **Darwin 之外**准备一个已有 Memory 资源，包含一个 episodic strategy 和一个 user preference strategy。Darwin 不创建或修改资源、策略。命名空间模板必须为：
-
-- Episode：`/users/{actorId}/projects/{projectid}/strategy/{memoryStrategyId}/sessions/{sessionId}/`
-- Reflection：`/users/{actorId}/projects/{projectid}/strategy/{memoryStrategyId}/`
-- 用户偏好：`/users/{actorId}/strategy/{memoryStrategyId}/preferences/`
+资源配置与运行时数据客户端分离。无论手动配置还是授权 Darwin 执行，都使用随包指南中的精确 episodic、reflection 和用户偏好模板。
 
 AWS 将 `{memoryStrategyId}` 替换为对应策略的 ID。资源的 `namespaceKeys` 必须声明小写自定义键 `projectid`；上传时通过 `extractionConfig.namespaceVariables.projectid` 提供小写值。缺少变量时，CreateEvent 仍可能成功，但不会提取长期记忆；应监控 AWS 提取日志和 `NamespaceResolutionFailure`。不要配置更宽的 reflection 命名空间：客户端检查返回记录的标签，无法撤销服务端已发生的跨用户汇总。IAM 应限制资源及操作：检索需要 `RetrieveMemoryRecords`、`GetMemoryRecord`，上传才需要 `CreateEvent`，明确删除才需要 `DeleteMemoryRecord`。原始事件 TTL 与长期记录保留是两回事。
 
 运行时使用官方 `@aws-sdk/client-bedrock-agentcore` **3.1127.0**（要求 Node >=20，符合 Darwin 的 Node 支持范围），已包含 CreateEvent 的 `extractionConfig.namespaceVariables`。不需要 AWS CLI 可执行文件，也不启动能力检查子进程。凭证由标准 SDK 凭证链解析，支持环境变量、profile、容器凭证和实例角色，并遵守 `AWS_EC2_METADATA_DISABLED`。Darwin 不修改凭证，也不从凭证推断 actor。AgentCore region 由配置固定；`ignoreConfiguredEndpointUrls: true` 忽略环境变量和共享配置中的服务 endpoint URL，不修改进程环境。凭证服务使用独立的 SDK handler，不经过单次记忆请求的取消/JSON 检查。本地 STS XML 和签名测试覆盖标准 `role_arn`/`source_profile` AssumeRole 链；嵌套凭证客户端也忽略服务 endpoint 覆盖配置，并限制为一次尝试。凭证服务的 region 仍按标准 profile/SSO 配置选择。这不会禁用容器凭证 URI、实例元数据、SSO 或用户配置的 credential process；它们仍属于可信的用户凭证配置，不是模型输入。Get/Delete 同时发送固定的偏好 namespace，供 IAM condition 授权使用；本地范围校验不变。
 
-**旧配置迁移：**只移除 `agentCoreMemory.cliPath`。旧值若为最长 1024 字符的绝对路径，仍通过格式校验，但被忽略并显示有限的迁移提示，不执行或展示路径内容。保留 region、资源/策略 ID、actor、自动项目身份（省略 `projectId`）、`preferences: true` 以及原有的 `upload: manual` 选择。Darwin 不重写配置、批准记录、命名空间或 outbox；新增未知字段仍报错。**部分旧偏好批准需要重新查看确认：**CLI 的 metadata 时间戳 `2026-01-01T00:00:00+00:00` 会变成 SDK ISO 格式 `2026-01-01T00:00:00.000Z`。Metadata 字节参与证据哈希，所以即使仅格式变化，该偏好也不会应用。本地批准检查后，状态会提示哈希变化，要求先 `/cloud-memory inspect <record-id>`，再确认显示的新哈希。旧批准不会被静默改写；字节一致的批准继续有效。
+**旧配置迁移：**确认后只移除 `agentCoreMemory.cliPath`。旧值若为最长 1024 字符的绝对路径，仍通过格式校验，但被忽略并显示有限的迁移提示，不执行或展示路径内容。保留 region、资源/策略 ID、actor、自动项目身份（省略 `projectId`）、`preferences: true` 以及原有的 `upload: manual` 选择。运行时不会自动重写配置、批准记录、命名空间或 outbox；新增未知字段仍报错。**部分旧偏好批准需要重新查看确认：**CLI 的 metadata 时间戳 `2026-01-01T00:00:00+00:00` 会变成 SDK ISO 格式 `2026-01-01T00:00:00.000Z`。Metadata 字节参与证据哈希，所以即使仅格式变化，该偏好也不会应用。本地批准检查后，状态会提示哈希变化，要求先 `/cloud-memory inspect <record-id>`，再确认显示的新哈希。旧批准不会被静默改写；字节一致的批准继续有效。
 
 可选的 [`agentcore` 基础设施 CLI](../architecture/agentcore-cli-memory-plan.md) 是独立生命周期工具，不是运行时依赖。保留现有资源：已验证的 CLI schema 会丢弃 `namespaceKeys`，import 会过滤含 `{memoryStrategyId}` 的模板。必须另行证明迁移无损并取得授权后，才能导入或部署资源。
 
-在 `~/.darwin/config.json` 根级添加以下对象，保留原有模型配置：
-
-```json
-{
-  "agentCoreMemory": {
-    "enabled": true,
-    "region": "us-west-2",
-    "memoryId": "YourMemory-0123456789",
-    "episodicStrategyId": "YourEpisodes-0123456789",
-    "preferenceStrategyId": "YourPreferences-0123456789",
-    "actorId": "opaque-user-42",
-    "projectId": "my-project",
-    "timeoutMs": 5000,
-    "preferences": true,
-    "upload": "off"
-  }
-}
-```
+[随包指南的配置章节](../../src/skills/builtin/setup-agentcore-memory/SKILL.md#4-apply-only-the-approved-configuration)提供唯一的根级 `agentCoreMemory` JSON 模板。只将确认的字段合并到私有 `~/.darwin/config.json`，保留全部无关设置，权限设为 `0600`，不写入凭证或提交到仓库。现有 `trajectory: false` 与手动上传冲突，须先询问用户。
 
 示例 ID 是占位符。`actorId` 是用户配置的稳定、不含身份信息的用户 ID，跨项目共用，不使用邮箱或 AWS 身份。`projectId` 独立于用户；省略时由规范化项目键计算 SHA-256。显式指定相同项目 ID，可让不同检出目录共享项目经验。Actor/strategy ID 使用字母、数字、`_`、`-`，最长 128 字符；项目 ID 必须小写且不超过 64 字符，与服务端 namespace value 上限一致。Region 必填，未知字段和路径穿越式字符串会被拒绝。`timeoutMs` 范围 100–15000，默认 5000；启用对象内的 `preferences` 默认 true；`upload` 仅支持 `off`（默认）或 `manual`，后者要求启用 trajectory。省略整个对象或设为 `false`，就不会创建云控制器、工具、网络请求或云状态。
 
@@ -49,7 +38,7 @@ AWS 说明：[命名空间](https://docs.aws.amazon.com/bedrock-agentcore/latest
 
 ## 检索与偏好确认
 
-主模型获得 `episodic_recall({intent, limit?})` 和 `reflection_recall({useCase, limit?})`。查询 1–300 字符，limit 为 1–5，默认 3；疑似秘密内容会被拒绝。Intent 描述任务目标，useCase 描述适用情境与约束，不发送原始日志。两者使用 `RetrieveMemoryRecords.searchCriteria.searchQuery` 和配置的 strategy ID，属于外部网络调用，不是静态安全的本地记忆读取。普通 hooks、plan 模式和 deny 规则先于 CLI 生效，子代理没有这两个工具。偏好启动检索则是宿主行为：启用 `preferences` 就明确授权了这项有限检索，包括 plan 模式。
+主模型获得 `episodic_recall({intent, limit?})` 和 `reflection_recall({useCase, limit?})`。查询 1–300 字符，limit 为 1–5，默认 3；疑似秘密内容会被拒绝。Intent 描述任务目标，useCase 描述适用情境与约束，不发送原始日志。两者使用 `RetrieveMemoryRecords.searchCriteria.searchQuery` 和配置的 strategy ID，属于外部网络调用，不是静态安全的本地记忆读取。普通 hooks、plan 模式和 deny 规则先于 SDK 请求生效，子代理没有这两个工具。偏好启动检索则是宿主行为：启用 `preferences` 就明确授权了这项有限检索，包括 plan 模式。
 
 `namespacePath` 是层级查询。Darwin 先验证所有返回记录的 namespace、strategy 和有限 metadata 是否属于配置的 actor/project/resource；错误范围导致整体拒绝。同一项目下混入 reflection 查询的 episode 则明确省略，并报告遗漏和不足条数，不为凑数扩大检索范围，不虚构服务端类型过滤器。Episode/reflection XML 转成有序树，保留证据、结果评价与操作顺序。属性、DTD、处理指令、未知实体、格式错误和超限 XML 都被拒绝。Reflection 的 confidence 表示估计的适用价值，不是正确概率；服务端格式变化可能导致保守拒绝。
 

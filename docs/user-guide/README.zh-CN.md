@@ -11,7 +11,7 @@
 | [入门与模型供应商](getting-started.zh-CN.md) | 环境要求、安装、工作目录结构、模型供应商、首次启动、旧版迁移 |
 | [使用 darwin](using-darwin.zh-CN.md) | TUI、无头模式、结构化输出、消息队列、本地 shell 命令、后台任务 |
 | [配置与上下文](configuration.zh-CN.md) | 全部配置字段、模型切换、缓存、思考强度、system prompt、`AGENTS.md`、工作上下文 |
-| [可选 AgentCore Memory](agentcore-memory.zh-CN.md) | 资源准备、范围隔离、偏好确认、手动预览与上传 |
+| [可选 AgentCore Memory](agentcore-memory.zh-CN.md) | 引导配置、范围隔离、偏好确认、手动预览与上传 |
 | [会话与状态](sessions-and-state.zh-CN.md) | 快照、恢复、轨迹、费用、导出/分叉、记忆、诊断、存储路径 |
 | [权限](permissions.zh-CN.md) | 四种模式、静态安全判定、分类器、放行规则及撤销 |
 | [扩展](extensions.zh-CN.md) | 发现顺序、MCP、skills、内置工作流、子代理、workflow DAG、自定义命令、hooks |

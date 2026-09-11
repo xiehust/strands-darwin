@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -63,6 +63,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   tasks: 'list background jobs',
   // The record this session is writing, not the CLI's search/fork/replay verbs.
   trajectory: 'this session\u2019s recorded trajectory',
+  'setup-agentcore-memory': 'guided cloud memory setup with confirmation',
   usage: 'token counts this run',
   // A prompt expansion, not an executor: the model still decomposes the DAG.
   workflow: 'orchestrate a task with the workflow tool',
@@ -121,7 +122,9 @@ export async function loadCustomCommands(
   const problems: CustomCommandProblem[] = [];
   const claimed = new Map<string, string>();
   for (const name of RESERVED_COMMAND_NAMES) claimed.set(name.toLowerCase(), `built-in command /${name}`);
-  for (const name of skillNames) claimed.set(name.toLowerCase(), `skill /${name}`);
+  for (const name of skillNames) {
+    if (!claimed.has(name.toLowerCase())) claimed.set(name.toLowerCase(), `skill /${name}`);
+  }
 
   for (const commandsDir of [...new Set(commandDirs)]) {
     let entries: Dirent[];

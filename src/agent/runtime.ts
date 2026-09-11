@@ -2307,7 +2307,7 @@ export class AgentRuntime {
    * notice, and the runtime never fabricates a turn — while bare `/init` is the
    * trigger itself. `/init` decides create-versus-improve from the instructions
    * summary this runtime captured at startup (the header's own data), never from
-   * a fresh filesystem read, so every driver — TUI, dev-repl, headless — gets the
+   * a fresh filesystem read, so TUI, dev-repl and both headless drivers get the
    * same branch through this one seam. Skills are checked before
    * custom commands as a defensive backstop to the loader's collision
    * filtering. Unknown slash input remains ordinary user input.
