@@ -835,12 +835,20 @@ fresh scope check. Model provider and permission policy remain independent.
 Uploads require trajectory plus `upload: manual`. New turns use `darwin-upload-v2`, not
 trajectory reconstruction: a synchronous/no-I/O/nonthrowing bounded observer reads public
 parent BeforeToolCallEvent (SDK_LAST) and AfterToolCallEvent (SDK_FIRST, before ContextOffloader).
+The latter is labelled pre-after-hook execution evidence, not necessarily final model-visible
+output: interventions may transform it. BeforeToolsEvent supplies bounded requested input
+when batch cancellation skips individual calls; ToolResultEvent supplies an explicitly labelled
+fallback for observed batch cancellation, generator errors or background acknowledgements.
+Neither public fallback nor late background completion overwrites an execution snapshot/ack.
 No SDK loop/executor change, event mutation or trajectory schema/bytes/order change. Only the
 existing durable closing-append settlement callback schedules detached local publication.
 Disabled upload installs no hooks or collector. Failure/early return closes collection; failed
 trajectory/pre-stream abort discards it, nondurable settlement consumes it, saturation refuses
-and counts turns, successor/shutdown clears it. Invocation-state identity rejects late results
-from another turn. No automatic upload, model summary, extra model call, backfill, path reads,
+and counts turns, successor/shutdown clears it. Invocation-state identity plus SDK tool-use ID
+pairs results; local scope/attempt ordinals distinguish records. Reuse within one state lacks
+a public attempt token, so later attribution is refused, never guessed. A bounded 512-key
+identity ledger retains evicted-action tombstones; excess identities are explicitly unmatched.
+Invocation-state identity rejects late results from another turn. No automatic upload, model summary, extra model call, backfill, path reads,
 child traversal or offload/archive hydration.
 
 Every tool name and textual argument/result is eligible, including arbitrary MCP, public
@@ -861,8 +869,14 @@ action bodies/summaries omitted, internal events, missing/unmatched results and 
 are distinct. No goal and no action means no metadata-only candidate. Text ranges are exact
 UTF-16 offsets at Unicode boundaries; retained/original bytes are UTF-8. Huge strings above
 262,144 UTF-16 units explicitly leave original byte length unknown, avoiding unbounded scans.
-JSON traversal caps at depth 8 / 128 values / 32 entries per container, four detailed losses
-plus aggregate. Engine object enumeration is not a hard real-time guarantee against hostile
+Capture discovers bounded descriptors before byte allocation (no getters/toJSON), then shrinks
+largest strings against the full serialized action including metadata/escaping; small sides
+leave their space to the other side. Short complete collections stay intact; long arrays/SDK
+content retain 16 prefix + 16 suffix entries with exact indices and omitted-middle metadata.
+Known short object siblings and result endings survive large earlier values. JSON traversal
+caps at depth 8 / 128 values / 32 entries per container, four detailed losses plus aggregate.
+Discovery copies at most 8192 bytes per string; bounded temporary snapshots are pruned before
+retention, without source references or unbounded source serialization. Engine object enumeration is not a hard real-time guarantee against hostile
 Proxies; production SDK inputs are JSON. Upstream loss indicators are marked, not hydrated;
 unmarked upstream loss cannot be recovered. See `agentcore-upload-projection-verification.md`. Immutable bounded outbox entries retain
 session/turn/order and truthful failed/cancelled/incomplete states; endTurn is not task

@@ -3,7 +3,7 @@
 process.env['DARWIN_MODEL_PRICES_FETCH'] = 'off';
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { Agent, Model, ModelError, BeforeToolCallEvent, AfterToolCallEvent, ToolUseBlock, ToolResultBlock, TextBlock, JsonBlock, ImageBlock, tool, type BaseModelConfig, type Message, type ModelStreamEvent } from '@strands-agents/sdk';
+import { Agent, Model, ModelError, BeforeToolCallEvent, AfterToolCallEvent, BeforeToolsEvent, ToolResultEvent, HookOrder, ExecuteToolStage, ToolUseBlock, ToolResultBlock, TextBlock, JsonBlock, ImageBlock, tool, type BaseModelConfig, Message, type ModelStreamEvent } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { capture, sliceText, UploadTurn, UploadObserver, uploadBody, MAX_ACTION_BYTES, MAX_EVENT_BYTES } from '../src/agentcore/upload-projection.js';
 import { CloudMemory } from '../src/agentcore/controller.js';
@@ -19,9 +19,9 @@ const agent = new Agent({ model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' }
 const state = {};
 const settlement = { durable: true as const, session: 'synthetic-session', turn: 1, seq: 99, at: '2026-01-01T00:00:00Z', stopReason: 'endTurn', failure: false, partial: false };
 const envelope = { memoryId: config.memoryId, actorId: config.actorId, sessionId: settlement.session, eventTimestamp: settlement.at, clientToken: 'a'.repeat(64), extractionConfig: { namespaceVariables: { projectid: 'synthetic' } } };
-function events(id: string, input: object, content = [new TextBlock('ok')] as ToolResultBlock['content'], name = 'arbitrary-mcp_secret') {
+function events(id: string, input: object, content = [new TextBlock('ok')] as ToolResultBlock['content'], name = 'arbitrary-mcp_secret', invocationState = state) {
   const use = new ToolUseBlock({ name, toolUseId: id, input: input as ToolUseBlock['input'] });
-  return [new BeforeToolCallEvent({ agent, invocationState: state, tool: undefined, toolUse: use }), new AfterToolCallEvent({ agent, invocationState: state, tool: undefined, toolUse: use, result: new ToolResultBlock({ toolUseId: id, status: 'success', content }) })] as const;
+  return [new BeforeToolCallEvent({ agent, invocationState, tool: undefined, toolUse: use }), new AfterToolCallEvent({ agent, invocationState, tool: undefined, toolUse: use, result: new ToolResultBlock({ toolUseId: id, status: 'success', content }) })] as const;
 }
 function add(turn: UploadTurn, id: string, input: object, content?: ToolResultBlock['content'], name?: string) { const [before, after] = events(id, input, content, name); turn.before(before); turn.after(after); }
 const bodyOf = (turn: UploadTurn) => uploadBody(envelope, turn, settlement)!;
@@ -51,6 +51,77 @@ const copyTurn = new UploadTurn(1, goal); copyTurn.before(immutable[0]); copyTur
 assert('public SDK event objects and order remain immutable', immutable.every((e, i) => JSON.stringify(e.toJSON()) === immutableBytes[i]) && copyTurn.actions[0]!.invocation === 'immutable');
 
 
+header('Host regressions: full action allocation, collections, accessors and identity');
+for (const size of [3000, 6000]) {
+  const small = new UploadTurn(1, 'goal'); const text = 'x'.repeat(size) + 'TAIL';
+  add(small, `small-${size}`, { query: 'small' }, [new TextBlock(text)]);
+  const action = actionsOf(bodyOf(small))[0];
+  assert(`${size} byte result plus tiny input retained exactly within full action cap`, action.result.content.content[0].text === text && action.result.content.losses.length === 0 && action.input.losses.length === 0 && Buffer.byteLength(JSON.stringify(action)) <= MAX_ACTION_BYTES);
+}
+const smallEscaped = new UploadTurn(1, 'goal'); const escapedText = '\\"\n中😀'.repeat(350);
+add(smallEscaped, 'escaped-small', { query: 'tiny' }, [new TextBlock(escapedText)]);
+assert('small escape-heavy result complete when serialized action fits', actionsOf(bodyOf(smallEscaped))[0].result.content.content[0].text === escapedText && actionsOf(bodyOf(smallEscaped))[0].result.content.losses.length === 0);
+const inputHeavy = new UploadTurn(1, 'goal'); const inputText = 'i'.repeat(6000);
+add(inputHeavy, 'input-heavy', { query: inputText }, [new TextBlock('tiny result')]);
+assert('large input also borrows small result space without truncation', actionsOf(bodyOf(inputHeavy))[0].input.content.query === inputText && actionsOf(bodyOf(inputHeavy))[0].input.losses.length === 0);
+const blocks = new UploadTurn(1, 'goal');
+add(blocks, 'blocks', {}, [new TextBlock('x'.repeat(2000)), new TextBlock('FINAL SUMMARY')]);
+assert('small multi-block result complete including final summary', JSON.stringify(actionsOf(bodyOf(blocks))[0].result.content.content) === JSON.stringify([{ text: 'x'.repeat(2000) }, { text: 'FINAL SUMMARY' }]));
+const completeBlocks = new UploadTurn(1, 'goal'); const shortBlocks = Array.from({ length: 32 }, (_, i) => new TextBlock(`short-${i}`));
+add(completeBlocks, 'complete-32', {}, shortBlocks);
+assert('complete short collection at traversal boundary preserved without loss', JSON.stringify(actionsOf(bodyOf(completeBlocks))[0].result.content.content) === JSON.stringify(shortBlocks.map(b => ({ text: b.text }))) && actionsOf(bodyOf(completeBlocks))[0].result.content.losses.length === 0);
+const longBlocks = new UploadTurn(1, 'goal');
+add(longBlocks, 'long-blocks', {}, [new TextBlock('x'.repeat(50000)), new TextBlock('FINAL SUMMARY')]);
+assert('long first block cannot starve final summary', actionsOf(bodyOf(longBlocks))[0].result.content.content[1].text === 'FINAL SUMMARY');
+const plainArray = capture(Array.from({ length: 100 }, (_, i) => i));
+assert('ordinary nested arrays also retain exact prefix/suffix indices', JSON.stringify(plainArray).includes('"index":99,"value":99') && plainArray.losses.some(l => l.reason.includes('[16, 84)')));
+const blockTail = new UploadTurn(1, 'goal');
+add(blockTail, 'blocks-80', {}, Array.from({ length: 80 }, (_, i) => new TextBlock(`block-${i}`)));
+const collection = actionsOf(bodyOf(blockTail))[0].result.content;
+assert('long content retains prefix/suffix exact indices with explicit omitted middle', collection.content.originalLength === 80 && collection.content.entries[0].index === 0 && collection.content.entries.at(-1).index === 79 && collection.content.entries.at(-1).value.text === 'block-79' && collection.losses.some((l: { reason: string }) => l.reason.includes('[16, 64)')));
+for (const size of [5000, 50000]) {
+  const bashTurn = new UploadTurn(1, 'goal');
+  const output = 'o'.repeat(size) + 'STDOUT END';
+  add(bashTurn, 'bash', {}, [new JsonBlock({ json: { output, error: 'IMPORTANT ERROR', cwd: '/project', exitCode: 1 } })], 'bash');
+  const action = actionsOf(bodyOf(bashTurn))[0]; const json = action.result.content.content[0].json;
+  assert(`stdout ${size}: short stderr/cwd/exit preserved and output tail exact`, json.error === 'IMPORTANT ERROR' && json.cwd === '/project' && json.exitCode === 1 && action.failed && (size === 5000 ? json.output === output && action.result.content.losses.length === 0 : json.output.at(-1).endsWith('STDOUT END')));
+  if (size > 5000) {
+    const loss = action.result.content.losses.find((l: { path: string }) => l.path === '/0/json/output');
+    assert('reallocated result ranges still refer to original source', loss.text.ranges.every((range: [number, number], i: number) => output.slice(...range) === json.output[i]) && loss.text.retainedBytes === json.output.reduce((n: number, p: string) => n + Buffer.byteLength(p), 0));
+  }
+}
+let getterCalls = 0;
+const getterArray: unknown[] = [];
+Object.defineProperty(getterArray, '0', { enumerable: true, get() { getterCalls++; return 'computed'; } });
+Object.defineProperty(getterArray, '1', { enumerable: true, get() { getterCalls++; throw new Error('must not evaluate'); } });
+const getterCapture = capture({ nested: getterArray });
+const accessorEvent = events('accessor', { nested: getterArray });
+const accessorBlock = new TextBlock('placeholder');
+Object.defineProperty(accessorBlock, 'text', { get() { getterCalls++; throw new Error('SDK field accessor'); } });
+accessorEvent[1].result.content.push(accessorBlock);
+const accessorTurn = new UploadTurn(1, 'goal'); accessorTurn.before(accessorEvent[0]); accessorTurn.after(accessorEvent[1]);
+assert('nested array and SDK field accessors never evaluated, including throwing getter', getterCalls === 0 && getterCapture.losses.length === 2 && JSON.stringify(accessorTurn.actions).includes('without evaluation'));
+assert('getter-bearing event and descriptors unmutated', Object.getOwnPropertyDescriptor(getterArray, '0')?.get !== undefined && getterArray.length === 2 && accessorEvent[1].result.content[1] === accessorBlock);
+const pairing = new UploadObserver(); pairing.begin(1, 'goal');
+const oldPair = events('reused', { old: true }, [new TextBlock('OLD RESULT')], 'old', {});
+const newPair = events('reused', { new: true }, [new TextBlock('NEW RESULT')], 'new', {});
+pairing.before(oldPair[0]); pairing.before(newPair[0]); pairing.after(oldPair[1]); pairing.after(newPair[1]);
+const paired = actionsOf(bodyOf(pairing.take(1)!));
+assert('same ID in distinct invocation states pairs only its own result', paired[0].tool === 'old' && paired[0].result.content.content[0].text === 'OLD RESULT' && paired[1].tool === 'new' && paired[1].result.content.content[0].text === 'NEW RESULT' && paired[0].invocationScope !== paired[1].invocationScope);
+const duplicate = new UploadTurn(1, 'goal');
+const dupA = events('duplicate', {}, [new TextBlock('FIRST')]); const dupB = events('duplicate', {}, [new TextBlock('SECOND')]);
+duplicate.before(dupA[0]); duplicate.before(dupB[0]); duplicate.after(dupA[1]); duplicate.after(dupB[1]);
+assert('same state duplicate ID never misattributes either interleaved result', duplicate.actions.every(a => 'missing' in a.result) && duplicate.unmatchedResults === 2 && duplicate.actions[1]!.attempt === 2);
+const sequentialDuplicate = new UploadTurn(1, 'goal');
+sequentialDuplicate.before(dupA[0]); sequentialDuplicate.after(dupA[1]); sequentialDuplicate.before(dupB[0]); sequentialDuplicate.after(dupA[1]); sequentialDuplicate.after(dupB[1]);
+assert('same-state reuse after completion preserves first evidence and refuses later attribution', JSON.stringify(sequentialDuplicate.actions[0]).includes('FIRST') && 'missing' in sequentialDuplicate.actions[1]!.result);
+const fallbackObserver = new UploadObserver(); fallbackObserver.begin(1, 'old'); fallbackObserver.before(oldPair[0]);
+fallbackObserver.fallback(new ToolResultEvent({ agent, invocationState: oldPair[0].invocationState, result: oldPair[1].result }));
+const frozenTurn = fallbackObserver.take(1)!; const frozen = JSON.stringify(bodyOf(frozenTurn));
+fallbackObserver.begin(2, 'new'); fallbackObserver.before(newPair[0]); fallbackObserver.fallback(new ToolResultEvent({ agent, invocationState: oldPair[0].invocationState, result: oldPair[1].result })); fallbackObserver.after(oldPair[1]);
+const freshTurn = fallbackObserver.take(2)!;
+assert('late public fallback/background result cannot touch new turn or prior candidate', JSON.stringify(bodyOf(frozenTurn)) === frozen && freshTurn.unmatchedResults === 2 && 'missing' in freshTurn.actions[0]!.result);
+
 header('UTF-8, escaping, traversal and capacity');
 for (const text of ['😀中\u0000\n\\"'.repeat(10000), 'a'.repeat(300000) + 'TAIL', '\ud800raw\udfff']) {
   const cut = sliceText(text, 1000);
@@ -63,6 +134,14 @@ for (const value of [deep, wide, new Array(1000000).fill('x'), { huge: 'x'.repea
   const start = performance.now(); const captured = capture(value);
   assert('huge/deep/wide/array/binary capture bounded and losses explicit', performance.now() - start < 1000 && Buffer.byteLength(JSON.stringify(captured)) < MAX_ACTION_BYTES && captured.losses.length > 0);
 }
+const bothSides = new UploadTurn(1, 'goal'); const unicodeSource = '😀中\u0000\\\"'.repeat(6000) + 'EXACT TAIL';
+add(bothSides, 'both-sides', { text: unicodeSource }, [new TextBlock(unicodeSource)]);
+const bothAction = actionsOf(bodyOf(bothSides))[0];
+for (const [captured, parts] of [[bothAction.input, bothAction.input.content.text], [bothAction.result.content, bothAction.result.content.content[0].text]]) {
+  const text = captured.losses.find((l: { text?: unknown }) => l.text !== undefined).text;
+  assert('both-side dynamic reallocation keeps Unicode source ranges/bytes exact', text.ranges.every((range: [number, number], i: number) => unicodeSource.slice(...range) === parts[i]) && text.retainedBytes === parts.reduce((n: number, p: string) => n + Buffer.byteLength(p), 0) && parts.at(-1).endsWith('EXACT TAIL'));
+}
+assert('both-side escaping and metadata obey serialized full action cap', Buffer.byteLength(JSON.stringify(bothAction)) <= MAX_ACTION_BYTES);
 const adversarialKeys = Object.fromEntries(Array.from({ length: 32 }, (_, i) => ['\u0000'.repeat(120) + i, '😀'.repeat(20000)]));
 const escapedAction = new UploadTurn(1, '\u0000'.repeat(20000));
 add(escapedAction, '\u0000'.repeat(256), adversarialKeys, [new JsonBlock({ json: adversarialKeys })]);
@@ -76,6 +155,13 @@ assert('capacity, content and internal omissions separate and truthful', quality
 assert('live action and summary windows bounded', many.actions.length <= 64 && many.summaries.length <= 96 && many.pending.size === 0);
 for (let i = 0; i < 1000; i++) many.before(events(`pending-${i}`, { text: 'p'.repeat(20000) })[0]);
 assert('many pending calls bounded including missing-result actions', many.pending.size <= 64 && many.actions.every(a => Buffer.byteLength(JSON.stringify(a)) <= MAX_ACTION_BYTES));
+const saturatedId = events('pending-999', {}, [new TextBlock('UNMATCHABLE')]); many.after(saturatedId[1]);
+assert('identity ledger saturation stays bounded and reports unmatchable result', many.unmatchedResults === 1 && many.actions.at(-1)!.sourceLoss.some(l => l.includes('512 keys')) && JSON.stringify(many.actions.at(-1)).includes('cannot be safely attributed'));
+const batchBound = new UploadTurn(1, 'batch');
+const batchUses = Array.from({ length: 80 }, (_, i) => new ToolUseBlock({ name: 'batch-tool', toolUseId: `batch-${i}`, input: {} }));
+batchBound.batch(new BeforeToolsEvent({ agent, invocationState: state, message: new Message({ role: 'assistant', content: batchUses }) }));
+for (const use of batchUses) batchBound.fallback(new ToolResultEvent({ agent, invocationState: state, result: new ToolResultBlock({ toolUseId: use.toolUseId, status: 'error', content: [new TextBlock('BATCH CANCELLED')] }) }));
+assert('bounded batch prefix/suffix loss distinct from internal events and unmatched results', batchBound.actions.length === 32 && batchBound.batchEntriesOmitted === 48 && batchBound.unmatchedResults === 48 && batchBound.internalEvents === 0 && batchBound.actions.at(-1)!.invocation === 'batch-79');
 const observer = new UploadObserver(); for (let i = 1; i <= 30; i++) observer.begin(i, goal);
 assert('unsettled turn queue bounded', observer.retainedTurns === 8); observer.clear(); assert('close clears all transient turns', observer.retainedTurns === 0);
 const cloud = new CloudMemory(config, root, settlement.session);
@@ -151,6 +237,51 @@ async function createRuntime(offload: boolean, model: UploadModel, upload: 'manu
   sdk.toolRegistry.add(tool({ name: 'arbitrary_upload_mcp', description: 'Synthetic original source', inputSchema: z.object({ command: z.string(), index: z.number() }), callback: ({ index }) => 'original '.repeat(6000) + `ORIGINAL-LATE-TAIL-${index}` }));
   return runtime;
 }
+header('Real SDK/runtime public fallback paths (no loop/executor replacement)');
+for (const mode of ['batch-cancel', 'generator-error', 'denied', 'transformed'] as const) {
+  const runtime = await createRuntime(false, new UploadModel());
+  const sdk = (runtime as unknown as { agent: Agent }).agent;
+  const controller = (runtime as unknown as { cloudMemory: CloudMemory }).cloudMemory;
+  let afterCount = 0; let publicCount = 0;
+  sdk.addHook(AfterToolCallEvent, () => { afterCount++; });
+  sdk.addHook(ToolResultEvent, () => { publicCount++; });
+  if (mode === 'batch-cancel') sdk.addHook(BeforeToolsEvent, event => { event.cancel = 'BATCH CANCEL RESULT'; });
+  if (mode === 'generator-error') sdk.addMiddleware(ExecuteToolStage, async function* () { throw new Error('GENERATOR ERROR RESULT'); });
+  if (mode === 'denied') sdk.addHook(BeforeToolCallEvent, event => { event.cancel = 'DENIED RESULT'; });
+  if (mode === 'transformed') sdk.addHook(AfterToolCallEvent, event => { event.result = new ToolResultBlock({ toolUseId: event.result.toolUseId, status: 'success', content: [new TextBlock('TRANSFORMED OUTPUT')] }); });
+  for await (const _event of runtime.send(mode)) {}
+  const rows = (await controller.command('pending')).split('\n'); let preview = '';
+  for (const row of rows) { const candidate = await controller.command(`preview ${row.split(' ')[0]}`); if (candidate.includes(runtime.info.sessionId)) preview = candidate; }
+  if (mode === 'batch-cancel' || mode === 'generator-error') {
+    assert(`runtime ${mode}: available public result captured and explicitly labelled without After hook`, afterCount === 0 && publicCount === 1 && preview.includes(mode === 'batch-cancel' ? 'BATCH CANCEL RESULT' : 'GENERATOR ERROR RESULT') && preview.includes('ToolResultEvent fallback') && !preview.includes('No corresponding result observed'));
+    if (mode === 'batch-cancel') assert('batch cancellation input is labelled requested, not executed', preview.includes('BeforeTools requested input; execution not observed'));
+  } else if (mode === 'denied') assert('runtime denial retains actual error execution evidence', afterCount === 1 && preview.includes('DENIED RESULT') && preview.includes('pre-after-hook execution evidence'));
+  else assert('final public transformed result never replaces original execution snapshot', publicCount === 1 && preview.includes('ORIGINAL-LATE-TAIL-0') && !preview.includes('TRANSFORMED OUTPUT') && preview.includes('not necessarily final model-visible output'));
+  await runtime.shutdown();
+}
+let finishBackground!: () => void;
+const backgroundGate = new Promise<void>(resolve => { finishBackground = resolve; });
+const backgroundObserver = new UploadObserver(); backgroundObserver.begin(1, 'background goal');
+const backgroundAgent = new Agent({ model: new UploadModel(), printer: false, retryStrategy: null,
+  backgroundTasks: { always: ['arbitrary_upload_mcp'], waitForCompletion: false },
+  tools: [tool({ name: 'arbitrary_upload_mcp', description: 'Bounded synthetic background test', inputSchema: z.object({ command: z.string(), index: z.number() }), callback: async () => { await backgroundGate; return 'LATE BACKGROUND RESULT'; } })] });
+backgroundAgent.addHook(BeforeToolsEvent, event => backgroundObserver.batch(event), { order: HookOrder.SDK_LAST });
+backgroundAgent.addHook(BeforeToolCallEvent, event => backgroundObserver.before(event), { order: HookOrder.SDK_LAST });
+let backgroundAfter!: () => void; let backgroundAfterCount = 0;
+const backgroundCompleted = new Promise<void>(resolve => { backgroundAfter = resolve; });
+backgroundAgent.addHook(AfterToolCallEvent, event => { backgroundAfterCount++; backgroundObserver.after(event); backgroundAfter(); }, { order: HookOrder.SDK_FIRST });
+backgroundAgent.addHook(ToolResultEvent, event => backgroundObserver.fallback(event), { order: HookOrder.SDK_LAST });
+for await (const _event of backgroundAgent.stream('background goal')) {}
+const ackTurn = backgroundObserver.take(1)!; const ackBody = JSON.stringify(bodyOf(ackTurn));
+assert('real SDK background dispatch acknowledgement captured without After hook', backgroundAfterCount === 0 && ackBody.includes('ToolResultEvent fallback') && ackBody.includes('Task ID:') && !ackBody.includes('No corresponding result observed') && !ackBody.includes('LATE BACKGROUND RESULT'));
+backgroundObserver.begin(2, 'successor'); finishBackground();
+// Wait on the actual public completion hook; no polling or timing assumption.
+await backgroundCompleted;
+for await (const _event of backgroundAgent.stream('drain background completion')) {}
+const successor = backgroundObserver.take(2)!;
+assert('background completion never mutates closed candidate or fabricates successor action', JSON.stringify(bodyOf(ackTurn)) === ackBody && successor.actions.length === 0 && successor.unmatchedResults === 1);
+backgroundObserver.clear();
+
 for (const offload of [false, true]) {
   const runtime = await createRuntime(offload, new UploadModel(80));
   for await (const _event of runtime.send(goal)) {}

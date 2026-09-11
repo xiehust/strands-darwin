@@ -74,7 +74,7 @@ for (const terms of [
   ['without raw API errors or secrets', 'after three stop/report'],
   ['/cloud-memory inspect <record-id>', '/cloud-memory confirm <record-id> <hash> global', '/cloud-memory preview <token>', '/cloud-memory send <token> <preview-hash>', '/cloud-memory discard <token>'],
   ['Never seed preferences automatically', 'Hashes prove data integrity, not human consent', 'standalone CLI is read-only', 'Never fake human confirmation via bash, SDK calls, pty'],
-  ['**USER goals**', '**TOOL evidence**', '**OTHER source/outcome/omissions**', 'excludes all assistant prose', 'not a confidentiality guarantee'],
+  ['**USER goals**', '**TOOL evidence**', '**OTHER source/outcome/omissions**', 'Every public textual tool argument/result is eligible', 'arbitrary MCP tools, free-form logs, file/diff content, skills, memory results and public subagent reports', 'excludes all assistant prose/reasoning and binary/images', 'never traverses child conversations', 'hydrates offload/archive content', 'observed public fallback results are labelled', 'not a confidentiality guarantee', 'No automatic uploads, history backfill'],
   ['resource reused/created', 'confirmed actor and region', 'config fields changed', 'upload mode', '**unverified extraction**', '**pending**, not complete'],
 ]) for (const term of terms) assert(guide.instructions.includes(term), `guide missing: ${term}`);
 const orderedSteps = ['Read and use this entire guide', 'FIRST inspect `~/.darwin/config.json`', '1. `darwin doctor`', '2. `darwin cloud-memory status`', '3. `darwin cloud-memory preferences`', '### Healthy stop', '**STOP** the bare setup workflow', '## 2. Only for setup', "ask for the user's chosen username", 'Present a proposed defaults table'];

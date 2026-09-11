@@ -17,7 +17,58 @@ Only isolated HOME fixtures, public SDK events/runtime and signed loopback HTTP 
 | U9 | Legacy immutable body/hash/token/proofs readable unchanged; OTHER-only refusal; order/reservations/retries/cancel/idempotency unchanged | Existing and expanded AgentCore suite |
 | U10 | English/Chinese READMEs, narrative/reference/configuration and architecture agree; AGENTS <32768 bytes; full gates then commit/build | Targeted documentation scan, pnpm test, pnpm typecheck, pnpm build |
 
-## Implementation and measured results
+## Host acceptance corrections after e947ff7
+
+The initial green suites below did not cover the Host's six reproductions. These
+corrections change repository projection/hooks/docs only; immutable private entries,
+configuration, preference policy, transport and storage contracts remain untouched.
+
+| Gap | Correction and new proof in `spike/verify-agentcore-upload.ts` |
+| --- | --- |
+| Hidden per-side cap | Descriptor snapshot followed by serialized full-action allocation; exact 3 KiB/6 KiB results with tiny input, 6 KiB input with tiny result, and escaping-sensitive complete content |
+| Collection endings/siblings | Complete short multi-block results and 32-block boundary; long first block plus final summary; 80-block/100-element arrays retain 16 head + 16 tail exact indices with omitted middle; 5 KiB/50 KiB stdout retains stderr/cwd/exitCode |
+| Getter side effects | Nested array getter and throwing getter, SDK text-field accessor, unchanged event references/descriptors and zero evaluations |
+| False pairing on ID reuse | Separate invocation-state scopes with same ID interleaved; same-state overlapping and sequential reuse refuse ambiguous attribution, never attach an old result to a new action |
+| Stale setup policy | Built-in setup skill now permits broad public textual evidence and states exclusions/risks; `verify-setup-agentcore-memory.ts` pins the full policy. Historical 32000-byte contract remains explicitly superseded at the top of the older checklist |
+| Missed public results | Actual runtime batch cancellation and executor generator failure have zero After hooks and retain labelled ToolResultEvent fallbacks; denial keeps execution evidence; output transformation cannot overwrite it. Real SDK background acknowledgement precedes the completion hook, is retained, and actual late completion leaves prior candidate/new turn unchanged |
+
+Execution evidence is **pre-after-hook**, not necessarily final model-visible output.
+A fallback is only an actually observed public result, not recovered history. Missing or
+ambiguous identity is explicit. After collection closes, background results cannot update
+an old candidate; SDK synthetic completion messages are not traversed. BeforeTools batch
+intent inspection shares the 32-entry prefix/suffix bound; skipped batch middle calls may
+have unmatched public results, explicitly counted, rather than fabricated input pairs.
+`batchEntriesOmitted` counts skipped message entries separately from internal events; the
+80-call cancellation fixture checks 32 paired results and 48 unmatched results.
+Within one invocation state the public SDK supplies no attempt token for reused IDs:
+subsequent pairing is deliberately refused, including retries. A 512-key ledger keeps
+identity tombstones; saturation reports unmatched results rather than forgetting identity.
+Temporary descriptor snapshots are bounded (128 visited values, depth 8, 32 entries per
+container, 8192 copied bytes/string) and pruned before retention. Allocation serializes
+only these bounded copies, never a source object. Detailed ranges still address the original
+text after further allocation cuts. The existing 8 KiB action / 256 KiB request caps remain.
+Object enumeration and Proxy execution still have no hard real-time guarantee.
+
+### Correction verification results
+
+- Final `pnpm tsx spike/verify-agentcore-upload.ts`: **75 passed, 0 failed**;
+  `/tmp/darwin-upload-correction-focused.log`. Includes both-side Unicode/escaping
+  reallocation with exact original ranges/byte counts and identity-ledger saturation.
+- `pnpm tsx spike/verify-setup-agentcore-memory.ts`: **all offline contracts passed**;
+  `/tmp/darwin-upload-correction-setup.log`. Policy pins, scripted runtime activation,
+  isolated local checks and signed loopback only; no cloud request.
+- Final `pnpm typecheck`: exit 0; `/tmp/darwin-upload-correction-typecheck.log`.
+- One source-settled `pnpm test`: exit 0, **6,733 PASS lines, zero FAIL**;
+  `/tmp/darwin-upload-correction-full-test.log`. Includes unchanged **261 AgentCore**
+  checks and the setup/upload suites. No separate repeat of the unchanged AgentCore suite.
+- Initial correction verification caught one optional-property type error and a test
+  expecting `taskId` instead of the SDK's literal `Task ID:` acknowledgement; both
+  corrected before the final gate. All six Host reproductions now have explicit proofs.
+- `git diff --check`: clean. Nine repository files changed; no private entry reads or
+  mutations, real config, cloud, dependency, iteration-log or history changes. Post-commit
+  build and copied-skill equality are reported in the final handoff.
+
+## Initial implementation and measured results (historical)
 
 ### Focused checks
 

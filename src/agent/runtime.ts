@@ -5,7 +5,7 @@
  * raw event stream to whatever is driving it. Callers (the dev REPL now, Ink
  * later) decide how to render.
  */
-import { Agent, AfterToolCallEvent, BeforeToolCallEvent, HookOrder, BeforeInvocationEvent, SummarizingConversationManager, TextBlock } from '@strands-agents/sdk';
+import { Agent, AfterToolCallEvent, BeforeToolCallEvent, BeforeToolsEvent, ToolResultEvent, HookOrder, BeforeInvocationEvent, SummarizingConversationManager, TextBlock } from '@strands-agents/sdk';
 import type { AgentStreamEvent, ImageBlock, InterventionHandler, McpClient, Model, SessionManager } from '@strands-agents/sdk';
 import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request';
@@ -869,9 +869,13 @@ export class AgentRuntime {
     });
     if (cloudMemory?.uploadObserver !== undefined) {
       const observer = cloudMemory.uploadObserver;
+      agent.addHook(BeforeToolsEvent, event => observer.batch(event), { order: HookOrder.SDK_LAST });
       agent.addHook(BeforeToolCallEvent, event => observer.before(event), { order: HookOrder.SDK_LAST });
-      // After hooks reverse registration order; explicit priority precedes offload.
+      // Pre-after-hook execution evidence, not necessarily final model-visible output.
       agent.addHook(AfterToolCallEvent, event => observer.after(event), { order: HookOrder.SDK_FIRST });
+      // Batch cancellation, executor failure and background acknowledgement may
+      // have no AfterToolCallEvent. Never overwrite an original snapshot.
+      agent.addHook(ToolResultEvent, event => observer.fallback(event), { order: HookOrder.SDK_LAST });
     }
     toolForName = (name) => agent.tools.find((candidate) => candidate.name === name);
     installMaxTokensRecovery(agent);
