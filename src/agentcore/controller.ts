@@ -27,6 +27,7 @@ export class CloudMemory {
   problem: string | undefined;
   private chain: Promise<void> = Promise.resolve();
   private pendingJobs = 0;
+  droppedTurns = 0;
   private readonly projectionAbort: AbortController | undefined;
   private closed = false;
   private management = new Map<AbortController, Promise<CloudCommandResult>>();
@@ -38,15 +39,16 @@ export class CloudMemory {
     this.uploadObserver = config.upload === 'manual' ? new UploadObserver() : undefined;
     this.projectionAbort = this.uploadObserver === undefined ? undefined : new AbortController();
   }
-  status(): string { return `AgentCore: enabled · ${this.config.region} · actor ${this.config.actorId} · project ${this.scope.projectId} · upload ${this.config.upload}${this.uploadObserver?.droppedTurns ? ` (${this.uploadObserver.droppedTurns} turns omitted: collector queue full)` : ''} · ${this.approvedContext.length} cached preference candidates (local approval rechecked per request)${this.problem ? ` · degraded: ${this.problem}` : ''}${this.approvalsNeedingReview ? ` · ${this.approvalsNeedingReview} preference approval(s) require re-review: record or metadata hash changed; use /cloud-memory inspect <record-id>, then confirm the displayed hash` : ''}. Details: /cloud-memory${this.config.cliPath === undefined ? '' : ` · ${AGENTCORE_CLI_PATH_NOTICE}`}`; }
+  status(): string { return `AgentCore: enabled · ${this.config.region} · actor ${this.config.actorId} · project ${this.scope.projectId} · upload ${this.config.upload}${this.uploadObserver?.droppedTurns ? ` (${this.uploadObserver.droppedTurns} turns omitted: collector turn bound)` : ''}${this.droppedTurns ? ` (${this.droppedTurns} turns omitted: projection job queue full)` : ''}${this.uploadObserver?.droppedBackground ? ` (${this.uploadObserver.droppedBackground} background results omitted: capacity or cancellation)` : ''} · ${this.approvedContext.length} cached preference candidates (local approval rechecked per request)${this.problem ? ` · degraded: ${this.problem}` : ''}${this.approvalsNeedingReview ? ` · ${this.approvalsNeedingReview} preference approval(s) require re-review: record or metadata hash changed; use /cloud-memory inspect <record-id>, then confirm the displayed hash` : ''}. Details: /cloud-memory${this.config.cliPath === undefined ? '' : ` · ${AGENTCORE_CLI_PATH_NOTICE}`}`; }
   cancelGeneration = 0;
   cancel(): void {
     this.cancelGeneration++;
+    this.uploadObserver?.cancel();
     for (const controller of this.management.keys()) controller.abort(cancelledManagement());
     this.transport.cancel();
   }
   async close(): Promise<void> {
-    this.closed = true; this.uploadObserver?.clear(); this.cancel(); this.transport.destroy();
+    this.closed = true; this.uploadObserver?.close(); this.cancel(); this.transport.destroy();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -121,7 +123,7 @@ export class CloudMemory {
   settle(settlement: TurnSettlement): void {
     const projection = this.uploadObserver?.take(settlement.turn);
     if (this.closed || !settlement.durable || projection === undefined) return;
-    if (this.pendingJobs >= 8) { this.problem = 'Upload projection queue full; turn omitted'; return; }
+    if (this.pendingJobs >= 8) { this.droppedTurns++; this.problem = 'Upload projection queue full; turn omitted'; return; }
     this.pendingJobs++;
     this.chain = this.chain.then(() => withStateLock(this.outbox(), async () => {
       const names = await stateNames(this.outbox());

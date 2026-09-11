@@ -17,7 +17,51 @@ Only isolated HOME fixtures, public SDK events/runtime and signed loopback HTTP 
 | U9 | Legacy immutable body/hash/token/proofs readable unchanged; OTHER-only refusal; order/reservations/retries/cancel/idempotency unchanged | Existing and expanded AgentCore suite |
 | U10 | English/Chinese READMEs, narrative/reference/configuration and architecture agree; AGENTS <32768 bytes; full gates then commit/build | Targeted documentation scan, pnpm test, pnpm typecheck, pnpm build |
 
-## Host acceptance corrections after e947ff7
+## Second Host acceptance corrections after 1e77608
+
+The preceding acceptance did not cover A–F. This pass keeps the same repository-only
+scope and setup-skill policy; no immutable entry is migrated, no cloud request or
+new wake/upload channel is introduced.
+
+| Gap | Correction and regression proof |
+| --- | --- |
+| A: exhausted surrogate ranges | Shared linear codepoint clipping; empty ranges stay empty, only genuine high/low pairs move boundaries. Zero-budget original and shrink fixtures include lone surrogates, exact offsets and bounded elapsed work. |
+| B: generic media filtering | `type: image/audio` business JSON remains exact; actual SDK media source and MCP data+mimeType shapes plus binary views remain excluded. |
+| C: evicted pending status | Ledger keeps bounded summary correlation; status, exitCode and failure update, failed result text can recover a body with explicit missing input. Both completion orders, duplicate fallback and summary eviction counters are tested; summaries include invocationScope. |
+| D: background final results | Ack is separate, never final success. Original hook-time completion updates an open origin; after seal, bounded original evidence is consumed once by existing ordinary parent forwarding, with original turn/ordinal/invocation reference. Actual runtime tests cover wait-in-turn, between turns, during next turn, cancel/shutdown, duplicate hook/forward/result, transformed downstream report, no idle candidate, no synthetic USER and immutable old body. |
+| E: detached queue losses | Ten immediate settlements retain eight jobs and count exactly two omitted turns, separate from the collector-turn bound. |
+| F: authorization/lifecycle | Previously sendable v1 USER/TOOL fixture starts with exact old body/hash/token and existing preview proof; read-only preview and signed-loopback send preserve them. Failure/nondurable/early-return/prestream checks assert release before shutdown and next-turn isolation; actual post-initialize failure verifies cloud ownership in startup unwind. |
+
+Background state retains at most 64 copied origin identities, 16 result bodies of at most
+8 KiB, and weak state/event identity keys (no child/Agent/event graph retained). Pending
+correlation/capacity/cancellation losses are explicit; no background body can cause idle
+publication. The next receiving turn still needs ordinary durable settlement and manual
+preview/send. An absent next turn cannot upload the result. Unrelated/ambiguous identities
+remain refused. SDK synthetic completion history is never traversed or hydrated.
+
+### Second-pass verification results
+
+- Source-stable upload focus: **120 passed, 0 failed**, `/tmp/darwin-upload-second-final-focus.log`.
+- Affected AgentCore suite: **263 passed, 0 failed**, `/tmp/darwin-upload-second-memory.log`;
+  includes sendable v1 pre-existing authorization and unchanged signed-loopback payload.
+- Source-stable typecheck: exit 0, `/tmp/darwin-upload-second-final-typecheck.log`.
+- An intermediate typecheck caught a test assigning SDK readonly `status`; the fixture now
+  constructs a new ToolResultBlock through the supported mutable event.result seam.
+- The single source-stable `pnpm test` invocation stopped at AgentCore with **6,052 PASS
+  lines and two failed ordering assertions**, `/tmp/darwin-upload-second-full-test.log`.
+  The fixture reused one state across turns and selected the cancelled turn by substring
+  across the whole preview (including missing-result text). It now uses per-turn SDK state
+  and parsed outcome. Production source was not changed. Only the affected suite/typecheck
+  and the never-reached fail-fast tail ran afterward; no second full gate.
+- Repaired affected suite: **263 passed, 0 failed**, `/tmp/darwin-upload-second-memory-repair.log`;
+  final typecheck also exits 0. The 17 never-reached suites all exit 0, **722 PASS lines,
+  zero FAIL**, `/tmp/darwin-upload-second-gate-tail.log`. Thus every gate suite has a passing
+  result on the final production source, but the original monolithic invocation did fail.
+- Final `git diff --check` is clean. Post-commit build result is reported in the handoff.
+- Setup skill and Host-owned iteration log unchanged. No actual outbox/config/cloud access,
+  dependency changes, autonomous Darwin launch, developer skill or push.
+
+## Host acceptance corrections after e947ff7 (historical)
 
 The initial green suites below did not cover the Host's six reproductions. These
 corrections change repository projection/hooks/docs only; immutable private entries,

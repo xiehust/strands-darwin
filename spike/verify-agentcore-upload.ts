@@ -1,7 +1,7 @@
 /** Upload v2: original public SDK data, bounded bytes, lifecycle and real runtime.
  * Offline only, isolated HOME. No archive hydration or cloud requests. */
 process.env['DARWIN_MODEL_PRICES_FETCH'] = 'off';
-import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, stat, open } from 'node:fs/promises';
 import path from 'node:path';
 import { Agent, Model, ModelError, BeforeToolCallEvent, AfterToolCallEvent, BeforeToolsEvent, ToolResultEvent, HookOrder, ExecuteToolStage, ToolUseBlock, ToolResultBlock, TextBlock, JsonBlock, ImageBlock, tool, type BaseModelConfig, Message, type ModelStreamEvent } from '@strands-agents/sdk';
 import { z } from 'zod';
@@ -9,7 +9,7 @@ import { capture, sliceText, UploadTurn, UploadObserver, uploadBody, MAX_ACTION_
 import { CloudMemory } from '../src/agentcore/controller.js';
 import { parseAgentCoreConfig, digest } from '../src/agentcore/config.js';
 import { cloudDirectory, readState, setCloudStateObserverForTest } from '../src/agentcore/state.js';
-import { AgentRuntime, setRuntimeModelFactoryForTest, setRuntimeRecorderOverridesForTest } from '../src/agent/runtime.js';
+import { AgentRuntime, setRuntimeModelFactoryForTest, setRuntimeRecorderOverridesForTest, setRuntimeCreateCheckpointForTest } from '../src/agent/runtime.js';
 import { trajectoryPath } from '../src/agent/session.js';
 import { configPath } from '../src/config.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
@@ -122,6 +122,78 @@ fallbackObserver.begin(2, 'new'); fallbackObserver.before(newPair[0]); fallbackO
 const freshTurn = fallbackObserver.take(2)!;
 assert('late public fallback/background result cannot touch new turn or prior candidate', JSON.stringify(bodyOf(frozenTurn)) === frozen && freshTurn.unmatchedResults === 2 && 'missing' in freshTurn.actions[0]!.result);
 
+header('Second Host regressions: exhausted ranges, business JSON and evicted results');
+for (const text of ['\udc00' + 'x'.repeat(40000), '\ud800' + 'x'.repeat(40000), '\udc00😀' + '中'.repeat(40000), '']) {
+  const start = performance.now();
+  const cut = sliceText(text, 0);
+  const shrunk = capture(text, 0);
+  const loss = shrunk.losses.find(l => l.text)?.text;
+  assert('zero-budget original/shrink paths have exact nonnegative empty ranges', JSON.stringify(cut.ranges) === JSON.stringify(text ? [[0, 0], [text.length, text.length]] : [[0, 0]]) && cut.parts.every(p => p === '') && (!text || JSON.stringify(loss?.ranges) === JSON.stringify([[0, 0], [text.length, text.length]])));
+  assert('exhausted lone-surrogate work bounded (no whole-source shrinking loop)', performance.now() - start < 100);
+}
+for (const type of ['image', 'audio', 'imageBlock']) {
+  const metadata = { type, description: 'ordinary metadata', query: 'logo' };
+  assert(`generic ${type} business JSON retained verbatim`, JSON.stringify(capture(metadata).content) === JSON.stringify(metadata));
+}
+for (const media of [{ type: 'image', mimeType: 'image/png', data: 'MEDIA-PAYLOAD' }, { type: 'audio', mimeType: 'audio/wav', data: 'MEDIA-PAYLOAD' }, new ImageBlock({ format: 'png', source: { bytes: Buffer.from('MEDIA-PAYLOAD') } })]) {
+  assert('actual MCP/SDK media payload excluded', !JSON.stringify(capture(media)).includes('MEDIA-PAYLOAD') && capture(media).losses.length > 0);
+}
+for (const failureFirst of [false, true]) {
+  const evicted = new UploadTurn(1, 'eviction');
+  const pairs = Array.from({ length: 65 }, (_, i) => events(String(i), {}, [new JsonBlock({ json: { exitCode: i === 0 ? 7 : 0, output: i === 0 ? 'EVICTED FAILURE' : 'ok' } })]));
+  pairs[0]![1].result = new ToolResultBlock({ toolUseId: '0', status: 'error', content: pairs[0]![1].result.content });
+  for (const pair of pairs) evicted.before(pair[0]);
+  for (const pair of failureFirst ? pairs : [...pairs.slice(1), pairs[0]!]) {
+    evicted.after(pair[1]); evicted.fallback(new ToolResultEvent({ agent, invocationState: state, result: pair[1].result }));
+  }
+  const recovered = evicted.actions.find(a => a.invocation === '0');
+  assert(`evicted pending failure recovered (${failureFirst ? 'first' : 'last'}) with exact status and no duplicate fallback`, recovered?.failed === true && 'status' in recovered.result && recovered.result.status === 'error' && recovered.result.exitCode === 7 && JSON.stringify(recovered).includes('EVICTED FAILURE') && evicted.unmatchedResults === 0 && evicted.actions.length === 64 && evicted.summaries.every(s => s.invocationScope > 0 && s.status === 'success'));
+}
+const summaryLoss = new UploadTurn(1, 'summary capacity');
+const lossPairs = Array.from({ length: 180 }, (_, i) => events(String(i), {}));
+for (const pair of lossPairs) summaryLoss.before(pair[0]);
+for (const pair of lossPairs) { summaryLoss.after(pair[1]); summaryLoss.fallback(new ToolResultEvent({ agent, invocationState: state, result: pair[1].result })); }
+assert('results after summary eviction counted once, retained summaries never falsely unobserved', summaryLoss.resultsWithoutSummary === 20 && summaryLoss.unmatchedResults === 0 && summaryLoss.summaries.length === 96 && summaryLoss.summaries.every(s => s.status === 'success'));
+
+header('Bounded background origins, idle body buffer and races');
+function acknowledge(observer: UploadObserver, before: BeforeToolCallEvent) {
+  observer.fallback(new ToolResultEvent({ agent, invocationState: before.invocationState, result: new ToolResultBlock({ toolUseId: before.toolUse.toolUseId, status: 'success', content: [new TextBlock('Background task dispatched.\n\nTask ID: synthetic-task\nTool: subagent')] }) }));
+}
+const idle = new UploadObserver(); idle.begin(1, 'idle bound');
+const idlePairs = Array.from({ length: 66 }, (_, i) => events(`bg-${i}`, {}, [new TextBlock('LATE ' + 'x'.repeat(10000))], 'subagent', {}));
+for (const pair of idlePairs) { idle.before(pair[0]); acknowledge(idle, pair[0]); }
+const idleOld = idle.take(1)!; const idleOldBody = JSON.stringify(bodyOf(idleOld));
+assert('outstanding background origins capped at 64, excess explicitly counted', idle.pendingBackground === 64 && idle.droppedBackground === 2);
+for (const pair of idlePairs) idle.after(pair[1]);
+assert('idle background original bodies capped at 16, capacity loss counted', idle.pendingBackground === 16 && idle.droppedBackground === 50);
+idle.begin(2, '');
+for (const pair of idlePairs) { idle.forwarded(pair[1]); idle.forwarded(pair[1]); idle.after(pair[1]); }
+const idleNext = idle.take(2)!;
+assert('bounded forwarding preserves original references once without USER goal or old mutation', idleNext.actions.length === 16 && idleNext.actions.every(a => a.original?.turn === 1 && Buffer.byteLength(JSON.stringify(a)) <= MAX_ACTION_BYTES) && bodyOf(idleNext).payload.every(p => p.conversational.role !== 'USER') && JSON.stringify(bodyOf(idleOld)) === idleOldBody && idle.pendingBackground === 0);
+idle.close();
+const fast = new UploadObserver(); fast.begin(1, 'completion before acknowledgement');
+const fastPair = events('fast', { text: 'i'.repeat(6000) }, [new TextBlock('\udc00' + 'r'.repeat(12000))], 'subagent', {});
+fast.before(fastPair[0]); fast.after(fastPair[1]); acknowledge(fast, fastPair[0]); acknowledge(fast, fastPair[0]);
+const fastAction = fast.take(1)!.actions[0]!;
+assert('completion preceding ack retains both under serialized cap with exact source ranges', fastAction.acknowledgement?.status === 'acknowledged' && 'status' in fastAction.result && fastAction.result.status === 'success' && Buffer.byteLength(JSON.stringify(fastAction)) <= MAX_ACTION_BYTES && fastAction.result.content.losses.every(l => !l.text || l.text.ranges.every(([start, end]) => start >= 0 && start <= end && end <= 12001)) && fast.pendingBackground === 0);
+const reuseBackground = new UploadObserver(); reuseBackground.begin(1, 'reuse');
+const reusePair = events('reuse-bg', {}, undefined, 'subagent', {});
+reuseBackground.before(reusePair[0]); acknowledge(reuseBackground, reusePair[0]); reuseBackground.before(reusePair[0]); reuseBackground.take(1);
+reuseBackground.after(reusePair[1]); reuseBackground.begin(2, 'successor'); reuseBackground.forwarded(reusePair[1]);
+assert('same-state retry drops ambiguous outstanding background origin instead of misattributing later report', reuseBackground.take(2)!.actions.length === 0 && reuseBackground.droppedBackground === 1 && reuseBackground.pendingBackground === 0);
+
+const cancelActive = new UploadObserver(); cancelActive.begin(1, 'cancel active');
+const cancelBg = events('cancel-bg', {}, undefined, 'subagent', {}); const cancelFg = events('cancel-fg', {}, undefined, 'bash', cancelBg[0].invocationState);
+cancelActive.before(cancelBg[0]); acknowledge(cancelActive, cancelBg[0]); cancelActive.before(cancelFg[0]); cancelActive.cancel();
+cancelActive.after(cancelBg[1]); cancelActive.after(cancelFg[1]);
+const cancelTurn = cancelActive.take(1)!;
+assert('cancelled active background cannot resurrect while ordinary foreground cancellation evidence stays eligible', 'missing' in cancelTurn.actions[0]!.result && 'status' in cancelTurn.actions[1]!.result && cancelTurn.backgroundResultsDropped === 1 && cancelActive.pendingBackground === 0);
+const refusedForward = new UploadObserver(); refusedForward.begin(1, 'origin'); refusedForward.before(cancelBg[0]); acknowledge(refusedForward, cancelBg[0]); refusedForward.take(1); refusedForward.after(cancelBg[1]);
+for (let i = 2; i < 10; i++) refusedForward.begin(i, 'queued');
+refusedForward.begin(10, 'refused'); refusedForward.forwarded(cancelBg[1]);
+assert('forwarding into refused collector turn counts drop and releases idle body', refusedForward.droppedTurns === 1 && refusedForward.droppedBackground === 1 && refusedForward.pendingBackground === 0);
+refusedForward.clear();
+
 header('UTF-8, escaping, traversal and capacity');
 for (const text of ['😀中\u0000\n\\"'.repeat(10000), 'a'.repeat(300000) + 'TAIL', '\ud800raw\udfff']) {
   const cut = sliceText(text, 1000);
@@ -183,7 +255,7 @@ for (let i = 1; i <= 10; i++) {
   saturated.uploadObserver!.begin(i, `queued ${i}`);
   saturated.settle({ ...settlement, session: 'saturated', turn: i, seq: i });
 }
-assert('detached queue refuses excess without retaining collector state', saturated.problem?.includes('queue full') === true && saturated.uploadObserver!.retainedTurns === 0);
+assert('detached queue refuses excess without retaining collector state and counts two omitted turns', saturated.problem?.includes('queue full') === true && saturated.uploadObserver!.retainedTurns === 0 && saturated.droppedTurns === 2 && saturated.uploadObserver!.droppedTurns === 0 && saturated.status().includes('2 turns omitted: projection job queue full'));
 await saturated.command('pending'); await saturated.close();
 const throwingInput = new Proxy({}, { ownKeys() { throw new Error('untrusted accessor'); } });
 lateObserver.begin(3, 'goal'); lateObserver.before(events('bad', throwingInput)[0]);
@@ -207,19 +279,21 @@ header('Actual runtime captures original source before trajectory and offloader'
 class UploadModel extends Model<BaseModelConfig> {
   private config: BaseModelConfig = { modelId: 'offline-upload', contextWindowLimit: 2000000 };
   calls = 0;
-  constructor(readonly count = 1, readonly failure?: Error) { super(); }
+  beforeCall: ((index: number) => Promise<void>) | undefined;
+  constructor(readonly count = 1, readonly failure?: Error, readonly toolName = 'arbitrary_upload_mcp') { super(); }
   updateConfig(value: BaseModelConfig) { this.config = { ...this.config, ...value }; }
   getConfig() { return this.config; }
   async *stream(_messages: Message[]): AsyncIterable<ModelStreamEvent> {
     const index = this.calls++;
+    await this.beforeCall?.(index);
     if (index === this.count && this.failure) throw this.failure;
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     if (index < this.count) {
       yield { type: 'modelContentBlockStartEvent' };
       yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'ASSISTANT-PRIVATE-MARKER' + 'a'.repeat(9000) } };
       yield { type: 'modelContentBlockStopEvent' };
-      yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name: 'arbitrary_upload_mcp', toolUseId: `runtime-${index}` } };
-      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify({ command: '/secret/path\npassword token', index }) } };
+      yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name: this.toolName, toolUseId: `runtime-${index}` } };
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify({ command: '/secret/path\npassword token', index, ...(this.toolName === 'subagent' ? { _background_execution: true } : {}) }) } };
       yield { type: 'modelContentBlockStopEvent' }; yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' };
     } else {
       yield { type: 'modelContentBlockStartEvent' };
@@ -228,11 +302,11 @@ class UploadModel extends Model<BaseModelConfig> {
     }
   }
 }
-async function createRuntime(offload: boolean, model: UploadModel, upload: 'manual' | 'off' = 'manual') {
+async function createRuntime(offload: boolean, model: UploadModel, upload: 'manual' | 'off' = 'manual', backgroundCompletionWakes = false) {
   await mkdir(path.dirname(configPath(root)), { recursive: true });
   await writeFile(configPath(root), JSON.stringify({ provider: 'bedrock', model: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', trajectory: true, memory: false, promptCache: false, contextOffload: offload, agentCoreMemory: { ...config, upload } }));
   setRuntimeModelFactoryForTest(async () => model);
-  const runtime = await AgentRuntime.create({ projectRoot: root, session: { kind: 'new' }, permissionModeOverride: 'yolo', permissionBridge: async () => ({ allowed: true }) });
+  const runtime = await AgentRuntime.create({ projectRoot: root, session: { kind: 'new' }, backgroundCompletionWakes, permissionModeOverride: 'yolo', permissionBridge: async () => ({ allowed: true }) });
   const sdk = (runtime as unknown as { agent: Agent }).agent;
   sdk.toolRegistry.add(tool({ name: 'arbitrary_upload_mcp', description: 'Synthetic original source', inputSchema: z.object({ command: z.string(), index: z.number() }), callback: ({ index }) => 'original '.repeat(6000) + `ORIGINAL-LATE-TAIL-${index}` }));
   return runtime;
@@ -279,8 +353,74 @@ backgroundObserver.begin(2, 'successor'); finishBackground();
 await backgroundCompleted;
 for await (const _event of backgroundAgent.stream('drain background completion')) {}
 const successor = backgroundObserver.take(2)!;
-assert('background completion never mutates closed candidate or fabricates successor action', JSON.stringify(bodyOf(ackTurn)) === ackBody && successor.actions.length === 0 && successor.unmatchedResults === 1);
+assert('hook-only background result waits for parent forwarding, never mutates prior candidate', JSON.stringify(bodyOf(ackTurn)) === ackBody && successor.actions.length === 0 && successor.unmatchedResults === 0 && backgroundObserver.pendingBackground === 1);
 backgroundObserver.clear();
+
+header('Real runtime background completion and ordinary forwarding');
+async function settled(runtime: AgentRuntime): Promise<CloudMemory> {
+  // Wait on the real append chain without shutdown/clear masking observer leaks.
+  const internals = runtime as unknown as { trajectory: { chain: Promise<void> }; cloudMemory: CloudMemory };
+  await internals.trajectory.chain;
+  await internals.cloudMemory.command('pending');
+  return internals.cloudMemory;
+}
+async function candidates(runtime: AgentRuntime) {
+  const cloud = await settled(runtime); const result: { token: string; body: ReturnType<typeof bodyOf> }[] = [];
+  for (const row of (await cloud.command('pending')).split('\n')) {
+    const token = row.split(' ')[0]!;
+    if (!/^[a-f0-9]{64}$/.test(token)) continue;
+    const preview = await cloud.command(`preview ${token}`);
+    const body = JSON.parse(preview.split('\nRead-only preview:')[0]!) as ReturnType<typeof bodyOf>;
+    if (body.sessionId === runtime.info.sessionId) result.push({ token, body });
+  }
+  return result.sort((a, b) => JSON.parse(a.body.payload[0]!.conversational.content.text).turn - JSON.parse(b.body.payload[0]!.conversational.content.text).turn);
+}
+for (const timing of ['wait-in-turn', 'between', 'during-next', 'cancel', 'shutdown'] as const) {
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  let completed!: () => void; const done = new Promise<void>(resolve => { completed = resolve; });
+  const model = new UploadModel(1, undefined, 'subagent');
+  const runtime = await createRuntime(false, model, 'manual', timing !== 'wait-in-turn');
+  const sdk = (runtime as unknown as { agent: Agent }).agent;
+  const cloud = (runtime as unknown as { cloudMemory: CloudMemory }).cloudMemory;
+  sdk.toolRegistry.addOrReplace([tool({ name: 'subagent', description: 'Synthetic public parent background report; no child conversation', inputSchema: z.object({ command: z.string(), index: z.number() }), callback: async () => { await gate; return `ORIGINAL BACKGROUND ${timing}`; } })]);
+  let completionEvent: AfterToolCallEvent | undefined;
+  sdk.addHook(AfterToolCallEvent, event => { if (event.toolUse.name === 'subagent') { completionEvent = event; completed(); } });
+  if (timing === 'wait-in-turn') model.beforeCall = async index => { if (index === 1) release(); };
+  for await (const _event of runtime.send('original background goal')) {}
+  const prior = (await candidates(runtime))[0]!;
+  const frozen = JSON.stringify(prior.body);
+  if (timing === 'wait-in-turn') {
+    const action = actionsOf(prior.body)[0];
+    assert('runtime wait-in-turn preserves acknowledgement AND original final result exactly once', action.acknowledgement.status === 'acknowledged' && action.result.status === 'success' && JSON.stringify(action).includes('ORIGINAL BACKGROUND wait-in-turn') && actionsOf(prior.body).length === 1 && cloud.uploadObserver!.pendingBackground === 0);
+  } else {
+    const ack = actionsOf(prior.body)[0];
+    assert(`${timing}: acknowledgement is pending, never final tool success`, ack.acknowledgement.status === 'acknowledged' && ack.result.missing.includes('final result pending'));
+    if (timing === 'cancel') runtime.cancel();
+    if (timing === 'shutdown') await runtime.shutdown();
+    if (timing === 'between') sdk.addHook(AfterToolCallEvent, event => { event.result = new ToolResultBlock({ toolUseId: event.result.toolUseId, status: 'success', content: [new TextBlock('TRANSFORMED LATE REPORT')] }); });
+    if (timing === 'during-next') model.beforeCall = async () => { release(); await done; };
+    else { release(); await done; }
+    if (timing === 'between') assert('completion between turns creates no idle candidate', (await candidates(runtime)).length === 1);
+    if (timing !== 'shutdown') {
+      for await (const _event of runtime.send('next ordinary goal')) {}
+      const next = (await candidates(runtime))[1]!;
+      const late = actionsOf(next.body);
+      if (timing === 'cancel') assert('cancel drops pending correlation, late completion cannot resurrect it', late.length === 0 && cloud.uploadObserver!.pendingBackground === 0 && cloud.uploadObserver!.droppedBackground === 1);
+      else {
+        assert(`${timing}: forwarded original late result retained with original turn/invocation reference`, late.length === 1 && late[0].original.turn === 1 && late[0].original.invocation === 'runtime-0' && late[0].original.invocationScope === ack.invocationScope && JSON.stringify(late[0]).includes(`ORIGINAL BACKGROUND ${timing}`) && !JSON.stringify(late[0]).includes('TRANSFORMED LATE REPORT'));
+        assert(`${timing}: no synthetic USER and no idle upload; prior sealed body unchanged`, next.body.payload.filter(p => p.conversational.role === 'USER').map(p => p.conversational.content.text).join('') === 'next ordinary goal' && JSON.stringify((await candidates(runtime))[0]!.body) === frozen);
+        const observer = cloud.uploadObserver!; observer.begin(100, 'duplicate check');
+        observer.after(completionEvent!); observer.forwarded(completionEvent!); observer.forwarded(completionEvent!);
+        observer.fallback(new ToolResultEvent({ agent: sdk, invocationState: completionEvent!.invocationState, result: completionEvent!.result }));
+        assert(`${timing}: duplicate hook/forward/result never duplicates late record`, observer.take(100)!.actions.length === 0 && observer.pendingBackground === 0);
+      }
+    } else {
+      cloud.uploadObserver!.after(completionEvent!); cloud.uploadObserver!.begin(100, 'closed'); cloud.uploadObserver!.forwarded(completionEvent!);
+      assert('shutdown latches observer closed before actual late completion', cloud.uploadObserver!.retainedTurns === 0 && cloud.uploadObserver!.pendingBackground === 0);
+    }
+  }
+  await runtime.shutdown();
+}
 
 for (const offload of [false, true]) {
   const runtime = await createRuntime(offload, new UploadModel(80));
@@ -303,12 +443,19 @@ const sentinel = new ModelError('identical-original-error');
 const failing = await createRuntime(false, new UploadModel(1, sentinel));
 let caught: unknown; try { for await (const _event of failing.send('failure goal')) {} } catch (error) { caught = error; }
 assert('runtime failure rethrows identical error with collector enabled', caught === sentinel);
+const failureCloud = await settled(failing);
+assert('failure settlement releases collection BEFORE shutdown', failureCloud.uploadObserver!.retainedTurns === 0);
+for await (const _event of failing.send('after failure isolated')) {}
+assert('next turn after failure is isolated before shutdown', actionsOf((await candidates(failing)).at(-1)!.body).length === 0 && failureCloud.uploadObserver!.retainedTurns === 0);
 await failing.shutdown();
 const abandoned = await createRuntime(false, new UploadModel());
 for await (const event of abandoned.send('early return')) { if (event.type === 'beforeToolCallEvent') break; }
 const abandonedCloud = (abandoned as unknown as { cloudMemory: CloudMemory }).cloudMemory;
+await settled(abandoned);
+assert('early stream return releases transient state BEFORE shutdown', abandonedCloud.uploadObserver!.retainedTurns === 0);
+for await (const _event of abandoned.send('after early return isolated')) {}
+assert('next turn after early return is isolated', actionsOf((await candidates(abandoned)).at(-1)!.body).length === 0);
 await abandoned.shutdown();
-assert('early stream return shuts down without hanging or retaining transient state', abandonedCloud.uploadObserver!.retainedTurns === 0);
 const disabled = await createRuntime(false, new UploadModel(), 'off');
 assert('upload off has no observer instance/state', (disabled as unknown as { cloudMemory: CloudMemory }).cloudMemory.uploadObserver === undefined);
 for await (const _event of disabled.send('disabled')) {} await disabled.shutdown();
@@ -316,9 +463,37 @@ setRuntimeRecorderOverridesForTest({ openFile: async () => { throw new Error('Sy
 const nondurable = await createRuntime(false, new UploadModel());
 for await (const _event of nondurable.send('nondurable')) {}
 const controller = (nondurable as unknown as { cloudMemory: CloudMemory }).cloudMemory;
+await settled(nondurable);
+assert('nondurable trajectory releases transient collector BEFORE shutdown', controller.uploadObserver!.retainedTurns === 0);
+for await (const _event of nondurable.send('nondurable next isolated')) {}
+assert('next nondurable turn cannot retain old collection', controller.uploadObserver!.retainedTurns === 0);
 await nondurable.shutdown();
-assert('failed trajectory settlement and shutdown release transient collector', controller.uploadObserver!.retainedTurns === 0);
-setRuntimeRecorderOverridesForTest(undefined); setRuntimeModelFactoryForTest(undefined);
+setRuntimeRecorderOverridesForTest(undefined);
+let prestreamCloud: CloudMemory | undefined; let cancelInput = true;
+setRuntimeRecorderOverridesForTest({ openFile: async (...args) => {
+  if (cancelInput && prestreamCloud) { cancelInput = false; prestreamCloud.cancel(); }
+  return open(...args);
+} });
+const prestreamModel = new UploadModel(0);
+const prestream = await createRuntime(false, prestreamModel);
+prestreamCloud = (prestream as unknown as { cloudMemory: CloudMemory }).cloudMemory;
+let prestreamError: unknown;
+try { for await (const _event of prestream.send('cancel before stream')) {} } catch (error) { prestreamError = error; }
+assert('prestream abort releases state BEFORE shutdown without invoking model', prestreamError instanceof Error && prestreamModel.calls === 0 && prestreamCloud.uploadObserver!.retainedTurns === 0);
+for await (const _event of prestream.send('after prestream isolated')) {}
+assert('next turn after prestream abort isolated', actionsOf((await candidates(prestream)).at(-1)!.body).length === 0 && prestreamCloud.uploadObserver!.retainedTurns === 0);
+await prestream.shutdown(); setRuntimeRecorderOverridesForTest(undefined);
+const unwindError = new Error('synthetic setup failure after cloud creation');
+const originalUnwind = AgentRuntime.unwindCreate;
+let unwoundCloud: CloudMemory | undefined;
+AgentRuntime.unwindCreate = async (...args) => { unwoundCloud = args[6]; await originalUnwind(...args); };
+setRuntimeCreateCheckpointForTest(() => { throw unwindError; });
+let startupError: unknown;
+try { await createRuntime(false, new UploadModel(0)); } catch (error) { startupError = error; }
+finally { AgentRuntime.unwindCreate = originalUnwind; setRuntimeCreateCheckpointForTest(undefined); }
+unwoundCloud?.uploadObserver?.begin(1, 'must remain closed');
+assert('actual startup unwind owns/closes cloud observer after later setup failure', startupError === unwindError && unwoundCloud !== undefined && unwoundCloud.uploadObserver!.retainedTurns === 0 && unwoundCloud.uploadObserver!.pendingBackground === 0);
+setRuntimeModelFactoryForTest(undefined);
 
 
 report();

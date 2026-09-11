@@ -22,21 +22,30 @@ export interface TextSlice {
 }
 /** Never encode an unbounded source. Offsets are explicit UTF-16 boundaries, never
  * split a surrogate pair; retained byte counts refer to UTF-8, not JSON escaping. */
+function clipText(text: string, start: number, end: number, cap: number, tail = false) {
+  const split = (at: number) => at > 0 && at < text.length && /[\uD800-\uDBFF]/.test(text[at - 1]!) && /[\uDC00-\uDFFF]/.test(text[at]!);
+  // Empty ranges must remain empty, including at a lone low surrogate.
+  if (start < end) {
+    if (split(start)) start++;
+    if (split(end)) end--;
+  }
+  let retained = 0; let cursor = tail ? end : start;
+  // Visit at most cap + one codepoint, not repeated whole-prefix encodings.
+  while (tail ? cursor > start : cursor < end) {
+    const width = tail ? (split(cursor - 1) ? 2 : 1) : ((text.codePointAt(cursor) ?? 0) > 0xffff ? 2 : 1);
+    const point = tail ? text.codePointAt(cursor - width)! : text.codePointAt(cursor)!;
+    const size = point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
+    if (retained + size > cap) break;
+    retained += size; cursor += tail ? -width : width;
+  }
+  if (tail) start = cursor; else end = cursor;
+  // Copy bounded bytes without replacing lone surrogates or retaining source backing.
+  return { text: JSON.parse(JSON.stringify(text.slice(start, end))) as string, range: [start, end] as [number, number] };
+}
 export function sliceText(text: string, limit: number): TextSlice {
   const known = text.length <= MAX_SCAN_UNITS;
   const originalBytes = known ? Buffer.byteLength(text) : null;
-  const take = (start: number, end: number, cap: number, tail = false) => {
-    if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start]!)) start++;
-    if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end]!)) end--;
-    let value = text.slice(start, end);
-    while (Buffer.byteLength(value) > cap) {
-      if (tail) start += (text.codePointAt(start) ?? 0) > 0xffff ? 2 : 1;
-      else end -= end > 1 && /[\uDC00-\uDFFF]/.test(text[end - 1]!) && /[\uD800-\uDBFF]/.test(text[end - 2]!) ? 2 : 1;
-      value = text.slice(start, end);
-    }
-    // Copy bounded bytes so a slice cannot keep a huge backing source alive.
-    return { text: JSON.parse(JSON.stringify(value)) as string, range: [start, end] as [number, number] };
-  };
+  const take = (start: number, end: number, cap: number, tail = false) => clipText(text, start, end, cap, tail);
   const full = originalBytes !== null && originalBytes <= limit;
   const head = full ? take(0, text.length, limit) : take(0, Math.min(text.length, Math.floor(limit / 3)), Math.floor(limit / 3));
   const tail = full ? undefined : take(Math.max(head.range[1], text.length - (limit - Math.floor(limit / 3))), text.length, limit - Math.floor(limit / 3), true);
@@ -72,7 +81,10 @@ function snapshot(value: unknown): Snapshot {
     if (typeof item === 'string') return { text: sliceText(item, MAX_ACTION_BYTES) };
     if (item === null || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) return { scalar: item };
     if (typeof item !== 'object' || ArrayBuffer.isView(item) || item instanceof ArrayBuffer) return omitted('Binary or non-JSON value omitted');
-    if (['imageBlock', 'audioBlock', 'videoBlock', 'documentBlock', 'image', 'audio'].includes(own(item, 'type') as string)) return omitted('Structured media payload omitted');
+    const kind = own(item, 'type');
+    const sdkMedia = ['imageBlock', 'audioBlock', 'videoBlock', 'documentBlock'].includes(kind as string) && own(item, 'source') !== undefined;
+    const mcpMedia = (kind === 'image' || kind === 'audio') && typeof own(item, 'data') === 'string' && typeof own(item, 'mimeType') === 'string';
+    if (sdkMedia || mcpMedia) return omitted('Structured media payload omitted');
     const array = Array.isArray(item);
     const length = array ? own(item, 'length') as number : undefined;
     const keys: string[] = []; const losses: Loss[] = [];
@@ -128,17 +140,8 @@ function shrinkText(source: TextSlice, limit: number): TextSlice {
   const parts: string[] = []; const ranges: [number, number][] = [];
   const headBudget = Math.floor(limit / 3);
   const first = source.parts[0]!; const last = source.parts.at(-1)!;
-  const clip = (text: string, cap: number, tail: boolean) => {
-    let start = tail ? Math.max(0, text.length - cap) : 0;
-    let end = tail ? text.length : Math.min(text.length, cap);
-    if (start > 0 && /[\uDC00-\uDFFF]/.test(text[start]!)) start++;
-    if (end < text.length && /[\uDC00-\uDFFF]/.test(text[end]!)) end--;
-    while (Buffer.byteLength(text.slice(start, end)) > cap) {
-      if (tail) start += (text.codePointAt(start) ?? 0) > 0xffff ? 2 : 1;
-      else end -= end > 1 && /[\uDC00-\uDFFF]/.test(text[end - 1]!) && /[\uD800-\uDBFF]/.test(text[end - 2]!) ? 2 : 1;
-    }
-    return JSON.parse(JSON.stringify(text.slice(start, end))) as string;
-  };
+  const clip = (text: string, cap: number, tail: boolean) => clipText(text,
+    tail ? Math.max(0, text.length - cap) : 0, tail ? text.length : Math.min(text.length, cap), cap, tail).text;
   const head = clip(first, headBudget, false);
   const tail = clip(last, limit - headBudget, true);
   parts.push(head, tail);
@@ -185,11 +188,14 @@ export function capture(value: unknown, budget = MAX_ACTION_BYTES - 1): Captured
   return fit(snapshot(value), budget);
 }
 
-type Action = { ordinal: number; invocation: string; invocationScope: number; attempt: number; tool: string; inputSource: string; input: Captured; result: { status: string; evidence: string; exitCode?: number; content: Captured } | { missing: string }; failed: boolean; recovery: boolean; sourceLoss: string[] };
-type Summary = Pick<Action, 'ordinal' | 'invocation' | 'tool' | 'failed' | 'recovery'> & { status: string; exitCode?: number; bodyOmitted: true };
+type Result = { status: string; evidence: string; exitCode?: number; content: Captured };
+type Origin = { turn: number; ordinal: number; invocation: string; invocationScope: number; tool: string };
+type Action = { ordinal: number; invocation: string; invocationScope: number; attempt: number; tool: string; inputSource: string; input: Captured; result: Result | { missing: string }; acknowledgement?: Result; original?: Origin; failed: boolean; recovery: boolean; sourceLoss: string[] };
+type Summary = Pick<Action, 'ordinal' | 'invocation' | 'invocationScope' | 'tool' | 'failed' | 'recovery' | 'original'> & { status: string; exitCode?: number; bodyOmitted: true };
+type Call = { action?: Action; summary?: Summary; attempt: number; started: boolean; ambiguous: boolean; observed?: boolean; acknowledged?: boolean };
 function summary(action: Action): Summary {
-  return { ordinal: action.ordinal, invocation: action.invocation, tool: action.tool, failed: action.failed, recovery: action.recovery, status: 'status' in action.result ? action.result.status : action.result.missing,
-    ...('exitCode' in action.result ? { exitCode: action.result.exitCode } : {}), bodyOmitted: true };
+  return { ordinal: action.ordinal, invocation: action.invocation, invocationScope: action.invocationScope, tool: action.tool, failed: action.failed, recovery: action.recovery, status: 'status' in action.result ? action.result.status : action.result.missing,
+    ...('exitCode' in action.result ? { exitCode: action.result.exitCode } : {}), ...(action.original ? { original: action.original } : {}), bodyOmitted: true };
 }
 function priority(action: Action | Summary): number { return action.failed || action.recovery ? 1 : 0; }
 function comparePriority(a: Action | Summary, b: Action | Summary): number { return priority(a) - priority(b) || a.ordinal - b.ordinal; }
@@ -220,12 +226,15 @@ export class UploadTurn {
   readonly pending = new Map<string, Action>();
   private scopes = new WeakMap<object, number>();
   private scopeCount = 0;
-  private calls = new Map<string, { action?: Action; attempt: number; started: boolean; ambiguous: boolean }>();
+  private calls = new Map<string, Call>();
   private inputs = new WeakMap<Action, Snapshot>();
+  private outputs = new WeakMap<Action, Snapshot>();
   totalActions = 0;
   internalEvents = 0;
   batchEntriesOmitted = 0;
   unmatchedResults = 0;
+  resultsWithoutSummary = 0;
+  backgroundResultsDropped = 0;
   aggregatedActions = 0;
   observerErrors = 0;
   private lastFailed = false;
@@ -248,8 +257,16 @@ export class UploadTurn {
   }
   constructor(readonly turn: number, goal: string) { this.goal = sliceText(goal, 8192); }
   private omit(action: Action) {
-    this.summaries.push(summary(action));
-    if (this.summaries.length > MAX_SUMMARIES) { this.summaries.shift(); this.aggregatedActions++; }
+    const value = summary(action);
+    this.summaries.push(value);
+    const record = this.calls.get(`${action.invocationScope}:${action.invocation}`);
+    if (record?.action === action) { delete record.action; record.summary = value; }
+    if (this.summaries.length > MAX_SUMMARIES) {
+      const evicted = this.summaries.shift()!;
+      const old = this.calls.get(`${evicted.invocationScope}:${evicted.invocation}`);
+      if (old?.summary === evicted) delete old.summary;
+      this.aggregatedActions++;
+    }
   }
   before(event: BeforeToolCallEvent): void { this.add(event.toolUse, event.invocationState, true); }
   private add(use: unknown, state: object, started: boolean): void {
@@ -275,6 +292,7 @@ export class UploadTurn {
       action.sourceLoss.push('SDK ID reused within invocation state; result attribution refused');
       action.result = { missing: 'Ambiguous reused SDK ID; result attribution refused' };
       if (prior.action && 'missing' in prior.action.result) prior.action.result.missing = 'Ambiguous reused SDK ID; result attribution refused';
+      if (prior.summary && !prior.observed) prior.summary.status = 'Ambiguous reused SDK ID; result attribution refused';
       this.pending.delete(key);
     }
     // Keep identity tombstones even for evicted actions. Once full, never forget
@@ -288,21 +306,22 @@ export class UploadTurn {
       this.calls.set(key, { action, attempt: action.attempt, started, ambiguous: !intent && prior !== undefined || prior?.ambiguous === true });
       if (!this.calls.get(key)!.ambiguous) this.pending.set(key, action);
     }
-    this.fitAction(action, input);
+    UploadTurn.fitAction(action, input);
     this.inputs.set(action, input);
     if (!intent) this.actions.push(action);
+    this.boundActions();
+  }
+  private boundActions(): void {
     if (this.actions.length > MAX_ACTIONS) {
       const candidates = this.actions.slice(0, -16);
       const victim = candidates.reduce((a, b) => comparePriority(a, b) < 0 ? a : b);
       this.actions.splice(this.actions.indexOf(victim), 1);
       const victimKey = `${victim.invocationScope}:${victim.invocation}`;
       if (this.pending.get(victimKey) === victim) this.pending.delete(victimKey);
-      const record = this.calls.get(victimKey);
-      if (record?.action === victim) delete record.action;
-      this.inputs.delete(victim); this.omit(victim);
+      this.inputs.delete(victim); this.outputs.delete(victim); this.omit(victim);
     }
   }
-  private fitAction(action: Action, input: Snapshot, result?: Snapshot): void {
+  private static fitAction(action: Action, input: Snapshot, result?: Snapshot): void {
     for (let i = 0; bytes(action) > MAX_ACTION_BYTES && i < 512; i++) {
       const source = result && 'content' in action.result && bytes(action.result.content) > bytes(action.input) ? result : input;
       if (!reduceSnapshot(source, bytes(action) - MAX_ACTION_BYTES)) break;
@@ -315,29 +334,75 @@ export class UploadTurn {
     }
   }
   after(event: AfterToolCallEvent): void { this.result(event.invocationState, event.result, 'pre-after-hook execution evidence; not necessarily final model-visible output'); }
-  fallback(event: ToolResultEvent): void { this.result(event.invocationState, event.result, 'observed public ToolResultEvent fallback; no pre-after-hook snapshot available'); }
-  private result(state: object, result: unknown, evidence: string): void {
+  fallback(event: ToolResultEvent): Origin | undefined {
+    return this.result(event.invocationState, event.result, 'observed public ToolResultEvent fallback; no pre-after-hook snapshot available', true);
+  }
+  private result(state: object, result: unknown, evidence: string, fallback = false): Origin | undefined {
     const id = own(result, 'toolUseId');
     const key = typeof id === 'string' ? this.key(state, id) : undefined;
     const record = key === undefined ? undefined : this.calls.get(key);
-    const action = record?.action;
-    if (!action || record?.ambiguous) { this.unmatchedResults++; return; }
-    // A public final/offloaded result or a later background completion must never
-    // overwrite original evidence (or an earlier dispatch acknowledgement).
-    if ('status' in action.result) return;
+    if (!record || record.ambiguous) { this.unmatchedResults++; return; }
+    let action = record.action;
     const text = toolText(own(result, 'content'));
-    const captured = snapshot(text.value);
     const status = own(result, 'status');
+    const failed = status === 'error' || text.exitCode !== undefined && text.exitCode !== 0;
+    const ack = fallback && status === 'success' && indices(text.value.length).some(index => {
+      const value = own(text.value[index], 'text');
+      return typeof value === 'string' && value.startsWith('Background task dispatched.\n\nTask ID: ') && /^Task ID: \S{1,256}$/mu.test(value.slice(0, 1024));
+    });
+    const retained = action ?? record.summary;
+    if (ack) {
+      if (record.acknowledged) return;
+      record.acknowledged = true;
+      if (!retained) { this.resultsWithoutSummary++; return; }
+      if (action && !action.acknowledgement) {
+        action.acknowledgement = { status: 'acknowledged', evidence, content: capture(text.value, 1024) };
+        if (!record.observed) action.result = { missing: 'Background acknowledged; final result pending' };
+        UploadTurn.fitAction(action, this.inputs.get(action) ?? snapshot(null), this.outputs.get(action));
+      } else if (record.summary && !record.observed) record.summary.status = 'Background acknowledged; final result pending (body omitted)';
+      if (!record.observed) return { turn: this.turn, ordinal: retained.ordinal, invocation: retained.invocation, invocationScope: retained.invocationScope, tool: retained.tool };
+      return;
+    }
+    if (record.observed) return;
+    record.observed = true;
+    if (record.summary) {
+      Object.assign(record.summary, { status: status === 'error' || status === 'success' ? status : 'not reported', failed,
+        ...(text.exitCode === undefined ? {} : { exitCode: text.exitCode }) });
+      // Recover failure text when the input body was evicted, without pretending
+      // the omitted input is still present. Selection may evict another body.
+      if (failed) {
+        const old = record.summary;
+        this.summaries.splice(this.summaries.indexOf(old), 1); delete record.summary;
+        const { bodyOmitted: _omitted, status: _status, exitCode: _exit, ...identity } = old;
+        action = { ...identity, attempt: record.attempt, inputSource: 'Input body evicted before result', input: { content: null, losses: [{ path: '', reason: 'Input body omitted for capacity' }] }, result: { missing: '' }, sourceLoss: ['Input body omitted for capacity before result arrived'] };
+        record.action = action; this.actions.push(action);
+      }
+    } else if (!action) this.resultsWithoutSummary++;
+    this.lastFailed = failed;
+    this.pending.delete(key!);
+    if (!action) return;
+    const captured = snapshot(text.value);
     action.result = { status: status === 'success' || status === 'error' ? status : 'not reported', evidence,
       ...(text.exitCode === undefined ? {} : { exitCode: text.exitCode }), content: project(captured) };
-    action.sourceLoss.push(...text.loss);
-    action.failed = status === 'error' || text.exitCode !== undefined && text.exitCode !== 0;
-    this.lastFailed = action.failed;
-    this.pending.delete(key!);
-    this.fitAction(action, this.inputs.get(action)!, captured);
-    this.inputs.delete(action);
+    action.sourceLoss.push(...text.loss); action.failed = failed;
+    UploadTurn.fitAction(action, this.inputs.get(action) ?? snapshot(null), captured);
+    this.outputs.set(action, captured);
+    this.actions.sort((a, b) => a.ordinal - b.ordinal); this.boundActions();
   }
-  finish(): void { this.pending.clear(); this.calls.clear(); this.inputs = new WeakMap(); this.scopes = new WeakMap(); }
+  static late(original: Origin, result: unknown): Action {
+    const text = toolText(own(result, 'content')); const captured = snapshot(text.value);
+    const status = own(result, 'status');
+    const action: Action = { ordinal: Number.MAX_SAFE_INTEGER, invocation: original.invocation, invocationScope: 0, attempt: 1, tool: original.tool,
+      original: { ...original }, inputSource: 'Late background result; input belongs to original turn/invocation', input: { content: null, losses: [] },
+      result: { status: status === 'success' || status === 'error' ? status : 'not reported', evidence: 'pre-after-hook background execution evidence; received via ordinary parent forwarding', content: project(captured), ...(text.exitCode === undefined ? {} : { exitCode: text.exitCode }) },
+      failed: status === 'error' || text.exitCode !== undefined && text.exitCode !== 0, recovery: false, sourceLoss: text.loss };
+    UploadTurn.fitAction(action, snapshot(null), captured);
+    return action;
+  }
+  receiveLate(action: Action): void {
+    this.actions.push({ ...action, ordinal: ++this.totalActions }); this.boundActions();
+  }
+  finish(): void { this.pending.clear(); this.calls.clear(); this.inputs = new WeakMap(); this.outputs = new WeakMap(); this.scopes = new WeakMap(); }
 }
 
 /** Parent-only pre-after-hook execution capture plus public-result fallback.
@@ -345,29 +410,85 @@ export class UploadTurn {
 export class UploadObserver {
   private active: UploadTurn | undefined;
   private turns = new Map<number, UploadTurn>();
-  private invocations = new WeakMap<object, number>();
+  private invocations = new WeakMap<object, { turn: number; scope: number }>();
+  private scope = 0;
+  // Weak state keys never retain Agent/invocation graphs. Only bounded copied
+  // origins (64) and original result bodies (16 x 8KiB) survive a sealed turn.
+  private background = new Map<string, { original: Origin; ready?: Action }>();
+  private seenAfter = new WeakSet<object>();
+  private closed = false;
+  private cancelledBackground = new Set<string>();
+  private cancelled = false;
   droppedTurns = 0;
+  droppedBackground = 0;
   get retainedTurns(): number { return this.turns.size; }
-  batch(event: BeforeToolsEvent): void { this.safely(turn => { this.invocations.set(event.invocationState, turn.turn); turn.batch(event); }); }
-  before(event: BeforeToolCallEvent): void { this.safely(turn => { this.invocations.set(event.invocationState, turn.turn); turn.before(event); }); }
+  get pendingBackground(): number { return this.background.size; }
+  private register(state: object, turn: UploadTurn): void {
+    if (!this.invocations.has(state)) this.invocations.set(state, { turn: turn.turn, scope: ++this.scope });
+  }
+  private backgroundKey(state: object, id: unknown): string | undefined {
+    const scope = this.invocations.get(state)?.scope;
+    return scope === undefined || typeof id !== 'string' || id.length > 256 ? undefined : `${scope}:${id}`;
+  }
+  batch(event: BeforeToolsEvent): void { this.safely(turn => { this.register(event.invocationState, turn); turn.batch(event); }); }
+  before(event: BeforeToolCallEvent): void {
+    this.safely(turn => {
+      this.register(event.invocationState, turn);
+      const key = this.backgroundKey(event.invocationState, own(event.toolUse, 'toolUseId'));
+      if (key && this.background.delete(key)) { this.droppedBackground++; turn.backgroundResultsDropped++; }
+      turn.before(event);
+    });
+  }
   fallback(event: ToolResultEvent): void {
     this.safely(turn => {
-      if (this.invocations.get(event.invocationState) !== turn.turn) { turn.unmatchedResults++; return; }
-      turn.fallback(event);
+      if (this.invocations.get(event.invocationState)?.turn !== turn.turn) { turn.unmatchedResults++; return; }
+      const original = turn.fallback(event);
+      const key = this.backgroundKey(event.invocationState, own(event.result, 'toolUseId'));
+      if (original && key && !this.background.has(key)) {
+        if (this.cancelled || this.background.size >= 64) { this.droppedBackground++; turn.backgroundResultsDropped++; }
+        else this.background.set(key, { original });
+      }
     });
   }
   after(event: AfterToolCallEvent): void {
-    this.safely(turn => {
-      if (this.invocations.get(event.invocationState) !== turn.turn) { turn.unmatchedResults++; return; }
-      turn.after(event);
-    });
+    if (this.closed || this.seenAfter.has(event)) return;
+    this.seenAfter.add(event);
+    try {
+      const key = this.backgroundKey(event.invocationState, own(event.result, 'toolUseId'));
+      if (key && this.cancelledBackground.has(key)) return;
+      const entry = key === undefined ? undefined : this.background.get(key);
+      if (this.active && this.invocations.get(event.invocationState)?.turn === this.active.turn) {
+        this.active.after(event);
+        if (key) this.background.delete(key);
+      } else if (entry && !entry.ready) {
+        if ([...this.background.values()].filter(value => value.ready).length >= 16) {
+          this.background.delete(key!); this.droppedBackground++;
+          if (this.active) this.active.backgroundResultsDropped++;
+        } else entry.ready = UploadTurn.late(entry.original, event.result);
+      } else if (!entry && this.active) this.active.unmatchedResults++;
+    } catch { if (this.active) this.active.observerErrors++; else this.droppedBackground++; }
+  }
+  /** Called only for ordinary parent-stream After events, including the existing
+   * background forwarder. Hook-time capture is original; forwarding authorizes
+   * inclusion in this turn, never an idle upload or a synthetic USER goal. */
+  forwarded(event: AfterToolCallEvent): void {
+    if (this.closed) return;
+    try {
+      const key = this.backgroundKey(event.invocationState, own(event.result, 'toolUseId'));
+      const entry = key === undefined ? undefined : this.background.get(key);
+      if (!entry?.ready) return;
+      if (this.active) this.active.receiveLate(entry.ready);
+      else this.droppedBackground++; // A refused collector turn cannot replay forwarding.
+      this.background.delete(key!);
+    } catch { if (this.active) this.active.observerErrors++; else this.droppedBackground++; }
   }
   private safely(observe: (turn: UploadTurn) => void): void {
-    if (!this.active) return;
+    if (this.closed || !this.active) return;
     try { observe(this.active); } catch { this.active.observerErrors++; }
   }
   begin(turn: number, goal: string): void {
-    this.end(); this.invocations = new WeakMap();
+    if (this.closed) return;
+    this.end(); this.cancelled = false; this.cancelledBackground.clear();
     if (this.turns.size >= 8) { this.droppedTurns++; return; }
     try { this.active = new UploadTurn(turn, goal); this.turns.set(turn, this.active); } catch { this.active = undefined; }
   }
@@ -378,7 +499,14 @@ export class UploadObserver {
     if (this.active === value) this.end();
     value?.finish(); return value;
   }
-  clear(): void { this.end(); this.turns.clear(); this.invocations = new WeakMap(); }
+  cancel(): void {
+    this.droppedBackground += this.background.size;
+    if (this.active) this.active.backgroundResultsDropped += this.background.size;
+    for (const key of this.background.keys()) this.cancelledBackground.add(key);
+    this.background.clear(); this.cancelled = true;
+  }
+  clear(): void { this.end(); this.turns.clear(); this.cancel(); this.invocations = new WeakMap(); this.cancelledBackground.clear(); }
+  close(): void { this.clear(); this.closed = true; }
 }
 
 type Envelope = { memoryId: string; actorId: string; sessionId: string; eventTimestamp: string; clientToken: string; extractionConfig: { namespaceVariables: { projectid: string } } };
@@ -400,7 +528,7 @@ export function uploadBody(envelope: Envelope, turn: UploadTurn, settlement: Ext
       contentTruncatedActions: selected.filter(a => a.input.losses.length || 'content' in a.result && a.result.content.losses.length).length,
       sourceLimitedActions: selected.filter(a => a.sourceLoss.length || a.input.losses.some(l => l.text?.sourceLoss.length) || 'content' in a.result && a.result.content.losses.some(l => l.text?.sourceLoss.length)).length,
       actionBodiesOmitted: turn.totalActions - selected.length, actionSummariesOmitted: turn.totalActions - selected.length - summaries.length,
-      internalEventsExcluded: turn.internalEvents, batchEntriesOmitted: turn.batchEntriesOmitted, unmatchedResults: turn.unmatchedResults, observerErrors: turn.observerErrors };
+      internalEventsExcluded: turn.internalEvents, batchEntriesOmitted: turn.batchEntriesOmitted, unmatchedResults: turn.unmatchedResults, resultsWithoutSummary: turn.resultsWithoutSummary, backgroundResultsDropped: turn.backgroundResultsDropped, observerErrors: turn.observerErrors };
     return { ...envelope, payload: [message('OTHER', JSON.stringify({ ...source, quality, omittedActions: summaries })),
       ...(turn.goal.retainedBytes ? [message('USER', turn.goal.parts.join(''))] : []),
       ...[...selected].sort((a, b) => a.ordinal - b.ordinal).map(a => message('TOOL', JSON.stringify(a))) ] };

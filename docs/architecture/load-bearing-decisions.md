@@ -839,7 +839,15 @@ The latter is labelled pre-after-hook execution evidence, not necessarily final 
 output: interventions may transform it. BeforeToolsEvent supplies bounded requested input
 when batch cancellation skips individual calls; ToolResultEvent supplies an explicitly labelled
 fallback for observed batch cancellation, generator errors or background acknowledgements.
-Neither public fallback nor late background completion overwrites an execution snapshot/ack.
+Public fallback never overwrites an execution snapshot. A background acknowledgement is
+stored separately from the final result. An open originating turn receives the original
+completion; after seal, a late TOOL record carries the original turn/ordinal/invocation
+reference in the next ordinary turn receiving the existing background forwarded After event.
+Hook capture copies pre-after-hook evidence; forwarding consumes that copy once, never
+traverses SDK synthetic history or child conversations, nor creates a USER goal/wake/upload
+channel. Weak invocation keys plus at most 64 copied origins and 16 pending 8 KiB late
+bodies survive between turns; capacity/cancellation losses are counted in status. Cancellation
+revokes pending background correlations; shutdown and startup unwind close the collector.
 No SDK loop/executor change, event mutation or trajectory schema/bytes/order change. Only the
 existing durable closing-append settlement callback schedules detached local publication.
 Disabled upload installs no hooks or collector. Failure/early return closes collection; failed
@@ -847,8 +855,11 @@ trajectory/pre-stream abort discards it, nondurable settlement consumes it, satu
 and counts turns, successor/shutdown clears it. Invocation-state identity plus SDK tool-use ID
 pairs results; local scope/attempt ordinals distinguish records. Reuse within one state lacks
 a public attempt token, so later attribution is refused, never guessed. A bounded 512-key
-identity ledger retains evicted-action tombstones; excess identities are explicitly unmatched.
-Invocation-state identity rejects late results from another turn. No automatic upload, model summary, extra model call, backfill, path reads,
+identity ledger retains evicted-action tombstones and bounded summary correlation; an observed
+result updates status/exitCode/failure even when the body was evicted, and failure text can
+recover an action with explicitly absent input. Summaries include invocationScope; results
+whose summaries were also evicted have a separate counter. Excess identities are explicitly
+unmatched. Invocation-state identity rejects unrelated late results from another turn. No automatic upload, model summary, extra model call, backfill, path reads,
 child traversal or offload/archive hydration.
 
 Every tool name and textual argument/result is eligible, including arbitrary MCP, public
@@ -862,13 +873,18 @@ endTurn never means task success. Exact preview + hash authorization remains man
 
 Bounds: 8 KiB per full action, 256 KiB serialized CreateEvent including JSON escaping,
 100 payload messages, 100,000 UTF-8 bytes/message. At most eight transient turns, each 64
-full actions + 96 omitted-body summaries + an 8 KiB goal, and eight detached jobs. Reserve
+full actions + 96 omitted-body summaries + an 8 KiB goal, and eight detached jobs. Collector
+turn saturation and detached-job saturation have distinct omission counters/reasons. Reserve
 goal/closing metadata, favor newest 16 then failed/immediate recovery actions; render chosen
 pairs in original chronology. Summaries spill into counted aggregates. Content truncation,
 action bodies/summaries omitted, internal events, missing/unmatched results and source loss
 are distinct. No goal and no action means no metadata-only candidate. Text ranges are exact
 UTF-16 offsets at Unicode boundaries; retained/original bytes are UTF-8. Huge strings above
 262,144 UTF-16 units explicitly leave original byte length unknown, avoiding unbounded scans.
+Zero/empty text budgets retain exact empty ranges, including lone surrogates; clipping walks
+bounded codepoints once rather than repeatedly encoding whole prefixes. Only genuine high/low
+pairs affect boundaries. Generic textual JSON `type: image/audio` remains eligible; structured
+SDK media sources and MCP data+mimeType payload shapes are excluded, not type strings alone.
 Capture discovers bounded descriptors before byte allocation (no getters/toJSON), then shrinks
 largest strings against the full serialized action including metadata/escaping; small sides
 leave their space to the other side. Short complete collections stay intact; long arrays/SDK

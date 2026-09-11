@@ -625,6 +625,7 @@ export class AgentRuntime {
     memoryController?: MemoryToolController,
     lifecycleHooks?: LifecycleHookRunner,
     codexHooks?: CodexHookRunner,
+    cloudMemory?: CloudMemory,
   ): Promise<void> {
     if (diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
     await Promise.allSettled([
@@ -634,6 +635,7 @@ export class AgentRuntime {
       memoryController?.close() ?? Promise.resolve(),
       lifecycleHooks?.close() ?? Promise.resolve(),
       codexHooks?.close() ?? Promise.resolve(),
+      cloudMemory?.close() ?? Promise.resolve(),
     ]);
   }
 
@@ -670,6 +672,7 @@ export class AgentRuntime {
     let startupMcpClients: readonly McpClient[] = [];
     let startupBackgroundBash: BackgroundBashManager | undefined;
     let startupMemoryController: MemoryToolController | undefined;
+    let startupCloudMemory: CloudMemory | undefined;
     let startupLifecycleHooks: LifecycleHookRunner | undefined;
     let startupCodexHooks: CodexHookRunner | undefined;
 
@@ -817,6 +820,7 @@ export class AgentRuntime {
     const memoryController = config.memory === true ? new MemoryToolController(options.projectRoot, config.memoryHorizonDays ?? 28) : undefined;
     startupMemoryController = memoryController;
     const cloudMemory = config.agentCoreMemory === undefined ? undefined : new CloudMemory(config.agentCoreMemory, options.projectRoot, session.sessionId);
+    startupCloudMemory = cloudMemory;
     // The fileEditor is the SDK vended tool — `makeFileEditor({ description })`, the
     // same factory as the singleton with the SDK's default text plus the SRF-032
     // payload bound — behind a same-path ordering wrapper (SRF-020): substituted here
@@ -1153,6 +1157,7 @@ export class AgentRuntime {
         startupMemoryController,
         startupLifecycleHooks,
         startupCodexHooks,
+        startupCloudMemory,
       );
       throw error;
     });
@@ -1265,6 +1270,7 @@ export class AgentRuntime {
       streamStarted = true;
       const stream = this.backgroundDelegation.observe(this.agent.stream(invocation));
       for await (const event of recordStream(stream, recording)) {
+        if (event.type === 'afterToolCallEvent') this.cloudMemory?.uploadObserver?.forwarded(event);
         if (event.type !== 'beforeToolCallEvent' && event.type !== 'afterToolCallEvent') this.cloudMemory?.uploadObserver?.internal();
         if (event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn') completed = true;
         if (event.type === 'agentResultEvent' && isRefusalStop(event.result.stopReason)) refused = true;

@@ -166,6 +166,23 @@ const legacyEntry = { version: 1, binding: legacyBinding, token: legacyToken, bo
 const legacyFile = path.join(largeDir, `${legacyToken}.event.json`); await writeState(legacyFile, legacyEntry, true);
 const legacyBytes = await readFile(legacyFile); const legacyPreview = await large.command(`preview ${legacyToken}`);
 assert('legacy OTHER-only refusal and immutable bytes/hash/token unchanged', legacyPreview.includes(digest(legacyEntry)) && (await large.command(`send ${legacyToken} ${digest(legacyEntry)}`)).includes('Legacy OTHER-only upload refused') && (await readFile(legacyFile)).equals(legacyBytes));
+// Previously sendable v1 USER/TOOL evidence with an already-authorized preview.
+// Read-only inspection must neither migrate bytes nor revoke that authorization.
+const sendableToken = digest([legacyBinding, 'sendable-v1', 1, 7]);
+const sendableBody = { ...largeBody, sessionId: 'sendable-v1', clientToken: sendableToken, payload: [
+  { conversational: { role: 'OTHER', content: { text: JSON.stringify({ format: 'darwin-upload-v1', session: 'sendable-v1', turn: 1, closingSeq: 7 }) } } },
+  { conversational: { role: 'USER', content: { text: 'Original v1 goal\nunchanged' } } },
+  { conversational: { role: 'TOOL', content: { text: 'Original v1 tool result' } } },
+] };
+const sendableEntry = { version: 1, binding: legacyBinding, token: sendableToken, body: sendableBody };
+const sendableHash = digest(sendableEntry);
+const sendableFile = path.join(largeDir, `${sendableToken}.event.json`);
+const authorizationFile = path.join(largeDir, `${sendableToken}.preview.json`);
+await writeState(sendableFile, sendableEntry, true); await writeState(authorizationFile, { hash: sendableHash }, true);
+const oldBodyBytes = await readFile(sendableFile); const oldAuthorization = await readFile(authorizationFile);
+const readOnlyLegacy = await large.command(`preview ${sendableToken}`, 'read');
+assert('sendable v1 read-only preview preserves exact old body/hash/token and pre-existing authorization', JSON.stringify(JSON.parse(readOnlyLegacy.split('\nRead-only preview:')[0]!)) === JSON.stringify(sendableBody) && readOnlyLegacy.includes(sendableHash) && (await readFile(sendableFile)).equals(oldBodyBytes) && (await readFile(authorizationFile)).equals(oldAuthorization));
+assert('pre-existing v1 authorization sends through signed loopback unchanged', (await large.command(`send ${sendableToken} ${sendableHash}`)).startsWith('AWS event accepted.') && isDeepStrictEqual((await calls()).at(-1).input.payload, sendableBody.payload) && (await calls()).at(-1).input.clientToken === sendableToken && (await calls()).at(-1).headers.authorization.includes('AWS4-HMAC-SHA256') && (await readFile(sendableFile)).equals(oldBodyBytes) && (await readFile(authorizationFile)).equals(oldAuthorization));
 await large.close();
 
 await uploader.close(); await restarted.close(); await preferences.close(); await crossProject.close();
@@ -174,6 +191,7 @@ const retryRoot = path.join(home, 'retry-project'); await mkdir(retryRoot);
 const retry = new CloudMemory(config, retryRoot, 'session-retry'); const retryFile = path.join(home, 'retry-trajectory.jsonl');
 const retryRecorder = new TrajectoryRecorder({ file: retryFile, run: { session: 'session-retry', agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => retry.settle(settlement) });
 for (const stopReason of ['cancelled', 'endTurn'] as const) {
+  const wireInvocation = {}; // One invocation state per turn, like Agent.stream().
   const next = retryRecorder.beginTurn('Synthetic public goal'); await next?.inputDurable();
   retry.uploadObserver!.begin(next!.turn, 'Synthetic public goal');
   const use = new ToolUseBlock({ name: 'memory_recall', toolUseId: 'private', input: { query: 'private' } });
@@ -187,7 +205,8 @@ for (const stopReason of ['cancelled', 'endTurn'] as const) {
 await retryRecorder.close();
 const retryTokens = (await retry.command('pending')).split('\n').map(row => row.split(' ')[0]!);
 const previews = await Promise.all(retryTokens.map(token => retry.command(`preview ${token}`)));
-const firstIndex = previews.findIndex(text => text.includes('cancelled')); const firstToken = retryTokens[firstIndex]!; const firstPreview = previews[firstIndex]!;
+const previewOutcome = (text: string) => JSON.parse(JSON.parse(text.split('\nReview for private material;')[0]!).payload[0].conversational.content.text).outcome;
+const firstIndex = previews.findIndex(text => previewOutcome(text) === 'cancelled'); const firstToken = retryTokens[firstIndex]!; const firstPreview = previews[firstIndex]!;
 const firstHash = firstPreview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)![1]!;
 const laterIndex = 1 - firstIndex; const laterHash = previews[laterIndex]!.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)![1]!;
 assert('public memory tool text retained but assistant paraphrases omitted', previews.join('').includes('PRIVATE MEMORY') && !previews.join('').includes('PARAPHRASED MEMORY'));
