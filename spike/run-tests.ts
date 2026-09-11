@@ -108,6 +108,7 @@ const suites = [
   'verify-agentcore-memory.ts',
   'verify-agentcore-upload.ts',
   'verify-cloud-memory-auto.ts',
+  'verify-cloud-memory-acceptance.ts',
   'verify-memory-command.ts',
   'verify-memory-validation.ts',
   'verify-resume-recap.ts',

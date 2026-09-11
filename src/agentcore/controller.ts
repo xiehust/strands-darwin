@@ -5,6 +5,9 @@ import { AGENTCORE_CLI_PATH_NOTICE, digest, scopeFor, type AgentCoreConfig } fro
 import { MemoryTransport, TransportError } from './transport.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { cloudBinding, readCloudPolicy } from '../project-overrides.js';
+import { projectIdentity } from '../project-identity.js';
+import { userDarwinDir } from '../paths.js';
+import { withConfigLock } from '../config-file.js';
 import { autoHoldReason, persistUploadMode } from './auto-policy.js';
 import { autoProofSchema, tokenReceipt, saveReceipt, receiptCapacity, reserveQuota, quotaUsage, MAX_OUTBOX_FILES, MAX_OUTBOX_BODIES, MAX_PENDING_BODIES, AUTO_RETENTION_MS, type AutoProof } from './auto-state.js';
 import type { AutoAuthorization } from './config.js';
@@ -32,7 +35,10 @@ export class CloudMemory {
   private origins = new Map<number, AutoAuthorization>();
   private autoStopped = false;
   private autoWork: Promise<void> = Promise.resolve();
+  // Same-process sessions serialize finite passes; filesystem locks still own cross-process exclusion.
+  private static autoOwners = new Map<string, Promise<void>>();
   private autoRunning = false;
+  private autoAgain = false;
   private originEpochs = new Map<number, string>();
   private autoSummary = 'queued/held/paused: not inspected';
   readonly scope: ReturnType<typeof scopeFor>;
@@ -53,7 +59,7 @@ export class CloudMemory {
   begin(turn: number, goal: string): void {
     if (this.config.upload === 'off') return;
     this.uploadObserver?.begin(turn, goal);
-    if (this.config.upload === 'auto' && this.config.authorization && this.origins.size < 8) {
+    if (this.config.upload === 'auto' && this.config.authorization?.version === 2 && this.config.authorization.project === projectIdentity(this.root) && this.origins.size < 8) {
       if (this.autoAbort.signal.aborted) this.autoAbort = new AbortController();
       this.origins.set(turn, this.config.authorization);
       this.originEpochs.set(turn, this.config.authorization.epoch);
@@ -62,8 +68,8 @@ export class CloudMemory {
   }
   discardTurn(turn: number): void { this.uploadObserver?.take(turn); this.origins.delete(turn); }
   async refreshPolicy(): Promise<void> {
-    // Manual/off fixtures and unchanged opt-out have no ambient policy/network work.
-    if (!this.config.projectOverride && !this.config.authorization && !this.config.autoProblem) return;
+    // Existing enabled controllers discover peer consent at ordinary local boundaries.
+    // Fully disabled runtimes have no controller and never enter this reader.
     let fresh: AgentCoreConfig | undefined;
     try { fresh = await readCloudPolicy(this.root); }
     catch {
@@ -74,11 +80,14 @@ export class CloudMemory {
     if (!fresh || cloudBinding(fresh, this.root) !== this.binding()) {
       this.autoAbort.abort(); delete this.config.authorization; this.config = { ...this.config, upload: 'manual', autoProblem: 'Cloud scope changed; restart and re-confirm /cloud-memory auto' }; return;
     }
-    if (fresh.authorization?.epoch !== this.config.authorization?.epoch || fresh.upload !== 'auto') this.autoAbort.abort();
+    if (fresh.authorization?.epoch !== this.config.authorization?.epoch) {
+      this.autoAbort.abort(); this.autoStopped = false; this.problem = undefined;
+    }
+    if (fresh.upload !== 'auto') this.autoAbort.abort();
     this.config = fresh;
     if (fresh.upload !== 'off') this.uploadObserver ??= new UploadObserver();
   }
-  status(): string { return `AgentCore: enabled · ${this.config.region} · actor ${this.config.actorId} · project ${this.scope.projectId} · upload ${this.config.upload}${this.config.projectOverride ? ' (project override)' : ''} · auto daily ${this.config.autoDailyEvents} attempts/${this.config.autoDailyBytes} bytes · ${this.autoSummary}${this.config.autoProblem ? ` · ${this.config.autoProblem}` : ''}${this.uploadObserver?.droppedTurns ? ` (${this.uploadObserver.droppedTurns} turns omitted: collector turn bound)` : ''}${this.droppedTurns ? ` (${this.droppedTurns} turns omitted: projection job queue full)` : ''}${this.uploadObserver?.droppedBackground ? ` (${this.uploadObserver.droppedBackground} background results omitted: capacity or cancellation)` : ''} · ${this.approvedContext.length} cached preference candidates (local approval rechecked per request)${this.problem ? ` · degraded: ${this.problem}` : ''}${this.approvalsNeedingReview ? ` · ${this.approvalsNeedingReview} preference approval(s) require re-review: record or metadata hash changed; use /cloud-memory inspect <record-id>, then confirm the displayed hash` : ''}. Details: /cloud-memory${this.config.cliPath === undefined ? '' : ` · ${AGENTCORE_CLI_PATH_NOTICE}`}`; }
+  status(): string { return `AgentCore: enabled · ${this.config.region} · actor ${this.config.actorId} · cloud namespace ${this.scope.projectId} · local key ${projectIdentity(this.root)} · upload ${this.config.upload}${this.config.projectOverride ? ' (project override)' : ''} · auto daily ${this.config.autoDailyEvents} attempts/${this.config.autoDailyBytes} bytes · ${this.autoSummary}${this.config.autoProblem ? ` · ${this.config.autoProblem}` : ''}${this.uploadObserver?.droppedTurns ? ` (${this.uploadObserver.droppedTurns} turns omitted: collector turn bound)` : ''}${this.droppedTurns ? ` (${this.droppedTurns} turns omitted: projection job queue full)` : ''}${this.uploadObserver?.droppedBackground ? ` (${this.uploadObserver.droppedBackground} background results omitted: capacity or cancellation)` : ''} · ${this.approvedContext.length} cached preference candidates (local approval rechecked per request)${this.problem ? ` · degraded: ${this.problem}` : ''}${this.approvalsNeedingReview ? ` · ${this.approvalsNeedingReview} preference approval(s) require re-review: record or metadata hash changed; use /cloud-memory inspect <record-id>, then confirm the displayed hash` : ''}. Details: /cloud-memory${this.config.cliPath === undefined ? '' : ` · ${AGENTCORE_CLI_PATH_NOTICE}`}`; }
   cancelGeneration = 0;
   cancel(): void {
     this.cancelGeneration++;
@@ -173,6 +182,7 @@ export class CloudMemory {
     if (this.closed || !settlement.durable || projection === undefined) return;
     if (this.pendingJobs >= 8) { this.droppedTurns++; this.problem = 'Upload projection queue full; turn omitted'; return; }
     this.pendingJobs++;
+    const publicationSignal = this.autoAbort.signal;
     this.chain = this.chain.then(() => withStateLock(path.join(this.outbox(), 'publication'), async () => {
       const names = await this.names();
       const bodies = names.filter(name => name.endsWith('.event.json'));
@@ -191,25 +201,47 @@ export class CloudMemory {
           ? 'Late result originated before this authorization; held manual' : autoHoldReason(projection, settlement);
         await writeState(path.join(this.outbox(), `${token}.auto.json`), autoProofSchema.parse({ version: 1, hash: digest(entry), authorization, session: settlement.session, turn: settlement.turn, ...(reason ? { reason } : {}) }), true, this.projectionAbort.signal);
       }
-    }, this.projectionAbort.signal)).then(() => this.kickAuto()).catch((error) => { this.problem = error instanceof Error ? error.message.slice(0, 200) : 'Upload projection unavailable'; }).finally(() => { this.pendingJobs--; });
+    }, this.projectionAbort.signal)).then(() => { if (!publicationSignal.aborted) this.kickAuto(); }).catch((error) => { this.problem = error instanceof Error ? error.message.slice(0, 200) : 'Upload projection unavailable'; }).finally(() => { this.pendingJobs--; });
   }
   private async checkAutoAuthority(proof: AutoProof, signal: AbortSignal): Promise<AgentCoreConfig> {
     signal.throwIfAborted();
     if (this.closed || this.autoStopped) throw new Error('Automatic sender stopped');
-    const fresh = await readCloudPolicy(this.root);
     const stopped = await readState(path.join(this.outbox(), 'auto-stop.json'));
     if (stopped !== undefined) {
       const stop = z.object({ epoch: z.string().uuid(), reason: z.string().max(240) }).strict().parse(stopped);
       if (stop.epoch === proof.authorization.epoch) throw new Error(`Auto stopped: ${stop.reason}; fix policy then re-confirm /cloud-memory auto`);
     }
+    return this.validateAutoAuthority(await readCloudPolicy(this.root), proof, signal);
+  }
+  private validateAutoAuthority(fresh: AgentCoreConfig | undefined, proof: AutoProof, signal: AbortSignal): AgentCoreConfig {
     signal.throwIfAborted();
-    if (!fresh || fresh.upload !== 'auto' || fresh.authorization?.epoch !== proof.authorization.epoch || fresh.authorization.scope !== this.binding() || cloudBinding(fresh, this.root) !== this.binding()) throw new Error('Auto authorization revoked or scope changed; re-confirm /cloud-memory auto (old pending remains manual)');
+    if (this.closed || this.autoStopped || proof.authorization.version !== 2 || proof.authorization.project !== projectIdentity(this.root) || !fresh || fresh.upload !== 'auto' || fresh.authorization?.version !== 2 || fresh.authorization.project !== proof.authorization.project || fresh.authorization.epoch !== proof.authorization.epoch || fresh.authorization.scope !== this.binding() || cloudBinding(fresh, this.root) !== this.binding()) throw new Error('Auto authorization revoked or scope changed; re-confirm /cloud-memory auto (old pending remains manual)');
     return fresh;
   }
   private kickAuto(): void {
-    if (this.closed || this.config.upload !== 'auto' || this.autoRunning || this.autoStopped || this.autoAbort.signal.aborted) return;
+    if (this.closed || this.config.upload !== 'auto' || this.autoStopped || this.autoAbort.signal.aborted) return;
+    if (this.autoRunning) { this.autoAgain = true; return; }
     this.autoRunning = true;
-    this.autoWork = this.drainAuto(this.autoAbort.signal).finally(() => this.inspectAutoState()).catch(error => { this.problem = error instanceof Error ? error.message.slice(0, 240) : 'Auto work refused'; }).finally(() => { this.autoRunning = false; });
+    const directory = this.outbox();
+    const previous = CloudMemory.autoOwners.get(directory);
+    this.autoWork = (async () => {
+      try {
+        await previous;
+        do {
+          this.autoAgain = false;
+          const signal = this.autoAbort.signal;
+          if (signal.aborted || this.closed || this.autoStopped) break;
+          try { await this.drainAuto(signal); await this.inspectAutoState(); }
+          catch (error) { this.problem = error instanceof Error ? error.message.slice(0, 240) : 'Auto work refused'; }
+          // Only publication earns another pass, never held/budget/order state.
+        } while (this.autoAgain);
+      } finally {
+        // No promise-reaction gap between the last latch check and releasing ownership.
+        this.autoRunning = false;
+        if (CloudMemory.autoOwners.get(directory) === this.autoWork) CloudMemory.autoOwners.delete(directory);
+      }
+    })();
+    CloudMemory.autoOwners.set(directory, this.autoWork);
   }
   /** Finite activity-owned pass, never a daemon or a model invocation. */
   private async drainAuto(signal: AbortSignal): Promise<void> {
@@ -219,7 +251,7 @@ export class CloudMemory {
       const token = name.slice(0, -10);
       if (await this.receipt(token)) continue;
       const proof = autoProofSchema.parse(await readState(path.join(this.outbox(), name)));
-      if (proof.authorization.epoch === this.config.authorization?.epoch && !proof.reason) proofs.push({ token, proof });
+      if (proof.authorization.version === 2 && proof.authorization.project === projectIdentity(this.root) && proof.authorization.epoch === this.config.authorization?.epoch && !proof.reason) proofs.push({ token, proof });
     }
     proofs.sort((a, b) => a.proof.turn - b.proof.turn || a.proof.session.localeCompare(b.proof.session));
     const blocked = new Set<string>(); let sent = 0;
@@ -270,7 +302,7 @@ export class CloudMemory {
       const proof = autoProofSchema.parse(value);
       const state = await readState(path.join(this.outbox(), `${token}.auto-state.json`));
       const status = state === undefined ? undefined : z.object({ state: z.enum(['held', 'paused']), reason: z.string().max(240) }).strict().parse(state);
-      if (proof.reason || proof.authorization.epoch !== this.config.authorization?.epoch || status?.state === 'held') held++;
+      if (proof.reason || proof.authorization.version !== 2 || proof.authorization.project !== projectIdentity(this.root) || proof.authorization.epoch !== this.config.authorization?.epoch || status?.state === 'held') held++;
       else if (status?.state === 'paused') paused++;
       else queued++;
     }
@@ -352,7 +384,15 @@ export class CloudMemory {
         const policy = await this.checkAutoAuthority(previewHash, signal);
         await reserveQuota(this.root, policy, bytes, signal);
         await reserveAttempt();
-        await this.checkAutoAuthority(previewHash, signal); // Revoke during reservation/credential waits.
+        await this.checkAutoAuthority(previewHash, signal); // All stop/reservation waits precede coordination.
+        return start => withConfigLock(path.join(userDarwinDir(), 'config.json'), async () => {
+          // Native writers cannot publish from this fresh read through handler start.
+          // No stop/quota/credential/network-response await inside this critical section.
+          this.validateAutoAuthority(await readCloudPolicy(this.root), previewHash, signal);
+          const pending = start();
+          void pending.catch(() => {}); // Response may reject while lock release awaits.
+          return { pending };
+        }, signal).catch(error => { throw new TransportError(error instanceof Error ? error.message : 'Auto authorization refused'); });
       } catch (error) { throw new TransportError(error instanceof Error ? error.message : 'Auto reservation refused'); }
     });
     const response = z.object({ event: z.object({ memoryId: z.string(), actorId: z.string(), sessionId: z.string(), eventId: z.string().min(1).max(128) }).passthrough() }).strict().parse(raw);
@@ -451,8 +491,8 @@ export class CloudMemory {
       this.autoAbort = new AbortController(); this.autoStopped = false; this.problem = undefined;
       await this.inspectAutoState();
       return verb === 'auto'
-        ? `Project ${this.scope.projectId}: auto enabled for NEW turns only. Content may include secrets. Existing pending excluded; no automatic preference adoption or cloud deletion. UTC daily budget ${next.autoDailyEvents} attempts / ${next.autoDailyBytes} bytes. Auto-accepted local bodies retained 7 days; idempotency receipts preserved. ${this.status()}`
-        : `Project ${this.scope.projectId}: manual persisted; unsent automatic work cancelled. Already-issued/acknowledged effects not undone; staged evidence preserved. ${this.status()}`;
+        ? `Local project ${projectIdentity(this.root)} (cloud namespace ${this.scope.projectId}): auto enabled for NEW turns only. Content may include secrets. Existing pending excluded; no automatic preference adoption or cloud deletion. UTC daily budget ${next.autoDailyEvents} attempts / ${next.autoDailyBytes} bytes. Auto-accepted local bodies retained 7 days; idempotency receipts preserved. ${this.status()}`
+        : `Local project ${projectIdentity(this.root)} (cloud namespace ${this.scope.projectId}): manual persisted; unsent automatic work cancelled. Already-issued/acknowledged effects not undone; staged evidence preserved. ${this.status()}`;
     }
     if (verb === 'discard-legacy' && hash === undefined) {
       await this.chain; await this.autoWork;

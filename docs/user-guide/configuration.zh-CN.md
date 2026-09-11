@@ -82,7 +82,7 @@
 | `memory` | 轨迹可用时开启 | 项目记忆；未设置时跟随 `trajectory: false` |
 | `memoryHorizonDays` | `28` | 生成记忆的有效天数，整数 `0–365`；`0` 只关闭过期检查 |
 | `agentCoreMemory` | 关闭 | 根级云身份与配置对象或 `false`；[ID、命名空间、偏好、上传和 SDK 要求](agentcore-memory.zh-CN.md) |
-| `projectOverrides` | — | 以稳定项目 ID 为键的严格映射；仅支持已注册的 `agentCoreMemory.upload`、`autoDailyEvents`、`autoDailyBytes` 和命令生成的 `authorization`；见下文 |
+| `projectOverrides` | — | 以规范化工作目录 SHA256 为键的严格映射；仅支持已注册的 `agentCoreMemory.upload`、`autoDailyEvents`、`autoDailyBytes` 和命令生成的 `authorization`；见下文 |
 | `maxConcurrentSubagents` | `8` | 同时运行的子代理派发上限（`subagent` 调用加 `workflow` 节点）；正整数；超出的调用会在创建任何模型或子代理之前被拒绝 |
 | `terminalBell` | `false` | 在权限提示和回合结束时响一次终端铃（仅交互式 TUI） |
 | `terminalNotify` | `false` | 在同样两个时刻请终端弹出一条桌面通知——一条 OSC 9 序列（`ESC ] 9 ; darwin · <项目目录名> · waiting for approval\|turn complete ESC \`）直接写到 stdout，仅在 stdout 是 TTY 时写入（仅交互式 TUI；`-p` 和子代理从不写）。是否显示由终端决定：iTerm2（需开启 Settings → Profiles → Terminal → "Notification Center Alerts" → Filter Alerts → "Send escape sequence-generated alerts"）、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端会静默吞掉该序列。在 tmux 内，序列会包在 tmux 的 passthrough DCS 中，需要在 `~/.tmux.conf` 里设置 `set -g allow-passthrough on`。SSH 下同样有效——通知出现在运行终端的那台机器上。`false` 完全不写 |
@@ -98,17 +98,17 @@
 
 ## 项目覆盖设置
 
-优先级为 **默认值 < 全局配置 < 当前项目覆盖**，单模型和 `models` 数组格式一致。键优先采用根级 `agentCoreMemory.projectId`；未设置时，使用 Darwin 规范化 `projectKey(root)` 的小写 SHA256，与云命名空间使用同一身份。显式采用相同 ID 的不同工作副本会共享策略。覆盖层不能修改自己的匹配 ID、区域、资源、actor、策略、模型供应商或权限。未知字段、递归覆盖、原型键和错误类型均拒绝；最多 1024 个项目，配置文件最多 1 MiB。
+优先级为 **默认值 < 全局配置 < 当前项目覆盖**，单模型和 `models` 数组格式一致。本地覆盖键始终是 Darwin 规范化 `projectKey(root)` 的小写 SHA256。符号链接别名共享键，不同工作目录（包括 git worktree）互不授权。`agentCoreMemory.projectId` 只选择云命名空间和共享配额账本，不决定授权。`/cloud-memory`、`/status` 和 doctor 分别显示 `local key` 与 `cloud namespace`。覆盖层不能修改自己的匹配 ID、区域、资源、actor、策略、模型供应商或权限。旧小写云 ID 形式的映射键仅保留读取兼容，不作为授权匹配键。未知字段、递归覆盖、原型键和错误类型均拒绝；最多 1024 个项目，配置文件最多 1 MiB。
 
 可先在文件中设置预算，不启用 auto：
 
 ```json
-{ "projectOverrides": { "<project-id>": { "agentCoreMemory": {
+{ "projectOverrides": { "<local-key-sha256>": { "agentCoreMemory": {
   "autoDailyEvents": 500, "autoDailyBytes": 104857600
 } } } }
 ```
 
-限制均为正整数：events 最大 100000，bytes 最大 107374182400。根级限制作为默认值，项目设置优先。用户输入 `/cloud-memory auto` 后，命令保存模式及新的授权 epoch、时间、策略版本和范围哈希（区域、资源、actor、项目及两项策略）。仅在根级写 `upload: "auto"` 不会授权任何项目；绑定缺失或改变时退回 manual 并提示重新确认。`/cloud-memory manual` 立即持久化、取消尚未发送的自动任务，不重建会话。配置写入采用私有跨进程锁、重新读取后合并及同步原子发布，保留其他项目和无关字段；崩溃遗留锁需要人工检查所有者，不自动抢锁。
+限制均为正整数：events 最大 100000，bytes 最大 107374182400。根级限制作为默认值，项目设置优先。用户输入 `/cloud-memory auto` 后，命令保存模式及严格的 `authorization: {version: 2, epoch, at, scope, project}`：UUID epoch、ISO 时间、原有云范围哈希（区域、资源、actor、云命名空间及两项策略），以及 `project` 中的本地覆盖键。版本 1 证明及旧云 ID 键条目可读取但不生效，必须由用户重新确认，不迁移也不追溯授权；手动 v1/v2 请求体字节、范围哈希和预览证明均不改变。仅在根级写 `upload: "auto"` 不会授权任何项目；绑定缺失或改变时退回 manual 并提示重新确认。`/cloud-memory manual` 立即持久化、取消尚未发送的自动任务，不重建会话。配置写入采用私有跨进程锁、重新读取后合并及同步原子发布，保留其他项目和无关字段；崩溃遗留锁需要人工检查所有者，不自动抢锁。
 
 ## System prompt 组成
 

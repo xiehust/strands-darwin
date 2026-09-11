@@ -21,11 +21,17 @@ export async function readConfigBytes(file: string): Promise<string | undefined>
   finally { await handle?.close(); }
 }
 
+/** Shared by writers and the final auto validation + synchronous handler invocation.
+ * Return a boxed pending response from launch callbacks; never await network here. */
+export function withConfigLock<T>(file: string, action: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  return withStateLock(path.join(path.dirname(file), 'config-write-lock'), action, signal);
+}
+
 /** All config writers share this fail-fast cross-process lock, including model/effort.
  * Unknown unrelated fields survive byte-content merge; external noncooperating edits
  * detected before publication refuse rather than overwrite. Crash locks need inspection. */
 export async function updateConfigFile<T>(file: string, change: (record: Record<string, unknown>, existed: boolean) => T, signal?: AbortSignal): Promise<T> {
-  return withStateLock(path.join(path.dirname(file), 'config-write-lock'), async () => {
+  return withConfigLock(file, async () => {
     const original = await readConfigBytes(file);
     const value: unknown = original?.trim() ? JSON.parse(original) : {};
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Config must contain an object');

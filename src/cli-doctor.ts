@@ -23,6 +23,7 @@
  */
 import { accessSync, constants as fsConstants, existsSync, statSync } from 'node:fs';
 import os from 'node:os';
+import { projectIdentity } from './project-identity.js';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -224,7 +225,7 @@ async function reportConfig(report: Report, projectRoot: string): Promise<AppCon
   report.info(`permission mode ${config.permissionMode}`);
   const cloud = config.agentCoreMemory;
   if (cloud) {
-    report.info(`cloud memory upload ${cloud.upload}${cloud.projectOverride ? ' (project override)' : ''}; daily auto ${cloud.autoDailyEvents} attempts/${cloud.autoDailyBytes} bytes`);
+    report.info(`cloud memory upload ${cloud.upload}${cloud.projectOverride ? ' (project override)' : ''}; local key ${projectIdentity(projectRoot)}; cloud namespace ${projectIdentity(projectRoot, cloud.projectId)}; daily auto ${cloud.autoDailyEvents} attempts/${cloud.autoDailyBytes} bytes`);
     if (cloud.autoProblem) report.problem(cloud.autoProblem);
   }
   return config;

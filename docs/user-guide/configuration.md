@@ -82,7 +82,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `memory` | true while trajectory is available | project memory; omitted follows `trajectory: false` |
 | `memoryHorizonDays` | `28` | generated-memory age, integer `0–365`; `0` disables age only |
 | `agentCoreMemory` | disabled | root cloud identity/config or `false`; [IDs, namespaces, preferences, upload and SDK requirements](agentcore-memory.md) |
-| `projectOverrides` | — | strict map keyed by stable project ID; registered `agentCoreMemory.upload`, `autoDailyEvents`, `autoDailyBytes`, and command-owned `authorization` only; see below |
+| `projectOverrides` | — | strict map keyed by canonical working-tree SHA256; registered `agentCoreMemory.upload`, `autoDailyEvents`, `autoDailyBytes`, and command-owned `authorization` only; see below |
 | `maxConcurrentSubagents` | `8` | ceiling on running child dispatches (`subagent` calls plus `workflow` nodes); positive integer; a call over it is refused before any model or child exists |
 | `terminalBell` | `false` | ring the terminal bell on permission prompts and turn completion (interactive TUI only) |
 | `terminalNotify` | `false` | ask the terminal for a desktop notification at the same two moments — one OSC 9 sequence (`ESC ] 9 ; darwin · <project> · waiting for approval\|turn complete ESC \`) straight to stdout, only when stdout is a TTY (interactive TUI only; `-p` and child agents never write one). The terminal decides whether to show it: iTerm2 (enable Settings → Profiles → Terminal → "Notification Center Alerts" → Filter Alerts → "Send escape sequence-generated alerts"), kitty, Ghostty, WezTerm and foot show a toast; every other terminal consumes the sequence silently. Inside tmux the sequence is wrapped in tmux's passthrough DCS and needs `set -g allow-passthrough on` in `~/.tmux.conf`. Works over SSH — the notification appears on the machine running the terminal. `false` never writes it |
@@ -98,17 +98,17 @@ The two tables above are the complete key set. Any other key — at the root or 
 
 ## Project overrides
 
-Precedence is **defaults < global config < current project override**, in both single-model and `models` array files. The key is global `agentCoreMemory.projectId` when explicitly set, otherwise lowercase SHA256 of Darwin's canonical `projectKey(root)` (the same identity used for cloud namespaces). Separate checkouts with the same explicit ID deliberately share policy. Overrides cannot change their matching ID, resource, region, actor, strategies, model/provider or permissions. Unknown/nested keys, recursive overrides, prototype keys, invalid types and more than 1024 project entries are refused; config reads/writes cap at 1 MiB.
+Precedence is **defaults < global config < current project override**, in both single-model and `models` array files. The local override key is always lowercase SHA256 of Darwin's canonical `projectKey(root)`. Symlink aliases share a key; distinct working trees (including git worktrees) do not. `agentCoreMemory.projectId` only selects the cloud namespace and shared quota ledger, never consent. `/cloud-memory`, `/status` and doctor label both `local key` and `cloud namespace`. Overrides cannot change their matching ID, resource, region, actor, strategies, model/provider or permissions. Legacy lowercase namespace-shaped map keys are accepted for read compatibility but never matched as consent keys. Unknown/nested fields, recursive overrides, prototype keys, invalid types and more than 1024 project entries are refused; config reads/writes cap at 1 MiB.
 
 You may preconfigure a project's budgets without enabling auto:
 
 ```json
-{ "projectOverrides": { "<project-id>": { "agentCoreMemory": {
+{ "projectOverrides": { "<local-key-sha256>": { "agentCoreMemory": {
   "autoDailyEvents": 500, "autoDailyBytes": 104857600
 } } } }
 ```
 
-Limits are positive integers: events up to 100000, bytes up to 107374182400. Root limits are defaults; the project wins. `/cloud-memory auto` writes `upload: "auto"` plus a fresh authorization epoch, timestamp, policy version and scope hash binding region/resource/actor/project/both strategies. Root `upload: "auto"` alone cannot authorize any project. Missing or changed bindings fall back to manual with re-confirm guidance. `/cloud-memory manual` persists immediately and cancels unsent auto work without resetting the conversation. Config writers share a private cross-process lock, fresh-read merge and synced atomic publication; unrelated settings and other projects survive. Crash locks require owner inspection, not automatic stealing.
+Limits are positive integers: events up to 100000, bytes up to 107374182400. Root limits are defaults; the project wins. `/cloud-memory auto` writes `upload: "auto"` plus strict `authorization: {version: 2, epoch, at, scope, project}`: a UUID epoch, ISO timestamp, legacy cloud scope hash (region/resource/actor/cloud namespace/both strategies), and the canonical local key in `project`. Version 1 proofs and old cloud-ID-keyed entries remain readable but inactive; they require explicit reconfirmation, never migration or retroactive authorization. Existing manual v1/v2 body bytes, scope hashes and preview proofs are unchanged. Root `upload: "auto"` alone cannot authorize any project. Missing or changed bindings fall back to manual with re-confirm guidance. `/cloud-memory manual` persists immediately and cancels unsent auto work without resetting the conversation. Config writers share a private cross-process lock, fresh-read merge and synced atomic publication; unrelated settings and other projects survive. Crash locks require owner inspection, not automatic stealing.
 
 ## System prompt composition
 

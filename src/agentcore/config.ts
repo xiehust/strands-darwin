@@ -19,7 +19,12 @@ export const agentCoreConfigSchema = z.object({
   autoDailyEvents: z.number().int().min(1).max(100000).default(500),
   autoDailyBytes: z.number().int().min(1).max(107374182400).default(104857600),
 }).strict().refine((value) => value.episodicStrategyId !== value.preferenceStrategyId, 'strategies must be distinct');
-export const authorizationSchema = z.object({ version: z.literal(1), epoch: z.string().uuid(), at: z.string().datetime(), scope: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+const authorizationFields = { epoch: z.string().uuid(), at: z.string().datetime(), scope: z.string().regex(/^[a-f0-9]{64}$/) };
+// V1 is readable only so old config/provenance remains inspectable and held manual.
+export const authorizationSchema = z.discriminatedUnion('version', [
+  z.object({ version: z.literal(1), ...authorizationFields }).strict(),
+  z.object({ version: z.literal(2), ...authorizationFields, project: z.string().regex(/^[a-f0-9]{64}$/) }).strict(),
+]);
 export type AutoAuthorization = z.infer<typeof authorizationSchema>;
 export type AgentCoreConfig = z.infer<typeof agentCoreConfigSchema> & {
   /** Derived only by the project registry; never accepted at the global root. */

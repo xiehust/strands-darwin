@@ -15,10 +15,10 @@ export async function persistUploadMode(root: string, expected: AgentCoreConfig,
     if (!global || cloudBinding(global, root) !== cloudBinding(expected, root)) throw new Error('Cloud scope changed; restart and re-confirm this project');
     if (record['trajectory'] === false) throw new Error('Uploads require trajectory recording');
     const overrides = parseProjectOverrides(record['projectOverrides']) ?? Object.create(null);
-    const key = projectIdentity(root, global.projectId);
+    const key = projectIdentity(root);
     const prior = overrides[key] ?? {};
     overrides[key] = { ...prior, agentCoreMemory: { ...prior.agentCoreMemory, upload: mode,
-      ...(mode === 'auto' ? { authorization: { version: 1, epoch: randomUUID(), at: new Date().toISOString(), scope: cloudBinding(global, root) } } : {}),
+      ...(mode === 'auto' ? { authorization: { version: 2, epoch: randomUUID(), at: new Date().toISOString(), scope: cloudBinding(global, root), project: key } } : {}),
     } };
     if (mode === 'manual') delete overrides[key]!.agentCoreMemory!.authorization;
     parseProjectOverrides(overrides); // Includes the bound after insertion.

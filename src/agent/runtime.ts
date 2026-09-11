@@ -1403,11 +1403,15 @@ export class AgentRuntime {
   private checkCloudPreparation(generation: number | undefined): void {
     if (generation !== this.cloudMemory?.cancelGeneration) throw new Error('AgentCore preparation cancelled before model invocation');
   }
+  async refreshCloudPolicy(): Promise<void> {
+    if (this.cloudMemory === undefined) return;
+    await this.cloudMemory.refreshPolicy();
+    this.liveConfig = { ...this.liveConfig, agentCoreMemory: this.cloudMemory.config };
+  }
   private async prepareCloudPreferences(): Promise<number | undefined> {
     if (this.cloudMemory === undefined) return;
     const generation = this.cloudMemory.cancelGeneration;
-    await this.cloudMemory.refreshPolicy();
-    this.liveConfig = { ...this.liveConfig, agentCoreMemory: this.cloudMemory.config };
+    await this.refreshCloudPolicy();
     await this.cloudMemory.startup(); // One cloud fetch per runtime; local revocations are checked on every request.
     this.checkCloudPreparation(generation);
     await this.applyCloudPreferences();
@@ -1776,6 +1780,7 @@ export class AgentRuntime {
    * describe a model that is no longer there.
    */
   async changeModel(target: ModelChoice): Promise<ModelChangeResult> {
+    await this.refreshCloudPolicy();
     const next = withModelChoice(this.liveConfig, target);
     // Built before anything is mutated: a failure here (a missing peer dependency,
     // a bad region) must leave the session on the model it was already using. Same
@@ -2153,6 +2158,7 @@ export class AgentRuntime {
    */
   async startRewind(checkpoint: RewindCheckpoint): Promise<AgentRuntime> {
     this.refuseWhileDelegationsTracked('/rewind');
+    await this.refreshCloudPolicy();
     const catalogue = await readRewindCatalogue(this.projectRoot, this.info.sessionId);
     if (catalogue.problem !== undefined) throw new Error(catalogue.problem);
     const current = catalogue.checkpoints.find((entry) => entry.snapshotId === checkpoint.snapshotId);
@@ -2229,6 +2235,7 @@ export class AgentRuntime {
    */
   async startNewSession(): Promise<AgentRuntime> {
     this.refuseWhileDelegationsTracked('/clear');
+    await this.refreshCloudPolicy();
     let successor: AgentRuntime;
     try {
       successor = await AgentRuntime.create({

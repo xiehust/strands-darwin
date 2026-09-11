@@ -1547,6 +1547,7 @@ export function App({
           dispatch({ type: 'notice', text: '/status takes no arguments' });
           return;
         }
+        await runtime.refreshCloudPolicy(); // Local-only peer policy discovery; never cloud retrieval.
         // The /context machinery, degraded rather than fatal: a failed estimate
         // costs one line of the report, never the report.
         let context: ContextEstimate | undefined;

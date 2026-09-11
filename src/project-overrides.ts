@@ -37,7 +37,8 @@ export function cloudBinding(config: AgentCoreConfig, root: string): string {
 
 export function effectiveCloudPolicy(global: AgentCoreConfig | undefined, overrides: ProjectOverrides | undefined, root: string): AgentCoreConfig | undefined {
   if (!global) return undefined;
-  const override = overrides?.[projectIdentity(root, global.projectId)]?.agentCoreMemory;
+  const project = projectIdentity(root); // Consent is NEVER keyed by the cloud namespace.
+  const override = overrides?.[project]?.agentCoreMemory;
   const config: AgentCoreConfig = { ...global,
     ...(override?.upload === undefined ? {} : { upload: override.upload }),
     ...(override?.autoDailyEvents === undefined ? {} : { autoDailyEvents: override.autoDailyEvents }),
@@ -45,8 +46,9 @@ export function effectiveCloudPolicy(global: AgentCoreConfig | undefined, overri
     ...(override === undefined ? {} : { projectOverride: true }),
   };
   delete config.authorization; delete config.autoProblem;
+  if (!override && global.projectId !== project && overrides?.[global.projectId ?? '']?.agentCoreMemory?.upload === 'auto') config.autoProblem = 'Legacy cloud-namespace consent is inactive; re-confirm this working tree with /cloud-memory auto';
   if (config.upload === 'auto') {
-    if (override?.upload === 'auto' && override.authorization?.scope === cloudBinding(config, root)) config.authorization = override.authorization;
+    if (override?.upload === 'auto' && override.authorization?.version === 2 && override.authorization.project === project && override.authorization.scope === cloudBinding(config, root)) config.authorization = override.authorization;
     else {
       config.upload = 'manual';
       config.autoProblem = 'Auto authorization missing or scope changed; re-confirm this project with /cloud-memory auto';
