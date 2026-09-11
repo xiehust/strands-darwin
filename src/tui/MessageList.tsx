@@ -126,7 +126,7 @@ function HistoryEntry({ item }: { readonly item: HistoryItem }): React.JSX.Eleme
         <Box marginBottom={1}>
           {item.severity === 'info' ? (
             <Text>
-              <Text color={noticeColor(item.severity)}>{visualMarker.notice[item.severity]}</Text> {item.text}
+              <Text color={noticeColor(item.severity)}>{visualMarker.notice[item.severity]}</Text> <Text dimColor>{item.text}</Text>
             </Text>
           ) : (
             <Text color={noticeColor(item.severity)}>

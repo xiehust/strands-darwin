@@ -21,6 +21,7 @@ const rows = (value: string): number => plain(value).split('\n').length;
 const FORCED_COLOR_FIXTURE = 'DARWIN_VISUAL_LANGUAGE_FORCED_COLOR_FIXTURE';
 if (process.env[FORCED_COLOR_FIXTURE] === '1') {
   const history: HistoryItem[] = [
+    { kind: 'user', id: 'u', text: 'question' },
     { kind: 'assistant', id: 'a', text: 'answer', part: 'whole', codeOpen: false },
     { kind: 'tool', id: 't', name: 'bash', summary: 'bash: pnpm test', status: 'ok', preview: '', inputPreview: '', expanded: false },
     { kind: 'notice', id: 'ni', text: 'memory report\nsecond line', severity: 'info' },
@@ -163,11 +164,13 @@ const sgrFor = (marker: string): readonly number[] => {
 };
 const hasSgr = (marker: string, code: number): boolean => sgrFor(marker).includes(code);
 assert('informational marker has the semantic accent', hasSgr('info ·', 36));
-assert('informational body remains at normal intensity',
-  coloredTranscript.includes('\u001B[39m memory report\nsecond line')
-    && !coloredTranscript.includes('\u001B[2mmemory report'));
-assert('warning and error retain distinct semantic colors',
-  hasSgr('warn ! cache unavailable', 33) && hasSgr('error ! turn failed', 31));
+assert('informational body dims every line using terminal-native intensity',
+  coloredTranscript.includes('\u001B[2mmemory report\u001B[22m\n\u001B[2msecond line\u001B[22m'));
+assert('user and assistant bodies remain at normal intensity',
+  ['question', 'answer'].every((text) => !hasSgr(text, 2)));
+assert('warning and error retain distinct semantic colors without dimming',
+  coloredTranscript.includes('\u001B[33mwarn ! cache unavailable\u001B[39m')
+    && coloredTranscript.includes('\u001B[31merror ! turn failed\u001B[39m'));
 assert('ANSI stripping preserves exact informational report bytes',
   plain(coloredTranscript).includes('info · memory report\nsecond line'));
 assert('assistant, tool identity, composer and selected completion share the cyan accent',
