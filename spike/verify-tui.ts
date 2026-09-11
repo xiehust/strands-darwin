@@ -16,7 +16,7 @@
  * sessions and allow rules under test are this suite's own and never the
  * developer's — see the note there before adding a scenario that reads one.
  *
- * Free scenarios (no model call): model | mode | clear | completion | pathCompletion | recall |
+ * Free scenarios (no model call): cloudAuto | model | mode | clear | completion | pathCompletion | recall |
  * recallEmpty | bang | queue | wordNav | undo | mcp | resume | copy | rewind | escRewind | tangent | modelRetry — `copy`
  * (SER-057) seeds a completed answer through a local fixture model and `--resume`, then proves
  * the OSC 52 sequence in the raw pty output decodes to the exact committed answer text;
@@ -1137,6 +1137,32 @@ async function composerUndo(): Promise<void> {
  * Completion uses a temporary project with one skill, one custom command, and a
  * colliding command. Nothing is submitted, so this makes no model call.
  */
+async function cloudAuto(): Promise<void> {
+  header('TUI — project-only cloud auto/manual without a model turn');
+  await resetWorkDir();
+  await writeHomeConfig({ agentCoreMemory: { enabled: true, region: 'us-west-2', memoryId: 'Synthetic-0123456789', actorId: 'synthetic-user', episodicStrategyId: 'episodes-0123456789', preferenceStrategyId: 'preferences-0123456789', preferences: false, upload: 'off' } });
+  const tui = startTui({ cwd: WORK_DIR });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60000 });
+    let mark = tui.mark(); tui.submit('/cloud-memory auto extra');
+    await tui.waitFor('usage: /cloud-memory', { from: mark });
+    assert('invalid args do not persist mode', !JSON.parse(await readFile(HOME_CONFIG, 'utf8')).projectOverrides);
+    mark = tui.mark(); tui.submit('/cloud-memory auto');
+    await tui.waitFor('auto enabled for NEW turns only', { from: mark });
+    const record = JSON.parse(await readFile(HOME_CONFIG, 'utf8'));
+    const policy = Object.values(record.projectOverrides)[0] as { agentCoreMemory: { upload: string; authorization: unknown } };
+    assert('typed auto persists current project authorization', policy.agentCoreMemory.upload === 'auto' && !!policy.agentCoreMemory.authorization && record.agentCoreMemory.upload === 'off');
+    assert('auto notice warns about secrets and retention', tui.screen.slice(mark).includes('Content may include secrets') && tui.screen.slice(mark).includes('7 days'));
+    mark = tui.mark(); tui.submit('/cloud-memory manual');
+    await tui.waitFor('manual persisted', { from: mark });
+    const manual = Object.values(JSON.parse(await readFile(HOME_CONFIG, 'utf8')).projectOverrides)[0] as { agentCoreMemory: { upload: string } };
+    assert('typed manual persists immediately without model work', manual.agentCoreMemory.upload === 'manual' && !tui.screen.includes('working…'));
+    mark = tui.mark(); tui.submit('/status');
+    await tui.waitFor('upload manual', { from: mark });
+    tui.submit('/exit'); await tui.exitedWithin(EXIT_TIMEOUT_MS);
+  } finally { tui.kill(); }
+}
+
 async function slashCompletion(): Promise<void> {
   header('TUI — slash-command completion');
 
@@ -4561,6 +4587,7 @@ const SCENARIOS = {
   wordNav: wordNavigation,
   undo: composerUndo,
   completion: slashCompletion,
+  cloudAuto,
   pathCompletion,
   historySearch: promptHistorySearch,
   recall: promptRecall,

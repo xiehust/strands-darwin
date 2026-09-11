@@ -1651,6 +1651,7 @@ async function documentedKeys(): Promise<void> {
     memory: true,
     memoryHorizonDays: 7,
     agentCoreMemory: false,
+    projectOverrides: {},
     maxConcurrentSubagents: 4,
     systemPrompt: 'You are terse.',
   };

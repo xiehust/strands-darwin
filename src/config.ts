@@ -36,6 +36,8 @@ import type { ToolHookCommand, ToolHookGroup, ToolHooksConfig } from './hooks/to
 import { darwinDir, hookExtensionRoots, userDarwinDir, userProjectDir, type ExtensionRoot } from './paths.js';
 import { passthroughEntryProblem } from './tools/shell-env.js';
 import { parseAgentCoreConfig, type AgentCoreConfig } from './agentcore/config.js';
+import { readConfigBytes, updateConfigFile } from './config-file.js';
+import { effectiveCloudPolicy, parseProjectOverrides, type ProjectOverrides } from './project-overrides.js';
 
 /** Raised for malformed or unusable configuration. Always carries a fix hint. */
 export class ConfigError extends Error {
@@ -345,6 +347,7 @@ export interface SessionFields {
   memoryHorizonDays?: number;
   /** Optional cloud memory; independent of model provider and local project memory. */
   agentCoreMemory?: AgentCoreConfig;
+  projectOverrides?: ProjectOverrides;
   /**
    * Ceiling on concurrently running child dispatches (`subagent` calls plus
    * `workflow` nodes, counted on the one dispatch registry). A call that would
@@ -424,6 +427,7 @@ export const SESSION_KEYS = [
   'memory',
   'memoryHorizonDays',
   'agentCoreMemory',
+  'projectOverrides',
   'maxConcurrentSubagents',
   'systemPrompt',
 ] as const;
@@ -723,8 +727,8 @@ export function withModelChoice(config: AppConfig, target: ModelChoice): AppConf
   return {
     // Safe: SESSION_KEYS are exactly the keys of SessionFields, and the required
     // ones are always present on a validated AppConfig.
-    ...(session as unknown as SessionFields),
     ...target.fields,
+    ...(session as unknown as SessionFields),
     modelChoices: config.modelChoices.map((choice) => ({ ...choice, enabled: choice.index === target.index })),
   };
 }
@@ -741,7 +745,9 @@ export async function loadConfig(projectRoot: string): Promise<AppConfig> {
 
   let raw: string;
   try {
-    raw = await readFile(file, 'utf8');
+    const bytes = await readConfigBytes(file);
+    if (bytes === undefined) return defaultConfig();
+    raw = bytes;
   } catch (error) {
     if (isFileNotFound(error)) return defaultConfig();
     throw new ConfigError(`Could not read ${file}: ${describe(error)}`);
@@ -765,7 +771,11 @@ export async function loadConfig(projectRoot: string): Promise<AppConfig> {
   }
 
   const embeddedHooksActive = !(await pathExists(globalHooksPath())) && !(await hookDirectoryHasJson(userDarwinDir()));
-  return validate(parsed, file, embeddedHooksActive);
+  const config = validate(parsed, file, embeddedHooksActive);
+  const cloud = effectiveCloudPolicy(config.agentCoreMemory, config.projectOverrides, projectRoot);
+  if (cloud !== undefined) config.agentCoreMemory = cloud;
+  if (config.agentCoreMemory?.upload !== undefined && config.agentCoreMemory.upload !== 'off' && config.trajectory === false) throw new ConfigError('agentCoreMemory uploads require trajectory recording.');
+  return config;
 }
 
 function validate(parsed: unknown, configPath: string, validateEmbeddedHooks = true): AppConfig {
@@ -1238,7 +1248,8 @@ function validateSessionFields(
   if (trajectory !== undefined) fields.trajectory = trajectory;
   try {
     const cloud = parseAgentCoreConfig(input['agentCoreMemory']);
-    if (cloud?.upload === 'manual' && trajectory === false) throw new Error('agentCoreMemory uploads require trajectory recording.');
+    const overrides = parseProjectOverrides(input['projectOverrides']);
+    if (overrides !== undefined) fields.projectOverrides = overrides;
     if (cloud !== undefined) fields.agentCoreMemory = cloud;
   } catch (error) { throw new ConfigError(`${configPath}: ${(error as Error).message}`); }
 
@@ -1775,14 +1786,14 @@ export async function saveThinkingEffort(projectRoot: string, effort: ThinkingEf
     throw new ConfigError(`Refusing to save ${JSON.stringify(effort)}: it is not a thinking effort level.`);
   }
 
-  const file = configPath(projectRoot);
-  const { record } = await readConfigRecord(file);
-  // Reuses the loader's own selection so the level cannot land on a different
-  // entry than the session is running: one rule for "which model is enabled".
-  const entries = record['models'] === undefined ? undefined : modelEntries(record, file);
-  const target = entries === undefined ? record : entries[selectEnabledIndex(entries, file)];
-  (target as Record<string, unknown>)['thinkingEffort'] = effort;
-  await writeConfigRecord(file, record);
+  const file = configFilePath();
+  await updateConfigFile(file, (record) => {
+    // Reuses the loader's own selection so the level cannot land on a different
+    // entry than the session is running: one rule for "which model is enabled".
+    const entries = record['models'] === undefined ? undefined : modelEntries(record, file);
+    const target = entries === undefined ? record : entries[selectEnabledIndex(entries, file)];
+    (target as Record<string, unknown>)['thinkingEffort'] = effort;
+  });
 }
 
 /**
@@ -1803,30 +1814,29 @@ export async function saveThinkingEffort(projectRoot: string, effort: ThinkingEf
  * failed write costs only the memory of the choice.
  */
 export async function saveEnabledModel(projectRoot: string, index: number): Promise<void> {
-  const file = configPath(projectRoot);
-  const { record, existed } = await readConfigRecord(file);
-
-  if (record['models'] === undefined) {
-    if (existed) {
-      throw new ConfigError(
-        `${file} configures a single model, so there is nothing to switch between. ` +
-          `Move it into a "models" array to keep more than one configuration.`,
-      );
+  const file = configFilePath();
+  await updateConfigFile(file, (record, existed) => {
+    if (record['models'] === undefined) {
+      if (existed) {
+        throw new ConfigError(
+          `${file} configures a single model, so there is nothing to switch between. ` +
+            `Move it into a "models" array to keep more than one configuration.`,
+        );
+      }
+      record['models'] = DEFAULT_MODELS.map((fields, choiceIndex) => ({
+        ...fields,
+        enable: choiceIndex === index,
+      }));
     }
-    record['models'] = DEFAULT_MODELS.map((fields, choiceIndex) => ({
-      ...fields,
-      enable: choiceIndex === index,
-    }));
-  }
 
-  const entries = modelEntries(record, file);
-  const target = entries[index];
-  if (target === undefined) {
-    throw new ConfigError(`${file}: there is no models[${index}] to enable (${entries.length} entries).`);
-  }
+    const entries = modelEntries(record, file);
+    const target = entries[index];
+    if (target === undefined) {
+      throw new ConfigError(`${file}: there is no models[${index}] to enable (${entries.length} entries).`);
+    }
 
-  for (const entry of entries) entry['enable'] = entry === target;
-  await writeConfigRecord(file, record);
+    for (const entry of entries) entry['enable'] = entry === target;
+  });
 }
 
 /** Writes the config file back, creating `.darwin/` when this is the first write. */

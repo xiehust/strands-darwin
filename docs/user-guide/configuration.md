@@ -2,7 +2,7 @@
 
 **English** · [简体中文](configuration.zh-CN.md) · [Guide index](README.md)
 
-`agentCoreMemory` is a root-only, default-off object (or `false`), independent of local `memory` and the model provider. Its complete field/namespace/SDK contract is in [Optional AgentCore Memory](agentcore-memory.md). Upload defaults off; only user-submitted TUI preview/send is supported. `upload: "manual"` requires trajectory and collects bounded original public tool text for future turns (all tool names, no secret-word/path filtering). Each paired action is at most 8 KiB; the serialized CreateEvent body is at most 256 KiB. Content can contain secrets: exact preview is required, not a confidentiality guarantee. Existing immutable outboxes are never regenerated. Standalone CLI is read-only. Explicit `projectId` is lowercase, 1–64 characters; preferences are fetched once per runtime, then local revocations are rechecked.
+`agentCoreMemory` is a root-only, default-off object (or `false`), independent of local `memory` and the model provider. Its complete field/namespace/SDK contract is in [Optional AgentCore Memory](agentcore-memory.md). Upload defaults off; user-submitted TUI preview/send remains available; `/cloud-memory auto` explicitly authorizes automatic uploads only for the current project. `upload: "manual"` requires trajectory and collects bounded original public tool text for future turns (all tool names, no secret-word/path filtering). Each paired action is at most 8 KiB; the serialized CreateEvent body is at most 256 KiB. Content can contain secrets: manual sending requires exact preview; auto mode is standing project consent, not a confidentiality guarantee. Existing immutable outboxes are never regenerated. Standalone CLI is read-only. Explicit `projectId` is lowercase, 1–64 characters; preferences are fetched once per runtime, then local revocations are rechecked.
 
 
 ## File forms and precedence
@@ -81,7 +81,8 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `diagnostics` | `false` | per-session SDK/darwin debug log |
 | `memory` | true while trajectory is available | project memory; omitted follows `trajectory: false` |
 | `memoryHorizonDays` | `28` | generated-memory age, integer `0–365`; `0` disables age only |
-| `agentCoreMemory` | disabled | root-only cloud config or `false`; [IDs, namespaces, preferences, manual upload and SDK requirements](agentcore-memory.md) |
+| `agentCoreMemory` | disabled | root cloud identity/config or `false`; [IDs, namespaces, preferences, upload and SDK requirements](agentcore-memory.md) |
+| `projectOverrides` | — | strict map keyed by stable project ID; registered `agentCoreMemory.upload`, `autoDailyEvents`, `autoDailyBytes`, and command-owned `authorization` only; see below |
 | `maxConcurrentSubagents` | `8` | ceiling on running child dispatches (`subagent` calls plus `workflow` nodes); positive integer; a call over it is refused before any model or child exists |
 | `terminalBell` | `false` | ring the terminal bell on permission prompts and turn completion (interactive TUI only) |
 | `terminalNotify` | `false` | ask the terminal for a desktop notification at the same two moments — one OSC 9 sequence (`ESC ] 9 ; darwin · <project> · waiting for approval\|turn complete ESC \`) straight to stdout, only when stdout is a TTY (interactive TUI only; `-p` and child agents never write one). The terminal decides whether to show it: iTerm2 (enable Settings → Profiles → Terminal → "Notification Center Alerts" → Filter Alerts → "Send escape sequence-generated alerts"), kitty, Ghostty, WezTerm and foot show a toast; every other terminal consumes the sequence silently. Inside tmux the sequence is wrapped in tmux's passthrough DCS and needs `set -g allow-passthrough on` in `~/.tmux.conf`. Works over SSH — the notification appears on the machine running the terminal. `false` never writes it |
@@ -94,6 +95,20 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 `memory: true` with `trajectory: false` is invalid. Permission allow and deny rules are deliberately not config fields: they live per project in `~/.darwin/projects/<project-key>/permission-rules.json`; a `permissionRules` field in config is a startup error.
 
 The two tables above are the complete key set. Any other key — at the root or inside a `models` entry, including `$schema` or comment-style keys — is an unknown key and a startup error, never a silently ignored one: the message names the file, every unknown key and where it was found, and suggests the nearest known key when a spelling is close (`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`). Fix the spelling or remove the key. `darwin doctor` reports the same problem as a `!` line (and exits 1) without starting a session, so a config edit can be checked before the next launch.
+
+## Project overrides
+
+Precedence is **defaults < global config < current project override**, in both single-model and `models` array files. The key is global `agentCoreMemory.projectId` when explicitly set, otherwise lowercase SHA256 of Darwin's canonical `projectKey(root)` (the same identity used for cloud namespaces). Separate checkouts with the same explicit ID deliberately share policy. Overrides cannot change their matching ID, resource, region, actor, strategies, model/provider or permissions. Unknown/nested keys, recursive overrides, prototype keys, invalid types and more than 1024 project entries are refused; config reads/writes cap at 1 MiB.
+
+You may preconfigure a project's budgets without enabling auto:
+
+```json
+{ "projectOverrides": { "<project-id>": { "agentCoreMemory": {
+  "autoDailyEvents": 500, "autoDailyBytes": 104857600
+} } } }
+```
+
+Limits are positive integers: events up to 100000, bytes up to 107374182400. Root limits are defaults; the project wins. `/cloud-memory auto` writes `upload: "auto"` plus a fresh authorization epoch, timestamp, policy version and scope hash binding region/resource/actor/project/both strategies. Root `upload: "auto"` alone cannot authorize any project. Missing or changed bindings fall back to manual with re-confirm guidance. `/cloud-memory manual` persists immediately and cancels unsent auto work without resetting the conversation. Config writers share a private cross-process lock, fresh-read merge and synced atomic publication; unrelated settings and other projects survive. Crash locks require owner inspection, not automatic stealing.
 
 ## System prompt composition
 

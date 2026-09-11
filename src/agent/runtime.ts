@@ -871,15 +871,14 @@ export class AgentRuntime {
       // Darwin's own hook + middleware below keep the same schedule (SER-066).
       retryStrategy: null,
     });
-    if (cloudMemory?.uploadObserver !== undefined) {
-      const observer = cloudMemory.uploadObserver;
-      agent.addHook(BeforeToolsEvent, event => observer.batch(event), { order: HookOrder.SDK_LAST });
-      agent.addHook(BeforeToolCallEvent, event => observer.before(event), { order: HookOrder.SDK_LAST });
+    if (cloudMemory !== undefined) {
+      agent.addHook(BeforeToolsEvent, event => cloudMemory.uploadObserver?.batch(event), { order: HookOrder.SDK_LAST });
+      agent.addHook(BeforeToolCallEvent, event => cloudMemory.uploadObserver?.before(event), { order: HookOrder.SDK_LAST });
       // Pre-after-hook execution evidence, not necessarily final model-visible output.
-      agent.addHook(AfterToolCallEvent, event => observer.after(event), { order: HookOrder.SDK_FIRST });
+      agent.addHook(AfterToolCallEvent, event => cloudMemory.uploadObserver?.after(event), { order: HookOrder.SDK_FIRST });
       // Batch cancellation, executor failure and background acknowledgement may
       // have no AfterToolCallEvent. Never overwrite an original snapshot.
-      agent.addHook(ToolResultEvent, event => observer.fallback(event), { order: HookOrder.SDK_LAST });
+      agent.addHook(ToolResultEvent, event => cloudMemory.uploadObserver?.fallback(event), { order: HookOrder.SDK_LAST });
     }
     toolForName = (name) => agent.tools.find((candidate) => candidate.name === name);
     installMaxTokensRecovery(agent);
@@ -1249,7 +1248,7 @@ export class AgentRuntime {
       this.memoryController?.openTurn(recording?.turn, origin === undefined ? userInput : '');
       if (recording !== undefined && this.cloudMemory?.uploadObserver !== undefined) {
         uploadTurn = recording.turn;
-        this.cloudMemory.uploadObserver.begin(recording.turn, origin === undefined ? userInput : '');
+        this.cloudMemory.begin(recording.turn, origin === undefined ? userInput : '');
       }
       // The current input is the one exception to fire-and-forget recording: make it
       // readable to offline observers before Agent.stream() can invoke a provider or
@@ -1302,7 +1301,7 @@ export class AgentRuntime {
       // generator before natural completion: only the natural path above seals.
       if (!sealed) this.memoryController?.discard();
       this.cloudMemory?.uploadObserver?.end();
-      if (uploadTurn !== undefined && (!streamStarted || this.trajectory?.status.active === false)) this.cloudMemory?.uploadObserver?.take(uploadTurn);
+      if (uploadTurn !== undefined && (!streamStarted || this.trajectory?.status.active === false)) this.cloudMemory?.discardTurn(uploadTurn);
       // Only a turn that ran to `endTurn` commits what its `wait`/`status` results
       // delivered; an abandoned or failed turn forgets them, so the wake still fires.
       this.terminalDelivery.closeTurn(sealed && completed);
@@ -1407,6 +1406,8 @@ export class AgentRuntime {
   private async prepareCloudPreferences(): Promise<number | undefined> {
     if (this.cloudMemory === undefined) return;
     const generation = this.cloudMemory.cancelGeneration;
+    await this.cloudMemory.refreshPolicy();
+    this.liveConfig = { ...this.liveConfig, agentCoreMemory: this.cloudMemory.config };
     await this.cloudMemory.startup(); // One cloud fetch per runtime; local revocations are checked on every request.
     this.checkCloudPreparation(generation);
     await this.applyCloudPreferences();
@@ -1416,6 +1417,7 @@ export class AgentRuntime {
   async manageCloudMemory(input: string): Promise<string> {
     if (this.cloudMemory === undefined) return this.cloudMemoryStatus;
     const result = await this.cloudMemory.command(input, 'user');
+    this.liveConfig = { ...this.liveConfig, agentCoreMemory: this.cloudMemory.config };
     await this.applyCloudPreferences();
     return result;
   }

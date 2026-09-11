@@ -222,6 +222,11 @@ async function reportConfig(report: Report, projectRoot: string): Promise<AppCon
       `diagnostics ${config.diagnostics === true ? 'on' : 'off'}`,
   );
   report.info(`permission mode ${config.permissionMode}`);
+  const cloud = config.agentCoreMemory;
+  if (cloud) {
+    report.info(`cloud memory upload ${cloud.upload}${cloud.projectOverride ? ' (project override)' : ''}; daily auto ${cloud.autoDailyEvents} attempts/${cloud.autoDailyBytes} bytes`);
+    if (cloud.autoProblem) report.problem(cloud.autoProblem);
+  }
   return config;
 }
 

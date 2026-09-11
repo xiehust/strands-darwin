@@ -51,7 +51,7 @@ function record(kind: 'preference' | 'episode' | 'reflection', overrides = {}) {
 }
 header('AgentCore config, scope, XML and transport');
 assert('disabled omitted and false have no config', parseAgentCoreConfig(undefined) === undefined && parseAgentCoreConfig(false) === undefined);
-for (const bad of [{ ...config, actorId: '../other' }, { ...config, projectId: 'UpperCase' }, { ...config, upload: 'auto' }, { ...config, namespace: '/' }, { ...config, episodicStrategyId: config.preferenceStrategyId }]) await rejects('invalid host configuration fails closed', () => parseAgentCoreConfig(bad));
+for (const bad of [{ ...config, actorId: '../other' }, { ...config, projectId: 'UpperCase' }, { ...config, upload: 'automatic' }, { ...config, namespace: '/' }, { ...config, episodicStrategyId: config.preferenceStrategyId }]) await rejects('invalid host configuration fails closed', () => parseAgentCoreConfig(bad));
 assert('project deterministic and isolated; preferences shared by actor', scopeFor(config, root).project === scope.project && scopeFor(config, root + '-other').project !== scope.project && scopeFor(config, root + '-other').preferences === scope.preferences);
 assert('opaque actor not inferred from credentials', !scope.preferences.includes('AWS') && scopeFor({ ...config, actorId: 'other' }, root).preferences !== scope.preferences);
 const episode = validateRecord(record('episode'), 'episode', config, root);

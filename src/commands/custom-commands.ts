@@ -43,7 +43,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   mcp: 'MCP servers and their tools',
   // Local inspection and explicit user management of enabled project memory.
   memory: 'list, show, remember, or forget project memory',
-  'cloud-memory': 'AgentCore status, preference adoption, and manual upload preview/send',
+  'cloud-memory': 'AgentCore status, project auto/manual, preferences and upload review',
 
   // Session-scoped enforcement policy, not the model: /mode sits next to /model in
   // the menu, so both descriptions have to say which is which.

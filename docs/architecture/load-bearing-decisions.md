@@ -832,7 +832,7 @@ immediately drops approval and live context. No automatic
 promotion or local-memory migration. Cloud deletion is a distinct user command with a
 fresh scope check. Model provider and permission policy remain independent.
 
-Uploads require trajectory plus `upload: manual`. New turns use `darwin-upload-v2`, not
+Uploads require trajectory plus manual mode or project-authorized auto. New turns use `darwin-upload-v2`, not
 trajectory reconstruction: a synchronous/no-I/O/nonthrowing bounded observer reads public
 parent BeforeToolCallEvent (SDK_LAST) and AfterToolCallEvent (SDK_FIRST, before ContextOffloader).
 The latter is labelled pre-after-hook execution evidence, not necessarily final model-visible
@@ -859,7 +859,7 @@ identity ledger retains evicted-action tombstones and bounded summary correlatio
 result updates status/exitCode/failure even when the body was evicted, and failure text can
 recover an action with explicitly absent input. Summaries include invocationScope; results
 whose summaries were also evicted have a separate counter. Excess identities are explicitly
-unmatched. Invocation-state identity rejects unrelated late results from another turn. No automatic upload, model summary, extra model call, backfill, path reads,
+unmatched. Invocation-state identity rejects unrelated late results from another turn. No observer upload, model summary, extra model call, backfill, path reads,
 child traversal or offload/archive hydration.
 
 Every tool name and textual argument/result is eligible, including arbitrary MCP, public
@@ -869,7 +869,7 @@ blocks remain excluded; separate preference/local-memory publicProse policy is u
 USER is literal submitted text (bounded exact head/tail); one TOOL is an ordinal/SDK identity
 plus input and corresponding result; OTHER carries provenance, outcome and categorized loss.
 SDK status and structured bash exitCode remain separate; missing results are explicit and
-endTurn never means task success. Exact preview + hash authorization remains mandatory.
+endTurn never means task success. Manual sends still require exact preview + hash authorization.
 
 Bounds: 8 KiB per full action, 256 KiB serialized CreateEvent including JSON escaping,
 100 payload messages, 100,000 UTF-8 bytes/message. At most eight transient turns, each 64
@@ -897,9 +897,9 @@ Proxies; production SDK inputs are JSON. Upstream loss indicators are marked, no
 unmarked upstream loss cannot be recovered. See `agentcore-upload-projection-verification.md`. Immutable bounded outbox entries retain
 session/turn/order and truthful failed/cancelled/incomplete states; endTurn is not task
 success. Three durable reserved attempts maximum, stable CreateEvent clientToken/body
-across restart; event acceptance never claims episode generation. No eviction or automatic
-sender. User-only discard/clear-accepted free bodies after durable bounded receipts (256),
-never silently evicted. No-clobber publication links synced private temporary files; incomplete
+across restart; event acceptance never claims episode generation. No pending eviction.
+User-only discard/clear-accepted free bodies after durable receipts; legacy 256-token ledgers
+stay readable, new per-token partitioned receipts never evict proof. No-clobber publication links synced private temporary files; incomplete
 staging cannot become an event/reservation. Cross-process outbox locks refuse in-flight work;
 crash-held locks/legacy corrupt final entries need manual repair, never silent order skipping.
 Standalone CLI permits only read-only status/preferences/inspect/pending/preview and reports
@@ -915,6 +915,54 @@ publish approval/start AWS, while already-issued effects and received acknowledg
 truthful. Runtime cancellation generation spans local context/proof reads through send/compact
 invocation, without resetting the preference cache. Crash before candidate
 persistence can omit a turn, deliberately without archive recovery.
+
+**Project auto authority and storage.** `project-identity.ts` extracts the existing explicit global
+projectId-or-SHA256(projectKey(root)) identity without importing config. `project-overrides.ts`
+is a strict typed registry: defaults < global < matching project, in both file forms and live
+model switches/successors. Only upload/daily limits and command-owned authorization are
+registered; unknown/prototype/recursive/model/permission/identity overrides are refused.
+The 1 MiB config and 1024-entry map bounds are independent of configurable daily quotas.
+All global config writers fresh-read under one private cross-process lock, preserve unrelated
+JSON, sync/atomically publish, reject symlinks and refuse overlap/crash locks. Root auto is
+not authority: only an explicit matching project auto entry with versioned epoch/time/scope
+hash authorizes requests; changed identity binds nothing and displays re-confirm guidance.
+The idle user TUI auto/manual path persists local policy without model/tool/conversation reset;
+mode switches preserve collected evidence and manual proofs. No programmatic consent tool.
+
+`begin` snapshots the active authorization for new turns, separately from immutable projection
+bytes. Durable close then event publication precede the separate hash/provenance record. Old
+manual/legacy/pre-enable turns are never eligible, including after re-enable; bounded original
+late-result identity must belong to the same epoch. Closed failed tool work can qualify; no
+success inference. Cancel/incomplete/provider failure, observer errors, ambiguity and missing
+results hold manual. Goal-only/ack-only management does not send; bounded truncation does not
+veto. Existing public observer hooks remain synchronous/nonthrowing/no I/O and SDK loop intact.
+
+The manual sender core owns both gates, reservations, ordering, transport and acknowledgements.
+Auto passes are detached, serial, at most eight candidates per activity, no daemon/model/tick.
+Publication has a separate bounded local lock so network work cannot block new event files;
+sends and retention/manual cleanup share the original outbox lock.
+Earlier pending blocks only its session; other sessions retain request slots. Budget-paused
+candidates resume only on later ordinary activity with the same active authorization. Every
+attempt is reserved durably, counts exact Smithy wire-body UTF-8 bytes (including multibyte
+JSON) against one UTC project ledger, and conservatively consumes quota on unknown ack/cancel.
+Defaults 500 attempts/104857600 bytes; validated maxima 100000/107374182400. Outbox and quota
+locks prevent process/restart bypass, including checkouts sharing explicit project identity. Three stable token/body attempts total; 250/500ms cancellable
+backoff for network/429/5xx. Permanent transport/IAM failures persist an epoch-bound stop.
+The pre-HTTP handler rereads only local upload policy after credentials/signing and reservations;
+revoked or changed authority cannot launch a later request. Shutdown/clear/cancel stop owned
+requests and retain exact acknowledgements, with the existing two-second drain, not a daemon.
+
+Auto acceptance retains a per-token receipt before any expiry. Only auto-accepted bodies expire
+at seven days during later authorized activity; pending/manual/failure/cloud data never expires.
+Body cap 4096, pending cap 512, directory cap 32768 suit seven days at default throughput;
+capacity refuses new candidates visibly. Receipts use 256 prefix partitions, each ≤4096 files;
+lookup is per-token plus bounded legacy ledger, never whole archive. Full partition stops before
+network/removal, no proof eviction. Pending listing ≤64 with explicit omission. User-only
+`discard-legacy` previews ≤256 unaccepted non-v2 events in this exact binding, then requires
+manifest hash under the outbox lock; TOCTOU refuses, all tombstones precede deletion, committed
+manifest allows restart-safe partial cleanup. Accepted/v2/foreign/cloud data never included.
+Checks: `verify-cloud-memory-auto.ts`, existing upload/memory/config/doctor/setup suites, free
+`tui cloudAuto` and `tui completion`; requirement map in `cloud-memory-auto-verification.md`.
 
 Transport is the official `@aws-sdk/client-bedrock-agentcore@3.1127.0` data client with four
 public Commands, never a generated Strands memory/session manager: automatic extraction upload
@@ -934,7 +982,7 @@ only the SDK top-level `$metadata` envelope is stripped, never memory metadata. 
 XML and scope guards still decide trust. Get/Delete carry the fixed preference namespace IAM
 condition, not new mutation authority.
 
-`maxAttempts: 1` leaves finite retries to durable manual reservations. A total deadline spans
+`maxAttempts: 1` leaves finite retries to durable outbox reservations. A total deadline spans
 credential resolution through body consumption. Cancel/deadline races the SDK promise so a
 blocked credential provider cannot hold the caller; the per-request HTTP guard prevents late
 credential completion from issuing a signed request. Credential-provider internal work may finish

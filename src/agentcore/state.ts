@@ -71,12 +71,12 @@ export async function removeState(file: string, signal?: AbortSignal): Promise<v
   await unlink(file).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
 }
 
-export async function stateNames(directory: string): Promise<string[]> {
+export async function stateNames(directory: string, limit = 256): Promise<string[]> {
   if (!await safeDirectory(directory)) return [];
   const names: string[] = [];
   for await (const entry of await opendir(directory)) {
     names.push(entry.name);
-    if (names.length > 256) throw new Error('AgentCore state capacity reached (256 files); manage state outside Darwin');
+    if (names.length > limit) throw new Error(`AgentCore state capacity reached (${limit} files); manage state outside Darwin`);
   }
   return names.sort();
 }

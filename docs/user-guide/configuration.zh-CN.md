@@ -2,7 +2,7 @@
 
 [English](configuration.md) · **简体中文** · [指南首页](README.zh-CN.md)
 
-`agentCoreMemory` 是根级配置对象（或 `false`），默认关闭，与本地 `memory` 和模型供应商独立。字段、命名空间和 SDK 要求见[可选 AgentCore Memory](agentcore-memory.zh-CN.md)。上传默认关闭，只支持用户亲自提交的 TUI 预览、发送，独立 CLI 只读。`upload: "manual"` 要求启用 trajectory，只采集未来回合的有界原始工具文本，不按工具名、敏感词或路径过滤。每个配对操作不超过 8 KiB，序列化 CreateEvent 请求体不超过 256 KiB。内容可能含秘密，必须逐次预览；这不是保密保证。已有不可变 outbox 不会重新生成。显式 `projectId` 必须小写且为 1–64 字符；偏好每个 runtime 只检索一次，后续重查本地撤销。
+`agentCoreMemory` 是根级配置对象（或 `false`），默认关闭，与本地 `memory` 和模型供应商独立。字段、命名空间和 SDK 要求见[可选 AgentCore Memory](agentcore-memory.zh-CN.md)。上传默认关闭，用户可在 TUI 手动预览、发送，或输入 `/cloud-memory auto` 仅授权当前项目自动上传；独立 CLI 只读。`upload: "manual"` 要求启用 trajectory，只采集未来回合的有界原始工具文本，不按工具名、敏感词或路径过滤。每个配对操作不超过 8 KiB，序列化 CreateEvent 请求体不超过 256 KiB。内容可能含秘密，手动发送必须逐次预览，auto 则是项目级持续授权；两者都不是保密保证。已有不可变 outbox 不会重新生成。显式 `projectId` 必须小写且为 1–64 字符；偏好每个 runtime 只检索一次，后续重查本地撤销。
 
 
 ## 文件形式与优先级
@@ -81,7 +81,8 @@
 | `diagnostics` | `false` | 每会话 SDK/darwin 调试日志 |
 | `memory` | 轨迹可用时开启 | 项目记忆；未设置时跟随 `trajectory: false` |
 | `memoryHorizonDays` | `28` | 生成记忆的有效天数，整数 `0–365`；`0` 只关闭过期检查 |
-| `agentCoreMemory` | 关闭 | 根级云配置对象或 `false`；[ID、命名空间、偏好、手动上传和 SDK 要求](agentcore-memory.zh-CN.md) |
+| `agentCoreMemory` | 关闭 | 根级云身份与配置对象或 `false`；[ID、命名空间、偏好、上传和 SDK 要求](agentcore-memory.zh-CN.md) |
+| `projectOverrides` | — | 以稳定项目 ID 为键的严格映射；仅支持已注册的 `agentCoreMemory.upload`、`autoDailyEvents`、`autoDailyBytes` 和命令生成的 `authorization`；见下文 |
 | `maxConcurrentSubagents` | `8` | 同时运行的子代理派发上限（`subagent` 调用加 `workflow` 节点）；正整数；超出的调用会在创建任何模型或子代理之前被拒绝 |
 | `terminalBell` | `false` | 在权限提示和回合结束时响一次终端铃（仅交互式 TUI） |
 | `terminalNotify` | `false` | 在同样两个时刻请终端弹出一条桌面通知——一条 OSC 9 序列（`ESC ] 9 ; darwin · <项目目录名> · waiting for approval\|turn complete ESC \`）直接写到 stdout，仅在 stdout 是 TTY 时写入（仅交互式 TUI；`-p` 和子代理从不写）。是否显示由终端决定：iTerm2（需开启 Settings → Profiles → Terminal → "Notification Center Alerts" → Filter Alerts → "Send escape sequence-generated alerts"）、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端会静默吞掉该序列。在 tmux 内，序列会包在 tmux 的 passthrough DCS 中，需要在 `~/.tmux.conf` 里设置 `set -g allow-passthrough on`。SSH 下同样有效——通知出现在运行终端的那台机器上。`false` 完全不写 |
@@ -94,6 +95,20 @@
 `memory: true` 与 `trajectory: false` 不能同时使用。权限放行与拒绝规则不属于该配置，它们按项目存于 `~/.darwin/projects/<project-key>/permission-rules.json`。在配置文件中写入 `permissionRules` 会导致启动失败。
 
 上面两张表就是全部字段。其他任何键——无论在顶层还是 `models` 条目内，包括 `$schema` 或注释风格的键——都是未知字段，会导致启动失败，而不会被静默忽略：错误信息会指出文件、每个未知字段及其位置，并在拼写接近时给出最近的已知字段（`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`）。请修正拼写或删除该字段。`darwin doctor` 会在不启动会话的情况下以 `!` 行报告同样的问题（并以退出码 1 结束），因此改完配置可以先检查再启动。
+
+## 项目覆盖设置
+
+优先级为 **默认值 < 全局配置 < 当前项目覆盖**，单模型和 `models` 数组格式一致。键优先采用根级 `agentCoreMemory.projectId`；未设置时，使用 Darwin 规范化 `projectKey(root)` 的小写 SHA256，与云命名空间使用同一身份。显式采用相同 ID 的不同工作副本会共享策略。覆盖层不能修改自己的匹配 ID、区域、资源、actor、策略、模型供应商或权限。未知字段、递归覆盖、原型键和错误类型均拒绝；最多 1024 个项目，配置文件最多 1 MiB。
+
+可先在文件中设置预算，不启用 auto：
+
+```json
+{ "projectOverrides": { "<project-id>": { "agentCoreMemory": {
+  "autoDailyEvents": 500, "autoDailyBytes": 104857600
+} } } }
+```
+
+限制均为正整数：events 最大 100000，bytes 最大 107374182400。根级限制作为默认值，项目设置优先。用户输入 `/cloud-memory auto` 后，命令保存模式及新的授权 epoch、时间、策略版本和范围哈希（区域、资源、actor、项目及两项策略）。仅在根级写 `upload: "auto"` 不会授权任何项目；绑定缺失或改变时退回 manual 并提示重新确认。`/cloud-memory manual` 立即持久化、取消尚未发送的自动任务，不重建会话。配置写入采用私有跨进程锁、重新读取后合并及同步原子发布，保留其他项目和无关字段；崩溃遗留锁需要人工检查所有者，不自动抢锁。
 
 ## System prompt 组成
 

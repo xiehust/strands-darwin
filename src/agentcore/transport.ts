@@ -14,7 +14,9 @@ type MemoryInputs = {
   'create-event': Omit<CreateEventCommandInput, 'eventTimestamp'> & { eventTimestamp: string };
   'delete-memory-record': DeleteMemoryRecordCommandInput;
 };
-class TransportError extends Error {}
+export class TransportError extends Error {
+  constructor(message: string, readonly retryable = false) { super(message); }
+}
 const refused = () => new TransportError('AgentCore response failed bounded validation; refused');
 const MAX_SEARCH_TYPE_CHARS = 64;
 /** Live RetrieveMemoryRecords adds this envelope hint before the pinned SDK models it.
@@ -61,12 +63,12 @@ type TransportTestOptions = Pick<BedrockAgentCoreClientConfig, 'requestHandler' 
 let testOptions: (() => TransportTestOptions) | undefined;
 export function setMemoryTransportOptionsForTest(factory?: () => TransportTestOptions): void { testOptions = factory; }
 
-/** Official v3 data client only; manual outbox policy owns all retry/authorization. */
+/** Official v3 data client only; outbox policy owns all retry/authorization. */
 export class MemoryTransport {
   private readonly client: BedrockAgentCoreClient;
   private readonly credentialClient: BedrockAgentCoreClient;
   private active = new Set<() => void>();
-  private requests = new Map<AbortSignal, { check: () => void; raw?: unknown }>();
+  private requests = new Map<AbortSignal, { check: () => void; raw?: unknown; beforeLaunch?: (bytes: number) => Promise<void> }>();
   private closed = false;
   constructor(readonly config: AgentCoreConfig) {
     const defaults = {
@@ -96,6 +98,12 @@ export class MemoryTransport {
             const state = this.requests.get(signal);
             if (!state) throw new TransportError('AgentCore request cancelled');
             state.check(); // Credential/signing awaits must never allow a late request.
+            if (state.beforeLaunch) {
+              const bytes = typeof request.body === 'string' ? Buffer.byteLength(request.body) : request.body instanceof Uint8Array ? request.body.byteLength : undefined;
+              if (bytes === undefined) throw refused();
+              await state.beforeLaunch(bytes);
+              state.check();
+            }
             const result = await handler.handle(request, options);
             const body = result.response.body as Readable;
             const stop = () => body.destroy(new TransportError('AgentCore request cancelled'));
@@ -128,7 +136,7 @@ export class MemoryTransport {
   }
   cancel(): void { for (const cancel of this.active) cancel(); }
   destroy(): void { this.closed = true; this.cancel(); this.client.destroy(); this.credentialClient.destroy(); }
-  async call<K extends MemoryOperation>(operation: K, input: MemoryInputs[K], signal?: AbortSignal): Promise<unknown> {
+  async call<K extends MemoryOperation>(operation: K, input: MemoryInputs[K], signal?: AbortSignal, beforeLaunch?: (bytes: number) => Promise<void>): Promise<unknown> {
     if (this.closed || signal?.aborted) throw new TransportError('AgentCore request cancelled');
     const inputLimit = operation === 'create-event' ? 262144 : 32000;
     if (Buffer.byteLength(JSON.stringify(input)) > inputLimit) throw new TransportError(`AgentCore input exceeds ${inputLimit} bytes`);
@@ -138,11 +146,11 @@ export class MemoryTransport {
     let rejectAbort!: (error: Error) => void;
     const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
     const stop = (reason: string) => {
-      problem ??= new TransportError(reason); controller.abort(); rejectAbort(problem);
+      problem ??= new TransportError(reason, reason === 'AgentCore request timed out'); controller.abort(); rejectAbort(problem);
     };
     const cancel = () => stop('AgentCore request cancelled');
     const deadline = performance.now() + this.config.timeoutMs;
-    const state: { check: () => void; raw?: unknown } = { check: () => {
+    const state: { check: () => void; raw?: unknown; beforeLaunch?: (bytes: number) => Promise<void> } = { ...(beforeLaunch ? { beforeLaunch } : {}), check: () => {
       if (performance.now() >= deadline) stop('AgentCore request timed out');
       if (problem) throw problem;
       controller.signal.throwIfAborted();
@@ -180,7 +188,7 @@ export class MemoryTransport {
       if (error instanceof TransportError) throw error;
       const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
       // Never echo service-controlled names/messages, request IDs, causes or credentials.
-      throw new TransportError(`AgentCore SDK request failed${Number.isInteger(status) && status! >= 300 && status! <= 599 ? ` (HTTP ${status})` : ''}; check region, credentials, IAM and resource configuration. Diagnostics omitted.`);
+      throw new TransportError(`AgentCore SDK request failed${Number.isInteger(status) && status! >= 300 && status! <= 599 ? ` (HTTP ${status})` : ''}; check region, credentials, IAM and resource configuration. Diagnostics omitted.`, status === 429 || status !== undefined && status >= 500 || status === undefined && ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND'].includes((error as NodeJS.ErrnoException).code ?? ''));
     } finally {
       clearTimeout(timer); controller.abort(); this.active.delete(cancel);
       this.requests.delete(controller.signal); signal?.removeEventListener('abort', cancel);
