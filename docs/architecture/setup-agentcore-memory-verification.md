@@ -8,11 +8,11 @@ Implementation scope: offline command/skill integration, not provisioning. Host 
 | Exact case-insensitive slash grammar; bare starts setup; optional remainder preserved, not consent | New setup suite: actual `AgentRuntime.expandSlashCommand`, unknown suffix/prose cases |
 | Full official activation, single catalogue entry, no guide in ambient system prompt | New setup suite: real runtime plus offline model request capture and `load_skill` activation; text/structured headless drivers deliver the full guide and return questions |
 | Expansion has no tool, file/config or cloud effects; normal send keeps literal user trajectory | New setup suite: filesystem snapshots, tool events, offline send and recorded `userInput` |
-| Activation failure stops instead of sending unguided input | Loader/activation failure fixtures and offline TUI failure scenario |
+| Activation failure stops and returns failed literal input/image plus later queued user entries, preserving newer drafts and held shell reports | Loader fixtures; `verify-setup-recovery.ts`: four real runtime/pty cases, removed private setup root, no later drain or failed userInput, repair/remove and retry |
 | Busy submission stays literal and expands only on the next turn | Existing queue suites plus setup queue case |
 | Help/completion uses canonical description once; every built-in fits the offered cap | New suite plus real `verify-tui.ts completion` (including `/help`) |
 | Actor question/stop, reuse confirmation, grouped defaults, arguments/yolo/headless not consent | Guide contract assertions and offline scripted question turn; not a claim of live model compliance |
-| Defaults/config preserve existing settings, sensitive reads, private mode, no credentials, restart | Parsed guide JSON validated by actual config loader; guide contract assertions |
+| Defaults/config preserve confirmed deviations, sensitive reads, private mode, no credentials, restart | Actual config loader retains upload off/preferences false/nondefault timeout/region; guide assertions permit confirmed retention/KMS key while namespace JSON stays invariant |
 | Resource reuse/create schema, exact namespaces, pagination, ACTIVE checks, bounded idempotent wait | Parsed request JSON compared with runtime scope and pinned AWS control-plane shape; guide contract assertions |
 | Install consent, bundled runtime vs control-plane/optional infra CLI, import fidelity, IAM/cost/TTL limits | Guide contract assertions; no installs or AWS calls |
 | Read-only verification distinguishes local status/connectivity from extraction and write proof | Guide contract assertions; no live verification |

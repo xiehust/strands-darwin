@@ -51,6 +51,9 @@ for (const terms of [
   ['Honor pagination', '10 pages/100 resources', 'full resource details', 'do not mutate another application'],
   ['one stable `clientToken`', 'After timeout, check resource state', 'both strategies are `ACTIVE`', '5 minutes/10 checks', 'background bash start/wait'],
   ['freshly verify lossless support', 'Defaults cannot bypass', 'without import/redeploy'],
+  ['template shows defaults, not overrides', 'confirmed resource `name` and `eventExpiryDuration`', 'optional `encryptionKeyArn`', 'Never reset confirmed nondefault retention', 'namespace templates strictly unchanged'],
+  ['Before issuing create-memory, validate the exact adapted request', '3 to 365 days', 'stop and explain rather than reverting'],
+  ['Confirmed choices override all example defaults', '`upload` (including `off`)', '`preferences` (including `false`)', 'validate the exact merged config'],
   ['GetMemoryRecord', 'RetrieveMemoryRecords', 'CreateEvent', 'DeleteMemoryRecord', 'Do not add administrator', 'pricing', 'TTL is NOT long-term'],
   ['No test writes, history backfill', 'disposable scope', 'acceptance, not full extraction'],
   ['darwin cloud-memory status', '**local-only**', 'darwin cloud-memory preferences', 'SDK read-only connectivity'],
@@ -93,6 +96,15 @@ assert.equal(materialize(preference, config.preferenceStrategyId), scope.prefere
 const baseConfig = { provider: 'bedrock', model: 'fake.offline-setup', region: 'us-west-2', promptCache: false, memory: false, contextOffload: false, trajectory: true };
 await writeFile(configPath(), JSON.stringify({ ...baseConfig, agentCoreMemory: config }), { mode: 0o600 });
 assert.deepEqual((await loadConfig(root)).agentCoreMemory, config, 'actual config loader accepts substituted guide schema');
+// Confirmed deviations are data fixtures, not a provisioning implementation.
+const chosenResource = { ...request, name: 'ChosenMemory', eventExpiryDuration: 60, encryptionKeyArn: 'arn:aws:kms:us-west-2:000000000000:key/synthetic-test-key' };
+assert.equal(chosenResource.eventExpiryDuration, 60);
+assert.equal(chosenResource.encryptionKeyArn.split(':')[2], 'kms');
+assert.deepEqual(chosenResource.namespaceKeys, [{ key: 'projectid' }]);
+assert.deepEqual(chosenResource.memoryStrategies, request.memoryStrategies, 'confirmed retention/encryption never widen namespaces');
+const choices = { ...config, region: 'us-east-1', upload: 'off', preferences: false, timeoutMs: 8000 };
+await writeFile(configPath(), JSON.stringify({ ...baseConfig, trajectory: false, agentCoreMemory: choices }));
+assert.deepEqual((await loadConfig(root)).agentCoreMemory, choices, 'real loader retains off/false/nondefault timeout and region');
 await writeFile(configPath(), JSON.stringify({ ...baseConfig, trajectory: false, agentCoreMemory: config }));
 await assert.rejects(loadConfig(root), /trajectory/);
 await writeFile(configPath(), JSON.stringify(baseConfig));
@@ -223,6 +235,9 @@ try {
   tui.submit('/vanishing');
   await tui.waitFor('prompt not sent', { timeoutMs: 10_000, settleMs: 200 });
   assert(!tui.screen.includes('Setup pending:'), 'failed activation never reaches the model');
+  assert(tui.frame.includes('you> /vanishing'), 'failed immediate prompt remains editable');
+  tui.send('\u0015');
+  await tui.waitUntil(() => !tui.frame.includes('you> /vanishing'), { timeoutMs: 10_000, settleMs: 200 });
   tui.submit('!sleep 2');
   await tui.waitFor('running ! command…', { timeoutMs: 10_000, settleMs: 100 });
   const queuedAt = tui.mark();

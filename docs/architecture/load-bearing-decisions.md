@@ -730,7 +730,11 @@ turn; no provisioning executor, new SDK loop, cloud call or config write occurs 
 The catalogue carries metadata only; the sole agent-facing setup schema/workflow ships in
 `src/skills/builtin/setup-agentcore-memory/SKILL.md`, not repository docs. Loader failures
 (including empty bundled bodies) refuse startup; activation errors stop TUI submission rather
-than sending unguided slash text. Completion deduplicates the built-in/skill name. Busy queue
+than sending unguided slash text. Failed input/images and later queued user entries return
+unsent ahead of newer drafts via the ordinary queue return; notifications keep their disposition,
+and held shell reports are untouched. Images are reserved across activation as well as send.
+`verify-setup-recovery.ts` covers immediate/queued text/image failure and repaired retry.
+Completion deduplicates the built-in/skill name. Busy queue
 and literal trajectory semantics are unchanged. TUI/REPL and text/structured headless `-p`
 all call the same expansion seam; headless missing answers end as questions, not guessed setup.
 Consent is guide policy plus ordinary tool gates, not a new sandbox: actor/default confirmation is required even in yolo;

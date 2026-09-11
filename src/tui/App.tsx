@@ -1946,7 +1946,16 @@ export function App({
         return;
       }
 
-      setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+      // A drained entry must not erase a newer draft. Reserve its image across
+      // asynchronous activation too, so a dequeued image cannot lose ownership.
+      if (queuedEntry === undefined) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+      }
+      if (image !== undefined) {
+        imageTurnInFlight.current = true;
+        clipboardReadGeneration.current += 1;
+        if (queuedEntry === undefined) setAttachedImage(undefined);
+      }
       setSelectedCompletion(0);
       dispatch({ type: 'userInput', text });
 
@@ -1972,9 +1981,15 @@ export function App({
       } catch (error) {
         dispatch({
           type: 'notice',
-          text: `could not expand ${text}: ${error instanceof Error ? error.message : String(error)}; prompt not sent`,
+          text: `could not expand ${text}: ${error instanceof Error ? error.message : String(error)}; prompt not sent — restored to the editor`,
           severity: 'error',
         });
+        if (image !== undefined) imageTurnInFlight.current = false;
+        // The drain already shifted this entry. Return it plus later user entries
+        // ahead of any draft typed during activation; wakes retain their ordinary
+        // queue disposition. No user command remains to auto-drain after failure.
+        setQueued([{ text: raw, ...(image === undefined ? {} : { image }) }, ...queuedRef.current]);
+        returnQueuedToEditor(true);
         return;
       }
 
@@ -1990,11 +2005,6 @@ export function App({
       // The invocation owns its image while streaming. Success consumes it; a
       // provider/model rejection restores the exact image + literal prompt so the
       // user can retry or remove without rereading the clipboard.
-      if (image !== undefined) imageTurnInFlight.current = true;
-      if (image !== undefined && queuedEntry === undefined) {
-        clipboardReadGeneration.current += 1;
-        setAttachedImage(undefined);
-      }
       const completed = await runTurn(toSend, text, image);
       if (image !== undefined) imageTurnInFlight.current = false;
       if (!completed && image !== undefined) {
