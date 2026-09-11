@@ -1,7 +1,8 @@
 # AgentCore CLI memory integration — revised design
 
-Status: proposed architecture, not implemented. Requested on 2026-09-11.
-This document does not replace the current user guide's runtime contract.
+Status: SDK runtime data-plane migration implemented; infrastructure import remains deferred.
+Approved implementation followed the design requested on 2026-09-11. The user guide documents
+the runtime contract; the acceptance boundary below separates local proof from live verification.
 
 ## Verified upstream capabilities
 
@@ -23,11 +24,13 @@ References: [memory guide](https://github.com/aws/agentcore-cli/blob/5b7a0405175
 
 Use a dedicated memory-only AgentCore project outside coding-target repositories. It owns CLI project configuration and deployment targets; ordinary Darwin runs never generate a deployment project in each repository, deploy a runtime/harness, or execute resource-management commands as model tools. Configuration is explicit and deployment remains user-authorized. CLI telemetry and any CDK bootstrap/IAM effects must be disclosed before provisioning.
 
-Retain the existing Memory resource and both strategy IDs for now. Before bringing it under CLI lifecycle management, require lossless representation of `namespaceKeys: projectid`, all three namespace templates, existing resource identity, and event retention. Resolve upstream schema/import limitations through a supported release or a separately reviewed minimal upstream/CDK extension; do not silently drop custom keys or rewrite isolation to fit defaults. There is no authorization in this design-only request to modify upstream code or redeploy the existing resource.
+Retain the existing Memory resource and both strategy IDs for now. Before bringing it under CLI lifecycle management, require lossless representation of `namespaceKeys: projectid`, all three namespace templates, existing resource identity, and event retention. Resolve upstream schema/import limitations through a supported release or a separately reviewed minimal upstream/CDK extension; do not silently drop custom keys or rewrite isolation to fit defaults. There is no authorization in this runtime migration to modify upstream code, import, deploy or update the existing resource, or change IAM.
 
 ### Runtime access
 
-Replace `MemoryCli` with a thin SDK-backed transport, not the whole memory feature. Prefer the official TypeScript AgentCore integration used by the CLI when its public extension points can preserve Darwin's manual upload, custom namespace variables, bounded retrieval and cancellation contracts. Otherwise use the public AWS SDK v3 AgentCore data-plane client, which the CLI itself depends on. The exact SDK adapter is an implementation spike, not a claim that the generated template satisfies those contracts today.
+`MemoryTransport` replaces `MemoryCli` using `BedrockAgentCoreClient` and the public AWS v3 CreateEvent/RetrieveMemoryRecords/GetMemoryRecord/DeleteMemoryRecord Commands. The sole added direct runtime dependency is pinned to `@aws-sdk/client-bedrock-agentcore@3.1127.0` (published September 4; Node >=20), installed through pnpm's normal release-age/supply-chain policy rather than the newly published 3.1130 release. No globally installed private dependencies are imported.
+
+The inspected official Strands template uses `MemoryManager`/`createAgentCoreMemoryStores` with `extraction: true`. That automatic upload path conflicts with Darwin's explicit preview/send gates, so it is deliberately not installed or integrated. The data client changes transport only; no SDK agent loop, memory store or session manager is generated.
 
 Remove the runtime dependency on shell executables, `/dev/stdin`, and CLI request-file plumbing. Credentials and request signing use the SDK credential chain. Retain explicit region/resource binding, cancellation, bounded inputs/results, finite retries and external-data validation. SDK response normalization must account for Date objects and SDK metadata without widening accepted memory content.
 
@@ -35,7 +38,7 @@ Do not import a globally installed CLI's private dependencies. Declare the selec
 
 ### Preserve product behavior
 
-- Project episodes/reflections remain isolated by actor and project and reusable across sessions. User preferences remain actor-scoped across projects; actor ID is `river-xie` in local user configuration, not inferred from credentials.
+- Project episodes/reflections remain isolated by actor and project and reusable across sessions. User preferences remain actor-scoped across projects; the existing actor ID stays only in private user configuration, not inferred from credentials.
 - Episode queries describe intent; reflection queries describe use case. Both remain ordinary parent-only gated tools.
 - Only explicitly adopted preferences apply; initial retrieval is bounded, local revocation is checked before later requests, and remote edits invalidate approval when refreshed.
 - Manual preview/send remains the upload default selected by the user. No generated session-manager auto-upload, archive backfill, assistant/private-reasoning upload, or implicit cloud deletion.
@@ -43,13 +46,11 @@ Do not import a globally installed CLI's private dependencies. Declare the selec
 
 ## Migration and acceptance
 
-1. Pause the superseded AWS CLI paramfile repair. Its seven modified files remain uncommitted and unaccepted; preserve unrelated work and remove only obsolete transport-specific edits during an authorized implementation pass.
-2. Confirm this split architecture and authorization for one explicit runtime SDK dependency. A requirement that *all* reads/writes execute `agentcore` commands cannot be met by the verified upstream CLI.
-3. In an isolated local fixture, verify the chosen SDK supports required namespace variables, raw USER/TOOL/OTHER events, stable idempotency tokens, request cancellation and distinct episode/reflection/preference queries. Inspect the official Strands adapter before deciding whether to use it; never copy the generated automatic extraction policy wholesale.
-4. Resolve CLI schema/import fidelity before any deployment: validate and synthesize the exact custom scope, reject dropped keys, and prove existing resource IDs remain stable. A successful `agentcore validate` alone is insufficient because unknown keys may be stripped.
-5. Replace only the data-plane transport and configuration plumbing; retain permission, projection, adoption and lifecycle regressions. Update both user guides and architecture only when runtime behavior actually changes.
-6. Run typecheck, full fast suite and relevant TUI/lifecycle checks. Then verify read-only retrieval against the existing resource. A separately authorized synthetic event test must prove extraction and retrieval; an empty result from a fresh resource proves connectivity only.
-7. Build before use. Retire the old runtime `cliPath` setting through an explicit config migration, retaining actor, resource/strategy IDs, automatic project identity and manual upload mode. No destructive resource migration or history rewrite.
+- The stopped paramfile repair was superseded, not accepted as a passing repair. Only its obsolete transport fixture/tests and claims were replaced. Existing policy regressions are mapped in [the verification checklist](agentcore-memory-verification.md); historical failures remain historical failures.
+- Local tests use real SDK Commands, serialization/signing and loopback HTTP, synthetic credentials and isolated HOME. They preserve actual runtime/permissions, manual outbox, preference confirmation/revocation and lifecycle coverage. No service call or synthetic upload is part of this implementation acceptance.
+- Run typecheck, the full fast suite and free completion check, then commit/build. Host independently owns the full acceptance gate and read-only retrieval against the existing resource. Real extraction requires separately authorized synthetic upload; it remains unverified here.
+- After build, Host removes only the actual global `agentCoreMemory.cliPath`. Until then, its validated legacy value is ignored with a bounded migration notice. Preserve region, resource/strategy IDs, actor, automatic project identity, preferences enabled and manual uploads. No config or namespace rewrite occurs in code.
+- Before any future infrastructure import/deploy, require lossless namespace-key/template representation and stable resource identity. Validation alone is insufficient when unknown fields can be stripped.
 
-Design validation performed: installed CLI 0.26.0 help/version, Memory schema probe, official command/docs/source inspection. No AgentCore project was created or imported, no resource deployed or modified, no dependency installed, and no event uploaded in this design revision. The existing global config remains enabled against the old runtime transport; this proposal does not make that transport operational.
+Historical design validation: installed CLI 0.26.0 help/version, Memory schema probe and official source/docs inspection, without resource changes. This implementation adds the approved runtime dependency but creates/imports/deploys no AgentCore project, changes no IAM or global config, and uploads/deletes no AWS event. Host owns the iteration log.
 

@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { z } from 'zod';
 import type { TurnSettlement } from '../trajectory/writer.js';
-import { digest, scopeFor, type AgentCoreConfig } from './config.js';
-import { MemoryCli } from './transport.js';
+import { AGENTCORE_CLI_PATH_NOTICE, digest, scopeFor, type AgentCoreConfig } from './config.js';
+import { MemoryTransport } from './transport.js';
 import { recordId, validateRecord, validateRecordScope, type RecordKind, type ValidatedRecord } from './records.js';
 import { cloudDirectory, readState, removeState, stateNames, withStateLock, writeState } from './state.js';
 import { projectTurn, publicProse } from './projection.js';
@@ -20,7 +20,7 @@ export function cloudReadArguments(input: string): boolean {
 }
 export const CLOUD_USAGE = 'usage: /cloud-memory [status|preferences|inspect <record-id>|confirm <record-id> <hash> global|forget <record-id>|delete <record-id> cloud|pending|preview <token>|send <token> <preview-hash>|discard <token>|clear-accepted]';
 export class CloudMemory {
-  readonly cli: MemoryCli;
+  readonly transport: MemoryTransport;
   readonly scope: ReturnType<typeof scopeFor>;
   problem: string | undefined;
   private chain: Promise<void> = Promise.resolve();
@@ -30,17 +30,17 @@ export class CloudMemory {
   private approvedContext: ValidatedRecord[] = [];
   private started = false;
   constructor(readonly config: AgentCoreConfig, readonly root: string, readonly session: string) {
-    this.cli = new MemoryCli(config); this.scope = scopeFor(config, root);
+    this.transport = new MemoryTransport(config); this.scope = scopeFor(config, root);
   }
-  status(): string { return `AgentCore: enabled · ${this.config.region} · actor ${this.config.actorId} · project ${this.scope.projectId} · upload ${this.config.upload} · ${this.approvedContext.length} cached preference candidates (local approval rechecked per request)${this.problem ? ` · degraded: ${this.problem}` : ''}. Details: /cloud-memory`; }
+  status(): string { return `AgentCore: enabled · ${this.config.region} · actor ${this.config.actorId} · project ${this.scope.projectId} · upload ${this.config.upload} · ${this.approvedContext.length} cached preference candidates (local approval rechecked per request)${this.problem ? ` · degraded: ${this.problem}` : ''}. Details: /cloud-memory${this.config.cliPath === undefined ? '' : ` · ${AGENTCORE_CLI_PATH_NOTICE}`}`; }
   cancelGeneration = 0;
   cancel(): void {
     this.cancelGeneration++;
     for (const controller of this.management.keys()) controller.abort(cancelledManagement());
-    this.cli.cancel();
+    this.transport.cancel();
   }
   async close(): Promise<void> {
-    this.closed = true; this.cancel();
+    this.closed = true; this.cancel(); this.transport.destroy();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -54,7 +54,7 @@ export class CloudMemory {
   }
   async recall(kind: RecordKind, query: string, limit: number, signal?: AbortSignal): Promise<{ records: ValidatedRecord[]; omitted: number; warning: string }> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 5 || publicProse(query) === undefined || query.length > 300) throw new Error('Memory query must be bounded task/context prose without sensitive material');
-    const raw = await this.cli.call('retrieve-memory-records', {
+    const raw = await this.transport.call('retrieve-memory-records', {
       memoryId: this.config.memoryId, namespacePath: kind === 'preference' ? this.scope.preferences : kind === 'episode' ? this.scope.episodes : this.scope.project,
       searchCriteria: { searchQuery: query, memoryStrategyId: kind === 'preference' ? this.config.preferenceStrategyId : this.config.episodicStrategyId, topK: limit }, maxResults: limit,
     }, signal);
@@ -73,7 +73,7 @@ export class CloudMemory {
     if (!ids.has(id) && ids.size >= 64) throw new Error('Preference state capacity reached (64 records)');
   }
   private async preference(id: string, signal?: AbortSignal): Promise<ValidatedRecord> {
-    const response = z.object({ memoryRecord: z.unknown() }).strict().parse(await this.cli.call('get-memory-record', { memoryId: this.config.memoryId, memoryRecordId: recordId.parse(id) }, signal));
+    const response = z.object({ memoryRecord: z.unknown() }).strict().parse(await this.transport.call('get-memory-record', { memoryId: this.config.memoryId, memoryRecordId: recordId.parse(id), namespace: this.scope.preferences }, signal));
     signal?.throwIfAborted();
     const record = validateRecord(response.memoryRecord, 'preference', this.config, this.root);
     if (record.id !== id) throw new Error('Preference identity mismatch');
@@ -155,7 +155,6 @@ export class CloudMemory {
       const other = await this.entry(otherToken); // A corrupt final entry needs manual repair; never guess its order.
       if (other.body.sessionId === entry.body.sessionId && JSON.parse(other.body.payload[0]!.conversational.content.text).turn < JSON.parse(entry.body.payload[0]!.conversational.content.text).turn && !names.includes(`${other.token}.accepted.json`)) throw new Error(`Send earlier pending token first: ${other.token}`);
     }
-    await this.cli.requireExtraction(signal);
     const currentNames = await stateNames(this.outbox());
     if (currentNames.includes(`${token}.accepted.json`)) return 'AWS event already accepted; episode generation not verified';
     const attempts = currentNames.filter((name) => [1, 2, 3].some(attempt => name === `${token}.attempt-${attempt}.json`)).length;
@@ -164,7 +163,7 @@ export class CloudMemory {
     // every retry uses exactly the same body/token, including after restart.
     try { await writeState(path.join(this.outbox(), `${token}.attempt-${attempts + 1}.json`), { hash: expected }, true, signal); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new Error('Another sender reserved this attempt; retry status later'); throw error; }
-    const raw = await this.cli.call('create-event', entry.body, signal);
+    const raw = await this.transport.call('create-event', entry.body, signal);
     const response = z.object({ event: z.object({ memoryId: z.string(), actorId: z.string(), sessionId: z.string(), eventId: z.string().min(1).max(128) }).passthrough() }).strict().parse(raw);
     if (response.event.memoryId !== this.config.memoryId || response.event.actorId !== this.config.actorId || response.event.sessionId !== entry.body.sessionId) throw new Error('CreateEvent acknowledgement scope mismatch');
     // Once AWS acknowledged, persist that evidence even if cancellation arrives now.
@@ -250,7 +249,7 @@ export class CloudMemory {
       }, signal);
       if (verb === 'delete') {
         await this.preference(id, signal); // Scope must validate before a destructive cloud request.
-        await this.cli.call('delete-memory-record', { memoryId: this.config.memoryId, memoryRecordId: id }, signal);
+        await this.transport.call('delete-memory-record', { memoryId: this.config.memoryId, memoryRecordId: id, namespace: this.scope.preferences }, signal);
         return 'Preference approval removed locally; explicit cloud record deletion accepted. Source events may regenerate records; new records remain unapproved.';
       }
       return 'Preference forgotten locally immediately; cloud record unchanged. Use explicit delete <id> cloud to delete it remotely.';

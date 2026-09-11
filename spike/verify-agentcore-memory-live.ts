@@ -19,7 +19,6 @@ if (!filename || !path.isAbsolute(filename) || process.env['AGENTCORE_ALLOW_SYNT
   if (!config || config.upload !== 'manual' || !config.actorId.startsWith('synthetic-')) throw new Error('Use enabled config, upload:manual and a synthetic- actor in a disposable resource');
   const home = ownPrivateHome('agentcore-live'); const root = path.join(home, 'synthetic-project'); await mkdir(root);
   const session = `synthetic-${Date.now()}`; const memory = new CloudMemory(config, root, session);
-  await memory.cli.requireExtraction();
   const file = path.join(home, 'synthetic-trajectory.jsonl');
   const recorder = new TrajectoryRecorder({ file, run: { session, agentId: 'darwin', darwinVersion: 'test', provider: 'offline', model: 'none', permissionMode: 'plan', thinkingEffort: undefined, resumed: false, restoredMessages: 0 }, onTurnSettled: settlement => memory.settle(settlement, file) });
   const turn = recorder.beginTurn('Synthetic test: arrange three colored blocks.'); await turn?.inputDurable();

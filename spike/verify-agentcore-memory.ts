@@ -1,9 +1,9 @@
-/** Offline real-files, SDK constructors, actual runtime/gates and CLI subprocess proofs.
- * No AWS requests. The installed AWS CLI skeleton/service model is checked locally.
+/** Offline real-files, SDK Commands/signing/HTTP, actual runtime/gates and CLI proofs.
+ * No AWS requests. A separate loopback server handles synthetic signed requests.
  * Isolates HOME; generated events, credential markers and model responses are synthetic.
  */
 process.env['DARWIN_MODEL_PRICES_FETCH'] = 'off';
-import { chmod, mkdir, readFile, writeFile, readdir, symlink, stat, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, symlink, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { watch } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
@@ -15,7 +15,8 @@ import { CLOUD_CLOSE_TIMEOUT_MS, CloudMemory as ReadOnlyCloudMemory } from '../s
 class CloudMemory extends ReadOnlyCloudMemory {
   override command(input: string, authority: 'read' | 'user' = 'user') { return super.command(input, authority); }
 }
-import { MemoryCli } from '../src/agentcore/transport.js';
+import { MemoryTransport, setMemoryTransportOptionsForTest } from '../src/agentcore/transport.js';
+import { loopbackHandler } from './agentcore-sdk-fixture.js';
 import { digest, parseAgentCoreConfig, scopeFor, type AgentCoreConfig } from '../src/agentcore/config.js';
 import { parseMemoryXml, validateRecord } from '../src/agentcore/records.js';
 import { cloudDirectory, readState, setCloudStateObserverForTest, stateNames, withStateLock, writeState } from '../src/agentcore/state.js';
@@ -28,8 +29,14 @@ import { isSensitiveDarwinPath } from '../src/paths.js';
 import { applyWorkingContext } from '../src/agent/working-context.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 const home = ownPrivateHome('agentcore'); const root = path.join(home, 'project'); await mkdir(root);
-const fixture = fileURLToPath(new URL('./agentcore-cli-fixture.cjs', import.meta.url)); await chmod(fixture, 0o755);
-const config = parseAgentCoreConfig({ enabled: true, region: 'us-west-2', memoryId: 'Synthetic-0123456789', actorId: 'opaque-user', episodicStrategyId: 'episodes-0123456789', preferenceStrategyId: 'preferences-0123456789', cliPath: fixture, preferences: false, upload: 'manual', timeoutMs: 1000 })!;
+const fixture = fileURLToPath(new URL('./agentcore-http-fixture.cjs', import.meta.url));
+const server = spawn(process.execPath, [fixture], { stdio: ['ignore', 'pipe', 'inherit'] });
+process.on('exit', () => server.kill('SIGTERM'));
+const port = await new Promise<number>((resolve, reject) => { server.stdout.once('data', chunk => resolve(Number(String(chunk).trim()))); server.once('error', reject); });
+const preload = fileURLToPath(new URL('./agentcore-sdk-fixture.ts', import.meta.url));
+Object.assign(process.env, { AWS_ACCESS_KEY_ID: 'AKIDSYNTHETIC', AWS_SECRET_ACCESS_KEY: 'synthetic-not-a-secret', AWS_EC2_METADATA_DISABLED: 'true', DARWIN_TEST_AGENTCORE_PORT: String(port) });
+setMemoryTransportOptionsForTest(() => ({ requestHandler: loopbackHandler(port) }));
+const config = parseAgentCoreConfig({ enabled: true, region: 'us-west-2', memoryId: 'Synthetic-0123456789', actorId: 'opaque-user', episodicStrategyId: 'episodes-0123456789', preferenceStrategyId: 'preferences-0123456789', preferences: false, upload: 'manual', timeoutMs: 1000 })!;
 async function control(value: object) { await writeFile(path.join(home, 'fixture-control.json'), JSON.stringify(value)); }
 async function calls(): Promise<any[]> { try { return (await readFile(path.join(home, 'fixture-calls.jsonl'), 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); } catch { return []; } }
 async function rejects(label: string, action: () => unknown | Promise<unknown>) { let caught = false; try { await action(); } catch { caught = true; } assert(label, caught); }
@@ -55,16 +62,14 @@ await control({ records: [record('episode')] }); const memory = new CloudMemory(
 const recalled = await memory.recall('episode', 'Fix failing tests; $(touch injected)', 2);
 assert('no shell expansion and bounded structured recall', recalled.records.length === 1 && !(await readdir(root)).includes('injected'));
 const queryCall = (await calls()).at(-1);
-assert('verified retrieval fields and host strategy/scope', queryCall.input.searchCriteria.searchQuery.includes('Fix failing') && queryCall.input.searchCriteria.memoryStrategyId === config.episodicStrategyId && queryCall.input.namespacePath === scope.episodes && !queryCall.args.join(' ').includes('Fix failing'));
-await control({ mode: 'hang' }); await rejects('process timeout', () => new MemoryCli({ ...config, timeoutMs: 100 }).call('get-memory-record', {}));
-const abort = new AbortController(); const cancelled = new MemoryCli(config).call('get-memory-record', {}, abort.signal); setTimeout(() => abort.abort(), 50); await rejects('process abort', () => cancelled);
-await control({ mode: 'large' }); await rejects('bounded stdout', () => new MemoryCli(config).call('get-memory-record', {}));
-await rejects('missing CLI', () => new MemoryCli({ ...config, cliPath: '/nonexistent/agentcore-cli' }).call('get-memory-record', {}));
-await control({ legacy: true }); await rejects('CLI lacking namespace variables never uploads', () => new MemoryCli(config).requireExtraction());
+assert('verified retrieval fields and host strategy/scope', queryCall.input.searchCriteria.searchQuery.includes('Fix failing') && queryCall.input.searchCriteria.memoryStrategyId === config.episodicStrategyId && queryCall.input.namespacePath === scope.episodes && queryCall.headers.authorization.includes('/us-west-2/bedrock-agentcore/aws4_request'));
 assert('approval/outbox paths are sensitive policy', isSensitiveDarwinPath(root, path.join(cloudDirectory(config), `${id}.json`)));
-// The installed skeleton is an offline schema capability check; no credentials or resource call.
-try { await new MemoryCli({ ...config, cliPath: '/usr/local/bin/aws', timeoutMs: 10000 }).requireExtraction(); console.log('Installed CLI supports extractionConfig'); }
-catch (error) { assert('installed CLI absence/old schema has actionable refusal', String(error).includes('extractionConfig') || String(error).includes('unavailable')); }
+await verifyTransport();
+if (process.argv.includes('--transport-only')) {
+  await memory.close(); server.kill('SIGTERM');
+  await new Promise<void>(resolve => server.once('close', () => resolve()));
+  report(); process.exit(process.exitCode ?? 0);
+}
 
 header('Explicit preference proof and immediate invalidation');
 await control({ records: [record('preference')] });
@@ -84,9 +89,9 @@ await control({ records: [record('preference', { content: { text: preferenceJson
 await preferences.command('preferences'); assert('cloud content edits invalidate approval on explicit refresh', await preferences.context() === '');
 await control({ records: [record('preference', { namespaces: ['/users/wrong/'] })] });
 const beforeDelete = (await calls()).length; await preferences.command(`delete ${id} cloud`);
-assert('wrong-scope delete never invokes DeleteMemoryRecord', !(await calls()).slice(beforeDelete).some(call => call.args[1] === 'delete-memory-record'));
+assert('wrong-scope delete never invokes DeleteMemoryRecord', !(await calls()).slice(beforeDelete).some(call => call.operation === 'delete-memory-record'));
 await control({ records: [record('preference')] }); await preferences.command(`delete ${id} cloud`);
-assert('only explicit delete performs cloud delete', (await calls()).at(-1).args[1] === 'delete-memory-record');
+assert('only explicit delete performs cloud delete', (await calls()).at(-1).operation === 'delete-memory-record');
 header('Durable new-turn outbox and preview authorization');
 assert('privacy omissions reject dumps and secrets', publicProse('secret: abc') === undefined && publicProse('read /home/user/file') === undefined && publicProse('x'.repeat(1001)) === undefined);
 const file = path.join(home, 'trajectory.jsonl'); const uploader = new CloudMemory(config, root, 'session-upload');
@@ -102,7 +107,7 @@ const pending = await uploader.command('pending'); const token = pending.split('
 assert('new durable failed turn queued without network', /^[a-f0-9]{64}$/.test(token) && pending.includes('pending; not uploaded'));
 const beforeSend = (await calls()).length;
 assert('send without preview authorization refused', (await uploader.command(`send ${token} ${'0'.repeat(64)}`)).includes('Preview absent'));
-assert('no unauthorized subprocess', (await calls()).length === beforeSend);
+assert('no unauthorized SDK request', (await calls()).length === beforeSend);
 const preview = await uploader.command(`preview ${token}`); const previewHash = preview.match(/send [a-f0-9]{64} ([a-f0-9]{64})/)?.[1]!;
 assert('preview retains failure, command and exit evidence, excludes logs', !preview.includes('Public synthetic statement') && preview.includes('failed') && preview.includes('pnpm test') && preview.includes('exitCode') && !preview.includes('SECRET LOG DUMP'));
 await control({});
@@ -135,11 +140,11 @@ const laterIndex = 1 - firstIndex; const laterHash = previews[laterIndex]!.match
 assert('memory output and paraphrases omitted', !previews.join('').includes('PRIVATE MEMORY') && !previews.join('').includes('PARAPHRASED MEMORY'));
 assert('cancel and closed are not task success', firstPreview.includes('cancelled') && previews[laterIndex]!.includes('not inferred'));
 assert('session turn order enforced', (await retry.command(`send ${retryTokens[laterIndex]} ${laterHash}`)).includes('earlier pending'));
-await control({}); await retry.cli.requireExtraction(); await control({ mode: 'error' });
-for (let attempt = 0; attempt < 3; attempt++) assert('finite manual failure is reported', (await retry.command(`send ${firstToken} ${firstHash}`)).includes('CLI failed'));
+await control({ mode: 'error' });
+for (let attempt = 0; attempt < 3; attempt++) assert('finite manual failure is reported', (await retry.command(`send ${firstToken} ${firstHash}`)).includes('SDK request failed'));
 const beforeCap = (await calls()).length;
-assert('fourth attempt refused without subprocess', (await retry.command(`send ${firstToken} ${firstHash}`)).includes('retry cap') && (await calls()).length === beforeCap);
-const attempts = (await calls()).filter(call => call.args[1] === 'create-event' && call.input?.clientToken === firstToken);
+assert('fourth attempt refused without SDK request', (await retry.command(`send ${firstToken} ${firstHash}`)).includes('retry cap') && (await calls()).length === beforeCap);
+const attempts = (await calls()).filter(call => call.operation === 'create-event' && call.input?.clientToken === firstToken);
 assert('all retry bodies and tokens are byte-identical', attempts.length === 3 && attempts.every(call => JSON.stringify(call.input) === JSON.stringify(attempts[0].input)));
 const symbolic = path.join(home, 'state-link'); await symlink(root, symbolic);
 await rejects('symlinked cloud state refused', () => writeState(path.join(symbolic, 'approval.json'), {}));
@@ -179,16 +184,16 @@ assert('disabled command is useful', (await disabled.manageCloudMemory('status')
 await configure({ ...config, upload: 'off' }); await control({ records: [record('episode')] });
 for (const mode of ['default', 'plan'] as const) {
   const gated = await runtime(new ScriptedModel('episodic_recall'), mode); const before = (await calls()).length;
-  await drain(gated); assert(`${mode} gate denies before CLI invocation`, (await calls()).length === before); await gated.shutdown();
+  await drain(gated); assert(`${mode} gate denies before SDK HTTP invocation`, (await calls()).length === before); await gated.shutdown();
 }
 assert('network recall is not statically safe', classify('episodic_recall', { intent: 'test' }).kind === 'execute');
 await mkdir(path.dirname(permissionRulesPath(root)), { recursive: true });
 await writeFile(permissionRulesPath(root), JSON.stringify({ deny: ['episodic_recall'] }));
 const denied = await runtime(new ScriptedModel('episodic_recall'), 'yolo', true); const beforeDeny = (await calls()).length;
-await drain(denied); assert('explicit deny beats yolo before CLI', (await calls()).length === beforeDeny); await denied.shutdown();
+await drain(denied); assert('explicit deny beats yolo before SDK HTTP', (await calls()).length === beforeDeny); await denied.shutdown();
 await writeFile(permissionRulesPath(root), JSON.stringify({ deny: [] }));
 const allowed = await runtime(new ScriptedModel('episodic_recall'), 'default', true); const beforeAllowed = (await calls()).length;
-await drain(allowed); assert('ordinary approved recall reaches real subprocess', (await calls()).length === beforeAllowed + 1);
+await drain(allowed); assert('ordinary approved recall reaches signed SDK HTTP', (await calls()).length === beforeAllowed + 1);
 const childTools = (allowed as unknown as { subagents: { options: { tools: { name: string }[] } } }).subagents.options.tools;
 assert('both cloud tools excluded from actual child catalogue', !childTools.some(tool => ['episodic_recall', 'reflection_recall'].includes(tool.name)));
 const successor = await allowed.startNewSession(); assert('clear rebuilds cloud scope and session', successor.info.sessionId !== allowed.info.sessionId && successor.cloudMemoryStatus.includes('enabled')); await successor.shutdown();
@@ -207,9 +212,9 @@ assert('rewind has fresh cloud controller and no stale adopted block', rewound.i
 await control({ mode: 'hang' }); const cancelModel = new ScriptedModel(); const cancelling = await runtime(cancelModel);
 const running = drain(cancelling); setTimeout(() => cancelling.cancel(), 50); await rejects('startup cancellation prevents model invocation', () => running);
 assert('cancelled startup made no model call', cancelModel.calls === 0); await cancelling.shutdown();
-await configure({ ...config, preferences: true, cliPath: '/nonexistent/agentcore-cli', upload: 'off' });
+await configure({ ...config, preferences: true, upload: 'off' }); await control({ mode: 'error' });
 const degradedModel = new ScriptedModel(); const degraded = await runtime(degradedModel); await drain(degraded);
-assert('missing preference CLI degrades open without blocking task', degradedModel.calls === 1 && degraded.cloudMemoryStatus.includes('degraded'));
+assert('preference SDK failure degrades open without blocking task', degradedModel.calls === 1 && degraded.cloudMemoryStatus.includes('degraded'));
 await degraded.shutdown();
 const noStateRoot = path.join(home, 'disabled-project'); await mkdir(noStateRoot); await configure();
 const noState = await AgentRuntime.create({ projectRoot: noStateRoot, session: { kind: 'new' }, permissionBridge: async () => ({ allowed: false }) }); await drain(noState); await noState.shutdown();
@@ -217,34 +222,18 @@ let exists = true; try { await stat(cloudDirectory(config, noStateRoot)); } catc
 assert('disabled creates no project cloud state', !exists);
 setRuntimeModelFactoryForTest(undefined);
 const cliFile = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
-const cliDisabled = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), cliFile, 'cloud-memory', 'status'], { cwd: root, encoding: 'utf8', timeout: 10000 });
+const cliDisabled = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', preload, cliFile, 'cloud-memory', 'status'], { cwd: root, encoding: 'utf8', timeout: 10000 });
 assert('headless cloud command is local when disabled', cliDisabled.status === 0 && cliDisabled.stdout.includes('AgentCore: disabled'));
 await configure({ ...config, upload: 'off' });
 const beforeCli = (await calls()).length;
-const cliStatus = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), cliFile, 'cloud-memory', 'status'], { cwd: root, encoding: 'utf8', timeout: 10000 });
+const cliStatus = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', preload, cliFile, 'cloud-memory', 'status'], { cwd: root, encoding: 'utf8', timeout: 10000 });
 assert('headless status starts no model and invokes no AWS', cliStatus.status === 0 && cliStatus.stdout.includes('AgentCore: enabled') && (await calls()).length === beforeCli);
 
 header('Host regressions: real schema, mixed records and literal runtime preference data');
 assert('64-character project ID accepted', parseAgentCoreConfig({ ...config, projectId: 'a'.repeat(64) })?.projectId?.length === 64);
 await rejects('65-character project ID refused', () => parseAgentCoreConfig({ ...config, projectId: 'a'.repeat(65) }));
-// CLI 2.36.42 service definitions are local schema data, not an AWS request.
-await new MemoryCli({ ...config, cliPath: '/usr/local/bin/aws', timeoutMs: 10000 }).requireExtraction();
-const createMemorySkeleton = spawnSync('/usr/local/bin/aws', ['bedrock-agentcore-control', 'create-memory', '--generate-cli-skeleton', 'input', '--region', config.region], { encoding: 'utf8', timeout: 10000 });
-assert('installed CreateMemory skeleton supports namespaceKeys', createMemorySkeleton.status === 0 && JSON.parse(createMemorySkeleton.stdout).namespaceKeys !== undefined);
-const service = JSON.parse(await readFile('/usr/local/aws-cli/v2/current/dist/awscli/botocore/data/bedrock-agentcore/2024-02-28/service-2.json', 'utf8'));
-function validateShape(name: string, value: any): void {
-  const shape = service.shapes[name];
-  if (shape.type === 'structure') {
-    for (const key of shape.required ?? []) if (value[key] === undefined) throw new Error(`Missing ${name}.${key}`);
-    if (shape.union && Object.keys(value).length !== 1) throw new Error(`Invalid union ${name}`);
-    for (const key of Object.keys(value)) { if (!shape.members[key]) throw new Error(`Unknown ${name}.${key}`); validateShape(shape.members[key].shape, value[key]); }
-  } else if (shape.type === 'list') { if (shape.max && value.length > shape.max) throw new Error(name); for (const entry of value) validateShape(shape.member.shape, entry); }
-  else if (shape.type === 'map') { for (const [key, entry] of Object.entries(value)) { validateShape(shape.key.shape, key); validateShape(shape.value.shape, entry); } }
-  else if (shape.type === 'string') { if (typeof value !== 'string' || (shape.min && value.length < shape.min) || (shape.max && value.length > shape.max) || (shape.enum && !shape.enum.includes(value)) || (shape.pattern && !new RegExp(`^(?:${shape.pattern})$`).test(value))) throw new Error(`Invalid ${name}`); }
-  else if (shape.type === 'timestamp' && !Number.isFinite(Date.parse(value))) throw new Error(name);
-}
-validateShape('CreateEventInput', createCall.input);
-assert('captured ingestion validates against installed service skeleton shapes', service.shapes.NamespaceVariableValue.max === 64);
+assert('real SDK CreateEvent serializes ISO outbox timestamp to epoch seconds', createCall.input.eventTimestamp === Date.parse(JSON.parse(preview.slice(0, preview.indexOf('\nReview for private material'))).eventTimestamp) / 1000);
+assert('SDK wire preserves custom project namespace value at its 64-character bound', createCall.input.extractionConfig.namespaceVariables.projectid.length === 64);
 const payload = createCall.input.payload.map((entry: any) => entry.conversational);
 assert('literal user preference eligible as USER, actions/results TOOL, host metadata OTHER', payload[0].role === 'OTHER' && payload[1].role === 'USER' && payload[1].content.text.startsWith('Use concise replies') && payload[2].role === 'TOOL' && payload[3].role === 'TOOL' && JSON.parse(payload[3].content.text).result.exitCode === 1);
 const episodeFragment = '<language>English</language><summary><situation>Failing check</situation><user_intent>Fix tests</user_intent><assessment_user>No</assessment_user><justification>Exit 1</justification><turns><turn><action>Run tests</action></turn><turn><action>Fix implementation</action></turn></turns></summary>';
@@ -285,7 +274,7 @@ await rejects('actual runtime refuses model call if working-context cannot be re
 if (malformedPrompt === undefined) delete literalAgent.systemPrompt; else literalAgent.systemPrompt = malformedPrompt;
 await literalRuntime.shutdown(); await remoteRevoker.close();
 header('Host regressions: user authority, subprocess exits and inspection race');
-function cli(...args: string[]) { return spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), cliFile, 'cloud-memory', ...args], { cwd: root, encoding: 'utf8', timeout: 10000 }); }
+function cli(...args: string[]) { return spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', preload, cliFile, 'cloud-memory', ...args], { cwd: root, encoding: 'utf8', timeout: 10000 }); }
 await configure({ ...config, preferences: true, upload: 'off' }); await control({ records: [prettyRecord] });
 const proofFile = path.join(cloudDirectory(config), `${id}.json`);
 const proofBefore = await readFile(proofFile, 'utf8');
@@ -294,12 +283,12 @@ assert('CLI inspect succeeds without proof mutation', readInspect.status === 0 &
 for (const args of [['confirm', id, literalHash, 'global'], ['send', token, previewHash], ['delete', id, 'cloud'], ['forget', id], ['discard', token], ['clear-accepted'], ['nonsense']]) {
   const result = cli(...args); assert(`CLI ${args[0]} refusal is nonzero`, result.status === 1 && result.stderr.includes('Headless mutations unavailable'));
 }
-await configure({ ...config, cliPath: '/nonexistent/agentcore-cli', upload: 'off' });
-const missing = cli('preferences'); assert('CLI retrieval failure exits nonzero', missing.status === 1 && missing.stdout.includes('unavailable'));
+await configure({ ...config, upload: 'off' }); await control({ mode: 'error' });
+const missing = cli('preferences'); assert('CLI retrieval failure exits nonzero', missing.status === 1 && missing.stdout.includes('SDK request failed'));
 await configure({ ...config, preferences: false }); await control({});
 await writeFile(permissionRulesPath(root), JSON.stringify({ allow: ['bash:*'] }));
 for (const args of [['confirm', id, literalHash, 'global'], ['send', token, previewHash], ['delete', id, 'cloud']]) {
-  const command = [process.execPath, '--import', import.meta.resolve('tsx'), cliFile, 'cloud-memory', ...args].map(arg => `'${arg.replaceAll("'", "'\\''")}'`).join(' ');
+  const command = [process.execPath, '--import', import.meta.resolve('tsx'), '--import', preload, cliFile, 'cloud-memory', ...args].map(arg => `'${arg.replaceAll("'", "'\\''")}'`).join(' ');
   const shellRuntime = await runtime(new ScriptedModel('bash', { mode: 'execute', command }));
   const before = (await calls()).length; await drain(shellRuntime);
   const transcript = JSON.stringify((shellRuntime as unknown as { agent: Agent }).agent.messages);
@@ -318,7 +307,7 @@ await forgetter.command(`forget ${id}`); await writeFile(path.join(home, 'fixtur
 assert('paused inspection cannot resurrect approval forgotten by another controller', (await readState(proofFile) as { approved?: string }).approved === undefined && await inspector.context() === '');
 await inspector.close(); await forgetter.close();
 await control({ mode: 'hang' });
-const cliCancel = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), cliFile, 'cloud-memory', 'preferences'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+const cliCancel = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', preload, cliFile, 'cloud-memory', 'preferences'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
 let cancelledText = ''; cliCancel.stdout.on('data', chunk => { cancelledText += String(chunk); });
 const priorCalls = (await calls()).length;
 for (let n = 0; n < 300 && (await calls()).length === priorCalls; n++) await delay(10);
@@ -326,14 +315,7 @@ const cancelledExit = new Promise<number | null>(resolve => cliCancel.once('clos
 const cancellationCode = await cancelledExit;
 assert('CLI cancellation exits nonzero with explicit failure', cancellationCode === 1 && cancelledText.includes('cancelled'));
 if (cancellationCode !== 1 || !cancelledText.includes('cancelled')) console.log({ cancellationCode, cancelledText });
-const credentialKeys = ['AWS_CONTAINER_AUTHORIZATION_TOKEN', 'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE', 'AWS_EC2_METADATA_DISABLED', 'AWS_ENDPOINT_URL'] as const;
-const originalEnv = credentialKeys.map(key => process.env[key]);
-try {
-  Object.assign(process.env, { AWS_CONTAINER_AUTHORIZATION_TOKEN: 'synthetic-not-a-secret', AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: '/synthetic/token-file', AWS_EC2_METADATA_DISABLED: 'true', AWS_ENDPOINT_URL: 'https://invalid.example' });
-  await control({ captureEnv: true, records: [] }); await new MemoryCli(config).call('retrieve-memory-records', {});
-  const env = (await calls()).at(-1).env;
-  assert('credential flags preserved, endpoint override excluded', env.AWS_CONTAINER_AUTHORIZATION_TOKEN === 'synthetic-not-a-secret' && env.AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE === '/synthetic/token-file' && env.AWS_EC2_METADATA_DISABLED === 'true' && env.AWS_ENDPOINT_URL === undefined && env.AWS_IGNORE_CONFIGURED_ENDPOINT_URLS === 'true');
-} finally { credentialKeys.forEach((key, index) => { const value = originalEnv[index]; if (value === undefined) delete process.env[key]; else process.env[key] = value; }); }
+// Credential-chain and endpoint exclusion tests live in verifyTransport, through signed requests.
 header('Host regressions: actual runtime recorder privacy and failed command evidence');
 await control({});
 const runtimeConfig = { ...config, projectId: 'runtime-wire', preferences: false };
@@ -375,7 +357,7 @@ const hookFile = path.join(root, '.agents', 'hooks.json');
 await writeFile(hookFile, JSON.stringify({ hooks: { PreCompact: [{ hooks: [{ type: 'command', command: 'exit 2' }] }] } }));
 const blockedCompact = await runtime(new ScriptedModel()); const beforeCompact = (await calls()).length;
 await rejects('actual PreCompact refusal prevents preference network fetch', () => blockedCompact.compact());
-assert('denied compaction made no CLI request', (await calls()).length === beforeCompact);
+assert('denied compaction made no SDK request', (await calls()).length === beforeCompact);
 await blockedCompact.shutdown(); await unlink(hookFile);
 header('Host regressions: atomic no-clobber state and explicit bounded outbox lifecycle');
 function outboxPath(config: AgentCoreConfig, project: string) { return path.join(cloudDirectory(config, project), digest([config.region, config.memoryId, config.actorId, scopeFor(config, project).projectId, config.episodicStrategyId, config.preferenceStrategyId])); }
@@ -498,7 +480,7 @@ pause = pauseState(narrowProof, 'after-publish');
 try {
   const deleting = narrow.commandResult(`delete ${id} cloud`, 'user'); await bounded(pause.entered);
   const beforeCancel = (await calls()).length; narrow.cancel(); pause.release(); const result = await bounded(deleting);
-  assert('cancel after local revocation starts neither get nor delete CLI', !result.ok && result.text.includes('not undone') && (await calls()).length === beforeCancel && (await readState(narrowProof) as { approved?: string }).approved === undefined);
+  assert('cancel after local revocation starts neither Get nor Delete SDK Command', !result.ok && result.text.includes('not undone') && (await calls()).length === beforeCancel && (await readState(narrowProof) as { approved?: string }).approved === undefined);
   assert('cancelled delete cleans preference lock', !(await stateNames(cloudDirectory(narrowConfig))).includes('active.json'));
 } finally { pause.clear(); }
 const narrowFile = path.join(home, 'cancel-narrow-trajectory.jsonl');
@@ -513,7 +495,7 @@ const attemptFile = path.join(narrowBox, `${narrowToken}.attempt-1.json`);
 pause = pauseState(attemptFile, 'before-publish');
 try {
   const sending = narrow.commandResult(`send ${narrowToken} ${narrowHash}`, 'user'); await bounded(pause.entered);
-  assert('send reached reservation only after real CLI capability check', (await calls()).at(-1).args.includes('--generate-cli-skeleton'));
+  assert('send reaches local reservation without a capability subprocess', await readState(attemptFile) === undefined);
   const beforeCancel = (await calls()).length; narrow.cancel(); pause.release(); const result = await bounded(sending);
   assert('cancel before attempt publication prevents reservation and AWS launch', !result.ok && result.text.includes('cancelled') && await readState(attemptFile) === undefined && (await calls()).length === beforeCancel);
   assert('cancelled send cleans outbox lock and temporary reservation', !(await stateNames(narrowBox)).some(name => name === 'active.json' || name.endsWith('.tmp')));
@@ -532,10 +514,6 @@ try {
   assert('already accepted synthetic AWS effect keeps acknowledgement after cancel', !result.ok && result.text.includes('AWS event accepted') && await readState(ackFile) !== undefined && (await calls()).length === beforeCancel);
 } finally { pause.clear(); }
 await narrow.close();
-// Cancellation reaches capability subprocesses too, not just CreateEvent.
-await control({ mode: 'hang' }); const capabilityAbort = new AbortController();
-const capability = new MemoryCli(config).requireExtraction(capabilityAbort.signal);
-capabilityAbort.abort(); await rejects('capability subprocess honors operation signal', () => capability);
 await control({ records: [record('preference')] });
 const closingMemory = new CloudMemory(narrowConfig, root, 'closing-management');
 await closingMemory.command(`inspect ${id}`);
@@ -588,4 +566,159 @@ try {
 } finally { pause.clear(); }
 setRuntimeModelFactoryForTest(undefined);
 
+await memory.close(); setMemoryTransportOptionsForTest(undefined);
+server.kill('SIGTERM');
+await new Promise<void>(resolve => server.once('close', () => resolve()));
 report();
+
+async function verifyTransport() {
+  header('SDK transport bounds, normalization and manual compatibility');
+  const get = { memoryId: config.memoryId, memoryRecordId: id, namespace: scope.preferences };
+  const client = new MemoryTransport(config);
+  const legacy = new CloudMemory(parseAgentCoreConfig({ ...config, cliPath: '/nonexistent/ignored' })!, root, 'legacy');
+  assert('legacy executable accepted with bounded notice, new config has no cliPath default', legacy.status().includes('deprecated and ignored') && !legacy.status().includes('/nonexistent/ignored') && config.cliPath === undefined);
+  for (const cliPath of ['relative', 123, '/' + 'x'.repeat(1024)]) await rejects('malformed legacy path remains invalid', () => parseAgentCoreConfig({ ...config, cliPath }));
+  await control({ records: [record('preference', { metadata: { tag: { stringValue: 'keep' }, at: { dateTimeValue: 1767225600 } } })] });
+  const normalized = await client.call('get-memory-record', get) as any;
+  assert('SDK Dates become ISO strings and only envelope metadata removed', !('$metadata' in normalized) && normalized.memoryRecord.createdAt === '2026-01-01T00:00:00.000Z' && normalized.memoryRecord.metadata.at.dateTimeValue === '2026-01-01T00:00:00.000Z' && normalized.memoryRecord.metadata.tag.stringValue === 'keep');
+  validateRecord(normalized.memoryRecord, 'preference', config, root);
+  assert('Get namespace IAM condition reaches wire', (await calls()).at(-1).input.namespace === scope.preferences);
+  await client.call('delete-memory-record', get);
+  assert('Delete command and namespace IAM condition reach wire', (await calls()).at(-1).operation === 'delete-memory-record' && (await calls()).at(-1).input.namespace === scope.preferences);
+  const responses = [
+    { memoryRecord: { ...record('preference'), createdAt: 1767225600, extra: true } },
+    { memoryRecord: { ...record('preference'), createdAt: 1767225600, content: { text: 'safe', forged: true } } },
+    { memoryRecord: { ...record('preference'), createdAt: 1767225600 }, unexpected: true },
+    { $metadata: { fake: true }, memoryRecord: { ...record('preference'), createdAt: 1767225600 } },
+    { memoryRecord: { ...record('preference'), createdAt: 1767225600, content: { text: 42 } } },
+    { memoryRecord: { ...record('preference'), createdAt: 1767225600, metadata: null } },
+  ];
+  for (const response of responses) {
+    await control({ response });
+    await rejects('unknown or malformed remote fields are refused across SDK and policy boundary', async () => {
+      const output = await client.call('get-memory-record', get) as any;
+      validateRecord(output.memoryRecord, 'preference', config, root);
+    });
+  }
+  await control({ records: [record('preference', { metadata: { actorId: { stringValue: 'other-actor' } } })] });
+  await rejects('malicious metadata survives SDK boundary and fails policy validation', () => memory.recall('preference', 'communication', 1));
+  const oldConfig = parseAgentCoreConfig({ ...config, cliPath: '/nonexistent/legacy' })!;
+  assert('removing legacy cliPath preserves namespace and durable state binding', JSON.stringify(scopeFor(oldConfig, root)) === JSON.stringify(scopeFor(config, root)) && cloudDirectory(oldConfig, root) === cloudDirectory(config, root));
+  // Numeric service timestamps and SDK Dates must not change content/proof hashes.
+  await control({ records: [record('preference')] });
+  const dated = await client.call('get-memory-record', get) as any;
+  assert('legacy preference content hash survives SDK Date/envelope normalization', validateRecord(dated.memoryRecord, 'preference', config, root).hash === validateRecord(record('preference'), 'preference', config, root).hash);
+  for (const raw of ['{"x":' + '['.repeat(25) + '0' + ']'.repeat(25) + '}', JSON.stringify({ memoryRecordSummaries: Array(10001).fill(null) })]) {
+    await control({ raw }); await rejects('pre-deserialization structure depth/count finite', () => client.call('get-memory-record', get));
+  }
+  for (const [mode, expected] of [['large', '256 KiB'], ['diagnostics', '8 KiB'], ['invalid-json', 'SDK request failed'], ['error', 'HTTP 503'], ['hang', 'timed out'], ['body-hang', 'timed out']]) {
+    await control({ mode }); const before = (await calls()).length; let message = '';
+    try { await client.call('get-memory-record', get); } catch (error) { message = String(error); }
+    assert(`${mode}: bounded safe error and maxAttempts one`, message.includes(expected!) && !message.includes('secret service') && (await calls()).length === before + 1);
+  }
+  await control({ records: [] });
+  const input = { memoryId: config.memoryId, namespacePath: scope.episodes, searchCriteria: { searchQuery: '', topK: 1 } };
+  const room = 32000 - Buffer.byteLength(JSON.stringify(input));
+  input.searchCriteria.searchQuery = 'é'.repeat(Math.floor(room / 2)) + (room % 2 ? 'a' : '');
+  await client.call('retrieve-memory-records', input);
+  assert('exact multibyte 32000-byte input accepted through SDK serialization', Buffer.byteLength(JSON.stringify(input)) === 32000 && (await calls()).at(-1).input.searchCriteria.searchQuery === input.searchCriteria.searchQuery);
+  const before = (await calls()).length;
+  await rejects('32001-byte input rejected before signing/HTTP', () => client.call('retrieve-memory-records', { ...input, searchCriteria: { ...input.searchCriteria, searchQuery: input.searchCriteria.searchQuery + 'a' } }));
+  const pre = new AbortController(); pre.abort();
+  await rejects('pre-abort prevents credential/request work', () => client.call('get-memory-record', get, pre.signal));
+  const immediate = client.call('get-memory-record', get); client.cancel();
+  await rejects('immediate per-Agent cancel before first await', () => immediate);
+  assert('oversize and early abort never reach HTTP', (await calls()).length === before);
+  for (const kind of ['signal', 'agent', 'deadline', 'destroy'] as const) {
+    let release!: () => void; let entered!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    let handlerCalls = 0;
+    setMemoryTransportOptionsForTest(() => {
+      const handler = loopbackHandler(port);
+      return { credentials: async () => { entered(); await held; return { accessKeyId: 'AKIDDELAYED', secretAccessKey: 'synthetic' }; }, requestHandler: { ...handler, handle: (...args: Parameters<typeof handler.handle>) => { handlerCalls++; return handler.handle(...args); } } };
+    });
+    const delayed = new MemoryTransport({ ...config, timeoutMs: 100 }); const abort = new AbortController();
+    const start = performance.now();
+    const result = delayed.call('get-memory-record', get, abort.signal).then(() => '', error => String(error));
+    await bounded(ready);
+    if (kind === 'signal') abort.abort(); else if (kind === 'agent') delayed.cancel(); else if (kind === 'destroy') delayed.destroy();
+    const message = await bounded(result);
+    assert(`${kind} returns during unresolved credential wait within total deadline`, message.includes(kind === 'deadline' ? 'timed out' : 'cancelled') && performance.now() - start < 1000);
+    release(); await delay(40);
+    assert(`${kind} credential resolution cannot later reach signed HTTP handler`, handlerCalls === 0);
+    delayed.destroy();
+  }
+  setMemoryTransportOptionsForTest(() => ({ requestHandler: loopbackHandler(port) }));
+  await control({ mode: 'hang' });
+  const parallelA = new MemoryTransport({ ...config, timeoutMs: 5000 }); const parallelB = new MemoryTransport({ ...config, timeoutMs: 5000 });
+  const parallelBefore = (await calls()).length; let bSettled = false;
+  const a1 = parallelA.call('get-memory-record', get).catch(error => error);
+  const a2 = parallelA.call('get-memory-record', get).catch(error => error);
+  const b = parallelB.call('get-memory-record', get).catch(error => error).finally(() => { bSettled = true; });
+  for (let n = 0; n < 300 && (await calls()).length < parallelBefore + 3; n++) await delay(10);
+  parallelA.cancel(); await Promise.all([a1, a2]);
+  assert('per-Agent cancel isolates concurrent other-Agent request', !bSettled && (await calls()).length === parallelBefore + 3);
+  parallelB.destroy(); await b; await rejects('destroy latches future requests', () => parallelB.call('get-memory-record', get));
+  await control({ records: [record('preference')] }); await parallelA.call('get-memory-record', get);
+  assert('cancel leaves next ordinary request usable', (await calls()).at(-1).operation === 'get-memory-record'); parallelA.destroy();
+  const endpointKeys = ['AWS_ENDPOINT_URL', 'AWS_ENDPOINT_URL_BEDROCK_AGENTCORE', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS', 'AWS_REGION'] as const;
+  const saved = endpointKeys.map(key => process.env[key]);
+  try {
+    Object.assign(process.env, { AWS_ENDPOINT_URL: 'https://invalid.example', AWS_ENDPOINT_URL_BEDROCK_AGENTCORE: 'https://invalid.example', AWS_IGNORE_CONFIGURED_ENDPOINT_URLS: 'false', AWS_REGION: 'eu-west-1' });
+    const endpoint = new MemoryTransport(config); await endpoint.call('get-memory-record', get); endpoint.destroy();
+    const wire = (await calls()).at(-1);
+    assert('environment endpoints ignored, configured region signs actual SDK request', !wire.headers.host.includes('invalid.example') && wire.headers.authorization.includes('/us-west-2/bedrock-agentcore/aws4_request'));
+    assert('transport never mutates global endpoint/credential environment', process.env['AWS_ENDPOINT_URL'] === 'https://invalid.example' && process.env['AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'] === 'false');
+  } finally { endpointKeys.forEach((key, i) => { if (saved[i] === undefined) delete process.env[key]; else process.env[key] = saved[i]; }); }
+  // Fresh CLI processes exercise the official profile/container chain, not fake clients.
+  const credentialFile = path.join(home, 'synthetic-credentials');
+  const awsConfig = path.join(home, 'synthetic-aws-config');
+  await writeFile(credentialFile, '[synthetic]\naws_access_key_id = AKIDPROFILE\naws_secret_access_key = synthetic\n');
+  await writeFile(awsConfig, '[profile synthetic]\nregion = eu-west-1\nendpoint_url = https://invalid.example\nservices = synthetic\n[services synthetic]\nbedrock-agentcore =\n  endpoint_url = https://invalid.example\n');
+  const chainEnv = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AWS_')));
+  Object.assign(chainEnv, { AWS_EC2_METADATA_DISABLED: 'true', AWS_CONFIG_FILE: awsConfig, AWS_SHARED_CREDENTIALS_FILE: credentialFile });
+  await mkdir(path.dirname(configPath(root)), { recursive: true });
+  await writeFile(configPath(root), JSON.stringify({ agentCoreMemory: { ...config, cliPath: '/nonexistent/legacy', upload: 'off' } }));
+  const cliPath = fileURLToPath(new URL('../src/cli.ts', import.meta.url));
+  function chain(env: NodeJS.ProcessEnv) { return spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', preload, cliPath, 'cloud-memory', 'inspect', id], { cwd: root, env: { ...chainEnv, ...env }, encoding: 'utf8', timeout: 10000 }); }
+  const profile = chain({ AWS_PROFILE: 'synthetic' });
+  assert('official profile credentials sign, shared-config endpoints ignored, legacy path unused', profile.status === 0 && profile.stderr.includes('deprecated and ignored') && (await calls()).at(-1).headers.authorization.includes('Credential=AKIDPROFILE/') && !(await calls()).at(-1).headers.host.includes('invalid.example'));
+  const tokenFile = path.join(home, 'synthetic-token'); await writeFile(tokenFile, 'synthetic-file-token');
+  for (const auth of [{ AWS_CONTAINER_AUTHORIZATION_TOKEN: 'synthetic-direct-token' }, { AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE: tokenFile }]) {
+    const container = chain({ AWS_SHARED_CREDENTIALS_FILE: path.join(home, 'absent'), AWS_CONFIG_FILE: path.join(home, 'absent'), AWS_CONTAINER_CREDENTIALS_FULL_URI: `http://127.0.0.1:${port}/credentials`, ...auth });
+    assert('official container credentials and authorization token/file used', container.status === 0 && (await calls()).at(-1).headers.authorization.includes('Credential=AKIDCONTAINER/'));
+  }
+  const credentialCalls = (await readFile(path.join(home, 'fixture-credentials.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert('container token and token-file reach only credential endpoint', credentialCalls.some(call => call.authorization === 'synthetic-direct-token') && credentialCalls.some(call => call.authorization === 'synthetic-file-token'));
+  const noCredentials = chain({ AWS_CONFIG_FILE: path.join(home, 'absent'), AWS_SHARED_CREDENTIALS_FILE: path.join(home, 'absent') });
+  assert('official IMDS disable gives bounded nonzero CLI failure without credentials', noCredentials.status === 1 && noCredentials.stdout.includes('SDK request failed') && !noCredentials.stdout.includes('AKID'));
+  await unlink(configPath(root));
+  // Exercise the SDK's real Node HTTP handler against loopback too. A TCP listener
+  // that never speaks TLS reproduces connection timeout without contacting AWS.
+  const { BedrockAgentCoreClient } = await import('@aws-sdk/client-bedrock-agentcore');
+  const { createServer } = await import('node:net');
+  const sockets = new Set<import('node:net').Socket>();
+  const silent = createServer(socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+  await new Promise<void>(resolve => silent.listen(0, '127.0.0.1', resolve));
+  const silentPort = (silent.address() as import('node:net').AddressInfo).port;
+  const provider = new BedrockAgentCoreClient({ region: config.region, requestHandler: { connectionTimeout: 80, requestTimeout: 200, throwOnRequestTimeout: true } });
+  const defaultHandler = provider.config.requestHandler;
+  let destroyed = false;
+  setMemoryTransportOptionsForTest(() => ({ requestHandler: {
+    ...defaultHandler,
+    updateHttpClientConfig: () => {}, httpHandlerConfigs: () => ({}),
+    handle: (request: any, options: any) => defaultHandler.handle({ ...request, hostname: '127.0.0.1', port: silentPort }, options),
+    destroy: () => { destroyed = true; provider.destroy(); },
+  } }));
+  const connection = new MemoryTransport(config); const connectStart = performance.now();
+  await rejects('real SDK Node handler TLS connection timeout', () => connection.call('get-memory-record', get));
+  assert('connection timeout occurs before total deadline', performance.now() - connectStart < 900);
+  connection.destroy(); assert('transport destroy forwards to SDK HTTP handler', destroyed);
+  for (const socket of sockets) socket.destroy();
+  await new Promise<void>(resolve => silent.close(() => resolve()));
+  setMemoryTransportOptionsForTest(() => ({ requestHandler: loopbackHandler(port) }));
+  const source = await readFile(new URL('../src/agentcore/transport.ts', import.meta.url), 'utf8');
+  assert('transport imports no subprocess/files and has no temp/CLI/capability path', !/node:(?:child_process|fs)|mkdtemp|cliPath|requireExtraction|process\.env/.test(source));
+  client.destroy(); await legacy.close();
+}

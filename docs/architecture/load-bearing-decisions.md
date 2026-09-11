@@ -827,23 +827,48 @@ and exits nonzero without modifying global handlers. No proof mutation via CLI o
 submissions own mutations; hashes bind content, not human origin. Arbitrary approved shell
 is not a sandbox. Clear/rewind preserve external effects/outboxes, rebuild controllers and refresh
 preferences. Management captures a fresh AbortSignal before its first await; publication
-and CLI launches check it, including capability preflight. Shutdown cancels and tracks
+and SDK request launches check it, including after credential resolution. Shutdown cancels and tracks
 management promises plus local work with a two-second drain cap; late cancelled work cannot
 publish approval/start AWS, while already-issued effects and received acknowledgements stay
 truthful. Runtime cancellation generation spans local context/proof reads through send/compact
 invocation, without resetting the preference cache. Crash before candidate
 persistence can omit a turn, deliberately without archive recovery.
 
-Transport uses `spawn` without shell, JSON stdin, fixed operations, host executable,
-explicit region, bounded output/time, no CLI retries and process-group kill. CLI schema
-preflight requires `extractionConfig.namespaceVariables` before any upload. Installed
-2.36.42 passes this and CreateMemory namespaceKeys checks; captured synthetic CreateEvent
-payloads validate against its installed service model. Namespace values cap projectId at 64.
-Container authorization token/token-file and metadata-disable credential flags survive,
-endpoint overrides do not. Hierarchical recall validates all scopes before omitting in-scope
-other-kind results with underfill reporting; sibling-root XML fragments remain ordered. No resource creation, dependencies, live repository
-uploads or credentials changes. Guide: `docs/user-guide/agentcore-memory.md` (and Chinese).
-Checks: `verify-agentcore-memory.ts` (offline actual Agent/gates/files/subprocesses),
+Transport is the official `@aws-sdk/client-bedrock-agentcore@3.1127.0` data client with four
+public Commands, never a generated Strands memory/session manager: automatic extraction upload
+would bypass the manual outbox. One direct runtime dependency, no CLI/CDK/private imports.
+Inputs cap at 32000 UTF-8 bytes. The public runtime extension wraps the SDK HTTP handler,
+checking cancellation immediately before launch and bounding streamed bodies before collection
+and SDK parsing (256 KiB success, 8 KiB error). Successful JSON has a 16-depth/10000-node guard;
+unknown structure fields that Smithy would drop are refused. SDK Dates normalize to ISO strings;
+only the SDK top-level `$metadata` envelope is stripped, never memory metadata. Existing record,
+XML and scope guards still decide trust. Get/Delete carry the fixed preference namespace IAM
+condition, not new mutation authority.
+
+`maxAttempts: 1` leaves finite retries to durable manual reservations. A total deadline spans
+credential resolution through body consumption. Cancel/deadline races the SDK promise so a
+blocked credential provider cannot hold the caller; the per-request HTTP guard prevents late
+credential completion from issuing a signed request. Credential-provider internal work may finish
+later, but cannot start a memory request. Each controller cancels only its own requests; close
+also destroys its client/handler. Already-issued effects are not undone, and already-received
+acknowledgements still persist through the existing management cancellation windows. Errors
+expose only bounded fixed text/HTTP status, never raw SDK messages, credentials or request IDs.
+
+The standard credential chain supports profiles, container authorization token/token-file,
+instance roles and metadata disabling. Region is host-fixed. The supported
+`ignoreConfiguredEndpointUrls: true` excludes configured endpoint URLs without process-global
+environment mutation. Legacy absolute `cliPath` is validated/accepted only for compatibility,
+ignored with a bounded status/CLI notice, and omitted from new examples. No runtime subprocess,
+stdin, capability skeleton or temporary request-file path remains. Existing private durable
+outboxes, proofs, namespaces and actor identity are unchanged; no automatic migration or upload.
+The infrastructure `agentcore` CLI is separate and optional. Existing-resource import is deferred:
+its verified schema drops `namespaceKeys`, and import filters `{memoryStrategyId}` templates.
+See `agentcore-cli-memory-plan.md`; no deployment/import/IAM changes belong to the runtime.
+
+Hierarchical recall validates all scopes before omitting in-scope other-kind results with
+underfill reporting; sibling-root XML fragments remain ordered. No live repository uploads or
+credentials changes. Guide: `docs/user-guide/agentcore-memory.md` (and Chinese).
+Checks: `verify-agentcore-memory.ts` (offline actual Agent/gates/files/SDK signing and loopback HTTP),
 local memory/trajectory/clear/rewind/status/help/config suites, free `tui completion`.
 `verify-agentcore-memory-live.ts` requires explicit disposable configuration and synthetic
 upload consent; absent that, live transport/extraction remain unverified.

@@ -2,6 +2,46 @@
 
 The checklist was derived before implementation; this table records its verification locations.
 
+## Approved SDK data-plane migration from 16f8a9c
+
+The requirements map was established before transport edits. `verify-agentcore-memory.ts`
+retains the meaningful policy coverage of the prior 173-check baseline. Obsolete AWS CLI
+skeleton/env-filter/stdin/paramfile assertions are replaced, not silently counted as policy
+coverage. The stopped seven-file paramfile repair was never accepted: Linux Node pipe sockets
+failed AWS CLI `file:///dev/stdin` reopening (ENXIO/252), and the old fixture missed that failure.
+This migration makes no retroactive passing claim for that repair.
+
+| Observable requirement | Local verification location/behavior |
+|---|---|
+| Actual public AWS Commands, one pinned direct dependency | `verifyTransport` plus policy capture: real SDK serializers/signing and loopback server, never response-only client mocks; package/lock pin 3.1127.0 |
+| Namespace variables, stable token, roles and timestamp | Existing manual send/retry captures now check actual SDK HTTP: projectid, USER/TOOL/OTHER, byte-identical retry bodies, ISO outbox Date serialized as epoch seconds |
+| 32000-byte input, 256 KiB success/8 KiB error before SDK parsing | Exact multibyte boundary, oversize no HTTP; streamed oversized success/error; invalid JSON; real TLS connection timeout and body hang |
+| Finite remote structure and no metadata laundering | Date/metadata normalization, unknown top-level/record/content/envelope fields refused, scalar coercion refused and unchanged wrong-type data rejected by existing policy; excessive depth/count rejected before SDK decoding; original malicious scope/XML/preference tests retained |
+| Total deadline and pre/postcredential cancellation | Pre-abort, immediate cancel, delayed credentials with signal/Agent/deadline/destroy; promise returns before provider release and released provider never reaches handler |
+| One attempt, no raw errors, isolated cancel/destroy | 503 count exactly one, fixed safe HTTP-status error; concurrent two-Agent requests; cancel leaves next call usable, destroy latches/forwards |
+| Official credentials, configured region, endpoint exclusion | Environment signing; fresh CLI profile/shared-config and container token/token-file retrieval on loopback; IMDS disabled no-credential failure; endpoint env/shared-config ignored without mutation |
+| No runtime executable/files, compatible legacy config | Transport import scan; missing legacy executable ignored with bounded notice; malformed legacy values/unknown keys refused; status and standalone CLI surface deprecation |
+| Actual permission gate before network, parent-only tools | Original runtime default/plan/deny/yolo/allow and child-catalogue cases now count signed HTTP requests |
+| Manual immutable outbox/proof/receipts, privacy | Original recorder, ordered retry/restart, real failed pnpm command, image/bang/custom/assistant/memory exclusion, preview proof, discard/cleanup/capacity/crash cases unchanged |
+| Explicit preference confirmation, revocation, policy escape | Original compact/multiline object and extraction-array cases, cross-project proof checks, inspection race, once-only startup, literal dollar/XML escape and malformed prompt refusal |
+| Cancellation during disk windows/send/compact/shutdown | Original deterministic real I/O observers before/after publication and cached preparation; no later approval/network/model call; received acknowledgement persists |
+| Standalone management remains read-only | Original real CLI nonzero failure/cancel/invalid mutation and model-bash broad allow cases; no proof writes or implicit upload |
+| Resource/actor/namespaces retained, infrastructure deferred | Config/scope hash paths unchanged; no global edits, resource IDs in examples or service calls. CLI schema/import limitations documented, no infra code |
+
+### SDK migration verification (2026-09-11)
+
+- `pnpm typecheck`: exit 0; `git diff --check`: clean; AGENTS 32,753 bytes (cap 32,768).
+- Focused `--transport-only`: **75 passed, 0 failed** (`/tmp/darwin-agentcore-sdk-transport-accepted.log`).
+- Free `verify-tui.ts completion`: **72 passed, 0 failed** (`/tmp/darwin-agentcore-sdk-completion.log`).
+- One full `pnpm test` after source stabilization: **115 suites, exit 0**, including **217 AgentCore checks, 0 failed** (`/tmp/darwin-agentcore-sdk-full-test.log`). The runner gives every suite a private HOME and disables remote model-price fetching.
+- Earlier local failures were corrected, not counted as passes: the new HTTP fixture initially set a header after `writeHead`; a later numeric-content negative case incorrectly expected transport rejection rather than the unchanged record-policy rejection. Final coverage exercises both boundaries.
+- pnpm installed the exact approved package through normal supply-chain checks. Its ordinary transitive resolution consolidated Smithy dependencies and updated the credential-provider peer resolution; no second direct dependency or policy bypass was added.
+
+Historical Host results in later sections describe their named revisions only. Host owns
+live read-only acceptance, global `cliPath` removal and the iteration log; synthetic upload
+is not authorized. No service request, resource change, IAM change or global config edit
+was performed. Commit/build completion is reported by the implementation worker.
+
 ## Narrow final Host corrections after d9b2b73
 
 Host's independent `pnpm typecheck` and full `pnpm test` at d9b2b73 passed (exit 0,
@@ -71,13 +111,17 @@ The full already-covered inventory was deliberately not repeated; Host owns its 
 rerun and iteration log. The real `pnpm test` failure inside the regression is a synthetic
 private-project script exiting 1, not a rerun of Darwin's full inventory.
 
-All tests are offline unless explicitly labelled live. No resource was provisioned or real repository/user content uploaded.
+### Historical pre-SDK requirement map
+
+The following rows describe the earlier CLI implementation, not the current transport. The
+SDK replacement map above supersedes only transport rows. No resource was provisioned or
+real repository/user content uploaded in those verification passes.
 
 | Requirement | Verification |
 |---|---|
 | Default-off, no cloud state/network/tools, local memory unchanged | `verify-agentcore-memory.ts` disabled real-runtime cases; existing four memory suites in `pnpm test` |
 | Host-only actor/resource/region/strategies, independent project scope | Strict config rejections and cross-actor/project record/outbox tests |
-| Correct searchQuery/strategy/namespacePath transport, no fabricated filter | Captured real subprocess argv/stdin assertions; installed CLI service model and input skeleton |
+| Correct searchQuery/strategy/namespacePath transport, no fabricated filter | Captured subprocess argv/stdin assertions and installed CLI service model (the later paramfile repair was stopped, not accepted) |
 | Parent-only ordinary network gate, plan and deny before CLI | Actual AgentRuntime default/plan/approved/yolo-deny cases; actual child catalogue assertion |
 | Bounded safe XML, evidence/action order, confidence semantics | XML attack cases, record scope/metadata rejections, ordered evidence assertions |
 | No generated explicitness as preference proof | Startup without approval, confirm-before-inspect refusal, visible hash adoption |
@@ -95,11 +139,10 @@ All tests are offline unless explicitly labelled live. No resource was provision
 
 ## Known verification boundary
 
-Installed AWS CLI 2.36.42's CreateEvent input skeleton now includes extractionConfig;
-CreateMemory includes namespaceKeys. Captured synthetic USER/TOOL/OTHER payloads are checked
-against its installed service model, including namespace value max64. This is local schema
-verification, not service extraction, IAM, or generation latency proof. No disposable resource
-was provided; no cloud resource or upload was used in the correction pass.
+Historical CLI 2.36.42 skeleton/service-model checks were local schema proof only. Current
+SDK serialization/signing/HTTP checks likewise do not prove live IAM, service extraction or
+generation latency. No disposable resource or synthetic-upload authorization was provided
+for this SDK migration. Host owns real read-only acceptance separately.
 
 Candidate persistence is detached local work. A crash before it completes can omit a turn;
 there is no archive repair. Cross-controller inspection/revocation and exclusive state

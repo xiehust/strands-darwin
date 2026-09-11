@@ -4,7 +4,7 @@
 
 ## Optional cloud memory commands
 
-`/cloud-memory` (user-submitted TUI) supports `status`, `preferences`, `inspect <record-id>`, `confirm <record-id> <hash> global`, `forget <record-id>`, `delete <record-id> cloud`, `pending`, `preview <token>`, `send <token> <preview-hash>`, `discard <token>`, `clear-accepted`. No implicit uploads/deletions. Standalone `darwin cloud-memory` is read-only: only `status`, `preferences`, `inspect`, `pending`, `preview`; no proof mutation, adoption, sending or deletion. Failures/invalid usage/cancel exit nonzero. Hashes bind content, not human identity; ordinary shell permission is not a sandbox. [Configuration, provisioning, bounds and safety](agentcore-memory.md).
+`/cloud-memory` (user-submitted TUI) supports `status`, `preferences`, `inspect <record-id>`, `confirm <record-id> <hash> global`, `forget <record-id>`, `delete <record-id> cloud`, `pending`, `preview <token>`, `send <token> <preview-hash>`, `discard <token>`, `clear-accepted`. No implicit uploads/deletions. Runtime access uses the official AWS SDK, not an executable; legacy `agentCoreMemory.cliPath` is ignored with a migration notice. Standalone `darwin cloud-memory` is read-only: only `status`, `preferences`, `inspect`, `pending`, `preview`; no proof mutation, adoption, sending or deletion. Failures/invalid usage/cancel exit nonzero. Hashes bind content, not human identity; ordinary shell permission is not a sandbox. [Configuration, provisioning, bounds and safety](agentcore-memory.md).
 
 ## CLI
 

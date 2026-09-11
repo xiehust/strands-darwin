@@ -4,7 +4,7 @@
 
 ## 可选云记忆命令
 
-用户亲自提交的 TUI `/cloud-memory` 支持 `status`、`preferences`、`inspect <record-id>`、`confirm <record-id> <hash> global`、`forget <record-id>`、`delete <record-id> cloud`、`pending`、`preview <token>`、`send <token> <preview-hash>`、`discard <token>`、`clear-accepted`，不会隐式上传或删除。独立 CLI `darwin cloud-memory` 只读，仅支持 `status`、`preferences`、`inspect`、`pending`、`preview`，不写批准凭据，不确认、发送或删除。失败、错误用法和取消返回非零退出码。哈希绑定内容而非人类身份；shell 权限不是沙箱。详见[配置、资源准备和安全边界](agentcore-memory.zh-CN.md)。
+用户亲自提交的 TUI `/cloud-memory` 支持 `status`、`preferences`、`inspect <record-id>`、`confirm <record-id> <hash> global`、`forget <record-id>`、`delete <record-id> cloud`、`pending`、`preview <token>`、`send <token> <preview-hash>`、`discard <token>`、`clear-accepted`，不会隐式上传或删除。运行时使用官方 AWS SDK，不依赖可执行文件；旧 `agentCoreMemory.cliPath` 被忽略并显示迁移提示。独立 CLI `darwin cloud-memory` 只读，仅支持 `status`、`preferences`、`inspect`、`pending`、`preview`，不写批准凭据，不确认、发送或删除。失败、错误用法和取消返回非零退出码。哈希绑定内容而非人类身份；shell 权限不是沙箱。详见[配置、资源准备和安全边界](agentcore-memory.zh-CN.md)。
 
 
 ## CLI

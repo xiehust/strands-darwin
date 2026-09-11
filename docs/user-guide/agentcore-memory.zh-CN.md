@@ -18,7 +18,11 @@ AgentCore Memory **默认关闭**。原有项目本地记忆工具 `memory_recal
 
 AWS 将 `{memoryStrategyId}` 替换为对应策略的 ID。资源的 `namespaceKeys` 必须声明小写自定义键 `projectid`；上传时通过 `extractionConfig.namespaceVariables.projectid` 提供小写值。缺少变量时，CreateEvent 仍可能成功，但不会提取长期记忆；应监控 AWS 提取日志和 `NamespaceResolutionFailure`。不要配置更宽的 reflection 命名空间：客户端检查返回记录的标签，无法撤销服务端已发生的跨用户汇总。IAM 应限制资源及操作：检索需要 `RetrieveMemoryRecords`、`GetMemoryRecord`，上传才需要 `CreateEvent`，明确删除才需要 `DeleteMemoryRecord`。原始事件 TTL 与长期记录保留是两回事。
 
-运行要求：POSIX 系统和支持 Memory 的 AWS CLI v2。默认路径为 `/usr/local/bin/aws`，其他位置需设置绝对路径 `cliPath`。**本地已验证 CLI 2.36.42 支持 CreateEvent 的 `extractionConfig.namespaceVariables` 和 CreateMemory 的 `namespaceKeys`。** Darwin 发送前在本地检查 `create-event --generate-cli-skeleton input`，不兼容就拒绝。应安装 skeleton 包含 `extractionConfig.namespaceVariables` 的版本；文档不猜测最低版本号。AWS 凭证由用户配置，Darwin 不修改凭证，也不从凭证推断用户身份；适配器忽略 AWS endpoint 覆盖配置，但保留凭证链所需的容器 authorization token/token-file 和 `AWS_EC2_METADATA_DISABLED` 等环境变量。
+运行时使用官方 `@aws-sdk/client-bedrock-agentcore` **3.1127.0**（要求 Node >=20，符合 Darwin 的 Node 支持范围），已包含 CreateEvent 的 `extractionConfig.namespaceVariables`。不需要 AWS CLI 可执行文件，也不启动能力检查子进程。凭证由标准 SDK 凭证链解析，支持环境变量、profile、容器凭证和实例角色，并遵守 `AWS_EC2_METADATA_DISABLED`。Darwin 不修改凭证，也不从凭证推断 actor。Region 由配置固定；`ignoreConfiguredEndpointUrls: true` 忽略环境变量和共享配置中的 endpoint URL，不修改进程环境。Get/Delete 同时发送固定的偏好 namespace，供 IAM condition 授权使用；本地范围校验不变。
+
+**旧配置迁移：**只移除 `agentCoreMemory.cliPath`。旧值若为最长 1024 字符的绝对路径，仍通过格式校验，但被忽略并显示有限的迁移提示，不执行或展示路径内容。保留 region、资源/策略 ID、actor、自动项目身份（省略 `projectId`）、`preferences: true` 以及原有的 `upload: manual` 选择。Darwin 不重写配置、批准记录、命名空间或 outbox；新增未知字段仍报错。
+
+可选的 [`agentcore` 基础设施 CLI](../architecture/agentcore-cli-memory-plan.md) 是独立生命周期工具，不是运行时依赖。保留现有资源：已验证的 CLI schema 会丢弃 `namespaceKeys`，import 会过滤含 `{memoryStrategyId}` 的模板。必须另行证明迁移无损并取得授权后，才能导入或部署资源。
 
 在 `~/.darwin/config.json` 根级添加以下对象，保留原有模型配置：
 
@@ -32,7 +36,6 @@ AWS 将 `{memoryStrategyId}` 替换为对应策略的 ID。资源的 `namespaceK
     "preferenceStrategyId": "YourPreferences-0123456789",
     "actorId": "opaque-user-42",
     "projectId": "my-project",
-    "cliPath": "/usr/local/bin/aws",
     "timeoutMs": 5000,
     "preferences": true,
     "upload": "off"
@@ -82,8 +85,14 @@ Send 必须对应已预览且未变化的字节。事件保留 Darwin session ID
 
 ## 边界、生命周期与验证
 
-传输不使用 shell，JSON 走 stdin 而非 argv；单次 CLI 请求不自动重试；输入 32 KB、stdout 256 KiB、诊断 8 KiB；总时限和进程组取消受控，不输出服务端诊断中的潜在凭证。每次最多五条记录，每条最多 12,000 字符；XML 最多 500 个 token、16 层；不翻页下载历史。最多保存 64 条偏好的独立查看/批准文件，每次应用五条、每条最多 4,000 字符的已验证 JSON。每个项目/配置绑定的 outbox 最多 32 回合，每回合 24 个步骤，最多八个排队本地任务；trajectory 只读末尾 1 MiB，状态文件上限 64 KiB，目录最多 256 项。满额或降级会说明遗漏，不静默删除或淘汰；`/cloud-memory clear-accepted` 明确清除已接受的请求体、尝试和预览文件，释放 32 回合容量。discard/cleanup 先保存幂等回执或丢弃标记，禁止这些 token 再上传；回执账本最多 256 条，不自动淘汰，满后拒绝清理，需用户在 Darwin 外归档管理。未丢弃的 pending 仍保持顺序。send/discard/cleanup 用跨进程独占锁拒绝越过进行中的操作；崩溃遗留的 `active.json`（偏好状态有限写入也使用此锁）必须人工检查所有者后恢复，不自动抢锁。新状态先私有写入并 sync，再原子发布且不覆盖已有文件；中断的 `.tmp` 不计为事件或尝试，但占目录容量，后续运行不静默删除。旧版损坏的最终文件须人工检查，不猜测顺序。OTHER-only 旧请求体可预览、丢弃，但不能上传或自动转换。清理中断会明确报告，用户可重复命令，按回执或丢弃标记完成清理。
+传输使用四个官方 AWS SDK Command，不使用 shell、可执行文件、stdin 或临时请求文件。输入仍最多 **32,000 个 UTF-8 字节**。通过公开的 HTTP-handler 扩展，在收集和解析前限制成功响应体为 **256 KiB**、错误响应体为 **8 KiB**；成功 JSON 在 SDK 反序列化前还要通过有限深度、节点数检查。SDK Date 转成 ISO 字符串，仅移除顶层 SDK `$metadata`，不移除记忆 metadata。未知响应字段会被拒绝，不让 SDK 静默丢弃字段后绕过验证；记录和 XML 校验保持严格。
 
-偏好批准在 `~/.darwin/agentcore/<binding>/`；outbox 在 `~/.darwin/projects/<project-key>/agentcore/<binding>/<scope-binding>/`，均视为敏感用户策略路径，文件权限私有且拒绝符号链接。关闭功能不访问这些状态。`/clear`、`/rewind` 建立新控制器、刷新偏好，保留持久 outbox，不撤销 AWS 效果。取消按管理操作独立生效，即使刚结束磁盘等待，也不再发布新状态或启动 CLI；Esc 后的新命令仍可使用。已发出的操作不会被撤销，已收到的 AWS 确认仍保留。云控制器退出时取消并等待管理及本地投影任务，最多两秒；超时明确报告尚未完成的文件 I/O，取消的修改仍被禁止，锁可能到 I/O 返回后才释放。send/compact 在本地偏好准备完成后、调用模型前再次检查取消，不重新检索缓存；若进程在投影落盘前崩溃，该候选可能遗漏，不补扫历史。原始事件 TTL 或删除**不会**删除长期记录。
+`maxAttempts: 1` 将重试权留给手动 outbox。一个总时限覆盖凭证解析、签名、连接和响应读取。即使凭证提供器仍在等待，取消或超时也会返回；HTTP handler 的最终检查阻止迟到的凭证结果再发送请求。已发出的效果不能撤销。取消按控制器隔离，退出时销毁该 SDK 客户端及连接。服务诊断、凭证和请求 ID 不输出，可显示有限的 HTTP 状态。传输不创建或清理任何文件；原有持久 outbox 和状态文件仍为权限私有的明文，并非加密或安全擦除。
 
-离线验证：`pnpm tsx spike/verify-agentcore-memory.ts` 使用真实文件、子进程、runtime 和权限门，不调用 AWS。`pnpm tsx spike/verify-agentcore-memory-live.ts` 默认跳过；只有 `AGENTCORE_DISPOSABLE_CONFIG` 指向明确的一次性测试资源配置，且 `AGENTCORE_ALLOW_SYNTHETIC_UPLOAD=yes`，actor 以 `synthetic-` 开头，才上传合成事件。不创建或删除资源，清理由资源所有者负责；它检验传输接受，不保证提取时机。本次实现没有提供一次性资源，因此没有验证真实服务行为。
+每次最多五条记录，每条最多 12,000 字符；XML 最多 500 个 token、16 层；不翻页下载历史。最多保存 64 条偏好的独立查看/批准文件，每次应用五条、每条最多 4,000 字符的已验证 JSON。每个项目/配置绑定的 outbox 最多 32 回合，每回合 24 个步骤，最多八个排队本地任务；trajectory 只读末尾 1 MiB，状态文件上限 64 KiB，目录最多 256 项。满额或降级会说明遗漏，不静默删除或淘汰；`/cloud-memory clear-accepted` 明确清除已接受的请求体、尝试和预览文件，释放 32 回合容量。discard/cleanup 先保存幂等回执或丢弃标记，禁止这些 token 再上传；回执账本最多 256 条，不自动淘汰，满后拒绝清理，需用户在 Darwin 外归档管理。未丢弃的 pending 仍保持顺序。send/discard/cleanup 用跨进程独占锁拒绝越过进行中的操作；崩溃遗留的 `active.json`（偏好状态有限写入也使用此锁）必须人工检查所有者后恢复，不自动抢锁。新状态先私有写入并 sync，再原子发布且不覆盖已有文件；中断的 `.tmp` 不计为事件或尝试，但占目录容量，后续运行不静默删除。旧版损坏的最终文件须人工检查，不猜测顺序。OTHER-only 旧请求体可预览、丢弃，但不能上传或自动转换。清理中断会明确报告，用户可重复命令，按回执或丢弃标记完成清理。
+
+偏好批准在 `~/.darwin/agentcore/<binding>/`；outbox 在 `~/.darwin/projects/<project-key>/agentcore/<binding>/<scope-binding>/`，均视为敏感用户策略路径，文件权限私有且拒绝符号链接。关闭功能不访问这些状态。`/clear`、`/rewind` 建立新控制器、刷新偏好，保留持久 outbox，不撤销 AWS 效果。取消按管理操作独立生效，即使刚结束磁盘等待，也不再发布新状态或发送 SDK 请求；Esc 后的新命令仍可使用。已发出的操作不会被撤销，已收到的 AWS 确认仍保留。云控制器退出时取消并等待管理及本地投影任务，最多两秒；超时明确报告尚未完成的文件 I/O，取消的修改仍被禁止，锁可能到 I/O 返回后才释放。send/compact 在本地偏好准备完成后、调用模型前再次检查取消，不重新检索缓存；若进程在投影落盘前崩溃，该候选可能遗漏，不补扫历史。原始事件 TTL 或删除**不会**删除长期记录。
+
+离线验证：`pnpm tsx spike/verify-agentcore-memory.ts` 使用真实文件、SDK Command/序列化/签名、loopback HTTP、runtime/权限门和独立 Darwin CLI 进程。测试凭证及私有 HOME 隔离 AWS 和真实用户配置。覆盖 profile/容器凭证、endpoint 覆盖排除、输入/响应上限、凭证等待取消、磁盘发布取消窗口、明确偏好采纳和手动 outbox 回执。这不证明真实 IAM、检索或提取；Host 另做只读验收。
+
+`pnpm tsx spike/verify-agentcore-memory-live.ts` 默认跳过；只有 `AGENTCORE_DISPOSABLE_CONFIG` 指向明确的一次性测试资源配置，且 `AGENTCORE_ALLOW_SYNTHETIC_UPLOAD=yes`，actor 以 `synthetic-` 开头，才上传另行授权的合成事件。不创建或删除资源，清理由所有者负责；它检验传输接受，不保证提取时机。本次 SDK 迁移未授权或执行真实服务调用、合成事件上传。

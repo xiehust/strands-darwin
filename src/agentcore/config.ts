@@ -11,12 +11,15 @@ export const agentCoreConfigSchema = z.object({
   preferenceStrategyId: segment,
   actorId: segment,
   projectId: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
-  cliPath: z.string().regex(/^\//).max(1024).default('/usr/local/bin/aws'),
+  // Compatibility only: validated, ignored, never executed or displayed.
+  cliPath: z.string().regex(/^\//).max(1024).optional(),
   timeoutMs: z.number().int().min(100).max(15000).default(5000),
   preferences: z.boolean().default(true),
   upload: z.enum(['off', 'manual']).default('off'),
 }).strict().refine((value) => value.episodicStrategyId !== value.preferenceStrategyId, 'strategies must be distinct');
 export type AgentCoreConfig = z.infer<typeof agentCoreConfigSchema>;
+export const AGENTCORE_CLI_PATH_NOTICE = 'agentCoreMemory.cliPath is deprecated and ignored; runtime memory uses the AWS SDK. Remove cliPath from your private config; retain all other memory settings.';
+
 export function parseAgentCoreConfig(value: unknown): AgentCoreConfig | undefined {
   if (value === undefined || value === false) return undefined;
   const result = agentCoreConfigSchema.safeParse(value);

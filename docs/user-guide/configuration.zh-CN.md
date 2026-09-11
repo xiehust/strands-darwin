@@ -2,7 +2,7 @@
 
 [English](configuration.md) · **简体中文** · [指南首页](README.zh-CN.md)
 
-`agentCoreMemory` 是根级配置对象（或 `false`），默认关闭，与本地 `memory` 和模型供应商独立。字段、命名空间和 CLI 要求见[可选 AgentCore Memory](agentcore-memory.zh-CN.md)。上传默认关闭，只支持用户亲自提交的 TUI 预览、发送，独立 CLI 只读。显式 `projectId` 必须小写且为 1–64 字符；偏好每个 runtime 只检索一次，后续重查本地撤销。
+`agentCoreMemory` 是根级配置对象（或 `false`），默认关闭，与本地 `memory` 和模型供应商独立。字段、命名空间和 SDK 要求见[可选 AgentCore Memory](agentcore-memory.zh-CN.md)。上传默认关闭，只支持用户亲自提交的 TUI 预览、发送，独立 CLI 只读。显式 `projectId` 必须小写且为 1–64 字符；偏好每个 runtime 只检索一次，后续重查本地撤销。
 
 
 ## 文件形式与优先级
@@ -81,7 +81,7 @@
 | `diagnostics` | `false` | 每会话 SDK/darwin 调试日志 |
 | `memory` | 轨迹可用时开启 | 项目记忆；未设置时跟随 `trajectory: false` |
 | `memoryHorizonDays` | `28` | 生成记忆的有效天数，整数 `0–365`；`0` 只关闭过期检查 |
-| `agentCoreMemory` | 关闭 | 根级云配置对象或 `false`；[ID、命名空间、偏好、手动上传和 CLI 要求](agentcore-memory.zh-CN.md) |
+| `agentCoreMemory` | 关闭 | 根级云配置对象或 `false`；[ID、命名空间、偏好、手动上传和 SDK 要求](agentcore-memory.zh-CN.md) |
 | `maxConcurrentSubagents` | `8` | 同时运行的子代理派发上限（`subagent` 调用加 `workflow` 节点）；正整数；超出的调用会在创建任何模型或子代理之前被拒绝 |
 | `terminalBell` | `false` | 在权限提示和回合结束时响一次终端铃（仅交互式 TUI） |
 | `terminalNotify` | `false` | 在同样两个时刻请终端弹出一条桌面通知——一条 OSC 9 序列（`ESC ] 9 ; darwin · <项目目录名> · waiting for approval\|turn complete ESC \`）直接写到 stdout，仅在 stdout 是 TTY 时写入（仅交互式 TUI；`-p` 和子代理从不写）。是否显示由终端决定：iTerm2（需开启 Settings → Profiles → Terminal → "Notification Center Alerts" → Filter Alerts → "Send escape sequence-generated alerts"）、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端会静默吞掉该序列。在 tmux 内，序列会包在 tmux 的 passthrough DCS 中，需要在 `~/.tmux.conf` 里设置 `set -g allow-passthrough on`。SSH 下同样有效——通知出现在运行终端的那台机器上。`false` 完全不写 |
