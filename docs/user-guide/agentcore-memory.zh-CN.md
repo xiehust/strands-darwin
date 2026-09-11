@@ -93,6 +93,6 @@ Send 必须对应已预览且未变化的字节。事件保留 Darwin session ID
 
 偏好批准在 `~/.darwin/agentcore/<binding>/`；outbox 在 `~/.darwin/projects/<project-key>/agentcore/<binding>/<scope-binding>/`，均视为敏感用户策略路径，文件权限私有且拒绝符号链接。关闭功能不访问这些状态。`/clear`、`/rewind` 建立新控制器、刷新偏好，保留持久 outbox，不撤销 AWS 效果。取消按管理操作独立生效，即使刚结束磁盘等待，也不再发布新状态或发送 SDK 请求；Esc 后的新命令仍可使用。已发出的操作不会被撤销，已收到的 AWS 确认仍保留。云控制器退出时取消并等待管理及本地投影任务，最多两秒；超时明确报告尚未完成的文件 I/O，取消的修改仍被禁止，锁可能到 I/O 返回后才释放。send/compact 在本地偏好准备完成后、调用模型前再次检查取消，不重新检索缓存；若进程在投影落盘前崩溃，该候选可能遗漏，不补扫历史。原始事件 TTL 或删除**不会**删除长期记录。
 
-离线验证：`pnpm tsx spike/verify-agentcore-memory.ts` 使用真实文件、SDK Command/序列化/签名、loopback HTTP、runtime/权限门和独立 Darwin CLI 进程。测试凭证及私有 HOME 隔离 AWS 和真实用户配置。覆盖 profile/容器凭证、endpoint 覆盖排除、输入/响应上限、凭证等待取消、磁盘发布取消窗口、明确偏好采纳和手动 outbox 回执。这些本地测试不证明真实 IAM 或提取。Host 已观察到原始 SDK 只读检索成功，结果为空，并带有额外的顶层 `searchType`；空结果不能证明提取成功。Host 将在此兼容修复后重做真实只读验收。
+离线验证：`pnpm tsx spike/verify-agentcore-memory.ts` 使用真实文件、SDK Command/序列化/签名、loopback HTTP、runtime/权限门和独立 Darwin CLI 进程。测试凭证及私有 HOME 隔离 AWS 和真实用户配置。覆盖 profile/容器凭证、endpoint 覆盖排除、输入/响应上限、凭证等待取消、磁盘发布取消窗口、明确偏好采纳和手动 outbox 回执。这些本地测试不证明真实 IAM 或提取。修复 `searchType` 兼容问题后，Host 已通过构建后的 Darwin SDK 路径检索现有资源：偏好、episode、reflection 均成功返回空结果。这验证了当前实例角色凭证下的读取连通性，不代表已验证提取、非空记录、上传/删除权限或所有凭证来源。
 
 `pnpm tsx spike/verify-agentcore-memory-live.ts` 默认跳过；只有 `AGENTCORE_DISPOSABLE_CONFIG` 指向明确的一次性测试资源配置，且 `AGENTCORE_ALLOW_SYNTHETIC_UPLOAD=yes`，actor 以 `synthetic-` 开头，才上传另行授权的合成事件。不创建或删除资源，清理由所有者负责；它检验传输接受，不保证提取时机。实现 worker 未调用真实服务或上传合成事件；上述 Host 单独执行的只读观察不证明提取成功。

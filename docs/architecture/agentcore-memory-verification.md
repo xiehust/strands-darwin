@@ -2,6 +2,21 @@
 
 The checklist was derived before implementation; this table records its verification locations.
 
+## Final Host SDK migration acceptance (7b10466, 2026-09-11)
+
+Independent diff review and `pnpm typecheck` passed. One uninterrupted Host `pnpm test`
+completed with exit 0, 6,643 PASS lines and zero FAIL, including 253 AgentCore checks.
+Free real-pty completion passed 72 checks; Host `pnpm build` passed and refreshed dist.
+Logs: `/tmp/darwin-agentcore-sdk-host-{typecheck,full-test,completion,build}.log`.
+
+Built Darwin preference, episode and reflection queries against the existing AWS resource
+all succeeded with empty results using the current instance role. This is read-connectivity
+proof only: no events were uploaded, no records deleted, no resource imported/redeployed,
+and no extraction, nonempty response or write-IAM behavior is claimed. Host removed only
+legacy `cliPath` from private config, preserving resource/strategy IDs, requested actor,
+automatic project isolation, preferences enabled and manual uploads. File mode remains 0600.
+Earlier worker-only and failed-run results below retain their original scope.
+
 ## Host live-read compatibility correction after 262cb91
 
 Host observed a successful raw SDK read-only RetrieveMemoryRecords response with
