@@ -354,7 +354,7 @@ Sources: report S1 (Claude Code Ctrl+S), `App.tsx` editor/image refs and `clipbo
 
 ## SER-086 — Preserve arguments for placeholder-free custom commands: `expandCustomCommand` keeps the loaded template bytes and appends two newlines plus the existing trimmed argument string when `$ARGUMENTS` is absent and arguments are nonempty; placeholder replacement and no-argument behavior stay byte-identical
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 118
 - Score: 15
 - Importance: 4
