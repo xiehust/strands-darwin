@@ -22,6 +22,7 @@ const suites = [
   'verify-prompt-recall.ts',
   'verify-prompt-history-search.ts',
   'verify-rewind-search.ts',
+  'verify-search-paste.ts',
   'verify-prompt-queue.ts',
   'verify-shell-command.ts',
   'verify-stream-into-static.ts',

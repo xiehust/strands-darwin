@@ -40,6 +40,7 @@ The slot holds at most 65,536 Unicode code points. A larger cut still deletes an
 - `Escape` twice within 500 ms on an empty, idle composer opens the same chooser as `/rewind` (conversation-only branch from an earlier completed prompt; files are never rolled back). A draft, a running turn, a queued message or a pending permission makes the second `Escape` an ordinary one.
 - `/tangent` bookmarks the conversation for a side question: the next prompt starts the tangent, `/tangent` again returns to the state before it through the same rewind path (one level, no picker, nothing put back into the editor; `N prompt(s) discarded` is stated). See [Sessions and state](sessions-and-state.md#rewind-and-tangents).
 - `Ctrl+J` or trailing `\` + `Enter` inserts a newline. Multiline paste does not send unexpectedly.
+- While `Ctrl+R` search or the `/rewind` chooser is open, paste appends to its query, not the draft (256 Unicode code points maximum). CRLF/CR become LF and non-text controls are dropped, just as in the composer; pasted newlines and tabs are text, never acceptance or submission. Only a separate `Enter`/`Tab` accepts; `Escape` restores the opening draft/cursor. Permission prompts and compaction ignore paste before either search or the composer can receive it.
 
 ## Draft stash
 

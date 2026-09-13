@@ -136,7 +136,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `Ctrl+J`、行尾 `\` + `Enter` | 插入换行；多行粘贴保留全部行 |
 | `Tab` | 接受选中的补全项 |
 | `Up` / `Down` | 先操作菜单，再取回队列、回看历史或移动多行光标 |
-| `Ctrl+R` | 搜索本项目提示词；输入筛选，`Ctrl+R`/`Up`/`Down` 切换，`Enter`/`Tab` 接受原文而不发送，`Escape` 恢复草稿和光标；[单行预览规则](using-darwin.zh-CN.md#输入编辑与补全) |
+| `Ctrl+R` | 搜索本项目提示词；输入或粘贴筛选（上限 256 个 Unicode 码点），`Ctrl+R`/`Up`/`Down` 切换，`Enter`/`Tab` 接受原文而不发送，`Escape` 恢复草稿和光标；[单行预览规则](using-darwin.zh-CN.md#输入编辑与补全) |
 | `Escape` | 关闭当前补全菜单或结束历史回看；保留草稿和光标（权限框中仍表示拒绝） |
 | `Esc` `Esc` | 输入框为空且空闲时（无草稿、无回合、无 `!` 命令、无队列、无权限框），500 ms 内再按一次 `Esc` 打开 `/rewind` 选择器——与输入 `/rewind` 完全相同；此时单按一次 `Esc` 不做任何事 |
 | `Home` / `End`、`Ctrl+A` / `Ctrl+E` | 移到可见行开头/结尾 |
@@ -153,7 +153,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `Ctrl+C` | 忙碌时取消；2 秒内再按一次退出；空闲时直接退出 |
 | `Ctrl+D` | 退出 |
 
-权限框和压缩界面激活时拥有键盘与粘贴输入。补全菜单对方向键的优先级高于历史回看和光标移动。队列取回又优先于提示词回看。
+权限框和压缩界面激活时拥有键盘与粘贴输入，并忽略粘贴。否则，打开的 rewind／历史搜索会把粘贴文本追加到有上限的查询，不修改草稿，也不将其当作接受按键；只有单独按 Enter／Tab 才接受。补全菜单对方向键的优先级高于历史回看和光标移动。队列取回又优先于提示词回看。
 
 ## 报告命令约定
 

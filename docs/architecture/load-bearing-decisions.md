@@ -2155,6 +2155,20 @@ frame grant arithmetic, history/trajectory bytes or model-content formatter chan
 columns across zero/short/full grants, selected windows and omissions; `verify-frame-budget.ts`
 and free `verify-tui.ts historySearch` cover the budget and interactive reader/keyboard path.
 
+**Paste follows the active search owner (SER-089).** Ink delivers bracketed paste on a
+separate channel from `useInput`, so `App.usePaste` must enforce ownership too. After the
+unchanged permission/compaction block, it applies `normalizeDraftText`, then routes to
+rewind first, history second, through their immediate refs and existing bounded query
+updates; only the fallback inserts into the composer. This preserves the 256-code-point
+query caps and makes same-event paste/key sequences see current state without synthesizing
+keys: pasted Enter/Tab/control text never accepts, branches, submits or queues. Search
+filtering leaves the underlying draft and Escape snapshot untouched; explicit Enter/Tab
+keeps its existing acceptance semantics. SER-088 remains presentation-only. No new row,
+timer, store, runtime or permission-policy path. `verify-search-paste.ts` (registered in
+`pnpm test`) drives both owners in the real CLI with private HOME/cwd and a local SDK model,
+checks exact cancellation cursors and unchanged durable bytes/model-call logs, and covers
+permission/compaction blocking, composer fallback and narrow frames.
+
 ## `!` shell commands
 
 **A draft starting with `!` runs as the user's own shell command — outside the permission gate,

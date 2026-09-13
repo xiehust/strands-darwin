@@ -2847,6 +2847,16 @@ export function App({
 
     const text = normalizeDraftText(pasted);
     if (text === '') return;
+    // Ink delivers paste separately from keys. Use immediate owners/updates so
+    // batched paste and key events filter the same query, never the held draft.
+    if (rewindSearchRef.current !== undefined) {
+      updateRewindSearch((current) => appendRewindSearchQuery(current, text));
+      return;
+    }
+    if (historySearchRef.current !== undefined) {
+      updateHistorySearch((current) => appendPromptHistorySearchQuery(current, text));
+      return;
+    }
     setEditor((current) => insertAtCursor(current, text));
     preferredColumn.current = undefined;
     setSelectedCompletion(0);
