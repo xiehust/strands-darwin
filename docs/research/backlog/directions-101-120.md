@@ -374,7 +374,7 @@ Source: report S4, OpenCode commands fallback; repository `src/commands/custom-c
 
 ## SER-087 — Add `/review [focus]` as a pure built-in prompt expansion over `AgentRuntime.expandSlashCommand`: review current staged/unstaged changes and relevant untracked files for evidence-backed prioritized bugs and test gaps, optionally focused by literal user text, without edits or commits unless separately requested; use the existing gate and driver path, never a new review executor or automatic permission-mode switch
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 119
 - Score: 12
 - Importance: 3
@@ -386,7 +386,7 @@ Source: report S4, OpenCode commands fallback; repository `src/commands/custom-c
 
 ### Implementation / acceptance evidence
 
-Not implemented. At `c1f34b4`, `BUILTIN_COMMAND_NAMES` contains `init` and `workflow` but no `review`; pure built-in expansion and shared driver seams already exist and are tested by `spike/verify-init-command.ts` and `spike/verify-workflow-command.ts`.
+Accepted commit `d29f091` (`feat(commands): add a built-in review prompt`). Fresh child `session-20260913-054619047`, task `bg-bd580aba-9666-4bf8-b617-d0c42099ca3a`, exit 0, fully drained. Host inspected all 22 changed files: pure parser/template, canonical registration, runtime/TUI/dev-repl integration, raised help/completion caps, preserved custom fixture assertions, new offline runtime/gate/PTY suites and bilingual docs. Host `pnpm typecheck && pnpm test && pnpm tsx spike/verify-tui.ts completion && pnpm build && git diff --check && git status --short` passed in `bg-8026888e-141d-4102-ad11-7f8a654773b9`: full suite 8,285 PASS lines (review contract152, drivers13, custom130), free completion75, clean tree and refreshed dist. Actual queue/image/literal-input and unchanged gate behavior verified, not live model review quality. Iteration log Batch 130. Worker spend input 98, output 24,813, cacheRead 5,690,294, cacheWrite 167,384; USD unknown. Both records in origin batch now done.
 
 ### Notes / blockers / abandonment reason
 
