@@ -392,3 +392,24 @@ Accepted commit `d29f091` (`feat(commands): add a built-in review prompt`). Fres
 
 Sources: report S2 (Codex `/review`), S4 (OpenCode review template); repository `src/commands/{custom-commands,init-command,workflow-command}.ts`, `src/agent/runtime.ts:expandSlashCommand`, `src/tui/App.tsx`, architecture §§ SDK reuse/Permissions/System prompt composition/Workflow DAG/The prompt queue. Sequence after SER-086. New pure parser mirrors exact case-insensitive built-in grammar; bare invocation is valid, optional trimmed focus embedded verbatim under `Focus:`. Fixed prompt asks to inspect repository instructions, current Git changes and relevant context, report actionable prioritized findings with file/line evidence, distinguish bugs from test gaps, avoid speculative/style-only findings, and explicitly report no findings and unverified limits. No edits/commits unless separately requested; this is guidance, not an enforced read-only sandbox. No second execution channel, forced delegation, mode mutation, automatic shell/template interpolation or new tool. Reserve canonical name and one-phrase description; expose via help/completion, keep every built-in visible. Reservation intentionally displaces an existing custom command/skill named `review` through existing collision behavior; document it and update colliding verification fixtures while preserving assertions. Ordinary runtime expansion shared by TUI/dev-repl/headless; busy submission queues, attachments and literal trajectory input preserved. Verify parser, prompt contract, purity, reservation/discovery, runtime/headless integration and queue path, `tui completion`, full typecheck/test/build. Sync README, narrative/reference EN/zh-CN and architecture; keep AGENTS untouched. Host owns mutable research state/log.
 
+
+## SER-088 — Keep reverse-search query and candidate previews on their counted visual row: project multiline/control layout only at presentation, preserving raw filtering, accepted prompt and Escape-restored draft/cursor
+
+- Status: `not-started`
+- Priority: 120
+- Score: 15
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 1
+- Origin report: [`research_2026-09-13.md`](../research_2026-09-13.md) (run `06:21:23Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. At `75e40ae`, real Ink `renderToString` renders both a history candidate and query containing `first\nsecond` on two rows despite `wrap="truncate-end"`; `planPromptBox` counts each as one. Acceptance must cover real rendering at narrow/wide widths, CR/LF/CRLF and Unicode/control inputs, one row per query/candidate, unchanged ordinary single-line previews, exact raw matching/acceptance/cancel state, existing omission counts and granted height. Focused `verify-prompt-history-search.ts`, `verify-rewind-search.ts`, `verify-frame-budget.ts`, real free `verify-tui.ts historySearch`, full typecheck/test/build. Record independent Host evidence before done.
+
+### Notes / blockers / abandonment reason
+
+Sources R1–R3/R6 in origin run; `src/tui/prompt-history-search.ts:promptHistorySearchView` promises one-row-safe strings but returns raw query/matches. `InputBox` draws them as one Text each; rewind already uses visible newline markers. Use a presentation-only projection, no stored-history/trajectory mutation, filtering reinterpretation, new row, timer or SDK/runtime change. This correctness fix precedes SER-089 so routing multiline paste cannot introduce an over-tall search title. Inspect relevant EN/zh-CN docs and architecture, update only stale claims. Host owns this record/report/log; developer child owns source/tests/docs and commit.
+
