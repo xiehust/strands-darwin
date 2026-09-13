@@ -351,3 +351,44 @@ Accepted `7ec524b` plus test-only correction `8f7b641` after second independent 
 
 Sources: report S1 (Claude Code Ctrl+S), `App.tsx` editor/image refs and `clipboardReadGeneration`, architecture §§ Clipboard image input/TUI frame budget/Prompt recall/The prompt queue. Dependency: implement after SER-084; stash/restore must clear its cut register alongside undo so hidden editor state never crosses ownership. One slot: nonempty draft or image with empty slot stores exact `EditorValue` and optional image then clears composer; empty composer with occupied slot restores and consumes it; both occupied refuses with a bounded notice (never swaps or overwrites); both empty is inert. Refuse stashing text above 65,536 code points without changing either state, never truncate. Available idle or busy wherever normal composer editing owns keys, not under permission/compaction/history or rewind search. Stash survives intervening submissions, queue take-back, recalls and `/model`/`/compact`, but drops with a notice on successful `/clear` or rewind/tangent successor and on exit; never persisted. Invalidate pending clipboard reads on stash/restore; a stashed image counts toward the existing one-image invariant and prevents another clipboard attachment. State indication is a short suffix on the existing composer hint row, no new row/timer; bounded notices say stored/restored/refused without draft content. No new slash command, model/tool call, SDK loop change or trajectory record; only an eventual ordinary submission records restored literal text. Sync help/README/user-guide EN/zh-CN and architecture; keep AGENTS.md untouched.
 
+
+## SER-086 — Preserve arguments for placeholder-free custom commands: `expandCustomCommand` keeps the loaded template bytes and appends two newlines plus the existing trimmed argument string when `$ARGUMENTS` is absent and arguments are nonempty; placeholder replacement and no-argument behavior stay byte-identical
+
+- Status: `not-started`
+- Priority: 118
+- Score: 15
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 1
+- Risk: 2
+- Origin report: [`research_2026-09-13.md`](../research_2026-09-13.md) (run `05:09:44Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. At `c1f34b4`, direct `expandCustomCommand` reproduction with template `Review code for bugs.` and `/review src/auth.ts` returned only the template; the target vanished. `spike/verify-custom-commands.ts:expansion` explicitly pins the previous discard behavior.
+
+### Notes / blockers / abandonment reason
+
+Source: report S4, OpenCode commands fallback; repository `src/commands/custom-commands.ts:expandCustomCommand`, `src/agent/runtime.ts:expandSlashCommand`, architecture §§ `.agents` extension layering/System prompt composition. Intentional compatibility change to old test-pinned semantics, not a parser rewrite. If `$ARGUMENTS` exists, replace every occurrence exactly as today, without recursive interpolation. If it does not exist and trimmed args are empty, return original content exactly; otherwise original content + `\n\n` + args (do not trim template bytes). Shell-looking and placeholder-looking args remain literal data; no positional syntax, shell interpolation, file access, model call or extra trajectory record in expansion. Verify nonempty/no args, repeated placeholders, multiline/Unicode/shell-looking text, case-insensitive/unknown commands, real loader/runtime/headless path, full typecheck/test/build. Sync README and extension narrative/reference EN/zh-CN plus rationale; keep AGENTS untouched. Host owns backlog/report/iteration log. Implement before SER-087; both share this report.
+
+## SER-087 — Add `/review [focus]` as a pure built-in prompt expansion over `AgentRuntime.expandSlashCommand`: review current staged/unstaged changes and relevant untracked files for evidence-backed prioritized bugs and test gaps, optionally focused by literal user text, without edits or commits unless separately requested; use the existing gate and driver path, never a new review executor or automatic permission-mode switch
+
+- Status: `not-started`
+- Priority: 119
+- Score: 12
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-13.md`](../research_2026-09-13.md) (run `05:09:44Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. At `c1f34b4`, `BUILTIN_COMMAND_NAMES` contains `init` and `workflow` but no `review`; pure built-in expansion and shared driver seams already exist and are tested by `spike/verify-init-command.ts` and `spike/verify-workflow-command.ts`.
+
+### Notes / blockers / abandonment reason
+
+Sources: report S2 (Codex `/review`), S4 (OpenCode review template); repository `src/commands/{custom-commands,init-command,workflow-command}.ts`, `src/agent/runtime.ts:expandSlashCommand`, `src/tui/App.tsx`, architecture §§ SDK reuse/Permissions/System prompt composition/Workflow DAG/The prompt queue. Sequence after SER-086. New pure parser mirrors exact case-insensitive built-in grammar; bare invocation is valid, optional trimmed focus embedded verbatim under `Focus:`. Fixed prompt asks to inspect repository instructions, current Git changes and relevant context, report actionable prioritized findings with file/line evidence, distinguish bugs from test gaps, avoid speculative/style-only findings, and explicitly report no findings and unverified limits. No edits/commits unless separately requested; this is guidance, not an enforced read-only sandbox. No second execution channel, forced delegation, mode mutation, automatic shell/template interpolation or new tool. Reserve canonical name and one-phrase description; expose via help/completion, keep every built-in visible. Reservation intentionally displaces an existing custom command/skill named `review` through existing collision behavior; document it and update colliding verification fixtures while preserving assertions. Ordinary runtime expansion shared by TUI/dev-repl/headless; busy submission queues, attachments and literal trajectory input preserved. Verify parser, prompt contract, purity, reservation/discovery, runtime/headless integration and queue path, `tui completion`, full typecheck/test/build. Sync README, narrative/reference EN/zh-CN and architecture; keep AGENTS untouched. Host owns mutable research state/log.
+
