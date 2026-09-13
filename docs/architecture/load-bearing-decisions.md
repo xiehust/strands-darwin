@@ -1838,11 +1838,14 @@ sequence per moment bare and wrapped, zero when disabled).
 ## Background activity in the header
 
 The first live header row keeps the foreground state (`ready`, `working`, permission,
-compaction or shell) and appends ` · ● N task(s) running · /tasks` for running background
-bash jobs only. Completed history is not counted. The active-colour label remains readable
-without colour; narrow widths drop the hint, shorten to `N running`, then keep the count.
-One `Text wrap="truncate-end"` prevents a second header row. There is no idle animation,
-new timer, log read, output-cursor movement, model call or trajectory record.
+compaction or shell) and appends ` · ⠋ N task(s) running · /tasks` for running background
+bash jobs only. Completed history is not counted. The one-cell spinner shares the tool
+panel's frames and the App's existing 90 ms clock; running jobs keep it moving even when
+the foreground is idle or awaiting permission. The clock stops when neither foreground
+nor background activity needs animation. The active-colour label remains readable without
+colour; narrow widths drop the hint, shorten to `N running`, then keep the count.
+One `Text wrap="truncate-end"` prevents a second header row. There is no additional timer,
+log read, output-cursor movement, model call or trajectory record.
 
 `BackgroundBashManager.runningCount` projects its in-memory task states; a separate
 `subscribeActivity` invalidation fires on registration and terminal transition, with
@@ -1864,12 +1867,13 @@ no new information channel. The suffix rides directly *behind* the busy word, ah
 command hints: both rows are one `<Text wrap="truncate-end">`, so they can never wrap or grow a
 row at any width and the tail that truncates on a narrow terminal is the part that never changes —
 the hint's 2-row claim in `promptBoxWanted` and `thinkingRows = 1` stay correct untouched. The
-only clock is the existing spinner interval (never a second one, no tick while idle) and the only
+only clock is the existing spinner interval (never a second one, no tick without activity) and the only
 read is `runtime.usage`, the SDK's synchronous in-memory accumulator — which counts a model call
 when it *finishes*, the same lagging reading mid-turn `/usage` reports as "not counted yet".
 Honesty is the `usageBuckets` rule: an unreported metric is absent, never 0; a zero accumulator
 renders `↑0 ↓0`; a meter read that throws degrades to elapsed-only. The per-turn start ref is
-cleared in `runTurn`'s `finally`, so cancelled and failed turns stop the readout with the tick.
+cleared in `runTurn`'s `finally`, so cancelled and failed turns stop the readout even if
+background jobs keep the shared animation clock alive.
 The second read the same tick makes is `runtime.retryWait()` (SER-067): a pending model-retry wait
 appends ` · throttled, retry 3/6 in 12s` after the spend on both rows through the same `busySuffix`
 (the rules above hold: no row, no tick, the reason never on the row, byte-identical without a wait —

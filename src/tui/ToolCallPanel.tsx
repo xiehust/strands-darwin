@@ -21,11 +21,10 @@ import {
 import { formatDispatchPhase } from './subagent-format.js';
 import { formatTaskDuration } from './task-format.js';
 import { SHELL_TOOL_NAME } from './shell-command.js';
+import { spinnerFrame } from './spinner.js';
 import { expandedToolInput, toolResultPreview } from './tool-detail-presentation.js';
 import type { ActiveTool, HistoryItem, ToolStatus } from './turn-state.js';
 import { diffToneColor, visualColor, visualMarker } from './visual-language.js';
-
-const FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
 
 /** Running tool calls, with a spinner driven by the parent's tick. */
 export function ActiveToolCalls({
@@ -75,7 +74,7 @@ export function ActiveToolCalls({
                 lays those out as flex items and wraps them independently, which is a
                 row the budget did not count. */}
             <Text wrap="truncate-end">
-              <Text color={visualColor.active} bold>{`${visualMarker.activeTool} ${FRAMES[frame % FRAMES.length]} `}</Text>
+              <Text color={visualColor.active} bold>{`${visualMarker.activeTool} ${spinnerFrame(frame)} `}</Text>
               {activeToolCallSummary(tool.summary, tool.compactSummary, toolDetailsExpanded)}
               {/* Elapsed suffix, never prefix: pty assertions match the summary as a
                   substring, and the existing spinner tick already redraws each frame. */}

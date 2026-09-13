@@ -1,5 +1,6 @@
 import type { BackgroundTaskStatus } from '../tools/background-bash.js';
 import { TASK_TAIL_LINES, type BackgroundTail } from '../tools/background-tail.js';
+import { spinnerFrame } from './spinner.js';
 
 const COMMAND_SUMMARY_LIMIT = 72;
 /** Width of one tail row's text; with its indent and marker it matches the widest job row. */
@@ -9,15 +10,16 @@ export const TASK_TAIL_PREFIX = '    │ ';
 export const TASK_TAIL_EMPTY_NOTICE = '(no output yet)';
 export const TASK_TAIL_UNAVAILABLE_NOTICE = '(output unavailable)';
 
-/** One header suffix: drop the hint, then shorten the label before truncating. */
-export function runningTasksHeader(count: number, availableColumns: number): { label: string; hint: string } {
+/** One header suffix: one-cell motion, then drop the hint and shorten before truncating. */
+export function runningTasksHeader(count: number, availableColumns: number, frame = 0): { label: string; hint: string } {
   if (count <= 0) return { label: '', hint: '' };
-  const label = ` · ● ${count} task${count === 1 ? '' : 's'} running`;
+  const marker = spinnerFrame(frame);
+  const label = ` · ${marker} ${count} task${count === 1 ? '' : 's'} running`;
   const hint = ' · /tasks';
   if (label.length + hint.length <= availableColumns) return { label, hint };
   if (label.length <= availableColumns) return { label, hint: '' };
-  const compact = ` · ● ${count} running`;
-  return { label: compact.length <= availableColumns ? compact : ` · ● ${count}`, hint: '' };
+  const compact = ` · ${marker} ${count} running`;
+  return { label: compact.length <= availableColumns ? compact : ` · ${marker} ${count}`, hint: '' };
 }
 
 /** Keeps task ids recognizable without printing an entire UUID in every notice. */

@@ -524,7 +524,7 @@ export function App({
     permissions.getSnapshot,
   );
 
-  // Background activity is independent of the foreground turn and its spinner.
+  // Background activity is independent of the foreground turn.
   // The manager publishes starts and terminal transitions, never output or ticks.
   const subscribeTaskActivity = useCallback(
     (onChange: () => void) => runtime.subscribeToBackgroundTaskActivity(onChange), [runtime],
@@ -852,15 +852,15 @@ export function App({
     live: { wanted: liveTextRows === 0 ? 0 : liveTextRows + LIVE_BLOCK_CHROME_ROWS, floor: 0 },
   });
 
-  // Spinner tick, while a model is actually streaming or a `!` command is running —
-  // the running command's panel row carries the same spinner and elapsed suffix.
-  // `/compact` waits on its own model calls too, but has no per-call tool panel to
-  // animate.
+  // One clock for live tools and the background-task marker, including while the
+  // foreground is idle or awaiting permission. No tick when all activity stops.
+  // `/compact` alone has no per-call tool panel to animate.
+  const animateActivity = effectiveStatus === 'streaming' || effectiveStatus === 'shell' || runningTaskCount > 0;
   useEffect(() => {
-    if (effectiveStatus !== 'streaming' && effectiveStatus !== 'shell') return;
+    if (!animateActivity) return;
     const timer = setInterval(() => setFrame((f) => f + 1), SPINNER_INTERVAL_MS);
     return () => clearInterval(timer);
-  }, [effectiveStatus]);
+  }, [animateActivity]);
 
   // A `!` command must not outlive the TUI that ran it: on unmount (Ctrl+D, /exit,
   // a second Ctrl+C) the group gets the same TERM→KILL reaping a cancel gives it.
@@ -2999,7 +2999,7 @@ export function Header({
   const mode = runtime.permissionMode;
   const stateLabel = status === 'streaming' ? 'working' : headerStatus(status);
   const tangentSuffix = tangentHeaderSuffix(tangent);
-  const activity = runningTasksHeader(runningTaskCount, columns - `◆ DARWIN · ${stateLabel}${tangentSuffix}`.length);
+  const activity = runningTasksHeader(runningTaskCount, columns - `◆ DARWIN · ${stateLabel}${tangentSuffix}`.length, frame);
 
   return (
     <Box flexDirection="column" marginBottom={1}>

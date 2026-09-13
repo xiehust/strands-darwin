@@ -115,19 +115,26 @@ for (const columns of [14, 16, 20, 40, 80]) {
 }
 
 header('visual language — background activity stays in one header row');
-assert('no running tasks leaves the baseline unchanged', !headerOutput.includes('●') && !headerOutput.includes('/tasks'));
+assert('no running tasks leaves the baseline unchanged', !headerOutput.includes('⠋') && !headerOutput.includes('/tasks'));
 for (const status of ['idle', 'streaming', 'awaiting-permission', 'compacting', 'shell'] as const) {
   for (const columns of [14, 20, 30, 40, 80]) {
     const base = plain(renderToString(<Header runtime={runtime} status={status} />, { columns }));
     const active = plain(renderToString(<Header runtime={runtime} status={status} runningTaskCount={2} />, { columns }));
     assert(`${status}: activity adds no rows at ${columns} columns`, rows(base) === rows(active));
+    for (let frame = 1; frame <= 10; frame += 1) {
+      const next = plain(renderToString(<Header runtime={runtime} status={status} runningTaskCount={2} frame={frame} />, { columns }));
+      assert(`${status}: frame ${frame} keeps layout stable at ${columns} columns`,
+        rows(next) === rows(active) && next.replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, '⠋') === active);
+      if (columns === 80) assert(`${status}: frame ${frame} advances or wraps only the marker`,
+        frame === 10 ? next === active : next !== active);
+    }
     if (columns === 80) assert(`${status}: foreground state and background count coexist`,
-      active.split('\n')[0]?.includes('● 2 tasks running · /tasks') === true);
+      active.split('\n')[0]?.includes('⠋ 2 tasks running · /tasks') === true);
   }
 }
 const activeIdle = plain(renderToString(<Header runtime={runtime} runningTaskCount={1} />, { columns: 80 }));
 assert('idle with a job remains ready and shows a singular running label',
-  activeIdle.startsWith('◆ DARWIN · ready · ● 1 task running · /tasks'));
+  activeIdle.startsWith('◆ DARWIN · ready · ⠋ 1 task running · /tasks'));
 
 const shadowRuntime = {
   ...runtime,

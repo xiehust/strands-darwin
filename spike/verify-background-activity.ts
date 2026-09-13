@@ -2,7 +2,8 @@
  * Background activity: real manager jobs and the production CLI/App in a pty.
  * Local scripted transport (task-wake-cli), private HOME, no provider/network.
  * Jobs are released by files, never timing assumptions. Current-frame assertions
- * exclude historical repaints; idle silence proves there is no background tick.
+ * exclude historical repaints; animation changes only the one-cell marker, and
+ * idle silence after the last completion proves the shared clock stops.
  * Run: pnpm tsx spike/verify-background-activity.ts
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -68,11 +69,11 @@ try {
 
 header('background activity — responsive label');
 assert('zero is silent', runningTasksHeader(0, 80).label === '' && runningTasksHeader(0, 80).hint === '');
-assert('wide view offers details', runningTasksHeader(1, 80).label === ' · ● 1 task running' && runningTasksHeader(1, 80).hint === ' · /tasks');
-assert('multiple jobs use plural', runningTasksHeader(2, 80).label === ' · ● 2 tasks running');
-assert('hint yields before the full label', runningTasksHeader(1, 20).label === ' · ● 1 task running' && runningTasksHeader(1, 20).hint === '');
-assert('narrow view keeps activity and count', runningTasksHeader(1, 15).label === ' · ● 1 running');
-assert('tight view keeps a count', runningTasksHeader(12, 8).label === ' · ● 12');
+assert('wide view offers details', runningTasksHeader(1, 80).label === ' · ⠋ 1 task running' && runningTasksHeader(1, 80).hint === ' · /tasks');
+assert('multiple jobs use plural', runningTasksHeader(2, 80).label === ' · ⠋ 2 tasks running');
+assert('hint yields before the full label', runningTasksHeader(1, 20).label === ' · ⠋ 1 task running' && runningTasksHeader(1, 20).hint === '');
+assert('narrow view keeps activity and count', runningTasksHeader(1, 15).label === ' · ⠋ 1 running');
+assert('tight view keeps a count', runningTasksHeader(12, 8).label === ' · ⠋ 12');
 
 header('background activity — idle, busy, resize and clear in a real pty');
 await mkdir(path.join(HOME, '.darwin'), { recursive: true });
@@ -85,56 +86,67 @@ const tui = startTui({
   env: { HOME, DARWIN_MODEL_PRICES_FETCH: 'off', AWS_EC2_METADATA_DISABLED: 'true' },
 });
 // A pty emits CRLF: the carriage return is not a visible terminal cell.
-const title = () => (tui.frame.split('\n').find((line) => line.includes('◆ DARWIN')) ?? '').replace(/\r/g, '');
+const rawTitle = () => (tui.frame.split('\n').find((line) => line.includes('◆ DARWIN')) ?? '').replace(/\r/g, '');
+// Layout/count assertions ignore the current animation phase; motion is checked separately.
+const title = () => rawTitle().replace(/[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/g, '⠋');
 const settled = (predicate: () => boolean, label: string) => tui.waitUntil(predicate, { timeoutMs: 30_000, settleMs: 250, label });
 const release = (marker: string) => writeFile(path.join(ROOT, `activity-release-${marker}`), 'release');
 try {
   await tui.waitFor('you>');
-  assert('empty session has no background indicator', !title().includes('●'));
+  assert('empty session has no background indicator', !title().includes('⠋'));
   tui.submit('start-activity success');
-  await settled(() => title().includes('ready · ● 1 task running · /tasks'), 'one job while ready');
-  assert('running job is visible after the dispatching turn ends', title().includes('ready · ● 1 task running'));
+  await settled(() => title().includes('ready · ⠋ 1 task running · /tasks'), 'one job while ready');
+  assert('running job is visible after the dispatching turn ends', title().includes('ready · ⠋ 1 task running'));
   tui.send('unsent draft');
   await settled(() => tui.frame.includes('you> unsent draft'), 'draft remains editable');
-  const idleBytes = tui.raw.length;
-  await delay(350);
-  assert('background-only activity adds no animation or output tick', tui.raw.length === idleBytes);
+  const animationRawStart = tui.raw.length;
+  const animationStart = tui.mark();
+  await delay(450);
+  const animation = tui.screen.slice(animationStart);
+  const markers = new Set([...animation.matchAll(/◆ DARWIN · ready · ([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]) 1 task running/g)].map((match) => match[1]));
+  assert('background-only activity animates through multiple frames', markers.size >= 2);
+  assert('animation preserves the ready state and unsent draft',
+    title().includes('ready · ⠋ 1 task running') && tui.frame.includes('you> unsent draft'));
+  assert('animation never clears the screen', !/\u001b\[(?:2|3)J/.test(tui.raw.slice(animationRawStart)));
 
   tui.resize(40, 32);
-  await settled(() => title().includes('ready · ● 1 task running') && !title().includes('/tasks'), 'hint yields first');
+  await settled(() => title().includes('ready · ⠋ 1 task running') && !title().includes('/tasks'), 'hint yields first');
   assert('medium width keeps the full task label without the hint', title().length <= 40);
   tui.resize(24, 32);
-  await settled(() => title().includes('ready · ● 1') && !title().includes('running'), 'count-only title');
+  await settled(() => title().includes('ready · ⠋ 1') && !title().includes('running'), 'count-only title');
   assert('tight width retains the task count', title().length <= 24);
   tui.resize(30, 32);
-  await settled(() => title().includes('ready · ● 1 running'), 'compact running label');
+  await settled(() => title().includes('ready · ⠋ 1 running'), 'compact running label');
   assert('narrow title keeps count and drops hint', !title().includes('/tasks') && title().length <= 30);
   tui.resize(80, 32);
   await settled(() => title().includes('1 task running · /tasks'), 'wide label restored');
   await release('success');
-  await settled(() => title().includes('ready') && !title().includes('●'), 'completion clears activity');
+  await settled(() => title().includes('ready') && !title().includes('⠋'), 'completion clears activity');
   assert('idle completion preserves the unsent draft', tui.frame.includes('you> unsent draft'));
   assert('completion still appears in the transcript', tui.screen.includes('succeeded in'));
+  const stoppedBytes = tui.raw.length;
+  await delay(350);
+  assert('last completion stops the idle animation clock', tui.raw.length === stoppedBytes);
   tui.send('\u0015');
   await settled(() => !tui.frame.includes('unsent draft'), 'draft cleared');
 
   tui.submit('start-activity failure');
-  await settled(() => title().includes('ready · ● 1 task running'), 'second job');
+  await settled(() => title().includes('ready · ⠋ 1 task running'), 'second job');
   tui.submit('start-activity-block busy');
-  await settled(() => title().includes('working · ● 2 tasks running'), 'foreground and background coexist');
+  await settled(() => title().includes('working · ⠋ 2 tasks running'), 'foreground and background coexist');
   await release('failure');
-  await settled(() => title().includes('working · ● 1 task running'), 'failure reduces count mid-turn');
+  await settled(() => title().includes('working · ⠋ 1 task running'), 'failure reduces count mid-turn');
   assert('failure keeps the existing notification', tui.screen.includes('failed (exit 7)'));
   await writeFile(path.join(ROOT, 'wake-block-release'), 'release');
-  await settled(() => title().includes('ready · ● 1 task running'), 'model turn finished');
+  await settled(() => title().includes('ready · ⠋ 1 task running'), 'model turn finished');
 
   const beforeClear = tui.mark();
   tui.submit('/clear');
   await tui.waitFor('new session', { from: beforeClear, timeoutMs: 30_000 });
-  await settled(() => title().includes('ready · ● 1 task running'), 'inherited manager after clear');
+  await settled(() => title().includes('ready · ⠋ 1 task running'), 'inherited manager after clear');
   assert('clear preserves process-owned running jobs', title().includes('1 task running'));
   await release('busy');
-  await settled(() => title().includes('ready') && !title().includes('●'), 'successor observes completion');
+  await settled(() => title().includes('ready') && !title().includes('⠋'), 'successor observes completion');
   const calls = (await readFile(path.join(ROOT, 'wake-model-calls.jsonl'), 'utf8')).trim().split('\n');
   assert('display transitions and clear make no extra model calls', calls.length === 6);
   tui.submit('/exit');
