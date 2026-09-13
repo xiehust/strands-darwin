@@ -3,17 +3,18 @@
  * price table one model id at a time.
  *
  * This module is the feature's only I/O and darwin's only use of the network outside
- * tools and MCP. Its contract, decided by the user (2026-09-04):
+ * tools and MCP. Original contract: 2026-09-04; negative-cache recovery: 2026-09-13.
  *
  * - The file stores **only the resolved mapping** — darwin model id → the four base
  *   rates plus the LiteLLM key they were read under and when — never the 2 MB table.
- * - **A mapped id is never refetched.** Only an id the file does not know triggers a
- *   fetch, and at most one per process for that id (concurrent callers share it, a
- *   failed attempt is not retried until the next launch). An id LiteLLM does not
- *   list is recorded as `litellmKey: null` so it, too, is fetched once and not on
- *   every launch.
- * - Every failure degrades to "price unavailable": no thrown error, no warning into
- *   the frame, no file write. A missing or damaged cache reads as empty.
+ * - **A priced id is never refetched.** Missing ids and no-price entries at least
+ *   24 hours old may fetch at startup or `/model`, at most once per process per id
+ *   (concurrent callers share it; failed attempts wait until the next launch).
+ *   `litellmKey: null` is a negative cache, not a permanent price decision; invalid
+ *   or future timestamps expire too. There is no polling or read-triggered refresh.
+ * - Every failure preserves the prior cache: no thrown error, no warning into the
+ *   frame, no file write. Without a cached entry the price stays "unavailable";
+ *   an expired no-price entry stays "none". Missing/damaged caches read as empty.
  * - Reads are synchronous and side-effect free, so `/status` and `/usage` can read
  *   through {@link ModelPriceStore.lookup} without becoming a fetch or a write.
  */
@@ -31,6 +32,8 @@ export const MODEL_PRICES_SCHEMA_VERSION = 1;
 /** The table is ~2.1 MB today; anything past this is not the table. */
 export const MODEL_PRICES_MAX_BYTES = 8 * 1024 * 1024;
 export const MODEL_PRICES_FETCH_TIMEOUT_MS = 10_000;
+/** A missing upstream price is retried after one day, never on every launch. */
+export const MODEL_PRICES_NEGATIVE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** One cached mapping. `litellmKey: null` records "LiteLLM has no entry for this id". */
 export interface ModelPriceEntry extends Partial<ModelRates> {
@@ -143,7 +146,7 @@ export function priceCandidateKeys(config: PriceConfig): readonly string[] {
  * Resolves one model against a fetched table: the first candidate key whose entry
  * carries numeric `input_cost_per_token` and `output_cost_per_token` wins; the
  * cache rates are copied when present. No hit records `litellmKey: null` — a
- * resolved "no price", not an absence, so the id is not fetched again next launch.
+ * resolved "no price", not an absence, so launches within its TTL do not refetch.
  */
 export function resolveModelPrice(table: unknown, config: PriceConfig, fetchedAt: string): ModelPriceEntry {
   if (isRecord(table)) {
@@ -264,7 +267,7 @@ export const MODEL_PRICES_FETCH_ENV = 'DARWIN_MODEL_PRICES_FETCH';
 
 /**
  * The per-process price store: read-only {@link lookup} for every surface, and
- * {@link ensure} — lookup, fetch once if absent, record — for startup and `/model`.
+ * {@link ensure} — fetch once if absent or negative-expired — for startup and `/model`.
  */
 export class ModelPriceStore {
   /** One settled-or-pending attempt per model id: the "one fetch per process per id" rule. */
@@ -287,13 +290,19 @@ export class ModelPriceStore {
 
   /**
    * Makes sure the cache has an entry for this model if the network can provide one.
-   * A mapped id returns without fetching; an unmapped id fetches at most once per
-   * process (shared by concurrent callers) and records the result — the resolved
-   * rates, or `litellmKey: null`. Never rejects: callers fire and forget it.
+   * Priced and fresh no-price entries return without fetching. Missing or expired
+   * no-price entries fetch at most once per process (shared by concurrent callers).
+   * Success records rates or renews the negative timestamp; failure writes nothing.
+   * Never rejects: callers fire and forget it.
    */
   async ensure(config: PriceConfig): Promise<void> {
     try {
-      if (readModelPriceCache(this.options.file).models[config.model] !== undefined) return;
+      const entry = readModelPriceCache(this.options.file).models[config.model];
+      if (entry !== undefined) {
+        if (entry.litellmKey !== null) return;
+        const age = (this.options.now ?? (() => new Date()))().getTime() - Date.parse(entry.fetchedAt);
+        if (age >= 0 && age < MODEL_PRICES_NEGATIVE_TTL_MS) return;
+      }
       if (this.options.fetchEnabled === false) return;
       let attempt = this.attempts.get(config.model);
       if (attempt === undefined) {
@@ -319,6 +328,10 @@ export class ModelPriceStore {
     // Re-read before merging so two processes filling different ids cannot erase
     // each other's work; the rename below then publishes the merged file whole.
     const cache = readModelPriceCache(this.options.file);
+    // A concurrent process may have priced this id while our request was in flight.
+    // Existing prices remain authoritative, even if our table still has no match.
+    const current = cache.models[config.model];
+    if (current !== undefined && current.litellmKey !== null) return;
     cache.source = this.options.url ?? MODEL_PRICES_SOURCE_URL;
     cache.models[config.model] = entry;
     writeModelPriceCache(this.options.file, cache);

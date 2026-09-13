@@ -1935,16 +1935,24 @@ would be read as the total. The supervisor skills (`developer`, `self-reflection
 record beside `usage:` on the same `-`-is-unknown rule. The price table is the feature's only I/O
 and darwin's only non-tool network use, and it is fenced accordingly: `~/.darwin/model-prices.json`
 stores only the resolved per-id mapping (with the LiteLLM key it came from, so it is auditable),
-a mapped id is never refetched, an unmapped id fetches once per process in the background
-(bounded 10 s / 8 MiB, every failure degrades to "unavailable" with no write, no warning, no
-frame), an unlisted id is recorded as `litellmKey: null` so it is not fetched on every launch,
-and reads — what `/status`, `/usage` and the trajectory CLI do — never fetch or write, which is
+a priced id is never refetched. An unlisted id is recorded as `litellmKey: null`, but this
+negative result expires after 24 hours (`MODEL_PRICES_NEGATIVE_TTL_MS`); an invalid/future
+`fetchedAt` is expired too. Startup and `/model` may refresh missing/expired-negative ids,
+at most once per process per id (concurrent callers share the attempt), never by timer.
+A successful no-match renews `fetchedAt`; a newly published exact-model price replaces the
+negative. The bounded 10 s / 8 MiB fetch fails without a write/warning/frame, retaining an
+old `none` result or leaving an absent entry `unavailable`; the next process may retry.
+Before publishing, the store rereads and preserves any price another process already saved.
+This supersedes the original permanent-negative-cache rule after the 2026-09-13 stale-price
+incident; priced entries and schema v1 remain unchanged. Reads — what `/status`, `/usage`
+and the trajectory CLI do — never fetch or write, which is
 what keeps `/status` byte-zero mutation and the readers as offline as replay; `/export` passes no
 prices at all, so a transcript file depends on the record alone. Children never touch the store:
 they report tokens, the parent prices them at its live rates and folds them into that model's
 share. `DARWIN_MODEL_PRICES_FETCH=off` makes the store cache-only, which is how the free suites
 keep their private HOMEs off the network. Free checks: `spike/verify-cost.ts`,
-`spike/verify-model-prices.ts` (fetch stubs that fail the suite when a mapped id fetches),
+`spike/verify-model-prices.ts` (real loopback HTTP/files for negative TTL, recovery, failure,
+read-only/offline guards and concurrent positive preservation; existing fetch contracts),
 `spike/verify-model-shares.ts` (a real offline runtime across `/model`),
 `spike/verify-trajectory-cost.ts` (hand-written records, unchanged cache mtime), and the
 `/status`, `/usage`, headless suites (all in `pnpm test`).

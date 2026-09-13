@@ -610,9 +610,9 @@ export class AgentRuntime {
     this.liveConfig = info.config;
     this.promptCachePlan = info.promptCache;
     this.cacheMisses = new CacheMissTracker(() => promptCacheTtlMs(this.promptCachePlan.ttl), info.resumed);
-    // Fire and forget: a mapped id costs one file read, an unmapped one starts the
-    // single bounded background fetch. Nothing awaits it — not startup, not the
-    // first turn — and it cannot reject, so it cannot become a startup failure.
+    // Fire and forget: priced/fresh-negative ids cost one file read; missing or
+    // expired-negative ids start one bounded fetch. Startup and the first turn do
+    // not await it; it cannot reject or become a startup failure.
     void this.modelPrices.ensure(this.liveConfig);
   }
 

@@ -2,12 +2,11 @@
  * The model price cache (`src/pricing/model-prices.ts`) — `~/.darwin/model-prices.json`
  * filled from LiteLLM one model id at a time.
  *
- * Free suite: no model call, no network. Every fetch goes through an injected stub
- * that counts its calls (and, where the contract is "no fetch", fails the suite if
- * called at all). Proves the user's rules verbatim: a mapped id is never refetched;
- * an unmapped id fetches exactly once per process and is recorded atomically with
- * its LiteLLM key, `fetchedAt`, `source` and `version`; an id LiteLLM does not list
- * is recorded as `litellmKey: null` and not refetched; key resolution follows the
+ * Free suite: no model call or external network. Legacy transport checks use
+ * injected fetches; negative-cache recovery uses real loopback HTTP and files.
+ * Priced ids never refetch; missing/expired-negative ids fetch at most once per
+ * process and record their LiteLLM key, `fetchedAt`, `source` and `version`;
+ * fresh negative entries suppress requests for 24 hours; key resolution follows the
  * provider order; a missing or damaged file reads as empty; every fetch failure
  * degrades to "unavailable" without a throw or a write; and `lookup()` — what
  * `/status`, `/usage` and headless read — is a read, never a fetch or a write.
@@ -15,11 +14,13 @@
  * Run: pnpm tsx spike/verify-model-prices.ts
  */
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
 import {
   MODEL_PRICES_FETCH_ENV,
+  MODEL_PRICES_NEGATIVE_TTL_MS,
   MODEL_PRICES_SCHEMA_VERSION,
   MODEL_PRICES_SOURCE_URL,
   ModelPriceStore,
@@ -32,6 +33,7 @@ import {
   writeModelPriceCache,
 } from '../src/pricing/model-prices.js';
 import { userModelPricesFile } from '../src/paths.js';
+import { estimateCost } from '../src/pricing/cost.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const HOME = ownPrivateHome('model-prices');
@@ -256,14 +258,16 @@ async function storeContract(): Promise<void> {
   assert('the Mantle id is priced under its bedrock_mantle/ key',
     mantle.kind === 'priced' && mantle.litellmKey === 'bedrock_mantle/openai.gpt-5.6-sol');
 
-  // An unresolvable id: one fetch, `litellmKey: null` recorded, not refetched by a later process.
+  // An unresolvable id: one fetch, `litellmKey: null` recorded, fresh across processes.
   await store.ensure(bedrock('us.made-up.model-v9'));
   assert('an unlisted id is fetched once and recorded as no price',
     stub.calls() === 3 && readModelPriceCache(fresh).models['us.made-up.model-v9']?.litellmKey === null &&
     store.lookup(bedrock('us.made-up.model-v9')).kind === 'none');
-  const later = new ModelPriceStore({ file: fresh, fetch: neverFetch });
+  const laterFetch = stubFetch();
+  const later = new ModelPriceStore({ file: fresh, fetch: laterFetch.fetch, now: () => now });
   await later.ensure(bedrock('us.made-up.model-v9'));
-  assert('a later process finds the no-price entry and does not fetch', later.lookup(bedrock('us.made-up.model-v9')).kind === 'none');
+  assert('a later process reuses the fresh no-price entry without fetching',
+    laterFetch.calls() === 0 && later.lookup(bedrock('us.made-up.model-v9')).kind === 'none');
 
   // Fetch disabled: ensure is a pure cache check.
   const off = stubFetch();
@@ -333,6 +337,146 @@ async function failureContract(): Promise<void> {
     !threw && stub.calls() === 1 && store.lookup(bedrock('global.anthropic.claude-sonnet-5')).kind === 'unavailable');
 }
 
+async function negativeCacheContract(): Promise<void> {
+  header('negative cache — real HTTP recovery, expiry bounds and failure preservation');
+  const config = { provider: 'openai' as const, model: 'global.openai.gpt-6-astra', bedrockRuntime: true };
+  const base = Date.parse('2026-09-09T06:10:09.039Z');
+  let clock = base + MODEL_PRICES_NEGATIVE_TTL_MS - 1;
+  let requests = 0;
+  let status = 200;
+  let body = '{}';
+  let beforeResponse: (() => void) | undefined;
+  // The diagnosed model's public base rates, served locally (no live price dependency).
+  const table = { [config.model]: {
+    input_cost_per_token: 0.00001, output_cost_per_token: 0.00005,
+    cache_read_input_token_cost: 0.000001, cache_creation_input_token_cost: 0.0000125,
+  } };
+  const server = createServer((_request, response) => {
+    requests += 1;
+    beforeResponse?.();
+    response.writeHead(status, { 'content-type': 'application/json' });
+    response.end(body);
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (address === null || typeof address === 'string') throw new Error('loopback server has no port');
+  const url = `http://127.0.0.1:${address.port}/prices`;
+  const now = () => new Date(clock);
+  const seed = (label: string, fetchedAt = new Date(base).toISOString()): string => {
+    const file = tempFile(label);
+    const cache = readModelPriceCache(file);
+    cache.models[config.model] = { litellmKey: null, fetchedAt };
+    cache.models['unrelated-priced'] = {
+      litellmKey: 'unrelated-priced', fetchedAt: 'old', inputCostPerToken: 1, outputCostPerToken: 2,
+    };
+    writeModelPriceCache(file, cache);
+    return file;
+  };
+  try {
+    assert('negative TTL is exactly one day', MODEL_PRICES_NEGATIVE_TTL_MS === 86_400_000);
+    const file = seed('negative-expiry');
+    const original = readFileSync(file, 'utf8');
+    const originalMtime = statSync(file).mtimeMs;
+    const store = new ModelPriceStore({ file, url, now });
+    await store.ensure(config);
+    await new ModelPriceStore({ file, url, now }).ensure(config);
+    assert('fresh negative entries survive launches without a request or write',
+      requests === 0 && readFileSync(file, 'utf8') === original && statSync(file).mtimeMs === originalMtime);
+
+    clock += 1;
+    assert('expired lookup is still a read-only no-price result',
+      store.lookup(config).kind === 'none' && requests === 0 && readFileSync(file, 'utf8') === original);
+    await new ModelPriceStore({ file, url, now, fetchEnabled: false }).ensure(config);
+    assert('fetch disabled preserves expired negative entries without a request or write',
+      requests === 0 && readFileSync(file, 'utf8') === original && statSync(file).mtimeMs === originalMtime);
+    await Promise.all([store.ensure(config), store.ensure(config), store.ensure(config)]);
+    const renewed = readModelPriceCache(file).models[config.model];
+    assert('at the TTL boundary concurrent ensures share one real HTTP request', requests === 1);
+    assert('a successful no-match renews the negative timestamp',
+      renewed?.litellmKey === null && renewed.fetchedAt === now().toISOString());
+    const renewedBytes = readFileSync(file, 'utf8');
+    clock += MODEL_PRICES_NEGATIVE_TTL_MS - 1;
+    await new ModelPriceStore({ file, url, now }).ensure(config);
+    assert('a renewed negative suppresses requests until its next TTL',
+      requests === 1 && readFileSync(file, 'utf8') === renewedBytes);
+    clock += 1;
+    await store.ensure(config);
+    assert('even after TTL expiry the same process never attempts an id twice', requests === 1);
+
+    body = JSON.stringify(table);
+    const recovery = new ModelPriceStore({ file, url, now });
+    await Promise.all([recovery.ensure(config), recovery.ensure(config)]);
+    const priced = recovery.lookup(config);
+    assert('a later process recovers a published exact-model price from the negative cache',
+      requests === 2 && priced.kind === 'priced' && priced.litellmKey === config.model);
+    assert('recovery keeps unrelated prices and records the real source and schema',
+      readModelPriceCache(file).models['unrelated-priced']?.inputCostPerToken === 1 &&
+      readModelPriceCache(file).source === url && readModelPriceCache(file).version === 1);
+    assert('recovered rates can price the diagnosed worker token totals',
+      priced.kind === 'priced' && Math.abs(estimateCost({
+        input: 184, output: 42713, cacheRead: 8429915, cacheWrite: 236611,
+      }, priced.rates).total - 13.5250425) < 1e-10);
+    const pricedBytes = readFileSync(file, 'utf8');
+    clock += 100 * MODEL_PRICES_NEGATIVE_TTL_MS;
+    await new ModelPriceStore({ file, url, now }).ensure(config);
+    await new ModelPriceStore({ file, url, now }).ensure(bedrock('unrelated-priced'));
+    assert('priced entries never refetch, regardless of age or invalid timestamp',
+      requests === 2 && readFileSync(file, 'utf8') === pricedBytes);
+
+    for (const fetchedAt of ['', 'invalid', new Date(clock + 1).toISOString()]) {
+      const invalidFile = seed('negative-invalid-time', fetchedAt);
+      const count = requests;
+      const invalid = new ModelPriceStore({ file: invalidFile, url, now });
+      await invalid.ensure(config);
+      assert(`negative timestamp ${JSON.stringify(fetchedAt)} cannot suppress recovery forever`,
+        requests === count + 1 && invalid.lookup(config).kind === 'priced');
+    }
+    for (const failure of [
+      { name: 'HTTP failure', status: 503, body: '{}' },
+      { name: 'malformed JSON', status: 200, body: 'not json' },
+    ]) {
+      status = failure.status;
+      body = failure.body;
+      const failedFile = seed('negative-refresh-failure');
+      const before = readFileSync(failedFile, 'utf8');
+      const mtime = statSync(failedFile).mtimeMs;
+      const count = requests;
+      const failed = new ModelPriceStore({ file: failedFile, url, now });
+      await Promise.all([failed.ensure(config), failed.ensure(config)]);
+      await failed.ensure(config);
+      assert(`${failure.name}: one attempt, old negative bytes/timestamp retained`,
+        requests === count + 1 && readFileSync(failedFile, 'utf8') === before &&
+        statSync(failedFile).mtimeMs === mtime && failed.lookup(config).kind === 'none');
+      status = 200;
+      body = JSON.stringify(table);
+      const next = new ModelPriceStore({ file: failedFile, url, now });
+      await next.ensure(config);
+      assert(`${failure.name}: next process can recover without manual cache deletion`,
+        requests === count + 2 && next.lookup(config).kind === 'priced');
+    }
+
+    // Publish a positive mapping while another store's older table is in flight.
+    const racingFile = seed('negative-race');
+    let publishedBytes = '';
+    const winner = resolveModelPrice(table, config, now().toISOString());
+    beforeResponse = () => {
+      const cache = readModelPriceCache(racingFile);
+      cache.models[config.model] = winner;
+      writeModelPriceCache(racingFile, cache);
+      publishedBytes = readFileSync(racingFile, 'utf8');
+    };
+    body = '{}';
+    const racing = new ModelPriceStore({ file: racingFile, url, now });
+    await racing.ensure(config);
+    assert('a late no-match response cannot erase a concurrently published price',
+      racing.lookup(config).kind === 'priced' && readFileSync(racingFile, 'utf8') === publishedBytes);
+    beforeResponse = undefined;
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+}
+
 function pathContract(): void {
   header('paths — the cache lives under the user-global .darwin, derived from the home directory');
   const file = userModelPricesFile();
@@ -347,5 +491,6 @@ cacheFileContract();
 resolutionContract();
 await storeContract();
 await failureContract();
+await negativeCacheContract();
 pathContract();
 report();

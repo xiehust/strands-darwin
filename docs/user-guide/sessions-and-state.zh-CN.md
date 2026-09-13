@@ -88,7 +88,7 @@ cost: total=0.0415 input=0.0008 output=0.0135 cacheRead=0.0262 cacheWrite=0.0010
 
 这只是估算：仅用基础档单价（不含长上下文或 1 小时缓存价目），摘要调用因为 meter 不计而不计入。`/model` 切换后，每个模型的 token 按该模型自己的单价计价：该行会标出模型数（`≈ $4.6250 (2 models; base rates, LiteLLM)`），`/usage` 在其下方为每个模型各加一行，混合中若有模型没有价格，数字就变成指明该模型的下限（`≥ $3.1250 (2 models; no price for <id>; …)`）；此时 headless 写出 `model=2-models pricing=mixed`。未报告的分桶绝不按 0 计价——TUI 显示下限（`≥ $0.0030 (cacheRead not reported, cacheWrite not reported; …)`），headless 则把该分桶和 `total` 都写成 `-`。`pricing=` 给出单价所用的 LiteLLM key，或 `none`（LiteLLM 没有该模型）/ `unavailable`（价目表尚未获取——离线，或后台下载还没完成）。子代理使用父级当前模型，按其单价计价。
 
-单价来自 `~/.darwin/model-prices.json`，其中只保存每个模型 id 解析后的映射（绝不保存整张表）：文件已知的模型不会再次下载；未知 id 会在启动或 `/model` 时触发每进程一次的后台获取；LiteLLM 没有列出的 id 会被记录为无价格，避免每次启动重试。删除该文件即可刷新价格。`DARWIN_MODEL_PRICES_FETCH=off` 可完全关闭下载。
+单价来自 `~/.darwin/model-prices.json`，其中只保存每个模型 id 解析后的映射，不保存整张表。已经缓存的价格不会自动刷新；“无价格”结果（`litellmKey: null`）在 24 小时后过期，时间戳无效或在未来也视为过期。启动或 `/model` 时，缺失或已过期的无价格条目可触发后台获取，每个进程对同一 id 最多请求一次，并发调用共享请求。成功查询后仍无匹配价格，就重新开始 24 小时有效期；请求失败则原样保留旧条目，下一个进程可以重试。没有定时轮询，`/status`、`/usage` 和轨迹读取也不会刷新缓存。因此，上游新收录的模型不再需要手动删除缓存才能恢复计价。`DARWIN_MODEL_PRICES_FETCH=off` 关闭所有下载，包括过期条目的刷新。
 
 ## 项目记忆
 
