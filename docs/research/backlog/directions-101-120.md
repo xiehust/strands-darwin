@@ -395,7 +395,7 @@ Sources: report S2 (Codex `/review`), S4 (OpenCode review template); repository 
 
 ## SER-088 — Keep reverse-search query and candidate previews on their counted visual row: project multiline/control layout only at presentation, preserving raw filtering, accepted prompt and Escape-restored draft/cursor
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 120
 - Score: 15
 - Importance: 4
