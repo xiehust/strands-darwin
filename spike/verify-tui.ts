@@ -3710,7 +3710,7 @@ async function promptHistorySearch(): Promise<void> {
   await writeFile(
     recordFile,
     record(1, 'SEARCH_OLDER fix tests') +
-      record(2, 'SEARCH_MIDDLE document behavior') +
+      record(2, 'SEARCH_MIDDLE document\r\nbehavior\t中文🧬') +
       record(3, 'SEARCH_NEWEST fix login') +
       record(4, 'SEARCH_NEWEST fix login'),
     'utf8',
@@ -3762,6 +3762,8 @@ async function promptHistorySearch(): Promise<void> {
     await tui.waitFor('reverse search:', { timeoutMs: 30_000, settleMs: 200 });
     tui.send('doc');
     await tui.waitFor('reverse search: doc', { timeoutMs: 30_000, settleMs: 300 });
+    assert('multiline/control history candidate stays on one marked preview row',
+      tui.frame.split('\n').some((row) => row.includes('SEARCH_MIDDLE document ⏎ behavior\\u0009中文🧬')));
     tui.send('\u001b');
     await tui.waitFor('you> ABC', { timeoutMs: 30_000, settleMs: 200 });
     tui.send('X');

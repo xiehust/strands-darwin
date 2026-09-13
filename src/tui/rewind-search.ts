@@ -1,6 +1,7 @@
 /** Pure bounded chooser state for conversation-only `/rewind`. */
 import type { RewindCheckpoint } from '../agent/rewind.js';
 import type { EditorValue } from './prompt-editor.js';
+import { searchPreview } from './search-preview.js';
 
 export const MAX_REWIND_SEARCH_MATCHES = 5;
 export const MAX_REWIND_SEARCH_QUERY_CODE_POINTS = 256;
@@ -81,10 +82,10 @@ export function rewindSearchView(search: RewindSearch): RewindSearchView {
     : Math.min(Math.max(0, search.selected - capacity + 1), search.matches.length - capacity);
   const end = start + capacity;
   return {
-    title: search.matches.length === 0
+    title: searchPreview(search.matches.length === 0
       ? `rewind prompts — no match for ${JSON.stringify(search.query)}`
-      : `rewind prompts (${search.selected + 1}/${search.matches.length}) — type to filter · ↑/↓ · enter branch · esc cancel`,
-    matches: search.matches.slice(start, end).map((checkpoint) => checkpoint.prompt.replace(/\n/g, ' ⏎ ')),
+      : `rewind prompts (${search.selected + 1}/${search.matches.length}) — type to filter · ↑/↓ · enter branch · esc cancel`),
+    matches: search.matches.slice(start, end).map((checkpoint) => searchPreview(checkpoint.prompt)),
     selected: Math.max(0, search.selected - start),
     hiddenAbove: start,
     hiddenBelow: search.matches.length - end,

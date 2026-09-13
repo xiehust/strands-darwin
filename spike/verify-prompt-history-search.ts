@@ -1,5 +1,5 @@
 /**
- * Pure bounded reverse-search behavior; no terminal, model or network. One case
+ * Bounded reverse-search behavior and real Ink rendering; no model or network. One case
  * (SER-069) seeds a real record under a private HOME and reads it back, because
  * "a background-task wake is never offered" is a property of the reader plus the
  * search, not of the search alone.
@@ -23,6 +23,7 @@ import {
 } from '../src/tui/prompt-history-search.js';
 import type { EditorValue } from '../src/tui/prompt-editor.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
+import { checkSearchRender, SEARCH_PREVIEW_CASES } from './search-preview-checks.js';
 
 const draft: EditorValue = {
   text: 'draft 🧬 text',
@@ -115,6 +116,49 @@ assert('one batched input event is capped in code points without splitting Unico
 unicode = clearPromptHistorySearchQuery(unicode);
 assert('query clear reopens the complete bounded snapshot and resets selection',
   unicode.query === '' && unicode.matches.length === 2 && unicode.selected === 0);
+
+header('prompt history search — single counted preview rows, raw state intact (SER-088)');
+
+for (const { name, raw, preview } of SEARCH_PREVIEW_CASES) {
+  const original: EditorValue = { text: `draft\r\n${raw}`, cursor: { offset: 3, affinity: 'downstream' } };
+  const entries = [raw, `older ${raw}`, 'unrelated'];
+  const opened = openPromptHistorySearch(original, 88, history(entries));
+  const filtered = appendPromptHistorySearchQuery(opened, raw.toLocaleLowerCase());
+  const snapshot = JSON.stringify(filtered);
+  const view = promptHistorySearchView(filtered);
+  assert(`${name}: preview changes only presentation`,
+    view.matches[0] === preview && view.title.startsWith(`reverse search: ${preview.toLocaleLowerCase()} · `));
+  assert(`${name}: raw case-insensitive filtering and query survive projection`,
+    filtered.query === raw.toLocaleLowerCase() && JSON.stringify(filtered.matches) === JSON.stringify(entries.slice(0, 2)));
+  checkSearchRender(`history ${name}`, view);
+  const accepted = acceptPromptHistorySearch(filtered);
+  assert(`${name}: rendering leaves raw entries, acceptance and exact Escape snapshot untouched`,
+    JSON.stringify(filtered) === snapshot &&
+    JSON.stringify(accepted) === JSON.stringify({ text: raw, cursor: { offset: raw.length, affinity: 'upstream' } }) &&
+    JSON.stringify(cancelPromptHistorySearch(filtered)) === JSON.stringify(original));
+  if (raw !== preview) {
+    assert(`${name}: filtering never matches the display escape instead of raw text`,
+      appendPromptHistorySearchQuery(opened, preview).matches.length === 0);
+  }
+}
+
+const windowEntries = Array.from({ length: 9 }, (_, i) => `entry ${i}\n🧬 second`);
+const windowSearch = movePromptHistorySearchSelection(openPromptHistorySearch(draft, 88, history(windowEntries)), 5);
+const windowView = promptHistorySearchView(windowSearch);
+assert('five-row presentation cap and centered window retain exact omissions and selection',
+  windowView.matches.length === 5 && windowView.hiddenAbove === 3 && windowView.hiddenBelow === 1 && windowView.selected === 2);
+checkSearchRender('history capped window', windowView);
+for (const [name, state] of [
+  ['pending', appendPromptHistorySearchQuery(openPromptHistorySearch(draft, 88, undefined), 'first\r\nsecond')],
+  ['empty', appendPromptHistorySearchQuery(empty, 'first\nsecond')],
+  ['no match', appendPromptHistorySearchQuery(noMatch, '\r\n🧬')],
+  ['degraded', openPromptHistorySearch(draft, 88, history([], { problem: 'bad\nrecord\u001b[2J' }))],
+  ['reader omissions', bounded],
+] as const) checkSearchRender(`history ${name}`, promptHistorySearchView(state));
+const cappedControls = appendPromptHistorySearchQuery(empty, '\r\n🧬'.repeat(100));
+const cappedQuery = [...'\r\n🧬'.repeat(100)].slice(0, MAX_PROMPT_SEARCH_QUERY_CODE_POINTS).join('');
+promptHistorySearchView(cappedControls);
+assert('multiline query cap still counts raw code points, not expanded preview markers', cappedControls.query === cappedQuery);
 
 header('prompt history search — a background-task wake is never offered (SER-069)');
 

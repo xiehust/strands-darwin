@@ -135,6 +135,7 @@ Rules and limits:
 | `Ctrl+J`, trailing `\` + `Enter` | newline; multiline paste keeps all lines |
 | `Tab` | accept selected completion |
 | `Up` / `Down` | menu first; then queue take-back, recall, or multiline cursor |
+| `Ctrl+R` | search project prompts; type to filter, `Ctrl+R`/`Up`/`Down` navigate, `Enter`/`Tab` accept raw text without sending, `Escape` restores draft/cursor; [single-row previews](using-darwin.md#prompt-editing-and-completion) |
 | `Escape` | close current completion menu or end recall; preserve draft/cursor (permission prompt still denies) |
 | `Esc` `Esc` | on an empty idle composer (no draft, turn, `!` command, queue or prompt), a second `Esc` within 500 ms opens the `/rewind` chooser — same behavior as typing `/rewind`; one `Esc` there does nothing |
 | `Home` / `End`, `Ctrl+A` / `Ctrl+E` | visible-row start/end |

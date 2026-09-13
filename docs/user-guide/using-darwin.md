@@ -31,6 +31,7 @@ It queues normally while the TUI is busy, carrying an attached clipboard image t
 
 The slot holds at most 65,536 Unicode code points. A larger cut still deletes and can be undone, but clears the slot with a notice—no stale or truncated yank. Submission (including queueing and local commands), queue take-back/cancel return, recall/search acceptance, draft stash/restore, `/clear` and `/rewind` clear it wherever they clear undo. Search cancellation keeps it. Permission prompts and compaction take precedence: `Ctrl+Y` never approves a permission or edits through those modes.
 
+- `Ctrl+R` searches this project's sent prompts. Type to filter case-insensitively, use `Ctrl+R`/`Up`/`Down` to navigate, `Enter`/`Tab` to accept the original prompt without sending, or `Escape` to restore the exact opening draft and cursor. Query and candidate previews occupy one row each: line breaks appear as `⏎`, other terminal controls as visible escapes. Filtering and acceptance use the raw text, not those markers. The `/rewind` chooser uses the same candidate preview convention.
 - `/` offers built-ins, skills, and custom commands. The bounded menu windows around the selected row and states omitted rows.
 - `@` scans the workspace asynchronously and inserts path text only. It never opens or injects the file; `.git`, `node_modules`, escaping symlinks, and large scans are bounded/excluded.
 - `Up`/`Down` first control an open menu; otherwise `Up` can take back the oldest queued message, then recall sent trajectory prompts from this project, or move in a multiline draft.

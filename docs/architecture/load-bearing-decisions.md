@@ -2142,6 +2142,19 @@ stated on the one row recall draws (`history 3/12 · ↑ older ↓ newer — new
 counted through `promptBoxWanted`/`planPromptBox` like every other row and never a header line. Free
 checks: `spike/verify-prompt-recall.ts`, `spike/verify-tui.ts recall` / `recallEmpty`.
 
+**Reverse-search previews are single counted visual rows (SER-088).** `promptHistorySearchView`
+projects its title and candidates through `search-preview.ts`; the `/rewind` view shares only
+that presentation helper. CRLF is one visible ` ⏎ ` break, as are CR/LF, VT/FF/NEL and Unicode
+line/paragraph separators; remaining C0/DEL/C1 controls become literal `\uXXXX` text so ANSI,
+OSC, tabs and backspaces cannot control the terminal. Ordinary printable text is unchanged.
+Ink's `truncate-end` bounds width but does not collapse explicit newlines, so this projection
+must happen before the one-`Text`-per-row render. Raw query/filtering, prompt/checkpoint identity,
+acceptance and Escape's exact draft/cursor snapshot never pass through it. No paste routing,
+frame grant arithmetic, history/trajectory bytes or model-content formatter changes. Checks:
+`verify-prompt-history-search.ts` and `verify-rewind-search.ts` render real InputBox at 24/100
+columns across zero/short/full grants, selected windows and omissions; `verify-frame-budget.ts`
+and free `verify-tui.ts historySearch` cover the budget and interactive reader/keyboard path.
+
 ## `!` shell commands
 
 **A draft starting with `!` runs as the user's own shell command — outside the permission gate,

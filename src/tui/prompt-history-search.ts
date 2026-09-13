@@ -8,6 +8,7 @@
  */
 import { promptHistoryNote, type PromptHistory } from '../trajectory/prompt-history.js';
 import type { EditorValue } from './prompt-editor.js';
+import { searchPreview } from './search-preview.js';
 
 /** A query can never grow without bound, including when a terminal pastes one event. */
 export const MAX_PROMPT_SEARCH_QUERY_CODE_POINTS = 256;
@@ -126,8 +127,8 @@ export function promptHistorySearchView(search: PromptHistorySearch): PromptHist
   );
   const end = start + capacity;
   return {
-    title: `reverse search: ${query} · ${state}${note}`,
-    matches: search.matches.slice(start, end),
+    title: searchPreview(`reverse search: ${query} · ${state}${note}`),
+    matches: search.matches.slice(start, end).map(searchPreview),
     selected: search.selected - start,
     hiddenAbove: start,
     hiddenBelow: search.matches.length - end,
