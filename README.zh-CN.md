@@ -108,6 +108,7 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 /self-evolution-research
 /help                   查看本地命令、输入语法和按键说明
 /init                   请模型为当前项目创建或改进 AGENTS.md
+/review [focus]         审查当前改动中的缺陷和测试缺口
 /copy                   把最近一条已完成回答复制到剪贴板（OSC 52，SSH 下可用）
 /rewind                 从已完成提示词分支对话（工作区不变）
 /tangent                为一次旁支提问给对话加书签；再输入 /tangent 即返回
@@ -116,6 +117,8 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 按 `Ctrl+R` 可搜索当前项目的提示历史（输入文字筛选，按 `Ctrl+R`/`Up`/`Down` 切换结果，按 `Enter`/`Tab` 接受，按 `Escape` 取消）；忙碌时按 `Ctrl+C` 取消，按 `Ctrl+B` 展开或收起工具详情，使用 `/exit` 或 `Ctrl+D` 退出。编辑输入时，`Alt/Ctrl+Left/Right` 或 `Alt+B`/`Alt+F` 按词移动光标，`Alt+Backspace`/`Alt+D` 删除光标前／后的一个词，`Ctrl+_`（或 `Ctrl+-`）可撤销最近一次 `Ctrl+K`/`Ctrl+U`、`Ctrl+W` 或 `Alt` 系列的删词操作。`Ctrl+Y` 会在当前光标处插入最近剪下的文本，同一草稿内可重复使用，不经过剪贴板；[剪切恢复的上限与清空规则](docs/user-guide/using-darwin.zh-CN.md#输入编辑与补全)见使用指南。`Ctrl+S` 可暂存一份未提交草稿，保留光标位置和附图；输入框为空时再按一次即可取回。不会覆盖或自动发送，期间可以提交其他问题；切换到新会话或退出时丢弃（[草稿暂存规则](docs/user-guide/using-darwin.zh-CN.md#草稿暂存)）。输入框为空且空闲时，连按两次 `Esc`（第二次在 500 ms 内）会打开 `/rewind` 选择器，效果与输入 `/rewind` 完全相同；此时单按一次 `Esc` 不做任何事。模型发起的工具调用仍会经过当前审批模式；`!` 命令由你亲自输入，因此不走模型工具审批。
 
 想在切到别处时被叫回来，可在 `~/.darwin/config.json` 中设置 `"terminalBell": true`（响一次终端铃）和／或 `"terminalNotify": true`（写一条 OSC 9 桌面通知序列，iTerm2、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端静默忽略）；二者都在权限提示等待时和回合结束时触发，默认均为关闭。iTerm2 需开启 "Send escape sequence-generated alerts"；tmux 需要 `set -g allow-passthrough on`。详见[配置与上下文](docs/user-guide/configuration.zh-CN.md)。
+
+`/review` 请模型检查暂存、未暂存的改动及相关未跟踪文件，按优先级报告有证据的缺陷，并单列测试缺口。可选 focus 保持为字面文本。提示要求未经另行请求不要修改文件或提交，但**不会强制只读，也不改变权限模式**。内置命令现在占用 `/review`；原来使用该斜杠名称的自定义命令或 skill 需要改名，例如 `audit`。详见[审查改动](docs/user-guide/using-darwin.zh-CN.md#审查改动)。
 
 无交互运行方式如下：
 

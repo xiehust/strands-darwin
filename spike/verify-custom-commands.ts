@@ -37,7 +37,7 @@ async function buildFixture(): Promise<string> {
   await mkdir(path.join(COMMANDS_ROOT, 'nested'), { recursive: true });
 
   await writeFile(
-    path.join(COMMANDS_ROOT, 'review.md'),
+    path.join(COMMANDS_ROOT, 'audit.md'),
     'Review $ARGUMENTS. Then review $ARGUMENTS again.\n',
     'utf8',
   );
@@ -74,7 +74,7 @@ async function discovery(): Promise<CustomCommandRegistry> {
   console.log(`  commands : ${JSON.stringify(names)}`);
   console.log(`  problems : ${JSON.stringify(reasons)}`);
 
-  assert('discovers direct Markdown files', names.includes('review') && names.includes('plain'));
+  assert('discovers direct Markdown files', names.includes('audit') && names.includes('plain'));
   assert('accepts a case-insensitive .md extension', names.includes('plain'));
   assert('direct symlinked Markdown commands resolve to regular files', names.includes('linked'));
 
@@ -97,12 +97,12 @@ async function discovery(): Promise<CustomCommandRegistry> {
 function expansion(registry: CustomCommandRegistry): void {
   header('custom commands — argument expansion');
 
-  const bare = expandCustomCommand(registry, '/review');
-  const args = expandCustomCommand(registry, '/review focus on auth');
-  const mixedCase = expandCustomCommand(registry, '/REVIEW one thing');
+  const bare = expandCustomCommand(registry, '/audit');
+  const args = expandCustomCommand(registry, '/audit focus on auth');
+  const mixedCase = expandCustomCommand(registry, '/AUDIT one thing');
   const plain = expandCustomCommand(registry, '/plain extra words');
 
-  assert('bare command expands', bare?.command.name === 'review');
+  assert('bare command expands', bare?.command.name === 'audit');
   assert('bare command replaces every placeholder with empty text', bare?.message === 'Review . Then review  again.\n');
   assert('arguments replace every placeholder', args?.message === 'Review focus on auth. Then review focus on auth again.\n');
   assert('lookup is case-insensitive', mixedCase?.message.includes('one thing') === true);
@@ -115,24 +115,24 @@ function expansion(registry: CustomCommandRegistry): void {
       expandCustomCommand(registry, input)?.message === PLAIN_CONTENT);
   }
   assert('placeholder whitespace-only args behave like no args',
-    expandCustomCommand(registry, '/review \t\n')?.message === bare?.message);
+    expandCustomCommand(registry, '/audit \t\n')?.message === bare?.message);
   assert('fallback keeps multiline Unicode, shell/placeholder-looking args and internal spaces literal',
     expandCustomCommand(registry, ` \t/PLAIN \t${LITERAL_ARGS}\n `)?.message === `${PLAIN_CONTENT}\n\n${LITERAL_ARGS}`);
   assert('repeated replacement is nonrecursive and keeps shell-looking args as text',
-    expandCustomCommand(registry, `/review ${LITERAL_ARGS}`)?.message === `Review ${LITERAL_ARGS}. Then review ${LITERAL_ARGS} again.\n`);
+    expandCustomCommand(registry, `/audit ${LITERAL_ARGS}`)?.message === `Review ${LITERAL_ARGS}. Then review ${LITERAL_ARGS} again.\n`);
   const replacementSyntax = "$& $$ $` $'";
   assert('fallback does not interpret JavaScript replacement-string syntax',
     expandCustomCommand(registry, `/plain ${replacementSyntax}`)?.message === `${PLAIN_CONTENT}\n\n${replacementSyntax}`);
   assert('existing placeholder replacement-string behavior stays byte-identical',
-    expandCustomCommand(registry, `/review ${replacementSyntax}`)?.message ===
+    expandCustomCommand(registry, `/audit ${replacementSyntax}`)?.message ===
       'Review $ARGUMENTS. Then review $ARGUMENTS again.\n'.replaceAll('$ARGUMENTS', replacementSyntax));
-  const reproduction = { commands: [{ name: 'review', file: '', content: 'Review code for bugs.' }], problems: [] };
+  const reproduction = { commands: [{ name: 'audit', file: '', content: 'Review code for bugs.' }], problems: [] };
   assert('report reproduction preserves the supplied target',
-    expandCustomCommand(reproduction, '/review src/auth.ts')?.message === 'Review code for bugs.\n\nsrc/auth.ts');
+    expandCustomCommand(reproduction, '/audit src/auth.ts')?.message === 'Review code for bugs.\n\nsrc/auth.ts');
   for (const input of ['/unknown', '/plain-other x', '/plainx x']) {
     assert('unknown slash input passes through without prefix matching', expandCustomCommand(registry, input) === null);
   }
-  assert('plain prose is not a command', expandCustomCommand(registry, 'please /review this') === null);
+  assert('plain prose is not a command', expandCustomCommand(registry, 'please /audit this') === null);
 }
 
 async function missingDirectory(): Promise<void> {
@@ -151,7 +151,7 @@ function completionDescriptions(): void {
   assert('the map carries no entries beyond the built-ins',
     Object.keys(BUILTIN_COMMAND_DESCRIPTIONS).length === BUILTIN_COMMAND_NAMES.length);
   assert('custom command and skill names get no description',
-    builtinCommandDescription('review') === undefined &&
+    builtinCommandDescription('audit') === undefined &&
     builtinCommandDescription('commit-message') === undefined);
   assert('prototype properties are not descriptions',
     builtinCommandDescription('constructor') === undefined &&
@@ -194,9 +194,9 @@ async function runtimeExpansion(): Promise<void> {
       { input, expected },
       { input: '/plain', expected: PLAIN_CONTENT },
       { input: ' /plain \t\n ', expected: PLAIN_CONTENT },
-      { input: `/review ${LITERAL_ARGS}`, expected: `Review ${LITERAL_ARGS}. Then review ${LITERAL_ARGS} again.\n` },
-      { input: '/REVIEW', expected: 'Review . Then review  again.\n' },
-      { input: '/review \t\n', expected: 'Review . Then review  again.\n' },
+      { input: `/audit ${LITERAL_ARGS}`, expected: `Review ${LITERAL_ARGS}. Then review ${LITERAL_ARGS} again.\n` },
+      { input: '/AUDIT', expected: 'Review . Then review  again.\n' },
+      { input: '/audit \t\n', expected: 'Review . Then review  again.\n' },
       { input: '/unknown untouched', expected: '/unknown untouched' },
     ];
     for (const driver of ['direct', 'text', 'json', 'stream-json'] as const) {

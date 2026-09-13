@@ -320,7 +320,9 @@ async function main(): Promise<void> {
                 ? '  · delegating via the workflow tool'
                 : expanded.kind === 'init'
                   ? '  · writing project instructions with /init'
-                  : `  · loaded command "/${expanded.command.name}"`,
+                  : expanded.kind === 'review'
+                    ? '  · reviewing current changes with /review'
+                    : `  · loaded command "/${expanded.command.name}"`,
           );
           await renderTurn(runtime, expanded.message, input);
           continue;

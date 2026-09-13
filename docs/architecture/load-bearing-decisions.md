@@ -780,6 +780,32 @@ answer; the TUI passes nothing, so the interactive prompt never carries it.
 
 Custom-command expansion changes only the ordinary user message, not this system-prompt order or the instructions/catalogue. The `.agents` extension-layering section defines argument fallback and its literal trajectory boundary.
 
+**`/review [focus]` is prompt guidance, not an enforced read-only mode (SER-087).**
+`parseReviewCommand` (`src/commands/review-command.ts`) is pure and import-free, with the
+same exact case-insensitive name grammar as `/init`; bare input is valid and only the
+focus's surrounding whitespace is trimmed before literal insertion under `Focus:`.
+The fixed prompt asks for repository instructions, staged/unstaged changes, relevant
+untracked files and surrounding code; prioritized actionable bugs with file/line evidence
+and impact; separate test gaps; no speculative/style-only findings; and honest no-findings
+and unverified limits, including tests not run. It asks for no edits or commits unless
+separately requested. That sentence never changes the gate: `/review` does not switch
+permission mode, install a tool/executor, interpolate shell/templates, or start a child.
+Only the subsequent ordinary model requests can call tools, through the existing gate.
+
+`AgentRuntime.expandSlashCommand` checks it before skills and custom commands. Canonical
+reservation and its one-line description feed help/completion; `MAX_HELP_COMMANDS` and
+`MAX_COMPLETIONS` keep all built-ins offered. Existing custom `review.md` commands receive
+the normal collision diagnostic; a same-name skill stays loadable by `load_skill` but loses the slash invocation.
+Rename colliding extensions to an unreserved name such as `audit`. The TUI/dev-repl and
+text/structured headless drivers use their ordinary send path: busy TUI submissions queue,
+images retain their existing ownership, and trajectory input stays literal. Nothing enters
+the system prompt or changes its composition order. Required offline checks:
+`verify-review-command.ts` (parser/template, purity, collisions, real runtime/headless SDK
+capture and gate denial/approval) and `verify-review-drivers.ts` (production TUI queue and
+clipboard image plus dev-repl requests/trajectory); both in `pnpm test`. Real free
+`spike/verify-tui.ts completion` proves discovery with the renamed custom fixture. These
+checks verify transport and policy boundaries, not model review quality.
+
 **The base prompt names no tool.** Tool descriptions are the contract the model reads; a
 catalogue in the prompt shadowed the real registry in both directions (it listed the memory pair,
 which is registered only when memory is on, and omitted `http_request`/`web_fetch`, which always

@@ -5,7 +5,7 @@ import {
 import { ESCAPE_REWIND_CHORD_MS } from './rewind-search.js';
 
 /** Hard report bounds: help is transcript history, never an unbounded catalogue dump. */
-export const MAX_HELP_COMMANDS = 24;
+export const MAX_HELP_COMMANDS = 25;
 /**
  * Fixed rows `formatHelpReport()` always emits: the title, the command-section header,
  * the "prompt and completion" block and the "editing and session" block, plus the

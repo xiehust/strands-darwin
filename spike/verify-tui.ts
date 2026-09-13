@@ -1179,7 +1179,7 @@ async function slashCompletion(): Promise<void> {
   await mkdir(commandsDir, { recursive: true });
   await mkdir(agentsDir, { recursive: true });
   await mkdir(skillDir, { recursive: true });
-  await writeFile(path.join(commandsDir, 'review.md'), 'Review $ARGUMENTS.\n', 'utf8');
+  await writeFile(path.join(commandsDir, 'audit.md'), 'Review $ARGUMENTS.\n', 'utf8');
   await writeFile(path.join(commandsDir, 'COMMIT-MESSAGE.md'), 'must lose to skill\n', 'utf8');
   await writeFile(
     path.join(agentsDir, 'broken.md'),
@@ -1389,7 +1389,7 @@ async function slashCompletion(): Promise<void> {
       tui.frame === afterFirstEscape && !tui.screen.slice(beforeDismiss).includes('working…'));
     const beforeRearm = tui.mark();
     tui.send('r');
-    await tui.waitFor('❯ /rewind', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
+    await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
     assert('editing a dismissed slash query reopens completion at the unchanged cursor',
       tui.frame.includes('you> /r') && tui.frame.includes('commands ('));
     tui.send('\u007f');
@@ -1398,11 +1398,11 @@ async function slashCompletion(): Promise<void> {
     // The six-row menu truncates the full catalogue, so narrow once for each
     // project-defined kind rather than mistaking warning/header text for a row.
     const beforeCustom = tui.mark();
-    tui.send('r');
-    await tui.waitFor('❯ /rewind', { timeoutMs: 30_000, from: beforeCustom, settleMs: 200 });
+    tui.send('a');
+    await tui.waitFor('❯ /agents', { timeoutMs: 30_000, from: beforeCustom, settleMs: 200 });
     tui.send('\u001b[B');
-    await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeCustom, settleMs: 400 });
-    assert('the custom command is listed', tui.screen.slice(beforeCustom).includes('❯ /review'));
+    await tui.waitFor('❯ /audit', { timeoutMs: 30_000, from: beforeCustom, settleMs: 400 });
+    assert('the custom command is listed', tui.screen.slice(beforeCustom).includes('❯ /audit'));
 
     const beforeSkill = tui.mark();
     tui.send('\u007fc');
@@ -1452,6 +1452,8 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /mode is listed', completed.includes('  /mode — set the permission mode'));
     assert('the built-in /model is listed', completed.includes('  /model — list or switch models'));
     assert('the built-in /permissions is listed', completed.includes('  /permissions'));
+    assert('the built-in /review is listed with its description',
+      completed.includes('  /review — review current changes for bugs and test gaps'));
     // Matched with its description: '  /status' could ride along in other transcript
     // text, and the description is what tells the built-in apart in the menu.
     assert('the built-in /setup-agentcore-memory is listed',
@@ -1467,7 +1469,7 @@ async function slashCompletion(): Promise<void> {
       completed.includes('  /workflow — orchestrate a task with the workflow tool'));
     assert(
       'runtime completion order is built-ins, custom commands, then skills',
-      completed.indexOf('/review') < completed.lastIndexOf('/commit-message'),
+      completed.indexOf('/audit') < completed.lastIndexOf('/commit-message'),
     );
     assert('the list explains the keys', /to select/.test(completed));
 
@@ -1484,13 +1486,13 @@ async function slashCompletion(): Promise<void> {
       });
     }
     tui.send('\u001b[B');
-    await tui.waitUntil(() => tui.frame.includes('❯ /review'), {
+    await tui.waitUntil(() => tui.frame.includes('❯ /audit'), {
       timeoutMs: 30_000,
       settleMs: 400,
-      label: '/review selected after the built-ins',
+      label: '/audit selected after the built-ins',
     });
     assert('Down windows an overflowing slash menu around the selected candidate',
-      tui.frame.includes('❯ /review') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
+      tui.frame.includes('❯ /audit') && (tui.frame.match(/❯/g)?.length ?? 0) === 1);
     assert('the slash window states omissions above', /… \d+ more not shown \(\d+ above/.test(tui.frame));
     const beforeTabAccept = tui.mark();
     tui.send('\t');
@@ -1500,12 +1502,12 @@ async function slashCompletion(): Promise<void> {
       settleMs: 400,
     });
     assert('Tab accepts exactly the visibly selected slash candidate',
-      tui.frame.includes('you> /review') && !tui.frame.includes('commands ('));
+      tui.frame.includes('you> /audit') && !tui.frame.includes('commands ('));
 
     // Reopen, then wrap upward from the first full-list item to the last. Enter has
     // the same acceptance contract as Tab and must not submit the accepted command.
     tui.send('\u0015');
-    await tui.waitUntil(() => !tui.frame.includes('commands (') && !tui.frame.includes('you> /review'), {
+    await tui.waitUntil(() => !tui.frame.includes('commands (') && !tui.frame.includes('you> /audit'), {
       timeoutMs: 10_000,
       label: 'slash draft cleared before reopening completion',
     });

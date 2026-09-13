@@ -15,6 +15,16 @@ The startup frame identifies the model, session, cache, effort, permission mode,
 
 While a turn runs, the existing `working…`/`thinking…` row shows elapsed time and reported token spend. Unreported usage is omitted, never rendered as zero. `Ctrl+B` toggles compact/expanded tool details without changing the prompt draft.
 
+## Reviewing changes
+
+After making changes, type `/review` to request a review without restating the checklist. Use `/review focus on authentication` to steer the pass: the command trims surrounding whitespace and includes the remaining text verbatim under `Focus:`. The name is case-insensitive and must match exactly (`/reviews` is not the built-in).
+
+The prompt asks the model to read repository instructions, staged and unstaged changes, relevant untracked files, and surrounding code. It requests actionable bugs in priority order with file/line evidence and impact, with test gaps listed separately. Speculative and style-only findings are discouraged; no actionable bugs and anything not inspected or verified, including tests not run, must be stated honestly.
+
+This is one ordinary model turn, not a separate review executor. The prompt says not to edit files or make commits unless separately requested, but **this is guidance, not enforced read-only mode**. `/review` does not switch modes, run shell/template interpolation, or automatically start a subagent; tool calls remain subject to your existing permission gate. If you need enforced restrictions, choose the permission mode separately.
+
+It queues normally while the TUI is busy, carrying an attached clipboard image through the same send path as other prompts. TUI, dev-repl and text/JSON/stream-JSON headless share the expansion (`darwin -p '/review focus on authentication'`); the trajectory keeps your literal slash input, not the expanded prompt or image bytes. The reserved built-in displaces an existing `/review` custom command or skill invocation. Rename that extension to an unreserved name such as `audit`; custom-command collisions use the usual startup diagnostic. A same-name skill remains loadable with `load_skill`, but `/review` invokes the built-in.
+
 ## Prompt editing and completion
 
 `Ctrl+K`/`Ctrl+U` cuts to the visible row end/start; `Ctrl+W`, `Alt+Backspace` and `Alt+D`/`Alt+Delete` cut the word before/after the cursor. `Ctrl+Y` inserts the exact last cut at the current grapheme-safe cursor, and can repeat it after movement or typing. This is one draft-local slot, not the system clipboard or a model action. Each nonempty cut replaces it; no-op cuts and ordinary Backspace/Delete leave it alone. `Ctrl+_` (or `Ctrl+-`) still restores the whole draft snapshot from before a destructive chord, not just the cut; yank does not add an undo step.

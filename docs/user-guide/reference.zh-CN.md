@@ -103,6 +103,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/model [name]` | 列出/切换已配置模型，会话不断开；缓存尚热时切换前先提示一次 |
 | `/permissions` | 当前放行规则及来源，随后是已配置的拒绝规则 |
 | `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘上的放行规则；拒绝规则不能在此撤销 |
+| `/review [focus]` | 精确匹配、不区分大小写；裸命令结合仓库指令、周围代码审查暂存／未暂存改动及相关未跟踪文件。一条普通 prompt 要求按优先级报告有文件／行号证据的缺陷，单列测试缺口，避免推测和纯风格问题，如实说明无发现及未验证范围。focus 去掉首尾空白后原样放在 `Focus:` 下。未经另行请求不编辑／提交只是指引，不是强制只读：不切换模式、不自动委派，现有 gate 仍有效。排队、附图及字面轨迹不变。`review` 为保留名，同名自定义命令／skill 斜杠调用需改名，例如 `audit`（[指南](using-darwin.zh-CN.md#审查改动)） |
 | `/rewind` | 在本会话已完成提示词的检查点中选择——即模型跑完了回合的提示词，无论是回答还是拒绝（拒绝类停止原因）；失败和被取消的回合不在其中；接受后把对话分支到一个新的后继会话，恢复到所选提示词之前的状态，该提示词回到编辑器但不发送（回退到被拒绝的提示词会在你改写之前移除被拒绝的回复）；文件、shell 与 `!` 的效果、hooks、MCP 写入、子代理、后台任务和已学习记忆永不回滚 |
 | `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/hooks/shell 环境变量/费用/成本/上下文；出现过缓存未命中后，模型行会注明最近一次未命中的可能原因；只有在 tangent 已武装或进行中时才会多出一行 `tangent` |
 | `/tangent`、`/tangent start`、`/tangent end` | 建立在 rewind 路径之上的单层书签：裸 `/tangent` 先武装，下一条完成的提示词开始它（该提示词的检查点就是返回点）；再输入 `/tangent` 或 `/tangent end` 就沿着与 `/rewind` 相同的后继路径回到那里——同样的省略说明，外加 `returned from tangent — N prompt(s) discarded`——且不把提示词放回编辑器；进行中再 `/tangent start` 会被拒绝（不嵌套、不提供选择器：请用 `/rewind`）；`/clear` 或接受一次 `/rewind` 会以 `tangent ended by …` 结束它；仅为 TUI 当前会话状态 |

@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rewind', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'mcp', 'memory', 'mode', 'model', 'permissions', 'review', 'rewind', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -52,6 +52,8 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // Rules, not the mode: /permissions lists allow- and deny-rules and revokes
   // allow-rules (what runs silently); /mode moves how much everything else asks.
   permissions: 'list allow/deny rules, revoke allow-rules',
+  // Prompt guidance only; the active permission mode still governs tool calls.
+  review: 'review current changes for bugs and test gaps',
   // Conversation only: branches from an SDK checkpoint and never rolls back files.
   rewind: 'branch from an earlier completed prompt',
   // The consolidated read-only session report — configuration and live state in
