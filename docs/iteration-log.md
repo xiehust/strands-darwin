@@ -2872,3 +2872,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Each task reported `cost: total=- input=- output=- cacheRead=- cacheWrite=- model=global.openai.gpt-6-astra pricing=none`; per-task and aggregate USD unknown, never zero.
 - Docs synchronized in accepted commits: README EN/zh-CN; AgentCore narrative, configuration and reference EN/zh-CN; architecture rationale/index and verification checklist; setup built-in skill. Host closure updates this log/checklist only. Current project remains manual; existing records have not been deleted by this work. Users must restart for new dist and directly invoke mode/manifest-confirmation commands. Live AWS IAM/extraction, crash-held-lock recovery, and guaranteed shutdown delivery remain outside acceptance. Finite storage/quotas and conservative failed-transition session stops are documented.
 
+
+## Batch 129 — SER-086 custom-command argument preservation (2026-09-13)
+
+- Origin: `docs/research/research_2026-09-13.md`, peer roll `05:09:44Z`; Score 15, Priority 118. Initial source `c1f34b4` passed Host `pnpm typecheck && pnpm test` (8,017 PASS lines); research-only commits led to clean handoff `f7b3316`. No implementation outside the developer boundary.
+- Fresh child conversation `session-20260913-052155663`; managed task `bg-b11d08e3-ee17-487e-b077-822defb8ff10`, exit 0, drained to `hasMore: false`. Source CLI, `--yolo --context-offload`, no call ceiling or correction. No further worker delegation.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Preserve plain-template args without changing interpolation | `0c49aa2` | Inspected production `expandCustomCommand`, all changed tests/docs and unchanged TUI/dev-repl handoff. Host `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short`, task `bg-7150cd5b-da55-4513-9a94-501ee4bf3018`, exit 0: 8,120 PASS lines, including custom-command130 and 28 direct/text/JSON/JSONL offline runtime turns. Exact template/argument bytes, no extra read/tool execution, literal trajectory inputs, original replacement semantics and clean tree verified. |
+
+- Docs wrap-up: README EN/zh-CN, extension narrative EN/zh-CN, reference EN/zh-CN and load-bearing rationale synchronized in accepted commit. AGENTS remains 32,758 bytes and untouched. Build regenerated dist/patches and refreshed source CLI artifacts/skills. No dedicated new PTY or live-provider call was needed for this pure expansion; full gate includes existing PTY checks. Runtime fixtures used isolated HOME. Existing runtime cloud-memory configuration was not changed; worker footer reported project auto mode, so this is not a claim that ambient runtime uploads were disabled.
+- Reported worker spend: `usage: input=52 output=13542 cacheRead=1809749 cacheWrite=93286`. Cost `total=-`, model `global.openai.gpt-6-astra`, `pricing=none`; per-task and aggregate USD unknown. No child-descendant spend line. Batch continues immediately to SER-087 after this accepted source revision; push reserved for the research batch halt.
+

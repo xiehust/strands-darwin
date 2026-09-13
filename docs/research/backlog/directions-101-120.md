@@ -354,7 +354,7 @@ Sources: report S1 (Claude Code Ctrl+S), `App.tsx` editor/image refs and `clipbo
 
 ## SER-086 — Preserve arguments for placeholder-free custom commands: `expandCustomCommand` keeps the loaded template bytes and appends two newlines plus the existing trimmed argument string when `$ARGUMENTS` is absent and arguments are nonempty; placeholder replacement and no-argument behavior stay byte-identical
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 118
 - Score: 15
 - Importance: 4
@@ -366,7 +366,7 @@ Sources: report S1 (Claude Code Ctrl+S), `App.tsx` editor/image refs and `clipbo
 
 ### Implementation / acceptance evidence
 
-Not implemented. At `c1f34b4`, direct `expandCustomCommand` reproduction with template `Review code for bugs.` and `/review src/auth.ts` returned only the template; the target vanished. `spike/verify-custom-commands.ts:expansion` explicitly pins the previous discard behavior.
+Accepted commit `0c49aa2` (`fix(commands): preserve arguments for plain templates`). Child `session-20260913-052155663`, task `bg-b11d08e3-ee17-487e-b077-822defb8ff10`, exit 0. Host inspected all nine changed files, exact append/replacement branches, offline loader/runtime/headless regressions and EN/zh-CN docs. Independent `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short` passed in `bg-7150cd5b-da55-4513-9a94-501ee4bf3018`: 8,120 PASS lines, including 130 custom-command checks and 28 ordinary runtime/headless turns; clean tree, dist refreshed. TUI/dev-repl shared expansion inspected unchanged. No live-provider review-quality claim. Iteration log: Batch 129. Child spend: input 52, output 13,542, cacheRead 1,809,749, cacheWrite 93,286; USD unknown (no price).
 
 ### Notes / blockers / abandonment reason
 
