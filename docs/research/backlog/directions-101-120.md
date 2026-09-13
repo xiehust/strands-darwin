@@ -374,7 +374,7 @@ Source: report S4, OpenCode commands fallback; repository `src/commands/custom-c
 
 ## SER-087 — Add `/review [focus]` as a pure built-in prompt expansion over `AgentRuntime.expandSlashCommand`: review current staged/unstaged changes and relevant untracked files for evidence-backed prioritized bugs and test gaps, optionally focused by literal user text, without edits or commits unless separately requested; use the existing gate and driver path, never a new review executor or automatic permission-mode switch
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 119
 - Score: 12
 - Importance: 3
