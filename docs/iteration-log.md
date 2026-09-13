@@ -2899,3 +2899,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Worker spend: `usage: input=98 output=24813 cacheRead=5690294 cacheWrite=167384`. Cost `total=-`, model `global.openai.gpt-6-astra`, `pricing=none`; USD unknown. No child-descendant usage. Fixtures are private/offline; existing runtime cloud-memory settings unchanged (worker footer reported project auto), not a claim of ambient upload disablement.
 - Research-run worker aggregate (Batches 129–130): input **150**, output **38,355**, cacheRead **7,500,043**, cacheWrite **260,670**; aggregate USD unknown. Both directions done, no abandoned backlog record this run, no corrections. Three considered below-gate directions remain report-only. Halt: batch exhausted; remaining unfinished backlog none. Host closes metadata then performs the requested single ordinary branch push and reports its verified result.
 
+
+## Batch 131 — SER-088 counted search-preview rows (2026-09-13)
+
+- Origin: `docs/research/research_2026-09-13.md`, TUI roll `06:21:23Z`; Score 15, Priority 120. Host baseline `pnpm typecheck && pnpm test` passed at source `75e40ae` (8,285 PASS lines); artifact-only queue/start commits passed `verify-skills`162 and yielded clean `47cc4f8`, no source change. No implementation outside developer supervision.
+- Fresh child `session-20260913-063304435`; managed `bg-b17441d6-0002-4fea-aa92-ff0b789a1ba2`, exit 0, output drained through `hasMore: false`. Source CLI, `--yolo --context-offload`, no ceiling, correction/retry or descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Single counted search previews, raw state unchanged | `328f338` | Reviewed all 12 changed source/test/doc files. Host `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts historySearch && pnpm build && git diff --check && git status --short`, task `bg-f0f7920f-145b-4360-9e2c-07683564e963`, exit 0; 8,585 PASS lines total (full gate 8,573, extra pty12). Includes history-search161, rewind-search157, frame-budget80. Real Ink at 24/100 columns and grants 0–12 verifies query/candidate controls, selected windows/omissions, exact raw filtering/acceptance/cancel; pty verifies preview and byte-identical record. Clean tree and refreshed dist. |
+
+- Docs wrap-up: EN/zh-CN using-darwin narratives and references plus load-bearing rationale synchronized in accepted commit. README summaries still accurate; AGENTS untouched, 32,758 bytes. Shared helper changes presentation only; App/paste, frame grants, runtime and dependencies untouched. No external-provider verification; fixture checks are isolated/offline. Ambient runtime cloud-memory settings unchanged (worker footer reports project auto), not a claim that ambient uploads were disabled.
+- Worker spend: `usage: input=60 output=16081 cacheRead=2300067 cacheWrite=110056`; `cost: total=- input=- output=- cacheRead=- cacheWrite=- model=global.openai.gpt-6-astra pricing=none`. Per-task/aggregate USD unknown; no descendant spend. SER-089 remains pending, premise valid, and starts next against this accepted revision. Push occurs at research-batch halt.
+

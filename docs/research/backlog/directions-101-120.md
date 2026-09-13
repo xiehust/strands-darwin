@@ -395,7 +395,7 @@ Sources: report S2 (Codex `/review`), S4 (OpenCode review template); repository 
 
 ## SER-088 — Keep reverse-search query and candidate previews on their counted visual row: project multiline/control layout only at presentation, preserving raw filtering, accepted prompt and Escape-restored draft/cursor
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 120
 - Score: 15
 - Importance: 4
@@ -407,7 +407,7 @@ Sources: report S2 (Codex `/review`), S4 (OpenCode review template); repository 
 
 ### Implementation / acceptance evidence
 
-Not implemented. At `75e40ae`, real Ink `renderToString` renders both a history candidate and query containing `first\nsecond` on two rows despite `wrap="truncate-end"`; `planPromptBox` counts each as one. Acceptance must cover real rendering at narrow/wide widths, CR/LF/CRLF and Unicode/control inputs, one row per query/candidate, unchanged ordinary single-line previews, exact raw matching/acceptance/cancel state, existing omission counts and granted height. Focused `verify-prompt-history-search.ts`, `verify-rewind-search.ts`, `verify-frame-budget.ts`, real free `verify-tui.ts historySearch`, full typecheck/test/build. Record independent Host evidence before done.
+Accepted `328f338` (`fix(tui): keep search previews on their counted row`), developer child `session-20260913-063304435`, task `bg-b17441d6-0002-4fea-aa92-ff0b789a1ba2` exit 0, fully drained. Host reviewed all 12 changed files and independently ran `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts historySearch && pnpm build && git diff --check && git status --short`, task `bg-f0f7920f-145b-4360-9e2c-07683564e963`, exit 0; log `/tmp/darwin-ser088-host-acceptance.log`. Full gate includes history-search161, rewind-search157, frame-budget80; extra real pty historySearch12. Real Ink at 24/100 columns and grants 0–12 proves exact counted heights, selected windows and omissions for CR/LF/CRLF, Unicode separators and controls. Raw state, filtering, acceptance and Escape snapshot stay exact. Shared `searchPreview` is confined to both search views; App/paste/frame arithmetic/runtime unchanged. EN/zh-CN narrative/reference and architecture synchronized; README remains accurate, AGENTS unchanged at 32,758 bytes. Dist rebuilt; clean tree. Iteration-log Batch 131.
 
 ### Notes / blockers / abandonment reason
 
