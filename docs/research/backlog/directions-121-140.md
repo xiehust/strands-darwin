@@ -4,7 +4,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ## SER-089 — Route bracketed paste to the active history or rewind search owner before the composer: filter through existing bounded query updates, never mutate or submit the underlying draft, and retain permission/compaction ownership
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 121
 - Score: 14
 - Importance: 4
@@ -16,7 +16,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ### Implementation / acceptance evidence
 
-Not implemented. Real CLI pty at `75e40ae`: Ctrl+R plus bracketed NEEDLE leaves query `(all)` and changes DRAFT to DRAFTNEEDLE; Escape discards NEEDLE. `/rewind` plus MISSING changes the draft while leaving both checkpoint matches. Probe task `bg-ec3d17d4-31ad-418b-8d19-9086391148bf` exited 0; origin report records artifacts. Acceptance: offline real CLI pty with private HOME/project and local SDK fixture, both search modes, single-line/multiline/Unicode/over-cap/repeated and same-event paste; pasted text filters the query with unchanged underlying draft/cursor, no automatic submission/branch/queue/model request, Enter/Tab retains explicit acceptance, Escape restores exact original. Permission and compaction still ignore paste; ordinary composer paste still edits without sending. Query remains under existing 256-code-point cap; normalized line endings and safe counted rows; durable history/checkpoints unchanged by filter/cancel. Run focused search/frame/composer checks, free `verify-tui.ts historySearch` and `rewind`, full typecheck/test/build. Record independent Host evidence before done.
+Accepted `63e8cc0` (`fix(tui): route paste to the active search owner`), fresh child `session-20260913-065841818`, task `bg-622f8525-9e8b-449d-9816-db2bfbb33c0e` exit 0, fully drained. Ten production lines in `App.usePaste` route normalized text through immediate rewind/history refs and existing bounded updates, leaving permission/compaction guard and composer fallback unchanged. Host reviewed all 8 changed files and ran `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts historySearch && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts rewind && pnpm build && git diff --check && git status --short`, task `bg-c279a3d3-b5b2-4bae-a1a0-baa4772400f8`, exit 0. Full gate 8,599 PASS lines includes new registered search-paste26, history-search161, rewind-search157, frame-budget80 and composer coverage; extra historySearch12/rewind9. New suite uses private HOME/cwd, real CLI/SDK local transport, exact 256-code-point cap, Unicode/multiline/control/repeated/same-write paste, exact cancellation cursors, no filter-time durable bytes/model requests, explicit Enter/Tab acceptance, permission/compaction blocking and bounded frames. EN/zh-CN narrative/reference and architecture synced; README still accurate, AGENTS untouched. Clean tree, dist rebuilt. Log `/tmp/darwin-ser089-host-acceptance.log`; iteration-log Batch 132.
 
 ### Notes / blockers / abandonment reason
 
