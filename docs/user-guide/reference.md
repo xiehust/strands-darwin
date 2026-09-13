@@ -109,6 +109,7 @@ Rules and limits:
 | `/trajectory` | this run's local record status |
 | `/usage` | process token buckets plus an approximate USD cost; unreported is not zero; counts cache misses and names the last one's likely cause once one was observed |
 | `/workflow <task>` | ask the model to orchestrate the task as one `workflow` DAG call; bare form prints usage |
+| `/command-name [arguments]` | loaded Markdown custom command: replace every literal `$ARGUMENTS` nonrecursively; if absent, append two newline characters and nonempty trimmed arguments without trimming the template; absent/whitespace-only arguments leave placeholder-free content unchanged. No positional parsing or shell interpolation; [details](extensions.md#custom-commands) |
 | `/skill-name [request]` | explicitly load/send a skill |
 | `/developer <requirement>` | supervise a complete persistent headless worker |
 | `/self-evolution-research` | bundled skill: backlog/research/scored supervised iteration loop |

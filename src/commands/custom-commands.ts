@@ -202,6 +202,8 @@ export function expandCustomCommand(
 
   return {
     command,
-    message: command.content.replaceAll(ARGUMENTS_PLACEHOLDER, args),
+    message: command.content.includes(ARGUMENTS_PLACEHOLDER)
+      ? command.content.replaceAll(ARGUMENTS_PLACEHOLDER, args)
+      : args === '' ? command.content : `${command.content}\n\n${args}`,
   };
 }

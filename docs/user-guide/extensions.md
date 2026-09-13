@@ -161,7 +161,13 @@ Denied while running: a scoped node's `fileEditor` `create`, `str_replace` or `i
 
 ## Custom commands
 
-Place Markdown under `.darwin/commands/` or global/portable counterparts. `/name arguments` sends the file body as the message, replacing `$ARGUMENTS` with text after the command. Built-ins remain reserved; command discovery follows the common precedence.
+Place Markdown under `.darwin/commands/` or global/portable counterparts. `/name arguments` sends an expanded prompt through the ordinary runtime shared by the TUI, dev-repl, and headless drivers. Built-ins remain reserved; command discovery follows the common precedence, and names match case-insensitively. Unknown commands remain ordinary input.
+
+Arguments are the text after the command with only surrounding whitespace removed. If the loaded template contains literal `$ARGUMENTS`, every occurrence is replaced using the existing nonrecursive replacement behavior. Otherwise, nonempty arguments are appended as `original content + '\n\n' + args`. The template is never trimmed: all leading/trailing spaces and newlines remain. With no arguments (or only whitespace), a placeholder-free template is unchanged; placeholders still become empty text.
+
+For example, a template containing exactly `Review code for bugs.` and `/review src/auth.ts` produces `Review code for bugs.\n\nsrc/auth.ts`. This deliberately changes the former behavior that discarded arguments when the template had no placeholder. A template already ending in a newline keeps that newline before the two added ones.
+
+Expansion uses the already-loaded content: no additional file reads, positional argument parsing (`$1`), shell interpolation, or separate execution channel. Multiline/Unicode text, quotes, shell-looking text, and `$ARGUMENTS` inside appended arguments remain literal. The existing placeholder branch retains JavaScript `replaceAll` replacement-string semantics (including `$&` and `$$`); it does not recursively expand inserted placeholders. Trajectory records keep the literal slash input rather than the expanded template.
 
 ## Command hooks
 

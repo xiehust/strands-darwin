@@ -110,6 +110,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/trajectory` | 当前运行的本地记录状态 |
 | `/usage` | 当前进程 token 分桶及近似美元成本；未报告不等于零；出现过缓存未命中后，统计次数并注明最近一次的可能原因 |
 | `/workflow <task>` | 请模型把任务编排为一次 `workflow` DAG 调用；不带参数时打印用法 |
+| `/command-name [arguments]` | 已加载的 Markdown 自定义命令：非递归替换每个字面量 `$ARGUMENTS`；若无占位符且参数去除首尾空白后非空，则在完整模板后追加两个换行符和参数，不裁剪模板；无参数或参数只有空白时，无占位符模板保持原样。不解析位置参数，不做 shell 插值；[详见](extensions.zh-CN.md#自定义命令) |
 | `/skill-name [request]` | 显式加载并发送一个 skill |
 | `/developer <requirement>` | 监督一个完整、可持续的无头 worker |
 | `/self-evolution-research` | 内置 skill：待办/研究/评分/受监督迭代循环 |

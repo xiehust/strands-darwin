@@ -161,7 +161,13 @@ Trace the requested behavior, cite files and symbols, and report to the parent.
 
 ## 自定义命令
 
-把 Markdown 放在 `.darwin/commands/` 或对应全局/可移植目录中。输入 `/name arguments` 时，文件正文会作为消息发送，其中 `$ARGUMENTS` 替换为命令后的文字。内置名称仍保留；发现顺序遵循通用优先级。
+把 Markdown 放在 `.darwin/commands/` 或对应全局/可移植目录中。输入 `/name arguments` 时，展开后的提示词通过 TUI、dev-repl 和无头驱动共用的普通 runtime 发送。内置名称仍保留，发现顺序遵循通用优先级；命令名不区分大小写，未知命令按普通输入处理。
+
+参数是命令名之后去除首尾空白的文字。若已加载的模板含有字面量 `$ARGUMENTS`，则沿用现有的非递归替换方式，替换每一处。否则，非空参数按 `原始正文 + '\n\n' + 参数` 追加。模板本身不裁剪，首尾空格和换行全部保留。不带参数或参数只有空白时，无占位符模板原样返回；模板中的占位符仍替换为空串。
+
+例如，模板恰好为 `Review code for bugs.`，输入 `/review src/auth.ts`，结果就是 `Review code for bugs.\n\nsrc/auth.ts`。这是对旧行为的有意变更：以前模板没有占位符时会丢弃参数。若模板末尾已有换行，仍保留该换行，再追加两个换行符和参数。
+
+展开只使用已加载的正文，不会再读文件，不解析位置参数（`$1`），不做 shell 插值，也没有另起执行通道。追加参数中的多行文本、Unicode、引号、类似 shell 的文字和 `$ARGUMENTS` 都按字面保留。原有占位符分支继续采用 JavaScript `replaceAll` 的替换字符串语义（包括 `$&` 和 `$$`），不会递归展开插入的占位符。轨迹记录保留原始斜杠输入，不以展开后的模板替代。
 
 ## 工具 hooks
 
