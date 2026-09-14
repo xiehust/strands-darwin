@@ -911,12 +911,14 @@ plus input and corresponding result; OTHER carries provenance, outcome and categ
 SDK status and structured bash exitCode remain separate; missing results are explicit and
 endTurn never means task success. Manual sends still require exact preview + hash authorization.
 
-Bounds: 8 KiB per full action, 256 KiB serialized CreateEvent including JSON escaping,
-100 payload messages, 100,000 UTF-8 bytes/message. At most eight transient turns, each 64
+Bounds: 8 KiB per full action, **96 KiB for newly generated serialized CreateEvent** including
+JSON escaping, 100 payload messages, 100,000 UTF-8 bytes/message. Legacy read/state/transport
+limits remain 256 KiB; never lower acceptance bounds or regenerate old bytes/proofs. At most eight transient turns, each 64
 full actions + 96 omitted-body summaries + an 8 KiB goal, and eight detached jobs. Collector
 turn saturation and detached-job saturation have distinct omission counters/reasons. Reserve
-goal/closing metadata, favor newest 16 then failed/immediate recovery actions; render chosen
-pairs in original chronology. Summaries spill into counted aggregates. Content truncation,
+goal/closing metadata; collector retains newest 16 plus priority history, while final upload
+selection favors the final action, then failed/immediate recovery actions, then recent history.
+Render chosen pairs in original chronology. Summaries spill into counted aggregates. Content truncation,
 action bodies/summaries omitted, internal events, missing/unmatched results and source loss
 are distinct. No goal and no action means no metadata-only candidate. Text ranges are exact
 UTF-16 offsets at Unicode boundaries; retained/original bytes are UTF-8. Huge strings above
@@ -955,6 +957,32 @@ publish approval/start AWS, while already-issued effects and received acknowledg
 truthful. Runtime cancellation generation spans local context/proof reads through send/compact
 invocation, without resetting the preference cache. Crash before candidate
 persistence can omit a turn, deliberately without archive recovery.
+
+**Prospective Memory session budget.** Each new v2 body carries
+`memorySession: { version: 1, maxEvents: 1, maxBytes: 98304 }` and uses
+`darwin-part-<existing clientToken>` as the transport session ID. The token remains the digest
+of binding/Darwin session/turn/closingSeq; source provenance, auto proofs, session stops and
+pending order remain keyed to the original Darwin session. The reader validates both mappings
+and the new budget. One immutable event per derived session bounds accumulated unique input
+without a mutable allocation ledger; retries reuse the same body/token/session and rely on
+CreateEvent idempotency. Different closing sequences sharing a turn still get distinct sessions.
+No numbered-turn bucket, archive scan, timer, model summary or new config is needed.
+
+The 96 KiB serialized byte cap is conservative, not a measured tokenizer result or an AWS
+rate guarantee. AWS documents **50,000 tokens/min per episodic session** (not adjustable) and
+**150,000 tokens/min per account/Region** (adjustable); TPM is not a lifetime context limit.
+Service prompt overhead and account-wide extraction remain outside this budget. See
+[Memory quotas](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/bedrock-agentcore-limits.html#agentcore-memory-service-quotas).
+Cross-turn episodic grouping is intentionally traded for a strict unique-event byte bound;
+project namespaces still group retrieval/reflections. Quality displays the byte budget explicitly.
+
+Unpartitioned historical candidates are held manual before automatic attempt scheduling and
+at auto launch, without body/proof migration or held-state writes. Concurrent user cleanup
+is tolerated only when durable receipt/acceptance explains a failed new body read; unexplained
+missing/corrupt state still fails closed. They stay readable and
+explicitly preview/sendable at the original bounds, and still block later Darwin-session turns.
+No extraction-job retry/backfill or real cloud cleanup accompanies the upgrade.
+Tests: `verify-cloud-memory-partitions.ts`, upload and cloud-auto/storage regression suites.
 
 **Project auto authority and storage.** `project-identity.ts` retains the existing explicit global
 projectId-or-SHA256(projectKey(root)) cloud namespace/quota identity without importing config.

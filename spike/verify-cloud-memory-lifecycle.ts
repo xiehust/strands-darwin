@@ -156,7 +156,7 @@ async function candidate(runtime: AgentRuntime, turn = 1): Promise<Candidate> {
     const bytes = await readFile(path.join(box(memory), name), 'utf8');
     const entry: Candidate['entry'] = JSON.parse(bytes);
     const metadata = JSON.parse(entry.body.payload[0]!.conversational.content.text);
-    if (entry.body.sessionId === runtime.info.sessionId && metadata.turn === turn) return { token: name.slice(0, -11), bytes, entry };
+    if (metadata.session === runtime.info.sessionId && metadata.turn === turn) return { token: name.slice(0, -11), bytes, entry };
   }
   throw new Error(`Missing actual runtime candidate ${runtime.info.sessionId}/${turn}`);
 }

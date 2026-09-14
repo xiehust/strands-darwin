@@ -308,6 +308,7 @@ assert('manual accepted body never auto-expires', await readState(path.join(box(
 const legacySession = 'legacy-session'; const legacyToken = digest([cloudBinding(base, root), legacySession, 1, 11]);
 const legacyBody = uploadBody({ memoryId: base.memoryId, actorId: base.actorId, sessionId: legacySession, eventTimestamp: new Date().toISOString(), clientToken: legacyToken, extractionConfig: { namespaceVariables: { projectid: key } } }, good, closeTurn(legacySession, 1))!;
 const metadata = JSON.parse(legacyBody.payload[0]!.conversational.content.text); metadata.format = 'legacy';
+delete metadata.memorySession; legacyBody.sessionId = legacySession;
 legacyBody.payload[0]!.conversational.content.text = JSON.stringify(metadata);
 const legacyEntry = { version: 1, binding: cloudBinding(base, root), token: legacyToken, body: legacyBody };
 await writeState(path.join(box(), `${legacyToken}.event.json`), legacyEntry);
@@ -396,6 +397,62 @@ await successorCloud.refreshPolicy();
 assert('corrupt changed policy fails closed without breaking ordinary invocation preparation', successorCloud.config.upload === 'manual' && successorCloud.status().includes('repair config'));
 await writeFile(file, validPolicy);
 await successor.shutdown(); setRuntimeModelFactoryForTest(undefined);
+
+header('Upgrade never automatically retries unpartitioned historical candidates');
+const upgraded = new CloudMemory((await loadConfig(root)).agentCoreMemory!, root, 'upgrade-origin');
+const upgradeToken = digest([cloudBinding(upgraded.config, root), upgraded.session, 1, 11]);
+const upgradeBody = uploadBody({ memoryId: base.memoryId, actorId: base.actorId, sessionId: upgraded.session, eventTimestamp: new Date().toISOString(), clientToken: upgradeToken, extractionConfig: { namespaceVariables: { projectid: upgraded.scope.projectId } } }, good, closeTurn(upgraded.session, 1))!;
+const upgradeSource = JSON.parse(upgradeBody.payload[0]!.conversational.content.text);
+delete upgradeSource.memorySession; upgradeBody.sessionId = upgraded.session;
+upgradeBody.payload[0]!.conversational.content.text = JSON.stringify(upgradeSource);
+const upgradeEntry = { version: 1, binding: cloudBinding(upgraded.config, root), token: upgradeToken, body: upgradeBody };
+const upgradeFile = path.join(box(), `${upgradeToken}.event.json`);
+const upgradeProofFile = path.join(box(), `${upgradeToken}.auto.json`);
+await writeState(upgradeFile, upgradeEntry);
+await writeState(upgradeProofFile, { version: 1, hash: digest(upgradeEntry), authorization: upgraded.config.authorization, session: upgraded.session, turn: 1 });
+await writeState(path.join(box(), `${upgradeToken}.attempt-1.json`), { hash: digest(upgradeEntry) });
+const upgradeBytes = await readFile(upgradeFile); const upgradeProofBytes = await readFile(upgradeProofFile);
+const beforeUpgrade = calls.length;
+const laterUpgrade = await capture(upgraded, 2);
+assert('same-epoch historical candidate consumes no auto retry and still blocks later origin turn', calls.length === beforeUpgrade && await readState(path.join(box(), `${upgradeToken}.attempt-2.json`)) === undefined && await readState(path.join(box(), `${laterUpgrade}.attempt-1.json`)) === undefined);
+assert('upgrade leaves historical body/proof unchanged and does not create a held-state sidecar', (await readFile(upgradeFile)).equals(upgradeBytes) && (await readFile(upgradeProofFile)).equals(upgradeProofBytes) && await readState(path.join(box(), `${upgradeToken}.auto-state.json`)) === undefined);
+assert('historical auto candidate visibly held manual', (await upgraded.command('pending')).includes('unpartitioned historical upload; held manual'));
+const independentUpgrade = new CloudMemory(upgraded.config, root, 'upgrade-independent');
+await capture(independentUpgrade, 1);
+assert('unrelated new partition still uploads under original consent', calls.length === beforeUpgrade + 1 && JSON.parse(calls.at(-1)!.body).sessionId.startsWith('darwin-part-'));
+assert('new partitions are not eligible for legacy cleanup', !(await upgraded.command('discard-legacy', 'user')).includes(laterUpgrade));
+await upgraded.close(); await independentUpgrade.close();
+
+header('Concurrent discard during partition inspection preserves earned work');
+for (const phase of ['drain', 'inspect'] as const) {
+  const racing = new CloudMemory((await loadConfig(root)).agentCoreMemory!, root, `partition-race-${phase}`);
+  const peer = new CloudMemory(racing.config, root, 'partition-race-user');
+  const token = digest([cloudBinding(racing.config, root), racing.session, 1, 11]);
+  const body = { ...upgradeBody, sessionId: racing.session, clientToken: token,
+    payload: upgradeBody.payload.map((item, index) => index ? item : { conversational: { ...item.conversational, content: { text: JSON.stringify({ ...upgradeSource, session: racing.session }) } } }) };
+  const entry = { version: 1, binding: cloudBinding(racing.config, root), token, body };
+  const bodyFile = path.join(box(), `${token}.event.json`); const proofFile = path.join(box(), `${token}.auto.json`);
+  await writeState(bodyFile, entry);
+  await writeState(proofFile, { version: 1, hash: digest(entry), authorization: racing.config.authorization, session: racing.session, turn: 1 });
+  let discarded = false;
+  setCloudStateObserverForTest(async (file, boundary) => {
+    if (file !== proofFile || boundary !== 'after-read' || discarded) return;
+    discarded = true;
+    const result = await peer.commandResult(`discard ${token}`, 'user');
+    if (!result.ok) throw new Error(result.text);
+  });
+  const before = calls.length;
+  if (phase === 'drain') {
+    await capture(racing, 2);
+    assert('discard after proof read does not abort unrelated/new candidate in earned drain', discarded && calls.length === before + 1 && (await tokenReceipt(box(), token))?.disposition === 'discarded');
+  } else {
+    const result = await racing.commandResult('status');
+    assert('discard during status partition inspection preserves valid status', discarded && result.ok && !result.text.includes('failed validation') && calls.length === before);
+  }
+  assert(`${phase}: no historical retry or replacement after concurrent cleanup`, await readState(bodyFile) === undefined && await readState(path.join(box(), `${token}.attempt-1.json`)) === undefined);
+  setCloudStateObserverForTest(undefined);
+  await racing.close(); await peer.close();
+}
 
 setMemoryTransportOptionsForTest(undefined); server.close(); await once(server, 'close');
 report();

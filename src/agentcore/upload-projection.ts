@@ -2,8 +2,14 @@ import type { AfterToolCallEvent, BeforeToolCallEvent, BeforeToolsEvent, ToolRes
 import type { TurnSettlement } from '../trajectory/writer.js';
 
 export const MAX_ACTION_BYTES = 8192;
+// Keep legacy immutable entries readable/sendable at their original bound.
 export const MAX_EVENT_BYTES = 262144;
 export const MAX_EVENT_STATE_BYTES = MAX_EVENT_BYTES + 1024;
+// New evidence only: one event per deterministic Memory session, so cumulative
+// session input cannot grow across turns. Bytes are NOT a service token count.
+export const MAX_NEW_EVENT_BYTES = 98304;
+export const memorySessionId = (token: string): string => `darwin-part-${token}`;
+export const uploadSessionBudget = () => ({ version: 1, maxEvents: 1, maxBytes: MAX_NEW_EVENT_BYTES });
 export const UPLOAD_NOTICE = 'Bounded original public tool content; can include secrets. NOT a confidentiality guarantee. No assistant prose/reasoning, binary/images, child traversal or file/offload/archive hydration. Upstream loss may be undetectable. taskSuccess is not inferred.';
 const MAX_ACTIONS = 64;
 const MAX_SUMMARIES = 96;
@@ -601,6 +607,7 @@ export function uploadBody(envelope: Envelope, turn: UploadTurn, settlement: Ext
   // Reserve goal + closing/quality metadata independently of action selection.
   const source = {
     format: 'darwin-upload-v2', session: settlement.session, turn: settlement.turn, closingSeq: settlement.seq, at: settlement.at,
+    memorySession: uploadSessionBudget(),
     outcome: settlement.failure ? 'failed' : settlement.stopReason === 'cancelled' ? 'cancelled' : settlement.partial || !settlement.stopReason ? 'incomplete' : 'closed',
     stopReason: settlement.stopReason ?? 'not reported', taskSuccess: 'not inferred',
     goal: { ...turn.goal, parts: undefined, present: turn.goal.retainedBytes > 0 },
@@ -612,30 +619,34 @@ export function uploadBody(envelope: Envelope, turn: UploadTurn, settlement: Ext
       sourceLimitedActions: selected.filter(a => a.sourceLoss.length || a.input.losses.some(l => l.text?.sourceLoss.length) || 'content' in a.result && a.result.content.losses.some(l => l.text?.sourceLoss.length)).length,
       actionBodiesOmitted: turn.totalActions - selected.length, actionSummariesOmitted: turn.totalActions - selected.length - summaries.length,
       internalEventsExcluded: turn.internalEvents, batchEntriesOmitted: turn.batchEntriesOmitted, unmatchedResults: turn.unmatchedResults, resultsWithoutSummary: turn.resultsWithoutSummary, backgroundResultsDropped: turn.backgroundResultsDropped, observerErrors: turn.observerErrors };
-    return { ...envelope, payload: [message('OTHER', JSON.stringify({ ...source, quality, omittedActions: summaries })),
+    return { ...envelope, sessionId: memorySessionId(envelope.clientToken), payload: [message('OTHER', JSON.stringify({ ...source, quality, omittedActions: summaries })),
       ...(turn.goal.retainedBytes ? [message('USER', turn.goal.parts.join(''))] : []),
       ...[...selected].sort((a, b) => a.ordinal - b.ordinal).map(a => message('TOOL', JSON.stringify(a))) ] };
   };
-  const recent = turn.actions.slice(-16);
-  const ranked = [...recent].reverse().concat(turn.actions.filter(a => !recent.includes(a)).sort((a, b) => comparePriority(b, a)));
+  // Keep the final observed action first, then failures/recoveries before the
+  // remaining recent history. Sixteen large recent bodies could crowd out all
+  // failure evidence under the new budget. Output remains chronological.
+  const ranked = turn.actions.slice(-1).concat(turn.actions.slice(0, -1).sort((a, b) => comparePriority(b, a)));
   for (const action of ranked) {
     selected.push(action);
     // 16KiB reserved for bounded omitted-action summaries.
-    if (bytes(render([])) > MAX_EVENT_BYTES - 16384 || selected.length > 98) { selected.pop(); omitted.push(summary(action)); }
+    if (bytes(render([])) > MAX_NEW_EVENT_BYTES - 16384 || selected.length > 98) { selected.pop(); omitted.push(summary(action)); }
   }
   const summaries: Summary[] = [];
   for (const item of omitted.sort((a, b) => b.ordinal - a.ordinal)) {
     summaries.push(item);
     const candidate = render(summaries);
-    if (bytes(candidate) > MAX_EVENT_BYTES || Buffer.byteLength(candidate.payload[0]!.conversational.content.text) > 100000) { summaries.pop(); break; }
+    if (bytes(candidate) > MAX_NEW_EVENT_BYTES || Buffer.byteLength(candidate.payload[0]!.conversational.content.text) > 100000) { summaries.pop(); break; }
   }
   summaries.sort((a, b) => a.ordinal - b.ordinal);
-  return render(summaries);
+  const body = render(summaries);
+  if (bytes(body) > MAX_NEW_EVENT_BYTES) throw new Error('Upload session byte budget exceeded; new candidate omitted');
+  return body;
 }
 
 export function uploadQuality(text: string): string {
   const source = JSON.parse(text);
   if (source.format !== 'darwin-upload-v2') return 'legacy projection (unchanged)';
   const q = source.quality;
-  return `goal ${source.goal.present ? 'present' : 'absent'}${source.goal.truncated ? ' (truncated)' : ''}; ${q.completeActions} complete actions; ${q.missingResults} missing results; ${q.contentTruncatedActions} content-truncated; ${q.actionBodiesOmitted} action bodies omitted; ${q.sourceLimitedActions} source-limited; task success not inferred${q.integrity ? `; turn integrity ${JSON.stringify(q.integrity)}` : ''}`;
+  return `goal ${source.goal.present ? 'present' : 'absent'}${source.goal.truncated ? ' (truncated)' : ''}; ${q.completeActions} complete actions; ${q.missingResults} missing results; ${q.contentTruncatedActions} content-truncated; ${q.actionBodiesOmitted} action bodies omitted; ${q.sourceLimitedActions} source-limited; task success not inferred${source.memorySession ? `; Memory session: one event, ${source.memorySession.maxBytes} byte budget (not tokens)` : ''}${q.integrity ? `; turn integrity ${JSON.stringify(q.integrity)}` : ''}`;
 }

@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile, stat, open } from 'node:fs/promises';
 import path from 'node:path';
 import { Agent, Model, ModelError, BeforeToolCallEvent, AfterToolCallEvent, BeforeToolsEvent, ToolResultEvent, HookOrder, ExecuteToolStage, ToolUseBlock, ToolResultBlock, TextBlock, JsonBlock, ImageBlock, tool, type BaseModelConfig, Message, type ModelStreamEvent } from '@strands-agents/sdk';
 import { z } from 'zod';
-import { capture, sliceText, UploadTurn, UploadObserver, uploadBody, MAX_ACTION_BYTES, MAX_EVENT_BYTES } from '../src/agentcore/upload-projection.js';
+import { capture, sliceText, UploadTurn, UploadObserver, uploadBody, MAX_ACTION_BYTES, MAX_NEW_EVENT_BYTES } from '../src/agentcore/upload-projection.js';
 import { CloudMemory } from '../src/agentcore/controller.js';
 import { parseAgentCoreConfig, digest } from '../src/agentcore/config.js';
 import { cloudDirectory, readState, setCloudStateObserverForTest } from '../src/agentcore/state.js';
@@ -217,11 +217,11 @@ assert('both-side escaping and metadata obey serialized full action cap', Buffer
 const adversarialKeys = Object.fromEntries(Array.from({ length: 32 }, (_, i) => ['\u0000'.repeat(120) + i, '😀'.repeat(20000)]));
 const escapedAction = new UploadTurn(1, '\u0000'.repeat(20000));
 add(escapedAction, '\u0000'.repeat(256), adversarialKeys, [new JsonBlock({ json: adversarialKeys })]);
-assert('escaped names/keys/control payload obey full action and event byte bounds', escapedAction.actions.every(a => Buffer.byteLength(JSON.stringify(a)) <= MAX_ACTION_BYTES) && Buffer.byteLength(JSON.stringify(bodyOf(escapedAction))) <= MAX_EVENT_BYTES);
+assert('escaped names/keys/control payload obey full action and event byte bounds', escapedAction.actions.every(a => Buffer.byteLength(JSON.stringify(a)) <= MAX_ACTION_BYTES) && Buffer.byteLength(JSON.stringify(bodyOf(escapedAction))) <= MAX_NEW_EVENT_BYTES);
 const many = new UploadTurn(1, goal);
 for (let i = 0; i < 400; i++) add(many, `call-${i}`, { command: `operation-${i}`, text: '\u0000😀\\"'.repeat(10000) }, [new JsonBlock({ json: { exitCode: i === 350 ? 1 : 0, output: 'long original '.repeat(3000) + `TAIL-${i}` } })]);
 const manyBody = bodyOf(many); const chosen = actionsOf(manyBody); const quality = JSON.parse(manyBody.payload[0]!.conversational.content.text).quality;
-assert('serialized event and every message/action bounded after escaping', Buffer.byteLength(JSON.stringify(manyBody)) <= MAX_EVENT_BYTES && manyBody.payload.length <= 100 && manyBody.payload.every(p => Buffer.byteLength(p.conversational.content.text) <= 100000) && chosen.every(a => Buffer.byteLength(JSON.stringify(a)) <= MAX_ACTION_BYTES));
+assert('serialized event and every message/action bounded after escaping', Buffer.byteLength(JSON.stringify(manyBody)) <= MAX_NEW_EVENT_BYTES && manyBody.payload.length <= 100 && manyBody.payload.every(p => Buffer.byteLength(p.conversational.content.text) <= 100000) && chosen.every(a => Buffer.byteLength(JSON.stringify(a)) <= MAX_ACTION_BYTES));
 assert('failure/recovery and tail verification prioritized with complete chronological pairs', [350, 351, 399].every(i => chosen.some(a => a.invocation === `call-${i}` && a.result.status === 'success')) && chosen.every((a, i) => i === 0 || a.ordinal > chosen[i - 1].ordinal));
 assert('capacity, content and internal omissions separate and truthful', quality.actionBodiesOmitted === 400 - chosen.length && quality.contentTruncatedActions > 0 && quality.internalEventsExcluded === 0 && quality.actionSummariesOmitted > 0);
 assert('live action and summary windows bounded', many.actions.length <= 64 && many.summaries.length <= 96 && many.pending.size === 0);
@@ -371,7 +371,7 @@ async function candidates(runtime: AgentRuntime) {
     if (!/^[a-f0-9]{64}$/.test(token)) continue;
     const preview = await cloud.command(`preview ${token}`);
     const body = JSON.parse(preview.split('\nRead-only preview:')[0]!) as ReturnType<typeof bodyOf>;
-    if (body.sessionId === runtime.info.sessionId) result.push({ token, body });
+    if (JSON.parse(body.payload[0]!.conversational.content.text).session === runtime.info.sessionId) result.push({ token, body });
   }
   return result.sort((a, b) => JSON.parse(a.body.payload[0]!.conversational.content.text).turn - JSON.parse(b.body.payload[0]!.conversational.content.text).turn);
 }

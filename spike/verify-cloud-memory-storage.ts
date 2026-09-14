@@ -179,7 +179,7 @@ async function runtimeEntries(runtime: AgentRuntime) {
   const memory = cloud(runtime); const entries: Entry[] = [];
   for (const name of (await readdir(box(memory))).filter(name => name.endsWith('.event.json'))) {
     const entry = JSON.parse(await readFile(path.join(box(memory), name), 'utf8')) as Entry;
-    if (entry.body.sessionId === runtime.info.sessionId) entries.push(entry);
+    if (JSON.parse(entry.body.payload[0]!.conversational.content.text).session === runtime.info.sessionId) entries.push(entry);
   }
   return entries;
 }
@@ -193,7 +193,8 @@ function syntheticEntry(memory: CloudMemory, session: string, turn: number, at =
   const body = need(uploadBody({ memoryId: base.memoryId, actorId: base.actorId, sessionId: session, eventTimestamp: at, clientToken: token, extractionConfig: { namespaceVariables: { projectid: memory.scope.projectId } } }, projection, settlement(session, turn, at)), 'synthetic body');
   if (legacy) {
     const metadata = JSON.parse(body.payload[0]!.conversational.content.text);
-    metadata.format = 'legacy'; body.payload[0]!.conversational.content.text = JSON.stringify(metadata);
+    metadata.format = 'legacy'; delete metadata.memorySession; body.sessionId = session;
+    body.payload[0]!.conversational.content.text = JSON.stringify(metadata);
   }
   return { version: 1, binding, token, body };
 }
@@ -201,7 +202,7 @@ async function seed(memory: CloudMemory, entry: Entry, options: { proof?: boolea
   await mkdir(box(memory), { recursive: true });
   // Synthetic capacity setup uses real closed files, not controller internals.
   await writeFile(stateFile(memory, entry.token, 'event'), JSON.stringify(entry));
-  if (options.proof) await writeFile(stateFile(memory, entry.token, 'auto'), JSON.stringify({ version: 1, hash: digest(entry), authorization: memory.config.authorization, session: entry.body.sessionId, turn: JSON.parse(entry.body.payload[0]!.conversational.content.text).turn }));
+  if (options.proof) await writeFile(stateFile(memory, entry.token, 'auto'), JSON.stringify({ version: 1, hash: digest(entry), authorization: memory.config.authorization, session: JSON.parse(entry.body.payload[0]!.conversational.content.text).session, turn: JSON.parse(entry.body.payload[0]!.conversational.content.text).turn }));
   if (options.accepted) await writeFile(stateFile(memory, entry.token, 'accepted'), JSON.stringify({ eventId: 'synthetic-stored-acceptance', at: entry.body.eventTimestamp, ...(options.accepted === 'auto' ? { auto: true } : {}) }));
   if (options.held) await writeFile(stateFile(memory, entry.token, 'auto-state'), JSON.stringify({ state: 'held', reason: 'synthetic prior sender failure; manual review required' }));
   // Receipt publication is synced and atomic even in saturation fixtures.
@@ -422,7 +423,8 @@ async function regressionF() {
   await seed(memory, held, { proof: true, held: true });
   await seed(memory, cleanup, { proof: true, receipt: 'discarded' });
   await seed(memory, stopped, { proof: true });
-  await writeState(path.join(box(memory), `${digest(stopped.body.sessionId)}.session-stop.json`), { session: stopped.body.sessionId });
+  const stoppedOrigin = JSON.parse(stopped.body.payload[0]!.conversational.content.text).session;
+  await writeState(path.join(box(memory), `${digest(stoppedOrigin)}.session-stop.json`), { session: stoppedOrigin });
   // Accepted receipts without the old .accepted sidecar must still be separate.
   const receiptOnly = syntheticEntry(memory, 'receipt-only', 1);
   await seed(memory, receiptOnly, { receipt: 'accepted' }); accepted.push(receiptOnly);

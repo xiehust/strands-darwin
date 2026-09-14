@@ -14,7 +14,7 @@ import type { AutoAuthorization } from './config.js';
 import { recordId, validateRecord, validateRecordScope, type RecordKind, type ValidatedRecord } from './records.js';
 import { cloudDirectory, readState, removeState, stateNames, withStateLock, writeState } from './state.js';
 import { publicProse } from './projection.js';
-import { MAX_EVENT_BYTES, UploadObserver, uploadBody, uploadQuality, type UploadTurn } from './upload-projection.js';
+import { MAX_EVENT_BYTES, MAX_NEW_EVENT_BYTES, memorySessionId, uploadSessionBudget, UploadObserver, uploadBody, uploadQuality, type UploadTurn } from './upload-projection.js';
 
 type UploadClose = { generation: number; signal: AbortSignal; completed?: boolean; settled?: { settlement: TurnSettlement; projection: UploadTurn } };
 
@@ -308,7 +308,13 @@ export class CloudMemory {
       const token = name.slice(0, -10);
       if (await this.receipt(token) || await readState(path.join(this.outbox(), `${token}.accepted.json`))) continue;
       const proof = autoProofSchema.parse(await readState(path.join(this.outbox(), name)));
-      if (proof.authorization.version === 2 && proof.authorization.project === projectIdentity(this.root) && proof.authorization.epoch === this.config.authorization?.epoch && !proof.reason && !await this.sessionStopped(proof.session)) proofs.push({ token, proof });
+      if (proof.authorization.version === 2 && proof.authorization.project === projectIdentity(this.root) && proof.authorization.epoch === this.config.authorization?.epoch && !proof.reason && !await this.sessionStopped(proof.session)) {
+        // Upgrade is prospective: old immutable bodies/proofs remain inspectable,
+        // but ordinary activity never retries their unbudgeted Memory sessions.
+        const entry = await this.pendingEntry(token);
+        if (!entry || this.unpartitioned(entry)) continue;
+        proofs.push({ token, proof });
+      }
     }
     proofs.sort((a, b) => a.proof.turn - b.proof.turn || a.proof.session.localeCompare(b.proof.session));
     const blocked = new Set<string>(); let sent = 0;
@@ -372,7 +378,9 @@ export class CloudMemory {
       const proof = autoProofSchema.parse(value);
       const state = await readState(path.join(this.outbox(), `${token}.auto-state.json`));
       const status = state === undefined ? undefined : z.object({ state: z.enum(['held', 'paused']), reason: z.string().max(240) }).strict().parse(state);
-      if (proof.reason || await this.sessionStopped(proof.session) || proof.authorization.version !== 2 || proof.authorization.project !== projectIdentity(this.root) || proof.authorization.epoch !== this.config.authorization?.epoch || status?.state === 'held') held++;
+      const entry = await this.pendingEntry(token);
+      if (!entry) continue;
+      if (proof.reason || this.unpartitioned(entry) || await this.sessionStopped(proof.session) || proof.authorization.version !== 2 || proof.authorization.project !== projectIdentity(this.root) || proof.authorization.epoch !== this.config.authorization?.epoch || status?.state === 'held') held++;
       else if (status?.state === 'paused') paused++;
       else queued++;
     }
@@ -398,12 +406,27 @@ export class CloudMemory {
       await this.cleanup(token, 'accepted', signal);
     }
   }
+  /** Cleanup publishes a terminal receipt before removing bodies. A concurrent
+   * user discard/accept must not abort an unrelated activity-earned drain. */
+  private async pendingEntry(token: string) {
+    try { return await this.entry(token); }
+    catch (error) {
+      if (await this.receipt(token) || await readState(path.join(this.outbox(), `${token}.accepted.json`))) return undefined;
+      throw error; // Missing/corrupt without terminal evidence still fails closed.
+    }
+  }
+  private unpartitioned(entry: z.infer<typeof outboxSchema>): boolean {
+    return JSON.parse(entry.body.payload[0]!.conversational.content.text).memorySession === undefined;
+  }
   private async entry(token: string) {
     hashSchema.parse(token);
     const entry = outboxSchema.parse(await readState(path.join(this.outbox(), `${token}.event.json`)));
     const body = entry.body;
     const projection = z.object({ session: z.string(), turn: z.number().int().positive(), closingSeq: z.number().int().nonnegative() }).passthrough().parse(JSON.parse(body.payload[0]!.conversational.content.text));
-    if (projection.session !== body.sessionId || digest([this.binding(), projection.session, projection.turn, projection.closingSeq]) !== token) throw new Error('Outbox source identity mismatch');
+    const partitioned = projection['memorySession'] !== undefined;
+    if (partitioned && (projection['format'] !== 'darwin-upload-v2' || digest(projection['memorySession']) !== digest(uploadSessionBudget()) || Buffer.byteLength(JSON.stringify(body)) > MAX_NEW_EVENT_BYTES)) throw new Error('Outbox Memory session budget mismatch');
+    const expectedSession = partitioned ? memorySessionId(token) : projection.session;
+    if (expectedSession !== body.sessionId || digest([this.binding(), projection.session, projection.turn, projection.closingSeq]) !== token) throw new Error('Outbox source identity mismatch');
     if (entry.binding !== this.binding() || entry.token !== token || body.clientToken !== token || body.memoryId !== this.config.memoryId || body.actorId !== this.config.actorId || body.extractionConfig.namespaceVariables.projectid !== this.scope.projectId || !/^[a-zA-Z0-9_-]{1,128}$/.test(body.sessionId)) throw new Error('Outbox scope mismatch');
     return entry;
   }
@@ -421,6 +444,7 @@ export class CloudMemory {
       if (previewHash !== expected || JSON.stringify(preview) !== JSON.stringify({ hash: expected })) throw new Error('Preview absent or stale; user must preview this token first');
     } else {
       const source = JSON.parse(entry.body.payload[0]!.conversational.content.text);
+      if (this.unpartitioned(entry)) throw new Error('Unpartitioned historical upload; manual preview/send required');
       if (source.format !== 'darwin-upload-v2' || previewHash.reason || previewHash.hash !== expected || source.session !== previewHash.session || source.turn !== previewHash.turn) throw new Error('Auto provenance invalid; held manual');
       await this.checkAutoAuthority(previewHash, signal);
     }
@@ -431,7 +455,11 @@ export class CloudMemory {
       const otherToken = name.slice(0, -'.event.json'.length);
       if (await this.receipt(otherToken)) continue;
       const other = await this.entry(otherToken); // A corrupt final entry needs manual repair; never guess its order.
-      if (other.body.sessionId === entry.body.sessionId && JSON.parse(other.body.payload[0]!.conversational.content.text).turn < JSON.parse(entry.body.payload[0]!.conversational.content.text).turn && !names.includes(`${other.token}.accepted.json`)) throw new Error(`Send earlier pending token first: ${other.token}`);
+      const source = JSON.parse(entry.body.payload[0]!.conversational.content.text);
+      const prior = JSON.parse(other.body.payload[0]!.conversational.content.text);
+      // Memory partitions must not bypass ordering in the logical Darwin session,
+      // including an earlier legacy unpartitioned event.
+      if (prior.session === source.session && prior.turn < source.turn && !names.includes(`${other.token}.accepted.json`)) throw new Error(`Send earlier pending token first: ${other.token}`);
     }
     const currentNames = await this.names();
     if (currentNames.includes(`${token}.accepted.json`)) return 'AWS event already accepted; episode generation not verified';
@@ -632,7 +660,7 @@ export class CloudMemory {
         const receipt = await this.receipt(token); const entry = await this.entry(token);
         const proof = await readState(path.join(this.outbox(), `${token}.auto.json`));
         const state = await readState(path.join(this.outbox(), `${token}.auto-state.json`));
-        const detail = proof === undefined ? 'manual' : await this.sessionStopped(autoProofSchema.parse(proof).session) ? 'origin session stopped; held manual' : autoProofSchema.parse(proof).reason ?? (state === undefined ? 'auto queued' : JSON.stringify(state));
+        const detail = proof === undefined ? 'manual' : this.unpartitioned(entry) ? 'unpartitioned historical upload; held manual' : await this.sessionStopped(autoProofSchema.parse(proof).session) ? 'origin session stopped; held manual' : autoProofSchema.parse(proof).reason ?? (state === undefined ? 'auto queued' : JSON.stringify(state));
         rows.push(`${token} ${detail} · ${names.includes(`${token}.accepted.json`) ? 'AWS event accepted (generation unknown)' : receipt ? `${receipt.disposition}; cleanup interrupted, repeat user cleanup` : 'pending; not uploaded'} · ${uploadQuality(entry.body.payload[0]!.conversational.content.text)}`);
       }
       const prefix = authority === 'read' ? 'darwin cloud-memory' : '/cloud-memory';

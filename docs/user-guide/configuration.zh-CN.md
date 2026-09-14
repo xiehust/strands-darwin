@@ -2,7 +2,7 @@
 
 [English](configuration.md) · **简体中文** · [指南首页](README.zh-CN.md)
 
-`agentCoreMemory` 是根级配置对象（或 `false`），默认关闭，与本地 `memory` 和模型供应商独立。字段、命名空间和 SDK 要求见[可选 AgentCore Memory](agentcore-memory.zh-CN.md)。上传默认关闭，用户可在 TUI 手动预览、发送，或输入 `/cloud-memory auto` 仅授权当前项目自动上传；独立 CLI 只读。`upload: "manual"` 要求启用 trajectory，只采集未来回合的有界原始工具文本，不按工具名、敏感词或路径过滤。每个配对操作不超过 8 KiB，序列化 CreateEvent 请求体不超过 256 KiB。内容可能含秘密，手动发送必须逐次预览，auto 则是项目级持续授权；两者都不是保密保证。已有不可变 outbox 不会重新生成。显式 `projectId` 必须小写且为 1–64 字符；偏好每个 runtime 只检索一次，后续重查本地撤销。
+`agentCoreMemory` 是根级配置对象（或 `false`），默认关闭，与本地 `memory` 和模型供应商独立。字段、命名空间和 SDK 要求见[可选 AgentCore Memory](agentcore-memory.zh-CN.md)。上传默认关闭，用户可在 TUI 手动预览、发送，或输入 `/cloud-memory auto` 仅授权当前项目自动上传；独立 CLI 只读。`upload: "manual"` 要求启用 trajectory，只采集未来回合的有界原始工具文本，不按工具名、敏感词或路径过滤。每个配对操作不超过 8 KiB，新序列化 CreateEvent 请求体不超过 96 KiB，每个事件独占一个确定性的 Memory session 分片；这是字节预算而非 token 保证。历史请求体仍按 256 KiB 上限读取与发送，但需明确手动预览、发送，不再自动重试。内容可能含秘密，手动发送必须逐次预览，auto 则是项目级持续授权；两者都不是保密保证。已有不可变 outbox 不会重新生成。显式 `projectId` 必须小写且为 1–64 字符；偏好每个 runtime 只检索一次，后续重查本地撤销。
 
 
 ## 文件形式与优先级

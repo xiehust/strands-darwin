@@ -24,6 +24,7 @@ import { digest, parseAgentCoreConfig, scopeFor, type AgentCoreConfig } from '..
 import { parseMemoryXml, validateRecord } from '../src/agentcore/records.js';
 import { cloudDirectory, readState, setCloudStateObserverForTest, stateNames, withStateLock, writeState } from '../src/agentcore/state.js';
 import { publicProse } from '../src/agentcore/projection.js';
+import { MAX_NEW_EVENT_BYTES, memorySessionId } from '../src/agentcore/upload-projection.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { configPath, loadConfig, permissionRulesPath } from '../src/config.js';
 import { classify } from '../src/agent/permission.js';
@@ -124,7 +125,7 @@ assert('preview retains failure, command, exit evidence and original logs, exclu
 await control({});
 assert('manual upload acknowledges event not episode', (await uploader.command(`send ${token} ${previewHash}`)).includes('generation is asynchronous and NOT verified'));
 const createCall = (await calls()).at(-1);
-assert('CreateEvent scope, projectid and token fixed', createCall.input.actorId === config.actorId && createCall.input.sessionId === 'session-upload' && createCall.input.clientToken === token && createCall.input.extractionConfig.namespaceVariables.projectid === scope.projectId);
+assert('CreateEvent scope, projectid and token fixed', createCall.input.actorId === config.actorId && createCall.input.sessionId === memorySessionId(token) && createCall.input.clientToken === token && createCall.input.extractionConfig.namespaceVariables.projectid === scope.projectId);
 const restarted = new CloudMemory(config, root, 'different-session'); const count = (await calls()).length;
 assert('restart does not duplicate accepted upload', (await restarted.command(`send ${token} ${previewHash}`)).includes('already accepted') && (await calls()).length === count);
 const otherActor = new CloudMemory({ ...config, actorId: 'different' }, root, 'session');
@@ -146,7 +147,7 @@ large.settle({ durable: true, session: 'large-session', turn: 1, seq: 999, at: '
 const largeToken = pendingTokens(await large.command('pending'))[0]!;
 const largeRead = await large.command(`preview ${largeToken}`, 'read');
 const largeBody = JSON.parse(largeRead.split('\nRead-only preview:')[0]!);
-assert('new CreateEvent body exceeds old 64KiB state cap but fits 256KiB escaped request', Buffer.byteLength(JSON.stringify(largeBody)) > 65536 && Buffer.byteLength(JSON.stringify(largeBody)) <= 262144);
+assert('new CreateEvent body exceeds old 64KiB state cap but fits 96KiB partition budget', Buffer.byteLength(JSON.stringify(largeBody)) > 65536 && Buffer.byteLength(JSON.stringify(largeBody)) <= MAX_NEW_EVENT_BYTES);
 const largeDir = path.join(cloudDirectory(largeConfig, root), digest([largeConfig.region, largeConfig.memoryId, largeConfig.actorId, 'large-upload', largeConfig.episodicStrategyId, largeConfig.preferenceStrategyId]));
 const largeFile = path.join(largeDir, `${largeToken}.event.json`); const largeBytes = await readFile(largeFile);
 await mkdir(path.dirname(configPath(root)), { recursive: true });

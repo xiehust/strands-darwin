@@ -111,6 +111,7 @@ const suites = [
   'verify-memory-tools.ts',
   'verify-agentcore-memory.ts',
   'verify-agentcore-upload.ts',
+  'verify-cloud-memory-partitions.ts',
   'verify-cloud-memory-auto.ts',
   'verify-cloud-memory-acceptance.ts',
   'verify-cloud-memory-integrity.ts',

@@ -1,5 +1,31 @@
 # AgentCore upload projection redesign — acceptance checklist
 
+## Prospective session budget (2026-09-14)
+
+The historical acceptance below used 256 KiB new requests. New projections now cap the
+serialized request at 96 KiB and dedicate one deterministic Memory session to each existing
+upload token (`darwin-part-<token>`). Original Darwin session/turn/closingSeq and project
+namespace remain unchanged. This is a conservative byte budget, **not** a tokenizer or a
+promise against AWS's 50,000/session TPM or 150,000/account TPM extraction limits.
+
+`verify-cloud-memory-partitions.ts` exercises aggregate unique-event bytes, same-turn/different
+sequence identities, branch identities, escaped goals, exact restart retries/receipts,
+legacy >96 KiB preview/send without migration, mixed legacy/new ordering, and fail-closed
+partition/budget validation through real files and signed loopback SDK requests. Upload
+fixtures still check raw failed/recovery/final evidence, Unicode ranges and omissions;
+auto fixtures cover historical candidates held manual without proof/body rewrites.
+No real cloud extraction job is retried, and live extraction quality/rate behavior is unverified.
+
+Final source-stable verification: `pnpm typecheck` passed; `pnpm test` exited 0 with
+8,660 PASS lines and zero FAIL (`/tmp/darwin-partitions-full-final.log`). Focused suites:
+32 partition checks, 120 upload checks, 263 AgentCore checks and 108 auto checks, all passing.
+The auto suite includes concurrent user discard during partition inspection in both drain
+and status paths. A separate read-only review found no remaining blockers after this race fix.
+Earlier runs caught fixture type inference, JSON property-order assumptions, a missing loopback
+ACK field and stale Darwin/Memory identity selectors; those were corrected before the final gate.
+An earlier full run was stopped for the race correction; only the final uninterrupted run is
+claimed green. `git diff --check` clean; AGENTS.md remains under its 32 KiB preload cap.
+
 Implementation fixtures use isolated HOME, public SDK events/runtime and signed loopback HTTP. No cloud calls, configuration migration or archive backfill. Host acceptance additionally performed the user-requested read-only inspection/hash check of existing private outbox entries; no entry or authorization was modified.
 
 ## Final independent Host acceptance (2026-09-11)
