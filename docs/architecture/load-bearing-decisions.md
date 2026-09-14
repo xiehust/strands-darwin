@@ -1198,6 +1198,18 @@ the Ink frame. The header states it on the model line, never a line of its own: 
 shares the live frame with the permission box, and one extra line pushes the box off a 50-row
 terminal (`spike/verify-tui.ts approve` catches it).
 
+**One TTL on every checkpoint, including the ones the SDK places by itself.** The Bedrock
+`cacheConfig` carries the shared `ttl` and all three section TTLs (`toolsTTL`,
+`systemPromptTTL`, `messagesTTL`) at the same value. The per-section values alone were not
+enough: the main agent's system prompt carries darwin's own hand-placed `1h` point, but any
+request the SDK builds with a *string* system prompt — the summarizer behind `/compact`, recipe
+children — gets an SDK auto-injected system cache point whose TTL is filled from
+`systemPromptTTL`/`ttl`. Without them it stayed at Bedrock's `5m` default between a `1h` tools
+point and a `1h` messages point, and Bedrock rejected the request (`a ttl='1h' cache_control
+block must not come after a ttl='5m' cache_control block`), which surfaced as `/compact`
+failing with "the summarizer made no reduction". `spike/verify-prompt-cache.ts` formats that
+exact summarizer-shaped request through `BedrockModel` and asserts the three checkpoints agree.
+
 **A cache miss gets a likely cause, never a remedy** (SER-074, `src/agent/cache-miss.ts`,
 `AgentRuntime.cacheMissReport()` / `cacheWarmth()`). `/usage` and `/status` always showed cache
 read/write counts and a hit ratio; nothing said *why* a call re-read the conversation uncached,

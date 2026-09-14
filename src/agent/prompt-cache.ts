@@ -139,8 +139,21 @@ export function bedrockCacheConfig(plan: PromptCachePlan): BedrockCacheConfig | 
   return {
     strategy: 'auto',
     // One TTL everywhere: Bedrock requires TTLs to be non-increasing across
-    // tools → system → messages, and equal values satisfy that trivially.
-    ...(plan.ttl !== undefined && { toolsTTL: plan.ttl, messagesTTL: plan.ttl }),
+    // tools → system → messages, and equal values satisfy that trivially. The
+    // shared `ttl` matters as much as the per-section values: whenever a request
+    // carries a *string* system prompt — the SDK summarizer behind `/compact`,
+    // recipe children — the SDK auto-injects a system cache point of its own and
+    // fills its TTL from `systemPromptTTL`/`ttl`. Without these, that point stays
+    // at Bedrock's `5m` default between a `1h` tools point and a `1h` messages
+    // point, and Bedrock rejects the request (`a ttl='1h' cache_control block
+    // must not come after a ttl='5m' cache_control block`). Darwin's hand-placed
+    // system point already carries the TTL, so it is left as written.
+    ...(plan.ttl !== undefined && {
+      ttl: plan.ttl,
+      toolsTTL: plan.ttl,
+      systemPromptTTL: plan.ttl,
+      messagesTTL: plan.ttl,
+    }),
   };
 }
 

@@ -12,7 +12,8 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { CachePointBlock, TextBlock } from '@strands-agents/sdk';
+import { CachePointBlock, Message, TextBlock, ToolResultBlock, ToolUseBlock } from '@strands-agents/sdk';
+import { BedrockModel } from '@strands-agents/sdk/models/bedrock';
 
 import {
   anthropicCacheConfig,
@@ -157,6 +158,56 @@ function modelConfig(): void {
   );
 }
 
+/**
+ * The request shape darwin never builds itself but the SDK does on its behalf: a
+ * *string* system prompt (the summarizer behind `/compact`, recipe children) over
+ * a history that mentions tools. The SDK auto-injects a system cache point there
+ * and fills its TTL from `cacheConfig`; if the config carried only the tools and
+ * messages TTLs, that point stayed at Bedrock's `5m` default between two `1h`
+ * points and Bedrock rejected the whole request (`a ttl='1h' cache_control block
+ * must not come after a ttl='5m' cache_control block`) — which is how `/compact`
+ * failed in the field. No network: only the SDK's request formatter runs.
+ */
+function summarizerRequest(): void {
+  header('prompt cache — the SDK-built summarizer request keeps one TTL across all checkpoints');
+
+  const history = [
+    new Message({ role: 'user', content: [new TextBlock('hi')] }),
+    new Message({ role: 'assistant', content: [new ToolUseBlock({ toolUseId: 't1', name: 'bash', input: {} })] }),
+    new Message({
+      role: 'user',
+      content: [new ToolResultBlock({ toolUseId: 't1', status: 'success', content: [new TextBlock('ok')] })],
+    }),
+    new Message({ role: 'user', content: [new TextBlock('Please summarize this conversation.')] }),
+  ];
+
+  type Point = { cachePoint?: { type: string; ttl?: string } };
+  const ttlsOf = (blocks: Point[] | undefined): (string | undefined)[] =>
+    (blocks ?? []).filter((block) => block.cachePoint !== undefined).map((block) => block.cachePoint?.ttl);
+
+  for (const ttl of ['1h', '5m'] as const) {
+    const cacheConfig = bedrockCacheConfig(planPromptCache({ ...CLAUDE_CONFIG, promptCacheTtl: ttl }));
+    assert(`[${ttl}] claude gets a cacheConfig to hand the model`, cacheConfig !== undefined);
+    const model = new BedrockModel({
+      region: 'us-west-2',
+      modelId: CLAUDE_CONFIG.model,
+      ...(cacheConfig !== undefined && { cacheConfig }),
+    });
+    // Private, but it is the exact formatter both `stream()` paths call; reaching it
+    // is what keeps this suite free of a model call.
+    const request = (model as unknown as { _formatRequest: (m: Message[], o: object) => Record<string, unknown> })
+      ._formatRequest(history, { systemPrompt: 'You are a conversation summarizer.' });
+    const tools = ttlsOf((request.toolConfig as { tools?: Point[] } | undefined)?.tools);
+    const system = ttlsOf(request.system as Point[] | undefined);
+    const messages = ttlsOf((request.messages as { content: Point[] }[]).at(-1)?.content);
+
+    assert(`[${ttl}] the SDK placed one checkpoint per section`, tools.length === 1 && system.length === 1 && messages.length === 1);
+    assert(`[${ttl}] the tools checkpoint carries the configured TTL`, tools[0] === ttl);
+    assert(`[${ttl}] the auto-injected system checkpoint carries the same TTL (was the 5m default)`, system[0] === ttl);
+    assert(`[${ttl}] the messages checkpoint carries the same TTL`, messages[0] === ttl);
+  }
+}
+
 function systemPromptCachePoint(): void {
   header('prompt cache — the system prompt cache point');
 
@@ -217,6 +268,7 @@ async function main(): Promise<void> {
   await configSurface();
   decisionTable();
   modelConfig();
+  summarizerRequest();
   systemPromptCachePoint();
   report();
 }
