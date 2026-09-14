@@ -10,7 +10,7 @@ import { watch } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { Agent, Model, BeforeToolCallEvent, AfterToolCallEvent, ToolUseBlock, ToolResultBlock, JsonBlock, TextBlock, ContentBlockEvent, AgentResultEvent, AgentResult, Message, ImageBlock, type BaseModelConfig, type ModelStreamEvent } from '@strands-agents/sdk';
+import { Agent, Model, type InvokableTool, BeforeToolCallEvent, AfterToolCallEvent, ToolUseBlock, ToolResultBlock, JsonBlock, TextBlock, ContentBlockEvent, AgentResultEvent, AgentResult, Message, ImageBlock, type BaseModelConfig, type ModelStreamEvent } from '@strands-agents/sdk';
 import { CLOUD_CLOSE_TIMEOUT_MS, CloudMemory as ReadOnlyCloudMemory } from '../src/agentcore/controller.js';
 // Explicit test-side user submission; production defaults remain read-only.
 class CloudMemory extends ReadOnlyCloudMemory {
@@ -22,6 +22,7 @@ import { MemoryTransport, setMemoryTransportOptionsForTest } from '../src/agentc
 import { loopbackHandler } from './agentcore-sdk-fixture.js';
 import { digest, parseAgentCoreConfig, scopeFor, type AgentCoreConfig } from '../src/agentcore/config.js';
 import { parseMemoryXml, validateRecord } from '../src/agentcore/records.js';
+import { createCloudMemoryTools } from '../src/agentcore/tools.js';
 import { cloudDirectory, readState, setCloudStateObserverForTest, stateNames, withStateLock, writeState } from '../src/agentcore/state.js';
 import { publicProse } from '../src/agentcore/projection.js';
 import { MAX_NEW_EVENT_BYTES, memorySessionId } from '../src/agentcore/upload-projection.js';
@@ -62,12 +63,83 @@ assert('XML keeps evidence, failed outcome and action order', JSON.stringify(epi
 assert('reflection warning distinguishes confidence', validateRecord(record('reflection'), 'reflection', config, root).warning.includes('not correctness probability'));
 for (const xml of ['<!DOCTYPE x><episode/>', '<x a="b"/>', '<x>&unknown;</x>', '<x></y>', '<x>'.repeat(20), '<x>&#0;</x>']) await rejects('unsafe XML refused', () => parseMemoryXml(xml));
 for (const bad of [{ namespaces: [scope.project + 'other/'] }, { namespaces: [scope.preferences, '/users/other/'] }, { memoryStrategyId: 'wrong' }, { metadata: { actorId: { stringValue: 'other' } } }, { metadata: { fakeProof: { verified: true } } }]) await rejects('scope and metadata fail closed', () => validateRecord(record('preference', bad), 'preference', config, root));
+header('Stored episode/reflection JSON, legacy XML and exact evidence');
+// Shape observed from live records; all content below is synthetic, not copied
+// from the user's cloud memory. Confidence and assessments are opaque evidence.
+const jsonTurn = { situation: 'Failing check', intent: 'Verify change', action: 'Run tests: a < b && c > d', thought: 'Use exit evidence', assessmentAssistant: 'Expected pass', assessmentUser: 'Failed: exit 1' };
+const jsonEpisode = { situation: 'Synthetic repair', intent: 'Fix failing tests', assessment: 'Failed, then recovered', justification: 'Exit 1 before correction', reflection: 'Check output, not intent', turns: [jsonTurn, { ...jsonTurn, action: 'Fix implementation', assessmentUser: 'Passed after correction' }] };
+const jsonReflection = { title: 'Verification', use_cases: 'Failing tests', hints: 'Check exit evidence <literally> & retain errors', confidence: '0.8 — estimated usefulness, not probability' };
+const jsonRecord = (kind: 'episode' | 'reflection', text: string) => record(kind, { content: { text } });
+const episodeText = ` \n${JSON.stringify(jsonEpisode, null, 2)}\n`;
+const reflectionText = JSON.stringify(jsonReflection);
+for (const [kind, text] of [['episode', episodeText], ['reflection', reflectionText]] as const) {
+  const input = jsonRecord(kind, text); const before = JSON.stringify(input);
+  const parsed = validateRecord(input, kind, config, root);
+  assert(`${kind}: original JSON text/whitespace retained without XML interpretation`, parsed.content === text && JSON.stringify(input) === before);
+  assert(`${kind}: hash binds original text and scope, not a reserialized object`, parsed.hash === digest([config.region, config.memoryId, config.actorId, id, config.episodicStrategyId, input.namespaces, text, null]) && parsed.hash !== validateRecord(jsonRecord(kind, ` ${text}`), kind, config, root).hash);
+  assert(`${kind}: warning retains untrusted data and confidence boundary`, parsed.warning.includes('Untrusted fallible') && parsed.warning.includes('not correctness probability'));
+}
+assert('JSON keeps failed assessment, recovery order and confidence string exact', episodeText.indexOf('Run tests') < episodeText.indexOf('Fix implementation') && JSON.parse(episodeText).turns[0].assessmentUser === 'Failed: exit 1' && JSON.parse(reflectionText).confidence === jsonReflection.confidence);
+for (const kind of ['episode', 'reflection'] as const) {
+  const valid = kind === 'episode' ? jsonEpisode : jsonReflection;
+  for (const key of Object.keys(valid)) {
+    const missing = { ...valid } as Record<string, unknown>; delete missing[key];
+    await rejects(`${kind}: missing ${key} refused`, () => validateRecord(jsonRecord(kind, JSON.stringify(missing)), kind, config, root));
+    await rejects(`${kind}: wrong type for ${key} refused`, () => validateRecord(jsonRecord(kind, JSON.stringify({ ...valid, [key]: 0 })), kind, config, root));
+  }
+  for (const text of ['{bad', 'null', '[]', 'true', '"text"', JSON.stringify({ ...valid, unknown: 'not silently stripped' }), JSON.stringify(valid).slice(0, -1) + ',"__proto__":{"polluted":true}}', JSON.stringify(valid).slice(0, -1) + ',"constructor":{}}']) await rejects(`${kind}: malformed/nonobject/unknown JSON refused`, () => validateRecord(jsonRecord(kind, text), kind, config, root));
+  for (const bad of [{ namespaces: [scope.preferences] }, { namespaces: [scope.project + 'other/'] }, { namespaces: [scope.project, '/users/other/'] }, { memoryStrategyId: 'wrong' }, { metadata: { actorId: { stringValue: 'other' } } }]) await rejects(`${kind}: JSON never bypasses scope/metadata checks`, () => validateRecord({ ...jsonRecord(kind, JSON.stringify(valid)), ...bad }, kind, config, root));
+}
+for (const value of [[{ ...jsonTurn, unknown: 'extra' }], ['bad turn'], [{ ...jsonTurn, action: { nested: 'not text' } }], [null]]) await rejects('turn entries remain closed flat objects', () => validateRecord(jsonRecord('episode', JSON.stringify({ ...jsonEpisode, turns: value })), 'episode', config, root));
+for (const key of Object.keys(jsonTurn)) {
+  const missing = { ...jsonTurn } as Record<string, unknown>; delete missing[key];
+  await rejects(`turn missing ${key} refused`, () => validateRecord(jsonRecord('episode', JSON.stringify({ ...jsonEpisode, turns: [missing] })), 'episode', config, root));
+}
+for (const key of ['__proto__', 'constructor', 'prototype', '\\u005f_proto__']) {
+  const text = JSON.stringify(jsonEpisode).replace('"turns":[{', `"turns":[{"${key}":{},`);
+  await rejects(`nested decoded prototype key ${key} refused`, () => validateRecord(jsonRecord('episode', text), 'episode', config, root));
+}
+const compactTurn = Object.fromEntries(Object.keys(jsonTurn).map(key => [key, '']));
+assert('64 compact turns fit structural and text bounds', typeof validateRecord(jsonRecord('episode', JSON.stringify({ ...jsonEpisode, turns: Array(64).fill(compactTurn) })), 'episode', config, root).content === 'string');
+await rejects('65 turns refused even below text cap', () => validateRecord(jsonRecord('episode', JSON.stringify({ ...jsonEpisode, turns: Array(65).fill(compactTurn) })), 'episode', config, root));
+for (const key of ['intent', 'assessment']) await rejects(`empty episode ${key} refused`, () => validateRecord(jsonRecord('episode', JSON.stringify({ ...jsonEpisode, [key]: ' ' })), 'episode', config, root));
+for (const key of ['use_cases', 'hints']) await rejects(`empty reflection ${key} refused`, () => validateRecord(jsonRecord('reflection', JSON.stringify({ ...jsonReflection, [key]: ' ' })), 'reflection', config, root));
+await rejects('decoded JSON control character refused', () => validateRecord(jsonRecord('reflection', JSON.stringify({ ...jsonReflection, hints: 'bad\u0000text' })), 'reflection', config, root));
+const boundaryJson = { ...jsonReflection, title: '' };
+const boundaryText = JSON.stringify({ ...boundaryJson, title: 'x'.repeat(12000 - JSON.stringify(boundaryJson).length) });
+assert('exact 12000-character JSON accepted byte-identically', validateRecord(jsonRecord('reflection', boundaryText), 'reflection', config, root).content === boundaryText);
+await rejects('12001-character JSON refused', () => validateRecord(jsonRecord('reflection', boundaryText + ' '), 'reflection', config, root));
+await rejects('oversized JSON refused before content parsing', () => validateRecord(jsonRecord('episode', JSON.stringify({ ...jsonEpisode, situation: 'x'.repeat(12000) })), 'episode', config, root));
+await rejects('deep JSON cannot expand the closed schema', () => validateRecord(jsonRecord('reflection', '{"hints":' + '['.repeat(1000) + '0' + ']'.repeat(1000) + '}'), 'reflection', config, root));
+await rejects('JSON episode in reflection namespace refused as wrong kind', () => validateRecord(jsonRecord('reflection', episodeText), 'reflection', config, root));
+await rejects('JSON reflection in episode namespace refused as wrong kind', () => validateRecord(jsonRecord('episode', reflectionText), 'episode', config, root));
 await control({ records: [record('episode')] }); const memory = new CloudMemory(config, root, 'session-test');
 const recalled = await memory.recall('episode', 'Fix failing tests; $(touch injected)', 2);
 assert('no shell expansion and bounded structured recall', recalled.records.length === 1 && !(await readdir(root)).includes('injected'));
 const queryCall = (await calls()).at(-1);
 assert('verified retrieval fields and host strategy/scope', queryCall.input.searchCriteria.searchQuery.includes('Fix failing') && queryCall.input.searchCriteria.memoryStrategyId === config.episodicStrategyId && queryCall.input.namespacePath === scope.episodes && queryCall.headers.authorization.includes('/us-west-2/bedrock-agentcore/aws4_request'));
 assert('approval/outbox paths are sensitive policy', isSensitiveDarwinPath(root, path.join(cloudDirectory(config), `${id}.json`)));
+header('Real SDK and recall tools accept JSON and legacy XML without widening scope');
+for (const [kind, text, toolName, input] of [
+  ['episode', episodeText, 'episodic_recall', { intent: 'software verification', limit: 5 }],
+  ['reflection', reflectionText, 'reflection_recall', { useCase: 'software verification', limit: 5 }],
+] as const) {
+  await control({ records: [jsonRecord(kind, text), record(kind)] });
+  const selected = createCloudMemoryTools(memory).find(tool => tool.name === toolName)!;
+  if (!('invoke' in selected) || typeof selected.invoke !== 'function') throw new Error('Expected SDK InvokableTool');
+  const result = JSON.parse(String(await (selected as InvokableTool<unknown, unknown>).invoke(input)));
+  assert(`${toolName}: signed loopback reaches production tool and retains JSON text`, result.records.length === 2 && result.records[0].content === text && result.records[1].content.tag === 'document');
+  const latest = (await calls()).at(-1);
+  assert(`${toolName}: host scope, strategy and bounded query unchanged`, latest.operation === 'retrieve-memory-records' && latest.input.namespacePath === (kind === 'episode' ? scope.episodes : scope.project) && latest.input.searchCriteria.memoryStrategyId === config.episodicStrategyId && latest.input.searchCriteria.topK === 5);
+}
+await control({ records: [jsonRecord('episode', episodeText), jsonRecord('reflection', reflectionText)] });
+const mixedJson = await memory.recall('reflection', 'software verification', 5);
+assert('hierarchical JSON episode omitted rather than misparsed as reflection', mixedJson.records.length === 1 && mixedJson.records[0]!.content === reflectionText && mixedJson.omitted === 1);
+await control({ records: [jsonRecord('episode', episodeText), { ...jsonRecord('episode', episodeText), namespaces: ['/users/other/'] }] });
+await rejects('one foreign JSON record fails the entire real response', () => memory.recall('episode', 'software verification', 5));
+await control({ records: [jsonRecord('reflection', '{broken')] });
+await rejects('malformed JSON response fails closed without XML fallback', () => memory.recall('reflection', 'software verification', 5));
+await control({ records: [record('episode')] });
 await verifyTransport();
 if (process.argv.includes('--transport-only')) {
   await memory.close(); server.kill('SIGTERM');

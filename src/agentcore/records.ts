@@ -48,6 +48,36 @@ export function parseMemoryXml(text: string): XmlNode {
   return root;
 }
 function tags(node: XmlNode): string[] { return [node.tag, ...node.children.flatMap((child) => typeof child === 'string' ? [] : tags(child))]; }
+// Stored built-in episodes/reflections are JSON, even though the extraction
+// prompt uses XML. Closed shapes bound nesting to three levels and <=455 values;
+// no arbitrary nested data, coercion, stripping unknown fields or text rewriting.
+const memoryText = z.string().max(12000).refine(text => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text));
+const nonemptyMemoryText = memoryText.refine(text => text.trim().length > 0);
+const episodeJson = z.object({
+  situation: memoryText, intent: nonemptyMemoryText, assessment: nonemptyMemoryText,
+  justification: memoryText, reflection: memoryText,
+  turns: z.array(z.object({
+    situation: memoryText, intent: memoryText, action: memoryText, thought: memoryText,
+    assessmentAssistant: memoryText, assessmentUser: memoryText,
+  }).strict()).max(64),
+}).strict();
+const reflectionJson = z.object({
+  title: memoryText, use_cases: nonemptyMemoryText, hints: nonemptyMemoryText, confidence: memoryText,
+}).strict();
+function parseEpisodicContent(text: string, kind: 'episode' | 'reflection'): string | XmlNode {
+  if (text.trimStart().startsWith('<')) return parseMemoryXml(text);
+  let value: unknown;
+  try {
+    value = JSON.parse(text, (key, value: unknown) => {
+      // Zod's strict-object check ignores __proto__; reject decoded prototype
+      // keys explicitly, including escaped names and keys inside turn objects.
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') throw new Error('Prototype key');
+      return value;
+    });
+  } catch { throw new Error('Invalid memory JSON'); }
+  if (!(kind === 'episode' ? episodeJson : reflectionJson).safeParse(value).success) throw new Error(`Invalid ${kind} memory JSON structure`);
+  return text; // Original JSON bytes bind the hash and preserve evidence/order.
+}
 const preferenceObject = z.object({
   language: z.string().min(1).max(100).optional(), context: z.string().max(1000),
   preference: z.string().min(1).max(1000), categories: z.array(z.string().max(100)).max(16),
@@ -78,7 +108,7 @@ export function validateRecord(raw: unknown, kind: RecordKind, config: AgentCore
   const record = validateRecordScope(raw, kind, config, root); const scope = scopeFor(config, root);
   const strategy = kind === 'preference' ? config.preferenceStrategyId : config.episodicStrategyId;
   if (kind !== 'preference' && !record.namespaces.every(ns => kind === 'reflection' ? ns === scope.project : ns.startsWith(scope.episodes))) throw new Error('Memory kind namespace mismatch');
-  const content = kind === 'preference' ? parsePreference(record.content.text) : parseMemoryXml(record.content.text);
+  const content = kind === 'preference' ? parsePreference(record.content.text) : parseEpisodicContent(record.content.text, kind);
   if (typeof content !== 'string') {
     const names = tags(content);
     if (kind === 'episode' && (!names.includes('intent') && !names.includes('user_intent') || !names.includes('assessment') && !names.includes('assessment_user'))) throw new Error('Not an episode');

@@ -1,5 +1,38 @@
 # AgentCore Memory requirement-to-test checklist
 
+## Stored JSON recall compatibility (2026-09-14)
+
+A real read found 19 in-scope records (11 episodes, 8 reflections), all with JSON in
+`content.text`. The old non-preference path treated every record as XML and rejected all
+19. Extraction-prompt XML is not the stored record format. No cloud write, job retry,
+configuration change or preference adoption is needed for this correction.
+
+`records.ts` now validates the observed strict episode/reflection JSON shapes and returns
+original text. Scope and the 12,000-character cap precede decoding; at most 64 flat turns,
+no unknown keys, coercion, unsafe decoded controls or arbitrary nesting. Legacy XML kind
+checks, preference parsing, content hashes and transport validation stay unchanged.
+`verify-agentcore-memory.ts` uses synthetic fixtures matching the observed field names,
+not copied private content. Checks include exact bytes/order, failure and confidence text,
+wrong-kind/scope/type/size/shape refusal, mixed XML/JSON and both real recall tools over
+signed loopback SDK requests.
+
+Live read-only source verification against the existing configured resource: **19/19**
+records passed (11 episodes, 8 reflections), all 19 retaining their original text exactly.
+Calling the actual tool callbacks with `software verification` returned 5 episodes and
+2 reflections; the reflection query explicitly omitted 3 in-scope episode hits rather than
+broadening its scope. Only record listing/retrieval occurred; no content was copied into
+fixtures or printed, and no event, extraction job, config or approval was changed.
+Final source-stable gates: `pnpm typecheck` passed; focused AgentCore suite **350 passed,
+0 failed** (`/tmp/darwin-memory-json-focused-fixed.log`); uninterrupted `pnpm test` exited 0
+with **8,747 PASS lines, zero FAIL** (`/tmp/darwin-memory-json-full.log`). Independent
+read-only review found no remaining blockers. Post-commit build/live checks are reported
+in the delivery summary. Initial test verification caught a reused fixture variable and
+an overly specific SDK class check (`tool()` with Zod returns ZodTool, not FunctionTool);
+the fixture uses the public InvokableTool contract without changing production APIs.
+Adversarial tests also caught Zod strict objects accepting `__proto__`; JSON decoding now
+explicitly rejects decoded prototype keys at any level, including escaped names.
+
+
 The checklist was derived before implementation; this table records its verification locations.
 
 The sections below are historical SDK-migration results. The later upload-v2 redesign

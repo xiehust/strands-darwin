@@ -842,8 +842,18 @@ identity inference. Only parent `episodic_recall(intent,limit)` and
 `reflection_recall(useCase,limit)` are ordinary network tools, fail-closed execute like
 `http_request`; the child catalogue excludes both, and no SDK loop or trajectory schema
 changes. Tool parameters cannot set scopes. Every returned namespace and strategy is
-validated; XML is a bounded dependency-free ordered tree with no DTD/attributes/entity
-expansion. Reflection confidence is usefulness, not correctness probability.
+validated before content decoding. Stored episode/reflection JSON uses strict flat schemas:
+episode strings `situation`, `intent`, `assessment`, `justification`, `reflection`, plus ≤64
+ordered `turns` with string `situation`, `intent`, `action`, `thought`, `assessmentAssistant`,
+`assessmentUser`; reflection strings `title`, `use_cases`, `hints`, `confidence`. Required
+intent/assessment and use_cases/hints must be nonblank; unknown keys, wrong types, decoded
+unsafe controls and malformed JSON fail closed. The existing 12,000-character cap precedes
+parsing; accepted shapes have at most three nested levels and 455 values. JSON content is
+returned as the exact original text, never reserialized/coerced or converted to XML; hashes
+still bind original bytes. A leading `<` uses the unchanged bounded XML ordered-tree parser
+(no DTD/attributes/entity expansion), with the original kind checks. No JSON-to-XML error
+fallback or scope weakening. Preference parsing/adoption is unchanged. Reflection confidence
+is preserved as evidence of usefulness, never converted to correctness probability.
 
 User preferences are host-retrieved once per runtime before the first model request.
 Later sends/compaction only reread local approval/revocation; explicit preferences/inspect
