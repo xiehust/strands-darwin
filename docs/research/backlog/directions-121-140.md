@@ -106,7 +106,7 @@ Requirement: `src/agents/loader.ts` accepts one optional boolean frontmatter key
 
 ## SER-094 — Environment marker in spawned processes: every process darwin spawns (model `bash` foreground/background, `!` commands, native and Codex hook commands, stdio MCP servers) receives `DARWIN=1` through the existing env seams; never overrides a user-set `DARWIN`; documented in one sentence
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 126
 - Score: 10
 - Importance: 2
@@ -118,7 +118,9 @@ Requirement: `src/agents/loader.ts` accepts one optional boolean frontmatter key
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted `1625bec` (`feat(shell-env): mark every spawned process with DARWIN=1`), fresh child `session-20260915-164853870`, task `bg-baefa03b-c33c-4a5b-988e-934834f9fc68` exit 0, drained. `src/tools/shell-env.ts` `withDarwinMarker(env)` (+ `DARWIN_MARKER_NAME`/`_VALUE`): copies defined values and adds `DARWIN=1` only when absent — a preset value survives byte-identical; applied to the scrubbed env for the foreground shell and background jobs (parent and child bash, `runtime.ts`), `!` (`shell-command.ts`), native tool hooks (`tool-hooks.ts`), lifecycle hooks (`lifecycle-hooks.ts`), Codex-dialect hooks (`hook-process.ts`), and stdio MCP servers via `withStdioDarwinMarker` composed with `withDefaultPrefixes` in `loadMcpClients` (stdio detected as the SDK does; http/sse byte-identical; config `env.DARWIN` wins). SDK finding recorded: the stdio transport spawns with `{ ...getDefaultEnvironment(), ...env }` — a fixed whitelist, never `process.env` — so the config `env` is the only path into a server. Scrub, `ALWAYS_SURVIVE_NAMES`, passthrough, `shell-env:` notice and `/status` row unchanged. Host read the seven-file source diff, ran the built helper directly (`{PATH,DARWIN:"1"}` / preset `custom` preserved) and `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short` (task `bg-18a16932-7e63-4560-8e9a-bd95fd70112a`, exit 0, 9,014 PASS lines, 0 FAIL; log `/tmp/darwin-ser094-host-acceptance.log`). Six suites extended: `verify-shell-env.ts` (helper contracts + real offline `AgentRuntime` foreground/background `echo "[$DARWIN]"` → `[1]`), `verify-shell-command.ts`, `verify-tool-hooks.ts`, `verify-lifecycle-hooks.ts`, `verify-codex-hooks.ts`, `verify-mcp-config.ts` (real `sh -c` stdio server observes `1`; config `env.DARWIN` wins). Docs: README EN/zh-CN one sentence, `reference.md` EN/zh-CN `!command` row, one paragraph under the SER-082 shell-env decisions heading; `/help` unchanged (describes no shell environment); AGENTS.md untouched at 32,763 bytes. Iteration-log Batch 137.
+
+Note from the child, confirmed as pre-existing: `spike/verify-mcp-config.ts` run standalone under the real `HOME` fails 8 assertions at HEAD before this change too (this machine's global `~/.darwin/mcp.json` adds servers); under the private `HOME` `pnpm test` gives it, it is green.
 
 ### Notes / blockers / abandonment reason
 
