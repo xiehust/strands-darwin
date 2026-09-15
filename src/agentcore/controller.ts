@@ -26,11 +26,24 @@ export interface CloudCommandResult { ok: boolean; text: string }
 export const CLOUD_CLOSE_TIMEOUT_MS = 2000;
 const cancelledManagement = () => new Error('Cloud management cancelled; no further action authorized. Already-issued effects are not undone; inspect status/receipts.');
 const PENDING_ARGUMENTS = /^pending(?: accepted)?(?: after [a-f0-9]{64})?$/;
-export const CLOUD_READ_USAGE = 'usage: darwin cloud-memory [status|preferences|inspect <record-id>|pending [accepted] [after <token>]|preview <token>]';
-export function cloudReadArguments(input: string): boolean {
-  return /^(?:(?:status|preferences)|inspect [a-zA-Z0-9_-]{40,128}|preview [a-f0-9]{64})?$/.test(input) || PENDING_ARGUMENTS.test(input);
+/** Opaque service page token; bounded so it fits the 500-character management line. */
+const LIST_TOKEN = /^[A-Za-z0-9+/=_.:-]{1,400}$/;
+const LIST_ARGUMENTS = /^list(?: (?:preferences|episodes|reflections))?(?: after [A-Za-z0-9+/=_.:-]{1,400})?$/;
+export const LIST_PAGE_SIZE = 32;
+export const LIST_PREVIEW_CODE_POINTS = 120;
+const LIST_KINDS: Record<string, RecordKind> = { preferences: 'preference', episodes: 'episode', reflections: 'reflection' };
+const KIND_WORDS: Record<RecordKind, string> = { preference: 'preferences', episode: 'episodes', reflection: 'reflections' };
+/** One counted row per record: whitespace collapsed, angle brackets escaped, hard-capped. */
+function preview(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim().replace(/</g, '‹').replace(/>/g, '›');
+  const points = [...flat];
+  return points.length <= LIST_PREVIEW_CODE_POINTS ? flat : `${points.slice(0, LIST_PREVIEW_CODE_POINTS - 1).join('')}…`;
 }
-export const CLOUD_USAGE = 'usage: /cloud-memory [status|auto|manual|discard-legacy [<manifest-hash>]|preferences|inspect <record-id>|confirm <record-id> <hash> global|forget <record-id>|delete <record-id> cloud|pending [accepted] [after <token>]|preview <token>|send <token> <preview-hash>|discard <token>|clear-accepted]';
+export const CLOUD_READ_USAGE = 'usage: darwin cloud-memory [status|preferences|list [preferences|episodes|reflections] [after <token>]|inspect <record-id>|pending [accepted] [after <token>]|preview <token>]';
+export function cloudReadArguments(input: string): boolean {
+  return /^(?:(?:status|preferences)|inspect [a-zA-Z0-9_-]{40,128}|preview [a-f0-9]{64})?$/.test(input) || PENDING_ARGUMENTS.test(input) || LIST_ARGUMENTS.test(input);
+}
+export const CLOUD_USAGE = 'usage: /cloud-memory [status|auto|manual|discard-legacy [<manifest-hash>]|preferences|list [preferences|episodes|reflections] [after <token>]|inspect <record-id>|confirm <record-id> <hash> global|forget <record-id>|delete <record-id> cloud|pending [accepted] [after <token>]|preview <token>|send <token> <preview-hash>|discard <token>|clear-accepted]';
 export class CloudMemory {
   readonly transport: MemoryTransport;
   uploadObserver: UploadObserver | undefined;
@@ -158,6 +171,44 @@ export class CloudMemory {
     return { records: records.slice(0, limit), omitted: scoped.length - Math.min(records.length, limit) + (response.nextToken ? 1 : 0), warning: 'Untrusted fallible data; in-scope other-kind records omitted, results may underfill. Remaining pages not fetched (next page counts as at least one omission). No policy or permission precedence.' };
   }
   private preferenceFile(id: string): string { return path.join(cloudDirectory(this.config), `${recordId.parse(id)}.json`); }
+  /**
+   * The user-facing "my cloud memories" panel: one bounded read-only page of records for one
+   * kind, listed with id, time and a one-line content preview. Every returned record's scope
+   * is validated before any content is decoded (a scope mismatch refuses the whole page, as
+   * in `recall`); a record whose content fails its kind schema is still listed by id — the
+   * user must be able to see and delete what they cannot read — with the content withheld.
+   * Nothing is adopted, cached into `approvedContext`, written locally or sent to the model.
+   */
+  private async listRecords(kind: RecordKind, token: string | undefined, signal?: AbortSignal): Promise<string> {
+    if (token !== undefined && !LIST_TOKEN.test(token)) throw new Error(CLOUD_USAGE);
+    const strategy = kind === 'preference' ? this.config.preferenceStrategyId : this.config.episodicStrategyId;
+    const namespacePath = kind === 'preference' ? this.scope.preferences : kind === 'episode' ? this.scope.episodes : this.scope.project;
+    const raw = await this.transport.call('list-memory-records', {
+      memoryId: this.config.memoryId, namespacePath, memoryStrategyId: strategy, maxResults: LIST_PAGE_SIZE, ...(token === undefined ? {} : { nextToken: token }),
+    }, signal);
+    signal?.throwIfAborted();
+    const response = z.object({ memoryRecordSummaries: z.array(z.unknown()).max(100), nextToken: z.string().max(2048).optional() }).strict().parse(raw);
+    const scoped = response.memoryRecordSummaries.map((entry) => validateRecordScope(entry, kind, this.config, this.root));
+    const matching = scoped.filter(record => kind === 'preference' || record.namespaces.every(ns => kind === 'reflection' ? ns === this.scope.project : ns.startsWith(this.scope.episodes)));
+    let refused = 0;
+    const rows = matching.map((record, index) => {
+      const at = typeof record.createdAt === 'number' ? new Date(record.createdAt * 1000).toISOString() : record.createdAt;
+      try {
+        validateRecord(record, kind, this.config, this.root);
+        return `  ${index + 1}. ${record.memoryRecordId} · ${at} · ${preview(record.content.text)}`;
+      } catch {
+        refused++;
+        return `  ${index + 1}. ${record.memoryRecordId} · ${at} · content refused by bounded validation (not shown)`;
+      }
+    });
+    const next = response.nextToken === undefined ? 'no'
+      : LIST_TOKEN.test(response.nextToken) ? `yes — /cloud-memory list ${KIND_WORDS[kind]} after ${response.nextToken}` : 'yes — the next page token exceeds the command bound and cannot be passed';
+    return [
+      `Cloud memory records · ${KIND_WORDS[kind]} · namespace ${namespacePath} · strategy ${strategy}: ${matching.length} listed (page of ${LIST_PAGE_SIZE}), ${scoped.length - matching.length} other-kind omitted, ${refused} content refused · more: ${next}`,
+      ...(rows.length === 0 ? ['  (none)'] : rows),
+      `Untrusted fallible cloud data; read-only listing, nothing adopted or written.${kind === 'preference' ? ' Inspect: /cloud-memory inspect <record-id> · delete: /cloud-memory delete <record-id> cloud' : ' Episodes/reflections are read via the parent recall tools; no local delete verb.'}`,
+    ].join('\n');
+  }
   private async preferenceCapacity(id: string): Promise<void> {
     const ids = new Set((await stateNames(cloudDirectory(this.config))).flatMap(name => {
       const match = /^([a-zA-Z0-9_-]{40,128})\.json(?:\.inspection)?$/.exec(name); return match ? [match[1]!] : [];
@@ -603,6 +654,11 @@ export class CloudMemory {
     if (verb === 'preferences' && id === undefined) {
       const result = await this.refreshPreferences(signal);
       return JSON.stringify({ ...result, notice: 'Not automatically adopted. Inspect, then confirm only enduring cross-project communication/collaboration preferences. Inference or generated explicitness is not evidence.' }, null, 2);
+    }
+    if (verb === 'list' && LIST_ARGUMENTS.test(input.trim())) {
+      const kindWord = id !== undefined && id !== 'after' ? id : 'preferences';
+      const token = id === 'after' ? hash : hash === 'after' ? adoption : undefined;
+      return this.listRecords(LIST_KINDS[kindWord]!, token, signal);
     }
     if (verb === 'inspect' && id && hash === undefined) {
       this.approvedContext = this.approvedContext.filter(r => r.id !== id);

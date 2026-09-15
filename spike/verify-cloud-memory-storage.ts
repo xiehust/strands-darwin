@@ -467,10 +467,10 @@ async function regressionF() {
   }
   const afterLast = await memory.commandResult(`pending after ${expected.at(-1)}`, 'read');
   assert('F cursor beyond last actionable returns bounded empty page', afterLast.ok && listedTokens(afterLast.text).length === 0 && !afterLast.text.includes('Next:'));
-  for (const input of ['', 'status', 'preferences', `inspect ${'x'.repeat(40)}`, `preview ${pending.token}`, 'pending', 'pending accepted', `pending after ${pending.token}`, `pending accepted after ${pending.token}`]) {
+  for (const input of ['', 'status', 'preferences', `inspect ${'x'.repeat(40)}`, `preview ${pending.token}`, 'pending', 'pending accepted', `pending after ${pending.token}`, `pending accepted after ${pending.token}`, 'list', 'list episodes', 'list reflections after abc.123=']) {
     assert(`F legacy/new grammar accepts ${input || '(default)'}`, cloudReadArguments(input));
   }
-  const invalid = ['pending 2', 'pending after', 'pending accepted extra', `pending after ${'A'.repeat(64)}`, `pending after ${'a'.repeat(63)}`, `pending after ${pending.token} accepted`, `pending accepted after ${pending.token} extra`, 'status extra', 'auto', 'manual', 'clear-accepted', `discard ${pending.token}`, `send ${pending.token} ${'0'.repeat(64)}`];
+  const invalid = ['pending 2', 'pending after', 'pending accepted extra', `pending after ${'A'.repeat(64)}`, `pending after ${'a'.repeat(63)}`, `pending after ${pending.token} accepted`, `pending accepted after ${pending.token} extra`, 'status extra', 'auto', 'manual', 'clear-accepted', `discard ${pending.token}`, `send ${pending.token} ${'0'.repeat(64)}`, 'list other', 'list after', 'list preferences extra', `list after ${'a'.repeat(401)}`];
   for (const input of invalid) {
     const result = await memory.commandResult(input, 'read'); const cli = await captureCli(root, input.split(' '));
     assert(`F invalid/read-mutation refused: ${input.split(' ').slice(0, 2).join(' ')}`, !cloudReadArguments(input) && !result.ok && cli.code === 1 && cli.stdout === '' && cli.stderr.includes('Headless mutations unavailable'));

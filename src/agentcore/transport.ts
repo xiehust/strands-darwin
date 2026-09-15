@@ -1,13 +1,14 @@
 import { Readable } from 'node:stream';
 import {
   BedrockAgentCoreClient, CreateEventCommand, RetrieveMemoryRecordsCommand,
-  GetMemoryRecordCommand, DeleteMemoryRecordCommand,
+  GetMemoryRecordCommand, DeleteMemoryRecordCommand, ListMemoryRecordsCommand,
   type BedrockAgentCoreClientConfig, type CreateEventCommandInput,
   type RetrieveMemoryRecordsCommandInput, type GetMemoryRecordCommandInput, type DeleteMemoryRecordCommandInput,
+  type ListMemoryRecordsCommandInput,
 } from '@aws-sdk/client-bedrock-agentcore';
 import type { AgentCoreConfig } from './config.js';
 
-export type MemoryOperation = 'retrieve-memory-records' | 'get-memory-record' | 'create-event' | 'delete-memory-record';
+export type MemoryOperation = 'retrieve-memory-records' | 'get-memory-record' | 'create-event' | 'delete-memory-record' | 'list-memory-records';
 /** The guard invokes start under local authority coordination, then releases before response. */
 export type RequestLaunch = <T>(start: () => Promise<T>) => Promise<{ pending: Promise<T> }>;
 type BeforeLaunch = (bytes: number) => Promise<RequestLaunch | void>;
@@ -16,6 +17,7 @@ type MemoryInputs = {
   'get-memory-record': GetMemoryRecordCommandInput;
   'create-event': Omit<CreateEventCommandInput, 'eventTimestamp'> & { eventTimestamp: string };
   'delete-memory-record': DeleteMemoryRecordCommandInput;
+  'list-memory-records': ListMemoryRecordsCommandInput;
 };
 export class TransportError extends Error {
   constructor(message: string, readonly retryable = false) { super(message); }
@@ -178,6 +180,7 @@ export class MemoryTransport {
           case 'retrieve-memory-records': pending = this.client.send(new RetrieveMemoryRecordsCommand(input as RetrieveMemoryRecordsCommandInput), options); break;
           case 'get-memory-record': pending = this.client.send(new GetMemoryRecordCommand(input as GetMemoryRecordCommandInput), options); break;
           case 'delete-memory-record': pending = this.client.send(new DeleteMemoryRecordCommand(input as DeleteMemoryRecordCommandInput), options); break;
+          case 'list-memory-records': pending = this.client.send(new ListMemoryRecordsCommand(input as ListMemoryRecordsCommandInput), options); break;
           default: throw new TransportError('AgentCore operation refused');
         }
         const output = await pending;

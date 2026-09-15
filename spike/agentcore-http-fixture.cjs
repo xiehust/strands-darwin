@@ -24,7 +24,7 @@ const server = http.createServer(async (req, res) => {
   }
   const url = new URL(req.url, 'http://localhost');
   const parts = url.pathname.split('/').map(decodeURIComponent);
-  const operation = req.method === 'DELETE' ? 'delete-memory-record' : req.method === 'GET' ? 'get-memory-record' : url.pathname.includes('retrieve') ? 'retrieve-memory-records' : 'create-event';
+  const operation = req.method === 'DELETE' ? 'delete-memory-record' : req.method === 'GET' ? 'get-memory-record' : url.pathname.includes('retrieve') ? 'retrieve-memory-records' : url.pathname.endsWith('/memoryRecords') ? 'list-memory-records' : 'create-event';
   const input = { ...(text ? JSON.parse(text) : {}), memoryId: parts[2], ...Object.fromEntries(url.searchParams), ...(req.method === 'GET' || req.method === 'DELETE' ? { memoryRecordId: parts[4] } : {}) };
   fs.appendFileSync(path.join(home, 'fixture-calls.jsonl'), JSON.stringify({ operation, input, text, headers: req.headers, path: req.url }) + '\n');
   const control = JSON.parse(fs.readFileSync(path.join(home, 'fixture-control.json'), 'utf8'));
@@ -46,6 +46,7 @@ const server = http.createServer(async (req, res) => {
   switch (operation) {
     // Real service envelope includes searchType even when the pinned SDK drops it.
     case 'retrieve-memory-records': json({ memoryRecordSummaries: records, searchType: 'synthetic-search' }); break;
+    case 'list-memory-records': json({ memoryRecordSummaries: records, ...(control.nextToken ? { nextToken: control.nextToken } : {}) }); break;
     case 'get-memory-record': json({ memoryRecord: records[0] }); break;
     case 'create-event': {
       const { extractionConfig, clientToken, ...event } = input;

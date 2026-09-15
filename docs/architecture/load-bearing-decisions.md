@@ -874,6 +874,24 @@ immediately drops approval and live context. No automatic
 promotion or local-memory migration. Cloud deletion is a distinct user command with a
 fresh scope check. Model provider and permission policy remain independent.
 
+**`/cloud-memory list [kind] [after <token>]` is the user's read-only record panel, never a
+retrieval channel.** Deleting a preference required knowing its id, and `preferences` only
+surfaced the five best semantic hits — records the ranking never chose stayed invisible and
+undeletable. `list` issues one `ListMemoryRecordsCommand` (a fifth transport
+operation; same client, same byte/structure bounds) for one kind — `preferences` by default,
+`episodes` (sessions prefix) or `reflections` (project namespace) — with the strategy filter
+and a 32-row page, and prints id · time · a 120-code-point one-line preview per record. The
+whole page passes `validateRecordScope` before any content is decoded, so a namespace or
+strategy mismatch refuses the page like `recall`; unlike `recall`, a record whose content
+fails its kind schema is still listed by id with the text withheld, because the user must be
+able to see and delete what darwin cannot read. Other-kind records under the same prefix are
+counted as omitted, never shown. Paging uses the service's opaque `nextToken`, bounded to the
+400 characters the 500-character management line can carry; a longer token is reported as an
+unfollowable next page rather than truncated. The listing is available to the read-only
+standalone CLI, touches neither `approvedContext` nor proof files, writes nothing and reaches
+no model: adoption still goes through `inspect` and `confirm`. Checked by
+`verify-agentcore-memory.ts` and the grammar assertions in `verify-cloud-memory-storage.ts`.
+
 Uploads require trajectory plus manual mode or project-authorized auto. New turns use `darwin-upload-v2`, not
 trajectory reconstruction: a synchronous/no-I/O/nonthrowing bounded observer reads public
 parent BeforeToolCallEvent (SDK_LAST) and AfterToolCallEvent (SDK_FIRST, before ContextOffloader).
