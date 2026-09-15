@@ -4,9 +4,10 @@
  * The base prompt, AGENTS.md and the skills catalogue are all rules — true for as
  * long as the files behind them are unchanged. Where the agent is standing is not:
  * the directory it was started in, what that directory contains, which OS it is
- * on, and today's date are all things it would otherwise have to spend a tool call
- * discovering, or worse, guess at (a model with a training cutoff will happily
- * assert the wrong year).
+ * on, today's date, and which tools this run actually registered (memory, cloud
+ * recall and MCP tools are conditional) are all things it would otherwise have to
+ * spend a tool call discovering, or worse, guess at (a model with a training cutoff
+ * will happily assert the wrong year).
  *
  * Two properties make this safe to put in a cached system prompt:
  *
@@ -41,8 +42,30 @@ export const WORKING_CONTEXT_TAG = 'working-context';
  */
 export const MAX_LISTED_ENTRIES = 200;
 
+/**
+ * How many registered tool names the block may list.
+ *
+ * The built-ins are a dozen; MCP servers are what make this unbounded, and one
+ * catalogue-happy server can register fifty tools. Names only — the description a
+ * tool carries is still its contract (`279f864` retired the hand-written catalogue
+ * because it drifted from the registry; this list is *read from* the registry, so it
+ * cannot). What is dropped is reported, as with the directory entries.
+ */
+export const MAX_LISTED_TOOLS = 64;
+
 /** How wide the entry list wraps. Matches the prose width of the base prompt. */
 const WRAP_COLUMNS = 88;
+
+export interface WorkingContextOptions {
+  /**
+   * The names the agent's tool registry holds for this run, read after
+   * `initialize()` so MCP discovery and the conditional parent-only tools (memory,
+   * cloud recall, delegation) are all in. Omitted means "do not mention tools":
+   * a caller that has no registry, like the offline suites, states nothing rather
+   * than an empty list.
+   */
+  readonly toolNames?: readonly string[];
+}
 
 export interface WorkingContextLoad {
   /** The system-prompt fragment, delimited and ready to append. Never empty. */
@@ -66,6 +89,7 @@ export interface WorkingContextLoad {
 export async function buildWorkingContext(
   projectRoot: string,
   now: Date = new Date(),
+  options: WorkingContextOptions = {},
 ): Promise<WorkingContextLoad> {
   const listing = await listEntries(projectRoot);
   const lines = [
@@ -75,6 +99,26 @@ export async function buildWorkingContext(
     `- node: ${process.version}`,
     `- date: ${now.toISOString().slice(0, 10)} (UTC), local time zone ${timeZone()}`,
   ];
+
+  // Registered tools are a fact about this run, not a rule: which of the
+  // conditional tools (memory, cloud recall, MCP) exist depends on config and on
+  // what the servers answered at startup. Naming them here tells the model what it
+  // can reach without re-introducing a catalogue that could disagree with the
+  // registry — this *is* the registry, sorted, deduplicated and capped.
+  if (options.toolNames !== undefined) {
+    const names = [...new Set(options.toolNames)].sort((a, b) => a.localeCompare(b));
+    if (names.length === 0) lines.push('- tools registered for this session: none');
+    else {
+      const shown = names.slice(0, MAX_LISTED_TOOLS);
+      lines.push(
+        `- tools registered for this session (${names.length}; names only — each tool's description is its contract):`,
+        ...wrap(shown).map((line) => `    ${line}`),
+      );
+      if (names.length > shown.length) {
+        lines.push(`    (${names.length - shown.length} more tool${names.length - shown.length === 1 ? '' : 's'} not listed)`);
+      }
+    }
+  }
 
   if (listing.problem === undefined) {
     lines.push(`- ${describeCounts(listing)}`, ...wrap(listing.names).map((line) => `    ${line}`));

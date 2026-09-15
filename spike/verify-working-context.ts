@@ -24,6 +24,7 @@ import { composeSystemPrompt, loadProjectInstructions } from '../src/agent/instr
 import { DEFAULT_SYSTEM_PROMPT } from '../src/agent/system-prompt.js';
 import {
   MAX_LISTED_ENTRIES,
+  MAX_LISTED_TOOLS,
   WORKING_CONTEXT_TAG,
   applyWorkingContext,
   buildWorkingContext,
@@ -308,10 +309,43 @@ function workingMethodRules(): void {
   assert('the base prompt is still one static text with no working context of its own', !DEFAULT_SYSTEM_PROMPT.includes(`<${WORKING_CONTEXT_TAG}>`));
 }
 
+async function tools(): Promise<void> {
+  header('working context — the registered tool names, read from the registry');
+
+  const root = path.join(ROOT, 'tooled');
+  await mkdir(root, { recursive: true });
+
+  const silent = await buildWorkingContext(root, FIXED_NOW);
+  assert('a caller without a registry states nothing about tools', !silent.fragment.includes('tools registered'));
+
+  const registered = ['fileEditor', 'bash', 'memory_save', 'memory_recall', 'codegraph_codegraph_explore', 'bash'];
+  const { fragment } = await buildWorkingContext(root, FIXED_NOW, { toolNames: registered });
+  const header_ = lineStartingWith(fragment, '- tools registered for this session');
+  assert('the line states the count and that names are not the contract', header_ === "- tools registered for this session (5; names only — each tool's description is its contract):");
+  const start = fragment.split('\n').indexOf(header_!);
+  const after = fragment.split('\n').slice(start + 1);
+  const end = after.findIndex((line) => !line.startsWith('    '));
+  const listed = after.slice(0, end === -1 ? undefined : end).join(' ').trim().split(/\s+/);
+  assert('names are deduplicated and sorted, MCP tools included', listed.join(',') === 'bash,codegraph_codegraph_explore,fileEditor,memory_recall,memory_save');
+  assert('the conditional memory pair is visible when registered', fragment.includes('memory_save') && fragment.includes('memory_recall'));
+  assert('the tool list comes before the directory listing', fragment.indexOf('- tools registered') < fragment.indexOf('- contents'));
+
+  const many = Array.from({ length: MAX_LISTED_TOOLS + 7 }, (_, index) => `server_tool_${String(index).padStart(3, '0')}`);
+  const crowded = await buildWorkingContext(root, FIXED_NOW, { toolNames: many });
+  const shown = crowded.fragment.split('\n').filter((line) => line.startsWith('    server_tool_')).join(' ').trim().split(/\s+/);
+  assert('the list is capped', shown.length === MAX_LISTED_TOOLS);
+  assert('the cap is not silent', crowded.fragment.includes('(7 more tools not listed)'));
+  assert('the count still describes the whole registry', crowded.fragment.includes(`(${MAX_LISTED_TOOLS + 7}; names only`));
+
+  const none = await buildWorkingContext(root, FIXED_NOW, { toolNames: [] });
+  assert('an empty registry says so', none.fragment.includes('- tools registered for this session: none'));
+}
+
 async function main(): Promise<void> {
   await rm(ROOT, { recursive: true, force: true });
   try {
     await contents();
+    await tools();
     await bounded();
     await unreadable();
     resumed();

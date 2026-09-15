@@ -765,8 +765,17 @@ Official AgentSkills injects before each invocation; Darwin registers a later ho
 exact catalogue TextBlock ahead of current working context and cache. Repeated/resumed invocations
 remove the previous official block via persisted appState before reordering, so the catalogue is
 never duplicated. The working context is the one fragment
-that describes *now* rather than rules (cwd, OS, date, one-level directory listing), so it is
-re-derived every run and *replaces* the known working-context TextBlock after restore. Current
+that describes *now* rather than rules (cwd, OS, date, one-level directory listing, and the
+names of the tools this run registered), so it is
+re-derived every run and *replaces* the known working-context TextBlock after restore. The tool
+line is read from `agent.tools` after `initialize()` — MCP discovery and every parent-only
+registration are complete by then — sorted, deduplicated, capped at `MAX_LISTED_TOOLS` with the
+omission stated, and prefixed "names only — each tool's description is its contract". It exists
+because the conditional tools (memory pair, cloud recall, MCP) are otherwise invisible to a model
+that reads the base prompt and skims descriptions; it is *not* the hand-written catalogue
+`279f864` retired, which drifted because it was authored beside the registry rather than read
+from it. A caller with no registry (offline suites, the composition tests) omits the line rather
+than stating an empty list; the base prompt still names no tool. Current
 snapshots carry separate base/catalogue/context blocks plus the final cache point; pre-migration
 `[TextBlock, CachePointBlock]` snapshots are recognized, their stale Darwin catalogue is dropped,
 and official AgentSkills injects one current catalogue on the resumed invocation. A resumed run

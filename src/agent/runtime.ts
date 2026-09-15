@@ -1005,8 +1005,10 @@ export class AgentRuntime {
     // session overwrites `systemPrompt` with the snapshot's copy, so composing it
     // earlier would leave a resumed run advertising the previous run's date and
     // directory listing. Applied last, it is also the only fragment a resumed
-    // prompt can still be corrected by.
-    const workingContext = await buildWorkingContext(options.projectRoot);
+    // prompt can still be corrected by. The registry is complete here — MCP
+    // discovery ran inside initialize() and every parent-only tool is added above —
+    // so the block can name the tools this run really has.
+    const workingContext = await buildWorkingContext(options.projectRoot, new Date(), { toolNames: agent.tools.map((tool) => tool.name) });
     if (!applyWorkingContext(agent, workingContext.fragment)) {
       throw new Error('Could not refresh working context on the restored system prompt.');
     }
@@ -1433,7 +1435,7 @@ export class AgentRuntime {
   }
   private async applyCloudPreferences(): Promise<void> {
     if (this.cloudMemory === undefined) return;
-    const context = await buildWorkingContext(this.projectRoot);
+    const context = await buildWorkingContext(this.projectRoot, new Date(), { toolNames: this.agent.tools.map((tool) => tool.name) });
     const preferences = await this.cloudMemory.context();
     // Callback replacement preserves literal $&, $`, and $' in reviewed data.
     if (!applyWorkingContext(this.agent, context.fragment.replace('</working-context>', () => `${preferences}\n</working-context>`))) {
