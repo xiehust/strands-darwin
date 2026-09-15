@@ -76,7 +76,7 @@ import {
 } from '../tools/background-bash.js';
 import { FILE_EDITOR_DESCRIPTION, SerializedFileEditorTool } from '../tools/file-editor-serial.js';
 import { createImageViewerTool, normalizeRestoredImages } from '../tools/image-viewer.js';
-import { scrubShellEnv } from '../tools/shell-env.js';
+import { scrubShellEnv, withDarwinMarker } from '../tools/shell-env.js';
 import { createUpdatePlanTool } from '../tools/update-plan.js';
 import { webFetch } from '../tools/web-fetch.js';
 import {
@@ -828,17 +828,20 @@ export class AgentRuntime {
     // reuse `foregroundBash` and the manager through `childBash`), get this map.
     // Names only are kept for `/status` and the startup notice; values never leave
     // `shellEnv.env`. User `!` commands, hooks and MCP servers are not routed here.
+    // SER-094: the spawned shells additionally carry `DARWIN=1` (a preset `DARWIN`
+    // wins) — added after the scrub so the marker is never a withheld name.
     const shellPassthrough = config.shellEnv?.passthrough ?? [];
     const shellEnv = scrubShellEnv(process.env, shellPassthrough);
-    const foregroundBash = createForegroundBashTool(options.projectRoot, shellEnv.env);
+    const spawnEnv = withDarwinMarker(shellEnv.env);
+    const foregroundBash = createForegroundBashTool(options.projectRoot, spawnEnv);
     // The parent's wording states the runtime truth: only a driver that drains SER-069
     // task wakes, with the config key on, may tell the model that ending the turn is
     // followed by a `<task-notification>` turn. Children get the same manager and
     // foreground tool behind the no-wake wording (`childBash` below): a child's job
     // wakes the parent TUI, never the child.
     const completionWakes = options.backgroundCompletionWakes === true && config.backgroundTaskWake !== false;
-    const bash = createBackgroundBashTool(backgroundBash, foregroundBash, { completionWakes, env: shellEnv.env });
-    const childBash = completionWakes ? createBackgroundBashTool(backgroundBash, foregroundBash, { env: shellEnv.env }) : bash;
+    const bash = createBackgroundBashTool(backgroundBash, foregroundBash, { completionWakes, env: spawnEnv });
+    const childBash = completionWakes ? createBackgroundBashTool(backgroundBash, foregroundBash, { env: spawnEnv }) : bash;
     const imageViewer = createImageViewerTool(options.projectRoot);
     const conversationManager = new SummarizingConversationManager({
       summaryRatio: config.summaryRatio,

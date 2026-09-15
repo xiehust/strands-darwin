@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 
+import { withDarwinMarker } from '../tools/shell-env.js';
 import { matchesToolGlob, type ToolHookGroup, type ToolHooksConfig } from './tool-hooks.js';
 
 export const LIFECYCLE_HOOK_PAYLOAD_MAX_BYTES = 4096;
@@ -81,7 +82,8 @@ export class LifecycleHookRunner {
     try {
       child = spawn('/bin/sh', ['-c', command], {
         cwd: this.projectRoot,
-        env: process.env,
+        // The user's environment plus the `DARWIN=1` marker (SER-094; a preset wins).
+        env: withDarwinMarker(process.env),
         stdio: ['pipe', 'ignore', 'ignore'],
         detached: true,
       });

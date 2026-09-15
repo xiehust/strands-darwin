@@ -5,8 +5,10 @@
  *
  * Run: pnpm tsx spike/verify-mcp-config.ts
  */
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+
+import { McpClient } from '@strands-agents/sdk';
 
 import { ConfigError } from '../src/config.js';
 import {
@@ -14,6 +16,7 @@ import {
   ROOT_MCP_CONFIG_FILENAME,
   loadMcpClients,
   withDefaultPrefixes,
+  withStdioDarwinMarker,
 } from '../src/mcp/registry.js';
 import { darwinDir } from '../src/paths.js';
 import { assert, header, report } from './shared.js';
@@ -179,6 +182,70 @@ async function main(): Promise<void> {
     await withRootMcpJson('{ "mcpServers": { "noop": { "command": "true", "args": [] } } }'),
   );
   assert('prefixed config still yields a lazy client', viaFile.clients.length === 1);
+
+  header('withStdioDarwinMarker — every stdio server sees DARWIN=1, a config env.DARWIN wins (SER-094)');
+
+  // The pure shape: only stdio entries gain `env.DARWIN`, and only when absent.
+  const marked = withStdioDarwinMarker({
+    plain: { command: 'npx', args: ['x'] },
+    withEnv: { command: 'x', env: { TOKEN: '${TOKEN}' } },
+    preset: { command: 'x', env: { DARWIN: 'custom' } },
+    explicit: { transport: 'stdio', command: 'x' },
+    http: { url: 'https://example.com' },
+    httpWithEnv: { url: 'https://example.com', env: { A: 'b' } },
+    sse: { transport: 'sse', url: 'https://example.com/sse' },
+  });
+  assert('a stdio server without env gains exactly { DARWIN: "1" }', JSON.stringify(marked['plain']?.env) === '{"DARWIN":"1"}');
+  assert('a stdio server with env keeps its entries (interpolation placeholders intact) and gains the marker',
+    JSON.stringify(marked['withEnv']?.env) === '{"TOKEN":"${TOKEN}","DARWIN":"1"}');
+  assert('a config env.DARWIN is never overridden', JSON.stringify(marked['preset']?.env) === '{"DARWIN":"custom"}');
+  assert('an explicit transport: stdio counts as stdio', marked['explicit']?.env?.['DARWIN'] === '1');
+  assert('http and sse entries pass through byte-identical',
+    JSON.stringify(marked['http']) === '{"url":"https://example.com"}' &&
+    JSON.stringify(marked['httpWithEnv']) === '{"url":"https://example.com","env":{"A":"b"}}' &&
+    JSON.stringify(marked['sse']) === '{"transport":"sse","url":"https://example.com/sse"}');
+  assert('other stdio fields pass through untouched', marked['plain']?.command === 'npx' && marked['plain']?.args?.[0] === 'x');
+
+  // The real spawn, offline: the SDK's stdio transport builds the child environment
+  // from a fixed whitelist plus the config `env` — never `process.env` — so this is
+  // the only way the marker can reach a server. A server that is `sh -c` writing
+  // `$DARWIN` to a file exits at once; `listTools()` (what `agent.initialize()`
+  // does) spawns it, the connect fails under `continueOnError`, and the file holds
+  // what the process saw.
+  const markerDir = caseDir();
+  await mkdir(markerDir, { recursive: true });
+  const seen = path.join(markerDir, 'seen');
+  const presetSeen = path.join(markerDir, 'preset-seen');
+  const inherited = path.join(markerDir, 'inherited');
+  const server = (target: string, env?: Record<string, string>) => ({
+    command: 'sh',
+    args: ['-c', `printf %s "[$DARWIN|$DARWIN_MCP_CONTROL]" > ${JSON.stringify(target)}`],
+    ...(env === undefined ? {} : { env }),
+  });
+  const previousMarker = process.env['DARWIN'];
+  process.env['DARWIN'] = 'exported-in-darwin-shell';
+  process.env['DARWIN_MCP_CONTROL'] = 'control';
+  try {
+    const spawned = await loadMcpClients(await withRootMcpJson(JSON.stringify({ mcpServers: {
+      probe: server(seen),
+      preset: server(presetSeen, { DARWIN: 'from-config' }),
+    } })));
+    assert('two stdio clients are built', spawned.clients.length === 2);
+    await Promise.all(spawned.clients.map((client) => client.listTools().catch(() => [])));
+    const observed = await readFile(seen, 'utf8');
+    assert('the real stdio server process sees DARWIN=1', observed.startsWith('[1|'));
+    assert('…and, as before, nothing else from darwin\u2019s process.env (the SDK whitelist, not inheritance)', observed === '[1|]');
+    assert('a config env.DARWIN wins over the marker in the real process', (await readFile(presetSeen, 'utf8')) === '[from-config|]');
+    // Control: the SDK loaded directly, without the registry, shows the marker is ours.
+    const [control] = await McpClient.loadServers({ control: { ...server(inherited), prefix: 'control' } }, { continueOnError: true });
+    await control?.listTools().catch(() => []);
+    assert('control: the SDK alone hands a stdio server no DARWIN at all', (await readFile(inherited, 'utf8')) === '[|]');
+    await Promise.allSettled([...spawned.clients, ...(control === undefined ? [] : [control])].map((client) => client.disconnect()));
+  } finally {
+    delete process.env['DARWIN_MCP_CONTROL'];
+    if (previousMarker === undefined) delete process.env['DARWIN'];
+    else process.env['DARWIN'] = previousMarker;
+  }
 
   report();
 }

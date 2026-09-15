@@ -201,6 +201,25 @@ async function processCleanup(): Promise<void> {
   assert('cancelled process is reported and its descendant is reaped', result.cancelled && !exists);
 }
 
+/** SER-094: every Codex-dialect hook runs through `HookProcessManager`, so its spawn carries the marker. */
+async function environmentMarker(): Promise<void> {
+  header('codex hooks — the shared hook process carries DARWIN=1, a preset DARWIN wins');
+  const manager = new HookProcessManager(ROOT);
+  const previousMarker = process.env['DARWIN'];
+  delete process.env['DARWIN'];
+  try {
+    const marked = await manager.run('printf %s "$DARWIN"', undefined, { event: 'test' }, 5_000);
+    assert('a hook command observes DARWIN=1', marked.exitCode === 0 && marked.stdout === '1');
+    process.env['DARWIN'] = 'custom-user-value';
+    const preset = await manager.run('printf %s "$DARWIN"', undefined, { event: 'test' }, 5_000);
+    assert('a preset DARWIN reaches the hook byte-identical', preset.stdout === 'custom-user-value');
+  } finally {
+    if (previousMarker === undefined) delete process.env['DARWIN'];
+    else process.env['DARWIN'] = previousMarker;
+    await manager.close();
+  }
+}
+
 try {
   await rm(ROOT, { recursive: true, force: true });
   await mkdir(ROOT, { recursive: true });
@@ -208,6 +227,7 @@ try {
   await runnerContract();
   await realRuntimeProof();
   await processCleanup();
+  await environmentMarker();
 } finally {
   setRuntimeModelFactoryForTest(undefined);
   await rm(ROOT, { recursive: true, force: true });

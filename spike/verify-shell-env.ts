@@ -23,6 +23,15 @@
  * text-mode line (`formatHeadlessShellEnv`) name variables, never values, and stay
  * absent when nothing was withheld.
  *
+ * SER-094 rides on the same seams: `withDarwinMarker` adds `DARWIN=1` to a copy of any
+ * map unless the name is already set, and never appears in the withheld/passthrough
+ * projections; a real offline `AgentRuntime` (lazy model, private HOME) proves the
+ * registered `bash` tool prints `1` in the persistent foreground shell and in a
+ * background `start` job, and that darwin's own exported `DARWIN` reaches the shell
+ * byte-identical. The `!`, hook and stdio MCP seams are pinned in their own suites
+ * (`verify-shell-command`, `verify-lifecycle-hooks`, `verify-tool-hooks`,
+ * `verify-codex-hooks`, `verify-mcp-config`).
+ *
  * Run: pnpm tsx spike/verify-shell-env.ts
  */
 import { spawnSync } from 'node:child_process';
@@ -30,10 +39,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { Agent, Model, type BaseModelConfig, type Message, type ModelStreamEvent } from '@strands-agents/sdk';
+import { Agent, Model, type BaseModelConfig, type InvokableTool, type Message, type ModelStreamEvent } from '@strands-agents/sdk';
 import type { BashOutput } from '@strands-agents/sdk/vended-tools/bash';
 
-import { PermissionGate } from '../src/agent/permission.js';
+import { PermissionGate, allowAllBridge } from '../src/agent/permission.js';
+import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { SubagentTool } from '../src/agents/subagent-tool.js';
 import { formatHeadlessShellEnv } from '../src/headless.js';
 import {
@@ -41,19 +51,28 @@ import {
   createBackgroundBashTool,
   createForegroundBashTool,
   type BackgroundStartResult,
+  type BackgroundWaitResult,
 } from '../src/tools/background-bash.js';
 import {
   ALWAYS_SURVIVE_NAMES,
   CREDENTIAL_NAME_PATTERN,
+  DARWIN_MARKER_NAME,
+  DARWIN_MARKER_VALUE,
   MAX_NOTICE_NAMES,
   formatShellEnvNotice,
   passthroughEntryProblem,
   scrubShellEnv,
+  withDarwinMarker,
 } from '../src/tools/shell-env.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
+
+// The runtime seam below writes session state under `~/.darwin`; own a private HOME
+// so a standalone run never touches the real one (`pnpm test` does the same).
+ownPrivateHome('shell-env');
 
 const SECRET_VALUE = 'sk-test-secret-value-9f2c';
 const PROBE = 'echo "[$ANTHROPIC_API_KEY]"';
+const MARKER_PROBE = 'echo "[$DARWIN]"';
 
 /** Emits one bash tool call, then answers with the tool result as text. */
 class BashProbeModel extends Model<BaseModelConfig> {
@@ -184,6 +203,96 @@ function noticeContracts(): void {
       'shell-env: 1 credential-shaped variable withheld from model shells (NPM_TOKEN)');
 }
 
+function markerContracts(): void {
+  header('withDarwinMarker — DARWIN=1 added once, a preset DARWIN wins, nothing else touched (SER-094)');
+  assert('the marker name and value are the documented ones', DARWIN_MARKER_NAME === 'DARWIN' && DARWIN_MARKER_VALUE === '1');
+  const input: NodeJS.ProcessEnv = { PATH: '/usr/bin', NODE_ENV: 'test', UNSET: undefined };
+  const before = JSON.stringify(input);
+  const marked = withDarwinMarker(input);
+  assert('DARWIN=1 is added when absent', marked['DARWIN'] === '1');
+  assert('every other defined byte is identical and undefined values are dropped as spawn drops them',
+    JSON.stringify({ ...marked, DARWIN: undefined }) === JSON.stringify({ PATH: '/usr/bin', NODE_ENV: 'test' }) && !('UNSET' in marked));
+  assert('exactly one name is added', Object.keys(marked).length === 3);
+  assert('the input is never mutated', JSON.stringify(input) === before && !('DARWIN' in input));
+  const preset = withDarwinMarker({ DARWIN: 'custom', PATH: '/usr/bin' });
+  assert('a preset DARWIN survives byte-identical (the marker never overrides)',
+    JSON.stringify(preset) === JSON.stringify({ DARWIN: 'custom', PATH: '/usr/bin' }));
+  assert('an empty preset value is still "set" and survives', withDarwinMarker({ DARWIN: '' })['DARWIN'] === '');
+  assert('pure: same input, same output', JSON.stringify(withDarwinMarker(input)) === JSON.stringify(marked));
+
+  // The marker is neither credential-shaped nor an always-survive name, so the scrub,
+  // the notice and the `/status` row (a projection of `withheld`/`passthrough`) never
+  // mention it — in either direction of composition.
+  assert('DARWIN is not credential-shaped', !CREDENTIAL_NAME_PATTERN.test(DARWIN_MARKER_NAME));
+  assert('DARWIN is not an always-survive name', !ALWAYS_SURVIVE_NAMES.includes(DARWIN_MARKER_NAME));
+  const scrubbedMarked = scrubShellEnv(withDarwinMarker({ NPM_TOKEN: 'x', A: 'b' }), []);
+  assert('scrubbing a marked map keeps the marker and never lists it as withheld',
+    scrubbedMarked.env['DARWIN'] === '1' && !scrubbedMarked.withheld.includes('DARWIN') && scrubbedMarked.withheld.join() === 'NPM_TOKEN');
+  assert('the startup notice never names the marker', !(formatShellEnvNotice(scrubbedMarked.withheld) ?? '').includes('DARWIN'));
+  assert('marking a scrubbed map (the runtime order) adds only the marker',
+    JSON.stringify(withDarwinMarker(scrubShellEnv({ NPM_TOKEN: 'x', A: 'b' }, []).env)) === JSON.stringify({ A: 'b', DARWIN: '1' }));
+}
+
+/** Same private-field reach the `/clear` and `/model` suites use: the Agent is not public API. */
+function runtimeAgent(runtime: AgentRuntime): Agent {
+  return (runtime as unknown as { agent: Agent }).agent;
+}
+
+/** The runtime's registered `bash` tool, invokable with the wrapped tool's input shape. */
+function registeredBash(agent: Agent): InvokableTool<Record<string, unknown>, unknown> {
+  const bash = agent.toolRegistry.get('bash');
+  if (bash === undefined) throw new Error('the runtime registered no bash tool');
+  return bash as unknown as InvokableTool<Record<string, unknown>, unknown>;
+}
+
+/**
+ * The runtime seam, offline: `AgentRuntime.create()` builds its model lazily, so the
+ * real `bash` tool it registers can run `echo "[$DARWIN]"` through the persistent
+ * foreground shell and a background `start` job without a provider call. Under the
+ * suite's private HOME, so no login profile can set `DARWIN` on its own.
+ */
+async function runtimeMarkerContracts(): Promise<void> {
+  header('the runtime seam — the registered bash tool prints 1 in foreground and in a start job');
+  const previousMarker = process.env['DARWIN'];
+  delete process.env['DARWIN'];
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-shell-env-marker-'));
+  setRuntimeModelFactoryForTest(async () => new BashProbeModel());
+  const runtime = await AgentRuntime.create({ projectRoot: root, session: { kind: 'new' }, permissionBridge: allowAllBridge });
+  try {
+    const agent = runtimeAgent(runtime);
+    const bash = registeredBash(agent);
+    const context = { agent } as never;
+    assert('control: this process carries no DARWIN', spawnSync('bash', ['-c', MARKER_PROBE], { encoding: 'utf8' }).stdout.trim() === '[]');
+    const foreground = await bash.invoke({ mode: 'execute', command: MARKER_PROBE }, context) as BashOutput;
+    assert('the runtime\u2019s persistent foreground shell prints [1]', foreground.output.trim() === '[1]' && foreground.exitCode === 0);
+    const job = await bash.invoke({ mode: 'start', command: MARKER_PROBE }, context) as BackgroundStartResult;
+    const done = await bash.invoke({ mode: 'wait', taskId: job.taskId, waitMs: 5_000, wakeOnOutput: false }, context) as BackgroundWaitResult;
+    assert('a background start job through the same runtime prints [1]',
+      done.status.state === 'succeeded' && done.output.output.trim() === '[1]');
+    assert('the runtime reports the marker as neither withheld nor passthrough',
+      !runtime.info.shellEnv.withheld.includes('DARWIN') && !runtime.info.shellEnv.passthrough.includes('DARWIN'));
+  } finally {
+    await runtime.shutdown();
+  }
+
+  // A user's own exported DARWIN reaches the model shell byte-identical.
+  process.env['DARWIN'] = 'custom-user-value';
+  const presetRoot = await mkdtemp(path.join(tmpdir(), 'darwin-shell-env-marker-preset-'));
+  const presetRuntime = await AgentRuntime.create({ projectRoot: presetRoot, session: { kind: 'new' }, permissionBridge: allowAllBridge });
+  try {
+    const agent = runtimeAgent(presetRuntime);
+    const bash = registeredBash(agent);
+    const preset = await bash.invoke({ mode: 'execute', command: MARKER_PROBE }, { agent } as never) as BashOutput;
+    assert('a preset DARWIN in darwin\u2019s own environment reaches the shell unchanged', preset.output.trim() === '[custom-user-value]');
+  } finally {
+    await presetRuntime.shutdown();
+    setRuntimeModelFactoryForTest(undefined);
+    if (previousMarker === undefined) delete process.env['DARWIN'];
+    else process.env['DARWIN'] = previousMarker;
+    await Promise.all([rm(root, { recursive: true, force: true }), rm(presetRoot, { recursive: true, force: true })]);
+  }
+}
+
 async function seamContracts(): Promise<void> {
   header('the seams — foreground shell, restart replacement, background start, against live controls');
   const previous = process.env['ANTHROPIC_API_KEY'];
@@ -293,6 +402,8 @@ async function seamContracts(): Promise<void> {
 async function main(): Promise<void> {
   pureContracts();
   noticeContracts();
+  markerContracts();
+  await runtimeMarkerContracts();
   await seamContracts();
   report();
 }

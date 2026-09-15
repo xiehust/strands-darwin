@@ -13,6 +13,7 @@ import {
 import type { PermissionGate } from '../agent/permission.js';
 import { RepeatedFailureGuard } from '../agent/retry-guard.js';
 import type { ToolHookPolicyLayer } from '../config.js';
+import { withDarwinMarker } from '../tools/shell-env.js';
 import type { CodexHookRunner } from './codex-hook-runner.js';
 import type { CodexHookGroup } from './codex-hooks.js';
 
@@ -76,7 +77,8 @@ export function runToolHookCommand(
     try {
       child = spawn('/bin/sh', ['-c', command], {
         cwd: projectRoot,
-        env: process.env,
+        // The user's environment plus the `DARWIN=1` marker (SER-094; a preset wins).
+        env: withDarwinMarker(process.env),
         stdio: 'pipe',
         // Hooks may start their own children. A process group lets cancellation
         // reap the whole command tree instead of orphaning a formatter or test.

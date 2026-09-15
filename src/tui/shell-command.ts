@@ -24,6 +24,7 @@
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 
+import { withDarwinMarker } from '../tools/shell-env.js';
 import {
   boundText,
   truncationMarker,
@@ -220,7 +221,9 @@ export function runShellCommand(
     try {
       child = spawn('/bin/bash', ['-c', command], {
         cwd: options.cwd,
-        env: process.env,
+        // The user's own environment, unscrubbed (SER-082 scope), plus the one
+        // `DARWIN=1` marker every darwin-spawned process carries (SER-094).
+        env: withDarwinMarker(process.env),
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });

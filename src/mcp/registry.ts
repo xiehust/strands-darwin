@@ -13,9 +13,10 @@
  * - supports `disabled`, `prefix` and `toolFilters` per server
  *
  * So the things left for us are: treating a missing file as "no MCP", turning
- * per-server failures into warnings instead of a failed startup, and defaulting
+ * per-server failures into warnings instead of a failed startup, defaulting
  * each server's `prefix` to `<name>_` so tool names stay unique across servers
- * (see {@link withDefaultPrefixes}).
+ * (see {@link withDefaultPrefixes}), and giving every stdio server's `env` the
+ * `DARWIN=1` marker (see {@link withStdioDarwinMarker}).
  */
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -25,6 +26,7 @@ import type { McpConnectionState, McpServerConfig } from '@strands-agents/sdk';
 
 import { ConfigError } from '../config.js';
 import { darwinDir, userDarwinDir } from '../paths.js';
+import { withDarwinMarker } from '../tools/shell-env.js';
 
 /** Preferred location, alongside the rest of darwin's project state. */
 export const MCP_CONFIG_FILENAME = 'mcp.json';
@@ -137,7 +139,7 @@ export async function loadMcpClients(
   });
   if (servers === undefined) return { clients: [], ...sources };
 
-  const prefixed = withDefaultPrefixes(servers);
+  const prefixed = withStdioDarwinMarker(withDefaultPrefixes(servers));
   const clients = options.quietStdioStderr === true
     ? await loadServersQuietly(prefixed)
     : await McpClient.loadServers(prefixed, { continueOnError: true });
@@ -330,6 +332,39 @@ export function withDefaultPrefixes(
         : entry,
     ]),
   );
+}
+
+/**
+ * Gives every stdio server's `env` the `DARWIN=1` marker (SER-094), never overriding
+ * an `env.DARWIN` the user wrote.
+ *
+ * The config `env` is the only path into a stdio server's environment: the SDK's
+ * `buildStdioConfig` hands `{ ...getDefaultEnvironment(), ...interpolateRecord(env) }`
+ * to `StdioClientTransport`, whose `spawn` uses `{ ...getDefaultEnvironment(),
+ * ...env }` — a fixed whitelist (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`
+ * on POSIX), not `process.env`. So a `DARWIN` exported in the user's shell never
+ * reached a server before and still does not; the marker written here does, and a
+ * config `env.DARWIN` wins over it. Only stdio entries are touched — detected as the
+ * SDK detects them (`transport`, else `command`); http/sse entries and non-object
+ * entries pass through byte-identical, and `env` values keep their `${VAR}`
+ * interpolation because the SDK still runs it on the merged record.
+ */
+export function withStdioDarwinMarker(
+  servers: Record<string, McpServerConfig>,
+): Record<string, McpServerConfig> {
+  return Object.fromEntries(
+    Object.entries(servers).map(([name, entry]) => [
+      name,
+      typeof entry === 'object' && entry !== null && isStdioEntry(entry)
+        ? { ...entry, env: withDarwinMarker(entry.env ?? {}) }
+        : entry,
+    ]),
+  );
+}
+
+/** Mirrors the SDK loader's transport detection: explicit `transport`, else `command` → stdio. */
+function isStdioEntry(entry: McpServerConfig): boolean {
+  return entry.transport === undefined ? typeof entry.command === 'string' && entry.command !== '' : entry.transport === 'stdio';
 }
 
 /**

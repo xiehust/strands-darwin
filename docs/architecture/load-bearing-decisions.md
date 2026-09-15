@@ -1987,6 +1987,31 @@ suite runs its background cases under an empty HOME for that reason. Checks:
 `verify-config.ts` (`shellEnv` grammar), `verify-status-command.ts` (the row), and
 `verify-npm-patch-format.ts` for the regenerated patch.
 
+*Every process darwin spawns carries `DARWIN=1` (SER-094).* The counterpart of Claude Code's
+`CLAUDECODE=1` and Gemini CLI's `GEMINI_CLI=1`: one pure helper in the same module,
+`withDarwinMarker(env)`, returns a copy with `DARWIN=1` added **unless the name is already set**
+(a user's `export DARWIN=custom` survives byte-identical; nothing else is added, the input is never
+mutated), and every spawn seam darwin owns applies it — `runtime.ts` marks the *scrubbed* map
+before handing it to `createForegroundBashTool`/`createBackgroundBashTool` (parent and `childBash`
+alike, so the marker can never be a withheld name and the notice/`/status` row never mention it),
+`shell-command.ts` marks `process.env` for `!`, the three hook spawns (`tool-hooks.ts` native tool
+hooks, `lifecycle-hooks.ts`, `hook-process.ts` — the runner every Codex-dialect hook goes through)
+do the same, and `registry.ts` (`withStdioDarwinMarker`, beside `withDefaultPrefixes`) adds
+`env.DARWIN` to each *stdio* server entry without overriding a config `env.DARWIN`. The MCP seam
+is the one that had to be verified rather than assumed: the SDK's `buildStdioConfig` hands
+`{ ...getDefaultEnvironment(), ...interpolateRecord(env) }` to `StdioClientTransport`, whose spawn
+env is again `{ ...getDefaultEnvironment(), ...env }` — a fixed whitelist (`HOME`, `LOGNAME`,
+`PATH`, `SHELL`, `TERM`, `USER` on POSIX), never `process.env` — so the config `env` is the only
+path into a server, a `DARWIN` exported in darwin's own shell never reached a server before and
+still does not, and the marker written into the config does. The scrub, `ALWAYS_SURVIVE_NAMES`,
+passthrough, trajectory, `/export` and headless output are unchanged; darwin's own platform helpers
+(clipboard/copy commands) are not user or model programs and are left alone. Checks:
+`verify-shell-env.ts` (helper contracts; a real offline `AgentRuntime` whose registered `bash`
+prints `1` in the foreground shell and a `start` job, and passes a preset `DARWIN` through),
+`verify-shell-command.ts`, `verify-tool-hooks.ts`, `verify-lifecycle-hooks.ts`,
+`verify-codex-hooks.ts`, and `verify-mcp-config.ts` (a real `sh -c` stdio server writes what it
+saw: `1` through the registry, the config value when set, nothing through the bare SDK).
+
 ## TUI — production React owns the long-turn memory bound
 
 **The interactive React/Ink graph is first imported under the production condition**

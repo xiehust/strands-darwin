@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 
+import { withDarwinMarker } from '../tools/shell-env.js';
+
 export const HOOK_PAYLOAD_MAX_BYTES = 64 * 1024;
 // Capture enough for the adapter's 64 KiB per-handler context hard cap plus JSON
 // escaping and bounded diagnostics. No hook output is ever spilled to disk.
@@ -85,11 +87,15 @@ export class HookProcessManager {
       let child: ChildProcessWithoutNullStreams;
       try {
         const selected = process.platform === 'win32' ? commandWindows ?? command : command;
+        // The user's environment as configured, plus `DARWIN=1` (SER-094; a preset
+        // `DARWIN` wins). Codex-dialect hooks spawn here; native tool hooks
+        // (`tool-hooks.ts`) and lifecycle hooks (`lifecycle-hooks.ts`) add the same marker.
+        const env = withDarwinMarker(process.env);
         child = process.platform === 'win32'
-          ? spawn(selected, { cwd: this.projectRoot, env: process.env, stdio: 'pipe', shell: true, windowsHide: true })
+          ? spawn(selected, { cwd: this.projectRoot, env, stdio: 'pipe', shell: true, windowsHide: true })
           : spawn('/bin/sh', ['-c', selected], {
               cwd: this.projectRoot,
-              env: process.env,
+              env,
               stdio: 'pipe',
               detached: true,
             });

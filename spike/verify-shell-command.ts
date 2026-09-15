@@ -83,6 +83,22 @@ async function executionAndBounding(): Promise<void> {
   const cwd = await runShellCommand('pwd', { cwd: WORK_DIR }).done;
   assert('the command runs in the project root', cwd.output.text.trim().endsWith(path.basename(WORK_DIR)));
 
+  // SER-094: the user's environment plus the one marker; a preset DARWIN wins.
+  const previousMarker = process.env['DARWIN'];
+  delete process.env['DARWIN'];
+  process.env['DARWIN_BANG_TEST'] = 'inherited-ok';
+  try {
+    const marker = await runShellCommand('echo "[$DARWIN|$DARWIN_BANG_TEST]"', { cwd: WORK_DIR }).done;
+    assert('`!echo $DARWIN` prints 1 while the rest of the user\u2019s environment is inherited', marker.output.text.trim() === '[1|inherited-ok]');
+    process.env['DARWIN'] = 'custom-user-value';
+    const preset = await runShellCommand('echo "[$DARWIN]"', { cwd: WORK_DIR }).done;
+    assert('a preset DARWIN survives byte-identical', preset.output.text.trim() === '[custom-user-value]');
+  } finally {
+    delete process.env['DARWIN_BANG_TEST'];
+    if (previousMarker === undefined) delete process.env['DARWIN'];
+    else process.env['DARWIN'] = previousMarker;
+  }
+
   const spawnFail = await runShellCommand('echo x', { cwd: path.join(WORK_DIR, 'no-such-dir') }).done;
   assert('a spawn failure is reported, not thrown',
     spawnFail.spawnError !== undefined && spawnFail.exitCode === null &&

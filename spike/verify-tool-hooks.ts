@@ -148,17 +148,24 @@ async function shellContract(): Promise<void> {
   header('tool hooks — real shell payload and process contract');
   const payload = path.join(ROOT, 'payload.json');
   process.env['DARWIN_HOOK_TEST'] = 'inherited-ok';
+  const previousMarker = process.env['DARWIN'];
+  delete process.env['DARWIN'];
   const result = await runToolHookCommand(
     ROOT,
-    `cat > ${payload}; printf '%s|%s' "$PWD" "$DARWIN_HOOK_TEST"`,
+    `cat > ${payload}; printf '%s|%s|%s' "$PWD" "$DARWIN_HOOK_TEST" "$DARWIN"`,
     'probeTool',
     { nested: ['exact', 2], flag: true },
   );
   const received = await readFile(payload, 'utf8');
   assert('command exits successfully', result.exitCode === 0 && result.error === undefined);
   assert('one exact JSON object plus newline reaches stdin', received === '{"tool_name":"probeTool","tool_input":{"nested":["exact",2],"flag":true}}\n');
-  assert('cwd is the project root and environment is inherited', result.stdout === `${ROOT}|inherited-ok`);
+  assert('cwd is the project root, environment is inherited and DARWIN=1 is added (SER-094)', result.stdout === `${ROOT}|inherited-ok|1`);
   assert('stderr is captured', result.stderr === '');
+  process.env['DARWIN'] = 'custom-user-value';
+  const preset = await runToolHookCommand(ROOT, 'printf %s "$DARWIN"', 'probeTool', {});
+  assert('a preset DARWIN reaches a native tool hook byte-identical', preset.stdout === 'custom-user-value');
+  if (previousMarker === undefined) delete process.env['DARWIN'];
+  else process.env['DARWIN'] = previousMarker;
   delete process.env['DARWIN_HOOK_TEST'];
 
   const launch = await runToolHookCommand(path.join(ROOT, 'missing-cwd'), 'true', 'probeTool', {});

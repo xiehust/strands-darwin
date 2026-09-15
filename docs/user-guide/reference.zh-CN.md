@@ -131,7 +131,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 |---|---|
 | `/prefix` | 补全内置/自定义命令和 skill |
 | `@path` | 补全工作区路径；只插入文本，不插入文件内容 |
-| `!command` | 用户授权的单次本地 shell 命令 |
+| `!command` | 用户授权的单次本地 shell 命令；以你的环境运行，并附加 `DARWIN=1`——darwin 启动的每个进程（模型 `bash` shell 与后台任务、hook 命令、stdio MCP 服务器）都带有这个标记，已设置的 `DARWIN` 绝不会被覆盖 |
 | 普通文本 | 模型提示词；忙碌时排队 |
 
 ## 按键

@@ -104,6 +104,30 @@ async function main(): Promise<void> {
   await noisy.close();
   assert('nonzero commands cannot fail close()', true);
 
+  // SER-094: a hook command sees `DARWIN=1`; a preset DARWIN wins. `close()` reaps,
+  // so each file is awaited first, as the first block does.
+  const markerFile = path.join(ROOT, 'marker');
+  const presetFile = path.join(ROOT, 'marker-preset');
+  const written = (target: string) => waitFor(() => readFile(target, 'utf8').then((text) => text !== '', () => false));
+  const previousMarker = process.env['DARWIN'];
+  delete process.env['DARWIN'];
+  try {
+    const marked = new LifecycleHookRunner(ROOT, { TurnComplete: [group('*', `printf %s "$DARWIN" > ${markerFile}`)] });
+    marked.publish({ event: 'TurnComplete', outcome: 'success', source: 'interactive' });
+    await written(markerFile);
+    await marked.close();
+    assert('a lifecycle hook command observes DARWIN=1', (await readFile(markerFile, 'utf8')) === '1');
+    process.env['DARWIN'] = 'custom-user-value';
+    const preset = new LifecycleHookRunner(ROOT, { TurnComplete: [group('*', `printf %s "$DARWIN" > ${presetFile}`)] });
+    preset.publish({ event: 'TurnComplete', outcome: 'success', source: 'interactive' });
+    await written(presetFile);
+    await preset.close();
+    assert('a preset DARWIN reaches the hook byte-identical', (await readFile(presetFile, 'utf8')) === 'custom-user-value');
+  } finally {
+    if (previousMarker === undefined) delete process.env['DARWIN'];
+    else process.env['DARWIN'] = previousMarker;
+  }
+
   const reaper = new LifecycleHookRunner(ROOT, {
     TurnComplete: [group('*', `trap '' TERM; sleep 30 & echo $! > ${pidFile}; wait`)],
   });

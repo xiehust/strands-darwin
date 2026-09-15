@@ -130,7 +130,7 @@ Rules and limits:
 |---|---|
 | `/prefix` | built-in/custom/skill completion |
 | `@path` | workspace path completion; inserts text, never content |
-| `!command` | user-authorized one-shot local shell command |
+| `!command` | user-authorized one-shot local shell command; runs with your environment plus `DARWIN=1` — the marker every process darwin spawns (model `bash` shells and jobs, hook commands, stdio MCP servers) carries, never overriding a `DARWIN` already set |
 | normal text | model prompt; queues while busy |
 
 ## Keyboard

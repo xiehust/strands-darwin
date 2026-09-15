@@ -20,6 +20,10 @@
  * - The SDK `bash` tool stays the SDK's: only the existing `createBash` option
  *   seam carries the scrubbed map — no execution wrapper, no `toolExecutor`.
  *
+ * Orthogonal to the scrub, every one of those seams — the scrubbed map itself,
+ * `!`, hooks, stdio MCP `env` — adds the {@link DARWIN_MARKER_NAME} marker through
+ * {@link withDarwinMarker} (SER-094): one added name, never a withheld one.
+ *
  * The rule is fixed: one case-insensitive pattern on the variable *name*
  * ({@link CREDENTIAL_NAME_PATTERN}); values are never inspected. There is no off
  * switch — the only knob is `shellEnv.passthrough` in config, which restores named
@@ -125,6 +129,37 @@ export function scrubShellEnv(env: NodeJS.ProcessEnv, passthrough: readonly stri
   }
   withheld.sort();
   return { env: kept, withheld };
+}
+
+/**
+ * The one environment marker every process darwin spawns receives (SER-094):
+ * `DARWIN=1`, the counterpart of Claude Code's `CLAUDECODE=1` and Gemini CLI's
+ * `GEMINI_CLI=1`, so scripts, git hooks and test runners can detect an agent host
+ * and drop pagers or interactive prompts, and hook commands can tell who calls them.
+ */
+export const DARWIN_MARKER_NAME = 'DARWIN';
+
+/** The marker's value; a bare presence flag, never state. */
+export const DARWIN_MARKER_VALUE = '1';
+
+/**
+ * A copy of `env` carrying {@link DARWIN_MARKER_NAME}`=1` — unless the name is
+ * already set, in which case the input is returned byte-identical (a user's own
+ * `export DARWIN=custom` survives; the marker never overrides). Pure: the input is
+ * never mutated, undefined values are dropped as `spawn` would drop them, nothing
+ * else is added. Applied at every spawn seam darwin owns — the scrubbed map the
+ * model's `bash` gets, `!` commands, hook commands, stdio MCP server `env` — and
+ * deliberately outside {@link scrubShellEnv}: the marker is neither withheld nor
+ * a passthrough, so the notice and `/status` never mention it.
+ */
+export function withDarwinMarker(env: NodeJS.ProcessEnv): Record<string, string> {
+  const copy: Record<string, string> = {};
+  for (const name of Object.keys(env)) {
+    const value = env[name];
+    if (value !== undefined) copy[name] = value;
+  }
+  if (!(DARWIN_MARKER_NAME in copy)) copy[DARWIN_MARKER_NAME] = DARWIN_MARKER_VALUE;
+  return copy;
 }
 
 /** Representative withheld names in the startup notice before `…` takes over. */
