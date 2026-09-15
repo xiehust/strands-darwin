@@ -1181,6 +1181,22 @@ no-follow parsing, `0700` directories, `0600` atomic files and `/memory list|sho
 Version-1/2 state is read through a deterministic atomizing migration; only currently revalidated anchored
 facts survive an authorized mutation, and trajectories are never rescanned or backfilled.
 
+**Write timing is the tool description's contract, and the key merge is visible at stage time.** The base
+prompt names no tool, so the three routes of the memory decision tree live in `MEMORY_SAVE_DESCRIPTION`:
+changing state (progress, branch, diff, metrics, todo, workarounds) is never saved and is read live;
+evidenced stable facts are saved; an inferred or uncertain fact is asked about in the reply and saved only
+after the user confirms ("remember …" is confirmation). There is no low-risk auto-write path — the gate
+stays the only confirmation step. `stage()` reads the same validated state `recall` reads and returns a
+`consolidation` field: `add` (new key), `update` (existing key, different fact — the stored entry it
+replaces is echoed with id/title/fact/time) or `unchanged` (identical id), plus up to `MEMORY_RELATED_MAX`
+near-duplicates under other keys or user notes chosen by deterministic distinctive-word overlap
+(`findRelatedMemory`). Stored facts are already screened, so echoing them is not a new channel; the
+candidate's own fact and evidence line are still never echoed. A candidate whose id the user forgot is
+refused at stage time with the reason instead of failing silently in the post-turn commit; an unreadable
+archive reports `add` plus the problem and still stages. The permission prompt is unchanged — bounded
+key/category/title/evidence path, never the fact — because `classify()` is synchronous and pure over the
+tool input and the design keeps unscreened model text out of the live frame.
+
 Recall performs bounded deterministic lexical ranking, revalidates generated entries with `persist: false`,
 and returns explicitly fallible data rather than instructions or policy. It makes no model, network,
 embedding or vector call, writes nothing, and never injects the full archive into the system prompt. The

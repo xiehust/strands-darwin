@@ -91,7 +91,7 @@ section is the only reference; all free (no model call) unless marked *live*.
 | Native lifecycle command hooks | Native dialect remains exactly `TurnComplete` + `PermissionRequest`: bounded closed JSON, driver/visible-prompt publication, non-blocking and output-free; never model/permission/tool/trajectory/SDK-loop input; session process groups reaped on cancel, `/clear`, unwind and shutdown | `src/hooks/lifecycle-hooks.ts`, drivers, `src/tui/permission-queue.ts` | `verify-lifecycle-hooks.ts`†, `verify-headless-structured.ts`† |
 | Skills | Official `AgentSkills`; native tool private; symlinks stay within real root, 200-entry preflight + use-time check. `/setup-agentcore-memory`: required guide, confirm changes | `src/skills/` | `verify-setup-agentcore-memory.ts`†, doc § |
 | System prompt composition | Fixed order: base → `<project-instructions>` → `<available_skills>` → `<working-context>` → cache point; catalogue never duplicates and current context is re-derived every run | prompt modules | doc § |
-| Agent-managed project memory | Default-on with trajectory; parent-only safe recall, un-ruleable save staged until durable successful endTurn; exact evidence, v3 validation/suppression; no ambient archive/network, children isolated | `src/memory/` | `verify-memory*.ts`† |
+| Agent-managed project memory | Default-on with trajectory; parent-only safe recall; un-ruleable save staged until durable endTurn, `stage()` reports add/update/unchanged and refuses forgotten ids, never echoing the candidate fact; exact evidence, v3 validation/suppression; no ambient archive/network, children isolated | `src/memory/` | `verify-memory*.ts`† |
 | AgentCore Memory — optional, scoped, user-authorized cloud data | Default-off; scoped auto/manual uploads, 8KiB/action, new 96KiB/session; legacy unchanged; consent/quotas/receipts; no hydration | `src/agentcore/` | `verify-agentcore-{memory,upload}.ts`†, `verify-cloud-memory-auto.ts`† |
 | Prompt caching | On by default, Claude only (the gate avoids SDK `console.warn` into the Ink frame); stated on the model line, never a header line of its own | `src/agent/prompt-cache.ts` | `tui approve` (*live*) |
 | Thinking effort | Always `adaptive` (`output_config.effort`, never nested in `thinking`, never `budget_tokens`); unsupported levels clamped and reported on every driver, never sent — headless writes one `thinking:` stderr line and `run.started` carries `thinking.{requested,effective,problem}` plus a `thinking` warning; `/effort` uses `Model.updateConfig()` — the conversation survives | `src/agent/thinking.ts`, `src/headless-runner.ts` | `verify-headless-structured.ts`†, `verify-thinking-live.ts` (*live*) |
@@ -124,9 +124,9 @@ section is the only reference; all free (no model call) unless marked *live*.
   assertion strings. Read the relevant one before changing that area.
 - Keep this file under 32 KiB: darwin preloads only the first `MAX_INSTRUCTIONS_BYTES` of it
   into its own system prompt, so anything past the cap is invisible to the agent. Long-form
-  rationale goes to `docs/architecture/load-bearing-decisions.md`.
-- Non-trivial work: understand the area (doc section + relevant `spike/` suite) before editing,
-  verify with `pnpm typecheck` + `pnpm test` plus the row's listed checks, then commit.
+  rationale goes to the decisions doc.
+- Non-trivial work: verify with `pnpm typecheck` + `pnpm test` plus the row's listed checks,
+  then commit.
 - The installed `darwin` command runs `dist/`, not `src/`: after any commit that touches
   `src/` or the built-in skills, run `pnpm build` before reporting done — typecheck and
   tests do not refresh `dist`, so an unbuilt fix is invisible to the next `darwin` launch.

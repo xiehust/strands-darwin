@@ -137,4 +137,26 @@ export function rankMemory(state: MemoryState, query: string, limit: number): { 
   }).sort((a, b) => b.score - a.score || b.at.localeCompare(a.at) || a.entry.id.localeCompare(b.entry.id));
   return { entries: ranked.slice(0, limit).map(({ entry }) => entry), omitted: Math.max(0, ranked.length - limit) };
 }
+
+export const MEMORY_RELATED_MAX = 3;
+/**
+ * Near-duplicate lookup for a save candidate: entries under *other* keys (or user notes)
+ * whose title/fact share enough distinctive words with the candidate. Deterministic and
+ * lexical like `rankMemory`, but keyed on overlap rather than a short query phrase, so a
+ * 500-code-point fact does not light up every entry through stop words. Bounded to
+ * `MEMORY_RELATED_MAX`; ties break on newest, then id.
+ */
+export function findRelatedMemory(state: MemoryState, candidate: { key: string; title: string; fact: string }): ReturnType<typeof memoryEntries> {
+  const words = distinctiveWords(`${candidate.key.replace(/[:_-]/g, ' ')} ${candidate.title} ${candidate.fact}`); if (words.size === 0) return [];
+  const needed = Math.max(3, Math.ceil(words.size * 0.4));
+  return memoryEntries(state).flatMap((entry) => {
+    if (entry.origin === 'generated' && entry.key === candidate.key) return [];
+    const text = entry.origin === 'generated' ? `${entry.key.replace(/[:_-]/g, ' ')} ${entry.title} ${entry.fact}` : entry.note;
+    let shared = 0; for (const word of distinctiveWords(text)) if (words.has(word)) shared += 1;
+    return shared >= needed ? [{ entry, shared, at: entry.origin === 'generated' ? entry.source.at : entry.authoredAt }] : [];
+  }).sort((a, b) => b.shared - a.shared || b.at.localeCompare(a.at) || a.entry.id.localeCompare(b.entry.id)).slice(0, MEMORY_RELATED_MAX).map(({ entry }) => entry);
+}
+function distinctiveWords(text: string): Set<string> {
+  return new Set(text.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => [...word].length >= 4));
+}
 export { renderMemoryIndex };

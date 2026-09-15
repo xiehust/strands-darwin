@@ -2,6 +2,7 @@ import { projectMemoryDir } from '../paths.js';
 import type { TurnSettlement } from '../trajectory/writer.js';
 import {
   commitGeneratedMemory,
+  findRelatedMemory,
   rankMemory,
   readValidatedMemory,
   type MemoryStatus,
@@ -17,6 +18,7 @@ import {
   validateGeneratedText,
   type GeneratedMemoryCandidate,
   type MemoryCategory,
+  type MemoryEntry,
   type MemorySource,
 } from './state.js';
 import { resolveExactSourceAnchor, validateAnchor, type SourceAnchorFailure } from './validation.js';
@@ -43,6 +45,19 @@ export interface SaveToolInput {
 interface CandidateReservation {
   readonly fingerprint: string;
   readonly candidate: Promise<GeneratedMemoryCandidate>;
+}
+
+/** Stored-entry projection returned to the model; the same fields `recall` already exposes. */
+type RelatedMemory =
+  | { readonly id: string; readonly key: string; readonly category: MemoryCategory; readonly title: string; readonly fact: string }
+  | { readonly id: string; readonly origin: 'user'; readonly note: string };
+
+/** How the durable commit will treat the archive: the deterministic key merge, made visible. */
+export interface Consolidation {
+  readonly outcome: 'add' | 'update' | 'unchanged';
+  readonly existing?: { readonly id: string; readonly title: string; readonly fact: string; readonly at: string };
+  readonly related: readonly RelatedMemory[];
+  readonly problem?: string;
 }
 
 interface ActiveTurn {
@@ -189,12 +204,38 @@ export class MemoryToolController {
       if (turn.state !== 'open' || this.activeTurn !== turn) {
         throw new Error('memory save unavailable: the active turn ended before staging completed');
       }
+      const consolidation = await this.consolidation(key, validated);
       turn.candidates.set(key, validated);
-      return stagedResult(generatedMemoryId(key, validated.fact), false);
+      return stagedResult(generatedMemoryId(key, validated.fact), false, consolidation);
     } catch (error) {
       if (turn.reservations.get(key)?.candidate === candidate) turn.reservations.delete(key);
       throw error;
     }
+  }
+
+  /**
+   * What the durable commit will do to the archive, decided from the same validated
+   * state `recall` reads (stored facts are already screened, so echoing them is not a new
+   * channel; the candidate's own fact is never echoed). A fact the user forgot is refused
+   * here, with a reason, instead of failing silently in the post-turn commit.
+   */
+  private async consolidation(key: string, candidate: GeneratedMemoryCandidate): Promise<Consolidation> {
+    const id = generatedMemoryId(key, candidate.fact);
+    const loaded = await this.readMemory(this.projectRoot, { horizonDays: this.horizonDays });
+    if (loaded.state === undefined) {
+      return { outcome: 'add', related: [], ...(loaded.problem === undefined ? {} : { problem: loaded.problem }) };
+    }
+    if (loaded.state.suppressedGeneratedIds.includes(id)) {
+      throw new Error('this exact fact was previously forgotten by the user (/memory forget); do not save it again');
+    }
+    const related = findRelatedMemory(loaded.state, candidate).map(relatedProjection);
+    const existing = loaded.state.generated.find((entry) => entry.key === key);
+    if (existing === undefined) return { outcome: 'add', related };
+    return {
+      outcome: existing.id === id ? 'unchanged' : 'update',
+      existing: { id: existing.id, title: existing.title, fact: existing.fact, at: existing.source.at },
+      related,
+    };
   }
 
   seal(success: boolean): void {
@@ -364,13 +405,20 @@ function candidateFingerprint(input: SaveToolInput, key: string): string {
   });
 }
 
-function stagedResult(id: string, duplicate: boolean): object {
+function stagedResult(id: string, duplicate: boolean, consolidation?: Consolidation): object {
   return {
     staged: true,
     id,
     ...(duplicate ? { duplicate: true } : {}),
+    ...(consolidation === undefined ? {} : { consolidation }),
     durableAfter: 'successful recorded endTurn',
   };
+}
+
+function relatedProjection(entry: MemoryEntry): RelatedMemory {
+  return entry.origin === 'generated'
+    ? { id: entry.id, key: entry.key, category: entry.category, title: entry.title, fact: entry.fact }
+    : { id: entry.id, origin: 'user', note: entry.note };
 }
 
 function uniqueOccurrences(haystack: string, needle: string): number {
