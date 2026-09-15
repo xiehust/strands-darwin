@@ -2952,3 +2952,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Recorded risks: same-process re-open of one id is refused (darwin never does it); the 24 h foreign-host bound has no heartbeat behind it; a microsecond takeover race between two launches classifying one stale lease remains.
 - Worker spend: `usage: input=276 output=80702 cacheRead=21539666 cacheWrite=221565`; `cost: total=12.1923 input=0.0028 output=4.0351 cacheRead=5.3849 cacheWrite=2.7696 model=global.anthropic.claude-fable-5-1 pricing=global.anthropic.claude-fable-5-1`.
 
+## Batch 135 — SER-092 resume hint on exit (2026-09-15)
+
+- Origin: `docs/research/research_2026-09-15.md`, peer roll `12:43:40Z`; Score 11, Priority 124. Built on accepted SER-091 `55469cb` (green Host gate/build); handoff `3aa60d1` is docs-only. Third direction of the five-direction batch.
+- Fresh child `session-20260915-153718965`; managed `bg-11c1252d-3c64-497d-a90d-bbb664247d5a`, exit 0, drained to `hasMore: false`. Source CLI (`pnpm tsx src/cli.ts -p … --yolo --context-offload`, brief piped on stdin), no ceiling, no correction, retry or descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| One plain stdout line `session <id> · resume: darwin --resume <id>` after Ink exit and `shutdown()`, for the live runtime, only when it has messages to reopen; silent for fresh no-turn exits, refusals and `-p` | `7be168f` | Host read the `cli-main.ts`/`cli-usage.ts` diff (written after the `finally`, gated on `messageCount`, refusal paths return earlier) and ran `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts resumeHint && pnpm build && git diff --check && git status --short`, task `bg-3a95b23f-a34e-4873-ac98-67206a827d9d`, exit 0, 8,974 PASS lines, 0 FAIL; log `/tmp/darwin-ser092-host-acceptance.log`. |
+
+- Docs wrap-up: `sessions-and-state.md` + `reference.md` EN/zh-CN one sentence each and a paragraph under the existing "`darwin sessions` and `--resume <id>`" decisions heading, in the accepted commit; README (`# ids: darwin sessions`) still accurate; AGENTS.md untouched at 32,763 bytes. Dist rebuilt by Host.
+- Interpretation accepted by the Host: "completed at least one turn" is read as "has messages to reopen" (`messageCount > 0`), so a resumed session exiting without a new turn still prints its reopenable id; the alternative needed a new counter the brief discouraged.
+- Worker spend: `usage: input=148 output=29020 cacheRead=7180923 cacheWrite=107795`; `cost: total=4.5951 input=0.0015 output=1.4510 cacheRead=1.7952 cacheWrite=1.3474 model=global.anthropic.claude-fable-5-1 pricing=global.anthropic.claude-fable-5-1`.
+

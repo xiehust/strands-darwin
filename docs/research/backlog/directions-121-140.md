@@ -66,7 +66,7 @@ Requirement: `src/agent/session.ts` gains a lease under the session's state dire
 
 ## SER-092 — Resume hint on exit: after Ink releases the terminal, print one line `session <id> · resume: darwin --resume <id>` when the session completed at least one turn; nothing for headless, nothing when no turn ran
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 124
 - Score: 11
 - Importance: 2
@@ -78,7 +78,7 @@ Requirement: `src/agent/session.ts` gains a lease under the session's state dire
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted `7be168f` (`feat(cli): print the resume hint when the tui exits`), fresh child `session-20260915-153718965`, task `bg-11c1252d-3c64-497d-a90d-bbb664247d5a` exit 0, drained. `src/cli-usage.ts` `resumeHintLine(id)` (plain text, one `\n`); `runInteractive` writes it after the `try/finally` that awaits `waitUntilExit()` and `shutdown()` (lease released, writers settled), for `current.info.sessionId` (the `/clear`/`/rewind` successor when one exists), gated on `AgentRuntime.messageCount > 0` — the existing accessor; the SDK saves the snapshot `--resume <id>` reads on `AfterInvocationEvent`, so "has messages" is exactly "reopenable". Consequence accepted by the Host: a *resumed* session that exits without a new turn still prints the line (its id does reopen); a fresh session with no prompt prints nothing; refusal paths return earlier; `-p` never reaches it. Host read the `cli-main.ts`/`cli-usage.ts` diff and ran `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts resumeHint && pnpm build && git diff --check && git status --short` (task `bg-3a95b23f-a34e-4873-ac98-67206a827d9d`, exit 0, 8,974 PASS lines, 0 FAIL; log `/tmp/darwin-ser092-host-acceptance.log`). New free pty scenario `resumeHint` (offline `startup-cli` fixture: no-turn `/exit` silent; turn → `/clear` → turn → `/exit` ends with the successor's exact line, once); `verify-headless.ts`/`verify-headless-structured.ts` each pin the line's absence in `-p` output. Docs: one sentence each in `sessions-and-state*.md` and `reference*.md`, one paragraph under the existing "`darwin sessions` and `--resume <id>`" decisions heading; README and AGENTS.md untouched. Iteration-log Batch 135.
 
 ### Notes / blockers / abandonment reason
 
@@ -86,7 +86,7 @@ Requirement: in `src/cli-main.ts` `runInteractive`, after `waitUntilExit()` and 
 
 ## SER-093 — Agent definitions may omit project instructions: optional frontmatter `projectInstructions: false` (default unchanged) skips `<project-instructions>` in that child's system prompt; `/agents` states it; invalid values use the loader's bounded skip reason; built-in `general` unchanged
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 125
 - Score: 10
 - Importance: 3
