@@ -24,7 +24,7 @@ Depends on SER-088: multiline query presentation must be safe before paste is ro
 
 ## SER-090 — Workspace trust for repository-supplied executable configuration: hold project hook commands, project MCP servers and legacy project allow rules until the user accepts one bounded modal that lists exactly what the checkout would arm; store the decision in the user-owned `~/.darwin/projects/<key>/trust.json`; headless never asks — it holds them back and states so
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 122
 - Score: 13
 - Importance: 5
@@ -36,7 +36,7 @@ Depends on SER-088: multiline query presentation must be safe before paste is ro
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted `effb8ba` (`feat(trust): gate repository-supplied hooks, mcp and rules`), fresh child `session-20260915-131504369`, task `bg-3bafb509-1882-4196-bb40-c7c109ffe361` exit 0, drained. New pure `src/agent/workspace-trust.ts` (inventory shares the loaders' own parse; decision store `~/.darwin/projects/<key>/trust.json`, nothing under the project root ever read as a decision), `src/tui/trust-format.ts` + `WorkspaceTrustPrompt.tsx` (bounded modal, one `<Text>` per row), `RuntimeOptions.workspaceTrust` → `loadProjectPolicy({ projectLayers: 'held' })` / `loadMcpClients({ projectLayer: 'held' })` skip rather than fail, rule writers carry the same option, `/status`/`/mcp` held rows, headless `trust:` stderr line + additive `run.started.trust`. Host read the module, the runtime/cli-main diff, the decisions heading and the marker assertions in `spike/verify-workspace-trust.ts` (401 lines, registered in `run-tests.ts`), then ran `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts trust && … mcp && … completion && pnpm build && git diff --check && git status --short` (task `bg-4983452e-e0b0-4275-b5ca-252bcc178860`, exit 0, 8,997 PASS lines, no FAIL; log `/tmp/darwin-ser090-host-acceptance.log`). Docs: README EN/zh-CN, `permissions.md`/`reference.md` EN/zh-CN, load-bearing heading "Workspace trust"; no AGENTS.md row (32,763 bytes, five under cap — stated in the doc). Iteration-log Batch 133.
 
 ### Notes / blockers / abandonment reason
 
@@ -44,7 +44,7 @@ Requirement: on the first interactive launch in a project whose checkout declare
 
 ## SER-091 — Single live process per session: a per-session lease (`lease.json`: pid, hostname, startedAt) acquired in `resolveSession` with `wx`; a live lease refuses explicit `--resume <id>`/`--session <id>` naming pid and start time and makes bare `--resume` start fresh with one notice; a stale lease (dead pid) is taken over and stated; released at shutdown; `darwin sessions` marks a leased row
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 123
 - Score: 11
 - Importance: 4
