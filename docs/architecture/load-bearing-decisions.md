@@ -1177,9 +1177,25 @@ serialized cleanup may finish the commit without changing the completed turn.
 stable namespaced key, closed category, one fact, host-owned provenance, evidence and validation. IDs derive
 deterministically from normalized key plus fact; duplicates collapse and a newer validated fact supersedes
 an older generated fact with the same key, never a user note. Generated suppressions, age expiry, strict
-no-follow parsing, `0700` directories, `0600` atomic files and `/memory list|show|forget|remember` remain.
+no-follow parsing, `0700` directories, `0600` atomic files and `/memory list|show|edit|forget|remember` remain.
 Version-1/2 state is read through a deterministic atomizing migration; only currently revalidated anchored
 facts survive an authorized mutation, and trajectories are never rescanned or backfilled.
+
+**`/memory edit <id|number> <fact>` is the deterministic correction; a corrected key is user-owned.** Forget
+plus remember lost the structure — key, category, title, anchor — and left the wrong fact free to return. An
+edit of a user note rewrites it in place (fresh id, since ids derive from time plus text). An edit of a
+generated fact passes the same content screening as a save, keeps key/category/title/provenance/evidence
+anchor (the anchor still reports when the cited source moves; the horizon still counts from the original
+commit), takes the new deterministic id, and carries the one optional v3 field `edited: { at, previousId }`
+— unknown keys still fail closed. The predecessor id (and legacy ids) join the suppression list, so the
+wrong fact cannot be re-saved; a correction whose own id was forgotten earlier is refused; an identical
+correction changes nothing. Because the corrected text is user-authored, it gets the user-note protection:
+`commitGeneratedMemory` refuses a different fact under that key, `stage()` refuses it with the reason (the
+callback runs after the gate, so an approved call ends as one explicit tool error rather than a silent
+post-turn commit failure), and a verbatim re-save keeps the stamp and provenance instead of laundering them
+into model provenance. Only `/memory edit` or `/memory forget` may move it again. `show` prints the edit
+line, `list` marks `user-edited`, `recall` exposes `edited`. Checked by `verify-memory-command.ts` and
+`verify-memory-tools.ts`.
 
 **Write timing is the tool description's contract, and the key merge is visible at stage time.** The base
 prompt names no tool, so the three routes of the memory decision tree live in `MEMORY_SAVE_DESCRIPTION`:

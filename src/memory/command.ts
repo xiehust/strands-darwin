@@ -1,17 +1,22 @@
 import { projectKey } from '../paths.js';
 import {
+  MEMORY_FACT_MAX_CODE_POINTS,
   MEMORY_MAX_SUPPRESSIONS,
   MEMORY_MAX_USER_NOTES,
   createUserMemoryEntry,
   emptyMemoryState,
+  generatedMemoryId,
   isSafeMemoryId,
   memoryEntries,
+  parseV3State,
   readMemoryState,
   renderMemoryIndex,
+  validateGeneratedText,
   validateRememberedNote,
   withMemoryStateLock,
   writeMemoryProjection,
   writeMemoryState,
+  type GeneratedMemoryEntry,
   type MemoryEntry,
   type MemoryState,
 } from './state.js';
@@ -20,7 +25,7 @@ import { validateMemoryState, type MemoryValidationOptions } from './validation.
 export const MEMORY_REPORT_MAX_LINES = 48;
 export const MEMORY_REPORT_MAX_LINE_CODE_POINTS = 180;
 export const MEMORY_REPORT_MAX_ENTRIES = 32;
-export const MEMORY_USAGE = 'usage: /memory [list] · /memory show <id|number> · /memory forget <id|number|all> · /memory remember <note>';
+export const MEMORY_USAGE = 'usage: /memory [list] · /memory show <id|number> · /memory edit <id|number> <fact> · /memory forget <id|number|all> · /memory remember <note>';
 
 export type MemoryCommandResult = {
   readonly changed: boolean;
@@ -37,11 +42,12 @@ export async function runMemoryCommand(
   const separator = argument.search(/\s/);
   const verb = argument === '' ? 'list' : separator === -1 ? argument : argument.slice(0, separator);
   const target = separator === -1 ? '' : argument.slice(separator).trim();
-  if ((verb === 'list' && target !== '') || !['list', 'show', 'forget', 'remember'].includes(verb)) {
+  if ((verb === 'list' && target !== '') || !['list', 'show', 'edit', 'forget', 'remember'].includes(verb)) {
     return unchanged(`${verb} is not a valid /memory form\n  ${MEMORY_USAGE}`);
   }
   if (verb === 'list') return listMemory(projectRoot, options);
   if (verb === 'show') return showMemory(projectRoot, target, options);
+  if (verb === 'edit') return editMemory(projectRoot, target, options);
   if (verb === 'remember') return rememberMemory(projectRoot, target, options);
   return forgetMemory(projectRoot, target, options);
 }
@@ -127,6 +133,84 @@ async function rememberMemory(
     );
   });
 }
+
+/**
+ * Deterministic correction of one entry. A user note is rewritten in place (new id, since
+ * ids derive from time plus text). A generated fact keeps its key, category, title,
+ * provenance and evidence anchor — the anchor still tells us when the source moved — and
+ * gains an `edited` stamp; the wrong predecessor id is suppressed so the model cannot
+ * re-save it, and an edited fact is protected from model supersede like a user note.
+ */
+async function editMemory(
+  projectRoot: string,
+  argument: string,
+  options: MemoryValidationOptions,
+): Promise<MemoryCommandResult> {
+  const separator = argument.search(/\s/);
+  if (argument === '' || separator === -1) return unchanged(MEMORY_USAGE);
+  const target = argument.slice(0, separator);
+  const raw = argument.slice(separator).trim();
+  return withMemoryStateLock(projectRoot, async () => {
+    const read = await readMemoryState(projectRoot);
+    if (read.kind === 'invalid') {
+      return unchanged(report([scopeLine(projectRoot), `state: corrupt/refused — ${read.problem}`]));
+    }
+    if (read.kind === 'absent') {
+      return unchanged(report([scopeLine(projectRoot), 'state: absent — nothing edited']));
+    }
+    let prior: MemoryState;
+    try {
+      prior = await stateForAuthorizedMutation(projectRoot, read.state, read.migrated, options);
+    } catch {
+      return unchanged(report([scopeLine(projectRoot), 'state: validation unavailable — mutation refused']));
+    }
+    const entry = resolveEntry(prior, target);
+    if (entry === undefined) return unchanged(`${safeTarget(target)} matches no memory entry — nothing edited`);
+
+    if (entry.origin === 'user') {
+      const note = validateRememberedNote(raw);
+      if (note === undefined) return unchanged(report([REFUSED_TEXT, `  ${MEMORY_USAGE}`]));
+      if (note === entry.note) return unchanged(`${entry.id} already says that — nothing edited`);
+      const duplicate = prior.user.find((candidate) => candidate.note === note);
+      if (duplicate !== undefined) return unchanged(`memory note already exists as ${duplicate.id}`);
+      const replacement = createUserMemoryEntry(note);
+      const next = { ...prior, user: prior.user.map((candidate) => (candidate.id === entry.id ? replacement : candidate)) };
+      return persistMutation(projectRoot, next, `edited ${entry.id} → ${replacement.id} — user-authored; explicit/unvalidated`);
+    }
+
+    const fact = validateGeneratedText(raw, { maxCodePoints: MEMORY_FACT_MAX_CODE_POINTS, allowPolicyLike: entry.category === 'verification' });
+    if (fact === undefined) return unchanged(report([REFUSED_TEXT, `  ${MEMORY_USAGE}`]));
+    if (fact === entry.fact) return unchanged(`${entry.id} already says that — nothing edited`);
+    const id = generatedMemoryId(entry.key, fact);
+    const suppressions = [...new Set([...prior.suppressedGeneratedIds, entry.id, ...(entry.legacyIds ?? [])])];
+    if (suppressions.includes(id)) return unchanged(`edit refused: that exact fact was forgotten earlier as ${id}`);
+    if (suppressions.length > MEMORY_MAX_SUPPRESSIONS) return unchanged('edit refused: generated suppression limit reached');
+    const now = new Date().toISOString();
+    const { legacyIds: _legacy, ...kept } = entry;
+    const replacement: GeneratedMemoryEntry = {
+      ...kept,
+      id,
+      fact,
+      validation: { state: 'unknown', reason: 'awaiting revalidation after user edit', checkedAt: now },
+      edited: { at: now, previousId: entry.id },
+    };
+    const candidate: MemoryState = {
+      ...prior,
+      generated: prior.generated.map((current) => (current.id === entry.id ? replacement : current)),
+      suppressedGeneratedIds: suppressions,
+    };
+    if (parseV3State(candidate) === undefined) return unchanged('edit refused: the corrected entry failed strict state validation');
+    let next: MemoryState;
+    try {
+      next = (await validateMemoryState(projectRoot, candidate, { ...options, persist: false })).state;
+    } catch {
+      return unchanged(report([scopeLine(projectRoot), 'state: validation unavailable — mutation refused']));
+    }
+    return persistMutation(projectRoot, next, `edited ${entry.id} → ${id} — user-corrected ${entry.category}; predecessor suppressed, key protected from model supersede`);
+  });
+}
+
+const REFUSED_TEXT = 'memory text refused: expected bounded non-sensitive project context without prompt boundaries, policy-like instructions, controls, or dump text';
 
 async function forgetMemory(
   projectRoot: string,
@@ -265,7 +349,7 @@ async function loadedState(
 
 function listLine(entry: MemoryEntry, number: number): string {
   return entry.origin === 'generated'
-    ? `  ${number}. ${entry.id} · generated · ${entry.category} · ${entry.source.session} turn ${entry.source.turn} · ${entry.validation.state}: ${entry.validation.reason}`
+    ? `  ${number}. ${entry.id} · generated · ${entry.category}${entry.edited === undefined ? '' : ' · user-edited'} · ${entry.source.session} turn ${entry.source.turn} · ${entry.validation.state}: ${entry.validation.reason}`
     : `  ${number}. ${entry.id} · user-authored @ ${entry.authoredAt} · explicit/unvalidated · no expiry`;
 }
 
@@ -285,6 +369,7 @@ function showLines(entry: MemoryEntry): string[] {
     `origin: generated ${entry.category}`,
     `key: ${entry.key}`,
     `provenance: ${entry.source.session} turn ${entry.source.turn}, closing seq ${entry.source.seq}, ${entry.source.at}`,
+    ...(entry.edited === undefined ? [] : [`edited: by user @ ${entry.edited.at}, replacing ${entry.edited.previousId} (suppressed); protected from model supersede`]),
     `validation: ${entry.validation.state} — ${entry.validation.reason} @ ${entry.validation.checkedAt}`,
     `title: ${entry.title}`,
     `fact: ${entry.fact}`,

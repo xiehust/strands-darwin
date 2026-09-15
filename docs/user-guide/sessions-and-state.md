@@ -109,11 +109,12 @@ Manage and audit it locally:
 ```text
 /memory
 /memory show <id|number>
+/memory edit <id|number> <fact>
 /memory remember <note>
 /memory forget <id|number|all>
 ```
 
-`remember` atomically rejects likely secrets, prompt-boundary markup, dumps, and oversized notes. `forget` suppresses generated IDs so an exact forgotten fact cannot be restored. Unreadable, forged, wrong-project, or symlink-escaped stores are refused; validation/commit failures only warn. Memory never rewrites trajectory, snapshot, pointer, config, or repository files.
+`remember` atomically rejects likely secrets, prompt-boundary markup, dumps, and oversized notes. `edit` corrects one entry with the same screening: a note is rewritten; a generated fact keeps its key, category, title and evidence anchor, records who edited it and when, suppresses the wrong predecessor id, and is no longer superseded by a model save under that key (forget it or edit it again instead). `forget` suppresses generated IDs so an exact forgotten fact cannot be restored. Unreadable, forged, wrong-project, or symlink-escaped stores are refused; validation/commit failures only warn. Memory never rewrites trajectory, snapshot, pointer, config, or repository files.
 
 ## Diagnostics
 

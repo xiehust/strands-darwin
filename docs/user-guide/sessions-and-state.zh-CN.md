@@ -109,11 +109,12 @@ Save 走普通写权限。项目事实必须提供一条精确的当前项目相
 ```text
 /memory
 /memory show <id|number>
+/memory edit <id|number> <fact>
 /memory remember <note>
 /memory forget <id|number|all>
 ```
 
-`remember` 会原子拒绝疑似密钥、prompt 边界标记、dump 和超长备注。`forget` 会抑制生成 ID，防止完全相同的已忘记事实重新出现。不可读、伪造、项目不符或通过符号链接逃逸的 store 会被拒绝；校验/提交问题只产生提示。记忆不会重写轨迹、快照、指针、配置或仓库文件。
+`remember` 会原子拒绝疑似密钥、prompt 边界标记、dump 和超长备注。`edit` 用同一套筛查就地纠正一个条目：备注直接重写；生成事实保留 key、类别、标题和证据锚点，记录编辑人和时间，抑制错误的前身 id，并且此后模型对该 key 的保存不再覆盖它（要改就再 edit 或 forget）。`forget` 会抑制生成 ID，防止完全相同的已忘记事实重新出现。不可读、伪造、项目不符或通过符号链接逃逸的 store 会被拒绝；校验/提交问题只产生提示。记忆不会重写轨迹、快照、指针、配置或仓库文件。
 
 ## 诊断日志
 

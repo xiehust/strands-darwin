@@ -1445,7 +1445,7 @@ async function slashCompletion(): Promise<void> {
     // the bare-name form could pass with the row missing.
     assert('the built-in /mcp is listed', completed.includes('  /mcp — MCP servers and their tools'));
       assert('the built-in /memory is listed',
-        completed.includes('  /memory — list, show, remember, or forget project memory'));
+        completed.includes('  /memory — list, show, edit, remember, or forget project memory'));
 
     // Matched with its description: '  /mode' alone is also a prefix of the /model
     // row, so the bare-name form would pass with /mode missing entirely.

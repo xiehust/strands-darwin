@@ -55,7 +55,7 @@ type RelatedMemory =
 /** How the durable commit will treat the archive: the deterministic key merge, made visible. */
 export interface Consolidation {
   readonly outcome: 'add' | 'update' | 'unchanged';
-  readonly existing?: { readonly id: string; readonly title: string; readonly fact: string; readonly at: string };
+  readonly existing?: { readonly id: string; readonly title: string; readonly fact: string; readonly at: string; readonly edited?: string };
   readonly related: readonly RelatedMemory[];
   readonly problem?: string;
 }
@@ -152,6 +152,7 @@ export class MemoryToolController {
             title: entry.title,
             fact: entry.fact,
             source: entry.source,
+            ...(entry.edited === undefined ? {} : { edited: entry.edited }),
             validation: entry.validation,
             ...(entry.evidence.kind === 'project'
               ? { evidence: { path: entry.evidence.anchor.path, line: entry.evidence.anchor.line } }
@@ -231,9 +232,12 @@ export class MemoryToolController {
     const related = findRelatedMemory(loaded.state, candidate).map(relatedProjection);
     const existing = loaded.state.generated.find((entry) => entry.key === key);
     if (existing === undefined) return { outcome: 'add', related };
+    if (existing.edited !== undefined && existing.id !== id) {
+      throw new Error(`memory key ${key} was corrected by the user (/memory edit) and is protected from model supersede; use a different key or ask the user to edit it`);
+    }
     return {
       outcome: existing.id === id ? 'unchanged' : 'update',
-      existing: { id: existing.id, title: existing.title, fact: existing.fact, at: existing.source.at },
+      existing: { id: existing.id, title: existing.title, fact: existing.fact, at: existing.source.at, ...(existing.edited === undefined ? {} : { edited: existing.edited.at }) },
       related,
     };
   }

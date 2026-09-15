@@ -96,6 +96,7 @@ Rules and limits:
 | `/mcp` | read-only server states/tools/config paths; no reconnect |
 | `/memory`, `/memory list` | entries with origin, provenance, validation/expiry reason |
 | `/memory show <id|number>` | inspect one bounded entry |
+| `/memory edit <id|number> <fact>` | correct one entry in place: a note is rewritten; a generated fact keeps key/category/evidence, gains an edit stamp, suppresses the wrong predecessor and is protected from model supersede |
 | `/memory remember <note>` | screened user-authored project note |
 | `/memory forget <id/number/all>` | remove/suppress entries and refresh live prompt |
 | `/mode [mode]` | show/set user-only live permission mode; not persisted |

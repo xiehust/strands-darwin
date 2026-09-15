@@ -91,7 +91,7 @@ section is the only reference; all free (no model call) unless marked *live*.
 | Native lifecycle command hooks | Native dialect remains exactly `TurnComplete` + `PermissionRequest`: bounded closed JSON, driver/visible-prompt publication, non-blocking and output-free; never model/permission/tool/trajectory/SDK-loop input; session process groups reaped on cancel, `/clear`, unwind and shutdown | `src/hooks/lifecycle-hooks.ts`, drivers, `src/tui/permission-queue.ts` | `verify-lifecycle-hooks.ts`†, `verify-headless-structured.ts`† |
 | Skills | Official `AgentSkills`; native tool private; symlinks stay within real root, 200-entry preflight + use-time check. `/setup-agentcore-memory`: required guide, confirm changes | `src/skills/` | `verify-setup-agentcore-memory.ts`†, doc § |
 | System prompt composition | Fixed order: base → `<project-instructions>` → `<available_skills>` → `<working-context>` → cache point; catalogue never duplicates and current context is re-derived every run | prompt modules | doc § |
-| Agent-managed project memory | Default-on with trajectory; parent-only safe recall; un-ruleable save staged until durable endTurn, `stage()` reports add/update/unchanged and refuses forgotten ids, never echoing the candidate fact; exact evidence, v3 validation/suppression; no ambient archive/network, children isolated | `src/memory/` | `verify-memory*.ts`† |
+| Agent-managed project memory | Default-on with trajectory; parent-only safe recall; un-ruleable save staged until durable endTurn; `stage()` reports add/update/unchanged, refuses forgotten ids, never echoes the candidate fact; exact evidence, v3 validation/suppression; `/memory edit` beats model saves; no ambient archive/network, children isolated | `src/memory/` | `verify-memory*.ts`† |
 | AgentCore Memory — optional, scoped, user-authorized cloud data | Default-off; scoped auto/manual uploads, 8KiB/action, new 96KiB/session; legacy unchanged; consent/quotas/receipts; no hydration | `src/agentcore/` | `verify-agentcore-{memory,upload}.ts`†, `verify-cloud-memory-auto.ts`† |
 | Prompt caching | On by default, Claude only (the gate avoids SDK `console.warn` into the Ink frame); stated on the model line, never a header line of its own | `src/agent/prompt-cache.ts` | `tui approve` (*live*) |
 | Thinking effort | Always `adaptive` (`output_config.effort`, never nested in `thinking`, never `budget_tokens`); unsupported levels clamped and reported on every driver, never sent — headless writes one `thinking:` stderr line and `run.started` carries `thinking.{requested,effective,problem}` plus a `thinking` warning; `/effort` uses `Model.updateConfig()` — the conversation survives | `src/agent/thinking.ts`, `src/headless-runner.ts` | `verify-headless-structured.ts`†, `verify-thinking-live.ts` (*live*) |
@@ -135,8 +135,7 @@ section is the only reference; all free (no model call) unless marked *live*.
   row per accepted commit, and what the Host re-ran for acceptance. The log is the paper trail.
 - Keep `devEngines` out of `package.json` — it makes every `npx`-launched MCP server die
   with an opaque `Connection closed`.
-- pnpm's `minimumReleaseAge` may hold back very fresh `@strands-agents/sdk` releases; don't
-  bypass it.
+- pnpm's `minimumReleaseAge` may hold back very fresh `@strands-agents/sdk` releases; don't bypass it.
 - Running darwin in this repo dogfoods it: this `AGENTS.md` gets preloaded and
   `src/skills/builtin/commit-message` is a live sample skill.
 

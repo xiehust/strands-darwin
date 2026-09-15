@@ -75,6 +75,12 @@ export async function commitGeneratedMemory(
       if (prior.suppressedGeneratedIds.includes(entry.id)) {
         throw new Error('generated memory candidate was previously forgotten');
       }
+      // A user-corrected fact is user-authored content under a generated key: like a user
+      // note it is never superseded by the model. Only `/memory edit|forget` may move it.
+      const corrected = prior.generated.find((current) => current.key === entry.key && current.edited !== undefined);
+      if (corrected !== undefined && corrected.id !== entry.id) {
+        throw new Error(`memory key ${entry.key} was corrected by the user and is protected from model supersede`);
+      }
     }
 
     // Validate the combined state so unchanged generated entries keep their
@@ -109,7 +115,11 @@ export async function commitGeneratedMemory(
     const eligiblePrior = combined.state.generated.filter((entry) =>
       !stagedIds.has(entry.id) && entry.validation.state === 'valid');
     const byKey = new Map(eligiblePrior.map((entry) => [entry.key, entry]));
-    for (const entry of validatedStaged) byKey.set(entry.key, entry);
+    for (const entry of validatedStaged) {
+      // Re-saving a user-corrected fact verbatim keeps the correction's stamp and provenance.
+      const corrected = prior.generated.find((current) => current.id === entry.id && current.edited !== undefined);
+      byKey.set(entry.key, corrected ?? entry);
+    }
 
     let generated = [...byKey.values()].filter((entry) =>
       !prior.suppressedGeneratedIds.includes(entry.id) &&

@@ -41,7 +41,10 @@ export interface GeneratedMemoryEntry {
   readonly id: string; readonly key: string; readonly category: MemoryCategory; readonly title: string; readonly fact: string;
   readonly origin: 'generated'; readonly source: MemorySource; readonly evidence: GeneratedMemoryEvidence;
   readonly validation: MemoryValidation; readonly legacyIds?: readonly string[];
+  /** Present when the user rewrote the fact with `/memory edit`: the stamp and the suppressed predecessor id. */
+  readonly edited?: MemoryEdit;
 }
+export interface MemoryEdit { readonly at: string; readonly previousId: string }
 export interface UserMemoryEntry {
   readonly id: string; readonly origin: 'user'; readonly note: string; readonly authoredAt: string;
   readonly freshness: typeof MEMORY_FRESHNESS; readonly sensitivity: typeof USER_SENSITIVITY;
@@ -152,7 +155,7 @@ export function parseV3State(value: unknown): MemoryState | undefined {
   return { version: MEMORY_STATE_VERSION, projectKey: record['projectKey'] as string, generated: generated as GeneratedMemoryEntry[], user: user as UserMemoryEntry[], suppressedGeneratedIds: suppressions as string[] };
 }
 function parseGeneratedV3(value: unknown): GeneratedMemoryEntry | undefined {
-  if (!isRecord(value)) return undefined; const required = ['id', 'key', 'category', 'title', 'fact', 'origin', 'source', 'evidence', 'validation']; const allowed = [...required, 'legacyIds'];
+  if (!isRecord(value)) return undefined; const required = ['id', 'key', 'category', 'title', 'fact', 'origin', 'source', 'evidence', 'validation']; const allowed = [...required, 'legacyIds', 'edited'];
   if (Object.keys(value).some((key) => !allowed.includes(key)) || required.some((key) => !Object.hasOwn(value, key))) return undefined;
   if (value['origin'] !== 'generated' || typeof value['id'] !== 'string' || !isSafeMemoryId(value['id'])) return undefined;
   if (typeof value['key'] !== 'string' || !MEMORY_KEY_PATTERN.test(value['key']) || [...value['key']].length > MEMORY_KEY_MAX_CODE_POINTS || !MEMORY_CATEGORIES.includes(value['category'] as MemoryCategory)) return undefined;
@@ -161,6 +164,7 @@ function parseGeneratedV3(value: unknown): GeneratedMemoryEntry | undefined {
   const source = parseSource(value['source']); const evidence = parseEvidence(value['evidence']); const validation = parseValidation(value['validation']); if (source === undefined || evidence === undefined || validation === undefined) return undefined;
   if (MEMORY_PROJECT_CATEGORIES.includes(value['category'] as ProjectMemoryCategory) !== (evidence.kind === 'project') || value['id'] !== generatedMemoryId(value['key'], value['fact'])) return undefined;
   const legacyIds = value['legacyIds']; if (legacyIds !== undefined && (!Array.isArray(legacyIds) || legacyIds.length > 8 || !legacyIds.every((id) => typeof id === 'string' && isSafeMemoryId(id)) || new Set(legacyIds).size !== legacyIds.length)) return undefined;
+  if (value['edited'] !== undefined) { const edited = exactRecord(value['edited'], ['at', 'previousId']); if (edited === undefined || !isoTime(edited['at']) || typeof edited['previousId'] !== 'string' || !isSafeMemoryId(edited['previousId']) || edited['previousId'] === value['id']) return undefined; }
   return value as unknown as GeneratedMemoryEntry;
 }
 function parseSource(value: unknown): MemorySource | undefined { const record = exactRecord(value, ['session', 'turn', 'seq', 'at']); return record !== undefined && boundedString(record['session'], 160) && positiveInteger(record['turn']) && positiveInteger(record['seq']) && isoTime(record['at']) ? record as unknown as MemorySource : undefined; }

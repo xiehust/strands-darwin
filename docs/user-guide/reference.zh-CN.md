@@ -97,6 +97,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/mcp` | 只读服务器状态/工具/配置路径；不重连 |
 | `/memory`、`/memory list` | 含来源、证据、校验/过期原因的条目 |
 | `/memory show <id|number>` | 查看一个有界条目 |
+| `/memory edit <id|number> <fact>` | 就地纠正一个条目：备注直接重写；生成事实保留 key/类别/证据锚点，加上编辑戳，抑制错误的前身 id，并且不再被模型覆盖 |
 | `/memory remember <note>` | 添加经过筛查的用户项目备注 |
 | `/memory forget <id/number/all>` | 删除/抑制条目并刷新当前 prompt |
 | `/mode [mode]` | 查看/设置仅用户可改的当前权限模式；不持久化 |
