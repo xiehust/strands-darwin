@@ -64,7 +64,12 @@ function makeRuntime(gate: PermissionGate): AgentRuntime {
   Object.assign(runtime, {
     gate,
     projectRoot: ROOT,
-    info: { permissionRulesPath: permissionRulesPath(ROOT) },
+    info: {
+      permissionRulesPath: permissionRulesPath(ROOT),
+      // SER-090: the rule writers carry the trust decision so a held legacy layer is
+      // never promoted; a trusted project is the pre-trust behaviour this suite pins.
+      workspaceTrust: { state: 'trusted', heldHookFiles: [], heldMcpServers: [], heldLegacyRules: undefined, heldProblems: [] },
+    },
   });
   return runtime;
 }

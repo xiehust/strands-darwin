@@ -402,6 +402,51 @@ function testShellEnvRow(): void {
     /^  shell env\s+nothing withheld · passthrough: STRIPE_\*$/m.test(passthroughOnly));
 }
 
+/**
+ * SER-090: the held repository-supplied layers ride the existing mcp and hooks rows.
+ * Additive-everywhere: a trusted project, an absent fact, or nothing held leaves both
+ * rows byte-identical; the held names are bounded by `MAX_STATUS_NAMES` like every list.
+ */
+function testWorkspaceTrustRows(): void {
+  header('/status — held project layers ride the mcp and hooks rows');
+
+  const base = formatStatusReport(facts());
+  const trusted = formatStatusReport(facts({
+    workspaceTrust: { state: 'trusted', heldHookFiles: [], heldMcpServers: [], heldLegacyRules: undefined, heldProblems: [] },
+  }));
+  assert('a trusted project leaves the report byte-identical to one without the fact', trusted === base);
+
+  const held = formatStatusReport(facts({
+    mcpServers: [],
+    projectRoot: '/workspace',
+    workspaceTrust: {
+      state: 'untrusted',
+      heldHookFiles: ['/workspace/.darwin/hooks.json', '/workspace/.agents/hooks.json'],
+      heldMcpServers: [{ name: 'probe', file: '/workspace/.mcp.json' }],
+      heldLegacyRules: { file: '/workspace/.darwin/config.json', allow: 2, deny: 1 },
+      heldProblems: [{ file: '/workspace/.agents/hooks', problem: 'broken' }],
+    },
+  }));
+  assert('the mcp row states the held server as held (untrusted project)',
+    /^  mcp\s+none configured · 1 held \(untrusted project\): probe$/m.test(held));
+  assert('the hooks row states the held files project-relative, the unreadable one marked, and the legacy rules',
+    /^  hooks\s+none · 3 held \(untrusted project\): \.darwin\/hooks\.json, \.agents\/hooks\.json, \.agents\/hooks \(unreadable\) · legacy rules held: \.darwin\/config\.json \(2 allow, 1 deny\)$/m.test(held));
+
+  const undecided = formatStatusReport(facts({
+    mcpServers: [],
+    projectRoot: '/workspace',
+    workspaceTrust: {
+      state: 'undecided',
+      heldHookFiles: [],
+      heldMcpServers: Array.from({ length: 8 }, (_, index) => ({ name: `s${index}`, file: '/workspace/.mcp.json' })),
+      heldLegacyRules: undefined,
+      heldProblems: [],
+    },
+  }));
+  assert('an undecided project says so and bounds the held names with the shared remainder shape',
+    held !== undecided && /8 held \(project trust undecided\): s0, s1, s2, s3, s4, s5 … 2 more/.test(undecided) && !undecided.includes('s6'));
+}
+
 function testMenuCapacity(): void {
   header('/status — a registered built-in the completion menu can still show in full');
 
@@ -634,6 +679,7 @@ function main(): void {
   testStatesAndDegradation();
   testHooksRow();
   testShellEnvRow();
+  testWorkspaceTrustRows();
   testChildUsage();
   testCallStats();
   testCost();

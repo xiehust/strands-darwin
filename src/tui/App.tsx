@@ -211,6 +211,7 @@ import { PlanChecklist } from './PlanChecklist.js';
 import { ringTerminalBell } from './terminal-bell.js';
 import { notifyTerminal } from './terminal-notify.js';
 import { createTerminalTitleWriter, deriveTerminalTitleState } from './terminal-title.js';
+import { formatTrustNotice } from './trust-format.js';
 import { initialTurnState, turnReducer, type HistoryItem, type TurnAction } from './turn-state.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
@@ -921,6 +922,16 @@ export function App({
     dispatch({ type: 'notice', text: `shell env: ${notice} — see /status` });
   }, [dispatch, runtime]);
 
+  // SER-090: what the checkout declared and this session held back, said once in the
+  // transcript on the same terms — a trusted project or an empty inventory adds no
+  // line. Per runtime, so a `/clear` successor (which inherits the decision) states
+  // it again; `/status` and `/mcp` carry the same held items on their existing rows.
+  useEffect(() => {
+    const notice = formatTrustNotice(runtime.info.workspaceTrust, runtime.info.projectRoot);
+    if (notice === undefined) return;
+    dispatch({ type: 'notice', text: notice, severity: 'warn' });
+  }, [dispatch, runtime]);
+
   // Terminal task events are transcript-only observers: they never alter turn
   // status, active tools, permissions, or the agent loop. React dispatch also
   // causes an immediate idle render; cleanup prevents shutdown notices after exit.
@@ -1541,6 +1552,7 @@ export function App({
             overriddenServerNames: runtime.info.mcpOverriddenServerNames,
             ignoredConfigPath: runtime.info.mcpIgnoredConfigPath,
             candidatePaths: [candidates.global, candidates.preferred, candidates.fallback],
+            heldServers: runtime.info.workspaceTrust.heldMcpServers,
           }),
         });
         return;
@@ -1587,6 +1599,7 @@ export function App({
             hookSources: runtime.info.hookSources,
             hookShadowNotices: runtime.info.hookShadowNotices,
             shellEnv: runtime.info.shellEnv,
+            workspaceTrust: runtime.info.workspaceTrust,
             projectRoot: runtime.info.projectRoot,
             homeDir: os.homedir(),
             trajectory: runtime.trajectoryStatus,

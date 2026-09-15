@@ -15,6 +15,13 @@ import process from 'node:process';
 import { AgentRuntime } from './agent/runtime.js';
 import { SessionNotFoundError, trajectoryPath } from './agent/session.js';
 import {
+  needsTrustPrompt,
+  resolveWorkspaceTrust,
+  withTrustState,
+  writeTrustDecision,
+  type WorkspaceTrust,
+} from './agent/workspace-trust.js';
+import {
   CliUsageError,
   normalizeLeadingArgvSeparator,
   parseCliArgs,
@@ -164,12 +171,13 @@ async function runHeadless(options: CliOptions & { prompt: string }): Promise<vo
 }
 
 async function runInteractive(options: CliOptions): Promise<void> {
-  const [{ render }, { default: React }, { PermissionQueue }, { StartupScreen }] =
+  const [{ render }, { default: React }, { PermissionQueue }, { StartupScreen }, { WorkspaceTrustPrompt }] =
     await withProductionReactImports(() => Promise.all([
       import('ink'),
       import('react'),
       import('./tui/permission-queue.js'),
       import('./tui/StartupScreen.js'),
+      import('./tui/WorkspaceTrustPrompt.js'),
     ]));
   const projectRoot = process.cwd();
   const permissions = new PermissionQueue();
@@ -181,11 +189,43 @@ async function runInteractive(options: CliOptions): Promise<void> {
     { exitOnCtrlC: false },
   );
 
+  // SER-090: before anything the checkout declares can run. The inventory reads the
+  // project's hook and MCP files without arming them; a project that declares nothing
+  // (or already has a stored answer) goes straight on. The modal replaces the startup
+  // screen — the same renderer, still before `AgentRuntime.create` — and the answer
+  // travels into the runtime as one option, so the loaders skip what was declined.
+  let workspaceTrust: WorkspaceTrust = await resolveWorkspaceTrust(projectRoot);
+  if (needsTrustPrompt(workspaceTrust)) {
+    const pending = workspaceTrust;
+    const answer = await new Promise<import('./tui/WorkspaceTrustPrompt.js').TrustAnswer>((resolve) => {
+      instance.rerender(
+        React.createElement(WorkspaceTrustPrompt, { trust: pending, projectRoot, onDecision: resolve }),
+      );
+    });
+    let storeProblem: string | undefined;
+    if (answer !== 'decline-session') {
+      try {
+        await writeTrustDecision(projectRoot, answer === 'accept');
+      } catch (error) {
+        // The answer still governs this session; only its memory is lost, and the
+        // transcript notice says so rather than the process failing on a user store.
+        storeProblem = `trust decision could not be stored: ${errorMessage(error)}`;
+      }
+    }
+    workspaceTrust = withTrustState(
+      workspaceTrust,
+      answer === 'accept' ? 'trusted' : answer === 'decline' ? 'untrusted' : 'undecided',
+    );
+    if (storeProblem !== undefined) workspaceTrust = { ...workspaceTrust, problem: storeProblem };
+    instance.rerender(React.createElement(StartupScreen, { phase: 'runtime' }));
+  }
+
   let runtime: AgentRuntime;
   try {
     runtime = await AgentRuntime.create({
       projectRoot,
       session: options.session,
+      workspaceTrust,
       // MCP servers are subprocesses outside Ink's renderer. Their banners and
       // warnings must not write directly into the TUI frame.
       quietMcpStderr: true,

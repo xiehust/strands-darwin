@@ -7,6 +7,12 @@ import { AgentRuntime } from './agent/runtime.js';
 import { retryFailureHeading, type ModelRetryOutcome } from './agent/model-retry.js';
 import { HEADLESS_AUTONOMY_SECTION } from './agent/system-prompt.js';
 import { classify } from './agent/permission.js';
+import {
+  describeHeld,
+  resolveWorkspaceTrust,
+  workspaceTrustReport,
+  type WorkspaceTrust,
+} from './agent/workspace-trust.js';
 import { dispatchLabel } from './agents/dispatch-registry.js';
 import { routeSdkLogs, type SdkLogEntry } from './agent/sdk-logging.js';
 import type { CliOptions } from './cli-args.js';
@@ -35,6 +41,7 @@ import {
   structuredCallStats,
   structuredFailure,
   structuredThinking,
+  structuredTrust,
   structuredUsage,
   structuredWarning,
   type StructuredFailure,
@@ -60,6 +67,13 @@ export interface HeadlessRunnerDependencies {
    * in-process tests inject their own. Throws `CliUsageError` past the cap or on binary.
    */
   readPipedStdin(): Promise<PipedStdin | undefined>;
+  /**
+   * SER-090: the workspace-trust decision for the project, resolved *before* the runtime
+   * exists. Headless never asks: the stored answer applies, and no answer holds the
+   * checkout's hook files, MCP servers and legacy rules back. Production reads the
+   * user-owned store; fixtures may inject a fixed answer.
+   */
+  resolveWorkspaceTrust(projectRoot: string): Promise<WorkspaceTrust>;
 }
 
 export const productionHeadlessDependencies: HeadlessRunnerDependencies = {
@@ -68,6 +82,7 @@ export const productionHeadlessDependencies: HeadlessRunnerDependencies = {
   routeLogs: routeSdkLogs,
   forceExitIfHung: () => undefined,
   readPipedStdin: () => readPipedStdin(process.stdin),
+  resolveWorkspaceTrust,
 };
 
 /**
@@ -154,9 +169,15 @@ export async function runHeadlessProcess(
   }
 
   try {
+    // SER-090: decided before the runtime, because the runtime is what would arm the
+    // checkout's layers. The same object is what `run.started.trust` / the `trust:`
+    // line report — the runtime applied exactly this.
+    const workspaceTrust = await dependencies.resolveWorkspaceTrust(options.projectRoot);
+    const trustReport = workspaceTrustReport(workspaceTrust);
     runtime = await dependencies.createRuntime({
       projectRoot: options.projectRoot,
       session: options.session,
+      workspaceTrust,
       // No one answers a question mid-turn in a headless run: the base prompt's
       // interactive "ask before guessing" rule is overridden for exactly that case.
       systemPromptSuffix: HEADLESS_AUTONOMY_SECTION,
@@ -203,6 +224,7 @@ export async function runHeadlessProcess(
         resumed: runtime.info.resumed,
         ...(runtime.info.diagnosticsFile === undefined ? {} : { diagnosticsFile: runtime.info.diagnosticsFile }),
         ...(thinking === undefined ? {} : { thinking: structuredThinking(thinking) }),
+        trust: structuredTrust(trustReport, options.projectRoot),
       });
     }
     // `--compact-before` is the headless `/compact`: the same helper, so a shrinking
@@ -256,6 +278,11 @@ export async function runHeadlessProcess(
       // SER-082: the same startup-facts block; absent when nothing was withheld.
       const shellEnvLine = formatHeadlessShellEnv(runtime);
       if (shellEnvLine !== undefined) note(`${shellEnvLine}\n`);
+      // SER-090: one `trust:` line naming what the checkout declared and this run held
+      // back; absent for a trusted project or a checkout that declares nothing.
+      const trustLine = describeHeld(trustReport, options.projectRoot);
+      if (trustLine !== undefined) note(`trust: ${headlessField(trustLine)}\n`, 'warn');
+      else if (trustReport.problem !== undefined) note(`trust: ${headlessField(trustReport.problem)}\n`, 'warn');
       reply = await runHeadlessTurn(runtime, prompt, (text) => note(text));
     }
   } catch (error) {

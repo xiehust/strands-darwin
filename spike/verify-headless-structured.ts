@@ -1,7 +1,7 @@
 /** Network-free public-protocol, lifecycle, privacy and text-compatibility checks. */
 import nodeAssert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -25,11 +25,13 @@ import {
   StructuredHeadlessWriter,
   runStructuredHeadlessTurn,
   structuredThinking,
+  structuredTrust,
   structuredUsage,
 } from '../src/headless-protocol.js';
 import { installMaxTokensRecovery } from '../src/agent/max-tokens-recovery.js';
 import { installModelRetry } from '../src/agent/model-retry.js';
 import type { AppConfig } from '../src/config.js';
+import { projectKey } from '../src/paths.js';
 import { assert, header, report } from './shared.js';
 
 const FIXTURE = pathToFileURL(path.join(import.meta.dirname, 'fixtures/headless-runtime.ts')).href;
@@ -45,7 +47,7 @@ interface ProcessResult {
 async function cli(
   mode: string,
   outputFormat: 'text' | 'json' | 'stream-json',
-  options: { signal?: 'SIGINT'; args?: string[]; traceFile?: string } = {},
+  options: { signal?: 'SIGINT'; args?: string[]; traceFile?: string; env?: Record<string, string> } = {},
 ): Promise<ProcessResult> {
   const args = ['--import', 'tsx', 'spike/fixtures/headless-cli.ts', '-p', 'fixture prompt'];
   if (outputFormat !== 'text') args.push('--output-format', outputFormat);
@@ -61,6 +63,7 @@ async function cli(
       DARWIN_HEADLESS_FIXTURE_PROJECT_ROOT: FIXTURE_PROJECT_ROOT,
       ...(options.traceFile === undefined ? {} : { DARWIN_HEADLESS_FIXTURE_TRACE: options.traceFile }),
       DARWIN_HEADLESS_FIXTURE_EXPECTED_PROJECT_ROOT: FIXTURE_PROJECT_ROOT,
+      ...(options.env ?? {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -805,6 +808,71 @@ async function thinkingProtocols(): Promise<void> {
   assert('an over-long problem is whitespace-collapsed, cut at the field limit and flagged truncated', true);
 }
 
+/**
+ * SER-090: `run.started.trust` is additive and always present — the state that governed
+ * the loaders plus the held labels. Driven through the real runner with the production
+ * resolver: a private HOME holds the decision store, and the fixture project root is
+ * given a real `.mcp.json` so the inventory has something to hold. The fixture runtime
+ * receives the `workspaceTrust` option the runner resolved; nothing is spawned here
+ * (the held-layers proof over a real runtime is `spike/verify-workspace-trust.ts`).
+ */
+async function trustProtocols(): Promise<void> {
+  header('structured headless — run.started carries the workspace-trust decision (SER-090)');
+  const trustHome = mkdtempSync(path.join(os.tmpdir(), 'darwin-headless-trust-home-'));
+  const env = { HOME: trustHome, DARWIN_MODEL_PRICES_FETCH: 'off' };
+  rmSync(FIXTURE_PROJECT_ROOT, { recursive: true, force: true });
+  mkdirSync(FIXTURE_PROJECT_ROOT, { recursive: true });
+  try {
+    // A checkout declaring nothing: undecided, nothing held, no text line.
+    const empty = lines((await cli('success', 'stream-json', { env })).stdout);
+    nodeAssert.deepEqual(empty.find((record) => record.type === 'run.started')!['trust'], { state: 'undecided', held: [] });
+    const emptyText = await cli('success', 'text', { env });
+    nodeAssert.equal(emptyText.stderr.includes('trust:'), false);
+    assert('an empty inventory reports undecided with nothing held and writes no trust: line', true);
+
+    writeFileSync(
+      path.join(FIXTURE_PROJECT_ROOT, '.mcp.json'),
+      `${JSON.stringify({ mcpServers: { probe: { command: 'sh', args: ['-c', 'true'] } } })}\n`,
+    );
+    const undecided = lines((await cli('success', 'stream-json', { env })).stdout);
+    nodeAssert.deepEqual(undecided.find((record) => record.type === 'run.started')!['trust'], {
+      state: 'undecided',
+      held: ['mcp: probe (.mcp.json)'],
+    });
+    const undecidedText = await cli('success', 'text', { env });
+    nodeAssert.equal(
+      undecidedText.stderr.split('\n').filter((line) => line.startsWith('trust: ')).join('|'),
+      'trust: project trust undecided — held back: mcp: probe (.mcp.json)',
+    );
+    assert('a declared server with no decision is held: run.started.trust names it and text writes one trust: line', true);
+
+    const decisionFile = path.join(trustHome, '.darwin', 'projects', projectKey(FIXTURE_PROJECT_ROOT), 'trust.json');
+    mkdirSync(path.dirname(decisionFile), { recursive: true });
+    writeFileSync(decisionFile, `${JSON.stringify({ trusted: true, decidedAt: '2026-09-15T12:00:00.000Z' })}\n`);
+    const trusted = lines((await cli('success', 'stream-json', { env })).stdout);
+    nodeAssert.deepEqual(trusted.find((record) => record.type === 'run.started')!['trust'], { state: 'trusted', held: [] });
+    assert('a stored acceptance under the private HOME reports trusted with nothing held', true);
+
+    writeFileSync(decisionFile, '{ not json');
+    const malformed = lines((await cli('success', 'stream-json', { env })).stdout);
+    const malformedTrust = malformed.find((record) => record.type === 'run.started')!['trust'] as Record<string, unknown>;
+    nodeAssert.equal(malformedTrust['state'], 'undecided');
+    nodeAssert.deepEqual(malformedTrust['held'], ['mcp: probe (.mcp.json)']);
+    nodeAssert.equal(typeof malformedTrust['problem'], 'string');
+    assert('a malformed decision file is undecided with a bounded problem field, never a failed run', true);
+
+    const long = structuredTrust(
+      { state: 'untrusted', heldHookFiles: [], heldMcpServers: [], heldLegacyRules: undefined, heldProblems: [], problem: `x  ${'y'.repeat(9_000)}` },
+      FIXTURE_PROJECT_ROOT,
+    );
+    nodeAssert.deepEqual(long, { state: 'untrusted', held: [], problem: `x ${'y'.repeat(STRUCTURED_FIELD_LIMIT - 2)}`, truncated: true });
+    assert('the projection bounds the problem text like every other field', true);
+  } finally {
+    rmSync(FIXTURE_PROJECT_ROOT, { recursive: true, force: true });
+    rmSync(trustHome, { recursive: true, force: true });
+  }
+}
+
 function boundsAndEscaping(): void {
   header('structured headless — bounds and one-line escaping');
   const output: string[] = [];
@@ -834,5 +902,6 @@ usageContract();
 await childUsageProtocols();
 await callStatsProtocols();
 await thinkingProtocols();
+await trustProtocols();
 boundsAndEscaping();
 report();

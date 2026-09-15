@@ -17,6 +17,12 @@ export interface McpConfigSources {
   ignoredConfigPath: string | undefined;
   /** Every file darwin looked for, named when nothing is configured. */
   candidatePaths: readonly string[];
+  /**
+   * Project servers held back because the project is not trusted (SER-090): declared
+   * by the checkout, never spawned, so they have no client and no state to read.
+   * Listed as `held (untrusted project)` — stated, never omitted, like a failed one.
+   */
+  heldServers?: readonly { readonly name: string; readonly file: string }[];
 }
 
 /**
@@ -32,7 +38,8 @@ export function formatMcpReport(
   servers: readonly McpServerStatus[],
   sources: McpConfigSources,
 ): string {
-  if (servers.length === 0) {
+  const held = sources.heldServers ?? [];
+  if (servers.length === 0 && held.length === 0) {
     const looked =
       sources.configPaths.length > 0
         ? `config read: ${sources.configPaths.join(', ')} — it defines no enabled servers`
@@ -40,11 +47,14 @@ export function formatMcpReport(
     return `no MCP servers configured\n  ${looked}`;
   }
 
-  const nameWidth = Math.max(...servers.map((server) => server.name.length));
+  const nameWidth = Math.max(...servers.map((server) => server.name.length), ...held.map((server) => server.name.length));
   const rows = servers.map(
     (server) => `  ${server.name.padEnd(nameWidth)}  ${describeServer(server)}`,
   );
-  return [`mcp servers (${servers.length})`, ...rows, ...sourceLines(sources)].join('\n');
+  const heldRows = held.map(
+    (server) => `  ${server.name.padEnd(nameWidth)}  held (untrusted project) — declared in ${server.file}; not spawned, no connection attempted`,
+  );
+  return [`mcp servers (${servers.length + held.length})`, ...rows, ...heldRows, ...sourceLines(sources)].join('\n');
 }
 
 /** One server's state and bounded tool listing, on the row its name labels. */

@@ -19,6 +19,7 @@ import type { ApprovalMode } from '../agent/permission.js';
 import type { PromptCachePlan } from '../agent/prompt-cache.js';
 import type { ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import type { ThinkingPlan } from '../agent/thinking.js';
+import type { WorkspaceTrustReport } from '../agent/workspace-trust.js';
 import { formatUsageValue, sumUsage, usageBuckets } from '../agent/usage.js';
 import { describeCost, describeModelCosts, withChildUsage, type ModelPriceLookup, type ModelUsageShare } from '../agent/cost.js';
 import { describeCallEfficiency, type SessionCallStats } from '../agent/call-stats.js';
@@ -83,6 +84,12 @@ export interface StatusFacts {
    * (SER-082). Names, never values; the row counts and bounds them.
    */
   shellEnv: { readonly withheld: readonly string[]; readonly passthrough: readonly string[] };
+  /**
+   * `runtime.info.workspaceTrust` (SER-090) — what the checkout declared and this
+   * session held back. Rides the existing `mcp` and `hooks` rows as ` · N held
+   * (untrusted project)`; absent or nothing held keeps both rows byte-identical.
+   */
+  workspaceTrust?: WorkspaceTrustReport;
   /** `runtime.info.projectRoot` — what a hook source path is shown relative to. */
   projectRoot: string;
   /** `os.homedir()` — the root `paths.ts` derives the global layers from; shown as `~`. */
@@ -152,7 +159,7 @@ export function formatStatusReport(facts: StatusFacts): string {
     ['mode', describeMode(facts.mode, facts.allowRuleCount, facts.denyRuleCount)],
     // Live TUI state beside the other live row (mode), present only while it is.
     ...(facts.tangent === undefined ? [] : [['tangent', facts.tangent] as [string, string]]),
-    ['mcp', describeMcpServers(facts.mcpServers)],
+    ['mcp', `${describeMcpServers(facts.mcpServers)}${describeHeldMcp(facts.workspaceTrust)}`],
     ['skills', describeNames(facts.skillNames)],
     ['hooks', describeHooks(facts)],
     ['shell env', describeShellEnv(facts.shellEnv)],
@@ -287,7 +294,41 @@ function describeHooks(facts: StatusFacts): string {
     facts.hookSources.map((file) => displayPath(file, facts.projectRoot, facts.homeDir)),
   );
   const shadowed = facts.hookShadowNotices.length;
-  return shadowed > 0 ? `${sources} · ${shadowed} shadowed` : sources;
+  return `${shadowed > 0 ? `${sources} · ${shadowed} shadowed` : sources}${describeHeldHooks(facts)}`;
+}
+
+/**
+ * ` · N held (untrusted project): a, b` on the mcp row (SER-090): project servers the
+ * checkout declares that this session never spawned. Names under the shared
+ * `MAX_STATUS_NAMES` bound; empty when nothing is held, so the row stays as it was.
+ */
+function describeHeldMcp(trust: WorkspaceTrustReport | undefined): string {
+  if (trust === undefined || trust.heldMcpServers.length === 0) return '';
+  return ` · ${heldSuffix(trust.state, trust.heldMcpServers.map((server) => server.name))}`;
+}
+
+/**
+ * The hooks row's counterpart: held project hook files (project-relative), plus the
+ * legacy rule fallback when it was held too, since it lives in the same file family.
+ */
+function describeHeldHooks(facts: StatusFacts): string {
+  const trust = facts.workspaceTrust;
+  if (trust === undefined) return '';
+  const held = [
+    ...trust.heldHookFiles.map((file) => displayPath(file, facts.projectRoot, facts.homeDir)),
+    ...trust.heldProblems.map((problem) => `${displayPath(problem.file, facts.projectRoot, facts.homeDir)} (unreadable)`),
+  ];
+  const rules = trust.heldLegacyRules === undefined
+    ? ''
+    : ` · legacy rules held: ${displayPath(trust.heldLegacyRules.file, facts.projectRoot, facts.homeDir)} (${trust.heldLegacyRules.allow} allow, ${trust.heldLegacyRules.deny} deny)`;
+  return `${held.length === 0 ? '' : ` · ${heldSuffix(trust.state, held)}`}${rules}`;
+}
+
+function heldSuffix(state: WorkspaceTrustReport['state'], names: readonly string[]): string {
+  const shown = names.slice(0, MAX_STATUS_NAMES);
+  const remainder = names.length - shown.length;
+  const why = state === 'untrusted' ? 'untrusted project' : 'project trust undecided';
+  return `${names.length} held (${why}): ${shown.join(', ')}${remainder > 0 ? ` … ${remainder} more` : ''}`;
 }
 
 /**

@@ -138,6 +138,12 @@ import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { applyWorkingContext, buildWorkingContext } from './working-context.js';
 import { planThinking, type ThinkingEffort, type ThinkingPlan } from './thinking.js';
 import {
+  projectLayersArmed,
+  workspaceTrustReport,
+  type WorkspaceTrust,
+  type WorkspaceTrustReport,
+} from './workspace-trust.js';
+import {
   MAX_REWIND_CHECKPOINTS,
   appendRewindCheckpoint,
   newestRewindCheckpoints,
@@ -263,6 +269,18 @@ export interface RuntimeOptions {
   backgroundCompletionWakes?: boolean;
   /** Refuses the next parent-Agent SDK model call after this many in the process. */
   maxModelCalls?: number;
+  /**
+   * The workspace-trust decision the driver resolved *before* asking for a runtime
+   * (SER-090, `workspace-trust.ts`). Anything but `trusted` holds the repository-
+   * supplied layers back: `loadProjectPolicy` skips the project hook roots and the
+   * legacy `.darwin/config.json` rule fallback, `loadMcpClients` leaves the project MCP
+   * file unread — skipped, never an error — and the held items are reported on
+   * `info.workspaceTrust`. Absent means the caller vouches for the checkout (the
+   * pre-trust behaviour; programmatic embedding and the spike fixtures). The three
+   * drivers always pass it, and a `/clear` or `/rewind` successor inherits it with the
+   * rest of these options.
+   */
+  workspaceTrust?: WorkspaceTrust;
   /**
    * One driver-owned section appended to the base prompt, before project instructions.
    * Headless runs pass `HEADLESS_AUTONOMY_SECTION` (system-prompt.ts); the interactive TUI passes
@@ -452,6 +470,14 @@ export interface RuntimeInfo {
    * startup notice and `/status`; the map itself lives in the bash tools.
    */
   shellEnv: { withheld: string[]; passthrough: string[] };
+  /**
+   * The workspace-trust decision this runtime applied (SER-090) and exactly what it
+   * held back when the project is not trusted: hook files never loaded, MCP servers
+   * never spawned, the legacy rule fallback never granted. Empty held lists for a
+   * trusted project or an empty inventory. Read by the transcript notice, `/status`,
+   * `/mcp` and the headless `trust:` line / `run.started.trust`.
+   */
+  workspaceTrust: WorkspaceTrustReport;
 
   mcpIgnoredConfigPath: string | undefined;
   /** Number of MCP servers configured (some may have failed to connect). */
@@ -650,7 +676,12 @@ export class AgentRuntime {
     // re-reading the file, so a `/model` or `/effort` change made this session survives
     // the switch (see InheritedRuntimeResources).
     const config = options.inherit?.config ?? (await loadConfig(options.projectRoot));
-    const policy = await loadProjectPolicy(options.projectRoot);
+    // SER-090: the driver's trust decision decides whether the checkout's own hook
+    // files, MCP servers and legacy rule fallback are read at all. Held layers are
+    // skipped by the loaders, not failed — the user declined them.
+    const projectLayers: 'armed' | 'held' =
+      options.workspaceTrust === undefined || projectLayersArmed(options.workspaceTrust) ? 'armed' : 'held';
+    const policy = await loadProjectPolicy(options.projectRoot, { projectLayers });
     // Built here, before the model, the MCP clients and the skills plugin, because all
     // three log at `debug` while they start up (MCP tool renames, skill discovery) and
     // a diagnostics log that begins after startup cannot answer a question about
@@ -695,6 +726,7 @@ export class AgentRuntime {
       : `${basePrompt.prompt}\n\n${options.systemPromptSuffix}`;
     const mcp = options.inherit?.mcp ?? await loadMcpClients(options.projectRoot, {
       quietStdioStderr: options.quietMcpStderr === true,
+      projectLayer: projectLayers,
     });
     // Inherited resources belong to a predecessor that is still alive: if this
     // assembly fails, the unwind must not release them out from under it.
@@ -1134,6 +1166,7 @@ export class AgentRuntime {
           shadowed: [...notice.shadowed],
         })),
         shellEnv: { withheld: [...shellEnv.withheld], passthrough: [...shellPassthrough] },
+        workspaceTrust: workspaceTrustReport(options.workspaceTrust),
         mcpIgnoredConfigPath: mcp.ignoredConfigPath,
         mcpServerCount: mcp.clients.length,
         toolNames: agent.tools.map((tool) => tool.name).sort(),
@@ -1600,7 +1633,17 @@ export class AgentRuntime {
    */
   async saveAllowRule(rule: string): Promise<void> {
     this.gate.addAllowRule(rule);
-    await appendAllowRule(this.projectRoot, rule);
+    await appendAllowRule(this.projectRoot, rule, this.projectLayerOptions());
+  }
+
+  /**
+   * The `loadProjectPolicy` layer option this runtime was created with (SER-090), so
+   * the two rule writers below promote legacy rules only from a layer that was in
+   * force — an untrusted project's committed `.darwin/config.json` never reaches the
+   * user-owned file through an "always allow" answer.
+   */
+  private projectLayerOptions(): import('../config.js').ProjectPolicyOptions {
+    return { projectLayers: this.info.workspaceTrust.state === 'trusted' ? 'armed' : 'held' };
   }
 
   /**
@@ -1651,7 +1694,9 @@ export class AgentRuntime {
    */
   revokeAllowRules(rules: readonly string[]): { removed: string[]; saved: Promise<void> } {
     const removed = rules.filter((rule) => this.gate.removeAllowRule(rule));
-    const saved = removed.length === 0 ? Promise.resolve() : removeAllowRules(this.projectRoot, removed);
+    const saved = removed.length === 0
+      ? Promise.resolve()
+      : removeAllowRules(this.projectRoot, removed, this.projectLayerOptions());
     return { removed, saved };
   }
 

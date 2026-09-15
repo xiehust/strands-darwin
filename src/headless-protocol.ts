@@ -9,6 +9,7 @@ import { usageBuckets, type UsageTotals } from './agent/usage.js';
 import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
 import type { ThinkingEffort, ThinkingPlan } from './agent/thinking.js';
+import { heldLabels, type WorkspaceTrustReport, type WorkspaceTrustState } from './agent/workspace-trust.js';
 import { contextOverflowErrorMessage } from './context-overflow-error.js';
 import { failureFromError } from './trajectory/record.js';
 
@@ -82,6 +83,21 @@ export interface StructuredThinking {
   truncated?: true;
 }
 
+/**
+ * The workspace-trust decision applied to this run (SER-090), as a run-scoped fact
+ * beside the permission mode: `state` is what governed the loaders, `held` names
+ * exactly what the checkout declared and this run did not arm (`hooks: …`, `mcp: …`,
+ * `rules: …`, `unreadable: …` — the same labels the `trust:` text line and the TUI
+ * notice use), empty for a trusted project or a checkout that declares nothing.
+ * `problem` is the bounded notice about an unreadable decision file, when there is one.
+ */
+export interface StructuredTrust {
+  state: WorkspaceTrustState;
+  held: string[];
+  problem?: string;
+  truncated?: true;
+}
+
 export interface StructuredTerminalInput {
   outcome: StructuredOutcome;
   permissionMode?: ApprovalMode;
@@ -146,6 +162,8 @@ export class StructuredHeadlessWriter {
     diagnosticsFile?: string;
     /** Additive (issue #10): the resolved thinking plan; absent only when the runtime cannot say. */
     thinking?: StructuredThinking;
+    /** Additive (SER-090): the workspace-trust state applied and the held layers, bounded. */
+    trust?: StructuredTrust;
   }): void {
     const diagnosticsFile = input.diagnosticsFile === undefined
       ? undefined
@@ -157,6 +175,7 @@ export class StructuredHeadlessWriter {
       ...(diagnosticsFile === undefined ? {} : { diagnosticsFile: diagnosticsFile.value }),
       ...(diagnosticsFile?.truncated === true ? { truncated: true } : {}),
       ...(input.thinking === undefined ? {} : { thinking: input.thinking }),
+      ...(input.trust === undefined ? {} : { trust: input.trust }),
     });
   }
 
@@ -363,6 +382,23 @@ export function structuredThinking(plan: ThinkingPlan): StructuredThinking {
     enabled: plan.enabled,
     requested: plan.requested,
     ...(plan.effective === undefined ? {} : { effective: plan.effective }),
+    ...(problem === undefined ? {} : { problem: problem.value }),
+    ...(problem?.truncated === true ? { truncated: true } : {}),
+  };
+}
+
+/**
+ * The applied trust decision projected for `run.started` (SER-090). The held labels
+ * are already bounded per list by `heldLabels`; the problem text is bounded like every
+ * other field.
+ */
+export function structuredTrust(report: WorkspaceTrustReport, projectRoot: string): StructuredTrust {
+  const problem = report.problem === undefined
+    ? undefined
+    : bound(report.problem.replace(/\s+/gu, ' ').trim(), STRUCTURED_FIELD_LIMIT);
+  return {
+    state: report.state,
+    held: heldLabels(report, projectRoot),
     ...(problem === undefined ? {} : { problem: problem.value }),
     ...(problem?.truncated === true ? { truncated: true } : {}),
   };

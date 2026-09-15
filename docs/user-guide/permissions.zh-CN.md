@@ -101,6 +101,18 @@ bash pattern 必须匹配每个串联命令段；`pnpm build && rm -rf /` 不匹
 
 普通 `y` 不会暗中保存规则。`/permissions` 会列出所有生效的放行规则并区分来自磁盘还是当前会话，随后以 `deny (configured)` 列出每条拒绝规则。`/permissions revoke <n|rule|all>` 会同步把放行规则从 gate 和文件中删除，下次调用重新询问，重启后也不会复活；它拒绝撤销拒绝规则，因为那会放宽权限——请改文件。该命令只能收紧权限；新增规则仍只能来自权限框（放行）或文件（拒绝）。`/status` 分别统计放行与拒绝规则数。可以手工编辑 JSON，但非法规则会导致启动错误。
 
+## 工作区信任
+
+克隆下来的仓库是不可信输入，而一份 checkout 里有三类东西原本会在 darwin 启动的一瞬间就*执行或授权*：钩子命令文件（`.darwin/hooks.json`、`.darwin/hooks/*.json`、`.agents/hooks.json`、`.agents/hooks/*.json`，或已提交的 `.darwin/config.json` 里的 `hooks` 键）、`.darwin/mcp.json` 或根目录 `.mcp.json` 声明的 MCP 服务器（每个 stdio 条目都是一个在你第一条提示之前就被拉起的进程），以及已提交的 `.darwin/config.json` 里的旧式 `permissionRules`。自 SER-090 起，这三类东西在你同意之前都不会被启用。
+
+在一个 checkout 声明了其中任何一项的项目里首次交互式启动时，darwin 会在运行时存在**之前**——也就是钩子还没机会运行、服务器还没机会拉起、规则还没机会生效之前——显示一个模态框。它写出项目根目录，并逐项列出 checkout 将要启用的内容：每个钩子文件及其方言和各事件的命令数、每个 MCP 服务器及其命令与参数（或 URL）和声明它的文件、旧式规则文件及其 allow/deny 数量。无法解析的钩子或 MCP 文件会被列为“unreadable”——它仍然是 checkout 携带的东西。按 `y`（或 Enter）接受；`n` 拒绝；Escape 只对本次会话拒绝且不写入任何记录，下次启动会再问一次。
+
+答案存放在 `~/.darwin/projects/<key>/trust.json`，形如 `{ "trusted": true|false, "decidedAt": "<ISO 时间>" }`——与 `permission-rules.json` 同一个用户私有项目目录，位于仓库之外，因此仓库里提交的文件不可能替克隆授予自己信任（checkout 内的 `.darwin/trust.json` 永远不会被读取）。已存的答案在之后每次启动时静默生效；删除该文件即可重新被询问。文件格式损坏时视为“尚无决定”，附一条有界提示，绝不崩溃。
+
+拒绝（或 Escape）后会话照常开始，但仓库提供的这些层被**保留不用**：那些文件里的钩子命令一条都不运行，项目 MCP 服务器一个都不拉起，旧式项目 allow/deny 规则一条都不授予，权限框里的“总是允许”也不会把已提交的规则复制进你的用户私有文件。转录中会有一条提示说明被保留的内容；`/status` 在 `mcp` 与 `hooks` 行追加 ` · N held (untrusted project): …`；`/mcp` 把每个被保留的服务器列为 `held (untrusted project)`，且不会尝试连接。`/clear` 或 `/rewind` 的后继会话继承这一决定。所有用户私有的内容仍照常加载——`~/.darwin` 与 `~/.agents` 的钩子、`~/.darwin/mcp.json`、你自己的 `permission-rules.json`——而 skills、自定义命令与 `AGENTS.md` 属于提示内容而非执行，因此从不进入这道门。没有声明这些文件的项目不会看到任何变化。
+
+无头模式（`-p`）从不弹出对话框。已存的 `trusted: true` 直接生效；没有决定或 `trusted: false` 时，这些层被保留，文本输出在 stderr 写一行 `trust:` 说明保留了什么，结构化输出在 `run.started.trust` 中携带 `{ "state": "trusted"|"untrusted"|"undecided", "held": [...] }`。信任像 darwin 的其他路径一样以项目根目录为键，而不是 git 状态；它不新增第二条权限通道，也不改变面向模型的敏感路径分类。
+
 ## 无头模式与本地命令
 
 无头模式没有交互 bridge：未被静态安全或持久规则放行的调用会立即拒绝。需要时应显式选择 `auto`/`yolo`。

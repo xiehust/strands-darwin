@@ -182,6 +182,22 @@ function testFormatter(): void {
   assert('overridden server names are stated', layered.includes('project config overrides global for: a'));
   assert('an ignored root .mcp.json is stated as inert',
     layered.includes('ignored: /tmp/p/.mcp.json — .darwin/mcp.json takes precedence'));
+
+  // SER-090: servers the checkout declares but an untrusted project never spawned are
+  // stated as held — counted in the heading, never omitted, never probed.
+  const held = formatMcpReport([status({ name: 'calc' })], {
+    ...NO_SOURCES,
+    configPaths: ['/home/u/.darwin/mcp.json'],
+    heldServers: [{ name: 'probe', file: '/tmp/p/.mcp.json' }],
+  });
+  assert('held servers count toward the heading', held.startsWith('mcp servers (2)'));
+  assert('a held server is stated as held (untrusted project) with its declaring file and no connection attempt',
+    /^  probe  held \(untrusted project\) — declared in \/tmp\/p\/\.mcp\.json; not spawned, no connection attempted$/m.test(held));
+  const onlyHeld = formatMcpReport([], { ...NO_SOURCES, heldServers: [{ name: 'probe', file: '/tmp/p/.mcp.json' }] });
+  assert('a project with only held servers is not reported as "no MCP servers configured"',
+    onlyHeld.startsWith('mcp servers (1)') && onlyHeld.includes('held (untrusted project)'));
+  assert('no held servers leaves the report byte-identical',
+    formatMcpReport([status({ name: 'a' })], { ...NO_SOURCES, heldServers: [] }) === formatMcpReport([status({ name: 'a' })], NO_SOURCES));
 }
 
 function testCandidates(): void {

@@ -130,9 +130,11 @@ export function mcpConfigCandidates(projectRoot: string): {
  */
 export async function loadMcpClients(
   projectRoot: string,
-  options: { quietStdioStderr?: boolean } = {},
+  options: { quietStdioStderr?: boolean; projectLayer?: 'armed' | 'held' } = {},
 ): Promise<McpLoadResult> {
-  const { servers, ...sources } = await readMcpServerConfigs(projectRoot);
+  const { servers, ...sources } = await readMcpServerConfigs(projectRoot, {
+    ...(options.projectLayer === undefined ? {} : { projectLayer: options.projectLayer }),
+  });
   if (servers === undefined) return { clients: [], ...sources };
 
   const prefixed = withDefaultPrefixes(servers);
@@ -153,16 +155,33 @@ export interface McpServerConfigs extends Omit<McpLoadResult, 'clients'> {
 }
 
 /**
+ * Whether the repository-supplied project layer (`.darwin/mcp.json` or the root
+ * `.mcp.json`) is read at all (SER-090). `held` leaves both files unread — not parsed,
+ * so a malformed one cannot fail startup either — and the user-owned global file is
+ * the whole answer; `configPaths`/`ignoredConfigPath` then name only what was read.
+ * Default `armed`: every caller before workspace trust.
+ */
+export interface McpReadOptions {
+  projectLayer?: 'armed' | 'held';
+}
+
+/**
  * Reads and merges the MCP config files without constructing a single client:
  * nothing is spawned and nothing connects. `darwin doctor` reports from this;
  * {@link loadMcpClients} builds on it. An unreadable or malformed file is the same
  * {@link ConfigError} startup raises.
  */
-export async function readMcpServerConfigs(projectRoot: string): Promise<McpServerConfigs> {
+export async function readMcpServerConfigs(
+  projectRoot: string,
+  options: McpReadOptions = {},
+): Promise<McpServerConfigs> {
   const { global, preferred, fallback } = mcpConfigCandidates(projectRoot);
+  const held = options.projectLayer === 'held';
 
   const [hasGlobal, hasPreferred, hasFallback] = await Promise.all([
-    exists(global), exists(preferred), exists(fallback),
+    exists(global),
+    held ? false : exists(preferred),
+    held ? false : exists(fallback),
   ]);
   const projectConfig = hasPreferred ? preferred : hasFallback ? fallback : undefined;
   const ignoredConfigPath = hasPreferred && hasFallback ? fallback : undefined;
@@ -197,6 +216,59 @@ export async function readMcpServerConfigs(projectRoot: string): Promise<McpServ
     configPath: projectConfig ?? (hasGlobal ? global : undefined),
     ignoredConfigPath,
   };
+}
+
+/** One repository-supplied server as the workspace-trust inventory lists it (SER-090). */
+export interface ProjectMcpServerInventory {
+  name: string;
+  /** The file that declares it: `.darwin/mcp.json`, or the root `.mcp.json` when that is the one in effect. */
+  file: string;
+  /** stdio: the program and its arguments as written (no `${VAR}` interpolation); `env` is never listed. */
+  command?: string;
+  args?: readonly string[];
+  /** http/sse: the endpoint as written; `headers` are never listed. */
+  url?: string;
+  /** `"disabled": true` entries are listed as such — the file still names them, the loader would skip them. */
+  disabled?: boolean;
+}
+
+/**
+ * The project layer alone, exactly as {@link readMcpServerConfigs} would select it
+ * (`.darwin/mcp.json` over the root `.mcp.json`, one file only), without merging the
+ * global layer and without constructing a client. The declarative reader above is
+ * reused for the parse, so the inventory cannot disagree with what startup would
+ * spawn; a malformed file is returned as `problem` with the loader's own message
+ * rather than thrown, because the inventory exists to *show* the checkout, not to
+ * refuse it — the refusal (or the hold) is the caller's decision.
+ */
+export async function inventoryProjectMcpServers(
+  projectRoot: string,
+): Promise<{ servers: ProjectMcpServerInventory[]; problem?: { file: string; problem: string } }> {
+  const { preferred, fallback } = mcpConfigCandidates(projectRoot);
+  const [hasPreferred, hasFallback] = await Promise.all([exists(preferred), exists(fallback)]);
+  const file = hasPreferred ? preferred : hasFallback ? fallback : undefined;
+  if (file === undefined) return { servers: [] };
+  let layer: Record<string, McpServerConfig>;
+  try {
+    layer = unwrapServers(JSON.parse(await readFile(file, 'utf8')));
+  } catch (error) {
+    return { servers: [], problem: { file, problem: error instanceof Error ? error.message : String(error) } };
+  }
+  const servers = Object.entries(layer).map(([name, entry]): ProjectMcpServerInventory => {
+    const record = typeof entry === 'object' && entry !== null ? (entry as Record<string, unknown>) : {};
+    const command = record['command'];
+    const args = record['args'];
+    const url = record['url'];
+    return {
+      name,
+      file,
+      ...(typeof command === 'string' ? { command } : {}),
+      ...(Array.isArray(args) ? { args: args.map((value) => (typeof value === 'string' ? value : JSON.stringify(value))) } : {}),
+      ...(typeof url === 'string' ? { url } : {}),
+      ...(record['disabled'] === true ? { disabled: true } : {}),
+    };
+  });
+  return { servers };
 }
 
 /**

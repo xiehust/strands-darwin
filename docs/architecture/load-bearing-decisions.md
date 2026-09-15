@@ -426,6 +426,72 @@ notice says so and names the file), so "only narrows" is intact; `/status` and t
 because they are what `yolo` still refuses. Free checks: `spike/verify-deny-rules.ts` (in
 `pnpm test`), plus the status and config suites.
 
+## Workspace trust — repository-supplied executable configuration is held until consented to
+
+**A checkout is untrusted input, and nothing it carries may execute or pre-authorize at launch
+before the user has seen exactly what it is** (SER-090; `src/agent/workspace-trust.ts`,
+`src/tui/trust-format.ts`, `src/tui/WorkspaceTrustPrompt.tsx`). Three things a repository can
+commit used to be armed silently by `AgentRuntime.create`: project hook command files
+(`.darwin/hooks.json`, `.darwin/hooks/*.json`, `.agents/hooks.json` in the Codex dialect,
+`.agents/hooks/*.json`, and the `hooks` key of a committed `.darwin/config.json`) through
+`loadProjectPolicy`, project MCP servers (`.darwin/mcp.json` or the root `.mcp.json` — every stdio
+entry a process spawned before the first prompt) through `loadMcpClients`, and the legacy
+`permissionRules` fallback of a committed `.darwin/config.json`, which granted allow rules on
+exactly the fresh clone where the user-owned `permission-rules.json` does not yet exist. The
+existing sensitive-path classification protects these files from the *model*; this decision
+protects the user from the *checkout*, and it is a separate concern on purpose —
+`isSensitiveDarwinPath` is untouched and no second permission channel exists.
+
+The gate has three load-bearing boundaries. **One grammar.** The inventory
+(`inventoryWorkspace`) is not a second parser: `inventoryProjectPolicy` in `config.ts` runs the
+very `loadHookLayer` the policy activates from, over the project roots only, and
+`inventoryProjectMcpServers` in `mcp/registry.ts` reuses the declarative reader `darwin doctor`
+already used — so a file the modal lists is exactly a file startup would arm, an unparseable one
+is listed as `unreadable` with the loader's own message (a checkout carrying it still carries
+executable configuration), and nothing is constructed, registered or spawned by listing. **A
+user-owned store.** The decision is `~/.darwin/projects/<key>/trust.json`
+(`{ trusted, decidedAt }`, `userProjectDir` like every other user-owned project fact), keyed on
+the project root like every other darwin path — never on git state — and nothing under the
+project root is ever read as a decision, so a committed `.darwin/trust.json` counts for nothing.
+A malformed store reads as "no decision" with a bounded notice: the safe direction is to hold and
+ask again, never to grant. **One carried option.** The drivers resolve trust *before* the runtime
+exists — `runInteractive` renders the modal in the startup renderer's place, `runHeadlessProcess`
+and the dev REPL read the store — and hand the result to `AgentRuntime.create` as
+`workspaceTrust`; the runtime stays a thin assembly that passes `projectLayers: 'held'` to
+`loadProjectPolicy` and `projectLayer: 'held'` to `loadMcpClients`, which *skip* the project
+files rather than fail on them (a held layer was declined, not broken — an unparseable held
+file cannot stop startup either), and the same option flows to `appendAllowRule`/`removeAllowRules`
+so an "always allow" answer in an untrusted session cannot promote the committed legacy rules
+into the user-owned file. Only an explicit `trusted` arms the layers: `undecided` (headless with
+no store, the interactive Escape) holds exactly like a stored refusal, because "no answer yet" is
+not consent. An absent option means the caller vouches for the checkout — the pre-trust behaviour,
+kept for programmatic embedding and the spike fixtures that construct runtimes directly; all
+three product drivers always pass it, and `/clear`/`/rewind` successors inherit it through
+`createOptions`. User-global layers (`~/.darwin`, `~/.agents`, `~/.darwin/mcp.json`, the user's
+own `permission-rules.json`) are never held, and skills, custom commands and instruction files
+are prompt content, not execution, so they are not inventoried: a project declaring none of the
+three sees nothing new, and a trusted project's hooks and MCP semantics are byte-identical to
+before.
+
+What the user sees is bounded and stated everywhere. The modal (frame-budget `modal` exemption;
+one `<Text>` per counted row; `trustPromptRows` keeps four fixed rows and gives the items what the
+terminal has left, ending with `… N more`) names the root, each hook file with dialect and
+per-event command counts, each MCP server with its command and arguments or URL and declaring file
+(never `env` or `headers`), and the legacy rule counts; `y`/Enter accepts, `n` declines, Escape
+declines for this session only and stores nothing. A held session prints one transcript notice
+(`trust: … — held back: hooks: …, mcp: …, rules: …, unreadable: …`) from the same `heldLabels`
+vocabulary the headless `trust:` stderr line and the additive `run.started.trust`
+(`{ state, held, problem? }`) use, so the three cannot disagree; `/status` appends
+` · N held (untrusted project): …` to its existing `mcp` and `hooks` rows and `/mcp` lists each
+held server as `held (untrusted project) — declared in <file>; not spawned, no connection
+attempted` — stated, never omitted, never probed, exactly the failed-server rule. Headless never
+shows a dialog. Free checks: `spike/verify-workspace-trust.ts` (in `pnpm test`: marker commands
+in an untrusted checkout never run through inventory, runtime creation, `/clear` succession or a
+real `-p` run, and run exactly once trusted), `spike/verify-headless-structured.ts` (the
+`run.started.trust` field), `spike/verify-status-command.ts` / `verify-mcp-command.ts` (the
+rows), and `spike/verify-tui.ts trust` (the modal, decline/escape/accept/remembered, through a
+real pty). AGENTS.md has no row for this decision: the file sits 5 bytes under its preload cap.
+
 ## `/mcp` — a read-only projection
 
 **`/mcp` is a read-only projection of the MCP clients the runtime already holds, and reading

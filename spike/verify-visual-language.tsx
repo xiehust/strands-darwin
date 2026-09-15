@@ -76,6 +76,7 @@ const info: RuntimeInfo = {
   mcpConfigPath: '/workspace/.darwin/mcp.json', mcpConfigPaths: ['/workspace/.darwin/mcp.json'],
   mcpOverriddenServerNames: [], permissionRulesPath: '/home/test/rules.json', hookSources: [], hookShadowNotices: [],
   shellEnv: { withheld: [], passthrough: [] },
+  workspaceTrust: { state: 'trusted', heldHookFiles: [], heldMcpServers: [], heldLegacyRules: undefined, heldProblems: [] },
   mcpIgnoredConfigPath: undefined, mcpServerCount: 2,
   toolNames: ['bash', 'fileEditor', 'imageViewer'], trajectoryFile: '/tmp/trajectory.jsonl',
   diagnosticsFile: undefined,

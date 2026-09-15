@@ -106,7 +106,11 @@ function makeRuntime(gate: PermissionGate): AgentRuntime {
   Object.assign(runtime, {
     gate,
     projectRoot: ROOT,
-    info: { permissionRulesPath: permissionRulesPath(ROOT) },
+    info: {
+      permissionRulesPath: permissionRulesPath(ROOT),
+      // SER-090: read by the rule writers; a trusted project is the pre-trust behaviour.
+      workspaceTrust: { state: 'trusted', heldHookFiles: [], heldMcpServers: [], heldLegacyRules: undefined, heldProblems: [] },
+    },
   });
   return runtime;
 }

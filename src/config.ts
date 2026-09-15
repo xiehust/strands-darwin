@@ -1527,12 +1527,31 @@ export interface ProjectPolicy {
   legacyRules: boolean;
 }
 
+/**
+ * Which repository-supplied layers {@link loadProjectPolicy} arms (SER-090).
+ *
+ * `armed` (the default, and what every caller before workspace trust got) reads the
+ * project hook roots and the legacy `.darwin/config.json` `permissionRules`
+ * fallback. `held` skips exactly those — the user-owned global hook roots and the
+ * user-owned `permission-rules.json` still load — without reading or validating the
+ * skipped files, so an untrusted checkout can neither run a hook command nor fail
+ * startup with a malformed one. Nothing is an error here: holding a layer back is a
+ * decision the user made, stated by the drivers, not a failure.
+ */
+export interface ProjectPolicyOptions {
+  projectLayers?: 'armed' | 'held';
+}
+
 /** Loads project-scoped rules and all executable hook extension layers. */
-export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPolicy> {
+export async function loadProjectPolicy(
+  projectRoot: string,
+  options: ProjectPolicyOptions = {},
+): Promise<ProjectPolicy> {
+  const held = options.projectLayers === 'held';
   const primaryRules = permissionRulesPath(projectRoot);
   const legacyProject = path.join(darwinDir(projectRoot), CONFIG_FILENAME);
   const primaryRecord = await readOptionalRecord(primaryRules);
-  const legacyRecord = primaryRecord === undefined ? await readOptionalRecord(legacyProject) : undefined;
+  const legacyRecord = primaryRecord === undefined && !held ? await readOptionalRecord(legacyProject) : undefined;
   const { allow: allowRules, deny: denyRules } = primaryRecord === undefined
     ? legacyRecord?.['permissionRules'] === undefined
       ? { allow: [], deny: [] }
@@ -1544,6 +1563,7 @@ export async function loadProjectPolicy(projectRoot: string): Promise<ProjectPol
   // exact Pre wrapper order stated to the user.
   const loaded: LoadedHookLayer[] = [];
   for (const layer of hookExtensionRoots(projectRoot)) {
+    if (held && layer.scope === 'project') continue;
     loaded.push(await loadHookLayer(layer, projectRoot));
   }
   const active = loaded.flatMap((layer) => layer.sources);
@@ -1692,6 +1712,77 @@ async function readRequiredRecord(file: string): Promise<Record<string, unknown>
   return record;
 }
 
+/** One repository-supplied hook source as the workspace-trust inventory lists it (SER-090). */
+export interface ProjectHookSourceInventory {
+  file: string;
+  dialect: 'native' | 'codex';
+  /** Command hooks per event, in the file's own dialect vocabulary; events with none are absent. */
+  eventCounts: Record<string, number>;
+}
+
+/**
+ * What a checkout's `.darwin`/`.agents` roots would arm if the project were trusted
+ * (SER-090): the same `loadHookLayer` parse `loadProjectPolicy` activates from, over
+ * the *project* roots only, with nothing activated — no runner is built and no
+ * command runs. One grammar: a file this lists is exactly a file the policy would
+ * load, and a file the policy rejects is listed under `problems` with the loader's own
+ * message, because a checkout that carries an unparseable hook file still carries
+ * executable configuration the user should see before trusting it. The legacy
+ * `.darwin/config.json` rule fallback is inventoried only when it would be *in force*
+ * — the user-owned `permission-rules.json` makes it inert, and an inert layer grants
+ * nothing to consent to.
+ */
+export interface ProjectPolicyInventory {
+  hookSources: ProjectHookSourceInventory[];
+  /** Project hook layers the loader refused, by root: still repository-supplied, stated as unreadable. */
+  problems: { file: string; problem: string }[];
+  legacyRules: { file: string; allow: number; deny: number } | undefined;
+}
+
+export async function inventoryProjectPolicy(projectRoot: string): Promise<ProjectPolicyInventory> {
+  const hookSources: ProjectHookSourceInventory[] = [];
+  const problems: { file: string; problem: string }[] = [];
+  for (const layer of hookExtensionRoots(projectRoot)) {
+    if (layer.scope !== 'project') continue;
+    try {
+      const loaded = await loadHookLayer(layer, projectRoot);
+      for (const source of loaded.codexSources) {
+        hookSources.push({ file: source.file, dialect: 'codex', eventCounts: countHooks(source.hooks) });
+      }
+      for (const source of loaded.sources) {
+        hookSources.push({ file: source.file, dialect: 'native', eventCounts: countHooks(source.hooks) });
+      }
+    } catch (error) {
+      problems.push({ file: layer.root, problem: describe(error) });
+    }
+  }
+
+  let legacyRules: ProjectPolicyInventory['legacyRules'];
+  const legacyProject = path.join(darwinDir(projectRoot), CONFIG_FILENAME);
+  try {
+    const primaryRecord = await readOptionalRecord(permissionRulesPath(projectRoot));
+    const legacyRecord = primaryRecord === undefined ? await readOptionalRecord(legacyProject) : undefined;
+    if (legacyRecord?.['permissionRules'] !== undefined) {
+      const { allow, deny } = permissionRulesFields(legacyRecord['permissionRules'], legacyProject);
+      legacyRules = { file: legacyProject, allow: allow.length, deny: deny.length };
+    }
+  } catch (error) {
+    problems.push({ file: legacyProject, problem: describe(error) });
+  }
+  return { hookSources, problems, legacyRules };
+}
+
+/** Command hooks per event — the count the inventory shows, never the commands themselves. */
+function countHooks(hooks: ToolHooksConfig | CodexHooksConfig): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const [event, groups] of Object.entries(hooks) as [string, readonly { readonly hooks: readonly unknown[] }[] | undefined][]) {
+    if (groups === undefined) continue;
+    const total = groups.reduce((sum, group) => sum + group.hooks.length, 0);
+    if (total > 0) counts[event] = total;
+  }
+  return counts;
+}
+
 async function pathExists(file: string): Promise<boolean> {
   try {
     await lstat(file);
@@ -1715,12 +1806,23 @@ async function hookDirectoryHasJson(extensionRoot: string): Promise<boolean> {
   }
 }
 
-/** Adds one project-scoped allow rule, promoting legacy rules on first write. */
-export async function appendAllowRule(projectRoot: string, rule: string): Promise<void> {
+/**
+ * Adds one project-scoped allow rule, promoting legacy rules on first write.
+ *
+ * `options.projectLayers: 'held'` (SER-090) keeps the promotion from ever copying a
+ * *committed* `.darwin/config.json` rule set into the user-owned file: in an untrusted
+ * project the legacy fallback was never in force, so the first write starts from the
+ * empty list — exactly what the gate was honouring.
+ */
+export async function appendAllowRule(
+  projectRoot: string,
+  rule: string,
+  options: ProjectPolicyOptions = {},
+): Promise<void> {
   if (!isValidRule(rule)) {
     throw new ConfigError(`Refusing to save ${JSON.stringify(rule)}: it is not a permission rule.`);
   }
-  const policy = await loadProjectPolicy(projectRoot);
+  const policy = await loadProjectPolicy(projectRoot, options);
   const allow = [...policy.allowRules];
   if (!allow.includes(rule)) allow.push(rule);
   await writeConfigRecord(permissionRulesPath(projectRoot), rulesRecord(allow, policy.denyRules));
@@ -1736,8 +1838,12 @@ export async function appendAllowRule(projectRoot: string, rule: string): Promis
  * prompt, never a silent widening. Deny-rules (SER-076) pass through untouched:
  * this writer never sees them as a target.
  */
-export async function removeAllowRules(projectRoot: string, rules: readonly string[]): Promise<void> {
-  const policy = await loadProjectPolicy(projectRoot);
+export async function removeAllowRules(
+  projectRoot: string,
+  rules: readonly string[],
+  options: ProjectPolicyOptions = {},
+): Promise<void> {
+  const policy = await loadProjectPolicy(projectRoot, options);
   const allow = policy.allowRules.filter((rule) => !rules.includes(rule));
   await writeConfigRecord(permissionRulesPath(projectRoot), rulesRecord(allow, policy.denyRules));
 }

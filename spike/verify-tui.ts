@@ -17,7 +17,7 @@
  * developer's — see the note there before adding a scenario that reads one.
  *
  * Free scenarios (no model call): cloudAuto | model | mode | clear | completion | pathCompletion | recall |
- * recallEmpty | bang | queue | wordNav | undo | mcp | resume | copy | rewind | escRewind | tangent | modelRetry — `copy`
+ * recallEmpty | bang | queue | wordNav | undo | mcp | trust | resume | copy | rewind | escRewind | tangent | modelRetry — `copy`
  * (SER-057) seeds a completed answer through a local fixture model and `--resume`, then proves
  * the OSC 52 sequence in the raw pty output decodes to the exact committed answer text;
  * `escRewind` (SER-059) drives the seeded `rewind` fixture with two separate Escape pty events
@@ -25,12 +25,14 @@
  * (SER-083) drives a fresh session whose fixture model answers locally and proves the
  * arm → prompt → return gesture rides the `/rewind` successor path with no draft handed back; `modelRetry`
  * (SER-067) drives an always-throttled fixture model behind darwin's own retry and proves the
- * wait phrase rides the busy row and the failed turn names how retry ended.
+ * wait phrase rides the busy row and the failed turn names how retry ended; `trust` (SER-090)
+ * drives the workspace-trust modal in a project whose checkout declares an MCP server and a hook
+ * file — decline, escape, accept, remembered — and proves the marker command never runs until accepted.
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | contextOverflow | cursor | completion |
- *                 pathCompletion | historySearch | recall | recallEmpty | resume | copy | bang | queue | clear | mcpStderr | mcp |
+ *                 pathCompletion | historySearch | recall | recallEmpty | resume | copy | bang | queue | clear | mcpStderr | mcp | trust |
  *                 rewind | escRewind | tangent | toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | updatePlan | modelRetry | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
@@ -60,6 +62,7 @@ import {
 } from '../src/agent/session.js';
 import { MAX_REWIND_CHECKPOINTS, appendRewindCheckpoint } from '../src/agent/rewind.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../src/agent/system-prompt.js';
+import { readTrustDecision, trustDecisionPath, writeTrustDecision } from '../src/agent/workspace-trust.js';
 import { darwinDir, DARWIN_DIRNAME } from '../src/paths.js';
 import { CONFIG_FILENAME, permissionRulesPath } from '../src/config.js';
 import { AGENTS_DIRNAME } from '../src/agents/loader.js';
@@ -220,6 +223,10 @@ async function resetWorkDir(): Promise<void> {
   // waiting for. Resolved after the mkdir above: the key canonicalizes through
   // realpath, which needs WORK_DIR to exist.
   await rm(permissionRulesPath(WORK_DIR), { force: true });
+  // SER-090: the `mcp` scenario stores an acceptance for WORK_DIR's project key so its
+  // project `.darwin/mcp.json` is armed without the modal; every other scenario's WORK_DIR
+  // declares nothing (empty inventory, no gate), and none may inherit that answer.
+  await rm(trustDecisionPath(WORK_DIR), { force: true });
 }
 
 /** Writes {@link HOME_CONFIG} — the only config the TUI under test will read. */
@@ -4380,10 +4387,14 @@ async function mcpReport(): Promise<void> {
     `${JSON.stringify({ mcpServers: { ghost: { command: 'true', args: [] } } }, null, 2)}\n`,
     'utf8',
   );
+  // SER-090: a project MCP file is repository-supplied executable configuration, so
+  // this scenario runs with a stored acceptance — the modal itself is `trust`.
+  await writeTrustDecision(WORK_DIR, true);
 
   const tui = startTui({ cwd: WORK_DIR });
   try {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
+    assert('a stored acceptance shows no trust modal', !tui.screen.includes('trust this project?'));
 
     const beforeArgument = tui.mark();
     tui.submit('/mcp extra');
@@ -4430,6 +4441,138 @@ async function mcpReport(): Promise<void> {
     tui.kill();
     await rm(path.join(WORK_DIR, '.mcp.json'), { force: true });
     await rm(projectDarwinDir, { recursive: true, force: true });
+    await rm(trustDecisionPath(WORK_DIR), { force: true });
+  }
+}
+
+/**
+ * SER-090 — the workspace-trust modal, end to end and free (the `startup-cli` fixture's
+ * CaptureModel; no provider call). A fresh project whose checkout carries a root
+ * `.mcp.json` server that touches a marker and a `.darwin/hooks.json` `TurnComplete`
+ * hook: the modal must appear *before* the composer, list both, and the marker must
+ * stay absent while it waits. Declining (`n`) stores the refusal, the session starts
+ * with the layers held, one transcript notice says so, `/mcp` lists the server as
+ * `held (untrusted project)` and `/status` counts it on its mcp row. Escape stores
+ * nothing and asks again. Accepting (`y`) stores the acceptance and spawns the server —
+ * the marker appears — and a later launch shows no modal at all.
+ */
+async function workspaceTrust(): Promise<void> {
+  header('TUI — the workspace-trust modal gates repository-supplied hooks and MCP servers');
+
+  const dir = '/tmp/darwin-trust-tui';
+  const entry = path.join(REPO_ROOT, 'spike', 'fixtures', 'startup-cli.ts');
+  const marker = path.join(dir, 'mcp-server-ran');
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(path.join(dir, DARWIN_DIRNAME), { recursive: true });
+  await writeFile(
+    path.join(dir, '.mcp.json'),
+    `${JSON.stringify({ mcpServers: { probe: { command: 'sh', args: ['-c', `touch ${marker}`] } } }, null, 2)}\n`,
+    'utf8',
+  );
+  await writeFile(
+    path.join(dir, DARWIN_DIRNAME, 'hooks.json'),
+    `${JSON.stringify({ TurnComplete: [{ matcher: '*', hooks: [{ type: 'command', command: 'true' }] }] }, null, 2)}\n`,
+    'utf8',
+  );
+  await rm(trustDecisionPath(dir), { force: true });
+
+  // Decline.
+  const declined = startTui({ cwd: dir, entry });
+  try {
+    await declined.waitFor('trust this project?', { timeoutMs: 60_000, settleMs: 300 });
+    const modal = declined.screen;
+    assert('the modal appears before the composer', !modal.includes('you>'));
+    assert('the modal names the project root', modal.includes(dir));
+    assert('the modal lists the MCP server with its command and file',
+      modal.includes('probe') && modal.includes('touch') && modal.includes('.mcp.json'));
+    assert('the modal lists the hook file with its event count',
+      modal.includes(`${DARWIN_DIRNAME}/hooks.json`) && modal.includes('TurnComplete ×1'));
+    assert('the modal offers accept / decline / escape', /trust\? +y accept · n decline · esc/.test(modal));
+    assert('nothing ran while the modal waits (marker absent)', !existsSync(marker));
+
+    const beforeAnswer = declined.mark();
+    declined.send('n');
+    await declined.waitFor('you>', { timeoutMs: 60_000, from: beforeAnswer });
+    await declined.waitFor('trust: project not trusted — held back:', { timeoutMs: 30_000, from: beforeAnswer, settleMs: 300 });
+    const after = declined.screen.slice(beforeAnswer);
+    assert('the omission notice names the hook file and the server',
+      after.includes(`hooks: ${DARWIN_DIRNAME}/hooks.json`) && after.includes('mcp: probe (.mcp.json)'));
+    assert('the declined server was not spawned (marker absent)', !existsSync(marker));
+    const stored = await readTrustDecision(dir);
+    assert('the refusal is stored in the user-owned decision file', stored.decision?.trusted === false);
+
+    const beforeMcp = declined.mark();
+    declined.submit('/mcp');
+    await declined.waitFor('mcp servers (1)', { timeoutMs: 30_000, from: beforeMcp, settleMs: 400 });
+    const mcpText = declined.screen.slice(beforeMcp);
+    assert('/mcp lists the held server as held (untrusted project)', mcpText.includes('probe') && mcpText.includes('held (untrusted project)'));
+    assert('/mcp states that no connection was attempted', mcpText.includes('no connection attempted'));
+
+    const beforeStatus = declined.mark();
+    declined.submit('/status');
+    await declined.waitFor('status — this session', { timeoutMs: 30_000, from: beforeStatus, settleMs: 400 });
+    const statusText = declined.screen.slice(beforeStatus);
+    assert('/status carries the held server on its mcp row', statusText.includes('1 held (untrusted project): probe'));
+    assert('/status carries the held hook file on its hooks row', statusText.includes(`held (untrusted project): ${DARWIN_DIRNAME}/hooks.json`));
+
+    declined.submit('/exit');
+    assert('the declined session exits cleanly', (await declined.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    declined.kill();
+  }
+
+  // Escape: this session only, nothing stored.
+  await rm(trustDecisionPath(dir), { force: true });
+  const escaped = startTui({ cwd: dir, entry });
+  try {
+    await escaped.waitFor('trust this project?', { timeoutMs: 60_000, settleMs: 300 });
+    const beforeEscape = escaped.mark();
+    escaped.send('\u001b');
+    await escaped.waitFor('you>', { timeoutMs: 60_000, from: beforeEscape });
+    await escaped.waitFor('trust: project trust undecided — held back:', { timeoutMs: 30_000, from: beforeEscape, settleMs: 300 });
+    // The notice wraps on a 120-column pty, so the phrase is matched across line breaks.
+    assert('escape holds the layers for this session and says a restart asks again',
+      /restart\s+darwin\s+to\s+be\s+asked\s+again/.test(escaped.screen.slice(beforeEscape)));
+    assert('escape stores nothing', (await readTrustDecision(dir)).decision === undefined);
+    assert('the server was not spawned after escape (marker absent)', !existsSync(marker));
+    escaped.submit('/exit');
+    assert('the escaped session exits cleanly', (await escaped.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    escaped.kill();
+  }
+
+  // Accept.
+  const accepted = startTui({ cwd: dir, entry });
+  try {
+    await accepted.waitFor('trust this project?', { timeoutMs: 60_000, settleMs: 300 });
+    const beforeAccept = accepted.mark();
+    accepted.send('y');
+    await accepted.waitFor('you>', { timeoutMs: 60_000, from: beforeAccept });
+    assert('the acceptance is stored', (await readTrustDecision(dir)).decision?.trusted === true);
+    let spawned = existsSync(marker);
+    for (let waited = 0; !spawned && waited < 5_000; waited += 100) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      spawned = existsSync(marker);
+    }
+    assert('accepting spawns the declared server (marker present)', spawned);
+    assert('an accepted project gets no omission notice', !accepted.screen.slice(beforeAccept).includes('held back:'));
+    accepted.submit('/exit');
+    assert('the accepted session exits cleanly', (await accepted.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    accepted.kill();
+  }
+
+  // A second launch after acceptance: no modal at all.
+  const remembered = startTui({ cwd: dir, entry });
+  try {
+    await remembered.waitFor('you>', { timeoutMs: 60_000 });
+    assert('a stored acceptance shows no modal on the next launch', !remembered.screen.includes('trust this project?'));
+    remembered.submit('/exit');
+    assert('the remembered session exits cleanly', (await remembered.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    remembered.kill();
+    await rm(trustDecisionPath(dir), { force: true });
+    await rm(dir, { recursive: true, force: true });
   }
 }
 
@@ -4626,6 +4769,7 @@ const SCENARIOS = {
   tangent: tangentBookmark,
   mcpStderr: mcpStderrIsolation,
   mcp: mcpReport,
+  trust: workspaceTrust,
   toolDetails: toolDetailsToggle,
   agents: agentDispatches,
   agentsMd: agentsMdHeader,

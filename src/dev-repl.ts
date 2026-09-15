@@ -22,6 +22,7 @@ import {
   type PermissionDecision,
 } from './agent/permission.js';
 import { isThinkingEffort, THINKING_EFFORTS, type ThinkingPlan } from './agent/thinking.js';
+import { describeHeld, resolveWorkspaceTrust } from './agent/workspace-trust.js';
 import { CONFIG_FILENAME, ConfigError } from './config.js';
 import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from './commands/workflow-command.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
@@ -174,10 +175,14 @@ async function main(): Promise<void> {
   let runtime: AgentRuntime | undefined;
 
   try {
+    // SER-090: the REPL is a debugging driver without a modal — like headless it never
+    // asks, applies a stored answer and otherwise holds the checkout's layers back.
+    const workspaceTrust = await resolveWorkspaceTrust(projectRoot);
     runtime = await AgentRuntime.create({
       projectRoot,
       session: resume ? { kind: 'continue' } : { kind: 'new' },
       permissionBridge: createReadlineBridge(prompter),
+      workspaceTrust,
     });
 
     const info = runtime.info;
@@ -233,6 +238,11 @@ async function main(): Promise<void> {
     const shellEnvNotice = formatShellEnvNotice(info.shellEnv.withheld);
     if (shellEnvNotice !== undefined) {
       console.log(`  shell env: ${shellEnvNotice}`);
+    }
+    // SER-090: what the checkout declared and this session held back, once.
+    const trustNotice = describeHeld(info.workspaceTrust, projectRoot);
+    if (trustNotice !== undefined) {
+      console.log(`  trust    : ${trustNotice}`);
     }
 
     if (info.skillNames.length > 0) {
