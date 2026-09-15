@@ -2965,3 +2965,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Interpretation accepted by the Host: "completed at least one turn" is read as "has messages to reopen" (`messageCount > 0`), so a resumed session exiting without a new turn still prints its reopenable id; the alternative needed a new counter the brief discouraged.
 - Worker spend: `usage: input=148 output=29020 cacheRead=7180923 cacheWrite=107795`; `cost: total=4.5951 input=0.0015 output=1.4510 cacheRead=1.7952 cacheWrite=1.3474 model=global.anthropic.claude-fable-5-1 pricing=global.anthropic.claude-fable-5-1`.
 
+## Batch 136 — SER-093 agent definitions may omit project instructions (2026-09-15)
+
+- Origin: `docs/research/research_2026-09-15.md`, peer roll `12:43:40Z`; Score 10, Priority 125. Built on accepted SER-092 `7be168f` (green Host gate/build); handoff `b4e4db1` is docs-only. Fourth direction of the five-direction batch.
+- Host mistake, recorded: the first launch attempt for this direction was issued as an unmanaged shell background job with discarded output (a `&` in the same command as the handoff commit). It was killed within seconds, before any edit or commit (tree verified clean at `b4e4db1`); it left one abandoned empty session record `session-20260915-161506525` whose lease is dead-pid stale. The direction was then launched properly as a managed task.
+- Fresh child `session-20260915-161532664`; managed `bg-e512f8c7-b5ea-434c-9a08-849814b58c2d`, exit 0, drained to `hasMore: false`. Source CLI (`pnpm tsx src/cli.ts -p … --yolo --context-offload`, brief piped on stdin), no ceiling, no correction, retry or descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Frontmatter `projectInstructions: false` drops `<project-instructions>` from that child's prompt (recipe-level, so `subagent` and `workflow` both honour it); `Available agents:` catalogue marks it; non-boolean skipped with a bounded reason; default and `general` unchanged | `d8c6ab2` | Host read the loader/recipe/tool-description diff (single `catalogueEntry` helper shared by both tools; `composeSystemPrompt` sole child composer confirmed by the child's grep) and ran `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short`, task `bg-a4fe0721-a02d-409f-b294-234b70fe21b5`, exit 0, 8,978 PASS lines, 0 FAIL; log `/tmp/darwin-ser093-host-acceptance.log`. |
+
+- Docs wrap-up: `docs/architecture/sub-agents.md`, `extensions.md` EN/zh-CN and one sentence in the decisions doc, in the accepted commit; README and `reference.md` list no frontmatter keys so stay as they were; AGENTS.md untouched at 32,763 bytes. The record's "`/agents` states it" was corrected in the brief: `/agents` lists dispatches, so the tool-description catalogue carries the flag. Dist rebuilt by Host.
+- Worker spend: `usage: input=74 output=23263 cacheRead=2900338 cacheWrite=82536`; `cost: total=2.9207 input=0.0007 output=1.1632 cacheRead=0.7251 cacheWrite=1.0317 model=global.anthropic.claude-fable-5-1 pricing=global.anthropic.claude-fable-5-1`. The killed unmanaged attempt reported no `usage:` line (output discarded); its spend, if any, is unknown and not summed.
+

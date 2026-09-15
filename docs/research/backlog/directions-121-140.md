@@ -86,7 +86,7 @@ Requirement: in `src/cli-main.ts` `runInteractive`, after `waitUntilExit()` and 
 
 ## SER-093 — Agent definitions may omit project instructions: optional frontmatter `projectInstructions: false` (default unchanged) skips `<project-instructions>` in that child's system prompt; `/agents` states it; invalid values use the loader's bounded skip reason; built-in `general` unchanged
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 125
 - Score: 10
 - Importance: 3
@@ -98,7 +98,7 @@ Requirement: in `src/cli-main.ts` `runInteractive`, after `waitUntilExit()` and 
 
 ### Implementation / acceptance evidence
 
-Not started.
+Accepted `d8c6ab2` (`feat(agents): let a definition omit project instructions`), fresh child `session-20260915-161532664`, task `bg-e512f8c7-b5ea-434c-9a08-849814b58c2d` exit 0, drained. `src/agents/loader.ts`: `AgentDefinition.projectInstructions: boolean` (built-in `general` `true`), frontmatter key read after `tools` — absent means `true`, any non-boolean (including YAML `null`) skips with `frontmatter "projectInstructions" must be a boolean`; exported `catalogueEntry(definition)` appends ` (no project instructions)` for opted-out definitions. `buildRecipeChild` passes `undefined` to `composeSystemPrompt` for such a definition (the recipe is the only child prompt composer, so `subagent` and `workflow` both honour it). Discoverability correction accepted by the Host: `/agents` lists dispatches, not definitions, so the flag is stated on the `Available agents:` catalogue line of both tool descriptions instead — no new command. Host read the loader/recipe/tool diff and ran `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short` (task `bg-a4fe0721-a02d-409f-b294-234b70fe21b5`, exit 0, 8,978 PASS lines, 0 FAIL; log `/tmp/darwin-ser093-host-acceptance.log`). `spike/verify-subagents.ts` +70 lines (flag loads; `"no"` skipped with the reason; absent → `true`; offline recipe child without `<project-instructions>` while `general` keeps it; both descriptions mark only the opted-out agent); twelve offline definition literals in other suites gained the required field. Docs: `sub-agents.md`, `extensions.md` EN/zh-CN, one sentence in the decisions doc; README/AGENTS.md untouched. Iteration-log Batch 136.
 
 ### Notes / blockers / abandonment reason
 
@@ -106,7 +106,7 @@ Requirement: `src/agents/loader.ts` accepts one optional boolean frontmatter key
 
 ## SER-094 — Environment marker in spawned processes: every process darwin spawns (model `bash` foreground/background, `!` commands, native and Codex hook commands, stdio MCP servers) receives `DARWIN=1` through the existing env seams; never overrides a user-set `DARWIN`; documented in one sentence
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 126
 - Score: 10
 - Importance: 2
