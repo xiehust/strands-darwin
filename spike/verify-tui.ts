@@ -55,6 +55,7 @@ import {
 
 import {
   createSessionManager,
+  leasePath,
   sessionPaths,
   snapshotPath,
   trajectoryPath,
@@ -1978,6 +1979,35 @@ async function resumedHumanContext(): Promise<void> {
   } finally {
     fresh.kill();
   }
+
+  // SER-091: the pointer still names the seeded session, and this test process holds
+  // its lease — the same picture a second `darwin --resume` sees while the first is
+  // still running. Bare `--resume` must start fresh and say so; the held session's
+  // bytes, lease and the pointer stay exactly as they were.
+  header('TUI — bare --resume against a live lease starts fresh and states why');
+  const leaseFile = leasePath(WORK_DIR, sessionId);
+  await mkdir(path.dirname(leaseFile), { recursive: true });
+  const leaseBytes = `${JSON.stringify({ pid: process.pid, hostname: os.hostname(), startedAt: '2026-09-15T09:00:00.000Z' })}\n`;
+  await writeFile(leaseFile, leaseBytes, 'utf8');
+  const held = startTui({ cwd: WORK_DIR, args: ['--resume'], cols: 160, rows: 50 });
+  try {
+    await held.waitFor('you>', { timeoutMs: 60_000, settleMs: 400 });
+    const screen = held.screen;
+    assert('the held session is not reopened — no recap, none of its transcript',
+      !screen.includes('resume recap') && !screen.includes('earliest request marker'));
+    assert('the notice names the open session and its holder',
+      screen.includes(`session ${sessionId} is open in pid ${process.pid} since 2026-09-15T09:00:00.000Z`));
+    assert('…and says a fresh session was started instead', screen.includes('started a fresh session instead'));
+    held.submit('/exit');
+    assert('the fresh TUI exits without a model call', (await held.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    held.kill();
+  }
+  const heldAfter = await Promise.all([trajectory, snapshot, pointer].map(fileHash));
+  assert('the held session\'s trajectory, snapshot and the pointer are byte-identical',
+    before.every((hash, index) => hash === heldAfter[index]));
+  assert('the live lease was not overwritten', (await readFile(leaseFile, 'utf8')) === leaseBytes);
+  await rm(leaseFile);
 }
 
 /** Every OSC 52 clipboard sequence in the raw pty output, decoded from its base64 payload. */

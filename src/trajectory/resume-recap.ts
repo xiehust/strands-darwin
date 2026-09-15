@@ -32,6 +32,11 @@ export interface ResumeRecapOptions {
   restoredMessages: number;
   /** False when this run cannot append future trajectory records. */
   trajectoryEnabled: boolean;
+  /**
+   * SER-091: the runtime's bounded lease sentence (a stale lease taken over), stated
+   * on the recap header right after the title so it is read before the transcript.
+   */
+  leaseNotice?: string;
 }
 
 /**
@@ -50,6 +55,7 @@ export async function loadResumeRecap(options: ResumeRecapOptions): Promise<Hist
       inheritedHistory,
       restoredMessages: options.restoredMessages,
       trajectoryEnabled: options.trajectoryEnabled,
+      ...(options.leaseNotice === undefined ? {} : { leaseNotice: options.leaseNotice }),
       ...(damage === undefined ? {} : { damage }),
     });
   } catch {
@@ -69,6 +75,7 @@ export async function loadResumeRecap(options: ResumeRecapOptions): Promise<Hist
 interface ProjectionOptions {
   restoredMessages: number;
   trajectoryEnabled: boolean;
+  leaseNotice?: string;
   damage?: string;
   inheritedHistory?: readonly HistoryItem[];
 }
@@ -121,7 +128,7 @@ export function projectResumeRecap(
 }
 
 function recapNotices(
-  options: Pick<ProjectionOptions, 'restoredMessages' | 'trajectoryEnabled'> & { rewindFrom?: RewindOrigin },
+  options: Pick<ProjectionOptions, 'restoredMessages' | 'trajectoryEnabled' | 'leaseNotice'> & { rewindFrom?: RewindOrigin },
   tail: HistoryItem[],
 ): HistoryItem[] {
   const history: HistoryItem[] = [
@@ -133,6 +140,9 @@ function recapNotices(
       'title',
     ),
   ];
+  if (options.leaseNotice !== undefined) {
+    history.push(notice(options.leaseNotice, 'warn', 'lease'));
+  }
   if (!options.trajectoryEnabled) {
     history.push(notice('trajectory recording is disabled for this run', 'warn', 'disabled'));
   }

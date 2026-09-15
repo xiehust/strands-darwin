@@ -124,6 +124,7 @@ const suites = [
 
   'verify-export-command.ts',
   'verify-sessions-command.ts',
+  'verify-session-lease.ts',
   'verify-doctor-command.ts',
   'verify-workspace-trust.ts',
   'verify-clear-session.ts',

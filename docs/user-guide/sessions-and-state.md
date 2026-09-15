@@ -12,9 +12,18 @@ darwin --resume <id>
 darwin --session <id>
 ```
 
-`darwin sessions` is read-only, offline, and lists only restorable snapshots, newest activity first: ID, age, first recorded user prompt, and `(last)`. If trajectory was disabled it says `(not recorded)`; damaged/unusable entries are skipped with a count. Listing never writes or moves the pointer. Invalid/other-project IDs are refusals, never fallback. A named resumed session becomes the bare-resume target only after it completes another turn.
+`darwin sessions` is read-only, offline, and lists only restorable snapshots, newest activity first: ID, age, first recorded user prompt, `(last)`, and `(open in pid N)` when another live darwin currently holds the session (`(open on <host> in pid N)` when the holder runs on another machine). If trajectory was disabled it says `(not recorded)`; damaged/unusable entries are skipped with a count. Listing never writes or moves the pointer — a stale lease is not taken over by the listing. Invalid/other-project IDs are refusals, never fallback. A named resumed session becomes the bare-resume target only after it completes another turn.
 
-TUI resume shows a bounded read-only recap of the last completed user request/assistant answer from the exact trajectory before the prompt. Missing, disabled, damaged, or omitted history is stated. It creates no model message, model call, mutation, or pointer movement. Fresh/headless runs are unchanged.
+### One live process per session
+
+A session may be open in one darwin process at a time: two processes on the same session would each overwrite the snapshot and append to the trajectory, last writer wins. When a session is selected — fresh, `--resume`, `--session`, a `/clear` or `/rewind` successor — darwin writes `~/.darwin/sessions/<project-key>/<session-id>/lease.json` (`{ pid, hostname, startedAt }`) with an exclusive create, beside the trajectory and never under the project root. The lease is *live* while its hostname matches this machine and the pid still exists (a pid owned by another user counts as alive); a lease from another host is live for 24 hours after `startedAt`, since its pid cannot be checked. Anything else is *stale*.
+
+- `darwin --resume <id>` / `darwin --session <id>` against a live lease is refused in one line — `Session "<id>" is open in pid N since <time>; close it or start a new session.` — exit 1, never a fallback. Headless `-p --resume <id>` / `--session <id>` refuse the same way on stderr.
+- Bare `darwin --resume` (and `-p --continue`) against a live lease starts a **fresh** session and states why in one startup notice (`session <id> is open in pid N since <time>; started a fresh session instead`; headless: one `lease:` stderr line). The pointer is not moved by the refusal; the fresh session claims it only when it completes a turn, as any session does.
+- A stale lease (dead pid, or a foreign-host lease past the 24-hour bound) is taken over — the file is rewritten — and one notice says whose it was (`took over a stale lease left by pid N (started <time>)`). A crash, a kill, or the 500 ms forced exit leave exactly such a lease; a stale lease never blocks anyone, and there is no unlock file or flag.
+- The lease is released when the session ends: on exit, and on `/clear` or `/rewind` for the retired predecessor (the successor holds its own lease on its new id). Release removes the file only while it still names the releasing process.
+
+TUI resume shows a bounded read-only recap of the last completed user request/assistant answer from the exact trajectory before the prompt. Missing, disabled, damaged, or omitted history is stated; a stale-lease takeover is stated on the same header. It creates no model message, model call, mutation, or pointer movement. Fresh/headless runs are unchanged.
 
 `/clear` creates a successor runtime through the same factory. It inherits live permission mode, retires the predecessor, rebuilds session-scoped state, and does not move on-disk pointers until the new session completes a turn. Changing the runtime `AGENT_ID` orphans snapshots because it participates in their path.
 

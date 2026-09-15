@@ -23,10 +23,13 @@
 import { stat } from 'node:fs/promises';
 
 import {
+  describeHolderLocation,
+  inspectLease,
   listSessionIds,
   readLastSessionId,
   snapshotPath,
   trajectoryPath,
+  type SessionLeaseRecord,
 } from './agent/session.js';
 import { CliUsageError } from './cli-args.js';
 import { readTrajectory } from './trajectory/reader.js';
@@ -73,6 +76,13 @@ interface SessionRow {
   firstPrompt: string | undefined;
   /** Whether bare `--resume` would reopen this session right now. */
   isLast: boolean;
+  /**
+   * The live lease holder (SER-091), when another process has this session open right
+   * now — read from `lease.json` and one signal-0 probe, never written. A stale or
+   * absent lease is simply `undefined`: the row says only what `--resume <id>` would
+   * actually run into.
+   */
+  openIn: SessionLeaseRecord | undefined;
 }
 
 /** Runs the listing and returns the process exit code. */
@@ -92,11 +102,13 @@ export async function runSessionsCommand(io: SessionsIo, now = Date.now()): Prom
       skipped += 1;
       continue;
     }
+    const lease = await inspectLease(io.projectRoot, id);
     rows.push({
       id,
       activeAt,
       firstPrompt: await firstUserPrompt(io.projectRoot, id),
       isLast: id === lastSessionId,
+      openIn: lease.kind === 'live' ? lease.record : undefined,
     });
   }
 
@@ -114,7 +126,9 @@ export async function runSessionsCommand(io: SessionsIo, now = Date.now()): Prom
       const age = formatAge(now - row.activeAt).padStart(ageWidth);
       const prompt = row.firstPrompt === undefined ? '(not recorded)' : row.firstPrompt;
       const last = row.isLast ? '  (last)' : '';
-      io.out(`${row.id.padEnd(idWidth)}  ${age}  ${prompt}${last}\n`);
+      // `(open in pid N)` on this host; the holder's host is named when it is another.
+      const open = row.openIn === undefined ? '' : `  (open ${describeHolderLocation(row.openIn)})`;
+      io.out(`${row.id.padEnd(idWidth)}  ${age}  ${prompt}${last}${open}\n`);
     }
     io.out(`\nresume one with: darwin --resume <id>\n`);
   }

@@ -56,7 +56,21 @@ Requirement: on the first interactive launch in a project whose checkout declare
 
 ### Implementation / acceptance evidence
 
-Not started.
+Implemented (worker run, awaiting Host acceptance): `src/agent/session.ts` — `lease.json`
+(`{ pid, hostname, startedAt }`) under `sessionStateDir`, `wx` acquisition in `resolveSession`,
+`classifyLease`/`pidAlive` (same host: `kill(pid, 0)`, `EPERM` alive; foreign host: live for
+`FOREIGN_LEASE_STALE_AFTER_MS` = 24 h), `SessionInUseError` (sibling of `SessionNotFoundError`),
+`SessionLease.release()` (only while the file names this pid; `rmdir`s an emptied state dir),
+`inspectLease` for the listing; `AgentRuntime` holds the lease, releases in `shutdown()`/`retire()`
+and on a failed `create()`, exposes `info.leaseNotice`; `cli-main.ts` catches `SessionInUseError`
+beside `SessionNotFoundError` and seeds the fresh-session notice as startup history; resume recap
+carries a takeover notice after its title; headless writes one `lease:` line (`source: "session"`
+warning structured); `cli-sessions.ts` marks a live row `(open in pid N)`. Checks:
+`spike/verify-session-lease.ts` (new, in `pnpm test`, 71 assertions incl. real `cli.ts` runs through
+the `startup-cli` fixture), `spike/verify-sessions-command.ts` (marker + byte-identical store with
+leases present), `spike/verify-tui.ts resume` (bare `--resume` against a live lease). Docs:
+`docs/user-guide/sessions-and-state*.md`, `reference*.md`, decisions doc heading "Session lease —
+one live process per session"; AGENTS.md row omitted (5 bytes under the preload cap).
 
 ### Notes / blockers / abandonment reason
 

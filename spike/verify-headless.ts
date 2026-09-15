@@ -314,17 +314,25 @@ async function sessionContracts(): Promise<void> {
   const pointedSnapshot = path.join(paths.sessionsDir, 'session', 'pointed', 'scopes', 'agent', 'darwin', 'snapshots', 'snapshot_latest.json');
   await mkdir(path.dirname(pointedSnapshot), { recursive: true });
   await writeFile(pointedSnapshot, '{}');
-  assert.deepEqual(await resolveSession(ROOT, { kind: 'continue' }, 'darwin'), {
+  // SER-091: every selection also takes the session's lease; the id/restore pair is
+  // what this suite pins, `spike/verify-session-lease.ts` owns the lease itself.
+  const pointed = await resolveSession(ROOT, { kind: 'continue' }, 'darwin');
+  assert.deepEqual({ sessionId: pointed.sessionId, restoreRequested: pointed.restoreRequested }, {
     sessionId: 'pointed', restoreRequested: true,
   });
+  assert.equal(existsSync(path.join(paths.sessionsDir, 'pointed', 'lease.json')), true);
+  await pointed.lease.release();
 
   const selected = 'chosen-session';
   const snapshot = path.join(paths.sessionsDir, 'session', selected, 'scopes', 'agent', 'darwin', 'snapshots', 'snapshot_latest.json');
   await mkdir(path.dirname(snapshot), { recursive: true });
   await writeFile(snapshot, '{}');
-  assert.deepEqual(await resolveSession(ROOT, { kind: 'id', sessionId: selected }, 'darwin'), {
+  const chosen = await resolveSession(ROOT, { kind: 'id', sessionId: selected }, 'darwin');
+  assert.deepEqual({ sessionId: chosen.sessionId, restoreRequested: chosen.restoreRequested }, {
     sessionId: selected, restoreRequested: true,
   });
+  await chosen.lease.release();
+  await fresh.lease.release();
   await assert.rejects(
     () => resolveSession(ROOT, { kind: 'id', sessionId: 'missing' }, 'darwin'),
     /does not exist/u,

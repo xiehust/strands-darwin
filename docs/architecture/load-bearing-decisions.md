@@ -736,6 +736,52 @@ a stack trace and never the pointer's session instead. Pointer semantics stay th
 it; quitting without a turn moves nothing. Free check: `spike/verify-sessions-command.ts` (in
 `pnpm test`).
 
+## Session lease — one live process per session
+
+**A session is open in one process at a time, decided by liveness and never by a flag**
+(`src/agent/session.ts` `resolveSession`/`acquireLease`, `AgentRuntime.shutdown`/`retire`,
+`src/cli-sessions.ts`; sources: kiro-cli "Sessions can only be active in one process at a time to
+prevent conversation corruption", Codex 0.154.0's read-only transcript when the conversation is open
+elsewhere). The hazard is concrete: the SDK `SessionManager` writes `snapshot_latest.json` after every
+turn and `trajectory/writer.ts` appends, so two darwin processes on one id silently interleave — last
+writer wins on both files and nothing warns. So selecting a session — fresh, `--resume`, `--session`,
+the `/clear` and `/rewind` successor on its new id — writes `<sessionsDir>/<id>/lease.json`
+(`{ pid, hostname, startedAt }`) with `wx`, in the session's *state* directory beside the trajectory:
+never the SDK's `session/<id>` (its storage owns that tree and the `/rewind` fork copies it), never
+under the project root. `wx` is the whole exclusion primitive: an existing file is read and
+classified, live means refused, stale means the file is removed and the `wx` write tried once more,
+so two launches racing over the same stale lease still end with one holder. Live is
+`hostname` matches and `process.kill(pid, 0)` succeeds — `EPERM` (exists under another user) counts
+as alive — and a foreign-host lease, whose pid cannot be probed, is live for
+`FOREIGN_LEASE_STALE_AFTER_MS` (24 h) after `startedAt`; everything else, including a record that
+does not parse, is stale. Three shapes, all decided before provider/model construction: an explicit
+`--resume <id>`/`--session <id>` against a live lease is `SessionInUseError` — the sibling of
+`SessionNotFoundError`, caught in the same `cli-main.ts` branch, one line naming pid and start time,
+exit 1, never a fallback, headless refusing identically on stderr; bare `--resume`/`-p --continue`
+is the forgiving selector and starts a *fresh* session with one `leaseNotice` (`RuntimeInfo`, the
+recap header slot in the TUI, one `lease:` line or a `source: "session"` warning headless) — the
+pointer is not moved by the refusal, the fresh session claims it on its first completed turn as any
+session does; a stale lease is taken over, the rewrite stated in the same notice. A stale lease can
+never lock anyone out, which is why there is no unlock file, flag or environment override
+(`verify-session-lease.ts` greps the resolver for `process.env`/`process.argv`). Release is
+`SessionLease.release()`: `shutdown()` and `retire()` call it last, after every writer has settled;
+it removes the file only while it still names this pid and hostname (a later takeover is never undone
+by a dead owner's belated cleanup) and then `rmdir`s the state directory if that left it empty, so an
+aborted launch leaves no `<id>/` behind for `darwin sessions`/`trajectory list` to count; a failed
+`create()` (bad config, failed assembly) releases too. Process death and the unref'd 500 ms exit
+fallback leave a stale lease by design — the next launch takes it over and says so. `darwin sessions`
+stays a read-only projection: `inspectLease` is one file read and one signal-0 probe, a live row gains
+`(open in pid N)` (`(open on <host> in pid N)` elsewhere), a stale lease adds nothing and is *not*
+taken over by the listing; the store hashes identically before and after with leases present.
+Trajectory and snapshot bytes are untouched; nothing locks the trajectory file itself. Free checks:
+`spike/verify-session-lease.ts` (in `pnpm test`: rule, `resolveSession` shapes, runtime hold/`/clear`/
+shutdown/failed-create release, and the real `cli.ts` through the offline `startup-cli` fixture —
+`-p --resume <id>`/`--session <id>` refused with the lease bytes intact, `-p --continue` fresh with one
+`lease:` line, stale takeover released after exit), `spike/verify-sessions-command.ts` (marker and
+byte-identical store), `spike/verify-tui.ts resume` (bare `--resume` against a live lease: fresh
+session, notice on screen, held session's bytes and pointer untouched). AGENTS.md has no row for this
+decision: the file sits five bytes under its preload cap and the rationale lives here.
+
 ## `darwin doctor` — reports, never refuses; reads, never creates
 
 **The doctor is the startup loaders composed into one report, with exactly one rule changed: a

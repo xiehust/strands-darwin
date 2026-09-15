@@ -16,15 +16,22 @@
  * - **A named session that does not exist is a refusal, never a fallback.**
  *   `resolveSession` answers `SessionNotFoundError` for a bogus id and for an id
  *   that lives in another project's store.
+ * - **A live lease is shown, never touched (SER-091).** A row whose `lease.json` names
+ *   a live pid on this host gains `(open in pid N)`; a stale lease (dead pid) adds
+ *   nothing and is *not* taken over by the listing — both files hash identically after.
+ *   `spike/verify-session-lease.ts` owns the lease's own behaviour.
  *
  * Run: pnpm tsx spike/verify-sessions-command.ts
  */
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import {
+  leasePath,
   resolveSession,
   SessionNotFoundError,
   sessionPaths,
@@ -222,6 +229,37 @@ async function main(): Promise<void> {
         MAX_PROMPT_PREVIEW_CHARS);
   }
 
+  header('sessions — a live lease is marked (open in pid N); stale ones say nothing and stay put');
+  {
+    // SER-091. This process is the live holder; a process that has already exited is
+    // the stale one. Both lease files are part of the hashed tree: the listing must
+    // neither remove the stale lease nor take it over — it only reads.
+    const paths = sessionPaths(ROOT);
+    const deadPid = spawnSync(process.execPath, ['-e', '0']).pid ?? 1;
+    const liveLease = leasePath(ROOT, recorded);
+    const staleLease = leasePath(ROOT, bare);
+    await mkdir(path.dirname(liveLease), { recursive: true });
+    await mkdir(path.dirname(staleLease), { recursive: true });
+    await writeFile(liveLease, `${JSON.stringify({ pid: process.pid, hostname: os.hostname(), startedAt: '2026-08-19T11:00:00.000Z' })}\n`);
+    await writeFile(staleLease, `${JSON.stringify({ pid: deadPid, hostname: os.hostname(), startedAt: '2026-08-19T10:00:00.000Z' })}\n`);
+    const before = await hashTree(paths.stateDir);
+    const listing = await runSessions(ROOT, NOW);
+    const after = await hashTree(paths.stateDir);
+    const rows = listing.out.split('\n').filter((row) => row.startsWith('session-'));
+    const liveRow = rows.find((row) => row.startsWith(recorded));
+    const staleRow = rows.find((row) => row.startsWith(bare));
+    assert('the live holder is named on its row', liveRow?.endsWith(`(open in pid ${process.pid})`) === true);
+    assert('a stale lease adds nothing to its row', staleRow !== undefined && !staleRow.includes('(open'));
+    assert('the marker follows the prompt cell on the same row',
+      liveRow?.includes(`fix the frame budget overflow  (open in pid ${process.pid})`) === true);
+    assert('no other row is marked', rows.filter((row) => row.includes('(open ')).length === 1);
+    assert('both lease files are still there, byte-identical — the listing took nothing over',
+      before.has(path.relative(paths.stateDir, liveLease)) && before.has(path.relative(paths.stateDir, staleLease)) && sameTree(before, after));
+    assert('the store is byte-identical after a listing with leases present', sameTree(before, after));
+    await rm(liveLease);
+    await rm(staleLease);
+  }
+
   header('formatAge — coarse, human, monotonic');
   {
     assert('under a minute reads just now', formatAge(30_000) === 'just now');
@@ -262,6 +300,7 @@ async function main(): Promise<void> {
     const known = await resolveSession(ROOT, { kind: 'id', sessionId: recorded }, AGENT_ID);
     assert('a listed id resolves to that session and requests restore',
       known.sessionId === recorded && known.restoreRequested);
+    await known.lease.release();
 
     const bogus = await resolveSession(ROOT, { kind: 'id', sessionId: 'session-nope' }, AGENT_ID)
       .then(() => undefined, (error: unknown) => error);

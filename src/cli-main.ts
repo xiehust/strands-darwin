@@ -13,7 +13,7 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { AgentRuntime } from './agent/runtime.js';
-import { SessionNotFoundError, trajectoryPath } from './agent/session.js';
+import { SessionInUseError, SessionNotFoundError, trajectoryPath } from './agent/session.js';
 import {
   needsTrustPrompt,
   resolveWorkspaceTrust,
@@ -250,8 +250,9 @@ async function runInteractive(options: CliOptions): Promise<void> {
       return;
     }
     // A typo'd or other-project `--resume <id>` / `--session <id>` is a clear
-    // refusal, not a crash — and never a fallback to some other session.
-    if (error instanceof SessionNotFoundError) {
+    // refusal, not a crash — and never a fallback to some other session. The same
+    // shape for an id another live darwin holds the lease on (SER-091).
+    if (error instanceof SessionNotFoundError || error instanceof SessionInUseError) {
       process.stderr.write(`error: ${error.message} Run \`darwin sessions\` to list resumable ones.\n`);
       process.exitCode = 1;
       return;
@@ -286,15 +287,21 @@ async function runInteractive(options: CliOptions): Promise<void> {
   }
   let initialHistory: readonly import('./tui/turn-state.js').HistoryItem[] | undefined;
   try {
-    initialHistory = runtime.info.resumed
-      ? await import('./trajectory/resume-recap.js').then(({ loadResumeRecap }) =>
-          loadResumeRecap({
-            projectRoot,
-            file: trajectoryPath(projectRoot, runtime.info.sessionId),
-            restoredMessages: runtime.messageCount,
-            trajectoryEnabled: runtime.info.config.trajectory !== false,
-          }))
-      : undefined;
+    if (runtime.info.resumed) {
+      initialHistory = await import('./trajectory/resume-recap.js').then(({ loadResumeRecap }) =>
+        loadResumeRecap({
+          projectRoot,
+          file: trajectoryPath(projectRoot, runtime.info.sessionId),
+          restoredMessages: runtime.messageCount,
+          trajectoryEnabled: runtime.info.config.trajectory !== false,
+          ...(runtime.info.leaseNotice === undefined ? {} : { leaseNotice: runtime.info.leaseNotice }),
+        }));
+    } else if (runtime.info.leaseNotice !== undefined) {
+      // SER-091: bare `--resume` found its session open in another live process and
+      // started fresh — there is no recap to carry the reason, so it is the one
+      // startup notice, in the same scrollback slot the recap header would take.
+      initialHistory = [{ kind: 'notice', id: 'session-lease', text: runtime.info.leaseNotice, severity: 'warn' }];
+    }
   } catch (error) {
     instance.unmount();
     await instance.waitUntilExit();

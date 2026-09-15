@@ -131,6 +131,7 @@ import {
   sessionPaths,
   trajectoryPath,
   writePointer,
+  type SessionLease,
   type SessionSelector,
 } from './session.js';
 import { setSdkVerboseSink } from './sdk-logging.js';
@@ -404,6 +405,14 @@ export interface RuntimeInfo {
   permissionMode: ApprovalMode;
   sessionId: string;
   resumed: boolean;
+  /**
+   * SER-091: one bounded sentence about this session's lease when the acquisition was
+   * not the ordinary uncontested one — a stale lease taken over, or a bare `--resume`
+   * that found its session open in another live process and started fresh. Absent
+   * otherwise; the drivers state it once in the transcript/stderr and nothing else
+   * reads it.
+   */
+  leaseNotice?: string;
   /** Names of skills discovered under `.darwin/skills/`. */
   skillNames: string[];
   /** Skill directories that were skipped, with the reason. */
@@ -625,6 +634,12 @@ export class AgentRuntime {
     /** Undefined only when effective config disables derived project context. */
     private readonly memoryController: MemoryToolController | undefined,
     private readonly cloudMemory: CloudMemory | undefined,
+    /**
+     * This process's hold on `info.sessionId` (SER-091). Released by {@link shutdown}
+     * and by {@link retire} — the `/clear` and `/rewind` successor takes its own lease
+     * on its own id through `create()` — and only while the file still names this pid.
+     */
+    private readonly lease: SessionLease,
     readonly info: RuntimeInfo,
     /**
      * What this runtime was created with, so {@link startNewSession} can assemble its
@@ -672,16 +687,25 @@ export class AgentRuntime {
     // selector must fail locally without initializing anything billable.
     const session = await resolveSession(options.projectRoot, options.session, AGENT_ID);
     options.onSessionResolved?.(session.sessionId);
-    // A successor created by `/clear` takes the predecessor's *live* config instead of
-    // re-reading the file, so a `/model` or `/effort` change made this session survives
-    // the switch (see InheritedRuntimeResources).
-    const config = options.inherit?.config ?? (await loadConfig(options.projectRoot));
+    let config: Awaited<ReturnType<typeof loadConfig>>;
+    let policy: Awaited<ReturnType<typeof loadProjectPolicy>>;
     // SER-090: the driver's trust decision decides whether the checkout's own hook
     // files, MCP servers and legacy rule fallback are read at all. Held layers are
     // skipped by the loaders, not failed — the user declined them.
     const projectLayers: 'armed' | 'held' =
       options.workspaceTrust === undefined || projectLayersArmed(options.workspaceTrust) ? 'armed' : 'held';
-    const policy = await loadProjectPolicy(options.projectRoot, { projectLayers });
+    try {
+      // A successor created by `/clear` takes the predecessor's *live* config instead of
+      // re-reading the file, so a `/model` or `/effort` change made this session survives
+      // the switch (see InheritedRuntimeResources).
+      config = options.inherit?.config ?? (await loadConfig(options.projectRoot));
+      policy = await loadProjectPolicy(options.projectRoot, { projectLayers });
+    } catch (error) {
+      // SER-091: a `ConfigError` here ends the process; the lease must not outlive the
+      // session it was taken for, or the next launch would report a takeover.
+      await session.lease.release();
+      throw error;
+    }
     // Built here, before the model, the MCP clients and the skills plugin, because all
     // three log at `debug` while they start up (MCP tool renames, skill discovery) and
     // a diagnostics log that begins after startup cannot answer a question about
@@ -1123,12 +1147,14 @@ export class AgentRuntime {
       diagnosticsLog,
       memoryController,
       cloudMemory,
+      session.lease,
       {
         config,
         projectRoot: options.projectRoot,
         permissionMode,
         sessionId: session.sessionId,
         resumed: session.restoreRequested && agent.messages.length > 0,
+        ...(session.leaseNotice === undefined ? {} : { leaseNotice: session.leaseNotice }),
         skillNames: skills.skills.map((skill) => skill.name),
         skillProblems: skills.problems.map((problem) => ({ ...problem })),
         commandNames: commands.commands.map((command) => command.name),
@@ -1195,6 +1221,7 @@ export class AgentRuntime {
         startupCodexHooks,
         startupCloudMemory,
       );
+      await session.lease.release();
       throw error;
     });
   }
@@ -2359,6 +2386,9 @@ export class AgentRuntime {
       this.codexHooks?.sessionEnd('other').then(() => this.codexHooks?.close()) ?? Promise.resolve(),
     ]);
     await Promise.allSettled([this.diagnosticsLog?.close() ?? Promise.resolve()]);
+    // SER-091: last, after the trajectory is durable — the successor already holds its
+    // own lease on its own id, so this session is simply no longer open anywhere.
+    await this.lease.release();
   }
 
   /**
@@ -2461,6 +2491,10 @@ export class AgentRuntime {
     ]));
     if (this.diagnosticsLog !== undefined) setSdkVerboseSink(undefined);
     results.push(...await Promise.allSettled([this.diagnosticsLog?.close() ?? Promise.resolve()]));
+    // SER-091: the lease goes last, once every writer above has settled, and only if
+    // the file still names this process. Non-throwing: a lease that stays behind is
+    // stale the moment this pid is gone, and the next launch takes it over.
+    await this.lease.release();
     const failures = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
     if (options.throwOnError === true && failures.length > 0) {
       throw new AggregateError(failures, `${failures.length} runtime cleanup operation(s) failed`);
