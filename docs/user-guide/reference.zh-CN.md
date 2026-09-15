@@ -58,6 +58,8 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 
 会话租约：每个会话同时只能在一个进程中打开（`<session-id>/lease.json`——`pid`、`hostname`、`startedAt`；本机 pid 仍存在时有效，来自其他主机的租约 24 小时内有效）。`--resume <id>` / `--session <id>` 遇到有效租约时退出码 1，并打印 `error: Session "<id>" is open in pid N since <time>; close it or start a new session.`——TUI 与 `-p` 相同，绝不回退。裸 `--resume` / `-p --continue` 会启动新会话并说明原因（TUI 为一条启动通知；无头模式为一行 `lease:` stderr，`stream-json`/`json` 为一条 `source: "session"` 的 warning）。过期租约会被接管并以同样形式说明；`darwin sessions` 用 `(open in pid N)` 标记有效租约。详见[会话与状态](sessions-and-state.zh-CN.md#每个会话同时只能在一个进程中打开)。
 
+退出提示：TUI 在至少发送过一条提示词后退出时，stdout 的最后一行是 `session <id> · resume: darwin --resume <id>`，指向退出时仍在使用的会话（`/clear` 或 `/rewind` 的后继报告自己的 ID）；从未发送提示词的会话、`-p` 运行、以及启动时被拒绝的情况都不打印这一行。
+
 ### `darwin doctor`
 
 一份离线、只读的诊断报告，由会话启动时使用的同一批加载器拼成：`~/.darwin/config.json`（provider、模型、region 或 base URL、所指定的 API key 环境变量是否已设置——从不打印它的值——effort、prompt cache、context offload、trajectory / memory / diagnostics、权限模式）、系统提示词来源、项目指令文件（`AGENTS.md`，或回退的 `CLAUDE.md`）及其大小与 32 KiB 预载上限的对比、生效的 MCP 配置文件（哪个被读取、哪个被忽略）及每个已配置的 server——stdio `command` 只在 `PATH` 上查找，`http`/`sse` server 标为 `not connected (doctor never connects)`——各层技能目录的数量与每个被跳过的条目及原因、hook 文件及其方言（native 或 Codex 适配器）、permission-rules 文件、会话存储目录和版本。会让 TUI 拒绝启动的加载器错误（`ConfigError`）在这里变成一行问题：问题行以 `! ` 开头，末尾汇总计数，并决定退出码——没有问题为 0，至少一个为 1。`doctor` 不启动会话、不调用模型、不 spawn 或连接任何 MCP server、不联网、在任何位置都不创建或移动任何东西（连 `~/.darwin` 也不会创建）；它不接受参数（动词之后的任何内容都以用法错误退出 2）。由 `spike/verify-doctor-command.ts` 锁定。

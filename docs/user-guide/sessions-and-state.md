@@ -12,7 +12,7 @@ darwin --resume <id>
 darwin --session <id>
 ```
 
-`darwin sessions` is read-only, offline, and lists only restorable snapshots, newest activity first: ID, age, first recorded user prompt, `(last)`, and `(open in pid N)` when another live darwin currently holds the session (`(open on <host> in pid N)` when the holder runs on another machine). If trajectory was disabled it says `(not recorded)`; damaged/unusable entries are skipped with a count. Listing never writes or moves the pointer — a stale lease is not taken over by the listing. Invalid/other-project IDs are refusals, never fallback. A named resumed session becomes the bare-resume target only after it completes another turn.
+`darwin sessions` is read-only, offline, and lists only restorable snapshots, newest activity first: ID, age, first recorded user prompt, `(last)`, and `(open in pid N)` when another live darwin currently holds the session (`(open on <host> in pid N)` when the holder runs on another machine). If trajectory was disabled it says `(not recorded)`; damaged/unusable entries are skipped with a count. Listing never writes or moves the pointer — a stale lease is not taken over by the listing. Invalid/other-project IDs are refusals, never fallback. A named resumed session becomes the bare-resume target only after it completes another turn. When the TUI exits it leaves one plain line in the scrollback for the session that was live — `session <id> · resume: darwin --resume <id>` — only if that session has something to reopen (a session left without a prompt, and every `-p` run, prints nothing); the line is written after the lease is released and touches no file.
 
 ### One live process per session
 

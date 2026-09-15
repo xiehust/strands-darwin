@@ -17,7 +17,7 @@
  * developer's — see the note there before adding a scenario that reads one.
  *
  * Free scenarios (no model call): cloudAuto | model | mode | clear | completion | pathCompletion | recall |
- * recallEmpty | bang | queue | wordNav | undo | mcp | trust | resume | copy | rewind | escRewind | tangent | modelRetry — `copy`
+ * recallEmpty | bang | queue | wordNav | undo | mcp | trust | resumeHint | resume | copy | rewind | escRewind | tangent | modelRetry — `copy`
  * (SER-057) seeds a completed answer through a local fixture model and `--resume`, then proves
  * the OSC 52 sequence in the raw pty output decodes to the exact committed answer text;
  * `escRewind` (SER-059) drives the seeded `rewind` fixture with two separate Escape pty events
@@ -27,13 +27,16 @@
  * (SER-067) drives an always-throttled fixture model behind darwin's own retry and proves the
  * wait phrase rides the busy row and the failed turn names how retry ended; `trust` (SER-090)
  * drives the workspace-trust modal in a project whose checkout declares an MCP server and a hook
- * file — decline, escape, accept, remembered — and proves the marker command never runs until accepted.
+ * file — decline, escape, accept, remembered — and proves the marker command never runs until accepted;
+ * `resumeHint` (SER-092) runs the real `cli.ts` exit path through the offline `startup-cli` fixture
+ * (its CaptureModel completes a turn locally) and proves the pty output ends with the exact
+ * `session <id> · resume: darwin --resume <id>` line for the live session, and nothing without a turn.
  *
  * Run: AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts [scenario]
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | contextOverflow | cursor | completion |
  *                 pathCompletion | historySearch | recall | recallEmpty | resume | copy | bang | queue | clear | mcpStderr | mcp | trust |
- *                 rewind | escRewind | tangent | toolDetails |
+ *                 resumeHint | rewind | escRewind | tangent | toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | updatePlan | modelRetry | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
  */
@@ -67,6 +70,7 @@ import { readTrustDecision, trustDecisionPath, writeTrustDecision } from '../src
 import { darwinDir, DARWIN_DIRNAME } from '../src/paths.js';
 import { CONFIG_FILENAME, permissionRulesPath } from '../src/config.js';
 import { AGENTS_DIRNAME } from '../src/agents/loader.js';
+import { resumeHintLine } from '../src/cli-usage.js';
 import { BUILTIN_COMMAND_NAMES, COMMANDS_DIRNAME } from '../src/commands/custom-commands.js';
 import { SKILLS_DIRNAME } from '../src/skills/loader.js';
 import { MAX_COMPLETIONS } from '../src/tui/InputBox.js';
@@ -98,6 +102,8 @@ const OWNED_HOME = '/tmp/darwin-tui-home';
 const HOME_CONFIG = path.join(OWNED_HOME, DARWIN_DIRNAME, CONFIG_FILENAME);
 /** How the TUI names that file in a notice — `~` is literal on screen. */
 const HOME_CONFIG_LABEL = `~/${DARWIN_DIRNAME}/${CONFIG_FILENAME}`;
+/** What `spike/fixtures/startup-cli.ts`'s CaptureModel answers — a completed turn with no provider call. */
+const STARTUP_FIXTURE_REPLY = 'provider calls are forbidden in the startup fixture';
 
 const REAL_HOME = os.homedir();
 process.env['HOME'] = OWNED_HOME;
@@ -4606,6 +4612,70 @@ async function workspaceTrust(): Promise<void> {
   }
 }
 
+/**
+ * SER-092 — the resume hint on exit, free (the `startup-cli` fixture's CaptureModel
+ * answers locally, so the turns below reach no provider; the run is the real `cli.ts`
+ * path, which is where the line is written). A session that never sent a prompt exits
+ * silent. A session that completed a turn, `/clear`ed, and completed another turn ends
+ * its pty output with the exact line for the *successor* — the runtime live at exit —
+ * and never names the first session. The line is checked on the ANSI-stripped output,
+ * so the assertion also proves it carries no styling.
+ */
+async function resumeHint(): Promise<void> {
+  header('TUI — exit prints the resume hint for the live session, only once a turn completed');
+
+  const entry = path.join(REPO_ROOT, 'spike', 'fixtures', 'startup-cli.ts');
+  const lastLine = (screen: string): string => screen.trimEnd().split('\n').at(-1)?.trimEnd() ?? '';
+
+  // No turn: nothing to reopen, nothing printed.
+  await resetWorkDir();
+  const silent = startTui({ cwd: WORK_DIR, entry });
+  try {
+    await silent.waitFor('you>', { timeoutMs: 60_000 });
+    const sessionId = headerSessionId(silent.frame);
+    assert('the untouched session names itself in the header', sessionId !== '');
+    silent.submit('/exit');
+    assert('a session with no completed turn exits cleanly', (await silent.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+    assert('…and prints no resume hint', !silent.screen.includes('resume: darwin --resume'));
+  } finally {
+    silent.kill();
+  }
+
+  // A completed turn, a `/clear`, another completed turn: the successor is what exit names.
+  await resetWorkDir();
+  const tui = startTui({ cwd: WORK_DIR, entry });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000 });
+    const firstSession = headerSessionId(tui.frame);
+    assert('the first session names itself in the header', firstSession !== '');
+
+    let before = tui.mark();
+    tui.submit('first prompt');
+    await tui.waitFor(STARTUP_FIXTURE_REPLY, { timeoutMs: 60_000, from: before, settleMs: 300 });
+    await waitForIdle(tui, 30_000);
+
+    before = tui.mark();
+    tui.submit('/clear');
+    await tui.waitFor('cleared — new session', { timeoutMs: 60_000, from: before, settleMs: 600 });
+    const successor = headerSessionId(tui.frame);
+    assert('/clear moves the header to a successor session', successor !== '' && successor !== firstSession);
+
+    before = tui.mark();
+    tui.submit('second prompt');
+    await tui.waitFor(STARTUP_FIXTURE_REPLY, { timeoutMs: 60_000, from: before, settleMs: 300 });
+    await waitForIdle(tui, 30_000);
+
+    tui.submit('/exit');
+    assert('the session exits cleanly after two turns and a /clear', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+    const expected = resumeHintLine(successor).trimEnd();
+    assert(`the pty output ends with the exact hint line for the successor: ${expected}`, lastLine(tui.screen) === expected);
+    assert('the hint is printed exactly once', tui.screen.split('resume: darwin --resume').length === 2);
+    assert('the first session\u2019s id is not the one offered', !tui.screen.includes(`resume: darwin --resume ${firstSession}`));
+  } finally {
+    tui.kill();
+  }
+}
+
 /** Free real-pty proof of clipboard image chip ownership; no model invocation. */
 async function clipboardImageComposer(): Promise<void> {
   header('TUI — clipboard image attachment chip and explicit removal');
@@ -4800,6 +4870,7 @@ const SCENARIOS = {
   mcpStderr: mcpStderrIsolation,
   mcp: mcpReport,
   trust: workspaceTrust,
+  resumeHint,
   toolDetails: toolDetailsToggle,
   agents: agentDispatches,
   agentsMd: agentsMdHeader,

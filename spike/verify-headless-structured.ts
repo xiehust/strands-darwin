@@ -150,6 +150,13 @@ async function parserAndTextCompatibility(): Promise<void> {
       'cost: total=- input=- output=- cacheRead=- cacheWrite=- model=fake.headless pricing=unavailable\n',
   });
   assert('text success/failure/interrupt stdout and stderr order are exact', true);
+  // SER-092: the resume hint is the interactive exit's line alone; `-p` in either
+  // format prints none (the `json` run's stdout above is pure JSONL, `text` is the answer).
+  nodeAssert.doesNotMatch(
+    success.stdout + success.stderr + explicitRoot.stdout + explicitRoot.stderr,
+    /resume: darwin --resume/u,
+  );
+  assert('completed -p runs in text and json print no resume hint', true);
 }
 
 

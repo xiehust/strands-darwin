@@ -38,7 +38,7 @@ import {
   parseTrajectoryArgs,
   runTrajectoryCommand,
 } from './cli-trajectory.js';
-import { localCliAnswer, usageErrorText } from './cli-usage.js';
+import { localCliAnswer, resumeHintLine, usageErrorText } from './cli-usage.js';
 import { ConfigError, loadConfig } from './config.js';
 import { productionHeadlessDependencies, runHeadlessProcess } from './headless-runner.js';
 import { withProductionReactImports } from './tui/react-environment.js';
@@ -353,6 +353,15 @@ async function runInteractive(options: CliOptions): Promise<void> {
     await current.shutdown();
     forceExitIfHung();
   }
+  // SER-092: the one line an interactive exit leaves in the scrollback — the live
+  // session's id and the command that reopens it. After `shutdown()` on purpose: the
+  // lease is released and every writer has settled, so nothing else follows it. Gated
+  // on the session having messages: the SDK saves the snapshot `--resume <id>` reads
+  // whenever a message was added, so `messageCount` is exactly "reopenable" — a fresh
+  // session left without a prompt has nothing to name, a resumed one still does. The
+  // refusal paths above returned before this point; headless never reaches it. Written
+  // whether or not stdout is a TTY: the user asked for the TUI.
+  if (current.messageCount > 0) process.stdout.write(resumeHintLine(current.info.sessionId));
 }
 
 function errorMessage(error: unknown): string {

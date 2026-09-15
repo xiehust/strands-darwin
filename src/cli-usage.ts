@@ -44,6 +44,17 @@ export function usageErrorText(message: string): string {
 }
 
 /**
+ * The one stdout line an interactive run leaves behind on exit (SER-092): the id of
+ * the session that was live at exit and the command that reopens it. Plain text, one
+ * newline, no ANSI — it is written after Ink has released the terminal and after
+ * `shutdown()` has settled, so it is the last thing the process prints. `cli-main.ts`
+ * writes it only when that session has messages to reopen (the `-p` runner never does).
+ */
+export function resumeHintLine(sessionId: string): string {
+  return `session ${sessionId} · resume: darwin --resume ${sessionId}\n`;
+}
+
+/**
  * The stdout text for a `--help`/`--version` invocation, or `undefined` when argv asks
  * for neither. Either flag anywhere in argv wins over everything else — subcommands,
  * `-p`, unknown flags — and help wins over version, so the answer is decided before

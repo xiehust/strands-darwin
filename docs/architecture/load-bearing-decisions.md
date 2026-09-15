@@ -736,6 +736,20 @@ a stack trace and never the pointer's session instead. Pointer semantics stay th
 it; quitting without a turn moves nothing. Free check: `spike/verify-sessions-command.ts` (in
 `pnpm test`).
 
+The exit hint (SER-092, kiro-cli precedent) is a projection of the same store, from the other end:
+`runInteractive` writes exactly one plain stdout line, `session <id> · resume: darwin --resume <id>`
+(`resumeHintLine` in `src/cli-usage.ts`), after `waitUntilExit()` *and* after `current.shutdown()`
+has settled — the lease is released and no writer is live, so the line is the last thing the process
+prints and touches no trajectory, snapshot or pointer. `<id>` is the runtime live at exit (a
+`/clear`/`/rewind` successor names itself, never its predecessor), and the gate is
+`current.messageCount > 0` rather than a new counter: the SDK `SessionManager` saves the snapshot
+`--resume <id>` reads whenever a message was added (`AfterInvocationEvent` fires even on error or
+cancel), so "has messages" is exactly "reopenable" — a fresh session left without a prompt prints
+nothing, a resumed session still does. The refusal paths (`ConfigError`, `SessionNotFoundError`,
+`SessionInUseError`) return before it and `-p` never reaches it; a non-TTY stdout is not a reason to
+suppress it. Free checks: `spike/verify-tui.ts resumeHint` (real `cli.ts` through the offline
+`startup-cli` fixture), and the headless suites pin its absence from `-p` output.
+
 ## Session lease — one live process per session
 
 **A session is open in one process at a time, decided by liveness and never by a flag**

@@ -792,6 +792,10 @@ async function pipedStdinProcessContracts(): Promise<void> {
   );
   assert.deepEqual(sendInputs(ignored), ['fixture prompt']);
   countedAssert('stdio ignore keeps the exact pre-SER-050 stdout, stderr and model-facing prompt', true);
+  // SER-092: the interactive exit's `session <id> · resume: darwin --resume <id>` line is
+  // `runInteractive`'s alone — a `-p` run that completed a turn prints no such line anywhere.
+  assert.doesNotMatch(ignored.stdout + ignored.stderr, /resume: darwin --resume/u);
+  countedAssert('a completed -p run prints no resume hint on stdout or stderr', true);
 
   // Immediate EOF and whitespace-only pipes are indistinguishable from /dev/null.
   for (const [label, bytes] of [['an empty pipe', ''], ['a whitespace-only pipe', ' \n\t\n']] as const) {
