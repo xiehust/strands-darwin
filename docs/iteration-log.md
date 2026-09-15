@@ -2939,3 +2939,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Design note recorded for later rows: `RuntimeOptions.workspaceTrust` absent means the caller vouches (pre-trust behaviour for embedding and spike fixtures); all three drivers pass it. Behaviour change by design: headless and the dev REPL now hold project layers in a project with no stored decision and say so on the `trust:` line.
 - Worker spend: `usage: input=446 output=118624 cacheRead=49880766 cacheWrite=372633`; `cost: total=23.0638 input=0.0045 output=5.9312 cacheRead=12.4702 cacheWrite=4.6579 model=global.anthropic.claude-fable-5-1 pricing=global.anthropic.claude-fable-5-1`; 221 model calls. Child noted three trivial early edits went through `python3`/`sed -i` rather than `fileEditor`; the resulting bytes are in the reviewed diff.
 
+## Batch 134 — SER-091 one live process per session (2026-09-15)
+
+- Origin: `docs/research/research_2026-09-15.md`, peer roll `12:43:40Z`; Score 11, Priority 123. Built on accepted SER-090 `effb8ba` (green Host gate/build); handoff `7c0d261` is docs-only. Second direction of the five-direction batch.
+- Fresh child `session-20260915-143744191`; managed `bg-ba57106f-6af3-4333-be89-e006d1cfe306`, exit 0, drained to `hasMore: false`. Source CLI (`pnpm tsx src/cli.ts -p … --yolo --context-offload`, brief piped on stdin), no ceiling, no correction, retry or descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| `lease.json` per session taken with `wx` in `resolveSession`; live lease refuses explicit ids and turns bare `--resume` into a fresh session with a notice; stale (dead pid / foreign host > 24 h) taken over and stated; released at shutdown/retire/failed create; `darwin sessions` marks `(open in pid N)` read-only | `55469cb` | Host read the `session.ts`/`runtime.ts`/`cli-main.ts`/`cli-sessions.ts` diff (lease released last after the trajectory is durable; `ConfigError` during `create` releases it; listing reads and probes, never writes), ran `darwin sessions` here (read-only, no write), then `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts resume && pnpm build && git diff --check && git status --short`, task `bg-a0503fc1-a84f-4116-9362-aa348d08b718`, exit 0, 8,981 PASS lines, 0 FAIL; log `/tmp/darwin-ser091-host-acceptance.log`. |
+
+- Docs wrap-up: `sessions-and-state.md` + `reference.md` EN/zh-CN and the load-bearing heading "Session lease — one live process per session" in the accepted commit; README sessions prose still accurate. AGENTS.md unchanged at 32,763 bytes (no row fits). The child also wrote an "awaiting Host acceptance" evidence note into the SER-091 backlog record without changing its status; the Host replaced it with the acceptance record on closure. Dist rebuilt by Host.
+- Recorded risks: same-process re-open of one id is refused (darwin never does it); the 24 h foreign-host bound has no heartbeat behind it; a microsecond takeover race between two launches classifying one stale lease remains.
+- Worker spend: `usage: input=276 output=80702 cacheRead=21539666 cacheWrite=221565`; `cost: total=12.1923 input=0.0028 output=4.0351 cacheRead=5.3849 cacheWrite=2.7696 model=global.anthropic.claude-fable-5-1 pricing=global.anthropic.claude-fable-5-1`.
+

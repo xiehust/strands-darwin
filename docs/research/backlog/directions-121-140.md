@@ -44,7 +44,7 @@ Requirement: on the first interactive launch in a project whose checkout declare
 
 ## SER-091 — Single live process per session: a per-session lease (`lease.json`: pid, hostname, startedAt) acquired in `resolveSession` with `wx`; a live lease refuses explicit `--resume <id>`/`--session <id>` naming pid and start time and makes bare `--resume` start fresh with one notice; a stale lease (dead pid) is taken over and stated; released at shutdown; `darwin sessions` marks a leased row
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 123
 - Score: 11
 - Importance: 4
@@ -56,21 +56,9 @@ Requirement: on the first interactive launch in a project whose checkout declare
 
 ### Implementation / acceptance evidence
 
-Implemented (worker run, awaiting Host acceptance): `src/agent/session.ts` — `lease.json`
-(`{ pid, hostname, startedAt }`) under `sessionStateDir`, `wx` acquisition in `resolveSession`,
-`classifyLease`/`pidAlive` (same host: `kill(pid, 0)`, `EPERM` alive; foreign host: live for
-`FOREIGN_LEASE_STALE_AFTER_MS` = 24 h), `SessionInUseError` (sibling of `SessionNotFoundError`),
-`SessionLease.release()` (only while the file names this pid; `rmdir`s an emptied state dir),
-`inspectLease` for the listing; `AgentRuntime` holds the lease, releases in `shutdown()`/`retire()`
-and on a failed `create()`, exposes `info.leaseNotice`; `cli-main.ts` catches `SessionInUseError`
-beside `SessionNotFoundError` and seeds the fresh-session notice as startup history; resume recap
-carries a takeover notice after its title; headless writes one `lease:` line (`source: "session"`
-warning structured); `cli-sessions.ts` marks a live row `(open in pid N)`. Checks:
-`spike/verify-session-lease.ts` (new, in `pnpm test`, 71 assertions incl. real `cli.ts` runs through
-the `startup-cli` fixture), `spike/verify-sessions-command.ts` (marker + byte-identical store with
-leases present), `spike/verify-tui.ts resume` (bare `--resume` against a live lease). Docs:
-`docs/user-guide/sessions-and-state*.md`, `reference*.md`, decisions doc heading "Session lease —
-one live process per session"; AGENTS.md row omitted (5 bytes under the preload cap).
+Accepted `55469cb` (`feat(session): lease each session to one live process`), fresh child `session-20260915-143744191`, task `bg-ba57106f-6af3-4333-be89-e006d1cfe306` exit 0, drained. `src/agent/session.ts` — `lease.json` (`{ pid, hostname, startedAt }`) under `sessionStateDir`, `wx` acquisition in `resolveSession`, `classifyLease`/`pidAlive` (same host: `kill(pid, 0)`, `EPERM` alive; foreign host: live for `FOREIGN_LEASE_STALE_AFTER_MS` = 24 h), `SessionInUseError` (sibling of `SessionNotFoundError`), `SessionLease.release()` (only while the file names this pid), `inspectLease` for the listing; `AgentRuntime` holds the lease, releases in `shutdown()`/`retire()` and on a failed `create()`, exposes `info.leaseNotice`; `cli-main.ts` refuses `SessionInUseError` beside `SessionNotFoundError` and seeds the fresh-session notice as startup history; resume recap carries a takeover notice; headless writes one `lease:` line (structured warning `source: "session"`); `cli-sessions.ts` marks a live row `(open in pid N)`. Host read the session/runtime/cli-main/cli-sessions diff and the child's evidence note, ran `darwin sessions` against this project (read-only, no write), then `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts resume && pnpm build && git diff --check && git status --short` (task `bg-a0503fc1-a84f-4116-9362-aa348d08b718`, exit 0, 8,981 PASS lines, 0 FAIL; log `/tmp/darwin-ser091-host-acceptance.log`). New `spike/verify-session-lease.ts` (381 lines, in `pnpm test`, real `cli.ts` runs through the `startup-cli` fixture), `verify-sessions-command.ts` marker + byte-identical store, `tui resume` extended. Docs: `sessions-and-state*.md`, `reference*.md`, decisions heading "Session lease — one live process per session"; AGENTS.md row omitted (32,763 bytes, five under cap). Iteration-log Batch 134.
+
+Recorded risks (child, agreed by Host): same-process re-open of one id is refused too (darwin never does it; in-process tests must `shutdown()` first); the 24 h foreign-host bound is a stated guess without a heartbeat; two launches classifying one stale lease at the same instant leave a microsecond takeover race plain fs cannot close.
 
 ### Notes / blockers / abandonment reason
 
@@ -78,7 +66,7 @@ Requirement: `src/agent/session.ts` gains a lease under the session's state dire
 
 ## SER-092 — Resume hint on exit: after Ink releases the terminal, print one line `session <id> · resume: darwin --resume <id>` when the session completed at least one turn; nothing for headless, nothing when no turn ran
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 124
 - Score: 11
 - Importance: 2
