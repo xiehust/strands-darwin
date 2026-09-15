@@ -257,7 +257,7 @@ async function seamContracts(): Promise<void> {
     // A real SubagentTool child handed the runtime's wrapped bash: same builder, same scrub.
     const subagents = new SubagentTool({
       registry: {
-        definitions: [{ name: 'general', description: 'shell env child', systemPrompt: 'Run the probe.', tools: ['bash'], file: undefined }],
+        definitions: [{ name: 'general', description: 'shell env child', systemPrompt: 'Run the probe.', tools: ['bash'], projectInstructions: true, file: undefined }],
         problems: [],
       },
       tools: [scrubbedTool],

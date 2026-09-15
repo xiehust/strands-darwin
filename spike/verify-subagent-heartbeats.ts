@@ -25,6 +25,7 @@ const registry: AgentDefinitionRegistry = {
     description: 'offline child',
     systemPrompt: 'offline',
     tools: undefined,
+    projectInstructions: true,
     file: '/tmp/general.md',
   }],
   problems: [],

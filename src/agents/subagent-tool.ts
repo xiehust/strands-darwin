@@ -14,7 +14,7 @@ import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage }
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import { withFailedChildText } from './failed-child-text.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
-import { DEFAULT_AGENT_NAME } from './loader.js';
+import { DEFAULT_AGENT_NAME, catalogueEntry } from './loader.js';
 import { projectChildReport } from './report-projection.js';
 import { MAX_RETAINED_CHILDREN, RetainedChildStore, type RetainedChild } from './retained-children.js';
 
@@ -105,9 +105,7 @@ export class SubagentTool {
 
   constructor(private readonly options: SubagentToolOptions) {
     this.config = options.config;
-    const catalogue = options.registry.definitions
-      .map((definition) => `${definition.name}: ${definition.description}`)
-      .join('; ');
+    const catalogue = options.registry.definitions.map(catalogueEntry).join('; ');
 
     this.tool = tool({
       name: SUBAGENT_TOOL_NAME,

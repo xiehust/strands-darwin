@@ -320,7 +320,7 @@ try {
   await parent.initialize();
   const gate = new PermissionGate({ mode: 'yolo', projectRoot: root, ask: async () => ({ allowed: true }) });
   const child = buildRecipeChild({
-    definition: { name: 'probe', description: 'probe child', systemPrompt: 'probe', tools: undefined, file: undefined },
+    definition: { name: 'probe', description: 'probe child', systemPrompt: 'probe', tools: undefined, projectInstructions: true, file: undefined },
     config: {
       provider: 'bedrock', model: 'fake', region: 'us-west-2', maxTokens: 1000, permissionMode: 'yolo',
       promptCache: false, thinkingEffort: 'high', summaryRatio: 0.8, contextWarnRatio: 0.8, contextOffload: true,
@@ -405,7 +405,7 @@ try {
   // Children share the parent's wrapper, so the payload bound reaches a child whose
   // prompt omits the system-prompt rule.
   const runtimeChild = buildRecipeChild({
-    definition: { name: 'probe', description: 'probe child', systemPrompt: 'probe', tools: undefined, file: undefined },
+    definition: { name: 'probe', description: 'probe child', systemPrompt: 'probe', tools: undefined, projectInstructions: true, file: undefined },
     config: {
       provider: 'bedrock', model: 'fake', region: 'us-west-2', maxTokens: 1000, permissionMode: 'yolo',
       promptCache: false, thinkingEffort: 'high', summaryRatio: 0.8, contextWarnRatio: 0.8, contextOffload: true,

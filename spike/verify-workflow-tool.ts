@@ -24,6 +24,7 @@ const registry: AgentDefinitionRegistry = {
       description: 'offline child',
       systemPrompt: 'offline SECRET-SYSTEM-PROMPT',
       tools: undefined,
+      projectInstructions: true,
       file: '/tmp/general.md',
     },
     {
@@ -31,6 +32,7 @@ const registry: AgentDefinitionRegistry = {
       description: 'offline writer',
       systemPrompt: 'offline writer SECRET-SYSTEM-PROMPT',
       tools: ['dummy'],
+      projectInstructions: true,
       file: '/tmp/writer.md',
     },
   ],

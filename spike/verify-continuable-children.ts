@@ -53,8 +53,8 @@ ownPrivateHome('continuable-children');
 
 const registry: AgentDefinitionRegistry = {
   definitions: [
-    { name: 'general', description: 'offline child', systemPrompt: 'offline SECRET-SYSTEM-PROMPT', tools: undefined, file: '/tmp/general.md' },
-    { name: 'other', description: 'another offline child', systemPrompt: 'offline OTHER', tools: undefined, file: '/tmp/other.md' },
+    { name: 'general', description: 'offline child', systemPrompt: 'offline SECRET-SYSTEM-PROMPT', tools: undefined, projectInstructions: true, file: '/tmp/general.md' },
+    { name: 'other', description: 'another offline child', systemPrompt: 'offline OTHER', tools: undefined, projectInstructions: true, file: '/tmp/other.md' },
   ],
   problems: [],
 };

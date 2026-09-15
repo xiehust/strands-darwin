@@ -748,7 +748,7 @@ async function wrapperAndPermissionContracts(): Promise<void> {
 
   const subagents = new SubagentTool({
     registry: {
-      definitions: [{ name: 'general', description: 'background child', systemPrompt: 'Start the requested job.', tools: ['bash'], file: undefined }],
+      definitions: [{ name: 'general', description: 'background child', systemPrompt: 'Start the requested job.', tools: ['bash'], projectInstructions: true, file: undefined }],
       problems: [],
     },
     tools: [sdkWrapped],

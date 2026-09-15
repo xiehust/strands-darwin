@@ -15,6 +15,12 @@ export interface AgentDefinition {
   systemPrompt: string;
   /** Undefined means every child-eligible tool; an empty array means no tools. */
   tools: readonly string[] | undefined;
+  /**
+   * Whether the child's system prompt carries the project's `<project-instructions>`
+   * block (SER-093). Frontmatter `projectInstructions: false` opts out for a
+   * definition whose delegation prompts are self-sufficient; absent means `true`.
+   */
+  projectInstructions: boolean;
   /** Absolute Markdown source, or undefined for the built-in definition. */
   file: string | undefined;
 }
@@ -40,6 +46,7 @@ const DEFAULT_AGENT: AgentDefinition = {
     'changes, verification, and any unresolved risks that apply.',
   ].join(' '),
   tools: undefined,
+  projectInstructions: true,
   file: undefined,
 };
 
@@ -109,6 +116,16 @@ export async function loadAgentDefinitions(
   return { definitions: [DEFAULT_AGENT, ...custom], problems };
 }
 
+/**
+ * One definition's entry in the `Available agents:` catalogue of the `subagent` and
+ * `workflow` tool descriptions — the only place the model (and the user reading the
+ * description) sees that a definition opts out of project instructions (SER-093).
+ */
+export function catalogueEntry(definition: AgentDefinition): string {
+  const base = `${definition.name}: ${definition.description}`;
+  return definition.projectInstructions ? base : `${base} (no project instructions)`;
+}
+
 function parseDefinition(
   raw: string,
   file: string,
@@ -139,7 +156,12 @@ function parseDefinition(
   const parsedTools = parseTools(data['tools'], knownTools);
   if ('reason' in parsedTools) return parsedTools;
 
-  return { name, description, systemPrompt, tools: parsedTools.tools, file };
+  const projectInstructions = data['projectInstructions'] === undefined ? true : data['projectInstructions'];
+  if (typeof projectInstructions !== 'boolean') {
+    return { reason: 'frontmatter "projectInstructions" must be a boolean' };
+  }
+
+  return { name, description, systemPrompt, tools: parsedTools.tools, projectInstructions, file };
 }
 
 function parseTools(

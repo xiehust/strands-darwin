@@ -1668,7 +1668,9 @@ resolution, dependency-merged node inputs, `maxConcurrency`, terminus resolution
 darwin only wraps each node in a thin `InvokableAgent` adapter (node id outward, unique
 `darwin-workflow-*` agent id inward) that prepends the node's own task to the SDK-provided input.
 Each node is built by `buildRecipeChild`, the single child-construction recipe extracted from and
-still used by `SubagentTool` — same composed prompt, tool filtering, shared gate with dispatch
+still used by `SubagentTool` — same composed prompt (a definition's `projectInstructions: false`
+drops only the `<project-instructions>` block from that child, SER-093; the catalogue entry in both
+tool descriptions says ` (no project instructions)`), tool filtering, shared gate with dispatch
 `source` provenance, registry heartbeats and targeted `/agents cancel`, codex-hook fork,
 max-tokens recovery, bash reaping — so the two delegation surfaces cannot drift; neither may
 construct a child `Agent` directly. Only the graph's terminus content returns to the parent;

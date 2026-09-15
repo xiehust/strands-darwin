@@ -30,6 +30,7 @@ const registry: AgentDefinitionRegistry = {
       description: 'offline child',
       systemPrompt: 'offline SECRET-SYSTEM-PROMPT',
       tools: undefined,
+      projectInstructions: true,
       file: '/tmp/general.md',
     },
   ],

@@ -109,7 +109,7 @@ tools:
 Trace the requested behavior, cite files and symbols, and report to the parent.
 ```
 
-Required: valid unique non-`general` name (`[A-Za-z0-9_-]+`), description, nonempty body. Omit `tools` for all child-eligible tools, use `tools: []` for none, or exact case-sensitive registered names. Unknown tools or malformed/duplicate/unreadable definitions skip. Definitions load once at startup.
+Required: valid unique non-`general` name (`[A-Za-z0-9_-]+`), description, nonempty body. Omit `tools` for all child-eligible tools, use `tools: []` for none, or exact case-sensitive registered names. Optional `projectInstructions: false` (default `true`) leaves the project's `AGENTS.md` instructions out of that child's system prompt — for definitions whose tasks are self-sufficient — and the `subagent`/`workflow` tool descriptions mark that agent's entry `(no project instructions)`; a non-boolean value skips the definition. Unknown tools or malformed/duplicate/unreadable definitions skip. Definitions load once at startup.
 
 Children have fresh model/context, no parent messages, no persisted session, and no recursive `subagent`. Later children use the currently selected model. Tool restrictions are not permission grants: child calls use the shared gate/rules. Delegation itself is safe. Ctrl+C cancels child with parent and its bash session is reaped.
 

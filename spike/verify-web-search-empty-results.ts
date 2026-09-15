@@ -226,6 +226,7 @@ async function contract(root: string): Promise<void> {
         description: 'Web-search child probe',
         systemPrompt: 'Use web search.',
         tools: undefined,
+        projectInstructions: true,
         file: undefined,
       }],
       problems: [],

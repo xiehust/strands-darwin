@@ -66,7 +66,13 @@ export function buildRecipeChild(options: ChildRecipeOptions): Agent {
     name: definition.name,
     description: definition.description,
     model: options.model,
-    systemPrompt: composeSystemPrompt(definition.systemPrompt, options.projectInstructions),
+    // A definition with `projectInstructions: false` (SER-093) gets its own prompt alone:
+    // no `<project-instructions>` block, so a self-sufficient delegation does not pay
+    // for the project file on every dispatch. Base prompt and tools are unaffected.
+    systemPrompt: composeSystemPrompt(
+      definition.systemPrompt,
+      definition.projectInstructions === false ? undefined : options.projectInstructions,
+    ),
     tools: toolsForDefinition(definition, options.tools),
     conversationManager: new SummarizingConversationManager({
       summaryRatio: config.summaryRatio,

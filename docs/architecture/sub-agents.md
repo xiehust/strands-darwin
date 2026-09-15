@@ -59,6 +59,13 @@ prompt. The optional `tools` field is an exact, case-sensitive capability filter
 - `[]`: no tools;
 - a list: only those registered tool names.
 
+The optional boolean `projectInstructions` (default `true`) decides whether the child's system prompt
+carries the project's `<project-instructions>` block (`AGENTS.md`, up to 32 KiB per dispatch).
+`projectInstructions: false` suits a definition whose delegation prompts are self-sufficient — the
+child keeps its own body, its tools and the shared permission gate, and both the `subagent` and
+`workflow` tool descriptions mark its `Available agents:` entry ` (no project instructions)`. Any
+non-boolean value skips the definition (`frontmatter "projectInstructions" must be a boolean`).
+
 Invalid YAML, bad names, missing fields, empty bodies, unreadable files, duplicate names, and
 unknown tool names skip only that definition and are surfaced as startup problems. Other valid
 definitions remain usable. Definitions are loaded once during runtime startup.
@@ -114,7 +121,8 @@ Every dispatch therefore gets:
 - a fresh message history;
 - no parent messages or conversation summary;
 - no `SessionManager` and no resumable child session;
-- the definition prompt plus the project's `AGENTS.md` instructions;
+- the definition prompt plus the project's `AGENTS.md` instructions — unless the definition sets
+  `projectInstructions: false`, in which case the prompt is the definition body alone;
 - its selected tools and the same permission intervention as the parent;
 - no `subagent` tool.
 

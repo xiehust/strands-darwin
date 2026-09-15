@@ -20,12 +20,15 @@ import {
   loadAgentDefinitions,
   type AgentDefinitionRegistry,
 } from '../src/agents/loader.js';
+import { buildRecipeChild } from '../src/agents/child-recipe.js';
 import {
   SubagentDispatchRegistry,
   shortDispatchId,
   type SubagentDispatchStatus,
 } from '../src/agents/dispatch-registry.js';
 import { SubagentTool } from '../src/agents/subagent-tool.js';
+import { WorkflowTool } from '../src/agents/workflow-tool.js';
+import type { ProjectInstructions } from '../src/agent/instructions.js';
 import { PermissionGate, type AssessedPermissionRequest } from '../src/agent/permission.js';
 import { ToolHookGate } from '../src/hooks/tool-hooks.js';
 
@@ -325,6 +328,14 @@ async function buildFixture(): Promise<string> {
   await writeFile(path.join(AGENTS_ROOT, 'unknown.md'), '---\nname: unknown\ndescription: bad tool\ntools: [missing]\n---\nbody\n');
   await writeFile(path.join(AGENTS_ROOT, 'empty.md'), '---\nname: empty\ndescription: empty body\n---\n');
   await writeFile(path.join(AGENTS_ROOT, 'bad.md'), '---\nname: [oops\n---\nbody\n');
+  await writeFile(
+    path.join(AGENTS_ROOT, 'lean.md'),
+    '---\nname: lean\ndescription: Works from its task alone.\nprojectInstructions: false\n---\n\nAnswer from the task.\n',
+  );
+  await writeFile(
+    path.join(AGENTS_ROOT, 'bad-flag.md'),
+    '---\nname: bad-flag\ndescription: string flag\nprojectInstructions: "no"\n---\nbody\n',
+  );
   await writeFile(path.join(AGENTS_ROOT, 'notes.txt'), 'ignored\n');
   const unreadable = path.join(AGENTS_ROOT, 'unreadable.md');
   await writeFile(unreadable, '---\nname: unreadable\ndescription: nope\n---\nbody\n');
@@ -361,7 +372,65 @@ async function loader(): Promise<AgentDefinitionRegistry> {
   assert('unreadable files are isolated', reasons.some((reason) => reason.includes('could not read file')));
   assert('an explicit empty tool list survives', registry.definitions.find((d) => d.name === 'no-tools')?.tools?.length === 0);
   assert('a tool allowlist is preserved exactly', registry.definitions.find((d) => d.name === 'explorer')?.tools?.join(',') === 'fileEditor');
+  // SER-093: the optional boolean `projectInstructions` frontmatter key.
+  assert('projectInstructions: false loads with the flag', registry.definitions.find((d) => d.name === 'lean')?.projectInstructions === false);
+  assert('an absent projectInstructions key defaults to true', registry.definitions.find((d) => d.name === 'explorer')?.projectInstructions === true);
+  assert('the built-in general keeps project instructions', registry.definitions[0]?.projectInstructions === true);
+  assert('a non-boolean projectInstructions skips only that definition with the bounded reason',
+    !names.includes('bad-flag') && reasons.includes('frontmatter "projectInstructions" must be a boolean'));
   return registry;
+}
+
+/**
+ * SER-093: a `projectInstructions: false` definition's child gets its own prompt without the
+ * `<project-instructions>` block; every other child still carries it. Built through the one
+ * recipe both `subagent` and `workflow` use, offline, with no model call; and the opt-out is
+ * stated in both tools' `Available agents:` catalogue, for that agent only.
+ */
+async function projectInstructionsOptOut(registry: AgentDefinitionRegistry): Promise<void> {
+  header('subagents — projectInstructions: false drops the project block from that child only');
+  const fragment = '<project-instructions source="AGENTS.md">\nAGENTS-BODY-MARKER\n</project-instructions>';
+  const projectInstructions: ProjectInstructions = {
+    filename: 'AGENTS.md', path: path.join(ROOT, 'AGENTS.md'), bytes: fragment.length, truncated: false, fragment,
+  };
+  const gate = new PermissionGate({ mode: 'default', projectRoot: ROOT, ask: async () => ({ allowed: false }) });
+  const build = (name: string) => {
+    const definition = registry.definitions.find((candidate) => candidate.name === name);
+    if (definition === undefined) throw new Error(`fixture definition ${name} missing`);
+    return buildRecipeChild({
+      definition,
+      config: fakeConfig('prompt'),
+      model: new ScriptedChildModel(),
+      tools: [],
+      intervention: gate,
+      projectInstructions,
+      idPrefix: 'subagent',
+      dispatch: undefined,
+    });
+  };
+  const lean = JSON.stringify(build('lean').systemPrompt);
+  const general = JSON.stringify(build('general').systemPrompt);
+  assert('the opt-out child has no <project-instructions> block', !lean.includes('<project-instructions') && !lean.includes('AGENTS-BODY-MARKER'));
+  assert('the opt-out child still has its own definition prompt', lean.includes('Answer from the task.'));
+  assert('the general child still carries the block', general.includes('<project-instructions source=\\"AGENTS.md\\">') && general.includes('AGENTS-BODY-MARKER'));
+
+  const common = {
+    registry,
+    tools: [],
+    intervention: gate,
+    projectInstructions,
+    config: fakeConfig('prompt'),
+    createModel: async () => new ScriptedChildModel(),
+  };
+  for (const [label, description] of [
+    ['subagent', new SubagentTool(common).tool.description],
+    ['workflow', new WorkflowTool(common).tool.description],
+  ] as const) {
+    assert(`${label}: the opt-out agent's catalogue entry says so`,
+      description.includes('lean: Works from its task alone. (no project instructions)'));
+    assert(`${label}: no other entry carries the note`, description.split('(no project instructions)').length === 2);
+    assert(`${label}: general's entry is unchanged`, description.includes('general: General-purpose agent') && !/general: [^;]*no project instructions/.test(description));
+  }
 }
 
 async function missingDirectory(): Promise<void> {
@@ -837,6 +906,7 @@ function fakeConfig(model: string) {
 
 const registry = await loader();
 await missingDirectory();
+await projectInstructionsOptOut(registry);
 await dispatchContracts(registry);
 await officialSkillChildCatalogue(registry);
 

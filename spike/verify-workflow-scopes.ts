@@ -30,7 +30,7 @@ const ROOT = '/tmp/darwin-workflow-scopes-project';
 
 const registry: AgentDefinitionRegistry = {
   definitions: [
-    { name: 'general', description: 'offline child', systemPrompt: 'offline', tools: undefined, file: '/tmp/general.md' },
+    { name: 'general', description: 'offline child', systemPrompt: 'offline', tools: undefined, projectInstructions: true, file: '/tmp/general.md' },
   ],
   problems: [],
 };

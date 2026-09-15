@@ -44,7 +44,7 @@ import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage }
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import { splitFailedChildMessage, withFailedChildText } from './failed-child-text.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
-import { DEFAULT_AGENT_NAME } from './loader.js';
+import { DEFAULT_AGENT_NAME, catalogueEntry } from './loader.js';
 import { projectChildReport } from './report-projection.js';
 
 export const WORKFLOW_TOOL_NAME = 'workflow';
@@ -140,9 +140,7 @@ export class WorkflowTool {
 
   constructor(private readonly options: WorkflowToolOptions) {
     this.config = options.config;
-    const catalogue = options.registry.definitions
-      .map((definition) => `${definition.name}: ${definition.description}`)
-      .join('; ');
+    const catalogue = options.registry.definitions.map(catalogueEntry).join('; ');
 
     this.tool = tool({
       name: WORKFLOW_TOOL_NAME,

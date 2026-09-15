@@ -283,6 +283,7 @@ async function unavailableAndExplicitTargets(base: string): Promise<void> {
         description: 'CodeGraph child probe',
         systemPrompt: 'Use the available semantic reader.',
         tools: undefined,
+        projectInstructions: true,
         file: undefined,
       }],
       problems: [],

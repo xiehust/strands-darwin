@@ -36,7 +36,7 @@ const CONTINUING: SubagentDispatchPhase['kind'] = 'continuing-after-stream-inter
 
 const registry: AgentDefinitionRegistry = {
   definitions: [
-    { name: 'general', description: 'offline child', systemPrompt: 'offline SECRET-SYSTEM-PROMPT', tools: undefined, file: '/tmp/general.md' },
+    { name: 'general', description: 'offline child', systemPrompt: 'offline SECRET-SYSTEM-PROMPT', tools: undefined, projectInstructions: true, file: '/tmp/general.md' },
   ],
   problems: [],
 };

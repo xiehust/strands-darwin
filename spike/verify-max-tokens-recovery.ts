@@ -323,6 +323,7 @@ async function childCoverage(): Promise<void> {
       description: 'test child',
       systemPrompt: 'report',
       tools: [],
+      projectInstructions: true,
       file: undefined,
     }],
     problems: [],

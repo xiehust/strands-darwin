@@ -109,7 +109,7 @@ tools:
 Trace the requested behavior, cite files and symbols, and report to the parent.
 ```
 
-必需内容包括：有效且唯一、不能为 `general` 的名称（`[A-Za-z0-9_-]+`）、description 和非空正文。省略 `tools` 表示所有可供子代理使用的工具；`tools: []` 表示无工具；否则必须填写大小写完全匹配的已注册名称。未知工具、格式错误、重复或不可读定义会跳过。定义只在启动时读取一次。
+必需内容包括：有效且唯一、不能为 `general` 的名称（`[A-Za-z0-9_-]+`）、description 和非空正文。省略 `tools` 表示所有可供子代理使用的工具；`tools: []` 表示无工具；否则必须填写大小写完全匹配的已注册名称。可选的 `projectInstructions: false`（默认 `true`）会让该子代理的系统提示不包含项目的 `AGENTS.md` 指令——适合任务本身已足够自洽的定义——`subagent`/`workflow` 工具描述中该代理的条目会标注 `(no project instructions)`；非布尔值会跳过该定义。未知工具、格式错误、重复或不可读定义会跳过。定义只在启动时读取一次。
 
 子代理使用新的模型实例和上下文，不继承父会话消息，不持久化 session，也不能递归调用 `subagent`。之后派发的子代理使用当时已选择的模型。工具限制不是权限授权，子代理调用仍经过共享 gate 和规则。委派本身不做项目 I/O，因此安全。`Ctrl+C` 会同时取消父回合和子代理，并回收其 bash 会话。
 
