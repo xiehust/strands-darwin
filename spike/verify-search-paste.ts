@@ -47,7 +47,10 @@ const settled = (predicate: () => boolean, label: string) => tui.waitUntil(predi
 });
 function draftRows(): string[] {
   const rows = tui.frame.replace(/\r/g, '').split('\n');
-  const start = rows.findIndex((row) => row.startsWith('you>'));
+  // The composer is the frame's *last* `you>` row: a rewind/tangent successor
+  // (b912d6d) seeds the restored transcript — including its own `you>` prompt
+  // rows — into the live frame, so a first-row read would see history instead.
+  const start = rows.findLastIndex((row) => row.startsWith('you>'));
   if (start < 0) return [];
   const result = [rows[start]!.slice(5).trimEnd()];
   for (const row of rows.slice(start + 1)) {

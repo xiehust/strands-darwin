@@ -61,7 +61,13 @@ const BACK = '\u007f';
 const UNDO = '\u001f';
 const YANK = '\u0019';
 
-const draft = () => /you> ?([^\r\n]*)/.exec(tui.frame)?.[1]?.trimEnd();
+// The composer is the frame's *last* `you>` row: a rewind/tangent successor
+// (b912d6d) seeds the restored transcript — including its own `you>` prompt rows —
+// into the live frame, so a first-match read would see history, not the draft.
+const draft = () => {
+  const matches = [...tui.frame.matchAll(/you> ?([^\r\n]*)/g)];
+  return matches.at(-1)?.[1]?.trimEnd();
+};
 const chip = () => tui.frame.includes('Ctrl+O remove');
 const parked = () => tui.frame.includes('stash: Ctrl+S');
 const settled = (predicate: () => boolean, label: string) => tui.waitUntil(predicate, { timeoutMs: 30_000, settleMs: 180, label });
