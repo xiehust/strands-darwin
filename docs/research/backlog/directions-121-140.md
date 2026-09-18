@@ -129,7 +129,7 @@ Requirement: one pure helper (in `src/tools/shell-env.ts`) adds `DARWIN=1` to a 
 
 ## SER-095 — Model-stream idle watchdog: a per-stream timer (default 120 s, config `streamIdleTimeoutSeconds`, `0` disables) fails the turn visibly with a bounded `stream idle for Ns` notice when no stream event arrives; a new terminal failure class, never routed into the one-continuation stream-resumption path; cancel wins the race and stays a cancel; headless writes one `stream:` stderr line
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 127
 - Score: 11
 - Importance: 4
