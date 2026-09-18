@@ -126,3 +126,104 @@ Note from the child, confirmed as pre-existing: `spike/verify-mcp-config.ts` run
 
 Requirement: one pure helper (in `src/tools/shell-env.ts`) adds `DARWIN=1` to a spawn environment unless the name is already set; applied to the `scrubShellEnv` result used by the model's `bash` (foreground persistent shell and background jobs), to `src/tui/shell-command.ts` for `!`, to `src/hooks/hook-process.ts`/`src/hooks/lifecycle-hooks.ts` for hook commands, and to stdio MCP server `env` at `loadMcpClients`. Nothing else is added; the credential scrub, `ALWAYS_SURVIVE_NAMES` and passthrough are unchanged; trajectory, `/export` and headless output unchanged. README input docs and `/help` mention it in one sentence. Sources S1d (`CLAUDECODE=1` in Bash, hooks, stdio MCP subprocesses), S7 (`GEMINI_CLI=1` for `!`/shell). Darwin evidence: `shell-env.ts` adds nothing; `shell-command.ts:223` passes raw `process.env`. Checks: `verify-shell-env.ts` (or the suite that pins the scrub), `verify-background-bash.ts`, `verify-shell-command.ts`, `verify-lifecycle-hooks.ts`, `pnpm test`.
 
+
+## SER-095 — Model-stream idle watchdog: a per-stream timer (default 120 s, config `streamIdleTimeoutSeconds`, `0` disables) fails the turn visibly with a bounded `stream idle for Ns` notice when no stream event arrives; a new terminal failure class, never routed into the one-continuation stream-resumption path; cancel wins the race and stays a cancel; headless writes one `stream:` stderr line
+
+- Status: `not-started`
+- Priority: 127
+- Score: 11
+- Importance: 4
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 3
+- Origin report: [`research_2026-09-18.md`](../research_2026-09-18.md) (run `09:23:56Z`)
+
+### Implementation / acceptance evidence
+
+(empty — not yet implemented)
+
+### Notes / blockers / abandonment reason
+
+Source S5 (kiro-cli changelog 2-19: stream idle watchdog, retries with backoff, 60-minute streaming timeout). Darwin evidence: `src/agent/stream-resumption.ts` resumes only an *ended* stream (exact `ModelError: Stream ended without completing a message`); `src/agent/model-retry.ts` retries only throttle-class errors — a silently hung stream hangs the turn forever. The watchdog counts *any* stream event (thinking deltas included), so long thinking pauses never trip it. It must not become a second continuation path: the idle failure is terminal for the turn, recorded in the trajectory like any other failure. Checks: `pnpm typecheck`, `pnpm test`, the new suite the child adds, `verify-stream-resumption.ts` (unchanged behavior for the exact-match path).
+
+## SER-096 — Permission-rule dry-run: `darwin permissions test <rule>` (CLI) and `/permissions test <rule>` (TUI) evaluate a candidate rule against the existing matcher and print the parse result, which already-seen `(toolName, input)` pairs from the trajectory it would have matched, and whether an existing deny rule beats it; read-only, never writes config, never touches live gate state
+
+- Status: `not-started`
+- Priority: 128
+- Score: 11
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-18.md`](../research_2026-09-18.md) (run `09:23:56Z`)
+
+### Implementation / acceptance evidence
+
+(empty — not yet implemented)
+
+### Notes / blockers / abandonment reason
+
+Source S2c (Codex exec-policy `prefix_rule` ships inline `match`/`not_match` unit tests; most-restrictive-wins). Darwin evidence: `src/agent/permission-rules.ts` matcher is pure and already suite-tested; `src/trajectory/reader.ts` is the read-only record source; `darwin sessions` is the read-only-projection precedent. The dry run is a projection over the existing matcher plus the trajectory reader — no new write path, no gate mutation. Checks: `pnpm test`, `verify-permissions-command.ts`, `verify-deny-rules.ts`.
+
+## SER-097 — Suggest the exact allow rule at the permission prompt: answering "always" shows the exact rule text before it is persisted (derived from the exact `(toolName, input)`, e.g. the bounded bash wildcard for the command's stable prefix), and the post-write notice names the rule so `/permissions` can revoke it; no grammar or auto-approval change
+
+- Status: `not-started`
+- Priority: 129
+- Score: 9
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 3
+- Origin report: [`research_2026-09-18.md`](../research_2026-09-18.md) (run `09:23:56Z`)
+
+### Implementation / acceptance evidence
+
+(empty — not yet implemented)
+
+### Notes / blockers / abandonment reason
+
+Source S2c ("When Smart approvals are enabled (the default), Codex may propose a `prefix_rule` for you during escalation requests"). Darwin evidence: the permission prompt already persists allow rules (`src/agent/permission.ts`, `src/tui/PermissionPrompt.tsx`); the delta is transparency of *what* is persisted. The suggested rule must obey the existing constraints: never covers `~/.darwin/config.json` or `.env*`, a bash rule must match every chained segment and never a redirection/substitution. Checks: `pnpm test`, `tui approve` (live), `verify-permissions-command.ts`.
+
+## SER-098 — `/agents` overview gains a settled-dispatch summary line: counts by terminal state (succeeded/failed/cancelled) for the session's dispatches on the existing panel, from the dispatch registry's own records; no persistence, no deletion, no new surface
+
+- Status: `not-started`
+- Priority: 130
+- Score: 11
+- Importance: 2
+- Architecture fit: 5
+- Evidence confidence: 4
+- Difficulty: 1
+- Risk: 1
+- Origin report: [`research_2026-09-18.md`](../research_2026-09-18.md) (run `09:23:56Z`)
+
+### Implementation / acceptance evidence
+
+(empty — not yet implemented)
+
+### Notes / blockers / abandonment reason
+
+Source S2 (Codex v0.155.0 "Added task hiding, archiving, and deletion in the agents overview"). Darwin evidence: `src/agents/dispatch-registry.ts` tracks terminal states in-session; `/agents` (`src/tui/subagent-format.ts`) is the existing panel. Deliberately excludes archiving/deletion — dispatch records are session-scoped and ephemeral by design. Zero dispatches shows no summary line. Checks: `pnpm test`, the `/agents` format suite.
+
+## SER-099 — `darwin import --from claude-code`: read-only scan of `~/.claude/` and project `.claude/`/`CLAUDE.md` printing a bounded migration plan; `--apply` copies prompt-content layers only (skills, agents, CLAUDE.md → AGENTS.md section) and prints the exact `mcp.json`/permission-rule snippets for the user to paste; executable config (hooks, MCP) is never armed by the import itself
+
+- Status: `not-started`
+- Priority: 131
+- Score: 6
+- Importance: 3
+- Architecture fit: 3
+- Evidence confidence: 3
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-09-18.md`](../research_2026-09-18.md) (run `09:23:56Z`)
+
+### Implementation / acceptance evidence
+
+(empty — not yet implemented)
+
+### Notes / blockers / abandonment reason
+
+Source S2d (Codex `/import` "Import Claude Code or Cursor setup, projects, and chats"). Darwin evidence: darwin already reads Claude-format `.mcp.json` (root fallback) and `.agents/` layers, so the migration delta is small; workspace trust (SER-090) already governs arming executable config, and the import must stay consistent with it — hooks/MCP are printed as snippets, never armed. Risk is path handling across two tools' stores; the scan is read-only and bounded. Checks: `pnpm test`, the new CLI suite the child adds.
+
