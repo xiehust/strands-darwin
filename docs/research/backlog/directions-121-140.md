@@ -149,7 +149,7 @@ Source S5 (kiro-cli changelog 2-19: stream idle watchdog, retries with backoff, 
 
 ## SER-096 — Permission-rule dry-run: `darwin permissions test <rule>` (CLI) and `/permissions test <rule>` (TUI) evaluate a candidate rule against the existing matcher and print the parse result, which already-seen `(toolName, input)` pairs from the trajectory it would have matched, and whether an existing deny rule beats it; read-only, never writes config, never touches live gate state
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 128
 - Score: 11
 - Importance: 3
@@ -161,7 +161,7 @@ Source S5 (kiro-cli changelog 2-19: stream idle watchdog, retries with backoff, 
 
 ### Implementation / acceptance evidence
 
-(empty — not yet implemented)
+Accepted 2026-09-19 in `5d31ad543d85666d04d84d98e40a41e3cccc0a8a`, fresh child `session-20260919-024010300`. Host reviewed the 19-file diff and independently ran `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts completion && pnpm build && git diff --check && test -z "$(git status --porcelain)"` (task `bg-b7db9ae8-77de-46a0-babc-443f758a9df1`, exit 0, 9,212 PASS lines including completion75). `verify-permissions-test.ts`83 covers real CLI and busy pty, canonical parse/match/deny, no SDK import graph, byte-identical policy/session state, exact whitespace, sensitive exemptions and lossy/missing/symlinked evidence. Existing permission42/deny95/CLI-doc43 regressions included. CLI scopes current project, TUI current persisted session/live deny snapshot; bounded 20 sessions, 2 MiB/file, 8 MiB total, 20 displayed pairs/240-cp cells. Unknown evidence is never execution approval. README/permissions narratives/reference EN/zh and architecture synchronized; AGENTS 32,742 bytes, dist refreshed. See iteration-log Batch 139.
 
 ### Notes / blockers / abandonment reason
 

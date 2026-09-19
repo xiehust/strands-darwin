@@ -3004,3 +3004,15 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 
 - Docs wrap-up in accepted commit: README EN/zh, configuration/reference/using-darwin EN/zh, load-bearing rationale and compact AGENTS row (32,710 bytes). Dist rebuilt independently. Timer is absent outside parent provider reads; a custom provider ignoring abort can delay cleanup indefinitely and is deliberately never detached. No dependency or stash mutation.
 - Worker spend: `usage: input=168 output=46032 cacheRead=12725288 cacheWrite=220884`; `cost: total=17.7896 input=0.0017 output=2.3016 cacheRead=12.7253 cacheWrite=2.7611 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Single task/iteration aggregate is the same. Remaining batch: SER-096–SER-099; continue on accepted source.
+
+## Batch 139 — SER-096 permission-rule dry-run (2026-09-19)
+
+- Origin: `docs/research/research_2026-09-18.md` run `09:23:56Z`; Score 11, Priority 128. Built on independently green/built SER-095 `246bdbd`; `030a83c`/`dc1c3e2` change only acceptance/start artifacts. Clean baseline and ancestor checked, no redundant full gate for docs-only commits.
+- Fresh child `session-20260919-024010300`; managed `bg-8529dc60-8756-47d8-93a0-0e6712480f59`, exit 0, drained through `hasMore: false`. Source CLI with `--yolo --context-offload`, no ceiling/correction/retry/descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| SDK-free CLI observer and busy-safe TUI candidate rule report | `5d31ad5` | Reviewed 19-file source/test/doc diff. Host `pnpm typecheck && pnpm test && AWS_EC2_METADATA_DISABLED=true pnpm tsx spike/verify-tui.ts completion && pnpm build && git diff --check && test -z "$(git status --porcelain)"`, `bg-b7db9ae8-77de-46a0-babc-443f758a9df1`, exit 0; 9,212 PASS lines (full gate9,137 + completion75). New suite83 proves exact two routes, canonical matches and deny precedence, missing/lossy evidence, project/session isolation, bounded output, byte-identical state and one offline invocation across busy local command. Existing permissions42/deny95/CLI-doc43 included. |
+
+- Docs: README, permissions narrative and reference EN/zh, CLI usage/help description, architecture rationale and AGENTS row synced in accepted commit; AGENTS32,742 bytes. Build refreshed. No policy writes or live gate mutation; CLI missing/damaged project deny file is unknown, legacy config not loaded; recorded pairs may be incomplete and report is not execution approval.
+- Worker spend: `usage: input=86 output=35557 cacheRead=4154689 cacheWrite=146348`; `cost: total=7.7627 input=0.0009 output=1.7779 cacheRead=4.1547 cacheWrite=1.8294 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Single task/iteration aggregate same. Running batch total: input254, output81,589, cacheRead16,879,977, cacheWrite367,232; USD25.5523. Remaining SER-097–SER-099; continue.
