@@ -3016,3 +3016,17 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 
 - Docs: README, permissions narrative and reference EN/zh, CLI usage/help description, architecture rationale and AGENTS row synced in accepted commit; AGENTS32,742 bytes. Build refreshed. No policy writes or live gate mutation; CLI missing/damaged project deny file is unknown, legacy config not loaded; recorded pairs may be incomplete and report is not execution approval.
 - Worker spend: `usage: input=86 output=35557 cacheRead=4154689 cacheWrite=146348`; `cost: total=7.7627 input=0.0009 output=1.7779 cacheRead=4.1547 cacheWrite=1.8294 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Single task/iteration aggregate same. Running batch total: input254, output81,589, cacheRead16,879,977, cacheWrite367,232; USD25.5523. Remaining SER-097–SER-099; continue.
+
+## Batch 140 — SER-097 exact allow-rule review (2026-09-19)
+
+- Origin: `docs/research/research_2026-09-18.md` run `09:23:56Z`; Score9, Priority129. Green/built SER-096 `5d31ad5` baseline; only docs acceptance/start commits to clean `c256668`.
+- Fresh child `session-20260919-032104114`. Initial task `bg-73fa69ec-855f-458d-95eb-77f8349d9c9c` exited1 on exact provider error `The server had an error while processing your request. Sorry about that!`; same-session retry `bg-00967df8-7ade-459c-8566-85e7a6c16b49` exited0. Both outputs drained to `hasMore: false`; source CLI `--yolo --context-offload`, no compaction/call ceiling/descendant worker. No Host acceptance correction.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Exact paged rule preview before grant/persistence with flushed-page and request identity | `c526522` | Host reviewed 16-file diff, ran `pnpm typecheck && pnpm test`, live `AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve`29 and `alwaysAllow`9, free completion75/mode25, then build/diff/clean-tree checks. Task `bg-51780e01-8360-4e46-8841-6f69584cca52`, exit0, 9,485 PASS lines (full gate9,347 + extra138). Preview210 real Ink/files/pty covers reversible exact text, paging, small frame, resize, stale withdrawal/successor, cancel/once/back, save failure and revoke. |
+
+- Docs: README, permissions narrative/reference EN/zh and load-bearing rationale/compact AGENTS row synchronized; AGENTS32,761 bytes. Build independently refreshed. No generator, matcher, suggestion scope, exemption or SDK-loop change. Tiny terminal must enlarge to save; user can still return/deny/approve once/cancel. Stash untouched.
+- Initial task spend: `usage: input=62 output=26569 cacheRead=2505108 cacheWrite=129235`; `cost: total=5.4496 input=0.0006 output=1.3285 cacheRead=2.5051 cacheWrite=1.6154 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`.
+- Retry spend: `usage: input=56 output=11667 cacheRead=4056037 cacheWrite=26791`; `cost: total=4.9748 input=0.0006 output=0.5834 cacheRead=4.0560 cacheWrite=0.3349 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`.
+- Direction aggregate: input118, output38,236, cacheRead6,561,145, cacheWrite156,026; USD10.4244. Batch running aggregate: input372, output119,825, cacheRead23,441,122, cacheWrite523,258; USD35.9767. These are worker invocations, not a price for separate live acceptance probes. Remaining SER-098–SER-099; continue.

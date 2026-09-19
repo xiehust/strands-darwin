@@ -169,7 +169,7 @@ Source S2c (Codex exec-policy `prefix_rule` ships inline `match`/`not_match` uni
 
 ## SER-097 — Suggest the exact allow rule at the permission prompt: answering "always" shows the exact rule text before it is persisted (derived from the exact `(toolName, input)`, e.g. the bounded bash wildcard for the command's stable prefix), and the post-write notice names the rule so `/permissions` can revoke it; no grammar or auto-approval change
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 129
 - Score: 9
 - Importance: 3
@@ -181,7 +181,7 @@ Source S2c (Codex exec-policy `prefix_rule` ships inline `match`/`not_match` uni
 
 ### Implementation / acceptance evidence
 
-(empty — not yet implemented)
+Accepted 2026-09-19 in `c526522e96c6dc301cbf182f8c94ca3582468ba0`, child `session-20260919-032104114` (one provider-server-error retry in the same session, not an acceptance correction). Host reviewed 16 changed files and independently passed `pnpm typecheck`, full `pnpm test` (preview210 plus existing permission/mode/deny/dry-run/frame/visual regressions), live `AWS_REGION=us-west-2 pnpm tsx spike/verify-tui.ts approve`29 and `alwaysAllow`9, free `completion`75 and `mode`25, `pnpm build`, diff/clean-tree checks; task `bg-51780e01-8360-4e46-8841-6f69584cca52`, exit 0, 9,485 PASS lines. a/A selects unchanged suggestion for exact reversible ASCII-JSON review in existing modal; Enter pages then saves only a flushed last page, b back/y once/n-Esc deny, resize restarts, stale request refuses. Existing saved/session-only notice and revocation reused; generator/matcher/grammar unchanged. Small terminal cannot save until enlarged. README/permissions/reference EN/zh and architecture synchronized; AGENTS32,761 bytes, dist built. See iteration-log Batch 140.
 
 ### Notes / blockers / abandonment reason
 
