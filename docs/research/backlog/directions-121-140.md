@@ -209,7 +209,7 @@ Source S2 (Codex v0.155.0 "Added task hiding, archiving, and deletion in the age
 
 ## SER-099 — `darwin import --from claude-code`: read-only scan of `~/.claude/` and project `.claude/`/`CLAUDE.md` printing a bounded migration plan; `--apply` copies prompt-content layers only (skills, agents, CLAUDE.md → AGENTS.md section) and prints the exact `mcp.json`/permission-rule snippets for the user to paste; executable config (hooks, MCP) is never armed by the import itself
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 131
 - Score: 6
 - Importance: 3
@@ -221,7 +221,7 @@ Source S2 (Codex v0.155.0 "Added task hiding, archiving, and deletion in the age
 
 ### Implementation / acceptance evidence
 
-(empty — not yet implemented)
+Accepted 2026-09-19 in `84151059ae870776e96f8d5a887de3c562b4d457`, fresh child `session-20260919-044344757`. Host reviewed 19-file diff and independently ran `pnpm typecheck && pnpm test && pnpm build && git diff --check && test -z "$(git status --porcelain)"`, task `bg-d283f7ae-e885-40b2-ba51-f31058e000b1`, exit0, 9,465 PASS lines including import104/CLI-doc43 and existing loaders/trust regressions. Private-HOME real CLI/files and actual loaders prove no-write scan, scoped supported prompt copy, preserved restrictions, AGENTS append/repeat/cap, collisions, symlink/hardlink/special-file refusal, changed-since-scan refusal, bounded output, valid manual snippets and no executable policy/trust/session startup. Safe importer currently requires Linux descriptor-relative no-follow access; other hosts remain manual. Only plain name/description/body skills and agents (optional empty tools array) auto-map; nonempty tool restrictions/other frontmatter/global instructions remain explicit manual migration. MCP credentials/arbitrary shapes and ~/.claude.json are not exposed; snippets are candidates, not equivalent policy. Apply is nontransactional and reports partial I/O failure without rollback. No import ran against real HOME/repository. README/getting-started/extensions/permissions/reference EN/zh and architecture synchronized, AGENTS unchanged32,761 bytes; dist rebuilt. See iteration-log Batch142.
 
 ### Notes / blockers / abandonment reason
 
