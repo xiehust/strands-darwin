@@ -42,6 +42,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--continue|--resume [<id>]|--session <id>] [permission flags]
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
+       darwin permissions test <rule>
        darwin doctor
        darwin cloud-memory [status|preferences|list|inspect|pending|preview] …
        darwin trajectory <list|search|replay|fork> …
@@ -62,6 +63,19 @@ Exit hint: when the TUI exits after at least one prompt, the last stdout line is
 ### Stream idle failure
 
 Root config `streamIdleTimeoutSeconds` defaults to `120` (`0` disables). A silent parent model stream fails with `StreamIdleError: stream idle for Ns`, without retry or continuation. All three `-p` formats write one `stream: stream idle for Ns` stderr line and exit 1; JSON/JSONL retain the ordinary turn-stage error in the terminal record (no new event type). User cancellation remains cancellation. [Exact timing scope and excluded waits](configuration.md#stream-idle-watchdog).
+
+### `darwin permissions test <rule>`
+
+Quote one candidate argument, for example `darwin permissions test 'bash:pnpm *'`.
+Read-only canonical parse/allow/deny matcher report, not execution approval. CLI scope:
+this project's persisted trajectory directories (20 reverse-lexical session ids), current
+project `permission-rules.json` deny rules; no global config, legacy policy or SDK startup.
+TUI counterpart `/permissions test <rule>` uses only the current session and live deny list,
+including while busy. No tool, hook, model, network, config/rule write or gate mutation.
+Invalid usage/parse exits 2; valid report exits 0, even with unavailable evidence. Caps:
+2,000-code-point candidate, 2 MiB/file, 8 MiB total, 20 pair rows, 240 code points/cell.
+Damage, disabled/stopped/missing recording, truncation/redaction, omitted rows and buffered
+calls are explicit; no complete-history/no-match claim. See [permission tests](permissions.md#test-a-candidate-without-granting-it).
 
 ### `darwin doctor`
 
@@ -111,6 +125,7 @@ Rules and limits:
 | `/mode [mode]` | show/set user-only live permission mode; not persisted |
 | `/model [name]` | list/switch configured models, conversation intact; a warm-cache notice precedes a switch |
 | `/permissions` | live allow rules and origins, then configured deny rules |
+| `/permissions test <rule>` | read-only canonical matcher test against this session's recorded pairs and live deny list; works while busy, no model or gate mutation |
 | `/permissions revoke <n/rule/all>` | synchronously narrow live/disk allow rules; deny rules are never revoked here |
 | `/review [focus]` | exact case-insensitive built-in; bare form reviews staged/unstaged changes and relevant untracked files with repository instructions and surrounding code. One ordinary prompt requests prioritized bugs with file/line evidence, separate test gaps, no speculative/style-only findings, honest no-findings and unverified limits. Trimmed focus stays verbatim under `Focus:`. No edits/commits unless separately requested is guidance, not enforced read-only mode: no mode switch or automatic delegation; existing gate applies. Queues/attachments and literal trajectory input unchanged. Reserves `review` over custom commands/skill invocations; rename them, e.g. `audit` ([guide](using-darwin.md#reviewing-changes)) |
 | `/rewind` | chooser over this session's completed prompt checkpoints — prompts whose turn the model finished, answered or declined (a refusal-class stop); failed and cancelled turns are absent; accepting branches the conversation into a fresh successor session restored to the state before the selected prompt, which returns to the editor unsent (rewinding to a declined prompt removes the declined reply before you rephrase); files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned memory are never rolled back |

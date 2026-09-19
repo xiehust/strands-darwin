@@ -28,6 +28,7 @@ import {
 } from '../agent/permission.js';
 import { compactAndRecord, compactFocusRefusal, normalizeCompactFocus } from '../agent/compact.js';
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
+import { permissionTestReport } from '../permissions-test.js';
 import type { RewindCatalogue } from '../agent/rewind.js';
 import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { describeModelCosts, type ModelUsageShare } from '../agent/cost.js';
@@ -1361,7 +1362,7 @@ export function App({
       // like /mode: this never reaches the agent, and there is no tool that can
       // invoke it. Additions have no path through here; they stay exclusively
       // with the permission-prompt grant flow.
-      if (text === '/permissions' || text.startsWith('/permissions ')) {
+      if (/^\/permissions(?:\s|$)/.test(text)) {
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
@@ -3618,7 +3619,25 @@ export function applyPermissionsCommand(
   dispatch: (action: TurnAction) => void,
 ): void {
   const argument = text.slice('/permissions'.length).trim();
-  const usage = 'usage: /permissions — list allow- and deny-rules · /permissions revoke <n|rule|all> (allow-rules only)';
+  const usage = 'usage: /permissions — list allow- and deny-rules · /permissions revoke <n|rule|all> (allow-rules only) · /permissions test <rule>';
+
+  // Consume the remaining string intact; splitting/joining would change bash patterns.
+  if (/^test(?:\s|$)/i.test(argument)) {
+    const rule = argument.slice(4).trim();
+    if (rule === '') {
+      dispatch({ type: 'notice', text: `test needs a rule\n  ${usage}` });
+      return;
+    }
+    const status = runtime.trajectoryStatus;
+    void permissionTestReport(rule, {
+      projectRoot: runtime.info.projectRoot,
+      sessionId: runtime.info.sessionId,
+      denyRules: [...runtime.listDenyRules()],
+      recording: status === undefined ? 'disabled' : status.active ? 'active' : 'stopped',
+    }).then(text => dispatch({ type: 'notice', text }),
+      () => dispatch({ type: 'notice', text: 'permissions test: evidence unavailable; no rules changed' }));
+    return;
+  }
 
   if (argument === '') {
     dispatch({

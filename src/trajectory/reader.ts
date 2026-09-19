@@ -7,7 +7,7 @@
  * counted, never repaired — the record is append-only, so a reader that rewrote it
  * to "fix" a line would destroy the only evidence of what happened.
  */
-import { readFile } from 'node:fs/promises';
+import { open, readFile } from 'node:fs/promises';
 
 import { parseRecordLine, type TrajectoryRecord } from './record.js';
 
@@ -31,11 +31,12 @@ export class TrajectoryMissingError extends Error {
   }
 }
 
-export async function readTrajectory(file: string): Promise<TrajectoryReadResult> {
+export async function readTrajectory(file: string, maxBytes?: number): Promise<TrajectoryReadResult> {
   let raw: string;
   let bytes: number;
   try {
-    const buffer = await readFile(file);
+    // Optional observer budget: a growing file must not defeat a prior stat check.
+    const buffer = maxBytes === undefined ? await readFile(file) : await readBounded(file, maxBytes);
     bytes = buffer.byteLength;
     raw = buffer.toString('utf8');
   } catch (error) {
@@ -69,4 +70,21 @@ export function describeDamage(result: TrajectoryReadResult): string | undefined
   if (result.partialTrailingLine) parts.push('ignored 1 partial trailing line');
   if (result.unreadableLines > 0) parts.push(`skipped ${result.unreadableLines} unreadable line(s)`);
   return parts.length === 0 ? undefined : parts.join('; ');
+}
+
+async function readBounded(file: string, maxBytes: number): Promise<Buffer> {
+  const handle = await open(file, 'r');
+  try {
+    const buffer = Buffer.alloc(maxBytes + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset > maxBytes) throw new Error('trajectory read budget exceeded');
+    return buffer.subarray(0, offset);
+  } finally {
+    await handle.close();
+  }
 }

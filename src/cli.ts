@@ -26,7 +26,10 @@ if (refusal !== undefined) {
 } else {
   const args = process.argv.slice(2);
   if (args[0] === '--') args.shift();
-  if (args[0] === 'cloud-memory' && !args.some(arg => ['--help', '-h', '--version', '-V'].includes(arg))) {
+  if (args[0] === 'permissions' && !args.some(arg => ['--help', '-h', '--version', '-V'].includes(arg))) {
+    const { runPermissionsCli } = await import('./cli-permissions.js');
+    await runPermissionsCli(process.cwd(), args.slice(1));
+  } else if (args[0] === 'cloud-memory' && !args.some(arg => ['--help', '-h', '--version', '-V'].includes(arg))) {
     const { runCloudMemoryCli } = await import('./agentcore/cli.js');
     await runCloudMemoryCli(process.cwd(), args.slice(1));
   } else {

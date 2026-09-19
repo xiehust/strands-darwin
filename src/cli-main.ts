@@ -5,6 +5,7 @@
  * so this module must never be the entry point: on an unpatched SDK it fails at ESM
  * link time, before any statement could print a readable refusal.
  *
+ * The SDK-free `permissions test` observer is routed by `cli.ts` before this module.
  * The usage grammar lives in one place, `CLI_USAGE` in `./cli-usage.ts` — it is what
  * `darwin --help` prints and what `docs/user-guide/reference.md` quotes, so it is not
  * repeated here.

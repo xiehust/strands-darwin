@@ -438,6 +438,33 @@ notice says so and names the file), so "only narrows" is intact; `/status` and t
 because they are what `yolo` still refuses. Free checks: `spike/verify-deny-rules.ts` (in
 `pnpm test`), plus the status and config suites.
 
+**Permission-rule dry-run (SER-096) is an observer, never a second gate.**
+`src/permissions-test.ts` uses `parseRule`, `matchesAnyRule` and `matchesAnyDenyRule` unchanged;
+`darwin permissions test <rule>` routes in the bootstrap before `cli-main` imports the SDK,
+and `/permissions test <rule>` is a bounded Static notice above busy queueing. Neither
+route invokes a tool, hook, model or network, writes policy/session state, or mutates the
+gate. CLI reads the current user-owned project rules file only (no global/legacy config
+loader); TUI snapshots its current deny list. Missing/damaged CLI policy means unknown,
+not no deny. CLI scope is current-project trajectory directories, reverse-lexical ids,
+20 sessions; TUI is current session only. Both state that scope and that matcher outcomes
+are not safe/plan/yolo/hook execution promises. Candidate grammar is canonical, with a
+2,000-code-point command budget; argv requires one quoted argument, TUI keeps the remainder.
+
+The tolerant trajectory reader has an optional bounded read (2 MiB/file, 8 MiB aggregate
+here); normal readers are unchanged. The projection understands the SDK's nested wire
+ToolUseBlock in before-call and content-block events, collapses exact duplicate pairs
+within a session, and never tries to recover a redacted input from another channel.
+Truncation, depth/reasoning removal and redaction placeholders make a pair unknown; damage,
+missing/stopped recording, unmatched permission decisions and skipped files/entries are
+stated. Buffered busy events, children and disabled periods prevent any complete-history
+claim. At most 20 pair rows, 240 code points per escaped cell and eight evidence notices
+are shown, with omission counts; only display is clipped, not matcher inputs. Symlinked
+paths are refused rather than following another project's record. No second history store,
+recorder flush, live transcript read, session initialization or resume-pointer movement.
+Checks: `verify-permissions-test.ts` (real SDK-projected files, real CLI with invalid global
+config, import graph, byte-identical state and busy pty), existing permissions/deny suites,
+CLI usage/docs and TUI completion.
+
 ## Workspace trust — repository-supplied executable configuration is held until consented to
 
 **A checkout is untrusted input, and nothing it carries may execute or pre-authorize at launch

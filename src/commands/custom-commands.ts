@@ -51,7 +51,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   model: 'list or switch models',
   // Rules, not the mode: /permissions lists allow- and deny-rules and revokes
   // allow-rules (what runs silently); /mode moves how much everything else asks.
-  permissions: 'list allow/deny rules, revoke allow-rules',
+  permissions: 'list/test allow/deny rules, revoke allow-rules',
   // Prompt guidance only; the active permission mode still governs tool calls.
   review: 'review current changes for bugs and test gaps',
   // Conversation only: branches from an SDK checkpoint and never rolls back files.

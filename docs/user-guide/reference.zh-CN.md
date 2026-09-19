@@ -43,6 +43,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--continue|--resume [<id>]|--session <id>] [permission flags]
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
+       darwin permissions test <rule>
        darwin doctor
        darwin cloud-memory [status|preferences|list|inspect|pending|preview] …
        darwin trajectory <list|search|replay|fork> …
@@ -63,6 +64,18 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 ### 模型流空闲失败
 
 根级 `streamIdleTimeoutSeconds` 默认 `120`（`0` 关闭）。主代理模型流无响应时以 `StreamIdleError: stream idle for Ns` 失败，不重试或续接。三种 `-p` 格式都在 stderr 输出一行 `stream: stream idle for Ns` 并以 1 退出；JSON/JSONL 保留终端记录中的普通 turn 阶段错误，不新增事件类型。用户取消仍按取消处理。[准确计时范围与排除的等待](configuration.zh-CN.md#模型流空闲检测)。
+
+### `darwin permissions test <rule>`
+
+规则作为一个参数传入，例如 `darwin permissions test 'bash:pnpm *'`。
+只读复用原解析器、放行与拒绝匹配器，结果不是执行许可。CLI 仅检查当前项目已落盘的
+trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permission-rules.json` 的拒绝规则；
+不加载全局配置、旧式策略或 SDK。TUI `/permissions test <rule>` 仅检查当前会话与当前拒绝
+规则，忙碌时也可用。不执行工具、hook、模型或网络操作，不写配置/规则、不改 gate。
+用法或解析错误退出码为 2；有效报告为 0，即使证据不可用。上限：候选规则 2,000 码点，
+每文件 2 MiB、合计 8 MiB、20 行调用对、每字段 240 码点。损坏、禁用/停止/缺失记录、
+截断/脱敏、省略行和未落盘调用均明确说明，不声称完整历史或完整无匹配。
+详见[权限测试](permissions.zh-CN.md#只测试候选规则不授予权限)。
 
 ### `darwin doctor`
 
@@ -112,6 +125,7 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 | `/mode [mode]` | 查看/设置仅用户可改的当前权限模式；不持久化 |
 | `/model [name]` | 列出/切换已配置模型，会话不断开；缓存尚热时切换前先提示一次 |
 | `/permissions` | 当前放行规则及来源，随后是已配置的拒绝规则 |
+| `/permissions test <rule>` | 只读检查本会话已记录调用与当前拒绝规则，复用原匹配器；忙碌时可用，不调用模型、不改 gate |
 | `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘上的放行规则；拒绝规则不能在此撤销 |
 | `/review [focus]` | 精确匹配、不区分大小写；裸命令结合仓库指令、周围代码审查暂存／未暂存改动及相关未跟踪文件。一条普通 prompt 要求按优先级报告有文件／行号证据的缺陷，单列测试缺口，避免推测和纯风格问题，如实说明无发现及未验证范围。focus 去掉首尾空白后原样放在 `Focus:` 下。未经另行请求不编辑／提交只是指引，不是强制只读：不切换模式、不自动委派，现有 gate 仍有效。排队、附图及字面轨迹不变。`review` 为保留名，同名自定义命令／skill 斜杠调用需改名，例如 `audit`（[指南](using-darwin.zh-CN.md#审查改动)） |
 | `/rewind` | 在本会话已完成提示词的检查点中选择——即模型跑完了回合的提示词，无论是回答还是拒绝（拒绝类停止原因）；失败和被取消的回合不在其中；接受后把对话分支到一个新的后继会话，恢复到所选提示词之前的状态，该提示词回到编辑器但不发送（回退到被拒绝的提示词会在你改写之前移除被拒绝的回复）；文件、shell 与 `!` 的效果、hooks、MCP 写入、子代理、后台任务和已学习记忆永不回滚 |

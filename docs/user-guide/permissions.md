@@ -80,6 +80,37 @@ Rules are project-scoped at `~/.darwin/projects/<project-key>/permission-rules.j
 
 Rules are checked after static safety and before classifier. A written rule therefore also avoids a classifier call.
 
+## Test a candidate without granting it
+
+Run `darwin permissions test 'bash:pnpm *'` from the project, or type
+`/permissions test bash:pnpm *` in the TUI (also while busy). The CLI needs one quoted
+rule argument; the TUI takes the whole remainder without shell quotes. Internal spaces,
+newlines, colons and shell metacharacters retain their meaning under the existing rule
+grammar. Blank/missing or extra CLI arguments and invalid rules are local usage errors
+(CLI exit 2); valid reports, including unavailable evidence, exit 0. Candidates are capped
+at 2,000 code points. There is no `add` command.
+
+The report shows the canonical parse, recorded `(toolName, input)` pairs, candidate allow
+matches, and which current deny rule beats each match. It describes **matcher results,
+not permission to execute**: safe/plan/yolo, hooks and other gate policy are not simulated.
+Nothing runs; no model, network, tool or hook is called, no rule is granted/revoked, and no
+config, trajectory, snapshot, resume pointer or live gate is changed.
+
+The scope is printed: CLI reads only this project's trajectory directories, at most 20
+session ids in reverse lexical order, and the current user-owned
+`~/.darwin/projects/<project-key>/permission-rules.json` deny list. It does not load global
+config or legacy policy; missing/damaged policy makes deny precedence unknown. TUI reads
+only the current session's persisted trajectory and a snapshot of its live deny list.
+Neither route reads another project, offloaded content, snapshots or live tool inputs.
+
+Evidence is deliberately partial: at most 2 MiB per file and 8 MiB total; larger files
+are skipped, not silently shortened. Missing, damaged, stopped, truncated, redacted or
+placeholder input is reported, never reconstructed. Disabled periods, child inputs and
+busy-turn buffered events may be absent. No report claims complete history or a complete
+no-match. Duplicate exact pairs are collapsed within each session. At most 20 pair rows
+are displayed; each cell is escaped and capped at 240 code points, with display clipping
+and omitted rows stated. Matching uses the unshortened recorded input, never the preview.
+
 ## Deny rules
 
 The same file takes a second array, `deny`, in the same grammar. A deny rule is a prohibition you write down once: it holds in every mode — `yolo` included — for the main agent and for every subagent or workflow node, and it wins over any matching allow rule, whether configured or granted this session.
