@@ -189,7 +189,7 @@ Source S2c ("When Smart approvals are enabled (the default), Codex may propose a
 
 ## SER-098 — `/agents` overview gains a settled-dispatch summary line: counts by terminal state (succeeded/failed/cancelled) for the session's dispatches on the existing panel, from the dispatch registry's own records; no persistence, no deletion, no new surface
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 130
 - Score: 11
 - Importance: 2
