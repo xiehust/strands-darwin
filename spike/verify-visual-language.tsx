@@ -244,7 +244,7 @@ const permission = plain(renderToString(
 for (const detail of [
   '◆ permission required', '(execute — runs a process)', '2 more queued',
   '[general#dispatch-1] bash: pnpm test', 'Command:', 'pnpm test',
-  'allow? y n always: a=pnpm * A=all bash esc=deny',
+  'allow? y n always: a=review rule A=review tool esc=deny',
 ]) {
   assert(`permission modal retains ${detail}`, permission.includes(detail));
 }
@@ -283,7 +283,7 @@ for (const detail of [
   '[parent] fileEditor str_replace: /workspace/src/calc.ts',
   'Path:', '/workspace/src/calc.ts', 'Operation:', 'str_replace',
   'Diff (+1 -1):', '-   return n + 2;', '+   return n * 2;',
-  'allow? y n always: a=/workspace/src/** A=all fileEditor esc=deny',
+  'allow? y n always: a=review rule A=review tool esc=deny',
 ]) {
   assert(`edit modal retains ${detail}`, editPermission.includes(detail));
 }

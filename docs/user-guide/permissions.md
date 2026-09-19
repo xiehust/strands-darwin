@@ -49,7 +49,7 @@ A prompt identifies risk and source:
 ```text
 permission required (execute — `curl` is not on the safe-command list)
 [explorer#a1b2c3d4] bash: curl https://example.com
-allow? y n always: a=curl * A=all bash esc=deny
+allow? y n always: a=review rule A=review tool esc=deny
 ```
 
 `[parent]` means the main agent; `[agent#dispatch]` identifies a child. Permission prompts serialize even when read-heavy subagents run in parallel.
@@ -60,8 +60,12 @@ allow? y n always: a=curl * A=all bash esc=deny
 
 - `y`: this call only.
 - `n` or `Esc`: deny.
-- `a`: approve and persist the narrow proposed rule.
-- `A`: approve and persist a tool-wide rule.
+- `a`: review the narrow proposed rule; `A`: review the whole-tool rule. Neither grants anything yet.
+- During review, `Enter` advances through the full rule, then saves and approves on the last page. `b` goes back without answering; `y` still allows this call only, `n`/`Esc` deny, and `Ctrl+C` cancels.
+
+Review replaces the permission box within its existing frame budget. The exact rule from this call's tool name and input is shown as an ASCII JSON string (for example, `"bash:curl\u0020*"`): spaces use `\u0020` so row-edge whitespace cannot disappear; quotes, backslashes, Unicode and controls also use JSON escapes, never terminal control sequences. Joining the displayed rule rows and JSON-decoding them gives the exact saved string. Long rules require every page; resizing restarts review. If the terminal cannot fit the rule and keys, saving is disabled until it is enlarged. A withdrawn or replaced request invalidates its review.
+
+The save notice names the rule and the rules file. A failed write says the rule applies to this session only. Use `/permissions` to find its number and `/permissions revoke <n>` to revoke it; reviewing never changes rule grammar, suggestion scope, exemptions or deny precedence.
 
 Rules are project-scoped at `~/.darwin/projects/<project-key>/permission-rules.json`:
 

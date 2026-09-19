@@ -310,8 +310,8 @@ async function approvePath(): Promise<void> {
     assert('prompt offers y and n on the reachable decision row', /allow\?\s+y\s+n/.test(permissionFrame));
     // The wildcard offers stay on the same row as y/n so all decision keys remain
     // reachable without adding another row to the 50-row frame.
-    assert('prompt offers the narrow wildcard rule', permissionFrame.includes('always: a=/tmp/darwin-tui-target/…'));
-    assert('prompt offers the whole tool as well', permissionFrame.includes('A=all fileEditor'));
+    assert('prompt offers review of the narrow wildcard rule', permissionFrame.includes('always: a=review rule'));
+    assert('prompt offers review of the whole tool as well', permissionFrame.includes('A=review tool'));
 
     assert('input box is replaced while awaiting permission', awaitsPermission(permissionFrame));
     assert('assistant text was streamed to the screen', tui.screen.includes('agent'));
@@ -406,6 +406,10 @@ async function alwaysAllowRule(): Promise<void> {
 
     const afterAnswer = tui.mark();
     tui.send('a');
+    await tui.waitFor('enter=save', { timeoutMs: 30_000, from: afterAnswer, settleMs: 400 });
+    assert('always reviews the exact rule before saving', tui.frame.includes(JSON.stringify(expectedRule)));
+    assert('selection has not persisted the rule', !existsSync(rulesFile));
+    tui.send('\r');
 
     await tui.waitFor('always allowing', { timeoutMs: 120_000, from: afterAnswer });
     assert(

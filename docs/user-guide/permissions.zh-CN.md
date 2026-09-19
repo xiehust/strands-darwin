@@ -49,7 +49,7 @@
 ```text
 permission required (execute — `curl` is not on the safe-command list)
 [explorer#a1b2c3d4] bash: curl https://example.com
-allow? y n always: a=curl * A=all bash esc=deny
+allow? y n always: a=review rule A=review tool esc=deny
 ```
 
 `[parent]` 表示主代理；`[agent#dispatch]` 标识某次子代理调用。即使多个读型子代理并行执行，权限框仍会串行出现。
@@ -60,8 +60,12 @@ allow? y n always: a=curl * A=all bash esc=deny
 
 - `y`：只批准本次调用。
 - `n` 或 `Esc`：拒绝。
-- `a`：批准，并保存当前提议的窄规则。
-- `A`：批准，并保存整个工具的规则。
+- `a`：预览当前提议的窄规则；`A`：预览整个工具的规则。此时尚未放行或保存。
+- 预览中，按 `Enter` 逐页阅读完整规则，最后一页再按一次才保存并批准。`b` 返回权限框、不作答；`y` 仍只批准本次调用，`n`/`Esc` 拒绝，`Ctrl+C` 取消。
+
+预览沿用权限框的行数预算，不增加屏幕区域。它显示由本次工具名及原始输入生成的完整规则，采用 ASCII JSON 字符串形式，例如 `"bash:curl\u0020*"`：空格显示为 `\u0020`，避免行首行尾空白消失；引号、反斜杠、Unicode 和控制字符也以 JSON 转义显示，不执行终端控制序列。拼接各页规则行并按 JSON 解码，得到的就是实际保存的字符串。长规则必须逐页查看；改变终端尺寸会从头预览。终端放不下规则和按键提示时，保存被禁用，扩大窗口后才能继续。请求被撤回或替换后，旧预览失效。
+
+保存提示会指出规则及规则文件；写入失败则说明仅本会话生效。用 `/permissions` 查到编号，再用 `/permissions revoke <n>` 撤销。预览不改变规则语法、建议范围、敏感路径豁免或拒绝规则优先级。
 
 规则按项目存于 `~/.darwin/projects/<project-key>/permission-rules.json`：
 

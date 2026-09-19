@@ -55,6 +55,7 @@ const suites = [
   'verify-update-plan.tsx',
   'verify-context-offload.ts',
   'verify-permission-presentation.ts',
+  'verify-permission-rule-preview.tsx',
   'verify-edit-diff.ts',
   'verify-file-editor.ts',
   'verify-file-editor-serial.ts',

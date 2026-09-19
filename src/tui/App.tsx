@@ -84,6 +84,7 @@ import {
 } from './frame-budget.js';
 import { MessageList } from './MessageList.js';
 import { PermissionPrompt, permissionBoxClaim } from './PermissionPrompt.js';
+import { PermissionRulePreview, ruleReviewClaim, ruleReviewLayout, type RuleReview } from './permission-rule-preview.js';
 import { welcomeLayout } from './WelcomeHeader.js';
 import { ActiveToolCalls } from './ToolCallPanel.js';
 import { QueuedMessages } from './QueuedMessages.js';
@@ -526,6 +527,11 @@ export function App({
     permissions.getSnapshot,
   );
 
+  const [ruleReview, setRuleReview] = useState<RuleReview | undefined>();
+  const renderedRuleReview = useRef<RuleReview | undefined>(undefined);
+  const reviewing = ruleReview?.request === pendingPermission && pendingPermission !== undefined
+    ? ruleReview : undefined;
+
   // Background activity is independent of the foreground turn.
   // The manager publishes starts and terminal transitions, never output or ticks.
   const subscribeTaskActivity = useCallback(
@@ -829,7 +835,9 @@ export function App({
             floor: 1,
           }
         : {
-            wanted: permissionBoxClaim(pendingPermission, permissions.waiting, columns),
+            wanted: reviewing === undefined
+              ? permissionBoxClaim(pendingPermission, permissions.waiting, columns)
+              : ruleReviewClaim(reviewing.rule, columns),
             // The box keeps its heading, summary and decision row while it can:
             // a question that scrolled off the frame blocks the agent loop.
             floor: PERMISSION_BOX_FIXED_ROWS,
@@ -853,6 +861,26 @@ export function App({
     // guaranteed to reach `<Static>` history in full.
     live: { wanted: liveTextRows === 0 ? 0 : liveTextRows + LIVE_BLOCK_CHROME_ROWS, floor: 0 },
   });
+
+  // A changed viewport starts review over. An Enter may acknowledge only a page
+  // flushed by Ink, never a newly selected rule or an unrendered next page.
+  const activeRuleReview = useMemo(() => reviewing === undefined ? undefined : {
+    ...reviewing,
+    offset: reviewing.columns === columns && reviewing.maxRows === grants.prompt ? reviewing.offset : 0,
+    columns,
+    maxRows: grants.prompt,
+  }, [reviewing, columns, grants.prompt]);
+  useLayoutEffect(() => {
+    renderedRuleReview.current = undefined;
+    let current = true;
+    if (reviewing !== undefined && activeRuleReview !== undefined &&
+      (reviewing.columns !== columns || reviewing.maxRows !== grants.prompt)) setRuleReview(activeRuleReview);
+    else if (ruleReview !== undefined && reviewing === undefined) setRuleReview(undefined);
+    else if (activeRuleReview !== undefined) void waitUntilRenderFlush().then(() => {
+      if (current) renderedRuleReview.current = activeRuleReview;
+    }, () => { /* A failed flush never enables saving. */ });
+    return () => { current = false; };
+  }, [activeRuleReview, reviewing, ruleReview, columns, grants.prompt, waitUntilRenderFlush]);
 
   // One clock for live tools and the background-task marker, including while the
   // foreground is idle or awaiting permission. No tick when all activity stops.
@@ -2101,6 +2129,11 @@ export function App({
    */
   const answerPermission = useCallback(
     (decision: PermissionDecision) => {
+      // The queue may have withdrawn/replaced the rendered question before React
+      // handles this key. Neither answer nor persistence may target its successor.
+      if (pendingPermission === undefined || permissions.current !== pendingPermission || pendingPermission.withdrawn.aborted) return;
+      renderedRuleReview.current = undefined;
+      setRuleReview(undefined);
       permissions.answer(decision);
       const rule = decision.rule;
       if (rule === undefined) return;
@@ -2124,7 +2157,7 @@ export function App({
         },
       );
     },
-    [permissions, runtime],
+    [pendingPermission, permissions, runtime],
   );
 
   /** Any edit ends the walk: the draft is the user's again, not an entry from the record. */
@@ -2473,15 +2506,32 @@ export function App({
 
     // Confirmations take the keyboard while one is pending.
     if (pendingPermission !== undefined) {
-      // Ctrl+Y is a composer chord, never plain approval.
+      if (permissions.current !== pendingPermission || pendingPermission.withdrawn.aborted) return;
+      // Ctrl+Y is a composer chord, never plain approval. y stays once-only even
+      // during review; Esc still denies (b is the non-denying way back).
       if ((typed === 'y' || typed === 'Y') && !key.ctrl && !key.meta) answerPermission({ allowed: true });
       else if (typed === 'n' || typed === 'N' || key.escape) answerPermission({ allowed: false });
-      // Lowercase takes the narrow offer, uppercase the whole tool — the more
-      // sweeping choice costs the more deliberate keystroke.
-      else if (typed === 'a' || typed === 'A') {
+      else if (!key.ctrl && !key.meta && typed === 'b' && reviewing !== undefined) {
+        renderedRuleReview.current = undefined;
+        setRuleReview(undefined);
+      } else if (!key.ctrl && !key.meta && key.return && reviewing !== undefined) {
+        const shown = renderedRuleReview.current;
+        if (shown === undefined || shown !== activeRuleReview) return;
+        const page = ruleReviewLayout(shown.rule, columns, grants.prompt, shown.offset);
+        if (!page.ready) return;
+        renderedRuleReview.current = undefined;
+        if (page.end < page.total) setRuleReview({ ...shown, offset: page.end });
+        else answerPermission({ allowed: true, rule: shown.rule });
+      }
+      // Lowercase reviews the narrow offer; uppercase reviews the whole tool.
+      // Selection alone never resolves the call or writes a rule.
+      else if (!key.ctrl && !key.meta && (typed === 'a' || typed === 'A')) {
         const suggestions = pendingPermission.suggestions;
         const chosen = typed === 'a' ? suggestions[0] : suggestions[suggestions.length - 1];
-        if (chosen !== undefined) answerPermission({ allowed: true, rule: chosen.rule });
+        if (chosen !== undefined) {
+          renderedRuleReview.current = undefined;
+          setRuleReview({ request: pendingPermission, rule: chosen.rule, offset: 0, columns, maxRows: grants.prompt });
+        }
       }
       return;
     }
@@ -2916,7 +2966,7 @@ export function App({
             its height and the cursor stays on its draft row. */}
         <QueuedMessages entries={queued} maxRows={grants.queued} />
 
-        {pendingPermission !== undefined ? (
+        {activeRuleReview !== undefined ? <PermissionRulePreview review={activeRuleReview} /> : pendingPermission !== undefined ? (
           <PermissionPrompt
             request={pendingPermission}
             waiting={permissions.waiting}

@@ -407,6 +407,24 @@ mid-turn is the point) and has no add form at all — additions stay exclusively
 permission prompt. Adding the twelfth built-in grew `MAX_COMPLETIONS` with it; the free checks
 are `spike/verify-permissions-command.ts` (in `pnpm test`) and `spike/verify-tui.ts completion`.
 
+**Exact approval-time rule review (SER-097).** `a`/`A` select the existing
+`suggestRules` result (narrow/whole-tool), never its clipped label, and open review
+in the permission region's existing modal frame grant. The full rule is an ASCII
+JSON string: reversible escapes keep controls, bidi, combining characters and
+surrogates visible instead of letting the terminal reinterpret them; spaces are
+escaped too because Ink trims row-edge whitespace. One counted
+`Text` per row, no content truncation; Enter traverses each page and only the last
+page can save. A too-small grant disables saving, resize resets traversal, `b`
+returns without answering, `y` stays once-only, `n`/Esc deny and Ctrl+C cancels.
+Ink-flushed page identity prevents a batched key from confirming an unseen
+page; request identity and the queue's current/withdrawn checks prevent a stale
+review from answering or persisting for a successor. The existing `answerPermission`
+save flow and success/session-only failure notices remain the grant lifecycle;
+`/permissions` remains its narrowing counterpart. No matcher, generator, exemption,
+deny order or automatic approval changes. Free check:
+`spike/verify-permission-rule-preview.tsx` (Ink + real App pty + real files, in
+`pnpm test`); live checks: `tui approve` and `tui alwaysAllow`.
+
 **Deny-rules (SER-076) are the one permission expression the allow side cannot make: a
 prohibition the user writes down once and that holds with nobody watching.** They live in the
 same project-scoped file as a second array, `permissionRules.deny`, in exactly the allow grammar

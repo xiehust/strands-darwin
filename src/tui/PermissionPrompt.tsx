@@ -233,9 +233,11 @@ function ruleOptions(request: AssessedPermissionRequest): { key: string; label: 
   const [specific] = request.suggestions;
   const wholeTool = request.suggestions[request.suggestions.length - 1];
   if (specific === undefined || wholeTool === undefined) return [];
-  if (specific.rule === wholeTool.rule) return [{ key: 'a', label: specific.label }];
+  // These are navigation keys, not grants. The selected suggestion.rule is
+  // reviewed in full in this same modal before Enter can persist it.
+  if (specific.rule === wholeTool.rule) return [{ key: 'a', label: 'review rule' }];
   return [
-    { key: 'a', label: specific.label },
-    { key: 'A', label: wholeTool.label },
+    { key: 'a', label: 'review rule' },
+    { key: 'A', label: 'review tool' },
   ];
 }
