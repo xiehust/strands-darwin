@@ -60,6 +60,10 @@ With -p, piped (non-TTY) stdin is read to EOF and appended to <message> as one d
 
 退出提示：TUI 在至少发送过一条提示词后退出时，stdout 的最后一行是 `session <id> · resume: darwin --resume <id>`，指向退出时仍在使用的会话（`/clear` 或 `/rewind` 的后继报告自己的 ID）；从未发送提示词的会话、`-p` 运行、以及启动时被拒绝的情况都不打印这一行。
 
+### 模型流空闲失败
+
+根级 `streamIdleTimeoutSeconds` 默认 `120`（`0` 关闭）。主代理模型流无响应时以 `StreamIdleError: stream idle for Ns` 失败，不重试或续接。三种 `-p` 格式都在 stderr 输出一行 `stream: stream idle for Ns` 并以 1 退出；JSON/JSONL 保留终端记录中的普通 turn 阶段错误，不新增事件类型。用户取消仍按取消处理。[准确计时范围与排除的等待](configuration.zh-CN.md#模型流空闲检测)。
+
 ### `darwin doctor`
 
 一份离线、只读的诊断报告，由会话启动时使用的同一批加载器拼成：`~/.darwin/config.json`（provider、模型、region 或 base URL、所指定的 API key 环境变量是否已设置——从不打印它的值——effort、prompt cache、context offload、trajectory / memory / diagnostics、权限模式）、系统提示词来源、项目指令文件（`AGENTS.md`，或回退的 `CLAUDE.md`）及其大小与 32 KiB 预载上限的对比、生效的 MCP 配置文件（哪个被读取、哪个被忽略）及每个已配置的 server——stdio `command` 只在 `PATH` 上查找，`http`/`sse` server 标为 `not connected (doctor never connects)`——各层技能目录的数量与每个被跳过的条目及原因、hook 文件及其方言（native 或 Codex 适配器）、permission-rules 文件、会话存储目录和版本。会让 TUI 拒绝启动的加载器错误（`ConfigError`）在这里变成一行问题：问题行以 `! ` 开头，末尾汇总计数，并决定退出码——没有问题为 0，至少一个为 1。`doctor` 不启动会话、不调用模型、不 spawn 或连接任何 MCP server、不联网、在任何位置都不创建或移动任何东西（连 `~/.darwin` 也不会创建）；它不接受参数（动词之后的任何内容都以用法错误退出 2）。由 `spike/verify-doctor-command.ts` 锁定。

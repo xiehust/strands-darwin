@@ -31,6 +31,7 @@ import {
   type BackgroundDelegationStatus,
 } from './background-delegation.js';
 import { installMaxTokensRecovery } from './max-tokens-recovery.js';
+import { installStreamIdleWatchdog } from './stream-idle.js';
 import { installModelCallBudget } from './model-call-budget.js';
 import { installModelRetry, type ModelRetryHandle, type ModelRetryOutcome, type RetryWaitState } from './model-retry.js';
 import { loadAgentDefinitions } from '../agents/loader.js';
@@ -944,6 +945,8 @@ export class AgentRuntime {
     toolForName = (name) => agent.tools.find((candidate) => candidate.name === name);
     installMaxTokensRecovery(agent);
     const modelRetry = installModelRetry(agent);
+    // Registered inside retry: deliberate backoff is never stream inactivity.
+    installStreamIdleWatchdog(agent, config.streamIdleTimeoutSeconds);
     backgroundDelegation.install(agent);
 
     // The constructor does not initialize; the SDK defers it to the first

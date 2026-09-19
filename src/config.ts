@@ -9,6 +9,8 @@ import { mkdirSync } from 'node:fs';
 
 import path from 'node:path';
 
+import { DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS, MAX_STREAM_IDLE_TIMEOUT_SECONDS, modelStreamMiddleware } from './agent/stream-idle.js';
+
 import { BedrockModel } from '@strands-agents/sdk';
 import type { BaseModelConfig, JSONValue, Model } from '@strands-agents/sdk';
 
@@ -219,6 +221,8 @@ export interface SessionFields {
    * Set to 0 to disable. Default: 0.8.
    */
   contextWarnRatio: number;
+  /** Parent model-stream inactivity in seconds; 0 disables. Default: 120. */
+  streamIdleTimeoutSeconds?: number;
   /**
    * Offload oversized tool results to session-scoped storage, keeping a preview
    * plus a reference in context. On by default; explicit `false` opts out.
@@ -415,6 +419,7 @@ export const SESSION_KEYS = [
   'summaryRatio',
   'preserveRecentMessages',
   'contextWarnRatio',
+  'streamIdleTimeoutSeconds',
   'contextOffload',
   'maxResultTokens',
   'terminalBell',
@@ -1221,6 +1226,9 @@ function validateSessionFields(
     contextWarnRatio:
       numberField(input, 'contextWarnRatio', configPath, { min: 0, max: 1 }) ??
       DEFAULTS.contextWarnRatio,
+    streamIdleTimeoutSeconds:
+      numberField(input, 'streamIdleTimeoutSeconds', configPath, { min: 0, max: MAX_STREAM_IDLE_TIMEOUT_SECONDS }) ??
+      DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS,
     contextOffload:
       booleanField(input, 'contextOffload', configPath) ?? DEFAULTS.contextOffload,
     terminalBell:
@@ -2065,11 +2073,10 @@ async function createAnthropicModel(config: AppConfig): Promise<Model> {
     // Tools, system prompt and last user message, one TTL — the same three cache
     // points Bedrock gets; omitted entirely when caching is off.
     ...(cacheConfig !== undefined && { cacheConfig }),
-    // `clientConfig` is spread into the SDK's own `new Anthropic({...})`, which is
-    // how a Messages-API-compatible endpoint is reached without darwin importing
-    // the client package itself. Omitted entirely when nothing resolved, so the
-    // default install passes exactly what it always has.
-    ...(baseURL !== undefined && { clientConfig: { baseURL } }),
+    // The pinned provider does not forward StreamOptions.cancelSignal. The
+    // client's supported middleware carries only the scoped parent stream
+    // signal; outside that scope (children/counting) it delegates unchanged.
+    clientConfig: { ...(baseURL !== undefined && { baseURL }), middleware: [modelStreamMiddleware] },
     ...(thinking !== undefined && { params: thinking as Record<string, unknown> }),
   });
 }

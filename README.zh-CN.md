@@ -130,6 +130,8 @@ darwin -p "inspect this project" --output-format stream-json
 
 TUI、无头模式、结构化输出、消息队列、shell 命令和后台任务的完整约定，见[使用 darwin](docs/user-guide/using-darwin.zh-CN.md)。
 
+主代理模型流连续 120 秒没有事件时会明确报错，不自动重试；思考事件也会重新计时，权限、工具和重试等待不计入。根级 `streamIdleTimeoutSeconds` 可调整秒数（`0` 关闭）；详见[范围与取消语义](docs/user-guide/configuration.zh-CN.md#模型流空闲检测)。
+
 ## 可选云记忆
 
 AgentCore Memory 默认关闭，与模型供应商独立，原有本地项目记忆不变。它提供受权限控制、仅主代理可用的 episode/reflection 检索、用户明确确认的跨项目偏好，以及单独启用的**手动预览、发送或项目授权自动上传**新回合的有界原始工具内容，涵盖任意工具/MCP 的文本参数与结果；其中可能含有秘密，**不保证保密**。偏好采纳、上传和删除控制仅限用户亲自提交的 TUI 命令，独立 cloud-memory CLI 只读。上传省略全部助手文本。`/cloud-memory auto` 仅为当前项目的新回合持久化授权；`/cloud-memory manual` 停止尚未发送的自动任务。默认每 UTC 日 500 次尝试/100 MiB，自动接受的本地请求体保留七天，分区幂等回执长期保留。根级 `upload: auto` 不构成授权。用户命令 `discard-legacy` 先预览本地旧格式批次，再以清单哈希确认，不删除云记录。

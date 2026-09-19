@@ -19,6 +19,7 @@ import type { CliOptions } from './cli-args.js';
 import { CliUsageError } from './cli-args.js';
 import { usageErrorText } from './cli-usage.js';
 import { contextOverflowErrorMessage } from './context-overflow-error.js';
+import { StreamIdleError } from './agent/stream-idle.js';
 import {
   createHeadlessPermissionBridge,
   formatHeadlessDiagnosticsProblem,
@@ -299,6 +300,11 @@ export async function runHeadlessProcess(
       // the runtime's own outcome — the `error:` line and the failure record keep the
       // provider's message byte for byte.
       const retry = runtime !== undefined && turnStarted ? lastRetryOutcome(runtime) : undefined;
+      if (error instanceof StreamIdleError && !interrupted) {
+        const diagnostic = `stream: ${error.message}\n`;
+        if (structured) target.stderr.write(diagnostic);
+        note(diagnostic, 'error');
+      }
       if (structured) {
         errors.push(structuredFailure(runtime === undefined || !turnStarted ? 'runtime' : 'turn', error, retry));
         if (runtime !== undefined && turnStarted) turnFailure = error;

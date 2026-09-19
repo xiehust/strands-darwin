@@ -75,6 +75,7 @@
 | `summaryRatio` | `0.8` | 上下文溢出时被摘要的旧消息比例 |
 | `preserveRecentMessages` | `10` | 摘要时原样保留的消息数 |
 | `contextWarnRatio` | `0.8` | 回合结束后建议 `/compact` 的阈值；`0` 关闭提醒 |
+| `streamIdleTimeoutSeconds` | `120` | 主代理模型流空闲秒数，有限数值 `0–2147483`（允许小数）；`0` 关闭。每个 SDK 模型流事件（包括思考）重新计时；详见[模型流空闲检测](#模型流空闲检测) |
 | `contextOffload` | `true` | 把超大工具结果存到会话目录，上下文只留预览和引用；`false` 显式退出 |
 | `maxResultTokens` | `5000` | 卸载阈值；默认或显式 `true` 时有效，与 `contextOffload: false` 冲突，且必须大于 `1000` |
 | `trajectory` | `true` | 把每轮追加到轨迹 |
@@ -95,6 +96,12 @@
 `memory: true` 与 `trajectory: false` 不能同时使用。权限放行与拒绝规则不属于该配置，它们按项目存于 `~/.darwin/projects/<project-key>/permission-rules.json`。在配置文件中写入 `permissionRules` 会导致启动失败。
 
 上面两张表就是全部字段。其他任何键——无论在顶层还是 `models` 条目内，包括 `$schema` 或注释风格的键——都是未知字段，会导致启动失败，而不会被静默忽略：错误信息会指出文件、每个未知字段及其位置，并在拼写接近时给出最近的已知字段（`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`）。请修正拼写或删除该字段。`darwin doctor` 会在不启动会话的情况下以 `!` 行报告同样的问题（并以退出码 1 结束），因此改完配置可以先检查再启动。
+
+## 模型流空闲检测
+
+`streamIdleTimeoutSeconds` 是根级会话设置，切换模型后仍然生效，默认 `120`；`0` 关闭此检测，但不关闭供应商传输层超时。它只计算**主代理模型流**等待下一项的时间，包括首个事件和流结束。每个 SDK 流事件（包括思考）都会重新计时；持续有事件的长流没有总时长上限。hook、界面消费、token 计数、权限提示、工具、后台完成等待、限流退避、子代理和 `/compact` 不在计时范围内。它不同于 Bedrock 按字节计时的 `requestTimeoutMs`，适用的超时中先到期者终止请求。
+
+模型流无响应时先中止并等待读取清理，再以 `StreamIdleError: stream idle for Ns` 结束回合，不自动重试或续接。清理期间用户取消优先，仍按取消处理。TUI 沿用普通回合失败提示；text、JSON、JSONL 无头模式各在 stderr 输出一行 `stream: stream idle for Ns`，保留原有失败输出和退出码 1。再次发送提示前请检查已完成的部分工作。受支持的传输实现会响应中止；自定义模型若忽略取消，Darwin 会等待其当前读取结束，不会留下仍在运行的迭代器。
 
 ## 项目覆盖设置
 

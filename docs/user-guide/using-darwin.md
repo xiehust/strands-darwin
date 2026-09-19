@@ -15,6 +15,10 @@ The startup frame identifies the model, session, cache, effort, permission mode,
 
 While a turn runs, the existing `working…`/`thinking…` row shows elapsed time and reported token spend. Unreported usage is omitted, never rendered as zero. `Ctrl+B` toggles compact/expanded tool details without changing the prompt draft.
 
+## Silent model streams
+
+If the parent model stops sending events for 120 seconds, the turn fails visibly with `stream idle for 120s`; there is no automatic retry or continuation. Thinking events count as activity, while permission, tool, background and throttle waits do not count as stream silence. User cancellation takes precedence during cleanup. Already streamed output remains visible; inspect completed work before resubmitting. All headless formats add one `stream:` stderr diagnostic and keep their ordinary failure contract. Change the root `streamIdleTimeoutSeconds` setting, or set `0` to disable; [exact scope and limits](configuration.md#stream-idle-watchdog).
+
 ## Reviewing changes
 
 After making changes, type `/review` to request a review without restating the checklist. Use `/review focus on authentication` to steer the pass: the command trims surrounding whitespace and includes the remaining text verbatim under `Focus:`. The name is case-insensitive and must match exactly (`/reviews` is not the built-in).
@@ -122,7 +126,7 @@ darwin -p "inspect the project" --output-format stream-json
 
 `json` emits one versioned result document, including failure/cancellation. `stream-json` emits one JSON object per physical line for session/run/turn lifecycle, completed assistant messages, permission denials, tool start/completion, diagnostics, and one terminal `result`.
 
-Every valid record has `schemaVersion: 1`, monotonic process `sequence` from 1, ISO `timestamp`, and resolved/requested `sessionId` (or `null` only before startup resolution). Structured stderr is empty after valid parsing; CLI usage errors still use stderr and exit 2.
+Every valid record has `schemaVersion: 1`, monotonic process `sequence` from 1, ISO `timestamp`, and resolved/requested `sessionId` (or `null` only before startup resolution). Structured stderr is empty after valid parsing except for the single `stream:` diagnostic on model-stream idle failure; CLI usage errors still use stderr and exit 2.
 
 Terminal `outcome` is `success`, `failure`, or `cancelled`. Success is written only after runtime shutdown and pointer persistence. `errors` contains turn/cleanup/persistence errors in order; observer/SDK degradations are `warnings`. Usage has mutually exclusive `input`, `output`, `cacheRead`, and `cacheWrite`; missing means unreported and measured zero stays `0`.
 

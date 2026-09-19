@@ -1639,6 +1639,7 @@ async function documentedKeys(): Promise<void> {
     summaryRatio: 0.5,
     preserveRecentMessages: 4,
     contextWarnRatio: 0.7,
+    streamIdleTimeoutSeconds: 120,
     contextOffload: true,
     maxResultTokens: 2000,
     terminalBell: false,

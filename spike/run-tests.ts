@@ -121,6 +121,7 @@ const suites = [
   'verify-memory-validation.ts',
   'verify-resume-recap.ts',
   'verify-stream-resumption.ts',
+  'verify-stream-idle.ts',
 
   'verify-export-command.ts',
   'verify-sessions-command.ts',

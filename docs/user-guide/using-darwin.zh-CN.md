@@ -15,6 +15,10 @@
 
 回合执行期间，原有 `working…`/`thinking…` 行会显示耗时和供应商已报告的 token 消耗。未报告的指标直接省略，不会冒充零。`Ctrl+B` 可展开或收起工具详情，不影响正在编辑的输入。
 
+## 模型流无响应
+
+主代理模型连续 120 秒没有事件时，回合会明确提示 `stream idle for 120s` 并失败，不自动重试或续接。思考事件也算活动；权限、工具、后台和限流等待不计入流空闲。清理期间用户取消优先。此前已显示的输出仍然保留，再次提交前请检查已完成的工作。所有无头格式额外输出一行 `stream:` stderr 诊断，保留普通失败约定。可通过根级 `streamIdleTimeoutSeconds` 调整，或设为 `0` 关闭；[详细范围和限制](configuration.zh-CN.md#模型流空闲检测)。
+
 ## 审查改动
 
 完成改动后输入 `/review`，即可发起一次审查，无需重新描述检查要求。也可以输入 `/review 重点检查认证逻辑`：命令只去掉参数首尾空白，把剩余文本原样放在 `Focus:` 下。命令名不区分大小写，但必须精确匹配，`/reviews` 不是这个内置命令。
@@ -122,7 +126,7 @@ darwin -p "inspect the project" --output-format stream-json
 
 `json` 输出一个带版本的结果文档，失败和取消也包含在内。`stream-json` 每个物理行输出一个 JSON 对象，覆盖 session/run/turn 生命周期、完整助手消息、权限拒绝、工具开始/完成、诊断，以及唯一的终态 `result`。
 
-每条有效记录都包含 `schemaVersion: 1`、从 1 开始且在当前进程递增的 `sequence`、ISO `timestamp`，以及请求或解析后的 `sessionId`。只有启动解析前失败时，`sessionId` 才可能是 `null`。参数解析成功后，结构化模式的 stderr 为空；CLI 参数错误仍写 stderr，并返回 2。
+每条有效记录都包含 `schemaVersion: 1`、从 1 开始且在当前进程递增的 `sequence`、ISO `timestamp`，以及请求或解析后的 `sessionId`。只有启动解析前失败时，`sessionId` 才可能是 `null`。参数解析成功后，结构化模式的 stderr 为空，只有模型流空闲失败会额外输出一行 `stream:` 诊断；CLI 参数错误仍写 stderr，并返回 2。
 
 终态 `outcome` 只有 `success`、`failure`、`cancelled`。只有 runtime 严格关闭且最近会话指针落盘后，才会输出成功。`errors` 按顺序保存回合、清理和持久化错误；`warnings` 保存观察器或 SDK 降级。`usage` 的 `input`、`output`、`cacheRead`、`cacheWrite` 互斥计量；字段缺失表示未报告，实测为零才写 `0`。
 

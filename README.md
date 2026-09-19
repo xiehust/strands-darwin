@@ -130,6 +130,8 @@ darwin -p "inspect this project" --output-format stream-json
 
 Read [Using darwin](docs/user-guide/using-darwin.md) for TUI, headless, structured-output, queue, shell, and background-job contracts.
 
+Silent parent model streams fail visibly after 120 seconds without an event, with no automatic retry; thinking events reset the allowance. Permission, tool and retry waits are excluded. Root config `streamIdleTimeoutSeconds` changes it (`0` disables); see [scope and cancellation](docs/user-guide/configuration.md#stream-idle-watchdog).
+
 ## Optional cloud memory
 
 AgentCore Memory is default-off and independent of the model provider; existing local project memory is unchanged. It adds gated, parent-only episode/reflection recall, user-confirmed cross-project preferences, and separately enabled **manual preview/send or project-authorized auto upload** of bounded original new-turn tool content, including arbitrary tools/MCP, textual arguments and results. This can include secrets and is **not a confidentiality guarantee**. Memory adoption/upload/deletion controls are user-submitted TUI-only; the standalone cloud-memory CLI is read-only. All assistant prose is omitted from uploads. `/cloud-memory auto` persists consent for this project's new turns only; `/cloud-memory manual` stops unsent automatic work. Defaults: 500 attempts/100 MiB per UTC day, seven-day retention for auto-accepted local bodies, permanent bounded-partition receipts. Root `upload: auto` is not authorization. User-only `discard-legacy` previews a local legacy batch and requires its manifest hash; it never deletes cloud records.
