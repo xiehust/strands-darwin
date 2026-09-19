@@ -209,7 +209,7 @@ Source S2 (Codex v0.155.0 "Added task hiding, archiving, and deletion in the age
 
 ## SER-099 — `darwin import --from claude-code`: read-only scan of `~/.claude/` and project `.claude/`/`CLAUDE.md` printing a bounded migration plan; `--apply` copies prompt-content layers only (skills, agents, CLAUDE.md → AGENTS.md section) and prints the exact `mcp.json`/permission-rule snippets for the user to paste; executable config (hooks, MCP) is never armed by the import itself
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 131
 - Score: 6
 - Importance: 3
