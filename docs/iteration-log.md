@@ -2992,3 +2992,15 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Worker spend: `usage: input=198 output=49569 cacheRead=12135672 cacheWrite=148842`; `cost: total=7.3749 input=0.0020 output=2.4785 cacheRead=3.0339 cacheWrite=1.8605 model=global.anthropic.claude-fable-5-1 pricing=global.anthropic.claude-fable-5-1`.
 - Research-run aggregate (Batches 133–137, five managed children, no corrections): input **1,142**, output **301,178**, cacheRead **93,637,365**, cacheWrite **933,371**; USD **$50.1468** (all five reported a `cost:` line on `global.anthropic.claude-fable-5-1`; the killed unmanaged SER-093 attempt reported none and is not summed). All five directions `done`; none abandoned; seven considered directions stayed report-only below the gate and one (`doom_loop`, score 7) was deferred by the five-direction cap. Halt: batch exhausted. Host commits closure, performs one ordinary push, verifies the upstream gap and reports.
 
+
+## Batch 138 — SER-095 parent model-stream idle watchdog (2026-09-19)
+
+- Origin: `docs/research/research_2026-09-18.md`, run `09:23:56Z`; Score 11, Priority 127. User requested clean-tree restoration first; inherited partial changes preserved in stash `faa1c61` and never applied. Host baseline `pnpm typecheck && pnpm test` passed at clean `ddd64b0` (task `bg-49087db2-542b-4ee6-a6ea-a55114ca8029`, exit 0).
+- Fresh child `session-20260919-015608498`; managed `bg-3ab4371f-f36c-43b4-becd-36c3ef1d738b`, exit 0, output drained to `hasMore: false`. Source CLI, `--yolo --context-offload`, no ceiling, correction, retry or descendant worker. Host handles backlog/log/push.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Parent provider-read timer, terminal idle failure and abort/drain cancellation | `246bdbd` | Reviewed all 17 changed files. Host `pnpm typecheck && pnpm test && pnpm build && git diff --check && test -z "$(git status --porcelain)"`, `bg-a1c23e94-d65d-423a-aa16-ffc56965eec9`, exit 0, 9,054 PASS lines. New stream-idle suite includes real runtime/config/reset/cleanup/waits, local OpenAI/Anthropic HTTP/1 and Bedrock HTTP/2 pre-header/body abort, text/JSON/JSONL and production TUI reuse. Existing stream-resumption/model-retry/headless/config checks included. |
+
+- Docs wrap-up in accepted commit: README EN/zh, configuration/reference/using-darwin EN/zh, load-bearing rationale and compact AGENTS row (32,710 bytes). Dist rebuilt independently. Timer is absent outside parent provider reads; a custom provider ignoring abort can delay cleanup indefinitely and is deliberately never detached. No dependency or stash mutation.
+- Worker spend: `usage: input=168 output=46032 cacheRead=12725288 cacheWrite=220884`; `cost: total=17.7896 input=0.0017 output=2.3016 cacheRead=12.7253 cacheWrite=2.7611 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Single task/iteration aggregate is the same. Remaining batch: SER-096–SER-099; continue on accepted source.

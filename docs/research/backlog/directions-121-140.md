@@ -129,7 +129,7 @@ Requirement: one pure helper (in `src/tools/shell-env.ts`) adds `DARWIN=1` to a 
 
 ## SER-095 — Model-stream idle watchdog: a per-stream timer (default 120 s, config `streamIdleTimeoutSeconds`, `0` disables) fails the turn visibly with a bounded `stream idle for Ns` notice when no stream event arrives; a new terminal failure class, never routed into the one-continuation stream-resumption path; cancel wins the race and stays a cancel; headless writes one `stream:` stderr line
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 127
 - Score: 11
 - Importance: 4
@@ -141,7 +141,7 @@ Requirement: one pure helper (in `src/tools/shell-env.ts`) adds `DARWIN=1` to a 
 
 ### Implementation / acceptance evidence
 
-(empty — not yet implemented)
+Accepted 2026-09-19 in `246bdbd75df82fc582d22d889b91be12a9085c21`, fresh child `session-20260919-015608498`. Host reviewed all 17 changed files and independently ran `pnpm typecheck && pnpm test && pnpm build && git diff --check && test -z "$(git status --porcelain)"` (task `bg-a1c23e94-d65d-423a-aa16-ffc56965eec9`, exit 0, 9,054 PASS lines). Full gate includes new `verify-stream-idle.ts`, config, stream-resumption, model-retry and structured-headless regressions. Real runtime and local HTTP/1 OpenAI/Anthropic, HTTP/2 Bedrock, text/JSON/JSONL and production TUI checks prove silent first/later reads fail, thinking resets, cancellation wins, transport closes, no retry/continuation/late tools and subsequent invocation works. Timer is confined to parent provider reads through `InvokeModelStage`, excluding tools/permissions/backoff/background/children; custom providers ignoring abort must settle before cleanup returns (documented limitation, never detached). Bilingual README/configuration/reference/usage and architecture synced; AGENTS 32,710 bytes. See iteration-log Batch 138. Earlier partial work remains preserved in stash `faa1c61`, not applied.
 
 ### Notes / blockers / abandonment reason
 
