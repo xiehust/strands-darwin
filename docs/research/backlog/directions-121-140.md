@@ -189,7 +189,7 @@ Source S2c ("When Smart approvals are enabled (the default), Codex may propose a
 
 ## SER-098 — `/agents` overview gains a settled-dispatch summary line: counts by terminal state (succeeded/failed/cancelled) for the session's dispatches on the existing panel, from the dispatch registry's own records; no persistence, no deletion, no new surface
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 130
 - Score: 11
 - Importance: 2
@@ -201,7 +201,7 @@ Source S2c ("When Smart approvals are enabled (the default), Codex may propose a
 
 ### Implementation / acceptance evidence
 
-(empty — not yet implemented)
+Accepted 2026-09-19 in `56c25c79cc25ad215d152bd7d2de8ca5cc931a0a`, fresh child `session-20260919-041026304`. Five production lines in `formatDispatchesReport` append `settled — this run: succeeded N · failed N · cancelled N`; empty unchanged, running excluded, all supplied registry snapshots counted without stored counters. Host reviewed eight changed files and independently ran `pnpm typecheck && pnpm test && pnpm build && git diff --check && test -z "$(git status --porcelain)"`, task `bg-9da5211f-830f-40ce-8658-6224578a5a9a`, exit0, 9,361 PASS lines. Subagent-format57 covers real registry transitions, cancel-request versus settlement, continuations/workflow/colliding IDs, immutable snapshots, old row bytes and Static reducer/source-route evidence. No new live pty scenario claimed; App/registry unchanged. EN/zh extensions/reference and both subagent architecture docs synchronized; README/using-darwin accurate, AGENTS unchanged. Dist rebuilt. See iteration-log Batch141.
 
 ### Notes / blockers / abandonment reason
 

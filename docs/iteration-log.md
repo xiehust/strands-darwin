@@ -3030,3 +3030,15 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Initial task spend: `usage: input=62 output=26569 cacheRead=2505108 cacheWrite=129235`; `cost: total=5.4496 input=0.0006 output=1.3285 cacheRead=2.5051 cacheWrite=1.6154 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`.
 - Retry spend: `usage: input=56 output=11667 cacheRead=4056037 cacheWrite=26791`; `cost: total=4.9748 input=0.0006 output=0.5834 cacheRead=4.0560 cacheWrite=0.3349 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`.
 - Direction aggregate: input118, output38,236, cacheRead6,561,145, cacheWrite156,026; USD10.4244. Batch running aggregate: input372, output119,825, cacheRead23,441,122, cacheWrite523,258; USD35.9767. These are worker invocations, not a price for separate live acceptance probes. Remaining SER-098–SER-099; continue.
+
+## Batch 141 — SER-098 settled-dispatch summary (2026-09-19)
+
+- Origin: `docs/research/research_2026-09-18.md` run `09:23:56Z`; Score11, Priority130. Built on accepted/green/built SER-097 `c526522`; only docs closure/start to clean `6ae6049`.
+- Fresh child `session-20260919-041026304`, managed `bg-3073307b-2eca-4f01-9ffd-b238f23833fb`, exit0, output drained to `hasMore: false`. Source CLI `--yolo --context-offload`, no ceiling/retry/correction/descendant.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| One settled-state summary on the existing `/agents` report | `56c25c7` | Host reviewed eight-file diff (five production lines only). `pnpm typecheck && pnpm test && pnpm build && git diff --check && test -z "$(git status --porcelain)"`, task `bg-9da5211f-830f-40ce-8658-6224578a5a9a`, exit0, 9,361 PASS lines. Subagent-format57 proves empty/running/mixed, real registry transitions, continuations/workflow/colliding IDs, unchanged snapshots/rows and existing notice reducer route. |
+
+- Docs: extensions/reference EN/zh and both subagent architecture docs synchronized. README/using-darwin still accurate; AGENTS unchanged32,761 bytes. Build refreshed. No registry/App change, persistence, archive/delete, timer or live surface. Route proof uses actual App source and reducer, not a new interactive scenario.
+- Worker spend: `usage: input=38 output=9966 cacheRead=1186595 cacheWrite=89845`; `cost: total=2.8083 input=0.0004 output=0.4983 cacheRead=1.1866 cacheWrite=1.1231 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Direction aggregate same. Batch running aggregate input410, output129,791, cacheRead24,627,717, cacheWrite613,103; USD38.7850. Remaining SER-099; continue.
