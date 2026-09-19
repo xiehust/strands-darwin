@@ -34,6 +34,10 @@ unfinished backlog, or one weighted research-path draw
 
 This is a bounded workflow, not autonomous product authority. A dirty or unverifiable starting point, repeated acceptance failure, a falsified premise, or a product/safety decision only a person can make stops the batch and records the reason. See the [dated research reports](docs/research/) and [self-reflections](docs/reflections/) for the evidence trail.
 
+## Bringing an existing setup
+
+Run `darwin import --from claude-code` inside the target project to preview a bounded, read-only migration plan. On Linux, add `--apply` to copy supported prompt-only skills, agents and marked `CLAUDE.md` sections; existing content is never silently overwritten. Hooks, MCP, permission policy and trust are never enabled or written. Review the [supported mappings and manual steps](docs/user-guide/extensions.md#import-a-claude-code-setup) before applying; this does not import chats or switch providers.
+
 ## What it gives you
 
 - **A readable Ink TUI:** streaming Markdown answers, proposed file-edit diffs, elapsed time and token spend, slash/path completion, prompt recall and queueing, local `!` commands, and bounded reports.

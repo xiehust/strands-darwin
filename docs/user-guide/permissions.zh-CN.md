@@ -2,6 +2,10 @@
 
 [English](permissions.md) · **简体中文** · [指南首页](README.zh-CN.md)
 
+## 导入设置不代表授权
+
+`darwin import --from claude-code [--apply]` 永远不写 hook、MCP 配置、权限规则或 `trust.json`。输出的少量准确 JSON 片段仅供人工检查，不是完整策略转换。不支持的 `ask`/deny 规则、工具限制及含敏感信息的配置会明确列为遗漏；不要忽略这些限制而直接粘贴 allow 片段。确认后只向指定的项目级规则文件合并数组，保留原有 deny 规则。Claude 全局权限没有对应的 Darwin 全局规则存储。根目录 `.mcp.json` 仍按既有机制作为启动回退并接受 workspace trust 检查；导入提示词既不授予也不撤销信任。详见[迁移映射](extensions.zh-CN.md#迁移-claude-code-设置)。
+
 ## 模式
 
 可在 `~/.darwin/config.json` 中设置 `permissionMode`，用 `--permission-mode <mode>` 覆盖单次运行，或用 `--yolo` 作为简写。`/mode` 只改变当前会话，不写配置；`/clear` 会继承；正在处理的权限框或分类结果会撤回，并从头重新判断。

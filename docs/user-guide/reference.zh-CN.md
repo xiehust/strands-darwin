@@ -44,6 +44,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
        darwin permissions test <rule>
+       darwin import --from claude-code [--apply]
        darwin doctor
        darwin cloud-memory [status|preferences|list|inspect|pending|preview] …
        darwin trajectory <list|search|replay|fork> …
@@ -76,6 +77,10 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 每文件 2 MiB、合计 8 MiB、20 行调用对、每字段 240 码点。损坏、禁用/停止/缺失记录、
 截断/脱敏、省略行和未落盘调用均明确说明，不声称完整历史或完整无匹配。
 详见[权限测试](permissions.zh-CN.md#只测试候选规则不授予权限)。
+
+### `darwin import --from claude-code [--apply]`
+
+离线设置迁移，不是 TUI 命令。默认只读输出有上限的计划；`--apply` 可在 `--from claude-code` 前后出现，只复制支持的提示词层。重复/未知参数或其他来源以 2 退出；help/version 优先级不变。扫描及手动遗漏以 0 退出；应用时复查失败、输出超限或 I/O 失败以 1 退出。不启动模型、网络、hook、工具、配置、信任或会话。仅支持 Linux 的描述符安全访问；其他系统须手动迁移。源文件不改，冲突不覆盖，相同内容重复应用不写。已有 `AGENTS.md` 字节保留，合并内容不能超过 32768 字节。上限：400 条目加一次溢出探测、每文件 256 KiB、每次扫描/复查 4 MiB、skill 深度 6 / 100 文件、100 个 MCP 条目/每数组规则、输出 32 KiB。输出超限拒绝应用；失败会报告已完成或可能部分写入的内容。[准确映射、手动片段与遗漏](extensions.zh-CN.md#迁移-claude-code-设置)。
 
 ### `darwin doctor`
 

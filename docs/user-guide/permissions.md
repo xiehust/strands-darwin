@@ -2,6 +2,10 @@
 
 **English** · [简体中文](permissions.zh-CN.md) · [Guide index](README.md)
 
+## Imported setup is not permission consent
+
+`darwin import --from claude-code [--apply]` never writes hooks, MCP configuration, permission rules or `trust.json`. It prints a small set of exact JSON candidates for manual review, not a complete policy translation. Unsupported `ask`/deny rules, tool restrictions and sensitive-bearing configuration are explicitly omitted; do not paste an allow snippet while ignoring those restrictions. Merge reviewed arrays into the named project-scoped rule file without replacing existing deny rules. Global Claude permissions have no global Darwin rule-store equivalent. Root `.mcp.json` remains a startup fallback subject to workspace trust; importing prompts neither grants nor revokes that trust. See [migration mappings](extensions.md#import-a-claude-code-setup).
+
 ## Modes
 
 Set `permissionMode` in `~/.darwin/config.json`, use `--permission-mode <mode>` for one run, or use `--yolo` as shorthand. `/mode` changes live session state only: it never writes config, `/clear` inherits it, and in-flight prompts/classifier verdicts are withdrawn and reconsidered.

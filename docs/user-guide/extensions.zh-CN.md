@@ -15,6 +15,41 @@
 
 原生直接 hook 文件按 wrapper 合并：Pre 顺序为全局 `.agents`、全局 `.darwin`、项目 `.agents`、项目 `.darwin`；Post 完全反向。只有某一层没有直接 hook JSON 目录时，才回退到旧版 `.darwin/hooks.json` 或配置内嵌 hooks。全局/项目直接 `.agents/hooks.json` 是独立的 Codex 兼容可移植源，排在同层 `.agents/hooks/*.json` 之前；`.codex/hooks.json` 明确不会被读取。
 
+## 迁移 Claude Code 设置
+
+请在要迁移的目标项目内执行，不要在其他 checkout 中运行：
+
+```bash
+darwin import --from claude-code          # 只读计划，显示准确来源和目标路径
+darwin import --from claude-code --apply  # 只复制支持的提示词内容
+```
+
+两种模式都离线运行，不启动会话、模型、工具、hook 或 MCP 进程。目前要求 Linux，以便使用基于目录描述符且拒绝跟随符号链接的文件访问；其他系统会提示手动迁移，不改用安全性较弱的复制方式。应用期间不要同时编辑来源或目标设置。
+
+| 来源 | 自动迁移范围（仅提示词内容） |
+|---|---|
+| `~/.claude/skills/<dir>/SKILL.md` | `~/.darwin/skills/<dir>/SKILL.md` 及有上限的普通资源文件 |
+| `.claude/skills/<dir>/SKILL.md` | `.darwin/skills/<dir>/SKILL.md` 及有上限的普通资源文件 |
+| 全局/项目 `.claude/agents/*.md` | 同作用域 `.darwin/agents/*.md`；只支持直接 Markdown 子文件 |
+| 项目 `CLAUDE.md`、`.claude/CLAUDE.md` | 追加到项目 `AGENTS.md`，每段带明确来源标记 |
+| `~/.claude/CLAUDE.md` | 手动：Darwin 没有对应的全局指令文件层 |
+
+Skill 只接受 `name`、`description` 和正文；缺少 skill 名称时使用目录名。Agent 必须有 `name`、`description` 和正文；省略 `tools` 仍继承可用工具，`tools: []` 仍表示没有工具。非空 Claude 工具列表不会被删除或猜测映射。其他 frontmatter 一律手动处理，包括 hooks、model/权限设置、`allowed-tools`、`omitClaudeMd`、调用控制、context，甚至未映射的元数据。动态命令或参数替换也不转换。源文件不改；脚本可作为无执行位的普通资源复制，但不会运行。导入的文字只是提示词，不是强制安全策略。
+
+所有已有 Darwin 扩展层的名称及内置名称都保守保留，不改变优先级，也不静默遮蔽。目标文件内容完全一致时不再写入；文件或 skill 目录树不同则需手动处理，不自动合并。已导入的指令段落发生变化时同样要求手动合并。`AGENTS.md` 保留原有全部字节，不重复追加相同段落或正文；合并后将超过 **32768 字节** 时不追加任何内容。没有 `AGENTS.md` 时仍可使用根目录 `CLAUDE.md` 的既有回退机制；两种模式都不展开 `@path`。
+
+### 手动检查配置
+
+全局 `.claude/settings.json`、项目 `.claude/settings.json` 和 `.claude/settings.local.json` 提供权限候选；项目 `.mcp.json` 提供 MCP 候选。计划列明每项的目标路径。这些只是供检查、粘贴的片段，永远不会自动写入，也不代表完整转换：
+
+- 权限 JSON 使用 Darwin 的 `{ "allow": [...], "deny": [...] }` 结构。仅映射 `Bash`/`Bash(*)`，以及准确的 `Bash(git status)`、`Bash(git diff)`、`Bash(git log)`、`Bash(pnpm test)`、`Bash(pnpm typecheck)`、`Bash(npm test)`。其他命令、通配/前缀规则、路径、工具及 `ask` 字段须手动迁移。Darwin 的匹配器、生命周期调用和 deny 行为不同；合并前检查限制，保留原 deny 规则，可用 `darwin permissions test` 检查候选。目标是当前项目在用户目录中的 `permission-rules.json`；粘贴到这里不保留来源的全局作用域。
+- MCP 支持无参数的普通可执行文件名、`npx -y @scope/package`，以及不含用户信息、query、fragment 的 HTTPS `/`、`/mcp` 或 `/sse` 端点。Claude 的 `type: http`/`streamable-http` 转为 Darwin 的 `transport: streamable-http`，`sse` 保持 `sse`。未知字段、env、headers、auth、任意参数/URL 路径、变量插值及疑似敏感值会让整条配置被省略，不输出可运行的脱敏替代品。粘贴前须自行检查来源的禁用与授权列表。根目录 `.mcp.json` 已是 Darwin 的回退文件；新建优先级更高的 `.darwin/mcp.json` 可能遮蔽其他回退条目。
+- Hook 命令既不打印也不转换。信任、hook/MCP 启用及权限同意仍是独立的用户操作。导入不会创建 `config.json`、`mcp.json`、hook 文件、权限文件或 `trust.json`。
+
+凭证、会话/历史存储、混合了用户 MCP 和其他状态的 `~/.claude.json`、聊天、旧命令、插件、rules、托管设置、父级/嵌套项目及附加目录都不扫描。需要时请在本地检查，不要从终端报告复制秘密值。
+
+上限为 **400 个目录条目**、**每文件 256 KiB**、**每次扫描读取 4 MiB**（应用前会进行第二次有上限的复查）、skill 深度 **6**、**100 个资源文件**、**100 个 MCP 条目/每数组规则**及 **32 KiB 输出**。目录上限允许额外探测一个溢出条目。符号链接（含祖先目录）、硬链接、特殊文件和隐藏/敏感资源名称都会拒绝，并说明上限或遗漏。输出超限时拒绝应用，避免隐藏写入计划。写入前复查来源、目录列表和目标字节；新建采用排他创建，指令追加会复查已打开文件。I/O 失败立即停止并报告已完成写入；此前写入、新建目录或当前文件的部分内容可能保留。不回滚、不删除，也不自动修复不完整 skill 目录；重试前请检查报告中的目标。
+
 ## MCP 服务器
 
 项目 MCP 优先读取 `.darwin/mcp.json`，不存在时回退到根目录 `.mcp.json`，格式与 Claude Code 相同。全局 `~/.darwin/mcp.json` 也可提供服务器；同名时项目配置优先。`/mcp` 会显示实际生效和被忽略的路径。

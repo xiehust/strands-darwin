@@ -74,6 +74,10 @@ darwin sessions               # 验证：只读，不产生模型调用
 
 个人设置和生成状态位于 `~/.darwin/`，不会写入目标仓库。详情见[会话与状态](sessions-and-state.zh-CN.md)。
 
+## 迁移本地提示词内容
+
+启动会话前，在目标项目运行 `darwin import --from claude-code`。它只列出来源、目标路径和迁移计划，不改文件，不启动模型、hook、MCP 服务器或会话。Linux 上可用 `darwin import --from claude-code --apply` 复制支持的提示词内容；请先检查所有需手动迁移的项目。此操作不需要供应商凭证，不改 Claude Code 源文件，也不导入聊天、历史或可执行策略。详见[映射、冲突与上限](extensions.zh-CN.md#迁移-claude-code-设置)。无需导入也能继续使用根目录 `CLAUDE.md` 的既有回退机制；`@path` 不会展开。
+
 ## 启动与恢复
 
 ```bash

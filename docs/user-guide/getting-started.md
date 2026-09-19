@@ -74,6 +74,10 @@ Run darwin from the repository it should edit. The CLI's current working directo
 
 Personal settings and generated state live under `~/.darwin/`, not in the target repository. See [Sessions and state](sessions-and-state.md).
 
+## Migrate local prompt content
+
+Before starting a session, run `darwin import --from claude-code` from the target project. It prints source and destination paths without changing files or starting a model, hook, MCP server or session. On Linux, `darwin import --from claude-code --apply` copies only supported prompt content; review every manual item first. No provider credentials are needed. Your Claude Code files remain unchanged; chats/history and executable policy are not imported. See [mappings, collisions and limits](extensions.md#import-a-claude-code-setup). You can also keep using the existing root `CLAUDE.md` fallback without importing anything; `@path` imports are not expanded.
+
 ## Start and resume
 
 ```bash

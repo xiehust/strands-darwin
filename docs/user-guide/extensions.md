@@ -15,6 +15,41 @@ The first valid case-insensitive name wins; project resources override global on
 
 Native direct hook files merge as wrappers: global `.agents`, global `.darwin`, project `.agents`, project `.darwin` for Pre and observation-only lifecycle events; exact reverse for Post. Legacy `.darwin/hooks.json` and config-embedded hooks are fallbacks only when a layer has no direct hook JSON directory. Direct global/project `.agents/hooks.json` is a separate Codex-compatible portable source ordered before that `.agents/hooks/*.json` layer; `.codex/hooks.json` is deliberately never loaded.
 
+## Import a Claude Code setup
+
+Run these from the project you want to migrate, not from another checkout:
+
+```bash
+darwin import --from claude-code          # read-only plan, exact source/target paths
+darwin import --from claude-code --apply  # copy supported prompt content only
+```
+
+Both modes are offline and start no session, model, tool, hook or MCP process. Linux is currently required for descriptor-relative, no-follow access; other hosts report manual migration instead of using a weaker copy path. Do not edit source or destination setup concurrently with apply.
+
+| Source | Automatic prompt-only mapping |
+|---|---|
+| `~/.claude/skills/<dir>/SKILL.md` | `~/.darwin/skills/<dir>/SKILL.md`, plus bounded regular resources |
+| `.claude/skills/<dir>/SKILL.md` | `.darwin/skills/<dir>/SKILL.md`, plus bounded regular resources |
+| Global/project `.claude/agents/*.md` | Same-scope `.darwin/agents/*.md`; direct Markdown children only |
+| Project `CLAUDE.md`, `.claude/CLAUDE.md` | Clearly marked source sections appended to project `AGENTS.md` |
+| `~/.claude/CLAUDE.md` | Manual: Darwin has no equivalent global instruction-file layer |
+
+Skills accept only `name`, `description` and body (missing skill name defaults to the folder). Agents require `name`, `description`, body; absent `tools` keeps inherited eligible tools, and `tools: []` keeps no tools. Nonempty Claude tool lists are **not** dropped or guessed. All other frontmatter is manual, including hooks, model/permission settings, `allowed-tools`, `omitClaudeMd`, invocation controls, context and even unmapped metadata. Dynamic command/argument substitution is manual too. Sources stay unchanged. Scripts may be copied as non-executable resources but are never run. Imported prose is still prompt content, not an enforced security restriction.
+
+Existing Darwin names in any extension layer and built-in names are reserved conservatively: import never changes their precedence or silently shadows them. Exact existing destination bytes are a no-op; differing files or skill trees are manual, never merged. A changed previously imported instruction section is also manual. `AGENTS.md` keeps every existing byte, adds no duplicate identical section/body, and receives nothing if the combined append would exceed **32768 bytes**. Without `AGENTS.md`, the existing root `CLAUDE.md` fallback remains available; `@path` imports are never expanded in either mode.
+
+### Manual configuration review
+
+Global `.claude/settings.json`, project `.claude/settings.json` and `.claude/settings.local.json` produce permission candidates; project `.mcp.json` produces MCP candidates. The plan names the target path for each. These are **review/paste snippets, never writes**, and not a complete conversion:
+
+- Permission JSON uses Darwin's `{ "allow": [...], "deny": [...] }` shape. Only `Bash`/`Bash(*)` and exact `Bash(git status)`, `Bash(git diff)`, `Bash(git log)`, `Bash(pnpm test)`, `Bash(pnpm typecheck)`, `Bash(npm test)` are mapped. Other commands, wildcards/prefix rules, paths, tools and `ask` fields are manual. Darwin's matcher, lifecycle calls and deny behavior differ; inspect restrictions before merging, retain existing deny rules, and use `darwin permissions test` to check a candidate. The destination is the **current project's** user-owned `permission-rules.json`; global source scope is not preserved by pasting there.
+- MCP accepts a plain executable name without arguments, or `npx -y @scope/package`; HTTPS `/`, `/mcp` or `/sse` endpoints without user info/query/fragment are supported. Claude `type: http`/`streamable-http` becomes Darwin `transport: streamable-http`; `sse` stays `sse`. Unknown fields, env, headers, auth, arbitrary arguments/URL paths, interpolation and sensitive-looking values omit the **whole entry**. No runnable redacted substitute is printed. Check source disabled/approval lists yourself before pasting. Root `.mcp.json` is already Darwin's fallback when `.darwin/mcp.json` is absent; copying a reviewed entry to the preferred file can hide other fallback entries.
+- Hook commands are not printed or converted. Trust, hook/MCP activation and permission consent remain separate user actions. No `config.json`, `mcp.json`, hook file, permission file or `trust.json` is created by import.
+
+Credential/session/history stores, `~/.claude.json` (which mixes user MCP with other state), chats, legacy commands, plugins, rules, managed settings, parent/nested projects and additional directories are omitted without scanning. Review those locally if needed; do not copy secrets from a terminal report.
+
+The scan is limited to **400 directory entries**, **256 KiB/file**, **4 MiB read bytes per scan pass** (apply revalidates in a second bounded pass), skill depth **6**, **100 resource files**, **100 MCP entries / rules per array**, and **32 KiB output**. The entry limit allows one overflow probe. Symlinks (including ancestors), hard links, special files and hidden/sensitive resource names are refused. Caps and omissions are visible. Output truncation refuses apply rather than hiding writes. Sources, directory listings and destination bytes are rechecked before writing; creation is exclusive, and instruction appends recheck the opened file. An I/O failure stops immediately and reports completed writes; earlier writes, created directories or a partial current file can remain. There is no rollback, deletion or automatic repair of partial skill trees. Inspect the reported target before retrying.
+
 ## MCP servers
 
 Project MCP comes from `.darwin/mcp.json`, falling back to root `.mcp.json` in Claude Code format. Global `~/.darwin/mcp.json` can also contribute; project server names win. The effective/ignored paths are visible in `/mcp`.

@@ -43,6 +43,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
        darwin permissions test <rule>
+       darwin import --from claude-code [--apply]
        darwin doctor
        darwin cloud-memory [status|preferences|list|inspect|pending|preview] …
        darwin trajectory <list|search|replay|fork> …
@@ -76,6 +77,10 @@ Invalid usage/parse exits 2; valid report exits 0, even with unavailable evidenc
 2,000-code-point candidate, 2 MiB/file, 8 MiB total, 20 pair rows, 240 code points/cell.
 Damage, disabled/stopped/missing recording, truncation/redaction, omitted rows and buffered
 calls are explicit; no complete-history/no-match claim. See [permission tests](permissions.md#test-a-candidate-without-granting-it).
+
+### `darwin import --from claude-code [--apply]`
+
+Offline setup migration, not a TUI command. Default: bounded read-only plan. `--apply` may appear before or after `--from claude-code` and copies supported prompt layers only. Duplicate/unknown arguments or another source exit 2; help/version retain precedence. Scan/manual omissions exit 0; an apply revalidation, output-cap or I/O failure exits 1. No model, network, hooks, tools, config, trust or session startup. Linux descriptor-safe access only; unsupported hosts require manual migration. Source files remain unchanged; collisions never overwrite, identical repeats do nothing. Existing `AGENTS.md` bytes are preserved and combined content must fit 32768 bytes. Bounds: 400 entries plus one overflow probe, 256 KiB/file, 4 MiB per scan/revalidation pass, skill depth 6 / 100 files, 100 MCP entries / rules per array, 32 KiB output. Output caps refuse apply; failures report any completed/partial writes. [Exact mappings, manual snippets and omissions](extensions.md#import-a-claude-code-setup).
 
 ### `darwin doctor`
 

@@ -34,6 +34,10 @@ darwin 是一项自托管 AI 开发实验。[v0.0.1 基线版本](https://github
 
 这套流程有明确边界，不代表 darwin 拥有产品决策权。工作树不干净、起点无法验证、验收反复失败、前提被证伪，或遇到只能由人决定的产品/安全问题时，整批工作会停止，并把原因写入记录。证据可查阅[按日期归档的研究报告](docs/research/)和[自省报告](docs/reflections/)。
 
+## 迁移已有设置
+
+在目标项目内运行 `darwin import --from claude-code`，可只读预览有上限的迁移计划。Linux 上加 `--apply` 后，只复制支持的提示词型 skills、agents，以及带来源标记的 `CLAUDE.md` 段落，不会静默覆盖已有内容，也不会写入或启用 hook、MCP、权限策略或信任记录。执行前请查看[支持的映射与手动步骤](docs/user-guide/extensions.zh-CN.md#迁移-claude-code-设置)；此命令不导入聊天，也不切换模型供应商。
+
 ## 主要能力
 
 - **清晰的 Ink TUI：**流式 Markdown 回复、文件修改 diff、耗时与 token 消耗、斜杠命令与路径补全、提示词回看和排队、本地 `!` 命令，以及有长度上限的状态报告。
