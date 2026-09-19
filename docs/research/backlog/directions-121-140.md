@@ -169,7 +169,7 @@ Source S2c (Codex exec-policy `prefix_rule` ships inline `match`/`not_match` uni
 
 ## SER-097 — Suggest the exact allow rule at the permission prompt: answering "always" shows the exact rule text before it is persisted (derived from the exact `(toolName, input)`, e.g. the bounded bash wildcard for the command's stable prefix), and the post-write notice names the rule so `/permissions` can revoke it; no grammar or auto-approval change
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 129
 - Score: 9
 - Importance: 3
