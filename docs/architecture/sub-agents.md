@@ -260,6 +260,11 @@ The display id is derived from the parent tool-use id and shortened to eight cha
 terminal completion notice.
 
 `/agents` reads the in-memory registry, makes no model call, and remains available during a turn.
+A nonempty report appends one `settled — this run` line counting succeeded, failed and cancelled
+records; running entries never contribute. Each continuation and workflow node counts as an ordinary
+dispatch. Empty registries retain the old none report with no summary. Counts are computed afresh
+from all supplied snapshots, never stored or recovered from previous runs, and the whole report
+remains one Static notice rather than a new live-frame surface.
 Terminal transitions publish once to observers; an observer failure cannot affect the child result
 or prevent delivery to other listeners. Presentation code bounds long labels and tasks without
 truncating registry state.

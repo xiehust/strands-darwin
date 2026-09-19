@@ -1545,6 +1545,17 @@ cut-off note and the child's last assistant text, capped at 4000 code points and
 same projection; a text-less failure is the unchanged error object and cancellation is never wrapped
 (`spike/verify-failed-child-text.ts`).
 
+**`/agents` settled counts are a projection of this run, not stored history** (SER-098).
+`formatDispatchesReport` appends one `settled — this run` summary to a nonempty report, counting
+`succeeded`/`failed`/`cancelled` across every supplied registry snapshot. Running entries never
+count; continuation and workflow records count as ordinary dispatches, with no deduplication or
+retention-window filter. An empty registry keeps the old none report without a summary. The
+existing heading, bounded rows, usage and continuation suffixes stay byte-identical. Counts are
+local to the formatter call, never persisted or recovered on resume; there is no deletion,
+archive, new event/timer or live-frame row. `/agents` still sends one ordinary Static notice.
+Required check: `spike/verify-subagent-format.ts` (in `pnpm test`) covers empty/running/mixed
+counts, real registry transitions, immutable snapshots, old rows and the existing notice route.
+
 **A child whose stream is interrupted gets the same one continuation the parent gets — on the live
 child, at the tool's `invoke` seam, never in the loop** (SRF-026). One session lost ~21 minutes of two
 children that died mid-stream with the bare `Stream ended without completing a message` after their

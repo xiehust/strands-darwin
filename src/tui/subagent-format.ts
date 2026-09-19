@@ -55,6 +55,10 @@ export function formatDispatchesReport(
   nowMs = Date.now(),
 ): string {
   if (dispatches.length === 0) return 'subagent dispatches — none in this run';
+  const settled = { succeeded: 0, failed: 0, cancelled: 0 };
+  for (const dispatch of dispatches) {
+    if (dispatch.state !== 'running') settled[dispatch.state] += 1;
+  }
   return [
     `subagent dispatches — this run (${dispatches.length})`,
     ...dispatches.map(
@@ -63,6 +67,7 @@ export function formatDispatchesReport(
         `${formatTaskDuration(dispatchElapsedMs(dispatch, nowMs)).padStart(7)}  ` +
         `${summarizeTaskCommand(dispatch.task, TASK_SUMMARY_LIMIT)}${dispatchContinuationSuffix(dispatch)}${dispatchUsageSuffix(dispatch)}`,
     ),
+    `settled — this run: succeeded ${settled.succeeded} · failed ${settled.failed} · cancelled ${settled.cancelled}`,
   ].join('\n');
 }
 

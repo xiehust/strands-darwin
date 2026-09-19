@@ -106,7 +106,7 @@ Rules and limits:
 
 | Command | Behavior |
 |---|---|
-| `/agents` | bounded dispatch list for this run; metadata only |
+| `/agents` | bounded dispatch rows for this run; metadata only; nonempty reports append succeeded/failed/cancelled counts (running dispatches excluded) |
 | `/clear` | new successor session; live mode inherited; queue dropped |
 | `/compact [focus]` | summarize older conversation; user controlled. Optional focus text (≤400 code points after trimming, longer is refused with a notice and nothing runs) is appended to the SDK's default summarizer prompt as one fixed section the summary must keep; without it the summarizer request is unchanged |
 | `/context` | known/estimated context size (Bedrock may use heuristic), then a breakdown estimated over the current request shape: system prompt by section (base, project instructions, skills catalogue, working context), tools by origin (darwin built-ins, each MCP server), conversation by role — `~N tokens · P%` per row when the window is known; a failed count reads `not reported`; counted only when you run the command |

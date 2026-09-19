@@ -3,6 +3,8 @@
  * completion notice, the live delegation row, and the dispatch id every one of
  * them keys on. Pure — no agents, no models, no processes.
  */
+import { readFileSync } from 'node:fs';
+import { initialTurnState, turnReducer } from '../src/tui/turn-state.js';
 import {
   SubagentDispatchRegistry,
   shortDispatchId,
@@ -86,16 +88,106 @@ function reportRows(): void {
   assert('a row carries agent, dispatch, state and elapsed', /explorer#a1b2c3d4\s+running\s+12s\s+find every call site/.test(lines[1] ?? ''));
   assert('a finished row uses its own finish time', /general#0f9e8d7c\s+succeeded\s+4s/.test(lines[2] ?? ''));
   assert('multiline and repeated whitespace collapse to one line', lines[2]?.includes('summarize the permission gate') === true);
-  assert('every dispatch is exactly one row', lines.length === 3);
+  assert('old heading and row bytes are unchanged before the appended summary',
+    lines.slice(0, -1).join('\n') === [
+      'subagent dispatches — this run (2)',
+      `  ${'explorer#a1b2c3d4'.padEnd(25)}  ${'running'.padEnd(9)}  ${'12s'.padStart(7)}  find every call site of classify`,
+      `  ${'general#0f9e8d7c'.padEnd(25)}  succeeded  ${'4s'.padStart(7)}  summarize the permission gate`,
+    ].join('\n'));
+  assert('every dispatch is exactly one row, followed by one summary', lines.length === 4);
 
   const long = formatDispatchesReport([dispatched({ task: 'x'.repeat(400) })], now);
-  assert('a long task is bounded', long.length < 200);
+  assert('a long task keeps its original bound', long.split('\n').slice(0, -1).join('\n').length < 200);
   assert('a bounded task says it was cut', long.includes('…'));
 
   // Truncation by code points, not UTF-16 units: half a surrogate pair renders as
   // a replacement character and makes the report look corrupted.
   const emoji = formatDispatchesReport([dispatched({ task: `${'🙂'.repeat(60)}` })], now);
   assert('truncation keeps whole code points', !emoji.includes('\uFFFD'));
+}
+
+function settledSummary(): void {
+  header('subagent format — settled counts from immutable current-run snapshots');
+
+  const now = Date.parse('2026-08-15T10:00:12.000Z');
+  const registry = new SubagentDispatchRegistry({ now: () => now });
+  const first = registry.begin({ agentName: 'general', task: 'original', toolUseId: 'tooluse_original' });
+  const failed = registry.begin({ agentName: 'general', task: 'workflow node', toolUseId: 'tooluse_workflow', writeScopes: ['src'] });
+  const cancelled = registry.begin({ agentName: 'general', task: 'cancel me', toolUseId: 'tooluse_cancelme' });
+  const pending = registry.begin({ agentName: 'general', task: 'still running', toolUseId: 'tooluse_pending1' });
+  try {
+    const running = registry.list();
+    const runningBytes = JSON.stringify(running);
+    assert('running-only dispatches have zero terminal counts',
+      formatDispatchesReport(running, now).split('\n').at(-1) ===
+        'settled — this run: succeeded 0 · failed 0 · cancelled 0');
+    assert('requesting cancellation does not settle a dispatch',
+      registry.cancel(cancelled.dispatchId).outcome === 'cancelled' &&
+      formatDispatchesReport(registry.list(), now).split('\n').at(-1) ===
+        'settled — this run: succeeded 0 · failed 0 · cancelled 0');
+
+    first.finish('succeeded');
+    assert('a real terminal transition changes only its count',
+      formatDispatchesReport(registry.list(), now).split('\n').at(-1) ===
+        'settled — this run: succeeded 1 · failed 0 · cancelled 0');
+    failed.finish('failed');
+    cancelled.finish('cancelled');
+    const continued = registry.begin({ agentName: 'general', task: 'follow-up', continuedFrom: first.dispatchId });
+    continued.attachUsage(() => ({ inputTokens: 12, outputTokens: 3 }));
+    continued.finish('succeeded');
+    // Colliding display ids are still distinct registry records, not a unique-agent tally.
+    registry.begin({ agentName: 'general', task: 'collision one', toolUseId: 'tooluse_sameid00-a' }).finish('cancelled');
+    registry.begin({ agentName: 'general', task: 'collision two', toolUseId: 'tooluse_sameid00-b' }).finish('cancelled');
+
+    const snapshots = registry.list();
+    for (const snapshot of snapshots) {
+      Object.freeze(snapshot.phase);
+      if (snapshot.usage !== undefined) Object.freeze(snapshot.usage);
+      Object.freeze(snapshot);
+    }
+    Object.freeze(snapshots);
+    const before = JSON.stringify(snapshots);
+    const rendered = formatDispatchesReport(snapshots, now);
+    assert('mixed terminal states count every record, including continuation, workflow and colliding ids',
+      rendered.split('\n').at(-1) === 'settled — this run: succeeded 2 · failed 1 · cancelled 3');
+    assert('all seven rows remain, including the running entry',
+      rendered.split('\n').length === 9 && registry.runningCount() === 1);
+    assert('continued rows retain their id and usage suffixes',
+      rendered.split('\n')[5]?.endsWith(' — continues #original — tokens in=12 out=3') === true);
+    assert('formatting neither mutates snapshots nor adds registry fields or counters',
+      JSON.stringify(snapshots) === before && JSON.stringify(registry.list()) === before);
+    assert('earlier running snapshots remain unchanged after real settlement',
+      JSON.stringify(running) === runningBytes && formatDispatchesReport(running, now).split('\n').at(-1) ===
+        'settled — this run: succeeded 0 · failed 0 · cancelled 0');
+    assert('a subset is counted afresh, with no retained counters',
+      formatDispatchesReport(snapshots.filter((snapshot) => snapshot.state === 'failed'), now).split('\n').at(-1) ===
+        'settled — this run: succeeded 0 · failed 1 · cancelled 0');
+    assert('a fresh registry has no recovered history or summary',
+      formatDispatchesReport(new SubagentDispatchRegistry().list(), now) === 'subagent dispatches — none in this run');
+  } finally {
+    first.finish('cancelled');
+    failed.finish('cancelled');
+    cancelled.finish('cancelled');
+    pending.finish('cancelled');
+  }
+}
+
+function overviewNotice(): void {
+  header('subagent format — existing /agents notice route, no live-frame state');
+
+  const app = readFileSync(new URL('../src/tui/App.tsx', import.meta.url), 'utf8');
+  assert('/agents still sends the registry projection as one ordinary notice',
+    app.includes("if (text === '/agents') {\n          dispatch({ type: 'notice', text: formatDispatchesReport(runtime.listSubagentDispatches()) });\n          return;\n        }"));
+  const text = formatDispatchesReport([dispatched()]);
+  const after = turnReducer(initialTurnState, { type: 'notice', text });
+  const notice = after.history.at(-1);
+  assert('the entire overview, including summary, is one Static history notice',
+    after.history.length === initialTurnState.history.length + 1 &&
+    notice?.kind === 'notice' && notice.text === text);
+  const { history: _beforeHistory, ...beforeLive } = initialTurnState;
+  const { history: _afterHistory, ...afterLive } = after;
+  assert('the notice does not add or change any live-frame state',
+    JSON.stringify(afterLive) === JSON.stringify(beforeLive));
 }
 
 function usageSuffix(): void {
@@ -214,6 +306,8 @@ function registryProjection(): void {
 dispatchIds();
 elapsed();
 reportRows();
+settledSummary();
+overviewNotice();
 usageSuffix();
 completionNotice();
 liveRow();
