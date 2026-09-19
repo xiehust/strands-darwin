@@ -149,7 +149,7 @@ Source S5 (kiro-cli changelog 2-19: stream idle watchdog, retries with backoff, 
 
 ## SER-096 — Permission-rule dry-run: `darwin permissions test <rule>` (CLI) and `/permissions test <rule>` (TUI) evaluate a candidate rule against the existing matcher and print the parse result, which already-seen `(toolName, input)` pairs from the trajectory it would have matched, and whether an existing deny rule beats it; read-only, never writes config, never touches live gate state
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 128
 - Score: 11
 - Importance: 3
