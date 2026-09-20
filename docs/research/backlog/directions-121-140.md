@@ -238,7 +238,7 @@ Source S2d (Codex `/import` "Import Claude Code or Cursor setup, projects, and c
 - Evidence confidence: 5
 - Difficulty: 4
 - Risk: 3
-- Origin report: [`research_2026-09-20.md`](../research_2026-09-20.md#run--2026-09-20t112000840z)
+- Origin report: [`research_2026-09-20.md`](../research_2026-09-20.md)
 
 ### Implementation / acceptance evidence
 
