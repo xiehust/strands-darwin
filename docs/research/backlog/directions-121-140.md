@@ -230,7 +230,7 @@ Source S2d (Codex `/import` "Import Claude Code or Cursor setup, projects, and c
 
 ## SER-100 — Keep completion labels and accepted composer drafts terminal-safe at presentation: one counted menu row for hostile filename controls, exact raw path insertion, and display-cell/source-offset cursor mapping without rewriting draft bytes
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 132
 - Score: 11
 - Importance: 4
