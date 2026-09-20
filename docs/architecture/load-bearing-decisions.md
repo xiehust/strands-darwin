@@ -2405,6 +2405,25 @@ happened" assertion passes vacuously on a pipe) and the markdown section of
 
 ## `@` path completion
 
+**Completion and accepted-draft controls are display-only (SER-100).** `InputBox` projects
+completion names through `searchPreview` before Ink sees them: CRLF/LF/CR, VT/FF/NEL and
+Unicode line/paragraph separators become ` ⏎ `, other C0/DEL/C1 bytes become literal
+`\uXXXX`. `truncate-end` alone bounds width, not newlines or terminal styling. The raw
+candidate array, ordering, matching and Tab/Enter acceptance remain untouched. The editor
+separately projects non-layout controls (including CR and Unicode separators) as `\uXXXX`;
+LF retains multiline layout and tabs retain four cells. Each escape is one display unit
+with raw grapheme endpoints, measured before wrapping, never six editable source characters.
+CRLF remains one source grapheme: the CR is visible but creates no caret stop between the
+pair; the next stop is on the following logical row. Movement, deletion and undo continue to
+operate on exact raw drafts. This is not a transcript sanitizer, input normalizer, file read
+or second policy channel. No grant arithmetic, live row, timer or dependency changes.
+`verify-input-controls.tsx` covers real mode-000 hostile filenames through bounded scanning,
+exact insertion, real Ink grants at 24/100 columns, selected windows/omissions and source/cell
+mapping. `verify-input-controls-pty.ts` drives the real CLI without a model call: Tab/Enter,
+editing, destructive undo and deletion of every raw grapheme prove exact unsent text. Both
+are in `pnpm test`; neighboring editor/path/frame/search suites and free TUI
+`completion`, `pathCompletion`, `wordNav`, `undo` remain required regressions.
+
 **`@` in the prompt completes a workspace path, and inserts the path text — never the file's
 content** (`src/tui/path-completion.ts`). Three
 peers disagree here (Codex adds the path, OpenCode inlines the content, Claude Code autocompletes),

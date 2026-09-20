@@ -61,8 +61,10 @@ export function layoutEditor(text: string, columns: number, cursor: EditorCursor
 
   for (;;) {
     const newline = text.indexOf('\n', logicalStart);
-    const logicalEnd = newline === -1 ? text.length : newline;
-    const graphemes = segment(text.slice(logicalStart, logicalEnd), logicalStart);
+    const contentEnd = newline === -1 ? text.length : newline;
+    const crlf = newline > logicalStart && text[newline - 1] === '\r';
+    const logicalEnd = crlf ? contentEnd - 1 : contentEnd;
+    const graphemes = segment(text.slice(logicalStart, contentEnd), logicalStart, crlf);
     appendLogicalRows(rows, graphemes, logicalStart, logicalEnd, logicalIndex, contentWidth);
     logicalIndex += 1;
     if (newline === -1) break;
@@ -346,7 +348,9 @@ function makeRow(graphemes: readonly Grapheme[], start: number, end: number, pre
   let column = 0;
   for (const grapheme of graphemes) {
     column += grapheme.width;
-    boundaries.push({ offset: grapheme.end, column });
+    // A CR in CRLF is visible, but the pair is one source grapheme: its next
+    // caret stop belongs to the following logical row, never between CR and LF.
+    if (grapheme.end > grapheme.start) boundaries.push({ offset: grapheme.end, column });
   }
   return {
     text: graphemes.map((grapheme) => grapheme.display).join(''),
@@ -413,17 +417,22 @@ function sourceBoundaries(text: string): number[] {
   return boundaries;
 }
 
-function segment(text: string, sourceStart: number): Grapheme[] {
+function segment(text: string, sourceStart: number, crlf = false): Grapheme[] {
   return [...segmenter.segment(text)].map((part) => {
-    // Ink/string-width intentionally gives a tab zero width. Render a visible
-    // fixed tab stop so source offsets and hit-testing still have a real cell.
-    const display = part.segment === '\t' ? '    ' : part.segment;
+    // LF is handled by layoutEditor; tabs keep their four-cell layout. All
+    // other terminal/line controls are visible text, never Ink styling or motion.
+    // Keep each escape atomic at soft wraps: its only caret stops are the raw
+    // grapheme's endpoints, not the six printable characters of its projection.
+    const control = /^[\u0000-\u001f\u007f-\u009f\u2028\u2029]$/.test(part.segment);
+    const display = part.segment === '\t' ? '    '
+      : control ? `\\u${part.segment.charCodeAt(0).toString(16).padStart(4, '0')}`
+        : part.segment;
     return {
       text: part.segment,
       display,
       start: sourceStart + part.index,
-      end: sourceStart + part.index + part.segment.length,
-      width: part.segment === '\t' ? 4 : cellWidth(part.segment),
+      end: sourceStart + part.index + (crlf && part.index === text.length - 1 ? 0 : part.segment.length),
+      width: part.segment === '\t' ? 4 : control ? display.length : cellWidth(part.segment),
     };
   });
 }

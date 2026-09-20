@@ -7,6 +7,7 @@ import { draftWindow, hiddenDraftNotice, planPromptBox } from './frame-budget.js
 import type { PromptHistorySearchView } from './prompt-history-search.js';
 import type { RewindSearchView } from './rewind-search.js';
 import type { EditorLayout } from './prompt-editor.js';
+import { searchPreview } from './search-preview.js';
 import { visualColor, visualMarker } from './visual-language.js';
 
 /**
@@ -265,7 +266,7 @@ export function InputBox({
                   dimColor={!selected}
                   wrap="truncate-end"
                 >
-                  {selected ? `${visualMarker.completion} ` : '  '}{completionKind === 'command' ? '/' : ''}{name}
+                  {selected ? `${visualMarker.completion} ` : '  '}{completionKind === 'command' ? '/' : ''}{searchPreview(name)}
                 </Text>
                 {/* Appended after the name so pty substring assertions on
                     "  /name" rows keep matching; truncated so a narrow terminal

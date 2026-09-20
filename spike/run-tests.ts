@@ -19,6 +19,8 @@ const suites = [
   'verify-visual-language.tsx',
   'verify-markdown.tsx',
   'verify-path-completion.ts',
+  'verify-input-controls.tsx',
+  'verify-input-controls-pty.ts',
   'verify-prompt-recall.ts',
   'verify-prompt-history-search.ts',
   'verify-rewind-search.ts',

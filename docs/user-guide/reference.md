@@ -153,7 +153,7 @@ Rules and limits:
 | Syntax | Behavior |
 |---|---|
 | `/prefix` | built-in/custom/skill completion |
-| `@path` | workspace path completion; inserts text, never content |
+| `@path` | workspace path completion; inserts exact raw path text, never file content; controls are escaped only for display in the single-row menu and editable draft ([display rules](using-darwin.md#prompt-editing-and-completion)) |
 | `!command` | user-authorized one-shot local shell command; runs with your environment plus `DARWIN=1` — the marker every process darwin spawns (model `bash` shells and jobs, hook commands, stdio MCP servers) carries, never overriding a `DARWIN` already set |
 | normal text | model prompt; queues while busy |
 
