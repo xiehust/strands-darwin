@@ -227,3 +227,24 @@ Accepted 2026-09-19 in `84151059ae870776e96f8d5a887de3c562b4d457`, fresh child `
 
 Source S2d (Codex `/import` "Import Claude Code or Cursor setup, projects, and chats"). Darwin evidence: darwin already reads Claude-format `.mcp.json` (root fallback) and `.agents/` layers, so the migration delta is small; workspace trust (SER-090) already governs arming executable config, and the import must stay consistent with it — hooks/MCP are printed as snippets, never armed. Risk is path handling across two tools' stores; the scan is read-only and bounded. Checks: `pnpm test`, the new CLI suite the child adds.
 
+
+## SER-100 — Keep completion labels and accepted composer drafts terminal-safe at presentation: one counted menu row for hostile filename controls, exact raw path insertion, and display-cell/source-offset cursor mapping without rewriting draft bytes
+
+- Status: `not-started`
+- Priority: 132
+- Score: 11
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 4
+- Risk: 3
+- Origin report: [`research_2026-09-20.md`](../research_2026-09-20.md#run--2026-09-20t112000840z)
+
+### Implementation / acceptance evidence
+
+Not implemented. Report R1–R5 records real Ink reproduction at HEAD `fb83589`: an LF filename renders 16 rows under a 6-row InputBox grant, and ANSI names reach styling both in the menu and after acceptance; composer counted width/cursor diverges from displayed cells.
+
+### Notes / blockers / abandonment reason
+
+Score 11 passes gate 6. Pure presentation fix at `InputBox` and `prompt-editor` seams, informed by `searchPreview`; preserve `scanWorkspacePaths`/`applyPathCompletion` raw identity, matching/order and path-only/no-file-content contract. Cover C0/DEL/C1, CRLF, ANSI/OSC and Unicode separators in single-row labels; preserve ordinary Unicode, draft LF/tab behavior and exact source offsets while displaying non-layout controls safely after insertion. Menu-only remediation is incomplete. No global transcript sanitizer, new store/row/timer, dependency, permission change or SDK loop fork. Acceptance requires real names/Ink renders plus CLI pty selection/editing, exact raw insertion, safe display and cursor/delete/undo mapping; full gates, free completion/pathCompletion/wordNav/undo pty checks, and build. Sync English/Chinese user docs and relevant architecture. One-direction batch, no dependency.
+
