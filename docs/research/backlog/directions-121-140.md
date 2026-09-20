@@ -230,7 +230,7 @@ Source S2d (Codex `/import` "Import Claude Code or Cursor setup, projects, and c
 
 ## SER-100 — Keep completion labels and accepted composer drafts terminal-safe at presentation: one counted menu row for hostile filename controls, exact raw path insertion, and display-cell/source-offset cursor mapping without rewriting draft bytes
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 132
 - Score: 11
 - Importance: 4
@@ -242,7 +242,7 @@ Source S2d (Codex `/import` "Import Claude Code or Cursor setup, projects, and c
 
 ### Implementation / acceptance evidence
 
-Not implemented. Report R1–R5 records real Ink reproduction at HEAD `fb83589`: an LF filename renders 16 rows under a 6-row InputBox grant, and ANSI names reach styling both in the menu and after acceptance; composer counted width/cursor diverges from displayed cells.
+Accepted `7c96669` after independent Host review of all ten changed files. Host `pnpm typecheck && pnpm test && pnpm build && git diff --check` plus clean-tree assertion passed (task `bg-f98f94e5-46b4-4209-9595-2d3f787e534c`, exit 0; 9,443 PASS lines). Full gate includes new real-file/Ink/editor checks (16) and real CLI pty checks (6), covering exact insertion, all control classes, CRLF/graphemes, display widths, cursor/delete/undo mapping, menu grants/omissions and no model call. Separately Host reran `spike/verify-tui.ts completion` (75), `pathCompletion` (27), `wordNav` (11), `undo` (7), all exit 0. Independent original reproduction now returns 4 menu rows instead of 16; ANSI displays literally in menu and accepted draft, raw insertion unchanged, cursor column 36 matches projected width. Source changes confined to `InputBox` and `prompt-editor`; English/Chinese using-darwin/reference and architecture synced, README remains accurate. See iteration-log Batch 143. Child `session-20260920-114354682`, one successful managed task; no correction needed.
 
 ### Notes / blockers / abandonment reason
 
