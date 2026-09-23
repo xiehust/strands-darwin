@@ -44,7 +44,7 @@ jobs:
           version: 11
 
       # Node 24 ships npm 11 (trusted publishing needs npm >= 11.5.1); the package itself
-      # supports Node >= 20.11, which `engines` states and the npm suite installs against.
+      # requires Node >= 22.0.0 (the SDK floor); this job tests installation on Node 24.
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

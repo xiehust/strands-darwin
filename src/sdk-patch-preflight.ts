@@ -1,7 +1,7 @@
 /**
  * Startup preflight: refuse to run on an unpatched `@strands-agents/sdk`.
  *
- * darwin depends on its pinned SDK patch (`patches/@strands-agents__sdk@1.16.0.patch`).
+ * darwin depends on its pinned SDK patch (`patches/@strands-agents__sdk@1.18.0.patch`).
  * pnpm applies it in a clone; the npm package applies it from `postinstall` with
  * `patch-package`. An install that skipped scripts (`npm install --ignore-scripts`,
  * or `pnpm add -g`, whose isolated layout patch-package cannot address) leaves the

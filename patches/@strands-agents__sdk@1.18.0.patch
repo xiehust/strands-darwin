@@ -21,22 +21,22 @@ index 84e3d1bb0bcd499d3dd2cd07c08baa79807ca79c..7e1c407bb04714309226c40b5daa0082
  }
  /**
 diff --git a/dist/src/index.d.ts b/dist/src/index.d.ts
-index 89047d0b24999df274f256d25b4cca8624ce7ac6..ca746d6e27aa644eaf5186c79185263fa3d1fc53 100644
+index 416fa4a6d2a29417506588e05f95562bc7f3aa79..62e02b408b78ef5ade04ecd24478031331b6b1e4 100644
 --- a/dist/src/index.d.ts
 +++ b/dist/src/index.d.ts
-@@ -56,6 +56,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
+@@ -64,6 +64,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
  export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
  export { SlidingWindowConversationManager, type SlidingWindowConversationManagerConfig, } from './conversation-manager/sliding-window-conversation-manager.js';
  export { SummarizingConversationManager, type SummarizingConversationManagerConfig, } from './conversation-manager/summarizing-conversation-manager.js';
 +export { DEFAULT_SUMMARIZATION_PROMPT } from './conversation-manager/compression/context-compression.js';
  export { configureLogging } from './logging/logger.js';
  export type { Logger } from './logging/types.js';
- export { type McpClientOptions, type McpListToolsOptions, type McpToolFilterCallback, type McpToolFilters, type McpToolMatcher, type McpClientConfig, type McpClientCredentials, type McpTransport, type McpCallToolOptions, type TasksConfig, type McpConnectionState, type McpServerConfig, type SerializableMcpToolFilters, McpClient, } from './mcp/index.js';
+ export { type McpClientOptions, type McpListToolsOptions, type McpToolFilterCallback, type McpToolFilters, type McpToolMatcher, type McpClientConfig, type McpClientCredentials, type McpTransport, type McpCallToolOptions, type TasksConfig, type McpConnectionState, type McpLoadServersOptions, type McpServerConfig, type SerializableMcpToolFilters, McpClient, } from './mcp/index.js';
 diff --git a/dist/src/index.js b/dist/src/index.js
-index 3cb62b859eba690822bbd8fb1c2c9388cd151394..4a1febbd5752dc4bb0cbba24b0695c5ce40143e9 100644
+index 1ffe683b6944318f8524c231674eabcf8428f89f..ea8dfa7ae5d5cfb3166a6e23afe3042d59b8973f 100644
 --- a/dist/src/index.js
 +++ b/dist/src/index.js
-@@ -52,6 +52,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
+@@ -53,6 +53,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
  export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
  export { SlidingWindowConversationManager, } from './conversation-manager/sliding-window-conversation-manager.js';
  export { SummarizingConversationManager, } from './conversation-manager/summarizing-conversation-manager.js';
@@ -69,7 +69,7 @@ index e17f00ac284c1e3357d55205c57b431061141b55..a7b4edd12a5ac33277a5ad2c4bcea4c4
      stopReason: StopReason;
  }
 diff --git a/dist/src/models/openai/responses-adapter.js b/dist/src/models/openai/responses-adapter.js
-index 25091ff4351eaa61dc370382a251285ed6f3a629..8d342dc7be28c63b7f609bd3c9cca00f3877b664 100644
+index 9605eb256daa6aebf7dddea2f745d44bdf6f6970..a95bd07e8892bdc104da42ac9f74b1fa4513e59a 100644
 --- a/dist/src/models/openai/responses-adapter.js
 +++ b/dist/src/models/openai/responses-adapter.js
 @@ -328,9 +328,13 @@ function mapResponsesUsage(usage) {

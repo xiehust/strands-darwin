@@ -18,6 +18,7 @@ import {
   ContextWindowOverflowError,
   Message,
   Model,
+  SummarizingConversationManager,
   TextBlock,
   ToolResultBlock,
   ToolUseBlock,
@@ -538,6 +539,12 @@ try {
   assert('a default main runtime registers the retrieval tool',
     defaultRuntime.info.toolNames.includes('retrieve_offloaded_content'));
   assert('the effective default is visible in loaded config', defaultRuntime.config.contextOffload === true);
+  // Test-only inspection of the SDK's resolved manager: config alone cannot prove
+  // a new SDK did not substitute its experimental context pipeline.
+  const agent = (defaultRuntime as unknown as { agent: Agent }).agent;
+  assert('SDK 1.18 keeps the explicit SummarizingConversationManager, without experimental contextManager',
+    (agent as unknown as { _conversationManager: unknown })._conversationManager instanceof SummarizingConversationManager
+    && agent.contextManager === undefined);
   assert('child definitions cannot request the parent session retrieval capability',
     defaultRuntime.info.agentProblems.some((problem) =>
       problem.file.endsWith('retrieval-child.md') && problem.reason.includes('unknown tool')));
@@ -561,6 +568,10 @@ try {
   assert('explicit false omits the retrieval tool',
     !optedOut.info.toolNames.includes('retrieve_offloaded_content'));
   assert('the persistent opt-out remains visible in loaded config', optedOut.config.contextOffload === false);
+  const agent = (optedOut as unknown as { agent: Agent }).agent;
+  assert('opting out of offloading does not select experimental contextManager or replace summarization',
+    (agent as unknown as { _conversationManager: unknown })._conversationManager instanceof SummarizingConversationManager
+    && agent.contextManager === undefined);
 } finally {
   await optedOut.shutdown();
 }

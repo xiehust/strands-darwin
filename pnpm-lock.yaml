@@ -204,7 +204,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@strands-agents/sdk@1.16.0': 47be9fa6c3795cd34f36cc0895d530069340606eb79e908c9e8326e1f22027a1
+  '@strands-agents/sdk@1.18.0': b3369232ff1a76b452b2938e37f89dfeab1f976b0913f9f49ab3f9bcb6b5aee5
   ink@7.1.1: 7b7a5b41b349ec752f165991f44b21ee825ca371b8246f6fb20a33098e195323
 
 importers:
@@ -224,8 +224,8 @@ importers:
         specifier: ^1.30.0
         version: 1.30.0(supports-color@7.2.0)(zod@4.4.3)
       '@strands-agents/sdk':
-        specifier: 1.16.0
-        version: 1.16.0(patch_hash=47be9fa6c3795cd34f36cc0895d530069340606eb79e908c9e8326e1f22027a1)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1(supports-color@7.2.0))(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)
+        specifier: 1.18.0
+        version: 1.18.0(patch_hash=b3369232ff1a76b452b2938e37f89dfeab1f976b0913f9f49ab3f9bcb6b5aee5)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1(supports-color@7.2.0))(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -807,9 +807,9 @@ packages:
   '@stablelib/base64@1.0.1':
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
-  '@strands-agents/sdk@1.16.0':
-    resolution: {integrity: sha512-Qr720qGGtxjlmScw2J/7NRmKpWZiugB16H/WxKbR3i1I5H4e6o8ZyNAzOFJuXFifMKP1dHpFq3syNFZFMNHDUA==}
-    engines: {node: '>=20.0.0'}
+  '@strands-agents/sdk@1.18.0':
+    resolution: {integrity: sha512-YDaYA4MvYhzKdwu0aL7jZI8GHQkKAmqvmLMxFnywBwaSkTYE/DPiDFeAzI61U10pUGFwXKLbcRFIbjQ3iEMGsw==}
+    engines: {node: '>=22.0.0'}
     peerDependencies:
       '@a2a-js/sdk': ^0.3.10
       '@ai-sdk/provider': ^3.0.0
@@ -833,6 +833,7 @@ packages:
       '@tobilu/qmd': ^2.8.0
       express: ^5.1.0
       openai: ^6.45.0
+      turndown: ^7.2.4
       zod: ^4.1.12
     peerDependenciesMeta:
       '@a2a-js/sdk':
@@ -874,6 +875,8 @@ packages:
       express:
         optional: true
       openai:
+        optional: true
+      turndown:
         optional: true
 
   '@types/json-schema@7.0.15':
@@ -1787,9 +1790,6 @@ packages:
   zod@4.4.3:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
-ignoredOptionalDependencies:
-  - '@tobilu/qmd'
-
 snapshots:
 
   '@alcalzone/ansi-tokenize@0.3.0':
@@ -2411,7 +2411,7 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@strands-agents/sdk@1.16.0(patch_hash=47be9fa6c3795cd34f36cc0895d530069340606eb79e908c9e8326e1f22027a1)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1(supports-color@7.2.0))(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)':
+  '@strands-agents/sdk@1.18.0(patch_hash=b3369232ff1a76b452b2938e37f89dfeab1f976b0913f9f49ab3f9bcb6b5aee5)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1(supports-color@7.2.0))(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@aws-sdk/client-bedrock-runtime': 3.1123.0
       '@modelcontextprotocol/sdk': 1.30.0(supports-color@7.2.0)(zod@4.4.3)

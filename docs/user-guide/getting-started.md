@@ -4,7 +4,7 @@
 
 ## Requirements and installation
 
-- Node.js `>=20.11.0`.
+- Node.js `>=22.0.0`.
 - npm, for the global install below. Developing darwin itself uses pnpm (the repository's lockfile is pnpm's).
 - Credentials for the selected provider; AWS is the default.
 
@@ -14,9 +14,9 @@ darwin --version      # darwin <version>
 darwin doctor         # offline read-only diagnostics; exit 1 on problems
 ```
 
-The registry package is `strands-darwin`; the command is `darwin`. The package's `postinstall` script runs `patch-package` to apply darwin's pinned Strands SDK patch (shipped as `dist/patches/@strands-agents+sdk+1.16.0.patch`), so install with scripts enabled. If they were skipped — `npm install --ignore-scripts`, or an unsupported installer — `darwin` refuses to start before any model call, with one message that names the missing patch and this fix: `npm install -g strands-darwin`.
+The registry package is `strands-darwin`; the command is `darwin`. The package's `postinstall` script runs `patch-package` to apply darwin's pinned Strands SDK patch (shipped as `dist/patches/@strands-agents+sdk+1.18.0.patch`), so install with scripts enabled. If they were skipped — `npm install --ignore-scripts`, or an unsupported installer — `darwin` refuses to start before any model call, with one message that names the missing patch and this fix: `npm install -g strands-darwin`.
 
-`pnpm add -g strands-darwin` is unsupported: pnpm blocks a dependency's build scripts by default (the `postinstall` lands in `ignoredBuilds`), and even with `--allow-build` its isolated layout places the SDK beside the package, where `patch-package` cannot find it. The SDK's optional `@tobilu/qmd` dependency (a native search store darwin never imports) is installed under npm; it is optional all the way down, so a platform without prebuilds skips it rather than failing the install.
+`pnpm add -g strands-darwin` is unsupported: pnpm blocks a dependency's build scripts by default (the `postinstall` lands in `ignoredBuilds`), and even with `--allow-build` its isolated layout places the SDK beside the package, where `patch-package` cannot find it.
 
 ### Developer path: run from a clone
 

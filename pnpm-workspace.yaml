@@ -2,10 +2,6 @@ allowBuilds:
   esbuild: true
   node-pty: true
   sharp: true
-# SDK 1.16.0 lists `@tobilu/qmd` (local search store) as an optional dependency; darwin never
-# imports it and it drags in native builds (better-sqlite3, node-llama-cpp, tree-sitter-*).
-ignoredOptionalDependencies:
-  - '@tobilu/qmd'
 patchedDependencies:
-  '@strands-agents/sdk@1.16.0': patches/@strands-agents__sdk@1.16.0.patch
+  '@strands-agents/sdk@1.18.0': patches/@strands-agents__sdk@1.18.0.patch
   ink@7.1.1: patches/ink@7.1.1.patch

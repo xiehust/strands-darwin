@@ -5,14 +5,13 @@
  * `DEFAULT_SUMMARIZATION_PROMPT` error.
  *
  * **Not in `pnpm test`.** `npm install -g <tarball>` resolves darwin's dependencies
- * from the registry (the SDK, Ink, and the SDK's optional `@tobilu/qmd` chain — about
- * 350 packages, ~13 s warm, minutes cold), so this suite needs network access and is
- * run standalone. The offline half — the pnpm→patch-package conversion, the
- * generator, the manifest facts, the preflight's notice and import-graph placement —
+ * from the registry (the SDK, Ink, and their transitive dependencies), so this suite
+ * needs network access and is run standalone. The offline half — the pnpm→patch-package
+ * conversion, generator, manifest facts, preflight notice and import-graph placement —
  * is `spike/verify-npm-patch-format.ts`, which `pnpm test` does run.
  *
  * What it asserts, in order:
- * - `pnpm build` succeeds and leaves `dist/patches/@strands-agents+sdk+1.16.0.patch`;
+ * - `pnpm build` succeeds and leaves `dist/patches/@strands-agents+sdk+1.18.0.patch`;
  * - `npm pack --ignore-scripts` (the tree is freshly built, so `prepack` need not
  *   rebuild) lists `dist/src/**` incl. every built-in skill's `SKILL.md`, the generated
  *   patch, `README.md` (npm adds every `README*`, so `README.zh-CN.md` too), `package.json`
@@ -20,7 +19,8 @@
  *   dotfile entry;
  * - `npm install -g --prefix <tmp> <tarball>` exits 0, runs `postinstall`, and the
  *   installed SDK carries `DEFAULT_SUMMARIZATION_PROMPT` in `dist/src/index.js` and
- *   `excludeTools` in `dist/src/vended-plugins/context-offloader/plugin.js`;
+ *   `excludeTools` in `dist/src/vended-plugins/context-offloader/plugin.js`; every patched
+ *   file is byte-identical to pnpm's installed copy, and QMD is not installed;
  * - `<prefix>/bin/darwin --version` prints the manifest version (not `unknown`),
  *   `--help` prints the grammar, and `darwin doctor` exits 0 in an empty directory
  *   under a pristine HOME;
@@ -46,7 +46,7 @@ import { assert, header, report } from './shared.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const manifest = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { name: string; version: string };
-const GENERATED_PATCH = 'dist/patches/@strands-agents+sdk+1.16.0.patch';
+const GENERATED_PATCH = 'dist/patches/@strands-agents+sdk+1.18.0.patch';
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 
 function run(command: string, args: readonly string[], options: { cwd: string; env?: NodeJS.ProcessEnv; timeout?: number }): SpawnSyncReturns<string> {
@@ -115,8 +115,21 @@ try {
   const bin = path.join(prefix, 'bin', 'darwin');
   assert('<prefix>/bin/darwin exists and the package landed under lib/node_modules', existsSync(bin) && existsSync(installedPackageDir(prefix)));
   assert('the shipped generated patch is in the installed package', existsSync(path.join(installedPackageDir(prefix), GENERATED_PATCH)));
+  const installedSdk = JSON.parse(readFileSync(path.join(installedPackageDir(prefix), 'node_modules', '@strands-agents', 'sdk', 'package.json'), 'utf8')) as { version: string; engines: { node: string } };
+  assert('npm installed the exact SDK 1.18.0 with its Node >=22.0.0 requirement',
+    installedSdk.version === '1.18.0' && installedSdk.engines.node === '>=22.0.0');
+  assert('normal npm installation does not install the optional QMD peer',
+    !existsSync(path.join(installedPackageDir(prefix), 'node_modules', '@tobilu', 'qmd')));
   for (const { file, token } of SDK_PATCH_MARKERS) {
     assert(`the installed SDK's dist/src/${file} carries ${token}`, hasToken(sdkFile(prefix, file), token));
+  }
+  const patch = readFileSync(path.join(ROOT, GENERATED_PATCH), 'utf8');
+  const patchedFiles = [...patch.matchAll(/^\+\+\+ b\/node_modules\/@strands-agents\/sdk\/(.+)$/gm)].map((match) => match[1]!);
+  assert('the SDK patch still covers all 15 ported files', patchedFiles.length === 15);
+  for (const file of patchedFiles) {
+    assert(`npm and pnpm install identical patched SDK bytes: ${file}`,
+      readFileSync(path.join(installedPackageDir(prefix), 'node_modules', '@strands-agents', 'sdk', file))
+        .equals(readFileSync(path.join(ROOT, 'node_modules', '@strands-agents', 'sdk', file))));
   }
 
   header('the installed binary: --version, --help, doctor in an empty directory');

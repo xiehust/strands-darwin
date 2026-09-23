@@ -39,14 +39,14 @@ import { assert, header, report } from './shared.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SDK = '@strands-agents/sdk';
-const PNPM_PATCH_NAME = `${SDK.replace('/', '__')}@1.16.0.patch`;
-const GENERATED_NAME = `${SDK.replace('/', '+')}+1.16.0.patch`;
+const PNPM_PATCH_NAME = `${SDK.replace('/', '__')}@1.18.0.patch`;
+const GENERATED_NAME = `${SDK.replace('/', '+')}+1.18.0.patch`;
 const PREFIX = `node_modules/${SDK}/`;
 
 header('file names: pnpm dialect in, patch-package dialect out');
 const identity = parsePnpmPatchFileName(PNPM_PATCH_NAME);
 assert('the pinned pnpm file name parses to the scoped package and its exact version',
-  isDeepStrictEqual(identity, { packageName: SDK, version: '1.16.0' }));
+  isDeepStrictEqual(identity, { packageName: SDK, version: '1.18.0' }));
 assert('an unscoped pnpm name parses too',
   isDeepStrictEqual(parsePnpmPatchFileName('left-pad@1.3.0.patch'), { packageName: 'left-pad', version: '1.3.0' }));
 assert('a name outside pnpm\'s shape is refused, not guessed',
@@ -138,7 +138,8 @@ try {
     absent.status === 0 && absent.stdout.includes('No patch files found'));
   const applied = run(path.relative(ROOT, outputDir));
   assert('the generated patch against the SDK pnpm already patched exits 0 (already applied, nothing rewritten)',
-    applied.status === 0 && applied.stdout.includes(`${SDK}@1.16.0`));
+    applied.status === 0 && applied.stdout.includes(`${SDK}@1.18.0`)
+    && !`${applied.stdout}${applied.stderr}`.includes('**ERROR**'));
   for (const { file, token } of SDK_PATCH_MARKERS) {
     const text = readFileSync(path.join(ROOT, 'node_modules', SDK, 'dist', 'src', file), 'utf8');
     assert(`${file} still carries ${token} exactly as pnpm left it (the second application changed nothing)`,
@@ -154,7 +155,24 @@ const scripts = manifest['scripts'] as Record<string, string>;
 assert('the name is the unscoped registry name, and version.ts keys on the same constant',
   manifest['name'] === 'strands-darwin' && DARWIN_PACKAGE_NAME === manifest['name']);
 assert('the executable stays darwin → ./dist/src/cli.js', isDeepStrictEqual(manifest['bin'], { darwin: './dist/src/cli.js' }));
-assert('engines.node is the import.meta.dirname floor, >=20.11.0', isDeepStrictEqual(manifest['engines'], { node: '>=20.11.0' }));
+assert('engines.node matches the SDK floor, >=22.0.0', isDeepStrictEqual(manifest['engines'], { node: '>=22.0.0' }));
+const sdkManifest = JSON.parse(readFileSync(path.join(ROOT, 'node_modules', SDK, 'package.json'), 'utf8')) as {
+  version: string;
+  engines: { node: string };
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+};
+assert('the SDK dependency is an exact 1.18.0 pin and the installed package matches',
+  (manifest['dependencies'] as Record<string, string>)[SDK] === '1.18.0' && sdkManifest.version === '1.18.0');
+assert('Darwin and the installed SDK declare the same Node floor',
+  isDeepStrictEqual(manifest['engines'], sdkManifest.engines));
+assert('QMD is only an optional peer, no longer a dependency that needs ignoring',
+  sdkManifest.dependencies?.['@tobilu/qmd'] === undefined
+  && sdkManifest.optionalDependencies?.['@tobilu/qmd'] === undefined
+  && sdkManifest.peerDependenciesMeta?.['@tobilu/qmd']?.optional === true);
+assert('the obsolete QMD ignore workaround is absent from workspace configuration',
+  !readFileSync(path.join(ROOT, 'pnpm-workspace.yaml'), 'utf8').includes('ignoredOptionalDependencies'));
 assert('files whitelist: dist/src, dist/patches, README.md — nothing else',
   isDeepStrictEqual(manifest['files'], ['dist/src', 'dist/patches', 'README.md']));
 assert('publishConfig.access is public', isDeepStrictEqual(manifest['publishConfig'], { access: 'public' }));

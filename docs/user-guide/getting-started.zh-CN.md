@@ -4,7 +4,7 @@
 
 ## 环境要求与安装
 
-- Node.js `>=20.11.0`。
+- Node.js `>=22.0.0`。
 - npm，用于下面的全局安装。开发 darwin 本身使用 pnpm（仓库提交的是 pnpm lockfile）。
 - 所选供应商的凭证；默认供应商是 AWS。
 
@@ -14,9 +14,9 @@ darwin --version      # darwin <version>
 darwin doctor         # 离线只读诊断；发现问题时退出码 1
 ```
 
-npm 包名是 `strands-darwin`，命令是 `darwin`。包的 `postinstall` 脚本会运行 `patch-package`，应用 darwin 固定的 Strands SDK 补丁（随包发布为 `dist/patches/@strands-agents+sdk+1.16.0.patch`），所以安装时必须允许脚本运行。如果脚本被跳过——`npm install --ignore-scripts`，或使用了不受支持的安装器——`darwin` 会在任何模型调用之前拒绝启动，只打印一条消息，说明缺失的补丁和修复方式：`npm install -g strands-darwin`。
+npm 包名是 `strands-darwin`，命令是 `darwin`。包的 `postinstall` 脚本会运行 `patch-package`，应用 darwin 固定的 Strands SDK 补丁（随包发布为 `dist/patches/@strands-agents+sdk+1.18.0.patch`），所以安装时必须允许脚本运行。如果脚本被跳过——`npm install --ignore-scripts`，或使用了不受支持的安装器——`darwin` 会在任何模型调用之前拒绝启动，只打印一条消息，说明缺失的补丁和修复方式：`npm install -g strands-darwin`。
 
-不支持 `pnpm add -g strands-darwin`：pnpm 默认拦截依赖的构建脚本（`postinstall` 会进入 `ignoredBuilds`），即便加上 `--allow-build`，它的隔离目录布局也会把 SDK 放在包的旁边，而不是 `patch-package` 能找到的位置。SDK 的可选依赖 `@tobilu/qmd`（darwin 从不引用的原生搜索存储）在 npm 下会被一并安装；它自上而下都是可选的，没有预编译包的平台会跳过它，而不会让安装失败。
+不支持 `pnpm add -g strands-darwin`：pnpm 默认拦截依赖的构建脚本（`postinstall` 会进入 `ignoredBuilds`），即便加上 `--allow-build`，它的隔离目录布局也会把 SDK 放在包的旁边，而不是 `patch-package` 能找到的位置。
 
 ### 开发路径：从克隆目录运行
 

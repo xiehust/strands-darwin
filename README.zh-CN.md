@@ -3,9 +3,9 @@
   <p>一款在终端中运行的编程代理：每次通过验收的版本，都会成为开发下一版的工具。</p>
   <p><a href="README.md">English</a> · <strong>简体中文</strong></p>
   <p>
-    <a href="https://nodejs.org/"><img alt="Node.js >=20.11.0" src="https://img.shields.io/badge/Node.js-%3E%3D20.11.0-339933?logo=nodedotjs&amp;logoColor=white"></a>
+    <a href="https://nodejs.org/"><img alt="Node.js >=22.0.0" src="https://img.shields.io/badge/Node.js-%3E%3D22.0.0-339933?logo=nodedotjs&amp;logoColor=white"></a>
     <a href="https://www.typescriptlang.org/"><img alt="TypeScript 7.0.2" src="https://img.shields.io/badge/TypeScript-7.0.2-3178C6?logo=typescript&amp;logoColor=white"></a>
-    <a href="https://www.npmjs.com/package/@strands-agents/sdk"><img alt="Strands Agents SDK 1.16.0" src="https://img.shields.io/badge/Strands_Agents_SDK-1.16.0-5E4AE3"></a>
+    <a href="https://www.npmjs.com/package/@strands-agents/sdk"><img alt="Strands Agents SDK 1.18.0" src="https://img.shields.io/badge/Strands_Agents_SDK-1.18.0-5E4AE3"></a>
     <a href="https://spdx.org/licenses/ISC.html"><img alt="ISC License" src="https://img.shields.io/badge/License-ISC-blue.svg"></a>
   </p>
   <img src="docs/images/welcome.png" alt="darwin 终端欢迎界面" width="100%">
@@ -51,7 +51,7 @@ darwin 不会另写一套代理循环。它沿用 Strands SDK 的循环，只负
 
 ## 安装与启动
 
-需要 Node.js 20.11+、npm，以及所选模型供应商的凭证（默认使用 AWS）。
+需要 Node.js 22.0+、npm，以及所选模型供应商的凭证（默认使用 AWS）。
 
 ```bash
 npm install -g strands-darwin
