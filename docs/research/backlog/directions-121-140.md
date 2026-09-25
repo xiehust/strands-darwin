@@ -312,7 +312,7 @@ Evidence: turn 2 / seq 388 contains eleven same-class HTTP 400 concentration rej
 
 ## SER-101 — Provenance-scoped reasoning round-trip on the OpenAI Responses path: capture Bedrock `response.reasoning.delta` and opaque `encrypted_content` into tagged `ReasoningBlock`s, replay only same-model reasoning as stateless `reasoning` input items, and never send Responses-origin reasoning to another model or to Converse
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 136
 - Score: 10
 - Importance: 4
@@ -345,7 +345,7 @@ Kimi K3 via Converse is out of scope except for the Claude hand-off check. The K
 
 ## SRF-036 — Let terminal-delivery suppression observe the pre-offload bash result, so an offloaded terminal `wait` stops a redundant task wake
 
-- Status: `in-progress`
+- Status: `not-started`
 - Priority: 137
 - Score: 14
 - Importance: 4
@@ -385,6 +385,8 @@ Evidence: in source session `session-20260925-083010463`, nine `wait` calls retu
 - The previews do begin `"reason": "terminal"` plus the task id, so the model had seen the terminal fact. Suppression is semantically correct here.
 
 This is distinct from SRF-033, whose `$value` fix does not touch offloaded results. Score = 2×4+5+5−2−2 = 14, above gate 6. No dependency; implement first.
+
+Paused 2026-09-25: started as `9a386ac`; its child (`session-20260925-125304677`, task `bg-b3aba44c-47fc-4de1-86eb-a1a2490d2fdd`) was stopped during read-only exploration with no file change or commit, because the user directed SER-101 to be implemented first. Returned to `not-started`; resume after SER-101 closes.
 
 ## SRF-037 — Order bounded metadata before unbounded log text in background-bash results, so an offload preview still shows state, exit code and `hasMore`
 
