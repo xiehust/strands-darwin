@@ -74,13 +74,19 @@ export interface BackgroundStartResult {
   outputPath: string;
 }
 
+/**
+ * Key order is part of the result's usefulness (SRF-037): bounded metadata comes
+ * before the unbounded `output` text, and a wait's `status` snapshot before its
+ * `output`, so the context offloader's leading-characters preview of a large result
+ * still shows `state`, `exitCode` and `hasMore`. Consumers read by key.
+ */
 export interface BackgroundOutputResult {
   taskId: string;
-  output: string;
   startOffset: number;
   endOffset: number;
   hasMore: boolean;
   outputPath: string;
+  output: string;
 }
 
 export interface BackgroundWaitResult {
@@ -231,9 +237,10 @@ export class BackgroundBashManager {
           output: await this.readOutput(task),
           status: await this.snapshot(task),
         }));
-        if (final.output.output !== '') return { reason: 'output', ...final };
-        if (final.status.state !== 'running') return { reason: 'terminal', ...final };
-        return { reason: interrupted, ...final };
+        const { status: finalStatus, output: finalOutput } = final;
+        if (finalOutput.output !== '') return { reason: 'output', status: finalStatus, output: finalOutput };
+        if (finalStatus.state !== 'running') return { reason: 'terminal', status: finalStatus, output: finalOutput };
+        return { reason: interrupted, status: finalStatus, output: finalOutput };
       }
     }
   }
@@ -283,7 +290,8 @@ export class BackgroundBashManager {
     const finalReason = final.status.state === 'running' ? reason : 'terminal';
     return {
       reason: finalReason,
-      ...final,
+      status: final.status,
+      output: final.output,
       ...(finalReason === 'timeout'
         ? { instruction: TERMINAL_WAIT_TIMEOUT_INSTRUCTION }
         : {}),
@@ -550,7 +558,7 @@ export class BackgroundBashManager {
     const available = Math.max(0, size - startOffset);
     if (available === 0) {
       await handle.close();
-      return { taskId: task.id, output: '', startOffset, endOffset: startOffset, hasMore: false, outputPath: task.outputPath };
+      return { taskId: task.id, startOffset, endOffset: startOffset, hasMore: false, outputPath: task.outputPath, output: '' };
     }
 
     const bytesToRead = Math.min(available, limit + 3);
@@ -571,11 +579,11 @@ export class BackgroundBashManager {
     task.cursor += consumed;
     return {
       taskId: task.id,
-      output,
       startOffset,
       endOffset: task.cursor,
       hasMore: size > task.cursor,
       outputPath: task.outputPath,
+      output,
     };
   }
 

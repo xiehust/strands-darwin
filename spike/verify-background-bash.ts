@@ -5,9 +5,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { Agent, Model, type BaseModelConfig, type InvokableTool, type Message, type ModelStreamEvent } from '@strands-agents/sdk';
+import { LocalFileStorage } from '@strands-agents/sdk/storage';
+import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
 import { BashSessionError, BashTimeoutError } from '@strands-agents/sdk/vended-tools/bash';
 import type { BashInput, BashOutput } from '@strands-agents/sdk/vended-tools/bash';
 
+import { DEFAULT_MAX_RESULT_TOKENS, OFFLOAD_PREVIEW_TOKENS } from '../src/config.js';
 import {
   PermissionGate,
   assessRisk,
@@ -26,6 +29,7 @@ import {
   TERMINAL_WAIT_TIMEOUT_INSTRUCTION_WAKE,
   createBackgroundBashTool,
   createForegroundBashTool,
+  type BackgroundOutputResult,
   type BackgroundStartResult,
   type BackgroundTaskStatus,
   type BackgroundWaitResult,
@@ -490,6 +494,112 @@ async function waitContracts(): Promise<void> {
       shutdownWait.instruction === undefined && Date.now() - shutdownBefore < 1_300 && !exists(shutdownTask.pid),
   );
   await rm(shutdownRoot, { recursive: true, force: true });
+}
+
+/**
+ * SRF-037 — bounded metadata precedes the unbounded log text, so the SDK
+ * `ContextOffloader`'s preview of an oversized result still shows the job's state.
+ * The preview is the first `previewTokens × CHARS_PER_TOKEN` characters of
+ * `JSON.stringify(json, null, 2)` (SDK `context-offloader/plugin.js`: its
+ * `DEFAULT_PREVIEW_TOKENS` 1,000 × `CHARS_PER_TOKEN` 4; darwin never overrides
+ * `previewTokens`, mirrored as `OFFLOAD_PREVIEW_TOKENS`), i.e. 4,000 characters.
+ * Real manager, real tool, real offloader; a job log of ~39 KB, far above darwin's
+ * default offload threshold (`DEFAULT_MAX_RESULT_TOKENS`).
+ */
+async function keyOrderContracts(): Promise<void> {
+  header('background bash — bounded metadata before log text, so an offload preview shows state (SRF-037)');
+  const CHARS_PER_TOKEN = 4;
+  const previewChars = OFFLOAD_PREVIEW_TOKENS * CHARS_PER_TOKEN;
+  const OUTPUT_ORDER = 'taskId,startOffset,endOffset,hasMore,outputPath,output';
+  const WAIT_ORDER = 'reason,status,output';
+  const keys = (value: object): string => Object.keys(value).join(',');
+  const inPreview = (text: string, needle: string): boolean => {
+    const at = text.indexOf(needle);
+    return at >= 0 && at + needle.length <= previewChars;
+  };
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-background-key-order-'));
+  const manager = new BackgroundBashManager(root, 'session-key-order');
+  const bash = createBackgroundBashTool(manager);
+  const bigCommand = (label: string): string => `seq 1 8000; echo ${label}-end`;
+  const untilFinished = (taskId: string) =>
+    eventually(() => manager.status(taskId), (status) => status.state !== 'running', 10_000);
+  try {
+    // Terminal-focused wait through the real tool: the finishTerminalWait path.
+    const terminalJob = await manager.start(bigCommand('terminal'));
+    const terminal = await bash.invoke({ mode: 'wait', taskId: terminalJob.taskId, waitMs: 10_000, wakeOnOutput: false }) as BackgroundWaitResult;
+    const terminalText = JSON.stringify(terminal, null, 2);
+    const log = await readFile(terminalJob.outputPath, 'utf8');
+    assert('the fixture log exceeds darwin\'s default offload threshold (estimated at 4 chars/token)',
+      terminal.status.outputBytes !== null && terminal.status.outputBytes > DEFAULT_MAX_RESULT_TOKENS * CHARS_PER_TOKEN);
+    assert('a terminal-focused wait orders reason, status, output', terminal.reason === 'terminal' && keys(terminal) === WAIT_ORDER);
+    assert('the wait\'s output object orders bounded fields before the log text', keys(terminal.output) === OUTPUT_ORDER);
+    assert(`"state", "exitCode" and "hasMore" of a large terminal wait fall within the first ${previewChars} characters`,
+      inPreview(terminalText, '"state": "succeeded"') && inPreview(terminalText, '"exitCode": 0') && inPreview(terminalText, '"hasMore": false'));
+    assert('nothing is truncated or dropped: the wait carries the whole log once',
+      terminal.output.output === log && log.endsWith('terminal-end\n') && terminal.output.startOffset === 0 &&
+        terminal.output.endOffset === Buffer.byteLength(log) && terminal.status.outputBytes === Buffer.byteLength(log));
+
+    // Output-sensitive wait on a finished job: the main-loop output path.
+    const sensitiveJob = await manager.start(bigCommand('sensitive'));
+    await untilFinished(sensitiveJob.taskId);
+    const sensitive = await bash.invoke({ mode: 'wait', taskId: sensitiveJob.taskId, waitMs: 1_000 }) as BackgroundWaitResult;
+    const sensitiveText = JSON.stringify(sensitive, null, 2);
+    assert('an output-sensitive wait orders reason, status, output (and its output object likewise)',
+      sensitive.reason === 'output' && keys(sensitive) === WAIT_ORDER && keys(sensitive.output) === OUTPUT_ORDER);
+    assert('a large output-sensitive wait keeps state, exitCode and hasMore within the preview budget',
+      inPreview(sensitiveText, '"state": "succeeded"') && inPreview(sensitiveText, '"exitCode": 0') && inPreview(sensitiveText, '"hasMore": false'));
+
+    // `output` mode, a full read and the drained empty read.
+    const outputJob = await manager.start(bigCommand('output'));
+    await untilFinished(outputJob.taskId);
+    const read = await bash.invoke({ mode: 'output', taskId: outputJob.taskId }) as BackgroundOutputResult;
+    const drained = await bash.invoke({ mode: 'output', taskId: outputJob.taskId }) as BackgroundOutputResult;
+    assert('output mode orders taskId, startOffset, endOffset, hasMore, outputPath, output',
+      keys(read) === OUTPUT_ORDER && keys(drained) === OUTPUT_ORDER);
+    assert('a large output read keeps hasMore within the preview budget and still carries the whole log',
+      inPreview(JSON.stringify(read, null, 2), '"hasMore": false') && read.output.endsWith('output-end\n') &&
+        drained.output === '' && drained.startOffset === read.endOffset);
+
+    // Timeout (with its instruction) and both cancellation paths keep the order.
+    const running = await manager.start('sleep 1000');
+    const timedOut = await bash.invoke({ mode: 'wait', taskId: running.taskId, waitMs: 40, wakeOnOutput: false }) as BackgroundWaitResult;
+    assert('a terminal-focused timeout orders reason, status, output, instruction',
+      timedOut.reason === 'timeout' && keys(timedOut) === `${WAIT_ORDER},instruction`);
+    for (const wakeOnOutput of [true, false]) {
+      const controller = new AbortController();
+      const pending = manager.wait(running.taskId, 5_000, controller.signal, wakeOnOutput);
+      setTimeout(() => controller.abort(), 60);
+      const cancelled = await pending;
+      assert(`a cancelled ${wakeOnOutput ? 'output-sensitive' : 'terminal-focused'} wait orders reason, status, output`,
+        cancelled.reason === 'cancelled' && keys(cancelled) === WAIT_ORDER && keys(cancelled.output) === OUTPUT_ORDER);
+    }
+    await manager.stop(running.taskId);
+
+    // The real SDK ContextOffloader, configured as the runtime configures it.
+    const offloadJob = await manager.start(bigCommand('offloaded'));
+    const agent = new Agent({
+      model: new BashStartModel({ mode: 'wait', taskId: offloadJob.taskId, waitMs: 10_000, wakeOnOutput: false }),
+      tools: [bash],
+      plugins: [new ContextOffloader({
+        storage: new LocalFileStorage(path.join(root, 'offload')),
+        evictAfterCycles: null,
+        excludeTools: ['load_skill'],
+        maxResultTokens: DEFAULT_MAX_RESULT_TOKENS,
+      })],
+      printer: false,
+    });
+    await agent.invoke('wait for it');
+    const resultBlock = agent.messages.flatMap((message) => message.content)
+      .find((block) => block.type === 'toolResultBlock') as { content?: readonly { type?: string; text?: string }[] } | undefined;
+    const preview = resultBlock?.content?.[0]?.text ?? '';
+    assert('the real ContextOffloader replaced the large terminal wait with its preview',
+      resultBlock?.content?.length === 1 && preview.startsWith('[Offloaded:') && preview.includes(offloadJob.taskId));
+    assert('the offloader preview shows state, exitCode and hasMore',
+      preview.includes('"state": "succeeded"') && preview.includes('"exitCode": 0') && preview.includes('"hasMore": false'));
+  } finally {
+    await manager.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 async function wrapperAndPermissionContracts(): Promise<void> {
@@ -1435,6 +1545,7 @@ async function shutdownAndExitContracts(): Promise<void> {
 
 await managerContracts();
 await waitContracts();
+await keyOrderContracts();
 await wrapperAndPermissionContracts();
 await foregroundCwdPreflightContracts();
 await foregroundShellExitContracts();
