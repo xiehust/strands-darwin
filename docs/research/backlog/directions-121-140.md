@@ -535,7 +535,7 @@ SER-101 also edits `changeModel` (reasoning provenance). This observer write is 
 
 ## SRF-039 — Pin developer-skill negative controls to explicit commit SHAs and check for foreign commits first
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 140
 - Score: 10
 - Importance: 2
@@ -547,9 +547,20 @@ SER-101 also edits `changeModel` (reasoning provenance). This observer write is 
 
 ### Implementation / acceptance evidence
 
-Not implemented.
+Accepted 2026-09-25 as `26164b7` (`fix(skills): pin developer negative controls to explicit SHAs`). It was implemented by child `session-20260925-162142793` (task `bg-da8dcbee-7d29-404e-9125-d0faca4e2b4b`) on base `eb99a3b`; `eb99a3b..26164b7` holds only that commit.
 
-Add one short rule to the acceptance guidance in `src/skills/builtin/developer/SKILL.md`, domain-neutral and without naming any specific suite:
+What changed:
+
+- **Skill.** One paragraph was added to § 5 of `src/skills/builtin/developer/SKILL.md`; the rest of the file is byte-identical: "When the child is drained, resolve its base and result commits to explicit SHAs. Before any revert/negative control or diff review, run `git log <base>..HEAD` and name any commit the child did not make; controls and diffs then use those explicit SHAs, never `HEAD~N` or bare `HEAD`, because another writer may have committed meanwhile."
+- **Test.** One `spike/verify-skills.ts` assertion pins three phrases of the rule.
+
+Host acceptance (task `bg-3dc863ee-9d53-452a-ba7f-f11841e39bae`, exit 0):
+
+- **Gate.** `pnpm typecheck`; `pnpm test` (9,666 PASS lines, 0 FAIL); `verify-skills.ts` 163/0; `pnpm build`, with `dist/src/skills/builtin/developer/SKILL.md` byte-identical to source (`cmp`); `git diff --check`.
+- **Revert control.** The skill from `eb99a3b` gave 162 passed / 1 failed, and the only failure was the new assertion. The file was restored and the tree was clean.
+- **Docs.** None needed; no doc quotes § 5 verbatim.
+
+Original plan: Add one short rule to the acceptance guidance in `src/skills/builtin/developer/SKILL.md`, domain-neutral and without naming any specific suite:
 
 - when a child is drained, resolve its base and result commits to explicit SHAs;
 - before any revert/negative control or diff review, run `git log <base>..HEAD` and name any commit the child did not make;

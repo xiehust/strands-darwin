@@ -3196,3 +3196,21 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Worker spend: `usage: input=148 output=63205 cacheRead=11185170 cacheWrite=195032`; `cost: total=4.4769 input=0.0006 output=1.2641 cacheRead=2.2370 cacheWrite=0.9752 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets. Host made no provider model calls.
 - Final status: SRF-038 `done`. Remaining batch: SRF-039 (140) `not-started`.
 
+## Batch 151 — SRF-039 explicit-SHA negative controls in the developer skill (2026-09-25)
+
+- Origin: [`reflection_2026-09-25_session-20260925-083010463.md`](reflections/reflection_2026-09-25_session-20260925-083010463.md); Score 10, Priority 140, fourth and final of the batch. Built on accepted, green, built SRF-038 `0b5d865`, followed only by docs closure `3373494` (validator 162/0) and start commit `eb99a3b`.
+- Fresh child `session-20260925-162142793` ran as managed task `bg-da8dcbee-7d29-404e-9125-d0faca4e2b4b`, exit 0, output drained through `hasMore: false`. It used the source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p`, with no ceiling, retry, correction or descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Developer skill § 5 gains one rule: resolve base/result to explicit SHAs, check `git log <base>..HEAD` for foreign commits before controls/diffs, never `HEAD~N` | `26164b7` | See the checks below the table. |
+
+- **Diff review.** Reviewed the two-file, eight-line diff.
+- **Gate** (task `bg-3dc863ee-9d53-452a-ba7f-f11841e39bae`, exit 0): `pnpm typecheck`; `pnpm test` (9,666 PASS, 0 FAIL); `verify-skills.ts` 163/0; `pnpm build` with the dist skill byte-identical to source; `git diff --check`.
+- **Revert control.** Skill from `eb99a3b`: 162 passed / 1 failed, exactly the new assertion. Restored, tree clean.
+
+- Docs wrap-up: none needed. No doc quotes developer § 5; README and AGENTS unchanged (32,767 bytes).
+- Worker spend: `usage: input=28 output=5726 cacheRead=555371 cacheWrite=13334`; `cost: total=0.2924 input=0.0001 output=0.1145 cacheRead=0.1111 cacheWrite=0.0667 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets.
+- Run aggregate (Batches 147–151): five accepted child invocations, one per direction, plus the stopped SRF-036 child, which reported no spend line. There was no retry or correction. Totals: input **604**, output **276,330**, cacheRead **43,473,680**, cacheWrite **761,840**; approximate worker USD **18.0330**. Host acceptance's only provider calls were SER-101's two live-suite runs, which are not metered here.
+- Final status: SER-101, SRF-036, SRF-037, SRF-038, SRF-039 `done`; none abandoned or gated. Halt: batch exhausted, with no unfinished record left in the routed backlog. The Host pushes current main once after this closure and verifies `git log @{u}..` is empty.
+
