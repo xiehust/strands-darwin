@@ -3145,3 +3145,20 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Worker spend (single invocation): `usage: input=242 output=129804 cacheRead=23089552 cacheWrite=317260`; `cost: total=8.8013 input=0.0010 output=2.5961 cacheRead=4.6179 cacheWrite=1.5863 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets. The stopped SRF-036 child reported no spend line. Host acceptance made about 60 live model calls through the two live-suite runs; that provider spend was not metered.
 - Final status: SER-101 `done`. Remaining: the SRF-036..039 reflection batch (Priorities 137–140), all `not-started`; it resumes with SRF-036.
 
+## Batch 148 — SRF-036 pre-offload terminal-delivery observation (2026-09-25)
+
+- Origin: [`reflection_2026-09-25_session-20260925-083010463.md`](reflections/reflection_2026-09-25_session-20260925-083010463.md); Score 14, Priority 137, first of four (SRF-036..039). Paused by user direction for Batch 147. It resumed on accepted, green, built SER-101 `bd47afd`, after docs closure `5a1da2f` (validator 162/0) and restart commit `e2a5cee`.
+- Fresh child `session-20260925-140015939` ran as managed task `bg-3b9561b4-1f81-47c1-80f4-abb4da806096`, exit 0, output drained through `hasMore: false`. It used the source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p`, with no ceiling, retry, correction or descendant worker. The earlier paused child session was not reused.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| The ledger's read-only `SDK_FIRST` `AfterToolCallEvent` hook records the original `bash` result's terminal ids; a replaced (offloaded) success result commits an id only where its text names it exactly | `cf50fce` | See the checks below the table. |
+
+- **Diff review.** Reviewed the five-file diff.
+- **Gate** (task `bg-82e7fc2b-0a15-40a3-96be-9220ac648f61`, exit 0): `pnpm typecheck`; `pnpm test` (9,623 PASS, 0 FAIL); `verify-context-offload.ts` 51/0; `verify-task-wake.ts` 139/0; `pnpm build`; `git diff --check`.
+- **Revert control.** Ledger and runtime sources from `e2a5cee`: 112 passed / 9 failed, all offload checks or their call-count knock-ons. Source restored, tree clean.
+
+- Docs wrap-up: the accepted commit synced `load-bearing-decisions.md` (Background-task wake, Durable context offload). The user-guide wake sentence was already accurate and is now true for offloaded waits too. README unchanged; AGENTS unchanged (32,767 bytes).
+- Worker spend: `usage: input=118 output=54128 cacheRead=6183932 cacheWrite=167206`; `cost: total=3.1558 input=0.0005 output=1.0826 cacheRead=1.2368 cacheWrite=0.8360 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets. Host acceptance made no provider model calls.
+- Final status: SRF-036 `done`. Remaining batch: SRF-037 (138), SRF-038 (139), SRF-039 (140), all `not-started`.
+

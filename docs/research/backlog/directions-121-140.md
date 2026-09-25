@@ -367,7 +367,7 @@ Residual risks the child recorded at acceptance:
 
 ## SRF-036 — Let terminal-delivery suppression observe the pre-offload bash result, so an offloaded terminal `wait` stops a redundant task wake
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 137
 - Score: 14
 - Importance: 4
@@ -379,9 +379,21 @@ Residual risks the child recorded at acceptance:
 
 ### Implementation / acceptance evidence
 
-Not implemented.
+Accepted 2026-09-25 as `cf50fce` (`fix(task-wake): observe the pre-offload bash result`). It was implemented by child `session-20260925-140015939` (task `bg-3b9561b4-1f81-47c1-80f4-abb4da806096`) on base `e2a5cee`; `e2a5cee..cf50fce` holds only that commit.
 
-In the parent runtime (`src/agent/runtime.ts`), register one `AfterToolCallEvent` hook at `HookOrder.SDK_FIRST`. It runs before the SDK `ContextOffloader`'s default-order hook, the same precedent as the cloud-memory `uploadObserver.after`. It hands the original successful `bash` result to `TerminalDeliveryLedger` (`src/agent/task-terminal-delivery.ts`) as candidate terminal task ids, keyed by `toolUseId`. The existing stream-side `observe` then resolves each candidate:
+What changed:
+
+- **Ledger.** `TerminalDeliveryLedger.install(agent)` registers one read-only `AfterToolCallEvent` hook at `HookOrder.SDK_FIRST`. It records the original successful `bash` result's terminal ids by `toolUseId`.
+- **Resolution.** `observe` counts an unchanged result as before. A replaced success result commits a candidate id only when its text blocks contain that exact id. `closeTurn` drops candidates.
+- **Runtime.** The parent runtime builds and installs the ledger in `create()`; children are unchanged.
+- **Tests and docs.** New non-pty and pty sections in `spike/verify-task-wake.ts`, with fixture verbs, and a synced `load-bearing-decisions.md` (Background-task wake, Durable context offload).
+
+Host acceptance (task `bg-82e7fc2b-0a15-40a3-96be-9220ac648f61`, exit 0):
+
+- **Gate.** `pnpm typecheck`; `pnpm test` (9,623 PASS lines, 0 FAIL); `verify-context-offload.ts` 51/0; `verify-task-wake.ts` 139/0; `pnpm build`; `git diff --check`.
+- **Revert control.** `task-terminal-delivery.ts` and `runtime.ts` from `e2a5cee` against the new tests gave 112 passed / 9 failed. All nine failures are offload checks or call-count knock-ons: the offloaded wait woke, a request carried its notification, and the list-preview job woke. The source was restored and the tree was clean.
+
+Original plan: In the parent runtime (`src/agent/runtime.ts`), register one `AfterToolCallEvent` hook at `HookOrder.SDK_FIRST`. It runs before the SDK `ContextOffloader`'s default-order hook, the same precedent as the cloud-memory `uploadObserver.after`. It hands the original successful `bash` result to `TerminalDeliveryLedger` (`src/agent/task-terminal-delivery.ts`) as candidate terminal task ids, keyed by `toolUseId`. The existing stream-side `observe` then resolves each candidate:
 
 - a result that reached the stream unchanged counts exactly as today;
 - a result the offloader replaced commits a candidate id only when the model-visible replacement text contains that exact task id, so `list`/`status` snapshots beyond the preview stay unsuppressed.
