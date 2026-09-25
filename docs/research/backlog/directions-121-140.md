@@ -479,7 +479,7 @@ Score = 2×3+4+4−2−2 = 10, above gate 6. It follows SRF-036 so SRF-036's cov
 
 ## SRF-038 — Record a successful `/model` change in the trajectory, so a session's recorded model matches the model that actually ran
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 139
 - Score: 9
 - Importance: 3
@@ -491,9 +491,23 @@ Score = 2×3+4+4−2−2 = 10, above gate 6. It follows SRF-036 so SRF-036's cov
 
 ### Implementation / acceptance evidence
 
-Not implemented.
+Accepted 2026-09-25 as `0b5d865` (`feat(trajectory): record a successful /model switch`). It was implemented by child `session-20260925-153256922` (task `bg-4d3c78e7-a22e-4da3-9d31-715b257cf328`) on base `8cedf93`; `8cedf93..0b5d865` holds only that commit.
 
-When `AgentRuntime.changeModel` succeeds, append one bounded observer record through the existing recorder: `type: 'modelChanged'` with `from: { provider, model }`, `to: { provider, model }` and optional effective thinking effort. Labels are capped exactly like `spend.provider/model`. The record carries turn 0 when written outside a turn, and otherwise the ordinal of the current idle position, following the SRF-027 `contextCompacted` pattern.
+What changed:
+
+- **Recorder.** `TrajectoryRecorder.recordModelChanged` follows the `recordContextCompacted` pattern. It writes turn 0 before any turn, otherwise the last closed turn. Its four labels go through `capField` like `spend.provider/model`, and the effort key appears only when the new plan has one.
+- **Runtime.** `changeModel` records only after the swap succeeds, so a factory failure or refused cache shape writes nothing.
+- **Readers.** `modelChangedOf` reads the record, and `formatReplay` prints one bounded line (`model changed: a/b → c/d · thinking effort e`). `/export`, the resume recap and rewind history show it through the same notice.
+- **Unchanged.** `runStarted` and the replay run header are unchanged. The self-reflection template now names switches.
+- **Premise correction (Host-verified at `8cedf93`).** `spend.ts` derives no labels from `runStarted`; its only mention is a comment. Spend labels already come from each record's own spend field, so no `spend.ts` change was needed.
+
+Host acceptance (task `bg-bd1b9e00-a81d-45d0-b19e-1251fcc6232b`, exit 0):
+
+- **Gate.** `pnpm typecheck`; `pnpm test` (9,665 PASS lines, 0 FAIL); `verify-model-command.ts` 26/0; `verify-trajectory.ts` 430/0, including the byte-identical pre-change fixture replay and hostile-label capping; `verify-export-command.ts` 36/0; `verify-self-reflection.ts` 12/0; `verify-resume-recap.ts` 41/0; `verify-rewind-history.ts` 29/0; `verify-skills.ts` 162/0; `pnpm build`; `git diff --check`.
+- **Revert control.** `runtime.ts` from `8cedf93` gave `verify-model-command.ts` 21 passed / 5 failed. The source was restored and the tree was clean.
+- **Docs.** The commit synced `load-bearing-decisions.md` § Session trajectory and `sessions-and-state` EN/zh-CN.
+
+Original plan: When `AgentRuntime.changeModel` succeeds, append one bounded observer record through the existing recorder: `type: 'modelChanged'` with `from: { provider, model }`, `to: { provider, model }` and optional effective thinking effort. Labels are capped exactly like `spend.provider/model`. The record carries turn 0 when written outside a turn, and otherwise the ordinal of the current idle position, following the SRF-027 `contextCompacted` pattern.
 
 - Add the type to `TrajectoryRecordType` and the schema readers.
 - `formatReplay`/`replayRecords` print one line for it.

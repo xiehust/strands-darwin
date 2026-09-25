@@ -3179,3 +3179,20 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Worker spend: `usage: input=68 output=23467 cacheRead=2459655 cacheWrite=69008`; `cost: total=1.3066 input=0.0003 output=0.4693 cacheRead=0.4919 cacheWrite=0.3450 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets. Host made no provider model calls.
 - Final status: SRF-037 `done`. Remaining batch: SRF-038 (139), SRF-039 (140), `not-started`.
 
+## Batch 150 — SRF-038 modelChanged trajectory record (2026-09-25)
+
+- Origin: [`reflection_2026-09-25_session-20260925-083010463.md`](reflections/reflection_2026-09-25_session-20260925-083010463.md); Score 9, Priority 139, third of four. Built on accepted, green, built SRF-037 `cf64ea2`, followed only by docs closure `1acc3f4` (validator 162/0) and start commit `8cedf93`.
+- Fresh child `session-20260925-153256922` ran as managed task `bg-4d3c78e7-a22e-4da3-9d31-715b257cf328`, exit 0, output drained through `hasMore: false`. It used the source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p`, with no ceiling, retry, correction or descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| A successful `changeModel` writes one capped `modelChanged` observer record (turn 0 or last closed turn); replay/export/recap print one bounded line; failures write nothing; `runStarted` byte-identical | `0b5d865` | See the checks below the table. |
+
+- **Diff review.** Reviewed the 12-file diff. Verified at `8cedf93` that `spend.ts` never read `runStarted`, so the record's spend-label clause did not apply; recorded in the direction.
+- **Gate** (task `bg-bd1b9e00-a81d-45d0-b19e-1251fcc6232b`, exit 0): `pnpm typecheck`; `pnpm test` (9,665 PASS, 0 FAIL); `verify-model-command` 26/0; `verify-trajectory` 430/0; `verify-export-command` 36/0; `verify-self-reflection` 12/0; `verify-resume-recap` 41/0; `verify-rewind-history` 29/0; `verify-skills` 162/0; `pnpm build`; `git diff --check`.
+- **Revert control.** `runtime.ts` from `8cedf93`: 21 passed / 5 failed. Restored, tree clean.
+
+- Docs wrap-up: the accepted commit synced `load-bearing-decisions.md` (Session trajectory) and `sessions-and-state` EN/zh-CN, the only guide page that lists record types. The built-in self-reflection template was refreshed by `pnpm build`. README and AGENTS unchanged (32,767 bytes).
+- Worker spend: `usage: input=148 output=63205 cacheRead=11185170 cacheWrite=195032`; `cost: total=4.4769 input=0.0006 output=1.2641 cacheRead=2.2370 cacheWrite=0.9752 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets. Host made no provider model calls.
+- Final status: SRF-038 `done`. Remaining batch: SRF-039 (140) `not-started`.
+
