@@ -312,7 +312,7 @@ Evidence: turn 2 / seq 388 contains eleven same-class HTTP 400 concentration rej
 
 ## SER-101 — Provenance-scoped reasoning round-trip on the OpenAI Responses path: capture Bedrock `response.reasoning.delta` and opaque `encrypted_content` into tagged `ReasoningBlock`s, replay only same-model reasoning as stateless `reasoning` input items, and never send Responses-origin reasoning to another model or to Converse
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 136
 - Score: 10
 - Importance: 4
@@ -324,7 +324,22 @@ Evidence: turn 2 / seq 388 contains eleven same-class HTTP 400 concentration rej
 
 ### Implementation / acceptance evidence
 
-Not implemented. Implement in the pinned SDK patch (`patches/@strands-agents__sdk@1.18.0.patch`), which already edits `dist/src/models/openai/responses-adapter.js`; no loop fork, no `toolExecutor`, no new dependency. In `mapResponsesEventToSDK`: map `response.reasoning.delta` like `response.reasoning_text.delta`; on `response.output_item.done` of type `reasoning`, close the open reasoning block, and put an item's `encrypted_content` in its own block. In `formatResponsesMessages`: emit assistant reasoning as `{type:'reasoning', summary:[], encrypted_content}` or `{…, content:[{type:'reasoning_text', text}]}`, before that message's text and `function_call` items, with no `id`.
+Accepted 2026-09-25 as `bd47afd` (`feat(sdk-patch): replay responses reasoning to its own model only`). The work was implemented by child `session-20260925-125808372` (task `bg-9e42a846-333f-4544-9066-48a5ede39163`) and selected by user direction ahead of the SRF-036..039 batch. Base `4683fcf`; no foreign commits in `4683fcf..bd47afd`.
+
+- **Tag and replay.** The pinned patch now tags captured Responses reasoning in `signature` as `darwin-responses:v1:<model>:<text|enc|sum>[:<blob>]`. It maps `response.reasoning.delta`, and each `output_item.done` reasoning item closes its block, with `encrypted_content` in its own block. Same-model tagged blocks are replayed as stateless `reasoning` items with no `id`, before that message's text and calls.
+- **Drops.** The Converse, Anthropic and Chat Completions formatters drop tagged blocks. Converse also drops signature-less reasoning for a Claude id. The `openai/model.js` stream state carries the request model id.
+- **Changed files.** Patch 15 → 19 files; `pnpm-lock.yaml` patch hash; `changeModel` doc comment; new offline `spike/verify-responses-reasoning.ts` (in `pnpm test`) and live `spike/verify-responses-reasoning-live.ts`; `verify-npm-package.ts` count; load-bearing § Thinking effort and § npm package; configuration EN/zh-CN; one AGENTS.md live-suite line (32,767 ≤ 32,768 bytes).
+
+Host acceptance:
+
+- **Diff review.** Both new Converse/Anthropic `undefined` returns are filtered by their callers.
+- **Full gate** (task `bg-d7142f07-fdd5-495d-9077-f53919e702a1`, exit 0): `pnpm typecheck`; `pnpm test` (9,590 PASS lines, 0 FAIL); `verify-responses-reasoning.ts` 39/0; `verify-npm-patch-format.ts` 56/0; `verify-model-command.ts` 16/0; `pnpm build`; registry `verify-npm-package.ts` 49/0; `git diff --check`.
+- **Negative control.** The base patch and lock from `4683fcf` were reinstalled offline: `verify-responses-reasoning.ts` gave 20 passed / 19 failed. After restore it gave 39/0 and the tree was clean.
+- **Live suite, first run** (`bg-df0055b8-7ebe-4a62-a29c-09d90bfafc80`): 98/1. The only failure was the Kimi aggregate, because Kimi emitted no reasoning events on any call that run (`0d/0i`). This is the model's choice, as the suite header documents.
+- **Live suite, second run** (`bg-3e110fb6-9d24-4a6a-9b9e-a58492015843`): 99/0. Kimi captured 222d/1i and 125d/1i, with replay 0→1→2. GPT replay 0→1→2→3 across resume. All seven hand-offs succeeded, and every Responses request returned 200.
+- **Mantle.** `openai.gpt-5.6-sol` returned 2/2 reasoning items with `encrypted_content` and no `include`, so thinking params are unchanged.
+
+Original plan: Implement in the pinned SDK patch (`patches/@strands-agents__sdk@1.18.0.patch`), which already edits `dist/src/models/openai/responses-adapter.js`; no loop fork, no `toolExecutor`, no new dependency. In `mapResponsesEventToSDK`: map `response.reasoning.delta` like `response.reasoning_text.delta`; on `response.output_item.done` of type `reasoning`, close the open reasoning block, and put an item's `encrypted_content` in its own block. In `formatResponsesMessages`: emit assistant reasoning as `{type:'reasoning', summary:[], encrypted_content}` or `{…, content:[{type:'reasoning_text', text}]}`, before that message's text and `function_call` items, with no `id`.
 
 The report's prototype measured this on both models: Kimi 5/5 and GPT-6-astra 6/6 requests 200, with input tokens rising once reasoning is replayed. Unlike the prototype, every captured block carries a provenance tag inside `signature`, the only field `ReasoningBlock.toJSON` persists. Replay is only for a tag matching the live model id; every untagged or foreign block is dropped exactly as today. The Bedrock/Converse side must never emit a Responses-tagged block, and must be checked for signature-less Kimi Converse reasoning reaching a Claude adaptive model.
 
@@ -342,6 +357,13 @@ Score = 2×4+4+5−3−4 = 10, above gate 6. Risk 4 is the reason for the proven
 The signature-tag codec is a workaround for the missing upstream field (harness-sdk #2014). Upstream #3389 covers the OpenAI round-trip but not the Bedrock event name or cross-provider safety; a new upstream issue was filed from this report ([harness-sdk#4598](https://github.com/strands-agents/harness-sdk/issues/4598)). On any SDK upgrade, drop these hunks if upstream covers them rather than rebasing a duplicate. SDK 1.19.0 was checked and does not.
 
 Kimi K3 via Converse is out of scope except for the Claude hand-off check. The Kimi K3 model card (report source S1) documents a Converse multi-turn reasoning failure that was not reproduced; darwin configuration guidance for Kimi should point at `bedrockRuntime` + `responses` once this lands. No dependency on SRF-033…035; queued after them.
+
+Residual risks the child recorded at acceptance:
+
+- Kimi on Converse after Claude-signed reasoning is still refused (`doesn't support the reasoningContent.reasoningText.signature field`). This is pre-existing and byte-identical to the unpatched SDK, and outside this direction.
+- The Converse unsigned-reasoning drop detects Claude with `/anthropic|claude/` on the model id, so a Claude application-inference-profile ARN would miss it.
+- The Google and Vercel formatters do not check tags; darwin cannot configure either provider.
+- AGENTS.md's live-suite block replaced the `probe-model-switch.ts` line (the file remains) to stay under the byte cap.
 
 ## SRF-036 — Let terminal-delivery suppression observe the pre-offload bash result, so an offloaded terminal `wait` stops a redundant task wake
 

@@ -3125,3 +3125,23 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Batch aggregate (Batches 144–146, three fresh child sessions, three invocations, no retry or correction): input **156**, output **62,385**, cacheRead **5,788,464**, cacheWrite **219,366**; approximate worker USD **3.5029**. Host acceptance made no provider model calls.
 - Final status: SRF-033, SRF-034, SRF-035 `done`; none abandoned or gated. Halt: batch exhausted. The routed backlog still holds SER-101 (Priority 136, `not-started`), a separate batch from `research_2026-09-25.md` queued by a concurrent user-directed session; it was not selected or touched by this run. Host performs one ordinary push of current main after this closure and verifies `git log @{u}..` empty.
 
+## Batch 147 — SER-101 provenance-scoped Responses reasoning round-trip (2026-09-25)
+
+- Origin: [`research_2026-09-25.md`](research/research_2026-09-25.md); Score 10, Priority 136. It is the sole direction of its batch.
+- Selection: the self-evolution run first selected the newer SRF-036..039 reflection batch. It started SRF-036 (`9a386ac`) on a green baseline at `4320409` (`pnpm typecheck && pnpm test`, task `bg-96e17e16-78ac-4380-92e0-15dc04d48189`, exit 0). The user then directed SER-101 first.
+- SRF-036 pause: its child (`session-20260925-125304677`, task `bg-b3aba44c-47fc-4de1-86eb-a1a2490d2fdd`) was stopped during read-only exploration. It made no file change or commit and printed no `usage:` or `cost:` line. SRF-036 went back to `not-started`, recorded in `4683fcf`, with backlog validator `verify-skills.ts` 162/0.
+- Fresh child `session-20260925-125808372` ran as managed task `bg-9e42a846-333f-4544-9066-48a5ede39163`, exit 0, output drained through `hasMore: false`. It used the source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p` with `AWS_REGION=us-west-2`, no ceiling, and no retry, correction or descendant worker. The child made about 90 live model calls across three live-suite runs, and no foreign commits landed in `4683fcf..bd47afd`.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Pinned SDK patch captures Responses reasoning with a provenance tag in `signature`, replays only same-model tagged blocks statelessly, and drops tagged/unsigned-to-Claude reasoning in the other formatters | `bd47afd` | See the three checks below the table. |
+
+- **Diff review.** Reviewed the 11-file diff, including the Converse/Anthropic caller `undefined` filters.
+- **Full gate** (task `bg-d7142f07-fdd5-495d-9077-f53919e702a1`, exit 0): `pnpm typecheck`; `pnpm test` (9,590 PASS, 0 FAIL); `verify-responses-reasoning.ts` 39/0; `verify-npm-patch-format.ts` 56/0; `verify-model-command.ts` 16/0; `pnpm build`; registry `verify-npm-package.ts` 49/0; `git diff --check`.
+- **Negative control.** Reinstalled the `4683fcf` patch and lock offline: 20 passed / 19 failed. After restore: 39/0, tree clean.
+- **Live suite.** First run (task `bg-df0055b8-7ebe-4a62-a29c-09d90bfafc80`) was 98/1: Kimi emitted zero reasoning events on every call, the model's choice as the suite header documents. Second run (task `bg-3e110fb6-9d24-4a6a-9b9e-a58492015843`) was 99/0: Kimi replayed 0→1→2, GPT replayed 0→1→2→3 across resume, all seven hand-offs succeeded, and Mantle sol returned `encrypted_content` without `include`.
+
+- Docs wrap-up: the accepted commit synced `load-bearing-decisions.md` (§ Thinking effort, § npm package), `configuration` EN/zh-CN (Kimi via `bedrockRuntime` + `responses`), and one AGENTS.md live-suite line (32,767 bytes, cap 32,768). README and `reference` need nothing, because neither describes provider reasoning.
+- Worker spend (single invocation): `usage: input=242 output=129804 cacheRead=23089552 cacheWrite=317260`; `cost: total=8.8013 input=0.0010 output=2.5961 cacheRead=4.6179 cacheWrite=1.5863 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets. The stopped SRF-036 child reported no spend line. Host acceptance made about 60 live model calls through the two live-suite runs; that provider spend was not metered.
+- Final status: SER-101 `done`. Remaining: the SRF-036..039 reflection batch (Priorities 137–140), all `not-started`; it resumes with SRF-036.
+
