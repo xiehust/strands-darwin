@@ -426,7 +426,7 @@ Resumed 2026-09-25 after SER-101 was accepted (`bd47afd`, closure `5a1da2f`).
 
 ## SRF-037 — Order bounded metadata before unbounded log text in background-bash results, so an offload preview still shows state, exit code and `hasMore`
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 138
 - Score: 10
 - Importance: 3
