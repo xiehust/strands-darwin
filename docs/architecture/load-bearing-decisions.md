@@ -2629,7 +2629,14 @@ and the turn ends, with no separate timer or retry to lose; **suppressed when al
 the runtime's `TerminalDeliveryLedger` observes `afterToolCallEvent`s at the same synchronous,
 non-throwing point the recorder does, remembers task ids whose non-running `state` a successful
 `bash` `wait`/`status`/`stop`/`list` result carried, and commits them only when the turn reaches
-`endTurn`; the drain drops a queued wake for a committed id silently (a row may show for the rest
+`endTurn`; `list` reaches the model as the SDK `FunctionTool`'s ordinary-array envelope — the
+tool returns `manager.list()`, and a non-content-block array becomes one `JsonBlock` whose json is
+exactly `{ $value: [...] }` — so the ledger unwraps that one exact shape (sole own key `$value`,
+holding an array), one level, and checks each item as a snapshot; a bare array still counts,
+while extra keys, a non-array `$value`, envelopes nested in the array or in `$value`, other tools
+and non-success results count for nothing (SRF-033: before this, a completed `list` of stopped
+jobs left eight redundant wake turns behind it); the drain drops a queued wake for a committed
+id silently (a row may show for the rest
 of the turn that consumed the state, then leaves without a notice — the conversation already holds
 the fact). Suppression is decided at drain time because at snapshot time the turn holding the
 `wait` has not completed. **Next-turn-only** stands (deliberate non-parity with the peer's mid-turn

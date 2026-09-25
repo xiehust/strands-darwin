@@ -50,9 +50,27 @@ function resultPayload(content: readonly unknown[]): unknown {
 }
 
 /**
+ * The array inside the SDK's ordinary-array envelope, or undefined. The SDK's
+ * `FunctionTool` cannot hand a plain array to Bedrock as JSON content, so it returns
+ * one as `new JsonBlock({ json: { $value: array } })` — which is how `list`'s
+ * `manager.list()` reaches the model (SRF-033). Exactly that shape is unwrapped, one
+ * level: an object whose only own key is `$value`, holding an array. Extra keys, a
+ * non-array `$value` and envelopes nested inside the array are not the SDK's shape
+ * and are not unwrapped.
+ */
+function sdkArrayEnvelope(payload: unknown): unknown[] | undefined {
+  if (!isRecord(payload)) return undefined;
+  const keys = Object.keys(payload);
+  if (keys.length !== 1 || keys[0] !== '$value') return undefined;
+  const value = payload.$value;
+  return Array.isArray(value) ? value : undefined;
+}
+
+/**
  * Task ids whose terminal state a successful `bash` result carried to the model.
  * Recognizes the manager's own shapes only — `wait` (`status.state`), `status`/`stop`
- * (a snapshot) and `list` (snapshots) — by the result, never by the input, because
+ * (a snapshot) and `list` (snapshots: a bare array, or the SDK's `{ $value: [...] }`
+ * envelope the real tool path produces) — by the result, never by the input, because
  * some SDK after-events omit the original input. Foreground `execute` results and
  * `output` results carry no state and contribute nothing.
  */
@@ -62,8 +80,9 @@ export function terminalTaskIdsInToolResult(
 ): string[] {
   if (toolName !== 'bash' || result.status !== 'success') return [];
   const payload = resultPayload(result.content);
-  if (Array.isArray(payload)) {
-    return payload.map(terminalSnapshotId).filter((id): id is string => id !== undefined);
+  const listed = Array.isArray(payload) ? payload : sdkArrayEnvelope(payload);
+  if (listed !== undefined) {
+    return listed.map(terminalSnapshotId).filter((id): id is string => id !== undefined);
   }
   if (!isRecord(payload)) return [];
   const direct = terminalSnapshotId(payload);

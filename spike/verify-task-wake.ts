@@ -27,6 +27,16 @@
  *                     with `source: 'delegation'`; `/clear` succeeds once nothing is tracked.
  * 8. **collapsed**  — 19 real completed jobs occupy one summary row, keep typed messages visible
  *                     across resize, retain /tasks details and drain in unchanged FIFO order.
+ * 9. **list**       — (sixth session, SRF-033) a completed `bash list` returns terminal jobs
+ *                     through the SDK's `{ $value: [...] }` envelope: none of them wakes a turn
+ *                     or a model request; a job still running at the list wakes once; a failed
+ *                     or a cancelled (Ctrl+C) list turn commits nothing, so every wake behind it drains.
+ *
+ * Before the pty sessions, a free non-pty section drives the real `bash` tool through real
+ * SDK agents (scripted model only) to prove the ledger reads the enveloped `list` result,
+ * commits only at `endTurn`, and ignores unrelated tools, non-success results and malformed
+ * envelopes (non-array `$value`, extra keys, nested envelopes) produced by the SDK's own
+ * serialization.
  *
  * Every model request also carries the `bash` tool spec, so the log doubles as proof of
  * the per-runtime wording: the wake variant of the still-running-timeout sentence in the
@@ -43,8 +53,14 @@
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { Agent, Model, tool } from '@strands-agents/sdk';
+import type { AgentStreamEvent, BaseModelConfig, Message, ModelStreamEvent, StreamOptions } from '@strands-agents/sdk';
+import { z } from 'zod';
+
 import { sessionPaths, trajectoryPath } from '../src/agent/session.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../src/agent/system-prompt.js';
+import { TerminalDeliveryLedger, terminalTaskIdsInToolResult } from '../src/agent/task-terminal-delivery.js';
+import { BackgroundBashManager, createBackgroundBashTool } from '../src/tools/background-bash.js';
 import { readTrajectory } from '../src/trajectory/reader.js';
 import { formatReplay, replayRead } from '../src/trajectory/replay.js';
 import type { TaskNotificationRecord, TrajectoryRecord } from '../src/trajectory/record.js';
@@ -61,6 +77,7 @@ const BLOCK_CHECKPOINT = path.join(ROOT, 'wake-block-checkpoint');
 const BLOCK_RELEASE = path.join(ROOT, 'wake-block-release');
 const CLEAR_RELEASE = path.join(ROOT, 'wake-clear-release');
 const CLEAR_ARM = path.join(ROOT, 'wake-clear-arm');
+const CANCEL_CHECKPOINT = path.join(ROOT, 'wake-cancel-checkpoint');
 const EXIT_TIMEOUT_MS = 30_000;
 const WAKE_ROW = 'notifications · ';
 const WAKE_NOTICE = 'task wake · bg-';
@@ -165,6 +182,241 @@ async function sessionRecords(): Promise<{ id: string; records: TrajectoryRecord
     }
   }
   return out;
+}
+
+/** One scripted model step for the ledger section's real SDK agents. */
+type ScriptStep =
+  | { readonly tool: string; readonly input: unknown }
+  | { readonly text: string }
+  | { readonly fail: string }
+  | { readonly holdUntilCancel: true };
+
+/** Plays `steps` in order, one per model call; the SDK loop, tools and serialization stay real. */
+class ScriptModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.task-wake-ledger', contextWindowLimit: 200_000 };
+  private index = 0;
+
+  constructor(private readonly steps: readonly ScriptStep[]) {
+    super();
+  }
+
+  override updateConfig(config: BaseModelConfig): void { this.config = { ...this.config, ...config }; }
+  override getConfig(): BaseModelConfig { return this.config; }
+
+  override async *stream(_messages: Message[], options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    const step = this.steps[this.index] ?? { text: 'done' };
+    this.index += 1;
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    if ('tool' in step) {
+      yield { type: 'modelContentBlockStartEvent', start: { type: 'toolUseStart', name: step.tool, toolUseId: `ledger-${this.index}` } };
+      yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'toolUseInputDelta', input: JSON.stringify(step.input) } };
+      yield { type: 'modelContentBlockStopEvent' };
+      yield { type: 'modelMessageStopEvent', stopReason: 'toolUse' };
+      return;
+    }
+    if ('fail' in step) throw new Error(step.fail);
+    if ('holdUntilCancel' in step) {
+      const signal = options?.cancelSignal;
+      await new Promise<void>((resolve) => {
+        if (signal === undefined || signal.aborted) resolve();
+        else signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+    }
+    yield { type: 'modelContentBlockStartEvent' };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'text' in step ? step.text : 'held' } };
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+  }
+}
+
+interface LedgerTurn {
+  readonly stopReason: string | undefined;
+  readonly failed: boolean;
+  /** Each `afterToolCallEvent`'s tool name and result, exactly as the SDK emitted them. */
+  readonly results: { name: string; status: string; content: readonly unknown[] }[];
+}
+
+/**
+ * One turn fed to a ledger exactly as `AgentRuntime.send` feeds its own: every stream
+ * event observed, then `closeTurn` with completed = `endTurn`.
+ */
+async function ledgerTurn(
+  agent: Agent,
+  ledger: TerminalDeliveryLedger,
+  onEvent?: (event: AgentStreamEvent) => void,
+): Promise<LedgerTurn> {
+  let stopReason: string | undefined;
+  let failed = false;
+  const results: LedgerTurn['results'] = [];
+  try {
+    for await (const event of agent.stream('go')) {
+      ledger.observe(event);
+      const loose = event as unknown as {
+        type: string;
+        toolUse?: { name: string };
+        result?: { status: string; content: readonly unknown[]; stopReason?: string };
+      };
+      if (loose.type === 'afterToolCallEvent' && loose.toolUse !== undefined && loose.result !== undefined) {
+        results.push({ name: loose.toolUse.name, status: String(loose.result.status), content: loose.result.content });
+      }
+      if (loose.type === 'agentResultEvent') stopReason = loose.result?.stopReason;
+      onEvent?.(event);
+    }
+  } catch {
+    failed = true;
+  }
+  ledger.closeTurn(!failed && stopReason === 'endTurn');
+  return { stopReason, failed, results };
+}
+
+/** The JSON payload of one SDK tool result, or undefined. */
+function jsonOf(content: readonly unknown[]): unknown {
+  const block = content[0] as { type?: string; json?: unknown } | undefined;
+  return content.length === 1 && block?.type === 'jsonBlock' ? block.json : undefined;
+}
+
+/**
+ * SRF-033 — the real `list` path. `createBackgroundBashTool` returns `manager.list()` (an
+ * array) and the SDK's `FunctionTool` delivers it as `{ $value: [...] }`; the ledger must
+ * read that envelope, and only that exact envelope, from successful `bash` results only,
+ * committing only at `endTurn`. Real manager, real jobs, real SDK agent loop and tool
+ * serialization; only the model is scripted. The pty session below proves the drain.
+ */
+async function ledgerRealSdkSection(): Promise<void> {
+  header('task wake — the ledger reads the SDK-enveloped bash list result (real tool path)');
+  await resetProject();
+  const manager = new BackgroundBashManager(ROOT, 'session-ledger');
+  try {
+    const succeeded = (await manager.start('exit 0')).taskId;
+    const failed = (await manager.start('exit 3')).taskId;
+    const stopped = (await manager.start('sleep 30')).taskId;
+    const running = (await manager.start('sleep 30')).taskId;
+    await manager.wait(succeeded, 10_000, undefined, false);
+    await manager.wait(failed, 10_000, undefined, false);
+    await manager.stop(stopped);
+    const states = new Map((await manager.list()).map((task) => [task.taskId, task.state]));
+    assert('the fixture jobs are in the three terminal states and one running',
+      states.get(succeeded) === 'succeeded' && states.get(failed) === 'failed' &&
+        states.get(stopped) === 'stopped' && states.get(running) === 'running');
+    const terminal = [succeeded, failed, stopped];
+    const bash = createBackgroundBashTool(manager);
+
+    // Completed turn: bash list, then endTurn.
+    const ledger = new TerminalDeliveryLedger();
+    let pendingSeenBeforeClose = false;
+    const agent = new Agent({
+      model: new ScriptModel([{ tool: 'bash', input: { mode: 'list' } }, { text: 'listed' }]),
+      tools: [bash],
+      printer: false,
+    });
+    const listTurn = await ledgerTurn(agent, ledger, (event) => {
+      if (event.type === 'afterToolCallEvent') pendingSeenBeforeClose = terminal.some((id) => ledger.has(id));
+    });
+    const listResult = listTurn.results.find((result) => result.name === 'bash');
+    const envelope = jsonOf(listResult?.content ?? []);
+    const enveloped = typeof envelope === 'object' && envelope !== null && !Array.isArray(envelope) &&
+      Object.keys(envelope).length === 1 && Array.isArray((envelope as { $value?: unknown }).$value);
+    assert('the real SDK tool path delivers list as one JsonBlock whose only key is $value, holding the four snapshots',
+      listResult?.status === 'success' && enveloped &&
+        ((envelope as { $value: unknown[] }).$value).length === 4);
+    assert('the list turn completed with endTurn', listTurn.stopReason === 'endTurn' && !listTurn.failed);
+    assert('the ledger read the three terminal ids from the enveloped result',
+      JSON.stringify(terminalTaskIdsInToolResult('bash', listResult ?? { status: 'error', content: [] }).sort()) ===
+        JSON.stringify([...terminal].sort()));
+    assert('ids stay pending until the turn closes (none delivered at the tool result)', !pendingSeenBeforeClose);
+    assert('the completed turn committed every terminal id', terminal.every((id) => ledger.has(id)));
+    assert('the running job listed in the same result is not delivered', !ledger.has(running));
+
+    // Failed and cancelled turns: the same real list result, never committed.
+    const failedLedger = new TerminalDeliveryLedger();
+    const failedTurn = await ledgerTurn(new Agent({
+      model: new ScriptModel([{ tool: 'bash', input: { mode: 'list' } }, { fail: 'fixture model failure after list' }]),
+      tools: [bash],
+      printer: false,
+    }), failedLedger);
+    assert('a turn that fails after the list result commits nothing',
+      failedTurn.failed && failedTurn.results.length === 1 && terminal.every((id) => !failedLedger.has(id)));
+
+    const cancelledLedger = new TerminalDeliveryLedger();
+    const cancelAgent = new Agent({
+      model: new ScriptModel([{ tool: 'bash', input: { mode: 'list' } }, { holdUntilCancel: true }]),
+      tools: [bash],
+      printer: false,
+    });
+    const cancelledTurn = await ledgerTurn(cancelAgent, cancelledLedger, (event) => {
+      if (event.type === 'afterToolCallEvent') setTimeout(() => cancelAgent.cancel(), 50);
+    });
+    assert('a turn cancelled after the list result commits nothing',
+      cancelledTurn.stopReason !== 'endTurn' && cancelledTurn.results.length === 1 &&
+        terminal.every((id) => !cancelledLedger.has(id)));
+
+    // An unrelated tool returning the very same array through the same SDK envelope.
+    const unrelatedLedger = new TerminalDeliveryLedger();
+    const jobs = tool({
+      name: 'jobs',
+      description: 'Lists the fixture jobs.',
+      inputSchema: z.object({}),
+      callback: async () => manager.list(),
+    });
+    const unrelatedTurn = await ledgerTurn(new Agent({
+      model: new ScriptModel([{ tool: 'jobs', input: {} }, { text: 'listed' }]),
+      tools: [jobs],
+      printer: false,
+    }), unrelatedLedger);
+    assert('an unrelated tool whose SDK-enveloped result carries the same snapshots delivers nothing',
+      unrelatedTurn.stopReason === 'endTurn' && enveloped &&
+        JSON.stringify(jsonOf(unrelatedTurn.results[0]?.content ?? [])) === JSON.stringify(envelope) &&
+        terminal.every((id) => !unrelatedLedger.has(id)));
+
+    // Malformed envelopes, each produced by a `bash`-named tool through the SDK's own serialization.
+    const snapshot = (await manager.status(succeeded)) as unknown;
+    const malformed: { label: string; value: unknown }[] = [
+      { label: '$value is a snapshot, not an array', value: { $value: snapshot } },
+      { label: '$value alongside an extra key', value: { $value: [snapshot], note: 'extra' } },
+      { label: 'an envelope nested in the array', value: [{ $value: [snapshot] }] },
+      { label: 'an envelope nested in $value', value: { $value: { $value: [snapshot] } } },
+      { label: '$value is a string', value: { $value: JSON.stringify([snapshot]) } },
+    ];
+    let malformedIndex = 0;
+    const fakeBash = tool({
+      name: 'bash',
+      description: 'Returns one malformed list shape per call.',
+      inputSchema: z.object({ mode: z.string() }),
+      callback: async () => malformed[malformedIndex++]?.value,
+    });
+    const malformedLedger = new TerminalDeliveryLedger();
+    const malformedTurn = await ledgerTurn(new Agent({
+      model: new ScriptModel([...malformed.map(() => ({ tool: 'bash', input: { mode: 'list' } })), { text: 'done' }]),
+      tools: [fakeBash],
+      printer: false,
+    }), malformedLedger);
+    const nestedJson = jsonOf(malformedTurn.results[2]?.content ?? []);
+    assert('the SDK wrapped the nested-array case itself as an envelope around an envelope',
+      JSON.stringify(nestedJson) === JSON.stringify({ $value: [{ $value: [snapshot] }] }));
+    for (const [index, entry] of malformed.entries()) {
+      const result = malformedTurn.results[index];
+      assert(`malformed envelope is not unwrapped: ${entry.label}`,
+        result?.status === 'success' && terminalTaskIdsInToolResult('bash', result).length === 0);
+    }
+    assert('a completed turn of malformed envelopes delivered nothing',
+      malformedTurn.stopReason === 'endTurn' && !malformedLedger.has(succeeded));
+
+    // The shapes that already counted still count; non-bash / non-success never do.
+    const envelopeContent = listResult?.content ?? [];
+    const snap = snapshot as { taskId: string };
+    const ids = (name: string, status: string, content: readonly unknown[]): string[] =>
+      terminalTaskIdsInToolResult(name, { status, content });
+    assert('a bare array of snapshots still counts', ids('bash', 'success', [{ type: 'jsonBlock', json: [snapshot] }])[0] === snap.taskId);
+    assert('a direct snapshot (status/stop) still counts', ids('bash', 'success', [{ type: 'jsonBlock', json: snapshot }])[0] === snap.taskId);
+    assert('a wait result still counts',
+      ids('bash', 'success', [{ type: 'jsonBlock', json: { reason: 'terminal', status: snapshot, output: {} } }])[0] === snap.taskId);
+    assert('the envelope carried as JSON text counts like the JsonBlock',
+      ids('bash', 'success', [{ type: 'textBlock', text: JSON.stringify(envelope) }]).length === 3);
+    assert('an error-status bash result with the envelope counts for nothing', ids('bash', 'error', envelopeContent).length === 0);
+    assert('another tool name with the envelope counts for nothing', ids('bash_list', 'success', envelopeContent).length === 0);
+  } finally {
+    await manager.shutdown();
+  }
 }
 
 async function mainSession(): Promise<void> {
@@ -454,6 +706,102 @@ async function delegationSession(): Promise<void> {
     && replay.includes('· background result') && replay.includes('child counted deleg-marker-eta'));
 }
 
+/** Polls the model-call log until `predicate` holds; returns the calls it held on. */
+async function waitForCalls(predicate: (calls: ModelCall[]) => boolean, label: string, timeoutMs = 30_000): Promise<ModelCall[]> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const calls = await modelCalls();
+    if (predicate(calls)) return calls;
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${label}`);
+    await settle(50);
+  }
+}
+
+/**
+ * SRF-033 — a completed `bash list` delivered terminal jobs' states through the SDK's
+ * `{ $value: [...] }` envelope, so their queued wakes are dropped at the drain; a job
+ * still running at the list wakes once when it ends; a failed or cancelled list turn
+ * commits nothing, so every queued wake behind it still drains as its own turn.
+ */
+async function listSession(): Promise<void> {
+  header('task wake — a completed bash list (SDK $value envelope) suppresses the wakes of the jobs it returned');
+  await resetProject();
+  await writeConfig({});
+  const tui = startTui({ cwd: ROOT, entry: ENTRY, cols: 120, rows: 40 });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
+
+    // --- completed: three terminal jobs listed, one job still running at the list. ---
+    const listMark = tui.mark();
+    tui.submit('start-list-complete list-marker-eta');
+    await tui.waitFor('listed 3 terminal list-marker-eta jobs from a $value list result', { timeoutMs: 30_000, from: listMark });
+    await waitForIdle(tui, listMark);
+    let calls = await modelCalls();
+    assert('the list turn made six model calls (four starts, the list, the answer) and the model saw the $value envelope',
+      calls.length === 6);
+    calls = await waitForCalls((all) => wakeCallsFor(all, 'list-marker-eta-late').length === 1, 'the late job\'s wake');
+    await waitForIdle(tui, listMark);
+    await settle(2_000);
+    calls = await modelCalls();
+    for (const index of [0, 1, 2]) {
+      assert(`no model request carried a notification for listed terminal job ${index}`,
+        wakeCallsFor(calls, `list-marker-eta-done-${index}`).length === 0);
+    }
+    assert('the job still running at the list woke exactly one turn after it ended',
+      wakeCallsFor(calls, 'list-marker-eta-late').length === 1 && calls.length === 7);
+    const listScreen = tui.screen.slice(listMark);
+    assert('the only wake notice is the late job\'s',
+      listScreen.split(WAKE_NOTICE).length - 1 === 1 &&
+        /task wake · bg-[0-9a-f]{8} succeeded — sleep 3; echo list-marker-eta-late/.test(listScreen));
+    assert('the suppressed wakes left the listing at idle', !tui.frame.includes(WAKE_ROW));
+
+    // --- failed: the list result reached the model, but the turn failed. ---
+    const failMark = tui.mark();
+    const beforeFail = calls.length;
+    tui.submit('start-list-fail list-marker-theta');
+    calls = await waitForCalls((all) =>
+      wakeCallsFor(all, 'list-marker-theta-done-0').length === 1 && wakeCallsFor(all, 'list-marker-theta-done-1').length === 1,
+    'both wakes behind the failed list turn');
+    await waitForIdle(tui, failMark);
+    await settle(1_500);
+    calls = await modelCalls();
+    assert('the failed list turn was visible as a failure', tui.screen.slice(failMark).includes('model failure after list'));
+    assert('a failed list turn commits nothing: each listed job still woke exactly one turn',
+      wakeCallsFor(calls, 'list-marker-theta-done-0').length === 1 &&
+        wakeCallsFor(calls, 'list-marker-theta-done-1').length === 1 &&
+        calls.length === beforeFail + 4 + 2);
+
+    // --- cancelled: the list result reached the model, then Ctrl+C cancels the turn. ---
+    const cancelMark = tui.mark();
+    const beforeCancel = calls.length;
+    tui.submit('start-list-cancel list-marker-iota');
+    await waitForFile(CANCEL_CHECKPOINT, 30_000);
+    await settle(300);
+    tui.send('\u0003');
+    await tui.waitFor('interrupted — press ctrl+c again to exit', { timeoutMs: 10_000, from: cancelMark });
+    calls = await waitForCalls((all) =>
+      wakeCallsFor(all, 'list-marker-iota-done-0').length === 1 && wakeCallsFor(all, 'list-marker-iota-done-1').length === 1,
+    'both wakes behind the cancelled list turn');
+    await waitForIdle(tui, cancelMark);
+    await settle(1_500);
+    calls = await modelCalls();
+    assert('a cancelled list turn commits nothing: each listed job still woke exactly one turn',
+      wakeCallsFor(calls, 'list-marker-iota-done-0').length === 1 &&
+        wakeCallsFor(calls, 'list-marker-iota-done-1').length === 1 &&
+        calls.length === beforeCancel + 4 + 2);
+
+    tui.submit('/exit');
+    assert('the list session exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+
+  const records = (await sessionRecords())[0]?.records ?? [];
+  const wakes = records.filter((record): record is TaskNotificationRecord => record.type === 'taskNotification');
+  assert('the trajectory holds exactly the five delivered wakes (late, two after the failure, two after the cancel)',
+    wakes.length === 5 && wakes.filter((wake) => wake.command.includes('list-marker-eta-done')).length === 0);
+}
+
 async function collapsedNotificationsSession(): Promise<void> {
   header('task wake — nineteen completions share one row without changing delivery');
   await resetProject();
@@ -503,11 +851,13 @@ async function collapsedNotificationsSession(): Promise<void> {
 
 async function main(): Promise<void> {
   try {
+    await ledgerRealSdkSection();
     await mainSession();
     await permissionSession();
     await configOffSession();
     await delegationSession();
     await collapsedNotificationsSession();
+    await listSession();
   } finally {
     await rm(HOME, { recursive: true, force: true });
   }

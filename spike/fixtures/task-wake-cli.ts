@@ -18,6 +18,12 @@
  *                                  (`sleep 0.1; …`) that asks for permission in `default` mode, then text.
  * - `start-clear-window <marker>`→ `bash start` (`sleep 2.5; …`), then text; the *second*
  *                                  runtime creation (`/clear`) blocks on a release file.
+ * - `start-list-complete <m>`    → three short jobs (one exits 4) and one `sleep 3` job, a 1.5 s
+ *                                  pause, one `bash list` (the SDK's `{ $value: [...] }` envelope),
+ *                                  then text naming what the list carried (SRF-033).
+ * - `start-list-fail <m>`        → two short jobs, the pause and `bash list`, then the model fails.
+ * - `start-list-cancel <m>`      → the same, then a text answer held open (checkpoint file) until
+ *                                  the turn's cancel signal fires.
  * - `delegate-idle <marker>`     → `subagent` with `_background_execution: true` (task `count <marker>`),
  *                                  then text; the child (no `subagent` spec) sleeps 3 s and answers.
  * - a `<task-notification …>` message → text acknowledging the wake.
@@ -41,6 +47,7 @@ const BLOCK_CHECKPOINT = path.join(process.cwd(), 'wake-block-checkpoint');
 const BLOCK_RELEASE = path.join(process.cwd(), 'wake-block-release');
 const CLEAR_RELEASE = path.join(process.cwd(), 'wake-clear-release');
 const CLEAR_ARM = path.join(process.cwd(), 'wake-clear-arm');
+const CANCEL_CHECKPOINT = path.join(process.cwd(), 'wake-cancel-checkpoint');
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -179,6 +186,37 @@ class TaskWakeModel extends Model<BaseModelConfig> {
     } else if (verb === 'start-clear-window') {
       if (step === 0) events = start(`sleep 2.5; echo ${marker}`);
       else text = `started clear-window job ${marker}`;
+    } else if (verb === 'start-list-complete' || verb === 'start-list-fail' || verb === 'start-list-cancel') {
+      // SRF-033: short jobs end while this turn runs, then one real `bash list` returns them
+      // through the SDK's `{ $value: [...] }` envelope. `complete` also starts one job that
+      // is still running at the list and ends after the turn.
+      const shortJobs = verb === 'start-list-complete' ? 3 : 2;
+      const lateJob = verb === 'start-list-complete' ? 1 : 0;
+      if (step < shortJobs) events = start(`sleep 0.1; echo ${marker}-done-${step}${step === 1 ? '; exit 4' : ''}`);
+      else if (step < shortJobs + lateJob) events = start(`sleep 3; echo ${marker}-late`);
+      else if (step === shortJobs + lateJob) {
+        await delay(1_500);
+        events = toolCall('bash', `list-${this.calls}`, { mode: 'list' });
+      } else if (verb === 'start-list-fail') {
+        throw new Error('task-wake fixture: model failure after list');
+      } else {
+        const envelope = prompt.lastResult;
+        const listed = isRecord(envelope) && Object.keys(envelope).length === 1 && Array.isArray(envelope.$value)
+          ? envelope.$value as unknown[]
+          : undefined;
+        const terminal = listed?.filter((item) => isRecord(item) && item.state !== 'running' &&
+          typeof item.command === 'string' && item.command.includes(marker)).length ?? -1;
+        text = `listed ${terminal} terminal ${marker} jobs from a ${listed === undefined ? 'bare' : '$value'} list result`;
+        if (verb === 'start-list-cancel') {
+          writeFileSync(CANCEL_CHECKPOINT, 'held\n');
+          const signal = options?.cancelSignal;
+          await new Promise<void>((resolve) => {
+            const fallback = setTimeout(resolve, 30_000);
+            if (signal === undefined || signal.aborted) resolve();
+            else signal.addEventListener('abort', () => { clearTimeout(fallback); resolve(); }, { once: true });
+          });
+        }
+      }
     } else {
       text = 'ok';
     }
