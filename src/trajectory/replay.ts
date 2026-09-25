@@ -20,6 +20,7 @@ import {
   SILENT_PERMISSION_OUTCOMES,
   contextCompactedOf,
   formatTurnFailure,
+  modelChangedOf,
   permissionDecisionOf,
   rewindOriginOf,
   turnFailureOf,
@@ -27,6 +28,7 @@ import {
   type ContextCompactedRecord,
   type ModelCallReading,
   type ModelCallRecord,
+  type ModelChangedReading,
   type PermissionDecisionReading,
   type RewindOrigin,
   type TrajectoryRecord,
@@ -35,6 +37,7 @@ import {
 } from './record.js';
 import {
   formatModelCall,
+  formatModelLabel,
   formatModelSpend,
   formatSessionCost,
   formatSpendFields,
@@ -260,6 +263,18 @@ export function replayRecords(
         continue;
       }
 
+      case 'modelChanged': {
+        // A successful `/model` switch (SRF-038) replays as one bounded notice row in
+        // transcript order, so a run whose header names the startup model says where
+        // the model that actually ran took over. The run header itself is untouched —
+        // it states what `runStarted` recorded, and a file without the type renders
+        // byte-identically. An unreadable line prints nothing, like a compaction's.
+        const reading = modelChangedOf(record);
+        if (reading === undefined) continue;
+        state = turnReducer(state, { type: 'notice', text: formatModelChanged(reading) });
+        continue;
+      }
+
       case 'permissionDecision': {
         // A settled permission decision (SER-079) replays as one bounded notice row in
         // transcript order — only when the user was prompted or the call was denied.
@@ -314,6 +329,25 @@ export function formatContextCompacted(reading: ContextCompactedReading): string
   ];
   return parts.join(' · ');
 }
+
+/**
+ * The one line a successful `/model` switch contributes to the transcript (SRF-038):
+ * `model changed: openai/gpt-x → bedrock/claude-y`, then ` · thinking effort high`
+ * only when the record carries an effort. Each side is rendered through
+ * `formatModelLabel` — the bound the spend lines already put on the same labels
+ * (whitespace collapsed, 60 code points) — and the effort as one bounded word, so a
+ * hostile config string cannot make the row several rows or thousands of columns.
+ * The same text lands in `trajectory replay`, `/export` and the resume recap because
+ * all three read it through the notice `replayRecords` dispatches.
+ */
+export function formatModelChanged(reading: ModelChangedReading): string {
+  const side = (label: ModelChangedReading['from']): string => formatModelLabel(`${label.provider}/${label.model}`);
+  const effort = reading.thinkingEffort === undefined ? undefined : formatModelLabel(reading.thinkingEffort, MAX_EFFORT_CHARS);
+  return `model changed: ${side(reading.from)} → ${side(reading.to)}${effort === undefined ? '' : ` · thinking effort ${effort}`}`;
+}
+
+/** Longest effort word a model-change line repeats; the real levels are a few letters. */
+const MAX_EFFORT_CHARS = 20;
 
 /**
  * Whether a permission decision earns a transcript line (SER-079): the user was

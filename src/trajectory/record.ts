@@ -76,6 +76,7 @@ export type TrajectoryRecordType =
   | 'shellCommand'
   | 'taskNotification'
   | 'contextCompacted'
+  | 'modelChanged'
   | 'permissionDecision'
   | RecordedEventType;
 
@@ -438,6 +439,41 @@ export interface ContextCompactedRecord extends RecordEnvelope {
   focused: boolean;
 }
 
+/** One side of a `/model` switch: the same two labels `runStarted` and `spend` carry. */
+export interface ModelLabel {
+  provider: string;
+  model: string;
+}
+
+/**
+ * What the runtime hands the recorder after `AgentRuntime.changeModel` succeeded
+ * (SRF-038): the live config's labels before and after, and the effort level the new
+ * model's thinking plan actually sends — absent when it sends none.
+ */
+export interface ModelChangedEntry {
+  from: ModelLabel;
+  to: ModelLabel;
+  thinkingEffort?: string | undefined;
+}
+
+/**
+ * A successful `/model` switch (SRF-038). `runStarted` names the model a process
+ * started on and stays byte-identical, so without this record a session switched
+ * before (or between) turns read as one model while every later `modelCall` and
+ * `turnEnded.spend` named another. Written by the runtime after the swap, between
+ * turns like `contextCompacted` (the envelope's `turn` is the last *closed* turn's
+ * ordinal, 0 before any turn); a failed factory or a refused switch writes nothing.
+ * The four labels are capped on `spend.provider`/`spend.model`'s terms. See
+ * {@link modelChangedOf} for the reading.
+ */
+export interface ModelChangedRecord extends RecordEnvelope {
+  type: 'modelChanged';
+  from: ModelLabel;
+  to: ModelLabel;
+  /** The effective effort after the switch; absent when the new model thinks at no level. */
+  thinkingEffort?: string;
+}
+
 /**
  * The stages a permission decision can settle at (SER-079), spelled here as plain
  * strings rather than imported from the gate: `src/trajectory/**` reads the file
@@ -511,6 +547,7 @@ export type TrajectoryRecord =
   | ShellCommandRecord
   | TaskNotificationRecord
   | ContextCompactedRecord
+  | ModelChangedRecord
   | PermissionDecisionRecord;
 
 /**
@@ -733,6 +770,10 @@ export function searchableText(record: TrajectoryRecord): string[] {
       // Numbers only by construction — there is no text to match, and inventing a
       // sentence here would make search find words nobody recorded.
       return [];
+    case 'modelChanged':
+      // Configuration labels, not session content — `runStarted`'s provider/model
+      // are not searched either, and the two must not disagree about that.
+      return [];
     case 'permissionDecision': {
       // The words the record holds and nothing derived: "which session denied a
       // force-push" is a question the audit exists to answer, and the rule text is
@@ -939,6 +980,42 @@ export function contextCompactedOf(record: ContextCompactedRecord): ContextCompa
     ...(estimatedTokensBefore === undefined || estimatedTokensBefore === 0 ? {} : { estimatedTokensBefore }),
     focused: (record as { focused?: unknown }).focused === true,
   };
+}
+
+/** A {@link ModelChangedRecord} as readers consume it, labels validated. */
+export interface ModelChangedReading {
+  turn: number;
+  from: ModelLabel;
+  to: ModelLabel;
+  /** Absent when the record carries no usable effort. */
+  thinkingEffort?: string;
+}
+
+/**
+ * A record's model switch as a reader can trust it (SRF-038). Strict where the claim
+ * lives: both sides need a non-empty string `provider` and `model`, or the record is
+ * **rejected** (`undefined`) — a switch to or from nobody-knows-what is not a switch a
+ * transcript may state. A non-string or empty effort degrades to absence. Fields this
+ * reader does not know are not carried into the reading.
+ */
+export function modelChangedOf(record: ModelChangedRecord): ModelChangedReading | undefined {
+  const from = modelLabelOf((record as { from?: unknown }).from);
+  const to = modelLabelOf((record as { to?: unknown }).to);
+  if (from === undefined || to === undefined) return undefined;
+  const effort = (record as { thinkingEffort?: unknown }).thinkingEffort;
+  return {
+    turn: boundedCount(record.turn) ?? 0,
+    from,
+    to,
+    ...(typeof effort === 'string' && effort !== '' ? { thinkingEffort: effort } : {}),
+  };
+}
+
+function modelLabelOf(value: unknown): ModelLabel | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const { provider, model } = value as { provider?: unknown; model?: unknown };
+  if (typeof provider !== 'string' || provider === '' || typeof model !== 'string' || model === '') return undefined;
+  return { provider, model };
 }
 
 /** A `permissionDecision` record as the validated fields a reader may print (SER-079). */

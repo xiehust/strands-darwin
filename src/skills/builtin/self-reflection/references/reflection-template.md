@@ -12,7 +12,8 @@ written as `unknown`, never `0`.
 - **trajectory:** <absolute trajectory.jsonl path>
 - **record read:** seq <first>–<closed-through-seq>, turns <first>–<closed-through-turn>
   (inclusive closed subject range; records after this `turnEnded` cutoff were not graded)
-- **model / provider:** <from runStarted>
+- **model / provider:** <from runStarted; if a later `modelChanged` record exists, name each
+  switch and the turn it preceded — later `modelCall`/`turnEnded.spend` labels are the model that ran>
 - **session spend:** input=<n|unknown> output=<n|unknown> cacheRead=<n|unknown>
   cacheWrite=<n|unknown> (summed over recorded `turnEnded.spend`; absent fields stay unknown)
 

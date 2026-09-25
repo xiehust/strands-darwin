@@ -5,7 +5,9 @@
  * Split in two on purpose. Resolution is pure, so it is exhaustive and free. The
  * switch is not: it replaces the model object on a live `Agent`, which is the part
  * that can only be proven by doing it — so that half makes real model calls and
- * asserts the conversation survived a change of provider.
+ * asserts the conversation survived a change of provider. The offline half also
+ * drives `changeModel` on a real runtime with a scripted model factory, to prove the
+ * SRF-038 `modelChanged` trajectory record (once per success, never on failure).
  *
  * Run: pnpm tsx spike/verify-model-command.ts            (resolution only)
  *      pnpm tsx spike/verify-model-command.ts --live     (plus real model calls)
@@ -14,12 +16,30 @@ import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { CachePointBlock, TextBlock, type Agent } from '@strands-agents/sdk';
+import {
+  CachePointBlock,
+  Model,
+  TextBlock,
+  type Agent,
+  type BaseModelConfig,
+  type Message,
+  type ModelStreamEvent,
+  type StreamOptions,
+} from '@strands-agents/sdk';
 
-import { AgentRuntime } from '../src/agent/runtime.js';
+import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { allowAllBridge } from '../src/agent/permission.js';
 import { configPath, loadConfig, type ModelChoice } from '../src/config.js';
 import { resolveModelChoice } from '../src/tui/App.js';
+import { readTrajectory } from '../src/trajectory/reader.js';
+import {
+  modelChangedOf,
+  type ModelCallRecord,
+  type ModelChangedRecord,
+  type RunStartedRecord,
+  type TurnEndedRecord,
+} from '../src/trajectory/record.js';
+import { formatReplay, replayRead } from '../src/trajectory/replay.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 // The fixture and the persisted-switch assertions both go through configPath(),
@@ -131,6 +151,137 @@ async function offlineCacheShapeSwitch(): Promise<void> {
   }
 }
 
+
+/** Answers every call with one text block and provider usage; no network, no SDK loop change. */
+class ScriptedModel extends Model<BaseModelConfig> {
+  private config: BaseModelConfig = { modelId: 'fake.model-command', contextWindowLimit: 200_000 };
+
+  override updateConfig(config: BaseModelConfig): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  override getConfig(): BaseModelConfig {
+    return this.config;
+  }
+
+  override async *stream(_messages: Message[], _options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    yield { type: 'modelContentBlockStartEvent' };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'scripted answer' } };
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+    yield { type: 'modelMetadataEvent', usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } };
+  }
+}
+
+/** The `runStarted` keys a record carried before SRF-038 — the header must not grow one. */
+const RUN_STARTED_KEYS = new Set([
+  'v', 'seq', 't', 'turn', 'type', 'session', 'agentId', 'darwinVersion', 'provider', 'model',
+  'permissionMode', 'thinkingEffort', 'resumed', 'restoredMessages', 'pid',
+]);
+
+/**
+ * SRF-038 through the production seam: a real runtime with its trajectory recorder on
+ * and a scripted model factory (no model call, no network). A successful switch writes
+ * exactly one `modelChanged`; a failed factory and a refused cache shape write none;
+ * `runStarted` keeps naming the startup model; later spend names the model that ran;
+ * replay shows the switch as one line in transcript order.
+ */
+async function offlineModelChangedRecord(): Promise<void> {
+  header('/model — a successful switch is recorded once in the trajectory; a failed one never');
+  const root = await fixture();
+  const scripted = async (): Promise<Model<BaseModelConfig>> => new ScriptedModel();
+  setRuntimeModelFactoryForTest(scripted as never);
+  const runtime = await AgentRuntime.create({
+    projectRoot: root,
+    session: { kind: 'new' },
+    permissionBridge: allowAllBridge,
+  });
+  let shut = false;
+  try {
+    const opus = runtime.modelChoices.find((entry) => entry.name === 'opus') as ModelChoice;
+    const sol = runtime.modelChoices.find((entry) => entry.name === 'sol') as ModelChoice;
+
+    // 1. Before any turn: the case the origin session hit (seq 0 said one model, every
+    // later record another).
+    const toSol = await runtime.changeModel(sol);
+    await toSol.saved;
+
+    // 2. A failed factory: the session stays on sol and nothing is recorded.
+    setRuntimeModelFactoryForTest(async () => { throw new Error('scripted factory failure'); });
+    let factoryError = '';
+    try {
+      await runtime.changeModel(opus);
+    } catch (error) {
+      factoryError = error instanceof Error ? error.message : String(error);
+    }
+    setRuntimeModelFactoryForTest(scripted as never);
+    assert('a failed factory rejects the switch and leaves the live model', factoryError === 'scripted factory failure' && runtime.config.model === 'openai.gpt-5.6-sol');
+
+    // 3. A refused switch: an unknown prompt shape throws before the swap.
+    const agent = runtimeAgent(runtime);
+    const prompt = agent.systemPrompt as NonNullable<Agent['systemPrompt']>;
+    agent.systemPrompt = [new TextBlock('base'), new TextBlock('unknown second block')];
+    let refusal = '';
+    try {
+      await runtime.changeModel(opus);
+    } catch (error) {
+      refusal = error instanceof Error ? error.message : String(error);
+    }
+    agent.systemPrompt = prompt;
+    assert('a refused cache shape rejects the switch and leaves the live model', refusal.includes('Could not update the final cache point') && runtime.config.model === 'openai.gpt-5.6-sol');
+
+    // 4. One turn on the switched model, then a switch back after it.
+    for await (const _event of runtime.send('hello after the switch')) { /* drain */ }
+    const back = await runtime.changeModel(opus);
+    await back.saved;
+
+    const file = runtime.trajectoryStatus?.file ?? '';
+    await runtime.shutdown();
+    shut = true;
+
+    const read = await readTrajectory(file);
+    const changes = read.records.filter((record): record is ModelChangedRecord => record.type === 'modelChanged');
+    const readings = changes.map((record) => modelChangedOf(record));
+    assert('exactly two modelChanged records — one per successful switch, none for the failed or refused one', changes.length === 2);
+    assert('the first says bedrock/opus → openai/sol at turn 0, with the new plan\u2019s effective effort',
+      readings[0]?.turn === 0 &&
+      readings[0].from.provider === 'bedrock' && readings[0].from.model === 'global.anthropic.claude-opus-5' &&
+      readings[0].to.provider === 'openai' && readings[0].to.model === 'openai.gpt-5.6-sol' &&
+      readings[0].thinkingEffort === toSol.thinking.effective && typeof toSol.thinking.effective === 'string');
+    assert('the switch back carries the turn it followed and the reverse labels',
+      readings[1]?.turn === 1 && readings[1].from.model === 'openai.gpt-5.6-sol' && readings[1].to.model === 'global.anthropic.claude-opus-5' &&
+      readings[1].thinkingEffort === back.thinking.effective);
+    const started = read.records.find((record): record is RunStartedRecord => record.type === 'runStarted');
+    assert('runStarted still names the startup model, with no key it did not carry before',
+      read.records.filter((record) => record.type === 'runStarted').length === 1 &&
+      started?.provider === 'bedrock' && started.model === 'global.anthropic.claude-opus-5' &&
+      Object.keys(started).every((key) => RUN_STARTED_KEYS.has(key)));
+    const ended = read.records.find((record): record is TurnEndedRecord => record.type === 'turnEnded');
+    const call = read.records.find((record): record is ModelCallRecord => record.type === 'modelCall');
+    assert('the turn after the switch is billed to the model that ran — spend and modelCall say openai/sol',
+      ended?.spend?.provider === 'openai' && ended.spend.model === 'openai.gpt-5.6-sol' &&
+      call?.spend?.provider === 'openai' && call.spend.model === 'openai.gpt-5.6-sol');
+    const order = read.records.map((record) => record.type);
+    assert('file order: runStarted, the switch, the turn, then the switch back',
+      order.indexOf('runStarted') < order.indexOf('modelChanged') && order.indexOf('modelChanged') < order.indexOf('userInput') &&
+      order.lastIndexOf('modelChanged') > order.indexOf('turnEnded'));
+
+    const transcript = formatReplay(replayRead(read)).split('\n');
+    const toLine = `  note model changed: bedrock/global.anthropic.claude-opus-5 → openai/openai.gpt-5.6-sol${toSol.thinking.effective === undefined ? '' : ` · thinking effort ${toSol.thinking.effective}`}`;
+    const backLine = `  note model changed: openai/openai.gpt-5.6-sol → bedrock/global.anthropic.claude-opus-5${back.thinking.effective === undefined ? '' : ` · thinking effort ${back.thinking.effective}`}`;
+    assert('replay shows each switch as one note line in transcript order around the turn',
+      transcript.filter((line) => line.includes('model changed')).length === 2 &&
+      transcript.indexOf(toLine) !== -1 && transcript.indexOf(toLine) < transcript.indexOf('you> hello after the switch') &&
+      transcript.indexOf(backLine) > transcript.indexOf('darwin> scripted answer'));
+    assert('the replay run header is still runStarted\u2019s label',
+      transcript[0]?.endsWith(' · bedrock/global.anthropic.claude-opus-5') === true);
+  } finally {
+    if (!shut) await runtime.shutdown();
+    setRuntimeModelFactoryForTest(undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 /** A project root with two models configured, `opus` enabled. */
 async function fixture(): Promise<string> {
@@ -258,6 +409,7 @@ async function liveSwitch(): Promise<void> {
 async function main(): Promise<void> {
   resolution();
   await offlineCacheShapeSwitch();
+  await offlineModelChangedRecord();
   if (process.argv.includes('--live')) await liveSwitch();
   else console.log('\n(skipping the live switch — pass --live to make real model calls)');
   report();

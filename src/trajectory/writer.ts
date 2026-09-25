@@ -36,6 +36,7 @@ import {
   rewindOriginOf,
   type CallSpendProjector,
   type ContextCompactedEntry,
+  type ModelChangedEntry,
   type PermissionDecisionFields,
   type RewindOrigin,
   type TaskNotificationFields,
@@ -684,6 +685,46 @@ export class TrajectoryRecorder {
         after: { messages: messagesAfter },
         focused: entry.focused === true,
       });
+      this.flush();
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  /**
+   * Records one successful `/model` switch (SRF-038). Called by
+   * `AgentRuntime.changeModel` only after the swap succeeded, and between turns by
+   * nature — the TUI refuses `/model` while a turn streams — so, like
+   * {@link recordContextCompacted}, this is never on the streaming path: composing and
+   * buffering are synchronous and non-throwing, the flush is the same fire-and-forget
+   * append chain, and `turn` is the last closed turn's ordinal (0 before any turn).
+   * The four labels are configuration-controlled strings and pass the field cap
+   * exactly as `spend.provider`/`spend.model` do, each truncation under its own path;
+   * a side without a non-empty provider and model is not a switch anyone can read, so
+   * nothing is written for it. The effort key is absent when the new plan sends none.
+   */
+  recordModelChanged(entry: ModelChangedEntry): void {
+    if (!this.active) return;
+    try {
+      const label = (value: unknown): value is string => typeof value === 'string' && value !== '';
+      if (!label(entry.from?.provider) || !label(entry.from.model) || !label(entry.to?.provider) || !label(entry.to.model)) {
+        return;
+      }
+      const fromProvider = capField(entry.from.provider, 'from.provider');
+      const fromModel = capField(entry.from.model, 'from.model');
+      const toProvider = capField(entry.to.provider, 'to.provider');
+      const toModel = capField(entry.to.model, 'to.model');
+      const effort = label(entry.thinkingEffort) ? capField(entry.thinkingEffort, 'thinkingEffort') : undefined;
+      this.buffer(
+        {
+          turn: this.turns,
+          type: 'modelChanged',
+          from: { provider: fromProvider.value, model: fromModel.value },
+          to: { provider: toProvider.value, model: toModel.value },
+          ...(effort === undefined ? {} : { thinkingEffort: effort.value }),
+        },
+        [...fromProvider.trunc, ...fromModel.trunc, ...toProvider.trunc, ...toModel.trunc, ...(effort?.trunc ?? [])],
+      );
       this.flush();
     } catch (error) {
       this.fail(error);

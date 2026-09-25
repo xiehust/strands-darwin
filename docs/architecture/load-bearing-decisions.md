@@ -1905,6 +1905,29 @@ say why rather than silently omit), the second is labelled normally; `searchable
 `userInput` and never see it. Files without the record render byte-identically. Checks:
 `verify-trajectory.ts`, `verify-compact.ts`, `verify-export-command.ts`, `verify-resume-recap.ts`.
 
+**A successful `/model` switch is recorded (SRF-038, `modelChanged`).** `runStarted` names the
+model a process *started* on, so a session switched before its first prompt read as one model in
+the header (`openai / global.openai.gpt-6-astra` in `session-20260925-083010463`) while all 77
+`modelCall` records and every `turnEnded.spend` named another. Now `AgentRuntime.changeModel`
+appends one out-of-turn record on `contextCompacted`'s terms — synchronous, non-throwing, flushed on
+the ordinary append chain, `turn` = the last closed turn's ordinal (0 before any turn) — **after**
+the swap and every mutation succeeded: a failed model factory or a refused cache shape throws
+before it and writes nothing, while a failed config save is still a switch that ran. Fields:
+`from: { provider, model }`, `to: { provider, model }` and optional `thinkingEffort` (the new
+plan's *effective* level; absent when none is sent). The four labels pass the field cap exactly
+as `spend.provider`/`spend.model` do, each truncation under its own path (`to.model`, …); the
+writer refuses a side without non-empty strings, and `modelChangedOf` rejects one it finds.
+`runStarted` is unchanged byte for byte, and so is the replay run header — it states what
+`runStarted` recorded. Readers: `formatReplay` prints one notice row in transcript order through
+the ordinary reducer (`model changed: openai/gpt-x → bedrock/claude-y · thinking effort high`,
+each side bounded by `formatModelLabel`, whitespace collapsed), so `/export`, the resume recap and
+rewind history show the same line; `spend.ts` needs no change because every `spend` label is
+already the live config at turn start; `searchableText` is empty (as for `runStarted`'s labels);
+`fork` copies it as bytes; recall and `sessions` never see it. A file without the record replays
+byte-identically to a fixture rendered on the pre-change source
+(`spike/fixtures/trajectory-pre-srf038.*`). Checks: `verify-trajectory.ts`,
+`verify-model-command.ts` (free half: a real `changeModel`, failed and refused switches).
+
 **Every settled permission decision is recorded, as the decision only (SER-079,
 `permissionDecision`).** Before it, the record could show a tool call and its result but not
 *why it ran*: a grader reading the file could not tell a prompt the user answered from a silent

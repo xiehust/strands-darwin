@@ -1,0 +1,19 @@
+--- run 2026-09-25T08:30:13.000Z · openai/global.openai.gpt-6-astra
+you> list the files
+  note permission · bash · approved by user
+  tool bash [ok] bash: ls
+    README.md
+    src
+darwin> Two entries: README.md and src.
+you> !git status --short
+  tool shell [ok] $ git status --short (exit 0 in 14ms)
+     M README.md
+  note context compacted: 6 → 3 messages · ~2400 tokens before
+you> summarize README.md
+darwin> It describes the project.
+  turn 1 model call (attempt 1, 900ms) · stop toolUse · context ~1200 tokens · input=1200 output=40 cacheRead=0 cacheWrite=1100 · bedrock/global.anthropic.claude-opus-5-5
+  turn 1 model call (attempt 1, 1900ms) · stop endTurn · context ~1300 tokens · input=100 output=12 cacheRead=1100 cacheWrite=0 · bedrock/global.anthropic.claude-opus-5-5
+  turn 2 model call (attempt 1, 1500ms) · stop endTurn · context: reset by compaction · input=300 output=8 cacheRead=- cacheWrite=- · bedrock/global.anthropic.claude-opus-5-5
+  turn 1 spend: input=1300 output=52 cacheRead=1100 cacheWrite=1100 · bedrock/global.anthropic.claude-opus-5-5
+  turn 2 spend: input=300 output=8 cacheRead=- cacheWrite=- · bedrock/global.anthropic.claude-opus-5-5
+  session spend: input=1600 output=60 cacheRead=1100(+1 unreported) cacheWrite=1100(+1 unreported) over 2 turn(s)

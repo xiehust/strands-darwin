@@ -1899,6 +1899,7 @@ export class AgentRuntime {
       throw new Error('Could not update the final cache point on the assembled system prompt.');
     }
 
+    const from = { provider: this.liveConfig.provider, model: this.liveConfig.model };
     this.agent.model = model;
     this.model = model;
     this.liveConfig = next;
@@ -1913,6 +1914,15 @@ export class AgentRuntime {
     this.promptCachePlan = promptCachePlan;
     // A different model keys a different cache: the next call re-reads uncached.
     this.markCacheInvalidated('model');
+    // SRF-038: the swap has happened, so the record says so — `runStarted` keeps
+    // naming the startup model byte for byte. Observer-only (synchronous, no await,
+    // non-throwing); a factory failure or a refused cache shape threw above and never
+    // reaches here, and a failed config save is still a switch that ran.
+    this.trajectory?.recordModelChanged({
+      from,
+      to: { provider: next.provider, model: next.model },
+      thinkingEffort: thinkingPlan.effective,
+    });
 
     const choice = next.modelChoices.find((entry) => entry.index === target.index) as ModelChoice;
     return {

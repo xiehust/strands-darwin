@@ -69,6 +69,7 @@ import {
   failureFromError,
   formatTurnFailure,
   modelCallOf,
+  modelChangedOf,
   parseRecordLine,
   permissionDecisionOf,
   rewindOriginOf,
@@ -79,6 +80,7 @@ import {
   type CallSpendProjector,
   type ContextCompactedRecord,
   type ModelCallRecord,
+  type ModelChangedRecord,
   type PermissionDecisionRecord,
   type RunStartedRecord,
   type TrajectoryRecord,
@@ -87,6 +89,7 @@ import {
 } from '../src/trajectory/record.js';
 import {
   formatContextCompacted,
+  formatModelChanged,
   formatPermissionDecision,
   formatReplay,
   historyWithoutIds,
@@ -2015,6 +2018,116 @@ async function contextCompactedRecords(): Promise<void> {
     !formatReplay({ ...replayRecords(session, { turn: 2 }), damage: undefined }).includes('context compacted'));
 }
 
+/** Written before SRF-038 existed: an old record and the replay the base source printed for it. */
+const PRE_SRF038_FIXTURE = path.join(import.meta.dirname, 'fixtures', 'trajectory-pre-srf038.jsonl');
+const PRE_SRF038_REPLAY = path.join(import.meta.dirname, 'fixtures', 'trajectory-pre-srf038.replay.txt');
+
+/**
+ * SRF-038: a successful `/model` switch leaves one bounded `modelChanged` record —
+ * written out of turn like `contextCompacted`, labels capped like `spend`, one replay
+ * line — and a file recorded before the type existed replays byte for byte. The
+ * runtime seam (a real `changeModel`, failed and refused switches) is driven in
+ * `verify-model-command.ts`.
+ */
+async function modelChangedRecords(): Promise<void> {
+  header('trajectory — a successful /model switch leaves one bounded modelChanged record');
+
+  // An old file replays exactly as the base source (8cedf93) printed it.
+  const oldRead = await readTrajectory(PRE_SRF038_FIXTURE);
+  const oldExpected = await readFile(PRE_SRF038_REPLAY, 'utf8');
+  const oldTranscript = formatReplay(replayRead(oldRead));
+  assert('a trajectory recorded before modelChanged existed replays byte-identically to the pre-change fixture',
+    `${oldTranscript}\n` === oldExpected && oldRead.records.every((record) => record.type !== 'modelChanged'));
+
+  const dir = path.join(ROOT, 'model-changed');
+  await rm(dir, { recursive: true, force: true });
+  const file = path.join(dir, 'trajectory.jsonl');
+  const rec = recorder(file);
+  const opus = { provider: 'bedrock', model: 'global.anthropic.claude-opus-5-5' };
+  const astra = { provider: 'openai', model: 'global.openai.gpt-6-astra' };
+
+  let settledBeforeReturn = true;
+  const pending = new Promise<void>((resolve) => setImmediate(() => { settledBeforeReturn = false; resolve(); }));
+  rec.recordModelChanged({ from: astra, to: opus, thinkingEffort: 'high' });
+  assert('recordModelChanged returns synchronously — no await on the record path', settledBeforeReturn);
+  await pending;
+  const turn = rec.beginTurn('a prompt');
+  turn?.end();
+  rec.recordModelChanged({ from: opus, to: astra, thinkingEffort: undefined });
+  // A side nobody can read is not a switch: none of these produces a line.
+  rec.recordModelChanged({ from: { provider: '', model: 'm' }, to: opus });
+  rec.recordModelChanged({ from: opus, to: { provider: 'openai', model: '' } });
+  rec.recordModelChanged({ from: opus, to: { provider: 7, model: 'm' } as never });
+  rec.recordModelChanged({ from: undefined, to: opus } as never);
+  // Hostile labels: over the field cap, with line breaks and a control character.
+  const hostileModel = `${'m'.repeat(MAX_FIELD_CHARS + 500)}\nsecond line\u001b[31m`;
+  const hostileProvider = `evil\r\nprovider${'p'.repeat(MAX_FIELD_CHARS)}`;
+  rec.recordModelChanged({ from: { provider: hostileProvider, model: 'ok' }, to: { provider: 'bedrock', model: hostileModel }, thinkingEffort: `hi\ngh${'e'.repeat(100)}` });
+  await rec.close();
+  assert('recording model changes reports no problem', rec.status.problem === undefined);
+
+  const raw = await readFile(file, 'utf8');
+  const lines = raw.split('\n').filter((line) => line.includes('"modelChanged"'));
+  const read = await readTrajectory(file);
+  const changes = read.records.filter((r): r is ModelChangedRecord => r.type === 'modelChanged');
+  assert('one line per readable switch and none for an unreadable side', changes.length === 3 && lines.length === 3);
+  assert('every line parses through the envelope validator', lines.every((line) => parseRecordLine(line)?.type === 'modelChanged'));
+  assert('turn is 0 before any turn and the last closed turn after one, like contextCompacted',
+    changes[0]?.turn === 0 && changes[1]?.turn === 1 && changes[2]?.turn === 1);
+  const [first, second, hostile] = changes.map((record) => modelChangedOf(record));
+  assert('the record round-trips writer → reader with the right from/to/effort',
+    first?.from.provider === 'openai' && first.from.model === astra.model &&
+    first.to.provider === 'bedrock' && first.to.model === opus.model && first.thinkingEffort === 'high');
+  assert('an absent effort is an absent key in the bytes and in the reading',
+    lines[1] !== undefined && !lines[1].includes('thinkingEffort') && second !== undefined && second.thinkingEffort === undefined);
+  assert('the record holds exactly the envelope plus from/to/thinkingEffort — nothing else',
+    Object.keys(changes[0]!).sort().join(',') === 'from,seq,t,thinkingEffort,to,turn,type,v' &&
+    Object.keys(changes[1]!).sort().join(',') === 'from,seq,t,to,turn,type,v');
+  assert('the model labels are capped at MAX_FIELD_CHARS exactly like spend.provider/model, truncation written down',
+    [...(changes[2]?.to.model ?? '')].length === MAX_FIELD_CHARS && [...(changes[2]?.from.provider ?? '')].length === MAX_FIELD_CHARS &&
+    changes[2]?.trunc?.some((t) => t.path === 'to.model' && t.kept === MAX_FIELD_CHARS && t.chars === [...hostileModel].length) === true &&
+    changes[2]?.trunc?.some((t) => t.path === 'from.provider' && t.chars === [...hostileProvider].length) === true &&
+    changes[2]?.trunc?.length === 2);
+  const hostileLine = hostile === undefined ? '' : formatModelChanged(hostile);
+  assert('a hostile label still replays as one bounded row: no line break, both sides cut at the spend label bound',
+    hostileLine.startsWith('model changed: evil provider') && !/[\r\n]/.test(hostileLine) &&
+    [...hostileLine].length <= 'model changed:  →  · thinking effort '.length + 2 * MAX_MODEL_LABEL_CHARS + 20 &&
+    hostileLine.includes('… → ') && hostileLine.includes('· thinking effort hi gheeee'));
+
+  const damaged = (payload: Record<string, unknown>) =>
+    modelChangedOf({ v: 1, seq: 9, t: 'now', turn: 2, type: 'modelChanged', ...payload } as unknown as ModelChangedRecord);
+  assert('a missing, empty or non-string label rejects the record',
+    damaged({ from: astra }) === undefined && damaged({ from: astra, to: { provider: 'x' } }) === undefined &&
+    damaged({ from: { provider: '', model: 'x' }, to: opus }) === undefined && damaged({ from: astra, to: 'bedrock/x' }) === undefined &&
+    damaged({ from: [], to: opus }) === undefined);
+  const foreign = damaged({ from: { ...astra, region: 'us-east-1' }, to: opus, thinkingEffort: 3, apiKey: 'nope' });
+  assert('a foreign payload keeps the labels, drops a non-string effort and carries no unknown field',
+    foreign !== undefined && foreign.turn === 2 && foreign.thinkingEffort === undefined &&
+    !('apiKey' in foreign) && !('region' in foreign.from));
+  assert('the record contributes no searchable text, like runStarted\u2019s labels',
+    searchableText(changes[0] as TrajectoryRecord).length === 0);
+
+  // Replay: one notice row in transcript order; the run header stays runStarted's.
+  const withSwitch = [...oldRead.records];
+  const switchRecord = { ...(changes[0] as ModelChangedRecord), seq: 0.5, t: '2026-09-25T08:30:20.000Z' };
+  withSwitch.splice(1, 0, switchRecord as TrajectoryRecord);
+  const transcript = formatReplay(replayRead({ ...oldRead, records: withSwitch }));
+  const noteLine = '  note model changed: openai/global.openai.gpt-6-astra → bedrock/global.anthropic.claude-opus-5-5 · thinking effort high';
+  const transcriptLines = transcript.split('\n');
+  assert('formatReplay prints the switch as exactly one note line, before the first prompt',
+    transcriptLines.filter((line) => line.includes('model changed')).length === 1 &&
+    transcriptLines.indexOf(noteLine) !== -1 && transcriptLines.indexOf(noteLine) < transcriptLines.indexOf('you> list the files'));
+  assert('the note is the only difference from the pre-change replay; the run header is untouched',
+    `${transcriptLines.filter((line) => line !== noteLine).join('\n')}\n` === oldExpected &&
+    transcriptLines[0] === '--- run 2026-09-25T08:30:13.000Z · openai/global.openai.gpt-6-astra');
+  const unreadable = { ...switchRecord, to: { provider: 'bedrock' } } as unknown as TrajectoryRecord;
+  assert('an unreadable switch prints nothing and counts nothing as dropped',
+    `${formatReplay(replayRead({ ...oldRead, records: [oldRead.records[0]!, unreadable, ...oldRead.records.slice(1)] }))}\n` === oldExpected);
+  assert('a --turn replay shows a switch only under the turn it closed',
+    formatReplay({ ...replayRecords([...withSwitch.slice(0, 10), { ...switchRecord, turn: 1 } as TrajectoryRecord, ...withSwitch.slice(10)], { turn: 1 }), damage: undefined }).includes(noteLine) &&
+    !formatReplay({ ...replayRecords(withSwitch, { turn: 1 }), damage: undefined }).includes('model changed'));
+}
+
 /**
  * SER-079: one bounded `permissionDecision` record per settled gate decision — inside
  * the turn, keyed to the call by `toolUseId`, never the input; replay prints one line
@@ -3154,6 +3267,7 @@ async function main(): Promise<void> {
     await turnSpendReadPaths();
     await modelCallRecords();
     await contextCompactedRecords();
+    await modelChangedRecords();
     await permissionDecisionRecords();
     await rewindOriginRecords();
     await replayFidelity();
