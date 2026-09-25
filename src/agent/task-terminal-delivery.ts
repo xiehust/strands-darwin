@@ -15,9 +15,21 @@
  * (`endTurn`) commits them, because a cancelled turn's tool result may never have
  * been reasoned about. `observe` cannot throw — observer discipline: a ledger
  * failure costs a possible duplicate wake, never a turn.
+ *
+ * SRF-036: the SDK `ContextOffloader` replaces an oversized result at default hook
+ * order with an `[Offloaded: …]` text preview, so the stream carries only the
+ * preview. {@link TerminalDeliveryLedger.install} therefore registers one
+ * `HookOrder.SDK_FIRST` `AfterToolCallEvent` hook that reads the *original* result
+ * and keeps its terminal ids as candidates keyed by `toolUseId`; `observe` resolves
+ * them against the result the stream actually carries. Unchanged, it counts exactly
+ * as before. Replaced, a candidate id counts only when the model-visible
+ * replacement text contains that exact id, so snapshots cut off by the preview stay
+ * undelivered. The preview is only searched for the literal id, never parsed for
+ * state: the state comes from the original.
  */
 
-import type { AgentStreamEvent } from '@strands-agents/sdk';
+import { AfterToolCallEvent, HookOrder } from '@strands-agents/sdk';
+import type { Agent, AgentStreamEvent } from '@strands-agents/sdk';
 
 const TERMINAL_STATES: ReadonlySet<string> = new Set(['succeeded', 'failed', 'stopped']);
 const TASK_ID = /^bg-[0-9a-f-]{36}$/;
@@ -96,24 +108,69 @@ export function terminalTaskIdsInToolResult(
   return [];
 }
 
+/** Whether any text block of a model-visible result contains `id` verbatim. */
+function textContains(content: readonly unknown[], id: string): boolean {
+  return content.some((block) =>
+    isRecord(block) && block.type === 'textBlock' && typeof block.text === 'string' && block.text.includes(id));
+}
+
+/** The original result an SDK_FIRST hook saw, and the terminal ids it carried. */
+interface Candidate {
+  readonly result: unknown;
+  readonly ids: readonly string[];
+}
+
 export class TerminalDeliveryLedger {
   private readonly delivered = new Set<string>();
   private pending = new Set<string>();
+  /** Pre-replacement terminal ids per `toolUseId`, resolved by `observe`, dropped by `closeTurn`. */
+  private candidates = new Map<string, Candidate>();
+
+  /**
+   * Registers the pre-offload hook on the parent Agent: `SDK_FIRST`, so it runs
+   * before the `ContextOffloader`'s default-order hook can replace the result.
+   * It only reads; it never changes the event.
+   */
+  install(agent: Pick<Agent, 'addHook'>): void {
+    agent.addHook(AfterToolCallEvent, (event) => this.candidate(event), { order: HookOrder.SDK_FIRST });
+  }
+
+  /** Records the original result's terminal ids for `observe`. Synchronous, non-throwing. */
+  candidate(event: AfterToolCallEvent): void {
+    try {
+      const { toolUse, result } = event as unknown as {
+        toolUse?: { name?: unknown; toolUseId?: unknown };
+        result?: { status?: unknown; content?: unknown };
+      };
+      if (typeof toolUse?.name !== 'string' || typeof toolUse.toolUseId !== 'string') return;
+      if (!isRecord(result) || !Array.isArray(result.content)) return;
+      const ids = terminalTaskIdsInToolResult(toolUse.name, { status: String(result.status), content: result.content });
+      if (ids.length > 0) this.candidates.set(toolUse.toolUseId, { result, ids });
+      else this.candidates.delete(toolUse.toolUseId);
+    } catch {
+      // Observer discipline: a lost candidate costs a possible duplicate wake, never a turn.
+    }
+  }
 
   /** Observes one stream event of the current turn. Synchronous, non-throwing. */
   observe(event: AgentStreamEvent): void {
     try {
       if (event.type !== 'afterToolCallEvent') return;
       const { toolUse, result } = event as unknown as {
-        toolUse?: { name?: unknown };
+        toolUse?: { name?: unknown; toolUseId?: unknown };
         result?: { status?: unknown; content?: unknown };
       };
+      const candidate = typeof toolUse?.toolUseId === 'string' ? this.candidates.get(toolUse.toolUseId) : undefined;
+      if (candidate !== undefined) this.candidates.delete(toolUse?.toolUseId as string);
       if (typeof toolUse?.name !== 'string' || !isRecord(result) || !Array.isArray(result.content)) return;
-      for (const id of terminalTaskIdsInToolResult(toolUse.name, {
-        status: String(result.status),
-        content: result.content,
-      })) {
+      const status = String(result.status);
+      for (const id of terminalTaskIdsInToolResult(toolUse.name, { status, content: result.content })) {
         this.pending.add(id);
+      }
+      // A replaced result (the offloader's preview): the original's ids count only
+      // where the model-visible text still names them exactly.
+      if (candidate !== undefined && candidate.result !== result && status === 'success') {
+        for (const id of candidate.ids) if (textContains(result.content, id)) this.pending.add(id);
       }
     } catch {
       // Observer discipline: never a second reason a turn dies.
@@ -127,6 +184,7 @@ export class TerminalDeliveryLedger {
   closeTurn(completed: boolean): void {
     if (completed) for (const id of this.pending) this.delivered.add(id);
     this.pending = new Set();
+    this.candidates = new Map();
   }
 
   /** True once a completed turn carried this task's terminal state to the model. */

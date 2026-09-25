@@ -24,6 +24,13 @@
  * - `start-list-fail <m>`        → two short jobs, the pause and `bash list`, then the model fails.
  * - `start-list-cancel <m>`      → the same, then a text answer held open (checkpoint file) until
  *                                  the turn's cancel signal fires.
+ * - `start-and-wait-big[-cancel] <m>` → like `start-and-wait`, but the job prints ~14 KB, so the
+ *                                  terminal `wait` result exceeds a small `maxResultTokens` and
+ *                                  reaches the model as the offloader's preview (SRF-036); the answer
+ *                                  says whether it did. `-cancel` holds that answer until cancel.
+ * - `start-list-offload <m>`     → a job whose ~5 KB command pushes the next job's snapshot past the
+ *                                  offload preview, that next job, a 1.5 s pause, `bash list`, then
+ *                                  text naming which of the two ids the model-visible preview held.
  * - `delegate-idle <marker>`     → `subagent` with `_background_execution: true` (task `count <marker>`),
  *                                  then text; the child (no `subagent` spec) sleeps 3 s and answers.
  * - a `<task-notification …>` message → text acknowledging the wake.
@@ -54,10 +61,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** The newest user message that carries text (a prompt or a wake), and how many tool-result messages followed it. */
-function latestPrompt(messages: readonly Message[]): { text: string; toolResultsSince: number; lastResult: unknown } {
+function latestPrompt(messages: readonly Message[]): {
+  text: string;
+  toolResultsSince: number;
+  lastResult: unknown;
+  /** The last result's first block as the model saw it, when that block is text (an offload preview). */
+  lastText: string | undefined;
+  /** Every result's first-block text since the prompt, in order. */
+  resultTexts: string[];
+} {
   let text = '';
   let toolResultsSince = 0;
   let lastResult: unknown;
+  let lastText: string | undefined;
+  let resultTexts: string[] = [];
   for (const message of messages) {
     if (message.role !== 'user') continue;
     const textBlocks = message.content.filter((block) => block.type === 'textBlock');
@@ -65,6 +82,8 @@ function latestPrompt(messages: readonly Message[]): { text: string; toolResults
       text = textBlocks.map((block) => (block as { text: string }).text).join('\n');
       toolResultsSince = 0;
       lastResult = undefined;
+      lastText = undefined;
+      resultTexts = [];
       continue;
     }
     const result = message.content.find((block) => block.type === 'toolResultBlock');
@@ -76,9 +95,11 @@ function latestPrompt(messages: readonly Message[]): { text: string; toolResults
         : isRecord(payload) && typeof payload.text === 'string'
           ? safeJson(payload.text)
           : undefined;
+      lastText = isRecord(payload) && typeof payload.text === 'string' ? payload.text : undefined;
+      resultTexts.push(lastText ?? (isRecord(payload) && payload.type === 'jsonBlock' ? JSON.stringify(payload.json) : ''));
     }
   }
-  return { text, toolResultsSince, lastResult };
+  return { text, toolResultsSince, lastResult, lastText, resultTexts };
 }
 
 function safeJson(text: string): unknown {
@@ -163,7 +184,47 @@ class TaskWakeModel extends Model<BaseModelConfig> {
         events = toolCall('bash', `wait-${this.calls}`, {
           mode: 'wait', taskId: startedTaskId, waitMs: 10_000, wakeOnOutput: false,
         });
-      } else text = `waited job ${marker} to its end`;
+      } else {
+        // SRF-036 control: under a small `maxResultTokens` this short wait stays whole, so the
+        // answer keeps its pre-offload text; the suffix appears only if it was offloaded.
+        text = `waited job ${marker} to its end${prompt.lastText?.startsWith('[Offloaded:') === true ? ' through an offloaded preview' : ''}`;
+      }
+    } else if (verb === 'start-and-wait-big' || verb === 'start-and-wait-big-cancel') {
+      // SRF-036: ~14 KB of output makes the terminal wait result offloadable under a
+      // small `maxResultTokens`; the start result stays small and parseable.
+      if (step === 0) events = start(`sleep 0.3; seq 1 3000; echo ${marker}`);
+      else if (step === 1 && startedTaskId !== undefined) {
+        events = toolCall('bash', `wait-${this.calls}`, {
+          mode: 'wait', taskId: startedTaskId, waitMs: 10_000, wakeOnOutput: false,
+        });
+      } else {
+        const seen = prompt.lastText?.startsWith('[Offloaded:') === true ? 'an offloaded preview' : 'the whole result';
+        text = `waited big job ${marker} to its end through ${seen}`;
+        if (verb === 'start-and-wait-big-cancel') {
+          writeFileSync(CANCEL_CHECKPOINT, `${text}\n`);
+          const signal = options?.cancelSignal;
+          await new Promise<void>((resolve) => {
+            const fallback = setTimeout(resolve, 30_000);
+            if (signal === undefined || signal.aborted) resolve();
+            else signal.addEventListener('abort', () => { clearTimeout(fallback); resolve(); }, { once: true });
+          });
+        }
+      }
+    } else if (verb === 'start-list-offload') {
+      // SRF-036: the first job's ~5 KB command sits between its own id and the second
+      // job's snapshot, so an offloaded list preview names the first id but not the second.
+      if (step === 0) events = start(`sleep 0.1; echo ${marker}-seen; : ${'x'.repeat(5_000)}`);
+      else if (step === 1) events = start(`sleep 0.1; echo ${marker}-hidden`);
+      else if (step === 2) {
+        await delay(1_500);
+        events = toolCall('bash', `list-${this.calls}`, { mode: 'list' });
+      } else {
+        const idIn = (visible: string | undefined): string => /bg-[0-9a-f-]{36}/.exec(visible ?? '')?.[0] ?? 'none';
+        const [seenId, hiddenId] = [idIn(prompt.resultTexts[0]), idIn(prompt.resultTexts[1])];
+        const preview = prompt.lastText ?? '';
+        text = `list ${marker} ${preview.startsWith('[Offloaded:') ? 'offloaded' : 'whole'}: ` +
+          `seen id ${preview.includes(seenId) ? 'in' : 'not in'} preview, hidden id ${preview.includes(hiddenId) ? 'in' : 'not in'} preview`;
+      }
     } else if (verb === 'start-then-block') {
       if (step === 0) events = start(`sleep 0.5; echo ${marker}`);
       else {

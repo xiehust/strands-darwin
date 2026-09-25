@@ -583,14 +583,6 @@ export class AgentRuntime {
   /** Latched on the first tracker failure — its own latch, so it cannot break the others. */
   private cacheMissesBroken = false;
 
-  /**
-   * Which background jobs' terminal states completed turns already carried to the
-   * model through `wait`/`status` results (SER-069): the interactive drain asks it
-   * before sending a wake, so a job the model already saw finish never starts a
-   * duplicate turn. Session-scoped like the anchor; a `/clear` successor starts empty.
-   */
-  private readonly terminalDelivery = new TerminalDeliveryLedger();
-
   /** Serializes the bounded list/save/list critical section across concurrent callers. */
   private rewindCaptureTail: Promise<void> = Promise.resolve();
 
@@ -616,6 +608,14 @@ export class AgentRuntime {
     private readonly subagentDispatches: SubagentDispatchRegistry,
     /** Forwards background runs' `AfterToolCallEvent`s into `send()`'s stream (SER-064). */
     private readonly backgroundDelegation: BackgroundDelegationObserver,
+    /**
+     * Which background jobs' terminal states completed turns already carried to the
+     * model through `wait`/`status` results (SER-069): the interactive drain asks it
+     * before sending a wake, so a job the model already saw finish never starts a
+     * duplicate turn. Session-scoped like the anchor; a `/clear` successor starts empty.
+     * Built in `create()` because its pre-offload hook is installed on the Agent (SRF-036).
+     */
+    private readonly terminalDelivery: TerminalDeliveryLedger,
     /** The parent Agent's own retry state; children keep theirs behind their installer (SER-066). */
     private readonly modelRetry: ModelRetryHandle,
     private readonly backgroundBash: BackgroundBashManager,
@@ -942,6 +942,12 @@ export class AgentRuntime {
       // have no AfterToolCallEvent. Never overwrite an original snapshot.
       agent.addHook(ToolResultEvent, event => cloudMemory.uploadObserver?.fallback(event), { order: HookOrder.SDK_LAST });
     }
+    // SRF-036: one read-only SDK_FIRST AfterToolCallEvent hook hands the ledger the
+    // original `bash` result before the ContextOffloader's default-order hook can
+    // replace it with a preview; `send()`'s stream-side `observe` resolves it.
+    // Parent only: children never construct a ledger.
+    const terminalDelivery = new TerminalDeliveryLedger();
+    terminalDelivery.install(agent);
     toolForName = (name) => agent.tools.find((candidate) => candidate.name === name);
     installMaxTokensRecovery(agent);
     const modelRetry = installModelRetry(agent);
@@ -1141,6 +1147,7 @@ export class AgentRuntime {
       workflows,
       subagentDispatches,
       backgroundDelegation,
+      terminalDelivery,
       modelRetry,
       backgroundBash,
       gate,

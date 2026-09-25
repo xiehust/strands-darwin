@@ -31,12 +31,20 @@
  *                     through the SDK's `{ $value: [...] }` envelope: none of them wakes a turn
  *                     or a model request; a job still running at the list wakes once; a failed
  *                     or a cancelled (Ctrl+C) list turn commits nothing, so every wake behind it drains.
+ * 10. **offload**   — (seventh session, SRF-036, `maxResultTokens` just above the preview) a terminal
+ *                     `wait` the real `ContextOffloader` replaced with its preview, in a completed turn,
+ *                     wakes no turn and no model request; a small wait stays whole and suppresses as
+ *                     before; an offloaded `list` suppresses the job its preview names and still wakes
+ *                     the one it cut off; a cancelled offloaded-wait turn commits nothing, so it wakes.
  *
  * Before the pty sessions, a free non-pty section drives the real `bash` tool through real
  * SDK agents (scripted model only) to prove the ledger reads the enveloped `list` result,
  * commits only at `endTurn`, and ignores unrelated tools, non-success results and malformed
  * envelopes (non-array `$value`, extra keys, nested envelopes) produced by the SDK's own
- * serialization.
+ * serialization. A second one adds a real `ContextOffloader` (the runtime's configuration)
+ * and the ledger's own `install` hook: an offloaded terminal `wait` commits at `endTurn`
+ * only, an offloaded `list` commits only the ids its preview names, and an unrelated tool,
+ * a foreground `execute` and an error result — each offloaded or not — commit nothing.
  *
  * Every model request also carries the `bash` tool spec, so the log doubles as proof of
  * the per-runtime wording: the wake variant of the still-running-timeout sentence in the
@@ -55,8 +63,11 @@ import path from 'node:path';
 
 import { Agent, Model, tool } from '@strands-agents/sdk';
 import type { AgentStreamEvent, BaseModelConfig, Message, ModelStreamEvent, StreamOptions } from '@strands-agents/sdk';
+import { LocalFileStorage } from '@strands-agents/sdk/storage';
+import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
 import { z } from 'zod';
 
+import { OFFLOAD_PREVIEW_TOKENS } from '../src/config.js';
 import { sessionPaths, trajectoryPath } from '../src/agent/session.js';
 import { DEFAULT_SYSTEM_PROMPT } from '../src/agent/system-prompt.js';
 import { TerminalDeliveryLedger, terminalTaskIdsInToolResult } from '../src/agent/task-terminal-delivery.js';
@@ -416,6 +427,183 @@ async function ledgerRealSdkSection(): Promise<void> {
     assert('another tool name with the envelope counts for nothing', ids('bash_list', 'success', envelopeContent).length === 0);
   } finally {
     await manager.shutdown();
+  }
+}
+
+/** A real SDK `ContextOffloader` configured as the runtime configures it, at the smallest usable threshold. */
+function smallOffloader(dir: string): ContextOffloader {
+  return new ContextOffloader({
+    storage: new LocalFileStorage(dir),
+    evictAfterCycles: null,
+    excludeTools: ['load_skill'],
+    maxResultTokens: OFFLOAD_PREVIEW_TOKENS + 1,
+  });
+}
+
+/** The offloader's replacement: one text block opening with its `[Offloaded:` marker. */
+function offloadPreview(content: readonly unknown[] | undefined): string | undefined {
+  const block = content?.[0] as { type?: string; text?: unknown } | undefined;
+  return block?.type === 'textBlock' && typeof block.text === 'string' && block.text.startsWith('[Offloaded:')
+    ? block.text
+    : undefined;
+}
+
+async function untilTerminal(manager: BackgroundBashManager, ids: readonly string[]): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const states = await Promise.all(ids.map(async (id) => (await manager.status(id)).state));
+    if (states.every((state) => state !== 'running')) return;
+    await settle(20);
+  }
+  throw new Error('fixture jobs never reached a terminal state');
+}
+
+/**
+ * SRF-036 — the ledger reads the pre-offload `bash` result. A real `ContextOffloader`
+ * (runtime configuration, `maxResultTokens` just above the preview) replaces each
+ * oversized result with its preview before the stream yields it; the ledger's
+ * `install` hook (the runtime's own registration) keeps the original's terminal ids,
+ * and `observe` commits one only where the preview names it exactly, at `endTurn`.
+ */
+async function ledgerOffloadSection(): Promise<void> {
+  header('task wake — the ledger reads the pre-offload bash result (real ContextOffloader, SRF-036)');
+  await resetProject();
+  const manager = new BackgroundBashManager(ROOT, 'session-offload-ledger');
+  const listManager = new BackgroundBashManager(ROOT, 'session-offload-list');
+  const dir = path.join(ROOT, 'offload-ledger');
+  const bash = createBackgroundBashTool(manager);
+  const agentWith = (ledger: TerminalDeliveryLedger, steps: readonly ScriptStep[], tools: Agent['tools'] = [bash]): Agent => {
+    const agent = new Agent({ model: new ScriptModel(steps), tools, plugins: [smallOffloader(dir)], printer: false });
+    ledger.install(agent);
+    return agent;
+  };
+  const bigJob = async (label: string): Promise<string> => (await manager.start(`sleep 0.2; seq 1 3000; echo ${label}`)).taskId;
+  const waitStep = (taskId: string): ScriptStep => ({ tool: 'bash', input: { mode: 'wait', taskId, waitMs: 10_000, wakeOnOutput: false } });
+  try {
+    // Completed turn: an offloaded terminal wait.
+    const waited = await bigJob('offload-a');
+    const ledger = new TerminalDeliveryLedger();
+    let pendingSeenBeforeClose = false;
+    const turn = await ledgerTurn(agentWith(ledger, [waitStep(waited), { text: 'waited' }]), ledger, (event) => {
+      if (event.type === 'afterToolCallEvent') pendingSeenBeforeClose = ledger.has(waited);
+    });
+    const result = turn.results.find((entry) => entry.name === 'bash');
+    const preview = offloadPreview(result?.content);
+    assert('the terminal wait result reached the stream as the offloader\'s one-block preview',
+      result?.status === 'success' && result.content.length === 1 && preview !== undefined);
+    assert('the model-visible preview opens with the terminal reason and names the task id',
+      preview?.includes('"reason": "terminal"') === true && preview.includes(waited));
+    assert('the stream-side result alone yields no terminal id (the pre-SRF-036 failure mechanism)',
+      result !== undefined && terminalTaskIdsInToolResult('bash', result).length === 0);
+    assert('the offloaded wait turn completed with endTurn', turn.stopReason === 'endTurn' && !turn.failed);
+    assert('the offloaded id stays pending until the turn closes', !pendingSeenBeforeClose);
+    assert('the completed turn committed the offloaded wait\'s terminal id', ledger.has(waited));
+
+    // Control: a small wait under the same offloader stays whole and counts as before.
+    const small = (await manager.start('echo offload-small')).taskId;
+    const smallLedger = new TerminalDeliveryLedger();
+    const smallTurn = await ledgerTurn(agentWith(smallLedger, [waitStep(small), { text: 'waited' }]), smallLedger);
+    assert('a small wait result is not offloaded (one JsonBlock) and its completed turn commits it',
+      jsonOf(smallTurn.results[0]?.content ?? []) !== undefined && smallTurn.stopReason === 'endTurn' && smallLedger.has(small));
+
+    // Failed and cancelled turns forget an offloaded wait.
+    const failedJob = await bigJob('offload-failed');
+    const failedLedger = new TerminalDeliveryLedger();
+    const failedTurn = await ledgerTurn(agentWith(failedLedger, [waitStep(failedJob), { fail: 'fixture failure after offloaded wait' }]), failedLedger);
+    assert('a turn that fails after an offloaded wait commits nothing',
+      failedTurn.failed && offloadPreview(failedTurn.results[0]?.content) !== undefined && !failedLedger.has(failedJob));
+    const cancelledJob = await bigJob('offload-cancelled');
+    const cancelledLedger = new TerminalDeliveryLedger();
+    const cancelAgent = agentWith(cancelledLedger, [waitStep(cancelledJob), { holdUntilCancel: true }]);
+    const cancelledTurn = await ledgerTurn(cancelAgent, cancelledLedger, (event) => {
+      if (event.type === 'afterToolCallEvent') setTimeout(() => cancelAgent.cancel(), 50);
+    });
+    assert('a turn cancelled after an offloaded wait commits nothing',
+      cancelledTurn.stopReason !== 'endTurn' && offloadPreview(cancelledTurn.results[0]?.content) !== undefined &&
+        !cancelledLedger.has(cancelledJob));
+
+    // An offloaded list: the id inside the preview counts, the id beyond it does not.
+    const listBash = createBackgroundBashTool(listManager);
+    const seen = (await listManager.start(`echo list-seen; : ${'x'.repeat(5_000)}`)).taskId;
+    const hidden = (await listManager.start('echo list-hidden')).taskId;
+    await untilTerminal(listManager, [seen, hidden]);
+    const original = terminalTaskIdsInToolResult('bash', { status: 'success', content: [{ type: 'jsonBlock', json: { $value: await listManager.list() } }] });
+    assert('the original list result carries both jobs as terminal',
+      original.length === 2 && original.includes(seen) && original.includes(hidden));
+    const listLedger = new TerminalDeliveryLedger();
+    const listTurn = await ledgerTurn(agentWith(listLedger, [{ tool: 'bash', input: { mode: 'list' } }, { text: 'listed' }], [listBash]), listLedger);
+    const listPreview = offloadPreview(listTurn.results[0]?.content);
+    assert('the list result was offloaded; its preview names the first job but not the second',
+      listPreview?.includes(seen) === true && !listPreview.includes(hidden));
+    assert('the completed list turn committed the id the preview names', listLedger.has(seen));
+    assert('the terminal id beyond the preview was not committed, so its wake still fires', !listLedger.has(hidden));
+
+    // Unrelated tool, foreground execute and error results contribute nothing, offloaded or not.
+    const unrelatedJob = await bigJob('offload-unrelated');
+    const unrelatedLedger = new TerminalDeliveryLedger();
+    const waitTool = tool({
+      name: 'jobs_wait',
+      description: 'Waits for a fixture job.',
+      inputSchema: z.object({}),
+      callback: async () => manager.wait(unrelatedJob, 10_000, undefined, false),
+    });
+    const unrelatedTurn = await ledgerTurn(agentWith(unrelatedLedger, [{ tool: 'jobs_wait', input: {} }, { text: 'done' }], [waitTool]), unrelatedLedger);
+    assert('an unrelated tool\'s offloaded wait-shaped result, naming the id, delivers nothing',
+      offloadPreview(unrelatedTurn.results[0]?.content)?.includes(unrelatedJob) === true &&
+        unrelatedTurn.stopReason === 'endTurn' && !unrelatedLedger.has(unrelatedJob));
+
+    const snapshotFile = path.join(ROOT, 'terminal-snapshot.json');
+    await writeFile(snapshotFile, JSON.stringify(await manager.status(small)));
+    const executeLedger = new TerminalDeliveryLedger();
+    const executeTurn = await ledgerTurn(agentWith(executeLedger, [
+      { tool: 'bash', input: { mode: 'execute', command: `cat ${snapshotFile}; seq 1 3000` } },
+      { text: 'done' },
+    ]), executeLedger);
+    assert('a foreground execute whose offloaded output prints a terminal snapshot delivers nothing',
+      offloadPreview(executeTurn.results[0]?.content)?.includes(small) === true &&
+        executeTurn.stopReason === 'endTurn' && !executeLedger.has(small));
+
+    const errorPayload = JSON.stringify({ reason: 'terminal', status: await manager.status(waited), output: {} });
+    const failingBash = tool({
+      name: 'bash',
+      description: 'Fails with a terminal wait payload in its message.',
+      inputSchema: z.object({ mode: z.string() }),
+      callback: async () => { throw new Error(`${errorPayload}\n${'y'.repeat(8_000)}`); },
+    });
+    const errorLedger = new TerminalDeliveryLedger();
+    const errorTurn = await ledgerTurn(agentWith(errorLedger, [{ tool: 'bash', input: { mode: 'wait' } }, { text: 'done' }], [failingBash]), errorLedger);
+    assert('an error bash result naming a terminal id delivers nothing',
+      errorTurn.results[0]?.status === 'error' && errorTurn.stopReason === 'endTurn' && !errorLedger.has(waited));
+
+    // Observer discipline and turn scoping of candidates, on the ledger's own seams.
+    const bare = new TerminalDeliveryLedger();
+    let threw = false;
+    try {
+      bare.candidate(undefined as never);
+      bare.candidate({ toolUse: null, result: null } as never);
+      bare.observe({ type: 'afterToolCallEvent', toolUse: { name: 'bash', toolUseId: 'x' }, result: { status: 'success', content: null } } as never);
+      bare.observe(undefined as never);
+    } catch {
+      threw = true;
+    }
+    assert('candidate and observe never throw on malformed events', !threw);
+    const originalWait = { status: 'success', content: [{ type: 'jsonBlock', json: { reason: 'terminal', status: await manager.status(waited), output: {} } }] };
+    const replaced = { status: 'success', content: [{ type: 'textBlock', text: `[Offloaded: 1 blocks] ${waited}` }] };
+    const afterEvent = (result: unknown): never => ({ type: 'afterToolCallEvent', toolUse: { name: 'bash', toolUseId: 'stale-1' }, result }) as never;
+    bare.candidate(afterEvent(originalWait));
+    bare.closeTurn(false);
+    bare.observe(afterEvent(replaced));
+    bare.closeTurn(true);
+    assert('a candidate whose turn closed before its stream event is forgotten, never carried into a later turn', !bare.has(waited));
+    bare.candidate(afterEvent(originalWait));
+    bare.observe(afterEvent({ status: 'error', content: replaced.content }));
+    bare.closeTurn(true);
+    assert('a replacement that is no longer a success commits no candidate', !bare.has(waited));
+  } catch (error) {
+    assert(`the offload ledger section ran to completion (threw: ${error instanceof Error ? error.message : String(error)})`, false);
+  } finally {
+    await manager.shutdown();
+    await listManager.shutdown();
   }
 }
 
@@ -802,6 +990,93 @@ async function listSession(): Promise<void> {
     wakes.length === 5 && wakes.filter((wake) => wake.command.includes('list-marker-eta-done')).length === 0);
 }
 
+/**
+ * SRF-036 — the real runtime's `ContextOffloader` at `maxResultTokens` just above the
+ * preview replaces a terminal `wait` result with its preview; the ledger's pre-offload
+ * hook still sees the original, so a completed turn suppresses that job's wake. Controls
+ * in the same offloading session: a small wait stays whole and suppresses as before, an
+ * offloaded `list` suppresses the job its preview names and still wakes the one it cut
+ * off, and a cancelled turn after an offloaded wait commits nothing, so the job wakes.
+ */
+async function offloadSession(): Promise<void> {
+  header('task wake — an offloaded terminal wait suppresses its wake (real ContextOffloader, SRF-036)');
+  await resetProject();
+  await writeConfig({ maxResultTokens: OFFLOAD_PREVIEW_TOKENS + 1 });
+  const tui = startTui({ cwd: ROOT, entry: ENTRY, cols: 120, rows: 40 });
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
+
+    // --- completed: the terminal wait reached the model as the offloader's preview. ---
+    const bigMark = tui.mark();
+    tui.submit('start-and-wait-big offload-marker-kappa');
+    await tui.waitFor('waited big job offload-marker-kappa to its end through an offloaded preview', { timeoutMs: 30_000, from: bigMark });
+    await waitForIdle(tui, bigMark);
+    await settle(2_000);
+    let calls = await modelCalls();
+    assert('the offloaded wait turn made three calls (start, wait, text) and nothing followed it', calls.length === 3);
+    assert('no model request carried a notification for the offloaded-wait job', wakeCallsFor(calls, 'offload-marker-kappa').length === 0);
+    const bigScreen = tui.screen.slice(bigMark);
+    assert('the completion notice still appeared for the offloaded-wait job', bigScreen.includes('background task bg-'));
+    assert('no wake notice was written for the offloaded-wait job', !bigScreen.includes(WAKE_NOTICE));
+    assert('the suppressed offloaded-wait wake left the listing at idle', !tui.frame.includes(WAKE_ROW));
+
+    // --- control: a small wait under the same offloader stays whole and suppresses as before. ---
+    const smallMark = tui.mark();
+    tui.submit('start-and-wait offload-marker-lambda');
+    await tui.waitFor('waited job offload-marker-lambda to its end', { timeoutMs: 30_000, from: smallMark });
+    await waitForIdle(tui, smallMark);
+    await settle(2_000);
+    calls = await modelCalls();
+    const smallScreen = tui.screen.slice(smallMark);
+    assert('the small wait reached the model whole (no offloaded preview)', !smallScreen.includes('lambda to its end through'));
+    assert('the whole-result wait suppressed its wake as before', calls.length === 6 &&
+      wakeCallsFor(calls, 'offload-marker-lambda').length === 0 && !smallScreen.includes(WAKE_NOTICE));
+
+    // --- offloaded list: the job the preview names is suppressed, the one it cut off wakes. ---
+    const listMark = tui.mark();
+    tui.submit('start-list-offload offload-marker-mu');
+    await tui.waitFor('list offload-marker-mu offloaded: seen id in preview, hidden id not in preview', { timeoutMs: 30_000, from: listMark });
+    calls = await waitForCalls((all) => wakeCallsFor(all, 'offload-marker-mu-hidden').length === 1, 'the cut-off job\'s wake');
+    await waitForIdle(tui, listMark);
+    await settle(2_000);
+    calls = await modelCalls();
+    assert('the job whose id the list preview named woke no turn', wakeCallsFor(calls, 'offload-marker-mu-seen').length === 0);
+    assert('the job cut off by the list preview woke exactly one turn',
+      wakeCallsFor(calls, 'offload-marker-mu-hidden').length === 1 && calls.length === 6 + 4 + 1);
+    const listScreen = tui.screen.slice(listMark);
+    assert('the only wake notice after the list is the cut-off job\'s',
+      listScreen.split(WAKE_NOTICE).length - 1 === 1 && listScreen.includes('echo offload-marker-mu-hidden'));
+
+    // --- cancelled: the offloaded wait reached the model, then Ctrl+C cancels the turn. ---
+    const cancelMark = tui.mark();
+    const beforeCancel = calls.length;
+    tui.submit('start-and-wait-big-cancel offload-marker-nu');
+    await waitForFile(CANCEL_CHECKPOINT, 30_000);
+    assert('the cancelled turn\'s model saw the offloaded preview',
+      (await readFile(CANCEL_CHECKPOINT, 'utf8')).includes('offload-marker-nu to its end through an offloaded preview'));
+    await settle(300);
+    tui.send('\u0003');
+    await tui.waitFor('interrupted — press ctrl+c again to exit', { timeoutMs: 10_000, from: cancelMark });
+    calls = await waitForCalls((all) => wakeCallsFor(all, 'offload-marker-nu').length === 1, 'the wake behind the cancelled offloaded wait');
+    await waitForIdle(tui, cancelMark);
+    await settle(1_500);
+    calls = await modelCalls();
+    assert('a cancelled offloaded-wait turn commits nothing: the job still woke exactly one turn',
+      wakeCallsFor(calls, 'offload-marker-nu').length === 1 && calls.length === beforeCancel + 3 + 1);
+
+    tui.submit('/exit');
+    assert('the offload session exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+
+  const records = (await sessionRecords())[0]?.records ?? [];
+  const wakes = records.filter((record): record is TaskNotificationRecord => record.type === 'taskNotification');
+  assert('the trajectory holds exactly the two delivered wakes (the cut-off list job, the cancelled wait)',
+    wakes.length === 2 && wakes.some((wake) => wake.command.includes('offload-marker-mu-hidden')) &&
+      wakes.some((wake) => wake.command.includes('offload-marker-nu')));
+}
+
 async function collapsedNotificationsSession(): Promise<void> {
   header('task wake — nineteen completions share one row without changing delivery');
   await resetProject();
@@ -852,12 +1127,14 @@ async function collapsedNotificationsSession(): Promise<void> {
 async function main(): Promise<void> {
   try {
     await ledgerRealSdkSection();
+    await ledgerOffloadSection();
     await mainSession();
     await permissionSession();
     await configOffSession();
     await delegationSession();
     await collapsedNotificationsSession();
     await listSession();
+    await offloadSession();
   } finally {
     await rm(HOME, { recursive: true, force: true });
   }
