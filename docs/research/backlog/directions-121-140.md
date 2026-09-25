@@ -342,3 +342,163 @@ Score = 2×4+4+5−3−4 = 10, above gate 6. Risk 4 is the reason for the proven
 The signature-tag codec is a workaround for the missing upstream field (harness-sdk #2014). Upstream #3389 covers the OpenAI round-trip but not the Bedrock event name or cross-provider safety; a new upstream issue was filed from this report ([harness-sdk#4598](https://github.com/strands-agents/harness-sdk/issues/4598)). On any SDK upgrade, drop these hunks if upstream covers them rather than rebasing a duplicate. SDK 1.19.0 was checked and does not.
 
 Kimi K3 via Converse is out of scope except for the Claude hand-off check. The Kimi K3 model card (report source S1) documents a Converse multi-turn reasoning failure that was not reproduced; darwin configuration guidance for Kimi should point at `bedrockRuntime` + `responses` once this lands. No dependency on SRF-033…035; queued after them.
+
+## SRF-036 — Let terminal-delivery suppression observe the pre-offload bash result, so an offloaded terminal `wait` stops a redundant task wake
+
+- Status: `not-started`
+- Priority: 137
+- Score: 14
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`reflection_2026-09-25_session-20260925-083010463.md`](../../reflections/reflection_2026-09-25_session-20260925-083010463.md)
+
+### Implementation / acceptance evidence
+
+Not implemented.
+
+In the parent runtime (`src/agent/runtime.ts`), register one `AfterToolCallEvent` hook at `HookOrder.SDK_FIRST`. It runs before the SDK `ContextOffloader`'s default-order hook, the same precedent as the cloud-memory `uploadObserver.after`. It hands the original successful `bash` result to `TerminalDeliveryLedger` (`src/agent/task-terminal-delivery.ts`) as candidate terminal task ids, keyed by `toolUseId`. The existing stream-side `observe` then resolves each candidate:
+
+- a result that reached the stream unchanged counts exactly as today;
+- a result the offloader replaced commits a candidate id only when the model-visible replacement text contains that exact task id, so `list`/`status` snapshots beyond the preview stay unsuppressed.
+
+Pending state still commits only on `endTurn`; cancelled or failed turns forget it; observation stays synchronous and non-throwing, and child runtimes are unchanged. Do not add `bash` to `excludeTools`, do not parse preview prose for state, and do not reimplement or reorder the offloader.
+
+Acceptance:
+
+- In `spike/verify-task-wake.ts`, use a real `ContextOffloader` with a small `maxResultTokens`. A terminal `wait` whose result is offloaded, inside a completed turn, produces no later wake turn and no model request carrying its notification.
+- Controls: a non-offloaded wait behaves as before; a cancelled turn still wakes; an offloaded `list` whose preview omits a job id still wakes for that job; an unrelated tool, `execute`, and error results contribute nothing.
+- Revert control: restore the pre-change ledger at an explicit SHA and show the new offload checks fail.
+- Run `pnpm typecheck`, `pnpm test`, `verify-context-offload.ts`, `verify-task-wake.ts` and `pnpm build`.
+- Sync the "Background-task wake" and "Durable context offload" sections of `docs/architecture/load-bearing-decisions.md`, and the user-guide wake sentence if its wording changes.
+
+### Notes / blockers / abandonment reason
+
+Evidence: in source session `session-20260925-083010463`, nine `wait` calls returned `reason: "terminal"` in completed turn 1.
+
+- The six that stayed a `json` block (seq 62, 171, 186, 203, 357, 451) never woke.
+- The three that the offloader replaced with one `[Offloaded: …]` text block each woke once: seq 131 → wake seq 483, seq 329 → seq 489, seq 425 → seq 495. The waste was three full-context turns: 454,106 cacheRead, 1,225 output, 20,846 ms.
+- Mechanism: `ContextOffloader._handleToolResult` assigns `event.result = replacement` at default hook order. The yielded event reaches `terminalDelivery.observe`, and `resultPayload`'s `JSON.parse` fails on the preview.
+- Running the repository's `terminalTaskIdsInToolResult` on the stored originals under `offload/offloader/` returns each task id; on the recorded previews it returns `[]`.
+- The previews do begin `"reason": "terminal"` plus the task id, so the model had seen the terminal fact. Suppression is semantically correct here.
+
+This is distinct from SRF-033, whose `$value` fix does not touch offloaded results. Score = 2×4+5+5−2−2 = 14, above gate 6. No dependency; implement first.
+
+## SRF-037 — Order bounded metadata before unbounded log text in background-bash results, so an offload preview still shows state, exit code and `hasMore`
+
+- Status: `not-started`
+- Priority: 138
+- Score: 10
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`reflection_2026-09-25_session-20260925-083010463.md`](../../reflections/reflection_2026-09-25_session-20260925-083010463.md)
+
+### Implementation / acceptance evidence
+
+Not implemented.
+
+In `src/tools/background-bash.ts`, change only the order of object keys. Values, types and the tool schema stay the same.
+
+- Every `wait` result becomes `{ reason, status, output, …instruction }`: the snapshot (`state`, `exitCode`, `signal`, …) comes before the aggregated output.
+- Every output result (`readOutput`, `output` mode, and the `output` inside `wait`) becomes `taskId, startOffset, endOffset, hasMore, outputPath, output`.
+
+Nothing is truncated or dropped, and the ledger and every consumer continue to read by key.
+
+Acceptance:
+
+- A real-tool test in `spike/verify-background-bash.ts`: a finished job whose log exceeds the offload threshold. `JSON.stringify(result, null, 2)` places `"state"`, `"exitCode"` and `"hasMore"` within the first 1,000 tokens' worth of characters.
+- An SDK `ContextOffloader` preview of that result contains them.
+- Existing assertions are updated only where they pinned key order.
+- After SRF-036 lands, its offloaded-wait suppression checks still pass against the reordered payload.
+- Run `pnpm typecheck`, `pnpm test`, `verify-background-bash.ts`, `verify-task-wake.ts` and `pnpm build`.
+
+### Notes / blockers / abandonment reason
+
+Evidence: in source session `session-20260925-083010463`, the three offloaded child waits (seq 131, 329, 425) show 4,500-character previews containing `reason`, `taskId` and the start of the log, but no `"state"` and no `exitCode`. The source confirms why: `finishTerminalWait` returns `{ reason, output, status }`, and `readOutput` puts `output` before `hasMore`.
+
+After each wait the Host issued a `bash output` call that returned empty with `hasMore: false` (seq 136, 334, 430; seq 137: "The output is fully drained"). Those three rounds cost 302 output, 309,008 cacheRead and 7,438 cacheWrite tokens (modelCall seq 133, 331, 427). That the reads were caused by the hidden `hasMore`/state is inferred from the seq 137 text, hence Evidence 4.
+
+Score = 2×3+4+4−2−2 = 10, above gate 6. It follows SRF-036 so SRF-036's coverage can prove suppression survives the reorder; there is no hard functional dependency.
+
+## SRF-038 — Record a successful `/model` change in the trajectory, so a session's recorded model matches the model that actually ran
+
+- Status: `not-started`
+- Priority: 139
+- Score: 9
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 3
+- Risk: 2
+- Origin report: [`reflection_2026-09-25_session-20260925-083010463.md`](../../reflections/reflection_2026-09-25_session-20260925-083010463.md)
+
+### Implementation / acceptance evidence
+
+Not implemented.
+
+When `AgentRuntime.changeModel` succeeds, append one bounded observer record through the existing recorder: `type: 'modelChanged'` with `from: { provider, model }`, `to: { provider, model }` and optional effective thinking effort. Labels are capped exactly like `spend.provider/model`. The record carries turn 0 when written outside a turn, and otherwise the ordinal of the current idle position, following the SRF-027 `contextCompacted` pattern.
+
+- Add the type to `TrajectoryRecordType` and the schema readers.
+- `formatReplay`/`replayRecords` print one line for it.
+- The spend/run labels that `spend.ts` derives from `runStarted` use the latest `modelChanged` for later records.
+- A failed or refused switch writes nothing.
+- `runStarted` stays byte-identical and existing files stay readable.
+- No model call, network or SDK-loop change.
+
+Acceptance:
+
+- A free test that drives `changeModel` on a real runtime with a recorder: exactly one record with the right from/to, and replay shows it.
+- A failed factory writes none.
+- An old trajectory without the type replays unchanged.
+- Label capping holds for hostile labels.
+- Re-run `spike/verify-model-command.ts` (free mode), `verify-trajectory.ts`, `pnpm typecheck`, `pnpm test` and `pnpm build`.
+- Sync the "Session trajectory" decision section.
+
+### Notes / blockers / abandonment reason
+
+Evidence: in source session `session-20260925-083010463`, `runStarted` (seq 0, 08:30:13Z) records `openai / global.openai.gpt-6-astra`. All 77 `modelCall` records (from seq 5) and all four `turnEnded.spend` objects record `bedrock / global.anthropic.claude-opus-5-5`.
+
+`AgentRuntime.create` writes `runStarted` from `config` at construction; `changeModel` swaps `agent.model` and writes no record; no record type exists for it. `~/.darwin/config.json` now enables only the `claude-opus-5.5` entry, which is what `/model` persists. A pre-prompt switch in the 28 s before seq 1 is the consistent explanation, but it is inferred, hence Evidence 4. Replay's run header and the reflection template's "model / provider from runStarted" both mislabel such a session.
+
+SER-101 also edits `changeModel` (reasoning provenance). This observer write is orthogonal to it, and neither depends on the other. Score = 2×3+4+4−3−2 = 9, above gate 6.
+
+## SRF-039 — Pin developer-skill negative controls to explicit commit SHAs and check for foreign commits first
+
+- Status: `not-started`
+- Priority: 140
+- Score: 10
+- Importance: 2
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 1
+- Risk: 1
+- Origin report: [`reflection_2026-09-25_session-20260925-083010463.md`](../../reflections/reflection_2026-09-25_session-20260925-083010463.md)
+
+### Implementation / acceptance evidence
+
+Not implemented.
+
+Add one short rule to the acceptance guidance in `src/skills/builtin/developer/SKILL.md`, domain-neutral and without naming any specific suite:
+
+- when a child is drained, resolve its base and result commits to explicit SHAs;
+- before any revert/negative control or diff review, run `git log <base>..HEAD` and name any commit the child did not make;
+- controls and diffs use those SHAs, never `HEAD~N` or bare `HEAD`.
+
+Acceptance:
+
+- One `spike/verify-skills.ts` assertion pins the rule text.
+- Skill shape/size checks stay green.
+- Run `pnpm typecheck`, `pnpm test` and `pnpm build`, so the installed built-in skill refreshes.
+
+### Notes / blockers / abandonment reason
+
+Evidence: in source session `session-20260925-083010463`, another writer's commit `4cf69f4` (09:20:21, SER-101 queueing) landed after the SRF-033 child's `48c1b8c` (09:16:29). The Host's control at seq 181 checked out `HEAD~1`, which was then the fix itself, and passed 106/0 (seq 186).
+
+The Host noticed only via an incidental `git log` at seq 192, and reran with explicit SHAs (seq 198 → 203: `--- 96 passed, 10 failed ---`). It then checked for concurrent commits ad hoc (seq 341, 436). The skill currently contains neither "negative control" nor "concurrent". The observed cost was small (61 s, two rounds), but the failure mode is false acceptance evidence.
+
+Score = 2×2+4+4−1−1 = 10, above gate 6. No dependency; queued last.
