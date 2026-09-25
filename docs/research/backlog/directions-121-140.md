@@ -291,7 +291,7 @@ Evidence: turn 15 / seq 750 substitutes requested `quantity` when `filled_quanti
 
 ## SRF-035 — Extend bounded retry guidance to generated side-effect automation, distinguishing deterministic rejection, transient limits and ambiguous writes
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 135
 - Score: 13
 - Importance: 4
@@ -303,7 +303,7 @@ Evidence: turn 15 / seq 750 substitutes requested `quantity` when `filled_quanti
 
 ### Implementation / acceptance evidence
 
-Not implemented. Add a concise clause beside the retry rule in `src/agent/system-prompt.ts` for generated autonomous scripts: bound repeated deterministic rejection attempts and pause the affected action with a reason until inputs or observed state change; bound transient retries with server-directed backoff; reconcile ambiguous write outcomes or use idempotency before replay. Ask for representative offline response-sequence checks before unattended launch when feasible. Extend `spike/verify-system-prompt.ts` to pin all three distinctions and preserve existing tool-retry limits, prompt overrides and composition. Do not parse arbitrary background logs, change the runtime retry guard, stop processes automatically, add trading policy or bypass permissions. Run `pnpm typecheck`, `pnpm test` and build after an accepted source commit. Acceptance must state that static prompt checks verify the guidance, not a universal behavioral guarantee.
+Accepted `15f80c8` (`feat(prompt): bound retries in generated side-effect automation (SRF-035)`), child `session-20260925-101514714`. Rule 5 of the default base prompt keeps its tool-retry text verbatim and gains a seven-line, domain-neutral, tool-free continuation for code written to run unattended with side effects: bounded identical deterministic rejections then pause with the reason stated until inputs/observed state change; bounded transient-limit retries with backoff honouring server-directed delay; reconcile state or use an idempotency key before replaying an ambiguous state-changing request; offline response-sequence checks before unattended launch when feasible. `spike/verify-system-prompt.ts` pins each part inside the rule-5 slice, ordering after the existing limits, no tool/domain wording, rule 6 intact and no leak into a file override. `src/agent/retry-guard.ts`, runtime and permission gate untouched; `load-bearing-decisions.md` (Repeated tool failures) now states the guard counts SDK tool results only and the prompt is guidance, not enforcement. Host acceptance: `pnpm typecheck && pnpm test` (9,507 PASS lines, no failing suite), `verify-system-prompt.ts` 74/0, `verify-retry-guard.ts` 15/0, `verify-working-context.ts` 63/0, `pnpm build` (clause present in `dist/src/agent/system-prompt.js`), `git diff --check` — task `bg-87964170-c200-450a-8d62-74ff7b714baa`, exit 0. Static prompt checks verify the guidance, not a universal behavioural guarantee; no live run.
 
 ### Notes / blockers / abandonment reason
 

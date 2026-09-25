@@ -3111,3 +3111,17 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Worker spend (single invocation): `usage: input=30 output=10520 cacheRead=750657 cacheWrite=31972`; `cost: total=0.5205 input=0.0001 output=0.2104 cacheRead=0.1501 cacheWrite=0.1599 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets.
 - Final status: SRF-034 `done`. Remaining batch: SRF-035 (135) `not-started`.
 
+## Batch 146 — SRF-035 generated side-effect automation retry guidance (2026-09-25)
+
+- Origin: [`reflection_2026-09-24_session-20260924-010948157.md`](reflections/reflection_2026-09-24_session-20260924-010948157.md); Score 13, Priority 135; third and final direction of the batch. Built on accepted, green, built SRF-034 `3e6dbcd`; only docs closure `c6ff123` (backlog validator 162/0) and start `8af3247` to clean tree.
+- Fresh child `session-20260925-101514714`; managed task `bg-5ef1fbc0-4e61-4d3e-a78d-6f6e3ff2b3c5`, exit 0, output drained through `hasMore: false`. Source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p`, no ceiling, retry, correction or descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Rule 5 continued for unattended side-effect code: deterministic rejection, transient limit and ambiguous write kept apart | `15f80c8` | Reviewed three-file diff (retry guard/runtime untouched, existing rule-5 text verbatim). `pnpm typecheck && pnpm test` (9,507 PASS lines, no failing suite), `verify-system-prompt.ts` 74/0, `verify-retry-guard.ts` 15/0, `verify-working-context.ts` 63/0, `pnpm build` with the clause present in `dist/src/agent/system-prompt.js`, `git diff --check`: task `bg-87964170-c200-450a-8d62-74ff7b714baa`, exit 0. |
+
+- Docs wrap-up: accepted commit extended `load-bearing-decisions.md` (Repeated tool failures) with the guard/prompt boundary. No README or user-guide page quotes rule 5; AGENTS unchanged (32,761 bytes). Static checks prove the guidance text, not model behaviour; no live run.
+- Worker spend (single invocation): `usage: input=34 output=9978 cacheRead=907939 cacheWrite=57194`; `cost: total=0.6673 input=0.0001 output=0.1996 cacheRead=0.1816 cacheWrite=0.2860 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets.
+- Batch aggregate (Batches 144–146, three fresh child sessions, three invocations, no retry or correction): input **156**, output **62,385**, cacheRead **5,788,464**, cacheWrite **219,366**; approximate worker USD **3.5029**. Host acceptance made no provider model calls.
+- Final status: SRF-033, SRF-034, SRF-035 `done`; none abandoned or gated. Halt: batch exhausted. The routed backlog still holds SER-101 (Priority 136, `not-started`), a separate batch from `research_2026-09-25.md` queued by a concurrent user-directed session; it was not selected or touched by this run. Host performs one ordinary push of current main after this closure and verifies `git log @{u}..` empty.
+
