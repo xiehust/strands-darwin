@@ -3162,3 +3162,20 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Worker spend: `usage: input=118 output=54128 cacheRead=6183932 cacheWrite=167206`; `cost: total=3.1558 input=0.0005 output=1.0826 cacheRead=1.2368 cacheWrite=0.8360 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets. Host acceptance made no provider model calls.
 - Final status: SRF-036 `done`. Remaining batch: SRF-037 (138), SRF-038 (139), SRF-039 (140), all `not-started`.
 
+## Batch 149 — SRF-037 background-bash result key order (2026-09-25)
+
+- Origin: [`reflection_2026-09-25_session-20260925-083010463.md`](reflections/reflection_2026-09-25_session-20260925-083010463.md); Score 10, Priority 138, second of four. Built on accepted, green, built SRF-036 `cf50fce`, followed only by docs closure `b87efe4` (validator 162/0) and start commit `221f404`.
+- Fresh child `session-20260925-144943569` ran as managed task `bg-fc810a0a-50bf-4f01-9137-396a3006da55`, exit 0, output drained through `hasMore: false`. It used the source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p`, with no ceiling, retry, correction or descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Background-bash wait results order `reason, status, output`; output results order bounded offsets/`hasMore`/path before `output`; keys only | `cf64ea2` | See the checks below the table. |
+
+- **Diff review.** Reviewed the two-file diff and grepped every wait return site.
+- **Gate** (task `bg-91f22ca3-b491-4fa7-bcc9-952d417e7133`, exit 0): `pnpm typecheck`; `pnpm test` (9,637 PASS, 0 FAIL); `verify-background-bash.ts` 211/0; `verify-task-wake.ts` 139/0; `pnpm build`; `git diff --check`.
+- **Revert control.** `background-bash.ts` from `221f404`: 200 passed / 11 failed. Restored, tree clean.
+
+- Docs wrap-up: none needed. No README, user-guide or architecture page quotes the key order, and AGENTS is unchanged (32,767 bytes).
+- Worker spend: `usage: input=68 output=23467 cacheRead=2459655 cacheWrite=69008`; `cost: total=1.3066 input=0.0003 output=0.4693 cacheRead=0.4919 cacheWrite=0.3450 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets. Host made no provider model calls.
+- Final status: SRF-037 `done`. Remaining batch: SRF-038 (139), SRF-039 (140), `not-started`.
+

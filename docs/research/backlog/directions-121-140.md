@@ -426,7 +426,7 @@ Resumed 2026-09-25 after SER-101 was accepted (`bd47afd`, closure `5a1da2f`).
 
 ## SRF-037 — Order bounded metadata before unbounded log text in background-bash results, so an offload preview still shows state, exit code and `hasMore`
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 138
 - Score: 10
 - Importance: 3
@@ -438,9 +438,23 @@ Resumed 2026-09-25 after SER-101 was accepted (`bd47afd`, closure `5a1da2f`).
 
 ### Implementation / acceptance evidence
 
-Not implemented.
+Accepted 2026-09-25 as `cf64ea2` (`fix(background-bash): put bounded metadata before the log text`). It was implemented by child `session-20260925-144943569` (task `bg-fc810a0a-50bf-4f01-9137-396a3006da55`) on base `221f404`; `221f404..cf64ea2` holds only that commit.
 
-In `src/tools/background-bash.ts`, change only the order of object keys. Values, types and the tool schema stay the same.
+What changed:
+
+- **`wait` results.** In `src/tools/background-bash.ts`, every wait path returns `reason, status, output`, with `instruction` last on a timeout.
+- **Output results.** `readOutput` returns `taskId, startOffset, endOffset, hasMore, outputPath, output`, and the `BackgroundOutputResult` interface was reordered to match.
+- **Scope.** Values, types and the schema are unchanged, and the SDK patch is untouched.
+- **Tests.** A new SRF-037 section in `spike/verify-background-bash.ts`. For a finished ~39 KB log, `state`, `exitCode` and `hasMore` fall in the first 4,000 characters (the SDK preview is `previewTokens` 1,000 × `CHARS_PER_TOKEN` 4). A real `ContextOffloader` preview contains all three.
+
+Host acceptance (task `bg-91f22ca3-b491-4fa7-bcc9-952d417e7133`, exit 0):
+
+- **Diff review.** Every wait return site was grepped.
+- **Gate.** `pnpm typecheck`; `pnpm test` (9,637 PASS lines, 0 FAIL); `verify-background-bash.ts` 211/0; `verify-task-wake.ts` 139/0 (SRF-036 suppression intact); `pnpm build`; `git diff --check`.
+- **Revert control.** `background-bash.ts` from `221f404` gave 200 passed / 11 failed. The source was restored and the tree was clean.
+- **Docs.** None needed; no README, user-guide or architecture page quotes these key orders.
+
+Original plan: In `src/tools/background-bash.ts`, change only the order of object keys. Values, types and the tool schema stay the same.
 
 - Every `wait` result becomes `{ reason, status, output, …instruction }`: the snapshot (`state`, `exitCode`, `signal`, …) comes before the aggregated output.
 - Every output result (`readOutput`, `output` mode, and the `output` inside `wait`) becomes `taskId, startOffset, endOffset, hasMore, outputPath, output`.
