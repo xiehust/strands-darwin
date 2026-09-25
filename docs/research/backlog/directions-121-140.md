@@ -251,7 +251,7 @@ Score 11 passes gate 6. Pure presentation fix at `InputBox` and `prompt-editor` 
 
 ## SRF-033 — Recognize SDK-enveloped bash list results in terminal-delivery suppression so a completed list prevents redundant queued job wakes
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 133
 - Score: 14
 - Importance: 4
@@ -263,7 +263,7 @@ Score 11 passes gate 6. Pure presentation fix at `InputBox` and `prompt-editor` 
 
 ### Implementation / acceptance evidence
 
-Not implemented. Extend the pure payload recognition in `src/agent/task-terminal-delivery.ts` for the installed SDK's exact `{ $value: [...] }` ordinary-array envelope, retaining existing terminal task-id/state checks and bare-array/direct-snapshot/wait handling. Restrict recognition to successful bash results; do not recursively unwrap arbitrary objects. Keep pending delivery committed only at endTurn. Add real SDK tool-stream coverage for list serialization plus real pty coverage in `spike/verify-task-wake.ts`: multiple queued terminal jobs returned by a completed list produce no subsequent wake turn or model request; running jobs, failed/cancelled turns, malformed envelopes and unrelated tools remain unsuppressed. Prove clear/FIFO/delegation/cancel behavior unchanged. Run `pnpm typecheck`, `pnpm test`, the task-wake suite and build after an accepted source commit. Sync the relevant architecture rationale; do not change queue scheduling, the SDK loop or trajectory bytes.
+Accepted `48c1b8c` (`fix(wake): count sdk-enveloped bash list results as delivered`), child `session-20260925-084720722`. `sdkArrayEnvelope` in `src/agent/task-terminal-delivery.ts` unwraps exactly one level of an object whose sole own key is `$value` holding an array (the shape at installed SDK `function-tool.js:233–238`, Host-verified), then applies the unchanged per-item terminal snapshot check; bare arrays, direct snapshots and `wait` results unchanged; extra keys, non-array `$value`, nested envelopes, other tools and non-success results yield nothing; commit still waits for `endTurn`. `spike/verify-task-wake.ts` adds a real-SDK section (real bash tool through real `Agent`s, scripted model) and a sixth pty session (`start-list-complete`/`-fail`/`-cancel` fixture verbs). Host acceptance: `pnpm typecheck && pnpm test` (9,484 PASS lines, no failing suite), `spike/verify-task-wake.ts` 106 passed / 0 failed, `pnpm build`, `git diff --check` — task `bg-0e48aba4-a7e6-43f5-9671-63d68e8f735c`, exit 0. Negative control: source restored to pre-fix `f3c2550` gives 96 passed / 10 failed (all pty suppression assertions), task `bg-61edeeb3-accb-4392-9111-b9d7974c085b`; file restored after. Architecture rationale synced in the accepted commit; Host synced `using-darwin` EN/zh (`wait`/`status`/`list`).
 
 ### Notes / blockers / abandonment reason
 
