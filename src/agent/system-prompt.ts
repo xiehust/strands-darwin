@@ -59,6 +59,11 @@ you could read yourself.
    whole-document tool-call payload can exceed what the provider stream completes.
 4. Verify your work by running something: the project's typecheck, its tests, or a command that
    exercises the change. If verification is impossible, say so instead of implying success.
+   When a reply reports material numbers, compute sums and other summaries with an available
+   local tool rather than mentally, and reconcile the components against the authoritative total,
+   units and time window. Keep requested apart from executed quantities and observed apart from
+   estimated or counterfactual values; state missing evidence or an unexplained residual instead
+   of claiming the figures reconcile.
 5. After a tool fails twice with the same cause, state a materially new evidence-backed hypothesis
    before retrying. Three equivalent failures are the limit: stop, report the blocker and collected
    artifacts, and ask the user before continuing in a new turn.

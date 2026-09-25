@@ -131,6 +131,55 @@ async function defaultPrompt(): Promise<void> {
   );
 }
 
+/**
+ * SRF-034: rule 4 extends verification from code changes to reported numbers. The
+ * clause is pinned inside rule 4 only (SRF-035 edits beside rule 5), names no tool,
+ * and the arithmetic below is the computation it asks for, run over the attribution
+ * table that motivated it (trajectory turn 15 / seq 753 of session-20260924-010948157).
+ * These checks prove the instruction contract, not that a model follows it.
+ */
+function numericReportVerification(): void {
+  header('system prompt — rule 4 asks for computed, reconciled numeric reports (SRF-034)');
+
+  const start = DEFAULT_SYSTEM_PROMPT.indexOf('\n4. Verify your work');
+  const end = DEFAULT_SYSTEM_PROMPT.indexOf('\n5. After a tool fails twice');
+  const rule4 = start >= 0 && end > start ? DEFAULT_SYSTEM_PROMPT.slice(start, end) : '';
+  const flat = rule4.replace(/\s+/gu, ' ');
+  assert('rule 4 is found, directly followed by rule 5', rule4 !== '');
+  assert('it asks to compute summaries with a local tool rather than mentally',
+    flat.includes('compute sums and other summaries with an available local tool rather than mentally'));
+  assert('it asks to reconcile components against the authoritative total, units and time window',
+    flat.includes('reconcile the components against the authoritative total, units and time window'));
+  assert('it separates requested from executed and observed from estimated/counterfactual values',
+    flat.includes('Keep requested apart from executed quantities') &&
+      flat.includes('observed apart from estimated or counterfactual values'));
+  assert('it asks to state missing evidence or a residual instead of claiming reconciliation',
+    flat.includes('state missing evidence or an unexplained residual instead of claiming the figures reconcile'));
+  // No tool name in the rule: the base prompt defers mechanics to tool descriptions.
+  const toolNames = ['bash', 'fileEditor', 'http_request', 'web_fetch', 'imageViewer', 'load_skill', 'update_plan',
+    'memory_recall', 'memory_save', 'subagent', 'workflow', 'retrieve_offloaded_content'];
+  assert('the numeric clause names no tool', toolNames.every((name) => !rule4.includes(name)));
+  assert('the clause carries no domain-specific wording', !/trad|order|fill|price|profit/iu.test(rule4));
+  // The rules around it are untouched: rule 5's retry wording is pinned by verify-retry-guard.ts.
+  assert('rule 5 still follows unchanged',
+    DEFAULT_SYSTEM_PROMPT.includes('5. After a tool fails twice with the same cause, state a materially new evidence-backed hypothesis'));
+
+  // The eight amounts the seq-753 table displayed, against its stated net increase.
+  const components = [379_996, 197_950, -44_618, 234_228, 45_780, 5_000, -411, -382];
+  const statedTotal = 817_643;
+  const sum = components.reduce((total, amount) => total + amount, 0);
+  console.log(`  components sum ${sum} vs stated ${statedTotal}: residual ${statedTotal - sum}`);
+  assert('computing the displayed components exposes the 100-unit discrepancy',
+    sum === 817_543 && statedTotal - sum === 100);
+  // Requested (not executed) quantities from seq 751 plus the 200-unit opening gift,
+  // against the balance observed at turn 13 / seq 708.
+  const implied = 200 + 27_200 - 24_323;
+  const observed = 5_200.39933617;
+  console.log(`  implied balance ${implied} vs observed ${observed}`);
+  assert('the quantity balance built from requested quantities does not reconcile',
+    implied === 3_077 && Math.abs(observed - implied) > 1);
+}
+
 async function fileOverride(): Promise<void> {
   header(`system prompt — ${SYSTEM_PROMPT_FILENAME} replaces the default`);
 
@@ -145,6 +194,7 @@ async function fileOverride(): Promise<void> {
   assert('the path is reported so the user can see which file won', loaded.path === file);
   assert('nothing is flagged as a problem', loaded.problem === undefined);
   assert('the default is not appended to it', !loaded.prompt.includes('fileEditor'));
+  assert('the default numeric-report clause does not leak into an override', !loaded.prompt.includes('material numbers'));
 }
 
 async function configOverride(): Promise<void> {
@@ -243,6 +293,7 @@ async function composesWithProjectInstructions(): Promise<void> {
 async function main(): Promise<void> {
   await rm(ROOT, { recursive: true, force: true });
   await defaultPrompt();
+  numericReportVerification();
   await fileOverride();
   await configOverride();
   await brokenOverride();
