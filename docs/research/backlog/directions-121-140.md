@@ -535,7 +535,7 @@ SER-101 also edits `changeModel` (reasoning provenance). This observer write is 
 
 ## SRF-039 — Pin developer-skill negative controls to explicit commit SHAs and check for foreign commits first
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 140
 - Score: 10
 - Importance: 2
