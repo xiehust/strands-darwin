@@ -251,7 +251,7 @@ Score 11 passes gate 6. Pure presentation fix at `InputBox` and `prompt-editor` 
 
 ## SRF-033 — Recognize SDK-enveloped bash list results in terminal-delivery suppression so a completed list prevents redundant queued job wakes
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 133
 - Score: 14
 - Importance: 4
