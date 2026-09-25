@@ -479,7 +479,7 @@ Score = 2×3+4+4−2−2 = 10, above gate 6. It follows SRF-036 so SRF-036's cov
 
 ## SRF-038 — Record a successful `/model` change in the trajectory, so a session's recorded model matches the model that actually ran
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 139
 - Score: 9
 - Importance: 3
