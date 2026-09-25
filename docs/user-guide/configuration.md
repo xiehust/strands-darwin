@@ -184,6 +184,14 @@ Claude 4.6+ uses adaptive thinking:
 
 Unsupported levels clamp instead of causing every request to fail: for example Sonnet `xhigh` becomes `high`. Older Claude models report no adaptive thinking. OpenAI receives `reasoning_effort`; `xhigh` and `max` clamp to `high`, and non-reasoning models may reject the field. A clamp is always reported, never silent: the interactive header and `/status` show it, `darwin doctor` notes it, and a headless run writes a `thinking:` stderr line (text) or carries `thinking.requested`/`effective`/`problem` on `run.started` plus a `thinking` warning (json/stream-json).
 
+On the OpenAI Responses API (`openaiApi: "responses"`), a model's reasoning is kept in the history and sent back to *that same model* on later turns, statelessly: GPT's opaque `encrypted_content` items verbatim, Kimi K3's plain reasoning text as `reasoning_text`. It is never sent to a different model. After `/model`, earlier reasoning from another model is dropped (one `sdk warn` notice per dropped block), and Converse, Anthropic and Chat Completions never receive Responses reasoning. Kimi K3 is best run this way, through the Bedrock runtime endpoint, rather than through the `bedrock` (Converse) provider. Its model card steers to the OpenAI-compatible APIs, and on Responses darwin can show and replay its reasoning:
+
+```json
+{ "name": "kimi-k3", "provider": "openai", "model": "global.moonshotai.kimi-k3", "bedrockRuntime": true, "openaiApi": "responses", "maxTokens": 64000, "thinkingEffort": "high" }
+```
+
+With Converse, Kimi's reasoning carries no signature, so darwin drops it before a later `/model` switch to Claude, which would otherwise reject the request. Claude's own signed reasoning is still sent as before.
+
 ```text
 /effort
 /effort max

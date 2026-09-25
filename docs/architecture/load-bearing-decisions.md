@@ -1531,6 +1531,43 @@ accessor is read guardedly (a test double without it adds no field), all additiv
 version unchanged. Checks: `verify-headless-structured.ts` (clamped and disabled fixtures in all
 three protocols, unclamped run adds nothing).
 
+**Reasoning round-trips on the Responses path only to the model that produced it (SER-101).**
+Thinking *params* are unchanged — the Responses form stays `{ reasoning: { effort } }` with no
+`include`, because every Responses model measured returns what replay needs without it
+(GPT-6-astra and Mantle `openai.gpt-5.6-sol` send `encrypted_content` unasked; Kimi K3 sends
+plain `reasoning_text`). What changed is the *history*, inside the pinned SDK patch. The
+Responses mapper now captures Bedrock's `response.reasoning.delta` (Kimi's name for
+`response.reasoning_text.delta`, previously unmapped: no Kimi reasoning ever reached
+`agent.messages`) and, on `response.output_item.done` of a `reasoning` item, closes the open
+block and puts that item's `encrypted_content` in a block of its own, so GPT's several opaque
+items per response never collapse into one. Every captured block carries
+`darwin-responses:v1:<encodeURIComponent(modelId)>:<text|enc|sum>[:<blob>]` in `signature`,
+because `ReasoningBlock.toJSON` persists nothing else (upstream harness-sdk#2014). The formatter
+replays a block as a stateless input item (`{type:'reasoning', summary:[], encrypted_content}` or
+`{…, content:[{type:'reasoning_text', text}]}`, no `id`, before that message's text and
+`function_call` items) only when the tag's model id equals the live request's and the request is
+stateless; `sum` (summary text) is display-only. Everything else — untagged, Claude-signed,
+another model's, a different profile of the same model — is dropped exactly as before, with the
+same SDK warning. The provenance rule is load-bearing, not tidiness: the origin report measured
+400 `invalid encrypted reasoning` / `encrypted reasoning was created for a different account or
+provider` for foreign blobs on both Responses models and `thinking.signature: Field required` /
+`Invalid signature` on Claude, so an unscoped replay would turn `/model` into a session-breaking
+command. Converse, Anthropic and Chat Completions drop any tagged block, and Converse also drops
+signature-less, non-redacted reasoning when the model id names Claude (Kimi K3's Converse
+reasoning has no signature; measured: the next Claude adaptive turn failed with
+`messages.1.content.0.thinking.signature: Field required` before this). With no tagged block the
+Claude, Converse, Anthropic and Chat request bodies are byte-identical to the unpatched SDK
+(measured by formatting the same histories under both patches); the one intended difference is
+that drop. The trajectory already reduces any reasoning block to bare presence, so replay and
+`/export` are unchanged and neither tags nor blobs reach the record; the session snapshot keeps
+them, which is what `--resume` restores. Out of scope and unchanged: Claude-signed reasoning
+sent to Kimi on Converse is refused by Bedrock (`doesn't support the
+reasoningContent.reasoningText.signature field`), exactly as without the patch. Checks:
+`verify-responses-reasoning.ts` (offline, in `pnpm test`: capture, tag, replay order,
+foreign/untagged/summary/stateful drop, the three other formatters, golden no-tag shapes,
+snapshot round-trip, trajectory projection) and `verify-responses-reasoning-live.ts` (*live*:
+two same-model turns per model, every `/model` hand-off, resume by id, Mantle sol).
+
 ## Subagents
 
 **Subagents are parallel, labelled, and read-heavy by design** (`src/agents/subagent-tool.ts`,
@@ -1989,6 +2026,18 @@ proves the `--ignore-scripts` refusal. Publishing is the Host's release step, ne
 suite on a fresh runner, refuses a tag whose version differs from `package.json`, publishes
 through npm trusted publishing (OIDC, `NPM_TOKEN` secret as fallback) and creates the GitHub
 release only when none exists; `workflow_dispatch` rehearses the gate without publishing.
+
+**The SDK patch's reasoning hunks are an interim, to be dropped rather than rebased (SER-101).**
+The Responses-path provenance round-trip (see *Thinking effort*) touches
+`models/openai/responses-adapter.js`/`.d.ts`, `models/openai/model.js` (the stream state gets the
+request's model id), `models/bedrock.js`, `models/anthropic.js` and `models/openai/chat-adapter.js`;
+each hunk is marked `darwin patch (SER-101)`. It was regenerated with `pnpm patch` /
+`pnpm patch-commit`, which left every earlier hunk byte-identical and `pnpm-workspace.yaml`
+untouched (the lockfile's `patch_hash` changes, as it must). On any SDK upgrade, first check
+whether upstream shipped a provenance-aware reasoning round-trip — harness-sdk#4598 (filed from
+the origin report: the Bedrock event name plus cross-provider safety) or #3389 (the OpenAI
+round-trip) — and if so delete these hunks instead of porting them; a duplicate would tag or
+replay twice. SDK 1.19.0 was checked and does not cover it.
 
 ## Process exit
 

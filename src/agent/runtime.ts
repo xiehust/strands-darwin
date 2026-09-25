@@ -1857,9 +1857,15 @@ export class AgentRuntime {
    * instead of rebuilding the agent — which is the whole point: the history, the
    * session file, the tools and the permission gate all survive. Both switch
    * directions were measured to carry a conversation containing tool calls
-   * (`spike/probe-model-switch.ts`); a Claude reasoning block in the history is
-   * dropped with a warning by the OpenAI adapter rather than rejected, which is
-   * why the TUI routes SDK warnings into notices.
+   * (`spike/probe-model-switch.ts`). Reasoning crosses a switch only where it is
+   * provably the target's own (SER-101, the pinned SDK patch): the OpenAI Responses
+   * adapter tags what it captures with the producing model id and replays only a
+   * tag matching the live model; every foreign or untagged block — a Claude one, or
+   * another Responses model's — is still dropped with the SDK warning, which is why
+   * the TUI routes SDK warnings into notices. Converse, Anthropic and Chat
+   * Completions never send a tagged block, and Converse drops signature-less
+   * (Kimi) reasoning for a Claude id, which Claude would otherwise reject
+   * (`spike/verify-responses-reasoning-live.ts` measures every hand-off).
    *
    * The thinking and cache plans are recomputed rather than carried over: effort
    * clamping is per-model and caching is per-provider, so the old plans would

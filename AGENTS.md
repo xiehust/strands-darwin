@@ -38,7 +38,7 @@ pnpm tsx spike/verify-mantle-live.ts                          # openai.* over Be
 pnpm tsx spike/verify-anthropic-live.ts [model]               # anthropic provider via ANTHROPIC_BASE_URL/ANTHROPIC_API_KEY
 pnpm tsx spike/probe-mantle-catalog.ts us-east-1 us-west-2    # which models Mantle serves, per region
 pnpm tsx spike/verify-model-command.ts --live                  # /model: switch provider mid-session, conversation intact
-pnpm tsx spike/probe-model-switch.ts                          # what survives a provider hand-off
+pnpm tsx spike/verify-responses-reasoning-live.ts             # /model hand-offs + same-model reasoning
 pnpm tsx spike/probe-live-frame-overflow.tsx [--bounded]       # what an over-tall live frame costs: clears per render
 ```
 

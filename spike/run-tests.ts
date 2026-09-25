@@ -38,6 +38,7 @@ const suites = [
   'verify-cli-args.ts',
   'verify-import-command.ts',
   'verify-npm-patch-format.ts',
+  'verify-responses-reasoning.ts',
   'verify-background-bash.ts',
   'verify-background-activity.ts',
   'verify-shell-env.ts',

@@ -204,7 +204,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@strands-agents/sdk@1.18.0': b3369232ff1a76b452b2938e37f89dfeab1f976b0913f9f49ab3f9bcb6b5aee5
+  '@strands-agents/sdk@1.18.0': 33ced1224a14e82ae3a53ab5031f16b3bcb4d6c20ee9a23fb13acc7368761b7a
   ink@7.1.1: 7b7a5b41b349ec752f165991f44b21ee825ca371b8246f6fb20a33098e195323
 
 importers:
@@ -225,7 +225,7 @@ importers:
         version: 1.30.0(supports-color@7.2.0)(zod@4.4.3)
       '@strands-agents/sdk':
         specifier: 1.18.0
-        version: 1.18.0(patch_hash=b3369232ff1a76b452b2938e37f89dfeab1f976b0913f9f49ab3f9bcb6b5aee5)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1(supports-color@7.2.0))(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)
+        version: 1.18.0(patch_hash=33ced1224a14e82ae3a53ab5031f16b3bcb4d6c20ee9a23fb13acc7368761b7a)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1(supports-color@7.2.0))(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -2411,7 +2411,7 @@ snapshots:
 
   '@stablelib/base64@1.0.1': {}
 
-  '@strands-agents/sdk@1.18.0(patch_hash=b3369232ff1a76b452b2938e37f89dfeab1f976b0913f9f49ab3f9bcb6b5aee5)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1(supports-color@7.2.0))(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)':
+  '@strands-agents/sdk@1.18.0(patch_hash=33ced1224a14e82ae3a53ab5031f16b3bcb4d6c20ee9a23fb13acc7368761b7a)(@anthropic-ai/sdk@0.109.1(zod@4.4.3))(@aws/bedrock-token-generator@1.1.0)(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(@opentelemetry/api@1.9.1)(@smithy/types@4.17.2)(express@5.2.1(supports-color@7.2.0))(openai@6.49.0(@aws-sdk/credential-provider-node@3.972.82)(@smithy/hash-node@4.5.0)(@smithy/signature-v4@5.7.0)(ws@8.21.3)(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@aws-sdk/client-bedrock-runtime': 3.1123.0
       '@modelcontextprotocol/sdk': 1.30.0(supports-color@7.2.0)(zod@4.4.3)

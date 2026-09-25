@@ -125,7 +125,9 @@ try {
   }
   const patch = readFileSync(path.join(ROOT, GENERATED_PATCH), 'utf8');
   const patchedFiles = [...patch.matchAll(/^\+\+\+ b\/node_modules\/@strands-agents\/sdk\/(.+)$/gm)].map((match) => match[1]!);
-  assert('the SDK patch still covers all 15 ported files', patchedFiles.length === 15);
+  // 19 since SER-101 added the Converse/Anthropic/Chat reasoning guards and the
+  // Responses stream-state model id (models/{bedrock,anthropic}.js, openai/{chat-adapter,model}.js).
+  assert('the SDK patch still covers all 19 ported files', patchedFiles.length === 19);
   for (const file of patchedFiles) {
     assert(`npm and pnpm install identical patched SDK bytes: ${file}`,
       readFileSync(path.join(installedPackageDir(prefix), 'node_modules', '@strands-agents', 'sdk', file))

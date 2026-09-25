@@ -44,6 +44,63 @@ index 1ffe683b6944318f8524c231674eabcf8428f89f..ea8dfa7ae5d5cfb3166a6e23afe3042d
  // Logging
  export { configureLogging } from './logging/logger.js';
  // MCP Client types and implementations
+diff --git a/dist/src/models/anthropic.js b/dist/src/models/anthropic.js
+index ffbbb3d5d8a29ac0e21ffd2409658e1f69850492..ff1f3cac332a260fef809d318c11062de78ce3d8 100644
+--- a/dist/src/models/anthropic.js
++++ b/dist/src/models/anthropic.js
+@@ -560,6 +560,11 @@ export class AnthropicModel extends Model {
+                 };
+             }
+             case 'reasoningBlock':
++                // darwin patch (SER-101): Responses-origin reasoning carries a
++                // provenance tag, not an Anthropic signature; never send it.
++                if (typeof block.signature === 'string' && block.signature.startsWith('darwin-responses:')) {
++                    return undefined;
++                }
+                 if (block.signature) {
+                     return {
+                         type: 'thinking',
+diff --git a/dist/src/models/bedrock.js b/dist/src/models/bedrock.js
+index e9efcc8ba832b878ec4b1ec0350e8ce6bf5b0e5b..0ff2da8f0256a9a6fa0a1153e868cfa53c9104a8 100644
+--- a/dist/src/models/bedrock.js
++++ b/dist/src/models/bedrock.js
+@@ -944,6 +944,19 @@ export class BedrockModel extends Model {
+                 };
+             }
+             case 'reasoningBlock': {
++                // darwin patch (SER-101): Responses-origin reasoning (provenance tag in
++                // `signature`) is never sent to Converse, and a Claude model rejects a
++                // signature-less thinking block (`thinking.signature: Field required`),
++                // which is what another Converse model's reasoning (Kimi) carries.
++                if (typeof block.signature === 'string' && block.signature.startsWith('darwin-responses:')) {
++                    return undefined;
++                }
++                if (block.signature === undefined &&
++                    !block.redactedContent &&
++                    /anthropic|claude/i.test(this._config.modelId ?? '')) {
++                    logger.debug(`model_id=<${this._config.modelId}> | signature-less reasoning | dropping`);
++                    return undefined;
++                }
+                 if (block.text !== undefined || block.signature !== undefined) {
+                     return {
+                         reasoningContent: {
+diff --git a/dist/src/models/openai/chat-adapter.js b/dist/src/models/openai/chat-adapter.js
+index fb16b465262638c7d97e874156058a856174752c..0ff778d68eaea576279c6850cf6a708386496261 100644
+--- a/dist/src/models/openai/chat-adapter.js
++++ b/dist/src/models/openai/chat-adapter.js
+@@ -242,6 +242,12 @@ function formatChatMessages(messages) {
+                         break;
+                     }
+                     case 'reasoningBlock': {
++                        // darwin patch (SER-101): Responses-origin reasoning is never
++                        // sent to another model, not even as text.
++                        if (typeof block.signature === 'string' && block.signature.startsWith('darwin-responses:')) {
++                            logger.debug('block_type=<reasoningBlock> | responses-origin reasoning | dropping');
++                            break;
++                        }
+                         if (block.text) {
+                             logger.warn('block_type=<reasoningBlock> | reasoning blocks not supported by openai | converting to text');
+                             textParts.push(block.text);
 diff --git a/dist/src/models/openai/errors.js b/dist/src/models/openai/errors.js
 index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279e2355066 100644
 --- a/dist/src/models/openai/errors.js
@@ -56,23 +113,202 @@ index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279
  ];
  /**
   * Error patterns that indicate rate limiting.
+diff --git a/dist/src/models/openai/model.js b/dist/src/models/openai/model.js
+index e7db2ccc3d5d8cff7b27dbb5b5f46cdaf9a4de1b..d9881fb1d81a3cbd9e092591d8757023817ef6c7 100644
+--- a/dist/src/models/openai/model.js
++++ b/dist/src/models/openai/model.js
+@@ -196,7 +196,7 @@ export class OpenAIModel extends Model {
+         try {
+             const request = formatResponsesRequest(this._config, messages, options, this.stateful);
+             const stream = await this._client.responses.create(request, { signal: options?.cancelSignal });
+-            const state = createResponsesStreamState();
++            const state = createResponsesStreamState(request.model);
+             for await (const event of stream) {
+                 for (const sdkEvent of mapResponsesEventToSDK(event, state, this.stateful, options?.modelState)) {
+                     yield sdkEvent;
 diff --git a/dist/src/models/openai/responses-adapter.d.ts b/dist/src/models/openai/responses-adapter.d.ts
-index e17f00ac284c1e3357d55205c57b431061141b55..a7b4edd12a5ac33277a5ad2c4bcea4c4d8c1ea7d 100644
+index e17f00ac284c1e3357d55205c57b431061141b55..655e065df9823e8897759978a46cac8b2bee9d79 100644
 --- a/dist/src/models/openai/responses-adapter.d.ts
 +++ b/dist/src/models/openai/responses-adapter.d.ts
-@@ -52,6 +52,7 @@ export interface ResponsesStreamState {
+@@ -52,15 +52,35 @@ export interface ResponsesStreamState {
          outputTokens: number;
          totalTokens: number;
          cacheReadInputTokens?: number;
 +        cacheWriteInputTokens?: number;
      } | null;
      stopReason: StopReason;
++    /** darwin patch (SER-101): request model id that tags captured reasoning. */
++    modelId?: string | undefined;
++    /** darwin patch (SER-101): what the open reasoning block streamed. */
++    reasoningKind?: 'text' | 'sum' | undefined;
  }
+ /**
+  * Creates fresh stream state for a new Responses API stream.
+  *
+  * @internal
+  */
+-export declare function createResponsesStreamState(): ResponsesStreamState;
++export declare function createResponsesStreamState(modelId?: string): ResponsesStreamState;
++/** darwin patch (SER-101): the provenance tag prefix carried in `ReasoningBlock.signature`. */
++export declare const RESPONSES_REASONING_TAG = "darwin-responses:v1:";
++/** darwin patch (SER-101): one tagged kind; `enc` carries the opaque `encrypted_content`. */
++export type ResponsesReasoningTag = {
++    modelId: string;
++    kind: 'text' | 'sum';
++} | {
++    modelId: string;
++    kind: 'enc';
++    encryptedContent: string;
++};
++/** @internal */
++export declare function encodeResponsesReasoningSignature(modelId: string, kind: 'text' | 'sum' | 'enc', encryptedContent?: string): string;
++/** @internal */
++export declare function parseResponsesReasoningSignature(signature: unknown): ResponsesReasoningTag | undefined;
+ /**
+  * Maps a single Responses API stream event to zero or more SDK events. Mutates
+  * `state` and, when `stateful` is `true`, writes `responseId` into `modelState`.
 diff --git a/dist/src/models/openai/responses-adapter.js b/dist/src/models/openai/responses-adapter.js
-index 9605eb256daa6aebf7dddea2f745d44bdf6f6970..a95bd07e8892bdc104da42ac9f74b1fa4513e59a 100644
+index 9605eb256daa6aebf7dddea2f745d44bdf6f6970..76fb886e50ccbe1faa4bfb5208b82d64cbe84510 100644
 --- a/dist/src/models/openai/responses-adapter.js
 +++ b/dist/src/models/openai/responses-adapter.js
-@@ -328,9 +328,13 @@ function mapResponsesUsage(usage) {
+@@ -21,6 +21,72 @@ import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from
+ import { applyCacheConfig } from './cache.js';
+ export const DEFAULT_RESPONSES_MODEL_ID = MODEL_DEFAULTS.openai.modelId;
+ const MANAGED_PARAMS = new Set(['model', 'input', 'stream', 'store']);
++/**
++ * darwin patch (SER-101): provenance of reasoning captured on the Responses path.
++ *
++ * `ReasoningBlock` has no provider-metadata field (harness-sdk#2014) and its
++ * `toJSON` persists only `text`/`signature`/`redactedContent`, so provenance
++ * rides inside `signature`:
++ * `darwin-responses:v1:<encodeURIComponent(modelId)>:<kind>[:<encrypted_content>]`.
++ * Kinds: `text` = raw reasoning text (replayed as `reasoning_text`), `enc` = one
++ * opaque `encrypted_content` item (replayed verbatim), `sum` = a summary kept for
++ * display only (never replayed). Replay is same-model and stateless only; every
++ * other formatter (Converse, Anthropic, Chat Completions) drops a tagged block.
++ * Drop these hunks on upgrade if upstream (harness-sdk#4598 / #3389) ships a
++ * provenance-aware round-trip.
++ */
++export const RESPONSES_REASONING_TAG = 'darwin-responses:v1:';
++const RESPONSES_REASONING_KINDS = new Set(['text', 'enc', 'sum']);
++/** @internal */
++export function encodeResponsesReasoningSignature(modelId, kind, encryptedContent) {
++    const tag = `${RESPONSES_REASONING_TAG}${encodeURIComponent(modelId)}:${kind}`;
++    return kind === 'enc' ? `${tag}:${encryptedContent}` : tag;
++}
++/** @internal Returns `undefined` for anything that is not a well-formed tag. */
++export function parseResponsesReasoningSignature(signature) {
++    if (typeof signature !== 'string' || !signature.startsWith(RESPONSES_REASONING_TAG))
++        return undefined;
++    const rest = signature.slice(RESPONSES_REASONING_TAG.length);
++    const modelEnd = rest.indexOf(':');
++    if (modelEnd <= 0)
++        return undefined;
++    let modelId;
++    try {
++        modelId = decodeURIComponent(rest.slice(0, modelEnd));
++    }
++    catch {
++        return undefined;
++    }
++    const tail = rest.slice(modelEnd + 1);
++    const kindEnd = tail.indexOf(':');
++    const kind = kindEnd < 0 ? tail : tail.slice(0, kindEnd);
++    if (!RESPONSES_REASONING_KINDS.has(kind))
++        return undefined;
++    if (kind === 'enc') {
++        const encryptedContent = kindEnd < 0 ? '' : tail.slice(kindEnd + 1);
++        return encryptedContent === '' ? undefined : { modelId, kind, encryptedContent };
++    }
++    return kindEnd < 0 ? { modelId, kind } : undefined;
++}
++/**
++ * The stateless `reasoning` input item for one assistant reasoning block, or
++ * `undefined` when it must be dropped: untagged, foreign model, display-only, or
++ * no replay model (stateful requests keep reasoning server-side).
++ */
++function formatResponsesReasoningInput(block, replayModelId) {
++    if (replayModelId === undefined)
++        return undefined;
++    const tag = parseResponsesReasoningSignature(block.signature);
++    if (tag === undefined || tag.modelId !== replayModelId)
++        return undefined;
++    if (tag.kind === 'enc') {
++        return { type: 'reasoning', summary: [], encrypted_content: tag.encryptedContent };
++    }
++    if (tag.kind === 'text' && typeof block.text === 'string' && block.text !== '') {
++        return { type: 'reasoning', summary: [], content: [{ type: 'reasoning_text', text: block.text }] };
++    }
++    return undefined;
++}
+ /**
+  * Logs a warning for each responses-managed key present in `params`.
+  *
+@@ -35,7 +101,7 @@ export function warnManagedParams(params) {
+  * @internal
+  */
+ export function formatResponsesRequest(config, messages, options, stateful) {
+-    const input = formatResponsesMessages(messages);
++    const input = formatResponsesMessages(messages, stateful ? undefined : (config.modelId ?? DEFAULT_RESPONSES_MODEL_ID));
+     // User `params` are spread first so provider-managed fields (asserted
+     // required by `ResponseCreateParamsStreaming` below) always win. The
+     // managed-params warning fires at config time to surface the collision.
+@@ -111,11 +177,15 @@ export function formatResponsesRequest(config, messages, options, stateful) {
+  * - Text/media → grouped in `{ role, content: [...] }`
+  * - Tool calls → separate `{ type: 'function_call', ... }` items
+  * - Tool results → separate `{ type: 'function_call_output', ... }` items
++ * - Same-model tagged reasoning (darwin patch, SER-101) → stateless
++ *   `{ type: 'reasoning', ... }` items with no `id`, before that message's
++ *   text and `function_call` items
+  */
+-function formatResponsesMessages(messages) {
++function formatResponsesMessages(messages, replayModelId) {
+     const input = [];
+     for (const message of messages) {
+         const role = message.role === 'assistant' ? 'assistant' : 'user';
++        const reasoningItems = [];
+         const contentItems = [];
+         const toolCallItems = [];
+         const toolResultItems = [];
+@@ -171,6 +241,11 @@ function formatResponsesMessages(messages) {
+                     break;
+                 }
+                 case 'reasoningBlock': {
++                    const reasoning = role === 'assistant' ? formatResponsesReasoningInput(block, replayModelId) : undefined;
++                    if (reasoning !== undefined) {
++                        reasoningItems.push(reasoning);
++                        break;
++                    }
+                     logger.warn('block_type=<reasoningBlock> | reasoning content is not yet supported in multi-turn conversations with the responses api');
+                     break;
+                 }
+@@ -179,6 +254,7 @@ function formatResponsesMessages(messages) {
+                 }
+             }
+         }
++        input.push(...reasoningItems);
+         if (contentItems.length > 0) {
+             if (role === 'assistant') {
+                 // Only the string EasyInputMessage form is a valid assistant *input* shape
+@@ -303,12 +379,16 @@ function formatDocumentInput(docBlock) {
+  *
+  * @internal
+  */
+-export function createResponsesStreamState() {
++export function createResponsesStreamState(modelId) {
+     return {
+         dataType: null,
+         toolCalls: new Map(),
+         finalUsage: null,
+         stopReason: 'endTurn',
++        // darwin patch (SER-101): the request's model id tags captured reasoning;
++        // `reasoningKind` is what the open reasoning block streamed (`text`/`sum`).
++        modelId,
++        reasoningKind: undefined,
+     };
+ }
+ /**
+@@ -328,9 +408,13 @@ function mapResponsesUsage(usage) {
          totalTokens: usage.total_tokens,
      };
      const cached = usage.input_tokens_details?.cached_tokens;
@@ -87,6 +323,81 @@ index 9605eb256daa6aebf7dddea2f745d44bdf6f6970..a95bd07e8892bdc104da42ac9f74b1fa
      return mapped;
  }
  function createResponsesStreamError(message, code) {
+@@ -359,22 +443,66 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
+         case 'response.output_text.delta': {
+             events.push(...switchContent('text', state.dataType));
+             state.dataType = 'text';
++            state.reasoningKind = undefined;
+             events.push({
+                 type: 'modelContentBlockDeltaEvent',
+                 delta: { type: 'textDelta', text: event.delta },
+             });
+             break;
+         }
++        // darwin patch (SER-101): `response.reasoning.delta` is the Bedrock runtime
++        // endpoint's name for raw reasoning text (Kimi K3); same meaning as
++        // `response.reasoning_text.delta`. A block with any summary delta is `sum`.
++        case 'response.reasoning.delta':
+         case 'response.reasoning_text.delta':
+         case 'response.reasoning_summary_text.delta': {
++            if (state.dataType !== 'reasoning')
++                state.reasoningKind = undefined;
+             events.push(...switchContent('reasoning', state.dataType));
+             state.dataType = 'reasoning';
++            state.reasoningKind =
++                event.type === 'response.reasoning_summary_text.delta' || state.reasoningKind === 'sum' ? 'sum' : 'text';
+             events.push({
+                 type: 'modelContentBlockDeltaEvent',
+                 delta: { type: 'reasoningContentDelta', text: event.delta },
+             });
+             break;
+         }
++        // darwin patch (SER-101): a finished reasoning item closes the open reasoning
++        // block with its provenance tag, and its `encrypted_content` (if any) becomes a
++        // block of its own, so several opaque items never collapse into one.
++        case 'response.output_item.done': {
++            const item = event.item;
++            if (item?.type !== 'reasoning')
++                break;
++            const encrypted = typeof item.encrypted_content === 'string' && item.encrypted_content !== '' ? item.encrypted_content : undefined;
++            if (state.dataType === 'reasoning') {
++                if (state.modelId !== undefined) {
++                    const kind = encrypted !== undefined ? 'sum' : (state.reasoningKind ?? 'text');
++                    events.push({
++                        type: 'modelContentBlockDeltaEvent',
++                        delta: { type: 'reasoningContentDelta', signature: encodeResponsesReasoningSignature(state.modelId, kind) },
++                    });
++                }
++                events.push({ type: 'modelContentBlockStopEvent' });
++                state.dataType = null;
++                state.reasoningKind = undefined;
++            }
++            if (encrypted !== undefined && state.modelId !== undefined) {
++                events.push(...switchContent('reasoning', state.dataType));
++                events.push({
++                    type: 'modelContentBlockDeltaEvent',
++                    delta: {
++                        type: 'reasoningContentDelta',
++                        signature: encodeResponsesReasoningSignature(state.modelId, 'enc', encrypted),
++                    },
++                });
++                events.push({ type: 'modelContentBlockStopEvent' });
++                state.dataType = null;
++                state.reasoningKind = undefined;
++            }
++            break;
++        }
+         case 'response.output_text.annotation.added': {
+             // The SDK types `event.annotation` as `unknown` and doesn't export a
+             // named annotation union, so we narrow structurally on the fields we use.
+@@ -388,6 +516,7 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
+                 // a fresh TextBlock.
+                 events.push(...switchContent('citations', state.dataType));
+                 state.dataType = 'citations';
++                state.reasoningKind = undefined;
+                 events.push({
+                     type: 'modelContentBlockDeltaEvent',
+                     delta: {
 diff --git a/dist/src/vended-plugins/context-offloader/plugin.d.ts b/dist/src/vended-plugins/context-offloader/plugin.d.ts
 index b0223555c1f0410441546be860dbae824ac9857c..92ab47f4c8c1f5225c13dfd8a5e37324846bdfc2 100644
 --- a/dist/src/vended-plugins/context-offloader/plugin.d.ts
