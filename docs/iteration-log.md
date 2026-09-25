@@ -3098,3 +3098,16 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 - Worker spend (single invocation): `usage: input=92 output=41887 cacheRead=4129868 cacheWrite=130200`; `cost: total=2.3151 input=0.0004 output=0.8377 cacheRead=0.8260 cacheWrite=0.6510 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets. Host acceptance made no provider model calls.
 - Final status: SRF-033 `done`. Remaining batch: SRF-034 (134), SRF-035 (135), both `not-started`.
 
+## Batch 145 — SRF-034 numeric-report verification guidance (2026-09-25)
+
+- Origin: [`reflection_2026-09-24_session-20260924-010948157.md`](reflections/reflection_2026-09-24_session-20260924-010948157.md); Score 14, Priority 134; second of three. Built on accepted, green, built SRF-033 `48c1b8c`; only docs closure `b5fd240` (backlog validator `verify-skills.ts` 162/0) and start `ceee250` to clean tree.
+- Fresh child `session-20260925-093854218`; managed task `bg-8ebc3cbf-7552-41ee-8241-48041748dd17`, exit 0, output drained through `hasMore: false`. Source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p`, no ceiling, retry, correction or descendant worker.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Rule 4 of the default base prompt extended to material numeric reports (compute, reconcile, keep quantity/value semantics apart, state residuals) | `3e6dbcd` | Reviewed two-file diff; hand-checked the eight-component sum. `pnpm typecheck && pnpm test` (9,495 PASS lines, no failing suite), `verify-system-prompt.ts` 62/0 printing residual 100 and balance 3,077 vs 5,200.39933617, `pnpm build`, `git diff --check`: task `bg-0128ba4c-8100-4608-86b6-4d22ddd87080`, exit 0. |
+
+- Docs wrap-up: none needed — no README/user-guide/architecture page quotes rule 4; `configuration` composition section lists only load-bearing base rules and already states a replacement drops all base text. AGENTS unchanged (32,761 bytes). Static checks prove the instruction text, not model compliance; no live-model run.
+- Worker spend (single invocation): `usage: input=30 output=10520 cacheRead=750657 cacheWrite=31972`; `cost: total=0.5205 input=0.0001 output=0.2104 cacheRead=0.1501 cacheWrite=0.1599 model=global.anthropic.claude-opus-5-5 pricing=global.anthropic.claude-opus-5-5`. No unknown buckets.
+- Final status: SRF-034 `done`. Remaining batch: SRF-035 (135) `not-started`.
+

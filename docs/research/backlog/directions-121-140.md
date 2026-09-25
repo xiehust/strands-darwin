@@ -271,7 +271,7 @@ Evidence: source session turn 2 / seq 625 cancels and correctly discards pending
 
 ## SRF-034 — Extend default verification guidance to numeric reports: compute and reconcile totals, preserve quantity semantics, and label unsupported attribution explicitly
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 134
 - Score: 14
 - Importance: 4
@@ -283,7 +283,7 @@ Evidence: source session turn 2 / seq 625 cancels and correctly discards pending
 
 ### Implementation / acceptance evidence
 
-Not implemented. Add one concise domain-neutral clause to the existing verification rule in `src/agent/system-prompt.ts`: compute material numeric summaries using an available local tool, reconcile reported components against the authoritative total and units/time window, distinguish requested from executed quantities and observed from counterfactual values, and state missing evidence/residuals rather than claiming a complete reconciliation. No new calculator, model pass, report classifier, forced continuation or tool-name catalogue. Extend `spike/verify-system-prompt.ts` for the default clause and unchanged override/composition precedence; use bounded local arithmetic evidence demonstrating the source table's 100-unit discrepancy and inconsistent quantity balance. Static tests establish the instruction contract, not guaranteed model compliance. Run `pnpm typecheck`, `pnpm test` and build after an accepted source commit; preserve user-provided prompt overrides and SDK/driver behavior.
+Accepted `3e6dbcd` (`feat(prompt): extend verification rule to numeric reports (SRF-034)`), child `session-20260925-093854218`. Working method rule 4 in `src/agent/system-prompt.ts` gains one five-line, domain-neutral clause naming no tool: compute summaries with an available local tool, reconcile components against the authoritative total/units/time window, keep requested vs executed and observed vs estimated/counterfactual apart, state missing evidence or an unexplained residual. `spike/verify-system-prompt.ts` pins the four parts inside the rule-4 slice, no tool name and no domain wording in it, rule 5 unchanged, no leak into a file override, and recomputes the seq-753 components (817,543 vs stated 817,643, residual 100) and the requested-quantity balance (3,077 vs observed 5,200.39933617). Host acceptance: `pnpm typecheck && pnpm test` (9,495 PASS lines, no failing suite), `verify-system-prompt.ts` 62/0, `pnpm build`, `git diff --check` — task `bg-0128ba4c-8100-4608-86b6-4d22ddd87080`, exit 0. Static checks verify the instruction contract only, not model compliance; no live run. No user doc quotes rule 4 (configuration's composition section summarizes only the load-bearing base rules), so no docs sync.
 
 ### Notes / blockers / abandonment reason
 
