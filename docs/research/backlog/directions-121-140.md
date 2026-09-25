@@ -248,3 +248,63 @@ Accepted `7c96669` after independent Host review of all ten changed files. Host 
 
 Score 11 passes gate 6. Pure presentation fix at `InputBox` and `prompt-editor` seams, informed by `searchPreview`; preserve `scanWorkspacePaths`/`applyPathCompletion` raw identity, matching/order and path-only/no-file-content contract. Cover C0/DEL/C1, CRLF, ANSI/OSC and Unicode separators in single-row labels; preserve ordinary Unicode, draft LF/tab behavior and exact source offsets while displaying non-layout controls safely after insertion. Menu-only remediation is incomplete. No global transcript sanitizer, new store/row/timer, dependency, permission change or SDK loop fork. Acceptance requires real names/Ink renders plus CLI pty selection/editing, exact raw insertion, safe display and cursor/delete/undo mapping; full gates, free completion/pathCompletion/wordNav/undo pty checks, and build. Sync English/Chinese user docs and relevant architecture. One-direction batch, no dependency.
 
+
+## SRF-033 — Recognize SDK-enveloped bash list results in terminal-delivery suppression so a completed list prevents redundant queued job wakes
+
+- Status: `not-started`
+- Priority: 133
+- Score: 14
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`reflection_2026-09-24_session-20260924-010948157.md`](../../reflections/reflection_2026-09-24_session-20260924-010948157.md)
+
+### Implementation / acceptance evidence
+
+Not implemented. Extend the pure payload recognition in `src/agent/task-terminal-delivery.ts` for the installed SDK's exact `{ $value: [...] }` ordinary-array envelope, retaining existing terminal task-id/state checks and bare-array/direct-snapshot/wait handling. Restrict recognition to successful bash results; do not recursively unwrap arbitrary objects. Keep pending delivery committed only at endTurn. Add real SDK tool-stream coverage for list serialization plus real pty coverage in `spike/verify-task-wake.ts`: multiple queued terminal jobs returned by a completed list produce no subsequent wake turn or model request; running jobs, failed/cancelled turns, malformed envelopes and unrelated tools remain unsuppressed. Prove clear/FIFO/delegation/cancel behavior unchanged. Run `pnpm typecheck`, `pnpm test`, the task-wake suite and build after an accepted source commit. Sync the relevant architecture rationale; do not change queue scheduling, the SDK loop or trajectory bytes.
+
+### Notes / blockers / abandonment reason
+
+Evidence: source session turn 2 / seq 625 cancels and correctly discards pending deliveries. Turn 4 / seq 635 then returns ten stopped jobs inside a `$value` envelope and seq 640 completes, yet eight further old-job wakes run at turns 5–12 / seq 641–682: 32.555 seconds, 1,180 output and 1,645,703 cache-read tokens. `createBackgroundBashTool` returns `manager.list()`; installed SDK `function-tool.js` wraps arrays, while the ledger recognizes only bare arrays/direct/wait snapshots. This is a specific SER-069 regression gap, not a duplicate wake feature or permission to commit cancelled-turn deliveries. Score = 2×4+5+5−2−2 = 14, above gate 6. No dependency; implement first. The two wakes preceding the completed list are not claimed as savings.
+
+## SRF-034 — Extend default verification guidance to numeric reports: compute and reconcile totals, preserve quantity semantics, and label unsupported attribution explicitly
+
+- Status: `not-started`
+- Priority: 134
+- Score: 14
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 1
+- Origin report: [`reflection_2026-09-24_session-20260924-010948157.md`](../../reflections/reflection_2026-09-24_session-20260924-010948157.md)
+
+### Implementation / acceptance evidence
+
+Not implemented. Add one concise domain-neutral clause to the existing verification rule in `src/agent/system-prompt.ts`: compute material numeric summaries using an available local tool, reconcile reported components against the authoritative total and units/time window, distinguish requested from executed quantities and observed from counterfactual values, and state missing evidence/residuals rather than claiming a complete reconciliation. No new calculator, model pass, report classifier, forced continuation or tool-name catalogue. Extend `spike/verify-system-prompt.ts` for the default clause and unchanged override/composition precedence; use bounded local arithmetic evidence demonstrating the source table's 100-unit discrepancy and inconsistent quantity balance. Static tests establish the instruction contract, not guaranteed model compliance. Run `pnpm typecheck`, `pnpm test` and build after an accepted source commit; preserve user-provided prompt overrides and SDK/driver behavior.
+
+### Notes / blockers / abandonment reason
+
+Evidence: turn 15 / seq 750 substitutes requested `quantity` when `filled_quantity` is absent; seq 751 implies a 3,077-unit balance including the opening gift, versus 5,200.39933617 observed at turn 13 / seq 708. Turn 15 / seq 753 displays components totaling 817,543 against a stated rounded 817,643, even after an unexplained −382 residual, and advances counterfactual interest/rank claims without an executable reconciliation. Official aggregate attribution at seq 744 remains valid. The default prompt currently specifies verification for code changes, not numeric-report reconciliation. Score = 2×4+5+4−2−1 = 14, above gate 6; confidence 4 acknowledges prompt-following uncertainty. No hard dependency; implement after SRF-033. This is not the abandoned generic evaluation-corpus direction SER-005.
+
+## SRF-035 — Extend bounded retry guidance to generated side-effect automation, distinguishing deterministic rejection, transient limits and ambiguous writes
+
+- Status: `not-started`
+- Priority: 135
+- Score: 13
+- Importance: 4
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`reflection_2026-09-24_session-20260924-010948157.md`](../../reflections/reflection_2026-09-24_session-20260924-010948157.md)
+
+### Implementation / acceptance evidence
+
+Not implemented. Add a concise clause beside the retry rule in `src/agent/system-prompt.ts` for generated autonomous scripts: bound repeated deterministic rejection attempts and pause the affected action with a reason until inputs or observed state change; bound transient retries with server-directed backoff; reconcile ambiguous write outcomes or use idempotency before replay. Ask for representative offline response-sequence checks before unattended launch when feasible. Extend `spike/verify-system-prompt.ts` to pin all three distinctions and preserve existing tool-retry limits, prompt overrides and composition. Do not parse arbitrary background logs, change the runtime retry guard, stop processes automatically, add trading policy or bypass permissions. Run `pnpm typecheck`, `pnpm test` and build after an accepted source commit. Acceptance must state that static prompt checks verify the guidance, not a universal behavioral guarantee.
+
+### Notes / blockers / abandonment reason
+
+Evidence: turn 2 / seq 388 contains eleven same-class HTTP 400 concentration rejections inside one successful bash wait before stop/repair at seq 397–410. Seq 236/258 show genuinely transient 409 borrow-cap failures; seq 544 records an uncertain POST timeout after the non-GET replay repair at seq 442. These require different retry policies. SRF-016 intentionally counts SDK tool results, not script iterations; this direction extends code-generation guidance without duplicating or widening that runtime guard. Score = 2×4+4+5−2−2 = 13, above gate 6. No hard functional dependency; implement after SRF-034 because both touch the same prompt/test region. Keep the wording domain-neutral and bounded.
