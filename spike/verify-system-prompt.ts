@@ -180,6 +180,49 @@ function numericReportVerification(): void {
     implied === 3_077 && Math.abs(observed - implied) > 1);
 }
 
+/**
+ * SRF-035: rule 5 continues from the agent's own tool retries to code it writes to act
+ * unattended. The runtime retry guard (SRF-016) counts SDK tool results only, so eleven
+ * same-class rejections inside one successful background wait (session-20260924-010948157,
+ * turn 2 / seq 388) were invisible to it; the prompt is the seam for generated code. The
+ * clause keeps three failure kinds apart — deterministic rejection, transient limit,
+ * ambiguous write — because each needs a different retry policy. Pinned inside the rule-5
+ * slice only; these checks prove the instruction contract, not that a model follows it.
+ */
+function generatedAutomationRetry(): void {
+  header('system prompt — rule 5 bounds retries in generated unattended code (SRF-035)');
+
+  const start = DEFAULT_SYSTEM_PROMPT.indexOf('\n5. After a tool fails twice');
+  const end = DEFAULT_SYSTEM_PROMPT.indexOf('\n6. ');
+  const rule5 = start >= 0 && end > start ? DEFAULT_SYSTEM_PROMPT.slice(start, end) : '';
+  const flat = rule5.replace(/\s+/gu, ' ');
+  assert('rule 5 is found, directly followed by rule 6', rule5 !== '');
+  // The tool-retry limits stay first and verbatim (verify-retry-guard.ts pins the same phrases).
+  assert('the tool-retry hypothesis and three-failure limit are still rule 5',
+    flat.includes('After a tool fails twice with the same cause, state a materially new evidence-backed hypothesis before retrying.') &&
+      flat.includes('Three equivalent failures are the limit: stop, report the blocker and collected artifacts, and ask the user before continuing in a new turn.'));
+  assert('the new clause follows the existing text, not before it',
+    flat.indexOf('before continuing in a new turn.') < flat.indexOf('Code you write to run unattended'));
+  assert('it scopes the clause to generated unattended code with side effects',
+    flat.includes('Code you write to run unattended with side effects needs the same bounds'));
+  assert('deterministic rejections are bounded, then the action pauses with a reason until inputs or state change',
+    flat.includes('after a bounded number of identical deterministic rejections, pause that action with its reason stated until inputs or observed state change'));
+  assert('transient limits get bounded backoff that honours a server-directed delay',
+    flat.includes('retry transient limits a bounded number of times with backoff, honouring any server-directed delay'));
+  assert('ambiguous write outcomes are reconciled or made idempotent before replay',
+    flat.includes("when a state-changing request's outcome is ambiguous") &&
+      flat.includes('reconcile the actual state or use an idempotency key before replaying it'));
+  assert('it asks for offline response-sequence checks before an unattended launch, when feasible',
+    flat.includes('When feasible, check such a script against representative offline response sequences before an unattended launch.'));
+  const toolNames = ['bash', 'fileEditor', 'str_replace', 'http_request', 'web_fetch', 'imageViewer', 'load_skill',
+    'update_plan', 'memory_recall', 'memory_save', 'subagent', 'workflow', 'retrieve_offloaded_content'];
+  assert('rule 5 names no tool', toolNames.every((name) => !rule5.includes(name)));
+  assert('rule 5 carries no domain-specific wording',
+    !/trad|order|fill|price|profit|position|borrow|short|leverage|HTTP|\b4\d\d\b/iu.test(rule5));
+  assert('the working-method list still has rule 6 after it',
+    DEFAULT_SYSTEM_PROMPT.includes('\n6. Do not add dependencies, delete data, or rewrite git history unless asked.'));
+}
+
 async function fileOverride(): Promise<void> {
   header(`system prompt — ${SYSTEM_PROMPT_FILENAME} replaces the default`);
 
@@ -195,6 +238,8 @@ async function fileOverride(): Promise<void> {
   assert('nothing is flagged as a problem', loaded.problem === undefined);
   assert('the default is not appended to it', !loaded.prompt.includes('fileEditor'));
   assert('the default numeric-report clause does not leak into an override', !loaded.prompt.includes('material numbers'));
+  assert('the default generated-automation retry clause does not leak into an override',
+    !loaded.prompt.includes('run unattended') && !loaded.prompt.includes('idempotency'));
 }
 
 async function configOverride(): Promise<void> {
@@ -294,6 +339,7 @@ async function main(): Promise<void> {
   await rm(ROOT, { recursive: true, force: true });
   await defaultPrompt();
   numericReportVerification();
+  generatedAutomationRetry();
   await fileOverride();
   await configOverride();
   await brokenOverride();

@@ -67,6 +67,13 @@ you could read yourself.
 5. After a tool fails twice with the same cause, state a materially new evidence-backed hypothesis
    before retrying. Three equivalent failures are the limit: stop, report the blocker and collected
    artifacts, and ask the user before continuing in a new turn.
+   Code you write to run unattended with side effects needs the same bounds: after a bounded
+   number of identical deterministic rejections, pause that action with its reason stated until
+   inputs or observed state change; retry transient limits a bounded number of times with backoff,
+   honouring any server-directed delay; when a state-changing request's outcome is ambiguous (a
+   timeout, say), reconcile the actual state or use an idempotency key before replaying it. When
+   feasible, check such a script against representative offline response sequences before an
+   unattended launch.
 6. Do not add dependencies, delete data, or rewrite git history unless asked.
 7. Batch independent reads: when several tool calls have no dependency between them — searches,
    file views, status checks — issue them together in one assistant message instead of one call
