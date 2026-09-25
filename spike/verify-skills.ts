@@ -192,6 +192,12 @@ async function missingDirectory(): Promise<void> {
   assert('developer preserves product and task-scope authority', workflow.includes('ask the user') && workflow.includes('yolo changes confirmation behavior, not task scope'));
   assert('developer requires independent acceptance and no hidden Host patch', workflow.includes('independently inspect') && workflow.includes('Do not patch the implementation yourself'));
   assert(
+    'developer pins negative controls and diffs to explicit SHAs after a foreign-commit check',
+    workflow.includes('resolve its base and result commits to explicit SHAs') &&
+      workflow.includes('run `git log <base>..HEAD` and name any commit the child did not make') &&
+      workflow.includes('never `HEAD~N` or bare `HEAD`'),
+  );
+  assert(
     'developer wraps up by bringing README, user guide and architecture docs in step and reports it',
     workflow.includes('## 6. Wrap up: keep the user-facing docs in step') &&
       workflow.includes('`README.md` and `README.zh-CN.md`') &&
