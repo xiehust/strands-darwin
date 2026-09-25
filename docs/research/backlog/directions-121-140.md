@@ -308,3 +308,37 @@ Not implemented. Add a concise clause beside the retry rule in `src/agent/system
 ### Notes / blockers / abandonment reason
 
 Evidence: turn 2 / seq 388 contains eleven same-class HTTP 400 concentration rejections inside one successful bash wait before stop/repair at seq 397–410. Seq 236/258 show genuinely transient 409 borrow-cap failures; seq 544 records an uncertain POST timeout after the non-GET replay repair at seq 442. These require different retry policies. SRF-016 intentionally counts SDK tool results, not script iterations; this direction extends code-generation guidance without duplicating or widening that runtime guard. Score = 2×4+4+5−2−2 = 13, above gate 6. No hard functional dependency; implement after SRF-034 because both touch the same prompt/test region. Keep the wording domain-neutral and bounded.
+
+
+## SER-101 — Provenance-scoped reasoning round-trip on the OpenAI Responses path: capture Bedrock `response.reasoning.delta` and opaque `encrypted_content` into tagged `ReasoningBlock`s, replay only same-model reasoning as stateless `reasoning` input items, and never send Responses-origin reasoning to another model or to Converse
+
+- Status: `not-started`
+- Priority: 136
+- Score: 10
+- Importance: 4
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 4
+- Origin report: [`research_2026-09-25.md`](../research_2026-09-25.md)
+
+### Implementation / acceptance evidence
+
+Not implemented. Implement in the pinned SDK patch (`patches/@strands-agents__sdk@1.18.0.patch`), which already edits `dist/src/models/openai/responses-adapter.js`; no loop fork, no `toolExecutor`, no new dependency. In `mapResponsesEventToSDK`: map `response.reasoning.delta` like `response.reasoning_text.delta`; on `response.output_item.done` of type `reasoning`, close the open reasoning block, and put an item's `encrypted_content` in its own block. In `formatResponsesMessages`: emit assistant reasoning as `{type:'reasoning', summary:[], encrypted_content}` or `{…, content:[{type:'reasoning_text', text}]}`, before that message's text and `function_call` items, with no `id`.
+
+The report's prototype measured this on both models: Kimi 5/5 and GPT-6-astra 6/6 requests 200, with input tokens rising once reasoning is replayed. Unlike the prototype, every captured block carries a provenance tag inside `signature`, the only field `ReasoningBlock.toJSON` persists. Replay is only for a tag matching the live model id; every untagged or foreign block is dropped exactly as today. The Bedrock/Converse side must never emit a Responses-tagged block, and must be checked for signature-less Kimi Converse reasoning reaching a Claude adaptive model.
+
+Acceptance, as in the report's Recommendation:
+- live capture and same-model replay on Kimi K3 and GPT-6-astra;
+- live `/model` hand-offs across Claude, GPT and Kimi in both directions;
+- `--resume` persistence, with replay/export unchanged;
+- no Mantle `openai.gpt-5.6-sol` regression, including the `include` question;
+- `pnpm typecheck`, `pnpm test`, `verify-npm-patch-format.ts`, `pnpm build`, and registry `verify-npm-package.ts`.
+
+### Notes / blockers / abandonment reason
+
+Score = 2×4+4+5−3−4 = 10, above gate 6. Risk 4 is the reason for the provenance constraint: the report measured that untagged replay yields 400 `invalid encrypted reasoning` / `encrypted reasoning was created for a different account or provider` on the Responses models, and `thinking.signature: Field required` / `Invalid signature` on Claude Converse. `AgentRuntime.changeModel` currently relies on the adapter dropping reasoning (see its doc comment), so a replay without provenance would break `/model`.
+
+The signature-tag codec is a workaround for the missing upstream field (harness-sdk #2014). Upstream #3389 covers the OpenAI round-trip but not the Bedrock event name or cross-provider safety; a new upstream issue was filed from this report ([harness-sdk#4598](https://github.com/strands-agents/harness-sdk/issues/4598)). On any SDK upgrade, drop these hunks if upstream covers them rather than rebasing a duplicate. SDK 1.19.0 was checked and does not.
+
+Kimi K3 via Converse is out of scope except for the Claude hand-off check. The Kimi K3 model card (report source S1) documents a Converse multi-turn reasoning failure that was not reproduced; darwin configuration guidance for Kimi should point at `bedrockRuntime` + `responses` once this lands. No dependency on SRF-033…035; queued after them.
