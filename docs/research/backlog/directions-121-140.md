@@ -271,7 +271,7 @@ Evidence: source session turn 2 / seq 625 cancels and correctly discards pending
 
 ## SRF-034 — Extend default verification guidance to numeric reports: compute and reconcile totals, preserve quantity semantics, and label unsupported attribution explicitly
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 134
 - Score: 14
 - Importance: 4
