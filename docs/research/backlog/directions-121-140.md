@@ -345,7 +345,7 @@ Kimi K3 via Converse is out of scope except for the Claude hand-off check. The K
 
 ## SRF-036 — Let terminal-delivery suppression observe the pre-offload bash result, so an offloaded terminal `wait` stops a redundant task wake
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 137
 - Score: 14
 - Importance: 4
