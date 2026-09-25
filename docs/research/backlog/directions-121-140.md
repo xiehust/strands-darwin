@@ -291,7 +291,7 @@ Evidence: turn 15 / seq 750 substitutes requested `quantity` when `filled_quanti
 
 ## SRF-035 — Extend bounded retry guidance to generated side-effect automation, distinguishing deterministic rejection, transient limits and ambiguous writes
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 135
 - Score: 13
 - Importance: 4
