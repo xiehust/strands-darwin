@@ -1473,7 +1473,7 @@ export function App({
         dispatch({
           type: 'notice',
           text: text === '/list-agents'
-            ? formatLocalAgents(await readLocalAgents())
+            ? formatLocalAgents(await readLocalAgents(runtime.info.projectRoot, runtime.info.sessionId))
             : '/list-agents takes no arguments',
         });
         return;

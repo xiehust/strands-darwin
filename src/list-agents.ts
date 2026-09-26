@@ -4,7 +4,7 @@ import { lstat, open, opendir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { classifyLease, defaultLeaseEnvironment, isValidSessionId, leaseFileIn, type SessionLeaseRecord } from './agent/session-lease.js';
-import { userDarwinDir, userSessionsDir } from './paths.js';
+import { projectKey, userDarwinDir, userSessionsDir } from './paths.js';
 
 export const MAX_AGENT_PROJECT_ENTRIES = 128;
 export const MAX_AGENT_SESSION_ENTRIES = 2048;
@@ -47,14 +47,27 @@ async function safeDirectory(directory: string): Promise<void> {
 
 interface ScanBudget { used: number; max: number; label: string; stopped: boolean }
 
-async function* entries(directory: string, budget: ScanBudget, inventory: LocalAgentInventory): AsyncGenerator<string> {
+/** A known identity gets one ordinary budget slot, then is skipped in enumeration. */
+async function* entries(
+  directory: string,
+  budget: ScanBudget,
+  inventory: LocalAgentInventory,
+  first?: string,
+): AsyncGenerator<string> {
   try {
     await safeDirectory(directory);
     const dir = await opendir(directory, { bufferSize: 1 });
     try {
+      // Called only for the current project and its current session, before either
+      // shared budget can be exhausted. Missing/unsafe identities still cost a slot.
+      if (first !== undefined) {
+        budget.used += 1;
+        yield first;
+      }
       for (;;) {
         const entry = await dir.read();
         if (entry === null) break;
+        if (entry.name === first) continue;
         if (budget.used === budget.max) {
           budget.stopped = true;
           inventory.limits.push(`${budget.label} scan limit ${budget.max} reached; remaining entries not inspected (count unknown)`);
@@ -130,7 +143,7 @@ async function readHolder(file: string, inventory: LocalAgentInventory): Promise
 }
 
 /** One bounded observation, not a registry, poller, or authenticated process list. */
-export async function readLocalAgents(): Promise<LocalAgentInventory> {
+export async function readLocalAgents(projectRoot: string, currentSessionId?: string): Promise<LocalAgentInventory> {
   const inventory: LocalAgentInventory = { rows: [], omissions: {}, limits: [], state: 'readable' };
   try {
     await safeDirectory(userDarwinDir());
@@ -141,14 +154,16 @@ export async function readLocalAgents(): Promise<LocalAgentInventory> {
   const environment = defaultLeaseEnvironment();
   const projects: ScanBudget = { used: 0, max: MAX_AGENT_PROJECT_ENTRIES, label: 'project-entry', stopped: false };
   const sessions: ScanBudget = { used: 0, max: MAX_AGENT_SESSION_ENTRIES, label: 'session-entry', stopped: false };
-  for await (const projectKey of entries(userSessionsDir(), projects, inventory)) {
+  const currentProjectKey = projectKey(projectRoot);
+  for await (const projectKey of entries(userSessionsDir(), projects, inventory, currentProjectKey)) {
     // projectKey()'s readable prefix and digest, not a reversible cwd encoding.
     if (!/^[a-zA-Z0-9_-]{1,180}--[a-f0-9]{64}$/.test(projectKey)) {
       omit(inventory, 'invalid project keys');
       continue;
     }
     const projectDir = path.join(userSessionsDir(), projectKey);
-    for await (const sessionId of entries(projectDir, sessions, inventory)) {
+    const firstSession = projectKey === currentProjectKey ? currentSessionId : undefined;
+    for await (const sessionId of entries(projectDir, sessions, inventory, firstSession)) {
       // Never read the resume pointer or descend into the SDK snapshot tree.
       // `session` is also a legal explicit session id: inspect only its lease.
       if (sessionId === 'last-session.json') continue;
@@ -194,6 +209,7 @@ export function formatLocalAgents(inventory: LocalAgentInventory): string {
   const lines = [
     'local session lease holders — this HOME, current user, same host only',
     'source: ~/.darwin/sessions/<project-key>/<session-id>/lease.json (read-only)',
+    'inspection: current project first; current TUI session first when supplied; remaining entries in filesystem order (same budgets)',
   ];
   if (inventory.state === 'missing') lines.push('session inventory missing; no existing session store found');
   else if (inventory.state === 'unavailable') lines.push('session inventory unavailable: unreadable or unsafe session store');

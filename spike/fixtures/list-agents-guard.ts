@@ -41,11 +41,23 @@ fsp.readFile = ((...args: Parameters<typeof read>) => {
   checkRead(args[0]);
   return read(...args);
 }) as typeof read;
+const openedFiles = new Set<string>();
 const open = fsp.open;
 fsp.open = ((...args: Parameters<typeof open>) => {
   checkRead(args[0]);
+  const file = String(args[0]);
+  if (openedFiles.has(file)) forbidden(`duplicate lease read: ${file}`);
+  openedFiles.add(file);
   return open(...args);
 }) as typeof open;
+const openedDirectories = new Set<string>();
+const opendir = fsp.opendir;
+fsp.opendir = ((...args: Parameters<typeof opendir>) => {
+  const directory = String(args[0]);
+  if (openedDirectories.has(directory)) forbidden(`duplicate project scan: ${directory}`);
+  openedDirectories.add(directory);
+  return opendir(...args);
+}) as typeof opendir;
 syncBuiltinESMExports();
 // Negative controls prove a caught tripwire still fails the process.
 try {

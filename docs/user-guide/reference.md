@@ -22,10 +22,15 @@ sessions. The CLI runs without provider configuration; the TUI prints one local 
 notice even while busy, without a model turn or queue entry. CLI report exit code is 0
 (including missing, unreadable or empty state); misuse is 2, including `list-agents --help`.
 
-Limits: 128 project entries, 2,048 total session entries, 4,096 bytes per lease plus one
-overflow byte, 32 displayed rows, 255 printable-ASCII characters per cell. Scan caps use
-one-entry lookahead; filesystem enumeration order determines the inspected subset, then
-rows sort by project key/session ID. Rejected entries and hidden live rows are counted;
+Inspection order: current canonical project first (TUI runtime project root, CLI cwd);
+within it, the TUI's explicit current session ID first. The CLI has no current-session
+identity. Remaining entries follow filesystem enumeration order. Priority identities
+share the same budgets, each costing one slot even if absent/unsafe; enumeration skips
+them thereafter, so no duplicate lease read or count occurs. Limits remain 128 project
+entries, 2,048 total session entries, 4,096 bytes per lease plus one overflow byte,
+32 displayed rows and 255 printable-ASCII characters per cell. Scan caps use one-entry
+lookahead. Rows sort by project key/session ID only after the inspected subset is chosen.
+Rejected entries and hidden live rows are counted;
 uninspected remainder counts are unknown. Dead, foreign-host, malformed, oversized,
 invalid-PID and symlink/unsafe entries are excluded, never cleaned up.
 

@@ -900,9 +900,19 @@ model turn. `/agents` remains an in-memory dispatch projection; `darwin sessions
 per-project snapshot discovery. No `-p` slash routing, model tool, polling, transport, socket,
 server, launch/cancel or communication is introduced.
 
-Safety bounds: 128 root entries, 2,048 session entries globally, filesystem enumeration order,
-one lookahead per exhausted scan cap, 4,096 bytes/lease plus one overflow byte, and 32 shown
-rows. Only the inspected subset is sorted. Omitted live rows and rejected entries are counted;
+Inspection prioritizes the canonical current project key from the caller: runtime
+`projectRoot` in the TUI, cwd passed by `cli.ts` in the standalone CLI. The TUI also supplies
+its existing session ID, inspected first within that project. The CLI has no session identity.
+This is necessary for a HOME with enough historical projects/sessions to fill the scan or row
+budget before enumeration reaches the active workspace. No extra registry or snapshot read
+is involved. Remaining entries follow filesystem enumeration order, skipping each prioritized
+identity when it is encountered again. Each priority attempt, including a missing/unsafe one,
+uses one slot of the same budget; projects and leases are never inspected twice.
+
+Safety bounds remain 128 root entries, 2,048 session entries globally, one lookahead per
+exhausted scan cap, 4,096 bytes/lease plus one overflow byte, and 32 shown rows. Only the
+inspected subset is sorted for display; sorting does not control inspection priority.
+Omitted live rows and rejected entries are counted;
 uninspected remainders are explicitly unknown. Directory lstat/realpath and ownership checks
 reject symlink/unsafe traversal; leases require regular owned files, `O_NOFOLLOW`/`O_NONBLOCK`,
 fstat identity checks and bounded descriptor reads. Missing/unreadable state is explicit, not
@@ -911,9 +921,11 @@ This HOME's same-host holders exclude older/non-registering processes, other use
 ordinary OS children and in-process SDK subagents; a scan is not an atomic OS snapshot.
 
 Checks: `verify-list-agents.ts` (real owned-HOME files/processes, exclusions, bounds, read
-failures, terminal controls, state hashes, CLI import/read/network tripwires, discovery) and
-`verify-list-agents-pty.ts` (real idle/busy local command, no queued/model turn, `/agents`
-unchanged), both in `pnpm test`; lease/sessions suites pin compatibility and free
+failures, terminal controls, state hashes, CLI import/read/network and duplicate-read tripwires,
+discovery, current canonical project beyond the ordinary project prefix, and explicit current
+session beyond scan/row caps) and `verify-list-agents-pty.ts` (real idle/busy local command
+in a workspace beyond the project prefix, crowded rows, zero writes, no queued/model turn,
+`/agents` unchanged), both in `pnpm test`; lease/sessions suites pin compatibility and free
 `tui completion` pins canonical discoverability. Listing conveys no messaging authorization.
 
 ## `darwin doctor` — reports, never refuses; reads, never creates

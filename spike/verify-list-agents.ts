@@ -5,8 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, readFile, readdir, readlink, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -17,34 +16,21 @@ import { BUILTIN_COMMAND_NAMES, loadCustomCommands } from '../src/commands/custo
 import { computeCompletions } from '../src/tui/prompt-completion.js';
 import { formatHelpReport } from '../src/tui/help-format.js';
 import { ownPrivateHome } from './shared.js';
+import { crowdedProject, digest, directoryOrder } from './list-agents-fixtures.js';
 
 const HOME = ownPrivateHome('list-agents');
-const REPO = path.resolve(import.meta.dirname, '..');
 const startedAt = '2026-09-26T05:11:10.000Z';
 const live = { pid: process.pid, hostname: os.hostname(), startedAt };
 const projectA = path.join(HOME, 'project-a');
 const projectB = path.join(HOME, 'project-b');
+await mkdir(projectA);
+await mkdir(projectB);
 
 async function seed(project: string, id: string, value: unknown): Promise<string> {
   const file = leaseFileIn(userProjectSessionsDir(project), id);
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, typeof value === 'string' ? value : JSON.stringify(value));
   return file;
-}
-
-/** Content, names, modes, size and mtimes, never atime (ordinary reads may update it). */
-async function digest(directory: string): Promise<string> {
-  const hash = createHash('sha256');
-  async function walk(file: string): Promise<void> {
-    const info = await lstat(file);
-    hash.update(`${path.relative(directory, file)}:${info.mode}:${info.mtimeMs}:`);
-    if (info.isSymbolicLink()) hash.update(await readlink(file));
-    else if (info.isDirectory()) {
-      for (const name of (await readdir(file)).sort()) await walk(path.join(file, name));
-    } else if (info.isFile()) hash.update(await readFile(file));
-  }
-  await walk(directory);
-  return hash.digest('hex');
 }
 
 async function inHome(label: string, work: () => Promise<void>): Promise<void> {
@@ -54,9 +40,14 @@ async function inHome(label: string, work: () => Promise<void>): Promise<void> {
   try { await work(); } finally { process.env['HOME'] = HOME; }
 }
 
-function cli(args: string[] = [], home = HOME, probe = '') {
-  return spawnSync(process.execPath, ['--import', 'tsx', path.join(REPO, 'spike/fixtures/list-agents-guard.ts'), 'list-agents', ...args], {
-    cwd: REPO, encoding: 'utf8', timeout: 15_000,
+function cli(args: string[] = [], home = HOME, probe = '', projectRoot = projectA) {
+  // Run with an isolated workspace cwd, not the source tree. Also works after
+  // build as `node dist/spike/verify-list-agents.js`, exercising the built CLI.
+  const source = import.meta.url.endsWith('.ts');
+  const loader = source ? ['--import', import.meta.resolve('tsx')] : [];
+  const fixture = path.join(import.meta.dirname, `fixtures/list-agents-guard.${source ? 'ts' : 'js'}`);
+  return spawnSync(process.execPath, [...loader, fixture, 'list-agents', ...args], {
+    cwd: projectRoot, encoding: 'utf8', timeout: 15_000,
     env: { ...process.env, HOME: home, LIST_AGENTS_GUARD_PROBE: probe, AWS_EC2_METADATA_DISABLED: 'true', DARWIN_MODEL_PRICES_FETCH: 'off' },
   });
 }
@@ -93,7 +84,7 @@ try {
   await writeFile(path.join(path.dirname(currentFile), 'trajectory.jsonl'), 'SECRET_PROMPT');
   await writeFile(path.join(userDarwinDir(), 'config.json'), 'INVALID_CONFIG_MUST_NOT_LOAD');
   const before = await digest(HOME);
-  const inventory = await readLocalAgents();
+  const inventory = await readLocalAgents(projectA);
   assert.deepEqual(inventory.rows.map(row => row.sessionId).sort(), ['snapshotless-current', 'snapshotless-peer']);
   assert.equal(inventory.rows.find(row => row.current)?.pid, process.pid);
   assert.equal(inventory.rows.find(row => !row.current)?.pid, peer.pid);
@@ -130,16 +121,70 @@ try {
   await exited;
 }
 
+await inHome('crowded-projects', async () => {
+  const currentProject = await crowdedProject(os.homedir());
+  const currentKey = projectKey(currentProject);
+  const projectOrder = await directoryOrder(userSessionsDir());
+  assert(projectOrder.indexOf(currentKey) >= MAX_AGENT_PROJECT_ENTRIES);
+  for (const key of projectOrder) {
+    if (key === currentKey) continue;
+    const directory = path.join(userSessionsDir(), key, 'historical-live');
+    await mkdir(directory);
+    await writeFile(path.join(directory, 'lease.json'), JSON.stringify(live));
+  }
+  await seed(currentProject, 'active-current-project', live);
+  const alias = path.join(os.homedir(), 'workspace-alias');
+  await symlink(currentProject, alias);
+  const before = await digest(os.homedir());
+  const inventory = await readLocalAgents(alias);
+  assert.equal(inventory.rows.length, MAX_AGENT_ROWS);
+  assert.deepEqual(inventory.rows.filter(row => row.projectKey === currentKey).map(row => row.sessionId), ['active-current-project']);
+  assert.equal(inventory.omissions[`live holders beyond row limit ${MAX_AGENT_ROWS}`], MAX_AGENT_PROJECT_ENTRIES - MAX_AGENT_ROWS,
+    'current project shares the project and row budgets instead of being appended after other live holders');
+  assert(inventory.limits.some(line => line.includes(`project-entry scan limit ${MAX_AGENT_PROJECT_ENTRIES}`)));
+  const result = cli([], os.homedir(), '', alias);
+  assert.equal(result.status, 0, result.stderr || String(result.error));
+  assert.equal(result.stdout.trimEnd(), formatLocalAgents({ ...inventory, rows: inventory.rows.map(row => ({ ...row, current: false })) }));
+  assert.equal(await digest(os.homedir()), before, 'crowded-store CLI and reader write nothing');
+});
+passed('current canonical project outside the historical prefix appears in guarded CLI; global project cap and state hashes hold');
+
+await inHome('crowded-current-session', async () => {
+  for (let index = 0; index <= MAX_AGENT_SESSION_ENTRIES; index++) await seed(projectA, `historical-${index}`, live);
+  const order = await directoryOrder(userProjectSessionsDir(projectA));
+  const currentSession = order[MAX_AGENT_SESSION_ENTRIES]!;
+  assert(currentSession, 'current session lies beyond both the original scan and row caps');
+  const before = await digest(os.homedir());
+  const inventory = await readLocalAgents(projectA, currentSession);
+  assert.equal(inventory.rows.length, MAX_AGENT_ROWS);
+  assert.equal(inventory.rows.filter(row => row.sessionId === currentSession && row.current).length, 1);
+  assert.equal(inventory.omissions[`live holders beyond row limit ${MAX_AGENT_ROWS}`], MAX_AGENT_SESSION_ENTRIES - MAX_AGENT_ROWS);
+  assert(inventory.limits.some(line => line.includes(`session-entry scan limit ${MAX_AGENT_SESSION_ENTRIES}`)));
+  assert.equal(await digest(os.homedir()), before);
+});
+passed('explicit current session beyond the scan/row prefix stays visible within the original shared limits, with zero writes');
+
+await inHome('priority-deduplication', async () => {
+  await seed(projectA, 'current', live);
+  await seed(projectA, 'dead', { ...live, pid: spawnSync(process.execPath, ['-e', '0']).pid });
+  const inventory = await readLocalAgents(projectA, 'current');
+  assert.equal(inventory.rows.length, 1, 'current session is read/listed once when enumeration reaches it again');
+  assert.equal(inventory.omissions['dead leases'], 1, 'current project is inspected once when enumeration reaches it again');
+  assert.deepEqual(inventory.limits, []);
+  assert.equal(cli([], os.homedir()).status, 0, 'tripwires forbid duplicate project and lease reads');
+});
+passed('priority identities are neither read nor counted again during ordinary enumeration');
+
 await inHome('named-session', async () => {
   await seed(projectA, 'session', live);
-  assert.deepEqual((await readLocalAgents()).rows.map(row => row.sessionId), ['session']);
+  assert.deepEqual((await readLocalAgents(projectA)).rows.map(row => row.sessionId), ['session']);
 });
 passed('legal explicit session id named session is not mistaken for snapshot-only state');
 
 await inHome('lease-byte-boundary', async () => {
   await seed(projectA, 'exact-cap', JSON.stringify(live).padEnd(MAX_AGENT_LEASE_BYTES, ' '));
   await seed(projectA, 'over-cap', JSON.stringify(live).padEnd(MAX_AGENT_LEASE_BYTES + 1, ' '));
-  const inventory = await readLocalAgents();
+  const inventory = await readLocalAgents(projectA);
   assert.deepEqual(inventory.rows.map(row => row.sessionId), ['exact-cap']);
   assert.equal(inventory.omissions['oversized leases'], 1);
 });
@@ -148,7 +193,7 @@ passed('exact lease byte cap accepted; one extra byte rejected');
 await inHome('row-cap', async () => {
   for (let index = 0; index < MAX_AGENT_ROWS + 2; index++) await seed(projectA, `live-${index}`, live);
   const before = await digest(os.homedir());
-  const inventory = await readLocalAgents();
+  const inventory = await readLocalAgents(projectA);
   assert.equal(inventory.rows.length, MAX_AGENT_ROWS);
   assert.equal(inventory.omissions[`live holders beyond row limit ${MAX_AGENT_ROWS}`], 2);
   assert.equal(formatLocalAgents(inventory).split('\n').filter(line => line.includes(' | ')).length, MAX_AGENT_ROWS + 1);
@@ -160,7 +205,7 @@ await inHome('session-cap', async () => {
     await mkdir(directory, { recursive: true });
     for (let index = 0; index < MAX_AGENT_SESSION_ENTRIES / 2 + 1; index++) await mkdir(path.join(directory, `missing-${index}`));
   }
-  const inventory = await readLocalAgents();
+  const inventory = await readLocalAgents(projectA);
   assert.equal(inventory.omissions['missing leases'], MAX_AGENT_SESSION_ENTRIES);
   assert(inventory.limits.some(line => line.includes(`session-entry scan limit ${MAX_AGENT_SESSION_ENTRIES}`)));
   assert(inventory.limits.some(line => line.includes('remaining projects not inspected (count unknown)')));
@@ -168,8 +213,9 @@ await inHome('session-cap', async () => {
 await inHome('project-cap', async () => {
   await mkdir(userSessionsDir(), { recursive: true });
   for (let index = 0; index < MAX_AGENT_PROJECT_ENTRIES + 1; index++) await mkdir(path.join(userSessionsDir(), `invalid-${index}`));
-  const inventory = await readLocalAgents();
-  assert.equal(inventory.omissions['invalid project keys'], MAX_AGENT_PROJECT_ENTRIES);
+  const inventory = await readLocalAgents(projectA);
+  assert.equal(inventory.omissions['invalid project keys'], MAX_AGENT_PROJECT_ENTRIES - 1);
+  assert.equal(inventory.omissions['unreadable, missing or unsafe directories'], 1, 'missing current project uses one budget slot');
   assert(inventory.limits.some(line => line.includes(`project-entry scan limit ${MAX_AGENT_PROJECT_ENTRIES}`)));
 });
 passed('row limit counts omitted live holders; total scan limits stop with explicit unknown remainder');
@@ -179,14 +225,14 @@ await inHome('read-failures', async () => {
   assert.notEqual(process.getuid?.(), 0, 'permission fixtures must run as an ordinary user');
   await chmod(file, 0);
   try {
-    const inventory = await readLocalAgents();
+    const inventory = await readLocalAgents(projectA);
     assert.equal(inventory.rows.length, 0);
     assert.equal(inventory.omissions['unreadable or unsafe lease files'], 1);
   } finally { await chmod(file, 0o600); }
   const directory = userProjectSessionsDir(projectA);
   await chmod(directory, 0);
   try {
-    assert.equal((await readLocalAgents()).omissions['unreadable, missing or unsafe directories'], 1);
+    assert.equal((await readLocalAgents(projectA)).omissions['unreadable, missing or unsafe directories'], 1);
   } finally { await chmod(directory, 0o700); }
   await chmod(userSessionsDir(), 0);
   try {
@@ -197,19 +243,19 @@ await inHome('read-failures', async () => {
   // A directory or FIFO in place of the lease cannot hang the reader.
   await rm(file);
   await mkdir(file);
-  assert.equal((await readLocalAgents()).omissions['unsafe lease files'], 1);
+  assert.equal((await readLocalAgents(projectA)).omissions['unsafe lease files'], 1);
   await rm(file, { recursive: true });
   assert.equal(spawnSync('mkfifo', [file]).status, 0);
-  assert.equal((await readLocalAgents()).omissions['unsafe lease files'], 1);
+  assert.equal((await readLocalAgents(projectA)).omissions['unsafe lease files'], 1);
 });
 await inHome('root-symlink', async () => {
   await symlink(path.join(HOME, '.darwin'), userDarwinDir());
-  assert.equal((await readLocalAgents()).state, 'unavailable');
+  assert.equal((await readLocalAgents(projectA)).state, 'unavailable');
 });
 await inHome('sessions-symlink', async () => {
   await mkdir(userDarwinDir());
   await symlink(path.join(HOME, '.darwin', 'sessions'), userSessionsDir());
-  assert.equal((await readLocalAgents()).state, 'unavailable');
+  assert.equal((await readLocalAgents(projectA)).state, 'unavailable');
 });
 passed('real EACCES, nonregular lease files, and root/session symlinks degrade honestly without following or hanging');
 

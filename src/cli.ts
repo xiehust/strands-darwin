@@ -28,7 +28,7 @@ if (refusal !== undefined) {
   if (args[0] === '--') args.shift();
   if (args[0] === 'list-agents') {
     const { runListAgentsCli } = await import('./cli-list-agents.js');
-    await runListAgentsCli(args.slice(1));
+    await runListAgentsCli(process.cwd(), args.slice(1));
   } else if (args[0] === 'import') {
     const { runImportCli } = await import('./cli-import.js');
     await runImportCli(process.cwd(), args.slice(1));

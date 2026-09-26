@@ -52,10 +52,18 @@ signal-0 lease probe (`EPERM` counts as alive); it is **not authenticated proces
 Processes may exit or leases may change while the scan runs. `/agents` still lists this
 runtime's subagent dispatches; `darwin sessions` still lists this project's resumable snapshots.
 
-The scan inspects at most 128 project-directory entries and 2,048 session-directory entries
-in total, in filesystem enumeration order (one extra entry detects each exhausted scan cap).
-It reads at most 4,096 bytes per lease plus one overflow-detection byte and shows at most
-32 live-holder rows, sorted by project key and session ID within the inspected subset.
+The scan inspects the **current canonical project first**: the TUI supplies its runtime
+project root, and the standalone CLI supplies its working directory. Within that project,
+the TUI's current session ID is inspected first, so historical projects or sessions cannot
+crowd its valid live lease out of the report. The CLI has no current session ID to prioritize.
+Remaining projects and sessions follow filesystem enumeration order.
+
+The same total budgets apply: at most 128 project entries, 2,048 session entries and 32
+live-holder rows. Each prioritized identity uses one slot even if missing or unsafe, and
+is skipped if encountered again during enumeration; its lease is never read twice. One
+extra entry detects each exhausted scan cap. Each lease reads at most 4,096 bytes plus
+one overflow-detection byte. Displayed rows are sorted by project key and session ID;
+that display order does not determine which entries are inspected first.
 Skipped entries and hidden live rows are counted; uninspected remainders have an explicit
 unknown count. Missing/unreadable stores are stated, not described as a complete empty
 inventory. Dead, foreign-host, malformed, oversized, invalid-PID, symlink and unsafe entries
