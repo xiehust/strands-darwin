@@ -25,7 +25,7 @@ Implement an explicit `/review --commit <40-hex-SHA>` target; retain exact legac
 
 ## SER-103 — List local Darwin session processes with a read-only `/list-agents` projection of existing leases
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 142
 - Score: 14
 - Importance: 5
@@ -37,7 +37,7 @@ Implement an explicit `/review --commit <40-hex-SHA>` target; retain exact legac
 
 ### Implementation / acceptance evidence
 
-Not implemented. Source: Claude Code cross-session messaging `/list-agents` (report S1); Darwin `src/agent/session.ts` lease ownership, `src/paths.ts:userProjectSessionsDir`, `src/agents/dispatch-registry.ts` in-memory registry, decisions doc §§ Session lease / Subagents. Acceptance: offline real-process fixture lists live leases from two project keys including a session without a snapshot; dead, foreign-host, malformed, oversized and symlinked entries cannot masquerade as local sessions; missing/unreadable state and scan/output caps explicit; immutable state hashes; no model/network/config/permission work; real TUI idle/busy command and completion, full gates and build.
+Accepted 2026-09-26 at `8d588e242d188d8cb1b3b6ded5e3ea9f05679017`, incorporating feature commit `947513b5f4f4e94fe6a5fc56df511842f1bfab3b`. Child session `session-20260926-052906558`; see `docs/iteration-log.md` Batch 153. Host inspected both diffs, source/CLI/TUI wiring, bilingual docs and byte-identical extracted lease helper bodies. First full gate passed but actual-HOME smoke failed product acceptance: 1,296 historical project directories crowded the current project's live lease out of the first 128. Same-child focused correction prioritizes current canonical project (and explicit current TUI session) within unchanged budgets, without duplicate reads. Second Host acceptance (`bg-97073123-5491-47c2-b7bb-8d5637af332e`, exit 0): `pnpm tsx spike/verify-list-agents.ts`, `pnpm tsx spike/verify-list-agents-pty.ts`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `node dist/spike/verify-list-agents.js`, built-CLI live-HOME assertion finding Host session `session-20260926-050636115`, `git diff --check`, clean tree. First Host gate (`bg-888c5d76-5db2-4340-9a4e-39294d4eb2f0`) independently passed free `spike/verify-tui.ts completion` (75/0); correction did not change command discovery. Real fixtures verify snapshotless cross-project leases, invalid/dead/foreign/oversized/symlink/FIFO/EACCES exclusions, shared bounds/omissions, terminal sanitization, immutable state hashes, provider/SDK/config/network tripwires and idle/busy no-extra-turn behavior. No live model quality assertion.
 
 ### Notes / blockers / abandonment reason
 
@@ -62,4 +62,6 @@ Not implemented. Source: Claude Code cross-session messaging S1 documents local 
 ### Notes / blockers / abandonment reason
 
 Depends on accepted SER-103. Before implementation, user must choose recipient authorization and scope: recommended explicit session-local opt-in, same canonical project by default, incoming text held for user acceptance before any model turn, no automatic replies; cross-project communication only if separately authorized. Alternative unattended peer collaboration requires explicit auto-delivery/turn-budget/loop policy and headless behavior. The request establishes interest in communication but does not resolve these cost and cross-session authorization choices. Do not infer that same OS user, process visibility, yolo mode or sender approval authorizes the recipient. Once decided, design bounded local transport and authenticated process/session identity, send/receive provenance, literal text (no slash/`!`/`@` expansion), recipient's ordinary tool gate, no prompt/approval/config mutation, no delegated permission bypass, no sender history/files, next-idle-turn delivery only, cancellation/shutdown/clear/rewind and replay evidence. No cloud, arbitrary host access, shared filesystem write scheduling, autonomous swarm or replacement SDK loop. Independent acceptance must use two real processes plus hostile sender/spoofing, denied permission, queue/expiry/backpressure, self-loop and lifecycle negative controls. Until user decides, preserve `not-started` and halt the batch at this direction under section 7; do not reinterpret it as a harmless notification-only substitute.
+
+2026-09-26 Host selection after SER-103 acceptance: prerequisite is now shipped at `8d588e2`, Score remains 9 (passes the gate), and the remaining premise is not falsified. Halt condition **only the user can decide**. No child launched for SER-104 and no recipient/transport code added. Ask whether to authorize same-project, session-opt-in, per-message human acceptance (recommended), or unattended automatic delivery; also ask whether cross-project sessions may communicate. Resume this batch after that answer, rather than performing fresh research.
 
