@@ -45,7 +45,7 @@ User explicitly requested `/list-agents` to see local Darwin processes. Implemen
 
 ## SER-104 — Add explicitly authorized local cross-session text messaging without sharing permissions or conversations
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 143
 - Score: 9
 - Importance: 5
@@ -57,7 +57,7 @@ User explicitly requested `/list-agents` to see local Darwin processes. Implemen
 
 ### Implementation / acceptance evidence
 
-Not implemented. Source: Claude Code cross-session messaging S1 documents local sockets, independent `ListAgents`/`SendMessage`, receiving-session permission checks and accept/hold/refuse controls. Darwin decisions doc §§ Permissions, Direct driver streaming, The prompt queue, Session trajectory, Subagents define the constraints. SER-103 supplies human discoverability only, not an authenticated endpoint.
+Accepted 2026-09-26 at `452e0c5afaf7d7fb89a00889a0bbd420d8935d45`, incorporating `eb010f2f4e2e50b5092704bc6daecdaac209562f`. Fresh developer session `session-20260926-141121540`; three tasks (initial stream-idle failure, recovery, focused acceptance correction), recorded in `docs/iteration-log.md` Batch 154. Host inspected 39-file implementation and 15-file correction; first full gate passed but independent real-PTY/owned-HOME probes found post-failure auto-drain, stale registration prefix hiding live endpoints, invalid CLI grammar and incomplete headless peer failure results. Same-child correction accepted only after second Host gate `bg-23efa471-8bea-4d0e-870b-8393140f00e8` exit0: `pnpm tsx spike/verify-collaboration-failures.ts`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `node dist/spike/verify-collaboration-failures.js`, `node dist/spike/verify-collaboration.js`, `node dist/spike/verify-collaboration-drivers.js`, diff check and clean tree. First Host free completion passed75/0; correction retained command catalogue/help. Real-process suites prove automatic same-project bidirectionality, actual one-time user CLI confirmation, symmetric durable pair reuse after both processes restart, revoke/regrant fencing, private/corrupt/concurrent/symlink storage, hostile IPC/identity/queue/loop controls, TUI idle/busy/failure and text/JSON/stream-JSON headless behavior, non-user trajectory/recall/rewind/memory provenance, plan and policy protections. No live-model collaboration quality assertion. State is `~/.darwin/collaboration/policy.json`; user commands `/collaborate` and `darwin collaborate`; parent-only `peer_discover`/`peer_send`. POSIX local only; Hub remains a versioned address/transport design seam. Both READMEs, bilingual task/reference/permission guides and architecture updated; AGENTS.md remains32767 bytes. Real HOME remains mode775, so live activation requires owner-approved permissions repair; no real trust grant/permission change performed. This environmental prerequisite does not invalidate private-HOME source/built acceptance.
 
 ### Notes / blockers / abandonment reason
 

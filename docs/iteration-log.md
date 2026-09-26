@@ -3252,3 +3252,43 @@ Token spend: implementation task `input=360 output=37,164 cacheRead=19,887,937 c
 Both exact `usage:`/`cost:` lines reported every bucket; `model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Host checks make no model calls. Child stderr also carried an existing AgentCore manual-cloud-state degradation notice; no cloud repair/upload was attempted in this scope.
 
 - **Batch continuation/halt:** SER-103 `done`; continued to select SER-104, which still passes Score9 but requires a user decision about receive opt-in/per-message approval versus auto-delivery and cross-project scope. No SER-104 worker launched; it remains `not-started`, not abandoned or silently reinterpreted. Halt: **only the user can decide**. No other unfinished backlog. Ask for that choice and resume this batch, not fresh research. Push the current branch once after closure and report upstream verification.
+
+## Batch 154 — SER-104 continuous local collaboration (2026-09-26)
+
+- Continuation of research run `05:11:10Z` in [`research_2026-09-26.md`](research/research_2026-09-26.md), after the user explicitly chose same-project automatic bidirectional collaboration and one persistent symmetric approval for local cross-project pairs. Hub is design-only. Metadata selection found only SER-104 unfinished, Priority143 Score9 unchanged. Decision commit `ee9e1d7`, clean handoff `692ae6e`.
+- **Baseline:** initial `pnpm typecheck && pnpm test` (`bg-7ab0979f-415f-43bf-bb5e-e1c77eb35de7`) exit1: existing review-driver Ctrl+U/retained-draft timeout. Read the test and log, changed no source; focused `pnpm tsx spike/verify-review-drivers.ts && pnpm typecheck && pnpm test` (`bg-d8a9162f-914e-40f1-8c3e-e08569cbbd4f`) exit0. No implementation launched onto the failed baseline.
+- **Fresh worker session:** `session-20260926-141121540`, source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p`. Initial task `bg-2d112fa3-9220-476f-83da-1fe7b915a88d` exit1, `stream: stream idle for 120s` after scaffolds. Host explicitly recovered with exact `--session`/yolo/context-offload in `bg-9205ce52-8119-46c7-b8d7-5f1fc60b27b1`, exit0, without compact-before (initial reads/scaffolds only), provider/watchdog changes or erased failure. Acceptance correction `bg-bd192852-40ba-45b5-8d67-8b88d30aa70b` exit0 used the same exact session plus `--compact-before` because recovery held117 model calls of broad implementation/check context. No model-call ceiling. All tasks had `bash output` called and were drained through `hasMore:false`.
+
+| Milestone | Accepted commit | Host rerun and review |
+|---|---|---|
+| Local IPC, persistent symmetric project trust, user controls, parent peer tools, literal non-user provenance, idle driver delivery and bilingual docs | `eb010f2f4e2e50b5092704bc6daecdaac209562f` (accepted only with correction) | Inspected39-file diff and all new protocol/storage/transport/driver suites; initial complete gate passed, additional Host probes found real acceptance gaps below. |
+| Final-failure admission fencing, stale-prefix discovery, strict zero-effect grammar and honest headless peer failure results | `452e0c5afaf7d7fb89a00889a0bbd420d8935d45` | Inspected15-file correction, real negative-control tests and docs; second Host source/full/built gate passed. |
+
+### Independent acceptance
+
+First Host gate `bg-1293261b-2cc4-4a17-bfc4-a13ddd1a69d4` exit0: `pnpm typecheck`, `pnpm test`, free `AWS_EC2_METADATA_DISABLED=true DARWIN_MODEL_PRICES_FETCH=off pnpm tsx spike/verify-tui.ts completion` (75/0), `pnpm build`, `node dist/spike/verify-collaboration.js`, diff/clean checks. Not accepted from those green results alone:
+
+- Real PTY Host probe `bg-21e059d4-6760-426c-8e19-cfe7abe8f8a0`: queue peer behind `hold peer queue`, do not release; after30s fixture failure, peer still started a model request. Log explicitly showed `peer model invoked after preceding failed turn: true`.
+- Owned-HOME discovery probe:40 live endpoints, close first32 according to actual opendir order and restore their registration bytes;8 live remained but report returned endpoints[]/omitted40. One Host probe coding error (accessing cleared address) was fixed before collecting the successful reproduction; no implementation was patched by Host.
+- Built CLI `collaborate list UNEXPECTED` returned an endpoint report instead of refusing; review found `on UNEXPECTED` could touch policy before rejection. Structured exception path left a begun peer without its own failure/outcome and hid the completed human reply. All findings sent as one focused correction.
+
+Second Host gate **`bg-23efa471-8bea-4d0e-870b-8393140f00e8` exit0**: `pnpm tsx spike/verify-collaboration-failures.ts && pnpm typecheck && pnpm test && pnpm build && node dist/spike/verify-collaboration-failures.js && node dist/spike/verify-collaboration.js && node dist/spike/verify-collaboration-drivers.js && git diff --check && git status --short`. This independently proves same-project bidirectionality; actual user confirmation, reverse auto-delivery and new-PID/session restart reuse; queued/future revoke and regrant fences; concurrent/private/corrupt/symlink storage; forged/stale endpoints and bounded flood/loop/expiry behavior; peer permission/plan/no-user-consent provenance; idle/busy/cancel/clear/rewind lifecycle; final-failure pause and explicit recovery; exact interruption continuation retained; strict no-effect grammar; all text/JSON/stream-JSON peer failures with retained human answer. Source and compiled PTYs tested. No live-provider collaboration quality claim.
+
+### Docs and scope
+
+Both READMEs, bilingual session narrative/reference/permissions pages, load-bearing rationale, subagent boundaries and `local-collaboration.md` synced by worker commits. AGENTS.md stays32767 bytes. Runtime uses SDK extension points and ordinary drivers, no loop/executor fork; no dependencies or Hub/cloud transport. Node builtins POSIX sockets only, socket paths≤103 bytes. Existing shell restriction explicitly prevents unsafe shell execution on peer-origin turns; plan ceiling propagates; policy and memory consent remain user-only. Same-UID arbitrary code is not an OS isolation boundary. Messages expire after60s if not started and acknowledgements mean queued, not processed. Pending/drop/limits are explicit; no durable message inbox.
+
+Host confirmed actual `/home/ubuntu/.darwin` mode775 and built `collaborate status` refused unsafe storage. No actual chmod, global trust grant, installed-package update or cloud repair performed. Owner permission needed to remove foreign write access before live local activation; private-HOME tests establish functionality. The existing AgentCore manual-state degradation notice remains out of scope. Repository dist was refreshed after acceptance.
+
+### Spend
+
+| Managed task | Outcome | input | output | cacheRead | cacheWrite | Approx USD |
+|---|---|---:|---:|---:|---:|---:|
+| `bg-2d112fa3-9220-476f-83da-1fe7b915a88d` | exit1 idle watchdog | 20 | 5277 | 434157 | 77484 | $1.6668 |
+| `bg-9205ce52-8119-46c7-b8d7-5f1fc60b27b1` | exit0 recovery | 234 | 121108 | 26627441 | 274910 | $36.1216 |
+| `bg-bd192852-40ba-45b5-8d67-8b88d30aa70b` | exit0 focused correction | 66 | 32574 | 3360688 | 152112 | $6.8914 |
+| Total this continuation | | **320** | **158959** | **30422286** | **504506** | **$44.6798** |
+
+All exact usage/cost buckets reported, model/pricing `global.openai.gpt-6-astra`; compaction cost included in that invocation record. Host verification uses offline models only. Including SER-103 Batch153, origin-batch totals: input462/output217440/cacheRead40118377/cacheWrite714655, **$59.9282**. No duplicate counting.
+
+SER-104 `done`; whole batch **exhausted** (SER-103 also done), no unfinished backlog or new gate abandonment. Push current branch once after research closure; verify upstream has no unpushed commit and report actual outcome without rewriting history.
