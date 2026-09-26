@@ -66,7 +66,7 @@ const RECURSIVE_CONTENT_READERS = new Set(['grep', 'rg']);
  * Home-relative directories whose every entry is a credential. The directory
  * itself counts too: listing `~/.ssh` names the keys that exist.
  */
-export const SENSITIVE_READ_DIRECTORIES: readonly string[] = ['.ssh', '.aws', '.gnupg'];
+export const SENSITIVE_READ_DIRECTORIES: readonly string[] = ['.ssh', '.aws', '.gnupg', '.darwin/collaboration'];
 
 /** Home-relative files that hold credentials. */
 export const SENSITIVE_READ_HOME_FILES: readonly string[] = [

@@ -14,6 +14,55 @@
 | `/cloud-memory pending [accepted] [after <64hex>]` / `darwin cloud-memory pending [accepted] [after <64hex>]` | 默认列出可处理请求体，含 held/丢弃清理中断；`accepted` 单独列已接受请求体。报告两类总数，每页最多 64 行，需要时给出下一游标。`<64hex>` 是 64 字符的小写十六进制 token；排序稳定但不是快照，新加入且排序较早的 token 需从头列出。不访问网络、不写文件、不生成证明。 |
 | `/cloud-memory list [preferences|episodes|reflections] [after <token>]` / `darwin cloud-memory list …` | “我的云记忆”面板：对一种记录类型（默认 `preferences`）拉取一页 `ListMemoryRecords`（32 行），每行 id · 时间 · 120 码点单行预览。先校验返回记录的全部作用域（不匹配则整页拒绝）；内容不符合该类型 schema 的记录仍按 id 列出、不显示正文。表头给出已列出/其他类型省略/内容拒绝的计数，以及存在下一页时的精确命令。只读：不采纳、不缓存、不写文件、不进入模型；preferences 仍通过 `inspect`/`confirm`/`delete` 处理。 |
 
+## 本地协作
+
+TUI `/collaborate` 默认为 `status`；CLI `darwin collaborate` 使用相同子命令。
+退出码 0 表示已返回报告（包括等待确认的发送），1 表示拒绝或错误。仅接受以下语法：
+
+```text
+status | list | pending | relations | on | off
+send <endpoint-uuid> <字面文本>
+confirm <pending-id> --persist
+revoke <pair-id>
+```
+
+`list` 返回 `{endpoints, omitted, scanLimited, scope}`；`scanLimited` 表示还有数量未知的未检查项。地址为
+`{version:1, transport:"local", node:<UUID>, endpoint:<UUID>, project:<规范绝对根路径>, session:<id>}`。
+发送必须使用完整 endpoint UUID，不能用 PID、前缀或显示名称；每个新进程/runtime 都有新的 UUID 和凭证。
+主模型的 `peer_discover {}` 返回相同安全投影；`peer_send {target:<UUID>,text:<string>}`
+经过普通工具权限检查，不接受 chain 或 trust 参数。模型不能调用用户控制命令。
+TUI 忙碌时拒绝 send，但状态和信任管理命令仍可使用。`/agents` 与只读 `/list-agents` 保持原意。
+
+`~/.darwin/collaboration/` 的私有存储：
+
+- `policy.json`：`{version:1,node,enabled,generation,pairs:[{id,projects:[a,b],grant}],pending:[{id,projects:[a,b],expires}]}`。
+  projects 是排序后的规范路径；pair ID 为该 JSON 二元组的 SHA-256；其余标识为 UUID。
+  最多 64 对关系、32 条待确认请求、每文件 64 KiB，请求十分钟过期；列表不显示 grant token。
+- `policy.lock`：0700 独占目录，最多尝试 20 次、间隔 25 ms；崩溃后不抢锁。
+  锁内读取校验，写 0600 独占临时文件、fsync、rename、fsync 目录。
+  损坏、软/硬链接、外部用户所有权或宽松权限均拒绝，不自动修复。
+- `<endpoint-uuid>.json`：`{address,pid,secret}`，secret 为 32 字节随机数的十六进制。
+  `<endpoint-uuid>.sock` 为私有 Unix socket。PID 仅诊断用，不证明身份；模型投影和轨迹不含凭证。
+  正常退役删除注册与 socket；崩溃遗留项不能通过实时挑战，用户可离线检查残留文件。
+
+v1 消息 envelope 为
+`{version:1,id,sender:<address>,target:<address>,sent:<epoch-ms>,chain:{id,started,hop,readOnly},text}`。
+每连接仅一个换行结尾 JSON 帧 `{body,mac}`，HMAC-SHA256 认证 body。
+接收端核对注册的完整地址，并向发送端 socket 发起带签名的实时挑战，不信任 JSON 声称的身份或 PID。
+回复由目标签名，并绑定 nonce/消息 ID；帧不携带凭证。
+完整帧上限 16 KiB，文本 4096 UTF-8 字节，socket 路径 103 字节；同时最多 16 个连接，
+每帧 1.5 秒超时，入站连接绝对期限 4.5 秒。
+发现最多扫描 256 个目录项，另读一个判断是否有遗漏；检查 32 个候选，每批八个，明确报告省略；不清理文件或启动模型。
+
+收件箱八条，每分钟接收十六条，60 秒过期。去重最多 256 个消息 ID，保留至消息过期。
+因果链最多 256 条、五分钟有效、每端点每链接收两次、回复四跳；peer 回合发一条，用户回合发四条。
+模型不能提供新 chain。入队、出队、SDK 调用前都检查授权代次；撤销后重新确认不能恢复旧队列。
+`Queued` 不等于处理完成；没有持久收件箱或确认丢失后的自动重发。
+无头主回合结束后关闭入口，最多处理已入队的八条。stream-json 的 `turn.started` 新增
+`origin:"peer"` 和 `peer`；最终 JSON 新增 `peerTurns`，最多八项，回复文本最多 4000 个码点，截断有标记。
+轨迹 `peerInput` 记录 `{text,peer:<envelope>}`，不生成 `userInput`、授权 token、回看/rewind 条目，
+不能作为记忆或云端同意的用户引文。见[流程与安全限制](sessions-and-state.zh-CN.md#本机会话协作)。
+
 ## 本机会话进程列表
 
 `/list-agents`（TUI）和 `darwin list-agents`（独立 CLI）均**不接受参数**。它们跨项目读取当前 HOME 已有的本机租约，显示 PID、会话 ID、项目 key（不是 cwd）、租约 `startedAt` 和当前进程标记，尚无快照的会话也能列出。CLI 不需要供应商配置；TUI 忙碌时也只显示一条本地历史通知，不触发模型回合或入队。CLI 报告结果返回 0（包括缺失、不可读和空状态），用法错误返回 2，`list-agents --help` 也属于参数错误。
@@ -52,6 +101,10 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
        darwin list-agents
+       darwin collaborate [status|list|pending|relations|on|off]
+       darwin collaborate send <endpoint-uuid> <literal text>
+       darwin collaborate confirm <pending-id> --persist
+       darwin collaborate revoke <pair-id>
        darwin permissions test <rule>
        darwin import --from claude-code [--apply]
        darwin doctor

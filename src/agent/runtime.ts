@@ -12,6 +12,9 @@ import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request';
 import { ContextOffloader } from '@strands-agents/sdk/vended-plugins/context-offloader';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import path from 'node:path';
+import { LocalCollaboration } from '../collaboration/local.js';
+import { peerTools } from '../collaboration/tools.js';
+import { peerPrompt, type PeerInput } from '../collaboration/protocol.js';
 
 import {
   compactConversation,
@@ -233,6 +236,8 @@ function permissionDecisionEntry(decision: PermissionDecisionRecord): Permission
  * order instead — they are added after the catalogue is captured.
  */
 const PARENT_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'peer_discover',
+  'peer_send',
   'retrieve_offloaded_content',
   httpRequest.name,
   webFetch.name,
@@ -641,6 +646,7 @@ export class AgentRuntime {
      * on its own id through `create()` — and only while the file still names this pid.
      */
     private readonly lease: SessionLease,
+    readonly collaboration: LocalCollaboration,
     readonly info: RuntimeInfo,
     /**
      * What this runtime was created with, so {@link startNewSession} can assemble its
@@ -766,6 +772,7 @@ export class AgentRuntime {
     // observer binds to it late: a decision published before the binding — none
     // can be, since no turn runs during assembly — or with recording off is dropped.
     let trajectoryAudit: TrajectoryRecorder | undefined;
+    const collaboration: LocalCollaboration = new LocalCollaboration(options.projectRoot, session.sessionId, () => gate.mode === 'plan');
     const gate = new PermissionGate({
       mode: permissionMode,
       projectRoot: options.projectRoot,
@@ -779,7 +786,12 @@ export class AgentRuntime {
       classifier: createModelClassifier(config, options.projectRoot),
       // SER-079: one bounded `permissionDecision` record per settled decision. The
       // adapter below is the only place the gate's object meets the record's shape.
-      onDecision: (decision) => trajectoryAudit?.recordPermissionDecision(permissionDecisionEntry(decision)),
+      peerOrigin: () => collaboration.fromPeer,
+      peerReadOnly: () => collaboration.peerReadOnly,
+      onDecision: (decision) => {
+        if (decision.outcome.includes('denied') || decision.outcome === 'deny-rule') collaboration.permissionDenied();
+        trajectoryAudit?.recordPermissionDecision(permissionDecisionEntry(decision));
+      },
     });
 
     const codexHooks = policy.codexHooks === undefined ? undefined : new CodexHookRunner({
@@ -890,6 +902,7 @@ export class AgentRuntime {
     // tool is never registered, and `childTools` below hands children the same
     // wrapper with per-Agent chains.
     const ordinaryTools = [
+      ...peerTools(collaboration),
       bash,
       new SerializedFileEditorTool(makeFileEditor({ description: FILE_EDITOR_DESCRIPTION })),
       imageViewer,
@@ -1161,6 +1174,7 @@ export class AgentRuntime {
       memoryController,
       cloudMemory,
       session.lease,
+      collaboration,
       {
         config,
         projectRoot: options.projectRoot,
@@ -1222,6 +1236,7 @@ export class AgentRuntime {
           : 'startup';
       await codexHooks?.sessionStart(source);
     }
+    await collaboration.start();
     return runtime;
     };
     return assemble().catch(async (error: unknown) => {
@@ -1276,15 +1291,18 @@ export class AgentRuntime {
     input: string,
     userInput = input,
     image?: ImageBlock,
-    origin?: TaskNotificationFields,
+    origin?: TaskNotificationFields | PeerInput,
   ): AsyncIterable<AgentStreamEvent> {
+    const peer = origin !== undefined && 'kind' in origin ? origin : undefined;
+    if (peer) { this.collaboration.beginPeerTurn(peer); userInput = peerPrompt(peer); }
+    else if (origin === undefined) this.collaboration.beginHumanTurn();
     const before = this.usage;
     // The config this turn is attributed to, for the recorded spend and the in-process
     // per-model tally alike. `/model` is refused while a turn is busy, so the live
     // config cannot move under the turn; capturing it once makes that a property of
     // this method rather than of the drivers.
     const turnConfig = this.liveConfig;
-    const submitted = await this.codexHooks?.userPromptSubmit(userInput);
+    const submitted = peer === undefined ? await this.codexHooks?.userPromptSubmit(userInput) : undefined;
     if (submitted !== undefined && !submitted.allowed) {
       throw new Error(submitted.reason ?? 'UserPromptSubmit hook blocked this prompt.');
     }
@@ -1344,6 +1362,7 @@ export class AgentRuntime {
       // before/after pair for a delegation the model routed to the background.
       const invocation = image === undefined ? modelInput : [new TextBlock(modelInput), image];
       this.checkCloudPreparation(cloudGeneration);
+      if (peer) this.collaboration.validateDelivery(peer);
       streamStarted = true;
       const stream = this.backgroundDelegation.observe(this.agent.stream(invocation));
       for await (const event of recordStream(stream, recording)) {
@@ -2217,6 +2236,7 @@ export class AgentRuntime {
    * ends with `stopReason: 'cancelled'` rather than throwing.
    */
   cancel(): void {
+    this.collaboration.close('cancelled; user can re-enable with /collaborate on');
     this.cloudMemory?.cancel();
     this.lifecycleHooks?.cancel();
     this.codexHooks?.cancel();
@@ -2397,6 +2417,7 @@ export class AgentRuntime {
    * session down with it.
    */
   private async retire(): Promise<void> {
+    this.collaboration.close('session retired by clear/rewind');
     // `/clear` and rewind retire the session before any still-pending closing append
     // may accept memory. Already accepted commits are unaffected and still awaited.
     this.memoryController?.discardUnsettled();
@@ -2501,6 +2522,7 @@ export class AgentRuntime {
    * exiting.
    */
   async shutdown(options: { throwOnError?: boolean } = {}): Promise<void> {
+    this.collaboration.close('shutdown');
     this.cloudMemory?.cancel();
     const results = await Promise.allSettled([
       this.subagents.shutdown(),

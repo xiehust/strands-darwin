@@ -108,6 +108,13 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 
 用 `/list-agents` 或离线 CLI `darwin list-agents`，可以跨项目查看当前 HOME 中本机仍存活的会话租约持有者；CLI 不需要配置模型供应商。这只是只读查看，**不提供通信能力**；`/agents` 仍然列出本进程的子代理派发。详见[范围与限制](docs/user-guide/sessions-and-state.zh-CN.md#查看本机会话进程)。
 
+需要实际通信时，先用 **`/collaborate list`**，再输入 `/collaborate send <endpoint-uuid> <文本>`。
+同一规范项目路径的会话会在空闲时自动接收并回复；不同项目只需用户亲自执行一次
+`/collaborate confirm <pending-id> --persist`，双向协作关系重启后仍有效。
+用 `/collaborate pending|relations|revoke <pair-id>|off` 查看、撤销或关闭；独立 CLI
+`darwin collaborate` 支持相同子命令。主模型只有 `peer_discover`、`peer_send`，不能确认信任。
+消息不构成用户授权或用户记忆引文。见[操作流程、限制与隐私](docs/user-guide/sessions-and-state.zh-CN.md#本机会话协作)。
+
 ```text
 /                       列出命令、skills 和自定义命令
 @src/                   补全工作区路径（只插入路径文本）

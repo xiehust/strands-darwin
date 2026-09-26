@@ -13,6 +13,61 @@
 | `/cloud-memory pending [accepted] [after <64hex>]` / `darwin cloud-memory pending [accepted] [after <64hex>]` | Default: actionable bodies, including held/interrupted discard cleanup. `accepted`: separate accepted-body view. Both counts, at most 64 rows/page, next cursor when needed. `<64hex>` is a 64-character lowercase hexadecimal token; stable token order is not a snapshot—restart listing for newly added earlier tokens. No network, writes or proof creation. |
 | `/cloud-memory list [preferences|episodes|reflections] [after <token>]` / `darwin cloud-memory list …` | The "my cloud memories" panel: one `ListMemoryRecords` page (32 rows) for one kind, default `preferences`, each row id · time · one-line 120-code-point preview. Scope of every returned record is validated first (a mismatch refuses the page); a record whose content fails its kind schema is still listed by id with its text withheld. The header states listed/other-kind-omitted/refused counts and the exact next-page command when more exist. Read-only: nothing adopted, cached, written or sent to the model; preferences remain `inspect`/`confirm`/`delete` targets. |
 
+## Local collaboration
+
+TUI: `/collaborate` defaults to `status`. CLI: `darwin collaborate` uses identical verbs;
+exit 0 means the command returned a report (including a pending send), exit 1 means refusal/error.
+No arguments are accepted beyond these forms:
+
+```text
+status | list | pending | relations | on | off
+send <endpoint-uuid> <literal text>
+confirm <pending-id> --persist
+revoke <pair-id>
+```
+
+`list` returns `{endpoints, omitted, scanLimited, scope}` (`scanLimited` means an unknown uninspected remainder). Each address is
+`{version:1, transport:"local", node:<UUID>, endpoint:<UUID>, project:<canonical absolute root>, session:<id>}`.
+The endpoint UUID is the exact send target, never a PID/prefix/display label. A new process/runtime
+gets a new UUID and credential. `peer_discover {}` returns the same safe projection;
+`peer_send {target:<UUID>, text:<string>}` is parent-only, ordinary gated and has no chain/trust flag.
+The models cannot invoke user controls. The send TUI command is refused while busy; status and
+trust controls remain local. Neither command changes `/agents` or read-only `/list-agents`.
+
+Owner-private state under `~/.darwin/collaboration/`:
+
+- `policy.json`: `{version:1,node,enabled,generation,pairs:[{id,projects:[a,b],grant}],pending:[{id,projects:[a,b],expires}]}`.
+  Projects are sorted canonical roots; pair ID is SHA-256 of their JSON tuple; grant/generation/node/request IDs are UUIDs.
+  At most 64 pairs, 32 pending requests, 64 KiB per file; pending TTL ten minutes. `relations`/`pending` show identities but not grant tokens.
+- `policy.lock`: exclusive 0700 directory, at most 20 acquisition attempts with 25 ms delay. Never stolen after a crash.
+  Updates read under this lock, validate, write a 0600 exclusive temporary file, fsync, rename, fsync directory.
+  Corruption, symlinks, hardlinks, foreign ownership or permissive modes fail closed; no implicit repair.
+- `<endpoint-uuid>.json`: `{address,pid,secret}` (secret is 32 random bytes encoded as hex).
+  `<endpoint-uuid>.sock`: private Unix socket; PID is diagnostic, not authentication.
+  Model projections/trajectory contain no credential. Normal teardown removes the registration/socket;
+  crashed registrations may remain but fail a live challenge. The owner may inspect stale files offline.
+
+The version-1 message envelope is
+`{version:1,id,sender:<address>,target:<address>,sent:<epoch-ms>,chain:{id,started,hop,readOnly},text}`.
+One newline-terminated JSON frame `{body,mac}` per connection; HMAC-SHA256 authenticates the body.
+A target verifies the sender's registered full address and signed live socket challenge, not caller
+JSON or PID. Responses are target-signed and bound to the request nonce/ID. No credential travels
+in a frame. Full frames are capped at 16 KiB, text at 4096 UTF-8 bytes, socket paths at 103 bytes,
+16 simultaneous connections, 1.5 s per frame and 4.5 s absolute inbound lifetime.
+Discovery scans at most 256 directory entries plus one lookahead, probes at most 32 candidates in groups of eight,
+and reports omissions; it neither cleans stale entries nor starts model work.
+
+Inbox: eight, 16 admissions/minute, 60 s TTL. Dedup: at most 256 IDs, retained through message expiry.
+Causal ledger: at most 256 five-minute chains, two admissions/endpoint/chain, four reply hops,
+one send/peer turn or four/human turn. No model-supplied fresh chains. Authorization generation is
+checked at admission, dequeue and immediately before SDK invocation; revocation/re-grant cannot
+revive previously queued text. `Queued` is not a processing receipt; no durable queue or automatic
+replay on ambiguous acknowledgement. Headless closes admission after its normal turn and drains
+at most eight admitted messages; streaming JSON adds `origin:"peer"` and `peer` on `turn.started`,
+final JSON adds `peerTurns` (at most eight, peer reply text capped at 4000 code points with `truncated`).
+`peerInput` trajectory records contain `{text,peer:<envelope>}`, never `userInput`, policy tokens,
+recall/rewind entries or memory/cloud user quotes. See [workflow and safety limits](sessions-and-state.md#collaborate-with-local-sessions).
+
 ## Local session process inventory
 
 `/list-agents` (TUI) and `darwin list-agents` (standalone CLI) take **no arguments**.
@@ -71,6 +126,10 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
        darwin list-agents
+       darwin collaborate [status|list|pending|relations|on|off]
+       darwin collaborate send <endpoint-uuid> <literal text>
+       darwin collaborate confirm <pending-id> --persist
+       darwin collaborate revoke <pair-id>
        darwin permissions test <rule>
        darwin import --from claude-code [--apply]
        darwin doctor

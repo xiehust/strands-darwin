@@ -34,6 +34,21 @@ The allowlist is judged per segment: `git status && git branch -D main` prompts 
 
 Denying is not a tool error. The model receives a user-declined result and is instructed not to retry or work around it.
 
+### Local collaboration is not permission delegation
+
+`/collaborate` trust is independent of workspace trust and ordinary tool permissions. Same canonical
+project sessions cooperate automatically; different projects require one human `confirm <id> --persist`
+for a symmetric durable pair. Models cannot confirm/revoke/disable it or read/write endpoint secrets.
+`~/.darwin/collaboration/` is sensitive policy; direct model access and model-issued collaboration CLI
+commands are denied before rules/hooks, even in yolo. Peer text never answers a permission prompt.
+Peer-origin policy/config/AGENTS changes, memory saves and unsafe shell execution are refused;
+ordinary file edits still use the recipient's gate. A plan sender's read-only ceiling follows its
+reply chain. Any local denial pauses peer sends until a new explicit human turn. This prevents a
+denied action from simply being forwarded; it is not a sandbox against arbitrary same-UID code.
+Use [the local collaboration workflow](sessions-and-state.md#collaborate-with-local-sessions)
+for status, pending confirmation, revocation and off. Cooperation grants neither cloud-memory consent
+nor permission to treat peer text as a user quote.
+
 ### Sensitive-path reads
 
 Reads are whitelisted too, but a fixed set of paths is never read silently: anything under `~/.ssh/`, `~/.aws/` or `~/.gnupg/` (the directory itself included), `~/.netrc`, `~/.kube/config`, `~/.docker/config.json`, `/etc/shadow`, any file named `.env` or `.env.*` anywhere, and Darwin's own config, hook and permission-rule files. Paths are resolved as the shell would (`~`, `~/`, `$HOME`, `${HOME}`, relative and absolute forms, `..` normalised), so `cat ~/.ssh/id_rsa`, `head $HOME/.aws/credentials` and `fileEditor view ../../.netrc` all prompt with `reads a sensitive path: <path>`. `plan` mode prompts for a sensitive `fileEditor view` rather than denying it, because the call is still a read (command-bearing bash stays plan-denied as before); `auto` never hands one to the classifier — it prompts directly; in headless runs the prompt is a `permission denied`. For `grep` and `rg` only, searching from an ancestor of a credential location (`grep -r AKIA ~`, `rg -uu secret /`, `grep -r k /etc`) counts as reading it and prompts with `reads a sensitive path: ~ (searches above ~/.ssh)`; `.env*` files are not part of that ancestor rule, so `grep -r foo .` stays silent in a project that has one. Everything else — `cat README.md`, `ls ~/.ssh/../`, `.envrc`, `/etc/os-release` — stays silent as before. `echo` is not treated as a reader: with redirection and substitution refused it can only print its arguments. The criterion is this fixed set, not "outside the project", because Darwin legitimately reads `/tmp`, `/etc/os-release` and global skill roots.

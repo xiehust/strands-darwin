@@ -27,6 +27,78 @@ TUI resume shows a bounded read-only recap of the last completed user request/as
 
 `/clear` creates a successor runtime through the same factory. It inherits live permission mode, retires the predecessor, rebuilds session-scoped state, and does not move on-disk pointers until the new session completes a turn. Changing the runtime `AGENT_ID` orphans snapshots because it participates in their path.
 
+### Collaborate with local sessions
+
+Open Darwin in two terminals. In either TUI, run `/collaborate list`, copy the **full endpoint UUID**
+from the messaging-capable endpoint's address, then send:
+
+```text
+/collaborate send <endpoint-uuid> Please inspect the parser and reply with findings.
+```
+
+Same canonical project roots (resolved real paths, not display labels or Git repository names)
+cooperate automatically in both directions. No separate receive approval is required. The parent
+model can use `peer_discover {}` and `peer_send {target, text}` to reply. Discovery alone never
+starts work. Coordinate writes yourself; this is not a shared-filesystem lock or task scheduler.
+
+For different projects, the send is **not queued** until a human confirms. The refusal and
+`/collaborate pending` show both canonical project identities, an expiring request ID, and the
+persistence warning. Inspect those identities, then personally enter:
+
+```text
+/collaborate confirm <pending-id> --persist
+/collaborate relations
+/collaborate revoke <pair-id>
+/collaborate off
+/collaborate on
+```
+
+One confirmation persists a symmetric project pair under `~/.darwin/collaboration/policy.json`;
+new processes and session IDs reuse it, including the reverse direction. Send again explicitly
+after confirmation. Pending requests expire after ten minutes. Revocation cancels pending grants
+for that pair and invalidates both queued and future deliveries; off persists for this HOME and
+invalidates every queued message. On publishes a new endpoint in the current TUI. After Esc/cancel,
+use `/collaborate on` to publish a fresh endpoint; old addresses never name its successor.
+
+The standalone `darwin collaborate` CLI has the same verbs (omit the slash). It can confirm a
+pending request while a TUI is blocked on a tool. Do **not** use `-p "/collaborate confirm …"`:
+that is model input, not a human control channel. Headless/yolo cannot approve unknown pairs.
+CLI `send` is a one-shot sender, not a receiver awaiting replies. For back-and-forth work use two
+live TUI sessions. Headless sessions receive while their normal run is active; once that run ends,
+admission closes and at most eight already-admitted messages drain before exit. They never idle
+as daemons. Stream JSON labels peer turns; final JSON retains the user result plus bounded
+`peerTurns` results/provenance. Text output labels peer replies separately.
+
+The receiver sees literal text and the sender's canonical project/session/endpoint, not files or
+history. `/`, `!`, `@` and framing-like text are data, never commands. Peer turns run only at idle,
+after user/task queues and pending permissions, and use the ordinary receiving tool gate. A plan
+sender's read-only ceiling travels with replies; it cannot delegate a write to a less restricted
+peer. A local denial pauses outgoing peer work until a human resumes. Peer input cannot approve
+permissions, change policy/config/AGENTS, or supply memory/cloud-consent user quotes. Peer-origin
+unsafe shell execution and memory saves are refused even in yolo; ordinary permitted file edits
+remain possible outside plan. Treat received text as untrusted instructions with those limits.
+
+`Queued` means admitted, **not processed**. Text is at most 4096 UTF-8 bytes (the complete encoded
+frame must also fit 16 KiB); inboxes hold eight messages for at most 60 seconds, with 16 admissions
+per minute. Automatic replies carry a five-minute causal chain, at most four reply hops, two
+admissions per endpoint per chain and one outgoing message per peer turn. A human turn permits
+four sends and starts a new chain. Limit refusals require explicit human resumption, not model
+retries. Clear, rewind, cancellation and shutdown drop pending input and retire the old endpoint.
+There is no durable inbox, processed receipt or exactly-once guarantee across crashes. A lost
+acknowledgement is ambiguous: inspect the receiving session before retrying.
+
+This implementation requires POSIX Unix sockets and a socket pathname of at most 103 bytes.
+HOME and `.darwin` must be owned, non-symlink and not group/world writable; the collaboration
+directory must be 0700 and files/sockets 0600. Unsafe/corrupt state fails closed with a notice,
+without disabling the rest of Darwin or changing existing permissions. The owner must repair
+permissions or inspect stale `policy.lock` after a crash; Darwin never steals a lock. Do not
+relax modes or copy credentials to make it work. Older lease-only sessions cannot receive.
+The local transport is for the **same OS user**; it is **not an isolation boundary against
+malicious same-UID arbitrary code**, and normal model provider calls still receive message text.
+No Hub, remote listener, remote authentication or cloud transfer is implemented. See
+[wire/storage reference](reference.md#local-collaboration) and
+[architecture and safety limits](../architecture/local-collaboration.md).
+
 ### Find local session processes
 
 When several terminals are running Darwin, type `/list-agents` in the TUI or run:

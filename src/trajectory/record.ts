@@ -74,6 +74,7 @@ export type TrajectoryRecordType =
   | 'forkedFrom'
   | 'recordingStopped'
   | 'shellCommand'
+  | 'peerInput'
   | 'taskNotification'
   | 'contextCompacted'
   | 'modelChanged'
@@ -395,6 +396,12 @@ export interface TaskNotificationFields {
  * fields are what the reducer composes the transcript row from, so replay prints
  * the row the live session showed without re-deriving it from the text.
  */
+export interface PeerInputRecord extends RecordEnvelope {
+  type: 'peerInput';
+  text: string;
+  peer: import('../collaboration/protocol.js').PeerEnvelope;
+}
+
 export interface TaskNotificationRecord extends RecordEnvelope, TaskNotificationFields {
   type: 'taskNotification';
   text: string;
@@ -485,6 +492,7 @@ export interface ModelChangedRecord extends RecordEnvelope {
 export const PERMISSION_OUTCOMES = [
   'write-scope-denied',
   'deny-rule',
+  'peer-policy-denied',
   'plan-denied',
   'yolo',
   'safe',
@@ -545,6 +553,7 @@ export type TrajectoryRecord =
   | ForkedFromRecord
   | RecordingStoppedRecord
   | ShellCommandRecord
+  | PeerInputRecord
   | TaskNotificationRecord
   | ContextCompactedRecord
   | ModelChangedRecord
@@ -763,6 +772,8 @@ export function searchableText(record: TrajectoryRecord): string[] {
       // Content the record already holds: "which session ran that migration"
       // is a question `!` makes real.
       return [record.command, record.output];
+    case 'peerInput':
+      return [record.text, JSON.stringify(record.peer)];
     case 'taskNotification':
       // Search, not recall: `trajectory search` may find the job, `Up` never offers it.
       return [record.command, record.text];

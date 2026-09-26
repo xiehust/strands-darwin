@@ -1,3 +1,5 @@
+import { peerNotice, peerPrompt } from './collaboration/protocol.js';
+
 import process from 'node:process';
 
 import type { DiagnosticLevel } from './agent/diagnostics.js';
@@ -292,6 +294,28 @@ export async function runHeadlessProcess(
       // `--continue` found its session open elsewhere; absent for the ordinary case.
       if (runtime.info.leaseNotice !== undefined) note(`lease: ${headlessField(runtime.info.leaseNotice)}\n`, 'warn');
       reply = await runHeadlessTurn(runtime, prompt, (text) => note(text));
+    }
+    // Freeze admission at the end of normal work. Drain only the bounded inbox
+    // already admitted, through the same streaming driver; never await new peers.
+    runtime.collaboration?.stopAdmission();
+    for (let n = 0; n < 8 && !cancelled && !interrupted; n++) {
+      const peer = runtime.collaboration?.take();
+      if (!peer) break;
+      runtime.observeTurnComplete('success', 'headless');
+      if (structured) {
+        const turn = await runStructuredHeadlessTurn(runtime, peerPrompt(peer), protocol!, (name, input) => classify(name, input).summary, peer);
+        protocol!.peerCompleted(peer, turn);
+        if (turn.outcome === 'cancelled') cancelled = true;
+        continued ||= turn.continued === true;
+      } else {
+        note(`${peerNotice(peer)}\n`);
+        const peerReply = await runHeadlessTurn(runtime, peerPrompt(peer), text => note(text), peer);
+        reply = `${reply ?? ''}\n\n${peerNotice(peer)}\n${peerReply}`;
+      }
+    }
+    for (const notice of runtime.collaboration?.takeNotices() ?? []) {
+      if (structured) recordWarning(structuredWarning('session', 'warn', notice));
+      else note(`collaborate: ${notice}\n`);
     }
   } catch (error) {
     if (structured && interrupted && isInterruptedError(error)) {

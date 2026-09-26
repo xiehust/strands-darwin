@@ -1,3 +1,5 @@
+import type { PeerInput } from './collaboration/protocol.js';
+
 import { MaxTokensError, type AgentStreamEvent, type Message } from '@strands-agents/sdk';
 
 import type { ApprovalMode, AssessedPermissionRequest, PermissionSource } from './agent/permission.js';
@@ -140,6 +142,7 @@ interface Bounded {
  */
 export class StructuredHeadlessWriter {
   private sequence = 0;
+  private peerTurns: Array<{ peer: PeerInput['envelope']; outcome?: string; result?: string; truncated?: boolean }> = [];
   private sessionId: string | null;
 
   constructor(
@@ -179,8 +182,19 @@ export class StructuredHeadlessWriter {
     });
   }
 
-  turnStarted(): void {
-    this.event({ type: 'turn.started' });
+  peerCompleted(peer: PeerInput, turn: StructuredTurnResult): void {
+    const entry = this.peerTurns.find(entry => entry.peer.id === peer.envelope.id);
+    if (!entry) return;
+    entry.outcome = turn.outcome;
+    if (turn.reply !== undefined) {
+      const result = bound(turn.reply, 4000); entry.result = result.value;
+      if (result.truncated) entry.truncated = true;
+    }
+  }
+
+  turnStarted(peer?: PeerInput): void {
+    if (peer && this.peerTurns.length < 8 && !this.peerTurns.some(entry => entry.peer.id === peer.envelope.id)) this.peerTurns.push({ peer: peer.envelope });
+    this.event({ type: 'turn.started', ...(peer === undefined ? {} : { origin: 'peer', peer: peer.envelope }) });
   }
 
   turnFailed(error: unknown): void {
@@ -305,6 +319,7 @@ export class StructuredHeadlessWriter {
   terminal(input: StructuredTerminalInput): void {
     const record = {
       type: 'result',
+      ...(this.peerTurns.length === 0 ? {} : { peerTurns: this.peerTurns }),
       outcome: input.outcome,
       ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
       ...(input.resumed === undefined ? {} : { resumed: input.resumed }),
@@ -440,15 +455,16 @@ export async function runStructuredHeadlessTurn(
   prompt: string,
   writer: StructuredHeadlessWriter,
   onToolStart: (name: string, input: unknown) => string,
+  peer?: PeerInput,
 ): Promise<StructuredTurnResult> {
-  const expanded = await runtime.expandSlashCommand(prompt);
+  const expanded = peer === undefined ? await runtime.expandSlashCommand(prompt) : undefined;
   const input = expanded?.message ?? prompt;
   let continued = false;
   const result = await runWithStreamResumption(
     input,
     async (turnInput) => {
-      writer.turnStarted();
-      return runOneStructuredHeadlessTurn(runtime, turnInput, prompt, writer, onToolStart);
+      writer.turnStarted(peer);
+      return runOneStructuredHeadlessTurn(runtime, turnInput, prompt, writer, onToolStart, peer);
     },
     (error) => {
       continued = true;
@@ -466,6 +482,7 @@ async function runOneStructuredHeadlessTurn(
   userInput: string,
   writer: StructuredHeadlessWriter,
   onToolStart: (name: string, input: unknown) => string,
+  peer?: PeerInput,
 ): Promise<StructuredTurnResult> {
   const answer: string[] = [];
   let completed = false;
@@ -478,7 +495,7 @@ async function runOneStructuredHeadlessTurn(
   // the runtime sets the state before that event reaches this loop (SER-066).
   let announcedWait: RetryWaitState | undefined;
 
-  for await (const event of runtime.send(input, userInput)) {
+  for await (const event of runtime.send(input, userInput, undefined, peer)) {
     switch (event.type) {
       case 'modelMessageEvent':
         appendSafeMessage(event.message, answer, writer, () => ++messageIndex);

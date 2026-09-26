@@ -17,7 +17,7 @@ export function rewindHistoryBoundary(records: readonly TrajectoryRecord[], chec
   const opening = records[index]!;
   // Require a closed eligible exchange in this run; a partial/damaged match is not a boundary.
   for (const record of records.slice(index + 1)) {
-    if (record.type === 'userInput' || record.type === 'taskNotification' || record.type === 'runStarted') break;
+    if (record.type === 'userInput' || record.type === 'peerInput' || record.type === 'taskNotification' || record.type === 'runStarted') break;
     if (record.type === 'turnEnded' && record.turn === opening.turn) {
       return record.stopReason === 'endTurn' || (typeof record.stopReason === 'string' && isRefusalStop(record.stopReason)) ? index : undefined;
     }

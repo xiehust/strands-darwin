@@ -2,16 +2,17 @@ import {
   BUILTIN_COMMAND_DESCRIPTIONS,
   BUILTIN_COMMAND_NAMES,
 } from '../commands/custom-commands.js';
+import { COLLABORATION_GRAMMAR } from '../collaboration/grammar.js';
 import { ESCAPE_REWIND_CHORD_MS } from './rewind-search.js';
 
 /** Hard report bounds: help is transcript history, never an unbounded catalogue dump. */
-export const MAX_HELP_COMMANDS = 26;
+export const MAX_HELP_COMMANDS = 27;
 /**
  * Fixed rows `formatHelpReport()` always emits: the title, the command-section header,
  * the "prompt and completion" block and the "editing and session" block, plus the
  * one-line overflow notice a filled command cap would add.
  */
-export const HELP_FIXED_LINES = 25;
+export const HELP_FIXED_LINES = 25 + COLLABORATION_GRAMMAR.length;
 /**
  * The line cap must cover the worst case — a command inventory that fills
  * `MAX_HELP_COMMANDS` *and* every fixed row — so `slice()` can never silently drop a
@@ -41,6 +42,7 @@ export function formatHelpReport(): string {
 
   lines.push(
     'prompt and completion:',
+    ...COLLABORATION_GRAMMAR.map(grammar => `  collaboration: ${grammar}`),
     '  / opens commands and skills · Up/Down select · Tab/Enter completes the selected row',
     '  @ completes a workspace path · acceptance inserts path text only, never file content',
     '  !<command> runs your shell command locally (not as a model tool call)',

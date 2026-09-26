@@ -283,6 +283,17 @@ per-child cleanup completes before process exit. The permission queue denies pen
 turn cancellation and closes permanently during application shutdown, avoiding a loop left waiting
 for an answer that can no longer arrive.
 
+## Independent local peers are not subagents
+
+SER-104's `peer_discover` and `peer_send` are explicitly excluded by
+`PARENT_ONLY_TOOL_NAMES` before child catalogue capture. A workflow node or subagent cannot
+recursively message another process. `/agents` still means dispatches in this runtime;
+`/list-agents` still projects existing leases. `/collaborate list` is the separate bounded,
+authenticated messaging endpoint projection. Peer sessions have independent histories and gates,
+not child permissions; plan ceilings can only narrow them. See
+[local collaboration](local-collaboration.md) for user-only symmetric project trust, literal
+non-user input, idle delivery, causal caps and the same-UID safety limitation.
+
 ## Deliberate boundaries
 
 The design intentionally does not provide:

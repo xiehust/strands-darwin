@@ -111,6 +111,15 @@ or the offline `darwin list-agents` CLI (no provider configuration needed). This
 read-only discovery, **not communication**; `/agents` still lists in-process subagent
 dispatches. See [inventory scope and limits](docs/user-guide/sessions-and-state.md#find-local-session-processes).
 
+For actual local collaboration, use **`/collaborate list`**, then
+`/collaborate send <endpoint-uuid> <text>`. Same canonical project sessions receive and
+reply automatically at idle. Different projects require one human
+`/collaborate confirm <pending-id> --persist`; the symmetric relationship survives restarts.
+`/collaborate pending|relations|revoke <pair-id>|off` manages it; the standalone
+`darwin collaborate` CLI has the same verbs. Parent models have `peer_discover` and
+`peer_send`, not trust controls. Messages never become user permission or memory quotes.
+[Workflow, limits and privacy](docs/user-guide/sessions-and-state.md#collaborate-with-local-sessions).
+
 ```text
 /                       list commands, skills, and custom commands
 @src/                   complete a workspace path (path text only)

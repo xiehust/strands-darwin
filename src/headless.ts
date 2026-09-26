@@ -1,4 +1,5 @@
 import type { AgentStreamEvent } from '@strands-agents/sdk';
+import type { PeerInput } from './collaboration/protocol.js';
 
 import { classify, type ApprovalMode, type PermissionBridge } from './agent/permission.js';
 import { runWithStreamResumption, STREAM_CONTINUATION_NOTICE } from './agent/stream-resumption.js';
@@ -240,12 +241,13 @@ export async function runHeadlessTurn(
   runtime: HeadlessRuntime,
   prompt: string,
   writeStderr: (text: string) => void,
+  peer?: PeerInput,
 ): Promise<string> {
-  const expanded = await runtime.expandSlashCommand(prompt);
+  const expanded = peer === undefined ? await runtime.expandSlashCommand(prompt) : undefined;
   const input = expanded?.message ?? prompt;
   return runWithStreamResumption(
     input,
-    (turnInput) => runOneHeadlessTurn(runtime, turnInput, prompt, writeStderr),
+    (turnInput) => runOneHeadlessTurn(runtime, turnInput, prompt, writeStderr, peer),
     () => writeStderr(`notice: ${STREAM_CONTINUATION_NOTICE}\n`),
   );
 }
@@ -256,6 +258,7 @@ async function runOneHeadlessTurn(
   input: string,
   userInput: string,
   writeStderr: (text: string) => void,
+  peer?: PeerInput,
 ): Promise<string> {
   const answer: string[] = [];
   let completed = false;
@@ -266,7 +269,7 @@ async function runOneHeadlessTurn(
   // object is unique per decided wait, so identity dedupes it.
   let announcedWait: RetryWaitState | undefined;
 
-  for await (const event of runtime.send(input, userInput)) {
+  for await (const event of runtime.send(input, userInput, undefined, peer)) {
     consumeEvent(event, answer, writeStderr);
     if (event.type === 'afterModelCallEvent' && event.error !== undefined) {
       const wait = pendingRetryWait(runtime);

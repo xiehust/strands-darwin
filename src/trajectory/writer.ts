@@ -19,6 +19,7 @@
  */
 import { open, mkdir, stat, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
+import type { PeerInput } from '../collaboration/protocol.js';
 
 import type { AgentStreamEvent } from '@strands-agents/sdk';
 
@@ -182,11 +183,15 @@ export class TurnRecording {
      * user: the opening record is then a `taskNotification` carrying these fields
      * and `input` as its `text`, and no `userInput` line is written for the turn.
      */
-    origin?: TaskNotificationFields,
+    origin?: TaskNotificationFields | PeerInput,
   ) {
     const { value, trunc } = capField(input, 'text');
     if (origin === undefined) {
       this.recorder.buffer({ turn, type: 'userInput', text: value }, trunc);
+      return;
+    }
+    if ('kind' in origin) {
+      this.recorder.buffer({ turn, type: 'peerInput', text: value, peer: origin.envelope }, trunc);
       return;
     }
     const command = capField(origin.command, 'command');
@@ -584,7 +589,7 @@ export class TrajectoryRecorder {
     input: string,
     spend?: TurnSpendMeter,
     callSpend?: CallSpendProjector,
-    origin?: TaskNotificationFields,
+    origin?: TaskNotificationFields | PeerInput,
   ): TurnRecording | undefined {
     if (!this.active) return undefined;
     this.turns += 1;

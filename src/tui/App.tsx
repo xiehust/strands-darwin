@@ -1,3 +1,6 @@
+import { collaborationCommand } from '../collaboration/command.js';
+import { peerNotice, peerPrompt, type PeerInput } from '../collaboration/protocol.js';
+
 /**
  * The TUI root and its state machine.
  *
@@ -1086,7 +1089,7 @@ export function App({
       text: string,
       userInput = text,
       image?: ImageBlock,
-      origin?: TaskNotificationFields,
+      origin?: TaskNotificationFields | PeerInput,
     ): Promise<boolean> => {
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
@@ -1466,6 +1469,17 @@ export function App({
       }
 
       // One read-only Static notice, also while busy; never a queued model prompt.
+      if (/^\/collaborate(?:\s|$)/.test(text)) {
+        const command = raw.trimStart().slice('/collaborate'.length).trimStart();
+        if (/^send(?:\s|$)/.test(command) && status !== 'idle') {
+          dispatch({ type: 'notice', text: 'Wait for idle before /collaborate send; status/list/pending/relations/confirm/revoke/off remain available.' });
+          return;
+        }
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        try { dispatch({ type: 'notice', text: await collaborationCommand(runtime.collaboration, command) }); }
+        catch (error) { dispatch({ type: 'notice', severity: 'warn', text: `collaborate: ${error instanceof Error ? error.message : 'local operation failed'}` }); }
+        return;
+      }
       if (/^\/list-agents(?:\s|$)/.test(text)) {
         setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
         setSelectedCompletion(0);
@@ -2142,6 +2156,34 @@ export function App({
       setDrainCycle((cycle) => cycle + 1);
     });
   }, [drainCycle, pendingPermission, queued, runtime, setQueued, status, submit]);
+
+  // Peer inbox borrows the existing Static notice surface and idle ownership latch,
+  // never a new live-frame row, editable user draft or background polling timer.
+  const [peerCycle, setPeerCycle] = useState(0);
+  useEffect(() => {
+    const local = runtime.collaboration;
+    if (!local) return;
+    let previous = 0;
+    const changed = () => {
+      for (const text of local.takeNotices()) dispatch({ type: 'notice', text });
+      if (local.pending > previous) dispatch({ type: 'notice', text: `peer queued · ${local.pending}/8; held until idle after user/task queue and permissions. /collaborate off disables collaboration.` });
+      previous = local.pending;
+      setPeerCycle(cycle => cycle + 1);
+    };
+    const unsubscribe = local.subscribe(changed);
+    changed();
+    return unsubscribe;
+  }, [runtime, dispatch]);
+  useEffect(() => {
+    if (draining.current || status !== 'idle' || pendingPermission !== undefined || clearing.current || queuedRef.current.length) return;
+    const peer = runtime.collaboration?.take();
+    if (!peer) return;
+    draining.current = true;
+    dispatch({ type: 'notice', text: peerNotice(peer) });
+    void runTurn(peerPrompt(peer), peerPrompt(peer), undefined, peer).then(completed => {
+      if (!completed) dispatch({ type: 'notice', severity: 'warn', text: `peer message ${peer.envelope.id} failed/cancelled; not re-sent` });
+    }).finally(() => { draining.current = false; setDrainCycle(cycle => cycle + 1); });
+  }, [peerCycle, drainCycle, pendingPermission, queued, runtime, runTurn, status, dispatch]);
 
   /**
    * Answers the pending confirmation and, when the user picked an "always allow"

@@ -928,6 +928,33 @@ in a workspace beyond the project prefix, crowded rows, zero writes, no queued/m
 `/agents` unchanged), both in `pnpm test`; lease/sessions suites pin compatibility and free
 `tui completion` pins canonical discoverability. Listing conveys no messaging authorization.
 
+## Local collaboration — authenticated endpoints, not shared authority
+
+SER-104 adds `peer_discover`/`peer_send` as ordinary parent-only gated tools, and user-only
+`/collaborate` / `darwin collaborate` controls. Same canonical project sessions automatically
+cooperate; one human `confirm <pending-id> --persist` grants a symmetric cross-project pair.
+The private bounded policy is atomic and locked; grant/generation checks at admission and delivery
+fence revocation/re-grant. It is separate from workspace trust and leases. `/list-agents` stays
+byte-zero read-only lease discovery, `/agents` stays in-process dispatches; a separate endpoint
+projection distinguishes messaging-capable sessions and never exposes credentials.
+
+One private POSIX socket and random incarnation belong to each parent runtime. Signed registered
+addresses plus live challenges, not JSON/PID assertions, bind sender/target identity. Literal peer
+text is a `peerInput` turn, never user authority, command expansion, recall/rewind selection or
+memory/cloud user consent. The drivers drain only at idle through the ordinary SDK stream/gate;
+no scheduler, loop fork or stream transaction. TUI uses existing Static notices and idle queue
+ownership; headless closes admission after normal work and drains a finite admitted inbox.
+Cancellation/retirement/shutdown drop pending messages and fence successors. Causal reply budgets
+and the sender's plan ceiling are runtime-owned, not tool arguments; denied work cannot be sent
+onward. Policy/credential controls remain un-ruleable and user-only.
+
+Exact schemas, bounds, threats and the **design-only** versioned node/address/transport seam for a
+possible Hub are in [local-collaboration.md](local-collaboration.md). Same UID is explicitly not a
+malicious-code isolation boundary; there is no remote implementation, data transfer, dependency,
+shared-write lock or processed-delivery guarantee. Checks: `verify-collaboration.ts` and
+`verify-collaboration-drivers.ts` (real processes/files/PTY, offline SDK models), existing lease,
+permissions, trajectory, clear/rewind, headless, task-wake and free completion suites.
+
 ## `darwin doctor` — reports, never refuses; reads, never creates
 
 **The doctor is the startup loaders composed into one report, with exactly one rule changed: a

@@ -95,9 +95,19 @@ export function userModelPricesFile(): string {
   return path.join(userDarwinDir(), 'model-prices.json');
 }
 
+/** Owner-private local IPC, endpoint credentials and symmetric cooperation policy. */
+export function collaborationDir(): string {
+  return path.join(userDarwinDir(), 'collaboration');
+}
+
+export function isCollaborationPath(candidate: string): boolean {
+  return isInside(collaborationDir(), path.resolve(candidate));
+}
+
 /** Files that can change Darwin's own authorization or executable policy. */
 export function sensitiveDarwinPaths(projectRoot: string): string[] {
   return [
+    collaborationDir(),
     path.join(userDarwinDir(), 'config.json'),
     path.join(userDarwinDir(), 'hooks.json'),
     path.join(userAgentsDir(), 'hooks.json'),
@@ -118,7 +128,7 @@ export function isSensitiveDarwinPath(projectRoot: string, candidate: string): b
   const resolved = path.resolve(candidate);
   if (sensitiveDarwinPaths(projectRoot).some((file) => samePath(file, resolved))) return true;
   // Cloud preference approvals and upload authorizations are user-owned policy.
-  if ([path.join(userDarwinDir(), 'agentcore'), path.join(userProjectDir(projectRoot), 'agentcore')].some((directory) => isInside(directory, resolved))) return true;
+  if ([collaborationDir(), path.join(userDarwinDir(), 'agentcore'), path.join(userProjectDir(projectRoot), 'agentcore')].some((directory) => isInside(directory, resolved))) return true;
   return sensitiveHookDirectories(projectRoot).some((directory) => isInside(directory, resolved));
 }
 

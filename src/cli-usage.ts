@@ -22,6 +22,10 @@ export const CLI_USAGE = `Usage: darwin [--resume [<id>]|--session <id>] [--perm
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
        darwin list-agents
+       darwin collaborate [status|list|pending|relations|on|off]
+       darwin collaborate send <endpoint-uuid> <literal text>
+       darwin collaborate confirm <pending-id> --persist
+       darwin collaborate revoke <pair-id>
        darwin permissions test <rule>
        darwin import --from claude-code [--apply]
        darwin doctor

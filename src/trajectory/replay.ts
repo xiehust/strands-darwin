@@ -12,6 +12,7 @@
  * replay makes zero model calls by construction, not by discipline.
  */
 import { contentBlockFromData, type AgentStreamEvent } from '@strands-agents/sdk';
+import { envelopeSchema, peerNotice } from '../collaboration/protocol.js';
 
 import { isRefusalStop } from '../agent/refusal.js';
 import { initialTurnState, turnReducer, type HistoryItem } from '../tui/turn-state.js';
@@ -178,6 +179,13 @@ export function replayRecords(
           output: record.output,
         });
         continue;
+
+      case 'peerInput': {
+        const envelope = envelopeSchema.safeParse(record.peer);
+        if (!envelope.success) { droppedRecords++; continue; }
+        state = turnReducer(state, { type: 'notice', text: peerNotice({ kind: 'peer', envelope: envelope.data, authorization: '' }) });
+        continue;
+      }
 
       case 'taskNotification':
         // A background-task wake (SER-069) replays as the one notice row the live
@@ -384,6 +392,9 @@ export function formatPermissionDecision(reading: PermissionDecisionReading): st
   const rule = reading.rule === undefined ? undefined : clipPart(reading.rule);
   let verdict: string;
   switch (reading.outcome) {
+    case 'peer-policy-denied':
+      verdict = 'denied by peer/policy protection';
+      break;
     case 'write-scope-denied':
       verdict = 'denied by workflow write scope';
       break;
