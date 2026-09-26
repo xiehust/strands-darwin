@@ -16,7 +16,9 @@
 ## Local collaboration
 
 TUI: `/collaborate` defaults to `status`. CLI: `darwin collaborate` uses identical verbs;
-exit 0 means the command returned a report (including a pending send), exit 1 means refusal/error.
+exit 0 means the command returned a report (including a pending send), exit 1 means refusal/error,
+including malformed grammar. No-argument verbs reject extra arguments; all grammar and identifier/text
+bounds are checked before policy mutation, endpoint creation or probes. Send text stays literal.
 No arguments are accepted beyond these forms:
 
 ```text
@@ -26,7 +28,11 @@ confirm <pending-id> --persist
 revoke <pair-id>
 ```
 
-`list` returns `{endpoints, omitted, scanLimited, scope}` (`scanLimited` means an unknown uninspected remainder). Each address is
+`list` returns `{endpoints, omitted, uninspected, scanLimited, scope}`. `omitted` counts scanned
+registrations not returned (invalid/stale, failed challenge, or over probe budget); `uninspected`
+is the subset with valid metadata not challenged because the probe budget was exhausted.
+`scanLimited` means further directory entries were not inspected; their count and liveness are unknown.
+Each address is
 `{version:1, transport:"local", node:<UUID>, endpoint:<UUID>, project:<canonical absolute root>, session:<id>}`.
 The endpoint UUID is the exact send target, never a PID/prefix/display label. A new process/runtime
 gets a new UUID and credential. `peer_discover {}` returns the same safe projection;
@@ -54,17 +60,29 @@ A target verifies the sender's registered full address and signed live socket ch
 JSON or PID. Responses are target-signed and bound to the request nonce/ID. No credential travels
 in a frame. Full frames are capped at 16 KiB, text at 4096 UTF-8 bytes, socket paths at 103 bytes,
 16 simultaneous connections, 1.5 s per frame and 4.5 s absolute inbound lifetime.
-Discovery scans at most 256 directory entries plus one lookahead, probes at most 32 candidates in groups of eight,
-and reports omissions; it neither cleans stale entries nor starts model work.
+Discovery scans at most 256 directory entries plus one lookahead. It rejects invalid/private-file
+metadata and missing/unsafe/non-socket paths before spending the 32 live-challenge slots (groups of
+eight, at most six seconds of probe waits). Registrations rejected by those cheap checks do not consume
+slots. The scan remains bounded, so a larger inventory may still be incomplete; it neither cleans
+entries nor starts model work.
 
 Inbox: eight, 16 admissions/minute, 60 s TTL. Dedup: at most 256 IDs, retained through message expiry.
 Causal ledger: at most 256 five-minute chains, two admissions/endpoint/chain, four reply hops,
 one send/peer turn or four/human turn. No model-supplied fresh chains. Authorization generation is
 checked at admission, dequeue and immediately before SDK invocation; revocation/re-grant cannot
 revive previously queued text. `Queued` is not a processing receipt; no durable queue or automatic
-replay on ambiguous acknowledgement. Headless closes admission after its normal turn and drains
-at most eight admitted messages; streaming JSON adds `origin:"peer"` and `peer` on `turn.started`,
-final JSON adds `peerTurns` (at most eight, peer reply text capped at 4000 code points with `truncated`).
+replay on ambiguous acknowledgement. A final failed TUI human/peer turn retires its endpoint and drops
+queued peers with a notice before idle. Only explicit user `/collaborate on` reopens that session's
+admission; project grants are unchanged. The one exact stream-interruption continuation keeps its
+inbox until recovery succeeds or finally fails. Cancellation/clear/rewind retain their existing fences.
+Headless closes admission after its normal turn and drains at most eight admitted messages, stopping
+on failure. Streaming JSON adds `origin:"peer"` and `peer` on `turn.started`; final JSON adds `peerTurns`
+(at most eight begun peers, reply text capped at 4000 code points with `truncated`). A failed begun peer
+has `outcome:"failure"` and `error:{stage,name,message,cause?,truncated?}`; error strings use the existing
+8000-code-point structured field cap. Stream JSON also emits the attributed `turn.failed` with the
+same peer, outcome and error. The completed initial human reply remains in `result` even when a later
+peer fails (overall `outcome:"failure"`, exit 1); text output also retains that reply. Queued but unstarted
+peers have no outcome entry; dropped-message notices report their omission.
 `peerInput` trajectory records contain `{text,peer:<envelope>}`, never `userInput`, policy tokens,
 recall/rewind entries or memory/cloud user quotes. See [workflow and safety limits](sessions-and-state.md#collaborate-with-local-sessions).
 

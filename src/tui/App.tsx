@@ -1164,6 +1164,14 @@ export function App({
         // retry loops start, so the queue is returned to the editor below.
         lifecycleOutcome = turnAborted.current ? 'cancelled' : 'failure';
         turnAborted.current = true;
+        // Only final failure reaches here: the exact stream continuation above
+        // keeps its inbox. Fence admission before idle can drain another peer.
+        if (lifecycleOutcome === 'failure') {
+          const local = runtime.collaboration;
+          const wasAvailable = local?.address !== undefined || (local?.pending ?? 0) > 0;
+          local?.close('turn failed');
+          if (wasAvailable) dispatch({ type: 'notice', severity: 'warn', text: 'Collaboration paused after turn failure; queued peers dropped. User: /collaborate on to publish a fresh endpoint. Project grants unchanged.' });
+        }
         // A throttled turn names how retry ended — the cap (`after N attempts`) or a
         // wait Esc cut short — from the runtime's own outcome, never the message text.
         dispatch({

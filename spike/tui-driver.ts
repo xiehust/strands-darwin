@@ -114,7 +114,7 @@ export interface TuiSession {
 
 export interface TuiOptions {
   cwd: string;
-  /** TypeScript entry point; defaults to the production CLI. */
+  /** TypeScript or compiled JavaScript entry point; defaults to the production CLI. */
   entry?: string;
   args?: string[];
   cols?: number;
@@ -127,7 +127,7 @@ export interface TuiOptions {
 
 export function startTui(options: TuiOptions): TuiSession {
   const child: IPty = spawn(
-    path.join(REPO_ROOT, 'node_modules/.bin/tsx'),
+    options.entry?.endsWith('.js') ? process.execPath : path.join(REPO_ROOT, 'node_modules/.bin/tsx'),
     [options.entry ?? path.join(REPO_ROOT, 'src/cli.ts'), ...(options.args ?? [])],
     {
       name: 'xterm-256color',

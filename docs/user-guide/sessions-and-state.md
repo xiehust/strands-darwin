@@ -39,7 +39,10 @@ from the messaging-capable endpoint's address, then send:
 Same canonical project roots (resolved real paths, not display labels or Git repository names)
 cooperate automatically in both directions. No separate receive approval is required. The parent
 model can use `peer_discover {}` and `peer_send {target, text}` to reply. Discovery alone never
-starts work. Coordinate writes yourself; this is not a shared-filesystem lock or task scheduler.
+starts work. Discovery rejects invalid registrations and missing/unsafe socket paths before spending
+its live-challenge budget, so those crash remnants cannot hide later live sessions within the bounded
+scan. Omissions and unchallenged candidates are reported; stale files are not deleted. Coordinate
+writes yourself; this is not a shared-filesystem lock or task scheduler.
 
 For different projects, the send is **not queued** until a human confirms. The refusal and
 `/collaborate pending` show both canonical project identities, an expiring request ID, and the
@@ -59,6 +62,10 @@ after confirmation. Pending requests expire after ten minutes. Revocation cancel
 for that pair and invalidates both queued and future deliveries; off persists for this HOME and
 invalidates every queued message. On publishes a new endpoint in the current TUI. After Esc/cancel,
 use `/collaborate on` to publish a fresh endpoint; old addresses never name its successor.
+A final failed human or peer turn also closes the current endpoint and visibly drops queued peers.
+No automatic peer message resumes that failed conversation, and an ordinary human prompt does not
+reopen admission. Use `/collaborate on` explicitly when ready; durable project grants are unchanged.
+The exact one-time stream-interruption continuation is allowed to finish before this failure fence.
 
 The standalone `darwin collaborate` CLI has the same verbs (omit the slash). It can confirm a
 pending request while a TUI is blocked on a tool. Do **not** use `-p "/collaborate confirm …"`:
@@ -67,7 +74,10 @@ CLI `send` is a one-shot sender, not a receiver awaiting replies. For back-and-f
 live TUI sessions. Headless sessions receive while their normal run is active; once that run ends,
 admission closes and at most eight already-admitted messages drain before exit. They never idle
 as daemons. Stream JSON labels peer turns; final JSON retains the user result plus bounded
-`peerTurns` results/provenance. Text output labels peer replies separately.
+`peerTurns` results/provenance. Text output labels peer replies separately. A failed peer stops the
+drain and drops the remaining inbox; its begun `peerTurns` entry has an explicit failure and bounded
+error, with an attributed `turn.failed` event in stream-json. The completed human reply stays visible
+in all formats even though the run fails with exit 1. Merely queued messages are not processed results.
 
 The receiver sees literal text and the sender's canonical project/session/endpoint, not files or
 history. `/`, `!`, `@` and framing-like text are data, never commands. Peer turns run only at idle,

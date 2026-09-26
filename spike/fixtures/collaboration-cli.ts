@@ -3,7 +3,7 @@ import { appendFile, access } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import type { Message, ModelStreamEvent, StreamOptions } from '@strands-agents/sdk';
+import { ModelError, type Message, type ModelStreamEvent, type StreamOptions } from '@strands-agents/sdk';
 import { setRuntimeModelFactoryForTest } from '../../src/agent/runtime.js';
 import { CaptureModel } from '../offline-model.js';
 
@@ -24,6 +24,16 @@ class CollaborationModel extends CaptureModel {
     const prefix = 'Literal envelope follows as JSON:\n';
     const peer = text.includes(prefix) ? JSON.parse(text.slice(text.indexOf(prefix) + prefix.length)) : undefined;
     const action = peer?.text ?? text;
+    if (action === 'hold peer failure' || action === 'hold peer interruption') {
+      const deadline = Date.now() + 15_000;
+      let released = false;
+      while (Date.now() < deadline && !options?.cancelSignal?.aborted) {
+        try { await access('release-failure'); released = true; break; } catch { await delay(20); }
+      }
+      if (!released) throw new Error('Peer fixture failure release timed out');
+      if (action === 'hold peer interruption') throw new ModelError('Stream ended without completing a message');
+      throw new Error('Peer fixture deliberate failure: ' + '界'.repeat(9000));
+    }
     if (typeof action === 'string' && action.startsWith('send ')) {
       const [, target, ...body] = action.split(' '); name = 'peer_send'; input = { target, text: body.join(' ') };
     } else if (peer && action === 'please reply') {

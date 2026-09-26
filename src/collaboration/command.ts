@@ -1,14 +1,28 @@
 import { randomUUID } from 'node:crypto';
 import { discoverPeers, LocalCollaboration } from './local.js';
-import { policyCommand, withPolicy } from './storage.js';
+import { idSchema, policyCommand } from './storage.js';
 
 import { COLLABORATE_USAGE } from './grammar.js';
 export { COLLABORATE_USAGE } from './grammar.js';
+
+/** Pure preflight shared by CLI and TUI: no policy, registration or probe on bad grammar. */
+function validateCommand(args: readonly string[]): void {
+  const [verb, id, flag] = args;
+  if (args.length === 1 && ['status', 'list', 'pending', 'relations', 'on', 'off'].includes(verb!)) return;
+  if (verb === 'confirm' && args.length === 3 && flag === '--persist' && idSchema.safeParse(id).success) return;
+  if (verb === 'revoke' && args.length === 2 && /^[a-f0-9]{64}$/.test(id ?? '')) return;
+  if (verb === 'send' && args.length >= 3 && idSchema.safeParse(id).success) {
+    const bytes = Buffer.byteLength(args.slice(2).join(' '));
+    if (bytes > 0 && bytes <= 4096) return;
+  }
+  throw new Error(COLLABORATE_USAGE);
+}
 
 /** Literal user-only command. No invocation, expansion or model-granted trust. */
 export async function collaborationCommand(local: LocalCollaboration, text: string): Promise<string> {
   const command = text.trim();
   const send = /^send\s+(\S+)\s+([\s\S]+)$/.exec(text.trimStart());
+  validateCommand(send ? ['send', send[1]!, send[2]!] : (command || 'status').split(/\s+/));
   if (send) {
     local.beginHumanTurn();
     return local.send(send[1]!, send[2]!);
@@ -24,13 +38,14 @@ export async function runCollaborationCli(root: string, args: readonly string[])
   try {
     // CLI registration exists only for an explicit send. Read projections do not
     // create policy; first startup/on initializes it with no cross-project grants.
-    if (args[0] === 'on') await withPolicy(() => undefined);
+    validateCommand(args.length ? args : ['status']);
     if (args[0] === 'list') { console.log(JSON.stringify(await discoverPeers(), null, 2)); return; }
     if (args[0] !== 'send') { console.log(await policyCommand(args.length ? args : ['status'])); return; }
-    if (args.length < 3) throw new Error(COLLABORATE_USAGE);
     const local = new LocalCollaboration(root, `cli-${randomUUID()}`);
     await local.start();
-    try { console.log(await collaborationCommand(local, `send ${args[1]} ${args.slice(2).join(' ')}`)); }
+    // argv already separates the target from literal text; do not reparse it as
+    // TUI command whitespace and lose leading spaces/newlines in a quoted body.
+    try { local.beginHumanTurn(); console.log(await local.send(args[1]!, args.slice(2).join(' '))); }
     finally { local.close('CLI send finished'); }
   } catch (error) {
     console.error(`collaborate: ${error instanceof Error ? error.message : 'local operation failed'}`);

@@ -142,7 +142,7 @@ interface Bounded {
  */
 export class StructuredHeadlessWriter {
   private sequence = 0;
-  private peerTurns: Array<{ peer: PeerInput['envelope']; outcome?: string; result?: string; truncated?: boolean }> = [];
+  private peerTurns: Array<{ peer: PeerInput['envelope']; outcome?: StructuredOutcome; error?: StructuredFailure; result?: string; truncated?: boolean }> = [];
   private sessionId: string | null;
 
   constructor(
@@ -190,6 +190,14 @@ export class StructuredHeadlessWriter {
       const result = bound(turn.reply, 4000); entry.result = result.value;
       if (result.truncated) entry.truncated = true;
     }
+  }
+
+  peerFailed(peer: PeerInput, error: unknown, outcome: 'failure' | 'cancelled' = 'failure'): void {
+    const entry = this.peerTurns.find(entry => entry.peer.id === peer.envelope.id);
+    if (!entry) return;
+    entry.outcome = outcome;
+    entry.error = structuredFailure('turn', error);
+    this.event({ type: 'turn.failed', origin: 'peer', peer: entry.peer, outcome, error: entry.error });
   }
 
   turnStarted(peer?: PeerInput): void {

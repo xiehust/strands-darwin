@@ -14,6 +14,9 @@ Implementation design and requirement-to-test checklist. Host owns acceptance an
 | Peer provenance is not user input, recall, rewind, memory quote or cloud consent; slash/shell/at/framing stay literal | `verify-collaboration-drivers.ts`: captured model requests, trajectory/replay/recall/catalogue, memory refusal |
 | Idle-only TUI delivery, busy/permission ownership, cancellation/successor fencing; headless bounded drain and honest structured events | `verify-collaboration-drivers.ts`: real PTY and normal headless driver, lifecycle negatives |
 | Existing leases, `/agents`, task wakes and plain streaming unchanged; canonical help/completion and source/built CLI work | Existing affected suites, free completion, new CLI tests against source and build |
+| Final human/peer failure cannot silently drain another peer; explicit user on restores admission without changing grants; exact interruption still continues once | `verify-collaboration-failures.ts`: original 30-second human hold timeout and throwing peer model in real PTYs, queued marker absent from captured requests, endpoint retired, restart and continuation controls |
+| Stale prefix cannot spend challenge budget; grammar fails before any state/probe/model work | `verify-collaboration-failures.ts`: 40 endpoints in actual directory order, first 32 retired registrations restored, 8 live found by API and CLI; absent/existing state hashes, socket sentinel and offline model-call log |
+| Every begun failed headless peer has bounded outcome/error provenance; initial human result survives; later peers never drain | `verify-collaboration-failures.ts`: throwing offline model in text/json/stream-json, exact request counts, final peer outcome/error and stream event, unstarted peer excluded, successful single-continuation controls |
 
 ## Design
 
@@ -38,6 +41,16 @@ to publish a fresh endpoint. A generation fence also rejects a startup supersede
 or overlapping user `on` commands, so it cannot publish an orphan endpoint. No pending text is
 reinterpreted as a successor's user input.
 
+Final TUI turn failure closes the local endpoint before publishing idle and visibly drops the peer
+inbox, regardless of whether the failed turn was human or peer. A normal human prompt cannot reopen
+admission; explicit user `on` publishes a new incarnation without changing project-pair grants.
+This is outside `runWithStreamResumption`, so the one exact interruption continuation retains its
+inbox until its final outcome. Cancellation and successor semantics remain unchanged. Headless also
+closes/drops on failure and stops the drain. Begun failed peers gain a bounded structured error and
+failure outcome (plus attributed `turn.failed` in stream-json); unstarted peers are not claimed as
+processed. A completed human reply survives subsequent peer failure in every output format, while
+the run still reports failure and exits 1. No new driver loop or output transaction is introduced.
+
 ### Trust and IPC
 
 [The user reference](../user-guide/reference.md#local-collaboration) specifies exact grammar,
@@ -56,6 +69,15 @@ identity is checked against its private registration and a fresh signed socket c
 a valid frame is deduplicated through its lifetime. The UUID is a process incarnation, not a PID:
 a stale PID or replaced socket cannot sign the required response. There is no durable inbox or
 processed receipt. Unknown outcome after network failure is explicitly ambiguous, never retried.
+
+Discovery validates bounded private registration metadata and socket type/ownership/existence during
+the existing 256-entry scan, before reserving one of 32 expensive challenge slots. Missing, invalid or
+non-socket remnants do not hide later live candidates. Metadata-valid but dead sockets can still cost
+a probe; there is no unbounded search or janitor. `omitted` counts scanned registrations not returned,
+`uninspected` is its metadata-valid but unchallenged subset, and `scanLimited` states that the further
+remainder is unknown. CLI/TUI share pure grammar preflight before policy mutation, registration or
+probe; no-argument verbs are strict. Malformed CLI grammar, like other refusals, exits 1; a returned
+report (including a send awaiting human confirmation) exits 0. Send text remains literal.
 
 ### Authority and bounded automation
 
@@ -95,6 +117,26 @@ remote address/transport, authenticated node ownership, remote trust scope, tran
 expiry/receipt semantics and matching abuse limits. None are implemented here: no Hub server,
 remote listener, cloud storage, remote authentication infrastructure, dependencies or speculative
 routing/scheduler framework. The current schema rejects any transport other than `local`.
+
+## Focused Host correction
+
+Host's independent edge-case acceptance of `eb010f2` found final TUI failure draining queued peer
+work, stale registration filenames exhausting discovery before validation, late CLI grammar refusal,
+and missing structured peer-failure outcomes. The corrections above are limited to those paths.
+`verify-collaboration-failures.ts` is in the fast runner and supports source and compiled execution;
+optional `discovery`, `tui`, or `headless` selects one section for diagnosis. Compiled PTY entries run
+with Node rather than looking for a second dependency installation under `dist/`.
+
+The first focused run passed discovery/grammar, both real TUI failure controls, interruption recovery
+and text headless controls, then stopped on a new test expecting `Error` instead of the SDK-observed
+`ModelError`. The assertion was corrected to the actual SDK error class; production error text and
+class are not rewritten. Focused headless/discovery sections, the existing collaboration transport
+and driver suites, and `pnpm typecheck` then passed. With source settled, the complete `pnpm test`
+(including all new regression sections), free `verify-tui.ts completion`, and `git diff --check`
+passed together on 2026-09-26 (worker task `bg-957506fd-a546-416c-a028-1c21006da3a5`).
+Post-commit `pnpm build` and compiled collaboration/regression suites remain the final worker step;
+the worker report records their actual outcome, not this pre-build source record.
+Host retains independent acceptance and the research/log state.
 
 ## Verification record
 

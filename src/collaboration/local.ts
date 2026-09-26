@@ -77,29 +77,37 @@ async function probe(record: Registration): Promise<void> {
 }
 
 /** Bounded metadata-only endpoint projection, separate from immutable lease discovery. */
-export async function discoverPeers(): Promise<{ endpoints: PeerAddress[]; omitted: number; scanLimited: boolean; scope: string }> {
+export async function discoverPeers(): Promise<{ endpoints: PeerAddress[]; omitted: number; uninspected: number; scanLimited: boolean; scope: string }> {
   const dir = opendirSync(checkStore());
-  const names: string[] = [];
+  const candidates: Registration[] = [];
   let omitted = 0;
+  let uninspected = 0;
   let scanLimited = false;
   try {
     for (let n = 0; n < 256; n++) {
       const entry = dir.readSync();
       if (!entry) break;
-      if (/^[a-f0-9-]{36}\.json$/.test(entry.name)) names.push(entry.name.slice(0, -5));
+      if (/^[a-f0-9-]{36}\.json$/.test(entry.name)) {
+        try {
+          // Cheap private metadata/socket checks precede the expensive challenge
+          // budget. Crash remnants must not hide current live endpoints.
+          const record = registration(entry.name.slice(0, -5));
+          if (candidates.length < 32) candidates.push(record);
+          else { omitted++; uninspected++; }
+        } catch { omitted++; }
+      }
       if (n === 255) scanLimited = dir.readSync() !== null;
     }
   } finally { dir.closeSync(); }
   const endpoints: PeerAddress[] = [];
   // Eight probes at a time, at most 32 endpoints / six seconds. Never reads history.
-  omitted += Math.max(0, names.length - 32);
-  for (let start = 0; start < Math.min(names.length, 32); start += 8) {
-    await Promise.all(names.slice(start, Math.min(start + 8, 32)).map(async id => {
-      try { const record = registration(id); await probe(record); endpoints.push(record.address); }
+  for (let start = 0; start < candidates.length; start += 8) {
+    await Promise.all(candidates.slice(start, start + 8).map(async record => {
+      try { await probe(record); endpoints.push(record.address); }
       catch { omitted++; }
     }));
   }
-  return { endpoints: endpoints.sort((a, b) => a.endpoint.localeCompare(b.endpoint)), omitted, scanLimited, scope: 'Messaging-capable local endpoints only. /list-agents separately lists leases; a lease without an endpoint (including older Darwin) cannot receive messages. Discovery starts no model work.' };
+  return { endpoints: endpoints.sort((a, b) => a.endpoint.localeCompare(b.endpoint)), omitted, uninspected, scanLimited, scope: 'Messaging-capable local endpoints only. Omitted counts scanned registrations not returned; uninspected counts metadata-valid candidates not challenged. scanLimited means further directory entries were not inspected (count unknown). /list-agents separately lists leases; a lease without an endpoint (including older Darwin) cannot receive messages. Discovery starts no model work.' };
 }
 
 /** One parent session, never a daemon or SDK loop. Only drivers drain the inbox. */

@@ -17,7 +17,9 @@
 ## 本地协作
 
 TUI `/collaborate` 默认为 `status`；CLI `darwin collaborate` 使用相同子命令。
-退出码 0 表示已返回报告（包括等待确认的发送），1 表示拒绝或错误。仅接受以下语法：
+退出码 0 表示已返回报告（包括等待确认的发送），1 表示拒绝或错误，语法错误也返回 1。
+无参数子命令拒绝多余参数；修改策略、创建端点或发起探测前，先校验完整语法、标识和文本长度。
+send 的文本保持字面内容。仅接受以下语法：
 
 ```text
 status | list | pending | relations | on | off
@@ -26,7 +28,9 @@ confirm <pending-id> --persist
 revoke <pair-id>
 ```
 
-`list` 返回 `{endpoints, omitted, scanLimited, scope}`；`scanLimited` 表示还有数量未知的未检查项。地址为
+`list` 返回 `{endpoints, omitted, uninspected, scanLimited, scope}`。`omitted` 统计已扫描但未返回的
+注册项（无效或过期、挑战失败、超过探测预算）；`uninspected` 是其中元数据有效、但因预算耗尽而未挑战的数量。
+`scanLimited` 表示还有未扫描的目录项，其数量和存活状态均未知。地址为
 `{version:1, transport:"local", node:<UUID>, endpoint:<UUID>, project:<规范绝对根路径>, session:<id>}`。
 发送必须使用完整 endpoint UUID，不能用 PID、前缀或显示名称；每个新进程/runtime 都有新的 UUID 和凭证。
 主模型的 `peer_discover {}` 返回相同安全投影；`peer_send {target:<UUID>,text:<string>}`
@@ -52,14 +56,24 @@ v1 消息 envelope 为
 回复由目标签名，并绑定 nonce/消息 ID；帧不携带凭证。
 完整帧上限 16 KiB，文本 4096 UTF-8 字节，socket 路径 103 字节；同时最多 16 个连接，
 每帧 1.5 秒超时，入站连接绝对期限 4.5 秒。
-发现最多扫描 256 个目录项，另读一个判断是否有遗漏；检查 32 个候选，每批八个，明确报告省略；不清理文件或启动模型。
+发现最多扫描 256 个目录项，另读一个判断是否有遗漏。先排除元数据无效、文件不安全、socket 缺失或
+路径不是安全 socket 的注册项，再使用最多 32 个实时挑战名额，每批八个，探测等待合计最多六秒。
+被这些低成本检查排除的残留不占挑战名额；扫描仍有上限，较大的清单可能不完整。发现不会清理文件或启动模型。
 
 收件箱八条，每分钟接收十六条，60 秒过期。去重最多 256 个消息 ID，保留至消息过期。
 因果链最多 256 条、五分钟有效、每端点每链接收两次、回复四跳；peer 回合发一条，用户回合发四条。
 模型不能提供新 chain。入队、出队、SDK 调用前都检查授权代次；撤销后重新确认不能恢复旧队列。
 `Queued` 不等于处理完成；没有持久收件箱或确认丢失后的自动重发。
-无头主回合结束后关闭入口，最多处理已入队的八条。stream-json 的 `turn.started` 新增
-`origin:"peer"` 和 `peer`；最终 JSON 新增 `peerTurns`，最多八项，回复文本最多 4000 个码点，截断有标记。
+TUI 中用户或 peer 回合最终失败时，会在返回空闲前退役端点、丢弃排队 peer 并提示；只有用户显式执行
+`/collaborate on` 才重新开放该会话入口，项目间授权不变。精确匹配的流中断仍只续接一次，在续接成功或最终
+失败前保留收件箱。取消、clear、rewind 的原有隔离行为不变。
+无头主回合结束后关闭入口，最多处理已入队的八条；失败后停止处理后续 peer。stream-json 的 `turn.started`
+新增 `origin:"peer"` 和 `peer`；最终 JSON 新增 `peerTurns`，只包含已开始处理的 peer，最多八项，回复文本
+最多 4000 个码点，截断有标记。失败项明确带有 `outcome:"failure"` 和
+`error:{stage,name,message,cause?,truncated?}`，错误字符串沿用结构化字段的 8000 码点上限。
+stream-json 还输出带相同 peer、outcome、error 的 `turn.failed`。后续 peer 失败不会抹去已完成的用户回复：
+JSON 的 `result` 和 text 输出均保留它，但整体仍为 `outcome:"failure"`、退出码 1。
+只入队而尚未开始的 peer 不生成结果项；丢弃通知报告这些遗漏。
 轨迹 `peerInput` 记录 `{text,peer:<envelope>}`，不生成 `userInput`、授权 token、回看/rewind 条目，
 不能作为记忆或云端同意的用户引文。见[流程与安全限制](sessions-and-state.zh-CN.md#本机会话协作)。
 

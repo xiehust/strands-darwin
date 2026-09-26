@@ -135,6 +135,7 @@ export async function runHeadlessProcess(
   let failed = false;
   let turnStarted = false;
   let continued = false;
+  let peerWorkStarted = false;
   let unsubscribeSubagentProgress: (() => void) | undefined;
 
   let turnFailure: unknown;
@@ -302,22 +303,25 @@ export async function runHeadlessProcess(
       const peer = runtime.collaboration?.take();
       if (!peer) break;
       runtime.observeTurnComplete('success', 'headless');
+      peerWorkStarted = true;
       if (structured) {
-        const turn = await runStructuredHeadlessTurn(runtime, peerPrompt(peer), protocol!, (name, input) => classify(name, input).summary, peer);
-        protocol!.peerCompleted(peer, turn);
-        if (turn.outcome === 'cancelled') cancelled = true;
-        continued ||= turn.continued === true;
+        try {
+          const turn = await runStructuredHeadlessTurn(runtime, peerPrompt(peer), protocol!, (name, input) => classify(name, input).summary, peer);
+          protocol!.peerCompleted(peer, turn);
+          if (turn.outcome === 'cancelled') cancelled = true;
+          continued ||= turn.continued === true;
+        } catch (error) {
+          protocol!.peerFailed(peer, error, interrupted && isInterruptedError(error) ? 'cancelled' : 'failure');
+          throw error;
+        }
       } else {
         note(`${peerNotice(peer)}\n`);
         const peerReply = await runHeadlessTurn(runtime, peerPrompt(peer), text => note(text), peer);
         reply = `${reply ?? ''}\n\n${peerNotice(peer)}\n${peerReply}`;
       }
     }
-    for (const notice of runtime.collaboration?.takeNotices() ?? []) {
-      if (structured) recordWarning(structuredWarning('session', 'warn', notice));
-      else note(`collaborate: ${notice}\n`);
-    }
   } catch (error) {
+    runtime?.collaboration?.close('turn failed');
     if (structured && interrupted && isInterruptedError(error)) {
       cancelled = true;
     } else {
@@ -341,6 +345,13 @@ export async function runHeadlessProcess(
       }
     }
   } finally {
+    for (const notice of runtime?.collaboration?.takeNotices() ?? []) {
+      if (structured) recordWarning(structuredWarning('session', 'warn', notice));
+      else note(`collaborate: ${notice}\n`);
+    }
+    // A later peer failure cannot erase the already completed human reply. Do
+    // not mark a failed run resumable or turn the failure into overall success.
+    if (!structured && failed && peerWorkStarted && reply !== undefined) target.stdout.write(`${reply}\n`);
     unsubscribeSubagentProgress?.();
     unsubscribeSubagentProgress = undefined;
     if (runtime !== undefined && turnStarted) {
@@ -492,7 +503,7 @@ export async function runHeadlessProcess(
           permissionMode: runtime.info.permissionMode,
           resumed: runtime.info.resumed,
         }),
-        ...(outcome === 'success' && reply !== undefined ? { result: reply } : {}),
+        ...((outcome === 'success' || peerWorkStarted) && reply !== undefined ? { result: reply } : {}),
         ...(usage === undefined ? {} : { usage }),
         ...(childUsage === undefined ? {} : { childUsage }),
         ...(totalUsage === undefined ? {} : { totalUsage }),

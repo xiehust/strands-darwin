@@ -944,6 +944,13 @@ text is a `peerInput` turn, never user authority, command expansion, recall/rewi
 memory/cloud user consent. The drivers drain only at idle through the ordinary SDK stream/gate;
 no scheduler, loop fork or stream transaction. TUI uses existing Static notices and idle queue
 ownership; headless closes admission after normal work and drains a finite admitted inbox.
+Final TUI human/peer failure retires the endpoint and visibly drops the inbox before idle; explicit
+user `on` is required to reopen admission, with project grants unchanged. The one exact interrupted
+stream continuation keeps its inbox until final outcome. Headless stops on peer failure, records a
+bounded per-peer error/outcome and preserves the completed human reply even in a failed final result.
+Discovery rejects invalid metadata and missing/unsafe/non-socket paths within its 256-entry scan
+before spending its 32 challenge slots; omitted/uninspected/scan-limited facts remain explicit, never
+cleanup. Shared CLI/TUI grammar preflight rejects malformed arguments before state/probe work.
 Cancellation/retirement/shutdown drop pending messages and fence successors. Causal reply budgets
 and the sender's plan ceiling are runtime-owned, not tool arguments; denied work cannot be sent
 onward. Policy/credential controls remain un-ruleable and user-only.
@@ -952,7 +959,8 @@ Exact schemas, bounds, threats and the **design-only** versioned node/address/tr
 possible Hub are in [local-collaboration.md](local-collaboration.md). Same UID is explicitly not a
 malicious-code isolation boundary; there is no remote implementation, data transfer, dependency,
 shared-write lock or processed-delivery guarantee. Checks: `verify-collaboration.ts` and
-`verify-collaboration-drivers.ts` (real processes/files/PTY, offline SDK models), existing lease,
+`verify-collaboration-drivers.ts` plus `verify-collaboration-failures.ts` (real processes/files/PTY,
+offline SDK models, also compiled regression coverage), existing lease,
 permissions, trajectory, clear/rewind, headless, task-wake and free completion suites.
 
 ## `darwin doctor` — reports, never refuses; reads, never creates
