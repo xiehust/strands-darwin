@@ -22,3 +22,44 @@ Accepted commit `3ec0da4f139793dd3477d3100a03ee52b3c11dee` (`feat(review): suppo
 
 Implement an explicit `/review --commit <40-hex-SHA>` target; retain exact legacy `/review` and `/review <focus>` prompt bytes and parsing behavior except malformed `--commit` invocations, which must give local usage without a model turn. A valid invocation should produce a fixed review-only prompt naming the exact SHA, guiding inspection of the target commit diff against its parent (root commits against empty tree), surrounding code and relevant tests; unsupported/missing git objects must be reported rather than fabricated. No shell interpolation, hidden git execution or new reviewer executor at parse time; ordinary SDK invocation, gate, prompt queue, literal input trajectory and no-edit guidance stay intact. Explicit SHA avoids rev/flag injection and moving refs. Document grammar in README and user guide/reference EN/zh-CN and rationale in architecture only if changed. Extend review tests across parser, runtime/headless, TUI/REPL, invalid local path and permission behavior; run typecheck, test, free TUI completion and build. Host owns report/backlog/iteration log, child owns implementation/docs and may commit them. No score exception or product decision needed.
 
+
+## SER-103 — List local Darwin session processes with a read-only `/list-agents` projection of existing leases
+
+- Status: `not-started`
+- Priority: 142
+- Score: 14
+- Importance: 5
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-09-26.md`](../research_2026-09-26.md) (run `05:11:10Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Source: Claude Code cross-session messaging `/list-agents` (report S1); Darwin `src/agent/session.ts` lease ownership, `src/paths.ts:userProjectSessionsDir`, `src/agents/dispatch-registry.ts` in-memory registry, decisions doc §§ Session lease / Subagents. Acceptance: offline real-process fixture lists live leases from two project keys including a session without a snapshot; dead, foreign-host, malformed, oversized and symlinked entries cannot masquerade as local sessions; missing/unreadable state and scan/output caps explicit; immutable state hashes; no model/network/config/permission work; real TUI idle/busy command and completion, full gates and build.
+
+### Notes / blockers / abandonment reason
+
+User explicitly requested `/list-agents` to see local Darwin processes. Implement a bounded read-only user command across the current user's existing `~/.darwin/sessions/<project-key>/<session-id>/lease.json` state, reusing lease liveness semantics without creating a second registry or changing leases. Show PID, session ID, project key (not a falsely reconstructed cwd), start time and current process marker. Describe scope honestly as live local session lease holders in this HOME, not all OS processes: older/non-registering processes, other users/homes/hosts and SDK subagents without a separate process are outside it; PID liveness is not authenticated process identity. Add `darwin list-agents` local CLI sibling for scripting and headless no-model inspection. `/agents` and `darwin sessions` retain their existing meanings. No messaging, socket, signals other than signal 0, launch/cancel, transcript reads, background polling, model tool or SDK-loop change. Centralize paths; sanitize terminal data; fail closed on unsafe entries and state omissions. EN/zh-CN README/task guide/reference and architecture explanation required; AGENTS.md is already at the byte cap, do not grow it. This is the prerequisite for SER-104, not an implicit messaging authorization.
+
+## SER-104 — Add explicitly authorized local cross-session text messaging without sharing permissions or conversations
+
+- Status: `not-started`
+- Priority: 143
+- Score: 9
+- Importance: 5
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 5
+- Risk: 5
+- Origin report: [`research_2026-09-26.md`](../research_2026-09-26.md) (run `05:11:10Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Source: Claude Code cross-session messaging S1 documents local sockets, independent `ListAgents`/`SendMessage`, receiving-session permission checks and accept/hold/refuse controls. Darwin decisions doc §§ Permissions, Direct driver streaming, The prompt queue, Session trajectory, Subagents define the constraints. SER-103 supplies human discoverability only, not an authenticated endpoint.
+
+### Notes / blockers / abandonment reason
+
+Depends on accepted SER-103. Before implementation, user must choose recipient authorization and scope: recommended explicit session-local opt-in, same canonical project by default, incoming text held for user acceptance before any model turn, no automatic replies; cross-project communication only if separately authorized. Alternative unattended peer collaboration requires explicit auto-delivery/turn-budget/loop policy and headless behavior. The request establishes interest in communication but does not resolve these cost and cross-session authorization choices. Do not infer that same OS user, process visibility, yolo mode or sender approval authorizes the recipient. Once decided, design bounded local transport and authenticated process/session identity, send/receive provenance, literal text (no slash/`!`/`@` expansion), recipient's ordinary tool gate, no prompt/approval/config mutation, no delegated permission bypass, no sender history/files, next-idle-turn delivery only, cancellation/shutdown/clear/rewind and replay evidence. No cloud, arbitrary host access, shared filesystem write scheduling, autonomous swarm or replacement SDK loop. Independent acceptance must use two real processes plus hostile sender/spoofing, denied permission, queue/expiry/backpressure, self-loop and lifecycle negative controls. Until user decides, preserve `not-started` and halt the batch at this direction under section 7; do not reinterpret it as a harmless notification-only substitute.
+
