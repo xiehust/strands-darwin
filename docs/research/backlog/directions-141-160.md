@@ -25,7 +25,7 @@ Implement an explicit `/review --commit <40-hex-SHA>` target; retain exact legac
 
 ## SER-103 — List local Darwin session processes with a read-only `/list-agents` projection of existing leases
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 142
 - Score: 14
 - Importance: 5
