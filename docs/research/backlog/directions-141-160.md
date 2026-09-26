@@ -4,7 +4,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ## SER-102 — Extend `/review` with an explicit full-SHA commit scope while preserving existing current-change and literal-focus forms
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 141
 - Score: 14
 - Importance: 4
