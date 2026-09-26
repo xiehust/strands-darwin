@@ -45,7 +45,7 @@ User explicitly requested `/list-agents` to see local Darwin processes. Implemen
 
 ## SER-104 — Add explicitly authorized local cross-session text messaging without sharing permissions or conversations
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 143
 - Score: 9
 - Importance: 5
