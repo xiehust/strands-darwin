@@ -25,6 +25,7 @@ import { isThinkingEffort, THINKING_EFFORTS, type ThinkingPlan } from './agent/t
 import { describeHeld, resolveWorkspaceTrust } from './agent/workspace-trust.js';
 import { CONFIG_FILENAME, ConfigError } from './config.js';
 import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from './commands/workflow-command.js';
+import { parseReviewCommand, REVIEW_COMMIT_USAGE } from './commands/review-command.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
 import { DARWIN_DIRNAME } from './paths.js';
 import { formatShellEnvNotice } from './tools/shell-env.js';
@@ -318,6 +319,11 @@ async function main(): Promise<void> {
         continue;
       }
 
+      if (parseReviewCommand(input)?.invalid) {
+        console.log(`  ${REVIEW_COMMIT_USAGE}\n`);
+        continue;
+      }
+
       try {
         // Skills and project commands send their expanded prompt instead of the
         // raw command. Unknown slash commands fall through as ordinary input.
@@ -331,7 +337,9 @@ async function main(): Promise<void> {
                 : expanded.kind === 'init'
                   ? '  · writing project instructions with /init'
                   : expanded.kind === 'review'
-                    ? '  · reviewing current changes with /review'
+                    ? expanded.message.startsWith('Review commit ')
+                      ? '  · reviewing commit with /review'
+                      : '  · reviewing current changes with /review'
                     : `  · loaded command "/${expanded.command.name}"`,
           );
           await renderTurn(runtime, expanded.message, input);

@@ -998,7 +998,7 @@ answer; the TUI passes nothing, so the interactive prompt never carries it.
 
 Custom-command expansion changes only the ordinary user message, not this system-prompt order or the instructions/catalogue. The `.agents` extension-layering section defines argument fallback and its literal trajectory boundary.
 
-**`/review [focus]` is prompt guidance, not an enforced read-only mode (SER-087).**
+**`/review [focus]` and `/review --commit <40-hex-SHA>` are prompt guidance, not an enforced read-only mode (SER-087, SER-102).**
 `parseReviewCommand` (`src/commands/review-command.ts`) is pure and import-free, with the
 same exact case-insensitive name grammar as `/init`; bare input is valid and only the
 focus's surrounding whitespace is trimmed before literal insertion under `Focus:`.
@@ -1006,7 +1006,12 @@ The fixed prompt asks for repository instructions, staged/unstaged changes, rele
 untracked files and surrounding code; prioritized actionable bugs with file/line evidence
 and impact; separate test gaps; no speculative/style-only findings; and honest no-findings
 and unverified limits, including tests not run. It asks for no edits or commits unless
-separately requested. That sentence never changes the gate: `/review` does not switch
+separately requested. The explicit commit form accepts only one full 40-hex SHA and
+asks for the exact commit diff against its parent (first parent for merges; the empty tree for a root),
+surrounding code/tests and honest limitations for missing or unsupported objects.
+Malformed leading `--commit` yields local bounded usage with no model turn, including
+when submitted while busy; valid input follows the ordinary queue and image path.
+That sentence never changes the gate: `/review` does not switch
 permission mode, install a tool/executor, interpolate shell/templates, or start a child.
 Only the subsequent ordinary model requests can call tools, through the existing gate.
 

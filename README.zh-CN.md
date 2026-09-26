@@ -115,6 +115,7 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 /help                   查看本地命令、输入语法和按键说明
 /init                   请模型为当前项目创建或改进 AGENTS.md
 /review [focus]         审查当前改动中的缺陷和测试缺口
+/review --commit <SHA>  审查指定的 40 位十六进制提交
 /copy                   把最近一条已完成回答复制到剪贴板（OSC 52，SSH 下可用）
 /rewind                 从已完成提示词分支对话（工作区不变）
 /tangent                为一次旁支提问给对话加书签；再输入 /tangent 即返回
@@ -124,7 +125,7 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 
 想在切到别处时被叫回来，可在 `~/.darwin/config.json` 中设置 `"terminalBell": true`（响一次终端铃）和／或 `"terminalNotify": true`（写一条 OSC 9 桌面通知序列，iTerm2、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端静默忽略）；二者都在权限提示等待时和回合结束时触发，默认均为关闭。iTerm2 需开启 "Send escape sequence-generated alerts"；tmux 需要 `set -g allow-passthrough on`。详见[配置与上下文](docs/user-guide/configuration.zh-CN.md)。
 
-`/review` 请模型检查暂存、未暂存的改动及相关未跟踪文件，按优先级报告有证据的缺陷，并单列测试缺口。可选 focus 保持为字面文本。提示要求未经另行请求不要修改文件或提交，但**不会强制只读，也不改变权限模式**。内置命令现在占用 `/review`；原来使用该斜杠名称的自定义命令或 skill 需要改名，例如 `audit`。详见[审查改动](docs/user-guide/using-darwin.zh-CN.md#审查改动)。
+`/review` 请模型检查暂存、未暂存的改动及相关未跟踪文件，按优先级报告有证据的缺陷，并单列测试缺口。可选 focus 保持为字面文本。`/review --commit <40-hex-SHA>` 则要求审查指定提交与父提交的差异（根提交与空树比较）及周围代码／测试；无效参数在本地提示用法，缺失的对象须如实说明。提示要求未经另行请求不要修改文件或提交，但**不会强制只读，也不改变权限模式**。内置命令现在占用 `/review`；原来使用该斜杠名称的自定义命令或 skill 需要改名，例如 `audit`。详见[审查改动](docs/user-guide/using-darwin.zh-CN.md#审查改动)。
 
 无交互运行方式如下：
 

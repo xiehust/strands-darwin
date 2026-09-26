@@ -52,7 +52,7 @@ import {
   type ExpandedCustomCommand,
 } from '../commands/custom-commands.js';
 import { parseInitCommand } from '../commands/init-command.js';
-import { parseReviewCommand } from '../commands/review-command.js';
+import { parseReviewCommand, REVIEW_COMMIT_USAGE } from '../commands/review-command.js';
 import { parseWorkflowCommand } from '../commands/workflow-command.js';
 import {
   appendAllowRule,
@@ -2463,7 +2463,8 @@ export class AgentRuntime {
    * reservation precedes skills and custom commands, so no extension can
    * shadow them. Bare `/workflow` returns null — the drivers own that local usage
    * notice, and the runtime never fabricates a turn — while bare `/init` is the
-   * trigger itself, as is bare `/review`. `/review` is guidance only, with no mode
+   * trigger itself, as is bare `/review`. Invalid `/review --commit` throws bounded
+   * usage before any send; valid reviews are guidance only, with no mode
    * change or executor. `/init` decides create-versus-improve from the instructions
    * summary this runtime captured at startup (the header's own data), never from
    * a fresh filesystem read, so TUI, dev-repl and both headless drivers get the
@@ -2483,6 +2484,7 @@ export class AgentRuntime {
     if (init !== null) return { kind: 'init', ...init };
 
     const review = parseReviewCommand(input);
+    if (review?.invalid) throw new Error(REVIEW_COMMIT_USAGE);
     if (review !== null) return { kind: 'review', ...review };
 
     const skill = await expandSkillCommand(this.skills, input);

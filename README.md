@@ -115,6 +115,7 @@ For multiple switchable models, provider-specific fields, Bedrock Mantle, cachin
 /help                   local command, prompt, and key reference
 /init                   ask the model to create or improve this project's AGENTS.md
 /review [focus]         review current changes for bugs and test gaps
+/review --commit <SHA>  review an exact 40-hex commit
 /copy                   copy the last completed answer to the clipboard (OSC 52, works over SSH)
 /rewind                 branch conversation from a completed prompt (workspace unchanged)
 /tangent                bookmark the conversation for a side question; /tangent again returns
@@ -124,7 +125,7 @@ Use `Ctrl+R` to search this project's prompt history (type to filter, `Ctrl+R`/`
 
 To be called back when you have switched away, set `"terminalBell": true` (one BEL) and/or `"terminalNotify": true` (one OSC 9 desktop-notification sequence, shown by iTerm2, kitty, Ghostty, WezTerm and foot, silently ignored elsewhere) in `~/.darwin/config.json`; both fire when a permission prompt waits and when a turn completes, and both are off by default. iTerm2 needs "Send escape sequence-generated alerts" enabled; tmux needs `set -g allow-passthrough on`. Details in [Configuration and context](docs/user-guide/configuration.md).
 
-`/review` asks for prioritized, evidence-backed bugs and separate test gaps in staged/unstaged changes and relevant untracked files. An optional focus stays literal text. It asks for no edits or commits unless separately requested, but **does not enforce read-only mode** or change permissions. The built-in now owns `/review`; rename a custom command or skill using that slash name (for example, to `audit`). See [reviewing changes](docs/user-guide/using-darwin.md#reviewing-changes).
+`/review` asks for prioritized, evidence-backed bugs and separate test gaps in staged/unstaged changes and relevant untracked files. An optional focus stays literal text. `/review --commit <40-hex-SHA>` instead asks for the exact commit's parent diff (or the empty tree for a root commit), surrounding code and tests; malformed explicit scopes show local usage, and missing objects must be reported honestly. It asks for no edits or commits unless separately requested, but **does not enforce read-only mode** or change permissions. The built-in now owns `/review`; rename a custom command or skill using that slash name (for example, to `audit`). See [reviewing changes](docs/user-guide/using-darwin.md#reviewing-changes).
 
 For non-interactive use:
 

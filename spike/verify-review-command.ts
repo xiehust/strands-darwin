@@ -1,5 +1,6 @@
 /** SER-087 offline contract checks.
  * R1 grammar + literal focus; R2 prompt requirements; R3 purity/reservation/help;
+ * SER-102: full-SHA grammar and fixed parent/root prompt; malformed local usage;
  * R4 real SDK runtime/text/json/stream-json + literal trajectory; R5 gate authority.
  * TUI queue/image and dev-repl paths are in verify-review-drivers.ts.
  * No external model/transport; all project/config/session files live in private HOME.
@@ -7,13 +8,14 @@
  */
 import { strict as check } from 'node:assert';
 import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Message, ModelStreamEvent, StreamOptions } from '@strands-agents/sdk';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import { configPath } from '../src/config.js';
 import { BUILTIN_COMMAND_NAMES, builtinCommandDescription, loadCustomCommands } from '../src/commands/custom-commands.js';
-import { parseReviewCommand, REVIEW_COMMAND_NAME } from '../src/commands/review-command.js';
+import { parseReviewCommand, REVIEW_COMMAND_NAME, REVIEW_COMMIT_USAGE } from '../src/commands/review-command.js';
 import { runHeadlessTurn } from '../src/headless.js';
 import { runStructuredHeadlessTurn, StructuredHeadlessWriter } from '../src/headless-protocol.js';
 import { formatHelpReport } from '../src/tui/help-format.js';
@@ -27,7 +29,11 @@ const root = path.join(home, 'project');
 const commandDir = path.join(root, '.darwin/commands');
 const skillDir = path.join(root, '.darwin/skills/review');
 const focus = `路径/文件.ts  "two words"\n$ARGUMENTS $1 $& $$ $\` $' @file \\tail $(touch ${root}/executed) !\`touch ${root}/executed\``;
-const base = parseReviewCommand('/review')!.message;
+const base = (parseReviewCommand('/review') as { message: string }).message;
+const sha = 'ABCDEF0123456789abcdef0123456789abcdef01';
+const commit = `/ReViEw --commit ${sha}`;
+const commitPrompt = (parseReviewCommand(commit) as { message: string }).message;
+const invalid = '/review --commit deadbeef';
 process.env['DARWIN_MODEL_PRICES_FETCH'] = 'off';
 process.env['AWS_EC2_METADATA_DISABLED'] = 'true';
 function parsing(): void {
@@ -43,6 +49,25 @@ function parsing(): void {
       parseReviewCommand(` \t/ReViEw${separator}${focus}\n `)?.message === `${base}\n\nFocus: ${focus}`);
   }
   assert('bare invocation adds no empty focus marker', !base.includes('Focus:'));
+  for (const input of ['/review --commit', invalid, `/review --commit ${sha} extra`,
+    `/review --commit ${sha.slice(1)}`, `/review --commit ${sha}$(touch ${root}/executed)`,
+    `/review --commit ${'f'.repeat(41)}`, '/REVIEW\t--commit\tHEAD', `/review --commit=${sha}`, '/review --commit --help']) {
+    assert(`malformed leading flag is local usage: ${input}`, parseReviewCommand(input)?.invalid === true);
+  }
+  assert('lookalike flag remains literal focus',
+    parseReviewCommand('/review --commitish x')?.message === `${base}\n\nFocus: --commitish x`);
+  assert('exact full SHA accepts mixed case and whitespace without normalization',
+    parseReviewCommand(` /REVIEW\t--commit\t${sha}\n`)?.message === commitPrompt &&
+    parseReviewCommand(`/review --commit ${sha.toLowerCase()}`)?.message ===
+      commitPrompt.replace(sha, sha.toLowerCase()));
+  for (const clause of [sha, 'only', 'commit object', 'against its parent', 'root commit', 'empty tree',
+    'surrounding code', 'relevant tests', 'priority order', 'file/line evidence', 'impact',
+    'test gaps separately', 'no actionable bugs', 'missing', 'unsupported', 'do not invent',
+    'tests not run', 'Do not edit files or make commits', 'existing permission gate remains authoritative']) {
+    assert(`commit prompt includes ${clause}`, commitPrompt.includes(clause));
+  }
+  assert('commit prompt does not accidentally target working tree or free-form focus',
+    !commitPrompt.includes('staged and unstaged') && !commitPrompt.includes('Focus:'));
   for (const clause of [
     'repository instructions', 'staged and unstaged changes', 'relevant untracked files', 'surrounding code',
     'actionable bugs in priority order', 'file/line evidence', 'explanation of the impact',
@@ -100,12 +125,23 @@ async function runtimeExpansion(config: string): Promise<void> {
       expanded?.kind === 'review' && expanded.message === `${base}\n\nFocus: ${focus}`);
     assert('expansion alone calls no model or permission and creates no dispatch', model.calls.length === 0 &&
       permissionCalls === 0 && runtime.listSubagentDispatches().length === 0);
+    const commitExpansion = await runtime.expandSlashCommand(commit);
+    assert('commit expansion is pure and uses the same reserved built-in',
+      commitExpansion?.kind === 'review' && commitExpansion.message === commitPrompt &&
+      model.calls.length === 0 && permissionCalls === 0);
+    await check.rejects(runtime.expandSlashCommand(invalid), { message: REVIEW_COMMIT_USAGE });
+    await check.rejects(runHeadlessTurn(runtime, invalid, () => {}), { message: REVIEW_COMMIT_USAGE });
+    await check.rejects(runStructuredHeadlessTurn(runtime, invalid,
+      new StructuredHeadlessWriter('stream-json', () => {}), () => 'unexpected tool'),
+    { message: REVIEW_COMMIT_USAGE });
+    assert('invalid scope sends no model turn or gate call', model.calls.length === 0 && permissionCalls === 0);
     assert('expansion keeps the active permission mode', runtime.permissionMode === 'default');
     trajectory = runtime.info.trajectoryFile;
     assert('expansion alone records no user input', !trajectory || !existsSync(trajectory) ||
       !(await readFile(trajectory, 'utf8')).includes('"type":"userInput"'));
     const cases = [
       { input: '/review', expected: base },
+      { input: commit, expected: commitPrompt },
       { input: ` \t/ReViEw \t${focus}\r\n `, expected: `${base}\n\nFocus: ${focus}` },
       { input: '/review \t\n', expected: base },
       { input: '/reviews unchanged', expected: '/reviews unchanged' },
@@ -179,7 +215,7 @@ async function gateAuthority(): Promise<void> {
     const runtime = await AgentRuntime.create({ projectRoot: root, session: { kind: 'new' },
       permissionModeOverride: mode, permissionBridge: async () => { prompts++; return { allowed }; } });
     try {
-      await runHeadlessTurn(runtime, '/review', () => {});
+      await runHeadlessTurn(runtime, commit, () => {});
       assert('review leaves selected mode unchanged', runtime.permissionMode === mode);
       assert('ordinary gate decides whether to prompt', prompts === (mode === 'default' ? 1 : 0));
       assert('only the fixture-authorized write executes', existsSync(target) === (mode === 'default' && allowed));
@@ -188,6 +224,15 @@ async function gateAuthority(): Promise<void> {
 }
 parsing();
 const config = await fixture();
+for (const format of ['text', 'json', 'stream-json']) {
+  const run = spawnSync(path.join(process.cwd(), 'node_modules/.bin/tsx'),
+    [new URL('./fixtures/review-cli.ts', import.meta.url).pathname, '-p', invalid,
+      '--output-format', format],
+    { cwd: root, env: { ...process.env, HOME: home }, encoding: 'utf8', timeout: 30_000 });
+  assert(`${format} process rejects invalid scope before runtime/model with bounded usage`,
+    run.status === 2 && run.stdout === '' && run.stderr.includes(REVIEW_COMMIT_USAGE) &&
+    !existsSync(path.join(root, 'review-requests')) && !existsSync(path.join(root, '.darwin/sessions')));
+}
 await runtimeExpansion(config);
 await gateAuthority();
 report();
