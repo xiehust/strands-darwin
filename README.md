@@ -106,6 +106,11 @@ For multiple switchable models, provider-specific fields, Bedrock Mantle, cachin
 
 ## Use it
 
+To see live local session lease holders across this HOME's projects, use `/list-agents`
+or the offline `darwin list-agents` CLI (no provider configuration needed). This is
+read-only discovery, **not communication**; `/agents` still lists in-process subagent
+dispatches. See [inventory scope and limits](docs/user-guide/sessions-and-state.md#find-local-session-processes).
+
 ```text
 /                       list commands, skills, and custom commands
 @src/                   complete a workspace path (path text only)

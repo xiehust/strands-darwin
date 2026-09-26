@@ -26,7 +26,10 @@ if (refusal !== undefined) {
 } else {
   const args = process.argv.slice(2);
   if (args[0] === '--') args.shift();
-  if (args[0] === 'import') {
+  if (args[0] === 'list-agents') {
+    const { runListAgentsCli } = await import('./cli-list-agents.js');
+    await runListAgentsCli(args.slice(1));
+  } else if (args[0] === 'import') {
     const { runImportCli } = await import('./cli-import.js');
     await runImportCli(process.cwd(), args.slice(1));
   } else if (args[0] === 'permissions' && !args.some(arg => ['--help', '-h', '--version', '-V'].includes(arg))) {

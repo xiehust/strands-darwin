@@ -17,6 +17,14 @@ import { SessionManager } from '@strands-agents/sdk';
 import { LocalFileStorage } from '@strands-agents/sdk/storage';
 
 import { darwinDir, userProjectSessionsDir } from '../paths.js';
+import {
+  classifyLease, defaultLeaseEnvironment, isValidSessionId, leaseFileIn,
+  type LeaseStatus, type SessionLeaseRecord,
+} from './session-lease.js';
+export {
+  classifyLease, FOREIGN_LEASE_STALE_AFTER_MS, isValidSessionId, LEASE_FILENAME, pidAlive,
+  type LeaseEnvironment, type LeaseStatus, type SessionLeaseRecord,
+} from './session-lease.js';
 
 const SESSIONS_DIRNAME = 'sessions';
 const POINTER_FILENAME = 'last-session.json';
@@ -24,18 +32,7 @@ const POINTER_FILENAME = 'last-session.json';
 export const TRAJECTORY_FILENAME = 'trajectory.jsonl';
 /** Per-session opt-in diagnostics log; the same sibling convention. */
 export const DIAGNOSTICS_FILENAME = 'diagnostics.log';
-/**
- * Per-session ownership marker (SER-091), the same sibling convention:
- * `<sessionsDir>/<sessionId>/lease.json` names the one process that may append to
- * this session's record and overwrite its snapshot.
- */
-export const LEASE_FILENAME = 'lease.json';
-/**
- * A lease written on another host cannot be checked with `process.kill(pid, 0)`, so
- * it counts as live until its `startedAt` is this old; then it is stale and taken over.
- * There is no heartbeat: this is the only bound, and it is stated in the user guide.
- */
-export const FOREIGN_LEASE_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
 /** Longest `hostname`/`startedAt` text a lease record may put into a notice, in code points. */
 const MAX_LEASE_FIELD_CHARS = 64;
 
@@ -108,7 +105,7 @@ export function leasePath(projectRoot: string, sessionId: string): string {
 }
 
 function leasePathIn(paths: SessionPaths, sessionId: string): string {
-  return path.join(paths.sessionsDir, sessionId, LEASE_FILENAME);
+  return leaseFileIn(paths.sessionsDir, sessionId);
 }
 
 /** Whether this project has a restorable snapshot for `sessionId`. */
@@ -180,11 +177,6 @@ export interface ResolvedSession {
   leaseNotice?: string;
 }
 
-/** Mirrors the SDK's accepted session-id alphabet. */
-export function isValidSessionId(value: string): boolean {
-  return /^[a-z0-9_-]+$/.test(value);
-}
-
 /**
  * An explicitly named session with no restorable snapshot in this project.
  *
@@ -215,14 +207,6 @@ export class SessionInUseError extends Error {
   }
 }
 
-/** What `lease.json` holds: the owning process, where it runs, and when it took the session. */
-export interface SessionLeaseRecord {
-  pid: number;
-  hostname: string;
-  /** ISO-8601, the moment the lease was written. */
-  startedAt: string;
-}
-
 /**
  * This process's hold on one session. Nothing but {@link release} ever removes the
  * file, and release removes it only while it still names this process — a takeover
@@ -235,20 +219,6 @@ export interface SessionLease {
   readonly record: SessionLeaseRecord;
   /** Idempotent and non-throwing: a lease that cannot be removed is left for the next launch to take over. */
   release(): Promise<void>;
-}
-
-/** How a lease file on disk reads right now; `none` when there is no file. */
-export type LeaseStatus =
-  | { kind: 'none' }
-  | { kind: 'live'; record: SessionLeaseRecord }
-  | { kind: 'stale'; record: SessionLeaseRecord | undefined };
-
-/** The facts {@link classifyLease} needs, injectable so the rule is testable without a second process. */
-export interface LeaseEnvironment {
-  hostname: string;
-  /** Epoch milliseconds. */
-  now: number;
-  pidAlive: (pid: number) => boolean;
 }
 
 /**
@@ -388,39 +358,6 @@ function makeLease(sessionId: string, file: string, record: SessionLeaseRecord):
       }
     },
   };
-}
-
-/**
- * The lease rule (SER-091). Same host: the pid decides — alive (including `EPERM`,
- * which means it exists under another user) is live, gone is stale. Other host: live
- * until `startedAt` is {@link FOREIGN_LEASE_STALE_AFTER_MS} old, unparseable dates
- * count as stale. A record that does not parse is stale with no holder to name.
- */
-export function classifyLease(record: SessionLeaseRecord | undefined, environment: LeaseEnvironment): LeaseStatus {
-  if (record === undefined) return { kind: 'stale', record: undefined };
-  if (record.hostname === environment.hostname) {
-    return environment.pidAlive(record.pid) ? { kind: 'live', record } : { kind: 'stale', record };
-  }
-  const started = Date.parse(record.startedAt);
-  if (Number.isNaN(started) || environment.now - started >= FOREIGN_LEASE_STALE_AFTER_MS) {
-    return { kind: 'stale', record };
-  }
-  return { kind: 'live', record };
-}
-
-/** `process.kill(pid, 0)` — signal 0 checks existence; `EPERM` means it exists under another user. */
-export function pidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return typeof error === 'object' && error !== null && (error as { code?: string }).code === 'EPERM';
-  }
-}
-
-function defaultLeaseEnvironment(): LeaseEnvironment {
-  return { hostname: os.hostname(), now: Date.now(), pidAlive };
 }
 
 /**

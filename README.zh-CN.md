@@ -106,6 +106,8 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 
 ## 日常使用
 
+用 `/list-agents` 或离线 CLI `darwin list-agents`，可以跨项目查看当前 HOME 中本机仍存活的会话租约持有者；CLI 不需要配置模型供应商。这只是只读查看，**不提供通信能力**；`/agents` 仍然列出本进程的子代理派发。详见[范围与限制](docs/user-guide/sessions-and-state.zh-CN.md#查看本机会话进程)。
+
 ```text
 /                       列出命令、skills 和自定义命令
 @src/                   补全工作区路径（只插入路径文本）

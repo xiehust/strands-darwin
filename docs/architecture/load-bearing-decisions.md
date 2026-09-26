@@ -879,6 +879,43 @@ byte-identical store), `spike/verify-tui.ts resume` (bare `--resume` against a l
 session, notice on screen, held session's bytes and pointer untouched). AGENTS.md has no row for this
 decision: the file sits five bytes under its preload cap and the rationale lives here.
 
+### Local lease inventory (SER-103)
+
+`/list-agents` and `darwin list-agents` share `src/list-agents.ts`: one bounded read-only
+projection across `userSessionsDir()` in this HOME, not a second process registry. Session
+selection already writes leases before the first snapshot, so snapshotless live holders are
+visible without reading prompts, transcripts, pointers, snapshots or config. Rows name PID,
+session ID, project key (not a reconstructed cwd), lease `startedAt`, and current PID. The
+SDK-free `session-lease.ts` holds the existing classification/probe functions and path suffix;
+`session.ts` re-exports them unchanged. Ownership acquisition, stale takeover, release and
+foreign-host lease aging are unchanged. The inventory excludes foreign hosts altogether,
+validates positive 32-bit PIDs before probing, and never invokes cleanup. PID existence,
+including `EPERM`, is not authenticated identity: leases can be forged and PIDs reused.
+
+The CLI routes before `cli-main.ts`, following the existing local-observer bootstrap seam;
+it imports no runtime/SDK/config and rejects all arguments locally (exit 2). Existing SDK
+patch preflight still applies. Reports, including missing/unavailable state, exit 0. The TUI
+branch precedes busy queueing and emits one Static notice, no extra live-frame surface or
+model turn. `/agents` remains an in-memory dispatch projection; `darwin sessions` remains
+per-project snapshot discovery. No `-p` slash routing, model tool, polling, transport, socket,
+server, launch/cancel or communication is introduced.
+
+Safety bounds: 128 root entries, 2,048 session entries globally, filesystem enumeration order,
+one lookahead per exhausted scan cap, 4,096 bytes/lease plus one overflow byte, and 32 shown
+rows. Only the inspected subset is sorted. Omitted live rows and rejected entries are counted;
+uninspected remainders are explicitly unknown. Directory lstat/realpath and ownership checks
+reject symlink/unsafe traversal; leases require regular owned files, `O_NOFOLLOW`/`O_NONBLOCK`,
+fstat identity checks and bounded descriptor reads. Missing/unreadable state is explicit, not
+an assertion that no processes exist. Cells are printable ASCII, at most 255 characters.
+This HOME's same-host holders exclude older/non-registering processes, other users/HOMEs/hosts,
+ordinary OS children and in-process SDK subagents; a scan is not an atomic OS snapshot.
+
+Checks: `verify-list-agents.ts` (real owned-HOME files/processes, exclusions, bounds, read
+failures, terminal controls, state hashes, CLI import/read/network tripwires, discovery) and
+`verify-list-agents-pty.ts` (real idle/busy local command, no queued/model turn, `/agents`
+unchanged), both in `pnpm test`; lease/sessions suites pin compatibility and free
+`tui completion` pins canonical discoverability. Listing conveys no messaging authorization.
+
 ## `darwin doctor` — reports, never refuses; reads, never creates
 
 **The doctor is the startup loaders composed into one report, with exactly one rule changed: a

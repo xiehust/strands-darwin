@@ -29,6 +29,7 @@ import {
 import { compactAndRecord, compactFocusRefusal, normalizeCompactFocus } from '../agent/compact.js';
 import type { AgentRuntime, CompactResult, ContextEstimate, UsageTotals } from '../agent/runtime.js';
 import { permissionTestReport } from '../permissions-test.js';
+import { formatLocalAgents, readLocalAgents } from '../list-agents.js';
 import type { RewindCatalogue } from '../agent/rewind.js';
 import { formatUsageValue, sumUsage, usageBuckets, usageRows, cacheEffectivenessRows, type UsageBuckets } from '../agent/usage.js';
 import { describeModelCosts, type ModelUsageShare } from '../agent/cost.js';
@@ -1461,6 +1462,20 @@ export function App({
             text: `could not list background tasks: ${error instanceof Error ? error.message : String(error)}`,
           });
         }
+        return;
+      }
+
+      // One read-only Static notice, also while busy; never a queued model prompt.
+      if (/^\/list-agents(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        dispatch({
+          type: 'notice',
+          text: text === '/list-agents'
+            ? formatLocalAgents(await readLocalAgents())
+            : '/list-agents takes no arguments',
+        });
         return;
       }
 

@@ -14,6 +14,14 @@
 | `/cloud-memory pending [accepted] [after <64hex>]` / `darwin cloud-memory pending [accepted] [after <64hex>]` | 默认列出可处理请求体，含 held/丢弃清理中断；`accepted` 单独列已接受请求体。报告两类总数，每页最多 64 行，需要时给出下一游标。`<64hex>` 是 64 字符的小写十六进制 token；排序稳定但不是快照，新加入且排序较早的 token 需从头列出。不访问网络、不写文件、不生成证明。 |
 | `/cloud-memory list [preferences|episodes|reflections] [after <token>]` / `darwin cloud-memory list …` | “我的云记忆”面板：对一种记录类型（默认 `preferences`）拉取一页 `ListMemoryRecords`（32 行），每行 id · 时间 · 120 码点单行预览。先校验返回记录的全部作用域（不匹配则整页拒绝）；内容不符合该类型 schema 的记录仍按 id 列出、不显示正文。表头给出已列出/其他类型省略/内容拒绝的计数，以及存在下一页时的精确命令。只读：不采纳、不缓存、不写文件、不进入模型；preferences 仍通过 `inspect`/`confirm`/`delete` 处理。 |
 
+## 本机会话进程列表
+
+`/list-agents`（TUI）和 `darwin list-agents`（独立 CLI）均**不接受参数**。它们跨项目读取当前 HOME 已有的本机租约，显示 PID、会话 ID、项目 key（不是 cwd）、租约 `startedAt` 和当前进程标记，尚无快照的会话也能列出。CLI 不需要供应商配置；TUI 忙碌时也只显示一条本地历史通知，不触发模型回合或入队。CLI 报告结果返回 0（包括缺失、不可读和空状态），用法错误返回 2，`list-agents --help` 也属于参数错误。
+
+上限：128 个项目条目、合计 2,048 个会话条目，每份租约 4,096 字节加一个溢出检测字节，显示 32 行，每个字段最多 255 个可打印 ASCII 字符。达到扫描上限时多看一个条目以检测遗漏；先按文件系统枚举顺序取有限子集，再按项目 key、会话 ID 排序显示。排除的条目和未显示的有效租约给出数量，未检查的剩余部分数量未知。死亡、其他主机、格式错误、过大、PID 无效、符号链接和不安全条目均跳过，绝不清理。
+
+范围仅为当前 HOME 中当前用户拥有的本机租约，不包括旧版或未登记的进程、其他用户/HOME/主机、普通 OS 子进程或进程内 SDK 子代理。信号 0 探测（`EPERM` 算存活）不是进程身份认证。不读取提示词、轨迹、快照或配置，不联网、不调用模型、不轮询、不启动/取消进程，也不提供通信。`/agents` 与 `darwin sessions` 的含义不变。无头检查用独立 CLI，不用 `-p "/list-agents"`。见[操作指南](sessions-and-state.zh-CN.md#查看本机会话进程)。
+
 ## CLI
 
 ```bash
@@ -35,7 +43,7 @@ darwin --help                               # 用法语法，退出码 0
 darwin --version                            # darwin <version>，退出码 0
 ```
 
-`darwin --help`（或 `-h`）把下面的语法原文打印到 stdout 并以 0 退出；`darwin --version`（或 `-V`）打印取自 `package.json` 的 `darwin <version>`（包名是 `strands-darwin`，打印的是命令名）。两者都在解析其余参数、加载运行时、配置或模型之前就地回答，不写任何文件；只要 argv 里出现其中一个，它就优先于其他所有参数（help 又优先于 version）。有一项检查比它们更早：如果安装的 `@strands-agents/sdk` 缺少 darwin 固定的补丁（安装时跳过了 `postinstall`/`patch-package`，例如 `npm install --ignore-scripts` 或不受支持的 `pnpm add -g`），任何调用都只在 stderr 打印一条五行的拒绝消息，指明修复方式 `npm install -g strands-darwin`，并以 1 退出（`spike/verify-npm-patch-format.ts`、`spike/verify-npm-package.ts`）。下面这段引自 `src/cli-usage.ts` 的 `CLI_USAGE`，由 `spike/verify-cli-args.ts` 锁定：
+`darwin --help`（或 `-h`）把下面的语法原文打印到 stdout 并以 0 退出；`darwin --version`（或 `-V`）打印取自 `package.json` 的 `darwin <version>`（包名是 `strands-darwin`，打印的是命令名）。两者都在解析其余参数、加载运行时、配置或模型之前就地回答，不写任何文件；在普通 CLI 语法中，只要 argv 里出现其中一个，它就优先于其他参数（help 又优先于 version）；无参数的 `list-agents` 分支会就地拒绝额外选项。有一项检查比它们更早：如果安装的 `@strands-agents/sdk` 缺少 darwin 固定的补丁（安装时跳过了 `postinstall`/`patch-package`，例如 `npm install --ignore-scripts` 或不受支持的 `pnpm add -g`），任何调用都只在 stderr 打印一条五行的拒绝消息，指明修复方式 `npm install -g strands-darwin`，并以 1 退出（`spike/verify-npm-patch-format.ts`、`spike/verify-npm-package.ts`）。下面这段引自 `src/cli-usage.ts` 的 `CLI_USAGE`，由 `spike/verify-cli-args.ts` 锁定：
 
 ```text
 Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]
@@ -43,6 +51,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--continue|--resume [<id>]|--session <id>] [permission flags]
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
+       darwin list-agents
        darwin permissions test <rule>
        darwin import --from claude-code [--apply]
        darwin doctor
@@ -112,6 +121,7 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 | 命令 | 行为 |
 |---|---|
 | `/agents` | 当前运行的派发列表，行内容有界且仅含元数据；非空列表末尾汇总 succeeded/failed/cancelled 数量，不计仍在运行的派发 |
+| `/list-agents` | 跨项目只读列出当前 HOME 的本机租约；忙碌时也可用，不接受参数，不提供通信 |
 | `/clear` | 创建后继会话；继承当前模式；丢弃队列 |
 | `/compact [focus]` | 摘要较旧对话；由用户主动触发。可选的 focus 文本（去除首尾空白后不超过 400 个码点，超出则提示拒绝且不执行）会作为一个固定小节追加到 SDK 默认摘要提示之后，要求摘要保留其所述内容；不带 focus 时摘要请求与以往完全一致 |
 | `/context` | 已知/估算的上下文大小（Bedrock 可能使用启发式），随后按当前请求形态估算的分项：系统提示按段（基础提示、项目指令、技能目录、工作上下文）、工具按来源（darwin 内置、各 MCP 服务器）、对话按角色——窗口已知时每行显示 `~N tokens · P%`；计数失败的一项显示 `not reported`；只在你运行该命令时才计数 |

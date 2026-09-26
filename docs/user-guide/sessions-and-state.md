@@ -27,6 +27,46 @@ TUI resume shows a bounded read-only recap of the last completed user request/as
 
 `/clear` creates a successor runtime through the same factory. It inherits live permission mode, retires the predecessor, rebuilds session-scoped state, and does not move on-disk pointers until the new session completes a turn. Changing the runtime `AGENT_ID` orphans snapshots because it participates in their path.
 
+### Find local session processes
+
+When several terminals are running Darwin, type `/list-agents` in the TUI or run:
+
+```bash
+darwin list-agents
+```
+
+This reads existing `~/.darwin/sessions/<project-key>/<session-id>/lease.json` files
+across this HOME's projects, including sessions that have not saved a snapshot yet.
+Rows show PID, session ID, project **key**, `startedAt` (lease acquisition time), and
+`(current process)` when the PID is the listing process. A project key cannot reconstruct
+the working directory. The standalone CLI does not acquire a lease itself, so it normally
+has no current-process row. Both commands reject arguments; the CLI needs no provider
+configuration, makes no model/network call, and returns 0 for an inventory report (even
+empty or unavailable), 2 for misuse. In the TUI, listing works while idle or busy, prints
+one transcript notice, and neither starts a model turn nor queues a prompt.
+
+The inventory covers the current user's **same-host lease holders in this HOME**, not
+all OS processes. Older/non-registering processes, other users/HOMEs/hosts, ordinary OS
+children and in-process SDK subagents are not tracked. PID liveness uses the existing
+signal-0 lease probe (`EPERM` counts as alive); it is **not authenticated process identity**.
+Processes may exit or leases may change while the scan runs. `/agents` still lists this
+runtime's subagent dispatches; `darwin sessions` still lists this project's resumable snapshots.
+
+The scan inspects at most 128 project-directory entries and 2,048 session-directory entries
+in total, in filesystem enumeration order (one extra entry detects each exhausted scan cap).
+It reads at most 4,096 bytes per lease plus one overflow-detection byte and shows at most
+32 live-holder rows, sorted by project key and session ID within the inspected subset.
+Skipped entries and hidden live rows are counted; uninspected remainders have an explicit
+unknown count. Missing/unreadable stores are stated, not described as a complete empty
+inventory. Dead, foreign-host, malformed, oversized, invalid-PID, symlink and unsafe entries
+are excluded; file/directory ownership is checked where the OS exposes a user ID. Displayed
+fields are sanitized to printable ASCII and capped at 255 characters.
+
+Listing reads no prompts, transcripts, snapshots or configuration and changes no state,
+including stale leases. It does not poll, launch, cancel, open a socket, or enable communication.
+For scripts and headless inspection use the standalone CLI, not `-p "/list-agents"`;
+this feature does not add headless slash-command dispatch.
+
 ### Rewind and tangents
 
 `/rewind` (or `Esc` `Esc` on an empty idle composer) lists this session's completed prompt checkpoints — one immutable SDK snapshot per text-only prompt whose turn the model finished, whether it answered or declined it (a refusal-class stop); captured before the prompt ran, up to 100 per session — and accepting one branches the conversation into a fresh successor session restored to that boundary; the selected prompt returns to the editor unsent, and the source session stays on disk, resumable and byte-identical. A failed or cancelled turn leaves no checkpoint. A declined prompt is listed on purpose: the declined reply stays in the conversation and can make the next prompts fail the same way, so the refusal notice points here — rewinding to that prompt removes the declined exchange before you rephrase. Only the conversation moves: workspace files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned memory are not rolled back, and the notice says so.

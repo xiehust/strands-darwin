@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'mcp', 'memory', 'mode', 'model', 'permissions', 'review', 'rewind', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'list-agents', 'mcp', 'memory', 'mode', 'model', 'permissions', 'review', 'rewind', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -20,6 +20,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
 > = {
   // Dispatch *runs*, not the catalogue of definitions the header lists.
   agents: 'list or cancel subagent dispatches',
+  'list-agents': 'list local session lease holders (no messaging)',
   // Starts a new session; the one being left stays on disk and resumable.
   clear: 'start a new session',
   // `/compact <focus>` steers one summary; bare `/compact` is the SDK default prompt.

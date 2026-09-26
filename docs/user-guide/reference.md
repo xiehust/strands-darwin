@@ -13,6 +13,29 @@
 | `/cloud-memory pending [accepted] [after <64hex>]` / `darwin cloud-memory pending [accepted] [after <64hex>]` | Default: actionable bodies, including held/interrupted discard cleanup. `accepted`: separate accepted-body view. Both counts, at most 64 rows/page, next cursor when needed. `<64hex>` is a 64-character lowercase hexadecimal token; stable token order is not a snapshot—restart listing for newly added earlier tokens. No network, writes or proof creation. |
 | `/cloud-memory list [preferences|episodes|reflections] [after <token>]` / `darwin cloud-memory list …` | The "my cloud memories" panel: one `ListMemoryRecords` page (32 rows) for one kind, default `preferences`, each row id · time · one-line 120-code-point preview. Scope of every returned record is validated first (a mismatch refuses the page); a record whose content fails its kind schema is still listed by id with its text withheld. The header states listed/other-kind-omitted/refused counts and the exact next-page command when more exist. Read-only: nothing adopted, cached, written or sent to the model; preferences remain `inspect`/`confirm`/`delete` targets. |
 
+## Local session process inventory
+
+`/list-agents` (TUI) and `darwin list-agents` (standalone CLI) take **no arguments**.
+They show PID, session ID, project key (not cwd), lease `startedAt`, and a current-process
+marker from existing same-host leases across this HOME's projects, including snapshotless
+sessions. The CLI runs without provider configuration; the TUI prints one local history
+notice even while busy, without a model turn or queue entry. CLI report exit code is 0
+(including missing, unreadable or empty state); misuse is 2, including `list-agents --help`.
+
+Limits: 128 project entries, 2,048 total session entries, 4,096 bytes per lease plus one
+overflow byte, 32 displayed rows, 255 printable-ASCII characters per cell. Scan caps use
+one-entry lookahead; filesystem enumeration order determines the inspected subset, then
+rows sort by project key/session ID. Rejected entries and hidden live rows are counted;
+uninspected remainder counts are unknown. Dead, foreign-host, malformed, oversized,
+invalid-PID and symlink/unsafe entries are excluded, never cleaned up.
+
+Only this HOME's current-user same-host lease holders are covered, not older/non-registering
+processes, other users/HOMEs/hosts, ordinary OS children or in-process SDK subagents. PID
+probe 0 (`EPERM` is alive) is not authenticated process identity. No prompt/transcript,
+snapshot or config reads, network/model work, polling, launch/cancel or messaging.
+`/agents` and `darwin sessions` retain their existing meanings. Use the standalone CLI
+for headless inspection, not `-p "/list-agents"`. See [the task guide](sessions-and-state.md#find-local-session-processes).
+
 ## CLI
 
 ```bash
@@ -34,7 +57,7 @@ darwin --help                               # usage grammar, exit 0
 darwin --version                            # darwin <version>, exit 0
 ```
 
-`darwin --help` (or `-h`) prints the grammar below to stdout and exits 0; `darwin --version` (or `-V`) prints `darwin <version>` from `package.json` (the package is `strands-darwin`; the printed name is the command's). Both are answered locally before any argument parsing, runtime, config or model work — no file is written — and either flag anywhere in argv wins over everything else (help before version). One check precedes even these: if the installed `@strands-agents/sdk` lacks darwin's pinned patch (an install that skipped `postinstall`/`patch-package`, e.g. `npm install --ignore-scripts` or the unsupported `pnpm add -g`), every invocation prints one five-line refusal on stderr naming `npm install -g strands-darwin` as the fix and exits 1 (`spike/verify-npm-patch-format.ts`, `spike/verify-npm-package.ts`). The block is quoted from `CLI_USAGE` in `src/cli-usage.ts` and pinned by `spike/verify-cli-args.ts`:
+`darwin --help` (or `-h`) prints the grammar below to stdout and exits 0; `darwin --version` (or `-V`) prints `darwin <version>` from `package.json` (the package is `strands-darwin`; the printed name is the command's). Both are answered locally before any argument parsing, runtime, config or model work — no file is written — and either flag anywhere in the ordinary CLI grammar wins over other arguments (help before version); the argument-free `list-agents` route rejects extra flags locally. One check precedes even these: if the installed `@strands-agents/sdk` lacks darwin's pinned patch (an install that skipped `postinstall`/`patch-package`, e.g. `npm install --ignore-scripts` or the unsupported `pnpm add -g`), every invocation prints one five-line refusal on stderr naming `npm install -g strands-darwin` as the fix and exits 1 (`spike/verify-npm-patch-format.ts`, `spike/verify-npm-package.ts`). The block is quoted from `CLI_USAGE` in `src/cli-usage.ts` and pinned by `spike/verify-cli-args.ts`:
 
 ```text
 Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|plan|yolo>] [--yolo]
@@ -42,6 +65,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
          [--continue|--resume [<id>]|--session <id>] [permission flags]
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
+       darwin list-agents
        darwin permissions test <rule>
        darwin import --from claude-code [--apply]
        darwin doctor
@@ -112,6 +136,7 @@ Rules and limits:
 | Command | Behavior |
 |---|---|
 | `/agents` | bounded dispatch rows for this run; metadata only; nonempty reports append succeeded/failed/cancelled counts (running dispatches excluded) |
+| `/list-agents` | read-only same-host lease inventory across this HOME's projects; available while busy; no arguments or messaging |
 | `/clear` | new successor session; live mode inherited; queue dropped |
 | `/compact [focus]` | summarize older conversation; user controlled. Optional focus text (≤400 code points after trimming, longer is refused with a notice and nothing runs) is appended to the SDK's default summarizer prompt as one fixed section the summary must keep; without it the summarizer request is unchanged |
 | `/context` | known/estimated context size (Bedrock may use heuristic), then a breakdown estimated over the current request shape: system prompt by section (base, project instructions, skills catalogue, working context), tools by origin (darwin built-ins, each MCP server), conversation by role — `~N tokens · P%` per row when the window is known; a failed count reads `not reported`; counted only when you run the command |

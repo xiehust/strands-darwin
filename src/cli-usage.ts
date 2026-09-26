@@ -21,6 +21,7 @@ export const CLI_USAGE = `Usage: darwin [--resume [<id>]|--session <id>] [--perm
          [--continue|--resume [<id>]|--session <id>] [permission flags]
          [--max-model-calls <n>] [--context-offload] [--compact-before]
        darwin sessions
+       darwin list-agents
        darwin permissions test <rule>
        darwin import --from claude-code [--apply]
        darwin doctor

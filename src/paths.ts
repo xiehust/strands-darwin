@@ -71,9 +71,14 @@ export function userProjectDir(projectRoot: string): string {
   return path.join(userDarwinDir(), 'projects', projectKey(projectRoot));
 }
 
+/** Existing session state across this HOME's projects; reading it never creates it. */
+export function userSessionsDir(): string {
+  return path.join(userDarwinDir(), 'sessions');
+}
+
 /** User-global session state scoped to one canonical project. */
 export function userProjectSessionsDir(projectRoot: string): string {
-  return path.join(userDarwinDir(), 'sessions', projectKey(projectRoot));
+  return path.join(userSessionsDir(), projectKey(projectRoot));
 }
 
 /** Derived, project-scoped learned memory. Never part of the repository itself. */
