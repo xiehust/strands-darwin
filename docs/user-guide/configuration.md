@@ -65,7 +65,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `promptCacheTtl` | `1h` | `1h` or `5m` (the provider default) at every cache point; Bedrock and Anthropic |
 | `thinkingEffort` | `high` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `classifierModel` | provider-specific cheap model | model used by `auto` permission mode |
-| `requestTimeoutMs` | `180000` | Bedrock streaming idle timeout; arriving bytes reset it |
+| `requestTimeoutMs` | `600000` | Bedrock streaming idle timeout; arriving bytes reset it |
 
 ## Session fields
 

@@ -65,7 +65,7 @@
 | `promptCacheTtl` | `1h` | 每个 cache point 使用 `1h` 或 `5m`（供应商默认值）；Bedrock 与 Anthropic 均生效 |
 | `thinkingEffort` | `high` | `low`、`medium`、`high`、`xhigh`、`max` |
 | `classifierModel` | 各供应商的低成本模型 | `auto` 权限模式使用的分类模型 |
-| `requestTimeoutMs` | `180000` | Bedrock 流式请求空闲超时；收到字节后重新计时 |
+| `requestTimeoutMs` | `600000` | Bedrock 流式请求空闲超时；收到字节后重新计时 |
 
 ## 会话字段
 

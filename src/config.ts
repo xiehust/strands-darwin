@@ -202,7 +202,7 @@ export interface ModelFields {
    * Bedrock only: how long one request may go with *no bytes arriving* before it
    * fails with "Stream timed out because of no activity", in milliseconds. An
    * idle timeout, not a total-duration cap — every streamed delta resets it.
-   * Unset means {@link DEFAULT_REQUEST_TIMEOUT_MS} (180s).
+   * Unset means {@link DEFAULT_REQUEST_TIMEOUT_MS} (600s).
    */
   requestTimeoutMs?: number;
 }
@@ -583,10 +583,12 @@ const DEFAULT_REGION = 'us-west-2';
 /**
  * Default idle timeout for one Bedrock streaming request, in milliseconds. The
  * Strands SDK's own default is 120s, which long quiet stretches (deep adaptive
- * thinking, a loaded endpoint) have been seen to exceed — darwin widens it to
- * 180s. Per-model override: `requestTimeoutMs`.
+ * thinking, a loaded endpoint) have been seen to exceed. With the default
+ * omitted thinking display Bedrock sends no bytes until reasoning ends, so this
+ * matches the 600s stream idle watchdog rather than cutting under it.
+ * Per-model override: `requestTimeoutMs`.
  */
-export const DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 600_000;
 
 /**
  * The inline preview the context offloader keeps for each offloaded result, in
