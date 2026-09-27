@@ -1,5 +1,6 @@
-import { link, lstat, mkdir, open, opendir, rename, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, open, opendir, rename, stat, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { userDarwinDir, userProjectDir } from '../paths.js';
@@ -17,8 +18,18 @@ export function setCloudStateObserverForTest(observer: typeof stateObserverForTe
 export function cloudDirectory(config: AgentCoreConfig, root?: string): string {
   return path.join(root === undefined ? userDarwinDir() : userProjectDir(root), 'agentcore', digest([config.region, config.memoryId, config.actorId]));
 }
-/** Refuse symlinked ancestors and oversized state. Never follow a model-provided path. */
+/**
+ * Refuse symlinked or non-directory components and oversized state. Never follow a model-provided
+ * path. The walk stops at HOME: every component from HOME down (`~/.darwin` and below) must be a
+ * real directory, while a HOME reached through a machine-level symlink is accepted.
+ */
 export async function safeDirectory(directory: string, create = false): Promise<boolean> {
+  const home = os.homedir();
+  if (directory === home) {
+    // HOME itself: a machine-level link is followed, but it must resolve to a real directory.
+    try { if (!(await stat(directory)).isDirectory()) throw new Error('AgentCore state path refused'); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !create) return false; throw error; }
+  }
   const parent = path.dirname(directory);
   if (parent !== directory && !await safeDirectory(parent, create)) return false;
   try { const stat = await lstat(directory); if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('AgentCore state path refused'); return true; }

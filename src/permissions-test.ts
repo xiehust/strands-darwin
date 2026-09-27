@@ -3,7 +3,7 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { matchesAnyDenyRule, matchesAnyRule, parseRule } from './agent/permission-rules.js';
-import { userProjectDir, userProjectSessionsDir } from './paths.js';
+import { canonicalUnderHome, userProjectDir, userProjectSessionsDir } from './paths.js';
 import { describeDamage, readTrajectory } from './trajectory/reader.js';
 
 export const MAX_TEST_RULE_CHARS = 2_000;
@@ -52,7 +52,7 @@ function lossy(value: unknown, depth = 0): boolean {
 
 /** Refuse symlink escapes rather than following another project's evidence. */
 async function localSize(file: string): Promise<number> {
-  if (await realpath(file) !== path.resolve(file)) throw new Error('symlink');
+  if (await realpath(file) !== (canonicalUnderHome(path.resolve(file)) ?? path.resolve(file))) throw new Error('symlink');
   const info = await stat(file);
   if (!info.isFile()) throw new Error('not a file');
   return info.size;
@@ -84,7 +84,7 @@ async function evidenceIds(options: PermissionTestOptions): Promise<{ ids: strin
   }
   const root = userProjectSessionsDir(options.projectRoot);
   try {
-    if (await realpath(root) !== path.resolve(root)) return { ids: [], notice: 'symlinked project store not read' };
+    if (await realpath(root) !== (canonicalUnderHome(path.resolve(root)) ?? path.resolve(root))) return { ids: [], notice: 'symlinked project store not read' };
     const entries = await readdir(root, { withFileTypes: true });
     const ids = entries.filter(entry => entry.isDirectory() && entry.name !== 'session' && /^[a-z0-9_-]{1,128}$/.test(entry.name))
       .map(entry => entry.name).sort().reverse();

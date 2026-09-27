@@ -4,7 +4,7 @@ import { lstat, open, opendir, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { classifyLease, defaultLeaseEnvironment, isValidSessionId, leaseFileIn, type SessionLeaseRecord } from './agent/session-lease.js';
-import { projectKey, userDarwinDir, userSessionsDir } from './paths.js';
+import { canonicalUnderHome, projectKey, userDarwinDir, userSessionsDir } from './paths.js';
 
 export const MAX_AGENT_PROJECT_ENTRIES = 128;
 export const MAX_AGENT_SESSION_ENTRIES = 2048;
@@ -37,10 +37,10 @@ function owned(uid: number): boolean {
   return process.getuid === undefined || uid === process.getuid();
 }
 
-/** Reject links at every traversed level, including .darwin and sessions. */
+/** Reject links at every traversed level, including .darwin and sessions (HOME's own location is the machine's). */
 async function safeDirectory(directory: string): Promise<void> {
   const info = await lstat(directory);
-  if (!info.isDirectory() || !owned(info.uid) || await realpath(directory) !== directory) {
+  if (!info.isDirectory() || !owned(info.uid) || await realpath(directory) !== (canonicalUnderHome(directory) ?? directory)) {
     throw new Error('unsafe directory');
   }
 }

@@ -2163,6 +2163,15 @@ the trajectory records no child event.
 `process.cwd()` is read only in the two entry points (`cli.ts`, `dev-repl.ts`); everything
 else takes an explicit `projectRoot`.
 
+**The no-symlink rule for user state starts at HOME.** The readers of `~/.darwin` state (config,
+AgentCore state, collaboration store, `/list-agents`, `permissions test`) refuse any link at or
+below HOME — a planted link inside HOME is the redirect they exist to stop — but HOME itself may be
+reached through a machine-level link (`/home -> /local/home` on dev hosts). Comparisons use
+`canonicalUnderHome()` (canonical HOME + the HOME-relative part), never `realpath(p) === p`, and
+the collaboration store's ownership/mode check applies to HOME's real directory. A first launch on
+such a host once failed outright ("AgentCore state path refused"). Paths outside HOME keep the
+whole-path rule. Check: `verify-symlinked-home.ts`†.
+
 ## The npm package — pinned pnpm patches, generated at build, SDK refused when missing
 
 **`npm install -g strands-darwin` is the supported install; the pnpm patch stays the single

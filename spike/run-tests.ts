@@ -138,6 +138,7 @@ const suites = [
 
   'verify-export-command.ts',
   'verify-sessions-command.ts',
+  'verify-symlinked-home.ts',
   'verify-session-lease.ts',
   'verify-list-agents.ts',
   'verify-list-agents-pty.ts',

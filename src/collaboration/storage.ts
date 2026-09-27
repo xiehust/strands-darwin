@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
-import { collaborationDir, userDarwinDir } from '../paths.js';
+import { canonicalUnderHome, collaborationDir, userDarwinDir } from '../paths.js';
 
 export const MAX_STATE_BYTES = 65_536;
 export const idSchema = z.string().uuid();
@@ -24,14 +24,16 @@ export function canonicalProject(root: string): string {
 function directory(dir: string, privateMode: boolean): void {
   const stat = lstatSync(dir);
   if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.()
-    || (stat.mode & (privateMode ? 0o077 : 0o022)) !== 0 || realpathSync.native(dir) !== dir) {
+    || (stat.mode & (privateMode ? 0o077 : 0o022)) !== 0 || realpathSync.native(dir) !== (canonicalUnderHome(dir) ?? dir)) {
     throw new Error('Unsafe collaboration directory; requires owned, non-symlink directories without foreign write access');
   }
 }
 
 export function checkStore(create = false): string {
   if (process.platform === 'win32' || process.getuid === undefined) throw new Error('Local collaboration requires POSIX Unix sockets');
-  directory(os.homedir(), false);
+  // HOME may be reached through a machine-level link (`/home -> /local/home`); its real directory
+  // gets the ownership/mode check, and nothing inside HOME may be a link.
+  directory(realpathSync.native(os.homedir()), false);
   for (const [dir, privateMode] of [[userDarwinDir(), false], [collaborationDir(), true]] as const) {
     if (create) { try { mkdirSync(dir, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; } }
     directory(dir, privateMode);

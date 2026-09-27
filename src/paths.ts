@@ -22,6 +22,20 @@ export function userDarwinDir(): string {
   return path.join(os.homedir(), DARWIN_DIRNAME);
 }
 
+/**
+ * What a path at or under HOME canonically resolves to when nothing *inside* HOME is a
+ * symlink: the canonical HOME joined with the path's HOME-relative part. HOME itself may be
+ * reached through a symlink (`/home -> /local/home` on many dev hosts) — that layout belongs to
+ * the machine, not to Darwin's state, so the no-symlink checks start at HOME. `undefined` for
+ * a path outside HOME (callers then keep their stricter whole-path rule).
+ */
+export function canonicalUnderHome(target: string): string | undefined {
+  const home = os.homedir();
+  const relative = path.relative(home, target);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+  return path.join(realpathSync.native(home), relative);
+}
+
 /** `~/.agents`, for portable user-global extension resources. */
 export function userAgentsDir(): string {
   return path.join(os.homedir(), AGENTS_DIRNAME);
