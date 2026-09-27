@@ -21,7 +21,9 @@ async function snapshot(directory: string): Promise<Record<string, unknown>> {
     if (entry.name.startsWith('fixture-')) continue; // Synthetic server logs are not product writes.
     const file = path.join(directory, entry.name);
     const meta = await stat(file);
-    result[file] = entry.isDirectory() ? { directory: true, mode: meta.mode } : { bytes: (await readFile(file)).toString('base64'), mode: meta.mode, mtime: meta.mtimeMs };
+    result[file] = entry.isDirectory() ? { directory: true, mode: meta.mode }
+      : entry.isSocket() ? { socket: true, mode: meta.mode }
+      : { bytes: (await readFile(file)).toString('base64'), mode: meta.mode, mtime: meta.mtimeMs };
     if (entry.isDirectory()) Object.assign(result, await snapshot(file));
   }
   return result;
@@ -182,12 +184,14 @@ export async function verifySetupPreflight({ home, root, repo, baseConfig, confi
     const outsideSessions = (files: Record<string, unknown>) => Object.fromEntries(Object.entries(files).filter(([name]) => name !== sessions && !name.startsWith(sessions + path.sep) && !sessions.startsWith(name + path.sep)));
     for (const scenario of scenarios) {
       await configure(scenario.memory);
-      const beforeTurn = outsideSessions(await snapshot(home));
       const beforeReads = (await calls()).length;
       const model = new CaptureModel(scenario.reply);
       setRuntimeModelFactoryForTest(async () => model);
       const runtime = await AgentRuntime.create({ projectRoot: root, session: { kind: 'new' }, permissionModeOverride: 'yolo', permissionBridge: async () => ({ allowed: false }) });
       try {
+        // Runtime startup owns endpoint/policy initialization. The setup turns must
+        // preserve that state too; compare while the endpoint is still alive.
+        const beforeTurn = outsideSessions(await snapshot(home));
         assert.equal(await runHeadlessTurn(runtime, '/setup-agentcore-memory', () => {}), scenario.reply);
         const structured = await runStructuredHeadlessTurn(runtime, '/setup-agentcore-memory', new StructuredHeadlessWriter('json', () => {}), () => 'unexpected tool');
         assert.equal(structured.reply, scenario.reply);
@@ -198,9 +202,9 @@ export async function verifySetupPreflight({ home, root, repo, baseConfig, confi
           assert(text.includes(instructions), `${scenario.label}: complete preflight and setup policy delivered`);
         }
         if (scenario.label === 'healthy') assert(!/what username|confirm.*defaults/i.test(structured.reply));
+        assert.deepEqual(outsideSessions(await snapshot(home)), beforeTurn, 'setup turns preserve config, cloud and live collaboration state');
       } finally { await runtime.shutdown(); setRuntimeModelFactoryForTest(undefined); }
       assert.equal((await calls()).length, beforeReads, 'scripted turn/expansion does not manufacture live-read evidence');
-      assert.deepEqual(outsideSessions(await snapshot(home)), beforeTurn, 'scripted turns write only ordinary session/trajectory state');
     }
   } finally {
     setMemoryTransportOptionsForTest(undefined);

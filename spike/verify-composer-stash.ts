@@ -24,7 +24,8 @@ const root = await mkdtemp(path.join(os.tmpdir(), 'darwin-stash-'));
 const home = path.join(root, 'home');
 const cwd = path.join(root, 'project');
 const bin = path.join(root, 'bin');
-await mkdir(path.join(home, '.darwin'), { recursive: true });
+// Exercise live collaboration under either the developer's or CI's umask.
+await mkdir(path.join(home, '.darwin'), { recursive: true, mode: 0o700 });
 await mkdir(cwd);
 await mkdir(bin);
 await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ preserveRecentMessages: 1,
@@ -103,7 +104,9 @@ async function allFiles(dir: string): Promise<{ name: string; text: string }[]> 
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const name = path.join(dir, entry.name);
     if (entry.isDirectory()) files.push(...await allFiles(name));
-    else files.push({ name, text: await readFile(name, 'utf8') });
+    // A live IPC socket has no persisted file body. Keep reading regular files
+    // beside it: excluding the whole collaboration directory would hide leaks.
+    else if (!entry.isSocket()) files.push({ name, text: await readFile(name, 'utf8') });
   }
   return files;
 }
@@ -126,6 +129,17 @@ async function probe(label: string, action: () => Promise<void>): Promise<void> 
 header('SER-085 — stash in the production CLI with local transport');
 try {
   await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
+  await probe('S2 privacy scan skips a live IPC socket but still detects persisted text beside it', async () => {
+    const directory = path.join(home, '.darwin', 'collaboration');
+    check.ok((await readdir(directory, { withFileTypes: true })).some(entry => entry.isSocket()),
+      'private fixture HOME must start a real collaboration socket');
+    const canary = path.join(directory, 'stash-privacy-canary');
+    const marker = 'STASH_PRIVACY_NEGATIVE_CONTROL';
+    await writeFile(canary, marker);
+    try { await check.rejects(privateDraft(marker), /hidden text in/); }
+    finally { await rm(canary); }
+    await privateDraft(marker);
+  });
   await probe('S1/S7 empty Ctrl+S inert; raw terminal keeps rendering without Ctrl+Q', async () => {
     await keys(STASH, '');
     await keys('raw-alive', 'raw-alive');
