@@ -16,6 +16,8 @@ export const NONCE_TTL_MS = 5 * 60_000;
 export const MESSAGE_CLAIM_TTL_MS = 2 * 60_000;
 export const SENDS_PER_MINUTE = 60;
 export const SENDS_PER_HOUR = 600;
+/** A Connections row this young may belong to a `$connect` still in progress; never reap it. */
+export const REAP_GRACE_MS = 60_000;
 
 /** Structured log fields only: ids, sizes, outcomes. Never text, envelopes, tokens or signatures. */
 export type LogFields = Record<string, string | number | boolean | undefined>;
@@ -76,6 +78,37 @@ export async function connect(ctx: HubContext, connectionId: string, node: strin
   const now = ctx.now();
   await ctx.store.putConnection({ connectionId, node, connectedAt: now, expiresAt: now + CONNECTION_TTL_MS });
   ctx.log({ event: 'connect', connectionId, node });
+  // `$disconnect` is best-effort: reap this node's rows whose socket is already gone. A live
+  // predecessor (two-hour rotation overlap, a second session) exists and is kept; so is any row
+  // younger than a minute, whose own `$connect` may still be completing. Never fatal.
+  try {
+    for (const other of await ctx.store.listConnections()) {
+      if (other.node !== node || other.connectionId === connectionId || other.connectedAt > now - REAP_GRACE_MS) continue;
+      if (other.expiresAt > now && await ctx.gateway.exists(other.connectionId)) continue;
+      await disconnect(ctx, other.connectionId);
+      ctx.log({ event: 'reap', connectionId: other.connectionId, node });
+    }
+  } catch (error) { ctx.log({ event: 'reap-failed', node, error: error instanceof Error ? error.name : 'unknown' }); }
+}
+
+export interface ConnectionStatus { connectionId: string; node: string; connectedAt: number; state: 'live' | 'stale' | 'expired'; endpoints: number }
+
+/**
+ * Operator projection: every Connections row checked against the gateway. `live` exists,
+ * `stale` is an unexpired row whose socket is gone (missed `$disconnect`), `expired` is past its
+ * two-hour lifetime awaiting TTL. With `prune`, stale and expired rows (and their endpoints) are
+ * removed through the ordinary disconnect path.
+ */
+export async function connectionStatus(ctx: HubContext, prune = false): Promise<ConnectionStatus[]> {
+  const now = ctx.now();
+  const endpoints = await ctx.store.listEndpoints(1024);
+  const rows: ConnectionStatus[] = [];
+  for (const connection of await ctx.store.listConnections()) {
+    const state = connection.expiresAt <= now ? 'expired' : await ctx.gateway.exists(connection.connectionId) ? 'live' : 'stale';
+    rows.push({ connectionId: connection.connectionId, node: connection.node, connectedAt: connection.connectedAt, state, endpoints: endpoints.filter(e => e.connectionId === connection.connectionId).length });
+    if (prune && state !== 'live') await disconnect(ctx, connection.connectionId);
+  }
+  return rows;
 }
 
 export async function disconnect(ctx: HubContext, connectionId: string): Promise<void> {

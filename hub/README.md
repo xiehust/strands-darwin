@@ -14,7 +14,7 @@ pnpm synth                        # CloudFormation + Lambda bundle, no AWS calls
 AWS_REGION=us-west-2 pnpm stack-deploy   # creates the stack; writes cdk-outputs.json (not `pnpm deploy`: a pnpm built-in)
 pnpm mint-token --note laptop     # one 10-minute single-use token, printed once
 darwin collaborate hub enroll <HubUrl> <token> --name laptop   # on each machine
-pnpm list-nodes | pnpm revoke-node <nodeId>
+pnpm list-nodes | pnpm revoke-node <nodeId>   # list-nodes --prune removes stale connection rows
 pnpm verify-deployed              # live acceptance (throwaway nodes, revoked at the end)
 pnpm verify-live-darwin           # two private HOMEs enrolled via the real CLI talk through the hub
 ```
@@ -36,6 +36,7 @@ The design sections are kept as written for their reasoning; these deviations wi
 | — | Every client socket ends via one handler bound to both `error` and `close` | Node 22's undici fires only `error` (no `close`, `readyState` stuck at CONNECTING) when the upgrade is refused |
 | — | Unreachable hub: 30 capped-backoff attempts, then pause | Bound for unattended reconnects, alongside the three-refusal pause |
 | — | A verified sender becomes a known reply target (≤64) | So a peer turn can answer without a fresh `peer_discover` |
+| — | `list-nodes` checks every Connections row with `GetConnection` (`live` / `stale` / `expired`), `--prune` removes non-live rows; `$connect` reaps its own node's gone rows older than 60 s | `$disconnect` is best-effort (AWS docs): a missed one left a row counted as a live connection for up to two hours. The 60 s grace avoids reaping a sibling whose `$connect` is still completing |
 | AGENTS.md row (§13) | Section "Collaboration hub — enrollment is the grant" in `docs/architecture/load-bearing-decisions.md` | AGENTS.md is at its 32 KiB preload cap; a row past the cap would be invisible |
 
 ### 0.1 Deployment and live verification record (2026-09-27)
@@ -81,7 +82,10 @@ versioned `PeerAddress`/`PeerEnvelope`).
 | Code location | `hub/` in this repository, independently installed |
 
 Non-goals: durable mailboxes, processed-delivery receipts, automatic retry, shared-write locking,
-multi-user accounts, a web UI, hub-side scheduling or any model work in the cloud.
+multi-user accounts, a web UI, hub-side scheduling or any model work in the cloud. (A receiver's
+"expired unprocessed" notice back to the sender is an ordinary signed envelope with a fixed text
+grammar, handled by the clients — see `docs/architecture/local-collaboration.md`; the hub is
+unchanged.)
 
 ## 2. Service limits that shape the design
 

@@ -125,6 +125,7 @@ export class LocalHub {
     const gateway: Gateway = {
       post: async (connectionId, frame) => (this.connections.get(connectionId)?.send(frame) ? 'ok' : 'gone'),
       close: async connectionId => { this.connections.get(connectionId)?.close(1008); },
+      exists: async connectionId => this.connections.get(connectionId)?.closed === false,
     };
     return { store: this.store, gateway, audience: this.audience, wsUrl: this.wsUrl, now: this.clock, log: fields => { this.logs.push(fields); this.extraLog?.(fields); } };
   }
@@ -188,11 +189,11 @@ export class LocalHub {
     const verdict = await authorize(this.ctx, headers);
     // API Gateway answers a denied authorizer with 403 and no detail; so does the local hub.
     if (!verdict.allow) { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return; }
+    // As on API Gateway, `$connect` completes before the client sees 101.
+    const id = randomUUID();
+    await connect(this.ctx, id, verdict.node);
     const accept = createHash('sha1').update(key + GUID).digest('base64');
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
-    const id = randomUUID();
-    const ctx = this.ctx;
-    await connect(ctx, id, verdict.node);
     const connection = new Connection(id, socket, text => message(this.ctx, id, text), () => {
       this.connections.delete(id);
       void disconnect(this.ctx, id);

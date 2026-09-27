@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import {
   connectHeaders, generateNodeKeys, hubFrame, parseFrame, signEnvelope, type HubAddress, type HubEnvelope, type HubFrame, type NodeKeys,
 } from '../../src/collaboration/hub-wire.js';
-import { SENDS_PER_MINUTE } from '../src/handlers.js';
+import { connectionStatus, SENDS_PER_MINUTE } from '../src/handlers.js';
 import { LocalHub } from '../src/local-server.js';
 
 let passed = 0;
@@ -232,6 +232,28 @@ await check('enrollment is broadcast to live connections', async () => {
   const late = await enrollNode('announced');
   const notice = await ca.next('node-enrolled', frame => frame.node.node === late.node.id);
   assert.equal(notice.node.publicKey, late.node.keys.publicKey);
+});
+
+await check('stale connection rows (missed $disconnect): counted apart, reaped on connect after a grace, pruned on demand', async () => {
+  const now = Date.now();
+  const old = randomUUID(); const young = randomUUID(); const orphan = randomUUID();
+  await hub.store.putConnection({ connectionId: old, node: a.node.id, connectedAt: now - 120_000, expiresAt: now + 3_600_000 });
+  await hub.store.putEndpoint({ endpoint: orphan, connectionId: old, node: a.node.id, project: 'github.com/x/y', session: 'gone', expiresAt: now + 600_000 }, now);
+  await hub.store.putConnection({ connectionId: young, node: a.node.id, connectedAt: now, expiresAt: now + 3_600_000 });
+  const before = await connectionStatus(hub.ctx);
+  assert.equal(before.find(c => c.connectionId === old)?.state, 'stale');
+  assert.equal(before.find(c => c.connectionId === old)?.endpoints, 1);
+  assert.equal(before.find(c => c.connectionId === young)?.state, 'stale');
+  assert.ok(before.filter(c => c.node === a.node.id && c.state === 'live').length >= 1, 'the real connection is live');
+  const extra = await Client.open(a.node); // $connect reaps this node's old stale row
+  assert.equal(await hub.store.getConnection(old), undefined, 'old stale row reaped');
+  assert.equal(await hub.store.getEndpoint(orphan), undefined, 'its endpoint removed with it');
+  assert.ok(await hub.store.getConnection(young), 'a row inside the grace window is kept');
+  const pruned = await connectionStatus(hub.ctx, true);
+  assert.equal(await hub.store.getConnection(young), undefined, 'prune removes the young stale row');
+  assert.ok(pruned.filter(c => c.state === 'live').every(c => hub.store.connections.has(c.connectionId)), 'prune never removes a live row');
+  assert.ok((await connectionStatus(hub.ctx)).every(c => c.state === 'live'));
+  extra.close();
 });
 
 await check('revoke: closes the node, broadcasts, refuses reconnect, target goes offline', async () => {
