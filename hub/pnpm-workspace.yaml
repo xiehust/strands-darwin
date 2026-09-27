@@ -1,0 +1,4 @@
+# Own workspace root: keeps `pnpm install` here from resolving to the darwin repository's
+# workspace. The hub is installed independently and never shipped in the npm package.
+allowBuilds:
+  esbuild: true

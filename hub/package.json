@@ -1,0 +1,37 @@
+{
+  "name": "darwin-collaboration-hub",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Relay and node directory for cross-machine darwin collaboration (API Gateway WebSocket + Lambda + DynamoDB). See README.md.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx spike/verify-handlers.ts",
+    "local": "tsx src/local-main.ts",
+    "synth": "cdk synth",
+    "stack-deploy": "cdk deploy",
+    "mint-token": "tsx scripts/mint-token.ts",
+    "revoke-node": "tsx scripts/revoke-node.ts",
+    "list-nodes": "tsx scripts/list-nodes.ts",
+    "verify-deployed": "tsx spike/verify-deployed.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.1141.0",
+    "@aws-sdk/client-dynamodb": "^3.1141.0",
+    "@aws-sdk/lib-dynamodb": "^3.1141.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-apigatewayv2": "^3.1141.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1141.0",
+    "@types/node": "^26.2.0",
+    "aws-cdk": "^2.1143.0",
+    "aws-cdk-lib": "^2.271.0",
+    "constructs": "^10.8.1",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

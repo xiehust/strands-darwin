@@ -1,0 +1,7 @@
+{
+  "app": "npx tsx infra/app.ts",
+  "outputsFile": "cdk-outputs.json",
+  "context": {
+    "@aws-cdk/aws-lambda-nodejs:useLatestRuntimeVersion": true
+  }
+}

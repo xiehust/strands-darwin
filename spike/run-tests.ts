@@ -8,6 +8,7 @@ const suites = [
   'verify-collaboration.ts',
   'verify-collaboration-drivers.ts',
   'verify-collaboration-failures.ts',
+  '../hub/spike/verify-handlers.ts',
   'verify-prompt-editor.ts',
   'verify-composer-yank.ts',
   'verify-draft-stash.ts',
