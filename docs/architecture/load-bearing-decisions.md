@@ -2272,6 +2272,19 @@ so `cli.ts` arms an unref'd 500ms `process.exit` fallback *after* shutdown compl
 without re-running `spike/verify-background-bash.ts`, `spike/probe-cancel-exit.ts`,
 `spike/verify-clear-session.ts`, and the `bashExit` / `cancelThenContinue` TUI scenarios.
 
+**A closed terminal exits through `shutdown()` too.** The interactive TUI installs SIGHUP/SIGTERM
+handlers that unmount Ink so the ordinary exit path runs `shutdown()`: without them Ink's
+`signal-exit` handler re-raised the signal and the process died with its hub endpoint still
+discoverable (until the hub's endpoint TTL) and its session lease on disk. The handler latches
+(a real terminal close delivers SIGHUP twice) and stays installed until shutdown finished, ignores
+write errors on the vanished terminal, sets exit code 128+signal and arms a 5s hard `process.exit`.
+`shutdown()` awaits `LocalCollaboration.close()`, whose hub transport resolves once its sockets
+closed after the queued `unregister` (bounded at `CLOSE_FLUSH_MS`, never rejects), so a graceful
+exit removes the endpoint by explicit unregister rather than the best-effort `$disconnect`. Idle
+Ctrl+C only arms; a second within 2s exits (busy or idle), and a cancel keeps the window armed so
+its "press ctrl+c again to exit" holds. Checks: `verify-hub-transport.ts`† (graceful close and
+real-TUI double SIGHUP: endpoint unregistered, lease released), `tui completion`.
+
 **The `/tasks` output tails read the log, never the cursor (SER-060).** The byte cursor behind
 `bash output` and `wait` is the model's: every byte belongs to exactly one consumer, and the
 offsets it reports are how the model knows what it has and has not seen. A user glancing at

@@ -1563,9 +1563,16 @@ async function slashCompletion(): Promise<void> {
     console.log(`  frame after /zzz: ${JSON.stringify(redrawn.slice(0, 400))}`);
     assert('completion list disappears when nothing matches', !redrawn.includes('commands ('));
 
-    tui.send('\u0003'); // ctrl+c while idle exits
+    // Idle Ctrl+C: the first press only arms (one stray press never ends a session), the
+    // second within the window exits.
+    const beforeCtrlC = tui.mark();
+    tui.send('\u0003');
+    await tui.waitFor('press ctrl+c again to exit', { timeoutMs: 10_000, from: beforeCtrlC });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert('one idle ctrl+c does not exit', !(await tui.exitedWithin(1000).then(() => true, () => false)));
+    tui.send('\u0003');
     const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
-    assert('ctrl+c exits when idle', code === 0);
+    assert('a second idle ctrl+c within 2s exits', code === 0);
   } finally {
     tui.kill();
     await rm(dir, { recursive: true, force: true });
@@ -2182,7 +2189,9 @@ async function agentsMdHeader(): Promise<void> {
     assert('it reports the size on disk', /KB/.test(shown ?? ''));
     assert('it warns that the file was truncated', /truncated to 32 KB/.test(tui.screen));
 
-    tui.send('\u0003'); // ctrl+c while idle exits
+    tui.send('\u0003'); // idle: the first press arms, the second exits
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    tui.send('\u0003');
     const code = await tui.exitedWithin(EXIT_TIMEOUT_MS);
     assert('startup with oversized instructions still exits cleanly', code === 0);
   } finally {
@@ -2207,6 +2216,8 @@ async function agentsMdHeader(): Promise<void> {
     assert('it says why', /EISDIR|illegal operation/i.test(reason ?? ''));
     assert('it is not also reported as loaded', !broken.screen.includes('AGENTS.md: loaded'));
 
+    broken.send('\u0003'); // idle: the first press arms, the second exits
+    await new Promise((resolve) => setTimeout(resolve, 200));
     broken.send('\u0003');
     assert('the session starts and exits normally regardless', (await broken.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
   } finally {

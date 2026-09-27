@@ -71,6 +71,8 @@ export interface WaitOptions {
 }
 
 export interface TuiSession {
+  /** The pty child's pid (the `tsx` wrapper for a `.ts` entry, node itself for `.js`). */
+  readonly pid: number;
   /** Everything written by the process, including terminal control sequences. */
   readonly raw: string;
   /** Everything drawn so far, ANSI stripped. */
@@ -157,6 +159,10 @@ export function startTui(options: TuiOptions): TuiSession {
   });
 
   const session: TuiSession = {
+    get pid() {
+      return child.pid;
+    },
+
     get raw() {
       return raw;
     },

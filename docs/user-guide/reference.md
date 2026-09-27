@@ -300,7 +300,7 @@ Rules and limits:
 | `y` / `n` / `Esc` | answer permission prompt; Esc denies; Ctrl+Y never approves |
 | `a` / `A` | review the exact narrow/tool-wide allow rule (ASCII JSON); Enter pages then saves, `b` goes back; `y` remains once-only and `n`/Esc deny. Small frames disable saving; resize restarts review |
 | `Ctrl+B` | compact/expanded tool details |
-| `Ctrl+C` | cancel busy work; press again within 2s to quit; idle quits |
+| `Ctrl+C` | cancel busy work; press again within 2s to quit; idle: the first press only arms, a second within 2s quits |
 | `Ctrl+D` | quit |
 
 Permission and compaction views own keyboard/paste while active and ignore paste. Otherwise an open rewind/history search receives pasted text as a bounded query, never as draft edits or acceptance keys; only explicit Enter/Tab accepts. The completion menu owns arrows before recall/cursor. Prompt queue take-back wins before recall.

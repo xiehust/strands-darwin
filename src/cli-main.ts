@@ -47,6 +47,8 @@ import { ringTerminalBell } from './tui/terminal-bell.js';
 import { notifyTerminal } from './tui/terminal-notify.js';
 
 const FORCE_EXIT_AFTER_MS = 500;
+/** After SIGHUP/SIGTERM, cleanup (hub unregister, lease release, child reaping) gets this long. */
+const SIGNAL_EXIT_DEADLINE_MS = 5000;
 
 export async function main(): Promise<void> {
   // Routed before argument parsing, and before any runtime, model or Ink import
@@ -347,11 +349,32 @@ async function runInteractive(options: CliOptions): Promise<void> {
       },
     }),
   );
+  // A closed terminal window / dropped SSH (SIGHUP) or a `kill` (SIGTERM) takes the same exit
+  // path as /exit: unmount, then `shutdown()` — which unregisters the hub endpoint and releases
+  // the session lease. Without this, Ink's signal-exit handler re-raised the signal and the
+  // process died before any cleanup. The terminal may already be gone, so a write error must not
+  // end the process first; a hard deadline bounds a cleanup that hangs. A real terminal close
+  // delivers SIGHUP more than once (window, then session leader), so the handler latches and
+  // stays installed until shutdown finished — a repeat must not reach Ink's re-raising handler.
+  let signalled = false;
+  const onSignal = (signal: NodeJS.Signals): void => {
+    if (signalled) return;
+    signalled = true;
+    process.exitCode = 128 + (signal === 'SIGHUP' ? 1 : 15);
+    process.stdout.on('error', () => {});
+    process.stderr.on('error', () => {});
+    setTimeout(() => process.exit(process.exitCode ?? 1), SIGNAL_EXIT_DEADLINE_MS).unref();
+    try { instance.unmount(); } catch { /* the terminal may already be gone */ }
+  };
+  process.on('SIGHUP', onSignal);
+  process.on('SIGTERM', onSignal);
   try {
     await instance.waitUntilExit();
   } finally {
     permissions.close();
     await current.shutdown();
+    process.off('SIGHUP', onSignal);
+    process.off('SIGTERM', onSignal);
     forceExitIfHung();
   }
   // SER-092: the one line an interactive exit leaves in the scrollback — the live

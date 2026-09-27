@@ -216,10 +216,15 @@ export class LocalCollaboration implements PeerTransport {
   /** Headless closes admission before draining a finite snapshot; not an idle daemon. */
   stopAdmission(): void { this.accepting = false; }
 
-  close(reason: string): void {
+  /**
+   * Retires the endpoint synchronously (callers may ignore the result). The returned promise
+   * settles when the hub transport has flushed its `unregister` and closed (bounded, never
+   * rejects) — `shutdown()` awaits it so an exit does not leave a discoverable hub endpoint.
+   */
+  close(reason: string): Promise<void> {
     this.generation++;
     this.stopped = true; this.accepting = false;
-    this.hub.close();
+    const hubClosed = this.hub.close();
     for (const timer of this.sweeps) clearTimeout(timer);
     this.sweeps.clear();
     const count = this.inbox.length; this.inbox = [];
@@ -236,6 +241,7 @@ export class LocalCollaboration implements PeerTransport {
     }
     if (count) this.notice(`peer messages dropped: ${count} (${reason}); not forwarded to a successor`);
     this.changed();
+    return hubClosed;
   }
 
   private async receive(socket: net.Socket, own: Registration): Promise<void> {

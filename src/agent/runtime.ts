@@ -2523,9 +2523,11 @@ export class AgentRuntime {
    * exiting.
    */
   async shutdown(options: { throwOnError?: boolean } = {}): Promise<void> {
-    this.collaboration.close('shutdown');
+    // Synchronous retirement first; the hub's bounded unregister flush is awaited with the rest.
+    const collaborationClosed = this.collaboration.close('shutdown');
     this.cloudMemory?.cancel();
     const results = await Promise.allSettled([
+      collaborationClosed,
       this.subagents.shutdown(),
       this.workflows.shutdown(),
       this.backgroundBash.shutdown(),

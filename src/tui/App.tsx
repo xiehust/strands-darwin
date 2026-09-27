@@ -11,8 +11,8 @@ import { peerNotice, peerPrompt, type PeerInput } from '../collaboration/protoco
  * Ctrl+C is handled here rather than by Ink (`exitOnCtrlC: false` at the render
  * call): during a turn the first press cancels that turn but keeps the session,
  * because losing a long conversation to a stray interrupt is worse than an
- * unfinished answer; a second press within a short window, or any press while
- * idle, exits. Ctrl+D always exits.
+ * unfinished answer; while idle the first press only arms. A second press within a
+ * short window exits, busy or idle. Ctrl+D always exits.
  */
 import os from 'node:os';
 import path from 'node:path';
@@ -1196,7 +1196,8 @@ export function App({
         // Cleared with the status, so a cancelled or failed turn stops the busy
         // readout in the same breath as the tick that was redrawing it.
         turnStartedAt.current = undefined;
-        interruptedAt.current = undefined;
+        // `interruptedAt` is deliberately kept: a Ctrl+C that cancelled this turn still arms
+        // the exit window, so the promised "press ctrl+c again to exit" holds once idle.
         // The turn's own `userInput` line reaches the record when the turn closes (one
         // append per turn), so this is the moment the reading in memory is one prompt
         // short. Marked, never re-read here: the next `Up` pays for it, and a session
@@ -1787,7 +1788,6 @@ export function App({
           // be killed, but it cannot wedge the session.
           shellRun.current = undefined;
           setStatus('idle');
-          interruptedAt.current = undefined;
         }
         // A user-cancelled `!` never silently sends the queue, exactly like a
         // cancelled turn (SER-027): what was queued behind it comes back to the
@@ -2526,17 +2526,20 @@ export function App({
     const now = Date.now();
     const previous = interruptedAt.current;
 
-    if (status === 'idle' && pendingPermission === undefined) {
-      exit();
-      return;
-    }
-
+    // Any Ctrl+C within the window of the previous one exits — idle or busy, and also right
+    // after a cancel ended the turn, which is what "press ctrl+c again to exit" promises.
     if (previous !== undefined && now - previous < DOUBLE_INTERRUPT_MS) {
       exit();
       return;
     }
 
     interruptedAt.current = now;
+    if (status === 'idle' && pendingPermission === undefined) {
+      // One stray press never ends the session: it only arms the second one.
+      dispatch({ type: 'notice', text: 'press ctrl+c again to exit' });
+      return;
+    }
+
     if (status === 'shell') {
       // The user's own `!` command: TERM its group now, KILL after the grace. The
       // completion path in submit() reports it as killed and frees the prompt —

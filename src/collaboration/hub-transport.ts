@@ -17,6 +17,8 @@ export const HEARTBEAT_MS = 4 * 60_000;
 export const ROTATE_MS = 110 * 60_000;
 export const REQUEST_TIMEOUT_MS = 10_000;
 export const MAX_REFUSALS = 3;
+/** Longest a close waits for its sockets to finish closing (after the `unregister` frame). */
+export const CLOSE_FLUSH_MS = 1000;
 /** ~25 minutes of capped backoff against an unreachable hub, then pause with a notice. */
 export const MAX_UNREACHABLE_ATTEMPTS = 30;
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 16_000, 32_000, 60_000];
@@ -88,13 +90,25 @@ export class HubTransport {
     this.hooks.notice(`hub: ${reason}`);
   }
 
-  close(): void {
+  /**
+   * Unregisters and closes. The promise settles once every socket has closed — the close
+   * handshake follows the queued `unregister` frame, so the hub has received it — or after
+   * {@link CLOSE_FLUSH_MS}; it never rejects. Synchronous state changes happen before it returns.
+   */
+  close(): Promise<void> {
     this.stopped = true;
     for (const timer of this.timers) clearTimeout(timer);
     this.timers.clear();
     for (const [id, pending] of this.requests) { clearTimeout(pending.timer); pending.reject(new Error('hub transport closed')); this.requests.delete(id); }
+    const closed: Promise<void>[] = [];
     for (const socket of [this.socket, this.rotating]) {
       if (!socket) continue;
+      if (!socket.ended) {
+        closed.push(new Promise<void>(resolve => {
+          socket.ws.addEventListener('close', () => resolve(), { once: true });
+          socket.ws.addEventListener('error', () => resolve(), { once: true });
+        }));
+      }
       try { if (socket.opened && this.own) socket.ws.send(JSON.stringify({ action: 'unregister', endpoint: this.own.endpoint })); } catch { /* closing */ }
       try { socket.ws.close(); } catch { /* closed */ }
     }
@@ -102,6 +116,11 @@ export class HubTransport {
     this.rows.clear();
     if (this.state === 'connected' || this.state === 'connecting' || this.state === 'paused') this.state = 'closed';
     this.own = undefined;
+    if (!closed.length) return Promise.resolve();
+    return Promise.race([
+      Promise.all(closed).then(() => undefined),
+      new Promise<void>(resolve => { setTimeout(resolve, CLOSE_FLUSH_MS).unref(); }),
+    ]);
   }
 
   private later(ms: number, run: () => void): void {

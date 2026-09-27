@@ -15,7 +15,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFile, fork, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -26,6 +26,7 @@ import { readHubState, updateHubState } from '../src/collaboration/hub-store.js'
 import { isRuleExempt, matchesAnyRule, sensitiveReadPath } from '../src/agent/permission-rules.js';
 import { isSensitiveDarwinPath } from '../src/paths.js';
 import { PermissionGate } from '../src/agent/permission.js';
+import { startTui } from './tui-driver.js';
 
 const ext = import.meta.url.endsWith('.js') ? 'js' : 'ts';
 const execArgv = ext === 'ts' ? ['--import', import.meta.resolve('tsx')] : [];
@@ -86,6 +87,18 @@ async function withHome<T>(dir: string, run: () => Promise<T> | T): Promise<T> {
   const previous = process.env['HOME'];
   process.env['HOME'] = dir;
   try { return await run(); } finally { process.env['HOME'] = previous; }
+}
+let homeC: { home: string; project: string } | undefined;
+function findFiles(dir: string, name: string): string[] {
+  if (!existsSync(dir)) return [];
+  return (readdirSync(dir, { recursive: true }) as string[]).filter(entry => path.basename(entry) === name);
+}
+/** The pty child is the tsx wrapper for a `.ts` entry; the darwin node process is its child. */
+function childPid(parent: number): Promise<number> {
+  return new Promise((resolve, reject) => execFile('pgrep', ['-P', String(parent)], (error, stdout) => {
+    const pid = Number(stdout.trim().split('\n')[0]);
+    if (error || !Number.isInteger(pid) || pid <= 0) reject(new Error(`no child of ${parent}`)); else resolve(pid);
+  }));
 }
 
 try {
@@ -248,6 +261,43 @@ try {
     const C = home('C', 'git@github.com:acme/gamma.git');
     assert.equal((await cli(C.home, ['hub', 'enroll', hub.httpUrl, await hub.mintToken(), '--name', 'gamma'])).status, 0);
     await waitFor('enrollment notice', async () => (await ask(a.child, 'notices')).some((n: string) => /node enrolled · gamma/.test(n)));
+    homeC = C;
+  });
+
+  const unregistered = (endpoint: string) => hub.logs.some(entry => entry['event'] === 'unregister' && entry['endpoint'] === endpoint);
+
+  await check('a graceful close unregisters the hub endpoint before it settles', async () => {
+    const node = await startNode(homeC!.home, homeC!.project);
+    await connected(node);
+    const endpoint = (await hubAddress(node)).endpoint;
+    await waitFor('endpoint registered', () => hub.store.endpoints.has(endpoint));
+    await ask(node.child, 'stop');
+    await waitFor('endpoint removed', () => !hub.store.endpoints.has(endpoint), 3000);
+    assert.ok(unregistered(endpoint), 'removed by the explicit unregister, not left to $disconnect');
+  });
+
+  await check('closing the terminal (SIGHUP) unregisters the hub endpoint and releases the lease', async () => {
+    const nodeC = JSON.parse(readFileSync(path.join(homeC!.home, '.darwin/collaboration/hub-node.json'), 'utf8')).node as string;
+    const tui = startTui({ cwd: homeC!.project, env: { HOME: homeC!.home } });
+    try {
+      await tui.waitFor('you>', { timeoutMs: 60_000 });
+      let endpoint: string | undefined;
+      await waitFor('TUI endpoint registered', () => {
+        endpoint = [...hub.store.endpoints.values()].find(row => row.node === nodeC)?.endpoint;
+        return endpoint !== undefined;
+      }, 30_000);
+      const leases = () => findFiles(path.join(homeC!.home, '.darwin'), 'lease.json');
+      assert.equal(leases().length, 1, 'the live session holds one lease');
+      // The darwin process itself (tsx wraps it), signalled twice as a real terminal close does.
+      const darwinPid = await childPid(tui.pid);
+      process.kill(darwinPid, 'SIGHUP');
+      await delay(50);
+      try { process.kill(darwinPid, 'SIGHUP'); } catch { /* already exiting */ }
+      await tui.exitedWithin(10_000);
+      await waitFor('endpoint removed', () => !hub.store.endpoints.has(endpoint!), 3000);
+      assert.ok(unregistered(endpoint!), 'removed by the explicit unregister, not left to $disconnect');
+      assert.equal(leases().length, 0, 'the session lease was released');
+    } finally { tui.kill('SIGKILL'); }
   });
 
   await check('revocation drops queued input at receivers; the revoked node pauses after three refusals', async () => {

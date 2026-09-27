@@ -36,7 +36,7 @@ process.on('message', async (message: { id: number; op: string; target?: string;
     else if (message.op === 'notices') result = local.takeNotices();
     else if (message.op === 'command') result = await collaborationCommand(local, message.text!);
     else if (message.op === 'rotate') { local.hub.rotateNow(); result = 'rotating'; }
-    else if (message.op === 'stop') { local.close('fixture shutdown'); result = local.takeNotices(); }
+    else if (message.op === 'stop') { await local.close('fixture shutdown'); result = local.takeNotices(); }
     else throw new Error('Unknown fixture operation');
     process.send?.({ id: message.id, result });
   } catch (error) { process.send?.({ id: message.id, error: error instanceof Error ? error.message : 'fixture error' }); }

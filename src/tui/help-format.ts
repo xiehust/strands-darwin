@@ -62,7 +62,7 @@ export function formatHelpReport(): string {
     '  /rewind branches conversation only; it never rolls back workspace files or side effects',
     '  /copy puts the last completed answer on the clipboard via OSC 52 (plus wl-copy/xclip/pbcopy when a display is present)',
     '  Ctrl+B toggles compact/expanded tool details',
-    '  Ctrl+C cancels busy work; press again within 2s to exit (while idle, it exits)',
+    '  Ctrl+C cancels busy work; press again within 2s to exit (while idle, the first press only arms)',
     '  Ctrl+D or /exit or /quit exits',
   );
 
