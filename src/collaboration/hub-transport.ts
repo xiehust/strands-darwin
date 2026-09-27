@@ -7,9 +7,10 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
-  connectHeaders, encodeFrame, fingerprint, hubFrame, MESSAGE_TTL_MS, parseFrame, shortFingerprint, signEnvelope, timeResponseSchema, verifyEnvelope,
+  connectHeaders, encodeFrame, fingerprint, hubFrame, parseFrame, shortFingerprint, signEnvelope, timeResponseSchema, verifyEnvelope,
   type DiscoverRow, type HubAddress, type HubEnvelope, type HubFrame, type PeerChain,
 } from './hub-wire.js';
+import { queuedText } from './protocol.js';
 import { isBlocked, pinNode, pinnedKey, readHubNode, remoteIdentity, type HubNode } from './hub-store.js';
 
 export const HEARTBEAT_MS = 4 * 60_000;
@@ -330,7 +331,7 @@ export class HubTransport {
     }
     const answer = await ack;
     if (answer?.type !== 'ack') throw new Error(ambiguous);
-    if (answer.status === 'queued') return `Queued ${envelope.id} via hub; not processed. Expires after ${MESSAGE_TTL_MS / 1000} seconds; revocation, cancellation, shutdown or capacity policy may drop it. No automatic retry on ambiguous acknowledgement.`;
+    if (answer.status === 'queued') return queuedText(envelope.id, ' via hub');
     return answer.reason ?? 'Not queued by the target';
   }
 

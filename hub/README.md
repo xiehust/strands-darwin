@@ -83,9 +83,10 @@ versioned `PeerAddress`/`PeerEnvelope`).
 
 Non-goals: durable mailboxes, processed-delivery receipts, automatic retry, shared-write locking,
 multi-user accounts, a web UI, hub-side scheduling or any model work in the cloud. (A receiver's
-"expired unprocessed" notice back to the sender is an ordinary signed envelope with a fixed text
-grammar, handled by the clients — see `docs/architecture/local-collaboration.md`; the hub is
-unchanged.)
+"expired unprocessed" notice back to the sender, and the sender's bounded resend of that verified
+never-processed message, are ordinary signed envelopes with a fixed text grammar handled by the
+clients — see `docs/architecture/local-collaboration.md`; the hub is unchanged and ambiguous sends
+are still never replayed.)
 
 ## 2. Service limits that shape the design
 

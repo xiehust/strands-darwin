@@ -204,6 +204,28 @@ try {
     await ask(b.child, 'take');
   });
 
+  await check('an expired queued message is resent three times via the hub, then the sender model is told', async () => {
+    await ask(a.child, 'notices');
+    const queued = await ask(a.child, 'sendAging', { target: addrB.endpoint, text: 'long task while busy' });
+    assert.match(queued, /^Queued .* via hub; .*resends it automatically up to 3 times/);
+    const id = /^Queued ([0-9a-f-]{36})/.exec(queued)![1]!;
+    const seen: string[] = [];
+    const noticed = (text: string) => waitFor(text, async () => { seen.push(...await ask(a.child, 'notices')); return seen.some(n => n.includes(text)); });
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await noticed(`peer message ${id} resent ${attempt}/3`);
+      await waitFor(`resend ${attempt} queued at B`, async () => (await ask(b.child, 'state')).pending === 1);
+      assert.equal((await ask(a.child, 'state')).pending, 0, 'notices and resends are never queued as work');
+      await ask(b.child, 'expireQueued');
+    }
+    await waitFor('failure turn queued at A', async () => (await ask(a.child, 'state')).pending === 1);
+    assert.ok((await ask(b.child, 'notices')).some((n: string) => n.includes('dropped: expired unprocessed; sender notified')));
+    const failure = await ask(a.child, 'take');
+    assert.deepEqual(failure.deliveryFailure, { original: id, attempts: 4 });
+    assert.match(failure.prompt, /^Local darwin runtime notice .*4 times/);
+    await assert.rejects(ask(a.child, 'reply', { text: 'retry myself' }), /unavailable in a delivery-failure notice turn/);
+    assert.equal((await ask(b.child, 'state')).pending, 0);
+  });
+
   await check('a stalled target gives an ambiguous result that is never replayed', async () => {
     b.child.kill('SIGSTOP');
     try { await assert.rejects(ask(a.child, 'send', { target: addrB.endpoint, text: 'ambiguous' }), /acknowledgement unavailable; delivery may have queued\. Do not replay automatically/); }

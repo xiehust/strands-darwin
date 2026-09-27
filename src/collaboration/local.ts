@@ -5,7 +5,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { collaborationDir } from '../paths.js';
 import { authorization, canonicalProject, checkStore, idSchema, readPolicy, readPrivate, requestCooperation, withPolicy, writePrivate } from './storage.js';
-import { addressSchema, authentic, CHAIN_TTL_MS, IO_TIMEOUT_MS, localEnvelopeSchema, MAX_FRAME_BYTES, MAX_HOPS, MAX_QUEUE, MESSAGE_TTL_MS, sign, type LocalEnvelope, type PeerAddress, type PeerChain, type PeerEnvelope, type PeerInput, type PeerTransport } from './protocol.js';
+import { addressSchema, authentic, CHAIN_TTL_MS, dropNoticeId, dropNoticeText, IO_TIMEOUT_MS, localEnvelopeSchema, MAX_AUTO_RESENDS, MAX_FRAME_BYTES, MAX_HOPS, MAX_QUEUE, MESSAGE_TTL_MS, queuedText, sign, type LocalEnvelope, type PeerAddress, type PeerChain, type PeerEnvelope, type PeerInput, type PeerTransport } from './protocol.js';
 import { isPublished } from './hub-store.js';
 import { HubTransport } from './hub-transport.js';
 import type { HubEnvelope } from './hub-wire.js';
@@ -17,6 +17,11 @@ const probeSchema = z.object({ kind: z.literal('probe'), target: idSchema, nonce
 const messageSchema = z.object({ kind: z.literal('message'), envelope: localEnvelopeSchema }).strict();
 const responseSchema = z.object({ nonce: idSchema, result: z.string().max(4096) }).strict();
 const sameAddress = (a: PeerAddress, b: PeerAddress): boolean => JSON.stringify(a) === JSON.stringify(b);
+/**
+ * One acknowledged send. `root` is the id of the original send; `attempt` counts runtime resends
+ * of it (0 = the original). Text/hop/readOnly let a verified expiry be resent without the model.
+ */
+interface SentRecord { endpoint: string; expires: number; text: string; hop: number; readOnly: boolean; root: string; attempt: number }
 
 export function socketPath(id: string): string {
   idSchema.parse(id);
@@ -122,12 +127,20 @@ export class LocalCollaboration implements PeerTransport {
   private listeners = new Set<() => void>();
   private notices: string[] = [];
   private seen = new Map<string, number>();
+  /** Messages this session got `Queued` for, so a matching drop notice can be shown and resent (bounded). */
+  private sentTo = new Map<string, SentRecord>();
+  /** Envelope ids whose sender was already told they expired unprocessed (bounded). */
+  private notified = new Set<string>();
+  /** One unref'd sweep per queued message, at its chain expiry; cleared on close. */
+  private sweeps = new Set<NodeJS.Timeout>();
   private chainCounts = new Map<string, { count: number; expires: number }>();
   private cause?: PeerChain;
   private outgoing = 0;
   private peerTurn = false;
   private lastPeerId?: string;
   private denied = false;
+  /** Set for a delivery-failure notice turn: the runtime already resent; the model reports, never sends. */
+  private noSend = false;
   private admitted = 0;
   private window = Date.now();
   private accepting = false;
@@ -207,6 +220,8 @@ export class LocalCollaboration implements PeerTransport {
     this.generation++;
     this.stopped = true; this.accepting = false;
     this.hub.close();
+    for (const timer of this.sweeps) clearTimeout(timer);
+    this.sweeps.clear();
     const count = this.inbox.length; this.inbox = [];
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
@@ -252,6 +267,7 @@ export class LocalCollaboration implements PeerTransport {
   }
 
   private async admit(envelope: LocalEnvelope): Promise<string> {
+    if (dropNoticeId(envelope.text) !== undefined) return this.acceptDropNotice(envelope);
     if (!this.fresh(envelope)) return 'Not queued: expired message/chain';
     const auth = authorization(this.project, envelope.sender.project);
     if (!auth) return requestCooperation(this.project, envelope.sender.project);
@@ -264,8 +280,112 @@ export class LocalCollaboration implements PeerTransport {
    */
   private admitHub(envelope: HubEnvelope): string {
     if (!this.accepting || this.stopped) return 'Not queued: endpoint retired or admission closed';
+    if (dropNoticeId(envelope.text) !== undefined) return this.acceptDropNotice(envelope);
     if (!this.fresh(envelope)) return 'Not queued: expired message/chain';
     return this.enqueue(envelope, `hub:${this.hub.generation}`);
+  }
+
+  /**
+   * A receiver's "expired unprocessed" notice: never queued, never a model turn. Shown once, only
+   * for an id this session sent to that exact endpoint; everything else is refused.
+   */
+  private acceptDropNotice(envelope: PeerEnvelope): string {
+    const now = Date.now();
+    const id = dropNoticeId(envelope.text)!;
+    const sent = this.sentTo.get(id);
+    if (envelope.sent > now + 1000 || envelope.sent <= now - MESSAGE_TTL_MS || !sent || sent.expires <= now || sent.endpoint !== envelope.sender.endpoint) {
+      return 'Not queued: unmatched peer notice';
+    }
+    this.sentTo.delete(id);
+    const where = `${envelope.sender.project} (${envelope.sender.session})`;
+    if (sent.attempt < MAX_AUTO_RESENDS) {
+      // Verified never processed, so a resend cannot duplicate work; ambiguous acks are never resent.
+      this.notice(`peer message ${sent.root} expired unprocessed in ${where}; resending automatically (${sent.attempt + 1}/${MAX_AUTO_RESENDS})`);
+      void this.resend(sent);
+      return `Queued notice ${envelope.id}; resending ${sent.attempt + 1}/${MAX_AUTO_RESENDS}, not queued as work`;
+    }
+    this.notice(`peer message ${sent.root} expired unprocessed in ${where} after ${MAX_AUTO_RESENDS} automatic resends; telling the model`);
+    const auth = envelope.version === 2 ? `hub:${this.hub.generation}` : authorization(this.project, envelope.sender.project);
+    if (!auth || this.inbox.length >= MAX_QUEUE || !this.accepting) return `Queued notice ${envelope.id}; shown to the user only (inbox unavailable)`;
+    this.inbox.push({ kind: 'peer', envelope, authorization: auth, deliveryFailure: { original: sent.root, attempts: sent.attempt + 1 } });
+    this.changed();
+    return `Queued notice ${envelope.id}; delivery failure queued for the sender's model`;
+  }
+
+  /**
+   * Runtime-owned resend after a verified expiry: same text, same hop and read-only ceiling, fresh
+   * chain (so the eventual reply is still allowed), outside the model's causal budget. Bounded by
+   * MAX_AUTO_RESENDS per original send; one attempt per notice, never after an ambiguous result.
+   */
+  private async resend(sent: SentRecord): Promise<void> {
+    const own = this.registration;
+    if (!own || this.stopped) return;
+    const chain: PeerChain = { id: randomUUID(), started: Date.now(), hop: sent.hop, readOnly: sent.readOnly };
+    const attempt = sent.attempt + 1;
+    let result: string;
+    let id: string;
+    try {
+      if (this.hub.knows(sent.endpoint)) {
+        const prepared = this.hub.prepare(sent.endpoint, chain, sent.text);
+        id = prepared.envelope.id;
+        result = await this.hub.transmit(prepared);
+      } else {
+        const recipient = registration(sent.endpoint);
+        if (!authorization(this.project, recipient.address.project)) { this.notice(`automatic resend ${attempt}/${MAX_AUTO_RESENDS} of ${sent.root} skipped: project pair no longer approved`); return; }
+        const envelope = localEnvelopeSchema.parse({ version: 1, id: randomUUID(), sender: own.address, target: recipient.address, sent: Date.now(), chain, text: sent.text });
+        id = envelope.id;
+        result = await exchange(recipient, { kind: 'message', envelope }, own.secret, envelope.id);
+      }
+    } catch (error) {
+      this.notice(`automatic resend ${attempt}/${MAX_AUTO_RESENDS} of ${sent.root} unavailable (${error instanceof Error ? error.message.slice(0, 200) : 'send failed'}); not retried again`);
+      return;
+    }
+    if (!result.startsWith('Queued')) { this.notice(`automatic resend ${attempt}/${MAX_AUTO_RESENDS} of ${sent.root} not queued: ${result.slice(0, 200)}`); return; }
+    this.rememberSent(result, id, sent.endpoint, chain, sent.text, sent.root, attempt);
+    this.notice(`peer message ${sent.root} resent ${attempt}/${MAX_AUTO_RESENDS} as ${id}`);
+  }
+
+  /** Delivery-time lifetime: an admitted message waits until its reply chain expires. */
+  private deliverableFresh(envelope: PeerEnvelope): boolean {
+    return envelope.chain.started > Date.now() - CHAIN_TTL_MS;
+  }
+
+  /** Drop queued messages whose chain expired, telling each sender once. */
+  private sweep(): void {
+    const expired = this.inbox.filter(input => !this.deliverableFresh(input.envelope));
+    if (!expired.length) return;
+    this.inbox = this.inbox.filter(input => !expired.includes(input));
+    for (const input of expired) {
+      this.notice(`peer message ${input.envelope.id} dropped: expired unprocessed; sender notified`);
+      this.notifyExpired(input);
+    }
+    this.changed();
+  }
+
+  /**
+   * Best effort, bounded (≤ one per admitted id, admission ≤16/minute): a fresh read-only chain
+   * outside the model's causal budget, fire-and-forget; failures only cost the notice.
+   */
+  private notifyExpired(input: PeerInput): void {
+    const envelope = input.envelope;
+    // A delivery-failure input is our own runtime notice, not the peer's work: nothing to report back.
+    if (input.deliveryFailure || this.notified.has(envelope.id) || this.stopped) return;
+    if (this.notified.size >= 256) this.notified.clear();
+    this.notified.add(envelope.id);
+    const chain: PeerChain = { id: randomUUID(), started: Date.now(), hop: 0, readOnly: true };
+    const text = dropNoticeText(envelope.id);
+    try {
+      if (envelope.version === 2) {
+        if (!this.hub.deliverable(envelope, input.authorization) || !this.hub.knows(envelope.sender.endpoint)) return;
+        void this.hub.transmit(this.hub.prepare(envelope.sender.endpoint, chain, text)).catch(() => {});
+        return;
+      }
+      const own = this.registration;
+      if (!own || authorization(this.project, envelope.sender.project) !== input.authorization) return;
+      const recipient = registration(envelope.sender.endpoint);
+      const notice = localEnvelopeSchema.parse({ version: 1, id: randomUUID(), sender: own.address, target: recipient.address, sent: Date.now(), chain, text });
+      void exchange(recipient, { kind: 'message', envelope: notice }, own.secret, notice.id).catch(() => {});
+    } catch { /* sender gone or transport down: the local notice already said it was dropped */ }
   }
 
   /** Drop queued hub input from one node (revoked at the hub, or blocked by the user). */
@@ -293,8 +413,12 @@ export class LocalCollaboration implements PeerTransport {
     this.seen.set(envelope.id, envelope.sent + MESSAGE_TTL_MS);
     this.chainCounts.set(envelope.chain.id, { count: (chain?.count ?? 0) + 1, expires: envelope.chain.started + CHAIN_TTL_MS });
     this.inbox.push({ kind: 'peer', envelope, authorization: auth }); this.admitted++;
+    // Busy sessions otherwise hold an expired message until the next idle take; the sweep lets
+    // the sender learn promptly. Unref'd: it never keeps a process alive.
+    const sweep = setTimeout(() => { this.sweeps.delete(sweep); this.sweep(); }, Math.max(0, envelope.chain.started + CHAIN_TTL_MS - now) + 50);
+    sweep.unref(); this.sweeps.add(sweep);
     this.changed();
-    return `Queued ${envelope.id}; not processed. Expires after 60 seconds; revocation, cancellation, shutdown or capacity policy may drop it. No automatic retry on ambiguous acknowledgement.`;
+    return queuedText(envelope.id);
   }
 
   /** Only a driver at idle takes input. Runtime rechecks it immediately before invocation. */
@@ -308,23 +432,26 @@ export class LocalCollaboration implements PeerTransport {
   }
 
   validateDelivery(input: PeerInput): void {
+    // Admission checked the 60 s send freshness; once queued, a message lives until its chain expires.
+    if (!this.deliverableFresh(input.envelope)) { this.notifyExpired(input); throw new Error('Peer delivery expired'); }
     if (input.envelope.version === 2) {
-      if (!this.fresh(input.envelope) || !this.hub.deliverable(input.envelope, input.authorization)) throw new Error('Peer delivery expired, revoked or retired');
+      if (!this.hub.deliverable(input.envelope, input.authorization)) throw new Error('Peer delivery expired, revoked or retired');
       return;
     }
-    if (!this.registration || !sameAddress(input.envelope.target, this.registration.address) || !this.fresh(input.envelope)
+    if (!this.registration || !sameAddress(input.envelope.target, this.registration.address)
       || authorization(this.project, input.envelope.sender.project) !== input.authorization) throw new Error('Peer delivery expired, revoked or retired');
   }
 
   beginHumanTurn(): void {
     this.cause = { id: randomUUID(), started: Date.now(), hop: 0, readOnly: this.readOnly() };
-    this.outgoing = 0; this.peerTurn = false; this.denied = false;
+    this.outgoing = 0; this.peerTurn = false; this.denied = false; this.noSend = false;
   }
   beginPeerTurn(input: PeerInput): void {
     this.validateDelivery(input);
     this.cause = input.envelope.chain;
     if (this.lastPeerId !== input.envelope.id) this.outgoing = 0;
     this.lastPeerId = input.envelope.id; this.peerTurn = true;
+    this.noSend = input.deliveryFailure !== undefined;
     // A local denial remains latched through synthetic turns; only a human can reset it.
   }
   permissionDenied(): void { if (!this.trustPeers) this.denied = true; }
@@ -336,6 +463,8 @@ export class LocalCollaboration implements PeerTransport {
     if (!own || this.stopped) throw new Error('Collaboration endpoint inactive; user: /collaborate on');
     idSchema.parse(target);
     if (target === own.address.endpoint) throw new Error('Self-send refused');
+    if (dropNoticeId(text) !== undefined) throw new Error('Peer notice text is reserved for the runtime');
+    if (this.noSend) throw new Error('peer_send is unavailable in a delivery-failure notice turn: the runtime already resent this message automatically; tell the user instead');
     if (this.denied) throw new Error('Peer send paused after a local permission denial; never route denied work to a peer. A human must explicitly resume.');
     const cause = this.cause;
     if (!cause || cause.started <= Date.now() - CHAIN_TTL_MS || (this.peerTurn && cause.hop >= MAX_HOPS) || this.outgoing >= (this.peerTurn ? 1 : 4)) throw new Error('Peer causal/outgoing limit; a human must explicitly resume work (no invented new chain)');
@@ -344,7 +473,9 @@ export class LocalCollaboration implements PeerTransport {
       const prepared = this.hub.prepare(target, chain, text);
       // Reserve synchronously before network waits; parallel tools share the cap.
       this.outgoing++;
-      return this.hub.transmit(prepared);
+      const result = await this.hub.transmit(prepared);
+      this.rememberSent(result, prepared.envelope.id, target, chain, text);
+      return result;
     }
     const recipient = registration(target);
     const envelope = localEnvelopeSchema.parse({ version: 1, id: randomUUID(), sender: own.address, target: recipient.address, sent: Date.now(), chain, text });
@@ -353,7 +484,20 @@ export class LocalCollaboration implements PeerTransport {
     // Reserve synchronously before network or lock waits; parallel tools share the cap.
     this.outgoing++;
     if (!authorization(this.project, recipient.address.project)) return requestCooperation(this.project, recipient.address.project);
-    try { return await exchange(recipient, body, own.secret, envelope.id); }
+    try {
+      const result = await exchange(recipient, body, own.secret, envelope.id);
+      this.rememberSent(result, envelope.id, target, chain, text);
+      return result;
+    }
     catch { throw new Error(`Peer send ${envelope.id}: acknowledgement unavailable; delivery may have queued. Do not replay automatically. Inspect the receiving session before a human retries.`); }
+  }
+
+  /** Bounded record of acknowledged sends, so only a matching drop notice is ever shown or resent. */
+  private rememberSent(result: string, id: string, endpoint: string, chain: PeerChain, text: string, root = id, attempt = 0): void {
+    if (!result.startsWith('Queued')) return;
+    const now = Date.now();
+    for (const [key, entry] of this.sentTo) if (entry.expires <= now) this.sentTo.delete(key);
+    if (this.sentTo.size >= 64) this.sentTo.delete(this.sentTo.keys().next().value!);
+    this.sentTo.set(id, { endpoint, expires: chain.started + CHAIN_TTL_MS + MESSAGE_TTL_MS, text, hop: chain.hop, readOnly: chain.readOnly, root, attempt });
   }
 }

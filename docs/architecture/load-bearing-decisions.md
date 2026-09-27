@@ -953,7 +953,12 @@ before spending its 32 challenge slots; omitted/uninspected/scan-limited facts r
 cleanup. Shared CLI/TUI grammar preflight rejects malformed arguments before state/probe work.
 Cancellation/retirement/shutdown drop pending messages and fence successors. Causal reply budgets
 and the sender's plan ceiling are runtime-owned, not tool arguments; denied work cannot be sent
-onward. Policy/credential controls remain un-ruleable and user-only.
+onward. Policy/credential controls remain un-ruleable and user-only. An admitted message stays
+deliverable until its chain expires (admission alone keeps the 60 s send window); one that expires
+unprocessed is dropped with one runtime notice back to its sender, matched to an id that sender
+got `Queued` for and never a model turn; the sender's runtime then resends it (≤3 times, fresh
+chain, outside the model's budget) and after that queues one no-send `deliveryFailure` turn for its
+model (details and bounds in local-collaboration.md).
 
 Exact schemas, bounds and threats are in [local-collaboration.md](local-collaboration.md); the
 versioned node/address/transport seam it reserved is now implemented by the collaboration hub

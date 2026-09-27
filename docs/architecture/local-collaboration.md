@@ -93,6 +93,30 @@ existing stream-interruption continuation. No classifier decides whether an answ
 turn. Four reply hops, one outgoing/peer turn, two admissions/endpoint/chain and a five-minute chain
 lifetime stop loops; queue, connection, frame and admission-rate caps bound floods.
 
+Queued lifetime and drop notice. Admission requires `sent` within 60 s (replay window); an admitted
+message then stays deliverable until its chain expires, because a busy receiver otherwise dropped
+acknowledged work silently after 60 s, and a reply after chain expiry would be refused anyway. An
+unref'd per-message sweep at chain expiry drops it and sends the sender one runtime notice on a
+fresh read-only chain, outside the model's causal budget (≤ one per admitted id). The notice is a
+fixed text grammar (`dropNoticeText` in `protocol.ts`) because the deployed hub validates a strict
+envelope schema; the sender intercepts it before admission — never queued, never a model turn —
+and shows it only for an id it got `Queued` for from that exact endpoint (bounded `sentTo`, 64);
+anything else is `unmatched peer notice`, and `peer_send` refuses notice-shaped text. Revocation,
+blocking, retirement and shutdown drops send no notice. Still no processed-delivery receipt: the
+reply itself is that.
+
+Automatic resend. A matched notice proves the message was never processed, so — unlike an
+ambiguous acknowledgement, which is still never replayed — the sender's runtime resends it itself:
+same text, same hop and read-only ceiling, a fresh chain (so the eventual reply is allowed),
+outside the model's causal budget, at most `MAX_AUTO_RESENDS` (3) times per original send, each
+visible as a notice (`resent k/3 as <id>`). A resend that is refused or ambiguous is reported and
+not retried. After the third resend also expires, the recipient's final notice envelope is queued
+once as a `deliveryFailure` peer input: the ordinary idle drain and `peerInput` record, with its
+own framing ("Local darwin runtime notice", attempts count), and `peer_send` refused for that turn
+so the model reports to its user instead of looping. It was chosen over handing each notice to the
+model because the expired chain would refuse the model's resend anyway, and a model-driven resend
+loop costs a turn per cycle with no bound but the model's judgement.
+
 ### Explicit limitations and future Hub seam
 
 This is **same OS user local IPC, not a security isolation boundary against malicious same-UID

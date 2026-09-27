@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { discoverPeers, LocalCollaboration, socketPath } from '../src/collaboration/local.js';
 import { authorization, readPolicy, requestCooperation, policyCommand, withPolicy } from '../src/collaboration/storage.js';
-import { sign, type PeerAddress, type PeerEnvelope } from '../src/collaboration/protocol.js';
+import { CHAIN_TTL_MS, dropNoticeText, peerPrompt, sign, type PeerAddress, type PeerEnvelope } from '../src/collaboration/protocol.js';
 
 const home = mkdtempSync('/tmp/dc-');
 process.env['HOME'] = home;
@@ -182,11 +182,58 @@ try {
   await ask(rate.child, 'stop');
   const expiry = new LocalCollaboration(root, 'queued-expiry'); await expiry.start();
   try {
-    const almostExpired = message(b.address, expiry.address!); almostExpired.sent -= 59_500; almostExpired.chain.started -= 59_500;
-    assert.match(await wire(expiry.address!.endpoint, frame(almostExpired, secret)), /Queued/);
-    await delay(550); assert.equal(expiry.take(), undefined, 'queued expiry checked at delivery');
-    assert.match(expiry.takeNotices().join('\n'), /expired/);
+    // C: admission keeps the 60 s send freshness, but a queued message outlives it until its chain expires.
+    const pastSendTtl = message(b.address, expiry.address!); pastSendTtl.sent -= 59_500; pastSendTtl.chain.started -= 59_500;
+    assert.match(await wire(expiry.address!.endpoint, frame(pastSendTtl, secret)), /Queued .*until the reply chain expires/);
+    await delay(550); assert.equal(expiry.take()?.envelope.id, pastSendTtl.id, 'a busy receiver still delivers after 60 s');
+    const chainEnding = message(b.address, expiry.address!); chainEnding.sent -= 1000; chainEnding.chain.started = Date.now() - CHAIN_TTL_MS + 400;
+    assert.match(await wire(expiry.address!.endpoint, frame(chainEnding, secret)), /Queued/);
+    await delay(600); assert.equal(expiry.take(), undefined, 'queued expiry follows the chain');
+    assert.match(expiry.takeNotices().join('\n'), /expired unprocessed; sender notified/);
+    // Notice-shaped text is reserved: refused as a peer_send, and an unmatched one is never queued.
+    assert.match(await wire(expiry.address!.endpoint, frame(message(b.address, expiry.address!, dropNoticeText(randomUUID())), secret)), /unmatched peer notice/);
+    assert.equal(expiry.pending, 0);
+    expiry.beginHumanTurn();
+    await assert.rejects(expiry.send(b.address.endpoint, dropNoticeText(randomUUID())), /reserved for the runtime/);
   } finally { expiry.close('expiry verified'); }
+  // B: a real socket round trip — the receiver's sweep tells the original sender, before any turn;
+  // the sender's runtime resends up to three times, then hands one no-send failure turn to its model.
+  const origin = new LocalCollaboration(root, 'notice-origin'); await origin.start();
+  const busy = new LocalCollaboration(root, 'notice-busy'); await busy.start();
+  try {
+    origin.beginHumanTurn();
+    (origin as unknown as { cause: { started: number } }).cause.started = Date.now() - CHAIN_TTL_MS + 600;
+    const queued = await origin.send(busy.address!.endpoint, 'long task while busy');
+    assert.match(queued, /^Queued .*resends it automatically up to 3 times/);
+    const id = /^Queued ([0-9a-f-]{36})/.exec(queued)![1]!;
+    const received: string[] = [];
+    const until = async (what: string, test: () => boolean) => {
+      const deadline = Date.now() + 5000;
+      while (!test()) { if (Date.now() > deadline) throw new Error(`timeout: ${what}; notices ${JSON.stringify(received)}`); received.push(...origin.takeNotices()); await delay(25); }
+    };
+    // Each resend carries a fresh five-minute chain; force its expiry through the real sweep.
+    const expireQueued = () => {
+      const inbox = (busy as unknown as { inbox: Array<{ envelope: { chain: { started: number }; text: string } }> }).inbox;
+      assert.equal(inbox.length, 1); assert.equal(inbox[0]!.envelope.text, 'long task while busy', 'the resend carries the original text');
+      inbox[0]!.envelope.chain.started = Date.now() - CHAIN_TTL_MS - 1;
+      (busy as unknown as { sweep(): void }).sweep();
+    };
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      await until(`resent ${attempt}/3`, () => received.some(n => n.includes(`peer message ${id} resent ${attempt}/3`)) && busy.pending === 1);
+      assert.equal(origin.pending, 0, 'notices and resends are never queued as work');
+      expireQueued();
+    }
+    await until('delivery failure queued for the model', () => origin.pending === 1);
+    received.push(...origin.takeNotices());
+    assert(received.some(n => n.includes(`peer message ${id} expired unprocessed`) && n.includes('after 3 automatic resends')));
+    const failure = origin.take()!;
+    assert.deepEqual(failure.deliveryFailure, { original: id, attempts: 4 });
+    assert.match(peerPrompt(failure), /expired unprocessed in the recipient's queue 4 times .*peer_send is unavailable in this turn/);
+    origin.beginPeerTurn(failure);
+    await assert.rejects(origin.send(busy.address!.endpoint, 'try again'), /unavailable in a delivery-failure notice turn/);
+    origin.beginHumanTurn();
+    assert.match(await origin.send(busy.address!.endpoint, 'human retries later'), /^Queued/, 'a human turn can send again');
+  } finally { origin.close('notice verified'); busy.close('notice verified'); }
   console.log('PASS forged identities/MAC, malformed/partial/oversize/flood, expiry, dedup, socket reuse, hop/outgoing/no-laundering caps and teardown');
 
   const third = path.join(home, 'c'); mkdirSync(third);

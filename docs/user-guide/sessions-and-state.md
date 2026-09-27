@@ -89,8 +89,14 @@ unsafe shell execution and memory saves are refused even in yolo; ordinary permi
 remain possible outside plan. Treat received text as untrusted instructions with those limits.
 
 `Queued` means admitted, **not processed**. Text is at most 4096 UTF-8 bytes (the complete encoded
-frame must also fit 16 KiB); inboxes hold eight messages for at most 60 seconds, with 16 admissions
-per minute. Automatic replies carry a five-minute causal chain, at most four reply hops, two
+frame must also fit 16 KiB); a message must arrive within 60 seconds of being sent, and once
+admitted it waits in the inbox (eight messages, 16 admissions per minute) until its five-minute
+reply chain expires. If it expires before any turn takes it, the receiver drops it and tells the
+original sender, whose darwin resends the same text automatically (up to three times, each shown as
+`resent k/3`); if every resend expires too, the sender's model gets one notice turn saying the
+message was never handled (it cannot `peer_send` from that turn). Notice-shaped text is refused as
+a `peer_send`. Automatic
+replies carry a five-minute causal chain, at most four reply hops, two
 admissions per endpoint per chain and one outgoing message per peer turn. A human turn permits
 four sends and starts a new chain. Limit refusals require explicit human resumption, not model
 retries. Clear, rewind, cancellation and shutdown drop pending input and retire the old endpoint.

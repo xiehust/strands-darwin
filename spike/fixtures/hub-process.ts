@@ -1,7 +1,7 @@
 /** Real hub node process fixture: one LocalCollaboration in its own HOME, no model/provider. Parent commands stand for explicit human actions. */
 import { collaborationCommand } from '../../src/collaboration/command.js';
 import { LocalCollaboration } from '../../src/collaboration/local.js';
-import { peerPrompt, type PeerInput } from '../../src/collaboration/protocol.js';
+import { CHAIN_TTL_MS, peerPrompt, type PeerInput } from '../../src/collaboration/protocol.js';
 
 const local = new LocalCollaboration(process.argv[2]!, process.argv[3]!);
 await local.start();
@@ -13,7 +13,20 @@ process.on('message', async (message: { id: number; op: string; target?: string;
     if (message.op === 'state') result = { state: local.hub.state, reason: local.hub.reason, hub: local.hub.address ?? null, pending: local.pending };
     else if (message.op === 'discover') result = await local.discover();
     else if (message.op === 'send') { local.beginHumanTurn(); result = await local.send(message.target!, message.text!); }
-    else if (message.op === 'take') { taken = local.take(); result = taken ? { envelope: taken.envelope, prompt: peerPrompt(taken) } : null; }
+    // Human send whose chain has ~1.5 s left, so a receiver that never takes it expires it quickly.
+    else if (message.op === 'sendAging') {
+      local.beginHumanTurn();
+      (local as unknown as { cause: { started: number } }).cause.started = Date.now() - CHAIN_TTL_MS + 1500;
+      result = await local.send(message.target!, message.text!);
+    }
+    else if (message.op === 'take') { taken = local.take(); result = taken ? { envelope: taken.envelope, prompt: peerPrompt(taken), deliveryFailure: taken.deliveryFailure ?? null } : null; }
+    // Force the queued message's chain expiry through the real sweep (a resend's chain is five minutes).
+    else if (message.op === 'expireQueued') {
+      const inbox = (local as unknown as { inbox: PeerInput[] }).inbox;
+      for (const input of inbox) input.envelope.chain.started = Date.now() - CHAIN_TTL_MS - 1;
+      (local as unknown as { sweep(): void }).sweep();
+      result = inbox.length;
+    }
     else if (message.op === 'reply') {
       if (!taken) throw new Error('No taken input');
       local.beginPeerTurn(taken);
