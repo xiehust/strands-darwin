@@ -105,9 +105,46 @@ permissions or inspect stale `policy.lock` after a crash; Darwin never steals a 
 relax modes or copy credentials to make it work. Older lease-only sessions cannot receive.
 The local transport is for the **same OS user**; it is **not an isolation boundary against
 malicious same-UID arbitrary code**, and normal model provider calls still receive message text.
-No Hub, remote listener, remote authentication or cloud transfer is implemented. See
+The local transport has no remote listener or cloud transfer; cross-machine collaboration is the
+separate, opt-in hub below. See
 [wire/storage reference](reference.md#local-collaboration) and
 [architecture and safety limits](../architecture/local-collaboration.md).
+
+### Collaborate across machines (collaboration hub)
+
+Deploy the hub once into your AWS account ([hub/README.md](../../hub/README.md)), then enrol each
+machine with a one-time token minted from that account:
+
+```bash
+cd hub && pnpm mint-token --note laptop          # on the machine with the deployer's credentials
+darwin collaborate hub enroll <HubUrl> <token> --name laptop   # on the machine to enrol
+```
+
+`enroll` is CLI-only, so the token never enters a session. After that, sessions on that machine
+publish to the hub automatically when their project has a network git `origin`; its normalized
+remote (`github.com/owner/repo`, credentials stripped) is the project identity other machines see.
+`peer_discover` lists hub endpoints under `hub`, and `peer_send` reaches them with the same literal
+text, limits and "queued, not processed" acknowledgement as local peers.
+
+**Every enrolled, active node collaborates with every other one without confirmation.** What
+protects you instead: each node's key is pinned the first time it is seen and a changed key is
+refused; a new enrolment shows a notice in every live session; `darwin collaborate hub block <node>`
+refuses a node locally whatever the hub says (and drops its queued messages); `pnpm revoke-node`
+cuts a node off everywhere; and peer messages stay peer input — the permission gate still asks or
+refuses exactly as for local peers, and denies peer-origin unsafe shell, policy/config/AGENTS edits
+and memory saves even in yolo. Message text passes through your AWS account (not stored or logged,
+but not end-to-end encrypted).
+
+```text
+darwin collaborate hub status     # enrolment, fingerprint, this session's hub state
+darwin collaborate hub nodes      # pinned nodes and fingerprints
+darwin collaborate hub publish off|on   # opt this project out of (or back into) the hub
+darwin collaborate hub block <node> | unblock <node>
+darwin collaborate hub leave      # remove this machine's identity (operator revoke is separate)
+```
+
+The same verbs except `enroll` work in the TUI as `/collaborate hub …`. A node that is refused three
+times pauses reconnects with the reason (revoked or clock skew); `/collaborate on` resumes.
 
 ### Find local session processes
 

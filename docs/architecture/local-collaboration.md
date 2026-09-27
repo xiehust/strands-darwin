@@ -112,11 +112,11 @@ not silently repaired. Dead endpoint files can remain after SIGKILL; discovery s
 bounded, not a janitor. No malicious-UID filesystem race isolation is claimed.
 
 `PeerAddress`/`PeerEnvelope` are versioned, carry a local node identity, and cross the small
-`PeerTransport.send(target,text)` seam. A future Hub adapter would need an explicitly authorized
-remote address/transport, authenticated node ownership, remote trust scope, transfer consent,
-expiry/receipt semantics and matching abuse limits. None are implemented here: no Hub server,
-remote listener, cloud storage, remote authentication infrastructure, dependencies or speculative
-routing/scheduler framework. The current schema rejects any transport other than `local`.
+`PeerTransport` seam. The collaboration hub ([hub/README.md](../../hub/README.md), decision
+"Collaboration hub — enrollment is the grant") implements that seam as version 2 addresses and
+envelopes over an authorized remote transport, with its own node authentication, trust scope,
+consent (enrolment), expiry/receipt semantics and abuse limits. Everything in this document still
+holds for the local transport, which continues to accept only `transport: "local"`.
 
 ## Focused Host correction
 

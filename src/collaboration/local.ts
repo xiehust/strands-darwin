@@ -5,13 +5,16 @@ import path from 'node:path';
 import { z } from 'zod';
 import { collaborationDir } from '../paths.js';
 import { authorization, canonicalProject, checkStore, idSchema, readPolicy, readPrivate, requestCooperation, withPolicy, writePrivate } from './storage.js';
-import { addressSchema, authentic, CHAIN_TTL_MS, envelopeSchema, IO_TIMEOUT_MS, MAX_FRAME_BYTES, MAX_HOPS, MAX_QUEUE, MESSAGE_TTL_MS, sign, type PeerAddress, type PeerChain, type PeerEnvelope, type PeerInput, type PeerTransport } from './protocol.js';
+import { addressSchema, authentic, CHAIN_TTL_MS, IO_TIMEOUT_MS, localEnvelopeSchema, MAX_FRAME_BYTES, MAX_HOPS, MAX_QUEUE, MESSAGE_TTL_MS, sign, type LocalEnvelope, type PeerAddress, type PeerChain, type PeerEnvelope, type PeerInput, type PeerTransport } from './protocol.js';
+import { isPublished } from './hub-store.js';
+import { HubTransport } from './hub-transport.js';
+import type { HubEnvelope } from './hub-wire.js';
 
 const registrationSchema = z.object({ address: addressSchema, pid: z.number().int().positive(), secret: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 type Registration = z.infer<typeof registrationSchema>;
 const wireSchema = z.object({ body: z.unknown(), mac: z.string() }).strict();
 const probeSchema = z.object({ kind: z.literal('probe'), target: idSchema, nonce: idSchema }).strict();
-const messageSchema = z.object({ kind: z.literal('message'), envelope: envelopeSchema }).strict();
+const messageSchema = z.object({ kind: z.literal('message'), envelope: localEnvelopeSchema }).strict();
 const responseSchema = z.object({ nonce: idSchema, result: z.string().max(4096) }).strict();
 const sameAddress = (a: PeerAddress, b: PeerAddress): boolean => JSON.stringify(a) === JSON.stringify(b);
 
@@ -131,13 +134,23 @@ export class LocalCollaboration implements PeerTransport {
   private stopped = false;
   private generation = 0;
   private canonicalRoot: string | undefined;
-  constructor(private readonly projectRoot: string, readonly session: string, private readonly readOnly: () => boolean = () => false) {}
+  /** Cross-machine transport (hub/README.md); shares this session's inbox, ledger and caps. */
+  readonly hub: HubTransport;
+  constructor(private readonly projectRoot: string, readonly session: string, private readonly readOnly: () => boolean = () => false) {
+    this.hub = new HubTransport({
+      admit: envelope => this.admitHub(envelope),
+      drop: (node, reason) => this.dropHubNode(node, reason),
+      notice: text => this.notice(text),
+    }, session);
+  }
   get project(): string {
     if (this.canonicalRoot === undefined) throw new Error('Canonical collaboration project unavailable');
     return this.canonicalRoot;
   }
 
   get address(): PeerAddress | undefined { return this.registration?.address; }
+  /** The project root this session was started in (not canonicalized). */
+  get root(): string { return this.projectRoot; }
   get pending(): number { return this.inbox.length; }
   get active(): boolean { return this.accepting; }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
@@ -175,6 +188,9 @@ export class LocalCollaboration implements PeerTransport {
       writePrivate(`${record.address.endpoint}.json`, record);
       this.registration = record;
       this.accepting = true;
+      // After local success, inside the same guard: any hub problem disables only the hub.
+      try { this.hub.start(this.project, isPublished(this.project)); }
+      catch (error) { this.notice(`hub: unavailable: ${error instanceof Error ? error.message.slice(0, 256) : 'startup failed'}`); }
     } catch (error) {
       if (generation !== this.generation) return;
       this.close('startup unavailable');
@@ -189,6 +205,7 @@ export class LocalCollaboration implements PeerTransport {
   close(reason: string): void {
     this.generation++;
     this.stopped = true; this.accepting = false;
+    this.hub.close();
     const count = this.inbox.length; this.inbox = [];
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
@@ -233,10 +250,37 @@ export class LocalCollaboration implements PeerTransport {
       && envelope.chain.started <= envelope.sent && envelope.chain.started > now - CHAIN_TTL_MS;
   }
 
-  private async admit(envelope: PeerEnvelope): Promise<string> {
+  private async admit(envelope: LocalEnvelope): Promise<string> {
     if (!this.fresh(envelope)) return 'Not queued: expired message/chain';
     const auth = authorization(this.project, envelope.sender.project);
     if (!auth) return requestCooperation(this.project, envelope.sender.project);
+    return this.enqueue(envelope, auth);
+  }
+
+  /**
+   * Hub admission: the transport already checked block/pin/signature/target. Enrollment is the
+   * grant (no per-pair confirmation); everything after is the shared local admission.
+   */
+  private admitHub(envelope: HubEnvelope): string {
+    if (!this.accepting || this.stopped) return 'Not queued: endpoint retired or admission closed';
+    if (!this.fresh(envelope)) return 'Not queued: expired message/chain';
+    return this.enqueue(envelope, `hub:${this.hub.generation}`);
+  }
+
+  /** Drop queued hub input from one node (revoked at the hub, or blocked by the user). */
+  dropHubNode(node: string, reason: string): void {
+    const before = this.inbox.length;
+    this.inbox = this.inbox.filter(input => input.envelope.version !== 2 || input.envelope.sender.node !== node);
+    if (this.inbox.length !== before) this.notice(`peer messages dropped: ${before - this.inbox.length} (${reason})`);
+  }
+
+  /** peer_discover: the local projection unchanged, plus the bounded hub projection. */
+  async discover(): Promise<Awaited<ReturnType<typeof discoverPeers>> & { hub: Awaited<ReturnType<HubTransport['discover']>> }> {
+    const [local, hub] = await Promise.all([discoverPeers(), this.hub.discover()]);
+    return { ...local, hub };
+  }
+
+  private enqueue(envelope: PeerEnvelope, auth: string): string {
     const now = Date.now();
     for (const [id, expiry] of this.seen) if (expiry <= now) this.seen.delete(id);
     for (const [id, entry] of this.chainCounts) if (entry.expires <= now) this.chainCounts.delete(id);
@@ -263,6 +307,10 @@ export class LocalCollaboration implements PeerTransport {
   }
 
   validateDelivery(input: PeerInput): void {
+    if (input.envelope.version === 2) {
+      if (!this.fresh(input.envelope) || !this.hub.deliverable(input.envelope, input.authorization)) throw new Error('Peer delivery expired, revoked or retired');
+      return;
+    }
     if (!this.registration || !sameAddress(input.envelope.target, this.registration.address) || !this.fresh(input.envelope)
       || authorization(this.project, input.envelope.sender.project) !== input.authorization) throw new Error('Peer delivery expired, revoked or retired');
   }
@@ -290,8 +338,15 @@ export class LocalCollaboration implements PeerTransport {
     if (this.denied) throw new Error('Peer send paused after a local permission denial; never route denied work to a peer. A human must explicitly resume.');
     const cause = this.cause;
     if (!cause || cause.started <= Date.now() - CHAIN_TTL_MS || (this.peerTurn && cause.hop >= MAX_HOPS) || this.outgoing >= (this.peerTurn ? 1 : 4)) throw new Error('Peer causal/outgoing limit; a human must explicitly resume work (no invented new chain)');
+    const chain: PeerChain = { ...cause, readOnly: cause.readOnly || this.readOnly(), hop: cause.hop + (this.peerTurn ? 1 : 0) };
+    if (this.hub.knows(target)) {
+      const prepared = this.hub.prepare(target, chain, text);
+      // Reserve synchronously before network waits; parallel tools share the cap.
+      this.outgoing++;
+      return this.hub.transmit(prepared);
+    }
     const recipient = registration(target);
-    const envelope = envelopeSchema.parse({ version: 1, id: randomUUID(), sender: own.address, target: recipient.address, sent: Date.now(), chain: { ...cause, readOnly: cause.readOnly || this.readOnly(), hop: cause.hop + (this.peerTurn ? 1 : 0) }, text });
+    const envelope = localEnvelopeSchema.parse({ version: 1, id: randomUUID(), sender: own.address, target: recipient.address, sent: Date.now(), chain, text });
     const body = { kind: 'message', envelope };
     if (Buffer.byteLength(JSON.stringify({ body, mac: sign(own.secret, body) }) + '\n') > MAX_FRAME_BYTES) throw new Error('Encoded peer frame exceeds 16 KiB; shorten text/identities');
     // Reserve synchronously before network or lock waits; parallel tools share the cap.

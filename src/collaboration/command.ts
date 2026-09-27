@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { discoverPeers, LocalCollaboration } from './local.js';
 import { idSchema, policyCommand } from './storage.js';
+import { hubCommand, parseHubArgs } from './hub-command.js';
 
 import { COLLABORATE_USAGE } from './grammar.js';
 export { COLLABORATE_USAGE } from './grammar.js';
@@ -8,6 +9,7 @@ export { COLLABORATE_USAGE } from './grammar.js';
 /** Pure preflight shared by CLI and TUI: no policy, registration or probe on bad grammar. */
 function validateCommand(args: readonly string[]): void {
   const [verb, id, flag] = args;
+  if (verb === 'hub') { parseHubArgs(args.slice(1)); return; }
   if (args.length === 1 && ['status', 'list', 'pending', 'relations', 'on', 'off'].includes(verb!)) return;
   if (verb === 'confirm' && args.length === 3 && flag === '--persist' && idSchema.safeParse(id).success) return;
   if (verb === 'revoke' && args.length === 2 && /^[a-f0-9]{64}$/.test(id ?? '')) return;
@@ -27,11 +29,13 @@ export async function collaborationCommand(local: LocalCollaboration, text: stri
     local.beginHumanTurn();
     return local.send(send[1]!, send[2]!);
   }
-  if (command === 'list') return JSON.stringify(await discoverPeers(), null, 2);
+  if (/^hub(?:\s|$)/.test(command)) return hubCommand(local, local.root, command.split(/\s+/).slice(1), false);
+  if (command === 'list') return JSON.stringify(await local.discover(), null, 2);
   const result = await policyCommand((command || 'status').split(/\s+/));
   if (command === 'off') local.close('collaboration off');
   if (command === 'on') { local.close('new endpoint requested'); await local.start(); }
-  return `${result}\nThis endpoint: ${JSON.stringify(local.address ?? null)}; queued: ${local.pending}\n${COLLABORATE_USAGE}`;
+  const hub = `${local.hub.state}${local.hub.reason ? ` (${local.hub.reason})` : ''}${local.hub.address ? ` endpoint ${local.hub.address.endpoint}` : ''}`;
+  return `${result}\nThis endpoint: ${JSON.stringify(local.address ?? null)}; queued: ${local.pending}\nHub: ${hub}\n${COLLABORATE_USAGE}`;
 }
 
 export async function runCollaborationCli(root: string, args: readonly string[]): Promise<void> {
@@ -39,6 +43,7 @@ export async function runCollaborationCli(root: string, args: readonly string[])
     // CLI registration exists only for an explicit send. Read projections do not
     // create policy; first startup/on initializes it with no cross-project grants.
     validateCommand(args.length ? args : ['status']);
+    if (args[0] === 'hub') { console.log(await hubCommand(undefined, root, args.slice(1), true)); return; }
     if (args[0] === 'list') { console.log(JSON.stringify(await discoverPeers(), null, 2)); return; }
     if (args[0] !== 'send') { console.log(await policyCommand(args.length ? args : ['status'])); return; }
     const local = new LocalCollaboration(root, `cli-${randomUUID()}`);

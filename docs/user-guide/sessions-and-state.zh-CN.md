@@ -88,8 +88,38 @@ clear、rewind、取消、关闭都会丢弃待处理消息并退役旧端点。
 不安全或损坏状态会关闭协作并提示，不影响 Darwin 其他功能。崩溃后遗留的 `policy.lock`
 须由用户检查后处理，Darwin 不抢占锁；不要通过放宽权限或复制凭证解决问题。
 只有租约的旧版会话不能接收。通信仅面向**同一 OS 用户**，**不是防御恶意同 UID 任意代码的隔离边界**；
-正常模型调用仍会把消息交给所配置的供应商。没有实现 Hub、远程监听、远程认证或云端传输。
+正常模型调用仍会把消息交给所配置的供应商。本地通道没有远程监听，也不向云端传输；跨机协作是下文单独、需要主动开启的 hub。
 详见[协议与存储参考](reference.zh-CN.md#本地协作)和[架构说明](../architecture/local-collaboration.md)。
+
+### 跨机协作（协作 hub）
+
+先把 hub 部署到你自己的 AWS 账号（见 [hub/README.md](../../hub/README.md)），再用该账号生成的一次性令牌注册每台机器：
+
+```bash
+cd hub && pnpm mint-token --note laptop          # 在持有部署凭据的机器上
+darwin collaborate hub enroll <HubUrl> <token> --name laptop   # 在要注册的机器上
+```
+
+`enroll` 仅限 CLI，令牌不会进入任何会话。注册之后，只要项目有网络 git `origin`，这台机器上的会话就会自动上线 hub；
+规范化后的远端（`github.com/owner/repo`，去掉凭据）就是其他机器看到的项目身份。`peer_discover` 在 `hub`
+字段下列出 hub 上的 endpoint，`peer_send` 向它们发送消息，文本、上限和"已入队、未处理"的回执语义与本地 peer 完全相同。
+
+**已注册且处于 active 状态的节点之间直接协作，不需要确认。** 取而代之的保护是：每个节点的公钥在首次见到时钉住，
+公钥变化一律拒收；有新节点注册时，所有在线会话都会看到通知；`darwin collaborate hub block <node>` 在本机屏蔽某个节点，
+不管 hub 怎么说都拒收，并清掉它已排队的消息；`pnpm revoke-node` 在所有地方切断一个节点；peer 消息始终只是 peer 输入，
+权限门照常询问或拒绝，来自 peer 的不安全 shell、策略/配置/AGENTS 修改和记忆写入即使在 yolo 模式下也会被拒绝。
+消息文本会经过你的 AWS 账号（不存储、不记录日志，但没有端到端加密）。
+
+```text
+darwin collaborate hub status     # 注册状态、指纹、本会话的 hub 状态
+darwin collaborate hub nodes      # 已钉住的节点及指纹
+darwin collaborate hub publish off|on   # 让本项目退出（或重新加入）hub
+darwin collaborate hub block <node> | unblock <node>
+darwin collaborate hub leave      # 删除本机身份（运维侧吊销需另行执行）
+```
+
+除 `enroll` 外，同样的子命令在 TUI 里以 `/collaborate hub …` 形式可用。节点连续三次被拒后会暂停重连并给出原因
+（已吊销或时钟偏差）；执行 `/collaborate on` 恢复。
 
 ### 查看本机会话进程
 

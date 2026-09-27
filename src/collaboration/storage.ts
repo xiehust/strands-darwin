@@ -78,7 +78,7 @@ export function writePrivate(name: string, value: unknown): void {
 }
 
 /** No stale-lock stealing: a crashed writer fails closed, never resurrects a revoked pair. */
-export async function withPolicy<T>(change: (state: CooperationState) => T): Promise<T> {
+export async function withLock<T>(change: () => T): Promise<T> {
   const root = checkStore(true);
   const lock = path.join(root, 'policy.lock');
   let acquired = false;
@@ -88,14 +88,18 @@ export async function withPolicy<T>(change: (state: CooperationState) => T): Pro
     await delay(25);
   }
   if (!acquired) throw new Error('Collaboration policy busy (policy.lock); retry after the writer finishes. After a crash, the owner must inspect and remove the stale empty lock directory.');
-  try {
+  try { return change(); } finally { rmdirSync(lock); }
+}
+
+export async function withPolicy<T>(change: (state: CooperationState) => T): Promise<T> {
+  return withLock(() => {
     const raw = readPrivate('policy.json');
     const state = raw === undefined ? { version: 1 as const, node: randomUUID(), enabled: true, generation: randomUUID(), pairs: [], pending: [] } : validateState(raw);
     state.pending = state.pending.filter(p => p.expires > Date.now());
     const result = change(state);
     writePrivate('policy.json', validateState(state));
     return result;
-  } finally { rmdirSync(lock); }
+  });
 }
 
 function validateState(raw: unknown): CooperationState {

@@ -26,6 +26,8 @@ export const CLI_USAGE = `Usage: darwin [--resume [<id>]|--session <id>] [--perm
        darwin collaborate send <endpoint-uuid> <literal text>
        darwin collaborate confirm <pending-id> --persist
        darwin collaborate revoke <pair-id>
+       darwin collaborate hub enroll <url> <token> [--name <label>]
+       darwin collaborate hub status|nodes|leave|publish on|off|block <node>|unblock <node>
        darwin permissions test <rule>
        darwin import --from claude-code [--apply]
        darwin doctor

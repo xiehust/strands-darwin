@@ -955,13 +955,59 @@ Cancellation/retirement/shutdown drop pending messages and fence successors. Cau
 and the sender's plan ceiling are runtime-owned, not tool arguments; denied work cannot be sent
 onward. Policy/credential controls remain un-ruleable and user-only.
 
-Exact schemas, bounds, threats and the **design-only** versioned node/address/transport seam for a
-possible Hub are in [local-collaboration.md](local-collaboration.md). Same UID is explicitly not a
-malicious-code isolation boundary; there is no remote implementation, data transfer, dependency,
-shared-write lock or processed-delivery guarantee. Checks: `verify-collaboration.ts` and
+Exact schemas, bounds and threats are in [local-collaboration.md](local-collaboration.md); the
+versioned node/address/transport seam it reserved is now implemented by the collaboration hub
+(next section). Same UID is explicitly not a malicious-code isolation boundary; the local transport
+has no remote data transfer, shared-write lock or processed-delivery guarantee. Checks: `verify-collaboration.ts` and
 `verify-collaboration-drivers.ts` plus `verify-collaboration-failures.ts` (real processes/files/PTY,
 offline SDK models, also compiled regression coverage), existing lease,
 permissions, trajectory, clear/rewind, headless, task-wake and free completion suites.
+
+## Collaboration hub — enrollment is the grant, the hub is a relay
+
+Invariant: a hub (version 2) message is admitted iff its sender node is `active` at the hub, not
+blocked locally, and its Ed25519 envelope signature verifies against the key **pinned on first
+sight** for that node id (a different key for a known id is refused forever; re-enrolment issues
+a new id). There is no per-pair confirmation on this transport; local-transport rules are
+unchanged and the hub never routes a node to itself. Enrolment is a one-time token redeemed by
+the user-only, CLI-only `darwin collaborate hub enroll`; the hub stores and logs no message text;
+peer-turn limits, peer-origin denials, causal budgets and ambiguous-never-replayed semantics are
+the local ones, shared through the same `LocalCollaboration` inbox and ledger.
+
+Why no confirmation. The user chose "every enrolled darwin collaborates by default" for a
+single-owner hub. The trust root is therefore the AWS account (who can mint tokens) plus the
+hub's `Nodes` table — deliberately more permissive than same-machine cross-project collaboration,
+which still needs `confirm --persist`. Do not "restore" a confirmation step on the hub transport
+without that decision changing; do not relax the local rule to match it either. What bounds a
+rogue enrolled node instead: pins (a compromised hub cannot re-key a known node), a visible
+`node-enrolled` notice on every live session, the local `hub block` veto re-checked at admission,
+dequeue and pre-invoke, revocation that drops queued input, and — the decisive part — peer-origin
+work still passes the gate (unsafe bash, policy/config/AGENTS writes and memory saves denied even
+in yolo), so a rogue node can make a session read and answer, not act beyond that.
+
+Why the state lives in `~/.darwin/collaboration/` (`hub-node.json`, `hub-state.json`) and the
+controls are `collaborate hub …`: the gate's existing collaboration protections — sensitive read
+path, un-ruleable, `collaborate` controls denied to the model before rules and hooks — cover the
+private key and the verbs with no new rule. Why `enroll` is CLI-only: a TUI command line is not a
+place for a bearer token.
+
+Transport facts that shaped the client (hub/README.md §2): the API Gateway WebSocket authorizer
+runs only on `$connect`, so authentication is a signed, audience-bound, single-use-nonce assertion
+in handshake headers (Node 22's undici `headers` option carries them); connections live at most
+two hours, so the client rotates at ~110 minutes (successor first); and undici fires only
+`error` — no `close`, `readyState` stuck at CONNECTING — when the upgrade is refused, so every
+socket ends through one idempotent handler bound to both events. Reconnects are bounded: capped
+backoff, three refusals from a reachable hub pause (the `/time` skew tells clock from revocation),
+thirty unreachable attempts pause; only `/collaborate on` resumes.
+
+Checks: `verify-hub-wire.ts`† (v1 bytes, v2 schemas, tamper-every-field signatures, connect
+domain separation, remote normalization and refusals, hub-wire purity), `../hub/spike/verify-handlers.ts`†
+(the real handlers through the dependency-free local hub: authorizer negatives, single-use tokens
+under concurrency, sender binding, ack forgery, rate windows, revoke, log sentinel, import
+boundary), `verify-hub-transport.ts`† (real node processes with private HOMEs and real CLI
+enrolment: exchange without confirmation, pins, re-key refusal, block, rotation, ambiguous result
+never replayed, publish off, enrolment notice, revocation pause, gate protection in yolo), and
+`hub/spike/verify-deployed.ts` (*live*, after `pnpm --dir hub stack-deploy`).
 
 ## `darwin doctor` — reports, never refuses; reads, never creates
 

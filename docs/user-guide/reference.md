@@ -26,7 +26,18 @@ status | list | pending | relations | on | off
 send <endpoint-uuid> <literal text>
 confirm <pending-id> --persist
 revoke <pair-id>
+hub status | hub nodes | hub leave | hub publish on|off | hub block <node> | hub unblock <node>
+hub enroll <url> <token> [--name <label>]      (CLI only)
 ```
+
+The `hub` verbs control cross-machine collaboration through the collaboration hub
+([design and threat model](../../hub/README.md)). Every enrolled, active, not locally blocked
+node collaborates with this one **without per-pair confirmation**; keys are pinned on first sight
+and a changed key is refused. `enroll` is CLI-only so the one-time token never enters a session.
+Hub identity (`hub-node.json`) and pins/blocks (`hub-state.json`) live in the owner-private
+collaboration directory below and share its protections. A session publishes to the hub only when
+its project has a network git `origin`; that normalized remote (`host/owner/repo`, credentials
+stripped) is the cross-machine project identity.
 
 `list` returns `{endpoints, omitted, uninspected, scanLimited, scope}`. `omitted` counts scanned
 registrations not returned (invalid/stale, failed challenge, or over probe budget); `uninspected`
@@ -148,6 +159,8 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
        darwin collaborate send <endpoint-uuid> <literal text>
        darwin collaborate confirm <pending-id> --persist
        darwin collaborate revoke <pair-id>
+       darwin collaborate hub enroll <url> <token> [--name <label>]
+       darwin collaborate hub status|nodes|leave|publish on|off|block <node>|unblock <node>
        darwin permissions test <rule>
        darwin import --from claude-code [--apply]
        darwin doctor

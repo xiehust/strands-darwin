@@ -26,7 +26,16 @@ status | list | pending | relations | on | off
 send <endpoint-uuid> <字面文本>
 confirm <pending-id> --persist
 revoke <pair-id>
+hub status | hub nodes | hub leave | hub publish on|off | hub block <node> | hub unblock <node>
+hub enroll <url> <token> [--name <label>]      （仅 CLI）
 ```
+
+`hub` 子命令控制经由协作 hub 的跨机协作（[设计与威胁模型](../../hub/README.md)）。
+凡是已注册、处于 active 状态、且未被本机屏蔽的节点，都与本机直接协作，**不需要逐对确认**；
+节点公钥在首次见到时钉住，之后公钥变化一律拒收。`enroll` 仅限 CLI，一次性令牌不会进入任何会话。
+hub 身份（`hub-node.json`）以及钉住/屏蔽记录（`hub-state.json`）存放在下文的 owner-private 协作目录中，
+享有同样的保护。只有当项目有网络 git `origin` 时，会话才会上线 hub；规范化后的远端
+（`host/owner/repo`，去掉凭据）就是跨机器的项目身份。
 
 `list` 返回 `{endpoints, omitted, uninspected, scanLimited, scope}`。`omitted` 统计已扫描但未返回的
 注册项（无效或过期、挑战失败、超过探测预算）；`uninspected` 是其中元数据有效、但因预算耗尽而未挑战的数量。
@@ -119,6 +128,8 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
        darwin collaborate send <endpoint-uuid> <literal text>
        darwin collaborate confirm <pending-id> --persist
        darwin collaborate revoke <pair-id>
+       darwin collaborate hub enroll <url> <token> [--name <label>]
+       darwin collaborate hub status|nodes|leave|publish on|off|block <node>|unblock <node>
        darwin permissions test <rule>
        darwin import --from claude-code [--apply]
        darwin doctor
