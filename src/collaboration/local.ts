@@ -136,7 +136,8 @@ export class LocalCollaboration implements PeerTransport {
   private canonicalRoot: string | undefined;
   /** Cross-machine transport (hub/README.md); shares this session's inbox, ledger and caps. */
   readonly hub: HubTransport;
-  constructor(private readonly projectRoot: string, readonly session: string, private readonly readOnly: () => boolean = () => false) {
+  /** `trustPeers` (user-only config): a local permission denial no longer pauses `peer_send`. */
+  constructor(private readonly projectRoot: string, readonly session: string, private readonly readOnly: () => boolean = () => false, private readonly trustPeers = false) {
     this.hub = new HubTransport({
       admit: envelope => this.admitHub(envelope),
       drop: (node, reason) => this.dropHubNode(node, reason),
@@ -326,7 +327,7 @@ export class LocalCollaboration implements PeerTransport {
     this.lastPeerId = input.envelope.id; this.peerTurn = true;
     // A local denial remains latched through synthetic turns; only a human can reset it.
   }
-  permissionDenied(): void { this.denied = true; }
+  permissionDenied(): void { if (!this.trustPeers) this.denied = true; }
   get fromPeer(): boolean { return this.peerTurn; }
   get peerReadOnly(): boolean { return this.peerTurn && this.cause?.readOnly === true; }
 

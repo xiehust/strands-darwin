@@ -8,6 +8,7 @@ const suites = [
   'verify-collaboration.ts',
   'verify-collaboration-drivers.ts',
   'verify-collaboration-failures.ts',
+  'verify-peer-trust.ts',
   'verify-hub-wire.ts',
   '../hub/spike/verify-handlers.ts',
   'verify-hub-transport.ts',

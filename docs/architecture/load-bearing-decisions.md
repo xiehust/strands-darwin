@@ -985,6 +985,20 @@ dequeue and pre-invoke, revocation that drops queued input, and — the decisive
 work still passes the gate (unsafe bash, policy/config/AGENTS writes and memory saves denied even
 in yolo), so a rogue node can make a session read and answer, not act beyond that.
 
+Peer trust — the one opt-out. Two relaxations, both checked by `verify-peer-trust.ts`. First,
+read-only system-info commands (`uname`, `whoami`, `id`, `arch`, `nproc`, `uptime`, `lsb_release`,
+bare `hostname`; `hostname` with any argument stays unsafe because it can set the name) joined the
+static safe list, so "what OS are you" needs no relaxation at all. Second, user-only config
+`trustPeers` (default `false`, `~/.darwin/config.json` only, a session key that survives `/model`)
+lifts exactly the peer-origin non-safe-bash denial — the call then takes the ordinary
+deny-rule/plan/mode/allow/prompt path — and the local-denial `peer_send` latch. It exists because a
+single owner running several enrolled machines found the hard denial made every cross-machine
+request a dead end, including the reply saying so. It deliberately does not lift the peer-origin
+memory-save, policy/config/AGENTS/`.darwin`/`.agents`/`.mcp.json` write, collaboration-secret or
+`collaborate`-control denials, nor the read-only sender ceiling or causal budgets; with it on, the
+paragraph above no longer holds for shell work — whoever can enroll a node can ask for it (prompted
+in `default`, run in `yolo`). Do not turn it on by default or make it project-settable.
+
 Why the state lives in `~/.darwin/collaboration/` (`hub-node.json`, `hub-state.json`) and the
 controls are `collaborate hub …`: the gate's existing collaboration protections — sensitive read
 path, un-ruleable, `collaborate` controls denied to the model before rules and hooks — cover the

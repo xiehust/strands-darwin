@@ -772,7 +772,7 @@ export class AgentRuntime {
     // observer binds to it late: a decision published before the binding — none
     // can be, since no turn runs during assembly — or with recording off is dropped.
     let trajectoryAudit: TrajectoryRecorder | undefined;
-    const collaboration: LocalCollaboration = new LocalCollaboration(options.projectRoot, session.sessionId, () => gate.mode === 'plan');
+    const collaboration: LocalCollaboration = new LocalCollaboration(options.projectRoot, session.sessionId, () => gate.mode === 'plan', config.trustPeers === true);
     const gate = new PermissionGate({
       mode: permissionMode,
       projectRoot: options.projectRoot,
@@ -788,6 +788,7 @@ export class AgentRuntime {
       // adapter below is the only place the gate's object meets the record's shape.
       peerOrigin: () => collaboration.fromPeer,
       peerReadOnly: () => collaboration.peerReadOnly,
+      trustPeers: config.trustPeers === true,
       onDecision: (decision) => {
         if (decision.outcome.includes('denied') || decision.outcome === 'deny-rule') collaboration.permissionDenied();
         trajectoryAudit?.recordPermissionDecision(permissionDecisionEntry(decision));

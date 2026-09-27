@@ -294,6 +294,16 @@ export interface SessionFields {
    */
   backgroundTaskWake?: boolean;
   /**
+   * Treat collaboration peers (local or hub) like the user for shell work: a
+   * peer-origin non-safe `bash` call goes through the ordinary mode/rules/prompt
+   * path (prompted in `default`, run in `yolo`) instead of the hard peer denial,
+   * and a local permission denial no longer pauses `peer_send`. Policy, config,
+   * AGENTS, `.darwin`/`.agents`, memory and collaboration protections, the
+   * read-only sender ceiling and causal limits are unchanged. **Off by default**;
+   * only `~/.darwin/config.json` can set it. For single-owner setups.
+   */
+  trustPeers?: boolean;
+  /**
    * Model-spawned shells — the persistent `bash` tool shell and `bash start` jobs,
    * for the parent and every child — never inherit credential-shaped environment
    * variables (SER-082): any name containing `KEY`, `SECRET`, `TOKEN`, `PASSWORD` or
@@ -426,6 +436,7 @@ export const SESSION_KEYS = [
   'terminalNotify',
   'terminalTitle',
   'backgroundTaskWake',
+  'trustPeers',
   'shellEnv',
   'trajectory',
   'diagnostics',
@@ -482,6 +493,7 @@ const DEFAULTS = {
   terminalNotify: false,
   terminalTitle: true,
   backgroundTaskWake: true,
+  trustPeers: false,
   memory: true,
   memoryHorizonDays: 28,
   maxConcurrentSubagents: DEFAULT_MAX_CONCURRENT_SUBAGENTS,
@@ -1241,6 +1253,8 @@ function validateSessionFields(
       booleanField(input, 'terminalTitle', configPath) ?? DEFAULTS.terminalTitle,
     backgroundTaskWake:
       booleanField(input, 'backgroundTaskWake', configPath) ?? DEFAULTS.backgroundTaskWake,
+    trustPeers:
+      booleanField(input, 'trustPeers', configPath) ?? DEFAULTS.trustPeers,
     memoryHorizonDays:
       integerField(input, 'memoryHorizonDays', configPath, { min: 0, max: 365 }) ??
       DEFAULTS.memoryHorizonDays,

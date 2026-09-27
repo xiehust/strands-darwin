@@ -45,6 +45,11 @@ Peer-origin policy/config/AGENTS changes, memory saves and unsafe shell executio
 ordinary file edits still use the recipient's gate. A plan sender's read-only ceiling follows its
 reply chain. Any local denial pauses peer sends until a new explicit human turn. This prevents a
 denied action from simply being forwarded; it is not a sandbox against arbitrary same-UID code.
+Read-only system-info commands (`uname`, `whoami`, `id`, `arch`, `nproc`, `uptime`,
+`lsb_release`, bare `hostname`) are on the safe list, so a peer can ask what a machine is without
+any of this relaxing. On machines you alone own, config `trustPeers: true` lifts exactly two of
+these rules: peer shell work is prompted (or run in yolo) like yours, and a denial no longer pauses
+peer sends; the policy, memory, secret and read-only-ceiling protections stay.
 Use [the local collaboration workflow](sessions-and-state.md#collaborate-with-local-sessions)
 for status, pending confirmation, revocation and off. Cooperation grants neither cloud-memory consent
 nor permission to treat peer text as a user quote.
