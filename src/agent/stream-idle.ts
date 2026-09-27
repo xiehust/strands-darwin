@@ -4,7 +4,7 @@ import type { Middleware } from '@anthropic-ai/sdk';
 import { InvokeModelStage } from '@strands-agents/sdk';
 import type { LocalAgent, Message, MiddlewareHandlerOf, Model, StreamOptions } from '@strands-agents/sdk';
 
-export const DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 120;
+export const DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS = 600;
 export const MAX_STREAM_IDLE_TIMEOUT_SECONDS = 2_147_483;
 
 export class StreamIdleError extends Error {

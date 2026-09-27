@@ -75,7 +75,7 @@ A flat file intentionally exposes only one model to `/model`. `/model` persists 
 | `summaryRatio` | `0.8` | fraction of old messages summarized on overflow |
 | `preserveRecentMessages` | `10` | messages kept verbatim by summarization |
 | `contextWarnRatio` | `0.8` | post-turn `/compact` recommendation threshold; `0` disables |
-| `streamIdleTimeoutSeconds` | `120` | parent model-stream inactivity in seconds, finite `0–2147483` (fractions allowed); `0` disables. Every SDK model-stream event, including thinking, resets it; see [stream idle watchdog](#stream-idle-watchdog) |
+| `streamIdleTimeoutSeconds` | `600` | parent model-stream inactivity in seconds, finite `0–2147483` (fractions allowed); `0` disables. Every SDK model-stream event, including thinking, resets it; see [stream idle watchdog](#stream-idle-watchdog) |
 | `contextOffload` | `true` | store oversized tool results beside the session, leaving a preview/reference; `false` opts out |
 | `maxResultTokens` | `5000` | offload threshold; valid with default/explicit `true`, rejected with `contextOffload: false`, must exceed `1000` |
 | `trajectory` | `true` | append every turn to trajectory |
@@ -99,7 +99,7 @@ The two tables above are the complete key set. Any other key — at the root or 
 
 ## Stream idle watchdog
 
-`streamIdleTimeoutSeconds` is a root session setting, shared across model switches. It defaults to `120`; `0` disables the watchdog (not provider transport timeouts). It times only pending reads of the **parent model stream**, including the first event and the final stream close. Each SDK stream event, including thinking, starts a fresh allowance; a long stream with regular events is not capped. Time spent in hooks, driver rendering, token counting, permission prompts, tools, background completion, deliberate throttle backoff, children and `/compact` is outside this scope. This is distinct from Bedrock's byte-level `requestTimeoutMs`; whichever applicable timeout expires first fails the request.
+`streamIdleTimeoutSeconds` is a root session setting, shared across model switches. It defaults to `600`; `0` disables the watchdog (not provider transport timeouts). It times only pending reads of the **parent model stream**, including the first event and the final stream close. Each SDK stream event, including thinking, starts a fresh allowance; a long stream with regular events is not capped. Time spent in hooks, driver rendering, token counting, permission prompts, tools, background completion, deliberate throttle backoff, children and `/compact` is outside this scope. This is distinct from Bedrock's byte-level `requestTimeoutMs`; whichever applicable timeout expires first fails the request.
 
 A silent stream is aborted and drained before the turn fails with `StreamIdleError: stream idle for Ns`. No automatic retry or continuation follows. User cancellation wins while the abort is settling and remains cancellation. TUI uses its ordinary turn-failed notice; text, JSON and JSONL headless each write one `stream: stream idle for Ns` stderr diagnostic and retain their normal failure output and exit code 1. Inspect partial work before sending a new prompt. Supported transports honor abort; a custom model that ignores cancellation cannot safely be detached, so cleanup waits for its pending read rather than leaving a live iterator behind.
 

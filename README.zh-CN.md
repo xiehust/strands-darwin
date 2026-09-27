@@ -146,7 +146,7 @@ darwin -p "inspect this project" --output-format stream-json
 
 TUI、无头模式、结构化输出、消息队列、shell 命令和后台任务的完整约定，见[使用 darwin](docs/user-guide/using-darwin.zh-CN.md)。
 
-主代理模型流连续 120 秒没有事件时会明确报错，不自动重试；思考事件也会重新计时，权限、工具和重试等待不计入。根级 `streamIdleTimeoutSeconds` 可调整秒数（`0` 关闭）；详见[范围与取消语义](docs/user-guide/configuration.zh-CN.md#模型流空闲检测)。
+主代理模型流连续 600 秒没有事件时会明确报错，不自动重试；思考事件也会重新计时，权限、工具和重试等待不计入。根级 `streamIdleTimeoutSeconds` 可调整秒数（`0` 关闭）；详见[范围与取消语义](docs/user-guide/configuration.zh-CN.md#模型流空闲检测)。
 
 ## 可选云记忆
 

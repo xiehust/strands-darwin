@@ -221,7 +221,7 @@ export interface SessionFields {
    * Set to 0 to disable. Default: 0.8.
    */
   contextWarnRatio: number;
-  /** Parent model-stream inactivity in seconds; 0 disables. Default: 120. */
+  /** Parent model-stream inactivity in seconds; 0 disables. Default: 600. */
   streamIdleTimeoutSeconds?: number;
   /**
    * Offload oversized tool results to session-scoped storage, keeping a preview

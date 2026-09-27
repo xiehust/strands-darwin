@@ -151,7 +151,7 @@ darwin -p "inspect this project" --output-format stream-json
 
 Read [Using darwin](docs/user-guide/using-darwin.md) for TUI, headless, structured-output, queue, shell, and background-job contracts.
 
-Silent parent model streams fail visibly after 120 seconds without an event, with no automatic retry; thinking events reset the allowance. Permission, tool and retry waits are excluded. Root config `streamIdleTimeoutSeconds` changes it (`0` disables); see [scope and cancellation](docs/user-guide/configuration.md#stream-idle-watchdog).
+Silent parent model streams fail visibly after 600 seconds without an event, with no automatic retry; thinking events reset the allowance. Permission, tool and retry waits are excluded. Root config `streamIdleTimeoutSeconds` changes it (`0` disables); see [scope and cancellation](docs/user-guide/configuration.md#stream-idle-watchdog).
 
 ## Optional cloud memory
 

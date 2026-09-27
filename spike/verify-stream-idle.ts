@@ -116,8 +116,8 @@ async function consume(rt: AgentRuntime) {
 async function contracts(): Promise<void> {
   await configure({ streamIdleTimeoutSeconds: undefined });
   const defaults = await loadConfig(root);
-  assert.equal(defaults.streamIdleTimeoutSeconds, 120);
-  assert.equal(withModelChoice(defaults, defaults.modelChoices[0]!).streamIdleTimeoutSeconds, 120);
+  assert.equal(defaults.streamIdleTimeoutSeconds, 600);
+  assert.equal(withModelChoice(defaults, defaults.modelChoices[0]!).streamIdleTimeoutSeconds, 600);
   for (const value of [0, LIMIT, 1, MAX_STREAM_IDLE_TIMEOUT_SECONDS]) {
     await configure({ streamIdleTimeoutSeconds: value });
     assert.equal((await loadConfig(root)).streamIdleTimeoutSeconds, value);
