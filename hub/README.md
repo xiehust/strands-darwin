@@ -1,7 +1,8 @@
 # darwin collaboration hub — design
 
-Status: **implemented and verified locally; not yet deployed.** This directory holds the hub
-service and its infrastructure. It is an independent package: own `package.json` and lockfile,
+Status: **deployed to `us-west-2`** (stack `DarwinCollaborationHub`, account 434444145045, 2026-09-27)
+and verified live — see §0.1. This directory holds the hub service and its infrastructure. It is an
+independent package: own `package.json` and lockfile,
 not a member of the root `pnpm-workspace.yaml`, never shipped in the `strands-darwin` npm package.
 Building the Lambda bundle also needs the repository's root install (it bundles `zod` and
 `src/collaboration/hub-wire.ts` from there).
@@ -15,6 +16,7 @@ pnpm mint-token --note laptop     # one 10-minute single-use token, printed once
 darwin collaborate hub enroll <HubUrl> <token> --name laptop   # on each machine
 pnpm list-nodes | pnpm revoke-node <nodeId>
 pnpm verify-deployed              # live acceptance (throwaway nodes, revoked at the end)
+pnpm verify-live-darwin           # two private HOMEs enrolled via the real CLI talk through the hub
 ```
 
 ## 0. Implementation notes — where the code differs from the design below
@@ -35,6 +37,26 @@ The design sections are kept as written for their reasoning; these deviations wi
 | — | Unreachable hub: 30 capped-backoff attempts, then pause | Bound for unattended reconnects, alongside the three-refusal pause |
 | — | A verified sender becomes a known reply target (≤64) | So a peer turn can answer without a fresh `peer_discover` |
 | AGENTS.md row (§13) | Section "Collaboration hub — enrollment is the grant" in `docs/architecture/load-bearing-decisions.md` | AGENTS.md is at its 32 KiB preload cap; a row past the cap would be invisible |
+
+### 0.1 Deployment and live verification record (2026-09-27)
+
+`cdk deploy` created all 47 resources in 81 s (HTTP API `siymiyvjk6`, WebSocket API `1qzhmqbtzb`).
+
+- `pnpm verify-deployed`, **first run ~20 s after deploy: failed** at the message-exchange check —
+  one fresh-header WebSocket open was refused, and neither the authorizer nor `$connect` logged
+  that attempt (no Lambda errors in any log group). Not reproduced by: four fresh-header opens on
+  one node, allow → replayed-nonce deny → fresh opens (raw HTTPS and undici), and the full suite.
+  Most likely the just-created stage/routes were not yet fully in service; **unconfirmed**.
+- `pnpm verify-deployed`, second and third runs: **6/6 passed** — deployed authorizer is REQUEST
+  with the four identity sources and no result TTL, stages throttled (20/50 and 2/5), five 14-day
+  log groups; 8 concurrent redemptions of one token → exactly 1 enrolment; missing assertion and
+  replayed nonce refused; signed message delivered and acked; revoke closes, broadcasts, refuses
+  reconnect; CloudWatch search for the sentinel text found 0 events.
+- `pnpm verify-live-darwin`: **passed** — two private HOMEs enrolled through the real
+  `darwin collaborate hub enroll` with minted tokens, discovered each other, exchanged a message
+  and a reply (hop 1) with no confirmation.
+- Afterwards: every test/debug node revoked, no live connections. Not yet done: a run between two
+  physically different machines.
 
 ## 1. Scope and settled decisions
 

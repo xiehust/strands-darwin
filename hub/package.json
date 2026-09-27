@@ -16,7 +16,8 @@
     "mint-token": "tsx scripts/mint-token.ts",
     "revoke-node": "tsx scripts/revoke-node.ts",
     "list-nodes": "tsx scripts/list-nodes.ts",
-    "verify-deployed": "tsx spike/verify-deployed.ts"
+    "verify-deployed": "tsx spike/verify-deployed.ts",
+    "verify-live-darwin": "tsx spike/verify-live-darwin.ts"
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.1141.0",
