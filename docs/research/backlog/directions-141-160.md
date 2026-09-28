@@ -74,7 +74,7 @@ Acceptance: real two-process same-project automatic bidirectional exchange; diff
 
 ## SER-105 — Jump to the start or end of a whole multiline composer draft with Ctrl+Home / Ctrl+End
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 144
 - Score: 10
 - Importance: 3
