@@ -158,6 +158,12 @@ export function moveHorizontal(
     : { offset: nextBoundary(text, safe.offset), affinity: 'upstream' };
 }
 
+export function moveToDraftEdge(text: string, edge: 'start' | 'end'): EditorCursor {
+  return edge === 'start'
+    ? { offset: 0, affinity: 'downstream' }
+    : { offset: text.length, affinity: 'upstream' };
+}
+
 export function moveToRowEdge(layout: EditorLayout, edge: 'start' | 'end'): EditorCursor {
   const row = layout.rows[layout.cursor.row] as VisualRow;
   return edge === 'start'
@@ -168,9 +174,9 @@ export function moveToRowEdge(layout: EditorLayout, edge: 'start' | 'end'): Edit
 /**
  * Kills from the cursor to a visual row edge (readline Ctrl+K / Ctrl+U).
  *
- * Row-scoped, like Home/End, so the chords agree with the movement keys the
- * editor already has. At the edge itself this is a no-op: the newline (or the
- * soft wrap) is a boundary, never part of the kill.
+ * Row-scoped, like plain Home/End and Ctrl+A/E, so the chords agree with
+ * the visual-row movement keys the editor already has. At the edge itself
+ * this is a no-op: the newline (or soft wrap) is never part of the kill.
  */
 export function killToRowEdge(value: EditorValue, layout: EditorLayout, edge: 'start' | 'end'): EditorValue {
   const cursor = snapCursor(value.text, value.cursor);

@@ -28,6 +28,7 @@ const suites = [
   'verify-path-completion.ts',
   'verify-input-controls.tsx',
   'verify-input-controls-pty.ts',
+  'verify-composer-edges-pty.ts',
   'verify-prompt-recall.ts',
   'verify-prompt-history-search.ts',
   'verify-rewind-search.ts',

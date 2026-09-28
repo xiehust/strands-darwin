@@ -33,6 +33,8 @@ It queues normally while the TUI is busy, carrying an attached clipboard image t
 
 ## Prompt editing and completion
 
+`Ctrl+Home`/`Ctrl+End` moves to the start/end of the entire raw draft, even across newlines and soft wraps. Plain `Home`/`End` and `Ctrl+A`/`Ctrl+E` still move only to the current visual-row edge. Moving never changes the draft or sends it; a permission prompt or open search keeps keyboard ownership.
+
 `Ctrl+K`/`Ctrl+U` cuts to the visible row end/start; `Ctrl+W`, `Alt+Backspace` and `Alt+D`/`Alt+Delete` cut the word before/after the cursor. `Ctrl+Y` inserts the exact last cut at the current grapheme-safe cursor, and can repeat it after movement or typing. This is one draft-local slot, not the system clipboard or a model action. Each nonempty cut replaces it; no-op cuts and ordinary Backspace/Delete leave it alone. `Ctrl+_` (or `Ctrl+-`) still restores the whole draft snapshot from before a destructive chord, not just the cut; yank does not add an undo step.
 
 The slot holds at most 65,536 Unicode code points. A larger cut still deletes and can be undone, but clears the slot with a notice—no stale or truncated yank. Submission (including queueing and local commands), queue take-back/cancel return, recall/search acceptance, draft stash/restore, `/clear` and `/rewind` clear it wherever they clear undo. Search cancellation keeps it. Permission prompts and compaction take precedence: `Ctrl+Y` never approves a permission or edits through those modes.

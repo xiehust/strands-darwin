@@ -290,6 +290,7 @@ Rules and limits:
 | `Escape` | close current completion menu or end recall; preserve draft/cursor (permission prompt still denies) |
 | `Esc` `Esc` | on an empty idle composer (no draft, turn, `!` command, queue or prompt), a second `Esc` within 500 ms opens the `/rewind` chooser — same behavior as typing `/rewind`; one `Esc` there does nothing |
 | `Home` / `End`, `Ctrl+A` / `Ctrl+E` | visible-row start/end |
+| `Ctrl+Home` / `Ctrl+End` | whole raw draft start/end (including multiline and soft wraps); no submit |
 | `Ctrl+K` / `Ctrl+U` | delete to row end/start |
 | `Ctrl+W` | delete previous word |
 | `Alt`/`Ctrl` + `Left` / `Right`, `Alt+B` / `Alt+F` | move by word |

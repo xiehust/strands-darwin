@@ -10,6 +10,7 @@ import {
   killToRowEdge,
   layoutEditor,
   moveHorizontal,
+  moveToDraftEdge,
   moveToRowEdge,
   moveVertical,
   moveWordHorizontal,
@@ -97,6 +98,18 @@ check('terminal resize recomputes visual rows and cursor geometry', () => {
 check('home and end use visual row boundaries', () => {
   nodeAssert.deepEqual(moveToRowEdge(wrapped, 'start'), { offset: 4, affinity: 'downstream' });
   nodeAssert.deepEqual(moveToRowEdge(wrapped, 'end'), { offset: 6, affinity: 'upstream' });
+});
+check('whole-draft edges preserve raw UTF-16 offsets and outward grapheme-safe affinity', () => {
+  for (const text of ['', 'a👩‍💻e\u0301\nb']) {
+    nodeAssert.deepEqual(moveToDraftEdge(text, 'start'), { offset: 0, affinity: 'downstream' });
+    nodeAssert.deepEqual(moveToDraftEdge(text, 'end'), { offset: text.length, affinity: 'upstream' });
+    for (const columns of [10, 70]) {
+      const beginning = moveToDraftEdge(text, 'start');
+      const ending = moveToDraftEdge(text, 'end');
+      nodeAssert.equal(layoutEditor(text, columns, beginning).cursor.row, 0);
+      nodeAssert.equal(layoutEditor(text, columns, ending).cursor.row, layoutEditor(text, columns, ending).rows.length - 1);
+    }
+  }
 });
 check('left and right traverse both caret sides of a soft wrap', () => {
   const upstream = { offset: 4, affinity: 'upstream' } as const;

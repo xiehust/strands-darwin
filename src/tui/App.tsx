@@ -103,6 +103,7 @@ import {
   killToRowEdge,
   layoutEditor,
   moveHorizontal,
+  moveToDraftEdge,
   moveToRowEdge,
   moveVertical,
   moveWordHorizontal,
@@ -2932,7 +2933,9 @@ export function App({
     if (key.home || key.end) {
       setEditor((current) => ({
         ...current,
-        cursor: moveToRowEdge(layoutEditor(current.text, columns, current.cursor), key.home ? 'start' : 'end'),
+        cursor: key.ctrl
+          ? moveToDraftEdge(current.text, key.home ? 'start' : 'end')
+          : moveToRowEdge(layoutEditor(current.text, columns, current.cursor), key.home ? 'start' : 'end'),
       }));
       preferredColumn.current = undefined;
       return;

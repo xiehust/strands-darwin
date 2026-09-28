@@ -258,6 +258,7 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 | `Escape` | 关闭当前补全菜单或结束历史回看；保留草稿和光标（权限框中仍表示拒绝） |
 | `Esc` `Esc` | 输入框为空且空闲时（无草稿、无回合、无 `!` 命令、无队列、无权限框），500 ms 内再按一次 `Esc` 打开 `/rewind` 选择器——与输入 `/rewind` 完全相同；此时单按一次 `Esc` 不做任何事 |
 | `Home` / `End`、`Ctrl+A` / `Ctrl+E` | 移到可见行开头/结尾 |
+| `Ctrl+Home` / `Ctrl+End` | 移到整份原始草稿的开头／结尾（跨多行和软换行），不发送 |
 | `Ctrl+K` / `Ctrl+U` | 删除到行尾/行首 |
 | `Ctrl+W` | 删除前一个词 |
 | `Alt`/`Ctrl` + `Left` / `Right`、`Alt+B` / `Alt+F` | 按词移动光标 |
