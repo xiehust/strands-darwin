@@ -3311,4 +3311,3 @@ SER-104 `done`; whole batch **exhausted** (SER-103 also done), no unfinished bac
 | Aggregate (one task) | **152** | **21,985** | **6,334,155** | **124,191** | **$1.7975** |
 
 SER-105 `done`; batch **exhausted**, no unfinished directions. Push current branch once after closure; verify upstream range empty, or report exact unpushed commits and failure.
-
