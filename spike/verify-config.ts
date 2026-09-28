@@ -1344,6 +1344,32 @@ async function backgroundTaskWakeField(): Promise<void> {
   assert('…and that error names the key', misplaced.includes('backgroundTaskWake'));
 }
 
+async function updateCheckField(): Promise<void> {
+  header('config — startup update check');
+  const def = await loadConfig(await writeConfig('{}'));
+  assert('updateCheck is on by default', def.updateCheck === true);
+  const off = await loadConfig(await writeConfig('{ "updateCheck": false }'));
+  assert('explicit false opts out', off.updateCheck === false);
+  const bad = await expectConfigError('a non-boolean updateCheck value is refused', async () =>
+    loadConfig(await writeConfig('{ "updateCheck": "daily" }')),
+  );
+  assert('…and the error names the field', bad.includes('updateCheck'));
+  const withModels = await loadConfig(
+    await writeConfig(
+      '{ "updateCheck": false, "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5" }] }',
+    ),
+  );
+  assert('a /model switch preserves the opt-out', withModelChoice(withModels, withModels.modelChoices[0]!).updateCheck === false);
+  const misplaced = await expectConfigError('updateCheck inside a models entry is refused', async () =>
+    loadConfig(
+      await writeConfig(
+        '{ "models": [{ "enable": true, "provider": "bedrock", "model": "global.anthropic.claude-opus-5", "updateCheck": false }] }',
+      ),
+    ),
+  );
+  assert('…and that error names the key', misplaced.includes('updateCheck'));
+}
+
 async function shellEnvField(): Promise<void> {
   header('config — shellEnv.passthrough (SER-082)');
   const def = await loadConfig(await writeConfig('{}'));
@@ -1646,6 +1672,7 @@ async function documentedKeys(): Promise<void> {
     terminalNotify: false,
     terminalTitle: true,
     backgroundTaskWake: true,
+    updateCheck: true,
     trustPeers: false,
     shellEnv: { passthrough: ['NPM_TOKEN', 'STRIPE_*'] },
     trajectory: true,
@@ -1711,6 +1738,7 @@ async function main(): Promise<void> {
   await terminalNotifyField();
   await terminalTitleField();
   await backgroundTaskWakeField();
+  await updateCheckField();
   await shellEnvField();
   await permissionModes();
   await permissionRules();

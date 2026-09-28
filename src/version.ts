@@ -18,7 +18,7 @@ export const DARWIN_PACKAGE_NAME = 'strands-darwin';
  * than an absent one. Walking up also survives both layouts: `src/version.ts` in
  * development and `dist/src/version.js` after a build.
  */
-function readVersion(): string {
+function readPackage(): { version: string; root?: string } {
   let directory = import.meta.dirname;
   for (let depth = 0; depth < 5; depth += 1) {
     try {
@@ -26,7 +26,9 @@ function readVersion(): string {
         name?: unknown;
         version?: unknown;
       };
-      if (parsed.name === DARWIN_PACKAGE_NAME && typeof parsed.version === 'string') return parsed.version;
+      if (parsed.name === DARWIN_PACKAGE_NAME && typeof parsed.version === 'string') {
+        return { version: parsed.version, root: directory };
+      }
     } catch {
       // Not this directory: keep walking. A missing package.json is expected here.
     }
@@ -34,7 +36,16 @@ function readVersion(): string {
     if (parent === directory) break;
     directory = parent;
   }
-  return 'unknown';
+  return { version: 'unknown' };
 }
 
-export const DARWIN_VERSION = readVersion();
+const PACKAGE = readPackage();
+
+export const DARWIN_VERSION = PACKAGE.version;
+
+/**
+ * The directory holding darwin's own `package.json` (a git checkout in development,
+ * `…/node_modules/strands-darwin` when installed), or `undefined` when the walk-up
+ * found none. The update check reads it to tell a checkout from an installed package.
+ */
+export const DARWIN_PACKAGE_ROOT: string | undefined = PACKAGE.root;

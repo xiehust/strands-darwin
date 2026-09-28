@@ -45,6 +45,8 @@ import { productionHeadlessDependencies, runHeadlessProcess } from './headless-r
 import { withProductionReactImports } from './tui/react-environment.js';
 import { ringTerminalBell } from './tui/terminal-bell.js';
 import { notifyTerminal } from './tui/terminal-notify.js';
+import { checkForUpdate, formatUpdateNotice } from './update-check.js';
+import { DARWIN_PACKAGE_ROOT, DARWIN_VERSION } from './version.js';
 
 const FORCE_EXIT_AFTER_MS = 500;
 /** After SIGHUP/SIGTERM, cleanup (hub unregister, lease release, child reaping) gets this long. */
@@ -224,6 +226,9 @@ async function runInteractive(options: CliOptions): Promise<void> {
   }
 
   let runtime: AgentRuntime;
+  // The update check starts here, gated by config before any request, so its one
+  // registry round trip (at most daily, 1.5s budget) runs behind runtime startup.
+  const updateNotice = startupUpdateNotice(projectRoot);
   try {
     runtime = await AgentRuntime.create({
       projectRoot,
@@ -310,6 +315,11 @@ async function runInteractive(options: CliOptions): Promise<void> {
     if (hubNotice !== undefined) {
       initialHistory = [...(initialHistory ?? []), { kind: 'notice', id: 'hub-startup', text: hubNotice, severity: 'info' }];
     }
+    // A newer published version gets one info notice in the same slot; none adds nothing.
+    const update = await updateNotice;
+    if (update !== undefined) {
+      initialHistory = [...(initialHistory ?? []), { kind: 'notice', id: 'update-available', text: update, severity: 'info' }];
+    }
   } catch (error) {
     instance.unmount();
     await instance.waitUntilExit();
@@ -395,6 +405,24 @@ async function runInteractive(options: CliOptions): Promise<void> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The startup update notice text, or `undefined`. Never rejects: a config problem
+ * is reported by `AgentRuntime.create`, and every check failure is silent.
+ */
+async function startupUpdateNotice(projectRoot: string): Promise<string | undefined> {
+  try {
+    const config = await loadConfig(projectRoot);
+    const update = await checkForUpdate({
+      currentVersion: DARWIN_VERSION,
+      packageRoot: DARWIN_PACKAGE_ROOT,
+      enabled: config.updateCheck,
+    });
+    return update === undefined ? undefined : formatUpdateNotice(update);
+  } catch {
+    return undefined;
+  }
 }
 
 /** Last resort after explicit shutdown for a provider socket leaked on cancel. */

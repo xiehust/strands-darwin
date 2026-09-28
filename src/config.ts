@@ -294,6 +294,17 @@ export interface SessionFields {
    */
   backgroundTaskWake?: boolean;
   /**
+   * Check npm for a newer `strands-darwin` when the interactive TUI starts (at most
+   * once per 24h, cached in `~/.darwin/update-check.json`, see `update-check.ts`) and
+   * show one info notice with the upgrade command; nothing is installed. **On by
+   * default.** `false` makes no request at all. Headless runs, CLI readers and
+   * development checkouts never check regardless of this value.
+   *
+   * Optional in the type for hand-built configs; {@link loadConfig} always stores
+   * the resolved boolean.
+   */
+  updateCheck?: boolean;
+  /**
    * Treat collaboration peers (local or hub) like the user for shell work: a
    * peer-origin non-safe `bash` call goes through the ordinary mode/rules/prompt
    * path (prompted in `default`, run in `yolo`) instead of the hard peer denial,
@@ -436,6 +447,7 @@ export const SESSION_KEYS = [
   'terminalNotify',
   'terminalTitle',
   'backgroundTaskWake',
+  'updateCheck',
   'trustPeers',
   'shellEnv',
   'trajectory',
@@ -493,6 +505,7 @@ const DEFAULTS = {
   terminalNotify: false,
   terminalTitle: true,
   backgroundTaskWake: true,
+  updateCheck: true,
   trustPeers: false,
   memory: true,
   memoryHorizonDays: 28,
@@ -1253,6 +1266,8 @@ function validateSessionFields(
       booleanField(input, 'terminalTitle', configPath) ?? DEFAULTS.terminalTitle,
     backgroundTaskWake:
       booleanField(input, 'backgroundTaskWake', configPath) ?? DEFAULTS.backgroundTaskWake,
+    updateCheck:
+      booleanField(input, 'updateCheck', configPath) ?? DEFAULTS.updateCheck,
     trustPeers:
       booleanField(input, 'trustPeers', configPath) ?? DEFAULTS.trustPeers,
     memoryHorizonDays:

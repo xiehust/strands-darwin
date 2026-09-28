@@ -2953,3 +2953,36 @@ the child catalogue's `bash` wrapper keeps the no-wake wording whatever the pare
 `spike/verify-task-wake.ts` (pty, in `pnpm test`: idle, suppressed, mid-turn, `/clear` window,
 permission-prompt race, config off, record and replay), `spike/verify-prompt-queue.ts`,
 `spike/verify-prompt-recall.ts`, `spike/verify-prompt-history-search.ts`, `spike/verify-config.ts`.
+
+## Startup update check — notify, never install
+
+`src/update-check.ts`, called only from `runInteractive` in `src/cli-main.ts`. When the TUI
+starts, darwin may ask `https://registry.npmjs.org/strands-darwin/latest` whether a newer version
+is published. If one is, the startup history gains one info notice (same slot as the resume recap
+and hub notices) naming both versions and `npm install -g strands-darwin@latest`.
+
+Invariants:
+
+- **Notify only.** Nothing is downloaded or installed. Replacing `dist/` under a running process,
+  a global install that may need elevated rights, and a half-applied patch-package step are all
+  worse failure modes than one line the user acts on.
+- **Interactive only.** Headless (`-p`), the CLI readers (`sessions`, `trajectory`, `doctor`,
+  `permissions test`, …) and children never check. Scripted stdout/stderr and the "local-only"
+  readers stay network-free; `doctor` remains a strict local reader.
+- **Off switches before any I/O:** config `updateCheck: false`, `DARWIN_NO_UPDATE_CHECK`
+  (non-empty, not `0`), a development checkout (`DARWIN_PACKAGE_ROOT/.git` exists — file or
+  directory), or a non-semver current version. The checkout rule is what keeps `pnpm start` and
+  every pty suite in `spike/` off the network without touching them.
+- **Bounded cost.** At most one request per 24h: the answer *and* a failure are cached in
+  `~/.darwin/update-check.json` (write-then-rename), so an offline machine pays the 1.5s timeout
+  at most daily. The request starts before `AgentRuntime.create` (config read first) and is awaited
+  after it, so it usually hides behind runtime startup. A cache stamped in the future is refetched;
+  a fresh cache is compared against the *current* version, so upgrading silences it at once.
+- **Silent failure.** Throws, non-2xx, malformed/oversized bodies (>512 KiB), non-semver versions,
+  timeouts and an unwritable cache all mean "no notice"; the function never rejects.
+- **Official registry only.** A configured npm mirror is not consulted (that would cost a
+  subprocess per launch); the notice's command still installs through the user's npm config.
+
+Free check: `spike/verify-update-check.ts` (in `pnpm test`: semver precedence, every off switch
+with zero requests, interval/cache behaviour, failure shapes, loopback fetch + timeout, call-site
+pins); `spike/verify-config.ts` covers the key.
