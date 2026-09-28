@@ -3292,3 +3292,23 @@ Host confirmed actual `/home/ubuntu/.darwin` mode775 and built `collaborate stat
 All exact usage/cost buckets reported, model/pricing `global.openai.gpt-6-astra`; compaction cost included in that invocation record. Host verification uses offline models only. Including SER-103 Batch153, origin-batch totals: input462/output217440/cacheRead40118377/cacheWrite714655, **$59.9282**. No duplicate counting.
 
 SER-104 `done`; whole batch **exhausted** (SER-103 also done), no unfinished backlog or new gate abandonment. Push current branch once after research closure; verify upstream has no unpushed commit and report actual outcome without rewriting history.
+
+## Batch 155 — SER-105 whole-draft composer edges (2026-09-28)
+
+- Origin: [`research_2026-09-28.md`](research/research_2026-09-28.md), rolled `tui` at `14:45:24.903Z` (chance, not override). Backlog router checked first; no unfinished directions. Priority144 Score10 passed the gate. Baseline clean HEAD `7c06f3ea5975845d76d83aabb36bef0d53f94c56` passed `pnpm typecheck && pnpm test` in `bg-20621bc4-c32c-4ef6-acdd-36a314e7a6bf` (exit0). Host set only SER-105 in-progress at `94681a2943662eb503263f15a564ef5194dea10b` before handoff.
+- Fresh headless developer child `session-20260928-150625553`, launched from source `pnpm tsx src/cli.ts --yolo --context-offload -p` within target repository; no cost ceiling or compact-before. Managed task `bg-ef2af11a-e024-4f74-b077-85ef4b97c2ea` succeeded and output was drained (`hasMore: false`). No correction turn or second child. Child owned implementation, tests, bilingual user docs and commit; Host owned research/backlog/log. Exact child usage and cost are in the table below.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Ctrl+Home/End whole-draft navigation with original plain Home/End and Ctrl+A/E row-local behavior, real PTY checks and EN/zh-CN documentation | `560387d1bece58b3ff711cadf9eb6e9bb580655c` | Host reviewed sole child commit via `git log 94681a2..HEAD` and explicit-SHA diff: 11 files, including App handler, prompt-editor primitive, new real PTY suite, test registration and both READMEs/guides/references. `bg-46c018c5-ad4d-4920-bec0-d4a120044552`: real composer PTY 7/0 (70/24 columns, owner precedence, insertion witnesses, no unwanted model calls), prompt editor 63/0, free TUI completion 76/0. `bg-8b4c3237-a84d-4bdf-8718-1ba9b6f1b6bd`: `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short` exit0; dist refreshed, tree clean. |
+
+- **Ancillary check not green:** in the child twice and Host once, `pnpm tsx spike/verify-tui.ts pathCompletion` reported one failed hidden-row omission-notice assertion (Host 26 pass / 1 fail); path selection and insertion checks passed. This extra scenario is not the named acceptance gate and sends no Home/End; no completion-renderer or test assertion change in child diff. No baseline run at the old revision, so no proven preexisting diagnosis. Host did not claim the check passed, retry it a fourth time, or widen SER-105 scope to conceal it. A separate focused investigation can follow a future research decision.
+- Docs wrap-up: README.md, README.zh-CN.md, `docs/user-guide/using-darwin{,.zh-CN}.md` and `reference{,.zh-CN}.md` all describe new chord and preserved row-local behavior; no new load-bearing invariant or architecture/AGENTS index edit needed. No additional docs-sync commit.
+
+| Child task | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---:|---:|---:|---:|---:|
+| `bg-ef2af11a-e024-4f74-b077-85ef4b97c2ea` | 152 | 21,985 | 6,334,155 | 124,191 | $1.7975 |
+| Aggregate (one task) | **152** | **21,985** | **6,334,155** | **124,191** | **$1.7975** |
+
+SER-105 `done`; batch **exhausted**, no unfinished directions. Push current branch once after closure; verify upstream range empty, or report exact unpushed commits and failure.
+

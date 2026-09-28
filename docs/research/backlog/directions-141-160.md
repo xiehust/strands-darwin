@@ -74,7 +74,7 @@ Acceptance: real two-process same-project automatic bidirectional exchange; diff
 
 ## SER-105 — Jump to the start or end of a whole multiline composer draft with Ctrl+Home / Ctrl+End
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 144
 - Score: 10
 - Importance: 3
@@ -86,7 +86,7 @@ Acceptance: real two-process same-project automatic bidirectional exchange; diff
 
 ### Implementation / acceptance evidence
 
-Not yet implemented. Independently verify modified and unmodified Home/End against a real Ink/PTY composer in both wide and narrow multiline drafts; assert exact raw draft and cursor offsets, no submission, and no interference with completion/search/permission owners. Run focused input-control and free TUI suites, `pnpm typecheck`, `pnpm test`, `pnpm build`, and check documentation parity.
+Accepted implementation commit `560387d1bece58b3ff711cadf9eb6e9bb580655c` (`feat(tui): jump to whole draft with modified home and end`), fresh developer session `session-20260928-150625553`, managed task `bg-ef2af11a-e024-4f74-b077-85ef4b97c2ea` (exit 0, output drained). Host inspected the only child commit against explicit base `94681a2943662eb503263f15a564ef5194dea10b`, reviewed code, real PTY tests, EN/zh-CN README, guide and reference diffs, and reran `pnpm tsx spike/verify-composer-edges-pty.ts` (7/0), `pnpm tsx spike/verify-prompt-editor.ts` (63/0), free `pnpm tsx spike/verify-tui.ts completion` (76/0), `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short` (exit 0; clean tree) in `bg-46c018c5-ad4d-4920-bec0-d4a120044552` and `bg-8b4c3237-a84d-4bdf-8718-1ba9b6f1b6bd`. Real PTY assertions include 70/24-column multiline and soft wraps, exact insertion witnesses, unchanged row-local keys, keyboard owners, and no unintended model calls. No live-provider quality claim. The extra, non-gate `spike/verify-tui.ts pathCompletion` scenario failed one hidden-row omission-notice assertion (26/1) in the child and the Host; selection/acceptance assertions passed. This failure was not resolved or claimed green; the scenario does not send Home/End, and the child diff did not touch completion rendering or its assertion. A baseline reproduction at the old SHA was not run. See `docs/iteration-log.md` Batch 155. One child task reported input 152, output 21,985, cacheRead 6,334,155, cacheWrite 124,191 tokens; approximate cost $1.7975.
 
 ### Notes / blockers / abandonment reason
 
