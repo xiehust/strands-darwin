@@ -305,6 +305,11 @@ async function runInteractive(options: CliOptions): Promise<void> {
       // startup notice, in the same scrollback slot the recap header would take.
       initialHistory = [{ kind: 'notice', id: 'session-lease', text: runtime.info.leaseNotice, severity: 'warn' }];
     }
+    // An enrolled hub gets one info notice in the same startup slot; not enrolled adds nothing.
+    const hubNotice = await import('./collaboration/hub-command.js').then(({ hubStartupNotice }) => hubStartupNotice(runtime.collaboration));
+    if (hubNotice !== undefined) {
+      initialHistory = [...(initialHistory ?? []), { kind: 'notice', id: 'hub-startup', text: hubNotice, severity: 'info' }];
+    }
   } catch (error) {
     instance.unmount();
     await instance.waitUntilExit();

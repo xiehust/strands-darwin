@@ -281,6 +281,8 @@ try {
     const tui = startTui({ cwd: homeC!.project, env: { HOME: homeC!.home } });
     try {
       await tui.waitFor('you>', { timeoutMs: 60_000 });
+      assert.match(tui.screen, /hub: enrolled as gamma/, 'an enrolled HOME gets one hub info notice at startup');
+      assert.match(tui.screen, /publishing\s+this\s+project\s+as\s+github\.com\/acme\/gamma/);
       let endpoint: string | undefined;
       await waitFor('TUI endpoint registered', () => {
         endpoint = [...hub.store.endpoints.values()].find(row => row.node === nodeC)?.endpoint;

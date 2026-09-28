@@ -84,6 +84,24 @@ function status(local: LocalCollaboration | undefined, root: string): string {
   }, null, 2);
 }
 
+/**
+ * One-line TUI startup info when this HOME is enrolled in a hub: identity plus what this session
+ * does with it. A read-only projection (no connect, no write); undefined when not enrolled or
+ * the identity is unreadable — the transport's own startup notice already reports that problem.
+ * Failure reasons are not repeated here: the transport emits them as their own `hub:` notice.
+ */
+export function hubStartupNotice(local: LocalCollaboration | undefined): string | undefined {
+  let node;
+  try { node = readHubNode(); } catch { return undefined; }
+  if (!node) return undefined;
+  const hub = local?.hub;
+  const session = !local?.active || !hub || hub.state === 'off' ? 'collaboration is off, so this session does not publish'
+    : hub.state === 'connecting' || hub.state === 'connected' ? `publishing this project as ${hub.address?.project ?? 'unknown'} (${hub.state})`
+    : hub.state === 'unpublished' ? 'this project is opted out (darwin collaborate hub publish on)'
+    : `hub transport ${hub.state}`;
+  return `hub: enrolled as ${node.name} (${node.node}) at ${node.hubUrl} · fingerprint ${shortFingerprint(node.fingerprint)} · ${session}. Details: /collaborate hub status`;
+}
+
 function nodes(): string {
   const state = readHubState();
   return JSON.stringify({ nodes: state.pins.map(pin => ({ node: pin.node, name: pin.name, fingerprint: shortFingerprint(pin.fingerprint), firstSeen: new Date(pin.firstSeen).toISOString(), blocked: state.blocked.includes(pin.node) })), note: 'Pinned on first sight. Compare fingerprints with `darwin collaborate hub status` on the other machine.' }, null, 2);
