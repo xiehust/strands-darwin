@@ -71,3 +71,24 @@ Implementation authorization: this is the continuation of SER-104 at unchanged S
 
 Acceptance: real two-process same-project automatic bidirectional exchange; different-project denied/pending before one human approval, automatic reverse direction afterward, durable pair reuse after both restart, revoke-before-delivery, corruption/concurrent save/symlink/spoofed identity and stale endpoint negative controls. Real TUI busy/idle and headless delivery, no extra approval for same-project, no extra approval after durable cross-project grant, ordinary recipient permissions still enforced, literal hostile messages cannot execute `/`/`!`/`@` or become user consent. Prove bounded floods/causal loops, clear/rewind/cancel/shutdown behavior and distinct replay provenance; verify source and built CLI, full typecheck/test plus affected listed checks and completion, bilingual README/task guide/reference/architecture. Child must document exact implemented grammar/file path/caps and requirement-to-test mapping. Host owns backlog/research/log; implementation only through fresh developer worker (not SER-103's child).
 
+
+## SER-105 — Jump to the start or end of a whole multiline composer draft with Ctrl+Home / Ctrl+End
+
+- Status: `not-started`
+- Priority: 144
+- Score: 10
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 3
+- Origin report: [`research_2026-09-28.md`](../research_2026-09-28.md) (run `14:45:24Z`)
+
+### Implementation / acceptance evidence
+
+Not yet implemented. Independently verify modified and unmodified Home/End against a real Ink/PTY composer in both wide and narrow multiline drafts; assert exact raw draft and cursor offsets, no submission, and no interference with completion/search/permission owners. Run focused input-control and free TUI suites, `pnpm typecheck`, `pnpm test`, `pnpm build`, and check documentation parity.
+
+### Notes / blockers / abandonment reason
+
+`src/tui/App.tsx` presently sends all `key.home || key.end` to `moveToRowEdge`; `src/tui/prompt-editor.ts` defines that operation on one visual row. Keep unmodified Home/End and Ctrl+A/E row-scoped, preserve the current editor's raw text/affinity and frame-budget invariants, and route *only* Ctrl+Home/End to absolute start/end after higher-priority keyboard owners. Installed Ink's `parseKeypress` recognizes CSI `1;5H` and `1;5F` as `home/end` with `ctrl: true` (local offline probe, 2026-09-28); the change uses that verified signal, no parser patch or new dependency. Document the chord in both READMEs and the EN/zh-CN user guide/reference; keep architecture rationale in its existing prompt-editor or frame-budget section if warranted. Host owns the backlog/research/iteration log; child owns implementation, tests, user docs, and the implementation commit.
+
