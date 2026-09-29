@@ -17,7 +17,10 @@
  * developer's — see the note there before adding a scenario that reads one.
  *
  * Free scenarios (no model call): cloudAuto | model | mode | clear | completion | pathCompletion | recall |
- * recallEmpty | bang | queue | wordNav | undo | mcp | trust | resumeHint | resume | copy | rewind | escRewind | tangent | modelRetry — `copy`
+ * recallEmpty | bang | queue | wordNav | undo | mcp | trust | resumeHint | resume | copy | rewind | escRewind | tangent | goal | modelRetry — `goal`
+ * (SER-108) drives `/goal` end to end through two scripted local models (agent and condition check): cap, check
+ * verdict notices, live header/hint state, cancel of a continuation and of the check, a permission prompt holding
+ * the loop, queue / `!` / task-wake ordering ahead of the goal, `/goal off`, a failed check and `/clear`; `copy`
  * (SER-057) seeds a completed answer through a local fixture model and `--resume`, then proves
  * the OSC 52 sequence in the raw pty output decodes to the exact committed answer text;
  * `escRewind` (SER-059) drives the seeded `rewind` fixture with two separate Escape pty events
@@ -36,7 +39,7 @@
  *      scenarios: approve | deny | alwaysAllow | safePassthrough | bashExit |
  *                 cancelThenContinue | multiline | chunkedEnter | compacting | permissionEscape | contextOverflow | cursor | completion |
  *                 pathCompletion | historySearch | recall | recallEmpty | resume | copy | bang | queue | clear | mcpStderr | mcp | trust |
- *                 resumeHint | rewind | escRewind | tangent | toolDetails |
+ *                 resumeHint | rewind | escRewind | tangent | goal | toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | updatePlan | modelRetry | longAnswer | tallDraft |
  *                 tallDraftStreaming | drainPrompt
  */
@@ -1246,6 +1249,26 @@ async function slashCompletion(): Promise<void> {
     await tui.waitFor('/tasks takes no arguments', { timeoutMs: 30_000, from: beforeTasksTabArgument, settleMs: 400 });
     assert('/tasks rejects non-space argument separators locally', !tui.screen.slice(beforeTasksTabArgument).includes('working…'));
 
+    // `/goal` (SER-108) local forms in the completion project: answered without a turn, the
+    // header word carries the goal while it is set, `off` and the bare form work with none set.
+    const beforeGoalBare = tui.mark();
+    tui.submit('/goal');
+    await tui.waitFor('goal: none set', { timeoutMs: 30_000, from: beforeGoalBare, settleMs: 400 });
+    assert('bare /goal with no goal answers locally without a turn', !tui.screen.slice(beforeGoalBare).includes('working…'));
+    const beforeGoalOffNone = tui.mark();
+    tui.submit('/goal off');
+    await tui.waitFor('no goal to clear', { timeoutMs: 30_000, from: beforeGoalOffNone, settleMs: 400 });
+    assert('/goal off with no goal is a notice, not a turn', !tui.screen.slice(beforeGoalOffNone).includes('working…'));
+    const beforeGoalSet = tui.mark();
+    tui.submit('/goal completion goal');
+    await tui.waitFor('goal set: completion goal', { timeoutMs: 30_000, from: beforeGoalSet, settleMs: 400 });
+    assert('/goal <condition> arms it on the existing header state word and starts no turn',
+      headerStateRow(tui.frame) === 'DARWIN · ready · goal armed' && !tui.screen.slice(beforeGoalSet).includes('working…'));
+    const beforeGoalOff = tui.mark();
+    tui.submit('/goal off');
+    await tui.waitFor('goal cleared', { timeoutMs: 30_000, from: beforeGoalOff, settleMs: 400 });
+    assert('/goal off clears the header state', headerStateRow(tui.frame) === 'DARWIN · ready');
+
     // The trajectory report: a local read of the recorder's own counters, so it must
     // answer without a model call, and must name the file something else can read.
     const beforeTrajectory = tui.mark();
@@ -1452,6 +1475,9 @@ async function slashCompletion(): Promise<void> {
     // Matched with its description: '  /export' is not a prefix of any other row,
     // but the description is what tells /export apart from a custom command.
     assert('the built-in /export is listed', completed.includes('  /export — write this session’s transcript to a file'));
+    // Matched with its description (SER-108): the 28th built-in, so MAX_COMPLETIONS must have grown with it.
+    assert('the built-in /goal is listed with its description',
+      completed.includes('  /goal — keep going until a condition holds, checked after each turn'));
     assert('the built-in /help is listed with its description',
       completed.includes('  /help — commands, prompt syntax, and keys'));
     // Matched with its description: the 22nd built-in (alphabetically /workflow) is
@@ -4852,6 +4878,317 @@ async function clipboardImageComposer(): Promise<void> {
   }
 }
 
+/**
+ * `/goal` (SER-108), end to end and free: the `goal-cli` fixture answers every agent call and
+ * every condition check locally (`spike/fixtures/goal-cli.ts` documents its script), so what
+ * only a pty can show is here — the local forms, the visible live state on the header word and
+ * the busy hint, the check's observable verdict notice, the hard cap, cancel winning over a
+ * running continuation and over the check itself, a permission prompt holding the loop, the
+ * queue / `!` / task-wake ordering ahead of the goal, `/goal off` mid-continuation, a failed
+ * check, and `/clear` dropping the goal. One ordered event log (`goal-events.log`) is the
+ * proof of what the models were asked and in which order.
+ */
+async function goalLoop(): Promise<void> {
+  header('TUI — /goal: cap, check, cancel, permission, queue, live state');
+  await resetWorkDir();
+  const entry = path.join(REPO_ROOT, 'spike', 'fixtures', 'goal-cli.ts');
+  const eventsFile = path.join(WORK_DIR, 'goal-events.log');
+  const controlFile = path.join(WORK_DIR, 'goal-control.json');
+  const events = async (): Promise<string[]> =>
+    existsSync(eventsFile) ? (await readFile(eventsFile, 'utf8')).split('\n').filter((line) => line !== '') : [];
+  const counts = async () => {
+    const lines = await events();
+    return {
+      prompts: lines.filter((line) => /^agent \d+ prompt /u.test(line)).length,
+      checks: lines.filter((line) => line.startsWith('check ')).length,
+      all: lines.length,
+    };
+  };
+  const script = (value: unknown): Promise<void> => writeFile(controlFile, JSON.stringify(value), 'utf8');
+  await script({});
+  const tui = startTui({ cwd: WORK_DIR, entry, cols: 110, rows: 36 });
+  const untilEvent = (predicate: (lines: string[]) => boolean, label: string): Promise<void> =>
+    waitForCondition(async () => predicate(await events()), 30_000, label);
+  const stable = async (label: string): Promise<void> => {
+    const before = await counts();
+    await settle(1_500);
+    const after = await counts();
+    assert(label, before.all === after.all);
+  };
+  try {
+    await tui.waitFor('you>', { timeoutMs: 60_000, settleMs: 300 });
+
+    // --- The local forms: spend nothing, send nothing.
+    const bare = tui.mark();
+    tui.submit('/goal');
+    await tui.waitFor('goal: none set', { timeoutMs: 30_000, from: bare, settleMs: 300 });
+    assert('bare /goal with no goal states none and the grammar without a turn',
+      tui.screen.slice(bare).includes('/goal off') && !tui.screen.slice(bare).includes('working…'));
+    const offNone = tui.mark();
+    tui.submit('/goal off');
+    await tui.waitFor('no goal to clear', { timeoutMs: 30_000, from: offNone, settleMs: 300 });
+    const tooLong = tui.mark();
+    tui.submit(`/goal ${'x'.repeat(401)}`);
+    await tui.waitFor('goal condition is 401 code points', { timeoutMs: 30_000, from: tooLong, settleMs: 300 });
+    assert('an over-long condition is refused and stores nothing', headerStateRow(tui.frame) === 'DARWIN · ready');
+    const setForm = tui.mark();
+    tui.submit('/goal ship it');
+    await tui.waitFor('goal set: ship it', { timeoutMs: 30_000, from: setForm, settleMs: 300 });
+    assert('setting a goal is visible on the existing header state word and spends nothing',
+      headerStateRow(tui.frame) === 'DARWIN · ready · goal armed' && (await counts()).all === 0);
+    const statusForm = tui.mark();
+    tui.submit('/goal');
+    await tui.waitFor('automatic continuations', { timeoutMs: 30_000, from: statusForm, settleMs: 300 });
+    assert('bare /goal reports the condition and the counter',
+      tui.screen.slice(statusForm).includes('goal: ship it') && tui.screen.slice(statusForm).includes('0/5'));
+    const offForm = tui.mark();
+    tui.submit('/goal off');
+    await tui.waitFor('goal cleared', { timeoutMs: 30_000, from: offForm, settleMs: 300 });
+    assert('/goal off clears the header state', headerStateRow(tui.frame) === 'DARWIN · ready');
+
+    // --- The cap, the check's observable result, and live visibility mid-continuation.
+    await script({ holdPromptCalls: [3] });
+    const capMark = tui.mark();
+    tui.submit('/goal never-done');
+    await tui.waitFor('goal set: never-done', { timeoutMs: 30_000, from: capMark, settleMs: 300 });
+    tui.submit('start work');
+    await tui.waitFor('goal not met · no DONE in check 1', { timeoutMs: 30_000, from: capMark, settleMs: 300 });
+    const firstVerdict = tui.screen.slice(capMark);
+    assert('the check result is a transcript notice with its reason, its spend and the next step',
+      firstVerdict.includes('check 101 in / 7 out tokens') && firstVerdict.includes('continuing 1/5'));
+    await untilEvent((lines) => lines.some((line) => line.startsWith('agent 3 prompt ')), 'the second continuation reaching the model');
+    await tui.waitFor('goal continuing 2/5', { timeoutMs: 30_000, from: capMark, settleMs: 300 });
+    assert('the live header state word carries the goal while a continuation streams',
+      headerStateRow(tui.frame).includes('· goal continuing 2/5'));
+    assert('the busy hint row carries the same state, on the existing row',
+      /working….*goal continuing 2\/5/u.test(tui.frame));
+    assert('the continuation is an ordinary submitted prompt naming the goal',
+      tui.screen.slice(capMark).includes('The goal set for this session is not yet met: never-done'));
+    await writeFile(path.join(WORK_DIR, 'goal-release-3'), 'go\n');
+    await tui.waitFor(/stopped after 5\s+automatic/u, { timeoutMs: 60_000, from: capMark, settleMs: 400 });
+    const capped = await counts();
+    assert('exactly five continuations follow the user prompt, each after one check', capped.prompts === 6 && capped.checks === 6);
+    assert('the cap is visible on the header and /goal states it',
+      headerStateRow(tui.frame).includes('goal capped 5/5'));
+    await stable('a capped goal starts nothing further, no check and no continuation');
+    const cappedStatus = tui.mark();
+    tui.submit('/goal');
+    await tui.waitFor('continuation cap', { timeoutMs: 30_000, from: cappedStatus, settleMs: 300 });
+    const checkLines = (await events()).filter((line) => line.startsWith('check '));
+    assert('the check saw the goal and the turn record, and no tool calls in a text-only turn',
+      checkLines[0]!.includes('condition=never-done') && checkLines[0]!.includes('tools=none'));
+
+    // --- A user prompt re-arms a capped goal with a fresh counter; DONE ends the loop.
+    await rm(path.join(WORK_DIR, 'goal-release-3'), { force: true });
+    await script({ finishPromptCall: 8 });
+    const metMark = tui.mark();
+    tui.submit('one more try');
+    await tui.waitFor('goal met · the record shows DONE', { timeoutMs: 60_000, from: metMark, settleMs: 400 });
+    assert('the counter restarted from the user prompt: the first continuation is 1/5',
+      tui.screen.slice(metMark).includes('continuing 1/5'));
+    assert('a met goal is cleared from the header', headerStateRow(tui.frame) === 'DARWIN · ready');
+    const met = await counts();
+    assert('a met verdict starts no further turn', met.prompts === 8 && met.checks === 8);
+    await stable('nothing runs after the goal is met');
+
+    // --- Permission precedence: a prompt in a continuation holds the whole loop.
+    await script({ toolPromptCalls: [10], finishPromptCall: 11 });
+    const permMark = tui.mark();
+    tui.submit('/goal perm-goal');
+    await tui.waitFor('goal set: perm-goal', { timeoutMs: 30_000, from: permMark, settleMs: 300 });
+    tui.submit('first');
+    await tui.waitFor('allow?', { timeoutMs: 60_000, from: permMark, settleMs: 400 });
+    assert('the permission prompt owns the frame and the header says so, with the goal still shown',
+      headerStateRow(tui.frame).includes('permission needed') && headerStateRow(tui.frame).includes('goal continuing 1/5'));
+    const held = await counts();
+    await settle(1_500);
+    const heldLater = await counts();
+    assert('while the prompt is pending no check and no further continuation starts',
+      held.all === heldLater.all && (await events()).at(-1)!.startsWith('agent 10 prompt '));
+    const denyMark = tui.mark();
+    tui.send('n');
+    await tui.waitFor('goal met · the record shows DONE', { timeoutMs: 60_000, from: denyMark, settleMs: 400 });
+    assert('the denied call never ran', !existsSync(path.join(WORK_DIR, 'goal-permission-sentinel-10.txt')));
+    const permEvents = await events();
+    assert('after the decision the turn finished, then one check saw the denied call in its record',
+      permEvents.some((line) => line.startsWith('check 10 ') && line.includes('tools=-bash:error')));
+    assert('and the loop resumed only afterwards, with exactly one continuation', permEvents.filter((line) => /^agent 1[01] prompt /u.test(line)).length === 2);
+
+    // --- User cancel wins over a running continuation.
+    await settle(2_100);
+    const before = await counts();
+    await script({ holdPromptCalls: [before.prompts + 2] });
+    const cancelMark = tui.mark();
+    tui.submit('/goal cancel-goal');
+    await tui.waitFor('goal set: cancel-goal', { timeoutMs: 30_000, from: cancelMark, settleMs: 300 });
+    tui.submit('go');
+    await untilEvent((lines) => lines.filter((line) => /^agent \d+ prompt /u.test(line)).length === before.prompts + 2, 'the held continuation');
+    tui.send('\u0003');
+    await tui.waitFor('the automatic continuation was cancelled', { timeoutMs: 30_000, from: cancelMark, settleMs: 400 });
+    assert('cancel clears the goal from the header', headerStateRow(tui.frame) === 'DARWIN · ready');
+    const afterCancel = await counts();
+    await stable('after a cancel no check and no continuation starts');
+    assert('the cancelled continuation was not checked', afterCancel.checks === before.checks + 1);
+
+    // --- User cancel wins over the check itself.
+    await settle(2_100);
+    const beforeCheckCancel = await counts();
+    await script({ checkHold: true });
+    const checkCancelMark = tui.mark();
+    tui.submit('/goal check-cancel');
+    await tui.waitFor('goal set: check-cancel', { timeoutMs: 30_000, from: checkCancelMark, settleMs: 300 });
+    tui.submit('go');
+    await untilEvent((lines) => lines.filter((line) => line.startsWith('check ')).length === beforeCheckCancel.checks + 1, 'the held check');
+    await tui.waitFor('goal checking', { timeoutMs: 30_000, from: checkCancelMark, settleMs: 300 });
+    assert('the check in flight is visible on the header and as a busy row',
+      headerStateRow(tui.frame).includes('goal checking') && tui.frame.includes('working…'));
+    tui.send('\u0003');
+    await tui.waitFor('goal check cancelled — goal cleared', { timeoutMs: 30_000, from: checkCancelMark, settleMs: 400 });
+    assert('a cancelled check leaves an idle prompt and no goal', headerStateRow(tui.frame) === 'DARWIN · ready');
+    const afterCheckCancel = await counts();
+    await stable('a cancelled check starts no continuation');
+    assert('the only turn was the user prompt', afterCheckCancel.prompts === beforeCheckCancel.prompts + 1);
+
+    // --- A failed check: no continuation, no silent retry.
+    await script({ checkFail: true });
+    const failMark = tui.mark();
+    tui.submit('/goal fail-goal');
+    await tui.waitFor('goal set: fail-goal', { timeoutMs: 30_000, from: failMark, settleMs: 300 });
+    const beforeFail = await counts();
+    tui.submit('go');
+    await tui.waitFor('goal check failed: fixture check provider failure', { timeoutMs: 30_000, from: failMark, settleMs: 400 });
+    assert('a failed check says no continuation started and keeps the goal armed',
+      tui.screen.slice(failMark).includes('no continuation started') && headerStateRow(tui.frame).includes('goal armed'));
+    await stable('a failed check is not retried');
+    const afterFail = await counts();
+    assert('one turn and one check only', afterFail.prompts === beforeFail.prompts + 1 && afterFail.checks === beforeFail.checks + 1);
+    tui.submit('/goal off');
+    await tui.waitFor('goal cleared', { timeoutMs: 30_000, from: failMark, settleMs: 300 });
+    await script({});
+
+    // --- Queue ordering: queued prompts and `!` run before the goal continues; a user turn resets the counter.
+    await settle(2_100);
+    const beforeQueue = await counts();
+    const k = beforeQueue.prompts;
+    await script({ holdPromptCalls: [k + 2], finishPromptCall: k + 5 });
+    const queueMark = tui.mark();
+    tui.submit('/goal queue-goal');
+    await tui.waitFor('goal set: queue-goal', { timeoutMs: 30_000, from: queueMark, settleMs: 300 });
+    tui.submit('go');
+    await untilEvent((lines) => lines.filter((line) => /^agent \d+ prompt /u.test(line)).length === k + 2, 'the held continuation');
+    tui.submit('queued prompt one');
+    await settle(500);
+    tui.submit('!echo shell >> goal-events.log');
+    await settle(500);
+    tui.submit('queued prompt two');
+    await tui.waitFor('queued · queued prompt two', { timeoutMs: 30_000, from: queueMark, settleMs: 300 });
+    assert('user and ! entries queue behind the running continuation and are counted on the busy hint',
+      tui.frame.includes('3 queued') && /working….*goal continuing 1\/5/u.test(tui.frame));
+    const releaseMark = tui.mark();
+    const marker = (await events()).length;
+    await writeFile(path.join(WORK_DIR, `goal-release-${k + 2}`), 'go\n');
+    await tui.waitFor('goal met · the record shows DONE', { timeoutMs: 90_000, from: releaseMark, settleMs: 500 });
+    const order = (await events()).slice(marker).map((line) => line.replace(/^check \d+ .*$/u, 'check'));
+    assert('queued prompt, then the ! command, then the second prompt, then one check, then the continuation, then its check',
+      JSON.stringify(order) === JSON.stringify([
+        `agent ${k + 3} prompt queued prompt one`,
+        'shell',
+        `agent ${k + 4} prompt queued prompt two`,
+        'check',
+        `agent ${k + 5} prompt continuation`,
+        'check',
+      ]));
+    assert('the queued user turns reset the counter: the continuation after them is 1/5, not 2/5',
+      tui.screen.slice(releaseMark).includes('continuing 1/5') && !tui.screen.slice(releaseMark).includes('continuing 2/5'));
+    assert('the queue is empty and the session idle afterwards', headerStateRow(tui.frame) === 'DARWIN · ready' && !tui.frame.includes('queued ·'));
+
+    // --- A background-task wake goes ahead of the goal.
+    await settle(2_100);
+    const j = (await counts()).prompts;
+    await script({ jobPromptCalls: [j + 1], holdPromptCalls: [j + 2], finishPromptCall: j + 4 });
+    const wakeMark = tui.mark();
+    tui.submit('/goal wake-goal');
+    await tui.waitFor('goal set: wake-goal', { timeoutMs: 30_000, from: wakeMark, settleMs: 300 });
+    const wakeStart = (await events()).length;
+    tui.submit('start a job');
+    // The `bash start` may ask; approve it. The held continuation then outlives the 1 s job.
+    await waitAnsweringPermissions(tui, async () => (await events()).some((line) => line.startsWith(`agent ${j + 2} prompt `)), 60_000, 'the held continuation with a job running');
+    await settle(1_800);
+    assert('the finished job is a pending notification while the continuation runs', tui.frame.includes('notification'));
+    await writeFile(path.join(WORK_DIR, `goal-release-${j + 2}`), 'go\n');
+    await tui.waitFor('goal met · the record shows DONE', { timeoutMs: 90_000, from: wakeMark, settleMs: 500 });
+    const wakeOrder = (await events()).slice(wakeStart).filter((line) => /^agent \d+ prompt /u.test(line)).map((line) => line.replace(/^agent \d+ prompt /u, ''));
+    assert('the wake turn ran right after the held continuation and before the goal\'s next one',
+      JSON.stringify(wakeOrder) === JSON.stringify(['start a job', 'continuation', 'wake', 'continuation']));
+
+    // --- /goal off never interrupts running work, and stops the loop.
+    await settle(2_100);
+    const o = (await counts()).prompts;
+    await script({ holdPromptCalls: [o + 2] });
+    const offMidMark = tui.mark();
+    tui.submit('/goal off-goal');
+    await tui.waitFor('goal set: off-goal', { timeoutMs: 30_000, from: offMidMark, settleMs: 300 });
+    tui.submit('go');
+    await untilEvent((lines) => lines.filter((line) => /^agent \d+ prompt /u.test(line)).length === o + 2, 'the held continuation');
+    tui.submit('/goal off');
+    await tui.waitFor('the running work is not interrupted', { timeoutMs: 30_000, from: offMidMark, settleMs: 300 });
+    assert('the running continuation keeps streaming after /goal off', tui.frame.includes('working…'));
+    const beforeRelease = await counts();
+    await writeFile(path.join(WORK_DIR, `goal-release-${o + 2}`), 'go\n');
+    await waitForIdle(tui, 30_000);
+    await stable('after /goal off the finished turn is not checked and nothing continues');
+    assert('no check followed the turn that outlived /goal off', (await counts()).checks === beforeRelease.checks);
+
+    // --- /clear drops the goal.
+    await script({});
+    const clearMark = tui.mark();
+    tui.submit('/goal clear-goal');
+    await tui.waitFor('goal set: clear-goal', { timeoutMs: 30_000, from: clearMark, settleMs: 300 });
+    tui.submit('/clear');
+    await tui.waitFor('goal dropped with the cleared conversation: clear-goal', { timeoutMs: 60_000, from: clearMark, settleMs: 400 });
+    assert('the successor session has no goal on the header', headerStateRow(tui.frame) === 'DARWIN · ready');
+    const afterClear = tui.mark();
+    tui.submit('/goal');
+    await tui.waitFor('goal: none set', { timeoutMs: 30_000, from: afterClear, settleMs: 300 });
+    const clearCounts = await counts();
+    tui.submit('hello after clear');
+    await waitForIdle(tui, 30_000);
+    await stable('a turn after /clear is not checked: the goal is gone');
+    assert('exactly the one user turn ran after /clear', (await counts()).prompts === clearCounts.prompts + 1 && (await counts()).checks === clearCounts.checks);
+
+    tui.submit('/exit');
+    assert('goal pty exits cleanly', (await tui.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    tui.kill();
+  }
+}
+
+async function waitForCondition(check: () => Promise<boolean>, timeoutMs: number, label: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await settle(50);
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
+/** Polls `check`, answering any permission box that appears with a once-only allow. */
+async function waitAnsweringPermissions(
+  tui: TuiSession,
+  check: () => Promise<boolean>,
+  timeoutMs: number,
+  label: string,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    if (tui.frame.includes('allow?')) tui.send('y');
+    await settle(100);
+  }
+  throw new Error(`timed out waiting for ${label}`);
+}
+
+
 const SCENARIOS = {
   approve: approvePath,
   deny: denyPath,
@@ -4882,6 +5219,7 @@ const SCENARIOS = {
   rewind: rewindSession,
   escRewind: escapeEscapeRewind,
   tangent: tangentBookmark,
+  goal: goalLoop,
   mcpStderr: mcpStderrIsolation,
   mcp: mcpReport,
   trust: workspaceTrust,

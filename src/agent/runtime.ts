@@ -56,6 +56,7 @@ import {
 } from '../commands/custom-commands.js';
 import { parseInitCommand } from '../commands/init-command.js';
 import { parseReviewCommand, REVIEW_COMMIT_USAGE } from '../commands/review-command.js';
+import { GOAL_HEADLESS_REFUSAL, parseGoalCommand } from '../commands/goal-command.js';
 import { parseWorkflowCommand } from '../commands/workflow-command.js';
 import {
   appendAllowRule,
@@ -127,6 +128,7 @@ import {
   type PromptCachePlan,
 } from './prompt-cache.js';
 import { isRefusalStop } from './refusal.js';
+import { goalCheckConfig, runGoalCheck, type GoalVerdict } from './goal-check.js';
 import { createModelClassifier } from './safety-classifier.js';
 import {
   createSessionManager,
@@ -590,6 +592,8 @@ export class AgentRuntime {
 
   /** Serializes the bounded list/save/list critical section across concurrent callers. */
   private rewindCaptureTail: Promise<void> = Promise.resolve();
+  /** Lazily built model for the `/goal` condition check (SER-108); never shared with the agent. */
+  private goalCheckModel: { readonly key: string; readonly model: Promise<Model> } | undefined = undefined;
 
   /**
    * The per-process model price cache (`~/.darwin/model-prices.json`). Process-wide
@@ -2233,6 +2237,28 @@ export class AgentRuntime {
   }
 
   /**
+   * One bounded `/goal` condition check (SER-108): a single-shot call on the classifier-tier
+   * model, outside the agent loop, session and conversation. Rejects on cancel, timeout or an
+   * unparseable reply; the caller decides what a rejection means (never a retry, never a continuation).
+   */
+  async checkGoal(condition: string, evidence: string, signal: AbortSignal): Promise<GoalVerdict> {
+    // Keyed on the resolved check config: `/model` can move the provider mid-session.
+    const checkConfig = goalCheckConfig(this.config);
+    const key = `${checkConfig.provider}/${checkConfig.model}`;
+    if (this.goalCheckModel?.key !== key) {
+      this.goalCheckModel = { key, model: Promise.resolve(runtimeModelFactory(checkConfig)) };
+    }
+    let model: Model;
+    try {
+      model = await this.goalCheckModel.model;
+    } catch (error) {
+      this.goalCheckModel = undefined;
+      throw error;
+    }
+    return runGoalCheck(model, condition, evidence, signal);
+  }
+
+  /**
    * Asks the agent to stop the current turn at its next safe point. The stream
    * ends with `stopReason: 'cancelled'` rather than throwing.
    */
@@ -2495,6 +2521,10 @@ export class AgentRuntime {
    * filtering. Unknown slash input remains ordinary user input.
    */
   async expandSlashCommand(input: string): Promise<ExpandedSlashCommand | null> {
+    // The TUI answers `/goal` before it ever reaches expansion; a driver that gets here
+    // (headless text/structured, the dev REPL) has no idle session to loop in, so the
+    // command is refused visibly instead of being sent to the model as prose (SER-108).
+    if (parseGoalCommand(input.trim()) !== undefined) throw new Error(GOAL_HEADLESS_REFUSAL);
     const workflow = parseWorkflowCommand(input);
     if (workflow === 'missing-task') return null;
     if (workflow !== null) return { kind: 'workflow', ...workflow };

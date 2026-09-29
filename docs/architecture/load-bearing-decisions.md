@@ -3003,6 +3003,74 @@ the child catalogue's `bash` wrapper keeps the no-wake wording whatever the pare
 permission-prompt race, config off, record and replay), `spike/verify-prompt-queue.ts`,
 `spike/verify-prompt-recall.ts`, `spike/verify-prompt-history-search.ts`, `spike/verify-config.ts`.
 
+## `/goal` — condition-checked self-continuation, the lowest-priority owner of an idle session
+
+**A goal makes darwin take one more turn only when a bounded check says the condition is unmet, only
+when nothing else wants the session, and never past a fixed cap** (SER-108; `src/tui/goal.ts`,
+`src/commands/goal-command.ts`, `src/agent/goal-check.ts`, `AgentRuntime.checkGoal`, the App's goal
+state/effect/turn tail). The peer shape (Claude Code `/goal`, `docs/research/research_2026-09-29.md`
+S1) is a fast-model check after each turn that starts the next one; the risk it carries is the
+requirement: unsupervised turns spend tokens, so every property below is a rule, not a default.
+
+- **A pure state machine plus one effect, no scheduler.** `GoalState` = condition, consecutive
+  automatic continuations, phase (`armed` → `check-due` → `checking` → `continue-due` → `continuing`
+  → `check-due` …, or `capped`). A completed turn owes a check; the App effect — declared after the
+  queue-drain and peer effects, sharing their `draining` latch — asks `goalAction()` and acts only
+  when the session is idle, no permission decision is pending, no `/clear` is assembling, no entry
+  is in flight, the queue is empty and the peer inbox is empty. So a queued prompt, a `!` command, a
+  task/delegation wake, a peer message and a permission prompt all go first *by construction*, and
+  the goal is re-asked at the next idle moment. The pure `goalAction` is unit-tested over every
+  hold; the pty proves queue, `!` and wake ordering from one ordered event log.
+- **The check is one bounded, cancellable, observable side call — outside the agent loop.** Same
+  shape as the `auto`-mode safety classifier: `Model.streamAggregated()` on `classifierModel` (else
+  the provider's default fast model), `maxTokens` 256, no tools, no conversation, no cache points,
+  a 30 s ref'd timer cleared on every exit, and a race against the cancel signal so a provider that
+  ignores it still returns promptly. Input is the condition plus what the driver *observed* of the
+  finished turn — the last 30 tool names/outcomes and the last 6,000 code points of answer text,
+  each cut stated — fenced as data; the checker cannot run anything, so "met" means the record shows
+  it. A reply that is not the exact `{"met": boolean, …}` object, a timeout or a throw is a visible
+  warning that starts **no** continuation and is **not** retried (the next completed turn is a new
+  check, not a retry). The verdict, reason and the call's own token spend are one transcript notice
+  (`not reported` when the provider sent none, never 0); the spend is deliberately outside `/usage`,
+  which meters the agent. Nothing is recorded in the trajectory for the check: it is live-only
+  observability, and replay stays a projection of turns.
+- **Exactly one continuation, through the ordinary path.** `continue-due` is submitted as a
+  drained entry, `submit(prompt, { text })` — so it never touches the draft or
+  an attached image, and it is a normal `userInput` record (the model received exactly that text; a
+  new trajectory record kind was rejected as a second channel). It starts only at idle, never
+  mid-stream, and the counter moves at dispatch. Stale owed work cannot fire: a turn starting drops
+  an owed check/continuation (`goalBeforeTurn`), and its own completion re-decides.
+- **A hard finite cap.** `GOAL_MAX_CONTINUATIONS = 5` consecutive, not configurable and not
+  persisted; reaching it with the goal still unmet stops with a warning (`capped`), and the last check
+  is what decides it, so the worst case is 5 continuations and 6 small checks. Only a *user* turn
+  resets the counter — wakes and peer turns never do, so a stream of wakes cannot extend the loop —
+  and a user turn re-arms a capped goal.
+- **User cancel wins; permission wins.** Ctrl+C during a goal continuation or the check clears the
+  goal (with a notice); Ctrl+C aborts only the check's controller when that is what is running (the
+  runtime's `cancel()` would also close the peer inbox for a turn that does not exist). A cancelled
+  or failed *user* or session turn owes no check and leaves the goal armed. A failed goal turn clears
+  the goal — no silent retry. The permission gate is untouched: a continuation turn asks exactly as
+  any turn does, a pending prompt holds check and continuation like the queue, and permission modes
+  apply unchanged (`yolo` continuations run unprompted, as `yolo` turns do). `/goal off` withdraws the
+  check in flight and stops the loop but never interrupts running work; `/clear` drops the goal
+  (idle-only, so no check is in flight) with a notice.
+- **Live state on existing surfaces.** A `· goal …` suffix on the header's state word (the
+  `/tangent` precedent) and the same phrase on the busy hint row; the check holds the session busy
+  (`streaming`), so submissions queue behind it and the rows already exist. No frame-budget
+  participant, no new row, no timer.
+- **Headless: refused.** Headless drivers run exactly one prompt, so there is no idle session to
+  loop in. `expandSlashCommand` — the one seam text headless, structured headless and the dev REPL
+  share — throws `/goal is interactive-only …` before any model call, rather than sending the
+  command to the model as prose; the TUI answers `/goal` before it ever reaches expansion.
+- **Not changed:** the SDK loop, `runtime.send`, exact stream-interruption continuation, the
+  gate, queue ordering, wake and peer semantics. The goal only observes turn completion.
+
+Checks (all free): `spike/verify-goal-command.ts` (in `pnpm test`: grammar, state machine, idle gate,
+bounded evidence/verdict, check call cancel/timeout, real-runtime `checkGoal` and headless refusal),
+`spike/verify-tui.ts goal` (real pty with two scripted local models: cap, verdict notices, live
+header/hint, cancel of a continuation and of the check, permission hold, queue/`!`/wake ordering,
+`/goal off`, failed check, `/clear`) and `completion`.
+
 ## Startup update check — notify, never install
 
 `src/update-check.ts`, called only from `runInteractive` in `src/cli-main.ts`. When the TUI

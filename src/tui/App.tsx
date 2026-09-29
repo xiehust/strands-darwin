@@ -183,6 +183,26 @@ import {
   type QueuedPrompt,
   type QueuedTaskWake,
 } from './prompt-queue.js';
+import { GOAL_CONDITION_MAX_CODE_POINTS, parseGoalCommand } from '../commands/goal-command.js';
+import { boundedReason } from '../agent/goal-check.js';
+import {
+  GOAL_SET_NOTICE,
+  composeGoalEvidence,
+  goalAction,
+  goalAfterCheck,
+  goalAfterTurn,
+  goalBeforeTurn,
+  goalContinuationPrompt,
+  goalContinued,
+  goalLiveSuffix,
+  goalStatusText,
+  newGoal,
+  type GoalCheckResult,
+  type GoalState,
+  type GoalToolCall,
+  type GoalTransition,
+  type GoalTurnKind,
+} from './goal.js';
 import {
   composeShellReport,
   parseShellCommand,
@@ -474,6 +494,24 @@ export function App({
     queuedRef.current = next;
     setQueuedState(next);
   }, []);
+  /**
+   * The `/goal` loop's state (SER-108), with the same immediate-mirror ref the queue has:
+   * effects and the turn tail must read one generation. Live-session state only — never
+   * persisted, dropped by `/clear`.
+   */
+  const [goal, setGoalState] = useState<GoalState | undefined>(undefined);
+  const goalRef = useRef<GoalState | undefined>(undefined);
+  const setGoal = useCallback((next: GoalState | undefined) => {
+    goalRef.current = next;
+    setGoalState(next);
+  }, []);
+  /** Set while the goal's own continuation is being submitted; read once at the turn's start. */
+  const goalTurnPending = useRef(false);
+  /** The in-flight condition check's controller; Ctrl+C aborts only this, never the agent. */
+  const goalCheckAbort = useRef<AbortController | undefined>(undefined);
+  /** What the current turn showed the driver: the bounded record the check reads. */
+  const goalAnswers = useRef<string[]>([]);
+  const goalTools = useRef<GoalToolCall[]>([]);
   /** True from a user Ctrl+C (or a turn failure) until the busy state it aborted ends. */
   const turnAborted = useRef(false);
   /** Latch: one queue entry in flight through submit(); see the drain effect. */
@@ -805,6 +843,7 @@ export function App({
     busyElapsedMs === undefined ? undefined : busySuffix(busyElapsedMs, liveSpend(runtime), busyRetryWait),
     queuedCounts.user.length,
     queuedCounts.wakes.length,
+    goalLiveSuffix(goal),
   );
   const streamingHint = statusHint === undefined ? undefined : stashHint(statusHint, draftStash !== undefined, columns);
   const activeToolClaims = state.activeTools.map((tool) => ({
@@ -1085,6 +1124,18 @@ export function App({
     return true;
   }, [dispatch, setAttachedImage, setEditor, setQueued]);
 
+  /** Applies a `/goal` transition: the new state, then its one transcript notice. */
+  const applyGoalTransition = useCallback((transition: GoalTransition) => {
+    setGoal(transition.goal);
+    if (transition.notice !== undefined) {
+      dispatch({
+        type: 'notice',
+        text: transition.notice.text,
+        ...(transition.notice.severity === undefined ? {} : { severity: transition.notice.severity }),
+      });
+    }
+  }, [dispatch, setGoal]);
+
   const runTurn = useCallback(
     async (
       text: string,
@@ -1094,6 +1145,13 @@ export function App({
     ): Promise<boolean> => {
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
+      // Who started this turn, decided once at its start (SER-108): the goal's own
+      // continuation, the session itself (task/delegation wake, peer), or the user.
+      const goalKind: GoalTurnKind = origin !== undefined ? 'session' : goalTurnPending.current ? 'goal' : 'user';
+      goalTurnPending.current = false;
+      goalAnswers.current = [];
+      goalTools.current = [];
+      if (goalRef.current !== undefined) setGoal(goalBeforeTurn(goalRef.current, goalKind));
       let lifecycleOutcome: 'success' | 'failure' | 'cancelled' = 'success';
       setStatus('streaming');
       try {
@@ -1107,6 +1165,16 @@ export function App({
               turnInput === text ? image : undefined,
               origin,
             )) {
+              // The bounded record a `/goal` check may read: observed, never re-read.
+              if (goalRef.current !== undefined) {
+                if (event.type === 'contentBlockEvent' && event.contentBlock.type === 'textBlock') {
+                  goalAnswers.current.push(event.contentBlock.text);
+                  if (goalAnswers.current.length > 64) goalAnswers.current.shift();
+                } else if (event.type === 'afterToolCallEvent') {
+                  goalTools.current.push({ name: event.toolUse.name, status: event.result.status });
+                  if (goalTools.current.length > 200) goalTools.current.shift();
+                }
+              }
               if (
                 event.type === 'modelStreamUpdateEvent' &&
                 event.event.type === 'modelContentBlockDeltaEvent' &&
@@ -1280,9 +1348,18 @@ export function App({
         dispatch({ type: 'notice', text: `hook: ${problem}`, severity: 'warn' });
       }
 
+      // The `/goal` loop's turn tail (SER-108), last on purpose: every notice this turn
+      // owes has been written before the goal may owe a check. Completed turns owe one
+      // check at the next idle moment; a cancelled or failed one owes nothing, and
+      // cancelled or failed goal-owned work clears the goal.
+      const goalNow = goalRef.current;
+      if (goalNow !== undefined) {
+        applyGoalTransition(goalAfterTurn(goalNow, goalKind, !failed ? 'completed' : lifecycleOutcome === 'cancelled' ? 'cancelled' : 'failed'));
+      }
+
       return !failed;
     },
-    [prepareAnswerClose, returnQueuedToEditor, runtime, setTangent, waitUntilRenderFlush],
+    [applyGoalTransition, prepareAnswerClose, returnQueuedToEditor, runtime, setGoal, setTangent, waitUntilRenderFlush],
   );
 
   const submit = useCallback(
@@ -1395,6 +1472,49 @@ export function App({
         setSelectedCompletion(0);
         dispatch({ type: 'userInput', text });
         applyModeCommand(runtime, text, dispatch);
+        return;
+      }
+
+      // `/goal` (SER-108), before the busy check for the reason `/mode` is: mid-loop is
+      // exactly when a goal needs replacing or switching off, and none of it sends
+      // anything. Setting a goal spends nothing — the first check runs after the next
+      // completed turn. `/goal off` never interrupts running work (Ctrl+C does that); it
+      // withdraws the check in flight, if any, and stops every later continuation.
+      const goalCommand = parseGoalCommand(text);
+      if (goalCommand !== undefined) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        dispatch({ type: 'userInput', text });
+        if (goalCommand.kind === 'status') {
+          dispatch({ type: 'notice', text: goalStatusText(goalRef.current) });
+        } else if (goalCommand.kind === 'too-long') {
+          dispatch({
+            type: 'notice',
+            text: `goal condition is ${goalCommand.length} code points; the limit is ${GOAL_CONDITION_MAX_CODE_POINTS} — goal unchanged`,
+            severity: 'warn',
+          });
+        } else if (goalCommand.kind === 'off') {
+          if (goalRef.current === undefined) {
+            dispatch({ type: 'notice', text: 'no goal to clear' });
+          } else {
+            const checkInFlight = goalCheckAbort.current;
+            checkInFlight?.abort();
+            setGoal(undefined);
+            dispatch({
+              type: 'notice',
+              text: checkInFlight !== undefined
+                ? 'goal cleared — the check in flight was cancelled'
+                : status !== 'idle'
+                  ? 'goal cleared — the running work is not interrupted (ctrl+c cancels it)'
+                  : 'goal cleared',
+            });
+          }
+        } else {
+          const replaced = goalRef.current !== undefined;
+          goalCheckAbort.current?.abort();
+          setGoal(newGoal(goalCommand.condition));
+          dispatch({ type: 'notice', text: GOAL_SET_NOTICE(goalCommand.condition, replaced) });
+        }
         return;
       }
 
@@ -1976,6 +2096,11 @@ export function App({
         setQueued([]);
         clipboardReadGeneration.current += 1;
         setAttachedImage(undefined);
+        // The goal (SER-108) was about the conversation just set aside; it dies with it.
+        // `/clear` is idle-only, so no check is in flight; a continuation owed is dropped.
+        const droppedGoal = goalRef.current;
+        setGoal(undefined);
+        goalTurnPending.current = false;
         // Mirrored to the *successor's* diagnostics log: the memoized `dispatch` still
         // points at the predecessor's, which this switch has just closed.
         withNoticeDiagnostics(recordAction, next.diagnostics)({
@@ -1984,6 +2109,12 @@ export function App({
             `cleared — new session ${next.info.sessionId}. Previous session ${previousSessionId} is saved and ` +
             `resumable (darwin --session ${previousSessionId}); background jobs and MCP servers keep running.`,
         });
+        if (droppedGoal !== undefined) {
+          withNoticeDiagnostics(recordAction, next.diagnostics)({
+            type: 'notice',
+            text: `goal dropped with the cleared conversation: ${droppedGoal.condition}`,
+          });
+        }
         // The tangent bookmarked a conversation this session no longer holds
         // (SER-083): it ends with one notice, and no rewind is performed for it.
         if (tangentRef.current !== undefined) {
@@ -2123,7 +2254,7 @@ export function App({
         });
       }
     },
-    [adoptBranchSuccessor, dispatch, exit, openRewindChooser, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setDraftStash, setEditor, setQueued, setTangent, startNewSession, startRewind, status, writeToTerminal],
+    [adoptBranchSuccessor, dispatch, exit, openRewindChooser, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setDraftStash, setEditor, setGoal, setQueued, setTangent, startNewSession, startRewind, status, writeToTerminal],
   );
 
   // The drain (SER-027): when the session is idle and nothing owns the keyboard,
@@ -2193,6 +2324,81 @@ export function App({
       if (!completed) dispatch({ type: 'notice', severity: 'warn', text: `peer message ${peer.envelope.id} failed/cancelled; not re-sent` });
     }).finally(() => { draining.current = false; setDrainCycle(cycle => cycle + 1); });
   }, [peerCycle, drainCycle, pendingPermission, queued, runtime, runTurn, status, dispatch]);
+
+  // The `/goal` loop (SER-108): the lowest-priority owner of an idle session. It is asked
+  // in the same commits as the two effects above and declared after them, so anything
+  // they take — a queued prompt, `!`, task/delegation wake, peer message — sets the
+  // shared `draining` latch first and the goal simply waits for the next idle moment.
+  // `goalAction` is the whole gate (idle, no permission decision, no `/clear`, empty queue,
+  // empty peer inbox); a pending permission prompt therefore holds both the check and the
+  // continuation exactly as it holds the queue.
+  //
+  // `check`: one bounded model call outside the agent loop, with the session held busy so
+  // submissions queue behind it and Ctrl+C reaches it (`goalCheckAbort`). `continue`:
+  // exactly one prompt through the ordinary `submit()`, as a drained entry — it never
+  // touches the draft or an attached image, and it counts against the cap at dispatch.
+  useEffect(() => {
+    const current = goalRef.current;
+    const action = goalAction(current, {
+      idle: status === 'idle',
+      permissionPending: pendingPermission !== undefined,
+      clearing: clearing.current,
+      draining: draining.current,
+      queued: queuedRef.current.length,
+      peerPending: runtime.collaboration?.pending ?? 0,
+    });
+    if (current === undefined || action === 'none') return;
+    draining.current = true;
+
+    if (action === 'continue') {
+      const prompt = goalContinuationPrompt(current.condition, current.note ?? '(no note)');
+      setGoal(goalContinued(current));
+      goalTurnPending.current = true;
+      void submit(prompt, { text: prompt }).finally(() => {
+        goalTurnPending.current = false;
+        draining.current = false;
+        setDrainCycle((cycle) => cycle + 1);
+      });
+      return;
+    }
+
+    const checking: GoalState = { ...current, phase: 'checking' };
+    setGoal(checking);
+    const controller = new AbortController();
+    goalCheckAbort.current = controller;
+    turnAborted.current = false;
+    turnStartedAt.current = Date.now();
+    setStatus('streaming');
+    void (async () => {
+      let result: GoalCheckResult;
+      try {
+        const verdict = await runtime.checkGoal(
+          current.condition,
+          composeGoalEvidence(goalAnswers.current, goalTools.current),
+          controller.signal,
+        );
+        result = { kind: 'verdict', ...verdict };
+      } catch (error) {
+        result = controller.signal.aborted
+          ? { kind: 'cancelled' }
+          : { kind: 'error', message: boundedReason(error instanceof Error ? error.message : String(error)) };
+      }
+      goalCheckAbort.current = undefined;
+      turnStartedAt.current = undefined;
+      setStatus('idle');
+      // A goal replaced or switched off while the check ran already said so; its result
+      // belongs to nothing now and is dropped. A user Ctrl+C left the state as it was.
+      if (goalRef.current === checking) applyGoalTransition(goalAfterCheck(checking, result));
+      // A cancelled check never silently sends the queue (SER-027), like a cancelled turn.
+      if (turnAborted.current) {
+        turnAborted.current = false;
+        returnQueuedToEditor(true);
+      }
+    })().finally(() => {
+      draining.current = false;
+      setDrainCycle((cycle) => cycle + 1);
+    });
+  }, [applyGoalTransition, drainCycle, goal, peerCycle, pendingPermission, queued, returnQueuedToEditor, runtime, setGoal, status, submit]);
 
   /**
    * Answers the pending confirmation and, when the user picked an "always allow"
@@ -2561,6 +2767,14 @@ export function App({
     // be able to ask for approval. The abort mark is what keeps the queue from
     // being silently sent when the cancelled turn winds down (SER-027).
     turnAborted.current = true;
+    // The goal's condition check (SER-108) is a busy state with no agent turn behind it:
+    // Ctrl+C aborts exactly that call. The runtime's cancel would also close the peer
+    // inbox for a turn that does not exist.
+    if (goalCheckAbort.current !== undefined) {
+      goalCheckAbort.current.abort();
+      dispatch({ type: 'notice', text: 'interrupted — press ctrl+c again to exit' });
+      return;
+    }
     permissions.denyPending();
     runtime.cancel();
     dispatch({ type: 'notice', text: 'interrupted — press ctrl+c again to exit' });
@@ -3011,7 +3225,7 @@ export function App({
   return (
     <Box flexDirection="column">
       <Box ref={headerRef} flexDirection="column">
-        <Header runtime={runtime} status={effectiveStatus} frame={frame} tangent={tangent} runningTaskCount={runningTaskCount}
+        <Header runtime={runtime} status={effectiveStatus} frame={frame} tangent={tangent} goal={goal} runningTaskCount={runningTaskCount}
           draftStashed={statusHint === undefined && draftStash !== undefined} />
       </Box>
       <MessageList
@@ -3082,6 +3296,7 @@ function hintForStatus(
   busyReadout?: string,
   queuedCount = 0,
   queuedWakeCount = 0,
+  goalSuffix = '',
 ): string | undefined {
   if (status === 'streaming') {
     // The live readout rides directly behind `working…`, ahead of the static command
@@ -3089,7 +3304,7 @@ function hintForStatus(
     // goes missing, and the tail should be the part that never changes. The queue
     // count (SER-027) rides with it: even a listing cut to nothing stays counted here,
     // typed entries and background-task wakes (SER-069) each under their own word.
-    return `working…${busyReadout ?? ''}${queuedCountHint(queuedCount, queuedWakeCount)} /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn`;
+    return `working…${busyReadout ?? ''}${goalSuffix}${queuedCountHint(queuedCount, queuedWakeCount)} /tasks lists jobs · /agents lists dispatches · /usage reports tokens · ctrl+c cancels this turn`;
   }
   // Elapsed lives on the command's own panel row, so this row can stay static.
   if (status === 'shell') return `running ! command…${queuedCountHint(queuedCount, queuedWakeCount)} ctrl+c cancels it`;
@@ -3133,6 +3348,7 @@ export function Header({
   status = 'idle',
   frame = 0,
   tangent,
+  goal,
   runningTaskCount = 0,
   draftStashed = false,
 }: {
@@ -3142,6 +3358,8 @@ export function Header({
   readonly frame?: number;
   /** Live `/tangent` state (SER-083); a suffix on the state word, never a row. */
   readonly tangent?: TangentState | undefined;
+  /** Live `/goal` state (SER-108); a suffix on the same state word as the tangent, never a row. */
+  readonly goal?: GoalState | undefined;
   /** Only running bash jobs; history stays in /tasks, never in this count. */
   readonly runningTaskCount?: number;
   /** Idle has no InputBox hint: use the existing header hint, never add a row. */
@@ -3155,7 +3373,7 @@ export function Header({
   // place the effective mode is stated, and it must not gain a second one.
   const mode = runtime.permissionMode;
   const stateLabel = status === 'streaming' ? 'working' : headerStatus(status);
-  const tangentSuffix = tangentHeaderSuffix(tangent);
+  const tangentSuffix = tangentHeaderSuffix(tangent) + goalLiveSuffix(goal);
   const activity = runningTasksHeader(runningTaskCount, columns - `◆ DARWIN · ${stateLabel}${tangentSuffix}`.length, frame);
 
   return (

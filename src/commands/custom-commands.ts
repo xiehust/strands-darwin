@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'collaborate', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'help', 'init', 'list-agents', 'mcp', 'memory', 'mode', 'model', 'permissions', 'review', 'rewind', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'collaborate', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'goal', 'help', 'init', 'list-agents', 'mcp', 'memory', 'mode', 'model', 'permissions', 'review', 'rewind', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -36,6 +36,8 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // transcript is the trajectory record's replay projection, so /export and
   // `darwin trajectory replay` cannot disagree.
   export: 'write this session\u2019s transcript to a file',
+  // Bare `/goal` reports it, `/goal off` clears it; the loop is bounded and Ctrl+C wins.
+  goal: 'keep going until a condition holds, checked after each turn',
   help: 'commands, prompt syntax, and keys',
   // A prompt expansion, not a generator: the model inspects the repository and
   // writes AGENTS.md with the ordinary file editor, through the permission gate.

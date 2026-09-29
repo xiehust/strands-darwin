@@ -82,6 +82,31 @@ A throttled model call (a provider 429, including Bedrock's `Too many requests` 
 
 While a wait is pending, the busy row says so in place — `working… · 12s · ↑1.2k ↓318 tokens · throttled, retry 3/6 in 12s` — where `3/6` is the attempt about to be made and the seconds count down on the row's existing tick; no extra row appears, and the provider's message is not shown there. A subagent in the same situation shows `waiting on model, retry 3/6` on its live tool row and heartbeat. A turn that ends because the budget ran out reads `turn failed after 6 attempts: <provider message>`; one you cut short with `Esc` / `Ctrl+C` during the wait reads `cancelled during retry wait (attempt 3/6): <provider message>` instead of a bare `turn failed:`. In `-p` text mode the same wait is one `model throttled, retry 3/6 in 12s — <reason>` stderr line and the failure adds one `notice:` line before the unchanged `error:` line; `--output-format stream-json` emits one `model.retrying` event per wait and the failure record gains a `retry` object (see the [reference](reference.md#report-contracts)).
 
+## Goals: keep going until a condition holds
+
+`/goal <condition>` (a single line, at most 400 characters) tells darwin what "done" means and lets it keep working toward it without you retyping "continue":
+
+```text
+/goal every test in test/ passes and pnpm typecheck is clean
+/goal              show the goal, its automatic-continuation counter and where the loop is
+/goal off          clear it
+```
+
+Setting a goal spends nothing and starts nothing. After each **completed** turn — yours, a background-task or delegation wake, or a peer message — darwin makes one bounded check: a single call to the small classifier-tier model (`classifierModel`, or the provider's default fast model), with no tools and no conversation, that reads only the goal and a bounded record of that turn (the tools it called and how each ended, plus the tail of its final answer). It answers met or not met with a one-sentence reason. The verdict is a transcript notice with its token spend, for example `goal not met · no passing run in the record (check 812 in / 41 out tokens) — continuing 2/5`, or `goal met · …`, which also clears the goal. The check cannot run anything itself, so "met" means the turn's own record shows it; a turn that never ran the tests cannot be judged green.
+
+If the goal is not met, darwin submits **exactly one** continuation prompt through the ordinary prompt path (it appears in the transcript as a normal prompt naming the goal and the check's note) and checks again when that turn completes. The counter counts consecutive automatic continuations and the cap is fixed at **5**; when it is reached the loop stops with `goal not met … stopped after 5 automatic continuations`. Any prompt you type re-arms a capped goal with a fresh counter.
+
+While a goal is set, the header state word shows it (`working · goal continuing 2/5`, `ready · goal armed`, `goal checking`, `goal capped 5/5`) and so does the busy hint — on the rows that already exist, never a new one.
+
+You always win:
+
+- `Ctrl+C` during an automatic continuation, or during the check itself, cancels it and **clears the goal**. Cancelling or failing your own turn starts no check and leaves the goal armed.
+- A pending permission prompt holds the loop exactly as it holds the queue: no check and no continuation starts until you answer, and denying a call is an ordinary result the turn (and the next check) sees. Permission modes apply to continuation turns unchanged — in `yolo` mode they run without prompts, as any turn would.
+- Everything else goes first. Queued prompts, `!` commands, background-task and delegation wakes, and peer messages drain before the goal acts; one check then covers the turns that ran. Your queued prompts reset the counter.
+- `/goal off` stops the loop at once but does not interrupt work already running (`Ctrl+C` does); `/clear` drops the goal with the conversation; a failed check starts no continuation and is not retried until the next completed turn.
+
+The goal is live session state only: nothing is written to configuration, it does not survive exit or `--resume`, and check calls are outside `/usage` (their tokens are in each verdict notice). Headless runs (`-p`, `--output-format`) execute exactly one prompt, so `/goal` is **refused** there with an error rather than sent to the model as text; state the completion condition in the prompt, or use the TUI.
+
 ## User shell commands
 
 A prompt beginning with `!` runs one user-authorized `bash -c` process group, in every permission mode including `plan`:
