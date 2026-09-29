@@ -116,7 +116,7 @@ Peer source: Claude Code `/skill-doctor` shows each skill's context cost (resear
 
 ## SER-107 — Interactive OAuth login for remote MCP servers: a bounded authorization-code + PKCE `OAuthClientProvider` (localhost loopback callback, per-server token store under `~/.darwin/mcp-auth/`) wired through the SDK's existing `authProvider` slot, with a login command and 401-driven guidance; static `auth` client-credentials pass-through documented
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 146
 - Score: 6
 - Importance: 3
