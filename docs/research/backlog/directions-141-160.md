@@ -136,7 +136,7 @@ Peer sources: Claude Code `claude mcp login` (S1); Gemini CLI MCP OAuth with SSR
 
 ## SER-108 — `/goal <condition>` condition-checked self-continuation: after a turn ends, one bounded condition check evaluates the goal; unmet → exactly one auto-submitted continuation prompt through the ordinary `submit()` path; hard cap on consecutive auto-continuations, visible live state, `/goal` bare/off forms; permission prompts and user cancel always win
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 147
 - Score: 6
 - Importance: 3
