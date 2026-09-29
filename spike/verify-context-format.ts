@@ -213,6 +213,7 @@ const breakdown: ContextBreakdown = {
   ],
   builtinTools: component(BUILTIN_TOOLS_LABEL, 9_000),
   mcpServers: [component(`${MCP_TOOLS_LABEL_PREFIX}codegraph`, 3_000), component(`${MCP_TOOLS_LABEL_PREFIX}web-search`, undefined)],
+  skills: [],
   conversation: [component(USER_MESSAGES_LABEL, 90_000), component(ASSISTANT_MESSAGES_LABEL, 10_000)],
 };
 const measured: ContextEstimate = {
@@ -331,9 +332,9 @@ assert('the system prompt is counted by section, from the composition seam strin
   measuredBreakdown.systemPrompt[1]?.tokens === Math.ceil(instructions.length / 4) &&
   measuredBreakdown.systemPrompt[2]?.tokens === Math.ceil(catalogue.length / 4) &&
   measuredBreakdown.systemPrompt[3]?.tokens === Math.ceil(workingContext.length / 4));
-assert('every component goes through the injected countTokens — exactly one call each, sections and tool groups apart',
-  calls.length === 4 + 1 + 3 + 2 &&
-  calls.filter((call) => call.options.systemPrompt !== undefined).length === 4 &&
+assert('every component goes through the injected countTokens — exactly one call each, sections, the one catalogued skill, and tool groups apart',
+  calls.length === 4 + 1 + 1 + 3 + 2 &&
+  calls.filter((call) => call.options.systemPrompt !== undefined).length === 4 + 1 &&
   calls.filter((call) => call.options.toolSpecs !== undefined).length === 4);
 assert('a component whose count threw is absent, never 0, while its neighbours are still counted',
   measuredBreakdown.mcpServers[1]?.tokens === undefined &&

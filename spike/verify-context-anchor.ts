@@ -282,7 +282,7 @@ async function runtimeEstimate(): Promise<void> {
       model.countTokenCalls.length === callsBefore + 1);
     const breakdown = await runtime.contextBreakdown();
     const breakdownCalls = model.countTokenCalls.length - callsBefore - 1;
-    const rows = [...breakdown.systemPrompt, breakdown.builtinTools, ...breakdown.mcpServers, ...breakdown.conversation];
+    const rows = [...breakdown.systemPrompt, breakdown.builtinTools, ...breakdown.mcpServers, ...breakdown.skills, ...breakdown.conversation];
     assert('the breakdown is the only path that counts components — one call per counted row',
       breakdownCalls === rows.filter((row) => row.absent === undefined).length && breakdownCalls > 1);
     const again = await runtime.contextEstimate();

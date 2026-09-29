@@ -6,9 +6,11 @@
  * one whole-request count — and says nothing about *what* is large. This module
  * counts the parts separately: the system prompt by section as Darwin composes it
  * (base prompt, `<project-instructions>`, the official `<available_skills>`
- * catalogue, `<working-context>`), the tool specs grouped by origin (darwin's own
- * built-ins, then each MCP server by its configured name), and the conversation by
- * role. Every component goes through the same `model.countTokens` the total already
+ * catalogue, `<working-context>`), the catalogue's individual `<skill>` entries
+ * one row each (SER-106 — Claude Code's per-skill `/skill-doctor` cost, as rows in
+ * this breakdown rather than a new command), the tool specs grouped by origin
+ * (darwin's own built-ins, then each MCP server by its configured name), and the
+ * conversation by role. Every component goes through the same `model.countTokens` the total already
  * uses, so the parts are stated in the total's own units — but they are an
  * *estimate over the current request shape*, never the anchor measurement, and the
  * formatter labels them so. The measured total stays the authoritative line.
@@ -48,6 +50,11 @@ export interface ContextBreakdown {
   builtinTools: ContextComponent;
   /** One row per configured MCP server, in configuration order; the formatter bounds them. */
   mcpServers: ContextComponent[];
+  /**
+   * One row per `<skill>` entry of the live catalogue, in catalogue order (SER-106);
+   * the formatter bounds them. Empty when the catalogue is absent or carries none.
+   */
+  skills: ContextComponent[];
   /** Conversation messages by role, whole messages only. */
   conversation: ContextComponent[];
 }
@@ -83,6 +90,35 @@ export const UNATTRIBUTED_TOOLS_LABEL = 'tools · darwin built-ins and unattribu
 export const MCP_TOOLS_LABEL_PREFIX = 'tools · mcp ';
 export const USER_MESSAGES_LABEL = 'conversation · user prompts and tool results';
 export const ASSISTANT_MESSAGES_LABEL = 'conversation · assistant replies and tool calls';
+export const SKILL_LABEL_PREFIX = 'skill · ';
+/** A `<skill>` block without a parseable `<name>` is still stated, not dropped. */
+const UNNAMED_SKILL = '(unnamed)';
+const SKILL_BLOCK_PATTERN = /<skill>[\s\S]*?<\/skill>/g;
+const SKILL_NAME_PATTERN = /<name>([\s\S]*?)<\/name>/;
+
+/** One `<skill>…</skill>` entry of the official catalogue block. */
+export interface SkillCatalogueEntry {
+  /** The entry's `<name>` as written, or `(unnamed)` when the block carries none. */
+  name: string;
+  /** The whole `<skill>…</skill>` block, byte for byte as the prompt carries it. */
+  block: string;
+}
+
+/**
+ * Reads the per-skill entries of a live `<available_skills>` catalogue, in
+ * catalogue order. The entries are parsed from the injected text — never
+ * regenerated from the loader — so the rows cost what the prompt actually
+ * carries. SDK escaping (`escapeXml`) and name validation mean a description
+ * cannot spoof a `<skill>` or `<name>` boundary.
+ */
+export function skillCatalogueEntries(catalogue: string): SkillCatalogueEntry[] {
+  const entries: SkillCatalogueEntry[] = [];
+  for (const match of catalogue.matchAll(SKILL_BLOCK_PATTERN)) {
+    const name = match[0].match(SKILL_NAME_PATTERN)?.[1]?.trim();
+    entries.push({ name: name === undefined || name === '' ? UNNAMED_SKILL : name, block: match[0] });
+  }
+  return entries;
+}
 
 /**
  * Counts every component with `countTokens`, one call per component, sequentially
@@ -102,6 +138,7 @@ export async function measureContextBreakdown(
   };
 
   const systemPrompt: ContextComponent[] = [];
+  const skills: ContextComponent[] = [];
   const sections = knownPromptSections(inputs.systemPrompt);
   if (sections === undefined) {
     if (inputs.systemPrompt !== undefined) {
@@ -128,6 +165,11 @@ export async function measureContextBreakdown(
         ? { label: SKILLS_CATALOGUE_LABEL, tokens: undefined, absent: CATALOGUE_NOT_INJECTED }
         : await count(SKILLS_CATALOGUE_LABEL, [], { systemPrompt: sections.catalogue }),
     );
+    if (sections.catalogue !== undefined) {
+      for (const entry of skillCatalogueEntries(sections.catalogue)) {
+        skills.push(await count(`${SKILL_LABEL_PREFIX}${entry.name}`, [], { systemPrompt: entry.block }));
+      }
+    }
     if (sections.workingContext !== undefined) {
       systemPrompt.push(await count(WORKING_CONTEXT_LABEL, [], { systemPrompt: sections.workingContext }));
     }
@@ -150,7 +192,7 @@ export async function measureContextBreakdown(
     await count(ASSISTANT_MESSAGES_LABEL, byRole('assistant'), {}),
   ];
 
-  return { systemPrompt, builtinTools, mcpServers, conversation };
+  return { systemPrompt, builtinTools, mcpServers, skills, conversation };
 }
 
 export interface ToolOriginGroups {

@@ -754,6 +754,11 @@ row admits the unattributed tools; and the conversation by role over whole messa
 labelled an *estimate over the current request shape*: the anchor-measured total above them stays the
 authoritative line, and the two are not reconciled. Presentation follows `usageBuckets`: a component
 whose count failed reads `not reported`, never 0; a catalogue not yet injected is a stated absence;
+the catalogue aggregate is followed by one row per `<skill>` entry, parsed from the live injected
+catalogue text — never regenerated from the loader, so the rows cost what the prompt actually
+carries — in catalogue order, counted once each under the same one-call-per-component rule and
+capped at the same bound with `… N more skills` (SER-106; a `<skill>` block without a `<name>` is
+stated as `(unnamed)`, and SDK escaping means a description cannot spoof a block boundary);
 MCP-server rows are capped at `/mcp`'s own `MAX_MCP_TOOL_NAMES` with `… N more servers`; the share
 is present only when the window is known. It is a separate accessor, not an option on
 `contextEstimate()`, on purpose: the estimate is read after every turn by the pressure latch and by
@@ -761,7 +766,8 @@ is present only when the window is known. It is a separate accessor, not an opti
 component and a provider-native counter may reach the provider's counting API. `/context` is its
 only caller, the total line and `formatContextValue` are byte-identical with and without it, and a
 failed breakdown costs the rows, never the line. Free coverage: `spike/verify-context-format.ts`
-(rows, bounds, measurement over an injected counter) and `spike/verify-context-anchor.ts` (the
+(rows, bounds, measurement over an injected counter), `spike/verify-context-skills.ts` (per-skill
+rows, failure, bounds), and `spike/verify-context-anchor.ts` (the
 default estimate stays one call before and after a breakdown; `App.tsx` asks exactly once, inside
 the `/context` handler).
 

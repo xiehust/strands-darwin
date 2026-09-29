@@ -10,7 +10,7 @@
  * is the pre-anchor wording, unchanged: a whole-request character heuristic.
  * An unknown window is said out loud rather than silently guessed.
  */
-import type { ContextBreakdown, ContextComponent } from '../agent/context-breakdown.js';
+import { SKILLS_CATALOGUE_LABEL, type ContextBreakdown, type ContextComponent } from '../agent/context-breakdown.js';
 import type { ContextEstimate } from '../agent/runtime.js';
 import { MAX_MCP_TOOL_NAMES } from './mcp-format.js';
 
@@ -27,14 +27,18 @@ export const BREAKDOWN_CAPTION =
   `${BREAKDOWN_INDENT}breakdown — estimated over the current request shape; the total above is authoritative`;
 /** How many MCP-server rows are shown before `… N more` — `/mcp`'s own bound for MCP lists. */
 export const MAX_BREAKDOWN_SERVER_ROWS = MAX_MCP_TOOL_NAMES;
+/** How many per-skill rows are shown before `… N more` — the same bound as the server rows. */
+export const MAX_BREAKDOWN_SKILL_ROWS = MAX_MCP_TOOL_NAMES;
 
 /**
  * The `/context` report with its breakdown (SER-077): the total line first, byte for
  * byte what {@link formatContextReport} prints alone, then the caption and one bounded
  * row per component — `  <label> ~N tokens · P%`, the share only when the window is
  * known. A failed count reads `not reported`, never 0; a stated absence reads its
- * reason. MCP-server rows are capped at {@link MAX_BREAKDOWN_SERVER_ROWS} with the
- * remainder counted, so a large configuration cannot dump into the transcript.
+ * reason. The skills-catalogue aggregate row is followed by one row per catalogued
+ * skill (SER-106), capped at {@link MAX_BREAKDOWN_SKILL_ROWS}; MCP-server rows are
+ * capped at {@link MAX_BREAKDOWN_SERVER_ROWS} — each with the remainder counted, so a
+ * large configuration cannot dump into the transcript.
  */
 export function formatContextReportWithBreakdown(estimate: ContextEstimate, breakdown: ContextBreakdown): string {
   return [formatContextReport(estimate), ...formatContextBreakdown(breakdown, estimate.windowTokens)].join('\n');
@@ -46,9 +50,18 @@ export function formatContextBreakdown(breakdown: ContextBreakdown, windowTokens
     `${BREAKDOWN_INDENT}${component.label} ${formatComponentValue(component, windowTokens)}`;
   const servers = breakdown.mcpServers.slice(0, MAX_BREAKDOWN_SERVER_ROWS);
   const remainder = breakdown.mcpServers.length - servers.length;
+  const skills = breakdown.skills.slice(0, MAX_BREAKDOWN_SKILL_ROWS);
+  const skillRemainder = breakdown.skills.length - skills.length;
+  const skillRows = [
+    ...skills.map(row),
+    ...(skillRemainder > 0 ? [`${BREAKDOWN_INDENT}… ${skillRemainder} more skill${skillRemainder === 1 ? '' : 's'}`] : []),
+  ];
   return [
     BREAKDOWN_CAPTION,
-    ...breakdown.systemPrompt.map(row),
+    ...breakdown.systemPrompt.flatMap((component) =>
+      component.label === SKILLS_CATALOGUE_LABEL && skillRows.length > 0
+        ? [row(component), ...skillRows]
+        : [row(component)]),
     row(breakdown.builtinTools),
     ...servers.map(row),
     ...(remainder > 0 ? [`${BREAKDOWN_INDENT}… ${remainder} more server${remainder === 1 ? '' : 's'}`] : []),
