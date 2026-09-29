@@ -75,6 +75,35 @@ Skill 只接受 `name`、`description` 和正文；缺少 skill 名称时使用�
 
 `.darwin/mcp.json` 默认被 gitignore，因为 headers/env 容易包含真实 token。先用变量插值清理敏感值，再决定是否提交。单个服务器启动失败或引用未设置变量时，只跳过该服务器；整个文件无法解析才会阻止启动。`/mcp` 会报告配置名称、连接状态、有上限的工具名/数量、生效与忽略文件，但不会调用 `listTools()`、连接或重试。失败服务器需重启 darwin 才会重试。
 
+### 需要登录的远程服务器（OAuth）
+
+返回 `401` 的 streamable-HTTP 服务器可以交互式登录。先在条目里用 `oauth` 声明，再运行 `darwin mcp login <name>`（全局服务器可在任意目录运行）：
+
+```json
+{
+  "mcpServers": {
+    "linear": {
+      "url": "https://mcp.example.com/mcp",
+      "oauth": { "scope": "read write" }
+    }
+  }
+}
+```
+
+`"oauth": true` 使用默认值。选项：`scope`（普通字符串）、`clientId`（预先注册的 public client；缺省则登录时动态注册）、`callbackPort`（1024–65535；为预注册的重定向 URI 固定回环端口，默认临时端口）、`allowPrivateNetwork`（见下）。其他键会被拒绝。`oauth` 需要 `url`，不能与 `command`、`sse` 传输、静态 `auth` 或 `Authorization` 头同用，且 URL 必须是 `https`（仅回环主机允许明文 `http`）。
+
+`darwin mcp login <name>` 执行带 PKCE 的授权码流程：发现服务器的授权服务器，注册 public client，打印授权 URL 并打开浏览器，在仅绑定 `127.0.0.1` 的监听器上接收重定向（单一路径，`state` 或 `Host` 不符的请求被忽略，5 分钟、成功或 Ctrl+C 后关闭）。令牌按服务器存放在 `~/.darwin/mcp-auth/<name>-<hash>.json`（目录 `0700`，文件 `0600`，原子写入），并绑定到确切的服务器 URL——同名服务器改用其他 URL 时视为未登录。会话仅对已启用、且（项目声明的服务器）已被信任的服务器读取该文件；过期的访问令牌由会话自行刷新并写回，但绝不会打开浏览器或注册客户端。`darwin mcp logout <name>` 删除该文件。
+
+会话请求得到无法自行修复的 `401`（从未登录、刷新令牌被撤销或过期、登录对应另一个 URL）时，该服务器不提供工具，`/mcp` 显示 `failed — authentication required` 以及需要运行的确切命令 `darwin mcp login <name>`（之后重启 darwin）。返回 `401` 但没有 `oauth` 条目的服务器只显示 `failed`：请加上 `"oauth": true` 再登录。
+
+流程强制的安全规则：来自发现过程的每个 URL（受保护资源元数据、授权服务器元数据及其授权/令牌/注册端点、重定向）都必须是不含凭据和片段的 `https`，且不得指向回环、私有、链路本地或云元数据地址——既检查 URL，也检查套接字解析到的地址——除非 MCP 服务器本身就是本地/私有地址（或你为内部主机设置了 `allowPrivateNetwork: true`）。各端点必须与授权服务器同源，元数据 `issuer` 必须与之一致，受保护资源元数据必须描述 MCP 服务器的源，回调中的 `iss` 也必须一致。请求受大小与时间限制，最多跟随三次 GET 重定向，每一跳都重新检查。会话中的静默刷新会在每次请求前重新检查已存的令牌端点及其 DNS 解析（该套接字由 SDK 打开，因此是预检而非套接字级检查）。只接受 `Bearer` 令牌。令牌绝不会被打印、记录日志、写入 trajectory、由 `/mcp` 列出，也不会发往 MCP 服务器及其令牌端点以外的任何地方。项目声明的服务器在工作区被信任之前不会被联系，其已存登录也不会被读取（`darwin mcp login` 会以提示信息拒绝）。
+
+现有的静态 `auth` 不变，仍是对 SDK client-credentials provider 的透传——机器对机器，无浏览器、无 darwin 令牌存储、`/mcp` 无登录状态：
+
+```json
+{ "url": "https://mcp.example.com/mcp", "auth": { "clientId": "${env:CLIENT_ID}", "clientSecret": "${env:CLIENT_SECRET}", "scopes": ["tools"] } }
+```
+
 若 `npx` 服务器只报 `Connection closed`，请删除项目 `package.json` 中的 `devEngines.packageManager`，或为服务器另设 `cwd`；`npx` 可能先因 `EBADDEVENGINES` 退出，MCP 只能看到连接关闭。
 
 ## Skills

@@ -27,6 +27,7 @@ import type { McpConnectionState, McpServerConfig } from '@strands-agents/sdk';
 import { ConfigError } from '../config.js';
 import { darwinDir, userDarwinDir } from '../paths.js';
 import { withDarwinMarker } from '../tools/shell-env.js';
+import { createRuntimeOAuthProvider, resolveOAuthSettings, type DarwinOAuthProvider } from './oauth-provider.js';
 
 /** Preferred location, alongside the rest of darwin's project state. */
 export const MCP_CONFIG_FILENAME = 'mcp.json';
@@ -68,6 +69,12 @@ export interface McpServerStatus {
    * for a server that failed to connect or exposed nothing.
    */
   toolNames: readonly string[] | undefined;
+  /**
+   * Only for servers with an `oauth` entry: whether a usable login is held. `login-required`
+   * means a session request needed `darwin mcp login <name>` (or none was ever done). Never a
+   * token, expiry or any other credential detail.
+   */
+  auth?: 'logged-in' | 'login-required' | 'not-logged-in';
 }
 
 /**
@@ -88,7 +95,13 @@ export function mcpServerStatuses(clients: readonly McpClient[]): McpServerStatu
       registered instanceof Set && [...registered].every((name) => typeof name === 'string')
         ? [...(registered as Set<string>)].sort((a, b) => a.localeCompare(b))
         : undefined;
-    return { name: client.clientName, state: client.connectionState, toolNames };
+    const provider = oauthProviders.get(client);
+    return {
+      name: client.clientName,
+      state: client.connectionState,
+      toolNames,
+      ...(provider === undefined ? {} : { auth: provider.authStatus() }),
+    };
   });
 }
 
@@ -140,10 +153,90 @@ export async function loadMcpClients(
   if (servers === undefined) return { clients: [], ...sources };
 
   const prefixed = withStdioDarwinMarker(withDefaultPrefixes(servers));
-  const clients = options.quietStdioStderr === true
-    ? await loadServersQuietly(prefixed)
-    : await McpClient.loadServers(prefixed, { continueOnError: true });
+  const { plain, oauth } = splitOAuthServers(prefixed);
+  const plainClients = options.quietStdioStderr === true
+    ? await loadServersQuietly(plain)
+    : await McpClient.loadServers(plain, { continueOnError: true });
+  if (Object.keys(oauth).length === 0) return { clients: plainClients, ...sources };
+  // Only entries `readMcpServerConfigs` returned reach here, so a held project layer never gets
+  // a provider, a token-store read or a network request.
+  const oauthClients = await buildOAuthClients(oauth);
+  const order = Object.keys(prefixed);
+  const clients = [...plainClients, ...oauthClients].sort(
+    (a, b) => order.indexOf(a.clientName) - order.indexOf(b.clientName),
+  );
   return { clients, ...sources };
+}
+
+/** Servers that opted into interactive OAuth (`oauth` key, enabled) versus everything else. */
+function splitOAuthServers(servers: Record<string, McpServerConfig>): {
+  plain: Record<string, McpServerConfig>;
+  oauth: Record<string, McpServerConfig>;
+} {
+  const oauth = Object.entries(servers).filter(
+    ([, entry]) =>
+      typeof entry === 'object' && entry !== null && entry.disabled !== true && (entry as Record<string, unknown>)['oauth'] !== undefined && (entry as Record<string, unknown>)['oauth'] !== false,
+  );
+  if (oauth.length === 0) return { plain: servers, oauth: {} };
+  const names = new Set(oauth.map(([name]) => name));
+  return {
+    plain: Object.fromEntries(Object.entries(servers).filter(([name]) => !names.has(name))),
+    oauth: Object.fromEntries(oauth),
+  };
+}
+
+/** Session-side OAuth provider of each client built by {@link buildOAuthClients}, for `/mcp`. */
+const oauthProviders = new WeakMap<McpClient, DarwinOAuthProvider>();
+
+function interpolate(value: string): string {
+  return value.replace(/\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, key: string) => {
+    const resolved = process.env[key];
+    if (resolved === undefined) throw new ConfigError(`MCP config: environment variable "${key}" is not set`);
+    return resolved;
+  });
+}
+
+function compileFilters(name: string, patterns: readonly string[] | undefined): RegExp[] | undefined {
+  return patterns?.map((pattern) => {
+    try {
+      return new RegExp(interpolate(pattern));
+    } catch (error) {
+      throw new ConfigError(`MCP server "${name}": invalid regex in toolFilters: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+}
+
+/**
+ * Builds the OAuth-opted servers through the public `McpClient` constructor with the SDK's own
+ * `authProvider` slot (the declarative loader has no way to pass one). The translation is the
+ * loader's, restricted to what a streamable-http entry can carry; the provider is non-interactive.
+ */
+async function buildOAuthClients(servers: Record<string, McpServerConfig>): Promise<McpClient[]> {
+  const clients: McpClient[] = [];
+  for (const [name, entry] of Object.entries(servers)) {
+    const settings = resolveOAuthSettings(name, entry);
+    if (settings === undefined) continue;
+    const provider = await createRuntimeOAuthProvider(settings);
+    const allowed = compileFilters(name, entry.toolFilters?.allowed);
+    const rejected = compileFilters(name, entry.toolFilters?.rejected);
+    const client = new McpClient({
+      applicationName: name,
+      url: settings.serverUrl,
+      authProvider: provider,
+      continueOnError: entry.continueOnError ?? true,
+      ...(entry.headers === undefined
+        ? {}
+        : { headers: Object.fromEntries(Object.entries(entry.headers).map(([key, value]) => [key, interpolate(value)])) }),
+      ...(entry.prefix === undefined ? {} : { prefix: interpolate(entry.prefix) }),
+      ...(entry.tasksConfig === undefined ? {} : { tasksConfig: entry.tasksConfig }),
+      ...(allowed === undefined && rejected === undefined
+        ? {}
+        : { toolFilters: { ...(allowed === undefined ? {} : { allowed }), ...(rejected === undefined ? {} : { rejected }) } }),
+    });
+    oauthProviders.set(client, provider);
+    clients.push(client);
+  }
+  return clients;
 }
 
 /** The declarative half of {@link loadMcpClients}: which files were read, and what they declare. */

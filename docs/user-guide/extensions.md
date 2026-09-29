@@ -75,6 +75,35 @@ Tools are normally registered as `<serverName>_<toolName>` to prevent collisions
 
 `.darwin/mcp.json` is gitignored because headers/env often contain tokens. Prefer interpolation before deciding to commit it. One server startup failure or unset variable skips that server; a whole-file parse error stops startup. `/mcp` reports configured names, connection state, bounded tool names/counts, and effective/ignored files without calling `listTools()`, connecting, or retrying. A failed server needs restart to retry.
 
+### Remote servers that need a login (OAuth)
+
+A streamable-HTTP server that answers `401` can be logged in to interactively. Opt the entry in with `oauth`, then run `darwin mcp login <name>` from the project (or anywhere, for a global server):
+
+```json
+{
+  "mcpServers": {
+    "linear": {
+      "url": "https://mcp.example.com/mcp",
+      "oauth": { "scope": "read write" }
+    }
+  }
+}
+```
+
+`"oauth": true` uses defaults. Options: `scope` (plain string), `clientId` (a pre-registered public client; otherwise the login registers one dynamically), `callbackPort` (1024–65535; a fixed loopback port for a pre-registered redirect URI, default an ephemeral one), `allowPrivateNetwork` (see below). Other keys are refused. `oauth` needs a `url`, cannot be combined with `command`, the `sse` transport, static `auth` or an `Authorization` header, and the URL must be `https` (plain `http` only for a loopback host).
+
+`darwin mcp login <name>` runs the authorization-code flow with PKCE: darwin discovers the server's authorization server, registers a public client, prints the authorization URL and opens your browser, and receives the redirect on a listener bound to `127.0.0.1` only (one path, wrong `state` or `Host` ignored, closed after 5 minutes, on success or on Ctrl+C). The tokens are stored per server in `~/.darwin/mcp-auth/<name>-<hash>.json` (directory `0700`, file `0600`, written atomically) and bound to the exact server URL, so a same-named server that moves to another URL is treated as not logged in. Sessions read that file only for servers that are enabled and, for project-declared ones, trusted; they refresh an expired access token themselves and persist the new one, but never open a browser or register a client. `darwin mcp logout <name>` deletes the file.
+
+When a session's request gets a `401` it cannot repair — never logged in, revoked or expired refresh token, a login for a different URL — the server contributes no tools and `/mcp` shows `failed — authentication required` and the exact `darwin mcp login <name>` command to run (then restart darwin). A server that answers `401` but has no `oauth` entry is only reported as `failed`: add `"oauth": true` and log in.
+
+Safety rules the flow enforces: every URL taken from discovery (protected-resource metadata, authorization-server metadata and its authorization, token and registration endpoints, redirects) must be `https` without credentials or fragments and must not point at a loopback, private, link-local or cloud-metadata address — checked on the URL and again on the addresses the socket resolves to — unless the MCP server itself is a local/private address (or you set `allowPrivateNetwork: true` for an internal host). The endpoints must share the authorization server's origin, the metadata `issuer` must match it, the protected-resource metadata must describe the MCP server's origin, and a callback `iss` must match. Requests are size- and time-bounded and follow at most three GET redirects, each re-checked. A session's silent refresh re-checks the stored token endpoint and its DNS resolution before each request (the SDK opens that socket, so this is a pre-flight, not a socket-level check). Only `Bearer` tokens are accepted. Tokens are never printed, logged, recorded in the trajectory, listed by `/mcp`, or sent anywhere but the MCP server and its token endpoint. A project-declared server is not contacted, and its stored login not read, until the workspace is trusted (`darwin mcp login` refuses with a message instead).
+
+Existing static `auth` is unchanged and stays a pass-through to the SDK's client-credentials provider — machine-to-machine, no browser, no darwin token store, no `/mcp` login state:
+
+```json
+{ "url": "https://mcp.example.com/mcp", "auth": { "clientId": "${env:CLIENT_ID}", "clientSecret": "${env:CLIENT_SECRET}", "scopes": ["tools"] } }
+```
+
 If an `npx` server says `Connection closed`, remove `devEngines.packageManager` from project `package.json` or set another `cwd`; `npx` may be failing with `EBADDEVENGINES` before MCP can report it.
 
 ## Skills

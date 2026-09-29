@@ -70,6 +70,7 @@ darwin --resume <id>        # ids: darwin sessions
 darwin --session <id>
 darwin doctor               # offline read-only diagnostics: config, MCP, skills, hooks; exit 1 on problems
 darwin permissions test 'bash:pnpm *'  # recorded project pairs; no policy changes
+darwin mcp login <name>     # OAuth login for a remote MCP server with "oauth": true; token store ~/.darwin/mcp-auth/
 # In the TUI: /permissions test bash:pnpm * (current session only, works while busy)
 darwin --help               # usage grammar; darwin --version prints the version
 ```

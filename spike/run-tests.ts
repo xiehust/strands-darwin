@@ -87,6 +87,7 @@ const suites = [
   'verify-codegraph-preflight.ts',
   'verify-web-search-empty-results.ts',
   'verify-mcp-command.ts',
+  'verify-mcp-oauth.ts',
   'verify-status-command.ts',
   'verify-help-command.ts',
   'verify-copy-command.ts',

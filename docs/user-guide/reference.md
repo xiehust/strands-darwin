@@ -162,6 +162,8 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
        darwin collaborate hub enroll <url> <token> [--name <label>]
        darwin collaborate hub status|nodes|leave|publish on|off|block <node>|unblock <node>
        darwin permissions test <rule>
+       darwin mcp login <name> [--no-browser]
+       darwin mcp logout <name>
        darwin import --from claude-code [--apply]
        darwin doctor
        darwin cloud-memory [status|preferences|list|inspect|pending|preview] …
@@ -196,6 +198,20 @@ Invalid usage/parse exits 2; valid report exits 0, even with unavailable evidenc
 2,000-code-point candidate, 2 MiB/file, 8 MiB total, 20 pair rows, 240 code points/cell.
 Damage, disabled/stopped/missing recording, truncation/redaction, omitted rows and buffered
 calls are explicit; no complete-history/no-match claim. See [permission tests](permissions.md#test-a-candidate-without-granting-it).
+
+### `darwin mcp login <name> [--no-browser]` and `darwin mcp logout <name>`
+
+Interactive OAuth for a remote MCP server (authorization-code flow with PKCE). The server's entry must
+opt in with `"oauth": true` (or an options object) — see [MCP servers](extensions.md#remote-servers-that-need-a-login-oauth).
+Routed before any runtime, model, session or MCP client exists.
+
+- `login` resolves the entry a session in this directory would use. A server declared only by the project's
+  MCP file is refused (exit 1, "Nothing was contacted") until the workspace is trusted; no request is made and
+  no stored login is read before then. It prints the authorization URL on stderr, opens your default browser
+  (`--no-browser` skips that), and waits up to 5 minutes for the redirect on `http://127.0.0.1:<port>/callback`.
+  Ctrl+C cancels. On success the login is stored and stdout says `logged in to <name>`; start a new session to use it.
+- `logout` deletes the stored login for `<name>` (local only — it does not revoke the grant at the provider).
+- Exit codes: 0 done, 1 refused or failed (one `error:` line), 2 grammar error (the usual `--help` hint).
 
 ### `darwin import --from claude-code [--apply]`
 

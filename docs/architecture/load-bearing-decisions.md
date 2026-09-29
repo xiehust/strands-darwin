@@ -597,6 +597,46 @@ second path for tool results or server output into parent context. The thirteent
 `spike/verify-tui.ts mcp` / `completion`.
 
 
+## MCP OAuth login — the SDK's provider slot, darwin's boundary
+
+**Interactive OAuth for remote MCP servers is the MCP SDK's own `auth()` flow behind
+`McpClientConfig.authProvider`; darwin adds the boundary around it, not a second flow**
+(SER-107; `src/mcp/oauth-{net,store,provider,login}.ts`, `src/cli-mcp.ts`). A streamable-http
+server opts in with an `oauth` key; only those entries are built with the public `McpClient`
+constructor (the declarative loader has no `authProvider` argument) and everything else still goes
+through `McpClient.loadServers` byte-for-byte. One provider class serves two modes so they cannot
+drift: `login` (`darwin mcp login`, interactive, in memory until the code exchange succeeds) and
+`runtime` (a session: backed by the stored record, no browser, no client registration — a request it
+cannot repair raises `McpLoginRequiredError`/no-ops the redirect, sets `loginRequired`, and
+`mcpServerStatuses` turns that into the `auth` field `/mcp` prints beside the command to run).
+Static `auth` client-credentials stays the SDK pass-through, untouched and mutually exclusive with `oauth`.
+
+Load-bearing rules: **(1) Trust.** The token store is only reachable from entries that
+`readMcpServerConfigs` returned, so a held project layer (SER-090) never gets a provider, a store
+read or a request; `darwin mcp login` resolves the entry a session here would use and refuses a
+project-declared server unless the workspace is trusted, before any read or request. **(2) Endpoints are
+untrusted input.** Every URL from discovery is vetted (`validateOAuthUrl`: https, no credentials/
+fragment, no loopback/private/link-local/metadata address unless the MCP server is itself local or
+the user set `allowPrivateNetwork`) at the URL and again at the socket (`lookup` hook, so rebinding
+is caught); endpoints must share the authorization server's origin, `issuer` and protected-resource
+origin must match, the 401's `resource_metadata` pointer must stay on the server's origin. Login
+requests use one guarded fetch (bounded size/time, manual GET-only redirects, each hop re-vetted); a
+session's refresh cannot inject a fetch into the SDK transport, so `addClientAuthentication` re-vets
+the stored token endpoint and its DNS before each token request (a pre-flight, stated as such).
+**(3) Callback.** `127.0.0.1` only, one path, one accepted callback, Host and `state` checked (a stray
+request is answered and ignored, so it can neither complete nor abort the login), request cap,
+deadline and `AbortSignal`, static reflection-free page, listener always closed. **(4) Store.**
+`~/.darwin/mcp-auth/<name>-<hash>.json`, `0700`/`0600`, exclusive-create temp + rename, size-capped,
+symlinks refused, bound to the exact server URL (a same-named server elsewhere reads as not logged
+in) and to a `loginId` so a session's refresh never overwrites a newer login. **(5) Secrecy.** Nothing
+in these modules logs, records or lists a token: printed failures go through `describeLoginFailure`
+(bounded, control characters stripped, credential-shaped fields redacted), `/mcp` shows only
+`logged-in`/`login-required`, no trajectory or session file is touched, and the modules import
+neither. `/mcp` stays a read-only projection: the new field is read from the provider in memory and
+nothing connects or reconnects. Free check: `spike/verify-mcp-oauth.ts` (in `pnpm test`) — a fake
+authorization + MCP server on loopback, real `McpClient` connections, real `darwin` processes.
+
+
 ## CodeGraph MCP preflight — existing indexes only
 
 CodeGraph's semantic readers fail predictably when a target has no usable `.codegraph/codegraph.db`,

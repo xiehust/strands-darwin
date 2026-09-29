@@ -61,8 +61,12 @@ export function formatMcpReport(
 function describeServer(server: McpServerStatus): string {
   switch (server.state) {
     case 'connected':
-      return `connected · ${describeTools(server.toolNames)}`;
+      return `connected · ${describeTools(server.toolNames)}${server.auth === 'logged-in' ? ' · oauth: logged in' : ''}`;
     case 'failed':
+      // A 401 that needs a login this process cannot perform names the command that fixes it.
+      if (server.auth === 'login-required') {
+        return `failed — authentication required; run \`darwin mcp login ${server.name}\` in a terminal, then restart darwin`;
+      }
       // continueOnError swallowed the connection failure at startup; the SDK said
       // so once at log level and the server has contributed zero tools since.
       return 'failed — could not connect; contributing no tools (restart darwin to retry)';

@@ -131,6 +131,8 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
        darwin collaborate hub enroll <url> <token> [--name <label>]
        darwin collaborate hub status|nodes|leave|publish on|off|block <node>|unblock <node>
        darwin permissions test <rule>
+       darwin mcp login <name> [--no-browser]
+       darwin mcp logout <name>
        darwin import --from claude-code [--apply]
        darwin doctor
        darwin cloud-memory [status|preferences|list|inspect|pending|preview] …
@@ -164,6 +166,18 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 每文件 2 MiB、合计 8 MiB、20 行调用对、每字段 240 码点。损坏、禁用/停止/缺失记录、
 截断/脱敏、省略行和未落盘调用均明确说明，不声称完整历史或完整无匹配。
 详见[权限测试](permissions.zh-CN.md#只测试候选规则不授予权限)。
+
+### `darwin mcp login <name> [--no-browser]` 与 `darwin mcp logout <name>`
+
+为远程 MCP 服务器做交互式 OAuth（授权码流程 + PKCE）。服务器条目必须显式声明 `"oauth": true`（或选项对象），
+见 [MCP 服务器](extensions.zh-CN.md#需要登录的远程服务器oauth)。该命令在任何运行时、模型、会话或 MCP 客户端创建之前处理。
+
+- `login` 解析当前目录的会话实际会使用的条目。仅由项目 MCP 文件声明的服务器，在工作区被信任之前会被拒绝
+  （退出码 1，并说明“未联系任何服务器”）：此前不发请求，也不读取已存的登录。它在 stderr 打印授权 URL，打开默认浏览器
+  （`--no-browser` 跳过），并最多等待 5 分钟接收 `http://127.0.0.1:<port>/callback` 上的重定向。Ctrl+C 取消。
+  成功后登录被保存，stdout 输出 `logged in to <name>`；新开会话即可使用。
+- `logout` 删除 `<name>` 已存的登录（仅本地，不会在服务商处撤销授权）。
+- 退出码：0 完成；1 被拒绝或失败（一行 `error:`）；2 语法错误（附常规 `--help` 提示）。
 
 ### `darwin import --from claude-code [--apply]`
 
