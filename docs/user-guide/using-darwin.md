@@ -15,6 +15,12 @@ The startup frame identifies the model, session, cache, effort, permission mode,
 
 While a turn runs, the existing `working…`/`thinking…` row shows elapsed time and reported token spend. Unreported usage is omitted, never rendered as zero. `Ctrl+B` toggles compact/expanded tool details without changing the prompt draft.
 
+## Reading context costs
+
+When a session grows, run `/context` before deciding whether to shorten the conversation or remove an unused skill. The first line is the context-size estimate (a provider-measured base plus estimated new messages when available); the following rows estimate the *current request shape*. Under `system prompt · skills catalogue`, `skill · <name> ~N tokens` shows each registered skill's catalogue entry — its name, description and location, **not** the full SKILL.md body. The aggregate catalogue row includes its wrapper, so do not add the per-skill rows to it or to the first line. A failed component count says `not reported`, not zero; only the first bounded set of skills is displayed, followed by `… N more skills` when necessary. With a known model window, each counted row also shows its approximate share.
+
+These rows are calculated only when you request `/context`; `/status` shows the same context estimate without the extra per-skill counts. They are estimates of prompt size, not billed tokens or a usage-frequency ranking. If the conversation is large, `/compact` is a user-triggered summary; it does not remove registered skills from the catalogue. See the [command reference](reference.md#slash-commands-and-bundled-skill-entry-points) for other sections of the breakdown.
+
 ## Silent model streams
 
 If the parent model stops sending events for 120 seconds, the turn fails visibly with `stream idle for 120s`; there is no automatic retry or continuation. Thinking events count as activity, while permission, tool, background and throttle waits do not count as stream silence. User cancellation takes precedence during cleanup. Already streamed output remains visible; inspect completed work before resubmitting. All headless formats add one `stream:` stderr diagnostic and keep their ordinary failure contract. Change the root `streamIdleTimeoutSeconds` setting, or set `0` to disable; [exact scope and limits](configuration.md#stream-idle-watchdog).

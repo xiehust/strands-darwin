@@ -5,6 +5,10 @@
  * deterministic catalogue order, and byte-identical aggregate/total//status lines.
  * No model call, no network — the "model" below is the SDK's own base heuristic.
  */
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import {
   CachePointBlock,
   Message,
@@ -28,7 +32,9 @@ import {
   type ComponentCounter,
   type ContextComponent,
 } from '../src/agent/context-breakdown.js';
-import type { ContextEstimate } from '../src/agent/runtime.js';
+import { allowAllBridge } from '../src/agent/permission.js';
+import { AgentRuntime, setRuntimeModelFactoryForTest, type ContextEstimate } from '../src/agent/runtime.js';
+import { configPath } from '../src/config.js';
 import {
   MAX_BREAKDOWN_SKILL_ROWS,
   formatContextBreakdown,
@@ -37,7 +43,7 @@ import {
   formatContextValue,
   formatWindowShare,
 } from '../src/tui/context-format.js';
-import { assert, header, report } from './shared.js';
+import { assert, header, ownPrivateHome, report } from './shared.js';
 
 /** The SDK's base heuristic (`chars/4` text), nothing else. */
 class HeuristicModel extends Model<BaseModelConfig> {
@@ -175,5 +181,71 @@ assert('a catalogue not yet injected stays a stated absence and grows no per-ski
   beforeInjection.systemPrompt[1]?.label === SKILLS_CATALOGUE_LABEL &&
   beforeInjection.systemPrompt[1]?.absent === CATALOGUE_NOT_INJECTED &&
   beforeInjection.skills.length === 0);
+
+header('/context — a real offline AgentSkills catalogue through the runtime');
+// Standalone runs must not overwrite the developer's ~/.darwin/config.json.
+const home = ownPrivateHome('context-skills');
+assert('the runtime fixture uses a private HOME', configPath().startsWith(`${home}${path.sep}`));
+const root = await mkdtemp(path.join(os.tmpdir(), 'darwin-context-skills-'));
+class OfflineModel extends HeuristicModel {
+  countedPrompts: unknown[] = [];
+  override async countTokens(messages: Message[], options?: CountTokensOptions): Promise<number> {
+    this.countedPrompts.push(options?.systemPrompt);
+    return super.countTokens(messages, options);
+  }
+  override async *stream(): AsyncIterable<ModelStreamEvent> {
+    yield { type: 'modelMessageStartEvent', role: 'assistant' };
+    yield { type: 'modelContentBlockStartEvent' };
+    yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'ok' } };
+    yield { type: 'modelContentBlockStopEvent' };
+    yield { type: 'modelMessageStopEvent', stopReason: 'endTurn' };
+  }
+}
+const offline = new OfflineModel();
+setRuntimeModelFactoryForTest(async () => offline);
+let runtime: AgentRuntime | undefined;
+try {
+  await mkdir(path.dirname(configPath()), { recursive: true });
+  await writeFile(configPath(), JSON.stringify({
+    provider: 'bedrock', model: 'global.anthropic.claude-opus-5', region: 'us-west-2',
+    permissionMode: 'yolo', promptCache: false, trajectory: false,
+  }));
+  const skillDir = path.join(root, '.darwin', 'skills', 'sample-cost');
+  await mkdir(skillDir, { recursive: true });
+  await writeFile(path.join(skillDir, 'SKILL.md'),
+    '---\nname: sample-cost\ndescription: Count a real project skill catalogue entry\n---\n\nInstructions.\n');
+  runtime = await AgentRuntime.create({ projectRoot: root, session: { kind: 'new' }, permissionBridge: allowAllBridge });
+  for await (const _event of runtime.send('a local turn to inject the catalogue')) { /* consume SDK stream */ }
+  const beforeEstimate = offline.countedPrompts.length;
+  const liveEstimate = await runtime.contextEstimate();
+  const beforeBreakdown = offline.countedPrompts.length;
+  assert('the ordinary estimate does not count individual skills', beforeBreakdown === beforeEstimate + 1);
+  const liveBreakdown = await runtime.contextBreakdown();
+  const promptCounts = offline.countedPrompts.slice(beforeBreakdown);
+  const injected = promptCounts.find((value): value is string =>
+    typeof value === 'string' && value.startsWith('<available_skills>'));
+  const liveEntries = injected === undefined ? [] : skillCatalogueEntries(injected);
+  assert('the SDK injected the real project skill alongside the registered skills',
+    runtime.info.skillNames.includes('sample-cost') && liveEntries.some((entry) => entry.name === 'sample-cost'));
+  assert('every skill row follows the live injected catalogue, one count for its exact block',
+    liveBreakdown.skills.length === liveEntries.length &&
+    liveBreakdown.skills.map((row) => row.label).join('|') ===
+      liveEntries.map((entry) => `${SKILL_LABEL_PREFIX}${entry.name}`).join('|') &&
+    liveEntries.every((entry) => promptCounts.filter((value) => value === entry.block).length === 1));
+  assert('the injected catalogue aggregate, per-skill rows and unchanged total reach the report',
+    liveBreakdown.systemPrompt.some((row) => row.label === SKILLS_CATALOGUE_LABEL) &&
+    formatContextReportWithBreakdown(liveEstimate, liveBreakdown).split('\n')[0] === formatContextReport(liveEstimate) &&
+    formatContextReportWithBreakdown(liveEstimate, liveBreakdown)
+      .includes(`  ${SKILL_LABEL_PREFIX}sample-cost ~`));
+  const afterBreakdown = offline.countedPrompts.length;
+  const statusEstimate = await runtime.contextEstimate();
+  assert('the following /status-style estimate still makes one call and has the same value',
+    offline.countedPrompts.length === afterBreakdown + 1 &&
+    formatContextValue(statusEstimate) === formatContextValue(liveEstimate));
+} finally {
+  if (runtime !== undefined) await runtime.shutdown();
+  setRuntimeModelFactoryForTest(undefined);
+  await rm(root, { recursive: true, force: true });
+}
 
 report();
