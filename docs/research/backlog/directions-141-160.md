@@ -136,7 +136,7 @@ Peer sources: Claude Code `claude mcp login` (S1); Gemini CLI MCP OAuth with SSR
 
 ## SER-108 — `/goal <condition>` condition-checked self-continuation: after a turn ends, one bounded condition check evaluates the goal; unmet → exactly one auto-submitted continuation prompt through the ordinary `submit()` path; hard cap on consecutive auto-continuations, visible live state, `/goal` bare/off forms; permission prompts and user cancel always win
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 147
 - Score: 6
 - Importance: 3
@@ -148,7 +148,7 @@ Peer sources: Claude Code `claude mcp login` (S1); Gemini CLI MCP OAuth with SSR
 
 ### Implementation / acceptance evidence
 
-(none yet — `not-started`)
+Accepted 2026-09-29: fresh supervised child `session-20260929-053258085` committed `1842df4695edd4e896352fbef81d6790a5580954`. Interactive `/goal` uses one bounded classifier-tier condition check after completed turns, a five-continuation cap, ordinary `submit()` with queue/task/peer and permission precedence, cancel-wins, and existing header/busy rows. Bare/off/clear and headless refusal are explicit; EN/zh-CN docs and architecture rationale are synced. Host independently reviewed the diff, re-ran `spike/verify-goal-command.ts` (81/0), free `spike/verify-tui.ts goal` (45/0), `completion` (81/0), and final `pnpm typecheck`, `pnpm test`, `pnpm build`, diff and clean-tree checks (all exit 0; full gate `bg-4676332e-4da6-480b-b678-bcbb921af246`). The first Host gate timed out in the existing review fixture; `spike/verify-review-drivers.ts` then passed alone (17/0), and the complete gate passed on the subsequent run. The failed attempt remains recorded in `docs/iteration-log.md`, Batch 158.
 
 ### Notes / blockers / abandonment reason
 
