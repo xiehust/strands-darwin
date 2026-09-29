@@ -51,7 +51,13 @@ export async function mcpCommand(
   if (flags.length > 0 && !noBrowser) return usage();
 
   if (verb === 'logout') {
-    const removed = await deleteOAuthRecord(name);
+    let removed: boolean;
+    try {
+      removed = await deleteOAuthRecord(name);
+    } catch (error) {
+      io.stderr(`error: could not remove the stored login for ${name}: ${describeLoginFailure(error)}\n`);
+      return 1;
+    }
     io.stdout(removed ? `logged out of ${name}: stored login removed\n` : `no stored login for ${name}\n`);
     return 0;
   }

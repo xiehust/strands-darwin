@@ -12,7 +12,8 @@
  * leave it are file paths and fixed problem descriptions.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { chmod, lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -110,15 +111,39 @@ function parseRecord(value: unknown): OAuthRecord | string {
   };
 }
 
+const NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+
+/**
+ * Why the store directory cannot be trusted, or undefined when it is absent or a real directory.
+ * A symlinked `mcp-auth` would send every token file (and its chmod) into whatever it points at,
+ * so reads, writes and deletes all refuse it before touching the target.
+ */
+async function storeDirProblem(dir: string): Promise<string | undefined> {
+  try {
+    const info = await lstat(dir);
+    return info.isDirectory() ? undefined : `${dir} is not a real directory (a symlink or file); nothing was read or written`;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    return code === 'ENOENT' ? undefined : `${dir} could not be inspected (${code ?? 'error'})`;
+  }
+}
+
 /** Reads one server's record, bound to `serverUrl`. Never throws; a bad file is `invalid`. */
 export async function readOAuthRecord(server: string, serverUrl: string): Promise<OAuthRecordRead> {
   const file = oauthRecordPath(server);
+  const dirProblem = await storeDirProblem(oauthStoreDir());
+  if (dirProblem !== undefined) return { status: 'invalid', problem: dirProblem };
   let text: string;
   try {
     const info = await lstat(file);
     if (!info.isFile()) return { status: 'invalid', problem: `${file} is not a regular file` };
     if (info.size > MAX_OAUTH_RECORD_BYTES) return { status: 'invalid', problem: `${file} is larger than ${MAX_OAUTH_RECORD_BYTES} bytes` };
-    text = await readFile(file, 'utf8');
+    const handle = await open(file, fsConstants.O_RDONLY | NOFOLLOW);
+    try {
+      text = await handle.readFile('utf8');
+    } finally {
+      await handle.close();
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return { status: 'absent' };
     return { status: 'invalid', problem: `${file} could not be read (${(error as NodeJS.ErrnoException | undefined)?.code ?? 'error'})` };
@@ -140,8 +165,18 @@ export async function writeOAuthRecord(record: OAuthRecord): Promise<void> {
   const text = `${JSON.stringify(record)}\n`;
   if (Buffer.byteLength(text) > MAX_OAUTH_RECORD_BYTES) throw new Error(`OAuth record exceeds ${MAX_OAUTH_RECORD_BYTES} bytes`);
   const dir = oauthStoreDir();
+  const dirProblem = await storeDirProblem(dir);
+  if (dirProblem !== undefined) throw new Error(dirProblem);
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  await chmod(dir, 0o700);
+  // Tighten through a no-follow directory handle, so a symlink swapped in after the check above
+  // is refused (ELOOP) instead of having its target chmod-ed.
+  const dirHandle = await open(dir, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | NOFOLLOW);
+  try {
+    if (!(await dirHandle.stat()).isDirectory()) throw new Error(`${dir} is not a real directory`);
+    await dirHandle.chmod(0o700);
+  } finally {
+    await dirHandle.close();
+  }
   const file = oauthRecordPath(record.server);
   const temp = `${file}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
   try {
@@ -155,6 +190,8 @@ export async function writeOAuthRecord(record: OAuthRecord): Promise<void> {
 
 /** Removes the server's record. Returns whether a file was removed. */
 export async function deleteOAuthRecord(server: string): Promise<boolean> {
+  const dirProblem = await storeDirProblem(oauthStoreDir());
+  if (dirProblem !== undefined) throw new Error(dirProblem);
   try {
     await rm(oauthRecordPath(server));
     return true;

@@ -627,8 +627,11 @@ the stored token endpoint and its DNS before each token request (a pre-flight, s
 request is answered and ignored, so it can neither complete nor abort the login), request cap,
 deadline and `AbortSignal`, static reflection-free page, listener always closed. **(4) Store.**
 `~/.darwin/mcp-auth/<name>-<hash>.json`, `0700`/`0600`, exclusive-create temp + rename, size-capped,
-symlinks refused, bound to the exact server URL (a same-named server elsewhere reads as not logged
-in) and to a `loginId` so a session's refresh never overwrites a newer login. **(5) Secrecy.** Nothing
+symlinks refused (record files and the `mcp-auth` directory itself, before any read, write, delete
+or chmod reaches the target), bound to the exact server URL (a same-named server elsewhere reads as not logged
+in) and to a `loginId`: a session rewrites or deletes the record only while it is still present,
+valid, for this URL and carries that session's own `loginId` — after a logout, a newer login or
+damage it writes nothing. **(5) Secrecy.** Nothing
 in these modules logs, records or lists a token: printed failures go through `describeLoginFailure`
 (bounded, control characters stripped, credential-shaped fields redacted), `/mcp` shows only
 `logged-in`/`login-required`, no trajectory or session file is touched, and the modules import

@@ -293,7 +293,9 @@ export class DarwinOAuthProvider implements OAuthClientProvider {
     if (this.mode === 'login' || this.record === undefined) return;
     // A session refresh must never clobber a login someone completed in another terminal since.
     const current = await readOAuthRecord(this.settings.name, this.settings.serverUrl.href);
-    if (current.status === 'ok' && current.record.loginId !== this.record.loginId) return;
+    // Only the login that produced the record may rewrite it: a logout (absent), a newer login, a
+    // record for another URL or a damaged file are all someone else's state.
+    if (current.status !== 'ok' || current.record.loginId !== this.record.loginId) return;
     this.record = { ...this.record, tokens: merged, savedAt: new Date().toISOString() };
     await writeOAuthRecord(this.record);
   }
@@ -394,7 +396,7 @@ export class DarwinOAuthProvider implements OAuthClientProvider {
     if (scope === 'client' || scope === 'all') this.client = undefined;
     if (this.mode !== 'runtime' || this.record === undefined) return;
     const current = await readOAuthRecord(this.settings.name, this.settings.serverUrl.href);
-    if (current.status === 'ok' && current.record.loginId !== this.record.loginId) return;
+    if (current.status !== 'ok' || current.record.loginId !== this.record.loginId) return;
     if (scope === 'all') {
       await deleteOAuthRecord(this.settings.name);
       return;

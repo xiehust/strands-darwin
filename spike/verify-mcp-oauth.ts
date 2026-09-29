@@ -20,7 +20,7 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import dns from 'node:dns';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
@@ -41,8 +41,8 @@ import {
   isNonPublicAddress,
   validateOAuthUrl,
 } from '../src/mcp/oauth-net.js';
-import { resolveOAuthSettings, validateDiscoveryState, type OAuthServerSettings } from '../src/mcp/oauth-provider.js';
-import { oauthRecordPath, oauthStoreDir, readOAuthRecord } from '../src/mcp/oauth-store.js';
+import { createRuntimeOAuthProvider, resolveOAuthSettings, validateDiscoveryState, type OAuthServerSettings } from '../src/mcp/oauth-provider.js';
+import { deleteOAuthRecord, oauthRecordPath, oauthStoreDir, readOAuthRecord, writeOAuthRecord as storeWriteRecord } from '../src/mcp/oauth-store.js';
 import { disconnectAll, loadMcpClients, mcpServerStatuses } from '../src/mcp/registry.js';
 import { formatMcpReport } from '../src/tui/mcp-format.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
@@ -912,6 +912,136 @@ header('token store: bound to the server URL, hostile files, concurrent logins')
   assert('no temporary files were left in the store', !readdirSync(oauthStoreDir()).some((file) => file.endsWith('.tmp')));
   await first.close();
   await second.close();
+}
+
+// ---------------------------------------------------------------------------------------------
+header('a stale session never recreates, replaces or deletes a login it does not own');
+{
+  const fake = await startFake();
+  const url = fake.url;
+  const tokens = (access: string) => ({ access_token: access, token_type: 'Bearer' as const, refresh_token: `${access}-refresh` });
+
+  // Logout in another terminal, then the old session refreshes: the logout must stick.
+  await loginWith(settingsFor('stale', url));
+  const owner = await createRuntimeOAuthProvider(settingsFor('stale', url));
+  await owner.saveTokens(tokens('owner-refreshed'));
+  const ownerRead = await readOAuthRecord('stale', url);
+  assert('control: the login that owns the record still persists its own refresh', ownerRead.status === 'ok' && ownerRead.record.tokens?.access_token === 'owner-refreshed');
+  await deleteOAuthRecord('stale'); // `darwin mcp logout stale`
+  await owner.saveTokens(tokens('refreshed-after-logout'));
+  assert('after logout a stale refresh does not recreate the record', (await readOAuthRecord('stale', url)).status === 'absent' && !existsSync(oauthRecordPath('stale')));
+  assert('the stale session still holds the refreshed tokens in memory', owner.tokens()?.access_token === 'refreshed-after-logout');
+  await owner.invalidateCredentials('tokens');
+  await owner.invalidateCredentials('all');
+  assert('after logout a stale invalidation writes nothing either', !existsSync(oauthRecordPath('stale')));
+
+  // The same thing end to end: a live session whose token expires after the user logged out.
+  await loginWith(settingsFor('stale-live', url));
+  const liveRecord = await readOAuthRecord('stale-live', url);
+  writeGlobalMcp({ 'stale-live': { url, oauth: true } });
+  const liveSession = await loadMcpClients(project);
+  await deleteOAuthRecord('stale-live');
+  fake.valid.delete(liveRecord.status === 'ok' ? liveRecord.record.tokens!.access_token : '');
+  const relisted = await liveSession.clients[0]!.listTools();
+  assert('the live session refreshed and kept working', relisted.length === 1);
+  assert('but the user\'s logout was not undone on disk', !existsSync(oauthRecordPath('stale-live')));
+  await disconnectAll(liveSession.clients);
+
+  // A login that replaced the record since is never overwritten or deleted by the old session.
+  await loginWith(settingsFor('stale-new', url));
+  const oldOne = await createRuntimeOAuthProvider(settingsFor('stale-new', url));
+  const base = await readOAuthRecord('stale-new', url);
+  if (base.status !== 'ok') throw new Error('base record expected');
+  await storeWriteRecord({ ...base.record, loginId: 'newer-login', tokens: tokens('newer-token') });
+  await oldOne.saveTokens(tokens('old-refresh'));
+  await oldOne.invalidateCredentials('tokens');
+  await oldOne.invalidateCredentials('all');
+  const newer = await readOAuthRecord('stale-new', url);
+  assert('a replaced record keeps the newer login\'s id and tokens through stale save and invalidate',
+    newer.status === 'ok' && newer.record.loginId === 'newer-login' && newer.record.tokens?.access_token === 'newer-token');
+
+  // An unreadable / re-pointed record is someone else's state too: left byte for byte alone.
+  await loginWith(settingsFor('stale-bad', url));
+  const badOwner = await createRuntimeOAuthProvider(settingsFor('stale-bad', url));
+  const badFile = oauthRecordPath('stale-bad');
+  writeFileSync(badFile, 'not json {');
+  await badOwner.saveTokens(tokens('into-damage'));
+  await badOwner.invalidateCredentials('all');
+  assert('a damaged record is neither replaced nor deleted by a stale session', existsSync(badFile) && readFileSync(badFile, 'utf8') === 'not json {');
+  const elsewhere = JSON.stringify({ ...base.record, server: 'stale-bad', serverUrl: 'https://elsewhere.example.test/mcp' });
+  writeFileSync(badFile, elsewhere);
+  await badOwner.saveTokens(tokens('into-other-url'));
+  await badOwner.invalidateCredentials('all');
+  assert('a record for another URL is neither replaced nor deleted by a stale session', readFileSync(badFile, 'utf8') === elsewhere);
+  await fake.close();
+}
+
+// ---------------------------------------------------------------------------------------------
+header('a symlinked token directory is refused for reads, writes and deletes before its target is touched');
+{
+  const fake = await startFake();
+  const url = fake.url;
+  await loginWith(settingsFor('linkdir', url));
+  const good = await readOAuthRecord('linkdir', url);
+  if (good.status !== 'ok') throw new Error('record expected');
+  const goodText = readFileSync(oauthRecordPath('linkdir'), 'utf8');
+  const storeDir = oauthStoreDir();
+  const aside = `${storeDir}.aside`;
+  const target = mkdtempSync(path.join(os.tmpdir(), 'darwin-mcp-oauth-linktarget-'));
+  chmodSync(target, 0o755);
+  const inTarget = path.join(target, path.basename(oauthRecordPath('linkdir')));
+  writeFileSync(inTarget, goodText); // a fully valid login, so a followed symlink would read as `ok`
+  // A session that read its login before the directory was swapped for a symlink.
+  const session = await createRuntimeOAuthProvider(settingsFor('linkdir', url));
+  renameSync(storeDir, aside);
+  symlinkSync(target, storeDir);
+  const snapshot = () => JSON.stringify(readdirSync(target).sort().map((name) => [name, readFileSync(path.join(target, name), 'utf8')]));
+  const before = snapshot();
+
+  const read = await readOAuthRecord('linkdir', url);
+  assert('a read through a symlinked store directory is invalid, never a login', read.status === 'invalid' && /not a real directory/.test(read.problem));
+  let writeFailure = '';
+  try {
+    await storeWriteRecord({ ...good.record, server: 'brand-new', loginId: 'x' });
+  } catch (error) {
+    writeFailure = error instanceof Error ? error.message : String(error);
+  }
+  assert('a write through it is refused', /not a real directory/.test(writeFailure));
+  let writeSame = '';
+  try {
+    await storeWriteRecord({ ...good.record, loginId: 'overwrite' });
+  } catch (error) {
+    writeSame = error instanceof Error ? error.message : String(error);
+  }
+  assert('overwriting an existing name through it is refused too', /not a real directory/.test(writeSame));
+  let deleteFailure = '';
+  try {
+    await deleteOAuthRecord('linkdir');
+  } catch (error) {
+    deleteFailure = error instanceof Error ? error.message : String(error);
+  }
+  assert('a delete through it is refused', /not a real directory/.test(deleteFailure));
+
+  await session.saveTokens({ access_token: 'via-link', token_type: 'Bearer', refresh_token: 'via-link-refresh' });
+  await session.invalidateCredentials('all');
+  const cliOut: string[] = [];
+  const cliErr: string[] = [];
+  const cliCode = await mcpCommand(project, ['logout', 'linkdir'], { stdout: (text: string) => void cliOut.push(text), stderr: (text: string) => void cliErr.push(text), timeoutMs: 2000 });
+  assert('`darwin mcp logout` reports the refusal and exits 1', cliCode === 1 && /not a real directory/.test(cliErr.join('')) && cliOut.length === 0);
+
+  assert('the target directory holds exactly the files and bytes it began with', snapshot() === before && readdirSync(target).length === 1);
+  assert('no token file was written, replaced or removed in the target', readFileSync(inTarget, 'utf8') === goodText);
+  assert('the target directory\'s permissions were not changed', (statSync(target).mode & 0o777) === 0o755);
+  assert('the store path is still the symlink, untouched', lstatSync(storeDir).isSymbolicLink());
+
+  // Put the real directory back: everything works again and stays private.
+  unlinkSync(storeDir);
+  renameSync(aside, storeDir);
+  await storeWriteRecord({ ...good.record, loginId: 'after-restore' });
+  assert('with a real directory the store writes again, 0700 / 0600', (statSync(storeDir).mode & 0o777) === 0o700 && (statSync(oauthRecordPath('linkdir')).mode & 0o777) === 0o600);
+  assert('and the symlink target still received nothing', snapshot() === before);
+  rmSync(target, { recursive: true, force: true });
+  await fake.close();
 }
 
 // ---------------------------------------------------------------------------------------------
