@@ -3311,3 +3311,15 @@ SER-104 `done`; whole batch **exhausted** (SER-103 also done), no unfinished bac
 | Aggregate (one task) | **152** | **21,985** | **6,334,155** | **124,191** | **$1.7975** |
 
 SER-105 `done`; batch **exhausted**, no unfinished directions. Push current branch once after closure; verify upstream range empty, or report exact unpushed commits and failure.
+
+## Batch 156 — SER-106 per-skill context costs (2026-09-29)
+
+- Origin: [`research_2026-09-29.md`](research/research_2026-09-29.md), peer path drawn at `00:49:56.642Z`; SER-106 Priority145 Score11. The Host inherited a dirty, already in-progress SER-106 tree. Rather than discard it, the Host checked `pnpm typecheck && pnpm test` and the focused suite (exit0), reviewed the diff, and preserved those exact bytes as a non-acceptance checkpoint `581539518adba3ba4b11572bf95c160e92db52ea`. Clean checkpoint HEAD passed `pnpm build && pnpm typecheck && pnpm test` (`bg-ab9c2d16-5ba4-4676-88c2-717299920bcf`, exit0) before delegation.
+- Fresh child conversation `session-20260929-030601739` launched via source CLI with `--yolo --context-offload`; managed task `bg-185d2cab-911b-44f3-9f70-69dcb9710760` exit0, output drained to `hasMore:false`; no ceiling, correction or descendant worker. Child reviewed inherited code, extended the focused suite through a real offline SDK-injected project skill, synchronized user docs and committed completion. Host owns backlog and log.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Per-skill `/context` rows, bounded failures, unchanged total/`/status`, offline injected-skill fixture and bilingual docs | `12bd7063d89979ac5021f6399240afd95c8c97fb` (built on preserved implementation checkpoint `5815395`) | Explicit `git log 5815395..HEAD` and `git diff bd40442..HEAD` reviewed; `pnpm tsx spike/verify-context-skills.ts` 26/0; `bg-d666a3cd-1587-485f-be36-0aa6507fda66`: `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short`, exit0, clean tree. |
+
+- Docs wrap-up: EN/zh-CN README, task-oriented `using-darwin` and `reference` pages describe estimates rather than additive/billed tokens; architecture rationale and AGENTS index in checkpoint, `AGENTS.md` 32,753 bytes. No docs-sync commit needed. The commit message of `12bd706` contains literal `\\n` in its body; history was not rewritten.
+- Child task spend `bg-185d2cab-911b-44f3-9f70-69dcb9710760`: usage input=86 output=13463 cacheRead=3306187 cacheWrite=107616; cost total=$1.0651 (model `global.openai.gpt-6-sol`). Aggregate (one task): same numbers and cost. Host checks had no model calls. SER-106 independently accepted and `done`; SER-107/108 remain not-started in this batch.

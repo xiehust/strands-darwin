@@ -96,7 +96,7 @@ Accepted implementation commit `560387d1bece58b3ff711cadf9eb6e9bb580655c` (`feat
 
 ## SER-106 — Per-skill token cost rows in the on-demand `/context` breakdown: expand the aggregated skills-catalogue component into one bounded row per registered skill (name + `~N tokens` via the same one-`countTokens`-per-component rule; a failed count reads `not reported`; the total line and `/status` stay byte-identical)
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 145
 - Score: 11
 - Importance: 3
@@ -108,7 +108,7 @@ Accepted implementation commit `560387d1bece58b3ff711cadf9eb6e9bb580655c` (`feat
 
 ### Implementation / acceptance evidence
 
-(none yet — `not-started`)
+Accepted 2026-09-29: inherited implementation was preserved without losing dirty work at `581539518adba3ba4b11572bf95c160e92db52ea` (checkpoint, not independent acceptance); fresh supervised developer child `session-20260929-030601739` reviewed that checkpoint, added an offline real-SDK runtime fixture and EN/zh-CN README, task-guide, and reference explanations, and committed `12bd7063d89979ac5021f6399240afd95c8c97fb`. Host independently inspected both commits and the changed source, suite and docs; re-ran `pnpm tsx spike/verify-context-skills.ts` (26/0), `pnpm typecheck`, `pnpm test`, `pnpm build`, `git diff --check`, and a clean-tree check (all exit 0; full gate `bg-d666a3cd-1587-485f-be36-0aa6507fda66`). The total and `/status` remain unchanged, rows come from the injected catalogue with one count each, failures read `not reported`, and skill rows are bounded. Full supervision record: `docs/iteration-log.md`, Batch 156.
 
 ### Notes / blockers / abandonment reason
 
