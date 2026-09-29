@@ -92,3 +92,64 @@ Accepted implementation commit `560387d1bece58b3ff711cadf9eb6e9bb580655c` (`feat
 
 `src/tui/App.tsx` presently sends all `key.home || key.end` to `moveToRowEdge`; `src/tui/prompt-editor.ts` defines that operation on one visual row. Keep unmodified Home/End and Ctrl+A/E row-scoped, preserve the current editor's raw text/affinity and frame-budget invariants, and route *only* Ctrl+Home/End to absolute start/end after higher-priority keyboard owners. Installed Ink's `parseKeypress` recognizes CSI `1;5H` and `1;5F` as `home/end` with `ctrl: true` (local offline probe, 2026-09-28); the change uses that verified signal, no parser patch or new dependency. Document the chord in both READMEs and the EN/zh-CN user guide/reference; keep architecture rationale in its existing prompt-editor or frame-budget section if warranted. Host owns the backlog/research/iteration log; child owns implementation, tests, user docs, and the implementation commit.
 
+
+
+## SER-106 — Per-skill token cost rows in the on-demand `/context` breakdown: expand the aggregated skills-catalogue component into one bounded row per registered skill (name + `~N tokens` via the same one-`countTokens`-per-component rule; a failed count reads `not reported`; the total line and `/status` stay byte-identical)
+
+- Status: `not-started`
+- Priority: 145
+- Score: 11
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-09-29.md`](../research_2026-09-29.md) (run `00:52:20Z`)
+
+### Implementation / acceptance evidence
+
+(none yet — `not-started`)
+
+### Notes / blockers / abandonment reason
+
+Peer source: Claude Code `/skill-doctor` shows each skill's context cost (research report S1, `code.claude.com/docs/en/whats-new`, accessed 2026-09-29). Darwin evidence: `src/agent/context-breakdown.ts` (SER-077) counts the skills catalogue as one aggregated component, so a heavy skill hides in the total. Extension points: the existing on-demand `/context` breakdown machinery and its bounded-row/`not reported` conventions (`src/tui/context-format.ts`, `MAX_STATUS_NAMES`-style bounds). Acceptance: `pnpm typecheck` + `pnpm test`; a focused free suite proving per-skill rows render under `/context`, a failed per-skill count reads `not reported`, and the total line + `/status` are byte-identical; re-run free `tui completion` if slash commands are touched; docs in EN/zh-CN README and user guide/reference. Host owns backlog/research/iteration log; child owns implementation, tests, user docs, and the implementation commit.
+
+## SER-107 — Interactive OAuth login for remote MCP servers: a bounded authorization-code + PKCE `OAuthClientProvider` (localhost loopback callback, per-server token store under `~/.darwin/mcp-auth/`) wired through the SDK's existing `authProvider` slot, with a login command and 401-driven guidance; static `auth` client-credentials pass-through documented
+
+- Status: `not-started`
+- Priority: 146
+- Score: 6
+- Importance: 3
+- Architecture fit: 3
+- Evidence confidence: 4
+- Difficulty: 4
+- Risk: 3
+- Origin report: [`research_2026-09-29.md`](../research_2026-09-29.md) (run `00:52:20Z`)
+
+### Implementation / acceptance evidence
+
+(none yet — `not-started`)
+
+### Notes / blockers / abandonment reason
+
+Peer sources: Claude Code `claude mcp login` (S1); Gemini CLI MCP OAuth with SSRF prevention in discovery and server filtering under restricted modes (S9 — apply the same discovery-endpoint validation). Darwin evidence: the SDK exposes `authProvider?: OAuthClientProvider` and client-credentials `auth` (`node_modules/@strands-agents/sdk/dist/src/mcp/client.d.ts`); `src/mcp/registry.ts` delegates config parsing to `McpClient.loadServers()` and has no OAuth (grep). Constraints: token store is new darwin-owned state — bounded, per-server, never logged, never in trajectory or `/mcp` output (the read-only-projection contract stands); untrusted-project `held` semantics (SER-090) must gate any login attempt for project-declared servers; no new dependency if the MCP SDK's own auth helpers suffice. Acceptance: `pnpm typecheck` + `pnpm test`; focused free suites against a local fake OAuth server (loopback only, no network) proving login → token store → authenticated connect, token reuse across restarts, refresh, and refusal paths; no real provider credentials in tests; docs in EN/zh-CN README and user guide/reference. Host owns backlog/research/iteration log; child owns implementation, tests, user docs, and the implementation commit.
+
+## SER-108 — `/goal <condition>` condition-checked self-continuation: after a turn ends, one bounded condition check evaluates the goal; unmet → exactly one auto-submitted continuation prompt through the ordinary `submit()` path; hard cap on consecutive auto-continuations, visible live state, `/goal` bare/off forms; permission prompts and user cancel always win
+
+- Status: `not-started`
+- Priority: 147
+- Score: 6
+- Importance: 3
+- Architecture fit: 3
+- Evidence confidence: 4
+- Difficulty: 3
+- Risk: 4
+- Origin report: [`research_2026-09-29.md`](../research_2026-09-29.md) (run `00:52:20Z`)
+
+### Implementation / acceptance evidence
+
+(none yet — `not-started`)
+
+### Notes / blockers / abandonment reason
+
+Peer source: Claude Code `/goal <condition>` — a fast model checks after each turn whether the condition holds; if not, another turn starts automatically; works interactive and in `-p` (S1, Claude Code what's-new 2026-w20, accessed 2026-09-29). Darwin evidence: `src/tui/prompt-queue.ts` drains one queued prompt per idle through the ordinary `submit()` path — the seam a goal continuation must reuse; nothing today restarts a turn from an unmet condition. Risk is the point of the requirement: autonomous turns spend tokens unsupervised, so the hard cap, visible live state (existing busy/live rows, no new frame surface), cancel-wins and permission-gate precedence are load-bearing, and the condition check itself must be bounded and observable. Interactions to pin down in implementation: `/clear` drops the goal; prompt queue and `!` drain ordering unchanged; headless behaviour explicit (either supported with the same cap or refused with a notice — child's evidence decides, stated in docs). Acceptance: `pnpm typecheck` + `pnpm test`; a free pty scenario proving cap enforcement, cancel-wins, queue interaction and visible state; docs in EN/zh-CN README and user guide/reference. Host owns backlog/research/iteration log; child owns implementation, tests, user docs, and the implementation commit.
