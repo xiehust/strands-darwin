@@ -96,7 +96,7 @@ Accepted implementation commit `560387d1bece58b3ff711cadf9eb6e9bb580655c` (`feat
 
 ## SER-106 — Per-skill token cost rows in the on-demand `/context` breakdown: expand the aggregated skills-catalogue component into one bounded row per registered skill (name + `~N tokens` via the same one-`countTokens`-per-component rule; a failed count reads `not reported`; the total line and `/status` stay byte-identical)
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 145
 - Score: 11
 - Importance: 3
