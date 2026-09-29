@@ -116,7 +116,7 @@ Peer source: Claude Code `/skill-doctor` shows each skill's context cost (resear
 
 ## SER-107 — Interactive OAuth login for remote MCP servers: a bounded authorization-code + PKCE `OAuthClientProvider` (localhost loopback callback, per-server token store under `~/.darwin/mcp-auth/`) wired through the SDK's existing `authProvider` slot, with a login command and 401-driven guidance; static `auth` client-credentials pass-through documented
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 146
 - Score: 6
 - Importance: 3
@@ -128,7 +128,7 @@ Peer source: Claude Code `/skill-doctor` shows each skill's context cost (resear
 
 ### Implementation / acceptance evidence
 
-(none yet — `not-started`)
+Accepted 2026-09-29 after one focused correction. Fresh supervised developer child `session-20260929-040735579` implemented SDK `OAuthClientProvider`-backed authorization-code/PKCE login, per-server private credential store, loopback callback, CLI login/logout, held-project trust gate, OAuth-only `/mcp` 401 guidance and EN/zh-CN docs in `981413d82af5fab3b34dea23bebb13465486895b`. Host independently reproduced a logout/old-session refresh resurrecting a token and a symlinked `mcp-auth` directory redirecting a write; the same child corrected both in `dc7b40f5cf662d7caff8538ffc49efa0b66e4af3` with regression tests. Host inspected explicit base-to-HEAD changes, re-ran `pnpm tsx spike/verify-mcp-oauth.ts` (262/0), then `pnpm typecheck`, `pnpm test`, `pnpm build`, diff and clean-tree checks (all exit 0; full gate `bg-13c6b7e8-7cbc-48d8-9339-1c81c2c772c4`). `/mcp` remains a read-only projection; static client-credentials pass-through is retained. Supervision record: `docs/iteration-log.md`, Batch 157.
 
 ### Notes / blockers / abandonment reason
 
