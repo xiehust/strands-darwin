@@ -153,3 +153,75 @@ Accepted 2026-09-29: fresh supervised child `session-20260929-053258085` committ
 ### Notes / blockers / abandonment reason
 
 Peer source: Claude Code `/goal <condition>` — a fast model checks after each turn whether the condition holds; if not, another turn starts automatically; works interactive and in `-p` (S1, Claude Code what's-new 2026-w20, accessed 2026-09-29). Darwin evidence: `src/tui/prompt-queue.ts` drains one queued prompt per idle through the ordinary `submit()` path — the seam a goal continuation must reuse; nothing today restarts a turn from an unmet condition. Risk is the point of the requirement: autonomous turns spend tokens unsupervised, so the hard cap, visible live state (existing busy/live rows, no new frame surface), cancel-wins and permission-gate precedence are load-bearing, and the condition check itself must be bounded and observable. Interactions to pin down in implementation: `/clear` drops the goal; prompt queue and `!` drain ordering unchanged; headless behaviour explicit (either supported with the same cap or refused with a notice — child's evidence decides, stated in docs). Acceptance: `pnpm typecheck` + `pnpm test`; a free pty scenario proving cap enforcement, cancel-wins, queue interaction and visible state; docs in EN/zh-CN README and user guide/reference. Host owns backlog/research/iteration log; child owns implementation, tests, user docs, and the implementation commit.
+
+## SER-109 — Process environments are sensitive reads: `/proc/<pid>/environ` (any pid token — digits, `self`, `$PPID`/`${PPID}`/other `$VAR`, globs such as `*`, and the `/proc/<pid>/task/<tid>/environ` form) joins the SER-071 sensitive set in `sensitiveReadPath`, so `fileEditor view` and whitelisted bash readers on it become `dangerous`, are prompted even in `plan`, are denied in headless and get no allow-rule — closing the unprompted bypass of SER-082's shell-env scrub
+
+- Status: `not-started`
+- Priority: 148
+- Score: 15
+- Importance: 5
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 3
+- Origin report: [`research_2026-10-03.md`](../research_2026-10-03.md) (run `13:23:35Z`)
+
+### Implementation / acceptance evidence
+
+None yet.
+
+### Notes / blockers / abandonment reason
+
+Evidence (report R3/R4, offline `classify` + `assessRisk` probe at `dd79491`): `cat /proc/$PPID/environ`, `head -c 4000 /proc/$PPID/environ`, `grep -a KEY /proc/$PPID/environ`, `cat /proc/*/environ`, `cat /proc/1/environ` and `cat /proc/self/environ` all return `safe | read-only command`, and `fileEditor view /proc/12345/environ` returns `safe | fileEditor is read-only`. In this session's darwin process, the parent environ held 19 credential-shaped names (`ANTHROPIC_API_KEY`, `AWS_BEARER_TOKEN_BEDROCK`, `NPM_TOKEN`, …) that SER-082 withholds from the shell. One unprompted `cat` in `default`/`auto` mode puts every one of those values into the tool result, the trajectory and `/export`, which is exactly the leak SER-082 was built to stop (`docs/architecture/load-bearing-decisions.md`, SER-082 paragraph). Nothing in SER-071 or the decisions doc excludes `/proc` deliberately.
+
+Extension point: `src/agent/permission-rules.ts` (`SENSITIVE_READ_*`, `sensitiveReadPath`), the one helper that `assessRisk` and `/permissions` already share. The matcher must cover how the bash classifier sees paths: literal `$PPID`/`${PPID}` tokens (the classifier does not expand variables), glob tokens, `self`/`thread-self`, `task/<tid>`, and relative paths that resolve under `/proc` (`cd /proc && cat 1/environ` is a cwd question; state what is and is not covered). It should stay narrow: `/proc/<pid>/cmdline`, `/proc/cpuinfo` and the like remain ordinary reads unless the child finds a recorded reason. Risk 3 comes from matcher coverage and from not regressing existing safe reads.
+
+Acceptance: `pnpm typecheck` + `pnpm test`; the SER-071 suite (whichever `spike/verify-*.ts` covers `sensitiveReadPath`, extended) proving every probe command above is `dangerous` with a `reads a sensitive path` reason and 0 rules offered, while `cat /proc/cpuinfo`, `cat src/cli.ts` and `rg secret src/` keep their prior verdicts byte-identical; `verify-permissions-command.ts` and `verify-deny-rules.ts` stay green; the decisions doc paragraph for SER-071/SER-082 states the addition; AGENTS.md stays under 32 KiB.
+
+## SER-110 — Keep git's paired env-config protocol intact through the shell-env scrub: `GIT_CONFIG_KEY_<n>` always survives (it carries a git config *name*; the paired `GIT_CONFIG_VALUE_<n>` and `GIT_CONFIG_COUNT` already pass), so an IDE- or CI-injected `GIT_CONFIG_COUNT` no longer makes every model-shell `git` call fail with `fatal: unable to parse command-line config`
+
+- Status: `not-started`
+- Priority: 149
+- Score: 16
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 1
+- Risk: 1
+- Origin report: [`research_2026-10-03.md`](../research_2026-10-03.md) (run `13:23:35Z`)
+
+### Implementation / acceptance evidence
+
+None yet.
+
+### Notes / blockers / abandonment reason
+
+Evidence (report R1/R6): this session's darwin process inherited `GIT_CONFIG_COUNT=2`, `GIT_CONFIG_KEY_0=credential.interactive`, `GIT_CONFIG_KEY_1=credential.guiPrompt` and `GIT_CONFIG_VALUE_{0,1}=false` from the Orca IDE terminal. `CREDENTIAL_NAME_PATTERN` (`src/tools/shell-env.ts`) matches `KEY` in `GIT_CONFIG_KEY_<n>`, so the model shell gets COUNT and both VALUEs but no KEY, and every `git` command exits 128. git documents that "Any missing key or value is treated as an error" (https://git-scm.com/docs/git-config, accessed 2026-10-03). The user sees `2 credential-shaped variables withheld (GIT_CONFIG_KEY_0, GIT_CONFIG_KEY_1)` at startup, but nothing links that notice to the git failure; the documented workaround (`shellEnv.passthrough: ["GIT_CONFIG_KEY_*"]`) is undiscoverable from the error. Ordering: placed after SER-109 for safety, despite the one-point-higher score.
+
+Extension point: `ALWAYS_SURVIVE_PREFIXES` or an equivalent stated rule in `src/tools/shell-env.ts`. The secrecy argument belongs in the decisions doc: keeping the KEY names exposes no value that is not already passed today, because the VALUE names never matched the pattern. Withholding credential-like VALUEs was rated separately and gated out (Score 5, report). The child may instead choose a whole-protocol coherence rule if it states why; it must never inspect values.
+
+Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-shell-env.ts` extended with the pure rule and a real foreground shell started with `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=cat` in which `git config --get core.pager` prints `cat` and exits 0, plus an unrelated `FOO_KEY` still withheld; the startup notice and `/status` row drop the git names; decisions doc SER-082 paragraph updated.
+
+## SER-111 — Tell the model its shell environment was scrubbed: when `RuntimeInfo.shellEnv.withheld` is non-empty, the `<working-context>` fragment gains one bounded line naming the count and up to a few withheld names (never a value), stating that those variables are unset in `bash` and that only the user can restore one via `shellEnv.passthrough`
+
+- Status: `not-started`
+- Priority: 150
+- Score: 10
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 4
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-10-03.md`](../research_2026-10-03.md) (run `13:23:35Z`)
+
+### Implementation / acceptance evidence
+
+None yet.
+
+### Notes / blockers / abandonment reason
+
+Evidence (report R5): the scrub is reported only to the user (startup notice, `/status` `shell env` row, headless `shell-env:` stderr; `docs/architecture/load-bearing-decisions.md` SER-082). `src/agent/working-context.ts` `buildWorkingContext` tells the model about tools and directory entries but not that its shell environment differs from the user's. In this research run, the model saw only `fatal: unable to parse command-line config`, and the sole route to a diagnosis was reading `/proc/$PPID/environ`, the very bypass SER-109 closes. Depends on SER-109: naming withheld variables to the model must not invite a `/proc` follow-up that still works.
+
+Extension point: the existing `<working-context>` section (System prompt composition: fixed order, re-derived every run). The withheld set is computed once per `create()`, so the line is stable within a session and the prompt cache is unaffected. Bound it like `formatShellEnvNotice` (`MAX_NOTICE_NAMES`, `…`), reuse that wording source rather than adding a second formatter where possible, and add nothing when nothing was withheld. Children follow whatever working-context rule they already follow; state it.
+
+Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-working-context.ts` extended: the line is present with the right count and bounded names when withheld is non-empty, byte-identical output when it is empty, and no value ever appears (seed a value-bearing variable and assert its value is absent); decisions doc System-prompt/SER-082 paragraph updated.
