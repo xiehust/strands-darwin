@@ -194,7 +194,7 @@ Residual gaps, stated in the decisions doc and left for a fresh research run rat
 
 ## SER-110 — Keep git's paired env-config protocol intact through the shell-env scrub: `GIT_CONFIG_KEY_<n>` always survives (it carries a git config *name*; the paired `GIT_CONFIG_VALUE_<n>` and `GIT_CONFIG_COUNT` already pass), so an IDE- or CI-injected `GIT_CONFIG_COUNT` no longer makes every model-shell `git` call fail with `fatal: unable to parse command-line config`
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 149
 - Score: 16
 - Importance: 4
@@ -206,7 +206,15 @@ Residual gaps, stated in the decisions doc and left for a fresh research run rat
 
 ### Implementation / acceptance evidence
 
-None yet.
+Accepted 2026-10-03 in `581fee259a55480daa311e4e5ee3fcc1795e652f` (`fix(shell-env): keep git's GIT_CONFIG_KEY_<n> through the scrub (SER-110)`, 5 files). The fresh supervised child was `session-20261003-150015772`, task `bg-8987036e-371a-4e3a-b061-2e656418869b`, exit 0, drained.
+
+What changed: `src/tools/shell-env.ts` adds `ALWAYS_SURVIVE_PATTERNS = [/^GIT_CONFIG_KEY_(?:0|[1-9][0-9]*)$/]`, which is anchored, case-sensitive, limited to git's canonical decimal index and unconditional on COUNT, and is checked in `alwaysSurvives`. The rule stays name-only and never inspects values. `FOO_KEY`, `GIT_TOKEN`, `GIT_ASKPASS_TOKEN`, `GIT_CONFIG_KEY_01` and `GIT_CONFIG_KEY_TOKEN` stay withheld.
+
+Host acceptance:
+- `git log aa45972..HEAD` showed only the child commit; Host read the source diff.
+- Real-environment control (`/tmp/ser-probe/probe-git.mts`): this Host's actual darwin environ was fed in-process through `scrubShellEnv`, with values never printed, and `git rev-parse` was spawned under the result. Base `aa45972` withheld `GIT_CONFIG_KEY_0,GIT_CONFIG_KEY_1` (20 names) and git exited **128** with `fatal: unable to parse command-line config`. At `581fee2`, no git names were withheld (18) and git exited **0**.
+- Host gate `bg-6812cab0-4397-4415-843e-291ac5f247ff`, exit 0: `verify-shell-env.ts` 79/0, `verify-status-command.ts` 109/0, `verify-config.ts` 422/0, then `pnpm typecheck && pnpm test` (`26 passed, 0 failed`) `&& pnpm build && git diff --check`, with a clean tree.
+- Docs: the decisions doc has a SER-082 list edit plus a SER-110 paragraph with the secrecy argument; `configuration` EN and zh-CN are updated; READMEs and AGENTS.md were untouched (neither lists the set).
 
 ### Notes / blockers / abandonment reason
 
@@ -218,7 +226,7 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-shell-env.ts` extended
 
 ## SER-111 — Tell the model its shell environment was scrubbed: when `RuntimeInfo.shellEnv.withheld` is non-empty, the `<working-context>` fragment gains one bounded line naming the count and up to a few withheld names (never a value), stating that those variables are unset in `bash` and that only the user can restore one via `shellEnv.passthrough`
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 150
 - Score: 10
 - Importance: 3

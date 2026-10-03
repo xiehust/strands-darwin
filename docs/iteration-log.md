@@ -3363,3 +3363,16 @@ SER-105 `done`; batch **exhausted**, no unfinished directions. Push current bran
 - The child reported a `spike/verify-hub-transport.ts` flake (1 of 3 isolated runs) unrelated to the change; the Host gate passed.
 - The child surfaced quote and `/proc/<pid>/root` escapes of the SER-071 home set. The Host verified them and queued them as SER-112 in the same batch rather than folding them into SER-109.
 - Child `bg-5fe318c6-…` reported usage input=60 output=30052 cacheRead=2427044 cacheWrite=116579, cost total=$1.6696 (model `global.anthropic.claude-opus-5-5`). The refused launch reported no usage line. Host checks made no model calls. SER-109 is `done`.
+
+## Batch 160 — SER-110 git's paired env-config survives the shell-env scrub (2026-10-03)
+
+- Origin [`research_2026-10-03.md`](research/research_2026-10-03.md), run `13:23:35Z`. Priority 149, Score 16.
+- Starting point: `084fb11` (the SER-109 accepted tree) passed the Host gate `bg-cfb17563-eb3b-4a10-8f04-9621a55d3613`. The closing commit `75de3cd` touched only `docs/research/**` and the iteration log, which `spike/verify-skills.ts` validates; it was re-run at `75de3cd` with 163/0. Then SER-110 alone was marked in-progress (`aa45972de6b5ea1f9974ee76a6374f9b47d54b51`).
+- Launch: a fresh headless developer conversation `session-20261003-150015772`, from the source CLI with `--yolo --context-offload`, no ceiling, no correction or retry. Task `bg-8987036e-371a-4e3a-b061-2e656418869b` exited 0 and was drained through `hasMore:false`.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| `ALWAYS_SURVIVE_PATTERNS` keeps canonical `GIT_CONFIG_KEY_<n>` names (anchored, case-sensitive, unconditional on COUNT, name-only); a real-shell `git config --get core.pager` suite case plus an exit-128 control; decisions doc SER-110 paragraph; EN/zh-CN configuration pages | `581fee259a55480daa311e4e5ee3fcc1795e652f` | `git log aa45972..HEAD` showed only the child commit, and the Host read the source diff. Real-environ control (`/tmp/ser-probe/probe-git.mts`, this Host's actual darwin environ scrubbed in-process, values never printed): base withheld `GIT_CONFIG_KEY_0,GIT_CONFIG_KEY_1` and `git rev-parse` exited 128; HEAD withheld no git names and git exited 0. Gate `bg-6812cab0-4397-4415-843e-291ac5f247ff` exited 0: `verify-shell-env.ts` 79/0, `verify-status-command.ts` 109/0, `verify-config.ts` 422/0, `pnpm typecheck && pnpm test` (`26 passed, 0 failed`) `&& pnpm build && git diff --check`, clean. |
+
+- Docs wrap-up: done by the child (decisions doc, configuration EN/zh-CN). The READMEs don't list the survive set; AGENTS.md is unchanged at 32,753 bytes. No docs-sync commit.
+- Child `bg-8987036e-…` reported usage input=42 output=14979 cacheRead=1288318 cacheWrite=89673, cost total=$1.0058 (model `global.anthropic.claude-opus-5-5`). Host checks made no model calls. SER-110 is `done`.
