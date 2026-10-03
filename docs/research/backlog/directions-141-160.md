@@ -156,7 +156,7 @@ Peer source: Claude Code `/goal <condition>` — a fast model checks after each 
 
 ## SER-109 — Process environments are sensitive reads: `/proc/<pid>/environ` (any pid token — digits, `self`, `$PPID`/`${PPID}`/other `$VAR`, globs such as `*`, and the `/proc/<pid>/task/<tid>/environ` form) joins the SER-071 sensitive set in `sensitiveReadPath`, so `fileEditor view` and whitelisted bash readers on it become `dangerous`, are prompted even in `plan`, are denied in headless and get no allow-rule — closing the unprompted bypass of SER-082's shell-env scrub
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 148
 - Score: 15
 - Importance: 5
