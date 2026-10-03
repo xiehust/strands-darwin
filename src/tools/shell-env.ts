@@ -187,6 +187,18 @@ export function withDarwinMarker(env: NodeJS.ProcessEnv): Record<string, string>
 export const MAX_NOTICE_NAMES = 3;
 
 /**
+ * The one bounding rule for naming withheld variables, shared by the user's
+ * startup notice and the model's `<working-context>` line (SER-111): the first
+ * {@link MAX_NOTICE_NAMES} names, comma-separated, then `, …` when there are
+ * more. Names only — the input is the scrub's `withheld` list, which never
+ * carries a value.
+ */
+export function formatWithheldNames(withheld: readonly string[]): string {
+  const shown = withheld.slice(0, MAX_NOTICE_NAMES);
+  return withheld.length > shown.length ? `${shown.join(', ')}, …` : shown.join(', ');
+}
+
+/**
  * The one sentence every driver's startup notice carries when something was
  * withheld: a count plus a few names, never a value. Callers add their own
  * prefix (`shell env:`) and, in the TUI, the `— see /status` pointer. Undefined
@@ -194,8 +206,6 @@ export const MAX_NOTICE_NAMES = 3;
  */
 export function formatShellEnvNotice(withheld: readonly string[]): string | undefined {
   if (withheld.length === 0) return undefined;
-  const shown = withheld.slice(0, MAX_NOTICE_NAMES);
-  const names = withheld.length > shown.length ? `${shown.join(', ')}, …` : shown.join(', ');
   const noun = withheld.length === 1 ? 'variable' : 'variables';
-  return `${withheld.length} credential-shaped ${noun} withheld from model shells (${names})`;
+  return `${withheld.length} credential-shaped ${noun} withheld from model shells (${formatWithheldNames(withheld)})`;
 }

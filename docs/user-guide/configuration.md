@@ -151,6 +151,7 @@ Only the run directory's own instructions file is loaded; darwin neither walks u
 ## Working context
 
 `<working-context>` states the working directory, OS/kernel, shell, Node version, current UTC date/time zone, and immediate directory contents. Directories come first and symlinks are marked `@`. The listing is capped at 200 entries with the remainder counted. Failure to list is nonfatal and visible.
+When [credential-shaped variables were withheld](#shell-environment) from model shells, the block also carries one line naming the count and up to three names (never a value), saying they are unset in the model's `bash` and that only you can restore one via `shellEnv.passthrough`.
 
 It is rebuilt for every fresh or resumed run. On resume only working context is refreshed; base prompt, `AGENTS.md`, and skill catalogue remain the conversation's captured versions. The block says it is a snapshot and instructs the model to recheck mutable facts.
 

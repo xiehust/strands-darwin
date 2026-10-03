@@ -1202,7 +1202,14 @@ because the conditional tools (memory pair, cloud recall, MCP) are otherwise inv
 that reads the base prompt and skims descriptions; it is *not* the hand-written catalogue
 `279f864` retired, which drifted because it was authored beside the registry rather than read
 from it. A caller with no registry (offline suites, the composition tests) omits the line rather
-than stating an empty list; the base prompt still names no tool. Current
+than stating an empty list; the base prompt still names no tool. When the SER-082 scrub withheld
+names, one bounded `- shell environment:` line follows the tool line (SER-111): count, the
+startup notice's own `formatWithheldNames` bound (`MAX_NOTICE_NAMES` + `…`), never a value,
+"unset in your bash tool, foreground and background", and only the user restores one via
+`shellEnv.passthrough`. It is built from `RuntimeInfo.shellEnv.withheld` (once per `create()`, so it is
+stable within a session and covers `/clear`/`/rewind` successors). Nothing withheld is
+byte-identical; children build no working context, so — as with the tool line — they get none.
+Current
 snapshots carry separate base/catalogue/context blocks plus the final cache point; pre-migration
 `[TextBlock, CachePointBlock]` snapshots are recognized, their stale Darwin catalogue is dropped,
 and official AgentSkills injects one current catalogue on the resumed invocation. A resumed run
@@ -2392,7 +2399,8 @@ interpolation) keep `process.env`, because their subject is the user's own autho
 model's. There is no off switch; the passthrough list is the only knob. What was withheld is
 reported as names only: `RuntimeInfo.shellEnv`, one transcript notice at startup (TUI and dev
 REPL, text-mode headless `shell-env:` beside `thinking:`; structured mode has no counterpart) and
-the `/status` `shell env` row under `MAX_STATUS_NAMES`. The SDK `bash` tool stays the SDK's: an
+the `/status` `shell env` row under `MAX_STATUS_NAMES`; the model is told too, through one bounded
+`<working-context>` line (SER-111, see System prompt composition). The SDK `bash` tool stays the SDK's: an
 option through the existing `createBash` seam, no execution wrapper, no `toolExecutor`. One
 stated gap: a `start` job is `bash -lc`, so the user's own `~/.profile` may re-export a name — the
 suite runs its background cases under an empty HOME for that reason. Checks:

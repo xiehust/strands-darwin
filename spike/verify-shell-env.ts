@@ -39,6 +39,11 @@
  * (`verify-shell-command`, `verify-lifecycle-hooks`, `verify-tool-hooks`,
  * `verify-codex-hooks`, `verify-mcp-config`).
  *
+ * SER-111: the same offline `AgentRuntime` seam proves a credential-shaped variable
+ * in darwin's environment reaches the system prompt's `<working-context>` as one
+ * `- shell environment:` line built from `RuntimeInfo.shellEnv.withheld` (the name,
+ * never the value), and that a `/clear` successor carries it too.
+ *
  * Run: pnpm tsx spike/verify-shell-env.ts
  */
 import { spawnSync } from 'node:child_process';
@@ -46,11 +51,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { Agent, Model, type BaseModelConfig, type InvokableTool, type Message, type ModelStreamEvent } from '@strands-agents/sdk';
+import { Agent, Model, TextBlock, type BaseModelConfig, type InvokableTool, type Message, type ModelStreamEvent } from '@strands-agents/sdk';
 import type { BashOutput } from '@strands-agents/sdk/vended-tools/bash';
 
 import { PermissionGate, allowAllBridge } from '../src/agent/permission.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
+import { formatShellEnvContextLine } from '../src/agent/working-context.js';
 import { SubagentTool } from '../src/agents/subagent-tool.js';
 import { formatHeadlessShellEnv } from '../src/headless.js';
 import {
@@ -337,6 +343,54 @@ async function runtimeMarkerContracts(): Promise<void> {
   }
 }
 
+/** The text of the runtime's one `<working-context>` system-prompt block. */
+function workingContextText(agent: Agent): string {
+  const blocks = Array.isArray(agent.systemPrompt) ? agent.systemPrompt : [];
+  const texts = blocks.flatMap((block) => (block instanceof TextBlock && block.text.includes('<working-context>') ? [block.text] : []));
+  return texts.length === 1 ? texts[0]! : '';
+}
+
+/**
+ * SER-111, the runtime seam offline: a credential-shaped variable in darwin's own
+ * environment reaches the model's system prompt as one `- shell environment:`
+ * line built from `RuntimeInfo.shellEnv.withheld` — the name, never the value —
+ * and a `/clear` successor (the same `create()`, as `/rewind` is) carries it too.
+ */
+async function runtimeContextContracts(): Promise<void> {
+  header('the runtime seam — the system prompt tells the model which names were withheld (SER-111)');
+  const PROBE_NAME = 'AAA_SER111_PROBE_TOKEN';
+  const PROBE_VALUE = 'ser111-runtime-value-marker-51be';
+  const previous = process.env[PROBE_NAME];
+  process.env[PROBE_NAME] = PROBE_VALUE;
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-shell-env-context-'));
+  setRuntimeModelFactoryForTest(async () => new BashProbeModel());
+  let live: AgentRuntime | undefined;
+  let next: AgentRuntime | undefined;
+  try {
+    live = await AgentRuntime.create({ projectRoot: root, session: { kind: 'new' }, permissionBridge: allowAllBridge });
+    const withheld = live.info.shellEnv.withheld;
+    const expected = formatShellEnvContextLine(withheld);
+    assert('control: the runtime withheld the probe by name', withheld.includes(PROBE_NAME) && expected !== undefined);
+    const context = workingContextText(runtimeAgent(live));
+    const lines = context.split('\n').filter((line) => line.startsWith('- shell environment:'));
+    assert('the working context carries exactly one shell-environment line, built from RuntimeInfo.shellEnv.withheld',
+      lines.length === 1 && lines[0] === expected);
+    assert('it names the probe (sorted first, inside the bounded names)', lines[0]?.includes(PROBE_NAME) === true);
+    assert('the probe value appears nowhere in the system prompt', !JSON.stringify(runtimeAgent(live).systemPrompt).includes(PROBE_VALUE));
+
+    next = await live.startNewSession();
+    const successor = workingContextText(runtimeAgent(next)).split('\n').filter((line) => line.startsWith('- shell environment:'));
+    assert('a /clear successor (the same create()) carries the same line', successor.length === 1 && successor[0] === expected);
+  } finally {
+    await next?.shutdown();
+    await live?.shutdown().catch(() => undefined);
+    setRuntimeModelFactoryForTest(undefined);
+    if (previous === undefined) delete process.env[PROBE_NAME];
+    else process.env[PROBE_NAME] = previous;
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function seamContracts(): Promise<void> {
   header('the seams — foreground shell, restart replacement, background start, against live controls');
   const previous = process.env['ANTHROPIC_API_KEY'];
@@ -495,6 +549,7 @@ async function main(): Promise<void> {
   noticeContracts();
   markerContracts();
   await runtimeMarkerContracts();
+  await runtimeContextContracts();
   await seamContracts();
   await gitConfigSeamContracts();
   report();

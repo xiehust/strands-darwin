@@ -8,6 +8,12 @@
  * that a *resumed* prompt ends up with exactly one working context — the current
  * one — because the SDK restores the previous run's prompt from the snapshot.
  *
+ * SER-111: when the shell-env scrub withheld names, the block gains exactly one
+ * bounded line (count, at most `MAX_NOTICE_NAMES` names plus `…`, never a value —
+ * proved through the real `scrubShellEnv`), placed after the tool list; nothing
+ * withheld is byte-identical to the option omitted. The runtime seam is proved in
+ * `verify-shell-env.ts`.
+ *
  * Run: pnpm tsx spike/verify-working-context.ts
  */
 import { mkdir, rm, symlink, writeFile } from 'node:fs/promises';
@@ -28,10 +34,12 @@ import {
   WORKING_CONTEXT_TAG,
   applyWorkingContext,
   buildWorkingContext,
+  formatShellEnvContextLine,
   stripWorkingContext,
   withWorkingContext,
 } from '../src/agent/working-context.js';
 import { withSoleChoice, type AppConfig } from '../src/config.js';
+import { MAX_NOTICE_NAMES, formatShellEnvNotice, formatWithheldNames, scrubShellEnv } from '../src/tools/shell-env.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 const ROOT = '/tmp/darwin-working-context-test';
@@ -341,11 +349,79 @@ async function tools(): Promise<void> {
   assert('an empty registry says so', none.fragment.includes('- tools registered for this session: none'));
 }
 
+/**
+ * SER-111: the model is told its shell environment was scrubbed — one bounded
+ * line, names only, through the startup notice's own bounding rule — and a run
+ * with nothing withheld is byte-identical to one built without the option.
+ */
+async function shellEnvironment(): Promise<void> {
+  header('working context — one bounded line when the shell environment was scrubbed (SER-111)');
+
+  const root = path.join(ROOT, 'scrubbed');
+  await mkdir(path.join(root, 'src'), { recursive: true });
+  const toolNames = ['bash', 'fileEditor'];
+  const prefix = '- shell environment:';
+  const linesOf = (fragment: string): string[] => fragment.split('\n').filter((line) => line.startsWith(prefix));
+
+  // (b) omitted or empty: byte-identical to the fragment built without the option.
+  const plain = (await buildWorkingContext(root, FIXED_NOW, { toolNames })).fragment;
+  const empty = (await buildWorkingContext(root, FIXED_NOW, { toolNames, shellEnvWithheld: [] })).fragment;
+  assert('an empty withheld list is byte-identical to the option omitted', empty === plain);
+  assert('…and neither carries a shell-environment line', linesOf(plain).length === 0);
+  assert('no withheld list renders no line', formatShellEnvContextLine([]) === undefined && formatShellEnvContextLine(undefined) === undefined);
+
+  // (a) one line, the count, at most MAX_NOTICE_NAMES names plus `…` when there are more.
+  const one = (await buildWorkingContext(root, FIXED_NOW, { toolNames, shellEnvWithheld: ['NPM_TOKEN'] })).fragment;
+  assert('one withheld name is exactly one line, singular, with the fixed wording',
+    linesOf(one).length === 1 && linesOf(one)[0] ===
+      "- shell environment: 1 credential-shaped variable withheld (NPM_TOKEN) — unset in your bash tool, foreground and background; only the user can restore one, via shellEnv.passthrough in darwin's config");
+  assert('the line is the only difference from the unscrubbed fragment',
+    one.split('\n').filter((line) => !line.startsWith(prefix)).join('\n') === plain);
+
+  const many = ['A_KEY', 'B_SECRET', 'C_TOKEN', 'D_PASSWORD', 'E_CREDENTIAL'];
+  const crowded = (await buildWorkingContext(root, FIXED_NOW, { toolNames, shellEnvWithheld: many })).fragment;
+  const line = linesOf(crowded)[0] ?? '';
+  assert('many withheld names are still exactly one line', linesOf(crowded).length === 1);
+  assert('the line states the whole count', line.startsWith(`${prefix} ${many.length} credential-shaped variables withheld (`));
+  const named = many.filter((name) => line.includes(name));
+  assert(`at most MAX_NOTICE_NAMES (${MAX_NOTICE_NAMES}) names, then …`,
+    named.join() === many.slice(0, MAX_NOTICE_NAMES).join() && line.includes(`(${many.slice(0, MAX_NOTICE_NAMES).join(', ')}, …)`));
+  assert('the bounding rule is the startup notice\u2019s own',
+    line.includes(`(${formatWithheldNames(many)})`) && (formatShellEnvNotice(many) ?? '').includes(`(${formatWithheldNames(many)})`));
+  const exact = (await buildWorkingContext(root, FIXED_NOW, { shellEnvWithheld: many.slice(0, MAX_NOTICE_NAMES) })).fragment;
+  assert('exactly MAX_NOTICE_NAMES names carry no ellipsis', linesOf(exact).length === 1 && !(linesOf(exact)[0] ?? '').includes('…'));
+  assert('it says the variables are unset in foreground and background bash',
+    line.includes('unset in your bash tool, foreground and background'));
+  assert('it says only the user can restore one, via shellEnv.passthrough',
+    line.includes('only the user can restore one, via shellEnv.passthrough'));
+  assert('it offers no route to the values', !/\/proc|\benviron\b|you can read|instead/i.test(line));
+  assert('the line stays bounded', Buffer.byteLength(line) < 400);
+
+  // (c) a value never appears: a real scrub of a credential-shaped variable.
+  const VALUE_MARKER = 'ser111-value-marker-7d41c0';
+  const scrubbed = scrubShellEnv({ PATH: '/usr/bin', SER111_PROBE_TOKEN: VALUE_MARKER, NODE_ENV: 'test' }, []);
+  assert('control: the real scrub withheld the probe by name', scrubbed.withheld.join() === 'SER111_PROBE_TOKEN');
+  const real = (await buildWorkingContext(root, FIXED_NOW, { toolNames, shellEnvWithheld: scrubbed.withheld })).fragment;
+  assert('the withheld name is stated', (linesOf(real)[0] ?? '').includes('(SER111_PROBE_TOKEN)'));
+  assert('the value never appears anywhere in the fragment', !real.includes(VALUE_MARKER));
+
+  // (d) inside the block, in the existing order: after the tools, before the listing.
+  const rows = crowded.split('\n');
+  const at = rows.indexOf(line);
+  assert('the line sits inside <working-context>',
+    at > rows.indexOf(`<${WORKING_CONTEXT_TAG}>`) && at < rows.indexOf(`</${WORKING_CONTEXT_TAG}>`));
+  assert('after the tool list and before the directory listing',
+    crowded.indexOf('- tools registered') < crowded.indexOf(prefix) && crowded.indexOf(prefix) < crowded.indexOf('- contents'));
+  assert('every pre-existing line keeps its order',
+    rows.filter((row) => !row.startsWith(prefix)).join('\n') === plain);
+}
+
 async function main(): Promise<void> {
   await rm(ROOT, { recursive: true, force: true });
   try {
     await contents();
     await tools();
+    await shellEnvironment();
     await bounded();
     await unreadable();
     resumed();

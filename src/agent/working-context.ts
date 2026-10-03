@@ -30,6 +30,7 @@ import os from 'node:os';
 
 import type { SystemPromptHolder } from './prompt-cache.js';
 import { refreshKnownPrompt } from '../skills/prompt.js';
+import { formatWithheldNames } from '../tools/shell-env.js';
 
 export const WORKING_CONTEXT_TAG = 'working-context';
 
@@ -65,6 +66,28 @@ export interface WorkingContextOptions {
    * than an empty list.
    */
   readonly toolNames?: readonly string[];
+  /**
+   * The variable *names* this run's scrub withheld from model-spawned shells
+   * (`RuntimeInfo.shellEnv.withheld`, SER-082), computed once per `create()`, so
+   * the line is stable for the session and the cached prefix is unaffected.
+   * Omitted or empty means no line: the fragment is byte-identical to one built
+   * without the option (SER-111).
+   */
+  readonly shellEnvWithheld?: readonly string[];
+}
+
+/**
+ * The one working-context line that tells the model its shell environment
+ * differs from the user's (SER-111). Count plus the shared bounded name list
+ * ({@link formatWithheldNames}, the startup notice's own rule), never a value.
+ * It states the variables are unavailable and who can change that — deliberately
+ * no route to them. Undefined when nothing was withheld.
+ */
+export function formatShellEnvContextLine(withheld: readonly string[] | undefined): string | undefined {
+  if (withheld === undefined || withheld.length === 0) return undefined;
+  const noun = withheld.length === 1 ? 'variable' : 'variables';
+  return `- shell environment: ${withheld.length} credential-shaped ${noun} withheld (${formatWithheldNames(withheld)}) — ` +
+    'unset in your bash tool, foreground and background; only the user can restore one, via shellEnv.passthrough in darwin\'s config';
 }
 
 export interface WorkingContextLoad {
@@ -119,6 +142,11 @@ export async function buildWorkingContext(
       }
     }
   }
+
+  // The scrub is otherwise reported only to the user; without this line an
+  // empty `$FOO_TOKEN` or a failing tool is a mystery the model can only probe.
+  const shellEnvLine = formatShellEnvContextLine(options.shellEnvWithheld);
+  if (shellEnvLine !== undefined) lines.push(shellEnvLine);
 
   if (listing.problem === undefined) {
     lines.push(`- ${describeCounts(listing)}`, ...wrap(listing.names).map((line) => `    ${line}`));
