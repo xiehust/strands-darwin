@@ -156,7 +156,7 @@ Peer source: Claude Code `/goal <condition>` — a fast model checks after each 
 
 ## SER-109 — Process environments are sensitive reads: `/proc/<pid>/environ` (any pid token — digits, `self`, `$PPID`/`${PPID}`/other `$VAR`, globs such as `*`, and the `/proc/<pid>/task/<tid>/environ` form) joins the SER-071 sensitive set in `sensitiveReadPath`, so `fileEditor view` and whitelisted bash readers on it become `dangerous`, are prompted even in `plan`, are denied in headless and get no allow-rule — closing the unprompted bypass of SER-082's shell-env scrub
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 148
 - Score: 15
 - Importance: 5
@@ -168,7 +168,16 @@ Peer source: Claude Code `/goal <condition>` — a fast model checks after each 
 
 ### Implementation / acceptance evidence
 
-None yet.
+Accepted 2026-10-03 in `084fb111279a494024fc9484cc68c666bebef103` (`fix(permission): treat /proc/<pid>/environ as a sensitive read`, 7 files). The fresh supervised child was `session-20261003-134952588`, task `bg-5fe318c6-270b-4916-8ff0-e42cb8efdad0`, exit 0, drained.
+
+What changed: `src/agent/permission-rules.ts` adds `isProcessEnvironPath` (any single pid segment, plus the `task/<tid>` form; `proc`/`environ` segments matched as bash glob words via `globMayMatch`, with `$` counting as a possible match) inside the shared `isSensitiveReadPath`. `sensitiveLocationBelow` gains the `/proc`, `/proc/<pid>`, `/proc/<pid>/task` and `/proc/<pid>/task/<tid>` ancestors for recursive `grep`/`rg`. `/proc/sys` and the other non-pid segments are excluded. There is no second classifier.
+
+Host acceptance:
+- `git log e030eb9..HEAD` showed only the child commit; Host read the source diff.
+- The original research probe (`/tmp/ser-probe/probe*.ts`) re-ran at `084fb11`. `cat`/`head -c`/`grep -a` on `/proc/$PPID/environ`, `cat /proc/*/environ`, `/proc/1/environ`, `/proc/self/environ` and `fileEditor view /proc/12345/environ` all went from `safe` to `dangerous | reads a sensitive path: …`. `cat /proc/$PPID/cmdline` and `echo $ANTHROPIC_API_KEY` stay `safe | read-only command`, and the `strings`/`less`/`tr <`/`ps` reasons are unchanged.
+- The new suite run against the base `permission-rules.ts` (separate worktree) fails at import, which proves the suite pins the new export.
+- Host gate `bg-cfb17563-eb3b-4a10-8f04-9621a55d3613`, exit 0: `verify-permission-modes.ts` 379/0, `verify-permissions-command.ts` 42/0, `verify-deny-rules.ts` 95/0, `verify-permissions-test.ts` 83/0, then `pnpm typecheck && pnpm test` (`26 passed, 0 failed`) `&& pnpm build && git diff --check`, with a clean tree.
+- Docs: the decisions doc has a SER-109 paragraph plus a correction to SER-082's `/proc/self/environ` sentence; `permissions`/`reference` EN and zh-CN are updated; README needed nothing; AGENTS.md is unchanged at 32,753 bytes.
 
 ### Notes / blockers / abandonment reason
 
@@ -177,6 +186,11 @@ Evidence (report R3/R4, offline `classify` + `assessRisk` probe at `dd79491`): `
 Extension point: `src/agent/permission-rules.ts` (`SENSITIVE_READ_*`, `sensitiveReadPath`), the one helper that `assessRisk` and `/permissions` already share. The matcher must cover how the bash classifier sees paths: literal `$PPID`/`${PPID}` tokens (the classifier does not expand variables), glob tokens, `self`/`thread-self`, `task/<tid>`, and relative paths that resolve under `/proc` (`cd /proc && cat 1/environ` is a cwd question; state what is and is not covered). It should stay narrow: `/proc/<pid>/cmdline`, `/proc/cpuinfo` and the like remain ordinary reads unless the child finds a recorded reason. Risk 3 comes from matcher coverage and from not regressing existing safe reads.
 
 Acceptance: `pnpm typecheck` + `pnpm test`; the SER-071 suite (whichever `spike/verify-*.ts` covers `sensitiveReadPath`, extended) proving every probe command above is `dangerous` with a `reads a sensitive path` reason and 0 rules offered, while `cat /proc/cpuinfo`, `cat src/cli.ts` and `rg secret src/` keep their prior verdicts byte-identical; `verify-permissions-command.ts` and `verify-deny-rules.ts` stay green; the decisions doc paragraph for SER-071/SER-082 states the addition; AGENTS.md stays under 32 KiB.
+
+Residual gaps, stated in the decisions doc and left for a fresh research run rather than reinterpreted into this direction:
+- `cat 1/environ` after a `cd /proc` is not covered, because the classifier resolves against the project root and doesn't track the shell's cwd.
+- A leading variable (`cat $D/1/environ`) is not covered.
+- The child also reported possible SER-071 home-set escapes, which the Host verified at `084fb11` (`/tmp/ser-probe/probe3.ts`): `cat ~/".ssh"/id_rsa`, `cat ~/'.aws'/credentials` and `cat /proc/self/root/home/ubuntu/.ssh/id_rsa` are `safe | read-only command`. These are queued separately as SER-112 (same origin report, addendum).
 
 ## SER-110 — Keep git's paired env-config protocol intact through the shell-env scrub: `GIT_CONFIG_KEY_<n>` always survives (it carries a git config *name*; the paired `GIT_CONFIG_VALUE_<n>` and `GIT_CONFIG_COUNT` already pass), so an IDE- or CI-injected `GIT_CONFIG_COUNT` no longer makes every model-shell `git` call fail with `fatal: unable to parse command-line config`
 
@@ -225,3 +239,27 @@ Evidence (report R5): the scrub is reported only to the user (startup notice, `/
 Extension point: the existing `<working-context>` section (System prompt composition: fixed order, re-derived every run). The withheld set is computed once per `create()`, so the line is stable within a session and the prompt cache is unaffected. Bound it like `formatShellEnvNotice` (`MAX_NOTICE_NAMES`, `…`), reuse that wording source rather than adding a second formatter where possible, and add nothing when nothing was withheld. Children follow whatever working-context rule they already follow; state it.
 
 Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-working-context.ts` extended: the line is present with the right count and bounded names when withheld is non-empty, byte-identical output when it is empty, and no value ever appears (seed a value-bearing variable and assert its value is absent); decisions doc System-prompt/SER-082 paragraph updated.
+
+## SER-112 — Sensitive-read paths are matched as bash will see them: quote removal (`~/".ssh"/id_rsa`, `~/'.aws'/credentials`) and the `/proc/<pid>/root/` and `/proc/<pid>/cwd/` re-rooting aliases no longer let a whitelisted reader or `fileEditor view` reach a SER-071 path behind a `safe` verdict
+
+- Status: `not-started`
+- Priority: 151
+- Score: 13
+- Importance: 5
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 4
+- Origin report: [`research_2026-10-03.md`](../research_2026-10-03.md) (run `13:23:35Z`, SER-109 acceptance addendum)
+
+### Implementation / acceptance evidence
+
+None yet.
+
+### Notes / blockers / abandonment reason
+
+Evidence: a Host probe at `084fb11` (`/tmp/ser-probe/probe3.ts`, offline `classify` + `assessRisk`) found that `cat ~/".ssh"/id_rsa`, `cat ~/'.aws'/credentials`, `cat /proc/self/root/home/ubuntu/.ssh/id_rsa` and `cat /proc/self/root/home/ubuntu/.darwin/config.json` all return `safe | read-only command`, while `cat ~/.ssh/id_rsa` is `dangerous | reads a sensitive path`. Bash removes the quotes, and `/proc/self/root` is the filesystem root, so each command reads the protected file without a prompt in `default`/`auto` mode. The SER-109 child surfaced this as out of scope, and it was not reinterpreted into SER-109.
+
+Extension point: the same shared `sensitiveReadPath` in `src/agent/permission-rules.ts`. SER-109's `globMayMatch` already strips quotes per segment for the `/proc` match. This direction applies quote removal to the home/absolute/basename checks, and adds `/proc/<pid>/root/…` (strip the prefix, re-check the remainder as absolute) and `/proc/<pid>/cwd/…` (reached path unknowable → treat as sensitive when the remainder could name a sensitive basename or directory; the child decides and states the rule). Risk 4: this touches every path decision the gate makes, so the existing safe reads must stay byte-identical, including quoted ordinary paths (`cat "src/cli.ts"`).
+
+Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-permission-modes.ts` extended so that each probe command above (plus `fileEditor view /proc/self/root/etc/shadow`) is `dangerous` with a `reads a sensitive path` reason and 0 rules offered, while `cat "src/cli.ts"`, `cat '/etc/os-release'` and `ls /proc/self/root/tmp` keep their prior verdicts; `verify-permissions-command.ts`, `verify-deny-rules.ts` and `verify-permissions-test.ts` stay green; the decisions doc SER-071 material states the rule and any remaining gap.
