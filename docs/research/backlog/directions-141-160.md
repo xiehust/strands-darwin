@@ -194,7 +194,7 @@ Residual gaps, stated in the decisions doc and left for a fresh research run rat
 
 ## SER-110 — Keep git's paired env-config protocol intact through the shell-env scrub: `GIT_CONFIG_KEY_<n>` always survives (it carries a git config *name*; the paired `GIT_CONFIG_VALUE_<n>` and `GIT_CONFIG_COUNT` already pass), so an IDE- or CI-injected `GIT_CONFIG_COUNT` no longer makes every model-shell `git` call fail with `fatal: unable to parse command-line config`
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 149
 - Score: 16
 - Importance: 4
