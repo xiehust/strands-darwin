@@ -2376,7 +2376,8 @@ value landed in the tool result, the trajectory and `/export`. The defence is up
 shell. `src/tools/shell-env.ts` is one pure decision — `scrubShellEnv(process.env, passthrough)`
 drops every variable whose *name* matches the fixed case-insensitive
 `KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL` pattern, keeps `PATH`/`HOME`/`USER`/`LOGNAME`/`SHELL`/
-`TERM`/`LANG`/`LC_*`/`TMPDIR`/`TZ` and the proxy names unconditionally, restores what
+`TERM`/`LANG`/`LC_*`/`TMPDIR`/`TZ`, the proxy names and git's `GIT_CONFIG_KEY_<n>` (SER-110,
+below) unconditionally, restores what
 `shellEnv.passthrough` names (exact or one trailing `*`, case-sensitive; the grammar is the
 module's own `passthroughEntryProblem`, which config validation calls, so the loader cannot accept
 what the scrub ignores) and returns the withheld *names*, sorted — never a value. `runtime.ts`
@@ -2399,6 +2400,30 @@ suite runs its background cases under an empty HOME for that reason. Checks:
 `spawnSync` control and an option-less control, the `start` path, a real `SubagentTool` child),
 `verify-config.ts` (`shellEnv` grammar), `verify-status-command.ts` (the row), and
 `verify-npm-patch-format.ts` for the regenerated patch.
+
+*git's paired env-config protocol survives whole (SER-110).* git reads `GIT_CONFIG_COUNT` and,
+for every index below it, the pair `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>`, and treats a missing
+key or value as fatal (git-config(1), `GIT_CONFIG_COUNT`). The pattern matched `KEY` in
+`GIT_CONFIG_KEY_<n>` but neither COUNT nor the VALUE names, so an IDE-injected pair set
+(Orca exports `credential.interactive`/`credential.guiPrompt` = `false`) reached the model shell
+as COUNT and VALUEs without KEYs, and every `git` call exited 128 with `fatal: unable to parse
+command-line config`. The only hint was a startup notice naming the KEYs, with nothing pointing
+at `shellEnv.passthrough`. `ALWAYS_SURVIVE_PATTERNS` now holds one anchored, case-sensitive rule,
+`^GIT_CONFIG_KEY_(0|[1-9][0-9]*)$`. That is the canonical decimal index git itself formats
+(`GIT_CONFIG_KEY_%d`), so `GIT_CONFIG_KEY_01`, a bare `GIT_CONFIG_KEY_`, `GIT_CONFIG_KEY_TOKEN`
+or a lowercase spelling, none of which git reads, stay withheld. So do `FOO_KEY`, `GIT_TOKEN` and
+`GIT_ASKPASS_TOKEN`. *The secrecy argument:* a KEY carries a config *name*, and the values travel in
+`GIT_CONFIG_VALUE_<n>`, which never matched the pattern and already reached every model shell, so
+keeping the KEYs exposes no value the shell did not already get. Withholding the VALUEs instead
+would only trade one fatal git error for the other. The rule is per-name and unconditional rather
+than a coherence rule ("keep the KEYs only when COUNT is present"). Without a COUNT, git ignores the
+KEYs, so the condition would buy no secrecy and would make each name's fate depend on its
+neighbours. The scrub stays a pure, name-only function that never inspects a value. The notice,
+the headless `shell-env:` line and the `/status` row stop naming the git KEYs because they
+project `withheld` and are otherwise unchanged. Checks: `verify-shell-env.ts` (the pure rule;
+a real foreground shell built from an explicit fixture env runs `git config --get core.pager` →
+`cat`, exit 0, with an unrelated `*_KEY` still unset, against a `spawnSync` control of the
+pre-fix map that git refuses with 128).
 
 *Every process darwin spawns carries `DARWIN=1` (SER-094).* The counterpart of Claude Code's
 `CLAUDECODE=1` and Gemini CLI's `GEMINI_CLI=1`: one pure helper in the same module,

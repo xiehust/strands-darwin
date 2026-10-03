@@ -26,7 +26,9 @@
  *
  * The rule is fixed: one case-insensitive pattern on the variable *name*
  * ({@link CREDENTIAL_NAME_PATTERN}); values are never inspected. There is no off
- * switch — the only knob is `shellEnv.passthrough` in config, which restores named
+ * switch — beside the fixed always-survive set (which includes git's paired
+ * `GIT_CONFIG_KEY_<n>` names, SER-110) the only knob is `shellEnv.passthrough`
+ * in config, which restores named
  * variables (exact names or `PREFIX_*`). The result reports the withheld *names*,
  * sorted, so `/status` and the startup notice can say what happened without ever
  * printing a value. A login shell's own profile (`~/.bashrc`, `~/.profile`) may
@@ -69,6 +71,23 @@ export const ALWAYS_SURVIVE_NAMES: readonly string[] = [
 /** Prefixes whose every variable always survives (`LC_ALL`, `LC_CTYPE`, …). */
 export const ALWAYS_SURVIVE_PREFIXES: readonly string[] = ['LC_'];
 
+/**
+ * Patterns whose matching names always survive (SER-110), anchored and
+ * case-sensitive. `GIT_CONFIG_KEY_<n>` carries a git config *name*
+ * (`credential.interactive`), and git refuses to run at all when
+ * `GIT_CONFIG_COUNT` is set but a pair's KEY is missing ("Any missing key or
+ * value is treated as an error"). The pattern matched `KEY` here, while the paired
+ * `GIT_CONFIG_VALUE_<n>` and `GIT_CONFIG_COUNT` never matched, so an IDE-injected
+ * COUNT made every model-shell `git` call exit 128. Keeping the KEY names exposes
+ * no value the shell did not already get: the values travel in the VALUE names.
+ * The suffix must be the canonical decimal index git itself formats
+ * (`GIT_CONFIG_KEY_%d`: `0`, `12`, never `01`), so `GIT_CONFIG_KEY_TOKEN` or
+ * `GIT_CONFIG_KEY_` stays withheld. The rule is unconditional, not tied to
+ * `GIT_CONFIG_COUNT` being present: without a COUNT git ignores the KEYs anyway,
+ * and a per-name rule keeps the scrub a function of each name alone.
+ */
+export const ALWAYS_SURVIVE_PATTERNS: readonly RegExp[] = [/^GIT_CONFIG_KEY_(?:0|[1-9][0-9]*)$/];
+
 export interface ScrubbedShellEnv {
   /** The environment to hand to `spawn` — defined values only, as before the scrub. */
   readonly env: Record<string, string>;
@@ -105,7 +124,9 @@ function passesThrough(name: string, passthrough: readonly string[]): boolean {
 }
 
 function alwaysSurvives(name: string): boolean {
-  return ALWAYS_SURVIVE_NAMES.includes(name) || ALWAYS_SURVIVE_PREFIXES.some((prefix) => name.startsWith(prefix));
+  return ALWAYS_SURVIVE_NAMES.includes(name) ||
+    ALWAYS_SURVIVE_PREFIXES.some((prefix) => name.startsWith(prefix)) ||
+    ALWAYS_SURVIVE_PATTERNS.some((pattern) => pattern.test(name));
 }
 
 /**

@@ -23,6 +23,13 @@
  * text-mode line (`formatHeadlessShellEnv`) name variables, never values, and stay
  * absent when nothing was withheld.
  *
+ * SER-110: git's paired env-config protocol survives whole — `GIT_CONFIG_KEY_<n>`
+ * (canonical decimal index only) is always kept, while `FOO_KEY`/`GIT_TOKEN` stay
+ * withheld; a real foreground shell built from an explicit fixture env
+ * (`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=cat` plus an
+ * unrelated `*_KEY`) runs `git config --get core.pager` → `cat`, exit 0, against a
+ * `spawnSync` control of the pre-fix map (no KEY) that git refuses with exit 128.
+ *
  * SER-094 rides on the same seams: `withDarwinMarker` adds `DARWIN=1` to a copy of any
  * map unless the name is already set, and never appears in the withheld/passthrough
  * projections; a real offline `AgentRuntime` (lazy model, private HOME) proves the
@@ -55,6 +62,7 @@ import {
 } from '../src/tools/background-bash.js';
 import {
   ALWAYS_SURVIVE_NAMES,
+  ALWAYS_SURVIVE_PATTERNS,
   CREDENTIAL_NAME_PATTERN,
   DARWIN_MARKER_NAME,
   DARWIN_MARKER_VALUE,
@@ -173,6 +181,42 @@ function pureContracts(): void {
   assert('proxy names in both cases pass through', Object.keys(proxies.env).length === 4 && proxies.withheld.length === 0);
   assert('an empty environment yields an empty map and nothing withheld',
     JSON.stringify(scrubShellEnv({}, ['X_*'])) === JSON.stringify({ env: {}, withheld: [] }));
+
+  // SER-110: git's paired env-config protocol survives whole. The KEY names carry
+  // config *names*; COUNT and the VALUE names never matched the pattern.
+  const gitEnv: NodeJS.ProcessEnv = {
+    GIT_CONFIG_COUNT: '13',
+    GIT_CONFIG_KEY_0: 'credential.interactive',
+    GIT_CONFIG_VALUE_0: 'false',
+    GIT_CONFIG_KEY_12: 'credential.guiPrompt',
+    GIT_CONFIG_VALUE_12: 'false',
+    GIT_CONFIG_KEY_01: 'a',
+    GIT_CONFIG_KEY_: 'b',
+    GIT_CONFIG_KEY_TOKEN: 'c',
+    git_config_key_0: 'd',
+    FOO_KEY: 'e',
+    GIT_TOKEN: 'f',
+    GIT_ASKPASS_TOKEN: 'g',
+  };
+  const git = scrubShellEnv(gitEnv, []);
+  assert('GIT_CONFIG_KEY_0 and GIT_CONFIG_KEY_12 always survive with their values',
+    git.env['GIT_CONFIG_KEY_0'] === 'credential.interactive' && git.env['GIT_CONFIG_KEY_12'] === 'credential.guiPrompt');
+  assert('GIT_CONFIG_COUNT and the paired VALUE names pass as before',
+    git.env['GIT_CONFIG_COUNT'] === '13' && git.env['GIT_CONFIG_VALUE_0'] === 'false' && git.env['GIT_CONFIG_VALUE_12'] === 'false');
+  assert('FOO_KEY, GIT_TOKEN and GIT_ASKPASS_TOKEN are still withheld',
+    ['FOO_KEY', 'GIT_TOKEN', 'GIT_ASKPASS_TOKEN'].every((name) => git.withheld.includes(name) && !(name in git.env)));
+  assert('only the canonical decimal index git reads survives (01, empty, TOKEN suffix, lowercase stay withheld)',
+    ['GIT_CONFIG_KEY_01', 'GIT_CONFIG_KEY_', 'GIT_CONFIG_KEY_TOKEN', 'git_config_key_0'].every((name) => git.withheld.includes(name)));
+  assert('withheld stays sorted and names no surviving git KEY',
+    JSON.stringify(git.withheld) === JSON.stringify([...git.withheld].sort()) &&
+      !git.withheld.includes('GIT_CONFIG_KEY_0') && !git.withheld.includes('GIT_CONFIG_KEY_12'));
+  const cleanGit = scrubShellEnv({ GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'a', GIT_CONFIG_VALUE_0: 'x', GIT_CONFIG_KEY_1: 'b', GIT_CONFIG_VALUE_1: 'y' }, []);
+  assert('the Orca-shaped environment withholds nothing, so the notice adds no line',
+    cleanGit.withheld.length === 0 && formatShellEnvNotice(cleanGit.withheld) === undefined);
+  assert('a KEY without GIT_CONFIG_COUNT survives too (the rule is per-name, never conditional)',
+    scrubShellEnv({ GIT_CONFIG_KEY_0: 'a' }, []).env['GIT_CONFIG_KEY_0'] === 'a');
+  assert('no always-survive pattern matches a plain always-survive name or DARWIN (patterns are additive)',
+    ALWAYS_SURVIVE_PATTERNS.every((pattern) => !pattern.test('PATH') && !pattern.test(DARWIN_MARKER_NAME)));
 
   header('passthroughEntryProblem — the config grammar is the scrub module\u2019s own');
   assert('an exact name is valid', passthroughEntryProblem('NPM_TOKEN') === undefined);
@@ -399,12 +443,60 @@ async function seamContracts(): Promise<void> {
   }
 }
 
+/**
+ * SER-110 against a real git: a source environment carrying git's paired env-config
+ * protocol (`GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=core.pager`, `GIT_CONFIG_VALUE_0=cat`)
+ * plus an unrelated `*_KEY`, built explicitly — never the Host's own environment — under
+ * an empty HOME with system config off, so only the fixture reaches git.
+ */
+async function gitConfigSeamContracts(): Promise<void> {
+  header('git env-config pairs — a real foreground shell runs git with the scrubbed map (SER-110)');
+  const home = await mkdtemp(path.join(tmpdir(), 'darwin-shell-env-git-home-'));
+  const root = await mkdtemp(path.join(tmpdir(), 'darwin-shell-env-git-'));
+  const source: NodeJS.ProcessEnv = {
+    PATH: process.env['PATH'],
+    HOME: home,
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.pager',
+    GIT_CONFIG_VALUE_0: 'cat',
+    UNRELATED_API_KEY: SECRET_VALUE,
+  };
+  const scrubbed = scrubShellEnv(source, []);
+  assert('the fixture scrub keeps the git triple and withholds only the unrelated key',
+    JSON.stringify(scrubbed.withheld) === JSON.stringify(['UNRELATED_API_KEY']) && scrubbed.env['GIT_CONFIG_KEY_0'] === 'core.pager');
+
+  // Control: the map the pre-SER-110 scrub produced (COUNT + VALUE, no KEY) breaks git.
+  const { GIT_CONFIG_KEY_0: _key, ...orphaned } = scrubbed.env;
+  const broken = spawnSync('git', ['config', '--get', 'core.pager'], { cwd: root, env: orphaned, encoding: 'utf8' });
+  assert('control: COUNT and VALUE without the KEY make git exit 128 with "unable to parse command-line config"',
+    broken.status === 128 && broken.stderr.includes('unable to parse command-line config'));
+
+  const manager = new BackgroundBashManager(root, 'session-shell-env-git');
+  const gitTool = createBackgroundBashTool(manager, createForegroundBashTool(root, scrubbed.env), { env: scrubbed.env });
+  const agent = new Agent({ model: new BashProbeModel(), tools: [gitTool], printer: false });
+  await agent.initialize();
+  const context = { agent } as never;
+  try {
+    const pager = await gitTool.invoke({ mode: 'execute', command: 'git config --get core.pager' }, context) as BashOutput;
+    assert('in the real persistent shell `git config --get core.pager` prints cat and exits 0',
+      pager.output.trim() === 'cat' && pager.exitCode === 0);
+    const unrelated = await gitTool.invoke({ mode: 'execute', command: 'echo "[${UNRELATED_API_KEY-unset}]"' }, context) as BashOutput;
+    assert('…while the unrelated *_KEY from the same source env is absent from that shell', unrelated.output.trim() === '[unset]');
+  } finally {
+    await gitTool.invoke({ mode: 'restart' }, context);
+    await manager.shutdown();
+    await Promise.all([rm(root, { recursive: true, force: true }), rm(home, { recursive: true, force: true })]);
+  }
+}
+
 async function main(): Promise<void> {
   pureContracts();
   noticeContracts();
   markerContracts();
   await runtimeMarkerContracts();
   await seamContracts();
+  await gitConfigSeamContracts();
   report();
 }
 
