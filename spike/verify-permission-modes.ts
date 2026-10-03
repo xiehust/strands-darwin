@@ -23,6 +23,7 @@ import {
   type SafetyClassifier,
 } from '../src/agent/permission.js';
 import {
+  isProcessEnvironPath,
   isSensitiveReadPath,
   isValidRule,
   matchesAnyRule,
@@ -324,6 +325,88 @@ function sensitiveReads(): void {
   assert('sensitiveReadPath ignores non-view fileEditor commands',
     sensitiveReadPath('fileEditor', { command: 'create', path: '~/.ssh/id_rsa' }, ROOT) === undefined);
   assert('sensitiveReadPath ignores tools it cannot see into', sensitiveReadPath('mcp__server__read', { path: '~/.ssh/id_rsa' }, ROOT) === undefined);
+
+  header('static risk rules — process environments are sensitive reads (SER-109)');
+
+  // [call, the path the reason must name]. The probe commands from the
+  // SER-109 evidence first: each returned `safe | read-only command` before.
+  const environReads: Array<[string, unknown, string]> = [
+    ['bash', { command: 'cat /proc/$PPID/environ' }, '/proc/$PPID/environ'],
+    ['bash', { command: 'head -c 4000 /proc/$PPID/environ' }, '/proc/$PPID/environ'],
+    ['bash', { command: 'grep -a KEY /proc/$PPID/environ' }, '/proc/$PPID/environ'],
+    ['bash', { command: 'cat /proc/*/environ' }, '/proc/*/environ'],
+    ['bash', { command: 'cat /proc/1/environ' }, '/proc/1/environ'],
+    ['bash', { command: 'cat /proc/self/environ' }, '/proc/self/environ'],
+    ['fileEditor', { command: 'view', path: '/proc/12345/environ' }, '/proc/12345/environ'],
+    ['bash', { command: 'cat /proc/thread-self/environ' }, '/proc/thread-self/environ'],
+    ['bash', { command: 'cat /proc/1/task/1/environ' }, '/proc/1/task/1/environ'],
+    ['bash', { command: "cat '/proc/${PPID}/environ'" }, "'/proc/${PPID}/environ'"],
+    ['bash', { command: 'head /proc/[0-9]*/environ' }, '/proc/[0-9]*/environ'],
+    // Further spellings the same predicate covers.
+    ['bash', { command: 'cat /proc/${PPID}/environ' }, '/proc/${PPID}/environ'],
+    ['bash', { command: 'cat /proc/$$/environ' }, '/proc/$$/environ'],
+    ['bash', { command: 'tail /proc/?/environ' }, '/proc/?/environ'],
+    ['bash', { command: 'cat /proc/*/task/*/environ' }, '/proc/*/task/*/environ'],
+    ['bash', { command: 'cat /proc/self/env*' }, '/proc/self/env*'],
+    ['bash', { command: 'cat /proc/1/e?viron' }, '/proc/1/e?viron'],
+    ['bash', { command: 'cat /proc/1/{cmdline,environ}' }, '/proc/1/{cmdline,environ}'],
+    ['bash', { command: 'cat /proc/1/"environ"' }, '/proc/1/"environ"'],
+    ['bash', { command: 'cat /proc/1/*' }, '/proc/1/*'],
+    ['bash', { command: 'cat /*/1/environ' }, '/*/1/environ'],
+    ['bash', { command: 'cat //proc/1/environ' }, '//proc/1/environ'],
+    ['bash', { command: 'cat /proc/self/root/proc/1/environ' }, '/proc/self/root/proc/1/environ'],
+    ['bash', { command: 'wc -c /proc/1/environ' }, '/proc/1/environ'],
+    ['bash', { command: 'ls src && cat /proc/$PPID/environ' }, '/proc/$PPID/environ'],
+    ['fileEditor', { command: 'view', path: '/proc/self/environ' }, '/proc/self/environ'],
+    // Recursive content readers starting above a process environment.
+    ['bash', { command: 'grep -ra KEY /proc/self' }, '/proc/self (searches above /proc/<pid>/environ)'],
+    ['bash', { command: 'grep -r KEY /proc' }, '/proc (searches above /proc/<pid>/environ)'],
+    ['bash', { command: 'rg -a KEY /proc/1/task' }, '/proc/1/task (searches above /proc/<pid>/environ)'],
+  ];
+  for (const [toolName, input, named] of environReads) {
+    const assessed = assessRisk(classify(toolName, input), ROOT);
+    const label = `${toolName} ${JSON.stringify(input)}`;
+    assert(`dangerous, names the path: ${label}`, assessed.risk === 'dangerous' && assessed.riskReason === `reads a sensitive path: ${named}`);
+    assert(`no allow rule offered or matching: ${label}`,
+      suggestRules({ toolName, input }, ROOT).length === 0 && matchesAnyRule([toolName, `${toolName}:*`, 'bash:cat *', 'fileEditor:**'], { toolName, input }, ROOT) === undefined);
+  }
+  assert('a ..-escaping relative path reaches /proc', bash(`cat ${path.relative(ROOT, '/proc/1/environ')}`).risk === 'dangerous');
+  // Stated gap: relative forms resolve against the project root, never a cwd a
+  // prior `cd /proc` left behind, so this one is judged as `<root>/1/environ`.
+  assert('a relative form below a cd is resolved against the project root (stated gap)',
+    bash('cat 1/environ').risk === 'safe' && bash('cat 1/environ').riskReason === 'read-only command');
+  assert('isProcessEnvironPath is exported and literal-path narrow',
+    isProcessEnvironPath('/proc/1/environ') && !isProcessEnvironPath('/proc/environ') && !isProcessEnvironPath('/proc/1/cmdline')
+      && !isProcessEnvironPath(`${ROOT}/proc/1/environ`));
+
+  // Readers already dangerous for another reason keep that reason.
+  assert('strings keeps its own reason', bash('strings /proc/1/environ').riskReason === '`strings` is not on the safe-command list');
+  assert('a redirect keeps its own reason', bash('tr "\\0" "\\n" < /proc/1/environ').riskReason === 'command uses redirection or substitution');
+
+  // Every other /proc read, and the ordinary reads, keep their prior verdicts.
+  for (const command of [
+    'cat /proc/cpuinfo',
+    'cat /proc/meminfo',
+    'cat /proc/$PPID/cmdline',
+    'cat /proc/self/status',
+    'head /proc/1/cmdline',
+    'ls /proc',
+    'ls /proc/self',
+    'find /proc/1 -maxdepth 1',
+    'cat /proc/1/c*',
+    'cat src/cli.ts',
+    'rg secret src/',
+    'cat src/environ',
+    'grep -r foo /proc/1/cwd',
+    'rg foo /proc/sys',
+  ]) {
+    const assessed = bash(command);
+    assert(`safe, reason unchanged: ${command}`, assessed.risk === 'safe' && assessed.riskReason === 'read-only command');
+  }
+  for (const filePath of ['/proc/cpuinfo', '/proc/12345/cmdline', `${ROOT}/environ`]) {
+    const viewed = view(filePath);
+    assert(`fileEditor view safe, reason unchanged: ${filePath}`, viewed.risk === 'safe' && viewed.riskReason === 'fileEditor is read-only');
+  }
 }
 
 /**
@@ -828,6 +911,33 @@ async function gateSensitiveReads(): Promise<void> {
   assert('the headless bridge denies the sensitive read', run.action.type === 'deny');
   assert('and writes one permission denied line naming the call',
     stderr.length === 1 && stderr[0] === 'permission denied — bash: cat ~/.aws/credentials\n');
+
+  header('gate — process environments prompt like every sensitive read (SER-109)');
+
+  const ENVIRON_VIEW = { command: 'view', path: '/proc/self/environ' };
+  const ENVIRON_CAT = { command: 'cat /proc/$PPID/environ' };
+  run = await runGate({ mode: 'default', allowRules: ['bash:cat *', 'bash'] }, 'bash', ENVIRON_CAT, false);
+  assert('default: bash:cat * and a whole-tool rule do not silence an environ cat',
+    run.action.type === 'deny' && run.asked.length === 1 && run.asked[0]?.suggestions.length === 0
+      && run.asked[0]?.riskReason === 'reads a sensitive path: /proc/$PPID/environ');
+  run = await runGate({ mode: 'plan' }, 'fileEditor', ENVIRON_VIEW, true);
+  assert('plan: an environ view is prompted, not denied', run.asked.length === 1 && run.action.type === 'proceed');
+  let environClassifierCalls = 0;
+  const environClassifier: SafetyClassifier = async () => {
+    environClassifierCalls += 1;
+    return { safe: true, reason: 'looks fine' };
+  };
+  run = await runGate({ mode: 'auto', classifier: environClassifier }, 'bash', ENVIRON_CAT, false);
+  assert('auto: an environ cat prompts with the sensitive-read flag, classifier untouched',
+    run.asked.length === 1 && run.asked[0]?.sensitiveRead === true && run.action.type === 'deny' && environClassifierCalls === 0);
+  const environStderr: string[] = [];
+  run = await runGate(
+    { mode: 'default', ask: createHeadlessPermissionBridge((text) => environStderr.push(text)) },
+    'bash',
+    ENVIRON_CAT,
+  );
+  assert('headless denies an environ cat with one permission denied line',
+    run.action.type === 'deny' && environStderr.length === 1 && environStderr[0] === 'permission denied — bash: cat /proc/$PPID/environ\n');
 
   const childId = 'darwin-subagent-explorer-0000';
   run = await runGate(

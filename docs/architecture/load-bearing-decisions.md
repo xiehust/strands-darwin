@@ -360,6 +360,26 @@ bytes then enter the provider request *and* the trajectory record on disk. Headl
 answer, so its bridge denies it like every other prompt; children share the gate; the user's `!`
 shell is untouched because its subject is user commands, not model tool calls. Free check:
 `spike/verify-permission-modes.ts` (in `pnpm test`).
+**Process environments are in the set (SER-109, `isProcessEnvironPath`).** SER-082 keeps
+credential-shaped names out of the model's shells, but darwin's own `/proc/<pid>/environ` still
+holds them, and an unprompted `cat /proc/$PPID/environ` returned every one. So a resolved target
+under `/proc` whose last segment may be `environ` (`/proc/<pid>/environ`,
+`/proc/<pid>/task/<tid>/environ`, and deeper forms such as `/proc/self/root/proc/1/environ`) joins
+the set through the same `isSensitiveReadPath`, so `assessRisk`, `isRuleExempt` and `/permissions`
+all see it with no second classifier. The classifier expands nothing, so the pid segment is any
+single segment: digits, `self`, `thread-self`, `$PPID`, `${PPID}`, `$$`, globs (`*`, `[0-9]*`, `?`)
+and braces. The first and last segments are matched as bash words, with quotes and backslashes
+dropped, `$…` counted as a possible match and globs/braces translated (`/*/1/environ`,
+`/proc/self/env*`, `/proc/1/{cmdline,environ}`, `/proc/1/*`). For `grep`/`rg` the ancestor rule
+names `/proc/<pid>/environ` for `/proc`, `/proc/<pid>`, `/proc/<pid>/task` and
+`/proc/<pid>/task/<tid>`, where `<pid>` must look like a process (digits, `self`, `thread-self` or
+an unexpanded token), so `rg foo /proc/sys` stays silent. Every other `/proc` read (`cmdline`,
+`cpuinfo`, `meminfo`, `status`, `ls /proc`) keeps its verdict byte for byte, and `strings`, `less`
+and `tr … <` keep their existing `dangerous` reasons. Relative forms resolve against the project
+root as everywhere in SER-071. A `..`-escaping `cat ../../proc/1/environ` is covered. `cat 1/environ`
+after a `cd /proc` (in the same chain or an earlier call to the persistent shell) is **not**
+covered, because the classifier never tracks the shell's effective cwd. A variable in the leading
+position (`cat $D/1/environ`) is not covered either.
 `plan` mode is enforced before risk, allow rules, classifier, bridge, and configured Pre hooks:
 reads proceed, while writes/executes deterministically deny. The same composed intervention
 protects child agents. Denial uses `InterventionActions.deny(...)`, never `confirm()`. The UI
@@ -2349,7 +2369,9 @@ the report stays a single bounded transcript block with no live row or timer.
 
 **Model-spawned shells never inherit credential-shaped names (SER-082).** `assessRisk` is right
 to call `echo $ANTHROPIC_API_KEY` and `cat /proc/self/environ` read-only, so the gate cannot be
-the defence: in `default` mode the model printed darwin's own API key without a prompt and the
+the defence (since SER-109 the `/proc/<pid>/environ` form is a prompted sensitive read, because
+darwin's own environ is not scrubbed; the variable form stays read-only): in `default` mode the
+model printed darwin's own API key without a prompt and the
 value landed in the tool result, the trajectory and `/export`. The defence is upstream of the
 shell. `src/tools/shell-env.ts` is one pure decision — `scrubShellEnv(process.env, passthrough)`
 drops every variable whose *name* matches the fixed case-insensitive

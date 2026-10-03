@@ -345,7 +345,9 @@ Permission and compaction views own keyboard/paste while active and ignore paste
 
 A read is never silent when its target resolves into the fixed sensitive set: anything under
 `~/.ssh/`, `~/.aws/`, `~/.gnupg/`; `~/.netrc`, `~/.kube/config`, `~/.docker/config.json`,
-`/etc/shadow`; any `.env` / `.env.*` basename; darwin's own config, hook and permission-rule files.
+`/etc/shadow`; any `.env` / `.env.*` basename; any process environment (`/proc/<pid>/environ`,
+`/proc/<pid>/task/<tid>/environ`, any pid spelling including `self`, `$PPID` and globs); darwin's
+own config, hook and permission-rule files.
 Targets are the `path` of `fileEditor view` and every non-option argument of `cat`, `head`, `tail`,
 `grep`, `rg`, `find`, `ls` and `wc` (`~`, `$HOME`, `${HOME}`, relative and `..` forms resolved). The
 prompt reads `reads a sensitive path: <path>`; it is asked in `default`, `auto` (the classifier is

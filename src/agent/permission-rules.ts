@@ -78,11 +78,70 @@ export const SENSITIVE_READ_HOME_FILES: readonly string[] = [
 /** Absolute files that hold credentials. */
 export const SENSITIVE_READ_ABSOLUTE_FILES: readonly string[] = ['/etc/shadow'];
 
+/** How a process environment is named in prompts (SER-109). */
+export const SENSITIVE_READ_PROCESS_ENVIRON = '/proc/<pid>/environ';
+
+/**
+ * A process environment (SER-109): `/proc/<pid>/environ`, the
+ * `/proc/<pid>/task/<tid>/environ` form and any deeper path under `/proc` whose
+ * last segment may be `environ`. The SER-082 scrub keeps credential-shaped
+ * names out of model shells, but darwin's own environ still holds them, and the
+ * bash classifier expands nothing — so the pid segment is *any* single segment
+ * (digits, `self`, `thread-self`, `$PPID`, `${PPID}`, `$$`, `*`, `[0-9]*`, `?`,
+ * braces) rather than a list. The first and last segments are matched as bash
+ * glob words ({@link globMayMatch}), so `/*\/1/environ` and `/proc/self/env*`
+ * count too. Every other `/proc` read (`cmdline`, `cpuinfo`, `meminfo`, …) is
+ * untouched.
+ */
+export function isProcessEnvironPath(resolved: string): boolean {
+  const segments = resolved.split(path.sep).filter((segment) => segment !== '');
+  return segments.length >= 3 && globMayMatch(segments[0]!, 'proc') && globMayMatch(segments[segments.length - 1]!, 'environ');
+}
+
+/**
+ * Whether one path segment, as the bash classifier sees it (unexpanded), may
+ * name `name` once bash removes quotes and expands variables, globs and
+ * braces (a `$` anywhere may expand to it). Errs on
+ * the side of a match: a pattern this cannot translate counts as matching,
+ * which for a read costs a prompt and never a silent approval.
+ */
+function globMayMatch(segment: string, name: string): boolean {
+  const word = segment.replace(/["'\\]/g, '');
+  if (word === name) return true;
+  if (word.includes('$')) return true;
+  if (!/[*?[{]/.test(word)) return false;
+  let source = '';
+  for (let index = 0; index < word.length; index += 1) {
+    const char = word[index]!;
+    if (char === '*') source += '.*';
+    else if (char === '?') source += '.';
+    else if (char === '{') source += '(?:';
+    else if (char === '}') source += ')';
+    else if (char === ',') source += '|';
+    else if (char === '[') {
+      const end = word.indexOf(']', index + 2);
+      if (end === -1) {
+        source += '\\[';
+        continue;
+      }
+      const body = word.slice(index + 1, end).replace(/^[!^]/, '^').replace(/[\\\]]/g, '\\$&');
+      source += `[${body}]`;
+      index = end;
+    } else source += escapeRegExp(char);
+  }
+  try {
+    return new RegExp(`^(?:${source})$`).test(name);
+  } catch {
+    return true;
+  }
+}
+
 /**
  * The fixed sensitive-read set (SER-071): a resolved absolute path that is under
  * one of {@link SENSITIVE_READ_DIRECTORIES}, is one of the home or absolute
- * credential files, has a `.env` / `.env.*` basename anywhere, or is one of
- * darwin's own policy files ({@link isSensitiveDarwinPath}).
+ * credential files, has a `.env` / `.env.*` basename anywhere, is a process
+ * environment ({@link isProcessEnvironPath}, SER-109), or is one of darwin's own
+ * policy files ({@link isSensitiveDarwinPath}).
  *
  * A fixed set rather than "outside the project": darwin legitimately reads
  * `/tmp`, `/etc/os-release` and the global skill roots, and a one-line list is
@@ -94,15 +153,18 @@ export function isSensitiveReadPath(projectRoot: string, resolved: string): bool
   if (SENSITIVE_READ_HOME_FILES.some((file) => samePath(path.join(home, file), resolved))) return true;
   if (SENSITIVE_READ_ABSOLUTE_FILES.some((file) => samePath(file, resolved))) return true;
   if (ENV_FILE.test(path.basename(resolved))) return true;
+  if (isProcessEnvironPath(resolved)) return true;
   return isSensitiveDarwinPath(projectRoot, resolved);
 }
 
 /**
  * The credential location a recursive content search started at `resolved`
  * would descend into — `~/.ssh` for `~`, `/home/<user>` or `/`; `/etc/shadow`
- * for `/etc` — or undefined. Only the fixed home/absolute locations qualify:
- * `.env*` basenames are excluded on purpose, or `grep -r foo .` would prompt in
- * every project that has a `.env`. Returned `~`-abbreviated for the prompt.
+ * for `/etc`; `/proc/<pid>/environ` for `/proc`, `/proc/<pid>`,
+ * `/proc/<pid>/task` and `/proc/<pid>/task/<tid>` (SER-109) — or undefined.
+ * Only the fixed home/absolute locations qualify: `.env*` basenames are
+ * excluded on purpose, or `grep -r foo .` would prompt in every project that
+ * has a `.env`. Returned `~`-abbreviated for the prompt.
  */
 export function sensitiveLocationBelow(resolved: string): string | undefined {
   const home = os.homedir();
@@ -112,7 +174,23 @@ export function sensitiveLocationBelow(resolved: string): string | undefined {
   for (const file of SENSITIVE_READ_HOME_FILES) {
     if (isInside(resolved, path.join(home, file))) return `~/${file.split(path.sep).join('/')}`;
   }
-  return SENSITIVE_READ_ABSOLUTE_FILES.find((file) => isInside(resolved, file));
+  const absolute = SENSITIVE_READ_ABSOLUTE_FILES.find((file) => isInside(resolved, file));
+  if (absolute !== undefined) return absolute;
+  const segments = resolved.split(path.sep).filter((segment) => segment !== '');
+  const [root = '', pid = '', task, tid] = segments;
+  const aboveEnviron =
+    segments.length >= 1 && segments.length <= 4 && globMayMatch(root, 'proc')
+    && (segments.length === 1 || (mayBePidSegment(pid) && (task === undefined || (task === 'task' && (tid === undefined || mayBePidSegment(tid))))));
+  return aboveEnviron ? SENSITIVE_READ_PROCESS_ENVIRON : undefined;
+}
+
+/**
+ * A `/proc` segment that may name a process or thread directory, unexpanded:
+ * digits, `self`, `thread-self`, or anything bash would still expand (`$…`,
+ * globs, braces). Used only by the ancestor rule — `/proc/sys` is no process.
+ */
+function mayBePidSegment(segment: string): boolean {
+  return /^\d+$/.test(segment) || segment === 'self' || segment === 'thread-self' || /[$*?[{]/.test(segment);
 }
 
 /**
