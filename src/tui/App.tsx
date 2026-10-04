@@ -3224,10 +3224,6 @@ export function App({
 
   return (
     <Box flexDirection="column">
-      <Box ref={headerRef} flexDirection="column">
-        <Header runtime={runtime} status={effectiveStatus} frame={frame} tangent={tangent} goal={goal} runningTaskCount={runningTaskCount}
-          draftStashed={statusHint === undefined && draftStash !== undefined} />
-      </Box>
       <MessageList
         history={state.history}
         {...(state.staticEpoch === 0 ? { welcome: initialWelcome } : {})}
@@ -3237,6 +3233,11 @@ export function App({
         maxLiveRows={grants.live}
         staticEpoch={state.staticEpoch}
       />
+      {/* Keep the mutable answer next to Static history, not below the status header. */}
+      <Box ref={headerRef} flexDirection="column">
+        <Header runtime={runtime} status={effectiveStatus} frame={frame} tangent={tangent} goal={goal} runningTaskCount={runningTaskCount}
+          draftStashed={statusHint === undefined && draftStash !== undefined} />
+      </Box>
 
       <Box ref={chromeRef} flexDirection="column">
         {/* The reduced busy suffix — elapsed only, since the hint row below already

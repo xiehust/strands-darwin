@@ -17,7 +17,7 @@
  * developer's — see the note there before adding a scenario that reads one.
  *
  * Free scenarios (no model call): cloudAuto | model | mode | clear | completion | pathCompletion | recall |
- * recallEmpty | bang | queue | wordNav | undo | mcp | trust | resumeHint | resume | copy | rewind | escRewind | tangent | goal | modelRetry — `goal`
+ * recallEmpty | bang | queue | wordNav | undo | mcp | trust | resumeHint | resume | copy | rewind | escRewind | tangent | goal | modelRetry | finalReplyHandoff — `goal`
  * (SER-108) drives `/goal` end to end through two scripted local models (agent and condition check): cap, check
  * verdict notices, live header/hint state, cancel of a continuation and of the check, a permission prompt holding
  * the loop, queue / `!` / task-wake ordering ahead of the goal, `/goal off`, a failed check and `/clear`; `copy`
@@ -41,7 +41,7 @@
  *                 pathCompletion | historySearch | recall | recallEmpty | resume | copy | bang | queue | clear | mcpStderr | mcp | trust |
  *                 resumeHint | rewind | escRewind | tangent | goal | toolDetails |
  *                 agentsMd | usage | tasks | effort | model | plan | updatePlan | modelRetry | longAnswer | tallDraft |
- *                 tallDraftStreaming | drainPrompt
+ *                 tallDraftStreaming | drainPrompt | finalReplyHandoff
  */
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -3029,8 +3029,11 @@ async function finalReplyHandoff(): Promise<void> {
     await tui.waitFor('终端滚动回归', { timeoutMs: 30_000, from: turn, settleMs: 100 });
     assert('the long CJK prefix has filled the constrained terminal before the final paragraph',
       tui.screen.slice(turn).includes('终端滚动回归'));
+    // The driver exposes controls from the header down. Inspect the whole
+    // viewport here: the answer belongs above that header, next to Static history.
+    const visibleLines = () => reconstructTerminalLines(tui.raw, rows).slice(-rows);
     await tui.waitUntil(() => {
-      const frame = tui.frame.replace(/\s+/gu, '');
+      const frame = visibleLines().join('\n').replace(/\s+/gu, '');
       return frame.includes(finalParagraph.replace(/\s+/gu, '')) && frame.includes('working…');
     }, {
       timeoutMs: 30_000,
@@ -3038,7 +3041,21 @@ async function finalReplyHandoff(): Promise<void> {
       settleMs: 100,
     });
     assert('the final paragraph is still mutable while the authoritative block is held',
-      tui.frame.replace(/\s+/gu, '').includes(finalParagraph.replace(/\s+/gu, '')));
+      visibleLines().join('\n').replace(/\s+/gu, '').includes(finalParagraph.replace(/\s+/gu, '')));
+    const liveRows = visibleLines();
+    const answerRow = liveRows.findIndex(line => line.includes('末段唯一标记'));
+    const headerRow = liveRows.findIndex(line => line.includes('◆ DARWIN'));
+    assert('the working header does not split committed history from the live answer',
+      answerRow >= 0 && answerRow < headerRow);
+    tui.send('draft-while-live');
+    await tui.waitUntil(() => tui.frame.includes('you> draft-while-live') && tui.cursorVisible === true, {
+      timeoutMs: 5_000, settleMs: 100, label: 'editable composer below the answer and header',
+    });
+    const typingRows = visibleLines();
+    assert('typing during the live answer keeps the composer below the working header',
+      typingRows.findIndex(line => line.includes('you> draft-while-live')) > typingRows.findIndex(line => line.includes('◆ DARWIN')));
+    tui.send('\u0015');
+    await tui.waitUntil(() => !tui.frame.includes('draft-while-live'), { timeoutMs: 5_000, settleMs: 100 });
 
     const rawBeforeRelease = tui.raw.length;
     await writeFile(release, 'release\n');
