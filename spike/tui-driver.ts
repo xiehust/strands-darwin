@@ -6,13 +6,15 @@
  * keystrokes. node-pty gives it a real pty.
  *
  * Most assertions match accumulated ANSI-stripped output, which answers "did this
- * ever appear?". `frame` separately exposes only Ink's latest standard repaint for
- * safety-critical assertions that must not pass from an older retained frame.
+ * ever appear?". `frame` reconstructs the visible live region, including Ink's
+ * changed-line updates, so stale repaints cannot satisfy current-state assertions.
  */
 import path from 'node:path';
 import process from 'node:process';
 
 import { spawn, type IPty } from 'node-pty';
+
+import { reconstructTerminalLines } from './terminal-state.js';
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 
@@ -33,13 +35,16 @@ export function stripAnsi(value: string): string {
   return value.replace(OSC_TEXT, '').replace(ANSI, '');
 }
 
-/** Ink's standard renderer clears the previous frame before writing the next. */
-const ERASE_FRAME = /(?:\u001b\[2K(?:\u001b\[1A\u001b\[2K)*\u001b\[G)/g;
-
-function latestFrame(value: string): string {
+/** Reconstruct changed-line paints rather than assuming a whole-frame erase. */
+function latestFrame(value: string, rows: number): string {
+  const lines = reconstructTerminalLines(value, rows, false).slice(-rows);
+  // The live header follows Static history. Fixtures without a Darwin header
+  // expose the viewport instead; neither path retains erased or replaced rows.
   let start = 0;
-  for (const match of value.matchAll(ERASE_FRAME)) start = (match.index ?? 0) + match[0].length;
-  return stripAnsi(value.slice(start));
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index]?.includes('◆ DARWIN')) start = index;
+  }
+  return lines.slice(start).join('\n');
 }
 
 /** Latest DEC private cursor visibility state emitted by Ink. */
@@ -54,9 +59,9 @@ export interface WaitOptions {
   /** Shown in timeout messages. Set automatically by {@link TuiSession.waitFor}. */
   label?: string;
   /**
-   * Only match output produced after this mark. Essential for anything that
-   * recurs — `you>` is drawn every frame, so an unanchored wait for it is
-   * satisfied by a frame from before the action being awaited.
+   * Match output after this mark, or text still visible after a later paint.
+   * Incremental rendering need not emit an unchanged row again. An anchor
+   * still prevents matching an old frame before the action being awaited.
    */
   from?: number;
   /**
@@ -77,7 +82,7 @@ export interface TuiSession {
   readonly raw: string;
   /** Everything drawn so far, ANSI stripped. */
   readonly screen: string;
-  /** Latest complete Ink repaint only; excludes text retained from older frames. */
+  /** Visible live region reconstructed from paints; excludes stale and erased rows. */
   readonly frame: string;
   /** Terminal cursor state after the latest emitted DEC show/hide control. */
   readonly cursorVisible: boolean | undefined;
@@ -142,6 +147,7 @@ export function startTui(options: TuiOptions): TuiSession {
   );
 
   let raw = '';
+  let terminalRows = options.rows ?? 50;
   const watchers = new Set<() => void>();
   let exitCode: number | undefined;
   const exitWaiters = new Set<(code: number) => void>();
@@ -168,7 +174,7 @@ export function startTui(options: TuiOptions): TuiSession {
     },
 
     get frame() {
-      return latestFrame(raw);
+      return latestFrame(raw, terminalRows);
     },
 
     get cursorVisible() {
@@ -187,8 +193,16 @@ export function startTui(options: TuiOptions): TuiSession {
       const from = options.from ?? 0;
       return session.waitUntil(
         (screen) => {
-          const region = screen.slice(from);
-          return typeof pattern === 'string' ? region.includes(pattern) : pattern.test(region);
+          const matches = (text: string): boolean => {
+            if (typeof pattern === 'string') return text.includes(pattern);
+            pattern.lastIndex = 0;
+            return pattern.test(text);
+          };
+          if (matches(screen.slice(from))) return true;
+          // Incremental paints leave unchanged visible rows on screen. A later
+          // paint may therefore satisfy an anchored wait without printing that
+          // row again; retained Static history is excluded by `frame`.
+          return from > 0 && screen.length > from && matches(session.frame);
         },
         { ...options, label: String(pattern) },
       );
@@ -212,7 +226,7 @@ export function startTui(options: TuiOptions): TuiSession {
           reject(
             new Error(
               `timed out after ${timeoutMs}ms waiting for ${label}.\n` +
-                `--- screen ---\n${session.screen.slice(-3000)}`,
+                `--- screen ---\n${session.screen.slice(-3000)}\n--- visible frame ---\n${session.frame}\n--- last controls ---\n${JSON.stringify(raw.slice(-1500))}`,
             ),
           );
         }, timeoutMs);
@@ -245,7 +259,7 @@ export function startTui(options: TuiOptions): TuiSession {
             reject(
               new Error(
                 `TUI exited (code ${exitCode}) before ${label} was met.\n` +
-                  `--- screen ---\n${session.screen.slice(-3000)}`,
+                  `--- screen ---\n${session.screen.slice(-3000)}\n--- visible frame ---\n${session.frame}\n--- last controls ---\n${JSON.stringify(raw.slice(-1500))}`,
               ),
             );
           }
@@ -263,6 +277,7 @@ export function startTui(options: TuiOptions): TuiSession {
     },
 
     resize(columns, rows) {
+      terminalRows = rows;
       child.resize(columns, rows);
     },
 

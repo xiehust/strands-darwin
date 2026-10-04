@@ -56,3 +56,18 @@ index 0082666b281ec2db77b875d6b8460bcc19a59ce7..dd772c834f77096cd3621f83bfa7d0fc
          if (shouldClearTerminal) {
              const sync = this.shouldSync();
              if (sync) {
+diff --git a/build/log-update.js b/build/log-update.js
+--- a/build/log-update.js
++++ b/build/log-update.js
+@@ -145,7 +145,10 @@ const createIncremental = (stream, { showCursor = false } = {}) => {
+         }
+         const returnPrefix = buildReturnToBottomPrefix(cursorWasShown, previousLines.length, previousCursorPosition);
+-        if (str === '\n' || previousOutput.length === 0) {
++        // A height change can scroll at the viewport edge. Reuse the full-paint
++        // path so hardware-cursor anchoring stays correct; diff unchanged rows
++        // only while the frame height is stable.
++        if (str === '\n' || previousOutput.length === 0 || visibleCount !== previousVisible) {
+             const cursorSuffix = buildCursorSuffix(visibleCount, activeCursor);
+             stream.write(returnPrefix +
+                 ansiEscapes.eraseLines(previousLines.length) +
+                 str +

@@ -2525,6 +2525,16 @@ budget unchanged. Required check: `spike/verify-react-production-memory.ts`.
 **TUI** (`src/tui/`): Ink 7 + React 19. The Agent must be constructed with `printer: false`
 or the SDK writes to stdout and fights Ink. Completed history renders through `<Static>`;
 stream events map per the table in the archived MVP task's `research/spike-results.md`.
+The CLI's one Ink renderer enables `incrementalRendering`: a busy animation tick rewrites
+only changed lines, not the stationary composer and tool rows below it. The 90 ms clock,
+hardware cursor, Static commits and frame budget stay unchanged; this is Ink's own renderer
+option, not an App-side erase or a new rendering loop. The pinned Ink patch limits its line
+diff to stable-height frames: a height transition reuses Ink's full-paint branch, because a
+long-history/menu-shrink case otherwise loses the hardware-cursor anchor and erases the
+unchanged draft (verified independently in tmux). `spike/verify-working-redraw.ts` drives the
+real CLI with a local model in a pty and pins both the no-draft-repaint/no-whole-frame-erase
+contract during animation and the long-history menu transition. The pty driver reconstructs
+changed-line paints for current-frame assertions rather than assuming a full repaint.
 **Whatever is redrawn must fit the terminal**: Ink does not clip an over-tall live frame, it
 switches to `clearTerminal` + a full transcript reprint *per render*, which is a strobing
 screen and an erased scrollback (`spike/probe-live-frame-overflow.tsx` counts them: 43 clears

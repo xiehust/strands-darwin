@@ -12,7 +12,7 @@ function params(raw: string): number[] {
   return raw.split(';').map((value) => value === '' ? Number.NaN : Number(value));
 }
 
-export function reconstructTerminalLines(output: string, rows: number): string[] {
+export function reconstructTerminalLines(output: string, rows: number, trimTrailingWhitespace = true): string[] {
   const scrollback: string[] = [];
   const screen = Array.from({ length: rows }, () => '');
   let row = 0;
@@ -104,5 +104,7 @@ export function reconstructTerminalLines(output: string, rows: number): string[]
     }
   }
 
-  return [...scrollback, ...screen].map((line) => line.replace(/\s+$/u, ''));
+  // Scrollback assertions use trimmed rows; the pty driver's live frame must
+  // preserve spaces such as an empty continuation prompt (`...> `).
+  return [...scrollback, ...screen].map((line) => trimTrailingWhitespace ? line.replace(/\s+$/u, '') : line);
 }

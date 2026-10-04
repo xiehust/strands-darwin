@@ -191,7 +191,8 @@ async function runInteractive(options: CliOptions): Promise<void> {
   // the root atomically and lets React clean up the startup timer on handoff.
   const instance = render(
     React.createElement(StartupScreen, { phase: 'runtime' }),
-    { exitOnCtrlC: false },
+    // Busy animation must not erase unchanged composer/tool rows every tick.
+    { exitOnCtrlC: false, incrementalRendering: true },
   );
 
   // SER-090: before anything the checkout declares can run. The inventory reads the

@@ -89,7 +89,12 @@ async function fixture(name: string, options: { tool?: string; input?: unknown; 
 }
 const unwrapped = (text: string): string => text.replace(/\s/g, '');
 async function waitText(tui: TuiSession, text: string, from = 0): Promise<void> {
-  await tui.waitUntil((screen) => unwrapped(screen.slice(from)).includes(unwrapped(text)), { timeoutMs: 15_000, settleMs: 120, label: text });
+  await tui.waitUntil((screen) => {
+    if (unwrapped(screen.slice(from)).includes(unwrapped(text))) return true;
+    // Paging may leave the decision row unchanged. Verify it in the current
+    // rendered frame after fresh page output, not only in newly emitted bytes.
+    return from > 0 && screen.length > from && unwrapped(tui.frame).includes(unwrapped(text));
+  }, { timeoutMs: 15_000, settleMs: 120, label: text });
 }
 async function key(tui: TuiSession, value: string, text: string): Promise<void> {
   const from = tui.mark();
