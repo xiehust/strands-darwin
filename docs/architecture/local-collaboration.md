@@ -79,6 +79,28 @@ remainder is unknown. CLI/TUI share pure grammar preflight before policy mutatio
 probe; no-argument verbs are strict. Malformed CLI grammar, like other refusals, exits 1; a returned
 report (including a send awaiting human confirmation) exits 0. Send text remains literal.
 
+The runtime's discovery excludes its own endpoint before allocating challenge slots, while standalone
+CLI discovery has no requesting endpoint and continues to list all authenticated addresses. `omissions`
+breaks the scanned-but-not-returned total into self, unusable registration/socket, failed challenge and
+probe-limit counts; it never returns private parsing errors or credentials. The original scan/probe caps
+and no-cleanup contract are unchanged. Real socket tests pin self exclusion even with 40 endpoints and
+reconcile the reason buckets against `omitted`.
+
+`self` is a credential-free runtime endpoint projection, not the global policy's enabled bit. It states
+active/address and a bounded inactive reason plus user-only recovery guidance. TUI status shares that
+projection so an enabled policy cannot masquerade as a listening session. No automatic reopen or new
+control channel is introduced. `localSessions` reuses the existing bounded read-only `readLocalAgents`
+reader, projects only other same-project live lease holders, and preserves inventory omissions/limits.
+Lease/PID is unauthenticated diagnostic data, never a send target; `not-discovered` does not assert the
+reason an endpoint is absent. Older/non-registering processes remain outside the inventory. Tests use
+real child processes and lease files, including a living child with a retired endpoint, and verify
+own/foreign lease exclusion, global-enabled/local-inactive status, zero inbox work, and unchanged leases.
+The canonical project and inventory key are captured before asynchronous reads, so a retargeted project
+alias cannot substitute another project's lease holders. If endpoint inspection fails, the runtime
+returns an explicit unavailable state and unknown counts (`null`), retaining its self/lease diagnostics
+without exposing private exceptions or weakening send authorization. A final self filter fences an
+incarnation published during probe waits; the existing send-time self guard remains.
+
 ### Authority and bounded automation
 
 Peer tools cannot choose trust, origin, chain ID, hop, budget or read-only ceiling. Same-project

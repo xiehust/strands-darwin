@@ -37,13 +37,26 @@ hub 身份（`hub-node.json`）以及钉住/屏蔽记录（`hub-state.json`）�
 享有同样的保护。只有当项目有网络 git `origin` 时，会话才会上线 hub；规范化后的远端
 （`host/owner/repo`，去掉凭据）就是跨机器的项目身份。
 
-`list` 返回 `{endpoints, omitted, uninspected, scanLimited, scope}`。`omitted` 统计已扫描但未返回的
-注册项（无效或过期、挑战失败、超过探测预算）；`uninspected` 是其中元数据有效、但因预算耗尽而未挑战的数量。
+独立 CLI 的 `list` 返回 `{state, endpoints, omitted, omissions, uninspected, scanLimited, scope}`。
+`omitted` 统计已扫描但未返回的注册项；`omissions` 分列自身（`self`）、注册文件或 socket 无效、不安全或缺失
+（`unusableRegistrationOrSocket`）、实时挑战失败（`challengeFailed`）及探测名额耗尽（`probeLimit`）。
+`uninspected` 是因探测名额耗尽而未挑战的子集。
 `scanLimited` 表示还有未扫描的目录项，其数量和存活状态均未知。地址为
 `{version:1, transport:"local", node:<UUID>, endpoint:<UUID>, project:<规范绝对根路径>, session:<id>}`。
 发送必须使用完整 endpoint UUID，不能用 PID、前缀或显示名称；每个新进程/runtime 都有新的 UUID 和凭证。
-主模型的 `peer_discover {}` 返回相同安全投影；`peer_send {target:<UUID>,text:<string>}`
-经过普通工具权限检查，不接受 chain 或 trust 参数。模型不能调用用户控制命令。
+`peer_discover {}` 和 TUI `/collaborate list` 在分配探测名额前排除当前 runtime 的端点，另以 `self` 报告
+本会话的端点状态，并通过 `localSessions` 列出同项目其他活跃租约持有者。租约和 PID 仅供诊断，不能作为
+认证身份或发送目标。`communication: "not-discovered"` 不等于协作关闭：端点可能已退役、不可用、版本不支持，
+也可能超出发现上限。租约清单复用只读 `/list-agents`；其遗漏和上限说明覆盖整个 HOME 扫描，旧版或不注册
+租约的进程仍不在清单内。`endpoints` 为空不表示没有其他 Darwin 在运行。
+若 runtime 无法读取端点存储，会返回 `state: "unavailable"`，未知扫描计数为 `null`，但仍报告 `self` 和
+独立可读的租约；租约通信状态为 `discovery-unavailable`，不冒充一次成功扫描后的空结果。
+
+全局 `enabled: true` 不证明某个会话正在监听。TUI `/collaborate status` 会另外报告
+`This endpoint: {active, address, reason?, userAction?}`。取消或最终失败退役端点后，需要用户在该窗口执行
+`/collaborate on` 才能恢复；同项目本机通信不需要 Hub，也不需要新增项目间授权。
+`peer_send {target:<UUID>,text:<string>}` 经过普通工具权限检查，不接受 chain 或 trust 参数。
+模型不能调用用户控制命令。
 TUI 忙碌时拒绝 send，但状态和信任管理命令仍可使用。`/agents` 与只读 `/list-agents` 保持原意。
 
 `~/.darwin/collaboration/` 的私有存储：

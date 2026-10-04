@@ -2,6 +2,7 @@
 import { LocalCollaboration } from '../../src/collaboration/local.js';
 import { discoverPeers } from '../../src/collaboration/local.js';
 import { policyCommand, requestCooperation } from '../../src/collaboration/storage.js';
+import { collaborationCommand } from '../../src/collaboration/command.js';
 const local = new LocalCollaboration(process.argv[2]!, process.argv[3]!);
 await local.start();
 process.send?.({ ready: local.address, problems: local.takeNotices() });
@@ -15,6 +16,8 @@ process.on('message', async (message: { id: number; op: string; target?: string;
     else if (message.op === 'policy') result = await policyCommand(message.args!);
     else if (message.op === 'request') result = await requestCooperation(local.project, message.project!);
     else if (message.op === 'list') result = await discoverPeers();
+    else if (message.op === 'discover') result = await local.discover();
+    else if (message.op === 'status') result = await collaborationCommand(local, 'status');
     else if (message.op === 'stop') { local.close('fixture shutdown'); result = local.takeNotices(); }
     else throw new Error('Unknown fixture operation');
     process.send?.({ id: message.id, result });

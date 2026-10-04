@@ -39,14 +39,29 @@ collaboration directory below and share its protections. A session publishes to 
 its project has a network git `origin`; that normalized remote (`host/owner/repo`, credentials
 stripped) is the cross-machine project identity.
 
-`list` returns `{endpoints, omitted, uninspected, scanLimited, scope}`. `omitted` counts scanned
-registrations not returned (invalid/stale, failed challenge, or over probe budget); `uninspected`
-is the subset with valid metadata not challenged because the probe budget was exhausted.
+Standalone `list` returns `{state, endpoints, omitted, omissions, uninspected, scanLimited, scope}`.
+`omitted` counts scanned registrations not returned; `omissions` breaks that total into `self`,
+`unusableRegistrationOrSocket` (invalid, unsafe or missing), `challengeFailed`, and `probeLimit`.
+`uninspected` is the probe-limit subset with valid metadata not challenged.
 `scanLimited` means further directory entries were not inspected; their count and liveness are unknown.
 Each address is
 `{version:1, transport:"local", node:<UUID>, endpoint:<UUID>, project:<canonical absolute root>, session:<id>}`.
 The endpoint UUID is the exact send target, never a PID/prefix/display label. A new process/runtime
-gets a new UUID and credential. `peer_discover {}` returns the same safe projection;
+gets a new UUID and credential. `peer_discover {}` and TUI `/collaborate list` exclude this runtime
+before reserving probe slots, add its credential-free endpoint state under `self`, and include other
+same-project live lease holders under `localSessions`. Lease/PID is diagnostic, never an authenticated
+send target. `communication: "not-discovered"` does not prove collaboration is off: the endpoint may be
+closed, unavailable, unsupported or outside discovery bounds. The lease inventory reuses `/list-agents`
+with its existing limits; its omissions and limits cover the whole HOME scan. Older/non-registering
+processes are still not tracked. Empty `endpoints` does not mean no other Darwin is running.
+If the runtime cannot inspect endpoint storage, it returns `state: "unavailable"` and unknown scan
+counts as `null`, while preserving `self` and independently readable leases. Their communication state
+is `discovery-unavailable`, not a claim that a successful scan found no listener.
+
+Global `enabled: true` is not proof that a session is listening. TUI `/collaborate status` reports
+`This endpoint: {active, address, reason?, userAction?}` separately from global policy. When a session's
+endpoint is retired by cancellation or final failure, only the user can restore it with `/collaborate on`
+in that window; same-project local communication needs no Hub or project-pair confirmation.
 `peer_send {target:<UUID>, text:<string>}` is parent-only, ordinary gated and has no chain/trust flag.
 The models cannot invoke user controls. The send TUI command is refused while busy; status and
 trust controls remain local. Neither command changes `/agents` or read-only `/list-agents`.

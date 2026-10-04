@@ -86,6 +86,18 @@ async function discoveryAndGrammar(): Promise<void> {
     for (let n = 0; n < 40; n++) { const local = new LocalCollaboration(home, `discovery-${n}`); await local.start(); assert(local.address); locals.push(local); }
     const capped = await discoverPeers();
     assert.equal(capped.endpoints.length, 32); assert.equal(capped.uninspected, 8); assert.equal(capped.omitted, 8); assert.equal(capped.scanLimited, false);
+    assert.deepEqual(capped.omissions, { self: 0, unusableRegistrationOrSocket: 0, challengeFailed: 0, probeLimit: 8 });
+    const requester = locals[0]!;
+    const scoped = await requester.discover();
+    assert.equal(scoped.endpoints.length, 32, 'self cannot consume one of the 32 peer slots');
+    assert(!scoped.endpoints.some(endpoint => endpoint.endpoint === requester.address!.endpoint));
+    assert.equal(scoped.self.active, true); assert.deepEqual(scoped.self.address, requester.address);
+    assert(scoped.omissions);
+    assert.deepEqual(scoped.omissions, { self: 1, unusableRegistrationOrSocket: 0, challengeFailed: 0, probeLimit: 7 });
+    assert.equal(scoped.omitted, Object.values(scoped.omissions).reduce((sum, value) => sum + value, 0));
+    assert.equal(scoped.uninspected, scoped.omissions.probeLimit);
+    assert.equal(scoped.localSessions.state, 'missing', 'no invented lease holders when the session store is absent');
+    assert.deepEqual(scoped.localSessions.rows, []);
     const ordered: string[] = [];
     const dir = opendirSync(store);
     try { for (let entry = dir.readSync(); entry; entry = dir.readSync()) if (/^[a-f0-9-]{36}\.json$/.test(entry.name)) ordered.push(entry.name); }
@@ -104,6 +116,7 @@ async function discoveryAndGrammar(): Promise<void> {
     assert.equal(expected.length, 8);
     assert.deepEqual(result.endpoints.map(p => p.endpoint), expected);
     assert.equal(result.omitted, 32); assert.equal(result.uninspected, 0); assert.equal(result.scanLimited, false);
+    assert.deepEqual(result.omissions, { self: 0, unusableRegistrationOrSocket: 32, challengeFailed: 0, probeLimit: 0 });
     assert.equal(stateHash(store), before, 'discovery neither deletes stale entries nor changes policy/registrations');
     const listing = launch(cli, ['collaborate', 'list'], home);
     try {
@@ -128,7 +141,10 @@ async function discoveryAndGrammar(): Promise<void> {
     const trap = net.createServer(socket => { probes++; socket.destroy(); });
     await new Promise<void>(resolve => trap.listen(socketPath(trapId), resolve)); chmodSync(socketPath(trapId), 0o600);
     try {
-      await discoverPeers(); assert(probes > 0, 'positive control: sentinel detects real challenge connections'); probes = 0;
+      const failedChallenge = await discoverPeers();
+      assert(probes > 0, 'positive control: sentinel detects real challenge connections'); probes = 0;
+      assert.equal(failedChallenge.omissions.challengeFailed, 1);
+      assert.equal(failedChallenge.omitted, Object.values(failedChallenge.omissions).reduce((sum, value) => sum + value, 0));
       const hash = stateHash(store);
       for (const args of malformed) {
         const result = await command(args);

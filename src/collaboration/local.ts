@@ -3,7 +3,8 @@ import { chmodSync, lstatSync, opendirSync, unlinkSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { z } from 'zod';
-import { collaborationDir } from '../paths.js';
+import { collaborationDir, projectKey } from '../paths.js';
+import { readLocalAgents } from '../list-agents.js';
 import { authorization, canonicalProject, checkStore, idSchema, readPolicy, readPrivate, requestCooperation, withPolicy, writePrivate } from './storage.js';
 import { addressSchema, authentic, CHAIN_TTL_MS, dropNoticeId, dropNoticeText, IO_TIMEOUT_MS, localEnvelopeSchema, MAX_AUTO_RESENDS, MAX_FRAME_BYTES, MAX_HOPS, MAX_QUEUE, MESSAGE_TTL_MS, queuedText, sign, type LocalEnvelope, type PeerAddress, type PeerChain, type PeerEnvelope, type PeerInput, type PeerTransport } from './protocol.js';
 import { isPublished } from './hub-store.js';
@@ -84,10 +85,11 @@ async function probe(record: Registration): Promise<void> {
   if (result !== 'live') throw new Error('Endpoint is not live');
 }
 
-/** Bounded metadata-only endpoint projection, separate from immutable lease discovery. */
-export async function discoverPeers(): Promise<{ endpoints: PeerAddress[]; omitted: number; uninspected: number; scanLimited: boolean; scope: string }> {
+/** Bounded authenticated endpoint projection; exclusion happens before probe slots are reserved. */
+export async function discoverPeers(excludeEndpoint?: string) {
   const dir = opendirSync(checkStore());
   const candidates: Registration[] = [];
+  const omissions = { self: 0, unusableRegistrationOrSocket: 0, challengeFailed: 0, probeLimit: 0 };
   let omitted = 0;
   let uninspected = 0;
   let scanLimited = false;
@@ -96,13 +98,14 @@ export async function discoverPeers(): Promise<{ endpoints: PeerAddress[]; omitt
       const entry = dir.readSync();
       if (!entry) break;
       if (/^[a-f0-9-]{36}\.json$/.test(entry.name)) {
-        try {
+        if (entry.name === `${excludeEndpoint}.json`) { omitted++; omissions.self++; }
+        else try {
           // Cheap private metadata/socket checks precede the expensive challenge
           // budget. Crash remnants must not hide current live endpoints.
           const record = registration(entry.name.slice(0, -5));
           if (candidates.length < 32) candidates.push(record);
-          else { omitted++; uninspected++; }
-        } catch { omitted++; }
+          else { omitted++; uninspected++; omissions.probeLimit++; }
+        } catch { omitted++; omissions.unusableRegistrationOrSocket++; }
       }
       if (n === 255) scanLimited = dir.readSync() !== null;
     }
@@ -112,10 +115,10 @@ export async function discoverPeers(): Promise<{ endpoints: PeerAddress[]; omitt
   for (let start = 0; start < candidates.length; start += 8) {
     await Promise.all(candidates.slice(start, start + 8).map(async record => {
       try { await probe(record); endpoints.push(record.address); }
-      catch { omitted++; }
+      catch { omitted++; omissions.challengeFailed++; }
     }));
   }
-  return { endpoints: endpoints.sort((a, b) => a.endpoint.localeCompare(b.endpoint)), omitted, uninspected, scanLimited, scope: 'Messaging-capable local endpoints only. Omitted counts scanned registrations not returned; uninspected counts metadata-valid candidates not challenged. scanLimited means further directory entries were not inspected (count unknown). /list-agents separately lists leases; a lease without an endpoint (including older Darwin) cannot receive messages. Discovery starts no model work.' };
+  return { state: 'readable' as const, endpoints: endpoints.sort((a, b) => a.endpoint.localeCompare(b.endpoint)), omitted, omissions, uninspected, scanLimited, scope: 'Authenticated local messaging endpoints only; the requesting runtime is excluded when supplied. Omitted is the sum of omissions: self, unusable registration/socket (invalid, unsafe or missing), failed live challenge, and probe limit. Uninspected is the probe-limit subset; scanLimited means further directory entries were not inspected (count unknown). Empty endpoints does not mean no other Darwin is running. Discovery starts no model work and performs no cleanup.' };
 }
 
 /** One parent session, never a daemon or SDK loop. Only drivers drain the inbox. */
@@ -146,6 +149,7 @@ export class LocalCollaboration implements PeerTransport {
   private accepting = false;
   private stopped = false;
   private generation = 0;
+  private inactiveReason = 'not started';
   private canonicalRoot: string | undefined;
   /** Cross-machine transport (hub/README.md); shares this session's inbox, ledger and caps. */
   readonly hub: HubTransport;
@@ -167,6 +171,17 @@ export class LocalCollaboration implements PeerTransport {
   get root(): string { return this.projectRoot; }
   get pending(): number { return this.inbox.length; }
   get active(): boolean { return this.accepting; }
+  /** Runtime state, not the global policy's enabled bit; contains no credential. */
+  get endpointStatus() {
+    return {
+      active: this.active,
+      address: this.address ?? null,
+      ...(!this.active ? {
+        reason: this.address ? 'admission closed' : this.inactiveReason,
+        userAction: 'User: /collaborate on in this session to publish a new local endpoint',
+      } : {}),
+    };
+  }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   takeNotices(): string[] { return this.notices.splice(0); }
   private changed(): void { for (const listener of this.listeners) { try { listener(); } catch { /* observer */ } } }
@@ -175,12 +190,13 @@ export class LocalCollaboration implements PeerTransport {
   async start(): Promise<void> {
     if (this.server) return;
     this.stopped = false;
+    this.inactiveReason = 'starting';
     const generation = ++this.generation;
     try {
       this.canonicalRoot = canonicalProject(this.projectRoot);
       const node = await withPolicy(state => state.node);
       if (this.stopped || generation !== this.generation) return;
-      if (!readPolicy().enabled) { this.notice('Collaboration is off. User: /collaborate on'); return; }
+      if (!readPolicy().enabled) { this.inactiveReason = 'collaboration off'; this.notice('Collaboration is off. User: /collaborate on'); return; }
       const record: Registration = { address: { version: 1, transport: 'local', node, endpoint: randomUUID(), project: this.project, session: this.session }, pid: process.pid, secret: randomBytes(32).toString('hex') };
       const file = socketPath(record.address.endpoint);
       const server = net.createServer(socket => {
@@ -223,6 +239,7 @@ export class LocalCollaboration implements PeerTransport {
    */
   close(reason: string): Promise<void> {
     this.generation++;
+    this.inactiveReason = reason.slice(0, 256);
     this.stopped = true; this.accepting = false;
     const hubClosed = this.hub.close();
     for (const timer of this.sweeps) clearTimeout(timer);
@@ -401,10 +418,40 @@ export class LocalCollaboration implements PeerTransport {
     if (this.inbox.length !== before) this.notice(`peer messages dropped: ${before - this.inbox.length} (${reason})`);
   }
 
-  /** peer_discover: the local projection unchanged, plus the bounded hub projection. */
-  async discover(): Promise<Awaited<ReturnType<typeof discoverPeers>> & { hub: Awaited<ReturnType<HubTransport['discover']>> }> {
-    const [local, hub] = await Promise.all([discoverPeers(), this.hub.discover()]);
-    return { ...local, hub };
+  /** Endpoints are authenticated send targets; lease holders are diagnostic only. */
+  async discover() {
+    const project = this.canonicalRoot ?? this.projectRoot;
+    const key = projectKey(project);
+    const [local, hub, inventory] = await Promise.all([
+      discoverPeers(this.address?.endpoint).catch(() => ({
+        state: 'unavailable' as const, endpoints: [], omitted: null, omissions: null, uninspected: null, scanLimited: null,
+        scope: 'Local endpoint inventory unavailable; inspection and omission counts are unknown. No credentials or private errors are returned. Lease holders and self state remain diagnostic only; no endpoint is authenticated by this failed scan.',
+      })),
+      this.hub.discover(), readLocalAgents(project, this.session),
+    ]);
+    const self = this.endpointStatus;
+    // User on/cancel may replace the incarnation while discovery awaits probes.
+    // Keep the final self projection out of targets too; send's guard is unchanged.
+    if (local.state === 'readable') {
+      const endpoints = local.endpoints.filter(endpoint => endpoint.endpoint !== self.address?.endpoint);
+      const excluded = local.endpoints.length - endpoints.length;
+      local.endpoints = endpoints; local.omitted += excluded; local.omissions.self += excluded;
+    }
+    const rows = inventory.rows.filter(row => row.projectKey === key && row.sessionId !== this.session).map(row => ({
+      session: row.sessionId, pid: row.pid, startedAt: row.startedAt,
+      communication: local.state === 'unavailable' ? 'discovery-unavailable'
+        : local.endpoints.some(endpoint => endpoint.project === project && endpoint.session === row.sessionId)
+          ? 'authenticated-endpoint' : 'not-discovered',
+    }));
+    return {
+      ...local,
+      self: { project: self.address?.project ?? project, session: this.session, ...self },
+      localSessions: {
+        project, rows, state: inventory.state, omissions: inventory.omissions, limits: inventory.limits,
+        scope: 'Other same-project live session lease holders from the bounded read-only /list-agents inventory. PID/lease is not authenticated identity or a send target. Not-discovered does not prove collaboration is off: an endpoint may be closed, unavailable, unsupported or outside discovery bounds. Ask the user to inspect /collaborate status in that session; /collaborate on republishes its endpoint. Inventory omissions/limits cover the whole HOME scan; older/non-registering processes are not tracked.',
+      },
+      hub,
+    };
   }
 
   private enqueue(envelope: PeerEnvelope, auth: string): string {

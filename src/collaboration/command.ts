@@ -35,7 +35,7 @@ export async function collaborationCommand(local: LocalCollaboration, text: stri
   if (command === 'off') local.close('collaboration off');
   if (command === 'on') { local.close('new endpoint requested'); await local.start(); }
   const hub = `${local.hub.state}${local.hub.reason ? ` (${local.hub.reason})` : ''}${local.hub.address ? ` endpoint ${local.hub.address.endpoint}` : ''}`;
-  return `${result}\nThis endpoint: ${JSON.stringify(local.address ?? null)}; queued: ${local.pending}\nHub: ${hub}\n${COLLABORATE_USAGE}`;
+  return `${result}\nThis endpoint: ${JSON.stringify(local.endpointStatus)}; queued: ${local.pending}\nHub: ${hub}\n${COLLABORATE_USAGE}`;
 }
 
 export async function runCollaborationCli(root: string, args: readonly string[]): Promise<void> {
