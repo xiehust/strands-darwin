@@ -56,6 +56,11 @@ assert(
     ' · 12s · ↑1.2k ↓318 tokens · throttled, retry 3/6 in 12s',
 );
 assert(
+  'server failures are named honestly without exposing provider prose or adding a row',
+  busySuffix(12_000, undefined, { ...waiting(1, 6, 4_000), kind: 'server-error' }, NOW) ===
+    ' · 12s · server error, retry 2/6 in 4s',
+);
+assert(
   'the reduced elapsed-only row carries the same phrase',
   busySuffix(12_000, undefined, waiting(1, 6, 4_000), NOW) === ' · 12s · throttled, retry 2/6 in 4s',
 );

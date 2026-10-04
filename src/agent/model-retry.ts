@@ -64,13 +64,15 @@ export interface RetryWaitState {
   readonly waitMs: number;
   /** Epoch milliseconds when the next attempt may start. */
   readonly until: number;
+  /** Missing on older callers' throttle fixtures; never inferred from provider prose. */
+  readonly kind?: 'throttled' | 'server-error';
   /** ≤ {@link RETRY_REASON_MAX_CODE_POINTS} code points, derived from the error name/message. */
   readonly reason: string;
 }
 
 /**
  * How the last turn's retry budget ended, when it ended badly (SER-067). `exhausted`:
- * every one of `attempts` calls was throttled and the last error propagated.
+ * every one of `attempts` calls failed retryably and the last error propagated.
  * `cancelled`: the wait before `attempt` (the attempt that was about to be made, out of
  * `maxAttempts`) was aborted by `cancel()`, so the turn ended with the previous attempt's
  * error and no further model call. Cleared when the next invocation begins.
@@ -118,7 +120,8 @@ export function retryNextAttempt(state: RetryWaitState): number {
  */
 export function describeRetryWait(state: RetryWaitState, nowMs: number): string {
   const remainingSeconds = Math.max(0, Math.ceil((state.until - nowMs) / 1000));
-  return `throttled, retry ${retryNextAttempt(state)}/${state.maxAttempts} in ${remainingSeconds}s`;
+  const label = state.kind === 'server-error' ? 'server error' : 'throttled';
+  return `${label}, retry ${retryNextAttempt(state)}/${state.maxAttempts} in ${remainingSeconds}s`;
 }
 
 /**
@@ -166,19 +169,45 @@ export function setModelRetryScheduleForTest(factory: (() => ModelRetrySchedule)
  * Anthropic/OpenAI 429s). The second clause covers Bedrock's *pre-stream* 429: the AWS
  * client's `ThrottlingException` is rethrown as-is by the Bedrock provider and wrapped
  * by `Model.streamAggregated` as a plain `ModelError` whose `cause` is that exception.
+ * Explicit provider server failures are retryable too: HTTP 500/502/503/504/529,
+ * or a status-less Responses stream `server_error`. No message substring matching:
+ * validation/auth failures, opaque errors and transport ambiguity stay fail-closed.
  * Overflow, output-token exhaustion and the stream-interruption `ModelError` owned by
  * `stream-resumption.ts` are never retried here, whatever their cause says.
  */
 export function isRetryableModelError(error: unknown): boolean {
-  if (error instanceof ModelThrottledError) return true;
-  if (!(error instanceof ModelError)) return false;
-  if (error instanceof ContextWindowOverflowError || error instanceof MaxTokensError) return false;
+  return modelRetryKind(error) !== undefined;
+}
+
+function modelRetryKind(error: unknown): RetryWaitState['kind'] {
+  if (!(error instanceof ModelError)) return undefined;
+  if (error instanceof ContextWindowOverflowError || error instanceof MaxTokensError) return undefined;
   // Guarded through an `unknown` alias: the type guard would otherwise narrow the
   // already-known `ModelError` to `never` on its false branch.
   const candidate: unknown = error;
-  if (isRetryableStreamInterruption(candidate)) return false;
+  if (isRetryableStreamInterruption(candidate)) return undefined;
+  if (error instanceof ModelThrottledError) return 'throttled';
   const cause: unknown = error.cause;
-  return cause instanceof Error && cause.name === 'ThrottlingException';
+  if (!(cause instanceof Error)) return undefined;
+  if (cause.name === 'ThrottlingException') return 'throttled';
+  // A concrete HTTP status takes precedence over a contradictory stream error code.
+  if ('status' in cause && cause.status !== undefined && cause.status !== null) {
+    return typeof cause.status === 'number' && [500, 502, 503, 504, 529].includes(cause.status) ? 'server-error' : undefined;
+  }
+  return 'code' in cause && cause.code === 'server_error' ? 'server-error' : undefined;
+}
+
+/** Public OpenAI/Anthropic error headers, not provider internals; seconds or HTTP date. */
+function providerRetryAfterMs(error: Error, nowMs: number): number {
+  const cause: unknown = error.cause;
+  if (!(cause instanceof Error) || !('headers' in cause) || !(cause.headers instanceof Headers)) return 0;
+  const millis = cause.headers.get('retry-after-ms')?.trim();
+  if (millis && Number.isFinite(Number(millis)) && Number(millis) >= 0) return Number(millis);
+  const value = cause.headers.get('retry-after')?.trim();
+  if (!value) return 0;
+  const seconds = Number(value);
+  const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - nowMs;
+  return Number.isFinite(delay) ? Math.max(0, delay) : 0;
 }
 
 /** `<name>: <message>` (the AWS cause's name for the pre-stream case), bounded in code points. */
@@ -277,16 +306,20 @@ export function installModelRetry(
     endWait(false);
     if (event.retry === true || event.error === undefined) return;
     if (event.agent.cancelSignal.aborted) return;
-    if (!isRetryableModelError(event.error)) return;
+    const kind = modelRetryKind(event.error);
+    if (kind === undefined) return;
     if (event.attemptCount >= schedule.maxAttempts) {
       outcome = Object.freeze({ kind: 'exhausted', attempts: event.attemptCount });
       return;
     }
 
     const now = Date.now();
+    const retryAfterMs = providerRetryAfterMs(event.error, now);
+    // Do not retry earlier than requested, or silently wait beyond our bounded schedule.
+    if (retryAfterMs > DEFAULT_MODEL_RETRY_MAX_MS) return;
     if (firstFailureAt === undefined) firstFailureAt = now;
     const waitMs = Math.max(
-      0,
+      retryAfterMs,
       schedule.backoff.nextDelay({
         attempt: event.attemptCount,
         elapsedMs: now - firstFailureAt,
@@ -299,6 +332,7 @@ export function installModelRetry(
       maxAttempts: schedule.maxAttempts,
       waitMs,
       until: now + waitMs,
+      kind,
       reason: retryReason(event.error),
     });
     current = state;

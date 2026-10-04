@@ -142,11 +142,13 @@ The installer splits the wait so it is visible and cancellable without touching 
 `AfterModelCallEvent` hook only *decides* — it acts when `event.error` is set and no hook already set
 `event.retry`, never once `event.agent.cancelSignal` is aborted, classifies through
 `isRetryableModelError` (`ModelThrottledError`, plus a `ModelError` whose `cause` is an `Error`
-named `ThrottlingException`; never `ContextWindowOverflowError`, `MaxTokensError`, the exact
-stream-interruption `ModelError` owned by `stream-resumption.ts`, or anything else), computes the
+named `ThrottlingException`, has HTTP status 500/502/503/504/529, or has a status-less Responses
+`server_error` code; never `ContextWindowOverflowError`, `MaxTokensError`, the exact
+stream-interruption `ModelError` owned by `stream-resumption.ts`, opaque/message-only errors,
+auth/validation failures, or ambiguous transport failures), computes the
 delay with the SDK's own exported `ExponentialBackoff` (6 attempts, 4 s base, 240 s cap, full jitter
 — the default's numbers, resetting per budget when `attemptCount === 1`), publishes one frozen
-`RetryWaitState` (`attempt`, `maxAttempts`, `waitMs`, `until`, `reason` ≤ 200 code points) and sets
+`RetryWaitState` (`attempt`, `maxAttempts`, `waitMs`, `until`, `kind`, `reason` ≤ 200 code points) and sets
 `event.retry = true` at once. So the failed event reaches `send()`'s consumer within milliseconds of
 the failure. The wait itself runs in an `InvokeModelStage` wrap middleware — the SDK's designed
 interception point around one model call — before `next()`: a timer racing the agent's
@@ -167,15 +169,25 @@ original error at the cap. No config key tunes this. The schedule's only seam is
 check: `spike/verify-model-retry.ts` (in `pnpm test`) — failures delivered before the wait, cancel
 settling in milliseconds with no further call, the Bedrock cause retried and another cause not,
 exactly `maxAttempts` calls at the cap with the failure recorded, the state accessor populated then
-cleared, and a recipe child behaving the same under `dispatches.cancel`.
+cleared, and a recipe child behaving the same under `dispatches.cancel`. Local HTTP/SSE checks
+also run the actual OpenAI Responses adapter against `response.failed` and `error` events carrying
+`server_error` (including the provider's “The server had an error while processing your request.
+Sorry about that!”), HTTP 503, permanent failures, exhaustion and cancellation. These retries
+stay inside the same SDK model-call budget, against retained history, not a driver-level replay
+of the user's prompt or completed tools. Partial failed text remains visible under direct
+streaming; it is not committed to SDK history. Public `Retry-After` seconds/HTTP dates (or
+OpenAI's higher-priority `Retry-After-Ms`) are a minimum delay; a requested wait above the
+production 240 s ceiling fails without retry rather than calling early or waiting unboundedly.
+No provider client or SDK loop is patched.
 
 **Rendering (SER-067) reads that state and adds no row, tick source or channel.** Every surface
 names the *attempt about to be made* (`retryNextAttempt`, `state.attempt + 1` of `maxAttempts`) —
 "retry 3/6" is the third call of six — and never the provider's `reason` on a live row. The TUI
 busy rows (`working…` hint and `thinking…`) append one phrase through the existing `busySuffix`
-(`src/tui/busy-suffix.ts`): ` · throttled, retry 3/6 in 12s`, seconds left from `until` against
-now rounded up and floored at 0, read on the spinner tick already there (`liveRetryWait`, a
-cannot-throw read like `liveSpend`); with no wait the suffix is byte-identical. Headless emits one
+(`src/tui/busy-suffix.ts`): ` · throttled, retry 3/6 in 12s` (or `server error` for a server failure),
+seconds left from `until` against now rounded up and floored at 0, read on the spinner tick
+already there (`liveRetryWait`, a cannot-throw read like `liveSpend`); with no wait the suffix
+is byte-identical. Headless emits one
 additive `model.retrying` event per wait (`attempt`, `maxAttempts`, `waitMs`, `reason` under the
 tool-field cap) where the failed `afterModelCallEvent` arrives, deduped on the frozen state object
 — the same object is readable on a repeated event and announced once — and text mode writes one
