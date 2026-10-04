@@ -252,7 +252,7 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-working-context.ts` ex
 
 ## SER-112 — Sensitive-read paths are matched as bash will see them: quote removal (`~/".ssh"/id_rsa`, `~/'.aws'/credentials`) and the `/proc/<pid>/root/` and `/proc/<pid>/cwd/` re-rooting aliases no longer let a whitelisted reader or `fileEditor view` reach a SER-071 path behind a `safe` verdict
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 151
 - Score: 13
 - Importance: 5
@@ -264,7 +264,11 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-working-context.ts` ex
 
 ### Implementation / acceptance evidence
 
-None yet.
+Accepted 2026-10-04 at `239cc3c06da94bb3dc660034b7628a6bafe26bdb` (`fix(permission): guard quoted paths and proc aliases`). Fresh developer child `session-20261004-093735129`; managed task `bg-faf57135-7aea-450a-8b7b-d63c878eed0e` exited 0, output drained, no retry/correction. Shared matcher strips embedded bash quotes/backslashes before expansion/normalization, re-roots leading proc root aliases and checks marked cwd tails without guessing their reached base; literal fileEditor syntax remains distinct. Risk, kind, un-ruleability, auto bypass, deny/plan order and child shared gate verified.
+
+Host inspected the sole child commit and explicit-SHA seven-file diff. Offline before/after probe reproduced the original safe verdicts and then proved 10 sensitive calls dangerous with no offered/matching rule, plus 6 ordinary reads with exact unchanged safe reasons. No sensitive file or proc environment read. Independent gate `bg-fa215680-e2c0-4cb6-b94f-1b6ef844a94f`: `pnpm tsx spike/verify-permission-modes.ts` (1025/0), `verify-permissions-command.ts` (42/0), `verify-deny-rules.ts` (95/0), `verify-permissions-test.ts` (83/0), `verify-cli-args.ts` (43/0), then `pnpm typecheck && pnpm test` (26 groups passed, 0 failed), `pnpm build && git diff --check && git status --short`, exit 0 clean; dist refreshed.
+
+Cwd rule: any normalized tail component naming a protected directory, fixed credential/policy basename, or `.env` variant is sensitive; bash variable/glob/brace segments conservatively match. Unmarked tails and bare cwd reads/searches retain their prior behavior. Decisions doc and permissions/reference EN/zh-CN state the rule and limits: persistent effective cwd, nonleading variable aliases, arbitrary symlinks, wrappers and quoted whitespace remain unresolved; `cwd/id_rsa` may miss when the unknown base is already `.ssh`. Not a sandbox. READMEs already state that boundary and needed no edit. Supervision recorded in iteration-log Batch 162.
 
 ### Notes / blockers / abandonment reason
 

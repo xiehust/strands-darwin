@@ -3396,3 +3396,23 @@ SER-105 `done`; batch **exhausted**, no unfinished directions. Push current bran
 | Total this direction | | **34** | **9388** | **1375482** | **213001** | **$0.7640** |
 
 Exact invocation records, model/pricing `global.openai.gpt-6.1-sol`. Bucket sums computed locally: 1,597,905 tokens; authoritative reported approximate cost totals summed independently (retry cost differs by $0.0001 from rounded component costs). No prior invocation spend inferred or counted. SER-111 independently accepted as done; SER-112 remains not-started and is next in the same origin batch.
+
+## Batch 162 — SER-112 quoted paths and proc aliases (2026-10-04)
+
+- Origin: [`research_2026-10-03.md`](research/research_2026-10-03.md), run `13:23:35Z`, SER-109 acceptance addendum; Priority151 Score13. Same unfinished batch, no fresh research. SER-111 closure at clean `4d5978da34e9d1b3c3c5bce46d608e6798b542ea` passed `pnpm typecheck && pnpm test` (26/0) and ancestor check for accepted `60b89b6` in `bg-355a9bda-1e2e-49fe-9ce7-7876e60f4d00` (exit0). Host then marked exactly SER-112 in-progress at clean `ef1b7e8a496a84ae091e8df14e83b170cdbcdc1b`.
+- Fresh developer session `session-20261004-093735129`, source CLI with `--yolo --context-offload`, no ceiling/compaction. Managed task `bg-faf57135-7aea-450a-8b7b-d63c878eed0e` exited0; output drained through `hasMore:false`. No correction, retry, descendant worker or Host implementation edit. Child owned matcher, tests, bilingual user docs and commit.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Shared sensitive matcher removes embedded bash quotes before expansion/normalization, re-roots proc root aliases, checks marked unknown-cwd tails while preserving literal fileEditor paths and gate invariants | `239cc3c06da94bb3dc660034b7628a6bafe26bdb` | `git log ef1b7e8..HEAD` contained only the child commit; explicit seven-file diff reviewed. Host before/after classification probes reproduced report bypasses then asserted 10 sensitive calls (risk/reason/flag and zero offered/matching rules) plus 6 unchanged safe calls. Gate `bg-fa215680-e2c0-4cb6-b94f-1b6ef844a94f`: permission-modes 1025/0, permissions-command 42/0, deny-rules 95/0, permissions-test 83/0, CLI-doc contract 43/0, `pnpm typecheck && pnpm test` (26/0), `pnpm build && git diff --check && git status --short`, exit0 clean, dist refreshed. |
+
+- Docs wrap-up: child synced `docs/architecture/load-bearing-decisions.md` SER-071/SER-112 and `docs/user-guide/permissions{,.zh-CN}.md` / `reference{,.zh-CN}.md`. Both READMEs remain accurate about the no-sandbox boundary; no edit or extra docs-sync commit. AGENTS.md unchanged at 32,753 bytes.
+- Cwd-tail rule: any normalized component matching a protected directory, fixed credential/policy basename or `.env` variant is sensitive; bash variables/globs/braces conservatively count. Unmarked tails and bare cwd reads/searches retain old reasons. Remaining documented gaps: persistent effective cwd, nonleading variable aliases, arbitrary symlinks, shell wrappers, quoted whitespace and `cwd/id_rsa` when the unknown base is already `.ssh`. No sensitive file/proc environment was read in child or Host verification; Host made no provider calls.
+
+| Child task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---:|
+| `bg-faf57135-7aea-450a-8b7b-d63c878eed0e` | exit0 | 56 | 21843 | 2237558 | 112434 | $0.7234 |
+
+Exact invocation record, model/pricing `global.openai.gpt-6.1-sol`; 2,371,891 tokens. Aggregate this resumed invocation including both SER-111 tasks: input90, output31231, cacheRead3613040, cacheWrite325435; 3,969,796 tokens, approximate USD total **$1.4874**, computed from authoritative per-task totals (rounded component residual $0.0001, not hidden). Earlier SER-109/SER-110/original SER-111 spend is not inferred or counted.
+
+SER-112 independently accepted as done. Origin batch exhausted: SER-109/110/111/112 all done; no direction gate-abandoned or reinterpreted. Final artifact verification: `git diff --check`, metadata-only validation of all eight routed pages (151 unique IDs/priorities, valid statuses, zero unfinished records), and `pnpm tsx spike/verify-skills.ts` (163/0) passed. Final closure requires one ordinary push and upstream-range verification; Host reports the actual result.
