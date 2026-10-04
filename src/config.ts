@@ -305,11 +305,9 @@ export interface SessionFields {
    */
   updateCheck?: boolean;
   /**
-   * Treat collaboration peers (local or hub) like the user for shell work: a
-   * peer-origin non-safe `bash` call goes through the ordinary mode/rules/prompt
-   * path (prompted in `default`, run in `yolo`) instead of the hard peer denial,
-   * and a local permission denial no longer pauses `peer_send`. Policy, config,
-   * AGENTS, `.darwin`/`.agents`, memory and collaboration protections, the
+   * Allow `peer_send` after a local permission denial. Peer shell work always
+   * takes the ordinary mode/rules/prompt path, regardless of this setting.
+   * Policy, config, AGENTS, `.darwin`/`.agents`, memory and collaboration protections, the
    * read-only sender ceiling and causal limits are unchanged. **Off by default**;
    * only `~/.darwin/config.json` can set it. For single-owner setups.
    */

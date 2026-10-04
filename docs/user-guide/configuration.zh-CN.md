@@ -90,7 +90,7 @@
 | `terminalTitle` | `true` | 把终端窗口/标签页标题设为 `darwin · <项目目录名> · <状态>`（状态为 `idle`/`working`/`waiting for approval`，有提示词排队时再加 ` · N queued`），仅在标题变化且 stdout 是 TTY 时写入；退出时恢复为项目目录名（仅交互式 TUI）；`false` 完全不写 |
 | `backgroundTaskWake` | `true` | `bash start` 后台任务结束时，把一条 `<task-notification>` 提示排入队列，作为独立回合唤醒代理（仅交互式 TUI）；`false` 只保留转录通知 |
 | `updateCheck` | `true` | 交互式 TUI 启动时向 npm 查询是否发布了更新的 `strands-darwin`（每 24 小时最多一次，结果缓存在 `~/.darwin/update-check.json`，超时 1.5 秒，失败时不提示）；有新版本时显示一条 info 提示和 `npm install -g strands-darwin@latest`，不会自动安装。`-p`、CLI 只读命令和开发检出目录从不检查。设为 `false` 或在环境中设置 `DARWIN_NO_UPDATE_CHECK=1` 时不发出任何请求 |
-| `trustPeers` | `false` | 在 shell 操作上把协作 peer（本机和 hub）当作你本人：peer 请求的非安全 `bash` 调用走普通的模式/规则/确认流程（`default` 下询问你，`yolo` 下直接执行），不再直接拒绝；本地拒绝后也不再暂停 `peer_send`。Peer 的记忆保存、策略/config/AGENTS/`.darwin`/`.agents` 写入、协作凭证以及 plan 发送者的只读限制仍受保护。仅适用于只有你自己拥有的机器——开启后，任何能注册 hub 节点的人都能请求 shell 操作，见[权限](permissions.zh-CN.md#本地协作不转交权限) |
+| `trustPeers` | `false` | 本地权限拒绝后不再暂停 `peer_send`。Peer 请求的 shell 操作始终走普通的模式/规则/分类器/确认流程，不受此设置影响。Peer 的记忆保存、策略/config/AGENTS/`.darwin`/`.agents` 写入、协作凭证以及 plan 发送者的只读限制仍受保护。仅适用于只有你自己拥有的机器，见[权限](permissions.zh-CN.md#本地协作不转交权限) |
 | `shellEnv` | — | `{ "passthrough": [...] }`：允许模型启动的 shell 继承的变量名（`NPM_TOKEN`）或带一个结尾 `*` 的前缀（`STRIPE_*`，大小写敏感），即使名字形似凭据——见 [Shell 环境变量](#shell-环境变量)。其他子键、非字符串条目、或 `*` 不在末尾都会导致启动失败，错误信息会指出 `shellEnv`。过滤本身没有关闭开关 |
 | `systemPrompt` | 内置值 | 替换基础 prompt，并优先于项目文件 |
 | `hooks` | — | 旧版内嵌后备配置；建议使用分层 `hooks/*.json` |

@@ -1105,22 +1105,22 @@ without that decision changing; do not relax the local rule to match it either. 
 rogue enrolled node instead: pins (a compromised hub cannot re-key a known node), a visible
 `node-enrolled` notice on every live session, the local `hub block` veto re-checked at admission,
 dequeue and pre-invoke, revocation that drops queued input, and — the decisive part — peer-origin
-work still passes the gate (unsafe bash, policy/config/AGENTS writes and memory saves denied even
-in yolo), so a rogue node can make a session read and answer, not act beyond that.
+work still passes the ordinary permission gate. Peer-origin shell calls are no longer denied
+solely for their origin: whoever can enroll a node can request shell work (prompted in `default`,
+classified in `auto`, denied in `plan`, run in `yolo`, with deny-rules and the sender ceiling
+still binding). Policy/config/AGENTS writes and memory saves remain denied even in yolo.
 
-Peer trust — the one opt-out. Two relaxations, both checked by `verify-peer-trust.ts`. First,
-read-only system-info commands (`uname`, `whoami`, `id`, `arch`, `nproc`, `uptime`, `lsb_release`,
-bare `hostname`; `hostname` with any argument stays unsafe because it can set the name) joined the
-static safe list, so "what OS are you" needs no relaxation at all. Second, user-only config
-`trustPeers` (default `false`, `~/.darwin/config.json` only, a session key that survives `/model`)
-lifts exactly the peer-origin non-safe-bash denial — the call then takes the ordinary
-deny-rule/plan/mode/allow/prompt path — and the local-denial `peer_send` latch. It exists because a
-single owner running several enrolled machines found the hard denial made every cross-machine
-request a dead end, including the reply saying so. It deliberately does not lift the peer-origin
-memory-save, policy/config/AGENTS/`.darwin`/`.agents`/`.mcp.json` write, collaboration-secret or
-`collaborate`-control denials, nor the read-only sender ceiling or causal budgets; with it on, the
-paragraph above no longer holds for shell work — whoever can enroll a node can ask for it (prompted
-in `default`, run in `yolo`). Do not turn it on by default or make it project-settable.
+Peer shell work and trust — checked by `verify-peer-trust.ts`. Read-only system-info commands
+(`uname`, `whoami`, `id`, `arch`, `nproc`, `uptime`, `lsb_release`, bare `hostname`; `hostname`
+with any argument stays unsafe because it can set the name) are on the static safe list.
+The user requested removal of the blanket peer-origin non-safe-bash denial after it blocked a
+release-status check. All peer shell calls now take the ordinary deny-rule/plan/mode/allow/
+classifier/prompt path, independently of `trustPeers`; this is not automatic permission to publish
+or bypass a local denial. User-only config `trustPeers` (default `false`, `~/.darwin/config.json`
+only, a session key that survives `/model`) now lifts only the local-denial `peer_send` latch.
+It deliberately does not lift the peer-origin memory-save, policy/config/AGENTS/`.darwin`/`.agents`/
+`.mcp.json` write, collaboration-secret or `collaborate`-control denials, nor the read-only sender
+ceiling or causal budgets. Do not turn it on by default or make it project-settable.
 
 Why the state lives in `~/.darwin/collaboration/` (`hub-node.json`, `hub-state.json`) and the
 controls are `collaborate hub …`: the gate's existing collaboration protections — sensitive read

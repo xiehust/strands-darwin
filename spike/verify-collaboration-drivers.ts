@@ -148,13 +148,17 @@ try {
     assert(!existsSync(path.join(root, 'peer-write-canary')));
     await tui.waitUntil(() => !tui.frame.includes('working…'), { settleMs: 150 });
     tui.submit('/mode yolo'); await tui.waitFor('mode: yolo', { settleMs: 100 });
+    mark = tui.mark(); await deliver(local, first.endpoint, 'shell write');
+    await waitFor(() => existsSync(path.join(root, 'peer-shell-canary')), 'peer-origin non-safe shell executes through the ordinary yolo gate');
+    await tui.waitUntil(() => !tui.frame.includes('working…'), { from: mark, settleMs: 150 });
+    assert.equal(readFileSync(path.join(root, 'peer-shell-canary'), 'utf8'), 'peer-shell');
     mark = tui.mark(); await deliver(local, first.endpoint, 'attack policy');
     await tui.waitFor('Peer/policy protection', { from: mark, settleMs: 100 });
     assert(!existsSync(path.join(home, '.darwin/collaboration/forged.json')));
     await tui.waitUntil(() => !tui.frame.includes('working…'), { settleMs: 150 });
     mark = tui.mark(); await deliver(local, first.endpoint, 'memory preference');
     await tui.waitFor('Peer/policy protection', { from: mark, settleMs: 100 });
-    assert(!(await readPromptHistory(root)).entries.some(text => [literal, 'plan write', 'attack policy', 'memory preference'].includes(text)));
+    assert(!(await readPromptHistory(root)).entries.some(text => [literal, 'plan write', 'shell write', 'attack policy', 'memory preference'].includes(text)));
     // A pending human permission owns the keyboard/turn; peers cannot answer it.
     await tui.waitUntil(() => !tui.frame.includes('working…'), { settleMs: 150 });
     tui.submit('/mode default'); await tui.waitFor('mode: default', { settleMs: 100 });

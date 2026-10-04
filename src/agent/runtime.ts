@@ -792,7 +792,6 @@ export class AgentRuntime {
       // adapter below is the only place the gate's object meets the record's shape.
       peerOrigin: () => collaboration.fromPeer,
       peerReadOnly: () => collaboration.peerReadOnly,
-      trustPeers: config.trustPeers === true,
       onDecision: (decision) => {
         if (decision.outcome.includes('denied') || decision.outcome === 'deny-rule') collaboration.permissionDenied();
         trajectoryAudit?.recordPermissionDecision(permissionDecisionEntry(decision));

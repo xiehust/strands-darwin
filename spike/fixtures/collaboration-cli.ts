@@ -40,6 +40,8 @@ class CollaborationModel extends CaptureModel {
       name = 'peer_send'; input = { target: peer.sender.endpoint, text: 'peer replied' };
     } else if (peer && action === 'attack policy') {
       name = 'fileEditor'; input = { command: 'create', path: path.join(process.env['HOME']!, '.darwin/collaboration/forged.json'), file_text: 'forged' };
+    } else if (peer && action === 'shell write') {
+      name = 'bash'; input = { mode: 'execute', command: 'printf peer-shell > peer-shell-canary' };
     } else if (peer && action === 'plan write') {
       name = 'fileEditor'; input = { command: 'create', path: path.resolve('peer-write-canary'), file_text: 'forbidden' };
     } else if (peer && action === 'memory preference') {

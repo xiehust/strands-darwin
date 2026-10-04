@@ -108,11 +108,13 @@ admission needs no cooperation approval; unknown project pairs produce a bounded
 and exact human confirmation command even under yolo/headless. The ordinary gate protects incoming
 tool work. Plan applies locally and propagates as a narrowing ceiling along the chain. Known
 collaboration policy/credential access and model-issued collaboration CLI are denied before rules
-or hooks. Peer-origin unsafe bash, policy/config/AGENTS paths and memory saves are denied; allowed
-ordinary file edits can still run outside plan. Denials latch peer sends until a genuine human
-turn, including across synthetic wakes. The same peer ID keeps its outgoing budget across the one
-existing stream-interruption continuation. No classifier decides whether an answer deserves another
-turn. Four reply hops, one outgoing/peer turn, two admissions/endpoint/chain and a five-minute chain
+or hooks. Peer-origin bash always takes the ordinary deny-rule/plan/mode/allow/classifier/prompt
+path; peer provenance alone never denies shell work. Policy/config/AGENTS paths and memory saves
+remain denied; allowed ordinary file edits can still run outside plan. With `trustPeers` off
+(the default), denials latch peer sends until a genuine human turn, including across synthetic
+wakes; the user-only `trustPeers` setting lifts only that send latch. The same peer ID keeps its
+outgoing budget across the one existing stream-interruption continuation. No classifier decides
+whether an answer deserves another turn. Four reply hops, one outgoing/peer turn, two admissions/endpoint/chain and a five-minute chain
 lifetime stop loops; queue, connection, frame and admission-rate caps bound floods.
 
 Queued lifetime and drop notice. Admission requires `sent` within 60 s (replay window); an admitted

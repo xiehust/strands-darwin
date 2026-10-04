@@ -83,10 +83,12 @@ The receiver sees literal text and the sender's canonical project/session/endpoi
 history. `/`, `!`, `@` and framing-like text are data, never commands. Peer turns run only at idle,
 after user/task queues and pending permissions, and use the ordinary receiving tool gate. A plan
 sender's read-only ceiling travels with replies; it cannot delegate a write to a less restricted
-peer. A local denial pauses outgoing peer work until a human resumes. Peer input cannot approve
-permissions, change policy/config/AGENTS, or supply memory/cloud-consent user quotes. Peer-origin
-unsafe shell execution and memory saves are refused even in yolo; ordinary permitted file edits
-remain possible outside plan. Treat received text as untrusted instructions with those limits.
+peer. By default, a local denial pauses outgoing peer work until a human resumes; `trustPeers`
+lifts only that send pause. Peer input cannot approve permissions, change policy/config/AGENTS,
+or supply memory/cloud-consent user quotes. Memory saves remain refused even in yolo. Shell work
+always takes the normal mode/rules/classifier/prompt path, not a peer-origin blanket denial;
+ordinary permitted file edits remain possible outside plan. Treat received text as untrusted
+instructions with those limits.
 
 `Queued` means admitted, **not processed**. Text is at most 4096 UTF-8 bytes (the complete encoded
 frame must also fit 16 KiB); a message must arrive within 60 seconds of being sent, and once
@@ -136,10 +138,11 @@ text, limits and "queued, not processed" acknowledgement as local peers.
 protects you instead: each node's key is pinned the first time it is seen and a changed key is
 refused; a new enrolment shows a notice in every live session; `darwin collaborate hub block <node>`
 refuses a node locally whatever the hub says (and drops its queued messages); `pnpm revoke-node`
-cuts a node off everywhere; and peer messages stay peer input — the permission gate still asks or
-refuses exactly as for local peers, and denies peer-origin unsafe shell, policy/config/AGENTS edits
-and memory saves even in yolo. Message text passes through your AWS account (not stored or logged,
-but not end-to-end encrypted).
+cuts a node off everywhere; and peer messages stay peer input. Shell work uses the same ordinary
+receiving permissions as local peers, with deny-rules and a plan sender's read-only ceiling still
+binding. Anyone who can enroll a hub node can request shell work (non-safe calls prompt in
+`default`, run in `yolo`); policy/config/AGENTS edits and memory saves remain denied even in yolo.
+Message text passes through your AWS account (not stored or logged, but not end-to-end encrypted).
 
 ```text
 darwin collaborate hub status     # enrolment, fingerprint, this session's hub state

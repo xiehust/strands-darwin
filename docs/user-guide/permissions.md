@@ -41,15 +41,17 @@ project sessions cooperate automatically; different projects require one human `
 for a symmetric durable pair. Models cannot confirm/revoke/disable it or read/write endpoint secrets.
 `~/.darwin/collaboration/` is sensitive policy; direct model access and model-issued collaboration CLI
 commands are denied before rules/hooks, even in yolo. Peer text never answers a permission prompt.
-Peer-origin policy/config/AGENTS changes, memory saves and unsafe shell execution are refused;
-ordinary file edits still use the recipient's gate. A plan sender's read-only ceiling follows its
-reply chain. Any local denial pauses peer sends until a new explicit human turn. This prevents a
-denied action from simply being forwarded; it is not a sandbox against arbitrary same-UID code.
+Peer-origin policy/config/AGENTS changes and memory saves are refused. Shell calls and ordinary
+file edits use the recipient's normal gate: shell work is prompted in `default`, classified in
+`auto`, denied in `plan`, and run in `yolo`, with deny-rules still binding. Peer origin alone is
+not a shell denial. Anyone who can enroll a hub node can request shell work under those rules.
+A plan sender's read-only ceiling follows its reply chain. By default, any local denial pauses
+peer sends until a new explicit human turn. This prevents a denied action from simply being
+forwarded; it is not a sandbox against arbitrary same-UID code.
 Read-only system-info commands (`uname`, `whoami`, `id`, `arch`, `nproc`, `uptime`,
-`lsb_release`, bare `hostname`) are on the safe list, so a peer can ask what a machine is without
-any of this relaxing. On machines you alone own, config `trustPeers: true` lifts exactly two of
-these rules: peer shell work is prompted (or run in yolo) like yours, and a denial no longer pauses
-peer sends; the policy, memory, secret and read-only-ceiling protections stay.
+`lsb_release`, bare `hostname`) are on the safe list. On machines you alone own, config
+`trustPeers: true` lifts only the denial-triggered send pause; the policy, memory, secret and
+read-only-ceiling protections stay.
 Use [the local collaboration workflow](sessions-and-state.md#collaborate-with-local-sessions)
 for status, pending confirmation, revocation and off. Cooperation grants neither cloud-memory consent
 nor permission to treat peer text as a user quote.

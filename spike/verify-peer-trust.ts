@@ -1,15 +1,10 @@
 /**
- * Peer trust — two narrow relaxations of the collaboration peer gate.
- *
- * 1. Read-only system-info commands (`uname`, `whoami`, `id`, `arch`, `nproc`,
- *    `uptime`, `lsb_release`, bare `hostname`) are on the static safe-command
- *    list, so a peer asking "what OS are you" is answered without any policy
- *    change. `hostname` with an argument can set the host name and stays unsafe.
- * 2. User-only config `trustPeers` (off by default): peer-origin non-safe bash
- *    goes through the ordinary mode/rules/prompt path instead of the hard peer
- *    denial, and a local denial no longer pauses `peer_send`. Everything else the
- *    peer gate protects — memory saves, AGENTS/.darwin/.agents/.mcp.json writes,
- *    collaboration secrets, the read-only sender ceiling — is unchanged.
+ * Peer shell work always takes the ordinary mode/rules/classifier/prompt path.
+ * Read-only system-info commands stay on the static safe list; non-safe shell
+ * calls are not denied solely for peer origin, including before Pre hooks.
+ * User-only config `trustPeers` (off by default) only lifts the local-denial
+ * `peer_send` latch. Memory saves, AGENTS/.darwin/.agents/.mcp.json paths,
+ * collaboration secrets/controls and the read-only sender ceiling stay protected.
  *
  * Free suite: no model call, no network (real Unix-socket endpoint for the latch).
  * Run: pnpm tsx spike/verify-peer-trust.ts
@@ -20,7 +15,7 @@ import path from 'node:path';
 
 import type { BeforeToolCallEvent } from '@strands-agents/sdk';
 
-import { PermissionGate, assessRisk, classify, type ApprovalMode, type AssessedPermissionRequest } from '../src/agent/permission.js';
+import { PermissionGate, assessRisk, classify, type ApprovalMode, type AssessedPermissionRequest, type PermissionGateOptions } from '../src/agent/permission.js';
 import { LocalCollaboration } from '../src/collaboration/local.js';
 import { ConfigError, configPath, loadConfig, withModelChoice } from '../src/config.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
@@ -37,7 +32,7 @@ function fakeEvent(name: string, input: unknown): BeforeToolCallEvent {
   } as unknown as BeforeToolCallEvent;
 }
 
-function makeGate(mode: ApprovalMode, trustPeers: boolean, readOnly = false): { gate: PermissionGate; asked: AssessedPermissionRequest[] } {
+function makeGate(mode: ApprovalMode, readOnly = false, overrides: Partial<PermissionGateOptions> = {}): { gate: PermissionGate; asked: AssessedPermissionRequest[] } {
   const asked: AssessedPermissionRequest[] = [];
   const gate = new PermissionGate({
     mode,
@@ -46,7 +41,7 @@ function makeGate(mode: ApprovalMode, trustPeers: boolean, readOnly = false): { 
     classifier: async () => ({ safe: false, reason: 'test classifier never clears' }),
     peerOrigin: () => true,
     peerReadOnly: () => readOnly,
-    trustPeers,
+    ...overrides,
   });
   return { gate, asked };
 }
@@ -64,31 +59,57 @@ function safeList(): void {
   }
 }
 
-async function gateWithoutTrust(): Promise<void> {
-  header('trustPeers off (default) — the hard peer denial is unchanged');
-  const { gate, asked } = makeGate('yolo', false);
-  assert('peer `uname -a` now proceeds (safe list), even with no trust', (await gate.beforeToolCall(fakeEvent('bash', { command: 'uname -a' }))).type === 'proceed');
-  assert('peer non-safe bash is still denied in yolo', isPeerDenial(await gate.beforeToolCall(fakeEvent('bash', { command: 'touch x' }))));
-  assert('…and the user was never asked', asked.length === 0);
+async function ordinaryShell(): Promise<void> {
+  header('peer shell — the ordinary permission path, without a trust opt-in');
+  const shell = () => fakeEvent('bash', { mode: 'execute', command: 'curl https://example.com' });
+  const yolo = makeGate('yolo');
+  assert('peer safe shell proceeds', (await yolo.gate.beforeToolCall(fakeEvent('bash', { command: 'uname -a' }))).type === 'proceed');
+  assert('peer non-safe shell is not denied before Pre hooks', yolo.gate.guardBeforeHooks(shell()) === undefined);
+  assert('peer non-safe shell proceeds in yolo without prompting', (await yolo.gate.beforeToolCall(shell())).type === 'proceed' && yolo.asked.length === 0);
+
+  const prompted = makeGate('default');
+  const action = await prompted.gate.beforeToolCall(shell());
+  assert('default mode prompts the local user', action.type === 'proceed' && prompted.asked.length === 1);
+  const refused = makeGate('default', false, { ask: async () => ({ allowed: false }) });
+  const refusal = await refused.gate.beforeToolCall(shell());
+  assert('the user can still refuse peer shell work', refusal.type === 'deny' && refusal.reason.includes('The user denied permission') && !isPeerDenial(refusal));
+
+  const auto = makeGate('auto');
+  assert('auto escalates a classifier refusal to the local user', (await auto.gate.beforeToolCall(shell())).type === 'proceed' && auto.asked.length === 1);
+  let classified = 0;
+  const cleared = makeGate('auto', false, { classifier: async () => { classified++; return { safe: true, reason: 'test classifier clears' }; } });
+  assert('auto can clear peer shell work without prompting', (await cleared.gate.beforeToolCall(shell())).type === 'proceed' && classified === 1 && cleared.asked.length === 0);
+
+  const allowed = makeGate('default', false, { allowRules: ['bash:curl *'] });
+  assert('an ordinary allow-rule clears peer shell work', (await allowed.gate.beforeToolCall(shell())).type === 'proceed' && allowed.asked.length === 0);
+  for (const mode of ['default', 'auto', 'plan', 'yolo'] as const) {
+    const denied = makeGate(mode, false, { allowRules: ['bash'], denyRules: ['bash:curl *'] });
+    const early = denied.gate.guardBeforeHooks(shell());
+    const decision = await denied.gate.beforeToolCall(shell());
+    assert(`${mode}: deny-rules still win before hooks and ordinary approval`, early?.type === 'deny' && decision.type === 'deny' && decision.reason.includes('blocked by deny rule') && denied.asked.length === 0);
+  }
+  const plan = makeGate('plan');
+  const blocked = await plan.gate.beforeToolCall(shell());
+  assert('plan still denies peer shell execution before prompting', blocked.type === 'deny' && blocked.reason.includes('Plan mode blocked') && plan.asked.length === 0);
+
+  const child = makeGate('default', false, { dispatchSource: () => ({ label: 'general#peer-child', dispatchId: 'peer-child', agentName: 'general' }) });
+  assert('a child of a peer turn also takes the ordinary permission path', (await child.gate.beforeToolCall(shell())).type === 'proceed' && child.asked[0]?.source.kind === 'child');
 }
 
-async function gateWithTrust(): Promise<void> {
-  header('trustPeers on — peer shell work takes the ordinary path');
-  const yolo = makeGate('yolo', true);
-  assert('peer non-safe bash proceeds in yolo', (await yolo.gate.beforeToolCall(fakeEvent('bash', { command: 'touch x' }))).type === 'proceed');
-
-  const prompted = makeGate('default', true);
-  const action = await prompted.gate.beforeToolCall(fakeEvent('bash', { command: 'curl https://example.com' }));
-  assert('in default mode the local user is prompted instead', action.type === 'proceed' && prompted.asked.length === 1);
-
-  header('trustPeers on — every other peer protection stays');
-  const g = yolo.gate;
+async function peerProtections(): Promise<void> {
+  header('peer shell relaxation — every other peer protection stays');
+  const g = makeGate('yolo', false, { allowRules: ['bash', 'fileEditor', 'memory_save'] }).gate;
   assert('peer memory_save is still denied', isPeerDenial(await g.beforeToolCall(fakeEvent('memory_save', { key: 'a:b', category: 'decision', title: 't', fact: 'f' }))));
-  assert('peer AGENTS.md write is still denied', isPeerDenial(await g.beforeToolCall(fakeEvent('fileEditor', { command: 'create', path: 'AGENTS.md', file_text: 'x' }))));
-  assert('peer .darwin write is still denied', isPeerDenial(await g.beforeToolCall(fakeEvent('fileEditor', { command: 'create', path: '.darwin/mcp.json', file_text: '{}' }))));
-  assert('collaboration secrets via bash are still denied', isPeerDenial(await g.beforeToolCall(fakeEvent('bash', { command: `cat ${HOME}/.darwin/collaboration/hub-node.json` }))));
-  assert('`darwin collaborate` controls via bash are still denied', isPeerDenial(await g.beforeToolCall(fakeEvent('bash', { command: 'darwin collaborate hub block x' }))));
-  const ceiling = await makeGate('yolo', true, true).gate.beforeToolCall(fakeEvent('bash', { command: 'touch x' }));
+  for (const file of ['AGENTS.md', '.darwin/mcp.json', '.agents/hooks.json', '.mcp.json']) {
+    assert(`peer ${file} write is still denied even with broad allow-rules`, isPeerDenial(await g.beforeToolCall(fakeEvent('fileEditor', { command: 'create', path: file, file_text: 'x' }))));
+  }
+  const secret = fakeEvent('bash', { command: `cat ${HOME}/.darwin/collaboration/hub-node.json` });
+  assert('collaboration secrets via bash are still denied before hooks', isPeerDenial(g.guardBeforeHooks(secret)!));
+  assert('collaboration secrets via bash are still denied', isPeerDenial(await g.beforeToolCall(secret)));
+  const controls = await g.beforeToolCall(fakeEvent('bash', { command: 'darwin collaborate hub block x' }));
+  assert('`darwin collaborate` controls via bash are still denied', isPeerDenial(controls));
+  assert('the remaining denial no longer claims peer shell needs a human turn', controls.type === 'deny' && !controls.reason.includes('fresh human turn'));
+  const ceiling = await makeGate('yolo', true).gate.beforeToolCall(fakeEvent('bash', { command: 'touch x' }));
   assert('the read-only sender ceiling still blocks writes', ceiling.type === 'deny' && ceiling.reason.includes('Peer sender read-only ceiling'));
 }
 
@@ -128,8 +149,8 @@ async function configField(): Promise<void> {
 async function main(): Promise<void> {
   await mkdir(ROOT, { recursive: true });
   safeList();
-  await gateWithoutTrust();
-  await gateWithTrust();
+  await ordinaryShell();
+  await peerProtections();
   await sendLatch();
   await configField();
   await rm(ROOT, { recursive: true, force: true });
