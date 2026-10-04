@@ -252,7 +252,7 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-working-context.ts` ex
 
 ## SER-112 — Sensitive-read paths are matched as bash will see them: quote removal (`~/".ssh"/id_rsa`, `~/'.aws'/credentials`) and the `/proc/<pid>/root/` and `/proc/<pid>/cwd/` re-rooting aliases no longer let a whitelisted reader or `fileEditor view` reach a SER-071 path behind a `safe` verdict
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 151
 - Score: 13
 - Importance: 5
