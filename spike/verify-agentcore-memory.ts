@@ -31,7 +31,7 @@ import { configPath, loadConfig, permissionRulesPath } from '../src/config.js';
 import { classify } from '../src/agent/permission.js';
 import { TrajectoryRecorder } from '../src/trajectory/writer.js';
 import { isSensitiveDarwinPath } from '../src/paths.js';
-import { applyWorkingContext } from '../src/agent/working-context.js';
+import { applyWorkingContext, formatShellEnvContextLine } from '../src/agent/working-context.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 const home = ownPrivateHome('agentcore'); const root = path.join(home, 'project'); await mkdir(root);
 const fixture = fileURLToPath(new URL('./agentcore-http-fixture.cjs', import.meta.url));
@@ -369,15 +369,31 @@ assert('both cloud tools excluded from actual child catalogue', !childTools.some
 const successor = await allowed.startNewSession(); assert('clear rebuilds cloud scope and session', successor.info.sessionId !== allowed.info.sessionId && successor.cloudMemoryStatus.includes('enabled')); await successor.shutdown();
 await configure({ ...config, preferences: true, upload: 'off' }); await control({ records: [record('preference')] });
 const preflight = await runtime(new ScriptedModel());
-await preflight.manageCloudMemory(`inspect ${id}`); await preflight.manageCloudMemory(`confirm ${id} ${hash} global`);
-const beforeStartup = (await calls()).length; await drain(preflight);
 const liveAgent = (preflight as unknown as { agent: Agent }).agent;
+// SER-111: use the credential marker already seeded above, never a real secret.
+const expectedShellEnvLine = formatShellEnvContextLine(preflight.info.shellEnv.withheld);
+assert('control: runtime withheld the synthetic AWS secret by name',
+  preflight.info.shellEnv.withheld.includes('AWS_SECRET_ACCESS_KEY') && expectedShellEnvLine !== undefined);
+function assertShellEnvContext(label: string, agent: Agent): void {
+  const blocks = Array.isArray(agent.systemPrompt) ? agent.systemPrompt : [];
+  const text = blocks.flatMap(block => block instanceof TextBlock ? [block.text] : []).join('\n');
+  const lines = text.split('\n').filter(line => line.startsWith('- shell environment:'));
+  assert(`${label}: exactly one captured shell-env line, never the synthetic value`,
+    lines.length === 1 && lines[0] === expectedShellEnvLine && !text.includes('synthetic-not-a-secret'));
+}
+assertShellEnvContext('runtime creation', liveAgent);
+await preflight.manageCloudMemory(`inspect ${id}`); await preflight.manageCloudMemory(`confirm ${id} ${hash} global`);
+assertShellEnvContext('cloud preference adoption refresh', liveAgent);
+const beforeStartup = (await calls()).length; await drain(preflight);
 assert('startup preference retrieval happens once before invocation', (await calls()).length === beforeStartup + 1);
 assert('real runtime prompt carries bounded adopted context', JSON.stringify(liveAgent.systemPrompt).includes('cloud-preference-data'));
+assertShellEnvContext('pre-model cloud preference refresh', liveAgent);
 await preflight.manageCloudMemory(`forget ${id}`);
 assert('forget removes live prompt context immediately', !JSON.stringify(liveAgent.systemPrompt).includes('cloud-preference-data'));
+assertShellEnvContext('cloud preference removal refresh', liveAgent);
 const checkpoint = (await preflight.listRewindCheckpoints()).checkpoints[0]!;
 const rewound = await preflight.startRewind(checkpoint);
+assertShellEnvContext('/rewind successor through create()', (rewound as unknown as { agent: Agent }).agent);
 assert('rewind has fresh cloud controller and no stale adopted block', rewound.info.sessionId !== preflight.info.sessionId && !JSON.stringify((rewound as unknown as { agent: Agent }).agent.systemPrompt).includes('cloud-preference-data')); await rewound.shutdown();
 await control({ mode: 'hang' }); const cancelModel = new ScriptedModel(); const cancelling = await runtime(cancelModel);
 const running = drain(cancelling); setTimeout(() => cancelling.cancel(), 50); await rejects('startup cancellation prevents model invocation', () => running);

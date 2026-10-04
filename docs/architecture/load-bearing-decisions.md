@@ -1207,8 +1207,10 @@ names, one bounded `- shell environment:` line follows the tool line (SER-111): 
 startup notice's own `formatWithheldNames` bound (`MAX_NOTICE_NAMES` + `…`), never a value,
 "unset in your bash tool, foreground and background", and only the user restores one via
 `shellEnv.passthrough`. It is built from `RuntimeInfo.shellEnv.withheld` (once per `create()`, so it is
-stable within a session and covers `/clear`/`/rewind` successors). Nothing withheld is
-byte-identical; children build no working context, so — as with the tool line — they get none.
+stable within a session and covers `/clear`/`/rewind` successors). Cloud-preference refresh
+also passes the runtime's captured withheld names when rebuilding the fragment, without
+re-scrubbing the environment. Nothing withheld is byte-identical; children build no working
+context, so — as with the tool line — they get none.
 Current
 snapshots carry separate base/catalogue/context blocks plus the final cache point; pre-migration
 `[TextBlock, CachePointBlock]` snapshots are recognized, their stale Darwin catalogue is dropped,

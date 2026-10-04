@@ -425,8 +425,8 @@ async function seamContracts(): Promise<void> {
       foreground.output.trim() === '[]' && foreground.exitCode === 0);
     const kept = await scrubbedTool.invoke({ mode: 'execute', command: 'printf "%s|%s" "$HOME" "${PATH:+set}"' }, scrubbedContext) as BashOutput;
     assert('…while HOME and PATH reach the same shell', kept.output === `${process.env['HOME']}|set`);
-    const environ = await scrubbedTool.invoke({ mode: 'execute', command: 'tr "\\0" "\\n" < /proc/self/environ | grep -c ANTHROPIC_API_KEY || true' }, scrubbedContext) as BashOutput;
-    assert('/proc/self/environ of the shell\u2019s children has no such name either', environ.output.trim() === '0');
+    const child = await scrubbedTool.invoke({ mode: 'execute', command: 'bash -c \'test -z "${ANTHROPIC_API_KEY+x}" && printf absent\'' }, scrubbedContext) as BashOutput;
+    assert('the shell\u2019s child inherits no synthetic probe name either', child.exitCode === 0 && child.output === 'absent');
 
     const unscrubbed = await plainTool.invoke({ mode: 'execute', command: PROBE }, plainContext) as BashOutput;
     assert('control: a tool built without the env option still inherits process.env (byte-identical to before)',

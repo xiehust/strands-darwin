@@ -192,7 +192,7 @@ async function composition(): Promise<void> {
   const loaded = await loadProjectInstructions(root);
   const composed = composeSystemPrompt(DEFAULT_SYSTEM_PROMPT, loaded.instructions);
   const withSkills = new TextBlock('<available_skills>\n  <skill><name>x</name><description>y</description></skill>\n</available_skills>');
-  const { fragment } = await buildWorkingContext(root, FIXED_NOW);
+  const { fragment } = await buildWorkingContext(root, FIXED_NOW, { shellEnvWithheld: ['NPM_TOKEN'] });
 
   const holder: SystemPromptHolder = { systemPrompt: [new TextBlock(composed), withSkills] };
   assert('the fragment converts the known prompt to explicit blocks', applyWorkingContext(holder, fragment));
@@ -217,6 +217,8 @@ async function composition(): Promise<void> {
   assert('the cache point is added to explicit prompt blocks', placed && blocks.length === 4);
   assert('the working context stays immediately before the cache point', blocks[2] instanceof TextBlock && (blocks[2] as TextBlock).text.trimEnd().endsWith(`</${WORKING_CONTEXT_TAG}>`));
   assert('the cache point is last', blocks[3] instanceof CachePointBlock);
+  assert('the withheld-name line stays inside the cached working context',
+    blocks[2] instanceof TextBlock && (blocks[2] as TextBlock).text.includes(formatShellEnvContextLine(['NPM_TOKEN'])!));
 
   // Order broken by something other than darwin: the text boundary is no longer
   // knowable, so refuse rather than guess.
