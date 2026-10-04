@@ -502,12 +502,15 @@ class StopOnlyModel extends Model<BaseModelConfig> {
 class ThrottlingModel extends Model<BaseModelConfig> {
   private config: BaseModelConfig = { modelId: 'fake.throttle', contextWindowLimit: 200_000 };
   calls = 0;
-  constructor(private readonly failures: number) { super(); }
+  constructor(private readonly failures: number, private readonly serverError = false) { super(); }
   override updateConfig(config: BaseModelConfig): void { this.config = { ...this.config, ...config }; }
   override getConfig(): BaseModelConfig { return this.config; }
   override async *stream(_messages: Message[], _options?: StreamOptions): AsyncIterable<ModelStreamEvent> {
     this.calls += 1;
-    if (this.calls <= this.failures) throw new ModelThrottledError('Rate exceeded');
+    if (this.calls <= this.failures) {
+      if (this.serverError) throw Object.assign(new Error('Temporary provider failure'), { code: 'server_error' });
+      throw new ModelThrottledError('Rate exceeded');
+    }
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
     yield { type: 'modelContentBlockStartEvent' };
     yield { type: 'modelContentBlockDeltaEvent', delta: { type: 'textDelta', text: 'after throttling' } };
@@ -553,6 +556,23 @@ async function modelRetryProtocols(): Promise<void> {
   nodeAssert.ok(answerIndex > lastRetryIndex, 'both waits are announced before the retried attempt answers');
   nodeAssert.ok(retrying.every((record, index) => index === 0 || (record.sequence as number) > (retrying[index - 1]!.sequence as number)));
   assert('a real throttled Agent yields one bounded model.retrying per wait, in order, before the answer', true);
+
+  const serverModel = new ThrottlingModel(1, true);
+  const serverAgent = new Agent({ model: serverModel, printer: false, retryStrategy: null });
+  const serverRetry = installModelRetry(serverAgent, { maxAttempts: 6, backoff: new ConstantBackoff({ delayMs: 5 }) });
+  const serverOutput: string[] = [];
+  const serverResult = await runStructuredHeadlessTurn({
+    send: input => serverAgent.stream(input),
+    expandSlashCommand: async () => null,
+    retryWait: () => serverRetry.retryWait(),
+  }, 'go', new StructuredHeadlessWriter('stream-json', text => serverOutput.push(text)), () => 'summary');
+  const serverRecords = lines(serverOutput.join(''));
+  nodeAssert.equal(serverResult.reply, 'after throttling');
+  nodeAssert.equal(serverModel.calls, 2);
+  nodeAssert.equal(serverRecords.filter(record => record.type === 'model.retrying').length, 1);
+  nodeAssert.equal(serverRecords.filter(record => record.type === 'turn.failed').length, 0);
+  nodeAssert.match(String(serverRecords.find(record => record.type === 'model.retrying')?.reason), /Temporary provider failure/u);
+  assert('server retry reuses the headless wait event without an intermediate turn failure', true);
 
   // A double without the accessor (every pre-SER-067 caller) still runs and emits nothing new.
   const plainModel = new ThrottlingModel(1);

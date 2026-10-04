@@ -3,8 +3,9 @@
  * extension points, with the SDK's schedule, a failure the driver sees at once, and a
  * wait that `cancel()` ends without spending another model call.
  *
- * Every scenario drives the real `AgentRuntime` (or the real `SubagentTool` child
- * recipe) with a scripted `Model` subclass and no network. The schedule is shortened
+ * Scenarios drive the real `AgentRuntime` (or the real `SubagentTool` child recipe)
+ * with a scripted `Model`, or the actual OpenAI Responses adapter over localhost
+ * HTTP/SSE; no external network or model service calls. The schedule is shortened
  * through the module's test seam only; production keeps the SDK default numbers.
  *
  * What is measured, and why the bounds are what they are:
@@ -17,6 +18,7 @@
  *   about the provider boundary, not about events.
  */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -30,10 +32,14 @@ import {
   ModelError,
   ModelThrottledError,
   TextBlock,
+  tool,
   type AgentStreamEvent,
   type BaseModelConfig,
   type ModelStreamEvent,
 } from '@strands-agents/sdk';
+
+import { OpenAIModel } from '@strands-agents/sdk/models/openai';
+import { z } from 'zod';
 
 import {
   DEFAULT_MODEL_RETRY_BASE_MS,
@@ -68,9 +74,58 @@ const LONG_WAIT_MS = 5_000;
 const FAILURE_TO_EVENT_MS = 100;
 const CANCEL_SETTLE_MS = 500;
 
-type Step = 'throttle' | 'bedrock-throttle' | 'validation' | 'ok';
+type Step = 'throttle' | 'bedrock-throttle' | 'server-error' | 'validation' | 'ok';
 
 const BEDROCK_THROTTLE_MESSAGE = 'Too many requests, please wait before trying again.';
+const SERVER_ERROR_MESSAGE = 'The server had an error while processing your request. Sorry about that!';
+type SseEvent = { type?: string } & Record<string, unknown>;
+type ProviderReply = { status?: number; retryAfter?: string; retryAfterMs?: string; events?: SseEvent[] };
+const serverFailure = (type: 'response.failed' | 'error', code = 'server_error'): ProviderReply => ({
+  events: [{ type, ...(type === 'response.failed'
+    ? { response: { error: { code, message: SERVER_ERROR_MESSAGE } } }
+    : { code, message: SERVER_ERROR_MESSAGE }) }],
+});
+const responseCreated: SseEvent = { type: 'response.created', response: { id: 'resp_retry' } };
+const responseCompleted: SseEvent = { type: 'response.completed', response: {} };
+const recoveredReply: ProviderReply = { events: [responseCreated,
+  { type: 'response.output_text.delta', delta: 'recovered' }, responseCompleted] };
+
+/** Real localhost HTTP/SSE, official client and SDK adapter; no model service calls. */
+async function withResponses<T>(
+  script: ProviderReply[],
+  body: (model: OpenAIModel, requests: string[], callsAt: number[]) => Promise<T>,
+  api: 'responses' | 'chat' = 'responses',
+): Promise<T> {
+  const requests: string[] = [];
+  const callsAt: number[] = [];
+  const server = createServer(async (request, response) => {
+    const parts: Buffer[] = [];
+    for await (const part of request) parts.push(Buffer.from(part));
+    requests.push(Buffer.concat(parts).toString());
+    callsAt.push(Date.now());
+    const reply = script[Math.min(requests.length - 1, script.length - 1)]!;
+    response.writeHead(reply.status ?? 200, {
+      'content-type': reply.events ? 'text/event-stream' : 'application/json',
+      ...(reply.retryAfter === undefined ? {} : { 'retry-after': reply.retryAfter }),
+      ...(reply.retryAfterMs === undefined ? {} : { 'retry-after-ms': reply.retryAfterMs }),
+    });
+    response.end(reply.events
+      ? reply.events.map(event => `${event.type ? `event: ${event.type}\n` : ''}data: ${JSON.stringify(event)}\n\n`).join('')
+      : JSON.stringify({ error: { message: SERVER_ERROR_MESSAGE, code: 'server_error' } }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('HTTP fixture has no port');
+    const model = new OpenAIModel({
+      api, modelId: 'fixture.model-retry', apiKey: 'offline',
+      clientConfig: { baseURL: `http://127.0.0.1:${address.port}/v1`, maxRetries: 0 },
+    });
+    return await body(model, requests, callsAt);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+}
 
 /** Plays one scripted step per model call; the last step repeats when the script runs out. */
 class ScriptedModel extends Model<BaseModelConfig> {
@@ -94,9 +149,11 @@ class ScriptedModel extends Model<BaseModelConfig> {
       const error =
         step === 'throttle'
           ? new ModelThrottledError('Rate exceeded')
-          : Object.assign(new Error(step === 'bedrock-throttle' ? BEDROCK_THROTTLE_MESSAGE : 'Malformed input'), {
-              name: step === 'bedrock-throttle' ? 'ThrottlingException' : 'ValidationException',
-            });
+          : step === 'server-error'
+            ? Object.assign(new Error(SERVER_ERROR_MESSAGE), { code: 'server_error' })
+            : Object.assign(new Error(step === 'bedrock-throttle' ? BEDROCK_THROTTLE_MESSAGE : 'Malformed input'), {
+                name: step === 'bedrock-throttle' ? 'ThrottlingException' : 'ValidationException',
+              });
       this.thrown.push(error);
       this.failedAt.push(Date.now());
       throw error;
@@ -157,7 +214,7 @@ await writeFile(
   `${JSON.stringify({ provider: 'bedrock', model: 'fake.model-retry', region: 'us-west-2', contextOffload: false })}\n`,
 );
 
-async function withRuntime<T>(model: ScriptedModel, body: (runtime: AgentRuntime) => Promise<T>): Promise<T> {
+async function withRuntime<T>(model: Model, body: (runtime: AgentRuntime) => Promise<T>): Promise<T> {
   setRuntimeModelFactoryForTest(async () => model);
   const runtime = await AgentRuntime.create({
     projectRoot: root,
@@ -212,6 +269,21 @@ try {
     assert('a ModelError caused by an AWS ThrottlingException is retryable', isRetryableModelError(bedrock));
     assert('a ModelError with another cause is not', !isRetryableModelError(validation));
     assert('a ModelError without a cause is not', !isRetryableModelError(new ModelError('opaque')));
+    const providerError = (fields: Record<string, unknown>, message = SERVER_ERROR_MESSAGE): ModelError =>
+      new ModelError(message, { cause: Object.assign(new Error(message), fields) });
+    assert('explicit transient HTTP statuses are retryable',
+      [500, 502, 503, 504, 529].every(status => isRetryableModelError(providerError({ status }))));
+    assert('a status-less server_error code is retryable', isRetryableModelError(providerError({ code: 'server_error' })));
+    assert('permanent HTTP errors win over misleading server_error prose/code',
+      [400, 401, 403, 404, 422, 501, 505].every(status => !isRetryableModelError(providerError({ status, code: 'server_error' }))));
+    assert('message-only, malformed status, transport and unknown codes are not retryable',
+      !isRetryableModelError(new ModelError(SERVER_ERROR_MESSAGE)) &&
+      [{}, { status: '503', code: 'server_error' }, { code: 'ECONNRESET' }, { code: 'invalid_request_error' }]
+        .every(fields => !isRetryableModelError(providerError(fields))));
+    assert('server_error metadata never steals exact interruption/overflow/max-token handling',
+      !isRetryableModelError(providerError({ code: 'server_error' }, 'Stream ended without completing a message')) &&
+      !isRetryableModelError(Object.assign(new ContextWindowOverflowError('too long'), { cause: Object.assign(new Error('x'), { status: 500 }) })) &&
+      !isRetryableModelError(Object.assign(new MaxTokensError('cut', partial), { cause: Object.assign(new Error('x'), { code: 'server_error' }) })));
     assert(
       'overflow, max-tokens and the stream-interruption text are never retryable, whatever the cause',
       !isRetryableModelError(new ContextWindowOverflowError('too long')) &&
@@ -334,6 +406,141 @@ try {
       otherOutcome === undefined && retryFailureNotice(otherOutcome, 'Malformed input') === 'turn failed: Malformed input',
     );
   }
+
+  header('model retry — real Responses server failures recover within the same turn');
+  for (const failure of [serverFailure('response.failed'), serverFailure('error'), { status: 503 }]) {
+    shortSchedule(6, WAIT_MS);
+    await withResponses([failure, recoveredReply], async (model, requests, callsAt) => {
+      const observed = await withRuntime(model, runtime => drive(runtime, 'recover server error'));
+      assert('the real provider error recovers on attempt 2',
+        observed.stopReason === 'endTurn' && observed.error === undefined && requests.length === 2);
+      assert('the retry resends unchanged history, not another user prompt', requests[0] === requests[1]);
+      assert('the wait is published honestly as a server error and honoured',
+        observed.waitAtFailure[0]?.kind === 'server-error' &&
+        observed.waitAtFailure[0].reason.includes(SERVER_ERROR_MESSAGE) && callsAt[1]! - callsAt[0]! >= WAIT_MS - 15);
+    });
+  }
+
+  header('model retry — permanent Responses failures stop immediately');
+  for (const failure of [{ status: 400 }, { status: 401 }, serverFailure('response.failed', 'invalid_request_error')]) {
+    await withResponses([failure, recoveredReply], async (model, requests) => {
+      const observed = await withRuntime(model, runtime => drive(runtime, 'permanent failure'));
+      assert('validation/auth/unknown codes are not retried despite identical server prose',
+        observed.error instanceof ModelError && requests.length === 1 && observed.waitAtFailure[0] === undefined);
+    });
+  }
+
+  header('model retry — Chat SSE and HTTP server failures use the same retry boundary');
+  const chatRecovered: ProviderReply = { events: [
+    { choices: [{ index: 0, delta: { role: 'assistant', content: 'recovered' }, finish_reason: null }] },
+    { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+  ] };
+  for (const failure of [{ events: [{ error: { code: 'server_error', message: SERVER_ERROR_MESSAGE } }] }, { status: 500 }]) {
+    shortSchedule(6, 10);
+    await withResponses([failure, chatRecovered], async (model, requests) => {
+      const observed = await withRuntime(model, runtime => drive(runtime, 'chat server recovery'));
+      assert('Chat nested SSE/HTTP 500 errors recover against unchanged history',
+        observed.stopReason === 'endTurn' && requests.length === 2 && requests[0] === requests[1] &&
+        observed.waitAtFailure[0]?.kind === 'server-error');
+    }, 'chat');
+  }
+
+  header('model retry — server exhaustion preserves the last error and trajectory');
+  shortSchedule(3, 10);
+  await withResponses([serverFailure('response.failed')], async (model, requests) => {
+    const sessionId = await withRuntime(model, async runtime => {
+      let lastError: Error | undefined;
+      const observed = await drive(runtime, 'always server error', event => {
+        if (event.type === 'afterModelCallEvent') lastError = event.error;
+      });
+      assert('server errors stop at the same bounded cap with the last identical error',
+        requests.length === 3 && observed.error === lastError &&
+        retryFailureNotice(runtime.retryOutcome(), lastError?.message ?? '') === `turn failed after 3 attempts: ${SERVER_ERROR_MESSAGE}`);
+      return runtime.info.sessionId;
+    });
+    // shutdown() settles the asynchronous trajectory append chain before reading it.
+    const read = await readTrajectory(trajectoryPath(root, sessionId));
+    const ended = read.records.find((record): record is TurnEndedRecord => record.type === 'turnEnded');
+    assert('server exhaustion is one failed turn with the original provider message',
+      read.records.filter(record => record.type === 'userInput').length === 1 &&
+      ended?.failure?.message === SERVER_ERROR_MESSAGE && ended.failure.name === 'ModelError');
+  });
+
+  header('model retry — server wait cancellation spends no extra request');
+  shortSchedule(6, LONG_WAIT_MS);
+  await withResponses([serverFailure('error'), recoveredReply], async (model, requests) => {
+    await withRuntime(model, async runtime => {
+      let original: Error | undefined;
+      let cancelledAt = 0;
+      const observed = await drive(runtime, 'cancel server wait', event => {
+        if (event.type === 'afterModelCallEvent' && event.error && !original) {
+          original = event.error;
+          setTimeout(() => { cancelledAt = Date.now(); runtime.cancel(); }, 150);
+        }
+      });
+      assert('cancelling server backoff is prompt and preserves the original error',
+        cancelledAt > 0 && Date.now() - cancelledAt < CANCEL_SETTLE_MS && requests.length === 1 && observed.error === original);
+      assert('cancelled server retry names the next attempt and clears the wait',
+        runtime.retryOutcome()?.kind === 'cancelled' && runtime.retryWait() === undefined);
+    });
+  });
+
+  header('model retry — provider Retry-After is honoured or refused above the ceiling');
+  shortSchedule(6, 10);
+  await withResponses([{ status: 503, retryAfter: '1' }, recoveredReply], async (model, requests, callsAt) => {
+    const observed = await withRuntime(model, runtime => drive(runtime, 'respect retry-after'));
+    assert('HTTP Retry-After is a minimum delay, even when the local backoff is shorter',
+      observed.stopReason === 'endTurn' && requests.length === 2 &&
+      observed.waitAtFailure[0]?.waitMs === 1000 && callsAt[1]! - callsAt[0]! >= 1000);
+  });
+  await withResponses([{ status: 503, retryAfterMs: '100', retryAfter: '0' }, recoveredReply], async (model, requests, callsAt) => {
+    const observed = await withRuntime(model, runtime => drive(runtime, 'respect retry-after-ms'));
+    assert('OpenAI Retry-After-Ms takes precedence and is honoured',
+      observed.stopReason === 'endTurn' && requests.length === 2 &&
+      observed.waitAtFailure[0]?.waitMs === 100 && callsAt[1]! - callsAt[0]! >= 100);
+  });
+  const retryDate = new Date(Date.now() + 3000).toUTCString();
+  await withResponses([{ status: 503, retryAfter: retryDate }, recoveredReply], async (model, requests, callsAt) => {
+    const observed = await withRuntime(model, runtime => drive(runtime, 'respect retry-after date'));
+    assert('HTTP-date Retry-After never calls before the requested deadline',
+      observed.stopReason === 'endTurn' && requests.length === 2 && callsAt[1]! >= Date.parse(retryDate));
+  });
+  await withResponses([{ status: 503, retryAfter: 'invalid' }, recoveredReply], async (model, requests) => {
+    const observed = await withRuntime(model, runtime => drive(runtime, 'invalid retry-after'));
+    assert('malformed Retry-After preserves the ordinary bounded backoff',
+      observed.stopReason === 'endTurn' && requests.length === 2 && observed.waitAtFailure[0]?.waitMs === 10);
+  });
+  await withResponses([{ status: 503, retryAfter: '241' }, recoveredReply], async (model, requests) => {
+    const observed = await withRuntime(model, runtime => drive(runtime, 'bounded retry-after'));
+    assert('a server wait above 240 s fails without retrying too early or waiting unboundedly',
+      requests.length === 1 && observed.error instanceof ModelError && observed.waitAtFailure[0] === undefined);
+  });
+
+  header('model retry — completed tools stay completed; failed partial tool calls never execute');
+  const callEvents = (id: string): SseEvent[] => [
+    { type: 'response.output_item.added', item: { type: 'function_call', id, call_id: id, name: 'count', arguments: '' } },
+    { type: 'response.function_call_arguments.done', item_id: id, arguments: '{}' },
+  ];
+  await withResponses([
+    { events: [responseCreated, ...callEvents('completed'), responseCompleted] },
+    { events: [responseCreated, { type: 'response.output_text.delta', delta: 'partial failed answer' },
+      ...callEvents('failed'), ...serverFailure('response.failed').events!] },
+    recoveredReply,
+  ], async (model, requests) => {
+    let effects = 0;
+    const count = tool({ name: 'count', description: 'Count executions.', inputSchema: z.object({}), callback: () => String(++effects) });
+    const agent = new Agent({ model, tools: [count], printer: false, retryStrategy: null });
+    installModelRetry(agent, { maxAttempts: 6, backoff: new ConstantBackoff({ delayMs: 10 }) });
+    let resultText = '';
+    for await (const event of agent.stream('execute once then recover')) {
+      if (event.type === 'agentResultEvent') resultText = event.result.toString();
+    }
+    assert('one completed tool effect, no execution of the failed streamed call', effects === 1 && resultText === 'recovered');
+    assert('retry history retains the completed tool result but not failed text/tool/prompt duplication',
+      requests.length === 3 && requests[1] === requests[2] && requests[2]!.includes('function_call_output') &&
+      !requests[2]!.includes('partial failed answer') && !requests[2]!.includes('"call_id":"failed"') &&
+      agent.messages.filter(message => message.role === 'user').length === 2);
+  });
 
   header('model retry — (d) every attempt throttles: exactly maxAttempts calls, original error, failure recorded');
   {
@@ -492,7 +699,7 @@ try {
     type DirectResult = { status?: string; content?: Array<{ text?: string }> };
 
     shortSchedule(6, WAIT_MS);
-    const childModel = new ScriptedModel(['throttle', 'bedrock-throttle', 'ok']);
+    const childModel = new ScriptedModel(['throttle', 'server-error', 'ok']);
     const ok = fixture([childModel]);
     // Every phase change with its time: the wait must be published as its own closed
     // phase, and `model` must not reappear until the wait has actually elapsed.
@@ -505,7 +712,7 @@ try {
     })) as DirectResult;
     const elapsed = Date.now() - startedAt;
     assert(
-      'the child retried an in-stream throttle and a pre-stream ThrottlingException, then reported',
+      'the child retried a throttle and an explicit server_error, then reported',
       result.status === 'success' && childModel.callsAt.length === 3 && (result.content ?? []).some((b) => b.text?.includes('recovered')),
     );
     assert(`the child honoured both waits (${elapsed} ms ≥ ${2 * WAIT_MS} ms)`, elapsed >= 2 * WAIT_MS - 20);
