@@ -18,7 +18,7 @@
 import os from 'node:os';
 import path from 'node:path';
 
-import { isSensitiveDarwinPath } from '../paths.js';
+import { isSensitiveDarwinPath, sensitiveDarwinPaths, sensitiveHookDirectories } from '../paths.js';
 
 /** What the matcher needs from a tool call. `PermissionRequest` satisfies it. */
 export interface RuleTarget {
@@ -147,7 +147,13 @@ function globMayMatch(segment: string, name: string): boolean {
  * `/tmp`, `/etc/os-release` and the global skill roots, and a one-line list is
  * something a prompt can explain.
  */
-export function isSensitiveReadPath(projectRoot: string, resolved: string): boolean {
+export function isSensitiveReadPath(projectRoot: string, resolved: string, bashWords = false): boolean {
+  // Keep SER-109's deliberately broad proc-environ projection intact even when
+  // a root alias would map the spelling to another absolute location.
+  if (isProcessEnvironPath(resolved)) return true;
+  resolved = rerootReadTarget(resolved, bashWords);
+  const alias = procReadAlias(resolved, bashWords);
+  if (alias?.kind === 'cwd' && sensitiveCwdTail(projectRoot, alias.tail, bashWords)) return true;
   const home = os.homedir();
   if (SENSITIVE_READ_DIRECTORIES.some((directory) => isInside(path.join(home, directory), resolved))) return true;
   if (SENSITIVE_READ_HOME_FILES.some((file) => samePath(path.join(home, file), resolved))) return true;
@@ -166,7 +172,8 @@ export function isSensitiveReadPath(projectRoot: string, resolved: string): bool
  * excluded on purpose, or `grep -r foo .` would prompt in every project that
  * has a `.env`. Returned `~`-abbreviated for the prompt.
  */
-export function sensitiveLocationBelow(resolved: string): string | undefined {
+export function sensitiveLocationBelow(resolved: string, bashWords = false): string | undefined {
+  resolved = rerootReadTarget(resolved, bashWords);
   const home = os.homedir();
   for (const directory of SENSITIVE_READ_DIRECTORIES) {
     if (isInside(resolved, path.join(home, directory))) return `~/${directory}`;
@@ -194,20 +201,83 @@ function mayBePidSegment(segment: string): boolean {
 }
 
 /**
- * One path argument as the shell (or the model) would resolve it: `~`, `~/…`,
- * `$HOME…` and `${HOME}…` against the home directory, relative forms against
- * the project root, `..` segments normalised. Surrounding quotes are dropped
- * first — bash would not expand a quoted `~`, so this over-approximates, which
- * for a read costs a prompt and never a silent approval.
+ * Path projection, never shell evaluation. Bash words lose quotes/backslashes
+ * before home expansion, then normalization (SER-112). This over-approximates
+ * quoted `~` and escaped syntax: a false positive costs a prompt. FileEditor
+ * keeps the legacy outer-quote/home shorthand only, not embedded shell syntax.
+ * Relative paths still use the project root, not the persistent shell's cwd.
  */
-export function resolveReadTarget(argument: string, projectRoot: string): string {
-  const unquoted = argument.replace(/^(["'])([\s\S]*)\1$/, '$2');
+export function resolveReadTarget(argument: string, projectRoot: string, bashWords = false): string {
+  const unquoted = bashWords ? argument.replace(/["'\\]/g, '') : argument.replace(/^(["'])([\s\S]*)\1$/, '$2');
   const home = os.homedir();
   let expanded = unquoted;
   if (unquoted === '~') expanded = home;
   else if (unquoted.startsWith('~/')) expanded = path.join(home, unquoted.slice(2));
   else if (/^\$(HOME|\{HOME\})(\/|$)/.test(unquoted)) expanded = path.join(home, unquoted.replace(/^\$(HOME|\{HOME\})/, ''));
-  return path.resolve(projectRoot, expanded);
+  const absolute = path.isAbsolute(expanded) ? expanded : `${projectRoot}/${expanded}`;
+  return normalizeReadTarget(absolute, bashWords);
+}
+
+/** Leading proc symlink only; fileEditor never interprets a glob or variable here. */
+function procReadAlias(target: string, bashWords: boolean): { kind: 'root' | 'cwd'; prefix: string; tail: string } | undefined {
+  const segments = target.split(path.sep).filter((segment) => segment !== '');
+  const matches = (word: string, name: string) => bashWords ? globMayMatch(word, name) : word === name;
+  const pid = (word: string) => bashWords ? mayBePidSegment(word) : /^(?:\d+|self|thread-self)$/.test(word);
+  if (!matches(segments[0] ?? '', 'proc') || !pid(segments[1] ?? '')) return undefined;
+  const index = segments[2] === 'task' && pid(segments[3] ?? '') ? 4 : 2;
+  const word = segments[index];
+  const kind = word === 'root' || word === 'cwd' ? word : undefined;
+  if (kind === undefined) return undefined;
+  return { kind, prefix: `/${segments.slice(0, index + 1).join('/')}`, tail: segments.slice(index + 1).join('/') };
+}
+
+/** Do not let lexical `..` erase the symlink before its tail is checked. */
+function normalizeReadTarget(absolute: string, bashWords: boolean): string {
+  const segments = absolute.split(path.sep);
+  const prefix: string[] = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]!;
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') prefix.pop();
+    else prefix.push(segment);
+    if (prefix.length !== 3 && prefix.length !== 5) continue;
+    const alias = procReadAlias(`/${prefix.join('/')}`, bashWords);
+    if (alias !== undefined) {
+      const tail = segments.slice(index + 1).join('/');
+      // Root tails are checked again as absolute paths, including nested proc
+      // aliases. Cwd tails stay relative so leading `..` cannot erase the alias.
+      return `${alias.prefix}/${alias.kind === 'root' ? tail : path.normalize(tail || '.')}`;
+    }
+  }
+  return `/${prefix.join('/')}`;
+}
+
+function rerootReadTarget(target: string, bashWords: boolean): string {
+  for (let alias = procReadAlias(target, bashWords); alias?.kind === 'root'; alias = procReadAlias(target, bashWords)) {
+    target = normalizeReadTarget(`/${alias.tail}`, bashWords);
+  }
+  return target;
+}
+
+/**
+ * An unknown cwd is not guessed as the project/home. Conservatively protect any
+ * tail component naming a credential directory or fixed credential/policy file,
+ * plus `.env` variants. Bash glob/variable components may name one too. This is
+ * deliberately not all tails: README.md stays safe, even though the unknown cwd
+ * could itself be inside .ssh. No filesystem/symlink probe is made.
+ */
+function sensitiveCwdTail(projectRoot: string, tail: string, bashWords: boolean): boolean {
+  const names = [
+    ...SENSITIVE_READ_DIRECTORIES.flatMap((directory) => directory.split(path.sep)),
+    ...SENSITIVE_READ_HOME_FILES.flatMap((file) => file.split(path.sep)),
+    ...SENSITIVE_READ_ABSOLUTE_FILES.map((file) => path.basename(file)),
+    ...sensitiveDarwinPaths(projectRoot).map((file) => path.basename(file)),
+    ...sensitiveHookDirectories(projectRoot).map((directory) => path.basename(directory)),
+    '.darwin', '.agents', 'agentcore',
+  ];
+  return tail.split(path.sep).some((segment) => ENV_FILE.test(segment)
+    || (bashWords && /[$*?[{]/.test(segment) && globMayMatch(segment, '.env'))
+    || names.some((name) => bashWords ? globMayMatch(segment, name) : segment === name));
 }
 
 /**
@@ -239,10 +309,10 @@ export function sensitiveReadPath(toolName: string, input: unknown, projectRoot:
       const recursive = RECURSIVE_CONTENT_READERS.has(word);
       for (const arg of args) {
         if (arg.startsWith('-')) continue;
-        const resolved = resolveReadTarget(arg, projectRoot);
-        if (isSensitiveReadPath(projectRoot, resolved)) return arg;
+        const resolved = resolveReadTarget(arg, projectRoot, true);
+        if (isSensitiveReadPath(projectRoot, resolved, true)) return arg;
         if (recursive) {
-          const below = sensitiveLocationBelow(resolved);
+          const below = sensitiveLocationBelow(resolved, true);
           if (below !== undefined) return `${arg} (searches above ${below})`;
         }
       }

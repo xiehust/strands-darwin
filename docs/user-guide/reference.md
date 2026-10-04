@@ -355,7 +355,26 @@ never consulted for it) and — for `fileEditor view` — `plan`, denied in head
 covers it or is offered. For `grep` and `rg` only, a search started from an ancestor of a credential
 location (`~`, `/home/<user>`, `/`, `/etc`, `~/.kube`, `~/.docker`) counts too and reads
 `reads a sensitive path: <arg> (searches above <location>)`; `.env*` is outside that ancestor rule.
-Every other read stays statically safe. Pinned by `spike/verify-permission-modes.ts`.
+Bash path words lose quotes/backslashes before home expansion and normalization, so
+`~/".ssh"/id_rsa` and `~/'.aws'/credentials` cannot hide the target. FileEditor retains legacy
+outer-quote/home shorthand but treats embedded shell syntax literally. A leading
+`/proc/<pid>/root/` re-checks the tail as absolute (including protected policy targets).
+`/proc/<pid>/cwd/` prompts if any normalized tail component names a protected directory or
+fixed credential/policy basename, or `.env`/`.env.*`; bash glob/variable/brace components that
+may name one count too. This includes `.ssh`, `.aws`, `.gnupg`, `.kube`, `.docker`, `.darwin`,
+`.agents`, `collaboration`, `hooks`, `agentcore`, `.netrc`, `config`, `config.json`, `shadow`,
+`hooks.json` and `permission-rules.json`. PID/TID forms are literal digits/`self`/`thread-self`
+for fileEditor, with variables/globs/braces also recognized for bash; `task/<tid>` aliases work
+as well. Proc aliases are recognized before tail normalization, including leading `..` in a
+cwd tail. Unmarked tails (`cwd/src/cli.ts`, `cwd/.envrc`) and bare cwd reads/searches stay safe,
+as do quoted ordinary paths and `ls /proc/self/root/tmp`.
+
+This is lexical classification, not a sandbox: relative reads use the project root rather
+than the persistent shell's effective cwd; nonleading home variables, arbitrary symlinks,
+shell wrappers and quoted whitespace are not resolved. An unmarked `cwd/id_rsa` may still
+reach `.ssh` if the unknown base is already there. No proc/credential probes are made.
+[Full rules and limitations](permissions.md#sensitive-path-reads).
+Pinned by `spike/verify-permission-modes.ts`.
 
 ## File edits
 

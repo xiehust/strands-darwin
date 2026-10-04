@@ -332,8 +332,8 @@ whitelisted `find`/`git branch`/`git log|diff|show` carrying a known mutating op
 **Reads are not exempt from the whitelist** (SER-071, `sensitiveReadPath` in
 `src/agent/permission-rules.ts`): the `path` of `fileEditor view` and every non-option argument of
 a whitelisted bash reader (`cat`, `head`, `tail`, `grep`, `rg`, `find`, `ls`, `wc` — not `echo`,
-which with `<` and `$(` already refused can only print its arguments) are resolved (`~`, `~/`,
-`$HOME`, `${HOME}`, relative and absolute forms, `..` normalised), and a target in the fixed
+which with `<` and `$(` already refused can only print its arguments) are projected as paths (`~`,
+`~/`, `$HOME`, `${HOME}`, relative and absolute forms, `..` normalised), and a target in the fixed
 sensitive set — anything under `~/.ssh/`, `~/.aws/`, `~/.gnupg/` (the directory itself included,
 a listing names the keys); `~/.netrc`, `~/.kube/config`, `~/.docker/config.json`, `/etc/shadow`;
 any `.env` / `.env.*` basename anywhere; every path `isSensitiveDarwinPath` already protects on
@@ -380,6 +380,43 @@ root as everywhere in SER-071. A `..`-escaping `cat ../../proc/1/environ` is cov
 after a `cd /proc` (in the same chain or an earlier call to the persistent shell) is **not**
 covered, because the classifier never tracks the shell's effective cwd. A variable in the leading
 position (`cat $D/1/environ`) is not covered either.
+**Quote removal and proc aliases extend the same set (SER-112).** For bash reader arguments,
+quotes and backslashes are removed throughout the word **before** home expansion and path
+normalization, so `cat ~/".ssh"/id_rsa`, `cat ~/'.aws'/credentials`, `cat /etc/"shadow"` and
+`cat ".en"v.local` join the ordinary sensitive spellings. This is a conservative lexical
+projection, not a shell parser: quoted `~`, escaped quotes and single-quoted `$HOME` may
+cost a prompt. FileEditor retains its existing outer-quote/home shorthand but its embedded
+quotes, variables, globs and backslashes remain literal; it is not a shell expansion channel.
+
+A leading `/proc/<pid>/root/` (also `/proc/<pid>/task/<tid>/root/`) is removed and its tail
+re-checked as an absolute path, including nested proc aliases and the existing `grep`/`rg`
+ancestor rule. Thus the actual `os.homedir()` credential/policy paths and `/etc/shadow` behind
+that alias cannot acquire a safe verdict. PID/TID forms include digits, `self`, `thread-self`
+and, for bash only, variables/globs/braces; fileEditor recognizes only literal process forms.
+The alias is recognized before its tail is normalized, including a relative escape from the
+project root, so `cwd/../.ssh/id_rsa` cannot lose the alias through lexical `..` handling.
+SER-109's broad final-`environ` match is retained before re-rooting.
+
+For `/proc/<pid>/cwd/`, the reached base is unknown. The chosen conservative **cwd-tail rule**
+flags any normalized tail component naming a protected directory component (`.ssh`, `.aws`,
+`.gnupg`, `.kube`, `.docker`, `.darwin`, `.agents`, `collaboration`, `hooks`, `agentcore`), a
+fixed credential/policy file basename (`.netrc`, `config`, `config.json`, `shadow`, `hooks.json`,
+`permission-rules.json`), or `.env` / `.env.*`. Bash variable/glob/brace segments that may name
+one also count. This intentionally prompts for `cwd/config.json` or `cwd/hooks/readme` even
+when the reached file is harmless; it does **not** mark all cwd aliases sensitive. Unmarked
+tails (`cwd/src/cli.ts`, `cwd/README.md`, `cwd/.envrc`) and bare cwd listings/searches keep their
+old reasons, as do `cat "src/cli.ts"`, `cat '/etc/os-release'` and `ls /proc/self/root/tmp`.
+Risk reason, kind, un-ruleability, auto classifier bypass and gate order are unchanged.
+
+**Remaining gaps are not a sandbox guarantee.** Relative reads still use the project root,
+not the effective persistent shell cwd. Variables outside leading `$HOME`/`${HOME}` are not
+expanded into absolute home/policy targets (`/tmp/$HOME/.ssh/id_rsa`,
+`/proc/self/root/$H/.ssh/id_rsa`); arbitrary symlinks, shell wrappers and quoted whitespace
+are not resolved/evaluated. An unmarked cwd tail such as `cwd/id_rsa` may still reach a
+sensitive file if the unknown base is already `.ssh`. No credential file, proc link or
+process environment is probed by classification or by the offline fixtures. These are
+bounded lexical checks on known reader inputs, not filesystem confinement.
+
 `plan` mode is enforced before risk, allow rules, classifier, bridge, and configured Pre hooks:
 reads proceed, while writes/executes deterministically deny. The same composed intervention
 protects child agents. Denial uses `InterventionActions.deny(...)`, never `confirm()`. The UI

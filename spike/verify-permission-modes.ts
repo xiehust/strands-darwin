@@ -409,6 +409,94 @@ function sensitiveReads(): void {
   }
 }
 
+/** Classification fixtures only: never open a credential or any proc entry. */
+function aliasedReadCases(): Array<[string, unknown, string]> {
+  const home = os.homedir();
+  const bashPaths = [
+    '~/".ssh"/id_rsa', "~/'.aws'/credentials",
+    '$HOME/".gnupg"/secring.gpg', '${HOME}/".darwin"/config.json',
+    '"~"/".ssh"/id_rsa', `${home}/'.ssh'/id_rsa`,
+    '/etc/"shadow"', '".env"', "config/'.env.production'", '".en"v.local',
+    '~/notes/../".ssh"/id_rsa', '~/".ssh"/../".aws"/credentials',
+    `/proc/self/root${home}/.ssh/id_rsa`, `/proc/self/root${home}/.darwin/config.json`,
+    `/proc/self/root${ROOT}/.darwin/hooks/policy.json`,
+    '/proc/self/root/etc/shadow', '/proc/self/root/../etc/shadow',
+    '/proc/self/root/proc/thread-self/root/etc/shadow',
+    '/proc/self/root/proc/thread-self/cwd/../.ssh/id_rsa',
+    `${path.relative(ROOT, '/proc/self/root')}/etc/shadow`,
+    `${path.relative(ROOT, '/proc/self/cwd')}/../.ssh/id_rsa`,
+    // SER-109's broad final-environ rule must not be narrowed by re-rooting.
+    '/proc/self/root/somewhere/environ',
+    '/proc/self/cwd/.ssh/id_rsa', '/proc/self/cwd/.aws', '/proc/self/cwd/.gnupg/key',
+    '/proc/self/cwd/.netrc', '/proc/self/cwd/.kube/config', '/proc/self/cwd/.docker/config.json',
+    '/proc/self/cwd/.darwin/config.json', '/proc/self/cwd/.agents/hooks.json',
+    '/proc/self/cwd/hooks/policy.json', '/proc/self/cwd/agentcore/authorization.json',
+    '/proc/self/cwd/config.json', '/proc/self/cwd/permission-rules.json', '/proc/self/cwd/shadow',
+    '/proc/self/cwd/.env', '/proc/self/cwd/config/.env.production', '/proc/self/cwd/".env.local"',
+    '/proc/self/cwd/../.ssh/id_rsa', '/proc/self/cwd/../../.netrc',
+    '/proc/self/cwd/*/credentials', '/proc/self/cwd/$TARGET',
+    '/proc/self/cwd/.a?s/credentials', '/proc/self/cwd/{notes,.ssh}/key',
+  ];
+  const calls: Array<[string, unknown, string]> = bashPaths.map((filePath) => ['bash', { command: `cat ${filePath}` }, filePath]);
+  for (const pid of ['self', 'thread-self', '1', '12345', '$PPID', '${PPID}', '$$', '*', '[0-9]*', '?', '{1,self}']) {
+    for (const filePath of [`/proc/${pid}/root${home}/.aws/credentials`, `/proc/${pid}/cwd/.ssh/id_rsa`]) {
+      calls.push(['bash', { command: `head ${filePath}` }, filePath]);
+    }
+  }
+  for (const filePath of [
+    '/proc/self/root/etc/shadow', `/proc/self/root${home}/.ssh/id_rsa`,
+    `/proc/self/root${home}/.darwin/config.json`, '/proc/thread-self/cwd/.env.local',
+    '/proc/12345/cwd/.aws/credentials', '/proc/self/cwd/../.ssh/id_rsa',
+    '/proc/self/task/1/root/etc/shadow', '/proc/self/task/1/cwd/config.json',
+  ]) calls.push(['fileEditor', { command: 'view', path: filePath }, filePath]);
+  calls.push(['bash', { command: 'rg secret /proc/self/root/etc' }, '/proc/self/root/etc (searches above /etc/shadow)']);
+  return calls;
+}
+
+function aliasedReads(): void {
+  header('static risk rules — quote removal and proc root/cwd aliases (SER-112)');
+  for (const [toolName, input, named] of aliasedReadCases()) {
+    const request = classify(toolName, input);
+    const assessed = assessRisk(request, ROOT);
+    const label = `${toolName} ${JSON.stringify(input)}`;
+    assert(`dangerous, original reason and flag: ${label}`,
+      assessed.risk === 'dangerous' && assessed.riskReason === `reads a sensitive path: ${named}` && assessed.sensitiveRead === true);
+    assert(`kind unchanged: ${label}`, request.kind === (toolName === 'bash' ? 'execute' : 'read'));
+    assert(`no allow rule offered or matching: ${label}`,
+      suggestRules(request, ROOT).length === 0 && matchesAnyRule([toolName, `${toolName}:*`, 'bash:cat *', 'fileEditor:**'], request, ROOT) === undefined);
+  }
+  for (const command of [
+    'cat "src/cli.ts"', "cat '/etc/os-release'", 'ls /proc/self/root/tmp',
+    'cat ~/".ssh"/../notes.txt', 'cat /etc/"shadow.bak"', 'cat ".envrc"', 'cat ".env."',
+    'cat /proc/self/root/etc/os-release', 'cat /proc/self/root/tmp/.envrc',
+    'cat /proc/self/cwd/src/cli.ts', 'cat /proc/self/cwd/README.md', 'cat /proc/self/cwd/.envrc',
+    'cat /proc/self/cwd/.env.', 'cat /proc/self/cwd/.aws-backup/notes', 'cat /proc/self/cwd/shadow.bak',
+    'cat /proc/self/cwd/config.yaml', 'cat /proc/self/cwd/notes/../src/cli.ts',
+    'ls /proc/self/cwd', 'grep -r foo /proc/self/cwd',
+    'cat /proc/sys/root/etc/shadow', 'cat /proc/self/rooted/etc/shadow', 'cat src/proc/self/cwd/.ssh/key',
+  ]) {
+    const assessed = riskOf('bash', { command });
+    assert(`safe, exact old reason: ${command}`, assessed.risk === 'safe' && assessed.riskReason === 'read-only command');
+  }
+  for (const filePath of [
+    '/proc/self/root/etc/os-release', '/proc/self/cwd/src/cli.ts', '/proc/self/cwd/.envrc',
+    '~/".ssh"/id_rsa', '/etc/"shadow"', '".en"v.local', '/proc/self/cwd/".ssh"/key',
+    '/proc/$PPID/root/etc/shadow', '/proc/*/root/etc/shadow',
+  ]) {
+    const assessed = riskOf('fileEditor', { command: 'view', path: filePath });
+    assert(`fileEditor keeps literal embedded syntax: ${filePath}`,
+      assessed.risk === 'safe' && assessed.riskReason === 'fileEditor is read-only');
+  }
+  assert('bash quote removal precedes home expansion and normalization',
+    resolveReadTarget('"~"/".ssh"/../".aws"/credentials', ROOT, true) === path.join(os.homedir(), '.aws/credentials'));
+  assert('fileEditor retains legacy outer-quote/home shorthand',
+    resolveReadTarget('"~/.ssh/id_rsa"', ROOT) === path.join(os.homedir(), '.ssh/id_rsa'));
+  // Honest boundaries: no effective cwd, nonleading variable expansion or arbitrary symlink resolution.
+  for (const command of ['cat .ssh/id_rsa', 'cat /tmp/$HOME/.ssh/id_rsa', 'cat /proc/self/root/$H/.ssh/id_rsa', 'cat /proc/self/cwd/id_rsa']) {
+    assert(`documented unmatched alias/cwd gap: ${command}`, riskOf('bash', { command }).risk === 'safe');
+  }
+}
+
 /**
  * Minimal stand-in for the SDK event. The gate reads `toolUse` and the calling
  * agent's id (for provenance), and the real event always carries both.
@@ -954,14 +1042,62 @@ async function gateSensitiveReads(): Promise<void> {
   assert('a child agent is held to the same gate', run.asked.length === 1 && run.asked[0]?.source.kind === 'child');
 }
 
+async function gateAliasedReads(): Promise<void> {
+  header('gate — quoted/aliased sensitive reads bypass rules and auto classifier (SER-112)');
+  let classifierCalls = 0;
+  const classifier: SafetyClassifier = async () => {
+    classifierCalls += 1;
+    return { safe: true, reason: 'approve everything' };
+  };
+  const allowRules = ['bash', 'bash:cat *', 'bash:head *', 'fileEditor', 'fileEditor:**'];
+  for (const [toolName, input, named] of aliasedReadCases()) {
+    for (const mode of ['default', 'auto'] as const) {
+      const run = await runGate({ mode, allowRules, classifier }, toolName, input, false);
+      const label = `${mode} ${toolName} ${JSON.stringify(input)}`;
+      assert(`user denial, not a rule/classifier approval: ${label}`,
+        run.action.type === 'deny' && run.asked.length === 1 && actionReason(run.action).includes('The user denied permission'));
+      assert(`sensitive prompt has no rules or classifier row: ${label}`,
+        run.asked[0]?.sensitiveRead === true && run.asked[0]?.riskReason === `reads a sensitive path: ${named}`
+          && run.asked[0]?.suggestions.length === 0 && run.asked[0]?.details.every((detail) => detail.label !== 'Classifier'));
+    }
+    const plan = await runGate({ mode: 'plan', allowRules, classifier }, toolName, input, true);
+    assert(`plan preserves kind-based behavior: ${toolName} ${JSON.stringify(input)}`,
+      toolName === 'bash'
+        ? plan.action.type === 'deny' && plan.asked.length === 0 && actionReason(plan.action).includes('Plan mode blocked')
+        : plan.action.type === 'proceed' && plan.asked.length === 1 && plan.asked[0]?.kind === 'read');
+  }
+  assert('no sensitive alias ever consults the auto classifier', classifierCalls === 0);
+  for (const mode of ['default', 'auto', 'plan', 'yolo'] as const) {
+    const run = await runGate({ mode, allowRules, denyRules: ['bash:cat *'], classifier }, 'bash', { command: 'cat ~/".ssh"/id_rsa' });
+    assert(`explicit deny precedes every widening stage: ${mode}`,
+      run.action.type === 'deny' && run.asked.length === 0 && actionReason(run.action).includes('deny rule'));
+  }
+  assert('explicit deny also skips the classifier', classifierCalls === 0);
+  const asked: AssessedPermissionRequest[] = [];
+  const childId = 'darwin-subagent-explorer-ser112';
+  const gate = new PermissionGate({
+    projectRoot: ROOT, mode: 'auto', allowRules, classifier,
+    ask: async (request) => { asked.push(request); return { allowed: false }; },
+    dispatchSource: (id) => id === childId ? { dispatchId: 'a1b2c3d4', agentName: 'explorer', label: 'explorer#a1b2c3d4' } : undefined,
+  });
+  for (const id of ['darwin', childId]) {
+    const action = await gate.beforeToolCall(fakeEvent('fileEditor', { command: 'view', path: '/proc/self/root/etc/shadow' }, id));
+    assert(`one shared gate denies the sensitive root view: ${id}`, action.type === 'deny');
+  }
+  assert('shared gate prompts parent and child with proper provenance, classifier untouched',
+    asked.length === 2 && asked[0]?.source.kind === 'parent' && asked[1]?.source.kind === 'child' && classifierCalls === 0);
+}
+
 async function main(): Promise<void> {
   staticRules();
   sensitiveReads();
+  aliasedReads();
   allowRules();
   await gateModes();
   await gateRules();
   await gateProvenance();
   await gateSensitiveReads();
+  await gateAliasedReads();
   report();
 }
 
