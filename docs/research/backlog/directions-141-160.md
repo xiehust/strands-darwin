@@ -226,7 +226,7 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-shell-env.ts` extended
 
 ## SER-111 — Tell the model its shell environment was scrubbed: when `RuntimeInfo.shellEnv.withheld` is non-empty, the `<working-context>` fragment gains one bounded line naming the count and up to a few withheld names (never a value), stating that those variables are unset in `bash` and that only the user can restore one via `shellEnv.passthrough`
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 150
 - Score: 10
 - Importance: 3
@@ -238,7 +238,9 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-shell-env.ts` extended
 
 ### Implementation / acceptance evidence
 
-None yet.
+Accepted 2026-10-04: existing production commit `100ad9237e5d9bb135d8998e0171da21cc8ed70f`, plus recovery child commit `60b89b613f00ab6f170305f5491966a15daba7f9`. Fresh developer recovery session `session-20261004-082921253`: initial managed task `bg-5b5842c6-a857-4c07-b0f5-ff6d347d7da0` exited 1 on a provider server error; same-session retry `bg-73a3de9e-1dd9-46ce-b027-32fd8cee999b` exited 0. Both outputs drained. Production audit found no defect; recovery added cache-placement, cloud-preference adoption/pre-model/removal and `/rewind` checks, replaced a `/proc` shell test with a synthetic child-shell absence assertion, and synced reference EN/zh-CN.
+
+Host inspected explicit-SHA production/recovery diffs and independently ran `pnpm tsx spike/verify-working-context.ts` (84/0), `verify-shell-env.ts` (84/0), `verify-agentcore-memory.ts` (365/0), `verify-cli-args.ts` (43/0), then `pnpm typecheck && pnpm test` (26 groups passed, 0 failed), `pnpm build && git diff --check && git status --short`. Managed gate `bg-ab4bd0d6-ab60-4292-8a47-77dee2768e73` exited 0, tree clean, dist refreshed. Names-only value absence, empty-list byte identity, shared bounds, runtime refresh and successors verified offline. Configuration EN/zh-CN and decisions doc were already synced by `100ad92`; READMEs need no change. Supervision recorded in iteration-log Batch 161.
 
 ### Notes / blockers / abandonment reason
 

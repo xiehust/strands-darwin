@@ -3376,3 +3376,23 @@ SER-105 `done`; batch **exhausted**, no unfinished directions. Push current bran
 
 - Docs wrap-up: done by the child (decisions doc, configuration EN/zh-CN). The READMEs don't list the survive set; AGENTS.md is unchanged at 32,753 bytes. No docs-sync commit.
 - Child `bg-8987036e-…` reported usage input=42 output=14979 cacheRead=1288318 cacheWrite=89673, cost total=$1.0058 (model `global.anthropic.claude-opus-5-5`). Host checks made no model calls. SER-110 is `done`.
+
+## Batch 161 — SER-111 shell-environment context recovery (2026-10-04)
+
+- Origin: [`research_2026-10-03.md`](research/research_2026-10-03.md), run `13:23:35Z`; Priority150 Score10. No fresh research. Initial clean-tree check halted on the unrelated reflection artifact; the user authorized its separate commit `2a175406aa9ab67ee37997d32c85705ae72fedf3`. That clean HEAD passed `pnpm typecheck && pnpm test` (26 groups, exit0, `bg-5dcd3d79-f4f1-4b97-bbd0-3545cdaf8bc1`) before delegation. Existing `100ad92` production implementation was unaccepted, so a fresh recovery worker audited it rather than rewriting it.
+- Developer child session `session-20261004-082921253`, source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p`, no ceiling or compaction. Initial `bg-5b5842c6-a857-4c07-b0f5-ff6d347d7da0` exited1 on the provider's server-error response before mutations; automatic retry `bg-73a3de9e-1dd9-46ce-b027-32fd8cee999b` used the exact captured session and same prompt, exited0. Outputs drained through `hasMore:false`; no implementation acceptance failure or correction turn.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Names-only bounded working-context line, absent/empty byte identity, shared startup bound, runtime create/cloud refresh wiring | `100ad9237e5d9bb135d8998e0171da21cc8ed70f` (recovered existing implementation) | Host inspected its explicit-SHA source/test/docs diff and the system-prompt/SER-082 decisions. Gate `bg-ab4bd0d6-ab60-4292-8a47-77dee2768e73` ran working-context 84/0, shell-env 84/0, AgentCore-memory 365/0, CLI-doc contract 43/0, then `pnpm typecheck && pnpm test` (26/0), `pnpm build && git diff --check && git status --short`, exit0 clean. |
+| Cache placement, cloud-preference adoption/pre-model/removal and rewind regression coverage; synthetic child-shell absence check; bilingual reference sync | `60b89b613f00ab6f170305f5491966a15daba7f9` | `git log 2a17540..HEAD` showed only this child commit. Explicit diff inspection and the same independent gate proved its tests and documentation. Production source unchanged by recovery. |
+
+- Docs wrap-up: configuration EN/zh-CN and decisions doc already updated in the production commit; recovery updated reference EN/zh-CN and cloud-refresh rationale. READMEs describe no conflicting detail; no README edit or extra docs-sync commit. AGENTS.md unchanged at 32,753 bytes. Children still build no working context, share the scrubbed shell, and get no such line. Existing login-profile re-export caveat remains; bounds count names rather than limiting each name's length. Host acceptance made no provider calls.
+
+| Child task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---:|
+| `bg-5b5842c6-a857-4c07-b0f5-ff6d347d7da0` | exit1 provider server error | 12 | 2889 | 248281 | 90077 | $0.2789 |
+| `bg-73a3de9e-1dd9-46ce-b027-32fd8cee999b` | exit0 retry | 22 | 6499 | 1127201 | 122924 | $0.4851 |
+| Total this direction | | **34** | **9388** | **1375482** | **213001** | **$0.7640** |
+
+Exact invocation records, model/pricing `global.openai.gpt-6.1-sol`. Bucket sums computed locally: 1,597,905 tokens; authoritative reported approximate cost totals summed independently (retry cost differs by $0.0001 from rounded component costs). No prior invocation spend inferred or counted. SER-111 independently accepted as done; SER-112 remains not-started and is next in the same origin batch.
