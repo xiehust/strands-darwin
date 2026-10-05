@@ -277,3 +277,31 @@ Evidence: a Host probe at `084fb11` (`/tmp/ser-probe/probe3.ts`, offline `classi
 Extension point: the same shared `sensitiveReadPath` in `src/agent/permission-rules.ts`. SER-109's `globMayMatch` already strips quotes per segment for the `/proc` match. This direction applies quote removal to the home/absolute/basename checks, and adds `/proc/<pid>/root/…` (strip the prefix, re-check the remainder as absolute) and `/proc/<pid>/cwd/…` (reached path unknowable → treat as sensitive when the remainder could name a sensitive basename or directory; the child decides and states the rule). Risk 4: this touches every path decision the gate makes, so the existing safe reads must stay byte-identical, including quoted ordinary paths (`cat "src/cli.ts"`).
 
 Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-permission-modes.ts` extended so that each probe command above (plus `fileEditor view /proc/self/root/etc/shadow`) is `dangerous` with a `reads a sensitive path` reason and 0 rules offered, while `cat "src/cli.ts"`, `cat '/etc/os-release'` and `ls /proc/self/root/tmp` keep their prior verdicts; `verify-permissions-command.ts`, `verify-deny-rules.ts` and `verify-permissions-test.ts` stay green; the decisions doc SER-071 material states the rule and any remaining gap.
+
+## SER-113 — Compose an unsent prompt in the user's external editor with Ctrl+G, using Ink terminal suspension and bounded private temporary storage
+
+- Status: `not-started`
+- Priority: 152
+- Score: 10
+- Importance: 4
+- Architecture fit: 4
+- Evidence confidence: 5
+- Implementation difficulty: 4
+- Implementation risk: 3
+- Origin report: [`research_2026-10-05.md`](../research_2026-10-05.md) (run `12:58:57Z`)
+
+### Implementation / acceptance evidence
+
+None yet. Independent acceptance must exercise a real editor process and real CLI pty, not only the worker's report.
+
+### Notes / blockers / abandonment reason
+
+Sources: report S1 (Claude Code external-editor chord), S5 (OpenCode `/editor`), S7 (Aider editor composition). Darwin evidence: `src/tui/App.tsx`'s `useInput` ignores unhandled control chords; `prompt-editor.ts` and `InputBox.tsx` provide internal multiline editing only; installed Ink 7.1.1 `AppContext` exposes `suspendTerminal(callback)` with restoration on throw. Relevant architecture: load-bearing decisions § TUI — the frame budget, Prompt recall, The prompt queue. No duplicate external-editor direction exists in routed heading metadata.
+
+Requirement: add composer-only Ctrl+G (no slash command required) to open the current exact unsent text in the user's `VISUAL`, falling back to `EDITOR`. If neither is configured, give local guidance and leave the draft untouched; do not guess an installed editor. Use Ink's existing `suspendTerminal`, not ad-hoc terminal escapes, remounts or a second renderer. Parse a bounded executable-plus-arguments value supporting quoted paths and ordinary flags, execute without a shell, and reject shell operators/substitutions rather than interpreting them. Use Darwin's existing sanitized child environment and cwd convention, including `DARWIN=1`; never read repository editor configuration or change permission policy. This is explicit user-authorized input editing, not a model tool.
+
+Eligibility: idle composer only, no permission/trust modal, compaction, history/rewind search, queued automatic work or active background delegation that can claim the next turn. Block async queue/task/peer/goal drains while terminal ownership is released. A repeated chord cannot launch a second editor. Keep the attached image and explicit draft stash in memory, out of the temporary file; invalidate any pending clipboard callback. Preserve the original draft/cursor/image on launch failure, nonzero/signal exit, invalid output or unchanged content. A valid changed result replaces the draft with its cursor at the end, resets obsolete composer undo/cut/recall/completion state, and stays unsent: it must not submit, queue, make a model call or write draft bytes to session/trajectory/memory. It becomes ordinary prompt content only after the user explicitly submits.
+
+Temporary storage: private random directory (0700) and regular file (0600) outside the repository; cap input/output at 65,536 code points and 256 KiB UTF-8 bytes, no truncation; reject nonregular/symlink output and malformed UTF-8; bound reading even if the file grows. Preserve multiline/Unicode and apply only the existing composer text-normalization policy, documented in the guide. Always clean up the owned storage on settlement and restore terminal ownership. Reap an active editor on Darwin shutdown; editor SIGINT/nonzero returns to the original usable composer. Do not add a short editing deadline or an automatic retry, since editing is an explicit human action. Document that editor programs themselves can write elsewhere and backups cannot be guaranteed erased.
+
+Acceptance checklist: real process tests for env precedence/quoted argv/no shell, absent/failed/signaled editor, file permissions and caps/type/encoding validation, exact unchanged/changed Unicode draft and cleanup; real CLI pty for Ctrl+G handoff, no double launch, unchanged/failure cursor recovery, attached-image/stash privacy, successful edit staying unsent until explicit Enter, key ownership/busy refusal, and resumed editable bounded frame. Use an owned HOME/cwd and local SDK transport, no paid acceptance call. Run `pnpm typecheck`, `pnpm test`, focused new suites, frame-budget and relevant free composer/queue/search checks; verify English/Chinese README, narrative guide/reference, help and architecture documentation. Commit implementation within `developer`; Host independently reviews and reruns acceptance and builds before closure.
