@@ -280,7 +280,7 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-permission-modes.ts` e
 
 ## SER-113 — Compose an unsent prompt in the user's external editor with Ctrl+G, using Ink terminal suspension and bounded private temporary storage
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 152
 - Score: 10
 - Importance: 4
