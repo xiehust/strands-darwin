@@ -221,7 +221,7 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 
 ## 斜杠命令与内置 skill 入口
 
-`/` 补全会把以下命令与项目 skills、自定义命令一起列出。
+`/` 补全会把以下命令与项目 skills、自定义命令一起列出，MCP 提示词命令（`/mcp__<server>__<prompt>`）排在最后。
 
 | 命令 | 行为 |
 |---|---|
@@ -237,7 +237,7 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 | `/goal <条件>`、`/goal`、`/goal off` | 带条件检查的自动续跑，仅 TUI：设置（单行，≤ 400 code point，不消耗 token）、查看、清除。每个完成的回合后，一次有界的 classifier 档检查读取目标以及该回合的工具结果和回答尾部；未达成则通过正常提交路径发送恰好一条续跑提示词，连续最多 5 次后停止。头部状态词与忙碌提示显示它；若 `Ctrl+C` 取消的是目标自己的工作则清除目标；权限提示、队列、唤醒和对等消息优先；`/clear` 丢弃它。忙碌时也可回答。无头模式拒绝。见[目标](using-darwin.md#目标持续工作直到条件成立) |
 | `/help` | 有界本地命令、语法和按键；带参数会拒绝 |
 | `/init [focus]` | 展开为一条普通 prompt，请模型检查仓库后创建 `AGENTS.md`（已加载 `AGENTS.md` 时就地改进；已加载 `CLAUDE.md` 时把仍然成立的内容迁入新的 `AGENTS.md`，`CLAUDE.md` 保持不动），控制在 32 KiB 上限内，通过普通文件编辑器写入；不带参数即触发，附加的 focus 原样追加 |
-| `/mcp` | 只读服务器状态/工具/配置路径；不重连 |
+| `/mcp` | 只读服务器状态/工具/配置路径，以及启动时列表给出的各服务器提示词数量/名称；不重连、不发请求 |
 | `/memory`、`/memory list` | 含来源、证据、校验/过期原因的条目 |
 | `/memory show <id|number>` | 查看一个有界条目 |
 | `/memory edit <id|number> <fact>` | 就地纠正一个条目：备注直接重写；生成事实保留 key/类别/证据锚点，加上编辑戳，抑制错误的前身 id，并且不再被模型覆盖 |
@@ -269,7 +269,8 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 
 | 语法 | 行为 |
 |---|---|
-| `/prefix` | 补全内置/自定义命令和 skill |
+| `/prefix` | 补全内置/自定义命令和 skill，最后是 MCP 提示词命令 |
+| `/mcp__<server>__<prompt> [参数]` | 显式调用 MCP 提示词：按空白切分的词依次对应声明的参数（对不上时给出用法提示，不请求服务器、不调用模型）；一次 `prompts/get`（超时 15 秒，`Ctrl+C` 取消），其中用户角色文本成为一条普通提示；未发送的助手/非文本内容在通知中计数；超过 8,000 字符直接拒绝。无头模式：发现问题各一行 `mcp-prompts:` stderr，有省略时一行 `notice:`（`json`/`stream-json`：`source: "mcp"`）。[详情](extensions.zh-CN.md#把-mcp-提示词当作斜杠命令) |
 | `@path` | 补全工作区路径；原样插入路径文本，不插入文件内容；单行菜单和可编辑草稿中的控制字符只在显示时转义（[显示规则](using-darwin.zh-CN.md#输入编辑与补全)） |
 | `!command` | 用户授权的单次本地 shell 命令；以你的环境运行，并附加 `DARWIN=1`——darwin 启动的每个进程（模型 `bash` shell 与后台任务、hook 命令、stdio MCP 服务器）都带有这个标记，已设置的 `DARWIN` 绝不会被覆盖 |
 | 普通文本 | 模型提示词；忙碌时排队 |
@@ -309,7 +310,7 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 - `/status` 与 `/usage` 的 `cost` 行是 Σ token 分桶 × LiteLLM 基础单价，**每个模型按各自单价**（`/model` 切换后该行标出模型数——`≈ … (2 models; …)`——`/usage` 并为每个模型各加一行），始终标注 `≈ … (base rates, LiteLLM)`；某个分桶未报告时显示为下限（`≥ $x.xxxx (cacheWrite not reported; …)`），绝不冒充零，混合中没有价格的模型同样使其成为下限（`≥ … (2 models; no price for <id>; …)`）；`unknown (no price for <model>)` / `unknown (price unavailable)` 说明没有数字的原因。读取它不会触发下载或写入。`trajectory list` 在每行会话后追加同样的 `cost: …` 子句，`trajectory replay` 打印 `session cost:` 及每个模型的金额，全部离线读取同一文件计价——绝不下载、绝不写入；`/export` 不含成本行。单价缓存在 `~/.darwin/model-prices.json`：已有价格不自动刷新，无价格条目在 24 小时后过期（无效或未来时间戳也视为过期）。启动或 `/model` 时可后台获取缺失或已过期的无价格条目，每个进程对同一 id 最多请求一次；失败保留旧条目，留待下一个进程重试，不增加定时器，也不由报告命令触发刷新；环境变量 `DARWIN_MODEL_PRICES_FETCH=off` 可让 darwin 完全不联网，只使用文件里已有的价格。
 - `/goal` 是会话内实时状态，不落盘。检查是对 `classifierModel`（否则用该 provider 的默认快速模型）的一次 `Model.streamAggregated()` 调用：`maxTokens` 256、30 秒超时（Ctrl+C 可提前取消）、无工具、无对话；输入是条件加最多最近 30 条工具结果和回合回答文本的 6,000 个 code point，截断都会说明。无法解析的回复、超时或错误会给出可见警告，不启动续跑，也不重试；结论通知带有该检查自己的 token 用量（provider 未提供则为 `not reported`，绝不写 0），`/usage` 不包含这部分。自动续跑是一条普通的 `userInput` 记录。无头文本与结构化模式会在任何模型调用之前抛出 `/goal is interactive-only …`。
 - `/help` 只写一条有界历史通知，在忙碌队列判断前处理，不调用模型/工具/网络，也不改配置或会话。
-- `/mcp` 不探测、不重连；工具名只来自已经注册的状态。在未受信任的项目里（见[权限 → 工作区信任](permissions.zh-CN.md#工作区信任)），checkout 声明的每个项目服务器都列为 `held (untrusted project) — declared in <file>; not spawned, no connection attempted` 并计入标题的数量；`/status` 在 `mcp` 行追加 ` · N held (untrusted project): name, … N more`，在 `hooks` 行追加 ` · N held (untrusted project): <file>, …`（以及 ` · legacy rules held: <file> (A allow, D deny)`）——按 Escape 后以 `project trust undecided` 代替 `untrusted project`。受信任的项目两份报告逐字节不变。
+- `/mcp` 不探测、不重连；工具名只来自已经注册的状态，提示词数量/名称（` · N prompts (K skipped): /mcp__…` 或 ` · prompts unavailable — <原因>`）只来自启动时那一次 `prompts/list`，且只出现在被请求过的服务器行上。在未受信任的项目里（见[权限 → 工作区信任](permissions.zh-CN.md#工作区信任)），checkout 声明的每个项目服务器都列为 `held (untrusted project) — declared in <file>; not spawned, no connection attempted` 并计入标题的数量；`/status` 在 `mcp` 行追加 ` · N held (untrusted project): name, … N more`，在 `hooks` 行追加 ` · N held (untrusted project): <file>, …`（以及 ` · legacy rules held: <file> (A allow, D deny)`）——按 Escape 后以 `project trust undecided` 代替 `untrusted project`。受信任的项目两份报告逐字节不变。
 - 工作区信任（SER-090）：在 checkout 声明了钩子文件、MCP 服务器或旧式 `permissionRules` 的项目里首次交互式启动，会在运行时存在之前显示一个模态框——`trust this project?`、项目根目录、每项一行有界内容（`hooks   <file> (<dialect> · <Event> ×N)`、`mcp     <name> — <command args | url> (<file>)`、`rules   <file> — A allow, D deny`、`unreadable  <file> — <reason>`，终端过矮时以 `… N more` 收尾），然后是 `trust? y accept · n decline · esc decline for this session only (nothing stored)`。决定保存在 `~/.darwin/projects/<key>/trust.json`（`{ "trusted": boolean, "decidedAt": ISO }`）；被保留的会话在转录中打印一条 `trust: project not trusted|project trust undecided — held back: hooks: <file>, mcp: <name> (<file>), rules: <file> (A allow, D deny), unreadable: <file> — <如何再次被询问>`。文本模式 `-p` 在 `permission-mode:` 之后把同样的内容写成一行 `trust:` stderr（受信任项目或空清单时没有这一行）；结构化 `run.started` 始终携带 `trust: { state: "trusted"|"untrusted"|"undecided", held: [<同样的标签>], problem?: <有界> }`。免费检查：`spike/verify-workspace-trust.ts`、`spike/verify-tui.ts trust`。
 - `/context` 及阈值提醒只是建议。已知比例跨过阈值后，回合结束时只提醒一次 `/compact`；只有确认比例下降后才重新触发；未知估算保持安静。
 - Prompt 缓存未命中的提示同样只是建议，且仅限 Claude（OpenAI 由服务端自动缓存，darwin 没有放置 cache point，因此不做推断）。一次完成的模型调用若在前一次调用有缓存读取的情况下，从缓存读到的 token 少于本次请求总量的 20%，即视为未命中；darwin 只用已掌握的事实给出一个可能原因，按以下优先级取其一：`model switched`、`effort changed`（仅当实际发送的强度确实变了）、`compacted`（仅当 `/compact` 确实缩短了历史）、`idle past cache TTL (5m|1h)`、`first request of a resumed session`，否则 `unknown`。本会话出现过未命中后，`/usage` 顶部区块增加 `cache misses  N`，上一回合区块增加 `last miss  <cause>`，`/status` 的模型行追加 ` · last miss: <cause>`；从未出现时两份报告与以往逐字节一致。`/rewind`、文件编辑、权限模式切换和加载 skill 不会使缓存失效，也永远不会被归咎。计数器未报告、新会话预期冷启动的首次调用、缓存关闭时均保持安静。在缓存尚热（上次调用有缓存读取且距今不足 TTL）时执行 `/model <target>` 或改变实际发送强度的 `/effort <level>`，会先打印一条通知说明代价然后照常切换：`cache is warm (<age> ago, <N> tokens read last call): switching model|effort re-reads the conversation uncached`。没有确认对话框，不自动压缩，不新增实时行；不记录也不持久化。

@@ -666,6 +666,57 @@ second path for tool results or server output into parent context. The thirteent
 `spike/verify-tui.ts mcp` / `completion`.
 
 
+## MCP prompts as slash commands — user-invoked, lowest precedence, one listing
+
+**A server's MCP prompts are offered as `/mcp__<server>__<prompt>` slash commands, fetched
+only on an explicit user submission and sent as one ordinary user prompt; they are never a tool,
+never automatic, never visible to the model and never in the system prompt** (SER-114;
+`src/mcp/prompts.ts`, `AgentRuntime.expandSlashCommand`). Everything goes through the pinned
+SDK's public surface — `McpClient.connectionState`, `serverCapabilities` and `client` (the MCP
+SDK `Client`, whose `listPrompts`/`getPrompt` take `RequestOptions` with `timeout` and `signal`) —
+so there is no SDK patch.
+
+Load-bearing rules. **(1) One bounded listing, only from what is already connected.** Discovery
+runs in `create()` strictly after `agent.initialize()`, over clients whose state is `connected`
+and whose capabilities declare `prompts`; everything else — failed, disabled, prompt-less, and a
+project server held by workspace trust (it has no client at all) — gets no prompt request.
+Never `listTools()` (it connects lazily) and never `connect(true)`: the `/mcp` section's
+reasoning applies unchanged. Servers are asked in parallel, each under one 5 s deadline for the
+whole listing, at most 8 pages and 64 prompts; names over 128 code points or prompts declaring
+more than 16 arguments are skipped, descriptions cut to 160. A failure is one bounded warning
+naming the server and its prompts are absent; the step never throws, so startup is delayed by at
+most one deadline. The listing is server data only and is handed to `/clear`/`/rewind`
+successors through `InheritedRuntimeResources.mcpPrompts`, exactly like the clients themselves:
+asked once per process. **(2) Names cannot take anything.** Both parts are sanitized per code
+point to `[A-Za-z0-9_-]` (the custom-command grammar) and named against `claimedCommandNames` —
+built-ins plus `/quit`, then skills, then custom commands, the claim order of
+`loadCustomCommands` — rebuilt by each successor against its own extensions. A collision with
+any owner or an earlier prompt is skipped and reported (bounded problem list, ≤ 16); nothing is
+ever shadowed, and completion appends the prompts after every existing entry, so
+`MAX_COMPLETIONS` still shows every built-in first. **(3) The same expansion seam, last.**
+`expandSlashCommand` tries MCP prompts after skills and custom commands, so TUI (including a
+queued entry at drain time), dev REPL and text/structured `-p` share one path. Arguments are
+whitespace-split and mapped positionally to the declared arguments; a missing required argument
+or a surplus word throws a bounded usage error before any request, which every driver already
+states as "could not expand … prompt not sent" with the draft returned. The one `prompts/get`
+has a 15 s timeout and an `AbortController` that `runtime.cancel()` aborts; because it is the
+only expansion that waits on a server, the TUI holds the session in its existing busy state while
+it runs (the goal-check precedent), so submissions queue and `Ctrl+C` reaches the cancel.
+**(4) A projection, refused rather than cut.** User-role text blocks are joined in order by a
+blank line; assistant-role messages and non-text content are not sent and are counted in the one
+`loaded MCP prompt … (not sent: …)` notice (TUI warning, headless `notice:` line, structured
+`mcp` diagnostic). A result over `MAX_FIELD_CHARS` — the trajectory's own per-field cap, reused
+rather than a second number — or with no user text is refused, never truncated. The turn is then
+an ordinary `send(expanded, literal)`: recorded exactly like a custom command, gated exactly like
+any other turn. **(5) `/mcp` stays read-only.** It appends per-server counts and bounded names
+(the tool-name bound) from the startup summary to rows of servers that were asked; it never
+fetches, and rows of other servers are byte-identical. Free checks: `spike/verify-mcp-prompts.ts`
+(real stdio fixtures whose request logs prove the zero-request rules, runtime + headless drivers,
+cancel/timeout/cap/usage, byte-identical custom-command/skill expansion, `/clear` reuse, trust)
+and `spike/verify-mcp-prompts-pty.ts` (real CLI: completion order, invocation, usage notice with
+no model call, omission notice, cancel, drain-time expansion, `/mcp` counts), both in `pnpm test`.
+AGENTS.md has no row for this decision: the file sits a few bytes under its preload cap.
+
 ## MCP OAuth login — the SDK's provider slot, darwin's boundary
 
 **Interactive OAuth for remote MCP servers is the MCP SDK's own `auth()` flow behind
