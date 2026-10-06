@@ -316,7 +316,7 @@ Acceptance checklist: real process tests for env precedence/quoted argv/no shell
 
 ## SER-114 — MCP server prompts as user-invoked slash commands: discover `prompts/list` once from connected, prompt-capable servers into slash completion as `/mcp__<server>__<prompt>` at the lowest precedence, expand on explicit invocation through `prompts/get` into one ordinary prompt, and name per-server prompt counts in `/mcp`
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 153
 - Score: 9
 - Importance: 3
