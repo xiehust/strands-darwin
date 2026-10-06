@@ -49,11 +49,23 @@ import {
 import { SUBAGENT_TOOL_NAME, SubagentTool } from '../agents/subagent-tool.js';
 import { WORKFLOW_TOOL_NAME, WorkflowTool } from '../agents/workflow-tool.js';
 import {
+  claimedCommandNames,
   expandCustomCommand,
   loadCustomCommands,
   type CustomCommandRegistry,
   type ExpandedCustomCommand,
 } from '../commands/custom-commands.js';
+import {
+  buildMcpPromptCatalogue,
+  discoverMcpPrompts,
+  EMPTY_MCP_PROMPT_CATALOGUE,
+  expandMcpPrompt,
+  matchMcpPromptCommand,
+  mcpPromptArgumentHint,
+  type ExpandedMcpPrompt,
+  type McpPromptCatalogue,
+  type McpPromptDiscovery,
+} from '../mcp/prompts.js';
 import { parseInitCommand } from '../commands/init-command.js';
 import { parseReviewCommand, REVIEW_COMMIT_USAGE } from '../commands/review-command.js';
 import { GOAL_HEADLESS_REFUSAL, parseGoalCommand } from '../commands/goal-command.js';
@@ -329,6 +341,13 @@ export interface InheritedRuntimeResources {
    */
   mcp: McpLoadResult;
   /**
+   * The one `prompts/list` discovery taken after the predecessor's `initialize()`
+   * (SER-114). Server data only: the successor re-derives names and collisions
+   * against its own freshly loaded skills and custom commands, and asks no server
+   * again. Absent: discover now (a fixture-built successor).
+   */
+  mcpPrompts?: McpPromptDiscovery;
+  /**
    * The background-job manager, with its running jobs. Jobs are owned by the
    * process, so `/clear` neither stops them nor loses track of them; their logs stay
    * in the directory of the session that started them.
@@ -375,6 +394,7 @@ export interface ModelChangeResult {
 export type ExpandedSlashCommand =
   | ({ kind: 'skill' } & ExpandedSkillCommand)
   | ({ kind: 'command' } & ExpandedCustomCommand)
+  | ({ kind: 'mcp-prompt' } & ExpandedMcpPrompt)
   | { kind: 'workflow'; message: string }
   | { kind: 'init'; message: string }
   | { kind: 'review'; message: string };
@@ -429,6 +449,14 @@ export interface RuntimeInfo {
   commandNames: string[];
   /** Custom command files that were skipped, with the reason. */
   commandProblems: { file: string; reason: string }[];
+  /**
+   * MCP prompt commands offered this session (SER-114), lowest slash precedence, in
+   * server then listing order: name (no slash), bounded description and argument hint
+   * for completion rows. Never sent to the model.
+   */
+  mcpPromptCommands: { name: string; description?: string; argumentHint: string }[];
+  /** Bounded discovery failures and skipped MCP prompts, stated once at startup. */
+  mcpPromptProblems: string[];
   /** Built-in and project-defined child agents available to the delegation tool. */
   agentNames: string[];
   /** Project agent files that were skipped, with the reason. */
@@ -594,6 +622,12 @@ export class AgentRuntime {
   private rewindCaptureTail: Promise<void> = Promise.resolve();
   /** Lazily built model for the `/goal` condition check (SER-108); never shared with the agent. */
   private goalCheckModel: { readonly key: string; readonly model: Promise<Model> } | undefined = undefined;
+  /** The one MCP prompt discovery this process took (SER-114); handed to successors. */
+  private mcpPromptDiscovery: McpPromptDiscovery = { listings: [] };
+  /** Offered MCP prompt commands, named against this session's skills/custom commands. */
+  private mcpPrompts: McpPromptCatalogue = EMPTY_MCP_PROMPT_CATALOGUE;
+  /** The in-flight `prompts/get`, aborted by {@link cancel}. */
+  private mcpPromptAbort: AbortController | undefined = undefined;
 
   /**
    * The per-process model price cache (`~/.darwin/model-prices.json`). Process-wide
@@ -978,6 +1012,15 @@ export class AgentRuntime {
     // without this the resumed history and MCP tools would not exist yet.
     await agent.initialize();
 
+    // SER-114: the clients are connected now. One bounded `prompts/list` per connected,
+    // prompt-capable server (concurrent, one deadline each), taken once per process —
+    // a successor reuses the predecessor's listing and only re-derives the names
+    // against its own skills and custom commands. Never throws.
+    const mcpPromptDiscovery = options.inherit?.mcpPrompts ?? await discoverMcpPrompts(mcp.clients);
+    const mcpPrompts = buildMcpPromptCatalogue(
+      mcpPromptDiscovery,
+      claimedCommandNames(skills.skills.map((skill) => skill.name), commands),
+    );
     // A rewind successor is always fresh, so initialization cannot accidentally
     // load its own latest snapshot. Restore the selected *source* immutable snapshot
     // explicitly, before Darwin refreshes current prompt fragments below. The source
@@ -1193,6 +1236,12 @@ export class AgentRuntime {
         skillProblems: skills.problems.map((problem) => ({ ...problem })),
         commandNames: commands.commands.map((command) => command.name),
         commandProblems: commands.problems.map((problem) => ({ ...problem })),
+        mcpPromptCommands: mcpPrompts.commands.map((command) => ({
+          name: command.name,
+          argumentHint: mcpPromptArgumentHint(command),
+          ...(command.description === undefined ? {} : { description: command.description }),
+        })),
+        mcpPromptProblems: [...mcpPrompts.problems],
         agentNames: agentDefinitions.definitions.map((definition) => definition.name),
         agentProblems: agentDefinitions.problems.map((problem) => ({ ...problem })),
         projectInstructions:
@@ -1235,6 +1284,8 @@ export class AgentRuntime {
       },
       options,
     );
+    runtime.mcpPromptDiscovery = mcpPromptDiscovery;
+    runtime.mcpPrompts = mcpPrompts;
     if (options.rewindRestore === undefined) {
       const source = options.inherit !== undefined
         ? 'clear'
@@ -1746,7 +1797,7 @@ export class AgentRuntime {
    * a server that never connected is reported as such, not probed.
    */
   listMcpServers(): McpServerStatus[] {
-    return mcpServerStatuses(this.mcp.clients);
+    return mcpServerStatuses(this.mcp.clients, this.mcpPrompts.servers);
   }
 
   /**
@@ -2274,6 +2325,7 @@ export class AgentRuntime {
     this.codexHooks?.cancel();
     this.subagents.cancelActive();
     this.workflows.cancelActive();
+    this.mcpPromptAbort?.abort();
     this.agent.cancel();
   }
 
@@ -2350,6 +2402,7 @@ export class AgentRuntime {
         inherit: {
           config: this.liveConfig,
           mcp: this.mcp,
+          mcpPrompts: this.mcpPromptDiscovery,
           backgroundBash: this.backgroundBash,
         },
       });
@@ -2421,6 +2474,7 @@ export class AgentRuntime {
         inherit: {
           config: this.liveConfig,
           mcp: this.mcp,
+          mcpPrompts: this.mcpPromptDiscovery,
           backgroundBash: this.backgroundBash,
         },
       });
@@ -2548,7 +2602,30 @@ export class AgentRuntime {
     if (skill !== null) return { kind: 'skill', ...skill };
 
     const command = expandCustomCommand(this.commands, input);
-    return command === null ? null : { kind: 'command', ...command };
+    if (command !== null) return { kind: 'command', ...command };
+
+    // SER-114: lowest precedence, and the only expansion that contacts anything —
+    // one `prompts/get` with a timeout, aborted by `cancel()`. Usage errors throw
+    // before any request; every failure is a bounded error the drivers state with
+    // the draft returned unsent.
+    const invocation = matchMcpPromptCommand(this.mcpPrompts, input);
+    if (invocation === null) return null;
+    const controller = new AbortController();
+    this.mcpPromptAbort = controller;
+    try {
+      return { kind: 'mcp-prompt', ...await expandMcpPrompt(invocation, { signal: controller.signal }) };
+    } finally {
+      if (this.mcpPromptAbort === controller) this.mcpPromptAbort = undefined;
+    }
+  }
+
+  /**
+   * Whether `input` names an offered MCP prompt command — the one expansion that
+   * waits on a server, so the TUI holds the session busy (queueing submissions,
+   * letting Ctrl+C reach {@link cancel}) while it runs. Pure; contacts nothing.
+   */
+  isMcpPromptCommand(input: string): boolean {
+    return matchMcpPromptCommand(this.mcpPrompts, input) !== null;
   }
 
   /**

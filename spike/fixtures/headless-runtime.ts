@@ -94,6 +94,7 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
       permissionMode: 'default',
       resumed: false,
       diagnosticsFile: undefined,
+      mcpPromptProblems: [],
     },
     config,
     // The resolved thinking plan (issue #10). The default mirrors `thinkingEffort: 'low'`

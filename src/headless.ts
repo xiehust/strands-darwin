@@ -12,6 +12,7 @@ import { describePricingSource, modelCostFields, type ModelUsageShare } from './
 import { averageRequestInputTokens, type SessionCallStats } from './agent/call-stats.js';
 import type { AppConfig } from './config.js';
 import { formatShellEnvNotice } from './tools/shell-env.js';
+import { mcpPromptLoadedNotice, mcpPromptOmittedAnything } from './mcp/prompts.js';
 
 const FIELD_LIMIT = 240;
 
@@ -245,6 +246,10 @@ export async function runHeadlessTurn(
 ): Promise<string> {
   const expanded = peer === undefined ? await runtime.expandSlashCommand(prompt) : undefined;
   const input = expanded?.message ?? prompt;
+  // SER-114: what an MCP prompt result left out is stated, never silently dropped.
+  if (expanded?.kind === 'mcp-prompt' && mcpPromptOmittedAnything(expanded.omitted)) {
+    writeStderr(`notice: ${mcpPromptLoadedNotice(expanded)}\n`);
+  }
   return runWithStreamResumption(
     input,
     (turnInput) => runOneHeadlessTurn(runtime, turnInput, prompt, writeStderr, peer),

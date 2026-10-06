@@ -234,6 +234,7 @@ export async function runHeadlessProcess(
       });
       // SER-091: the lease sentence is a run-scoped warning like a thinking clamp.
       if (runtime.info.leaseNotice !== undefined) recordWarning(structuredWarning('session', 'warn', runtime.info.leaseNotice));
+      for (const problem of runtime.info.mcpPromptProblems) recordWarning(structuredWarning('mcp', 'warn', problem));
     }
     // `--compact-before` is the headless `/compact`: the same helper, so a shrinking
     // pass leaves the same `contextCompacted` trajectory record (SRF-027).
@@ -294,6 +295,8 @@ export async function runHeadlessProcess(
       // SER-091: one `lease:` line when the session lease was taken over or a bare
       // `--continue` found its session open elsewhere; absent for the ordinary case.
       if (runtime.info.leaseNotice !== undefined) note(`lease: ${headlessField(runtime.info.leaseNotice)}\n`, 'warn');
+      // SER-114: one `mcp-prompts:` line per discovery failure or skipped prompt.
+      for (const problem of runtime.info.mcpPromptProblems) note(`mcp-prompts: ${headlessField(problem)}\n`, 'warn');
       reply = await runHeadlessTurn(runtime, prompt, (text) => note(text));
     }
     // Freeze admission at the end of normal work. Drain only the bounded inbox

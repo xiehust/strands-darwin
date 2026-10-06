@@ -191,6 +191,27 @@ export async function loadCustomCommands(
   return { commands, problems };
 }
 
+/**
+ * Every slash name already owned, lower-cased, with its owner — built-ins (and the
+ * `/quit` alias), then skills, then custom commands: the claim order of
+ * {@link loadCustomCommands}. MCP prompt commands (SER-114) are named against this
+ * map and so can never take a name from any of them.
+ */
+export function claimedCommandNames(
+  skillNames: readonly string[],
+  registry: CustomCommandRegistry,
+): Map<string, string> {
+  const claimed = new Map<string, string>();
+  for (const name of RESERVED_COMMAND_NAMES) claimed.set(name.toLowerCase(), `built-in command /${name}`);
+  for (const name of skillNames) {
+    if (!claimed.has(name.toLowerCase())) claimed.set(name.toLowerCase(), `skill /${name}`);
+  }
+  for (const command of registry.commands) {
+    if (!claimed.has(command.name.toLowerCase())) claimed.set(command.name.toLowerCase(), `custom command /${command.name}`);
+  }
+  return claimed;
+}
+
 /** Expands a known custom slash command, leaving all other input untouched. */
 export function expandCustomCommand(
   registry: CustomCommandRegistry,

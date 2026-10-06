@@ -61,6 +61,7 @@ const info: RuntimeInfo = {
   projectRoot: '/workspace', permissionMode: 'default', sessionId: 'session-visual', resumed: false,
   skillNames: ['commit-message', 'review', 'trellis-before-dev'], skillProblems: [],
   commandNames: ['release', 'doctor'], commandProblems: [],
+  mcpPromptCommands: [], mcpPromptProblems: [],
   agentNames: ['general', 'research'], agentProblems: [],
   projectInstructions: { filename: 'AGENTS.md', path: '/workspace/AGENTS.md', bytes: 4096, truncated: false },
   projectInstructionsProblem: undefined, projectInstructionsProblemFile: undefined, systemPromptSource: 'default', systemPromptPath: undefined,

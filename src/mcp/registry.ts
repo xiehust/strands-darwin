@@ -28,6 +28,7 @@ import { ConfigError } from '../config.js';
 import { darwinDir, userDarwinDir } from '../paths.js';
 import { withDarwinMarker } from '../tools/shell-env.js';
 import { createRuntimeOAuthProvider, resolveOAuthSettings, type DarwinOAuthProvider } from './oauth-provider.js';
+import type { McpPromptServerSummary } from './prompts.js';
 
 /** Preferred location, alongside the rest of darwin's project state. */
 export const MCP_CONFIG_FILENAME = 'mcp.json';
@@ -75,6 +76,12 @@ export interface McpServerStatus {
    * token, expiry or any other credential detail.
    */
   auth?: 'logged-in' | 'login-required' | 'not-logged-in';
+  /**
+   * Only for a server that was asked for prompts (connected and prompt-capable,
+   * SER-114): the offered command names, how many listed prompts were skipped, and
+   * the listing failure — read from the one startup discovery, never fetched here.
+   */
+  prompts?: McpPromptServerSummary;
 }
 
 /**
@@ -88,7 +95,10 @@ export interface McpServerStatus {
  * stops exposing it degrades to `toolNames: undefined` (stated as unavailable by
  * the formatter), never to a crash — and never to a connection attempt.
  */
-export function mcpServerStatuses(clients: readonly McpClient[]): McpServerStatus[] {
+export function mcpServerStatuses(
+  clients: readonly McpClient[],
+  prompts?: ReadonlyMap<string, McpPromptServerSummary>,
+): McpServerStatus[] {
   return clients.map((client) => {
     const registered = (client as unknown as { _registeredToolNames?: unknown })._registeredToolNames;
     const toolNames =
@@ -96,11 +106,13 @@ export function mcpServerStatuses(clients: readonly McpClient[]): McpServerStatu
         ? [...(registered as Set<string>)].sort((a, b) => a.localeCompare(b))
         : undefined;
     const provider = oauthProviders.get(client);
+    const promptSummary = prompts?.get(client.clientName);
     return {
       name: client.clientName,
       state: client.connectionState,
       toolNames,
       ...(provider === undefined ? {} : { auth: provider.authStatus() }),
+      ...(promptSummary === undefined ? {} : { prompts: promptSummary }),
     };
   });
 }

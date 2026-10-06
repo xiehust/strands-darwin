@@ -92,6 +92,7 @@ export function InputBox({
   completions,
   completionKind,
   completionNote,
+  commandDescriptions,
   selectedCompletion,
   editable,
   hint,
@@ -111,6 +112,12 @@ export function InputBox({
    * never given one of its own (the frame budget counts rows, not intentions).
    */
   readonly completionNote: string | undefined;
+  /**
+   * Descriptions for command rows that are not built-ins — the MCP prompt commands
+   * (SER-114): bounded server metadata plus the argument hint, drawn through the
+   * same control-escaping projection as every other completion row.
+   */
+  readonly commandDescriptions?: ReadonlyMap<string, string>;
   readonly selectedCompletion: number;
   readonly editable: boolean;
   readonly hint: string | undefined;
@@ -255,7 +262,9 @@ export function InputBox({
             const selected = menu.start + index === menu.selected;
             // Only commands carry one: a path describes itself, and inventing a
             // description would mean reading the file, which this feature never does.
-            const description = completionKind === 'command' ? builtinCommandDescription(name) : undefined;
+            const description = completionKind === 'command'
+              ? builtinCommandDescription(name) ?? commandDescriptions?.get(name)
+              : undefined;
             return (
               <Box key={name}>
                 {/* The textual pointer remains the durable selection; accent and
@@ -273,7 +282,7 @@ export function InputBox({
                     cannot wrap the row and grow the live frame taller. */}
                 {description !== undefined && (
                   <Text dimColor wrap="truncate-end">
-                    {' '}— {description}
+                    {' '}— {searchPreview(description)}
                   </Text>
                 )}
               </Box>

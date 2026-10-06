@@ -27,6 +27,7 @@ import { CONFIG_FILENAME, ConfigError } from './config.js';
 import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from './commands/workflow-command.js';
 import { parseReviewCommand, REVIEW_COMMIT_USAGE } from './commands/review-command.js';
 import { MCP_CONFIG_FILENAME } from './mcp/registry.js';
+import { mcpPromptLoadedNotice } from './mcp/prompts.js';
 import { DARWIN_DIRNAME } from './paths.js';
 import { formatShellEnvNotice } from './tools/shell-env.js';
 import { TANGENT_TUI_ONLY_NOTICE, parseTangentCommand } from './tui/tangent.js';
@@ -340,7 +341,9 @@ async function main(): Promise<void> {
                     ? expanded.message.startsWith('Review commit ')
                       ? '  · reviewing commit with /review'
                       : '  · reviewing current changes with /review'
-                    : `  · loaded command "/${expanded.command.name}"`,
+                    : expanded.kind === 'mcp-prompt'
+                      ? `  · ${mcpPromptLoadedNotice(expanded)}`
+                      : `  · loaded command "/${expanded.command.name}"`,
           );
           await renderTurn(runtime, expanded.message, input);
           continue;

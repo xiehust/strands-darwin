@@ -57,6 +57,8 @@ import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from '../commands/workflow-command.js';
 import { parseReviewCommand, REVIEW_COMMIT_USAGE } from '../commands/review-command.js';
 import { MCP_CONFIG_FILENAME, mcpConfigCandidates } from '../mcp/registry.js';
+import { mcpPromptLoadedNotice, mcpPromptOmittedAnything } from '../mcp/prompts.js';
+import { searchPreview } from './search-preview.js';
 import { DARWIN_DIRNAME } from '../paths.js';
 import { readBackgroundTail, readBackgroundTails } from '../tools/background-tail.js';
 import { formatShellEnvNotice } from '../tools/shell-env.js';
@@ -352,7 +354,19 @@ export function App({
       ...BUILTIN_COMMAND_NAMES,
       ...runtime.info.commandNames,
       ...runtime.info.skillNames,
+      // SER-114: lowest precedence, after every existing entry. Names were already
+      // claimed against everything above, so none of these dedupes anything away.
+      ...runtime.info.mcpPromptCommands.map((command) => command.name),
     ])],
+    [runtime],
+  );
+  // Completion-row descriptions for MCP prompt commands: the server's bounded
+  // description plus the argument hint; InputBox escapes controls when drawing.
+  const commandDescriptions = useMemo(
+    () => new Map(runtime.info.mcpPromptCommands.map((command) => [
+      command.name,
+      [command.argumentHint, command.description ?? `MCP prompt`].filter((part) => part !== '').join(' · '),
+    ])),
     [runtime],
   );
   // Escape suppresses one computed query generation, not the draft. Mirrors are
@@ -2213,6 +2227,15 @@ export function App({
       // Skills and project commands send their expanded prompt instead of the
       // literal command. Unknown slash input falls through as ordinary input.
       let toSend = text;
+      // SER-114: an MCP prompt is the one expansion that waits on a server. Hold the
+      // session busy meanwhile — submissions queue, Ctrl+C reaches `runtime.cancel()`,
+      // which aborts the `prompts/get` — exactly like the goal check's busy state.
+      const fetchingMcpPrompt = runtime.isMcpPromptCommand(text);
+      if (fetchingMcpPrompt) {
+        turnAborted.current = false;
+        turnStartedAt.current = Date.now();
+        setStatus('streaming');
+      }
       try {
         const expanded = await runtime.expandSlashCommand(text);
         if (expanded !== null) {
@@ -2229,11 +2252,18 @@ export function App({
                       ? expanded.message.startsWith('Review commit ')
                         ? 'reviewing commit with /review'
                         : 'reviewing current changes with /review'
-                      : `loaded command "/${expanded.command.name}"`,
+                      : expanded.kind === 'mcp-prompt'
+                        ? mcpPromptLoadedNotice(expanded)
+                        : `loaded command "/${expanded.command.name}"`,
+            ...(expanded.kind === 'mcp-prompt' && mcpPromptOmittedAnything(expanded.omitted) ? { severity: 'warn' as const } : {}),
           });
           toSend = expanded.message;
         }
       } catch (error) {
+        if (fetchingMcpPrompt) {
+          turnStartedAt.current = undefined;
+          setStatus('idle');
+        }
         dispatch({
           type: 'notice',
           text: `could not expand ${text}: ${error instanceof Error ? error.message : String(error)}; prompt not sent — restored to the editor`,
@@ -3422,6 +3452,7 @@ export function App({
             completions={completions}
             completionKind={completionKind}
             completionNote={completionNote}
+            commandDescriptions={commandDescriptions}
             selectedCompletion={selectedCompletion}
             editable={effectiveStatus !== 'compacting'}
             offset={{ top: chrome.top, left: chrome.left }}
@@ -3632,6 +3663,18 @@ export function Header({
           command skipped: {problem.file} — {problem.reason}
         </Text>
       ))}
+      {/* SER-114: discovery failures and skipped prompts, bounded to a few truncated
+          rows plus one remainder row; /mcp names the rest per server. */}
+      {info.mcpPromptProblems.slice(0, MAX_MCP_PROMPT_PROBLEM_ROWS).map((problem, index) => (
+        <Text key={`mcp-prompt-${index}`} color={visualColor.warning} wrap="truncate-end">
+          {searchPreview(problem)}
+        </Text>
+      ))}
+      {info.mcpPromptProblems.length > MAX_MCP_PROMPT_PROBLEM_ROWS && (
+        <Text color={visualColor.warning} wrap="truncate-end">
+          … {info.mcpPromptProblems.length - MAX_MCP_PROMPT_PROBLEM_ROWS} more MCP prompt problems — /mcp shows per-server counts
+        </Text>
+      )}
       {info.agentProblems.map((problem) => (
         <Text key={problem.file} color={visualColor.warning}>
           agent skipped: {problem.file} — {problem.reason}
@@ -3648,6 +3691,9 @@ export function Header({
 }
 
 const WORKING_LABEL = 'working';
+
+/** Startup header rows for MCP prompt problems before one `… N more` row (SER-114). */
+const MAX_MCP_PROMPT_PROBLEM_ROWS = 3;
 
 /** Highlights one letter in place, preserving the header's exact width and row count. */
 export function workingStatusIndex(frame: number): number {

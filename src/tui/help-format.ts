@@ -12,7 +12,7 @@ export const MAX_HELP_COMMANDS = 28;
  * the "prompt and completion" block and the "editing and session" block, plus the
  * one-line overflow notice a filled command cap would add.
  */
-export const HELP_FIXED_LINES = 26 + COLLABORATION_GRAMMAR.length;
+export const HELP_FIXED_LINES = 27 + COLLABORATION_GRAMMAR.length;
 /**
  * The line cap must cover the worst case — a command inventory that fills
  * `MAX_HELP_COMMANDS` *and* every fixed row — so `slice()` can never silently drop a
@@ -44,6 +44,7 @@ export function formatHelpReport(): string {
     'prompt and completion:',
     ...COLLABORATION_GRAMMAR.map(grammar => `  collaboration: ${grammar}`),
     '  / opens commands and skills · Up/Down select · Tab/Enter completes the selected row',
+    '  /mcp__<server>__<prompt> [args] fetches an MCP server prompt and sends it (listed last; /mcp shows counts)',
     '  @ completes a workspace path · acceptance inserts path text only, never file content',
     '  !<command> runs your shell command locally (not as a model tool call)',
     '  Enter sends · Ctrl+J or trailing \\ + Enter inserts a newline · multiline paste never submits',

@@ -14,6 +14,7 @@ import type { ThinkingEffort, ThinkingPlan } from './agent/thinking.js';
 import { heldLabels, type WorkspaceTrustReport, type WorkspaceTrustState } from './agent/workspace-trust.js';
 import { contextOverflowErrorMessage } from './context-overflow-error.js';
 import { failureFromError } from './trajectory/record.js';
+import { mcpPromptLoadedNotice, mcpPromptOmittedAnything } from './mcp/prompts.js';
 
 export const HEADLESS_SCHEMA_VERSION = 1 as const;
 export const STRUCTURED_FIELD_LIMIT = 8_000;
@@ -64,7 +65,7 @@ export interface StructuredFailure {
 }
 
 export interface StructuredWarning {
-  source: 'sdk' | 'trajectory' | 'diagnostics' | 'memory' | 'hook' | 'thinking' | 'session';
+  source: 'sdk' | 'trajectory' | 'diagnostics' | 'memory' | 'hook' | 'thinking' | 'session' | 'mcp';
   level: 'warn' | 'error';
   message: string;
   truncated?: true;
@@ -467,6 +468,10 @@ export async function runStructuredHeadlessTurn(
 ): Promise<StructuredTurnResult> {
   const expanded = peer === undefined ? await runtime.expandSlashCommand(prompt) : undefined;
   const input = expanded?.message ?? prompt;
+  // SER-114: what an MCP prompt result left out is stated, never silently dropped.
+  if (expanded?.kind === 'mcp-prompt' && mcpPromptOmittedAnything(expanded.omitted)) {
+    writer.diagnostic(structuredWarning('mcp', 'warn', mcpPromptLoadedNotice(expanded)));
+  }
   let continued = false;
   const result = await runWithStreamResumption(
     input,

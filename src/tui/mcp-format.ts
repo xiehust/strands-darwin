@@ -7,6 +7,9 @@ import type { McpServerStatus } from '../mcp/registry.js';
  */
 export const MAX_MCP_TOOL_NAMES = 8;
 
+/** Prompt command names shown per server before `… N more` — the same bound as tools. */
+export const MAX_MCP_PROMPT_NAMES = MAX_MCP_TOOL_NAMES;
+
 /** The config provenance the report states alongside the servers. */
 export interface McpConfigSources {
   /** Every contributing config path, global first and project second. */
@@ -61,7 +64,7 @@ export function formatMcpReport(
 function describeServer(server: McpServerStatus): string {
   switch (server.state) {
     case 'connected':
-      return `connected · ${describeTools(server.toolNames)}${server.auth === 'logged-in' ? ' · oauth: logged in' : ''}`;
+      return `connected · ${describeTools(server.toolNames)}${server.auth === 'logged-in' ? ' · oauth: logged in' : ''}${describePrompts(server)}`;
     case 'failed':
       // A 401 that needs a login this process cannot perform names the command that fixes it.
       if (server.auth === 'login-required') {
@@ -75,6 +78,24 @@ function describeServer(server: McpServerStatus): string {
       // connecting to count tools: reading state must not mutate state.
       return 'not connected — tools unknown (no connection attempted by this report)';
   }
+}
+
+/**
+ * The prompt segment (SER-114), only for a server that was asked: the offered
+ * `/mcp__…` command names, bounded like the tool names, the skipped count, or the
+ * listing failure. Read from the startup discovery summary — nothing is fetched,
+ * and a server that does not offer prompts keeps its row byte-identical.
+ */
+function describePrompts(server: McpServerStatus): string {
+  const prompts = server.prompts;
+  if (prompts === undefined) return '';
+  if (prompts.failure !== undefined) return ` · prompts unavailable — ${prompts.failure}`;
+  const skipped = prompts.skipped > 0 ? ` (${prompts.skipped} skipped)` : '';
+  if (prompts.commands.length === 0) return ` · no prompts${skipped}`;
+  const shown = prompts.commands.slice(0, MAX_MCP_PROMPT_NAMES).map((name) => `/${name}`);
+  const remainder = prompts.commands.length - shown.length;
+  const suffix = remainder > 0 ? ` … ${remainder} more` : '';
+  return ` · ${prompts.commands.length} prompt${prompts.commands.length === 1 ? '' : 's'}${skipped}: ${shown.join(', ')}${suffix}`;
 }
 
 /** Registered tool names, capped with an explicit remainder — or their absence. */
