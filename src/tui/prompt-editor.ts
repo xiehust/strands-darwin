@@ -82,6 +82,18 @@ export function layoutEditor(text: string, columns: number, cursor: EditorCursor
   };
 }
 
+/** C0 controls except LF and tab, plus DEL: never treated as draft text. */
+const NON_TEXT_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
+
+/**
+ * The composer's one text policy (typed keys, paste, search queries and the Ctrl+G
+ * external-editor result): canonicalizes terminal line endings and drops controls
+ * without losing layout.
+ */
+export function normalizeDraftText(value: string): string {
+  return value.replace(/\r+\n/g, '\n').replace(/\r/g, '\n').replace(NON_TEXT_CONTROLS, '');
+}
+
 /** One draft-local cut, not a kill ring. Count code points, not UTF-16 units. */
 export const LAST_CUT_CAP = 65_536;
 export const LAST_CUT_OVERFLOW_NOTICE = 'cut exceeds 65,536 code points; yank cleared — Ctrl+_ can still undo the deletion';

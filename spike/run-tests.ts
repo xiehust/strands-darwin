@@ -16,6 +16,8 @@ const suites = [
   'verify-composer-yank.ts',
   'verify-draft-stash.ts',
   'verify-composer-stash.ts',
+  'verify-external-editor.ts',
+  'verify-external-editor-pty.ts',
   'verify-prompt-completion.ts',
   'verify-live-text.ts',
   'verify-frame-budget.ts',

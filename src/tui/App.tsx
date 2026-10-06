@@ -14,11 +14,12 @@ import { peerNotice, peerPrompt, type PeerInput } from '../collaboration/protoco
  * unfinished answer; while idle the first press only arms. A second press within a
  * short window exits, busy or idle. Ctrl+D always exits.
  */
+import { open as openFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { ImageBlock } from '@strands-agents/sdk';
 
-import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdout, useWindowSize, type DOMElement } from 'ink';
+import { Box, Text, useApp, useBoxMetrics, useInput, usePaste, useStdin, useStdout, useWindowSize, type DOMElement } from 'ink';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from 'react';
 import { AGENTS_FILENAME } from '../agent/instructions.js';
 import type { DiagnosticsLog } from '../agent/diagnostics.js';
@@ -107,6 +108,7 @@ import {
   moveToRowEdge,
   moveVertical,
   moveWordHorizontal,
+  normalizeDraftText,
   popUndo,
   pushUndo,
   updateLastCut,
@@ -210,6 +212,17 @@ import {
   runShellCommand,
   type RunningShellCommand,
 } from './shell-command.js';
+import {
+  EXTERNAL_EDITOR_UNSET_NOTICE,
+  canQuiesceTerminalInput,
+  editorLabel,
+  externalEditorRefusal,
+  quiesceTerminalInput,
+  resolveEditorCommand,
+  runExternalEditor,
+  type ExternalEditorRun,
+} from './external-editor.js';
+import { scrubShellEnv, withDarwinMarker } from '../tools/shell-env.js';
 
 import { formatTaskCompletion, formatTasksReport, runningTasksHeader } from './task-format.js';
 import {
@@ -265,9 +278,6 @@ const PATH_SCAN_TTL_MS = 5000;
  */
 const ASSUMED_HEADER_ROWS = 14;
 
-/** C0 controls except LF and tab, plus DEL: never treated as draft text. */
-const NON_TEXT_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
-
 /**
  * Erase the screen, the scrollback and home the cursor — Ink's own `clearTerminal`,
  * spelled out here because `ansi-escapes` is Ink's dependency and not darwin's.
@@ -278,11 +288,6 @@ const NON_TEXT_CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
  * different thing from one per text delta.
  */
 const CLEAR_TERMINAL = '\u001B[2J\u001B[3J\u001B[H';
-
-/** Canonicalizes terminal line endings and drops controls without losing layout. */
-function normalizeDraftText(value: string): string {
-  return value.replace(/\r+\n/g, '\n').replace(/\r/g, '\n').replace(NON_TEXT_CONTROLS, '');
-}
 
 type Status = 'idle' | 'streaming' | 'shell' | 'compacting' | 'awaiting-permission';
 
@@ -306,7 +311,8 @@ export function App({
   /** Fresh source-preserving conversation branch; the selected prompt is not sent. */
   readonly startRewind?: (checkpoint: import('../agent/rewind.js').RewindCheckpoint) => Promise<AgentRuntime>;
 }): React.JSX.Element {
-  const { exit: inkExit, waitUntilRenderFlush } = useApp();
+  const { exit: inkExit, waitUntilRenderFlush, suspendTerminal } = useApp();
+  const { stdin } = useStdin();
   const { columns, rows } = useWindowSize();
   const { write: writeToTerminal } = useStdout();
   // The live session. A prop at startup, state afterwards: `/clear` replaces the
@@ -522,6 +528,16 @@ export function App({
   const clipboardReadGeneration = useRef(0);
   /** Image currently owned by one model-bound invocation, blocking reassociation. */
   const imageTurnInFlight = useRef(false);
+  /**
+   * Ctrl+G external editing (SER-113). `editorActive` is the repeated-chord fence;
+   * the run handle is what unmount reaps. While the terminal is released the shared
+   * `draining` latch is held too, so queue, peer and goal drains wait, and the Static
+   * history is frozen at its released length: Ink discards renders while suspended,
+   * so a notice committed then would advance `<Static>` past an item never printed.
+   */
+  const editorActive = useRef(false);
+  const editorRun = useRef<ExternalEditorRun | undefined>(undefined);
+  const [heldHistory, setHeldHistory] = useState<readonly HistoryItem[] | undefined>(undefined);
 
 
   /**
@@ -940,6 +956,9 @@ export function App({
   // A `!` command must not outlive the TUI that ran it: on unmount (Ctrl+D, /exit,
   // a second Ctrl+C) the group gets the same TERM→KILL reaping a cancel gives it.
   useEffect(() => () => shellRun.current?.kill(), []);
+  // Same for an external editor (SER-113): darwin shutdown TERM→KILLs it and removes
+  // its private storage synchronously, since the exit path may not await settlement.
+  useEffect(() => () => editorRun.current?.kill(), []);
 
   // Terminal window/tab title (SER-073): `darwin · <project> · <state>`, one OSC 2
   // sequence straight to the real stdout — the seam the bell uses, never Ink's
@@ -2729,6 +2748,127 @@ export function App({
     if (opened.text !== undefined) applyRecalled(opened.text);
   }, [applyRecalled, history, setRecall]);
 
+  /**
+   * Ctrl+G (SER-113): edit the exact unsent draft in the user's VISUAL/EDITOR. Eligible
+   * only at idle with nothing about to claim the session; the editor gets the terminal
+   * through Ink's `suspendTerminal`, darwin's own tty reads are paused for its lifetime
+   * (see `quiesceTerminalInput`), and drains hold behind the shared `draining` latch.
+   * A valid changed result replaces the draft, cursor at the end, and stays unsent.
+   * Everything else — refusal, launch failure, nonzero/signal exit, invalid output or
+   * no change — leaves the draft, cursor and image exactly as they were.
+   */
+  const openExternalEditor = useCallback(() => {
+    if (historySearchRef.current !== undefined || rewindSearchRef.current !== undefined) return;
+    const goalOwed = goalAction(goalRef.current, {
+      idle: true, permissionPending: false, clearing: false, draining: false, queued: 0, peerPending: 0,
+    }) !== 'none';
+    const refusal = externalEditorRefusal({
+      editorActive: editorActive.current,
+      idle: status === 'idle' && pendingPermission === undefined,
+      queued: queuedRef.current.length,
+      draining: draining.current,
+      clearing: clearing.current,
+      goalOwed,
+      peerPending: runtime.collaboration?.pending ?? 0,
+      liveDelegations: runtime.listBackgroundDelegations().length,
+    });
+    if (refusal === 'ignore') return;
+    if (refusal !== undefined) {
+      dispatch({ type: 'notice', text: refusal, severity: 'warn' });
+      return;
+    }
+    const command = resolveEditorCommand(process.env);
+    if (command.kind === 'unset') {
+      dispatch({ type: 'notice', text: EXTERNAL_EDITOR_UNSET_NOTICE, severity: 'warn' });
+      return;
+    }
+    if (command.kind === 'refused') {
+      dispatch({ type: 'notice', text: `${command.source} not used: it ${command.reason} — draft unchanged`, severity: 'warn' });
+      return;
+    }
+    if (!stdin.isTTY || !canQuiesceTerminalInput(stdin)) {
+      dispatch({ type: 'notice', text: 'Ctrl+G needs an interactive terminal darwin can hand over safely — draft unchanged', severity: 'warn' });
+      return;
+    }
+
+    const original = editorRef.current;
+    const label = editorLabel(command.argv);
+    // The same sanitized map the model's `bash` gets, plus `DARWIN=1` (SER-082/094).
+    const env = withDarwinMarker(scrubShellEnv(process.env, runtime.info.shellEnv.passthrough).env);
+    const cwd = runtime.info.projectRoot;
+    editorActive.current = true;
+    draining.current = true;
+    // A clipboard read still pending must not attach while (or after) the draft is away.
+    clipboardReadGeneration.current += 1;
+    setHeldHistory(historyRef.current);
+
+    void (async () => {
+      let outcome: import('./external-editor.js').ExternalEditorOutcome | undefined;
+      let failure: string | undefined;
+      let restartInput = (): void => {};
+      try {
+        // Let Ink finish the input batch that carried Ctrl+G and commit the held history.
+        await waitUntilRenderFlush();
+        // A fresh description of the controlling terminal: whatever the editor does to
+        // its file status flags (O_NONBLOCK) cannot leak into darwin's own stdin.
+        const terminal = await openFile('/dev/tty', 'r+').catch(() => undefined);
+        try {
+          await suspendTerminal(async () => {
+            restartInput = await quiesceTerminalInput(stdin);
+            const run = runExternalEditor(original.text, {
+              argv: command.argv,
+              cwd,
+              env,
+              normalize: normalizeDraftText,
+              projectRoot: cwd,
+              ...(terminal === undefined ? {} : { terminalFd: terminal.fd }),
+            });
+            editorRun.current = run;
+            outcome = await run.done;
+          });
+        } finally {
+          editorRun.current = undefined;
+          await terminal?.close().catch(() => undefined);
+        }
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+      } finally {
+        // Shutdown leaves darwin's terminal reads stopped on purpose.
+        if (presentationMounted.current) restartInput();
+        setHeldHistory(undefined);
+        editorActive.current = false;
+        draining.current = false;
+        setDrainCycle((cycle) => cycle + 1);
+      }
+      if (!presentationMounted.current) return;
+
+      if (outcome === undefined) {
+        dispatch({ type: 'notice', text: `external editor failed: ${failure ?? 'no result'} — draft unchanged`, severity: 'warn' });
+      } else if (outcome.kind === 'changed') {
+        if (editorRef.current !== original) {
+          dispatch({ type: 'notice', text: 'the draft changed while the editor was open; editor result discarded', severity: 'warn' });
+        } else {
+          // A different draft: undo/cut/recall/completion state belonged to the old one.
+          undoStack.current = [];
+          lastCut.current = '';
+          preferredColumn.current = undefined;
+          setRecall(undefined);
+          setDismissedCompletion(undefined);
+          setSelectedCompletion(0);
+          setEditor({ text: outcome.text, cursor: moveToDraftEdge(outcome.text, 'end') });
+          dispatch({ type: 'notice', text: `draft replaced from ${label} — not sent; Enter sends it` });
+        }
+      } else if (outcome.kind === 'unchanged') {
+        dispatch({ type: 'notice', text: `${label} closed without changes — draft unchanged` });
+      } else {
+        dispatch({ type: 'notice', text: `external editor: ${outcome.reason} — draft unchanged`, severity: 'warn' });
+      }
+      if (outcome?.cleanupProblem !== undefined) {
+        dispatch({ type: 'notice', text: `external editor storage: ${outcome.cleanupProblem}`, severity: 'warn' });
+      }
+    })();
+  }, [dispatch, pendingPermission, runtime, setDismissedCompletion, setEditor, setRecall, setSelectedCompletion, status, stdin, suspendTerminal, waitUntilRenderFlush]);
+
   const handleInterrupt = useCallback(() => {
     const now = Date.now();
     const previous = interruptedAt.current;
@@ -2912,6 +3052,13 @@ export function App({
       return;
     }
 
+    // External editor (SER-113): composer ownership like Ctrl+S/Ctrl+O, below the
+    // permission, compaction and search owners. Eligibility and the repeated-chord
+    // fence live in `openExternalEditor`.
+    if (key.ctrl && typed === 'g') {
+      openExternalEditor();
+      return;
+    }
 
     // Escape belongs to the highest transient prompt UI currently shown. A menu
     // wins over recall just as it wins the arrow keys; neither branch touches the
@@ -3225,7 +3372,7 @@ export function App({
   return (
     <Box flexDirection="column">
       <MessageList
-        history={state.history}
+        history={heldHistory ?? state.history}
         {...(state.staticEpoch === 0 ? { welcome: initialWelcome } : {})}
         liveText={state.liveText}
         liveCodeOpen={fenceOpenAfter(state.committedAnswer)}

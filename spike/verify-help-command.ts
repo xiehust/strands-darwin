@@ -61,6 +61,8 @@ const facts = [
   'Alt+Backspace/Alt+D deletes the word before/after',
   'Ctrl+_ (or Ctrl+-) undoes the last Ctrl+K/U, Ctrl+W or Alt word deletion in the draft',
   'Ctrl+Y yanks the last cut at the cursor, repeatably in this draft only (65,536 code points max; not the clipboard)',
+  'Ctrl+G edits the draft in $VISUAL (else $EDITOR) while idle',
+  'the result replaces the draft unsent — Enter sends it',
   '/copy puts the last completed answer on the clipboard via OSC 52 (plus wl-copy/xclip/pbcopy when a display is present)',
   'Ctrl+B toggles compact/expanded tool details',
   'Ctrl+C cancels busy work',

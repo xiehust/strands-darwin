@@ -2990,6 +2990,72 @@ and replay *prints* it through the same `turnReducer` action the live session di
 and replayed transcripts are one projection. Free checks: `spike/verify-shell-command.ts`,
 `spike/verify-tui.ts bang`.
 
+## Ctrl+G external editor — a bounded terminal handoff, never a send path
+
+**`Ctrl+G` edits the exact unsent draft in the user's `VISUAL` (else `EDITOR`) and returns it to
+the composer unsent** (SER-113; `src/tui/external-editor.ts`, `App.openExternalEditor`). Like `!`,
+it is user-authorized and outside the permission gate, but it is input editing, not execution
+reported to the model: nothing is recorded, sent or queued, and the result is ordinary draft
+text that becomes a `userInput` only when the user presses Enter. Seven decisions carry it.
+
+- **No shell, no guessing.** The variable is parsed into a bounded argv (≤1,024 code points,
+  ≤32 words; POSIX-style quotes and backslashes) and spawned with `shell: false`. Unquoted shell
+  syntax and substitutions inside double quotes are refused with a reason that never echoes the
+  value; a set-but-invalid `VISUAL` refuses rather than silently trying `EDITOR`; neither set is
+  one guidance notice. Repository editor configuration is never read. The child gets the
+  model-`bash` environment (`scrubShellEnv` + `withDarwinMarker`, so `DARWIN=1`) and the session
+  cwd — the sanitized map, unlike `!`, because nothing about editing needs credentials.
+- **Ink owns the handoff; darwin only closes the gap Ink leaves.** The terminal is released and
+  restored by Ink 7.1.1's `useApp().suspendTerminal` (raw mode, bracketed paste, cursor, forced
+  full redraw) — no escapes, remount or second renderer. Measured in a real pty, Ink's
+  `pauseInput` detaches its `readable` listener but leaves the libuv TTY handle reading, and
+  Ink's own input loop restarts it a tick later: darwin then races the editor and steals one
+  keystroke per handoff, which resume replays into the draft. Inside the suspension,
+  `quiesceTerminalInput` therefore pauses the handle the way Node's backpressure path does
+  (`reading = false` + `readStop()`) after the stale ticks drain, and restarts it once Ink has
+  resumed. The shape is feature-detected; an unexpected one refuses the handoff instead of
+  racing. The editor gets a fresh `/dev/tty` description so its `O_NONBLOCK` changes cannot
+  leak into darwin's stdin. It stays in darwin's process group (never `detached`) so it owns the
+  foreground terminal without SIGTTIN.
+- **Signals.** A cooked-mode editor's Ctrl+C is a SIGINT to the whole foreground group, and the
+  SDK's vended bash module listens with `process.exit(0)` (the listener `headless-runner.ts`
+  already replaces). While the editor runs, every SIGINT/SIGQUIT listener is held aside behind
+  one no-op, restored exactly 500 ms after exit (the editor's exit can be processed before
+  darwin's own copy of the same signal); holds are counted so back-to-back edits never leak.
+  SIGTERM/SIGHUP are untouched: shutdown unmounts the App, whose cleanup TERM→KILLs the editor
+  (2 s grace) and removes its storage synchronously, as `!` reaps its group.
+- **Eligibility by position and by state.** The chord sits beside Ctrl+S/Ctrl+O, after the
+  permission, compaction and search owners, so those never reach it. It then requires idle,
+  an empty queue, no `draining`/`/clear`, no owed `/goal` action, no pending peer message and no
+  live background delegation; a repeated chord is ignored by the `editorActive` fence. The run
+  holds the shared `draining` latch, which already gates the queue, peer and goal drains, so
+  wakes and messages that arrive meanwhile wait and drain after resume — no new scheduler.
+- **Static history is frozen while suspended.** Ink discards renders during a suspension while
+  `<Static>` still advances its index on commit, so a notice committed then would never be
+  printed. `MessageList` receives the history as of the release until Ink resumes; held items
+  print with the redraw.
+- **Private, bounded, exact storage.** One `mkdtemp` directory (0700) with one `prompt.md`
+  (`wx`, 0600) under `os.tmpdir()`, refused if it resolves inside the project. Input and output
+  are capped at 65,536 code points and 256 KiB, refused not truncated. The result is read
+  through one descriptor (`O_NOFOLLOW | O_NONBLOCK`, regular file only, at most cap+1 bytes
+  however the file grows) and strict UTF-8 (a BOM stays text). Only the composer's
+  `normalizeDraftText` (moved to `prompt-editor.ts`, unchanged) is applied. Only the draft text
+  is written — the attached image and the Ctrl+S stash stay in memory and a pending clipboard
+  read is invalidated. The directory is removed on every settlement. Editor swap or backup
+  files elsewhere are outside darwin's reach, and the guide says so.
+- **Failure keeps everything.** Launch failure, nonzero or signal exit, invalid output and
+  unchanged content leave the draft, cursor and image untouched with one content-free notice. A
+  valid change replaces the draft (cursor at the end) and resets undo, the last cut, recall and
+  completion state. There is no deadline and no retry, because editing is a human action.
+
+Checks (free): `spike/verify-external-editor.ts` (real child editors: precedence, argv, no
+shell, env/cwd, failures, modes, caps, symlink/FIFO/UTF-8/growth, round trip, cleanup, kill,
+signal hold) and `spike/verify-external-editor-pty.ts` (production CLI pty with a local model:
+handoff and redraw, unsent until Enter, unchanged/failed/SIGINT recovery, no double launch,
+busy/permission/search ownership, image/stash privacy and clipboard invalidation, a task wake
+held across the edit, shutdown reaping, unset guidance), both in `pnpm test`; plus
+`verify-help-command.ts` and `verify-frame-budget.ts`.
+
 ## The prompt queue
 
 **A submission while the session is busy queues, visibly, and is sent when the turn ends**
