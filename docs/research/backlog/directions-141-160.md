@@ -280,7 +280,7 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-permission-modes.ts` e
 
 ## SER-113 — Compose an unsent prompt in the user's external editor with Ctrl+G, using Ink terminal suspension and bounded private temporary storage
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 152
 - Score: 10
 - Importance: 4
@@ -292,7 +292,15 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-permission-modes.ts` e
 
 ### Implementation / acceptance evidence
 
-None yet. Independent acceptance must exercise a real editor process and real CLI pty, not only the worker's report.
+Accepted commit `99b551a5b1701e6de8eaabd3d18dc0552f7ec1f7` (`feat(tui): edit the unsent draft in VISUAL/EDITOR with Ctrl+G`), from developer child `session-20261006-020034673`, base `9ec43ab22ac40a83989a21905820ede342ecb9b0`. `git log 9ec43ab..HEAD` showed only that commit. Host reviewed `src/tui/external-editor.ts` and the `App.tsx` integration: no-shell argv, VISUAL→EDITOR, Ink `suspendTerminal`, 0700/0600 private temp storage, caps refused rather than truncated, `O_NOFOLLOW` bounded strict-UTF-8 read, drain fence via `draining`, held Static history, and unmount reap.
+
+Host re-ran:
+
+- `pnpm typecheck && pnpm test` (`bg-a246ae5a-f06a-4484-b8e0-83776a8ce259`): exit 0, 144 suite summaries with 0 failed, including the new `verify-external-editor.ts` and `verify-external-editor-pty.ts`.
+- An independent real-pty probe through the fixture CLI with real system programs as editors: 9/9 pass. `sed -i` changed a Unicode draft unsent, with no model call and no draft bytes under HOME; explicit Enter sent it exactly once; temp storage was removed; `VISUAL='true; touch …'` was refused and nothing ran; `false` kept the draft and an editable cursor.
+- `pnpm build`: exit 0, `dist` refreshed.
+
+Docs were synced by the child: both READMEs, `using-darwin{,.zh-CN}.md`, `reference{,.zh-CN}.md`, `/help`, and the decisions section "Ctrl+G external editor — a bounded terminal handoff, never a send path". AGENTS.md is unchanged at 32,762 bytes.
 
 ### Notes / blockers / abandonment reason
 

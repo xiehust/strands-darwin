@@ -3416,3 +3416,24 @@ Exact invocation records, model/pricing `global.openai.gpt-6.1-sol`. Bucket sums
 Exact invocation record, model/pricing `global.openai.gpt-6.1-sol`; 2,371,891 tokens. Aggregate this resumed invocation including both SER-111 tasks: input90, output31231, cacheRead3613040, cacheWrite325435; 3,969,796 tokens, approximate USD total **$1.4874**, computed from authoritative per-task totals (rounded component residual $0.0001, not hidden). Earlier SER-109/SER-110/original SER-111 spend is not inferred or counted.
 
 SER-112 independently accepted as done. Origin batch exhausted: SER-109/110/111/112 all done; no direction gate-abandoned or reinterpreted. Final artifact verification: `git diff --check`, metadata-only validation of all eight routed pages (151 unique IDs/priorities, valid statuses, zero unfinished records), and `pnpm tsx spike/verify-skills.ts` (163/0) passed. Final closure requires one ordinary push and upstream-range verification; Host reports the actual result.
+
+## Batch 163 — SER-113 Ctrl+G external prompt editor (2026-10-06)
+
+- Origin: [`research_2026-10-05.md`](research/research_2026-10-05.md), run `12:58:57Z`. It was a fresh `peer` research run (path from the roll, not an override) and added one direction: Priority 152, Score 10. The first starting gate at `684be01` failed on the new record's non-canonical rating labels; `fabc883` fixed them. The gate then passed at `fabc883` (`pnpm typecheck && pnpm test`, `bg-d066f5d1-c52c-4fd1-bc07-68fae1f5a2f5`, exit 0). Host marked SER-113 in-progress at clean `9ec43ab22ac40a83989a21905820ede342ecb9b0`.
+- Fresh developer session `session-20261006-020034673`, launched from the source CLI with `--yolo --context-offload`, no ceiling and no compaction. Managed task `bg-5cf1dc4d-c6ba-4bee-8bc8-45545cffbefc` exited 0, and its output was drained through `hasMore:false`. There was no correction, retry, descendant worker or Host implementation edit.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Composer-only Ctrl+G opens the exact unsent draft in VISUAL, else EDITOR. It uses no-shell argv, Ink `suspendTerminal` with a paused tty reader, held SIGINT/SIGQUIT listeners and frozen Static history, plus private bounded 0700/0600 temp storage. The result is unsent, and every failure path keeps the draft. | `99b551a5b1701e6de8eaabd3d18dc0552f7ec1f7` | `git log 9ec43ab..HEAD` showed only the child commit; the 16-file diff was reviewed. Gate `bg-a246ae5a-f06a-4484-b8e0-83776a8ce259`: `pnpm typecheck && pnpm test` exit 0, 144 summaries with 0 failed, including `verify-external-editor.ts` (process) and `verify-external-editor-pty.ts`. A Host-authored real-pty probe through the fixture CLI with real system editors passed 9/9: `sed -i` Unicode edit unsent with no model call or HOME bytes; Enter sent it once; temp storage removed; `VISUAL='true; touch …'` refused and not executed; `false` kept the draft and an editable cursor. `pnpm build` exit 0. |
+
+- Docs wrap-up: the child synced `README{,.zh-CN}.md`, `docs/user-guide/using-darwin{,.zh-CN}.md` (External editor section), `reference{,.zh-CN}.md`, `/help` (`verify-help-command`), and the decisions section "Ctrl+G external editor — a bounded terminal handoff, never a send path". No extra docs commit was needed. AGENTS.md is unchanged at 32,762 bytes, so no row was added: rationale stays in the decisions doc.
+- Residual risks, as documented: the input pause relies on feature-detected Node tty-handle internals, and an unexpected shape refuses Ctrl+G rather than racing. SIGINT/SIGQUIT sent to darwin are ignored while an editor is open (SIGTERM/SIGHUP still reap it). An editor's own final newline is kept. Editor swap/backup files are outside darwin's control.
+- Unrelated: free `verify-tui queue` (not in `pnpm test`) fails identically at `99b551a` and base `9ec43ab` ("TUI exited (code 0) before 1 queued message returned to the editor"). It predates this batch and is left for a future direction.
+
+| Child task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---:|
+| `bg-5cf1dc4d-c6ba-4bee-8bc8-45545cffbefc` | exit 0 | 286 | 174405 | 29422304 | 361306 | $11.1802 |
+
+Exact invocation record, model/pricing `global.anthropic.claude-opus-5-5`; 29,958,301 tokens. The components sum to the reported total ($11.1802). That single task is the whole batch aggregate.
+
+SER-113 was independently accepted as done. The origin batch is exhausted with no gate-abandoned or reinterpreted direction. Closure requires one ordinary push and upstream-range verification; the Host reports the actual result.
