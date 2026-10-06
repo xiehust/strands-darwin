@@ -313,3 +313,38 @@ Eligibility: idle composer only, no permission/trust modal, compaction, history/
 Temporary storage: private random directory (0700) and regular file (0600) outside the repository; cap input/output at 65,536 code points and 256 KiB UTF-8 bytes, no truncation; reject nonregular/symlink output and malformed UTF-8; bound reading even if the file grows. Preserve multiline/Unicode and apply only the existing composer text-normalization policy, documented in the guide. Always clean up the owned storage on settlement and restore terminal ownership. Reap an active editor on Darwin shutdown; editor SIGINT/nonzero returns to the original usable composer. Do not add a short editing deadline or an automatic retry, since editing is an explicit human action. Document that editor programs themselves can write elsewhere and backups cannot be guaranteed erased.
 
 Acceptance checklist: real process tests for env precedence/quoted argv/no shell, absent/failed/signaled editor, file permissions and caps/type/encoding validation, exact unchanged/changed Unicode draft and cleanup; real CLI pty for Ctrl+G handoff, no double launch, unchanged/failure cursor recovery, attached-image/stash privacy, successful edit staying unsent until explicit Enter, key ownership/busy refusal, and resumed editable bounded frame. Use an owned HOME/cwd and local SDK transport, no paid acceptance call. Run `pnpm typecheck`, `pnpm test`, focused new suites, frame-budget and relevant free composer/queue/search checks; verify English/Chinese README, narrative guide/reference, help and architecture documentation. Commit implementation within `developer`; Host independently reviews and reruns acceptance and builds before closure.
+
+## SER-114 — MCP server prompts as user-invoked slash commands: discover `prompts/list` once from connected, prompt-capable servers into slash completion as `/mcp__<server>__<prompt>` at the lowest precedence, expand on explicit invocation through `prompts/get` into one ordinary prompt, and name per-server prompt counts in `/mcp`
+
+- Status: `not-started`
+- Priority: 153
+- Score: 9
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-10-06.md`](../research_2026-10-06.md) (run `04:58:05Z`)
+
+### Implementation / acceptance evidence
+
+None yet. Acceptance must run against a real local stdio MCP fixture server, not the worker's report.
+
+### Notes / blockers / abandonment reason
+
+Sources: report S1 (Claude Code: `/mcp__servername__promptname`, whitespace-split arguments, sanitized server names), S6/S6b (kiro-cli: MCP prompts in slash completion with argument hints; local beats global beats MCP; friendly server errors), S7 (Gemini CLI: `/mcp` lists Prompts beside Tools). Darwin evidence: no `listPrompts`/`getPrompt` anywhere in `src`; pinned SDK 1.18.0 `McpClient` publicly exposes `client` (the MCP `Client`, which has `listPrompts`/`getPrompt`) and `serverCapabilities`; `src/commands/custom-commands.ts` (`loadCustomCommands` claim order, name grammar `[a-zA-Z0-9_-]+`, `expandCustomCommand`); `runtime.ts` `expandCommand` (skill, then custom command) and `info.commandNames` feeding TUI completion; decisions § "`/mcp` — a read-only projection", MCP OAuth, workspace trust (SER-090).
+
+Requirement:
+
+- **Discovery.** After `agent.initialize()` has connected the clients, each `connected` server whose `serverCapabilities.prompts` is present gets exactly one bounded `prompts/list` (pagination followed to a cap; a timeout; at most 64 prompts per server; name/description/argument metadata length-capped). Failed, disabled, prompt-less servers, and servers held by workspace trust, get no prompt request. Never call `listTools()` and never reconnect for this. A listing failure is one bounded warning naming the server, with that server's prompts absent. Discovery does not delay the first prompt indefinitely: it either completes within the bound or degrades to absent with the warning.
+- **Naming and precedence.** Canonical command `/mcp__<server>__<prompt>`, with both parts sanitized to `[A-Za-z0-9_-]` (any other character becomes `_`) so it fits the existing command-name grammar. Built-ins, skills and custom commands keep every name they own. A prompt whose sanitized name collides with any of them, or with another prompt, is skipped and reported, never shadowing. Completion lists prompts after every existing entry, with a bounded, control-escaped description and argument hint. `MAX_COMPLETIONS` keeps every built-in visible.
+- **Invocation.** Expansion runs only when the user explicitly submits `/mcp__s__p [args]` (TUI, including a busy-queued submission at drain time, and headless `-p`), through the same `expandCommand` path after skills and custom commands. Arguments are whitespace-split and mapped positionally to the declared arguments. Missing required arguments, or more words than declared arguments, produce a local usage notice listing the arguments, with no server call and no model call. `prompts/get` has a timeout and is cancellable by the turn's cancel. The result becomes one ordinary user prompt: user-role text content is joined in order. Assistant-role messages and non-text content are not sent and are counted in one visible notice, never silently dropped. An over-cap result (above the trajectory field cap darwin already enforces for expanded prompts) is refused, not truncated. A server error is one bounded notice, with the draft returned unsent.
+- **Unchanged.** The expanded prompt is recorded exactly like a skill or custom-command expansion. Model tool calls caused by it still go through the permission gate unchanged. There is no new tool, no automatic invocation, no model access to prompts, and nothing in the system prompt.
+- **`/mcp` projection.** Shows a per-server prompt count and bounded names from the discovery cache only. It never fetches, so the read-only contract and its "never a second path for server output into context" rule hold.
+- **Docs.** README and user-guide (English and zh-CN) narrative and reference, `/help`, and the decisions doc (an extension of the `/mcp` section, or a new section). AGENTS.md row only if it fits under 32 KiB (currently 32,762 bytes, so expect decisions-doc only).
+
+Acceptance:
+
+- A real stdio MCP fixture server (in `spike/fixtures/`) exposing prompts with no arguments, required and optional arguments, a multi-message result with an assistant message and an image block, an erroring prompt, a slow prompt for cancel and timeout, and a name needing sanitization or colliding with a built-in and a custom command. Plus a second server without the prompts capability and a third that fails to start.
+- Checks: discovery counts and skips; zero prompt requests to prompt-less, failed or trust-held servers (the fixture logs its requests); completion order with built-ins all still visible (`verify-tui completion`); argument mapping and usage errors with no model call; exact expanded text sent and recorded once; omission notice; refusal over the cap; cancel; `/mcp` counts with no fetch; existing custom-command and skill expansion byte-identical.
+- Offline only (local SDK fixture model, owned HOME/cwd), plus `pnpm typecheck`, `pnpm test`, `verify-mcp-command`, `verify-help-command`, workspace-trust and custom-command suites, and free `verify-tui completion`/`mcp`.
