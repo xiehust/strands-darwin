@@ -286,8 +286,8 @@ Acceptance: `pnpm typecheck` + `pnpm test`; `spike/verify-permission-modes.ts` e
 - Importance: 4
 - Architecture fit: 4
 - Evidence confidence: 5
-- Implementation difficulty: 4
-- Implementation risk: 3
+- Difficulty: 4
+- Risk: 3
 - Origin report: [`research_2026-10-05.md`](../research_2026-10-05.md) (run `12:58:57Z`)
 
 ### Implementation / acceptance evidence
