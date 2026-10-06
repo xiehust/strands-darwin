@@ -316,7 +316,7 @@ Acceptance checklist: real process tests for env precedence/quoted argv/no shell
 
 ## SER-114 — MCP server prompts as user-invoked slash commands: discover `prompts/list` once from connected, prompt-capable servers into slash completion as `/mcp__<server>__<prompt>` at the lowest precedence, expand on explicit invocation through `prompts/get` into one ordinary prompt, and name per-server prompt counts in `/mcp`
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 153
 - Score: 9
 - Importance: 3
@@ -328,7 +328,26 @@ Acceptance checklist: real process tests for env precedence/quoted argv/no shell
 
 ### Implementation / acceptance evidence
 
-None yet. Acceptance must run against a real local stdio MCP fixture server, not the worker's report.
+Accepted commits from developer child `session-20261006-052403446` on base `4654ff47c5b91cc6146eeb4d28ce7a4bd31fc06e` (`git log 4654ff4..HEAD` showed only these):
+
+- `55b4f35c862324c5a5eab9c28b540bb37f3984bb` (feature)
+- `162f4e9d1e488d486220c114221bdb1082530db1` (docs)
+- `aad014396efeeb250bdb0046ed61c7d37c0ff532` (Host-requested correction)
+
+**First acceptance failed.** A Host-authored stdio MCP server's request log showed a stray `notifications/cancelled` about 5 s after an already-answered `prompts/list`. `AbortSignal.timeout` was used as the request signal, and the MCP SDK's `Protocol.request` never removes its abort listener. The focused correction (`aad0143`) clears the listing deadline once the listing settles and gives `prompts/get` its own signal that is linked only while the call is in flight. It adds regression checks that failed before the fix and pass after.
+
+**Host re-run on `aad0143`:**
+
+- `pnpm typecheck && pnpm test` exit 0: 146 summaries with 0 failed, including `verify-mcp-prompts.ts` (90) and `verify-mcp-prompts-pty.ts` (15). An earlier gate on `162f4e9` was stopped before the correction.
+- Independent real-pty probe, production CLI with a local fixture model and the Host-authored McpServer (one tool plus a `greet` prompt with a required argument returning user and assistant messages): 10/10.
+  - Completion offers `/mcp__host-probe__greet`.
+  - A missing argument gives a usage notice with no `prompts/get` and no model call.
+  - Valid invocation sends only the user-role text, once; the assistant text is never sent; the omission is stated.
+  - `/mcp` names the prompt with exactly one `prompts/list` and no new request.
+  - No stray `notifications/cancelled` 6 s past the deadline.
+  - Server log: `initialize, notifications/initialized, tools/list, prompts/list, prompts/get`.
+- `pnpm build` exit 0.
+- Docs synced by the child: both READMEs, `extensions{,.zh-CN}.md`, `reference{,.zh-CN}.md`, `/help`, and decisions section "MCP prompts as slash commands — user-invoked, lowest precedence, one listing". AGENTS.md unchanged at 32,762 bytes.
 
 ### Notes / blockers / abandonment reason
 

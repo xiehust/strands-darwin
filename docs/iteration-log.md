@@ -3437,3 +3437,30 @@ SER-112 independently accepted as done. Origin batch exhausted: SER-109/110/111/
 Exact invocation record, model/pricing `global.anthropic.claude-opus-5-5`; 29,958,301 tokens. The components sum to the reported total ($11.1802). That single task is the whole batch aggregate.
 
 SER-113 was independently accepted as done. The origin batch is exhausted with no gate-abandoned or reinterpreted direction. Closure requires one ordinary push and upstream-range verification; the Host reports the actual result.
+
+## Batch 164 — SER-114 MCP prompts as slash commands (2026-10-06)
+
+- Origin: [`research_2026-10-06.md`](research/research_2026-10-06.md), run `04:58:05Z`. Fresh `peer` research, path from the roll (no override). It queued one direction (Priority 153, Score 9); two candidates fell below the gate (fallback model chain 4, background a running tool 3). The record validated before the gate (`verify-skills` 163/0). The starting gate passed at `a696a02` (`pnpm typecheck && pnpm test`, `bg-1d5750bc-74f7-4829-9c0b-918b71da09d5`, exit 0). Host marked SER-114 in-progress at clean `4654ff47c5b91cc6146eeb4d28ce7a4bd31fc06e`.
+- Fresh developer session `session-20261006-052403446`, source CLI, `--yolo --context-offload`, no ceiling or compaction. Implementation task `bg-cdd043b0-7d88-49dc-b2e6-6fe565452e24` exited 0 with `55b4f35` and `162f4e9`.
+- **First Host acceptance failed.** A Host-authored McpServer's request log showed a stray `notifications/cancelled` after the answered `prompts/list`. `AbortSignal.timeout` was the request signal, and the MCP SDK `Protocol.request` never removes its abort listener. The gate running on `162f4e9` (`bg-b2c7c00e-…`) was stopped.
+- Focused correction in the same session (`bg-0aa44940-2153-42a5-b23f-7454d950467e`, exit 0, no compaction) produced `aad0143`. There was no retry, descendant worker or Host implementation edit.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Connected, prompt-capable MCP servers listed once with bounds, offered as `/mcp__<server>__<prompt>` at the lowest precedence, expanded on explicit submission via `prompts/get` into one user prompt (user text only, omissions counted, over-cap refused), counts in `/mcp` with no fetch; listing deadline and get signal cannot cancel answered requests | `55b4f35c862324c5a5eab9c28b540bb37f3984bb`, `162f4e9d1e488d486220c114221bdb1082530db1`, `aad014396efeeb250bdb0046ed61c7d37c0ff532` | `git log 4654ff4..HEAD` showed only the child's three commits; diffs reviewed. Gate `bg-60893e02-fce6-4591-b551-e7066d9a989f` on `aad0143`: `pnpm typecheck && pnpm test` exit 0, 146 summaries with 0 failed, including `verify-mcp-prompts` (90) and `verify-mcp-prompts-pty` (15). Host real-pty probe (production CLI, local fixture model, Host McpServer with one tool and a `greet` prompt) passed 10/10: completion; usage error with no `prompts/get` or model call; exact user text sent once with the assistant text withheld and the omission stated; `/mcp` names the prompt with one listing; no stray cancel 6 s past the deadline. `pnpm build` exit 0. |
+
+- Docs wrap-up: the child synced both READMEs, `extensions{,.zh-CN}.md`, `reference{,.zh-CN}.md`, `/help`, and a new decisions section. AGENTS.md is unchanged at 32,762 bytes. No extra docs commit.
+- Pre-existing defects found during acceptance, both reproduced by the Host at base `4654ff4` and not attributed to SER-114:
+  1. A prompts-only MCP server (no `tools` capability) crashes darwin startup with `-32601` from `tools/list`.
+  2. A server name containing `.` crashes startup with `ToolValidationError` from the prefixed tool name.
+
+  Free `verify-tui queue` still fails at base. All three are recommended for the next research or reflection run.
+
+| Child task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---:|
+| `bg-cdd043b0-7d88-49dc-b2e6-6fe565452e24` | exit 0 (implementation) | 262 | 114029 | 22857799 | 311669 | $8.4115 |
+| `bg-0aa44940-2153-42a5-b23f-7454d950467e` | exit 0 (correction) | 20 | 9564 | 2882169 | 16264 | $0.8491 |
+
+Aggregate (computed locally): input 282, output 123,593, cacheRead 25,739,968, cacheWrite 327,933; 26,191,776 tokens; approximate USD **$9.2606**. Model/pricing `global.anthropic.claude-opus-5-5`.
+
+SER-114 was independently accepted as done after one focused correction. The origin batch is exhausted. Closure requires one ordinary push and upstream-range verification; the Host reports the actual result.
