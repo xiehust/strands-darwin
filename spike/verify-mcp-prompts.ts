@@ -170,18 +170,42 @@ async function testDiscovery(): Promise<void> {
   const clients = await McpClient.loadServers({
     slow: { ...server('slow-list', 'direct-slow.log'), prefix: 'slow' },
     idle: { ...server('prompts', 'direct-idle.log'), prefix: 'idle' },
+    answered: { ...server('prompts', 'direct-answered.log'), prefix: 'answered' },
   } as never, { continueOnError: true });
-  const [slow, idle] = clients;
+  const [slow, idle, answered] = clients;
   try {
     await slow!.listTools();
+    await answered!.listTools();
     const started = Date.now();
     const discovery = await discoverMcpPrompts(clients, { timeoutMs: 300 });
     const elapsed = Date.now() - started;
-    assert('only the connected prompt-capable client is asked', discovery.listings.length === 1 && discovery.listings[0]!.server === 'slow');
-    assert('a listing that never answers degrades within the one deadline', elapsed < 3_000 && discovery.listings[0]!.failure === 'prompts/list timed out after 0.3s');
+    const slowListing = discovery.listings.find((listing) => listing.server === 'slow');
+    const answeredListing = discovery.listings.find((listing) => listing.server === 'answered');
+    assert('only the connected prompt-capable clients are asked', JSON.stringify(discovery.listings.map((listing) => listing.server)) === JSON.stringify(['slow', 'answered']));
+    assert('a listing that never answers degrades within the one deadline', elapsed < 3_000 && slowListing?.failure === 'prompts/list timed out after 0.3s');
     assert('the failure is one bounded warning naming the server',
-      discovery.listings[0]!.problems.length === 1 && discovery.listings[0]!.problems[0] === 'mcp server "slow": prompts/list timed out after 0.3s; its prompts are not offered');
+      slowListing?.problems.length === 1 && slowListing.problems[0] === 'mcp server "slow": prompts/list timed out after 0.3s; its prompts are not offered');
     assert('a never-connected client is neither spawned nor asked (no connect)', idle!.connectionState === 'disconnected' && !existsSync(path.join(LOGS, 'direct-idle.log')));
+
+    // Regression (Host acceptance): the MCP SDK never removes its `abort` listener from a
+    // request's signal, so a deadline that could still fire after the answer sent a stray
+    // `notifications/cancelled` for an already-completed `prompts/list`. Wait well past
+    // the deadline and read the server's own log.
+    assert('the answered listing succeeded', answeredListing !== undefined && answeredListing.failure === undefined && answeredListing.prompts.length > 0);
+    await delay(900);
+    assert('no notifications/cancelled reaches a server whose listing was answered, after the deadline passed',
+      await count('direct-answered.log', 'prompts/list') === 1 && await count('direct-answered.log', 'notifications/cancelled') === 0);
+
+    // The same rule for `prompts/get`: a caller signal aborted after the answer must not
+    // reach the server either.
+    const answeredGreet = matchMcpPromptCommand(buildMcpPromptCatalogue({ listings: [answeredListing!] }, new Map()), '/mcp__answered__greet')!;
+    const caller = new AbortController();
+    const greeted = await expandMcpPrompt(answeredGreet, { signal: caller.signal, timeoutMs: 300 });
+    caller.abort();
+    await delay(600);
+    assert('a caller cancel after prompts/get answered sends nothing, and its own timeout is gone too',
+      greeted.message === 'Say hello to the SER-114 fixture.' && await count('direct-answered.log', 'prompts/get') === 1 &&
+      await count('direct-answered.log', 'notifications/cancelled') === 0);
   } finally {
     await Promise.allSettled(clients.map((client) => client.disconnect()));
   }

@@ -181,7 +181,13 @@ function boundPrompt(raw: unknown): McpListedPrompt | string {
 /** One server's bounded, paginated `prompts/list` under a single deadline. */
 async function listServerPrompts(client: McpClient, timeoutMs: number): Promise<McpPromptListing> {
   const server = client.clientName;
-  const deadline = AbortSignal.timeout(timeoutMs);
+  // The MCP SDK's `Protocol.request` adds an `abort` listener to the request signal and
+  // never removes it, so a signal that aborts after the answer sends a stray
+  // `notifications/cancelled` for a completed request. The deadline is therefore a
+  // controller whose timer is cleared once the listing settles: it can only ever abort
+  // a request that is still in flight.
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new Error(`prompts/list deadline of ${timeoutMs}ms passed`)), timeoutMs);
   const raw: unknown[] = [];
   const problems: string[] = [];
   let cursor: string | undefined;
@@ -189,19 +195,21 @@ async function listServerPrompts(client: McpClient, timeoutMs: number): Promise<
   try {
     let more = true;
     while (more) {
-      const page = await client.client.listPrompts(cursor === undefined ? undefined : { cursor }, { signal: deadline, timeout: timeoutMs });
+      const page = await client.client.listPrompts(cursor === undefined ? undefined : { cursor }, { signal: deadline.signal, timeout: timeoutMs });
       pages += 1;
       raw.push(...page.prompts);
       cursor = typeof page.nextCursor === 'string' && page.nextCursor !== '' ? page.nextCursor : undefined;
       more = cursor !== undefined && raw.length <= MAX_MCP_PROMPTS_PER_SERVER && pages < MAX_MCP_PROMPT_LIST_PAGES;
     }
   } catch (error) {
-    const timedOut = deadline.aborted || (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === -32001);
+    const timedOut = deadline.signal.aborted || (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === -32001);
     const reason = timedOut
       ? `prompts/list timed out after ${timeoutMs / 1000}s`
       : `prompts/list failed — ${errorText(error)}`;
     const failure = boundedMcpText(reason);
     return { server, client, prompts: [], failure, skipped: 0, problems: [boundedMcpText(`mcp server "${server}": ${failure}; its prompts are not offered`)] };
+  } finally {
+    clearTimeout(timer);
   }
   if (raw.length > MAX_MCP_PROMPTS_PER_SERVER) {
     problems.push(`mcp server "${server}": lists more than ${MAX_MCP_PROMPTS_PER_SERVER} prompts; only the first ${MAX_MCP_PROMPTS_PER_SERVER} are offered`);
@@ -434,10 +442,17 @@ export async function expandMcpPrompt(
     throw new McpPromptError(`/${command.name}: mcp server "${command.server}" is no longer connected; restart darwin to reconnect`);
   }
   let result: { messages?: unknown };
+  // The request gets its own signal, linked to the caller's only while the call is in
+  // flight: the MCP SDK never removes its `abort` listener, so a caller signal aborted
+  // after the answer would otherwise send a stray `notifications/cancelled`.
+  const inFlight = new AbortController();
+  const forward = (): void => inFlight.abort(options.signal?.reason);
+  if (options.signal?.aborted === true) forward();
+  else options.signal?.addEventListener('abort', forward, { once: true });
   try {
     result = await command.client.client.getPrompt(
       { name: command.prompt, ...(Object.keys(args).length === 0 ? {} : { arguments: args }) },
-      { timeout: timeoutMs, ...(options.signal === undefined ? {} : { signal: options.signal }) },
+      { timeout: timeoutMs, signal: inFlight.signal },
     );
   } catch (error) {
     if (options.signal?.aborted === true) throw new McpPromptError(`/${command.name}: cancelled before mcp server "${command.server}" answered`);
@@ -446,6 +461,8 @@ export async function expandMcpPrompt(
     const timedOut = typeof error === 'object' && error !== null && (error as { code?: unknown }).code === -32001;
     const reason = timedOut ? `timed out after ${timeoutMs / 1000}s` : `failed — ${text}`;
     throw new McpPromptError(`/${command.name}: prompts/get on mcp server "${command.server}" ${reason}`);
+  } finally {
+    options.signal?.removeEventListener('abort', forward);
   }
   return composeMcpPromptResult(command, result);
 }
