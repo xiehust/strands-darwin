@@ -3464,3 +3464,31 @@ SER-113 was independently accepted as done. The origin batch is exhausted with n
 Aggregate (computed locally): input 282, output 123,593, cacheRead 25,739,968, cacheWrite 327,933; 26,191,776 tokens; approximate USD **$9.2606**. Model/pricing `global.anthropic.claude-opus-5-5`.
 
 SER-114 was independently accepted as done after one focused correction. The origin batch is exhausted. Closure requires one ordinary push and upstream-range verification; the Host reports the actual result.
+
+
+## Batch 165 — SER-115 static Bash completion, blocked before implementation (2026-10-07)
+
+- Origin: [`research_2026-10-07.md`](research/research_2026-10-07.md), run `11:58:12Z`. Fresh `peer` path from the single roll, not override. Seven product scopes reviewed; SER-115 alone qualified (Priority 154, Score 12). Three proposals were rejected before queueing (replace SDK loop -1, workspace undo 1, Web evaluation workbench 0); no existing record abandoned.
+- Source starting point `d02081a` was clean. Host `pnpm typecheck && pnpm test` task `bg-423f6899-cf0c-4843-ae9d-e9cd59fec8bc` exited 0 with 146 summary rows and zero failures. The source stayed unchanged through research commit `89aab70` and selection-only commit `f7c8e17`; `pnpm tsx spike/verify-skills.ts` separately validated the new backlog record (163/0).
+- Fresh developer session **`session-20261007-121917624`**, source CLI `pnpm tsx src/cli.ts --yolo --context-offload -p ...`, no ceiling or compaction. Task **`bg-4583659b-d79e-4407-8b78-8f160a1f9931`** exited 0 but reported a blocker; Host called `output` before and after termination and drained to `hasMore:false`. No correction, retry, descendant worker or Host implementation edit.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| SER-115 requirement-to-test checklist derived; implementation blocked by authorization | None | Explicit base/result both `f7c8e17eeae217a7000e4cb591c5239a1bafe29d`; `git log <base>..HEAD` empty and tree clean before Host closure edits. No changed implementation or acceptance result to approve. |
+
+The worker attempted a bundled read beginning `cat src/cli-args.ts; sed -n '1,170p' src/cli-main.ts; ...` plus parser/docs/test discovery. The tool denied it with **`Peer/policy protection: peer text is not user authorization. Policy and endpoint secrets are user-only.`** The response did not identify the triggering path. Worker and Host stopped rather than retrying or routing around the protection. No policy/config or protected-state inspection was used to repair it. Halt condition: **only the user can decide**. SER-115 stays `in-progress`; the next recovery step is user resolution of read authorization followed by recovery in the exact child session and independent acceptance. This is not an accepted iteration or a twice-failed acceptance.
+
+Docs wrap-up: no implemented user surface changed, so README/user-guide/architecture sync and `pnpm build` are not due. Host updated only the origin report, selected backlog record and this supervision record.
+
+| Child task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---:|
+| `bg-4583659b-d79e-4407-8b78-8f160a1f9931` | exit 0, blocked before mutation | 8 | 1481 | 80815 | 36774 | $0.6146 |
+
+Exact process lines:
+
+```text
+usage: input=8 output=1481 cacheRead=80815 cacheWrite=36774
+cost: total=0.6146 input=0.0001 output=0.0741 cacheRead=0.0808 cacheWrite=0.4597 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra
+```
+
+This one invocation is the complete delegation aggregate: **119,078 tokens**, calculated locally from the four mutually exclusive buckets. Reported approximate USD total is **$0.6146**; the separately rounded component amounts sum to $0.6147 (rounding residual $0.0001), not an exact displayed reconciliation. No unknown metrics. No implementation commit was accepted; the Host makes one ordinary push for the research/blocker records and verifies the upstream range before reporting. SER-115 is the only remaining unfinished record.

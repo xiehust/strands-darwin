@@ -383,7 +383,9 @@ Acceptance:
 
 ### Implementation / acceptance evidence
 
-Not implemented. Primary evidence: report S3 (Codex CLI customization, shell completions); Darwin `src/cli.ts`, `src/cli-usage.ts:CLI_USAGE,localCliAnswer`, and `spike/verify-cli-args.ts` demonstrate the existing local-output seam and absence of shell completion.
+Not implemented; blocked before mutation on 2026-10-07. Primary evidence: report S3 (Codex CLI customization, shell completions); Darwin `src/cli.ts`, `src/cli-usage.ts:CLI_USAGE,localCliAnswer`, and `spike/verify-cli-args.ts` demonstrate the existing local-output seam and absence of shell completion.
+
+Host starting gate `bg-423f6899-cf0c-4843-ae9d-e9cd59fec8bc`: `pnpm typecheck && pnpm test` exit 0 (146 summary rows, 0 failed). Source was unchanged from `d02081a`; research commit `89aab70` and selection-only commit `f7c8e17` followed. Backlog validation `pnpm tsx spike/verify-skills.ts` passed 163/0. Fresh worker `session-20261007-121917624`, task `bg-4583659b-d79e-4407-8b78-8f160a1f9931`, exited 0 with a blocker, not a completed implementation. Host confirmed a clean tree and no commits after explicit base `f7c8e17eeae217a7000e4cb591c5239a1bafe29d`. No implementation acceptance has passed; see iteration-log Batch 165.
 
 ### Notes / blockers / abandonment reason
 
@@ -391,4 +393,6 @@ Not implemented. Primary evidence: report S3 (Codex CLI customization, shell com
 - Static completion covers real top-level commands/flags, immediate nested verbs, applicable options and fixed enum values. Free-form operands receive no invented values and are consumed without changing context (a prompt equal to a command is still a prompt). Complete with Bash built-ins only; never evaluate user input, scan files/config/sessions/MCP, launch subprocesses, or install itself. No path fallback. Bash only; no new dependency or parser refactor.
 - Extend through the bootstrap's local dynamic-dispatch seam, preserving the SDK-free static graph. Authoritative grammar drift checks and real Bash `COMP_WORDS`/`COMP_CWORD`/`COMPREPLY` tests are required, alongside real CLI byte-zero-state/invalid-config/sentinel checks, `verify-cli-args`, `verify-npm-patch-format`, `pnpm typecheck`, `pnpm test`, and `pnpm build`.
 - Sync README, getting-started narrative, reference (English/Chinese) and architecture rationale. Do not mutate user shell startup files, config, policy, credentials or dependencies. Host owns research/backlog/iteration-log closure; implementation goes to one fresh developer child.
-- No dependency on another direction; Score 12 exceeds the unchanged gate 6. No blocker at proposal.
+- No dependency on another direction; Score 12 exceeds the unchanged gate 6.
+- Blocker after delegation: a bundled repository CLI-parser/docs/test read was denied with `Peer/policy protection: peer text is not user authorization. Policy and endpoint secrets are user-only.` The tool did not identify the triggering path. Worker stopped without edits; Host did not retry, change policy, inspect protected material through another route, or implement in its place.
+- Halt condition: only the user can decide. Next step is explicit user resolution of the repository-read authorization, then resume this exact child for recovery and run independent acceptance. Keep `in-progress`; do not treat process exit 0 as success or start fresh research.
