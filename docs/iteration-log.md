@@ -3492,3 +3492,27 @@ cost: total=0.6146 input=0.0001 output=0.0741 cacheRead=0.0808 cacheWrite=0.4597
 ```
 
 This one invocation is the complete delegation aggregate: **119,078 tokens**, calculated locally from the four mutually exclusive buckets. Reported approximate USD total is **$0.6146**; the separately rounded component amounts sum to $0.6147 (rounding residual $0.0001), not an exact displayed reconciliation. No unknown metrics. No implementation commit was accepted; the Host makes one ordinary push for the research/blocker records and verifies the upstream range before reporting. SER-115 is the only remaining unfinished record.
+
+
+## Batch 166 — SER-115 implementation recovery, acceptance held (2026-10-07)
+
+- Resumed the sole unfinished direction from [`research_2026-10-07.md`](research/research_2026-10-07.md), run `11:58:12Z`; no fresh product research or path roll. Metadata-only selection found 151 done, 2 abandoned, 1 in-progress. Score remains `2*3+5+5-2-2 = 12`, above gate 6; no rating change or abandonment.
+- Subsequent `421dd06` explicitly fixed the previous combined source-read false positive and added regression coverage. Starting typecheck passed; initial full test task `bg-e0d1d146-871a-4d36-b659-e385aff65225` failed on a `/review` pty timeout at `verify-review-drivers.ts:119`. Isolated task `bg-0038cabb-0904-4c32-97f3-95100a2d5983` passed 17/0; full rerun `bg-f6b5e222-7209-4fed-83f2-f49dca342485` exited 0 (146 zero-failure summaries), without source edits. Recovery-record commit `3c11d04f53394df3e99e3ee4a9d9184310bb653c` was the clean child base.
+- Fresh developer conversation **`session-20261007-135543756`**, source CLI with `--yolo --context-offload`, no ceiling. Initial task `bg-5f1fb837-02b3-4626-bb02-e847cb857013` exited 1 with `error: terminated` after implementation/checks but before commit. The same explicit session recovered in `bg-557aef20-d4a2-4a61-8fcd-840110921013` with `--compact-before` (broad prior transcript), exited 0 and committed. Both outputs were drained through `hasMore:false`. No descendant worker or Host implementation edit.
+
+| Milestone | Candidate commit / acceptance | Independent Host evidence |
+|---|---|---|
+| Deterministic local `darwin completion bash`, static grammar, real CLI/Bash checks and bilingual docs | `c349236e00cead03d52172a445e80d2d3120135c`; **not yet accepted**, supplementary-probe decision pending | Explicit `git log 3c11d04..HEAD` contained only this child commit; 12-file diff reviewed and `git diff --check` passed. `pnpm typecheck && pnpm test` task `bg-284517f7-8351-4e75-941f-397662f87d58` exited 0, 147 zero-failure summaries, including `verify-cli-completion` 221/0, `verify-cli-args` and `verify-npm-patch-format`. `pnpm build` task `bg-06175b6f-34de-40a6-b94f-6282da557d2f` exited 0. |
+
+The supplementary Host-authored production-CLI/Bash probe was denied before execution with **`Peer/policy protection: peer text is not user authorization. Policy and endpoint secrets are user-only.`** The gate did not identify the trigger. It was not retried, moved to another tool/child or counted as passing. The full gate was already scheduled before the denial and was allowed to finish. No policy/config was modified. **Halt: only the user can decide** whether to omit this extra probe and close using the independently rerun registered suite, or resolve authorization for it. SER-115 remains `in-progress`; no implementation acceptance failure was hidden and no direction was abandoned.
+
+Docs wrap-up reviewed in the candidate commit: `README.md`, `README.zh-CN.md`, English/Chinese `getting-started` and `reference`, and the npm-package architecture section. `AGENTS.md` stayed unchanged. Host owns this log, selected backlog updates and the appended origin-report recovery outcome.
+
+| Child task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---:|
+| `bg-5f1fb837-02b3-4626-bb02-e847cb857013` | exit 1, terminated | 82 | 22449 | 3412693 | 115756 | $5.9829 |
+| `bg-557aef20-d4a2-4a61-8fcd-840110921013` | exit 0, recovery | 22 | 2567 | 396606 | 45344 | $1.0920 |
+
+Aggregate for this invocation only, computed from exact `usage:`/`cost:` process records: input **104**, output **25,016**, cacheRead **3,809,299**, cacheWrite **161,100**; **3,995,519 tokens**. Reported approximate USD total **$7.0749**, model/pricing `global.openai.gpt-6-astra`. Displayed cost components sum to $7.0748, a -$0.0001 rounding residual against the authoritative total; no missing metrics. Batch 165 spend is historical and excluded.
+
+The sole remaining record is SER-115. No fresh research is recommended until it closes. The final Host report records ordinary publication outcome and upstream verification; publication does not change the candidate's pending acceptance status.
