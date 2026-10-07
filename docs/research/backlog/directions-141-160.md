@@ -367,3 +367,28 @@ Acceptance:
 - A real stdio MCP fixture server (in `spike/fixtures/`) exposing prompts with no arguments, required and optional arguments, a multi-message result with an assistant message and an image block, an erroring prompt, a slow prompt for cancel and timeout, and a name needing sanitization or colliding with a built-in and a custom command. Plus a second server without the prompts capability and a third that fails to start.
 - Checks: discovery counts and skips; zero prompt requests to prompt-less, failed or trust-held servers (the fixture logs its requests); completion order with built-ins all still visible (`verify-tui completion`); argument mapping and usage errors with no model call; exact expanded text sent and recorded once; omission notice; refusal over the cap; cancel; `/mcp` counts with no fetch; existing custom-command and skill expansion byte-identical.
 - Offline only (local SDK fixture model, owned HOME/cwd), plus `pnpm typecheck`, `pnpm test`, `verify-mcp-command`, `verify-help-command`, workspace-trust and custom-command suites, and free `verify-tui completion`/`mcp`.
+
+
+## SER-115 — Generate static Bash shell completions with `darwin completion bash`, without starting an agent or discovering private state
+
+- Status: `not-started`
+- Priority: 154
+- Score: 12
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-10-07.md`](../research_2026-10-07.md) (run `11:58:12Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Primary evidence: report S3 (Codex CLI customization, shell completions); Darwin `src/cli.ts`, `src/cli-usage.ts:CLI_USAGE,localCliAnswer`, and `spike/verify-cli-args.ts` demonstrate the existing local-output seam and absence of shell completion.
+
+### Notes / blockers / abandonment reason
+
+- Requirement and independently observable acceptance are in the origin report's Recommendation. Print deterministic Bash source only for `darwin completion bash`; one leading `--` is supported, invalid shell/missing/extra operands exit 2, and help/version precedence plus SDK marker preflight remain intact.
+- Static completion covers real top-level commands/flags, immediate nested verbs, applicable options and fixed enum values. Free-form operands receive no invented values and are consumed without changing context (a prompt equal to a command is still a prompt). Complete with Bash built-ins only; never evaluate user input, scan files/config/sessions/MCP, launch subprocesses, or install itself. No path fallback. Bash only; no new dependency or parser refactor.
+- Extend through the bootstrap's local dynamic-dispatch seam, preserving the SDK-free static graph. Authoritative grammar drift checks and real Bash `COMP_WORDS`/`COMP_CWORD`/`COMPREPLY` tests are required, alongside real CLI byte-zero-state/invalid-config/sentinel checks, `verify-cli-args`, `verify-npm-patch-format`, `pnpm typecheck`, `pnpm test`, and `pnpm build`.
+- Sync README, getting-started narrative, reference (English/Chinese) and architecture rationale. Do not mutate user shell startup files, config, policy, credentials or dependencies. Host owns research/backlog/iteration-log closure; implementation goes to one fresh developer child.
+- No dependency on another direction; Score 12 exceeds the unchanged gate 6. No blocker at proposal.
