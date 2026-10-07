@@ -24,6 +24,7 @@ import {
   sensitiveReadPath,
   resolveReadTarget,
   splitBashSegments,
+  splitDenySegments,
   suggestRules,
   type RuleSuggestion,
 } from './permission-rules.js';
@@ -718,7 +719,7 @@ export class PermissionGate extends InterventionHandler {
     // including yolo and broad allow-rules. Arbitrary same-UID code is not sandboxed.
     const collaborationRead = sensitiveReadPath(toolName, input, this.options.projectRoot)?.includes('/collaboration') === true;
     const peerPolicy = collaborationRead || (toolName === 'bash' && (
-      (/\bcollaborate\b/.test(command) && assessRisk(classify(toolName, input), this.options.projectRoot).risk !== 'safe')
+      hasCollaborationControlOperand(command, this.options.projectRoot)
       || /\.darwin[\/]collaboration(?:[\/\s'";]|$)/.test(command)))
       || (file !== '' && isCollaborationPath(resolveReadTarget(file, this.options.projectRoot)))
       || (this.options.peerOrigin?.() === true && (toolName === 'memory_save'
@@ -1280,6 +1281,24 @@ function assessBashRisk(command: string): RiskAssessment {
   }
 
   return { risk: 'safe', riskReason: 'read-only command' };
+}
+
+/**
+ * A control operand is a whole shell word, not the substring in
+ * `src/cli-{collaborate,mcp}.ts`. Judge its own deny-side segment: an unrelated
+ * `sed` must not turn `rg collaborate src` or `echo collaborate` into a control.
+ * Deny-side splitting also exposes substitutions/groups; quote/escape removal
+ * catches literal alternate spellings. Variables stay conservative because they
+ * can supply word boundaries. This is not a shell parser or an approval: opaque
+ * commands carrying the operand remain denied; all others take the ordinary gate.
+ */
+function hasCollaborationControlOperand(command: string, projectRoot: string): boolean {
+  return splitDenySegments(command.replace(/\\\r?\n/g, '')).some((segment) => {
+    const words = segment.replace(/["'\\]/g, '');
+    const operand = /(?:^|\s)collaborate(?:\s|$)/.test(words)
+      || (words.includes('$') && /\bcollaborate\b/.test(words));
+    return operand && assessRisk(classify('bash', { command: segment }), projectRoot).risk !== 'safe';
+  });
 }
 
 /**

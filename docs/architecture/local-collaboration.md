@@ -108,7 +108,19 @@ admission needs no cooperation approval; unknown project pairs produce a bounded
 and exact human confirmation command even under yolo/headless. The ordinary gate protects incoming
 tool work. Plan applies locally and propagates as a narrowing ceiling along the chain. Known
 collaboration policy/credential access and model-issued collaboration CLI are denied before rules
-or hooks. Peer-origin bash always takes the ordinary deny-rule/plan/mode/allow/classifier/prompt
+or hooks. The Bash control check matches a whole `collaborate` operand in its own conservative
+deny-side segment, not a word-boundary substring anywhere in the full command. Source paths such as
+`src/cli-{collaborate,mcp}.ts` are not controls, and a separate `sed` cannot taint a safe
+`rg collaborate src` or `echo collaborate` segment. Substitutions/groups remain inspected; literal
+quotes/escapes and line continuations are normalized, while variable-bearing operands remain
+conservative. This is not a general Shell parser: opaque non-safe commands with a standalone control
+operand can still be refused. No command is made statically safe by this check. The ordinary gate
+still owns default-mode prompts, plan restrictions and deny-rules; policy/credential paths remain
+unconditionally protected. `verify-peer-trust.ts` pins the original combined research-read regression,
+both human/peer origins, all modes, nested/quoted controls and the existing secret protections.
+`verify-collaboration-drivers.ts` additionally runs an actual combined `sed`/`rg` source read through
+the headless runtime and checks returned bytes and unchanged files before its real control-denial test.
+Peer-origin bash always takes the ordinary deny-rule/plan/mode/allow/classifier/prompt
 path; peer provenance alone never denies shell work. Policy/config/AGENTS paths and memory saves
 remain denied; allowed ordinary file edits can still run outside plan. With `trustPeers` off
 (the default), denials latch peer sends until a genuine human turn, including across synthetic

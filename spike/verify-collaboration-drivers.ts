@@ -254,6 +254,14 @@ try {
       return Object.entries(value).flatMap(([key, child]) => key === 'output' && typeof child === 'string' ? [child] : outputs(child));
     };
     assert(outputs(echoCalls).some(output => output.trim() === 'collaborate') && !JSON.stringify(echoCalls).includes('Peer/policy protection'), 'harmless safe shell text is not mistaken for policy execution');
+    const sourceFiles = [['source-collaborate.ts', 'source read canary\n'], ['source-mcp.ts', 'collaborate source\n']] as const;
+    for (const [name, body] of sourceFiles) writeFileSync(path.join(root, name), body);
+    const beforeRead = requests(root).length;
+    await oneHeadless('inspect source files');
+    const readCalls = requests(root).slice(beforeRead);
+    assert(outputs(readCalls).some(output => output.includes('source read canary\n1:collaborate source'))
+      && !JSON.stringify(readCalls).includes('Peer/policy protection'), 'real bash reads brace-expanded source paths and a control-word search despite the separate sed segment');
+    for (const [name, body] of sourceFiles) assert.equal(readFileSync(path.join(root, name), 'utf8'), body, 'source inspection changes no bytes');
     const beforeGrant = requests(root).length;
     await oneHeadless(`model grant ${pending.id}`);
     assert(JSON.stringify(requests(root).slice(beforeGrant)).includes('Peer/policy protection'), 'the real model receives the gate denial, not CLI authority');

@@ -46,7 +46,7 @@ function makeGate(mode: ApprovalMode, readOnly = false, overrides: Partial<Permi
   return { gate, asked };
 }
 
-const isPeerDenial = (action: Action): boolean => action.type === 'deny' && action.reason.includes('Peer/policy protection');
+const isPeerDenial = (action: Action | undefined): boolean => action?.type === 'deny' && action.reason.includes('Peer/policy protection');
 const bashRisk = (command: string): string => assessRisk(classify('bash', { mode: 'execute', command }), ROOT).risk;
 
 function safeList(): void {
@@ -94,6 +94,88 @@ async function ordinaryShell(): Promise<void> {
 
   const child = makeGate('default', false, { dispatchSource: () => ({ label: 'general#peer-child', dispatchId: 'peer-child', agentName: 'general' }) });
   assert('a child of a peer turn also takes the ordinary permission path', (await child.gate.beforeToolCall(shell())).type === 'proceed' && child.asked[0]?.source.kind === 'child');
+}
+
+async function collaborationOperands(): Promise<void> {
+  header('collaboration guard — operands, not source-path substrings or unrelated segments');
+  // The actual refused research read: none of these commands invokes the user CLI.
+  const researchRead = "cat src/cli-args.ts; sed -n '1,170p' src/cli-main.ts; "
+    + "rg -n '^export |case |argv\\[|arg ===|arg ==|includes\\(|Usage:' "
+    + 'src/cli-{collaborate,cloud-memory,mcp,import,trajectory,permissions,doctor,sessions,list-agents}.ts; '
+    + "rg --files docs | rg 'getting-started|reference'; "
+    + "rg -n 'darwin --help|darwin doctor|darwin sessions|CLI|命令行' "
+    + 'README.md README.zh-CN.md docs/user-guide/getting-started* docs/user-guide/reference*; '
+    + "rg --files spike | rg 'docs|doc-'";
+  const reads = [
+    researchRead,
+    "sed -n '1,20p' src/cli-collaborate.ts",
+    "sed -n '1,20p' src/cli.ts; rg -n 'collaborate' src/cli.ts",
+    "rg -n 'collaborate' src/cli.ts; sed -n '1,20p' src/cli.ts",
+    "echo collaborate; sed -n '1,20p' src/cli.ts",
+    "sed -n '1,20p' src/cli.ts; echo collaborate",
+    "sed -n '1,20p' 'docs/collaborate.md'",
+  ];
+  for (const peer of [false, true]) {
+    const { gate, asked } = makeGate('yolo', false, { peerOrigin: () => peer });
+    for (const command of reads) {
+      const event = fakeEvent('bash', { mode: 'execute', command });
+      assert(`${peer ? 'peer' : 'human'}: source read reaches ordinary gate: ${command.slice(0, 65)}`,
+        gate.guardBeforeHooks(event) === undefined && (await gate.beforeToolCall(event)).type === 'proceed');
+    }
+    assert('yolo source reads need no prompt', asked.length === 0);
+  }
+  const ordinary = makeGate('default', false, { peerOrigin: () => false });
+  assert('the original read is still statically dangerous, not a new safe-list exemption', bashRisk(researchRead) === 'dangerous');
+  assert('default mode still asks for that read',
+    (await ordinary.gate.beforeToolCall(fakeEvent('bash', { command: researchRead }))).type === 'proceed' && ordinary.asked.length === 1);
+  const denied = makeGate('yolo', false, { denyRules: ['bash:sed *'] });
+  const decision = await denied.gate.beforeToolCall(fakeEvent('bash', { command: researchRead }));
+  assert('configured deny-rules still apply to the research read', decision.type === 'deny' && decision.reason.includes('blocked by deny rule'));
+  const plan = await makeGate('plan').gate.beforeToolCall(fakeEvent('bash', { command: researchRead }));
+  assert('plan still blocks the research shell read as execute', plan.type === 'deny' && plan.reason.includes('Plan mode blocked'));
+
+  const controls = [
+    'darwin collaborate confirm pending --persist',
+    '/usr/local/bin/darwin collaborate on',
+    'node dist/src/cli.js collaborate off',
+    'pnpm tsx src/cli.ts -- collaborate hub block node',
+    'env FOO=1 command darwin collaborate off',
+    "darwin 'collaborate' on",
+    'darwin "collab"orate on',
+    'darwin colla\\borate on',
+    'darwin colla\\\nborate on',
+    'echo ok; darwin collaborate on',
+    'echo ok && darwin collaborate on',
+    'echo ok | darwin collaborate on',
+    '(darwin collaborate on)',
+    'echo $(darwin collaborate on)',
+    'echo `darwin collaborate on`',
+    'bash -c "darwin collaborate on"',
+    'darwin${IFS}collaborate${IFS}on',
+    'darwin collaborate on; echo harmless',
+    'echo harmless; darwin collaborate on',
+  ];
+  for (const peer of [false, true]) {
+    for (const mode of ['default', 'auto', 'plan', 'yolo'] as const) {
+      const { gate, asked } = makeGate(mode, false, { peerOrigin: () => peer, allowRules: ['bash'] });
+      for (const command of controls) {
+        const event = fakeEvent('bash', { command });
+        assert(`${peer ? 'peer' : 'human'} ${mode}: control denied before hooks and approval: ${command}`,
+          isPeerDenial(gate.guardBeforeHooks(event)!) && isPeerDenial(await gate.beforeToolCall(event)));
+      }
+      const secretPath = path.join(HOME, '.darwin/collaboration/policy.json');
+      const secrets = [
+        fakeEvent('bash', { command: `cat ${secretPath}` }),
+        fakeEvent('bash', { command: `rg -uu secret ${HOME}/.darwin` }),
+        ...['view', 'create', 'str_replace', 'insert'].map(command => fakeEvent('fileEditor', { command, path: secretPath })),
+      ];
+      for (const event of secrets) {
+        assert(`${peer ? 'peer' : 'human'} ${mode}: policy/secret ${event.toolUse.name} stays protected`,
+          isPeerDenial(gate.guardBeforeHooks(event)) && isPeerDenial(await gate.beforeToolCall(event)));
+      }
+      assert('no control or secret reaches the prompt despite a broad allow-rule', asked.length === 0);
+    }
+  }
 }
 
 async function peerProtections(): Promise<void> {
@@ -150,6 +232,7 @@ async function main(): Promise<void> {
   await mkdir(ROOT, { recursive: true });
   safeList();
   await ordinaryShell();
+  await collaborationOperands();
   await peerProtections();
   await sendLatch();
   await configField();

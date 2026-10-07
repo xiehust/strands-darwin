@@ -52,6 +52,8 @@ class CollaborationModel extends CaptureModel {
       name = 'bash'; input = { mode: 'execute', command: `darwin collaborate confirm ${text.slice('model grant '.length)} --persist` };
     } else if (text === 'echo collaboration word') {
       name = 'bash'; input = { mode: 'execute', command: 'echo collaborate' };
+    } else if (text === 'inspect source files') {
+      name = 'bash'; input = { mode: 'execute', command: "sed -n '1p' source-{collaborate,mcp}.ts; rg -n 'collaborate' source-mcp.ts" };
     } else if (text === 'read collaboration secrets') {
       name = 'fileEditor'; input = { command: 'view', path: path.join(process.env['HOME']!, '.darwin/collaboration/policy.json') };
     } else if (text === 'permission hold') {
