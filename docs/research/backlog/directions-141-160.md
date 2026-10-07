@@ -371,7 +371,7 @@ Acceptance:
 
 ## SER-115 — Generate static Bash shell completions with `darwin completion bash`, without starting an agent or discovering private state
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 154
 - Score: 12
 - Importance: 3
