@@ -109,6 +109,10 @@ JSON 的 `result` 和 text 输出均保留它，但整体仍为 `outcome:"failur
 
 ## CLI
 
+`darwin completion bash` 向 stdout 输出确定性的 Bash 源码，stderr 为空，退出码为 0。支持一个前导 `--`。缺少 shell、未知 shell 或多余参数在本地返回退出码 2 的用法错误；help 优先于 version，两者均优先于补全参数校验。SDK 补丁预检仍最先执行，不加载 runtime、配置、会话、hook 或 MCP。
+
+手动加载：运行 `darwin completion bash > darwin-completion.bash`，检查文件后执行 `source ./darwin-completion.bash`。如需持久安装，手动在 Bash 启动文件中 source 自选的保存路径；不会自动安装。升级后重新生成。仅支持 Bash，静态补全命令、子命令、选项和枚举值；不补全自由参数或回退到路径，也不在补全时探查状态、启动子进程或联网。未知上下文返回空候选，不校验自由参数的实际有效性。见[设置与限制](getting-started.zh-CN.md#bash-补全)。
+
 ```bash
 darwin                                      # 新建 TUI
 darwin --resume                             # 恢复本项目最近会话
@@ -135,6 +139,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
        darwin -p <message> [--output-format text|json|stream-json]
          [--continue|--resume [<id>]|--session <id>] [permission flags]
          [--max-model-calls <n>] [--context-offload] [--compact-before]
+       darwin completion bash
        darwin sessions
        darwin list-agents
        darwin collaborate [status|list|pending|relations|on|off]

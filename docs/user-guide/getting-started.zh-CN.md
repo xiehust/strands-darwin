@@ -18,6 +18,21 @@ npm 包名是 `strands-darwin`，命令是 `darwin`。包的 `postinstall` 脚�
 
 不支持 `pnpm add -g strands-darwin`：pnpm 默认拦截依赖的构建脚本（`postinstall` 会进入 `ignoredBuilds`），即便加上 `--allow-build`，它的隔离目录布局也会把 SDK 放在包的旁边，而不是 `patch-package` 能找到的位置。
 
+### Bash 补全
+
+在自选路径生成文件，检查内容后加载到当前 Bash：
+
+```bash
+darwin completion bash > darwin-completion.bash
+source ./darwin-completion.bash
+```
+
+若需长期使用，把检查过的文件移到固定位置，再手动将 `source /your/chosen/path/darwin-completion.bash` 加入 Bash 启动文件。Darwin 不会安装补全或修改启动文件。升级后重新生成并加载；用 `complete -r darwin` 可移除当前 shell 的注册。
+
+仅支持 Bash。生成的脚本静态补全命令、嵌套子命令、适用选项和固定取值，例如 `--permission-mode plan`、`--output-format stream-json`。提示词、ID、规则、URL、凭证、服务器名、路径和数字不提供候选，也不回退到文件名补全。`-p trajectory` 中的 `trajectory` 始终是提示词。补全过程只使用 Bash 内建能力，不运行 darwin，不探查文件、配置、会话或 MCP 状态。未知上下文不提供候选。它是语法辅助，不校验自由参数的实际有效性；已用选项会保守地省略。仅适用于打印模式的选项即使写在 `-p` 前，执行时也仍需 `-p`。
+
+生成操作在本地完成，不写状态（用户显式的 shell 重定向除外），不启动 runtime、配置加载、会话、hook 或 MCP。SDK 补丁标记检查仍最先执行。`darwin -- completion bash` 等价；缺少 shell、未知 shell 或多余参数返回退出码 2；help/version 的优先级不变。见 [CLI 参考](reference.zh-CN.md#cli)。
+
 ### 开发路径：从克隆目录运行
 
 ```bash

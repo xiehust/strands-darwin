@@ -18,6 +18,21 @@ The registry package is `strands-darwin`; the command is `darwin`. The package's
 
 `pnpm add -g strands-darwin` is unsupported: pnpm blocks a dependency's build scripts by default (the `postinstall` lands in `ignoredBuilds`), and even with `--allow-build` its isolated layout places the SDK beside the package, where `patch-package` cannot find it.
 
+### Bash completion
+
+Generate a file at a path you choose, inspect it, then load it into your current Bash:
+
+```bash
+darwin completion bash > darwin-completion.bash
+source ./darwin-completion.bash
+```
+
+For persistent use, move the reviewed file to a stable location and manually add `source /your/chosen/path/darwin-completion.bash` to your Bash startup file. Darwin does not install completion or edit startup files. Regenerate and reload after upgrading; remove it from the current shell with `complete -r darwin`.
+
+Only Bash is supported. The generated source suggests static commands, nested verbs, applicable options and fixed values (for example `--permission-mode plan` and `--output-format stream-json`). Prompts, IDs, rules, URLs, credentials, server names, paths and numbers receive no suggestions; no filename fallback runs. A prompt such as `-p trajectory` stays a prompt. Completion uses Bash builtins only, never invokes darwin or discovers files, config, sessions or MCP state. Unknown contexts return no candidates. It is a grammar aid, not a validator of free-form values; repeated options are conservatively omitted. Print-only flags still require `-p` when executing, even when entered before it.
+
+Generation is local and write-free (apart from your explicit shell redirection): no runtime/config/session/hook/MCP startup. The SDK patch-marker preflight still runs first. `darwin -- completion bash` is equivalent; missing/unknown shells or extra operands exit 2. Help/version keep their precedence. See the [CLI reference](reference.md#cli).
+
 ### Developer path: run from a clone
 
 ```bash

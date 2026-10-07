@@ -75,6 +75,8 @@ darwin mcp login <name>     # 为配置了 "oauth": true 的远程 MCP 服务器
 darwin --help               # 用法语法；darwin --version 打印版本
 ```
 
+如需 Bash 补全，运行 `darwin completion bash > darwin-completion.bash`，检查文件后执行 `source ./darwin-completion.bash`。若想在后续 shell 中继续使用，可把文件移到自选位置，再手动在 Bash 启动文件中加入该路径的 `source` 行；darwin 不会自动安装。仅支持 Bash 静态补全：命令、选项与固定取值，不补全路径、会话、服务器名称或其他私有状态。详见[设置与限制](docs/user-guide/getting-started.zh-CN.md#bash-补全)。
+
 ### 开发 darwin 本身
 
 克隆仓库并使用 pnpm（lockfile 是 pnpm 的；`pnpm install` 会自行应用 SDK 补丁）：

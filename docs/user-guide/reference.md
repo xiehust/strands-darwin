@@ -142,6 +142,10 @@ for headless inspection, not `-p "/list-agents"`. See [the task guide](sessions-
 
 ## CLI
 
+`darwin completion bash` prints deterministic Bash source to stdout, with empty stderr and exit 0. One leading `--` is accepted. Missing/unknown shell or extra operands give a local exit-2 usage error; help wins over version, and both win over completion validation. The SDK patch preflight still precedes everything. No runtime, config, session, hook or MCP loader runs.
+
+Manual loading: `darwin completion bash > darwin-completion.bash`, inspect the file, then `source ./darwin-completion.bash`. For persistent installation, manually source your chosen saved path from your Bash startup file; nothing installs itself. Regenerate after upgrades. Bash only: static commands/verbs/options/enums, no free-operand suggestions or path fallback, discovery, subprocesses or network during completion. Unsupported contexts are empty; this is not free-value validation. See [setup and limits](getting-started.md#bash-completion).
+
 ```bash
 darwin                                      # fresh TUI
 darwin --resume                             # last project session
@@ -168,6 +172,7 @@ Usage: darwin [--resume [<id>]|--session <id>] [--permission-mode <default|auto|
        darwin -p <message> [--output-format text|json|stream-json]
          [--continue|--resume [<id>]|--session <id>] [permission flags]
          [--max-model-calls <n>] [--context-offload] [--compact-before]
+       darwin completion bash
        darwin sessions
        darwin list-agents
        darwin collaborate [status|list|pending|relations|on|off]

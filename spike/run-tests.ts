@@ -49,6 +49,7 @@ const suites = [
   'verify-headless.ts',
   'verify-headless-structured.ts',
   'verify-cli-args.ts',
+  'verify-cli-completion.ts',
   'verify-import-command.ts',
   'verify-npm-patch-format.ts',
   'verify-responses-reasoning.ts',

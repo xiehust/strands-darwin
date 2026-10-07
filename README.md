@@ -75,6 +75,8 @@ darwin mcp login <name>     # OAuth login for a remote MCP server with "oauth": 
 darwin --help               # usage grammar; darwin --version prints the version
 ```
 
+For optional Bash completion, run `darwin completion bash > darwin-completion.bash`, review the file, then `source ./darwin-completion.bash`. To keep it across shells, move it to a location you choose and manually source that path from your Bash startup file. Nothing is installed automatically. Completion is static and Bash-only: commands, options and fixed values, not paths, sessions, server names or other private state. See [setup and limits](docs/user-guide/getting-started.md#bash-completion).
+
 ### Developing darwin itself
 
 Clone the repository and use pnpm (the lockfile is pnpm's; `pnpm install` applies the SDK patch itself):

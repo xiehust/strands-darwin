@@ -2393,6 +2393,31 @@ suite on a fresh runner, refuses a tag whose version differs from `package.json`
 through npm trusted publishing (OIDC, `NPM_TOKEN` secret as fallback) and creates the GitHub
 release only when none exists; `workflow_dispatch` rehearses the gate without publishing.
 
+**Shell completion is a local static projection (SER-115), not another startup path.**
+`darwin completion bash` uses the bootstrap's dynamic-dispatch seam after the unchanged
+SDK marker preflight. `cli-completion.ts` imports only the local usage module (and thus
+package identity), never the argument parser's runtime-reaching imports, config, sessions,
+hooks or MCP. Help/version are answered first within this route; missing/unknown shell or
+extra operands use the shared exit-2 usage protocol. Valid generation writes deterministic
+Bash source only to stdout. The explicit supported grammar table follows the authoritative
+CLI/domain parsers; drift assertions pin commands, options and fixed values without
+refactoring those parsers. This is deliberately not a free-value validator: operands are
+consumed, never reinterpreted as commands, and unknown contexts stop rather than falling
+back to misleading root words. Already-used options are conservatively omitted.
+
+The generated function uses only Bash builtins, quoted data and fixed case arms. It never
+uses eval, subprocesses, filesystem/config/session/MCP discovery or network, and registers
+without default/filename fallback. Free values (including prompts, IDs, rules, URLs,
+credentials, server names, paths and numbers) have no fabricated candidates. Loading and
+persistent installation are manual; no user startup file is edited, and saved output must
+be regenerated after upgrades. Other shells are out of scope. The registered fast suite
+`verify-cli-completion.ts` runs the production source CLI under invalid config with hook/MCP
+sentinels and byte-identical HOME/cwd checks, tests an owned unpatched SDK fixture, and
+sources the actual output in real `bash --noprofile --norc` with no executable search path.
+It exercises every grammar state, literal metacharacters, operand consumption and the
+no-fallback registration; `verify-cli-args.ts` and `verify-npm-patch-format.ts` retain their
+existing boundary checks. Both language editions of the reference quote `CLI_USAGE` exactly.
+
 **The SDK patch's reasoning hunks are an interim, to be dropped rather than rebased (SER-101).**
 The Responses-path provenance round-trip (see *Thinking effort*) touches
 `models/openai/responses-adapter.js`/`.d.ts`, `models/openai/model.js` (the stream state gets the

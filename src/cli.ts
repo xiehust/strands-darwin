@@ -26,7 +26,10 @@ if (refusal !== undefined) {
 } else {
   const args = process.argv.slice(2);
   if (args[0] === '--') args.shift();
-  if (args[0] === 'collaborate') {
+  if (args[0] === 'completion') {
+    const { runCompletionCli } = await import('./cli-completion.js');
+    runCompletionCli(args.slice(1));
+  } else if (args[0] === 'collaborate') {
     const { runCollaborationCli } = await import('./collaboration/command.js');
     await runCollaborationCli(process.cwd(), args.slice(1));
   } else if (args[0] === 'list-agents') {
