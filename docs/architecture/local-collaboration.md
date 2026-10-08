@@ -118,8 +118,12 @@ operand can still be refused. No command is made statically safe by this check. 
 still owns default-mode prompts, plan restrictions and deny-rules; policy/credential paths remain
 unconditionally protected. `verify-peer-trust.ts` pins the original combined research-read regression,
 both human/peer origins, all modes, nested/quoted controls and the existing secret protections.
-`verify-collaboration-drivers.ts` additionally runs an actual combined `sed`/`rg` source read through
+`verify-collaboration-drivers.ts` additionally runs an actual combined `sed`/`grep` source read through
 the headless runtime and checks returned bytes and unchanged files before its real control-denial test.
+That read runs with a private PATH containing only the real `bash`, `sed` and `grep` executables:
+optional `rg` must not make a developer checkout pass while a clean release runner fails. The original
+`rg` command shapes remain covered by `verify-peer-trust.ts`; assertion failures expose bounded shell
+output/error so a missing executable is distinguishable from a permission denial.
 Peer-origin bash always takes the ordinary deny-rule/plan/mode/allow/classifier/prompt
 path; peer provenance alone never denies shell work. Policy/config/AGENTS paths and memory saves
 remain denied; allowed ordinary file edits can still run outside plan. With `trustPeers` off

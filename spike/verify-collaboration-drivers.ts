@@ -1,7 +1,7 @@
 /** SER-104: real offline SDK runtimes, production TUI PTYs and normal headless CLI. */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, existsSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -231,8 +231,8 @@ try {
   console.log('PASS text/stream-json/json headless, finite admitted drain, model reply, structured provenance and cleanup');
   const foreign = path.join(home, 'foreign'); mkdirSync(foreign);
   const target = new LocalCollaboration(foreign, 'unapproved-project'); await target.start();
-  async function oneHeadless(prompt: string): Promise<{ stdout: string; stderr: string }> {
-    const child = spawn(process.execPath, [...(ext === 'ts' ? ['--import', import.meta.resolve('tsx')] : []), fixture, '-p', prompt, '--yolo'], { cwd: root, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  async function oneHeadless(prompt: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<{ stdout: string; stderr: string }> {
+    const child = spawn(process.execPath, [...(ext === 'ts' ? ['--import', import.meta.resolve('tsx')] : []), fixture, '-p', prompt, '--yolo'], { cwd: root, env: { ...process.env, ...env, ...extraEnv }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = '';
     child.stdout.on('data', b => { stdout += b; }); child.stderr.on('data', b => { stderr += b; });
     try { await waitFor(() => child.exitCode !== null, 'headless user-only trust refusal'); assert.equal(child.exitCode, 0, stderr); return { stdout, stderr }; }
@@ -246,21 +246,32 @@ try {
     const beforeEcho = requests(root).length;
     await oneHeadless('echo collaboration word');
     const echoCalls = requests(root).slice(beforeEcho);
-    const outputs = (value: unknown): string[] => {
+    const outputs = (value: unknown, field = 'output'): string[] => {
       if (typeof value === 'string' && /^[{[]/.test(value)) {
-        try { return outputs(JSON.parse(value)); } catch { return []; }
+        try { return outputs(JSON.parse(value), field); } catch { return []; }
       }
       if (!value || typeof value !== 'object') return [];
-      return Object.entries(value).flatMap(([key, child]) => key === 'output' && typeof child === 'string' ? [child] : outputs(child));
+      return Object.entries(value).flatMap(([key, child]) => key === field && typeof child === 'string' ? [child] : outputs(child, field));
     };
     assert(outputs(echoCalls).some(output => output.trim() === 'collaborate') && !JSON.stringify(echoCalls).includes('Peer/policy protection'), 'harmless safe shell text is not mistaken for policy execution');
     const sourceFiles = [['source-collaborate.ts', 'source read canary\n'], ['source-mcp.ts', 'collaborate source\n']] as const;
     for (const [name, body] of sourceFiles) writeFileSync(path.join(root, name), body);
+    // Use real standard utilities only: optional developer tools must not make CI differ.
+    const sourceBin = path.join(home, 'source-bin'); mkdirSync(sourceBin);
+    for (const name of ['bash', 'sed', 'grep']) {
+      const resolved = spawnSync('bash', ['--noprofile', '--norc', '-c', 'command -v "$1"', 'bash', name], {
+        encoding: 'utf8', env: { ...process.env, BASH_ENV: '/dev/null' }, timeout: 5_000,
+      });
+      assert.equal(resolved.status, 0, `source-read fixture requires ${name}: ${resolved.stderr}`);
+      const executable = resolved.stdout.trim(); assert(path.isAbsolute(executable));
+      symlinkSync(executable, path.join(sourceBin, name));
+    }
     const beforeRead = requests(root).length;
-    await oneHeadless('inspect source files');
+    await oneHeadless('inspect source files', { PATH: sourceBin, BASH_ENV: '/dev/null' });
     const readCalls = requests(root).slice(beforeRead);
     assert(outputs(readCalls).some(output => output.includes('source read canary\n1:collaborate source'))
-      && !JSON.stringify(readCalls).includes('Peer/policy protection'), 'real bash reads brace-expanded source paths and a control-word search despite the separate sed segment');
+      && !JSON.stringify(readCalls).includes('Peer/policy protection'),
+      `real bash reads brace-expanded source paths and a control-word search despite the separate sed segment; output=${JSON.stringify(outputs(readCalls)).slice(0, 1000)}; error=${JSON.stringify(outputs(readCalls, 'error')).slice(0, 1000)}`);
     for (const [name, body] of sourceFiles) assert.equal(readFileSync(path.join(root, name), 'utf8'), body, 'source inspection changes no bytes');
     const beforeGrant = requests(root).length;
     await oneHeadless(`model grant ${pending.id}`);
