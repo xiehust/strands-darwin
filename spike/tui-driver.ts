@@ -106,7 +106,9 @@ export interface TuiSession {
   submitCrLf(text: string): void;
   /** Sends text plus CR in one write, forcing Ink's batched-input path. */
   submitChunk(text: string): void;
-  /** Resolves with the exit code. */
+  /** The PTY termination signal, when it exited by signal rather than by code. */
+  readonly exitSignal: number | undefined;
+  /** Resolves with the exit code (node-pty reports the termination signal separately). */
   exited(): Promise<number>;
   /**
    * Resolves with the exit code, or rejects if the TUI outlives `timeoutMs`.
@@ -150,6 +152,7 @@ export function startTui(options: TuiOptions): TuiSession {
   let terminalRows = options.rows ?? 50;
   const watchers = new Set<() => void>();
   let exitCode: number | undefined;
+  let exitSignal: number | undefined;
   const exitWaiters = new Set<(code: number) => void>();
 
   child.onData((chunk) => {
@@ -158,8 +161,9 @@ export function startTui(options: TuiOptions): TuiSession {
     for (const notify of [...watchers]) notify();
   });
 
-  child.onExit(({ exitCode: code }) => {
+  child.onExit(({ exitCode: code, signal }) => {
     exitCode = code;
+    exitSignal = signal;
     for (const resolve of [...exitWaiters]) resolve(code);
     for (const notify of [...watchers]) notify();
   });
@@ -167,6 +171,10 @@ export function startTui(options: TuiOptions): TuiSession {
   const session: TuiSession = {
     get pid() {
       return child.pid;
+    },
+
+    get exitSignal() {
+      return exitSignal;
     },
 
     get raw() {

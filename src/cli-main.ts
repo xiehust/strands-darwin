@@ -383,6 +383,10 @@ async function runInteractive(options: CliOptions): Promise<void> {
     try { instance.unmount(); } catch { /* the terminal may already be gone */ }
   };
   process.on('SIGHUP', onSignal);
+  // As in the headless driver, replace the SDK bash import's SIGTERM handler:
+  // it calls process.exit(0) synchronously, before this bounded cleanup can run.
+  // shutdown() owns reaping the shell and all other runtime resources instead.
+  process.removeAllListeners('SIGTERM');
   process.on('SIGTERM', onSignal);
   try {
     await instance.waitUntilExit();

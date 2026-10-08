@@ -50,7 +50,8 @@ class Connection {
     // Let the close frame flush; destroy shortly after regardless.
     setTimeout(() => this.socket.destroy(), 500).unref();
     this.closed = true;
-    this.onClose();
+    // Drain accepted frames before disconnect deletes their authenticated connection.
+    void this.queue.then(() => this.onClose());
   }
 
   /** Abrupt loss: no close frame. */
@@ -60,10 +61,12 @@ class Connection {
     if (this.closed) return;
     this.closed = true;
     this.socket.destroy();
-    this.onClose();
+    // Drain accepted frames before disconnect deletes their authenticated connection.
+    void this.queue.then(() => this.onClose());
   }
 
   private data(chunk: Buffer): void {
+    if (this.closed) return;
     this.buffer = Buffer.concat([this.buffer, chunk]);
     for (;;) {
       if (this.buffer.length < 2) return;

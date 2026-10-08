@@ -11,6 +11,7 @@ const suites = [
   'verify-peer-trust.ts',
   'verify-hub-wire.ts',
   '../hub/spike/verify-handlers.ts',
+  '../hub/spike/verify-close-order.ts',
   'verify-hub-transport.ts',
   'verify-prompt-editor.ts',
   'verify-composer-yank.ts',

@@ -1188,6 +1188,17 @@ socket ends through one idempotent handler bound to both events. Reconnects are 
 backoff, three refusals from a reachable hub pause (the `/time` skew tells clock from revocation),
 thirty unreachable attempts pause; only `/collaborate on` resumes.
 
+The dependency-free local hub must drain already accepted text frames before its disconnect
+callback removes the authenticated connection. A client can send `unregister` and the WebSocket
+close frame in the same TCP read: previously the parser queued the text handler but ran
+`disconnect` synchronously, so a correctly sent unregister was rejected as `unauthenticated`.
+This made the real-TUI shutdown assertion timing-dependent even though the client completed its
+normal shutdown. Both orderly close and transport loss now queue the disconnect callback after
+accepted work, while the socket closes immediately with the existing deadline and later input
+is ignored. Authentication and the deployed Lambda handlers are unchanged. The deterministic
+`../hub/spike/verify-close-order.ts`† regression sends the two masked frames in one socket write
+and requires explicit unregister before exactly one disconnect; it fails on the old ordering.
+
 Checks: `verify-hub-wire.ts`† (v1 bytes, v2 schemas, tamper-every-field signatures, connect
 domain separation, remote normalization and refusals, hub-wire purity), `../hub/spike/verify-handlers.ts`†
 (the real handlers through the dependency-free local hub: authorizer negatives, single-use tokens
@@ -2486,7 +2497,15 @@ closed after the queued `unregister` (bounded at `CLOSE_FLUSH_MS`, never rejects
 exit removes the endpoint by explicit unregister rather than the best-effort `$disconnect`. Idle
 Ctrl+C only arms; a second within 2s exits (busy or idle), and a cancel keeps the window armed so
 its "press ctrl+c again to exit" holds. Checks: `verify-hub-transport.ts`† (graceful close and
-real-TUI double SIGHUP: endpoint unregistered, lease released), `tui completion`.
+real-TUI `/exit`, double SIGHUP and double SIGTERM: explicit unregister, lease release and shell
+statuses 0/129/143, including node-pty's separate termination-signal field; SIGTERM also reaps
+a live owned `!` shell). The local hub's
+frame/disconnect ordering regression is described under **Collaboration hub**. The TUI must
+replace the SDK bash module's import-time SIGTERM listener, just as the headless driver does:
+that listener calls `process.exit(0)` synchronously before Darwin's later listener can run,
+skipping unregister and lease release entirely. The ordinary `shutdown()` path owns resource
+cleanup instead; its flush bounds, repeated-signal latch and exit fallbacks are unchanged.
+The idle Ctrl+C contract is also checked by `tui completion`.
 
 **The `/tasks` output tails read the log, never the cursor (SER-060).** The byte cursor behind
 `bash output` and `wait` is the model's: every byte belongs to exactly one consumer, and the

@@ -276,31 +276,54 @@ try {
     assert.ok(unregistered(endpoint), 'removed by the explicit unregister, not left to $disconnect');
   });
 
-  await check('closing the terminal (SIGHUP) unregisters the hub endpoint and releases the lease', async () => {
-    const nodeC = JSON.parse(readFileSync(path.join(homeC!.home, '.darwin/collaboration/hub-node.json'), 'utf8')).node as string;
-    const tui = startTui({ cwd: homeC!.project, env: { HOME: homeC!.home } });
-    try {
-      await tui.waitFor('you>', { timeoutMs: 60_000 });
-      assert.match(tui.screen, /hub: enrolled as gamma/, 'an enrolled HOME gets one hub info notice at startup');
-      assert.match(tui.screen, /publishing\s+this\s+project\s+as\s+github\.com\/acme\/gamma/);
-      let endpoint: string | undefined;
-      await waitFor('TUI endpoint registered', () => {
-        endpoint = [...hub.store.endpoints.values()].find(row => row.node === nodeC)?.endpoint;
-        return endpoint !== undefined;
-      }, 30_000);
-      const leases = () => findFiles(path.join(homeC!.home, '.darwin'), 'lease.json');
-      assert.equal(leases().length, 1, 'the live session holds one lease');
-      // The darwin process itself (tsx wraps it), signalled twice as a real terminal close does.
-      const darwinPid = await childPid(tui.pid);
-      process.kill(darwinPid, 'SIGHUP');
-      await delay(50);
-      try { process.kill(darwinPid, 'SIGHUP'); } catch { /* already exiting */ }
-      await tui.exitedWithin(10_000);
-      await waitFor('endpoint removed', () => !hub.store.endpoints.has(endpoint!), 3000);
-      assert.ok(unregistered(endpoint!), 'removed by the explicit unregister, not left to $disconnect');
-      assert.equal(leases().length, 0, 'the session lease was released');
-    } finally { tui.kill('SIGKILL'); }
-  });
+  for (const signal of ['/exit', 'SIGHUP', 'SIGTERM'] as const) {
+    await check(`TUI ${signal} unregisters the hub endpoint and releases the lease`, async () => {
+      const nodeC = JSON.parse(readFileSync(path.join(homeC!.home, '.darwin/collaboration/hub-node.json'), 'utf8')).node as string;
+      const tui = startTui({ cwd: homeC!.project, env: { HOME: homeC!.home } });
+      try {
+        await tui.waitFor('you>', { timeoutMs: 60_000 });
+        assert.match(tui.screen, /hub: enrolled as gamma/, 'an enrolled HOME gets one hub info notice at startup');
+        assert.match(tui.screen, /publishing\s+this\s+project\s+as\s+github\.com\/acme\/gamma/);
+        let endpoint: string | undefined;
+        await waitFor('TUI endpoint registered', () => {
+          endpoint = [...hub.store.endpoints.values()].find(row => row.node === nodeC)?.endpoint;
+          return endpoint !== undefined;
+        }, 30_000);
+        const leases = () => findFiles(path.join(homeC!.home, '.darwin'), 'lease.json');
+        assert.equal(leases().length, 1, 'the live session holds one lease');
+        let ownedPid: number | undefined;
+        if (signal === 'SIGTERM') {
+          const pidFile = path.join(homeC!.project, 'signal-shell.pid');
+          tui.submit('!echo $$ > signal-shell.pid; exec sleep 60');
+          await waitFor('owned shell started', () => existsSync(pidFile) && readFileSync(pidFile, 'utf8').trim() !== '');
+          ownedPid = Number(readFileSync(pidFile, 'utf8').trim());
+          assert.ok(Number.isSafeInteger(ownedPid) && ownedPid > 0);
+          process.kill(ownedPid, 0);
+        }
+        if (signal === '/exit') tui.submit('/exit');
+        else {
+          // The darwin process itself (tsx wraps it), signalled twice as a real terminal close does.
+          const darwinPid = await childPid(tui.pid);
+          process.kill(darwinPid, signal);
+          await delay(50);
+          try { process.kill(darwinPid, signal); } catch { /* already exiting */ }
+        }
+        const code = await tui.exitedWithin(10_000);
+        // A repeat can arrive after cleanup removed the handler but before process exit.
+        // node-pty reports that as {exitCode: 0, signal}, not the shell's 128 + signal.
+        const status = tui.exitSignal ? 128 + tui.exitSignal : code;
+        assert.equal(status, signal === '/exit' ? 0 : signal === 'SIGHUP' ? 129 : 143,
+          `exit code ${code}, termination signal ${tui.exitSignal ?? 'none'}`);
+        await waitFor('endpoint removed', () => !hub.store.endpoints.has(endpoint!), 3000);
+        assert.ok(unregistered(endpoint!), 'removed by the explicit unregister, not left to $disconnect');
+        assert.equal(leases().length, 0, 'the session lease was released');
+        if (ownedPid !== undefined) await waitFor('owned shell reaped', () => {
+          try { process.kill(ownedPid, 0); return false; }
+          catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+        }, 3000);
+      } finally { tui.kill('SIGKILL'); }
+    });
+  }
 
   await check('revocation drops queued input at receivers; the revoked node pauses after three refusals', async () => {
     const addrBNow = await hubAddress(b);
