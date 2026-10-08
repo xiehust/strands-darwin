@@ -3516,3 +3516,30 @@ Docs wrap-up reviewed in the candidate commit: `README.md`, `README.zh-CN.md`, E
 Aggregate for this invocation only, computed from exact `usage:`/`cost:` process records: input **104**, output **25,016**, cacheRead **3,809,299**, cacheWrite **161,100**; **3,995,519 tokens**. Reported approximate USD total **$7.0749**, model/pricing `global.openai.gpt-6-astra`. Displayed cost components sum to $7.0748, a -$0.0001 rounding residual against the authoritative total; no missing metrics. Batch 165 spend is historical and excluded.
 
 The sole remaining record is SER-115. No fresh research is recommended until it closes. The final Host report records ordinary publication outcome and upstream verification; publication does not change the candidate's pending acceptance status.
+
+### Acceptance recovery — 2026-10-08T14:30:25Z
+
+The user replied `ok` to omitting the denied supplementary probe and resuming registered-suite acceptance. The probe was not retried or recreated, and no policy/config changed. The former authorization hold is resolved; acceptance remains conditional on the current gate. No new developer child, correction, or model call was launched. The implementing conversation remains `session-20261007-135543756`; its historical spend above is unchanged and is not charged again. New child spend: zero.
+
+Host pinned clean HEAD `477f31578819dd7cea6125f749b59e50e4039c01`. The explicit implementation range `3c11d04f53394df3e99e3ee4a9d9184310bb653c..c349236e00cead03d52172a445e80d2d3120135c` contains only the child's candidate. Subsequent commits outside that child are `9d06caf` (acceptance-hold record), `1a565f4` (v0.0.46 release), `5ac50d9` (collaboration fixture dependency), and `477f315` (v0.0.47 release). The completion source/tests are byte-identical to the candidate. No negative control or source edit was performed.
+
+Host reviewed the candidate and mapped the origin report's Recommendation to the registered suite:
+
+| Requirement | Registered evidence reviewed |
+|---|---|
+| Deterministic output, leading separator, exit-2 errors, help/version precedence | `verify-cli-completion.ts:47–64`, production source CLI |
+| SDK preflight first; no runtime/config/hooks/MCP startup or state writes | `verify-cli-completion.ts:25–93`, invalid config, sentinels, byte snapshots, import closure and unpatched SDK fixture |
+| Static command/option/enum contexts; operands do not become commands | `verify-cli-completion.ts:95–169`, actual Bash `COMP_WORDS`/`COMP_CWORD`/`COMPREPLY`, every declared state |
+| Literal input, Bash builtins only, no path fallback or discovery | `verify-cli-completion.ts:170–180`, metacharacter cases, empty executable search path, registration and state snapshots |
+| Authoritative grammar and documentation stay synchronized | `verify-cli-completion.ts:182–235`, parser vocabulary, real pure parsers, both references and gate registration; existing argv/npm-patch suites remain registered |
+
+The bilingual READMEs, getting-started narrative and references plus npm-package architecture rationale were already synchronized in `c349236`; no further user-facing docs edit was needed. `AGENTS.md` remained untouched.
+
+| Host task | Exact check | Outcome |
+|---|---|---|
+| `bg-82e98389-267f-481d-93c4-dc449cc34a30` | Clean-HEAD assertions, then `pnpm typecheck && pnpm test && pnpm build && git diff --check` | Exit 1. Typecheck passed; test gate failed at `verify-hub-transport.ts:300:14`; build and trailing diff check were not reached. |
+| `bg-08df9277-4a56-469d-b8a3-0cfe1dface70` | `DARWIN_MODEL_PRICES_FETCH=off pnpm tsx spike/verify-hub-transport.ts` | Exit 1 at the identical assertion, with no source change. |
+
+Both outputs were drained through `hasMore:false`. The error is `removed by the explicit unregister, not left to $disconnect`, in doubled-SIGHUP terminal close; ordinary graceful close passed in both runs. A timing-sensitive shutdown hypothesis motivated one focused rerun, but identical failure does not establish the root cause. Logs: `/tmp/darwin-ser115-acceptance.P0L10p.log` and `/tmp/darwin-ser115-hub-rerun.fAu1uI.log`. No further retry, delegated workaround or Host implementation followed.
+
+**No accepted milestone in this recovery.** SER-115 stays `in-progress`; Score 12 is unchanged. Halt: **the starting point cannot be restored within this direction's scope**. The unmodified current HEAD is red; a separate developer-supervised hub-shutdown investigation requires user authorization before restoring the gate and resuming acceptance. This diagnostic rerun is not the developer workflow's focused correction, and no causal claim against completion is made. The existing batch has no other unfinished direction; no abandonment or fresh research.
