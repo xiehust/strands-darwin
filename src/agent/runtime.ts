@@ -141,6 +141,8 @@ import {
 } from './prompt-cache.js';
 import { isRefusalStop } from './refusal.js';
 import { goalCheckConfig, runGoalCheck, type GoalVerdict } from './goal-check.js';
+import { readSessionLabel } from './session-label.js';
+import { writeSessionLabel } from './session-label-write.js';
 import { createModelClassifier } from './safety-classifier.js';
 import {
   createSessionManager,
@@ -556,6 +558,26 @@ export class AgentRuntime {
    * `info` is the startup snapshot, this moves with the session.
    */
   private liveConfig: AppConfig;
+  private label: string | undefined;
+  private labelWrite: Promise<void> = Promise.resolve();
+  private labelClosed = false;
+
+  get sessionLabel(): string | undefined { return this.label; }
+
+  /** User-only local control; ordered writes keep the accessor and durable record in sync. */
+  renameSession(raw: string): Promise<string> {
+    if (this.labelClosed) return Promise.resolve('Session label not saved: session is no longer active');
+    const saved = this.labelWrite.then(async () => {
+      try {
+        this.label = await writeSessionLabel(this.projectRoot, this.info.sessionId, raw);
+        return `Session label set: ${JSON.stringify(this.label)}`;
+      } catch (error) {
+        return error instanceof Error ? error.message : 'Session label could not be saved';
+      }
+    });
+    this.labelWrite = saved.then(() => {});
+    return saved;
+  }
 
   /** What the live model can cache. Recomputed on `/model`, like the plan above. */
   private promptCachePlan: PromptCachePlan;
@@ -1284,6 +1306,7 @@ export class AgentRuntime {
       },
       options,
     );
+    runtime.label = await readSessionLabel(options.projectRoot, session.sessionId);
     runtime.mcpPromptDiscovery = mcpPromptDiscovery;
     runtime.mcpPrompts = mcpPrompts;
     if (options.rewindRestore === undefined) {
@@ -2503,11 +2526,13 @@ export class AgentRuntime {
    * session down with it.
    */
   private async retire(): Promise<void> {
+    this.labelClosed = true;
     this.collaboration.close('session retired by clear/rewind');
     // `/clear` and rewind retire the session before any still-pending closing append
     // may accept memory. Already accepted commits are unaffected and still awaited.
     this.memoryController?.discardUnsettled();
     const ownedWork = await Promise.allSettled([
+      this.labelWrite,
       this.subagents.shutdown(),
       this.stopBashSession(),
       this.lifecycleHooks?.close() ?? Promise.resolve(),
@@ -2635,10 +2660,12 @@ export class AgentRuntime {
    * exiting.
    */
   async shutdown(options: { throwOnError?: boolean } = {}): Promise<void> {
+    this.labelClosed = true;
     // Synchronous retirement first; the hub's bounded unregister flush is awaited with the rest.
     const collaborationClosed = this.collaboration.close('shutdown');
     this.cloudMemory?.cancel();
     const results = await Promise.allSettled([
+      this.labelWrite,
       collaborationClosed,
       this.subagents.shutdown(),
       this.workflows.shutdown(),

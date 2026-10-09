@@ -149,9 +149,9 @@ Manual loading: `darwin completion bash > darwin-completion.bash`, inspect the f
 ```bash
 darwin                                      # fresh TUI
 darwin --resume                             # last project session
-darwin --resume <id>                        # named session
+darwin --resume <id>                        # session ID, not a display label
 darwin --session <id>                       # named session, including a fork
-darwin sessions                             # restorable snapshots
+darwin sessions                             # restorable snapshots, optional labels
 darwin doctor                               # offline read-only diagnostics, exit 1 on problems
 darwin -p "prompt"                          # one-shot text
 darwin -p "prompt" --continue               # follow last pointer
@@ -289,10 +289,11 @@ Rules and limits:
 | `/permissions` | live allow rules and origins, then configured deny rules |
 | `/permissions test <rule>` | read-only canonical matcher test against this session's recorded pairs and live deny list; works while busy, no model or gate mutation |
 | `/permissions revoke <n/rule/all>` | synchronously narrow live/disk allow rules; deny rules are never revoked here |
+| `/rename <label>` | user-only local display label for the current parent session, idle or busy; trims exterior whitespace, literal nonempty single line ≤80 Unicode code points; controls/overflow refuse without writing, bare form shows usage; shown in `/status` and `darwin sessions`, duplicate labels allowed, resume ID-only; same-ID resume retains it, clear/rewind successors unnamed; no model prompt/queue/history/trajectory/pointer/lease change ([guide](sessions-and-state.md#session-display-labels)) |
 | `/review --commit <40-hex-SHA>` | review-only prompt for the exact commit's diff against its parent (root commits against the empty tree), surrounding code and tests; reports missing/unsupported objects honestly; malformed leading `--commit` is local usage with no model request. Ordinary gate, queue/attachments and literal trajectory still apply ([guide](using-darwin.md#reviewing-changes)) |
 | `/review [focus]` | exact case-insensitive built-in; bare form reviews staged/unstaged changes and relevant untracked files with repository instructions and surrounding code. One ordinary prompt requests prioritized bugs with file/line evidence, separate test gaps, no speculative/style-only findings, honest no-findings and unverified limits. Trimmed focus stays verbatim under `Focus:`. No edits/commits unless separately requested is guidance, not enforced read-only mode: no mode switch or automatic delegation; existing gate applies. Queues/attachments and literal trajectory input unchanged. Reserves `review` over custom commands/skill invocations; rename them, e.g. `audit` ([guide](using-darwin.md#reviewing-changes)) |
 | `/rewind` | chooser over this session's completed prompt checkpoints — prompts whose turn the model finished, answered or declined (a refusal-class stop); failed and cancelled turns are absent; accepting branches the conversation into a fresh successor session restored to the state before the selected prompt, which returns to the editor unsent (rewinding to a declined prompt removes the declined reply before you rephrase); files, shell and `!` effects, hooks, MCP writes, subagents, background jobs and learned memory are never rolled back |
-| `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/hooks/shell env/spend/cost/context report; the model row names the last cache miss's likely cause once one was observed; a `tangent` row appears only while a tangent is armed or active |
+| `/status` | consolidated read-only model/cache/effort/mode/MCP/skills/hooks/shell env/spend/cost/context report; the session row retains the ID and adds a display label when present; the model row names the last cache miss's likely cause once one was observed; a `tangent` row appears only while a tangent is armed or active |
 | `/tangent`, `/tangent start`, `/tangent end` | one-level bookmark over the rewind path: bare `/tangent` arms it and the next completed prompt starts it (its checkpoint is the return point); `/tangent` again or `/tangent end` returns there through the same successor path as `/rewind` — same omission notice, plus `returned from tangent — N prompt(s) discarded` — with no draft handed back; `/tangent start` while active is refused (no nesting, no picker: use `/rewind`); `/clear` or an accepted `/rewind` ends it with `tangent ended by …`; live TUI state only |
 | `/tasks` | background jobs with their last three non-empty output lines, including while busy; reading them never moves the model's `output`/`wait` cursor |
 | `/trajectory` | this run's local record status |

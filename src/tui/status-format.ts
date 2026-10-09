@@ -46,6 +46,8 @@ export interface StatusFacts {
   config: AppConfig;
   /** `runtime.info.sessionId`. */
   sessionId: string;
+  /** `runtime.sessionLabel` — bounded display metadata, never an identity. */
+  sessionLabel?: string | undefined;
   /** `runtime.info.resumed`. */
   resumed: boolean;
   /** The live cache plan (`runtime.promptCache`) — moves with `/model`. */
@@ -155,7 +157,8 @@ export function formatStatusReport(facts: StatusFacts): string {
         `${formatPromptCache(facts.promptCache)}${formatThinking(facts.thinking)}` +
         describeLastCacheMiss(facts),
     ],
-    ['session', `${facts.sessionId}${facts.resumed ? ' (resumed)' : ''}`],
+    ['session', `${facts.sessionId}${facts.resumed ? ' (resumed)' : ''}` +
+      (facts.sessionLabel === undefined ? '' : ` · label: ${JSON.stringify(facts.sessionLabel)}`)],
     ['mode', describeMode(facts.mode, facts.allowRuleCount, facts.denyRuleCount)],
     // Live TUI state beside the other live row (mode), present only while it is.
     ...(facts.tangent === undefined ? [] : [['tangent', facts.tangent] as [string, string]]),

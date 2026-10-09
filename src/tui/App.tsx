@@ -1780,6 +1780,16 @@ export function App({
         return;
       }
 
+      // User-only display metadata. Read the untrimmed suffix so exterior controls
+      // cannot disappear in submit's ordinary trim; never send or queue this command.
+      if (/^\/rename(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        const suffix = raw.trimStart().slice('/rename'.length);
+        dispatch({ type: 'notice', text: await runtime.renameSession(suffix) });
+        return;
+      }
+
       // One consolidated read of state the session already holds (SER-026), on the
       // /mcp precedent: a formatter over existing accessors, never a new information
       // channel — no model call, no connection attempt, no mutation. Above the busy
@@ -1808,6 +1818,7 @@ export function App({
           text: formatStatusReport({
             config: runtime.config,
             sessionId: runtime.info.sessionId,
+            sessionLabel: runtime.sessionLabel,
             resumed: runtime.info.resumed,
             promptCache: runtime.promptCache,
             thinking: runtime.thinking,

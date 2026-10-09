@@ -96,6 +96,8 @@ const suites = [
   'verify-mcp-prompts.ts',
   'verify-mcp-prompts-pty.ts',
   'verify-mcp-oauth.ts',
+  'verify-session-label.ts',
+  'verify-rename-pty.ts',
   'verify-status-command.ts',
   'verify-help-command.ts',
   'verify-copy-command.ts',

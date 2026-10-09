@@ -1430,7 +1430,7 @@ async function slashCompletion(): Promise<void> {
       tui.frame === afterFirstEscape && !tui.screen.slice(beforeDismiss).includes('working…'));
     const beforeRearm = tui.mark();
     tui.send('r');
-    await tui.waitFor('❯ /review', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
+    await tui.waitFor('❯ /rename', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
     assert('editing a dismissed slash query reopens completion at the unchanged cursor',
       tui.frame.includes('you> /r') && tui.frame.includes('commands ('));
     tui.send('\u007f');
@@ -1496,6 +1496,8 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /mode is listed', completed.includes('  /mode — set the permission mode'));
     assert('the built-in /model is listed', completed.includes('  /model — list or switch models'));
     assert('the built-in /permissions is listed', completed.includes('  /permissions'));
+    assert('the built-in /rename is listed with its description',
+      completed.includes('  /rename — set this session’s display label: /rename <label>'));
     assert('the built-in /review is listed with its description',
       completed.includes('  /review — review current changes for bugs and test gaps'));
     // Matched with its description: '  /status' could ride along in other transcript

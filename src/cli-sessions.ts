@@ -32,6 +32,7 @@ import {
   type SessionLeaseRecord,
 } from './agent/session.js';
 import { CliUsageError } from './cli-args.js';
+import { readSessionLabel } from './agent/session-label.js';
 import { readTrajectory } from './trajectory/reader.js';
 
 /** Must match `AGENT_ID` in `src/agent/runtime.ts`: snapshots are keyed by it. */
@@ -41,8 +42,8 @@ export const SESSIONS_COMMAND = 'sessions';
 
 export const SESSIONS_USAGE = `Usage: darwin ${SESSIONS_COMMAND}
 
-  Lists this project's resumable sessions, newest first: id, age, and the first
-  user prompt where the session recorded one. Reopen one with:
+  Lists this project's resumable sessions, newest first: id, age, the first
+  recorded user prompt, and an optional display label. Reopen by id only with:
 
     darwin --resume <id>`;
 
@@ -70,6 +71,7 @@ export interface SessionsIo {
 /** One listed session, resolved without writing anything. */
 interface SessionRow {
   id: string;
+  label: string | undefined;
   /** Snapshot mtime in epoch milliseconds. */
   activeAt: number;
   /** One-line first prompt, or `undefined` when no trajectory recorded one. */
@@ -105,6 +107,7 @@ export async function runSessionsCommand(io: SessionsIo, now = Date.now()): Prom
     const lease = await inspectLease(io.projectRoot, id);
     rows.push({
       id,
+      label: await readSessionLabel(io.projectRoot, id),
       activeAt,
       firstPrompt: await firstUserPrompt(io.projectRoot, id),
       isLast: id === lastSessionId,
@@ -128,7 +131,8 @@ export async function runSessionsCommand(io: SessionsIo, now = Date.now()): Prom
       const last = row.isLast ? '  (last)' : '';
       // `(open in pid N)` on this host; the holder's host is named when it is another.
       const open = row.openIn === undefined ? '' : `  (open ${describeHolderLocation(row.openIn)})`;
-      io.out(`${row.id.padEnd(idWidth)}  ${age}  ${prompt}${last}${open}\n`);
+      const label = row.label === undefined ? '' : `  label: ${JSON.stringify(row.label)}`;
+      io.out(`${row.id.padEnd(idWidth)}  ${age}  ${prompt}${last}${open}${label}\n`);
     }
     io.out(`\nresume one with: darwin --resume <id>\n`);
   }

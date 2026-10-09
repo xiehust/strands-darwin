@@ -839,7 +839,8 @@ twentieth built-in grew `MAX_COMPLETIONS` to 21 and added one fixed `/help` row;
 
 **`/status` is a formatter over accessors the runtime already exposes — never a new information
 channel** (`src/tui/status-format.ts`, on the `/mcp` precedent): model/provider and session id
-(`runtime.config`, `runtime.info`), cache and effort (the *live* plans, rendered by the very
+(`runtime.config`, `runtime.info`) plus optional display-only label (`runtime.sessionLabel`,
+never replacing the id), cache and effort (the *live* plans, rendered by the very
 functions the header's model line uses — `formatPromptCache`/`formatThinking` live in
 `status-format.ts` so the two surfaces cannot diverge), permission mode and live allow-rule count
 (the header's own three-state wording), MCP server states (`runtime.listMcpServers()`, a failed
@@ -971,7 +972,8 @@ before it is ever a fallback** (`src/cli-sessions.ts`, `src/agent/session.ts`, s
 `backend/strands-sdk-contracts.md` § Sessions). `darwin sessions` shows only what
 `--resume <id>` can actually reopen: each row is a session with a restorable snapshot — id, age
 from the snapshot's mtime (activity, so a hand-named `--session my-experiment` sorts in its real
-place), the first recorded `userInput` where the trajectory has one, and `(last)` on the
+place), the first recorded `userInput` where the trajectory has one, an optional bounded
+display label (not a resume handle), and `(last)` on the
 pointer's target. It runs before argument parsing on the `trajectory` routing precedent, makes no
 model call and no network access, imports nothing from the SDK, and contains no write API at all —
 the store is proved byte-identical by hashing every file before and after. Absence is an answer on
@@ -1001,6 +1003,38 @@ nothing, a resumed session still does. The refusal paths (`ConfigError`, `Sessio
 `SessionInUseError`) return before it and `-p` never reaches it; a non-TTY stdout is not a reason to
 suppress it. Free checks: `spike/verify-tui.ts resumeHint` (real `cli.ts` through the offline
 `startup-cli` fixture), and the headless suites pin its absence from `-p` output.
+
+## Session display labels — user-only owner-state metadata
+
+**A label is presentation, never identity or model context** (SER-116). `/rename <label>`
+handles the current parent runtime before busy queueing, as one transcript notice rather
+than a turn or a live-frame row. Trim exterior whitespace; preserve literal text without
+expansion or normalization; require a nonempty single line ≤80 Unicode code points,
+reject controls/line separators/overflow before any I/O. Bare form is local usage.
+No model tool, title generator, name flag, name-based resume or runtime switching.
+
+`src/agent/session-label.ts` derives the same state sibling as `sessionStateDir` without
+importing `session.ts`, the SDK or a writer. Its CLI-facing import closure is read-only.
+One ≤1 KiB `label.json` (`{ version: 1, label }`) sits beside `lease.json`, outside the
+SDK-owned `session/<id>` snapshot tree and outside trajectory. The reader checks HOME-down
+real owned directories and bounded single-link regular files, opens no-follow/nonblocking,
+and treats absent/malformed/unsafe data as unnamed without repair. Machine-symlinked HOME
+is accepted; redirects below HOME, externally reachable group/world-writable directories,
+and group/world-writable records are refused. A private ancestor shields ordinary umask-created
+session directories; rename never repairs permissions.
+`session-label-write.ts` is parent-only runtime assembly, not a tool: exclusive 0600 temp,
+file fsync, directory/target recheck, atomic rename and directory fsync. It never writes
+snapshot/history, trajectory, pointer or lease. Invalid input causes zero writes. Parent
+label saves serialize, and retire/shutdown close admission and await them before lease release.
+
+Runtime creation reads only its own ID's label. Same-ID resume retains it; `/clear` and
+`/rewind` successors get fresh IDs and no inherited label, leaving predecessor metadata
+unchanged. `/status` uses the live accessor and CLI `darwin sessions` uses the bounded
+reader, both quote the optional label alongside unchanged IDs. Activity ages/order, first
+prompts, last pointer and live lease markers remain as before; duplicates are allowed.
+Free acceptance: `verify-session-label.ts` and `verify-rename-pty.ts` in `pnpm test`, plus
+`tui completion`. These exercise real owned-HOME files, SDK runtime/checkpoints and a
+production-CLI offline pty, not a mock filesystem or App.
 
 ## Session lease — one live process per session
 
