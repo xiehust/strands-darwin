@@ -433,3 +433,56 @@ Acceptance: extend `spike/verify-file-editor-serial.ts` to assert the actual par
 - Starting-point blocker (2026-10-09T02:37:36Z): the self-evolution Host found HEAD `8f27abd` on `main` with this page already modified by the SRF-040 addition and `docs/reflections/reflection_2026-10-09_session-20261009-015409218.md` untracked. These artifacts predate this supervision attempt. No worker was launched, no baseline gate was run, and no implementation was accepted; status remains `not-started`. Halt pending user authorization to commit those existing research artifacts as preparation (or a user-provided clean starting point), then run `pnpm typecheck` and `pnpm test` at clean HEAD before marking this direction `in-progress`. No fresh research is eligible while this record remains unfinished.
 - Recovery authorization: the user replied `yes,go` to committing these existing research artifacts as preparation, verifying clean HEAD, and continuing SRF-040 through the developer workflow. The historical blocker above is retained.
 - Final resolution (2026-10-09T03:54:04Z): authorized preparation `b60f618` passed the Host clean-baseline `pnpm typecheck && pnpm test` (task `bg-90def857-d297-47dc-a9c7-1ad77f94ffd8`, exit 0); status-only commit `d9b6955` preceded fresh source-launched child `session-20261009-031042006`, task `bg-8c1c031b-4472-4e77-b129-a968e6fa5774` (exit 0, fully drained). The child produced the sole implementation commit `8ef7a61`; Host independently accepted it as recorded above. English/Chinese reference and using-darwin guides plus the existing architecture rationale are synchronized; README claims needed no change. See iteration-log Batch 168 for checklist evidence and exact child spend. No correction, abandonment or unresolved blocker; the batch is exhausted. Guidance remains advisory, not large-file support or a guarantee of compliance.
+
+## SER-116 — Add user-only `/rename <label>` for the current session: a persistent bounded display label, shown in `/status` and `darwin sessions`, without changing identity or resume grammar
+
+- Status: `not-started`
+- Priority: 156
+- Score: 12
+- Importance: 4
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 2
+- Origin report: [`research_2026-10-09.md`](../research_2026-10-09.md) (run `05:28:00Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Acceptance must be independently observed after the developer child finishes.
+
+### Notes / blockers / abandonment reason
+
+Sources S1/S7 in the origin report document human-assigned session names. Darwin evidence: `src/cli-sessions.ts` `SessionRow`/`runSessionsCommand` expose ID, age and first prompt; canonical built-ins in `src/commands/custom-commands.ts` have no rename. A hand-named `--session` ID is immutable identity, not a mutable label.
+
+Requirement: `/rename <label>` is an ordinary user-only local command for the current parent runtime, handled before busy prompt queueing. Trim exterior whitespace; accept a nonempty single-line literal label of at most 80 Unicode code points; reject terminal/control characters and over-cap input without mutation. Bare form is usage, not a model-generated title. Store one bounded owner-state metadata record beside the session's state, never in the SDK snapshot/conversation or trajectory; write safely and atomically, refuse redirected/special-file state and do not add a model tool. Read absent/malformed metadata as no label with no repair. Persist across resume of the same ID; `/clear` and `/rewind` successors start unnamed and leave the predecessor's metadata unchanged. Show label when present in `/status` and the existing CLI listing while retaining exact IDs, age/order, first prompt and lease markers. Labels are display-only; duplicate labels are allowed, `--resume <id>` and pointers are unchanged. No model calls, network, policy changes, deletion, new dependency or live-frame surface. No new name flag, auto-title or name-based resume.
+
+Read decisions § SDK reuse, Paths, Session lease, `darwin sessions`, `/status`, Session trajectory before modifying their seams. AGENTS.md is 32762 bytes at research baseline: keep it under 32768, put rationale in the decisions document rather than expanding the index. Sync READMEs, narrative sessions guide and references in EN/zh-CN.
+
+Acceptance: registered real owned-HOME state tests for bounds/Unicode/literal preservation, rejection zero-write, safe state handling, same-ID resume, fresh successor isolation; snapshot/trajectory/pointer/lease hashes unaffected by rename; real offline pty idle/busy local-command handling with no prompt queue/model turn; canonical completion/help, CLI sessions and status checks. `pnpm typecheck`, `pnpm test`, focused suites and free `tui completion`; Host `pnpm build`. Next direction depends on this one.
+
+## SER-117 — Add bounded read-only `/sessions` saved-session discovery in the TUI: share the CLI read model, include labels, and preserve every store byte without switching runtimes
+
+- Status: `not-started`
+- Priority: 157
+- Score: 13
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 1
+- Origin report: [`research_2026-10-09.md`](../research_2026-10-09.md) (run `05:28:00Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Acceptance must be independently observed after the developer child finishes.
+
+### Notes / blockers / abandonment reason
+
+Depends on SER-116's label metadata/read seam. Sources S4/S5/S7 show in-session saved-conversation discovery. Darwin evidence: `runSessionsCommand` is CLI-only and absent from the canonical slash inventory; `/list-agents` lists live lease holders, not saved snapshots. This is not duplicate SER-025 CLI listing or SER-103 live-process inspection.
+
+Requirement: `/sessions` with no arguments renders one local bounded transcript notice of this project's resumable saved sessions, newest snapshot activity first, reusing a shared read model with `darwin sessions`. Include immutable IDs, age, optional label, first-prompt preview, `(last)`/live-holder markers, empty/skipped/omitted notices and `darwin --resume <id>` guidance. Reject arguments locally. Operate idle and busy before queueing; never enqueue a prompt, call a model/network/tool, connect MCP, alter config or switch runtime. At most 200 enumerated session entries (plus one overflow probe) and 20 rendered session rows for this TUI projection; state scan and display omissions explicitly, do not pretend a capped scan establishes global newest ordering. Every rendered row component is bounded and terminal-safe, including legacy prompt/label/ID controls. Keep CLI semantics, strict resume and all store files unchanged; CLI can retain its complete listing. No picker, cross-project dashboard, name-based resume, deletion or new live-frame row. Refactoring reads must not accidentally import a metadata writer into the CLI's read-only closure.
+
+Architecture: decisions § `darwin sessions`, `/status`, Paths and TUI frame budget. Use existing local command/Static notice and canonical completion/help seams, not a new execution channel. Sync READMEs, narrative sessions guide and references EN/zh-CN; keep AGENTS.md under its byte cap.
+
+Acceptance: registered real owned-HOME fixtures pin shared CLI/TUI rows, labels, empty/missing/damaged metadata, missing snapshots, current project's scope, live leases, scan/display bounds and explicit omissions, malicious controls, store hashes before/after; registered offline pty proves idle/busy no-send/no-queue behavior and argument rejection. Completion/help and unchanged CLI parser/strict resume. `pnpm typecheck`, `pnpm test`, focused suites and free `tui completion`; Host `pnpm build`.
+
