@@ -36,6 +36,12 @@ export interface EditorValue {
   cursor: EditorCursor;
 }
 
+/** Exact pre-edit UTF-16 span, independent of the post-edit caret. */
+export interface EditorDeletion {
+  value: EditorValue;
+  span: { start: number; end: number };
+}
+
 interface Grapheme {
   text: string;
   display: string;
@@ -99,14 +105,14 @@ export const LAST_CUT_CAP = 65_536;
 export const LAST_CUT_OVERFLOW_NOTICE = 'cut exceeds 65,536 code points; yank cleared — Ctrl+_ can still undo the deletion';
 
 /**
- * Only for the contiguous kill/word-delete primitives below. Their resulting
- * cursor is the exact deletion start; length loss gives its end. A prefix/suffix
- * diff would pick the wrong span when text repeats. No-op cuts retain the slot.
+ * Only for the contiguous kill/word-delete transitions below. Capture their
+ * exact pre-edit span, never the repaired caret or a prefix/suffix diff that
+ * could misidentify repeated text. No-op cuts retain the slot.
  */
-export function updateLastCut(lastCut: string, before: EditorValue, after: EditorValue): { text: string; overflow: boolean } {
-  const removed = before.text.length - after.text.length;
-  if (removed <= 0) return { text: lastCut, overflow: false };
-  const cut = before.text.slice(after.cursor.offset, after.cursor.offset + removed);
+export function updateLastCut(lastCut: string, before: EditorValue, deletion: EditorDeletion): { text: string; overflow: boolean } {
+  const { start, end } = deletion.span;
+  if (start === end) return { text: lastCut, overflow: false };
+  const cut = before.text.slice(start, end);
   let points = 0;
   for (const _point of cut) {
     if (++points > LAST_CUT_CAP) return { text: '', overflow: true };
@@ -133,20 +139,14 @@ export function backspaceAtCursor(value: EditorValue): EditorValue {
   const cursor = snapCursor(value.text, value.cursor);
   if (cursor.offset === 0) return { ...value, cursor };
   const previous = previousBoundary(value.text, cursor.offset);
-  return {
-    text: value.text.slice(0, previous) + value.text.slice(cursor.offset),
-    cursor: { offset: previous, affinity: 'downstream' },
-  };
+  return deleteSpan(value, previous, cursor.offset, 'downstream').value;
 }
 
 export function deleteAtCursor(value: EditorValue): EditorValue {
   const cursor = snapCursor(value.text, value.cursor);
   if (cursor.offset === value.text.length) return { ...value, cursor };
   const next = nextBoundary(value.text, cursor.offset);
-  return {
-    text: value.text.slice(0, cursor.offset) + value.text.slice(next),
-    cursor: { offset: cursor.offset, affinity: 'downstream' },
-  };
+  return deleteSpan(value, cursor.offset, next, 'downstream').value;
 }
 
 export function moveHorizontal(
@@ -190,23 +190,15 @@ export function moveToRowEdge(layout: EditorLayout, edge: 'start' | 'end'): Edit
  * the visual-row movement keys the editor already has. At the edge itself
  * this is a no-op: the newline (or soft wrap) is never part of the kill.
  */
-export function killToRowEdge(value: EditorValue, layout: EditorLayout, edge: 'start' | 'end'): EditorValue {
+export function killToRowEdge(value: EditorValue, layout: EditorLayout, edge: 'start' | 'end'): EditorDeletion {
   const cursor = snapCursor(value.text, value.cursor);
   const row = layout.rows[layout.cursor.row] as VisualRow;
 
   if (edge === 'start') {
-    if (cursor.offset <= row.start) return { ...value, cursor };
-    return {
-      text: value.text.slice(0, row.start) + value.text.slice(cursor.offset),
-      cursor: { offset: row.start, affinity: 'downstream' },
-    };
+    return deleteSpan(value, Math.min(cursor.offset, row.start), cursor.offset, 'downstream');
   }
 
-  if (cursor.offset >= row.end) return { ...value, cursor };
-  return {
-    text: value.text.slice(0, cursor.offset) + value.text.slice(row.end),
-    cursor: { offset: cursor.offset, affinity: 'upstream' },
-  };
+  return deleteSpan(value, cursor.offset, Math.max(cursor.offset, row.end), 'upstream');
 }
 
 /**
@@ -215,14 +207,10 @@ export function killToRowEdge(value: EditorValue, layout: EditorLayout, edge: 's
  * boundaries keep a joined emoji or combining sequence intact, exactly as
  * backspace does.
  */
-export function deleteWordBefore(value: EditorValue): EditorValue {
+export function deleteWordBefore(value: EditorValue): EditorDeletion {
   const cursor = snapCursor(value.text, value.cursor);
-  if (cursor.offset === 0) return { ...value, cursor };
   const start = wordBoundaryBefore(value.text, cursor.offset);
-  return {
-    text: value.text.slice(0, start) + value.text.slice(cursor.offset),
-    cursor: { offset: start, affinity: 'downstream' },
-  };
+  return deleteSpan(value, start, cursor.offset, 'downstream');
 }
 
 /**
@@ -230,14 +218,20 @@ export function deleteWordBefore(value: EditorValue): EditorValue {
  * leading whitespace first, then every non-whitespace grapheme — the forward
  * mirror of {@link deleteWordBefore}, with the same grapheme guarantees.
  */
-export function deleteWordAfter(value: EditorValue): EditorValue {
+export function deleteWordAfter(value: EditorValue): EditorDeletion {
   const cursor = snapCursor(value.text, value.cursor);
-  if (cursor.offset === value.text.length) return { ...value, cursor };
   const end = wordBoundaryAfter(value.text, cursor.offset);
-  return {
-    text: value.text.slice(0, cursor.offset) + value.text.slice(end),
-    cursor: { offset: cursor.offset, affinity: 'downstream' },
-  };
+  return deleteSpan(value, cursor.offset, end, 'downstream');
+}
+
+/** Callers select exact source boundaries before deletion can join neighbors. */
+function deleteSpan(value: EditorValue, start: number, end: number, affinity: CursorAffinity): EditorDeletion {
+  if (start === end) return { value: { ...value, cursor: snapCursor(value.text, value.cursor) }, span: { start, end } };
+  const text = value.text.slice(0, start) + value.text.slice(end);
+  // Like insertion, advance past a newly joined grapheme when the old splice
+  // boundary disappears. Normal deletions keep their existing offset/affinity.
+  const offset = sourceBoundaries(text).find((boundary) => boundary >= start) ?? text.length;
+  return { value: { text, cursor: { offset, affinity } }, span: { start, end } };
 }
 
 /** Hard cap on composer undo snapshots; pushing past it drops the oldest. */

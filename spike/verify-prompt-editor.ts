@@ -21,6 +21,7 @@ import {
   LAST_CUT_OVERFLOW_NOTICE,
   updateLastCut,
   type EditorValue,
+  type EditorDeletion,
 } from '../src/tui/prompt-editor.js';
 import { assert, header, report } from './shared.js';
 
@@ -141,7 +142,7 @@ check('tabs render with stable hit-test width', () => {
 header('prompt editor — readline chords (kill and word delete)');
 const kill = (text: string, offset: number, edge: 'start' | 'end', columns = 40): EditorValue => {
   const cursor = { offset, affinity: 'downstream' } as const;
-  return killToRowEdge({ text, cursor }, layoutEditor(text, columns, cursor), edge);
+  return killToRowEdge({ text, cursor }, layoutEditor(text, columns, cursor), edge).value;
 };
 check('ctrl+k kills from the cursor to the end of the line', () => {
   nodeAssert.deepEqual(kill('alpha beta', 5, 'end'), {
@@ -175,7 +176,7 @@ check('a killed joined emoji goes whole, never split', () => {
 });
 
 const wordDelete = (text: string, offset?: number): EditorValue =>
-  deleteWordBefore({ text, cursor: { offset: offset ?? text.length, affinity: 'upstream' } });
+  deleteWordBefore({ text, cursor: { offset: offset ?? text.length, affinity: 'upstream' } }).value;
 check('ctrl+w deletes the whitespace-delimited word before the cursor', () => {
   nodeAssert.deepEqual(wordDelete('alpha beta'), {
     text: 'alpha ',
@@ -255,7 +256,7 @@ check('word jumps at the edges of the text are no-ops', () => {
 });
 
 const wordDeleteAfter = (text: string, offset: number): EditorValue =>
-  deleteWordAfter({ text, cursor: { offset, affinity: 'downstream' } });
+  deleteWordAfter({ text, cursor: { offset, affinity: 'downstream' } }).value;
 check('alt+d deletes the whitespace-delimited word after the cursor', () => {
   nodeAssert.deepEqual(wordDeleteAfter('alpha beta', 0), {
     text: ' beta',
@@ -289,7 +290,7 @@ header('prompt editor — composer undo stack (SER-044)');
 check('the cap is the specified 16', () => nodeAssert.equal(UNDO_CAP, 16));
 check('destroy-then-undo restores text and cursor exactly for every covered chord', () => {
   const columns = 40;
-  const chords: readonly ((value: EditorValue) => EditorValue)[] = [
+  const chords: readonly ((value: EditorValue) => EditorDeletion)[] = [
     (value) => killToRowEdge(value, layoutEditor(value.text, columns, value.cursor), 'end'),
     (value) => killToRowEdge(value, layoutEditor(value.text, columns, value.cursor), 'start'),
     deleteWordBefore,
@@ -298,7 +299,7 @@ check('destroy-then-undo restores text and cursor exactly for every covered chor
   for (const chord of chords) {
     const before: EditorValue = { text: 'alpha beta\ngamma', cursor: { offset: 8, affinity: 'downstream' } };
     const after = chord(before);
-    nodeAssert.notEqual(after.text, before.text);
+    nodeAssert.notEqual(after.value.text, before.text);
     const stack = pushUndo([], before);
     const popped = popUndo(stack);
     nodeAssert.ok(popped !== undefined);
@@ -331,7 +332,7 @@ check('undo on an empty stack is a harmless no-op', () => {
 });
 
 header('prompt editor — last cut and yank (SER-084)');
-const cutCases: readonly [string, number, (v: EditorValue) => EditorValue, string][] = [
+const cutCases: readonly [string, number, (v: EditorValue) => EditorDeletion, string][] = [
   ['abcabcabc', 3, (v) => killToRowEdge(v, layoutEditor(v.text, 40, v.cursor), 'end'), 'abcabc'],
   ['abcabcabc', 6, (v) => killToRowEdge(v, layoutEditor(v.text, 40, v.cursor), 'start'), 'abcabc'],
   ['same same same', 7, deleteWordBefore, 'sa'],
@@ -349,14 +350,14 @@ for (const [text, offset, edit, expected] of cutCases) {
     const after = edit(before);
     const cut = updateLastCut('old', before, after);
     nodeAssert.deepEqual(cut, { text: expected, overflow: false });
-    nodeAssert.equal(insertAtCursor(after, cut.text).text, before.text);
+    nodeAssert.equal(insertAtCursor(after.value, cut.text).text, before.text);
   });
 }
 check('movement and typing survive repeated yank; undo still restores the destroyed snapshot', () => {
   const before = atEnd('alpha beta');
   const after = deleteWordBefore(before);
   const cut = updateLastCut('', before, after).text;
-  let moved = insertAtCursor({ ...after, cursor: { offset: 0, affinity: 'downstream' } }, 'X');
+  let moved = insertAtCursor({ ...after.value, cursor: { offset: 0, affinity: 'downstream' } }, 'X');
   moved = insertAtCursor(insertAtCursor(moved, cut), cut);
   nodeAssert.equal(moved.text, 'Xbetabetaalpha ');
   nodeAssert.deepEqual(popUndo(pushUndo([], before))?.value, before);
@@ -377,7 +378,7 @@ check('all no-op cuts retain the old register; nonempty cuts replace without coa
   const before = atEnd('one two');
   const after = deleteWordBefore(before);
   const first = updateLastCut('old', before, after).text;
-  nodeAssert.equal(updateLastCut(first, after, deleteWordBefore(after)).text, 'one ');
+  nodeAssert.equal(updateLastCut(first, after.value, deleteWordBefore(after.value)).text, 'one ');
 });
 check('cap is code points: exact-cap astral cut survives; over-cap clears without truncating or losing undo', () => {
   nodeAssert.equal(LAST_CUT_CAP, 65_536);
@@ -386,7 +387,7 @@ check('cap is code points: exact-cap astral cut survives; over-cap clears withou
     const after = deleteWordBefore(before);
     const forward = { ...before, cursor: { offset: 0, affinity: 'downstream' as const } };
     nodeAssert.deepEqual(deleteWordAfter(forward), after);
-    nodeAssert.equal(after.text, '');
+    nodeAssert.equal(after.value.text, '');
     const cut = updateLastCut('stale', before, after);
     nodeAssert.deepEqual(cut, count === LAST_CUT_CAP
       ? { text: before.text, overflow: false }
@@ -394,6 +395,155 @@ check('cap is code points: exact-cap astral cut survives; over-cap clears withou
     nodeAssert.deepEqual(popUndo(pushUndo([], before))?.value, before);
   }
   nodeAssert.ok([...LAST_CUT_OVERFLOW_NOTICE].length < 160);
+});
+
+header('SER-118 — deletion merges: legal caret before rendering or the next edit');
+// SER-118 pure checklist: M1 raw merges and following edits; M2 every deletion
+// primitive/affinity; M3 exact span, cut/yank and original undo; M4 cap/no-op.
+const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+const boundariesOf = (text: string) => [0, ...[...segmenter.segment(text)].map((p) => p.index + p.segment.length)];
+function mergedResult(before: EditorValue, after: EditorValue, start: number, end: number, offset: number, affinity: 'upstream' | 'downstream'): void {
+  const text = before.text.slice(0, start) + before.text.slice(end);
+  nodeAssert.deepEqual(after, { text, cursor: { offset, affinity } });
+  nodeAssert.ok(boundariesOf(text).includes(after.cursor.offset), 'returned caret is legal without layout/snap');
+  nodeAssert.equal(insertAtCursor(after, 'Z').text, text.slice(0, offset) + 'Z' + text.slice(offset));
+  const boundaries = boundariesOf(text);
+  const index = boundaries.indexOf(offset);
+  const left = boundaries[Math.max(0, index - 1)]!;
+  const right = boundaries[Math.min(boundaries.length - 1, index + 1)]!;
+  const layout = layoutEditor(text, 100, after.cursor);
+  nodeAssert.equal(moveHorizontal(text, after.cursor, -1, layout).offset, left);
+  nodeAssert.equal(moveHorizontal(text, after.cursor, 1, layout).offset, right);
+  nodeAssert.equal(backspaceAtCursor(after).text, text.slice(0, left) + text.slice(offset));
+  nodeAssert.equal(deleteAtCursor(after).text, text.slice(0, offset) + text.slice(right));
+  const moved = { text, cursor: moveHorizontal(text, after.cursor, -1, layout) };
+  nodeAssert.equal(insertAtCursor(moved, 'Z').text, text.slice(0, left) + 'Z' + text.slice(left));
+}
+const merges: readonly [string, number, number, number][] = [
+  ['e\n\u0301x', 1, 2, 2],
+  ['e\r\n\u0301x', 1, 3, 2],
+  ['e\n\u0301\u0308x', 1, 2, 3],
+  ['🇦X🇧x', 2, 3, 4],
+  ['🇦\r\n🇧x', 2, 4, 4],
+  ['👩\n\u200d💻x', 2, 3, 5],
+  ['👩\r\n\u200d💻x', 2, 4, 5],
+  ['👩‍X💻x', 3, 4, 5],
+  ['\rX\nx', 1, 2, 2],
+];
+for (const [text, start, end, offset] of merges) {
+  check(`M1 exact raw merge and next edits: ${JSON.stringify(text)}`, () => {
+    for (const affinity of ['upstream', 'downstream'] as const) {
+      const backward = { text, cursor: { offset: end, affinity } };
+      mergedResult(backward, backspaceAtCursor(backward), start, end, offset, 'downstream');
+      const forward = { text, cursor: { offset: start, affinity } };
+      mergedResult(forward, deleteAtCursor(forward), start, end, offset, 'downstream');
+    }
+  });
+}
+
+const destructiveMerges: readonly [string, number, (v: EditorValue) => EditorDeletion, number, number, number, 'upstream' | 'downstream'][] = [
+  ['🇦X🇧x', 3, (v) => killToRowEdge(v, layoutEditor(v.text, 7, v.cursor), 'start'), 2, 3, 4, 'downstream'],
+  ['🇦X🇧x', 2, (v) => killToRowEdge(v, layoutEditor(v.text, 7, v.cursor), 'end'), 2, 3, 4, 'upstream'],
+  ['👩‍X💻x', 4, (v) => killToRowEdge(v, layoutEditor(v.text, 7, v.cursor), 'start'), 3, 4, 5, 'downstream'],
+  ['👩‍X💻x', 3, (v) => killToRowEdge(v, layoutEditor(v.text, 7, v.cursor), 'end'), 3, 4, 5, 'upstream'],
+  ['\rX\nx', 2, deleteWordBefore, 1, 2, 2, 'downstream'],
+  ['\rX\nx', 1, deleteWordAfter, 1, 2, 2, 'downstream'],
+];
+for (const [text, offset, edit, start, end, repaired, affinity] of destructiveMerges) {
+  check(`M2/M3 exact destructive span and legal caret: ${JSON.stringify(text)} at ${offset}`, () => {
+    // Row start at its soft-wrapped end belongs upstream; row end at its
+    // soft-wrapped start belongs downstream. Word deletes exercise both sides.
+    const sides = text.startsWith('\r') ? ['upstream', 'downstream'] as const :
+      [affinity === 'downstream' ? 'upstream' : 'downstream'] as const;
+    for (const side of sides) {
+      const before = { text, cursor: { offset, affinity: side } };
+      const deletion = edit(before);
+      nodeAssert.deepEqual(deletion.span, { start, end });
+      mergedResult(before, deletion.value, start, end, repaired, affinity);
+      const cut = updateLastCut('stale', before, deletion);
+      nodeAssert.deepEqual(cut, { text: 'X', overflow: false });
+      const once = insertAtCursor(deletion.value, cut.text);
+      const twice = insertAtCursor(once, cut.text);
+      const merged = deletion.value.text;
+      nodeAssert.equal(once.text, merged.slice(0, repaired) + 'X' + merged.slice(repaired));
+      nodeAssert.equal(twice.text, merged.slice(0, repaired) + 'XX' + merged.slice(repaired));
+      // Yank inserts at the repaired caret, not the old splice; undo alone
+      // restores the original destroyed draft, including its old affinity.
+      nodeAssert.deepEqual(popUndo(pushUndo([], before))?.value, before);
+      nodeAssert.deepEqual(before, { text, cursor: { offset, affinity: side } });
+    }
+  });
+}
+check('M3 repeated text pins exact pre-edit span rather than a prefix/suffix guess', () => {
+  const before = { text: 'abcabcabc', cursor: { offset: 6, affinity: 'upstream' as const } };
+  const deletion = killToRowEdge(before, layoutEditor(before.text, 9, before.cursor), 'start');
+  nodeAssert.deepEqual(deletion.span, { start: 3, end: 6 });
+  nodeAssert.deepEqual(deletion.value, { text: 'abcabc', cursor: { offset: 3, affinity: 'downstream' } });
+  nodeAssert.deepEqual(updateLastCut('old', before, deletion), { text: 'abc', overflow: false });
+});
+
+check('M4 all ordinary deletions preserve their prior offsets and affinities', () => {
+  for (const affinity of ['upstream', 'downstream'] as const) {
+    const before = { text: 'abc def', cursor: { offset: 5, affinity } };
+    nodeAssert.deepEqual(backspaceAtCursor(before), { text: 'abc ef', cursor: { offset: 4, affinity: 'downstream' } });
+    nodeAssert.deepEqual(deleteAtCursor(before), { text: 'abc df', cursor: { offset: 5, affinity: 'downstream' } });
+    const cases: readonly [EditorDeletion, string, number, string, number, number][] = [
+      [deleteWordBefore(before), 'abc ef', 4, 'downstream', 4, 5],
+      [deleteWordAfter(before), 'abc d', 5, 'downstream', 5, 7],
+      [killToRowEdge(before, layoutEditor(before.text, 40, before.cursor), 'start'), 'ef', 0, 'downstream', 0, 5],
+      [killToRowEdge(before, layoutEditor(before.text, 40, before.cursor), 'end'), 'abc d', 5, 'upstream', 5, 7],
+    ];
+    for (const [deletion, text, offset, side, start, end] of cases) {
+      nodeAssert.deepEqual(deletion.value, { text, cursor: { offset, affinity: side } });
+      nodeAssert.deepEqual(deletion.span, { start, end });
+    }
+  }
+});
+check('M4 no-op deletes preserve both affinities, exact empty spans, cut and undo', () => {
+  for (const text of ['', 'e\u0301', 'abc\r\nx']) {
+    for (const affinity of ['upstream', 'downstream'] as const) {
+      const start = { text, cursor: { offset: 0, affinity } };
+      const end = { text, cursor: { offset: text.length, affinity } };
+      nodeAssert.deepEqual(backspaceAtCursor(start), start);
+      nodeAssert.deepEqual(deleteAtCursor(end), end);
+      for (const [before, deletion] of [
+        [start, deleteWordBefore(start)], [end, deleteWordAfter(end)],
+        [start, killToRowEdge(start, layoutEditor(text, 40, start.cursor), 'start')],
+        [end, killToRowEdge(end, layoutEditor(text, 40, end.cursor), 'end')],
+      ] as const) {
+        nodeAssert.deepEqual(deletion.value, before);
+        nodeAssert.deepEqual(deletion.span, { start: before.cursor.offset, end: before.cursor.offset });
+        nodeAssert.deepEqual(updateLastCut('old', before, deletion), { text: 'old', overflow: false });
+        // Exactly App's destructive-only snapshot predicate: no-op uses no slot.
+        nodeAssert.equal(deletion.value.text !== before.text, false);
+      }
+    }
+  }
+});
+check('M4 no-op row kills preserve the visual side at shared soft-wrap offsets', () => {
+  for (const [affinity, edge] of [['upstream', 'end'], ['downstream', 'start']] as const) {
+    const before = { text: 'abcdef', cursor: { offset: 4, affinity } };
+    const deletion = killToRowEdge(before, layoutEditor(before.text, 10, before.cursor), edge);
+    nodeAssert.deepEqual(deletion.value, before);
+    nodeAssert.deepEqual(deletion.span, { start: 4, end: 4 });
+    nodeAssert.deepEqual(updateLastCut('old', before, deletion), { text: 'old', overflow: false });
+  }
+});
+check('M4 repaired-caret cuts obey code-point cap, clearing overflow without losing the original snapshot', () => {
+  for (const count of [LAST_CUT_CAP, LAST_CUT_CAP + 1]) {
+    const text = '\r' + 'X'.repeat(count) + '\nx';
+    for (const before of [
+      { text, cursor: { offset: count + 1, affinity: 'upstream' as const } },
+      { text, cursor: { offset: 1, affinity: 'downstream' as const } },
+    ]) {
+      const deletion = before.cursor.offset === 1 ? deleteWordAfter(before) : deleteWordBefore(before);
+      nodeAssert.deepEqual(deletion.span, { start: 1, end: count + 1 });
+      nodeAssert.deepEqual(deletion.value, { text: '\r\nx', cursor: { offset: 2, affinity: 'downstream' } });
+      nodeAssert.deepEqual(updateLastCut('stale', before, deletion), count === LAST_CUT_CAP
+        ? { text: 'X'.repeat(count), overflow: false } : { text: '', overflow: true });
+      nodeAssert.deepEqual(popUndo(pushUndo([], before))?.value, before);
+    }
+  }
 });
 
 report();

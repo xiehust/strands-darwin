@@ -331,12 +331,13 @@ Rules and limits:
 | `Esc` `Esc` | on an empty idle composer (no draft, turn, `!` command, queue or prompt), a second `Esc` within 500 ms opens the `/rewind` chooser — same behavior as typing `/rewind`; one `Esc` there does nothing |
 | `Home` / `End`, `Ctrl+A` / `Ctrl+E` | visible-row start/end |
 | `Ctrl+Home` / `Ctrl+End` | whole raw draft start/end (including multiline and soft wraps); no submit |
+| `Backspace` / `Delete` | remove the preceding/following raw grapheme; if neighbors join, the caret advances to the first boundary at or after the deletion point |
 | `Ctrl+K` / `Ctrl+U` | delete to row end/start |
 | `Ctrl+W` | delete previous word |
 | `Alt`/`Ctrl` + `Left` / `Right`, `Alt+B` / `Alt+F` | move by word |
 | `Alt+Backspace` / `Alt+D` | delete the word before/after the cursor |
 | `Ctrl+_` (or `Ctrl+-`) | undo the last `Ctrl+K`/`Ctrl+U`, `Ctrl+W` or `Alt` word deletion in the draft |
-| `Ctrl+Y` | insert the exact last cut at the cursor, repeatably within the draft; 65,536 code points max, not the clipboard; [limits/reset rules](using-darwin.md#prompt-editing-and-completion) |
+| `Ctrl+Y` | insert the exact removed text at the current legal cursor (not necessarily the old deletion point after a grapheme merge), repeatably within the draft; 65,536 code points max, not the clipboard; [limits/reset rules](using-darwin.md#prompt-editing-and-completion) |
 | `Ctrl+S` | stash one exact draft/cursor/image; restore into an empty composer; refuses overwrite or >65,536 code points; never sends ([lifetime/reset rules](using-darwin.md#draft-stash)) |
 | `Ctrl+G` | edit the draft in `$VISUAL` (else `$EDITOR`) while idle — no shell, private 0600 temp file, 65,536 code points / 256 KiB; the result replaces the draft unsent, `Enter` sends it; failure or no change keeps draft/cursor/image ([rules](using-darwin.md#external-editor-ctrlg)) |
 | `y` / `n` / `Esc` | answer permission prompt; Esc denies; Ctrl+Y never approves |

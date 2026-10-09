@@ -3067,10 +3067,11 @@ model-request/durable-file privacy, real clipboard callback races, key ownership
 lifetime transitions and narrow-frame behavior with local transport only.
 
 **Composer cut/yank (SER-084) is draft-local, not recall or undo.** `App` keeps one
-last-cut string beside SER-044's destructive-edit undo stack. `updateLastCut` in
-`prompt-editor.ts` uses the deletion result's cursor offset and length loss to capture
-the exact contiguous span, never a prefix/suffix diff that can misidentify repeated
-text. Word-boundary scans segment once per operation so a cap-sized word cut is
+last-cut string beside SER-044's destructive-edit undo stack. The pure deletion
+transition in `prompt-editor.ts` keeps an exact pre-edit UTF-16 span separate from
+its resulting `EditorValue`; `updateLastCut` slices that span, never the post-edit
+caret or a prefix/suffix diff that can misidentify repeated text. Word-boundary
+scans segment once per operation so a cap-sized word cut is
 usable, rather than re-segmenting the whole draft for each removed grapheme.
 Ctrl+K/U/W and Alt word deletes feed it; nonempty cuts replace, no-op cuts retain,
 and ordinary Backspace/Delete do not feed it. At most 65,536 code points survive: an
@@ -3087,6 +3088,24 @@ SDK, tool, record, network/file operation, timer or live-frame row is added. Fre
 `verify-prompt-editor.ts`, `verify-composer-yank.ts` (real CLI pty with local model,
 including reset seams and permission/search/compaction precedence), `verify-help-command.ts`
 and `verify-frame-budget.ts`; neighboring pty `undo`, `wordNav`, `queue`, `historySearch`, `completion`.
+
+**Deletion repairs its source caret before returning (SER-118), not during rendering.**
+Backspace, forward delete, row kills and word deletes all use the same pure deletion
+transition. Removing a separator can join combining neighbors, regional indicators,
+ZWJ emoji or CR/LF into a new grapheme. The old splice offset can then lie inside it;
+a later floor-snap would make the next input jump backward. Like `insertAtCursor`,
+the transition chooses the first legal post-edit boundary at or after the splice.
+Ordinary deletions retain their offsets and affinities; no-ops retain the snapped
+opening cursor and an empty span. Raw removal and the exact cut span never depend
+on this caret repair. `App.applyDestructive` still snapshots the original
+`EditorValue`, captures the span and commits only the repaired value; yank remains
+insertion at the current caret, not restoration at the old splice. No keyboard
+ownership, control projection, frame, queue, send or undo scope changes. Registered
+`verify-prompt-editor.ts` M1–M4 pin merges, next edits, every primitive, affinities,
+repeated-text spans and cap/undo behavior. `verify-deletion-merge-pty.ts` P1–P3 drive
+the real offline CLI through LF/combining and flag merges plus wrapped-row emoji
+cut/yank/undo, proving exact next input and zero submissions/model calls. Neighboring
+input-controls/pty, composer-yank, frame-budget and free TUI wordNav/undo remain checks.
 
 **`Up`/`Down` recall previous prompts, read out of the record darwin already keeps — and they take no
 key that already had a meaning** (`src/trajectory/prompt-history.ts`, `src/tui/prompt-recall.ts`). There is no history store and there must never be

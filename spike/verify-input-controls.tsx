@@ -127,7 +127,7 @@ for (const { name, raw } of SEARCH_PREVIEW_CASES) {
         if (index > 0) check.equal(backspaceAtCursor(value).text, text.slice(0, boundaries[index - 1]) + text.slice(offset));
         if (index + 1 < boundaries.length) check.equal(deleteAtCursor(value).text, text.slice(0, offset) + text.slice(boundaries[index + 1]));
         const cut = killToRowEdge(value, geometry, 'start');
-        check.equal(cut.text, text.slice(0, row.start) + text.slice(offset));
+        check.equal(cut.value.text, text.slice(0, row.start) + text.slice(offset));
         check.deepEqual(popUndo(pushUndo([], value))?.value, value);
         for (const direction of [-1, 1] as const) {
           check.ok(boundaries.includes(moveVertical(geometry, direction).cursor.offset));

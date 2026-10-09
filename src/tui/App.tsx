@@ -116,6 +116,7 @@ import {
   updateLastCut,
   LAST_CUT_OVERFLOW_NOTICE,
   type EditorValue,
+  type EditorDeletion,
   type UndoStack,
 } from './prompt-editor.js';
 import {
@@ -441,14 +442,14 @@ export function App({
    * not burn an undo step), then commits the result. Reads the immediate
    * editor mirror for the same batched-stdin reason `setEditor` does.
    */
-  const applyDestructive = useCallback((edit: (current: EditorValue) => EditorValue) => {
+  const applyDestructive = useCallback((edit: (current: EditorValue) => EditorDeletion) => {
     const current = editorRef.current;
-    const next = edit(current);
-    if (next.text !== current.text) undoStack.current = pushUndo(undoStack.current, current);
-    const cut = updateLastCut(lastCut.current, current, next);
+    const deletion = edit(current);
+    if (deletion.value.text !== current.text) undoStack.current = pushUndo(undoStack.current, current);
+    const cut = updateLastCut(lastCut.current, current, deletion);
     lastCut.current = cut.text;
     if (cut.overflow) dispatch({ type: 'notice', text: LAST_CUT_OVERFLOW_NOTICE, severity: 'warn' });
-    setEditor(next);
+    setEditor(deletion.value);
   }, [dispatch, setEditor]);
 
   // The frame's fixed furniture. Only the header is *measured*: its height depends

@@ -32,6 +32,7 @@ const suites = [
   'verify-path-completion.ts',
   'verify-input-controls.tsx',
   'verify-input-controls-pty.ts',
+  'verify-deletion-merge-pty.ts',
   'verify-composer-edges-pty.ts',
   'verify-prompt-recall.ts',
   'verify-prompt-history-search.ts',
