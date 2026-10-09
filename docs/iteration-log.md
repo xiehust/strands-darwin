@@ -3570,3 +3570,33 @@ The child's first full-gate attempt exposed the new SIGTERM case; it diagnosed a
 One-invocation aggregate, computed from the exact process receipt: **6,194,624 tokens**, approximately **$9.2655**, model/pricing `global.openai.gpt-6-astra`. Cost buckets: input $0.0013, output $1.4509, cacheRead $6.0222, cacheWrite $1.7910; displayed components sum to $9.2654, a -$0.0001 rounding residual against the reported total. All worker metrics were reported. Historical Batch 165/166 spend is excluded. The worker receipt excludes model calls made by its live verification scripts; their spend is unreported here, not zero.
 
 **Halt: batch exhausted.** SER-115 is `done`; no abandonment or unfinished direction remains. Host publishes the recovery and closure records with one ordinary push and verifies `git log @{u}..`; the final reply records the observed publication result. Fresh research is eligible only after this closed batch, not part of this invocation.
+
+## Batch 168 — SRF-040 existing-file size guidance (2026-10-09)
+
+- Resumed the sole unfinished direction from [`reflection_2026-10-09_session-20261009-015409218.md`](reflections/reflection_2026-10-09_session-20261009-015409218.md). No fresh research, product sources or path roll. Score remains `2*3+5+5-1-1 = 14`, above gate 6; no rating changes or abandonment.
+- The initial Host attempt halted before delegation because the reflection and backlog addition were uncommitted. The user explicitly authorized committing those artifacts and proceeding. Preparation commit `b60f6189c7eaa97ae6a05bc7147c5de7c6db890f` passed clean-baseline `pnpm typecheck && pnpm test`, task `bg-90def857-d297-47dc-a9c7-1ad77f94ffd8` (exit 0). Status-only commit `d9b6955dccd59d119f45772cd31c246723c78331` marked only SRF-040 in progress; no duplicate full gate for that documentation-only commit.
+- Fresh source-launched developer conversation **`session-20261009-031042006`**, managed task **`bg-8c1c031b-4472-4e77-b129-a968e6fa5774`**, ran from clean `d9b6955` with `pnpm tsx src/cli.ts --yolo --context-offload -p …`, no model-call ceiling. Exit 0; output consumed through `hasMore:false`, including exact session/usage/cost records. No correction invocation, recursive supervision or Host implementation edit.
+- Child result **`8ef7a61d4a45ab96a642e7b42c76ab9ec11f4f8d`** was the only commit in `git log d9b6955..HEAD`. Host reviewed all nine changed files against explicit base/result SHAs before acceptance; no concurrent commit, reset, revert or history rewrite.
+
+| Accepted milestone | Commit | Independent Host acceptance |
+|---|---|---|
+| SRF-040: distinguish whole-existing-file ceiling from emitted payload guidance | `8ef7a61d4a45ab96a642e7b42c76ab9ec11f4f8d` | Full typecheck/test/build/diff gate passed; registered real-file suite 181/0 and wrapper/runtime/recipe-child suite 68/0. Exact UTF-8 boundary, zero-write failure, unchanged result/schema and inherited guidance contracts verified. |
+
+**Host gate:** task `bg-99614b05-25cd-4a48-8d23-5dd5aa15f7ac`, exit 0, at clean `8ef7a61`: `pnpm typecheck && pnpm test && pnpm build && git diff --check`. Log `/tmp/darwin-srf040-host-acceptance.eFtQ8D.log`. Both focused file-editor suites ran within the full suite, not as duplicate green runs. The build refreshed `dist` and regenerated SDK/Ink packaged patches. Source remained unchanged afterward.
+
+**Requirement-to-check acceptance:**
+
+- Exact 1,048,576-byte (1 MiB) whole-existing UTF-8 content ceiling for `view`, `str_replace` and `insert`, separate payload bound, and distinct `create`: actual runtime parent and recipe-child description assertions in `verify-file-editor-serial.ts`.
+- Generated-artifact advice requires an already-read authorized source/template/generator, normal regeneration protected against unexpected output edits, and reporting the limitation without a safe path. The same assertions pin prohibitions on same-file retries, arbitrary shell mutation, relaxed permissions and cap increases.
+- Multibyte files one byte below, exactly at and one byte above the ceiling exercise all three operations against both the SDK singleton and configured wrapper. Small inputs above the ceiling retain exact error bytes, perform no writes, and preserve content and write metadata; supported operations retain exact output/content behavior. `create` succeeds without that existing-content assertion and still refuses overwrite.
+- Existing tests retain SDK default-description prefix, provider schema, result/error projection, exact-miss/replace-all compatibility, same-path ordering and child isolation. Production changes are tool-description composition plus one runtime comment; pinned SDK code, limits, permissions, dependencies and loop remain untouched.
+
+**Docs wrap-up:** the implementation synchronizes `docs/user-guide/reference.md`, `reference.zh-CN.md`, `using-darwin.md`, `using-darwin.zh-CN.md` and the existing Same-path fileEditor architecture section. Both READMEs were reviewed: their high-level claims do not describe a conflicting size contract, so no edits were needed. Doc-pinning suites found by searching `spike/` ran in `pnpm test`. `AGENTS.md` and built-in skills were unchanged. Host alone closes the selected backlog record and appends this supervision record; the originating reflection remains historical evidence.
+
+| Child task | Outcome | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---|---:|---:|---:|---:|---:|
+| `bg-8c1c031b-4472-4e77-b129-a968e6fa5774` | exit 0 | 56 | 12107 | 2382192 | 117239 | $4.4536 |
+
+Single-invocation aggregate, computed from the exact process receipt: **2,511,594 tokens**, approximately **$4.4536**, model/pricing `global.openai.gpt-6-astra`. The four token buckets are mutually exclusive and fully reported. Displayed USD components are input $0.0006, output $0.6054, cacheRead $2.3822 and cacheWrite $1.4655; they sum to $4.4537, a +$0.0001 rounding residual against the authoritative reported total. Host usage and the earlier reflection's spend are not included. There were no correction/retry delegations or model-calling acceptance suites. The child also printed an optional cloud-memory degraded-state notice; no cloud recovery or config mutation was attempted, and that notice is not implementation acceptance evidence.
+
+**Halt: batch exhausted.** SRF-040 is `done`; no direction was abandoned this run and no unfinished record remains. Guidance is advisory, not large-file support or a guarantee of model compliance. Host publishes preparation, implementation and closure with one ordinary push and verifies `git log @{u}..`; the final response records the observed push result. Fresh research is now eligible, but is not started in this invocation.
