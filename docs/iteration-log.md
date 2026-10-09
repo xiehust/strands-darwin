@@ -3600,3 +3600,33 @@ One-invocation aggregate, computed from the exact process receipt: **6,194,624 t
 Single-invocation aggregate, computed from the exact process receipt: **2,511,594 tokens**, approximately **$4.4536**, model/pricing `global.openai.gpt-6-astra`. The four token buckets are mutually exclusive and fully reported. Displayed USD components are input $0.0006, output $0.6054, cacheRead $2.3822 and cacheWrite $1.4655; they sum to $4.4537, a +$0.0001 rounding residual against the authoritative reported total. Host usage and the earlier reflection's spend are not included. There were no correction/retry delegations or model-calling acceptance suites. The child also printed an optional cloud-memory degraded-state notice; no cloud recovery or config mutation was attempted, and that notice is not implementation acceptance evidence.
 
 **Halt: batch exhausted.** SRF-040 is `done`; no direction was abandoned this run and no unfinished record remains. Guidance is advisory, not large-file support or a guarantee of model compliance. Host publishes preparation, implementation and closure with one ordinary push and verifies `git log @{u}..`; the final response records the observed push result. Fresh research is now eligible, but is not started in this invocation.
+
+## Batch 169 — SER-116 session display labels (2026-10-09)
+
+Research batch: `docs/research/research_2026-10-09.md` Run `05:28:00Z`, binding peer roll. Source baseline `0b75c018f66624c0efb071ecb2c7f205a94b1428` was clean; Host baseline `bg-f2d43d53-0e69-4149-9225-de58f879e1aa` passed `pnpm typecheck && pnpm test`, exit 0. Only research/status documentation changed through launch base `2faf5d07be67b713d8a3074ffe782f02655d1c26`. SER-116 Score 12 is unchanged; SER-117 stayed not-started throughout this supervision.
+
+Fresh source-launched child conversation **`session-20261009-054921297`**. Initial managed task **`bg-176f00b9-7d11-4f15-8b9f-9eb953ee9bad`**, exit 0, `--yolo --context-offload`, no ceiling. Same-session focused correction **`bg-3002ef42-7eca-4c01-b854-a436d701fa12`**, exit 0, same flags plus intentional `--compact-before` for the broad prior transcript. Both outputs drained through `hasMore:false`; identities captured from exact stderr session lines. No recursive worker, Host implementation edit or other writer commit in the explicit base/result range.
+
+| Accepted milestone | Commit | Independent Host acceptance |
+|---|---|---|
+| Display-only persistent user labels, local rename/status/CLI projections and real-state/pty checks | `4d57f55d4c2875e2766df0dc92dc38b4d16c2cb8` | Initial focused suites and typecheck passed; accepted only after the correction full gate below, not from the worker report. |
+| Settle both rejected-review draft clears before subsequent pty input; preserve attached image and no-send/no-queue checks | `382e4dda3085226ae5c8e5078a9c17515cac08c5` | Host affected review-driver suite 18/0, full typecheck/tests/build and clean diff/status passed. |
+
+Host reviewed all 21 feature files plus the one-file correction. Requirement checklist: owned-HOME files cover literal labels/exterior trim/80-point Unicode boundary, rejected controls/overflow zero-write, atomic bounded record and redirected/special-file refusals; real runtime/snapshot/checkpoint hashes prove resume persistence, fresh clear/rewind labels and unchanged core-state files. Offline production-CLI pty covers idle/busy locality, no send/queue, status and completion/help; CLI fixtures retain IDs, ages/order, first prompts, pointer and live lease markers and permit duplicate labels without name-based resume. Read-only metadata import closure has no writer/SDK.
+
+| Host task | Checks and outcome |
+|---|---|
+| `bg-efe32b64-a6c3-4069-b39e-d027491e14ae` | `verify-session-label.ts` 4/0, `verify-rename-pty.ts` 2/0, `verify-sessions-command.ts` 48/0, `verify-status-command.ts` 109/0, `verify-help-command.ts` 39/0, free `tui completion` 82/0 and typecheck passed. Full test gate failed at existing review/image queue timeout; build not reached. Log `/tmp/darwin-ser116-host-acceptance.log`. |
+| `bg-06d214d1-bfeb-40e7-b29c-30071407291b` | After diff inspection, `verify-review-drivers.ts` 18/0, `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short`, exit 0, clean. Log `/tmp/darwin-ser116-host-correction-acceptance.log`. |
+
+Failure evidence: captured composer concatenated the rejected `/review --commit deadbeef` with the next command. Installed Ink parser reproduction demonstrated how coalesced Ctrl+U/text strips the control rather than clearing; original stdin chunks were not recorded, so this is a demonstrated mechanism, not an observed original chunk boundary. Correction changes only fixture synchronization, not production or timeout limits. Independent acceptance succeeded on attempt two; this is not a batch halt.
+
+Docs wrap-up: both READMEs, EN/zh-CN `sessions-and-state` narrative and `reference`, plus existing decisions rationale synchronized in the feature commit. No extra docs sync needed. AGENTS.md unchanged at 32762 bytes. Host build refreshed dist before the next iteration. Linux filesystem/pty behavior verified; other platforms not exercised.
+
+| Child task | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---:|---:|---:|---:|---:|
+| Initial `bg-176f00b9-7d11-4f15-8b9f-9eb953ee9bad` | 122 | 43614 | 8219891 | 205670 | 1.7725 |
+| Correction `bg-3002ef42-7eca-4c01-b854-a436d701fa12` | 40 | 8490 | 1181704 | 74533 | 0.3895 |
+| Aggregate | 162 | 52104 | 9401595 | 280203 | 2.1620 |
+
+Exact process stderr usage/cost records supplied every bucket; sums computed locally. Cost uses reported `global.openai.gpt-6.1-sol` base pricing, approximate USD, not an invoice; rounded component sums equal each reported total. No unreported metric folded into zero. SER-116 is done; continue immediately with SER-117 on the accepted revision.

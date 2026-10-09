@@ -436,7 +436,7 @@ Acceptance: extend `spike/verify-file-editor-serial.ts` to assert the actual par
 
 ## SER-116 — Add user-only `/rename <label>` for the current session: a persistent bounded display label, shown in `/status` and `darwin sessions`, without changing identity or resume grammar
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 156
 - Score: 12
 - Importance: 4
@@ -448,7 +448,11 @@ Acceptance: extend `spike/verify-file-editor-serial.ts` to assert the actual par
 
 ### Implementation / acceptance evidence
 
-Not implemented. Acceptance must be independently observed after the developer child finishes.
+Accepted 2026-10-09 at `382e4dda3085226ae5c8e5078a9c17515cac08c5`, containing feature `4d57f55d4c2875e2766df0dc92dc38b4d16c2cb8` and focused verification correction `382e4dd`. Fresh developer session `session-20261009-054921297`; initial task `bg-176f00b9-7d11-4f15-8b9f-9eb953ee9bad` and same-session correction `bg-3002ef42-7eca-4c01-b854-a436d701fa12`, both exit 0, fully drained. Host inspected explicit-base/result diffs; no other writer committed in the range.
+
+Initial Host acceptance `bg-efe32b64-a6c3-4069-b39e-d027491e14ae` passed `verify-session-label.ts` (4), `verify-rename-pty.ts` (2), `verify-sessions-command.ts` (48), `verify-status-command.ts` (109), `verify-help-command.ts` (39), free `tui completion` (82), and typecheck, but full gate failed at the existing review/image pty queue scenario. Correction waits for a settled empty composer after Ctrl+U at both retained-draft sites; parser reproduction explains the exact concatenation without claiming the unrecorded original chunk boundary was observed. Production behavior/timeouts unchanged.
+
+Host correction acceptance `bg-06d214d1-bfeb-40e7-b29c-30071407291b`: affected `verify-review-drivers.ts` (18/0), `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short`, exit 0 clean. Registered label/rename suites reran in full gate. Snapshots, trajectory, pointer and leases remain unaffected by label saves; same-ID resume and clear/rewind isolation exercised over real state. CLI metadata read closure excludes writer/SDK; local idle/busy commands create no extra request or queue. READMEs, EN/zh-CN sessions guide/reference and architecture synced. AGENTS.md unchanged (32762 bytes). Batch 169 in iteration-log records both accepted commits and spend. Linux verified; other platforms untested.
 
 ### Notes / blockers / abandonment reason
 
