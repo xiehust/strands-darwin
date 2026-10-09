@@ -485,4 +485,3 @@ Requirement: `/sessions` with no arguments renders one local bounded transcript 
 Architecture: decisions § `darwin sessions`, `/status`, Paths and TUI frame budget. Use existing local command/Static notice and canonical completion/help seams, not a new execution channel. Sync READMEs, narrative sessions guide and references EN/zh-CN; keep AGENTS.md under its byte cap.
 
 Acceptance: registered real owned-HOME fixtures pin shared CLI/TUI rows, labels, empty/missing/damaged metadata, missing snapshots, current project's scope, live leases, scan/display bounds and explicit omissions, malicious controls, store hashes before/after; registered offline pty proves idle/busy no-send/no-queue behavior and argument rejection. Completion/help and unchanged CLI parser/strict resume. `pnpm typecheck`, `pnpm test`, focused suites and free `tui completion`; Host `pnpm build`.
-
