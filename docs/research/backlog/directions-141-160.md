@@ -466,7 +466,7 @@ Acceptance: registered real owned-HOME state tests for bounds/Unicode/literal pr
 
 ## SER-117 — Add bounded read-only `/sessions` saved-session discovery in the TUI: share the CLI read model, include labels, and preserve every store byte without switching runtimes
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 157
 - Score: 13
 - Importance: 3
