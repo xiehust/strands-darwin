@@ -497,7 +497,7 @@ Acceptance: registered real owned-HOME fixtures pin shared CLI/TUI rows, labels,
 
 ## SER-118 — Keep the composer caret legal after deletion joins neighboring graphemes, without corrupting exact cut/yank or undo
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 158
 - Score: 13
 - Importance: 4
@@ -509,7 +509,13 @@ Acceptance: registered real owned-HOME fixtures pin shared CLI/TUI rows, labels,
 
 ### Implementation / acceptance evidence
 
-Not implemented. Source probes at `96db05032fb8630f0aba816db82606bb867f939d`: backspace/delete removing LF in `e\n\u0301x` returns `e\u0301x` with offset 1 (legal offsets 0/2/3); next insertion of Z produces `Ze\u0301x`. Delete removing X in `🇦X🇧` returns offset 2 inside the new flag, similarly inserting Z before it.
+Accepted 2026-10-09 at `4404ef334e29100c35c650b3b74f0a1868b16431`, the sole child commit on explicit launch base `16264edd014975040ee27eab2b324d5d09b469fe`. Starting-point Host task `bg-3d765525-4cbf-431c-9eac-95a0eb3339ea` passed `pnpm typecheck && pnpm test`, exit 0. Research preparation and selected-status commits changed documentation only; launch tree was clean.
+
+Fresh source-launched developer session `session-20261009-152352053`, managed task `bg-e7a28cb3-723a-412a-afcd-6219289067ee`, exit 0 fully drained; no correction/retry or cost ceiling. Host inspected all 11 changed files and explicit-SHA base/result diff; no other writer commit. Independent acceptance task `bg-450465d6-02fb-4d7a-9308-0cd5d2c7da2b` passed prompt-editor 83/0, deletion-merge pty 4/0, input-controls 16/0, input-controls pty 6/0, composer-yank 14/0, frame-budget 80/0, free TUI wordNav 11/0 and undo 7/0, then `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short`, exit 0 clean. Build refreshed dist. Acceptance log is the task output under Host session `session-20261009-145959511/background/`.
+
+Pure M1–M4 checks cover LF/CRLF, combining neighbors, regional indicators, ZWJ emoji and CR/LF merges; legal returned caret before rendering, exact next input/movement/deletion; every deletion primitive, normal/no-op affinities, exact repeated-text spans, cap/overflow and original undo snapshots. Registered offline real CLI P1–P3 proves LF/flag next input, wrapped emoji row-cut capturing only X despite caret repair, repeat yank, restored undo cursor, bounded frames and zero automatic sends/model calls. Shared `EditorDeletion` keeps a pre-edit span separate from repaired `EditorValue`; App uses the span for cut and the original value for undo.
+
+EN/zh-CN narrative editing guides and reference plus existing architecture rationale synchronized. Both README summaries remain accurate and unchanged; AGENTS.md unchanged at 32762 bytes. See iteration-log Batch 171. Tiny-terminal projection redesign remains explicitly outside scope; Linux/offline verification only.
 
 ### Notes / blockers / abandonment reason
 
