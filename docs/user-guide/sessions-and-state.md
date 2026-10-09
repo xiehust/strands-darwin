@@ -14,9 +14,29 @@ darwin --session <id>
 
 `darwin sessions` is read-only, offline, and lists only restorable snapshots, newest activity first: ID, age, first recorded user prompt, optional display label, `(last)`, and `(open in pid N)` when another live darwin currently holds the session (`(open on <host> in pid N)` when the holder runs on another machine). If trajectory was disabled it says `(not recorded)`; damaged/unusable entries are skipped with a count. Listing never writes or moves the pointer — a stale lease is not taken over by the listing. Invalid/other-project IDs are refusals, never fallback. A named resumed session becomes the bare-resume target only after it completes another turn. When the TUI exits it leaves one plain line in the scrollback for the session that was live — `session <id> · resume: darwin --resume <id>` — only if that session has something to reopen (a session left without a prompt, and every `-p` run, prints nothing); the line is written after the lease is released and touches no file.
 
+### Discover saved sessions without leaving the TUI
+
+`/sessions` takes no arguments and prints one local, read-only transcript notice, even
+while a turn is busy. It shares the CLI's saved-session reads: immutable ID, snapshot
+activity age, first recorded prompt, optional label, `(last)` and live-lease markers.
+Nothing is sent or queued; it does not switch runtimes, connect MCP, change config or
+write snapshots, trajectories, pointers, leases or labels. It inspects this project only,
+not the cross-project live-process inventory of `/list-agents`.
+
+The TUI enumerates at most 200 directory entries across the snapshot and state layouts,
+plus one overflow probe (duplicates and non-session entries count toward the scan), and
+shows at most 20 resumable session rows. Missing snapshots are counted as skipped;
+missing/damaged prompt records read `(not recorded)`, and missing/malformed labels are
+unnamed. Scan and display omissions are stated separately. A capped scan sorts by newest
+activity **among inspected entries only**, not globally; `darwin sessions` retains the
+complete listing. Every row cell is terminal-sanitized and capped at 100 code points,
+with `…` for truncation, including legacy IDs and holder hosts. Reopen by immutable ID
+with `darwin --resume <id>` in another launch; there is no picker, label-based resume,
+deletion or in-place session switch.
+
 ### Session display labels
 
-In the TUI, `/rename <label>` sets a display-only label for the current parent session, even while a turn is busy. Exterior whitespace is trimmed; labels are literal, nonempty single lines of at most 80 Unicode code points. Controls, line separators and overflow are rejected without writing. Bare `/rename` shows usage, never generates a title. Labels appear quoted alongside the unchanged ID in `/status` and `darwin sessions`; the listing retains activity order, ages, first prompts and lease markers. Duplicate labels are allowed. Resume remains **ID-only**: there is no name flag, name-based lookup or in-place switching.
+In the TUI, `/rename <label>` sets a display-only label for the current parent session, even while a turn is busy. Exterior whitespace is trimmed; labels are literal, nonempty single lines of at most 80 Unicode code points. Controls, line separators and overflow are rejected without writing. Bare `/rename` shows usage, never generates a title. Labels appear quoted alongside the unchanged ID in `/status`, `/sessions` and `darwin sessions`; the listing retains activity order, ages, first prompts and lease markers. Duplicate labels are allowed. Resume remains **ID-only**: there is no name flag, name-based lookup or in-place switching.
 
 The label lives in one bounded (1 KiB), owner-state `label.json` beside `lease.json` and the trajectory, not in SDK history/snapshots or trajectory records. Saving is local and atomic; redirected, special-file or unsafe owner-state paths are refused. Absent/malformed labels are read as unnamed without repair. Same-ID resume retains the label; `/clear` and `/rewind` successors start unnamed and leave the predecessor's label intact. Renaming neither sends nor queues a model prompt, changes a pointer/policy/lease, nor adds a live-frame row.
 

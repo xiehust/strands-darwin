@@ -242,6 +242,7 @@ import { liveBackgroundDelegationRefusal } from '../agent/background-delegation.
 import { createContextWarnLatch, formatContextReport, formatContextReportWithBreakdown } from './context-format.js';
 import { COPY_COMMAND_USAGE, runCopyCommand } from './copy-command.js';
 import { formatHelpReport } from './help-format.js';
+import { readSessionsReport } from './sessions-format.js';
 import { formatMcpReport } from './mcp-format.js';
 import {
   describeMode,
@@ -1446,6 +1447,23 @@ export function App({
           type: 'notice',
           text: text === '/help' ? formatHelpReport() : '/help takes no arguments',
         });
+        return;
+      }
+
+      // Saved snapshots in this project only. Local idle/busy before queueing; one
+      // Static notice, no runtime state transition or model/tool/MCP work.
+      if (/^\/sessions(?:\s|$)/.test(text)) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        if (text !== '/sessions') {
+          dispatch({ type: 'notice', text: '/sessions takes no arguments' });
+          return;
+        }
+        try {
+          dispatch({ type: 'notice', text: await readSessionsReport(runtime.info.projectRoot) });
+        } catch {
+          dispatch({ type: 'notice', text: 'could not list saved sessions in this project' });
+        }
         return;
       }
 

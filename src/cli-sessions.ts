@@ -20,12 +20,15 @@
  * Exit codes follow the trajectory convention: 0 for a completed listing (including
  * an empty one), 2 for a usage error.
  */
-import { stat } from 'node:fs/promises';
+import { opendir, stat } from 'node:fs/promises';
+import path from 'node:path';
 
 import {
   describeHolderLocation,
   inspectLease,
+  isValidSessionId,
   listSessionIds,
+  sessionPaths,
   readLastSessionId,
   snapshotPath,
   trajectoryPath,
@@ -69,7 +72,7 @@ export interface SessionsIo {
 }
 
 /** One listed session, resolved without writing anything. */
-interface SessionRow {
+export interface SessionRow {
   id: string;
   label: string | undefined;
   /** Snapshot mtime in epoch milliseconds. */
@@ -87,29 +90,64 @@ interface SessionRow {
   openIn: SessionLeaseRecord | undefined;
 }
 
-/** Runs the listing and returns the process exit code. */
-export async function runSessionsCommand(io: SessionsIo, now = Date.now()): Promise<number> {
-  const ids = await listSessionIds(io.projectRoot);
-  const lastSessionId = await readLastSessionId(io.projectRoot);
+export interface SessionsReadModel {
+  rows: SessionRow[];
+  skipped: number;
+  /** Entries enumerated, including duplicates and non-session entries, in bounded mode. */
+  inspected: number;
+  scanCapped: boolean;
+}
+
+/** Bounded directory reads, not an unbounded readdir followed by slice. One overflow probe. */
+async function inspectSessionIds(projectRoot: string, maxEntries: number) {
+  const found = new Set<string>();
+  let inspected = 0;
+  const base = sessionPaths(projectRoot).sessionsDir;
+  for (const directory of [path.join(base, 'session'), base]) {
+    let handle;
+    try {
+      handle = await opendir(directory, { bufferSize: 1 });
+      while (true) {
+        const entry = await handle.read();
+        if (entry === null) break;
+        if (inspected === maxEntries) return { ids: [...found].sort().reverse(), inspected, scanCapped: true };
+        inspected += 1;
+        if (entry.isDirectory() && entry.name !== 'session' && isValidSessionId(entry.name)) found.add(entry.name);
+      }
+    } catch {
+      // Match the CLI's absent/unreadable directory semantics; never repair.
+    } finally {
+      await handle?.close();
+    }
+  }
+  return { ids: [...found].sort().reverse(), inspected, scanCapped: false };
+}
+
+/** Shared snapshot/trajectory/label/lease reads. No metadata writer in this closure. */
+export async function readSessions(projectRoot: string, maxEntries?: number): Promise<SessionsReadModel> {
+  const scan = maxEntries === undefined
+    ? { ids: await listSessionIds(projectRoot), inspected: 0, scanCapped: false }
+    : await inspectSessionIds(projectRoot, maxEntries);
+  const lastSessionId = await readLastSessionId(projectRoot);
 
   const rows: SessionRow[] = [];
   let skipped = 0;
-  for (const id of ids) {
+  for (const id of scan.ids) {
     let activeAt: number;
     try {
       // `stat` on the snapshot is both the existence check and the age source; a
       // directory whose snapshot is missing or unreadable lands here and is skipped.
-      activeAt = (await stat(snapshotPath(io.projectRoot, id, AGENT_ID))).mtimeMs;
+      activeAt = (await stat(snapshotPath(projectRoot, id, AGENT_ID))).mtimeMs;
     } catch {
       skipped += 1;
       continue;
     }
-    const lease = await inspectLease(io.projectRoot, id);
+    const lease = await inspectLease(projectRoot, id);
     rows.push({
       id,
-      label: await readSessionLabel(io.projectRoot, id),
+      label: await readSessionLabel(projectRoot, id),
       activeAt,
-      firstPrompt: await firstUserPrompt(io.projectRoot, id),
+      firstPrompt: await firstUserPrompt(projectRoot, id),
       isLast: id === lastSessionId,
       openIn: lease.kind === 'live' ? lease.record : undefined,
     });
@@ -119,7 +157,12 @@ export async function runSessionsCommand(io: SessionsIo, now = Date.now()): Prom
   // darwin generates them that way, and a hand-named `--session my-experiment`
   // would otherwise sort alphabetically (the prompt-history ordering rule).
   rows.sort((a, b) => b.activeAt - a.activeAt);
+  return { rows, skipped, inspected: scan.inspected, scanCapped: scan.scanCapped };
+}
 
+/** Runs the complete CLI listing and returns the process exit code. */
+export async function runSessionsCommand(io: SessionsIo, now = Date.now()): Promise<number> {
+  const { rows, skipped } = await readSessions(io.projectRoot);
   if (rows.length === 0) {
     io.out('no resumable sessions in this project\n');
   } else {

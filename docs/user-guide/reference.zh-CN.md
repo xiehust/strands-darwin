@@ -253,10 +253,11 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 | `/permissions` | 当前放行规则及来源，随后是已配置的拒绝规则 |
 | `/permissions test <rule>` | 只读检查本会话已记录调用与当前拒绝规则，复用原匹配器；忙碌时可用，不调用模型、不改 gate |
 | `/permissions revoke <n/rule/all>` | 同步收紧 gate 和磁盘上的放行规则；拒绝规则不能在此撤销 |
-| `/rename <label>` | 仅限用户输入的本地显示标签命令，作用于当前父会话，空闲或忙碌时均可用；去掉首尾空白，保留原文，非空单行且最多 80 个 Unicode 码点；控制字符或超长输入拒绝且不写入，裸命令显示用法；`/status` 和 `darwin sessions` 展示标签，可以重名，恢复仍只接受 ID；同 ID 恢复保留标签，clear/rewind 后继不继承；不调用或排队模型提示词，不改对话、轨迹、指针或租约（[指南](sessions-and-state.zh-CN.md#会话显示标签)） |
+| `/rename <label>` | 仅限用户输入的本地显示标签命令，作用于当前父会话，空闲或忙碌时均可用；去掉首尾空白，保留原文，非空单行且最多 80 个 Unicode 码点；控制字符或超长输入拒绝且不写入，裸命令显示用法；`/status`、`/sessions` 和 `darwin sessions` 展示标签，可以重名，恢复仍只接受 ID；同 ID 恢复保留标签，clear/rewind 后继不继承；不调用或排队模型提示词，不改对话、轨迹、指针或租约（[指南](sessions-and-state.zh-CN.md#会话显示标签)） |
 | `/review --commit <40-hex-SHA>` | 固定只审查提示：检查指定提交与父提交的差异（根提交与空树比较）、周围代码和测试；对象缺失或不受支持时如实报告。以 `--commit` 开头但格式不对的输入在本地显示用法，不调用模型；普通 gate、排队／附图和字面轨迹不变（[指南](using-darwin.zh-CN.md#审查改动)） |
 | `/review [focus]` | 精确匹配、不区分大小写；裸命令结合仓库指令、周围代码审查暂存／未暂存改动及相关未跟踪文件。一条普通 prompt 要求按优先级报告有文件／行号证据的缺陷，单列测试缺口，避免推测和纯风格问题，如实说明无发现及未验证范围。focus 去掉首尾空白后原样放在 `Focus:` 下。未经另行请求不编辑／提交只是指引，不是强制只读：不切换模式、不自动委派，现有 gate 仍有效。排队、附图及字面轨迹不变。`review` 为保留名，同名自定义命令／skill 斜杠调用需改名，例如 `audit`（[指南](using-darwin.zh-CN.md#审查改动)） |
 | `/rewind` | 在本会话已完成提示词的检查点中选择——即模型跑完了回合的提示词，无论是回答还是拒绝（拒绝类停止原因）；失败和被取消的回合不在其中；接受后把对话分支到一个新的后继会话，恢复到所选提示词之前的状态，该提示词回到编辑器但不发送（回退到被拒绝的提示词会在你改写之前移除被拒绝的回复）；文件、shell 与 `!` 的效果、hooks、MCP 写入、子代理、后台任务和已学习记忆永不回滚 |
+| `/sessions` | 空闲或忙碌时只打印一条本地只读历史通知，拒绝参数；与 CLI 共用当前项目可恢复会话读取，含 ID、快照活动时间/排序、首条提示词、可选标签、last/有效租约标记及按 ID 恢复指引；最多枚举 200 条目加一次超限探测，显示 20 行，分别说明扫描/显示省略，超限只按已检查条目排序；每个单元格清除终端控制字符且最多 100 码点；不发送/排队、不写状态、不切换运行时，无选择器、跨项目扫描或实时界面行（[指南](sessions-and-state.zh-CN.md#不离开-tui-查看已保存会话)） |
 | `/status` | 只读汇总模型/缓存/强度/模式/MCP/skills/hooks/shell 环境变量/费用/成本/上下文；会话行保留 ID，有显示标签时一并展示；出现过缓存未命中后，模型行会注明最近一次未命中的可能原因；只有在 tangent 已武装或进行中时才会多出一行 `tangent` |
 | `/tangent`、`/tangent start`、`/tangent end` | 建立在 rewind 路径之上的单层书签：裸 `/tangent` 先武装，下一条完成的提示词开始它（该提示词的检查点就是返回点）；再输入 `/tangent` 或 `/tangent end` 就沿着与 `/rewind` 相同的后继路径回到那里——同样的省略说明，外加 `returned from tangent — N prompt(s) discarded`——且不把提示词放回编辑器；进行中再 `/tangent start` 会被拒绝（不嵌套、不提供选择器：请用 `/rewind`）；`/clear` 或接受一次 `/rewind` 会以 `tangent ended by …` 结束它；仅为 TUI 当前会话状态 |
 | `/tasks` | 后台任务及其最近三行非空输出；忙碌时也可用；读取不会移动模型的 `output`/`wait` 游标 |
@@ -269,7 +270,7 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 | `/self-evolution-research` | 内置 skill：待办/研究/评分/受监督迭代循环 |
 | `/self-reflection [session id]` | 内置 skill：基于轨迹复盘，达标建议进入 backlog |
 
-`/help`、`/mcp`、`/permissions`、`/status`、`/tasks`、`/trajectory`、`/usage`、记忆管理等报告命令读取本地状态，不会把报告发送给模型；只有文档明确说明会更新当前 prompt 的变更命令例外。忙碌时 `/clear`、`/compact`、`/model`、`/rewind`、`/tangent`、`/exit`、`/quit` 会拒绝，普通输入进入队列。
+`/help`、`/mcp`、`/permissions`、`/sessions`、`/status`、`/tasks`、`/trajectory`、`/usage`、记忆管理等报告命令读取本地状态，不会把报告发送给模型；只有文档明确说明会更新当前 prompt 的变更命令例外。忙碌时 `/clear`、`/compact`、`/model`、`/rewind`、`/tangent`、`/exit`、`/quit` 会拒绝，普通输入进入队列。
 
 ## 输入语法
 

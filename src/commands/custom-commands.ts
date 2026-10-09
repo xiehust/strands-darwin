@@ -8,7 +8,7 @@ export const COMMANDS_DIRNAME = 'commands';
 export const ARGUMENTS_PLACEHOLDER = '$ARGUMENTS';
 
 /** Commands shown in completion, in their stable display order. */
-export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'collaborate', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'goal', 'help', 'init', 'list-agents', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rename', 'review', 'rewind', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
+export const BUILTIN_COMMAND_NAMES = ['agents', 'clear', 'cloud-memory', 'collaborate', 'compact', 'context', 'copy', 'effort', 'exit', 'export', 'goal', 'help', 'init', 'list-agents', 'mcp', 'memory', 'mode', 'model', 'permissions', 'rename', 'review', 'rewind', 'sessions', 'setup-agentcore-memory', 'status', 'tangent', 'tasks', 'trajectory', 'usage', 'workflow'] as const;
 
 /**
  * One-phrase completion-row descriptions, total over {@link BUILTIN_COMMAND_NAMES}
@@ -64,6 +64,7 @@ export const BUILTIN_COMMAND_DESCRIPTIONS: Readonly<
   // The consolidated read-only session report — configuration and live state in
   // one transcript block, for when the header has scrolled away.
   status: 'session configuration and state',
+  sessions: 'list this project’s saved resumable sessions (read-only)',
   // A bookmark over the rewind path: the next completed prompt's checkpoint is the
   // return point, and `/tangent` again rewinds there without a picker (SER-083).
   tangent: 'branch a side conversation, /tangent again returns',

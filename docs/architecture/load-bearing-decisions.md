@@ -1004,6 +1004,37 @@ nothing, a resumed session still does. The refusal paths (`ConfigError`, `Sessio
 suppress it. Free checks: `spike/verify-tui.ts resumeHint` (real `cli.ts` through the offline
 `startup-cli` fixture), and the headless suites pin its absence from `-p` output.
 
+### `/sessions` — bounded saved-session discovery in transcript history
+
+SER-117 adds the in-session discovery from OpenCode, kiro and Pi without their picker
+or switching semantics. `/sessions` owns its no-argument grammar before busy queueing
+and dispatches exactly one local Static notice. It calls `readSessionsReport(projectRoot)`
+(`src/tui/sessions-format.ts`), using the same `readSessions` model in `cli-sessions.ts`
+as the complete CLI listing: snapshot mtime order/age, immutable ID, first recorded
+prompt, optional `readSessionLabel`, last pointer and inspected live lease. No model,
+network, tools, MCP connection, config/store write, runtime successor or new live row.
+The read model never imports `session-label-write.ts`; label absence/damage stays unnamed.
+
+The TUI streams directory entries with `opendir({ bufferSize: 1 })`: at most 200 entries
+across SDK snapshot and state layouts, counting duplicates/non-session entries, plus
+one overflow probe. It deduplicates IDs and sorts inspected restorable snapshots by
+activity, then renders at most 20 rows. Scan and display omissions are distinct; scan
+overflow states unknown uninspected count and **newest among inspected only**, never
+global recency. Even capped empty results are qualified as inspected-only. Missing
+snapshots are counted, missing/damaged prompt records say `(not recorded)`, and the
+notice always gives `darwin --resume <id>`. Every dynamic cell is single-line,
+terminal-sanitized and ≤100 code points with visible ellipsis, including legacy IDs,
+quoted labels, prompts and holder host/PID text. CLI grammar, complete listing and
+strict resume are unchanged; this never introduces name-based identity or deletion.
+
+Registered real-file checks: `verify-sessions-tui.ts` (shared rows, owned-HOME labels,
+absence/damage, scope, lease markers, exact scan boundary/overflow, display omissions,
+legacy controls and byte-identical stores) and `verify-sessions-pty.ts` (offline
+production CLI, idle/busy, argument refusal, no send/queue/switch/live row). Canonical
+help and completion caps grow to 30; free `tui completion` still checks every built-in.
+Existing `verify-sessions-command.ts` retains CLI parser and strict-resume checks.
+AGENTS.md is deliberately unchanged because its preloaded byte cap has no room.
+
 ## Session display labels — user-only owner-state metadata
 
 **A label is presentation, never identity or model context** (SER-116). `/rename <label>`
