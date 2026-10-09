@@ -15,9 +15,11 @@ import {
   type BaseModelConfig,
   type Message,
   type ModelStreamEvent,
+  type Tool,
 } from '@strands-agents/sdk';
-import { fileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
+import { fileEditor, makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 
+import { FILE_EDITOR_DESCRIPTION, SerializedFileEditorTool } from '../src/tools/file-editor-serial.js';
 import { assert, header, report } from './shared.js';
 
 interface FileEditorResult {
@@ -49,9 +51,9 @@ function expectedView(filePath: string, lines: readonly string[], start = 1): st
   return `Here's the result of running \`cat -n\` on ${filePath}:\n${numbered.join('\n')}\n`;
 }
 
-async function runFileEditor(agent: Agent, input: Record<string, unknown>): Promise<FileEditorResult> {
-  const stream = fileEditor.stream({
-    toolUse: { name: fileEditor.name, toolUseId: 'file-editor-verification', input },
+async function runFileEditor(agent: Agent, input: Record<string, unknown>, editor: Tool = fileEditor): Promise<FileEditorResult> {
+  const stream = editor.stream({
+    toolUse: { name: editor.name, toolUseId: 'file-editor-verification', input },
     agent,
     invocationState: {},
     interrupt: () => {
@@ -437,16 +439,79 @@ try {
   assert('invalid UTF-8 keeps the sandbox decoder and existing output path',
     binary.status === 'success' && binary.text === expectedView(binaryPath, ['��\u0000']));
 
-  const largePath = path.join(root, 'too-large.txt');
-  await writeFile(largePath, 'x'.repeat(1_048_577));
-  assertError('the existing size bound', await runView(agent, largePath, [1, 2_000_000]), 'exceeds maximum allowed size');
-  const writesBeforeLargeReplace = writes;
-  const largeReplace = await runReplace(agent, largePath, 'x', 'y');
-  assert('str_replace size errors stay unrelated to miss recovery and perform no write',
-    largeReplace.status === 'error'
-      && largeReplace.text.includes('exceeds maximum allowed size')
-      && !largeReplace.text.includes('Advisory context')
-      && writes === writesBeforeLargeReplace);
+  header('fileEditor — SRF-040 whole-existing-file UTF-8 byte boundaries, not payload sizes');
+
+  const maxExistingBytes = 1_048_576;
+  // Short leading rows keep successful snippets small; the multibyte tail makes
+  // code-point/UTF-16-unit counting an observable regression at the byte ceiling.
+  const prefix = `old\n${'keep\n'.repeat(8)}`;
+  const boundaryContent = (bytes: number): string => {
+    const remaining = bytes - Buffer.byteLength(prefix, 'utf8');
+    return prefix + '🦕'.repeat(Math.floor(remaining / 4)) + 'x'.repeat(remaining % 4);
+  };
+  const describedWrapper = new SerializedFileEditorTool(makeFileEditor({ description: FILE_EDITOR_DESCRIPTION }));
+  const sdkResults = new Map<string, FileEditorResult>();
+  for (const [editorLabel, editor] of [['SDK singleton', fileEditor], ['described wrapper', describedWrapper]] as const) {
+    for (const bytes of [maxExistingBytes - 1, maxExistingBytes, maxExistingBytes + 1]) {
+      const boundaryPath = path.join(root, `boundary-${bytes}.txt`);
+      const seed = boundaryContent(bytes);
+      assert(`${editorLabel}: fixture is exactly ${bytes} UTF-8 bytes, not that many characters`,
+        Buffer.byteLength(seed, 'utf8') === bytes && seed.length < maxExistingBytes);
+      const operations = [
+        { command: 'view', view_range: [1, 1] },
+        { command: 'str_replace', old_str: 'old', new_str: 'new' },
+        { command: 'insert', insert_line: 0, new_str: 'new' },
+      ] as const;
+      for (const operation of operations) {
+        await writeFile(boundaryPath, seed);
+        const before = await readFile(boundaryPath);
+        const beforeMetadata = await stat(boundaryPath, { bigint: true });
+        const writesBefore = writes;
+        const result = await runFileEditor(agent, { ...operation, path: boundaryPath }, editor);
+        const after = await readFile(boundaryPath);
+        const afterMetadata = await stat(boundaryPath, { bigint: true });
+        const label = `${editorLabel}: ${operation.command} at ${bytes} bytes`;
+        assert(`${label}: on-disk fixture has the requested byte count`, before.length === bytes);
+        if (bytes > maxExistingBytes) {
+          assert(`${label}: tiny input retains the exact SDK size error without advisory text`,
+            result.status === 'error'
+              && result.text === 'Error: File size (1048577 bytes) exceeds maximum allowed size (1048576 bytes)');
+          assert(`${label}: rejection performs no write and leaves bytes and write metadata intact`,
+            writes === writesBefore && before.equals(after)
+              && beforeMetadata.mtimeNs === afterMetadata.mtimeNs && beforeMetadata.ctimeNs === afterMetadata.ctimeNs);
+        } else {
+          assert(`${label}: supported operation still succeeds`, result.status === 'success');
+          const expected = operation.command === 'str_replace' ? seed.replace('old', 'new')
+            : operation.command === 'insert' ? `new\n${seed}` : seed;
+          assert(`${label}: only the requested change is written (existing-content check, not output cap)`,
+            after.equals(Buffer.from(expected, 'utf8')) && writes === writesBefore + (operation.command === 'view' ? 0 : 1));
+          if (operation.command === 'view') {
+            assert(`${label}: one-line view keeps the exact numbered output`, result.text === expectedView(boundaryPath, ['old']));
+          }
+        }
+        const key = `${bytes}:${operation.command}`;
+        if (editor === fileEditor) sdkResults.set(key, result);
+        else assert(`${label}: result/error bytes are identical to the SDK singleton`,
+          JSON.stringify(result) === JSON.stringify(sdkResults.get(key)));
+        assert(`${label}: the described wrapper leaves no pending path`, describedWrapper.pendingPaths(agent).length === 0);
+      }
+    }
+
+    // create has no existing-content size assertion. This direct tool control is
+    // not advice to emit an oversized payload: the separate payload guidance stays.
+    const createPath = path.join(root, `large-create-${editorLabel}.txt`);
+    const createContent = boundaryContent(maxExistingBytes + 1);
+    const writesBeforeCreate = writes;
+    const created = await runFileEditor(agent, { command: 'create', path: createPath, file_text: createContent }, editor);
+    assert(`${editorLabel}: create retains its exact success and writes content above the existing-file ceiling`,
+      created.status === 'success' && created.text === `File created successfully at: ${createPath}`
+        && writes === writesBeforeCreate + 1 && (await readFile(createPath)).equals(Buffer.from(createContent, 'utf8')));
+    const refusedCreate = await runFileEditor(agent, { command: 'create', path: createPath, file_text: 'tiny' }, editor);
+    assert(`${editorLabel}: create refuses overwrite, not existing-content size, with no mutation`,
+      refusedCreate.status === 'error'
+        && refusedCreate.text === `Error: File already exists at: ${createPath}. Cannot overwrite files using command \`create\`.`
+        && writes === writesBeforeCreate + 1 && (await readFile(createPath)).equals(Buffer.from(createContent, 'utf8')));
+  }
 } finally {
   await rm(root, { recursive: true, force: true });
 }

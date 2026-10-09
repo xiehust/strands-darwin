@@ -37,12 +37,16 @@ export const MUTATING_FILE_EDITOR_COMMANDS: ReadonlySet<string> = new Set(['crea
 export const FILE_EDITOR_PAYLOAD_GUIDANCE =
   "Keep every payload bounded: create's file_text and each str_replace/insert new_str must stay within a few thousand words, because one oversized tool-call payload can exceed what the model stream completes and the whole call is lost. Write a long document as a short skeleton (title, headings, placeholders) with create, then fill it section by section with separate str_replace/insert calls — never as one whole-document payload.";
 
+/** SRF-040: whole existing content is checked before slicing or editing, not per payload. */
+export const FILE_EDITOR_EXISTING_FILE_GUIDANCE =
+  'The pinned SDK rejects whole existing UTF-8 file content over 1,048,576 bytes (1 MiB) for view, str_replace and insert, before slicing or editing. This existing-file ceiling is separate from the payload bound: small view ranges or replacement/insert strings do not avoid it. create does not share this existing-content check. Do not retry a known oversized file. For a known oversized generated artifact, edit an already-read, authorized source/template/generator and use its normal regeneration path only when unexpected output edits are protected; otherwise report the limitation. This is not authorization for arbitrary shell mutations, permission relaxation or cap increases.';
+
 /**
  * The description the runtime gives `makeFileEditor({ description })`: the SDK's own
- * text first, so the tool reads as the vended one, then the payload bound. The
- * wrapper below never touches it — it stays a projection of what it wraps.
+ * text first, then the separate payload and existing-file bounds. The wrapper below
+ * never touches it — it stays a projection of what it wraps.
  */
-export const FILE_EDITOR_DESCRIPTION = `${DEFAULT_FILE_EDITOR_DESCRIPTION} ${FILE_EDITOR_PAYLOAD_GUIDANCE}`;
+export const FILE_EDITOR_DESCRIPTION = `${DEFAULT_FILE_EDITOR_DESCRIPTION} ${FILE_EDITOR_PAYLOAD_GUIDANCE} ${FILE_EDITOR_EXISTING_FILE_GUIDANCE}`;
 
 type PathChains = Map<string, Promise<void>>;
 

@@ -935,7 +935,7 @@ export class AgentRuntime {
     startupCloudMemory = cloudMemory;
     // The fileEditor is the SDK vended tool — `makeFileEditor({ description })`, the
     // same factory as the singleton with the SDK's default text plus the SRF-032
-    // payload bound — behind a same-path ordering wrapper (SRF-020): substituted here
+    // payload / SRF-040 existing-file bounds — behind a same-path ordering wrapper (SRF-020): substituted here
     // rather than `addOrReplace`d after construction because it is static, so the raw
     // tool is never registered, and `childTools` below hands children the same
     // wrapper with per-Agent chains.

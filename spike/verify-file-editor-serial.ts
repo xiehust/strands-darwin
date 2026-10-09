@@ -6,8 +6,9 @@
  * `SerializedFileEditorTool` decides only when each delegated call starts. The
  * real SDK singleton edits real temp files; a deliberately slow fake original
  * proves what stays concurrent and what waits. The runtime section checks the
- * installed tool: `makeFileEditor({ description })` (SRF-032 payload bound on the
- * SDK's own text, singleton schema and patched behaviour) behind the wrapper.
+ * installed tool: `makeFileEditor({ description })` (SRF-032 payload and SRF-040
+ * existing-file bounds on the SDK's own text, singleton schema and patched behaviour)
+ * behind the wrapper, inherited by recipe children.
  */
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -31,6 +32,7 @@ import { PermissionGate } from '../src/agent/permission.js';
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
 import {
   FILE_EDITOR_DESCRIPTION,
+  FILE_EDITOR_EXISTING_FILE_GUIDANCE,
   FILE_EDITOR_PAYLOAD_GUIDANCE,
   MUTATING_FILE_EDITOR_COMMANDS,
   SerializedFileEditorTool,
@@ -365,7 +367,7 @@ try {
     (runtimeAgent as unknown as { _toolExecutor: unknown })._toolExecutor instanceof ConcurrentToolExecutor);
   // SRF-032: the runtime wraps `makeFileEditor({ description })` — the singleton's own
   // factory — so the schema is the singleton's and the description is the SDK's text
-  // followed by the payload bound. The wrapper itself stays a projection of what it
+  // followed by separate payload/existing-file bounds. The wrapper stays a projection of what it
   // wraps (asserted on a wrapped copy below, since the runtime keeps its original private).
   assert('the runtime tool keeps the SDK input schema (same bytes as the singleton)',
     JSON.stringify(runtimeEditor?.toolSpec.inputSchema) === JSON.stringify(fileEditor.toolSpec.inputSchema));
@@ -402,7 +404,7 @@ try {
   assert('an exact str_replace miss through the runtime tool is still an error with the advisory context',
     runtimeResults.get('r2')?.status === 'error' && /No replacement was performed/.test(runtimeResults.get('r2')?.text ?? '')
       && runtimeResults.get('r2')?.text.includes('Advisory context only') === true);
-  // Children share the parent's wrapper, so the payload bound reaches a child whose
+  // Children share the parent's wrapper, so both bounds reach a child whose
   // prompt omits the system-prompt rule.
   const runtimeChild = buildRecipeChild({
     definition: { name: 'probe', description: 'probe child', systemPrompt: 'probe', tools: undefined, projectInstructions: true, file: undefined },
@@ -419,8 +421,24 @@ try {
     dispatch: undefined,
   });
   const runtimeChildEditor = runtimeChild.tools.find((candidate) => candidate.name === 'fileEditor');
-  assert('a child built from the runtime catalogue gets the same wrapper, so the payload bound reaches it',
-    runtimeChildEditor === runtimeEditor && runtimeChildEditor?.description.includes(FILE_EDITOR_PAYLOAD_GUIDANCE) === true);
+  assert('a child built from the runtime catalogue gets the same wrapper, so both bounds reach it',
+    runtimeChildEditor === runtimeEditor);
+  for (const [label, editor] of [['runtime parent', runtimeEditor], ['recipe child', runtimeChildEditor]] as const) {
+    const description = editor?.description ?? '';
+    assert(`${label}: SDK prefix, payload guidance and existing-file guidance are separate and ordered`,
+      description === `${DEFAULT_FILE_EDITOR_DESCRIPTION} ${FILE_EDITOR_PAYLOAD_GUIDANCE} ${FILE_EDITOR_EXISTING_FILE_GUIDANCE}`
+        && editor?.toolSpec.description === description);
+    assert(`${label}: whole existing UTF-8 content over the exact ceiling is rejected for the three commands`,
+      description.includes('rejects whole existing UTF-8 file content over 1,048,576 bytes (1 MiB) for view, str_replace and insert, before slicing or editing'));
+    assert(`${label}: tiny inputs do not avoid the separate existing-file ceiling; create is distinct`,
+      description.includes('This existing-file ceiling is separate from the payload bound: small view ranges or replacement/insert strings do not avoid it.')
+        && description.includes('create does not share this existing-content check.'));
+    assert(`${label}: generated-artifact advice requires a read, authorized source and protected normal regeneration`,
+      description.includes('For a known oversized generated artifact, edit an already-read, authorized source/template/generator and use its normal regeneration path only when unexpected output edits are protected; otherwise report the limitation.'));
+    assert(`${label}: no same-file retry, arbitrary shell mutation, permission relaxation or cap increase`,
+      description.includes('Do not retry a known oversized file.')
+        && description.includes('This is not authorization for arbitrary shell mutations, permission relaxation or cap increases.'));
+  }
 } finally {
   await runtime?.shutdown();
   setRuntimeModelFactoryForTest(undefined);

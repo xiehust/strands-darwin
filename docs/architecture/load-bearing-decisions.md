@@ -2113,9 +2113,21 @@ and that a long document is a short skeleton filled section by section, never on
 payload. The bound lives on the tool because two consecutive processes died mid-`create` on the
 same oversized payload and the one automatic continuation re-emitted it (see § Stream interruption);
 children get the parent's wrapper, so the guidance reaches a child whose prompt omits the
-system-prompt rule. The wrapper's own description is never edited — that would break the
-projection — and the pinned SDK patch is untouched. What the wrapper adds is *when*:
-`create`/`str_replace`/`insert` on one
+system-prompt rule. SRF-040 appends `FILE_EDITOR_EXISTING_FILE_GUIDANCE` separately: the pinned
+SDK's `assertWithinSizeLimit` measures the whole existing content in UTF-8 bytes and rejects
+content over 1,048,576 bytes (1 MiB) in `handleView`, `handleStrReplace` and `handleInsert`, before
+slicing or editing. Small ranges or replacement/insert strings cannot avoid it; `handleCreate`
+does not share that check (and still refuses overwrites). For known oversized generated output,
+the guidance permits an already-read, authorized source/template/generator edit and normal
+regeneration only with protection for unexpected output edits; otherwise report the limitation.
+It forbids same-file retries, arbitrary shell mutation, permission relaxation and cap increases.
+This is advisory, not a new large-file editor or a guarantee of model compliance. The factory
+extension leaves schema, limits, result/error bytes, permissions and execution unchanged.
+`verify-file-editor.ts` exercises real multibyte files just below, at and above the ceiling for
+all three commands, compares singleton/wrapper results and zero-write failures, and distinguishes
+`create`; `verify-file-editor-serial.ts` checks the actual runtime parent/recipe-child descriptions.
+The wrapper's own description is never edited — that would break the projection — and the pinned
+SDK patch is untouched. What the wrapper adds is *when*: `create`/`str_replace`/`insert` on one
 resolved absolute path await the previous mutation on that path for the same Agent
 (`WeakMap<Agent, Map<path, chain>>` off `context.agent`, the vended bash tool's precedent), so each
 call reads what the previous one wrote and an `insert_line` means the updated file. `view`,

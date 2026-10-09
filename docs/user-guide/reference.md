@@ -400,6 +400,20 @@ Pinned by `spike/verify-permission-modes.ts`.
 
 ## File edits
 
+The pinned SDK checks the **whole existing UTF-8 file content** before `fileEditor view`,
+`str_replace` or `insert`: content over **1,048,576 bytes (1 MiB)** is rejected, even for a
+one-line view or a tiny replacement/insert string. `create` does not share this existing-content
+check; it refuses to overwrite an existing file. This is separate from the tool-call payload
+guidance: keep `create`'s `file_text` and each replacement/insert `new_str` within a few thousand
+words, building long documents as a short skeleton and separate edits. Small payloads do not
+avoid the existing-file ceiling.
+
+For a known oversized generated artifact, the guidance is to edit an already-read, authorized
+source/template/generator and use its normal regeneration path **only when unexpected output
+edits are protected**. Without that safe path, report the limitation. This does not authorize
+retrying the same oversized file, arbitrary shell mutations, permission relaxation or cap
+increases. Parent and recipe-child tools receive the same guidance; SDK behavior is unchanged.
+
 `fileEditor str_replace` requires `old_str` to occur exactly once; a repeated match is refused with
 the line numbers. Pass `replace_all: true` to replace every non-overlapping occurrence in one write —
 the result names the count and the (pre-edit) line numbers and shows one snippet around the first
