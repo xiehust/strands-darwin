@@ -436,7 +436,7 @@ Acceptance: extend `spike/verify-file-editor-serial.ts` to assert the actual par
 
 ## SER-116 — Add user-only `/rename <label>` for the current session: a persistent bounded display label, shown in `/status` and `darwin sessions`, without changing identity or resume grammar
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 156
 - Score: 12
 - Importance: 4
