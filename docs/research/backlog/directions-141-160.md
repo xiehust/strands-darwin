@@ -407,7 +407,7 @@ Prior invocation (before implementation): Host starting gate `bg-423f6899-cf0c-4
 
 ## SRF-040 — State fileEditor's existing-file size ceiling separately from its tool-call payload bound
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 155
 - Score: 14
 - Importance: 3
