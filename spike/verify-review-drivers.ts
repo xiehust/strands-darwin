@@ -73,6 +73,15 @@ async function tuiReview(): Promise<void> {
       tui.frame.includes(invalid) && tui.frame.includes('image attached · PNG') &&
       !tui.frame.includes('queued ·') && (await requests(cwd)).length === 1);
     tui.send('\u0015'); // Clear the retained malformed draft; the image remains owned by the composer.
+    // Separate writes alone do not separate stdin events: a coalesced Ctrl+U/text
+    // chunk loses the control during normalization and appends to the old draft.
+    // Observe the cleared live composer before typing the replacement review.
+    await tui.waitUntil(() => tui.frame.split('\n').some(line => line.trimEnd() === 'you>'), {
+      timeoutMs: 10_000, settleMs: 200, label: 'invalid busy review draft cleared',
+    });
+    assert('clearing rejected review preserves the image, sends nothing and never queues',
+      tui.frame.includes('image attached · PNG') && !tui.frame.includes('queued ·') &&
+      (await requests(cwd)).length === 1);
     const queued = tui.mark();
     tui.submit(commit);
     await tui.waitUntil(() => tui.frame.includes('queued ·') && tui.frame.includes('--commit'), {
@@ -113,7 +122,10 @@ async function tuiReview(): Promise<void> {
     await tui.waitFor(REVIEW_COMMIT_USAGE, { from: malformed, settleMs: 200 });
     assert('malformed TUI command retains draft, sends nothing and leaves no queue',
       tui.frame.includes(invalid) && !tui.frame.includes('queued ·') && (await requests(cwd)).length === 3);
-    tui.send('\u0015'); // Ctrl+U clears the retained draft before the next prompt.
+    tui.send('\u0015'); // Ctrl+U must settle separately from the next prompt here too.
+    await tui.waitUntil(() => tui.frame.split('\n').some(line => line.trimEnd() === 'you>'), {
+      timeoutMs: 10_000, settleMs: 200, label: 'invalid idle review draft cleared',
+    });
     const focused = tui.mark();
     tui.submit(literal);
     await tui.waitFor('reviewing current changes with /review', { from: focused });
