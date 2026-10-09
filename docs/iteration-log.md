@@ -3630,3 +3630,25 @@ Docs wrap-up: both READMEs, EN/zh-CN `sessions-and-state` narrative and `referen
 | Aggregate | 162 | 52104 | 9401595 | 280203 | 2.1620 |
 
 Exact process stderr usage/cost records supplied every bucket; sums computed locally. Cost uses reported `global.openai.gpt-6.1-sol` base pricing, approximate USD, not an invoice; rounded component sums equal each reported total. No unreported metric folded into zero. SER-116 is done; continue immediately with SER-117 on the accepted revision.
+
+## Batch 170 — SER-117 bounded saved-session discovery (2026-10-09)
+
+Second and final direction of research Run `2026-10-09T05:28:00Z`, worked only after accepted SER-116. Host starting-point task **`bg-4148a8fc-42dd-40b6-9db5-edb87d8584c2`** passed clean-HEAD/accepted-ancestor assertions plus `pnpm typecheck && pnpm test` at `4177c2aa9ff695c1c7d0aff0913ad82d8d9cb370`, exit 0. Launch base **`363d467b3ab8fcd3c1ae9f7547a8d7cb90b5b293`** differs only by selected status documentation. Source launch used the newest revision, not a stale bin artifact. Score 13 unchanged; only SER-117 was in-progress.
+
+Fresh developer conversation **`session-20261009-075809290`**, managed task **`bg-e755d8b5-b302-4977-bb12-512ca05206bf`**, exit 0 with `--yolo --context-offload`, no ceiling, no correction/retry. Captured exact stderr identity and receipts; output drained through `hasMore:false`. No recursive worker, Host implementation edit or other writer commit in the explicit base/result range.
+
+| Accepted milestone | Commit | Independent Host acceptance |
+|---|---|---|
+| Shared saved-session reader and bounded local `/sessions` notice, real-state/pty tests and bilingual docs | `3c4adec9990409b507f6df993720afaf33f3ca9f` | Host reviewed all 16 files, reran focused suites, full typecheck/tests/build, diff and clean status; all passed. |
+
+Host acceptance **`bg-c4b97e25-680b-43b5-899f-9f2f788d9b9d`**, exit 0: `verify-sessions-tui.ts` 5/0; `verify-sessions-pty.ts` 2/0; `verify-sessions-command.ts` 48/0; `verify-help-command.ts` 39/0; free `tui completion` 82/0; then `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short`. Log `/tmp/darwin-ser117-host-acceptance.log`. Registered fixtures also reran inside the complete gate.
+
+Requirement checklist independently inspected: real owned-HOME bytes prove shared CLI/TUI IDs, mtime ages/order, first prompt, optional label, pointer/lease markers, missing/damaged data and project scope. Exact-boundary and overflow fixtures prove at most 200 enumerated entries plus one probe, 20 displayed rows, separate scan/display omissions, inspected-only ordering/empty claims and complete CLI behavior. Malicious legacy prompts/hosts and long IDs are terminal-safe bounded cells. Reads leave snapshots, trajectories, pointers, leases and labels byte-identical and do not import the metadata writer. Offline production-CLI pty proves idle/busy locality, argument rejection, no send/queue/drain/runtime switch/config change/live row; help/completion exposes every canonical built-in.
+
+Docs wrap-up: both READMEs, EN/zh-CN sessions-and-state narrative/reference and existing decisions rationale synchronized in the milestone. No extra docs sync required. AGENTS.md unchanged at 32762 bytes; Host build refreshed dist. Limitation: scan caps do not establish global newest ordering; the notice states this and points to the complete CLI listing. Linux tests only; other platforms not exercised.
+
+Exact invocation receipt: `usage: input=60 output=21994 cacheRead=2822546 cacheWrite=137137`; `cost: total=0.8452 input=0.0001 output=0.2199 cacheRead=0.2823 cacheWrite=0.3428 model=global.openai.gpt-6.1-sol pricing=global.openai.gpt-6.1-sol`. All metrics reported. Rounded components sum to $0.8451, leaving a +$0.0001 rounding residual against the authoritative approximate total.
+
+Across both research directions and all three developer invocations: **input 222, output 74098, cacheRead 12224141, cacheWrite 417340**, totaling **12715801 mutually exclusive tokens**, approximate reported total **$3.0072**. Sums computed locally; Host/research-tool usage not included. Rounded USD components aggregate to $3.0071, a +$0.0001 residual, not an invoice. Optional cloud-memory degraded notices were not acceptance evidence; no cloud repair/config mutation was attempted.
+
+**Halt: batch exhausted.** SER-116 and SER-117 are done; no existing direction abandoned this run. Model-generated titles and a full cross-project dashboard were considered but rejected at proposal Score 4, never queued. No unfinished backlog remains. Host publishes all preparation, implementation and closure commits with one ordinary push and verifies `git log @{u}..`; final user report states the observed result. Fresh research is eligible, but this invocation does not begin a second research batch.

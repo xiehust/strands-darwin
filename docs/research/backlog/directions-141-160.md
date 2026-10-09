@@ -466,7 +466,7 @@ Acceptance: registered real owned-HOME state tests for bounds/Unicode/literal pr
 
 ## SER-117 — Add bounded read-only `/sessions` saved-session discovery in the TUI: share the CLI read model, include labels, and preserve every store byte without switching runtimes
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 157
 - Score: 13
 - Importance: 3
@@ -478,7 +478,11 @@ Acceptance: registered real owned-HOME state tests for bounds/Unicode/literal pr
 
 ### Implementation / acceptance evidence
 
-Not implemented. Acceptance must be independently observed after the developer child finishes.
+Accepted 2026-10-09 at `3c4adec9990409b507f6df993720afaf33f3ca9f`, sole child commit after explicit launch base `363d467b3ab8fcd3c1ae9f7547a8d7cb90b5b293`, which contains accepted SER-116. Starting-point Host `bg-4148a8fc-42dd-40b6-9db5-edb87d8584c2` passed clean-HEAD ancestor check, `pnpm typecheck && pnpm test` at `4177c2a`; only selected status documentation changed before launch.
+
+Fresh source-launched developer session `session-20261009-075809290`, task `bg-e755d8b5-b302-4977-bb12-512ca05206bf`, exit 0 fully drained, no correction/retry. Host inspected all 16 changed files and explicit-SHA diff. Independent task `bg-c4b97e25-680b-43b5-899f-9f2f788d9b9d` passed `verify-sessions-tui.ts` (5/0), `verify-sessions-pty.ts` (2/0), `verify-sessions-command.ts` (48/0), `verify-help-command.ts` (39/0), free `tui completion` (82/0), `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --short`, exit 0 clean. Log `/tmp/darwin-ser117-host-acceptance.log`.
+
+Registered owned-HOME fixtures prove shared CLI/TUI rows, labels/absence/damage/project scope, byte-zero reads, 200-entry scan plus overflow probe, 20-row display, separate omissions/inspected-only claims, terminal-safe bounded legacy cells and complete CLI listing. Production-CLI offline pty proves idle/busy no-send/no-queue/no-switch and argument rejection; canonical completion/help includes every built-in. READMEs, EN/zh-CN sessions narrative/reference and decisions rationale synchronized; AGENTS.md unchanged at 32762 bytes. Host build refreshed dist. See iteration-log Batch 170. No unresolved coverage gap; capped scans deliberately do not establish global recency, and other platforms remain untested.
 
 ### Notes / blockers / abandonment reason
 
