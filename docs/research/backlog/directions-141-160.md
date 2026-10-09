@@ -493,3 +493,28 @@ Requirement: `/sessions` with no arguments renders one local bounded transcript 
 Architecture: decisions § `darwin sessions`, `/status`, Paths and TUI frame budget. Use existing local command/Static notice and canonical completion/help seams, not a new execution channel. Sync READMEs, narrative sessions guide and references EN/zh-CN; keep AGENTS.md under its byte cap.
 
 Acceptance: registered real owned-HOME fixtures pin shared CLI/TUI rows, labels, empty/missing/damaged metadata, missing snapshots, current project's scope, live leases, scan/display bounds and explicit omissions, malicious controls, store hashes before/after; registered offline pty proves idle/busy no-send/no-queue behavior and argument rejection. Completion/help and unchanged CLI parser/strict resume. `pnpm typecheck`, `pnpm test`, focused suites and free `tui completion`; Host `pnpm build`.
+
+
+## SER-118 — Keep the composer caret legal after deletion joins neighboring graphemes, without corrupting exact cut/yank or undo
+
+- Status: `not-started`
+- Priority: 158
+- Score: 13
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 2
+- Origin report: [`research_2026-10-09.md`](../research_2026-10-09.md) (run `15:00:20Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Source probes at `96db05032fb8630f0aba816db82606bb867f939d`: backspace/delete removing LF in `e\n\u0301x` returns `e\u0301x` with offset 1 (legal offsets 0/2/3); next insertion of Z produces `Ze\u0301x`. Delete removing X in `🇦X🇧` returns offset 2 inside the new flag, similarly inserting Z before it.
+
+### Notes / blockers / abandonment reason
+
+Sources R1–R6 in origin report. Requirement: deletion results must return legal post-edit grapheme caret offsets before any render or subsequent edit. When the old splice boundary disappears because neighboring source graphemes join, select the first legal boundary at or after the splice, consistent with `insertAtCursor`; preserve existing offset/affinity for ordinary and no-op deletes. Audit backspace, forward delete, row kills and word deletes. Preserve exact raw text removal, exact pre-edit cut span for cut/yank (including repeated text, no-ops and overflow), repeatable yank, and original undo snapshots. `updateLastCut` currently derives the cut from `after.cursor.offset`, so cursor repair alone is insufficient: separate deletion-span capture from post-edit caret geometry through a small pure transition, never a heuristic prefix/suffix diff.
+
+Architecture: `src/tui/prompt-editor.ts` and existing `App.tsx` edit/cut seam; decisions §§ TUI frame budget, `@` path completion and Prompt recall. No new dependency, SDK loop/patch, permissions/config/provider change, persisted draft, queue/send path, frame row, timer, undo expansion or tiny-terminal projection redesign. Keep scope to demonstrated deletion merge correctness and necessary tests/docs. Sync existing EN/zh-CN editing guide/reference and architecture rationale; READMEs only if their described behavior needs clarification. AGENTS.md is already near cap.
+
+Acceptance: registered pure checks for LF/CRLF and Unicode neighbors (combining marks, regional indicators, joined emoji where applicable), legal returned caret, exact next insertion/movement/deletion, no-op/normal offsets and affinities; audit all deletion primitives and verify cut/yank exact span/overflow/repetition and undo. Registered real CLI offline pty reproduces LF deletion plus exact next input, without an automatic send; local transport only if needed. Independently rerun prompt-editor, input-controls/pty, composer-yank, frame-budget and free TUI wordNav/undo, `pnpm typecheck`, `pnpm test`, `pnpm build`, diff/clean-tree checks. Fresh developer child owns implementation; Host independently accepts before done.
