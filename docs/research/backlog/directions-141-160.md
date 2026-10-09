@@ -497,7 +497,7 @@ Acceptance: registered real owned-HOME fixtures pin shared CLI/TUI rows, labels,
 
 ## SER-118 — Keep the composer caret legal after deletion joins neighboring graphemes, without corrupting exact cut/yank or undo
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 158
 - Score: 13
 - Importance: 4
