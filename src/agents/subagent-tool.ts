@@ -4,18 +4,17 @@ import { z } from 'zod';
 
 import type { ProjectInstructions } from '../agent/instructions.js';
 import { backgroundDelegationDescriptionClause } from '../agent/background-delegation.js';
-import { withRetainedMaxTokensText } from '../agent/max-tokens-recovery.js';
 import { childRefusalError, isRefusalStop } from '../agent/refusal.js';
 import { isRetryableStreamInterruption, STREAM_CONTINUATION_PROMPT } from '../agent/stream-resumption.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
 import { buildRecipeChild, stopBashSession } from './child-recipe.js';
+import { parentVisibleChildReport } from './child-result-text.js';
 import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage } from './concurrency-limit.js';
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import { withFailedChildText } from './failed-child-text.js';
 import type { AgentDefinition, AgentDefinitionRegistry } from './loader.js';
 import { DEFAULT_AGENT_NAME, catalogueEntry } from './loader.js';
-import { projectChildReport } from './report-projection.js';
 import { MAX_RETAINED_CHILDREN, RetainedChildStore, type RetainedChild } from './retained-children.js';
 
 export const SUBAGENT_TOOL_NAME = 'subagent';
@@ -311,9 +310,11 @@ export class SubagentTool {
       const outcome = result.stopReason === 'cancelled' ? 'cancelled' : 'succeeded';
       dispatch?.finish(outcome);
       this.retainSettled(dispatch, definition, child, outcome, continuation);
-      // The one seam where child text becomes the parent's tool result: escape
-      // imitation of darwin's own framing and mark it, never remove or reword.
-      const report = projectChildReport(withRetainedMaxTokensText(result.toString(), invocationState));
+      // The one seam where child text becomes the parent's tool result. Reasoning
+      // stays in the child conversation: the report is assistant text and citation
+      // text, then the existing max-tokens retention and projection (escape framing
+      // imitation, never remove or reword). This string is what the trajectory records.
+      const report = parentVisibleChildReport(result, invocationState);
       // Child assistant text is private until the ordinary bounded tool result is
       // returned. Do not duplicate it into a lifecycle command payload.
       void childCodexHooks?.subagentStop({

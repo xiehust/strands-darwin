@@ -10,7 +10,7 @@ user request
   → SubagentTool resolves a definition and records the dispatch
   → a fresh model and child Agent are created
   → child.invoke(task) runs an independent SDK agent loop
-  → AgentResult.toString() becomes the parent tool result
+  → parent tool result is text and citation text only (reasoning omitted)
   → the parent Agent continues its turn
 ```
 
@@ -172,17 +172,24 @@ events through the parent tool stream. Calling `child.invoke()` privately keeps 
 messages and tool events out of the parent stream and session trajectory. The dispatch registry
 also stores no child output—only agent name, delegated task, state, and timestamps.
 
-The parent receives:
+The parent receives one terminal result, not a live child transcript:
 
 ```typescript
-withRetainedMaxTokensText(result.toString(), invocationState)
+parentVisibleChildReport(result, invocationState)
 ```
 
-This is one rendered terminal result rather than a live child transcript. A current SDK caveat is
-important: `AgentResult.toString()` can include rendered child reasoning as `💭 Reasoning:` text.
-That text then enters parent context as ordinary tool-result content. Removing it would require a
-projection change in `SubagentTool`; trajectory recording must preserve what the parent actually
-received rather than silently rewrite it.
+which is `projectChildReport(withRetainedMaxTokensText(visibleChildResultText(result), invocationState))`.
+`visibleChildResultText` keeps `textBlock` text and `citationsBlock` text in block order, joined with
+`\n` the way `AgentResult.toString()` joins those parts, and omits `reasoningBlock`s. `toString()` would
+append each reasoning block as a `💭 Reasoning:` section; that string used to be the tool result, so
+child reasoning entered parent context. A reasoning-only result is the same empty string as a text-less
+result. Nothing is substituted for it. Max-tokens retention and `projectChildReport` then run unchanged:
+a clean report stays byte-identical, and imitation lines are escaped rather than removed.
+`withRetainedResult` uses the same extraction, so a retained partial cannot fold a reasoning section
+into the single text block `terminusText` later keeps.
+
+The trajectory records that parent tool result. It does not keep a second copy of the child's reasoning
+or transcript.
 
 ## Parallel dispatch
 
@@ -314,6 +321,7 @@ process cleanup, and verification together.
 
 The executable contracts are concentrated in:
 
+- `spike/verify-child-result-text.ts` — parent-visible reports omit reasoning and keep citation text;
 - `spike/verify-subagents.ts` — discovery, fresh histories, tool filters, permissions, lifecycle,
   cancellation, concurrency, provenance, and registry behavior;
 - `spike/verify-subagent-format.ts` — dispatch ids and bounded display projections;

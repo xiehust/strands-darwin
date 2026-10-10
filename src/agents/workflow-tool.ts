@@ -40,6 +40,7 @@ import { childRefusalError, isRefusalStop } from '../agent/refusal.js';
 import type { AppConfig } from '../config.js';
 import { injectCodexContext, type CodexHookRunner } from '../hooks/codex-hook-runner.js';
 import { buildRecipeChild, stopBashSession } from './child-recipe.js';
+import { visibleChildResultText } from './child-result-text.js';
 import { concurrencyCap, concurrencyDescriptionClause, concurrencyLimitMessage } from './concurrency-limit.js';
 import type { SubagentDispatchHandle, SubagentDispatchRegistry } from './dispatch-registry.js';
 import { splitFailedChildMessage, withFailedChildText } from './failed-child-text.js';
@@ -555,11 +556,30 @@ function boundedEntry(entry: string): string {
   return oneLine.length > 120 ? `${oneLine.slice(0, 120)}…` : oneLine;
 }
 
-/** Folds privately retained max-tokens partial text back into the node result. */
-function withRetainedResult(result: AgentResult, invocationState: InvocationState): AgentResult {
-  const plain = result.toString();
-  const report = withRetainedMaxTokensText(plain, invocationState);
-  if (report === plain) return result;
+/**
+ * Folds privately retained max-tokens partial text back into the node result,
+ * without folding child reasoning in with it.
+ *
+ * The base string is {@link visibleChildResultText}, not `AgentResult.toString()`.
+ * `toString` appends every reasoning block as a `💭 Reasoning:` section, and a
+ * rewrite stores one text block — the block `terminusText` later keeps. The
+ * original result is returned when nothing was retained and no reasoning text
+ * would have been rendered, so citations and other blocks stay structured. A
+ * reasoning-only result rewrites to the same empty text a text-less result
+ * already produces.
+ */
+export function withRetainedResult(result: AgentResult, invocationState: InvocationState): AgentResult {
+  const visible = visibleChildResultText(result);
+  const report = withRetainedMaxTokensText(visible, invocationState);
+  // `toString` renders a reasoning block only when its text is non-empty. Leave
+  // every other result alone unless retained partials actually changed the text,
+  // so an interrupt or structured-output result is not rewritten just because
+  // `toString` prefers those over content blocks.
+  const renderedReasoning = result.lastMessage.content.some(
+    (block) => block.type === 'reasoningBlock' && typeof block.text === 'string' && block.text.length > 0,
+  );
+  if (report === visible && !renderedReasoning) return result;
+  if (report === result.toString()) return result;
   return new AgentResult({
     stopReason: result.stopReason,
     lastMessage: new Message({ role: 'assistant', content: [new TextBlock(report)] }),

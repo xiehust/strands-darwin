@@ -9,7 +9,7 @@
 - **Streamable HTTP MCP 已有配置支持，但没有真实联调。** 配置路径经过验证，stdio 已端到端测试；`/mcp` 检查不会主动探测。
 - **没有自治调度器或 agent swarm。** `developer` 通过现有会话/任务监督一个外部无头子进程。`self-evolution-research` 选择有边界的一批方向后调用该监督器；产品、安全和验收权仍归人。
 - **并行子代理写入不安全。** 子代理共享没有隔离、锁或冲突检测的工作树。并发只应用于读取，写入需要串行。
-- **子代理结果可能带出思考内容。** 子对话不会按子事件写入轨迹，但当前 SDK 返回给父代理的终端渲染结果可能包含子代理思考；详情见子代理架构文档。
+- **子代理结果不含思考内容。** 子对话不会按子事件写入轨迹。父代理看到的成功结果只保留子代理的助手文本和引用文本；思考块在这段文本被保留、投影或写入轨迹之前就会去掉。详情见子代理架构文档。
 - **Bedrock 上下文统计通常是估算。** 2026 年 8 月在 `us-east-1`/`us-west-2` 的实测显示，`CountTokens` 只接受裸 foundation-model ID，但真正调用 Claude 又必须使用 inference profile。`anthropic.claude-sonnet-4-6` 可以计数，同一模型的 `us.`/`global.` profile 或 ARN 会返回 `ValidationException: The provided model doesn't support counting tokens`；裸 4.5/4.6 可用，测试过的 `claude-opus-4-7`、`claude-opus-4-8`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5` 也不支持。darwin 不会只为旧模型擅自去掉前缀，在上游接受 profile ID 前统一退回 SDK 字符启发式。除非启用 diagnostics，这个降级只写入 debug 日志；IAM 缺少 `bedrock:CountTokens` 时，每个模型在每个进程中会警告一次。
 - **回合编号在同一份轨迹文件内唯一。** 恢复运行会从文件尾部读到的最大 `turn` 继续编号（读取方式与最后一个 `seq` 相同），因此 `replay --turn N` 只指向一个回合。在此之前写下的记录，或尾部没有可读记录时写下的记录，仍可能有多个 `turn 1`；费用合计无论如何都按真实结束记录计算。
 - **后台任务控制只属于当前进程。** 恢复会话保留日志，不保留 task 控制和游标。正常关闭会回收进程组；`SIGKILL` 或机器故障无法保证。

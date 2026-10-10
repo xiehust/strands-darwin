@@ -116,6 +116,7 @@ const suites = [
   'verify-subagent-limit.ts',
   'verify-report-projection.ts',
   'verify-failed-child-text.ts',
+  'verify-child-result-text.ts',
   'verify-continuable-children.ts',
   'verify-subagent-continuation.ts',
   'verify-background-delegation.ts',
