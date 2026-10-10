@@ -3741,3 +3741,21 @@ Exact receipt: `usage: input=218975 output=67824 cacheRead=9087360 cacheWrite=0`
 
 **Halt: batch exhausted.** SER-119, SER-120 and SER-121 are done. Aggregate across the three child invocations: input 576773, output 167524, cacheRead 22179328, cacheWrite 0, exclusive total **22923625** tokens, approximate USD **$13.2483**. SER-119's component sum is $0.0001 above its reported total; the other two match. No direction was abandoned. Fresh research is eligible. Host publishes with one ordinary current-branch push.
 
+
+## Batch 175 — SER-122 SDK 1.20.0 upgrade (2026-10-10)
+
+Origin: `docs/research/research_2026-10-10.md`, run `13:46:11Z`, SDK path explicitly user-directed. Host researched and queued SER-122/123; no unfinished backlog existed. Initial baseline gate failed only because Host authored noncanonical backlog metadata; corrected in `b88c57b`, then `bg-f17f3f67-d904-416e-afce-de346c09c712` passed skills/typecheck/full tests. Status-only handoff base `1be7b50ca1e4ac47008b5fd249e2b87d18aa39cc` was clean.
+
+Child **`session-20261010-142039103`**, source CLI `pnpm exec tsx src/cli.ts --yolo --context-offload -p …`; managed task **`bg-4b2d5e87-a088-4f01-b6f4-5346ad4f98f0`**, exit 0 and fully drained. No ceiling, retry or correction. No other writer commit between explicit base and result.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Exact SDK upgrade and compatibility rebase | `47eb4bfba683313e551f70ee701218c7bb2a2b78` | Reviewed full implementation/test/patch/docs diff; `bg-58f827b0-9ef0-472b-9e36-c30d48a56db4` exited 0: `pnpm typecheck`, `pnpm test` (167 registered suites), `pnpm tsx spike/verify-npm-package.ts` (49/0), free `verify-tui.ts` completion 82/0, model 17/0, mode 25/0, clear 19/0, mcp 14/0, resume 19/0, rewind 9/0, modelRetry 8/0; `pnpm build`, diff check, clean tree, built CLI version 0.0.48. |
+
+The source patch drops upstream-covered summary filtering and duplicate cache-write mapping, retains SER-101 provenance and every other needed fix, and preserves upstream changes. Registry install verifies all 18 retained patched files against pnpm bytes. Required MCP 2.x dependency/imports, issuer stamps, bounded prompt requests and management-get background delivery were adapted; no policy/tool expansion. SER-123 casts remain untouched.
+
+Docs wrap-up: both README badges, English/Chinese getting-started, reference and using-darwin guides, load-bearing decisions and sub-agents architecture updated in the accepted commit; no further sync needed. No live-provider verification; offline provider-format coverage passed. Optional cloud-memory emitted a degraded pre-existing/in-flight state notice in child output; no cloud operation or repair was authorized or attempted by this supervision.
+
+Exact spend: `usage: input=216 output=47526 cacheRead=26014646 cacheWrite=366262`; `cost: total=32.9714 input=0.0022 output=2.3763 cacheRead=26.0146 cacheWrite=4.5783 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Exclusive tokens **26428650**, approximate USD **32.9714**, rounded component residual **0.0000**. Host/research excluded.
+
+SER-122 is done. SER-123 remains queued, premise unchanged; the batch continues immediately on the rebuilt accepted revision.

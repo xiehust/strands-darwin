@@ -30,7 +30,7 @@ Acceptance: a fixture result with a reasoning block and a text block yields only
 
 ## SER-122 — Upgrade the pinned Strands SDK to 1.20.0 while preserving Darwin's patched contracts and MCP compatibility
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 162
 - Score: 12
 - Importance: 5
@@ -42,11 +42,11 @@ Acceptance: a fixture result with a reasoning block and a text block yields only
 
 ### Implementation / acceptance evidence
 
-Not implemented. Acceptance requires exact installed/manifest/workspace/lock 1.20.0, rebased patch and generated npm patch, Host typecheck/full tests/build and real registry install verification. Re-verify all load-bearing pinned-patch contracts, MCP OAuth/prompts/wrappers, usage and reasoning. Record exact commands/outcomes and accepted commit here.
+Accepted commit `47eb4bfba683313e551f70ee701218c7bb2a2b78` after Host diff review against `1be7b50ca1e4ac47008b5fd249e2b87d18aa39cc` (only the child commit intervened). Installed/manifest/workspace/lock pin is 1.20.0. Rebased 19-file patch becomes 18: upstream summary conversion and cache-write mapping replace duplicates; SER-101 provenance and other required patches retained. MCP 2.x OAuth issuer, bounded prompt pagination/timeouts and SDK management-get background delivery adapted without changing policy. Host task `bg-58f827b0-9ef0-472b-9e36-c30d48a56db4` exited 0: `pnpm typecheck`, all 167 registered `pnpm test` suites, `pnpm tsx spike/verify-npm-package.ts` (49/0), free TUI `completion` (82/0), `model` (17/0), `mode` (25/0), `clear` (19/0), `mcp` (14/0), `resume` (19/0), `rewind` (9/0), `modelRetry` (8/0), `pnpm build`, `git diff --check`, clean status and built CLI `darwin 0.0.48`. Child `session-20261010-142039103`; supervision Batch 175 in `docs/iteration-log.md`. No live-provider tests; that remains a stated risk.
 
 ### Notes / blockers / abandonment reason
 
-User explicitly requested latest SDK. Official [1.20.0 release](https://github.com/strands-agents/harness-sdk/releases/tag/typescript%2Fv1.20.0) published 2026-10-08; npm latest confirmed 2026-10-10. See report S1–S3/R1–R5. Upgrade `patches/@strands-agents__sdk@1.18.0.patch` to the target version with the existing pnpm patch workflow; preserve still-needed fixes and new upstream behavior. Review SER-101 provenance hunks against upstream before porting; do not duplicate a shipped equivalent. SDK MCP client 2.x is a compatibility risk requiring explicit verification. `pnpm build` regenerates `dist/patches/`. Respect `minimumReleaseAge`; wait if held, never bypass. No automatic migration to experimental contextManager, vended subagent/router or Agent.shutdown. Dependency first: SER-123 follows this accepted upgrade. No implementation acceptance yet.
+User explicitly requested latest SDK. Official [1.20.0 release](https://github.com/strands-agents/harness-sdk/releases/tag/typescript%2Fv1.20.0) published 2026-10-08; npm latest confirmed 2026-10-10. See report S1–S3/R1–R5. Upgrade `patches/@strands-agents__sdk@1.18.0.patch` to the target version with the existing pnpm patch workflow; preserve still-needed fixes and new upstream behavior. Review SER-101 provenance hunks against upstream before porting; do not duplicate a shipped equivalent. SDK MCP client 2.x is a compatibility risk requiring explicit verification. `pnpm build` regenerates `dist/patches/`. Respect `minimumReleaseAge`; wait if held, never bypass. No automatic migration to experimental contextManager, vended subagent/router or Agent.shutdown. Dependency first: SER-123 follows this accepted upgrade. Its private owner casts remain untouched and its premise remains valid. No blocker remains.
 
 ## SER-123 — Adopt the SDK public MCP tool owner accessor in CodeGraph and web-search wrappers
 
