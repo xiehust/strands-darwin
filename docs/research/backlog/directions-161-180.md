@@ -50,7 +50,7 @@ User explicitly requested latest SDK. Official [1.20.0 release](https://github.c
 
 ## SER-123 — Adopt the SDK public MCP tool owner accessor in CodeGraph and web-search wrappers
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 163
 - Score: 12
 - Importance: 3
