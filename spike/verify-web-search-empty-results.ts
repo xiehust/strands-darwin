@@ -8,13 +8,12 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   Agent,
-  InterventionHandler,
   McpClient,
   Model,
+  Tool,
   type BaseModelConfig,
   type Message,
   type ModelStreamEvent,
-  type Tool,
   type ToolContext,
   type ToolResultBlock,
   type ToolStreamEvent,
@@ -22,6 +21,7 @@ import {
 import { z } from 'zod';
 
 import { SubagentTool } from '../src/agents/subagent-tool.js';
+import { PermissionGate } from '../src/agent/permission.js';
 import type { AgentDefinitionRegistry } from '../src/agents/loader.js';
 import { WebSearchEmptyResults } from '../src/mcp/web-search-empty-results.js';
 import { assert, header, report } from './shared.js';
@@ -67,6 +67,8 @@ class EmptySearchChildModel extends Model<BaseModelConfig> {
   }
 }
 
+type McpTool = Awaited<ReturnType<McpClient['listTools']>>[number];
+
 interface Fixture {
   readonly agent: Agent;
   readonly searchClient: McpClient;
@@ -74,16 +76,21 @@ interface Fixture {
   readonly clients: readonly McpClient[];
   readonly servers: readonly McpServer[];
   readonly calls: Map<string, number>;
+  readonly foreignClient: McpClient;
+  readonly discovery: { connect: number; list: number };
+  readonly discovered: Map<string, { tool: McpTool; owner: McpClient }>;
 }
 
 async function fixture(): Promise<Fixture> {
   const calls = new Map<string, number>();
-  const make = async (name: string): Promise<{ client: McpClient; server: McpServer }> => {
+  const discovery = { connect: 0, list: 0 };
+  const discovered = new Map<string, { tool: McpTool; owner: McpClient }>();
+  const make = async (name: string, prefix = name): Promise<{ client: McpClient; server: McpServer }> => {
     const server = new McpServer({ name, version: '0.0.1' });
     server.registerTool('search', {
       inputSchema: { query: z.string(), mode: z.enum(['empty', 'one', 'many', 'provider']) },
     }, ({ query, mode }) => {
-      calls.set(`${name}:${mode}`, (calls.get(`${name}:${mode}`) ?? 0) + 1);
+      calls.set(`${prefix}:${mode}`, (calls.get(`${prefix}:${mode}`) ?? 0) + 1);
       if (mode === 'empty') return { isError: true, content: [{ type: 'text' as const, text: EMPTY_ERROR }] };
       if (mode === 'provider') {
         return { isError: true, content: [{ type: 'text' as const, text: 'Provider service unavailable' }] };
@@ -93,32 +100,53 @@ async function fixture(): Promise<Fixture> {
         : [{ title: 'one', url: 'https://example.test/one' }, { title: 'two', url: 'https://example.test/two' }];
       return { content: [{ type: 'text' as const, text: JSON.stringify({ query, results, totalResults: results.length }) }] };
     });
+    server.registerTool('status', { inputSchema: {} }, () => ({
+      isError: true, content: [{ type: 'text' as const, text: EMPTY_ERROR }],
+    }));
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    return {
-      client: new McpClient({ transport: clientTransport, applicationName: name, prefix: name }),
-      server,
+    const client = new McpClient({ transport: clientTransport, applicationName: name, prefix });
+    const connect = client.connect.bind(client);
+    const listTools = client.listTools.bind(client);
+    client.connect = (...args) => { discovery.connect++; return connect(...args); };
+    client.listTools = async (...args) => {
+      discovery.list++;
+      const tools = await listTools(...args);
+      for (const tool of tools) discovered.set(tool.name, { tool, owner: client });
+      return tools;
     };
+    return { client, server };
   };
 
   const search = await make('web-search');
   const other = await make('other');
+  const foreign = await make('web-search', 'foreign');
   const clients = [search.client, other.client];
-  const agent = new Agent({ model: new NoCallModel(), tools: clients, printer: false });
+  const agent = new Agent({ model: new NoCallModel(), tools: [...clients, foreign.client], printer: false });
   await agent.initialize();
   return {
     agent,
     searchClient: search.client,
     otherClient: other.client,
     clients,
-    servers: [search.server, other.server],
+    servers: [search.server, other.server, foreign.server],
     calls,
+    foreignClient: foreign.client,
+    discovery,
+    discovered,
   };
 }
 
 async function closeFixture(value: Fixture): Promise<void> {
-  await Promise.allSettled(value.clients.map((client) => client.disconnect()));
+  await Promise.allSettled([...value.clients, value.foreignClient].map((client) => client.disconnect()));
   await Promise.allSettled(value.servers.map((server) => server.close()));
+  assert('all real MCP clients still disconnect through their ordinary lifecycle',
+    [...value.clients, value.foreignClient].every((client) => client.connectionState === 'disconnected'));
+  const discoveryBefore = JSON.stringify(value.discovery);
+  assert('the public getter returns each original disconnected owner without connection or discovery',
+    value.discovered.size > 0 && [...value.discovered.values()].every(({ tool, owner }) =>
+      tool.mcpClient === owner && owner.connectionState === 'disconnected') &&
+    JSON.stringify(value.discovery) === discoveryBefore);
 }
 
 async function runTool(
@@ -183,10 +211,50 @@ async function contract(root: string): Promise<void> {
     const original = tool(value.agent, 'web-search_search');
     const oneBefore = await runTool(value.agent, original, { query: 'one query', mode: 'one' }, 'one-id');
     const manyBefore = await runTool(value.agent, original, { query: 'many query', mode: 'many' }, 'many-id');
+    const providerBefore = await runTool(value.agent, original, { query: 'provider query', mode: 'provider' });
+    const malformedBefore = await runTool(value.agent, original, { mode: 'empty' });
+    const status = tool(value.agent, 'web-search_status');
 
+    const foreign = tool(value.agent, 'foreign_search');
+    const other = tool(value.agent, 'other_search');
+    class LocalSearch extends Tool {
+      constructor(readonly name: string) { super(); }
+      readonly description = original.description;
+      get toolSpec() { return { ...original.toolSpec, name: this.name }; }
+      stream(context: ToolContext) { return original.stream(context); }
+    }
+    const local = new LocalSearch('local_search');
+    const lookalike = new LocalSearch('lookalike_search');
+    let lookalikeOwnerReads = 0;
+    Object.defineProperty(lookalike, 'mcpClient', {
+      get: () => { lookalikeOwnerReads++; return value.searchClient; },
+    });
+    value.agent.toolRegistry.addOrReplace([local, lookalike]);
+    const discoveryBefore = JSON.stringify(value.discovery);
+    const discovered = value.discovered.get(original.name);
+    const discoveredForeign = value.discovered.get(foreign.name);
+    assert('discovered tools expose their exact original owners, even with the same client name',
+      discovered?.tool === original && discovered.tool.mcpClient === value.searchClient &&
+      discoveredForeign?.tool === foreign && discoveredForeign.tool.mcpClient === value.foreignClient &&
+      value.foreignClient.clientName === value.searchClient.clientName);
     const policy = new WebSearchEmptyResults();
     assert('only the configured web-search server tool is replaced', policy.apply(value.agent, value.clients) === 1);
     const wrapped = tool(value.agent, 'web-search_search');
+    assert('repeat apply preserves wrapper identity and makes no connection or listTools call',
+      policy.apply(value.agent, value.clients) === 0 && tool(value.agent, wrapped.name) === wrapped &&
+      JSON.stringify(value.discovery) === discoveryBefore);
+    assert('foreign owners and plain/non-MCP lookalikes remain untouched without reading their owner',
+      tool(value.agent, foreign.name) === foreign && tool(value.agent, other.name) === other &&
+      tool(value.agent, local.name) === local && tool(value.agent, lookalike.name) === lookalike &&
+      lookalikeOwnerReads === 0);
+    const statusResult = await runTool(value.agent, status, {});
+    assert('a non-search tool on the configured client remains identical and its error is not normalized',
+      tool(value.agent, status.name) === status && statusResult.result.status === 'error' &&
+      text(statusResult.result) === EMPTY_ERROR);
+    const foreignEmpty = await runTool(value.agent, foreign, { query: 'foreign query', mode: 'empty' });
+    assert('a same-name foreign client keeps its real server error unnormalized',
+      foreignEmpty.result.status === 'error' && text(foreignEmpty.result) === EMPTY_ERROR &&
+      value.calls.get('foreign:empty') === 1);
     const empty = await runTool(value.agent, wrapped, { query: 'no matches query', mode: 'empty' });
     assert('a verified zero-hit outcome becomes successful actionable empty JSON',
       empty.result.status === 'success' &&
@@ -200,6 +268,9 @@ async function contract(root: string): Promise<void> {
 
     const provider = await runTool(value.agent, wrapped, { query: 'provider query', mode: 'provider' });
     const malformed = await runTool(value.agent, wrapped, { mode: 'empty' });
+    assert('provider and malformed-input errors preserve their original bytes and events',
+      JSON.stringify(provider) === JSON.stringify(providerBefore) &&
+      JSON.stringify(malformed) === JSON.stringify(malformedBefore));
     const callTool = value.searchClient.callTool.bind(value.searchClient);
     value.searchClient.callTool = async () => { throw new Error('transport timed out'); };
     const transport = await runTool(value.agent, wrapped, { query: 'timeout query', mode: 'empty' });
@@ -209,13 +280,18 @@ async function contract(root: string): Promise<void> {
       malformed.result.status === 'error' && text(malformed.result).includes('Input validation error') &&
       transport.result.status === 'error' && transport.result.error?.message === 'transport timed out');
 
-    const other = tool(value.agent, 'other_search');
     const otherEmpty = await runTool(value.agent, other, { query: 'other query', mode: 'empty' });
     assert('an unrelated client with the same server tool name is untouched',
       other.constructor.name === 'McpTool' && otherEmpty.result.status === 'error' && text(otherEmpty.result) === EMPTY_ERROR);
 
+    const beforeRefresh = { ...value.discovery };
     await (value.searchClient as unknown as { _handleToolsChanged(): Promise<void> })._handleToolsChanged();
     const refreshed = tool(value.agent, 'web-search_search');
+    assert('refresh performs only its ordinary list/connect and repeat apply leaves the refreshed wrapper stable',
+      policy.apply(value.agent, value.clients) === 0 && tool(value.agent, refreshed.name) === refreshed &&
+      value.discovery.list === beforeRefresh.list + 1 && value.discovery.connect === beforeRefresh.connect + 1 &&
+      tool(value.agent, foreign.name) === foreign && tool(value.agent, lookalike.name) === lookalike &&
+      lookalikeOwnerReads === 0);
     const refreshedEmpty = await runTool(value.agent, refreshed, { query: 'refreshed query', mode: 'empty' });
     assert('tools/list_changed preserves normalization instead of restoring a raw MCP tool',
       refreshed !== wrapped && refreshed.constructor.name !== 'McpTool' && refreshedEmpty.result.status === 'success');
@@ -232,10 +308,16 @@ async function contract(root: string): Promise<void> {
       problems: [],
     };
     let child: Agent | undefined;
+    let allowCalls = true;
+    let permissionRequests = 0;
+    const gate = new PermissionGate({
+      mode: 'default', projectRoot: root,
+      ask: async () => { permissionRequests++; return { allowed: allowCalls }; },
+    });
     const subagents = new SubagentTool({
       registry,
       tools: value.agent.tools,
-      intervention: new (class extends InterventionHandler { readonly name = 'allow'; })(),
+      intervention: gate,
       projectInstructions: undefined,
       config: {
         provider: 'bedrock', model: 'fake.child', region: 'us-west-2', maxTokens: 1000,
@@ -254,6 +336,17 @@ async function contract(root: string): Promise<void> {
       child.messages.some((message) => message.content.some((block) =>
         block.type === 'toolResultBlock' && block.status === 'success' &&
         text(block) === JSON.stringify({ query: 'child query', results: [], totalResults: 0 }))));
+    allowCalls = false;
+    const callsBeforeDenial = value.calls.get('web-search:empty');
+    const deniedParent = new Agent({
+      model: new EmptySearchChildModel(), tools: [refreshed], interventions: [gate], printer: false,
+    });
+    await deniedParent.invoke('search with permission denied');
+    await parent.tool['subagent']?.invoke({ task: 'search with permission denied' });
+    assert('the shared permission gate denies parent and child calls before MCP or normalization',
+      permissionRequests === 3 && [deniedParent, child].every((agent) => agent?.messages.some((message) =>
+        message.content.some((block) => block.type === 'toolResultBlock' && block.status === 'error'))) &&
+      value.calls.get('web-search:empty') === callsBeforeDenial);
     await subagents.shutdown();
   } finally {
     await closeFixture(value);

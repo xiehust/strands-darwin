@@ -11,6 +11,8 @@ import type {
   ToolStreamGenerator,
 } from '@strands-agents/sdk';
 
+type McpTool = Awaited<ReturnType<McpClient['listTools']>>[number];
+
 const CODEGRAPH_CLIENT_NAME = 'codegraph';
 const CODEGRAPH_TOOL_NAMES = new Set([
   'search',
@@ -81,7 +83,7 @@ export class CodeGraphPreflight {
   }
 
   private wrap(candidate: Tool, clients: readonly McpClient[]): Tool {
-    const owner = mcpOwner(candidate);
+    const owner = mcpOwner(candidate, clients);
     if (owner === undefined || !clients.includes(owner)) return candidate;
     const serverName = mcpServerToolName(owner, candidate);
     return serverName !== undefined && CODEGRAPH_TOOL_NAMES.has(serverName)
@@ -240,9 +242,14 @@ function boundedDisplay(value: string): string {
     : `${points.slice(0, MAX_DISPLAY_CODE_POINTS - 1).join('')}…`;
 }
 
-function mcpOwner(tool: Tool): McpClient | undefined {
-  const owner = (tool as unknown as { mcpClient?: unknown }).mcpClient;
-  return owner !== null && typeof owner === 'object' ? owner as McpClient : undefined;
+function mcpOwner(tool: Tool, clients: readonly McpClient[]): McpClient | undefined {
+  return clients.find((client) => isRegisteredMcpTool(tool, client) && tool.mcpClient === client);
+}
+
+function isRegisteredMcpTool(tool: Tool, client: McpClient): tool is McpTool {
+  // SDK discovery records only its real McpTool objects in this client's map.
+  // Check exact object membership before reading the public owner getter.
+  return mcpServerToolName(client, tool) !== undefined;
 }
 
 function mcpServerToolName(client: McpClient, tool: Tool): string | undefined {

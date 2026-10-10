@@ -7,6 +7,8 @@ import type {
   ToolStreamGenerator,
 } from '@strands-agents/sdk';
 
+type McpTool = Awaited<ReturnType<McpClient['listTools']>>[number];
+
 const WEB_SEARCH_CLIENT_NAME = 'web-search';
 const WEB_SEARCH_TOOL_NAME = 'search';
 const EMPTY_RESULTS_ERROR =
@@ -38,7 +40,7 @@ export class WebSearchEmptyResults {
   }
 
   private wrap(candidate: Tool, clients: readonly McpClient[]): Tool {
-    const owner = mcpOwner(candidate);
+    const owner = mcpOwner(candidate, clients);
     if (owner === undefined || !clients.includes(owner)) return candidate;
     return mcpServerToolName(owner, candidate) === WEB_SEARCH_TOOL_NAME
       ? new EmptyResultSearchTool(candidate)
@@ -96,9 +98,14 @@ function isEmptyResultsError(result: ToolResultBlock): boolean {
     result.content[0].text === EMPTY_RESULTS_ERROR;
 }
 
-function mcpOwner(tool: Tool): McpClient | undefined {
-  const owner = (tool as unknown as { mcpClient?: unknown }).mcpClient;
-  return owner !== null && typeof owner === 'object' ? owner as McpClient : undefined;
+function mcpOwner(tool: Tool, clients: readonly McpClient[]): McpClient | undefined {
+  return clients.find((client) => isRegisteredMcpTool(tool, client) && tool.mcpClient === client);
+}
+
+function isRegisteredMcpTool(tool: Tool, client: McpClient): tool is McpTool {
+  // SDK discovery records only its real McpTool objects in this client's map.
+  // Check exact object membership before reading the public owner getter.
+  return mcpServerToolName(client, tool) !== undefined;
 }
 
 function mcpServerToolName(client: McpClient, tool: Tool): string | undefined {

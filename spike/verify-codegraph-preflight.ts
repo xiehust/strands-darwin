@@ -10,13 +10,12 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   Agent,
-  InterventionHandler,
   McpClient,
   Model,
+  Tool,
   type BaseModelConfig,
   type Message,
   type ModelStreamEvent,
-  type Tool,
   type ToolContext,
   type ToolResultBlock,
   type ToolStreamEvent,
@@ -24,6 +23,7 @@ import {
 import { z } from 'zod';
 
 import { CodeGraphPreflight } from '../src/mcp/codegraph-preflight.js';
+import { PermissionGate } from '../src/agent/permission.js';
 import { SubagentTool } from '../src/agents/subagent-tool.js';
 import type { AgentDefinitionRegistry } from '../src/agents/loader.js';
 
@@ -73,29 +73,45 @@ class SemanticChildModel extends Model<BaseModelConfig> {
 }
 
 
+type McpTool = Awaited<ReturnType<McpClient['listTools']>>[number];
+
 interface McpFixture {
   readonly agent: Agent;
   readonly clients: readonly McpClient[];
   readonly servers: readonly McpServer[];
   readonly calls: Map<string, number>;
+  readonly foreignClient: McpClient;
+  readonly discovery: { connect: number; list: number };
+  readonly discovered: Map<string, { tool: McpTool; owner: McpClient }>;
 }
 
 async function fixture(): Promise<McpFixture> {
   const calls = new Map<string, number>();
-  const make = async (name: string, tools: readonly string[]): Promise<{ client: McpClient; server: McpServer }> => {
+  const discovery = { connect: 0, list: 0 };
+  const discovered = new Map<string, { tool: McpTool; owner: McpClient }>();
+  const make = async (name: string, tools: readonly string[], prefix = name): Promise<{ client: McpClient; server: McpServer }> => {
     const server = new McpServer({ name, version: '0.0.1' });
     for (const toolName of tools) {
       server.registerTool(toolName, {
         inputSchema: { projectPath: z.unknown().optional(), marker: z.string().optional() },
       }, ({ marker }) => {
-        const key = `${name}:${toolName}`;
+        const key = `${prefix}:${toolName}`;
         calls.set(key, (calls.get(key) ?? 0) + 1);
         return { content: [{ type: 'text' as const, text: `${key}:${marker ?? 'none'}` }] };
       });
     }
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new McpClient({ transport: clientTransport, applicationName: name, prefix: name });
+    const client = new McpClient({ transport: clientTransport, applicationName: name, prefix });
+    const connect = client.connect.bind(client);
+    const listTools = client.listTools.bind(client);
+    client.connect = (...args) => { discovery.connect++; return connect(...args); };
+    client.listTools = async (...args) => {
+      discovery.list++;
+      const tools = await listTools(...args);
+      for (const tool of tools) discovered.set(tool.name, { tool, owner: client });
+      return tools;
+    };
     return { client, server };
   };
 
@@ -103,15 +119,26 @@ async function fixture(): Promise<McpFixture> {
     'search', 'explore', 'node', 'callers', 'callees', 'impact', 'files', 'status', 'mystery',
   ]);
   const unrelated = await make('other', ['search']);
+  const foreign = await make('codegraph', ['search'], 'foreign');
   const clients = [codegraph.client, unrelated.client];
-  const agent = new Agent({ model: new NoCallModel(), tools: clients, printer: false });
+  const agent = new Agent({ model: new NoCallModel(), tools: [...clients, foreign.client], printer: false });
   await agent.initialize();
-  return { agent, clients, servers: [codegraph.server, unrelated.server], calls };
+  return {
+    agent, clients, servers: [codegraph.server, unrelated.server, foreign.server], calls,
+    foreignClient: foreign.client, discovery, discovered,
+  };
 }
 
 async function closeFixture(value: McpFixture): Promise<void> {
-  await Promise.allSettled(value.clients.map((client) => client.disconnect()));
+  await Promise.allSettled([...value.clients, value.foreignClient].map((client) => client.disconnect()));
   await Promise.allSettled(value.servers.map((server) => server.close()));
+  assert('all real MCP clients still disconnect through their ordinary lifecycle',
+    [...value.clients, value.foreignClient].every((client) => client.connectionState === 'disconnected'));
+  const discoveryBefore = JSON.stringify(value.discovery);
+  assert('the public getter returns each original disconnected owner without connection or discovery',
+    value.discovered.size > 0 && [...value.discovered.values()].every(({ tool, owner }) =>
+      tool.mcpClient === owner && owner.connectionState === 'disconnected') &&
+    JSON.stringify(value.discovery) === discoveryBefore);
 }
 
 async function createIndex(root: string, tables: readonly string[] = ['files', 'nodes', 'edges', 'schema_versions']): Promise<void> {
@@ -207,10 +234,45 @@ async function unavailableAndExplicitTargets(base: string): Promise<void> {
   let expectedFiles = await snapshot(base);
   const value = await fixture();
   try {
+    const codegraphClient = value.clients.find((client) => client.clientName === 'codegraph');
+    if (codegraphClient === undefined) throw new Error('missing CodeGraph fixture');
+    const original = tool(value.agent, 'codegraph_search');
+    const foreign = tool(value.agent, 'foreign_search');
+    const other = tool(value.agent, 'other_search');
+    class LocalSearch extends Tool {
+      constructor(readonly name: string) { super(); }
+      readonly description = original.description;
+      get toolSpec() { return { ...original.toolSpec, name: this.name }; }
+      stream(context: ToolContext) { return original.stream(context); }
+    }
+    const local = new LocalSearch('local_search');
+    const lookalike = new LocalSearch('lookalike_search');
+    let lookalikeOwnerReads = 0;
+    Object.defineProperty(lookalike, 'mcpClient', {
+      get: () => { lookalikeOwnerReads++; return codegraphClient; },
+    });
+    value.agent.toolRegistry.addOrReplace([local, lookalike]);
+    const discoveryBefore = JSON.stringify(value.discovery);
+    const discovered = value.discovered.get(original.name);
+    const discoveredForeign = value.discovered.get(foreign.name);
+    assert('discovered tools expose their exact original owners, even with the same client name',
+      discovered?.tool === original && discovered.tool.mcpClient === codegraphClient &&
+      discoveredForeign?.tool === foreign && discoveredForeign.tool.mcpClient === value.foreignClient &&
+      value.foreignClient.clientName === codegraphClient.clientName);
     const preflight = new CodeGraphPreflight(current);
     await preflight.primeCurrent();
     const replacements = preflight.apply(value.agent, value.clients);
     const search = tool(value.agent, 'codegraph_search');
+    assert('repeat apply preserves wrapper identity and makes no connection or listTools call',
+      preflight.apply(value.agent, value.clients) === 0 && tool(value.agent, search.name) === search &&
+      JSON.stringify(value.discovery) === discoveryBefore);
+    assert('foreign owners and plain/non-MCP lookalikes remain untouched without reading their owner',
+      tool(value.agent, foreign.name) === foreign && tool(value.agent, other.name) === other &&
+      tool(value.agent, local.name) === local && tool(value.agent, lookalike.name) === lookalike &&
+      lookalikeOwnerReads === 0);
+    const foreignResult = await runTool(value.agent, foreign, { marker: 'foreign' });
+    assert('a same-name foreign client still reaches its own real server without preflight',
+      text(foreignResult.result) === 'foreign:search:foreign' && value.calls.get('foreign:search') === 1);
 
     const first = await runTool(value.agent, search, { marker: 'current-1' });
     await createIndex(current);
@@ -266,10 +328,14 @@ async function unavailableAndExplicitTargets(base: string): Promise<void> {
       value.calls.get('codegraph:status') === 1 && value.calls.get('codegraph:mystery') === 1 &&
       value.calls.get('other:search') === 1);
 
-    const codegraphClient = value.clients.find((client) => client.clientName === 'codegraph');
-    if (codegraphClient === undefined) throw new Error('missing CodeGraph fixture');
+    const beforeRefresh = { ...value.discovery };
     await (codegraphClient as unknown as { _handleToolsChanged(): Promise<void> })._handleToolsChanged();
     const refreshedSearch = tool(value.agent, 'codegraph_search');
+    assert('refresh performs only its ordinary list/connect and repeat apply leaves the refreshed wrapper stable',
+      preflight.apply(value.agent, value.clients) === 0 && tool(value.agent, refreshedSearch.name) === refreshedSearch &&
+      value.discovery.list === beforeRefresh.list + 1 && value.discovery.connect === beforeRefresh.connect + 1 &&
+      tool(value.agent, foreign.name) === foreign && tool(value.agent, lookalike.name) === lookalike &&
+      lookalikeOwnerReads === 0);
     const refreshed = await runTool(value.agent, refreshedSearch, {});
     assert('tools/list_changed preserves the parent preflight instead of restoring a raw MCP tool',
       refreshedSearch !== search && refreshedSearch.constructor.name !== 'McpTool' &&
@@ -289,10 +355,16 @@ async function unavailableAndExplicitTargets(base: string): Promise<void> {
       problems: [],
     };
     let child: Agent | undefined;
+    let allowCalls = true;
+    let permissionRequests = 0;
+    const gate = new PermissionGate({
+      mode: 'default', projectRoot: base,
+      ask: async () => { permissionRequests++; return { allowed: allowCalls }; },
+    });
     const subagents = new SubagentTool({
       registry,
       tools: value.agent.tools,
-      intervention: new (class extends InterventionHandler { readonly name = 'allow'; })(),
+      intervention: gate,
       projectInstructions: undefined,
       config: {
         provider: 'bedrock', model: 'fake.child', region: 'us-west-2', maxTokens: 1000,
@@ -311,6 +383,16 @@ async function unavailableAndExplicitTargets(base: string): Promise<void> {
       child.messages.some((message) => message.content.some((block) =>
         block.type === 'toolResultBlock' && text(block).includes('Use bash or fileEditor'))) &&
       value.calls.get('codegraph:search') === 1);
+    allowCalls = false;
+    const deniedParent = new Agent({
+      model: new SemanticChildModel(), tools: [refreshedSearch], interventions: [gate], printer: false,
+    });
+    await deniedParent.invoke('inspect with permission denied');
+    await parent.tool['subagent']?.invoke({ task: 'inspect with permission denied' });
+    assert('the shared permission gate denies parent and child calls before the wrapped fallback',
+      permissionRequests === 3 && [deniedParent, child].every((agent) => agent?.messages.some((message) =>
+        message.content.some((block) => block.type === 'toolResultBlock' && block.status === 'error'))) &&
+      value.calls.get('codegraph:search') === 1);
     await subagents.shutdown();
   } finally {
     await closeFixture(value);
@@ -328,6 +410,7 @@ async function initializedCurrentPassThrough(base: string): Promise<void> {
   try {
     const original = tool(value.agent, 'codegraph_search');
     const direct = await runTool(value.agent, original, { marker: 'same' }, 'same-id');
+    const errorDirect = await runTool(value.agent, original, { marker: 42 }, 'error-id');
     const preflight = new CodeGraphPreflight(root);
     await preflight.primeCurrent();
     preflight.apply(value.agent, value.clients);
@@ -335,6 +418,9 @@ async function initializedCurrentPassThrough(base: string): Promise<void> {
     const delegated = await runTool(value.agent, wrapped, { marker: 'same' }, 'same-id');
     assert('usable current state preserves yielded events and final result bytes',
       JSON.stringify(delegated) === JSON.stringify(direct) && wrapped !== original);
+    const errorDelegated = await runTool(value.agent, wrapped, { marker: 42 }, 'error-id');
+    assert('usable current state also preserves MCP errors and events unchanged',
+      errorDirect.result.status === 'error' && JSON.stringify(errorDelegated) === JSON.stringify(errorDirect));
     assert('usable current state reaches the real in-memory MCP server', value.calls.get('codegraph:search') === 2);
   } finally {
     await closeFixture(value);

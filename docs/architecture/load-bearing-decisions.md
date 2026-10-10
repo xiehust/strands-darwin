@@ -785,7 +785,11 @@ authorization + MCP server on loopback, real `McpClient` connections, real `darw
 CodeGraph's semantic readers fail predictably when a target has no usable `.codegraph/codegraph.db`,
 so Darwin narrows that known local failure before the remote body rather than teaching the agent to
 retry it. `src/mcp/codegraph-preflight.ts` wraps only known semantic tools owned by the exact
-configured `codegraph` client, after SDK discovery and before child-catalogue capture. It validates
+configured `codegraph` client, after SDK discovery and before child-catalogue capture. Owner lookup
+narrows by exact tool-object membership in that client's existing server-name map before reading
+the public typed `mcpClient` getter and comparing client identity. The tool type is inferred from
+public `McpClient.listTools`; no constructor import, connection, or discovery is needed, and
+non-MCP lookalike properties are never read. It validates
 the current root once and each safe explicit absolute target once, requiring a non-symlink regular
 SQLite database whose bounded read-only bytes contain the SQLite header and CodeGraph schema
 records. Unavailable targets return one bounded successful instruction to use ordinary shell/file
@@ -801,8 +805,10 @@ The externally supplied `web-search` MCP provider reports a completed search wit
 MCP `-32602` error, making ordinary absence look like a recoverable tool failure. Darwin does not
 own or replace that search service; `src/mcp/web-search-empty-results.ts` uses the runtime-owned
 post-registration seam instead. It wraps only server tool `search` from the exact configured client
-`web-search`, delegates first, and changes only the recorded no-results signature into successful
-compact JSON preserving the query with an empty result list and zero total. Everything else —
+`web-search`, using the same registry-membership guard and public typed `mcpClient` getter as
+CodeGraph preflight, never a same-shaped non-MCP property or an extra connection/discovery call.
+It delegates first and changes only the recorded no-results signature into successful compact JSON
+preserving the query with an empty result list and zero total. Everything else —
 non-empty bytes, stream events, malformed input, transport/auth/timeout and other provider errors —
 passes through unchanged. Applying before child-catalogue capture and decorating the SDK refresh
 callback gives parent and child agents one policy without changing permissions, hooks, retry logic,
