@@ -528,7 +528,7 @@ Acceptance: registered pure checks for LF/CRLF and Unicode neighbors (combining 
 
 ## SER-119 — Named pathspecs on `git diff` and `git show` use the sensitive-read predicate
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 159
 - Score: 12
 - Importance: 4
@@ -540,7 +540,7 @@ Acceptance: registered pure checks for LF/CRLF and Unicode neighbors (combining 
 
 ### Implementation / acceptance evidence
 
-(none yet)
+Accepted 2026-10-10 at `6e3860e56649f39d12e133da915752765b33fe80`. Child session `session-20261010-060329592`, task `bg-364097d8-a797-45c0-a020-e0095dffa5b3`, exit 0. Host `git log f40b177..HEAD` showed only that commit. Host gate `bg-35317e29-95f1-4a00-9665-309f86085d5e`, exit 0: `spike/verify-permission-modes.ts` 1117/0 including the SER-119 static and gate sections, then `pnpm typecheck`, `pnpm test`, `pnpm build`, clean tree. See `docs/iteration-log.md` Batch 172.
 
 ### Notes / blockers / abandonment reason
 

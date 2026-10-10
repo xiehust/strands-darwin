@@ -3675,3 +3675,25 @@ Docs wrap-up: EN/zh-CN narrative `using-darwin` and `reference` synchronized; ex
 Exact receipt: `usage: input=64 output=20606 cacheRead=3266433 cacheWrite=145155`; `cost: total=0.8957 input=0.0001 output=0.2061 cacheRead=0.3266 cacheWrite=0.3629 model=global.openai.gpt-6.1-sol pricing=global.openai.gpt-6.1-sol`. Aggregate across all child tasks is the same four buckets, **3432258 mutually exclusive tokens**, approximate authoritative USD total **$0.8957**. Locally computed rounded component sum equals total, residual **$0.0000**; no unknown buckets and no Host/research spend included. Base-rate estimate, not invoice. Optional cloud-memory degraded notices were not repaired or used as acceptance evidence.
 
 **Halt: batch exhausted.** SER-118 independently accepted and closed done; no existing direction abandoned and no unfinished record remains. Fresh research is eligible after closure, but not started again in this invocation. Host publishes preparation, accepted implementation and closure with one ordinary current-branch push, verifies `git log @{u}..`, and reports the observed result to the user; never force-push or rewrite history.
+
+
+## Batch 172 — SER-119 sensitive git diff and show pathspecs (2026-10-10)
+
+Research Run **`2026-10-10T05:32:26Z`** rolled `open` (`path-source: roll`). No unfinished backlog record existed. The run queued SER-119, SER-120 and SER-121. SER-119 is first despite a lower score because `git diff` and `git show` were auto-approving commands that print credential text.
+
+Host baseline **`bg-12dc2833-dabc-40c6-8d92-a60656e14062`** passed `pnpm typecheck && pnpm test`, exit 0, on queue commit `5b7f267`. Selected-status commit `f40b177` changed the SER-119 status line only. Source-launched worker base **`f40b177`**, clean, with exactly SER-119 in-progress. No model-call ceiling and no recursive supervision.
+
+Fresh child conversation **`session-20261010-060329592`**, managed task **`bg-364097d8-a797-45c0-a020-e0095dffa5b3`**, exit 0, output drained to `hasMore: false`. One invocation, no correction or retry. The worker could change the sensitive-read predicate, the permission-mode suite, and the permissions guide plus the safe-git rationale. Research, backlog, and this log stayed with the Host.
+
+| Accepted milestone | Commit | Independent Host acceptance |
+|---|---|---|
+| Named pathspecs on `git diff` and `git show` use the existing sensitive-read predicate; `git log` and bare review commands stay read-only | `6e3860e56649f39d12e133da915752765b33fe80` | Diff of the five files reviewed. Host `bg-35317e29-95f1-4a00-9665-309f86085d5e` exit 0: permission-modes 1117/0, typecheck, full tests, build, clean tree. |
+
+`git log f40b177..HEAD` named only the child commit. Kind stays `execute`, so plan still denies before a prompt and yolo still approves. Auto prompts and does not call the classifier. Allow-rules and suggestions do not cover a hit. `git log -p -- .env` stays safe, as specified.
+
+Docs wrap-up: the child updated `docs/user-guide/permissions.md`, `permissions.zh-CN.md`, and the safe-git paragraph in `docs/architecture/load-bearing-decisions.md`. README and the command reference do not claim that a named `.env` pathspec is silent, so they were left unchanged. AGENTS.md was not edited.
+
+Exact receipt: `usage: input=167479 output=54420 cacheRead=5468544 cacheWrite=0`; `cost: total=3.3957 input=0.3350 output=0.3265 cacheRead=2.7343 cacheWrite=0.0000 model=global.xai.grok-4.7 pricing=global.xai.grok-4.7`. Aggregate for this direction is those four buckets, **5690443 mutually exclusive tokens**, approximate USD **$3.3957**. Rounded component sum is 3.3958, a **+$0.0001** residual against the reported total. Base-rate estimate, not an invoice. No unknown buckets. Host and research spend are excluded.
+
+SER-120 and SER-121 remain not-started. The batch continues.
+
