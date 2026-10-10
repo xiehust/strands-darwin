@@ -3719,3 +3719,25 @@ Exact receipt: `usage: input=190319 output=45280 cacheRead=7623424 cacheWrite=0`
 SER-121 remains not-started. The batch continues.
 
 
+
+
+## Batch 174 — SER-121 omit child reasoning from parent reports (2026-10-10)
+
+Same research run as Batches 172 and 173. SER-121 is the last direction: successful child reports were built from `AgentResult.toString()`, which appends reasoning.
+
+Worker base **`834ba3a537d10b357d4f844136768201ddbd3537`**, the SER-121 in-progress docs commit on the accepted SER-120 revision. That code had already passed the Host gate in Batch 173.
+
+Fresh child conversation **`session-20261010-080517770`**, managed task **`bg-3d8c0618-ccb5-421a-bc35-2cb1a7e38ce2`**, exit 0, drained. One invocation, no correction. The worker could change the success-report seam and the workflow retention rewrite, add a focused suite, and update the subagent architecture and the known-limitation line. It did not change `projectChildReport`'s "never remove" contract or the failure wrapper.
+
+| Accepted milestone | Commit | Independent Host acceptance |
+|---|---|---|
+| Parent-visible reports keep assistant text and citation text and omit reasoning; a reasoning-only result stays empty | `ad96efcd2afe6d7a577b1d128a300fbca0f5adfe` | Diff of eight files reviewed. Host `bg-dbac56f0-f70b-49a9-ada1-c501ba909e86` exit 0: child-result-text 30/0, report-projection 49/0, failed-child-text 43/0, subagents 88/0, workflow 38/0, typecheck, full tests, build, no FAIL lines, clean tree. |
+
+`git log 834ba3a..HEAD` named only the child commit. Live subagent and workflow fixtures keep reasoning in the child transcript and out of the parent result and the dispatch record.
+
+Docs wrap-up: the child updated `docs/architecture/sub-agents.md`, `docs/user-guide/development.md` and `development.zh-CN.md`. README does not describe child reasoning in parent reports, so it was left unchanged. AGENTS.md was not edited.
+
+Exact receipt: `usage: input=218975 output=67824 cacheRead=9087360 cacheWrite=0`; `cost: total=5.3886 input=0.4380 output=0.4069 cacheRead=4.5437 cacheWrite=0.0000 model=global.xai.grok-4.7 pricing=global.xai.grok-4.7`. This direction: **9374159 mutually exclusive tokens**, approximate USD **$5.3886**. Rounded component sum equals the reported total, residual **$0.0000**.
+
+**Halt: batch exhausted.** SER-119, SER-120 and SER-121 are done. Aggregate across the three child invocations: input 576773, output 167524, cacheRead 22179328, cacheWrite 0, exclusive total **22923625** tokens, approximate USD **$13.2483**. SER-119's component sum is $0.0001 above its reported total; the other two match. No direction was abandoned. Fresh research is eligible. Host publishes with one ordinary current-branch push.
+

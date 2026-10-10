@@ -4,7 +4,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ## SER-121 — Parent-visible subagent reports omit child reasoning blocks
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 161
 - Score: 14
 - Importance: 4
@@ -16,7 +16,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ### Implementation / acceptance evidence
 
-(none yet)
+Accepted 2026-10-10 at `ad96efcd2afe6d7a577b1d128a300fbca0f5adfe`. Child session `session-20261010-080517770`, task `bg-3d8c0618-ccb5-421a-bc35-2cb1a7e38ce2`, exit 0. Host gate `bg-dbac56f0-f70b-49a9-ada1-c501ba909e86`, exit 0: child-result-text 30/0, report-projection 49/0, failed-child-text 43/0, subagents 88/0, workflow 38/0, typecheck, full tests, build, no FAIL lines, clean tree. See `docs/iteration-log.md` Batch 174.
 
 ### Notes / blockers / abandonment reason
 
