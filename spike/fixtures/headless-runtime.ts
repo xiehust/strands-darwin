@@ -117,6 +117,11 @@ export async function createRuntime(options: RuntimeOptions): Promise<AgentRunti
           }
         : { enabled: true, requested: 'low', effective: 'low', problem: undefined }) satisfies ThinkingPlan,
     usage,
+    get runAccounting(): AgentRuntime['runAccounting'] {
+      const runtime = this as unknown as AgentRuntime;
+      return { usage: runtime.usage, childUsage: runtime.childUsage, sessionUsage: runtime.sessionUsage,
+        modelShares: runtime.modelShares, callStats: runtime.callStats };
+    },
     // The real runtime's childUsage is undefined until a dispatch reports usage;
     // every mode but child-usage keeps that zero-dispatch shape so the exact
     // stderr/terminal-record assertions double as byte-identity proofs.

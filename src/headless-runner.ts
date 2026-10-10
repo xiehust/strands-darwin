@@ -406,9 +406,12 @@ export async function runHeadlessProcess(
     let totalUsage: ReturnType<typeof structuredUsage> | undefined;
     let callStats: ReturnType<typeof structuredCallStats> | undefined;
     if (runtime !== undefined) {
+      // Resume restores session totals for /usage, but receipts still bill this run only.
+      let accounting: AgentRuntime['runAccounting'] | undefined;
+      const readAccounting = () => accounting ??= runtime!.runAccounting;
       try {
-        if (structured) usage = structuredUsage(runtime.usage, runtime.config);
-        else target.stderr.write(`${formatHeadlessUsage(runtime.usage, runtime.config)}\n`);
+        if (structured) usage = structuredUsage(readAccounting().usage, runtime.config);
+        else target.stderr.write(`${formatHeadlessUsage(readAccounting().usage, runtime.config)}\n`);
       } catch {
         // A meter that cannot be read is not a reason to change the exit status.
       }
@@ -416,14 +419,14 @@ export async function runHeadlessProcess(
         // Additive by contract: the records exist only when at least one dispatch
         // reported usage, so a run without delegation keeps its exact historical
         // stderr and terminal record. `usage:`/`usage` above stay parent-only.
-        const children = runtime.childUsage;
+        const children = readAccounting().childUsage;
         if (children !== undefined) {
           if (structured) {
             childUsage = { ...structuredUsage(children.usage, runtime.config), dispatches: children.dispatches };
-            totalUsage = structuredUsage(runtime.sessionUsage, runtime.config);
+            totalUsage = structuredUsage(readAccounting().sessionUsage, runtime.config);
           } else {
             target.stderr.write(`${formatHeadlessChildUsage(children, runtime.config)}\n`);
-            target.stderr.write(`${formatHeadlessTotalUsage(runtime.sessionUsage, runtime.config)}\n`);
+            target.stderr.write(`${formatHeadlessTotalUsage(readAccounting().sessionUsage, runtime.config)}\n`);
           }
         }
       } catch {
@@ -435,7 +438,7 @@ export async function runHeadlessProcess(
           // present) as its own line, so the anchored `usage:` record never changes
           // shape. A price the cache cannot supply is `-`/`unavailable`, not an error;
           // the structured protocols stay unchanged (out of scope, additive later).
-          target.stderr.write(`${formatHeadlessCost(runtime.modelShares)}\n`);
+          target.stderr.write(`${formatHeadlessCost(readAccounting().modelShares)}\n`);
         } catch {
           // A price is a projection over an observer; a failed read costs the record, not the run.
         }
@@ -445,7 +448,7 @@ export async function runHeadlessProcess(
         // the structured `callStats` field exist only when at least one completed
         // model call was observed, so a run that never reached the model keeps its
         // exact historical output. `usage:`/`usage` above stay untouched.
-        const stats = runtime.callStats;
+        const stats = readAccounting().callStats;
         if (stats !== undefined) {
           if (structured) callStats = structuredCallStats(stats, runtime.config);
           else target.stderr.write(`${formatHeadlessCallStats(stats, runtime.config)}\n`);

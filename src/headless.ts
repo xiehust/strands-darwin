@@ -108,7 +108,7 @@ export function formatHeadlessTotalUsage(total: UsageTotals, config: AppConfig):
  * `cost: total=<usd|-> input=<usd|-> output=<usd|-> cacheRead=<usd|-> cacheWrite=<usd|-> model=<id> pricing=<litellmKey|unavailable|none>`.
  *
  * Prices the same parent buckets `usage:` reports, per model at its own rates —
- * `runtime.modelShares`, the one projection `/status` and `/usage` share. Every
+ * `runtime.runAccounting.modelShares`, excluding any resumed lifetime prefix. Every
  * figure is four-decimal USD at LiteLLM base rates; `-` is unknown, never `0` — and
  * `total` is `-` whenever any bucket is unknown, because a floor written into
  * `total=` would be read as the total. `pricing` names the LiteLLM key the rates

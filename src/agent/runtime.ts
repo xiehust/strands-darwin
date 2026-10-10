@@ -5,7 +5,7 @@
  * raw event stream to whatever is driving it. Callers (the dev REPL now, Ink
  * later) decide how to render.
  */
-import { Agent, AfterToolCallEvent, BeforeToolCallEvent, BeforeToolsEvent, ToolResultEvent, HookOrder, BeforeInvocationEvent, SummarizingConversationManager, TextBlock } from '@strands-agents/sdk';
+import { Agent, AfterInvocationEvent, AfterToolCallEvent, BeforeToolCallEvent, BeforeToolsEvent, ToolResultEvent, HookOrder, BeforeInvocationEvent, SummarizingConversationManager, TextBlock } from '@strands-agents/sdk';
 import type { AgentStreamEvent, ImageBlock, InterventionHandler, McpClient, Model, SessionManager } from '@strands-agents/sdk';
 import { makeFileEditor } from '@strands-agents/sdk/vended-tools/file-editor';
 import { httpRequest } from '@strands-agents/sdk/vended-tools/http-request';
@@ -154,6 +154,7 @@ import {
   type SessionLease,
   type SessionSelector,
 } from './session.js';
+import { emptySessionUsageState, readSessionUsageState, SESSION_USAGE_KEY, type SessionUsageState } from './usage-state.js';
 import { setSdkVerboseSink } from './sdk-logging.js';
 import { loadSystemPrompt, type SystemPromptSource } from './system-prompt.js';
 import { applyWorkingContext, buildWorkingContext } from './working-context.js';
@@ -583,6 +584,15 @@ export class AgentRuntime {
   private promptCachePlan: PromptCachePlan;
 
   private lastTurnDelta: UsageTotals | undefined = undefined;
+  /** The resumed prefix; the SDK's untouched meter counts only this Agent's lifetime. */
+  private restoredUsage: UsageTotals = { inputTokens: 0, outputTokens: 0 };
+  private restoredChildUsage: SessionUsageState['children'];
+  private restoredAccounting: SessionUsageState | undefined;
+  /** Headless receipts remain process-scoped, even when /usage restores session totals. */
+  private runCallStatsState: SessionCallStats = emptyCallStats();
+  private activeTurnBefore: UsageTotals | undefined;
+  /** False for legacy/damaged snapshots whose earlier spend cannot be recovered exactly. */
+  private usageHistoryComplete = true;
 
   /**
    * Completed turns' meter deltas, tallied under the config in effect for each turn —
@@ -1054,6 +1064,8 @@ export class AgentRuntime {
         snapshotId: options.rewindRestore.snapshotId,
       });
       if (!restored) throw new Error('The selected rewind checkpoint no longer exists.');
+      // A branch is a new accounting session, not a refund of its source's spend.
+      agent.appState.set(SESSION_USAGE_KEY, JSON.parse(JSON.stringify(emptySessionUsageState())));
     }
 
     // Older summarizer versions copied reasoning blocks into the user-role
@@ -1306,6 +1318,10 @@ export class AgentRuntime {
       },
       options,
     );
+    if (session.restoreRequested && options.rewindRestore === undefined) runtime.restoreSessionUsage();
+    // Counter-only appState is captured by the ordinary SDK autosave. Lower priority
+    // runs first even for After hooks, before SessionManager's default-order save.
+    agent.addHook(AfterInvocationEvent, () => runtime.stageSessionUsage(), { order: HookOrder.SDK_FIRST });
     runtime.label = await readSessionLabel(options.projectRoot, session.sessionId);
     runtime.mcpPromptDiscovery = mcpPromptDiscovery;
     runtime.mcpPrompts = mcpPrompts;
@@ -1405,6 +1421,7 @@ export class AgentRuntime {
     let naturallyCompleted = false;
     let uploadTurn: number | undefined;
     let streamStarted = false;
+    this.activeTurnBefore = before;
     try {
       // A multimodal turn's durable text is the literal submitted prompt. Expanded
       // command text and held shell reports still reach the model, but image bytes
@@ -1488,6 +1505,7 @@ export class AgentRuntime {
       this.terminalDelivery.closeTurn(sealed && completed);
       this.lastTurnDelta = deltaUsage(before, this.usage);
       this.tallyTurnUsage(turnConfig, this.lastTurnDelta);
+      this.activeTurnBefore = undefined;
     }
   }
 
@@ -1924,7 +1942,7 @@ export class AgentRuntime {
   }
 
   /**
-   * This process's meter split per model, each share with the config that projects
+   * This session's meter split per model, each share with the config that projects
    * it and what the price cache says about it — what `/status`, `/usage` and the
    * headless `cost:` record price, each model at its own rates.
    *
@@ -2036,6 +2054,88 @@ export class AgentRuntime {
     };
   }
 
+  /** Whether the session prefix is accounted for, rather than a legacy/damaged gap. */
+  get hasCompleteUsageHistory(): boolean {
+    return this.usageHistoryComplete;
+  }
+
+  /** A read-only projection for run-scoped headless receipts, not lifetime totals. */
+  get runAccounting(): Pick<AgentRuntime, 'usage' | 'childUsage' | 'sessionUsage' | 'modelShares' | 'callStats'> {
+    const usage = this.runUsage;
+    const childUsage = this.subagentDispatches.totalUsage();
+    const prefix = this.restoredAccounting?.models;
+    const shares = prefix === undefined ? this.modelShares : this.modelShares.flatMap((share) => {
+      const before = prefix.find((entry) => entry.provider === share.config.provider && entry.model === share.config.model)?.usage;
+      const delta = deltaUsage(before ?? { inputTokens: 0, outputTokens: 0 }, share.usage);
+      // A historical cache counter is not evidence this process reported that metric.
+      if (usage.cacheReadInputTokens === undefined) delete delta.cacheReadInputTokens;
+      if (usage.cacheWriteInputTokens === undefined) delete delta.cacheWriteInputTokens;
+      if (delta.inputTokens === 0 && delta.outputTokens === 0 &&
+          (delta.cacheReadInputTokens ?? 0) === 0 && (delta.cacheWriteInputTokens ?? 0) === 0) return [];
+      return [{ ...share, usage: delta }];
+    });
+    return {
+      usage, childUsage,
+      sessionUsage: childUsage === undefined ? usage : sumUsage([usage, childUsage.usage]),
+      modelShares: shares.length === 0 ? [{ config: this.liveConfig, usage, lookup: this.modelPrice }] : shares,
+      callStats: this.callStatsBroken || this.runCallStatsState.calls === 0 ? undefined : this.runCallStatsState,
+    };
+  }
+
+  private restoreSessionUsage(): void {
+    const saved = readSessionUsageState(this.agent.appState.get(SESSION_USAGE_KEY));
+    if (saved === undefined) {
+      this.usageHistoryComplete = false;
+      return;
+    }
+    this.restoredAccounting = saved;
+    this.usageHistoryComplete = saved.historyComplete;
+    this.restoredUsage = saved.usage;
+    this.lastTurnDelta = saved.lastTurn;
+    this.restoredChildUsage = saved.children;
+    for (const entry of saved.models) {
+      // Save only projection identity, never credentials or the old full config.
+      const config = { ...this.liveConfig, provider: entry.provider, model: entry.model };
+      delete config.openaiApi;
+      if (entry.openaiApi !== undefined) config.openaiApi = entry.openaiApi;
+      this.turnUsageByModel.push({ config, usage: entry.usage });
+    }
+    if (saved.callStats === null) this.callStatsBroken = true;
+    else this.callStatsState = saved.callStats;
+    if (saved.cacheMisses === null) this.cacheMissesBroken = true;
+    else this.cacheMisses = new CacheMissTracker(() => promptCacheTtlMs(this.promptCachePlan.ttl), true, saved.cacheMisses);
+  }
+
+  /** Stages counters before the SDK's normal invocation snapshot, never its loop or meter. */
+  private stageSessionUsage(): void {
+    try {
+      const lastTurn = this.activeTurnBefore === undefined
+        ? this.lastTurnDelta : deltaUsage(this.activeTurnBefore, this.usage);
+      const children = this.childUsage;
+      const value: SessionUsageState = {
+        version: 1,
+        historyComplete: this.usageHistoryComplete,
+        usage: this.usage,
+        ...(lastTurn === undefined ? {} : { lastTurn }),
+        models: this.modelShares.map(({ config, usage }) => ({
+          provider: config.provider, model: config.model, usage,
+          ...(config.openaiApi === undefined ? {} : { openaiApi: config.openaiApi }),
+        })),
+        callStats: this.callStatsBroken ? null : this.callStatsState,
+        cacheMisses: this.cacheMissesBroken ? null : this.cacheMisses.report(),
+        ...(children === undefined ? {} : { children }),
+      };
+      const bounded = readSessionUsageState(value);
+      if (bounded === undefined) throw new Error('Session usage exceeded its bounded counter schema.');
+      // StateStore rejects explicit undefined; JSON omission preserves unknown metrics.
+      this.agent.appState.set(SESSION_USAGE_KEY, JSON.parse(JSON.stringify(bounded)));
+    } catch {
+      // Do not save stale totals or replace an invocation's original failure.
+      this.agent.appState.delete(SESSION_USAGE_KEY);
+      this.diagnosticsLog?.notice('session usage checkpoint unavailable', 'warn');
+    }
+  }
+
   /**
    * Token totals for every model call this agent has made so far.
    *
@@ -2045,11 +2145,15 @@ export class AgentRuntime {
    * running total and is readable between turns, including after a cancelled one
    * that never produced an `agentResultEvent`.
    *
-   * Counts this process only. Sessions persist messages, not metrics, so a
-   * `--resume`d session starts from zero however much it spent before — callers
-   * that show these numbers should say so.
+   * The persisted session prefix is added to this Agent's lifetime meter on
+   * resume. The SDK meter itself is never changed, so per-turn subtraction and
+   * repeated resumes cannot count the restored prefix twice.
    */
   get usage(): UsageTotals {
+    return sumUsage([this.restoredUsage, this.runUsage]);
+  }
+
+  private get runUsage(): UsageTotals {
     const usage = this.agent.metrics.accumulatedUsage;
     return {
       inputTokens: usage.inputTokens,
@@ -2107,6 +2211,7 @@ export class AgentRuntime {
       // A failed attempt has no stopData: nothing completed, nothing to count.
       if (stopData === undefined) return;
       this.callStatsState = recordCompletedCall(this.callStatsState, stopData);
+      this.runCallStatsState = recordCompletedCall(this.runCallStatsState, stopData);
     } catch {
       this.callStatsBroken = true;
     }
@@ -2205,7 +2310,7 @@ export class AgentRuntime {
   }
 
   /**
-   * Token totals for this run's child agents (subagent dispatches and workflow
+   * Token totals for this session's child agents (subagent dispatches and workflow
    * nodes), summed over the dispatch registry — running children read live,
    * finished ones report their frozen terminal reading, and a cancelled or
    * failed child still counts what it spent. `dispatches` counts only the
@@ -2214,7 +2319,11 @@ export class AgentRuntime {
    * indistinguishable from before children were counted at all.
    */
   get childUsage(): { dispatches: number; usage: UsageTotals } | undefined {
-    return this.subagentDispatches.totalUsage();
+    const current = this.subagentDispatches.totalUsage();
+    const restored = this.restoredChildUsage;
+    if (restored === undefined) return current;
+    if (current === undefined) return restored;
+    return { dispatches: restored.dispatches + current.dispatches, usage: sumUsage([restored.usage, current.usage]) };
   }
 
   /**

@@ -2864,6 +2864,26 @@ see § Model retry). Free check: `spike/verify-busy-suffix.ts` (in `pnpm test`) 
 
 ## Cost accounting
 
+**Session usage is counter-only SDK application state, not the SDK meter (resume fix).**
+`darwin.sessionUsage` is a versioned, validated ≤65,536-character record in `Agent.appState`,
+which the normal SessionManager snapshot already saves. An `AfterInvocationEvent` hook at
+`SDK_FIRST` stages the session prefix plus the untouched Agent-lifetime meter before the
+SDK's default-order autosave, including the pending turn's remainder because `send()`'s
+final tally runs later. Restore happens once after initialization; new deltas cancel the
+fixed prefix, so repeated resumes cannot double-count it. Parent counters, latest-turn
+usage, ≤128 provider/model/API shares, call efficiency, child aggregates and historical
+cache-miss verdicts survive; cache warmth and context anchors stay process-local. No
+credentials, full config, messages, child jobs/transcripts, trajectory reconstruction,
+new file, model call or extra snapshot write is involved. Invalid/legacy checkpoints
+leave an explicit historical gap on `/usage`; new known usage persists without erasing
+that gap. Reads never save. `/clear` and `/rewind` remain new accounting sessions, never
+refunding prior spend or changing source snapshots. Check: `verify-usage-resume.ts`
+(real SDK snapshots, fresh runtimes and a separate process, trajectory disabled), plus
+usage/model-share/cache/clear/rewind regressions. Headless text/JSON receipts retain
+run scope through the read-only `runAccounting` projection: the raw new Agent meter,
+current dispatch registry, current-call stats and model shares minus the restored
+prefix. Historical cache counters cannot fabricate current-run reported metrics.
+
 **Cost is a projection over the token buckets, priced per model from a fetch-once cache — never a
 new channel and never an invoice** (`src/pricing/cost.ts`, `src/agent/cost.ts`,
 `src/pricing/model-prices.ts`, `src/trajectory/spend.ts`). The only arithmetic is Σ bucket × LiteLLM base

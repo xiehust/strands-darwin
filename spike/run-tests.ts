@@ -129,6 +129,7 @@ const suites = [
   'verify-working-context.ts',
   'verify-prompt-cache.ts',
   'verify-usage.ts',
+  'verify-usage-resume.ts',
   'verify-cost.ts',
   'verify-model-prices.ts',
   'verify-model-shares.ts',

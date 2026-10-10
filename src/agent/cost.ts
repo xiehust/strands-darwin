@@ -50,7 +50,7 @@ export {
 } from '../pricing/cost.js';
 
 /**
- * One model's share of this process's meter: the counters it incurred, the config
+ * One model's share of the session's meter: the counters it incurred, the config
  * that projects them into buckets (provider/API decide the split), and what the
  * price cache says about it. `runtime.modelShares` is a list of these.
  */

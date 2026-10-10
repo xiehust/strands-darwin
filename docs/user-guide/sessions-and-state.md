@@ -14,6 +14,22 @@ darwin --session <id>
 
 `darwin sessions` is read-only, offline, and lists only restorable snapshots, newest activity first: ID, age, first recorded user prompt, optional display label, `(last)`, and `(open in pid N)` when another live darwin currently holds the session (`(open on <host> in pid N)` when the holder runs on another machine). If trajectory was disabled it says `(not recorded)`; damaged/unusable entries are skipped with a count. Listing never writes or moves the pointer — a stale lease is not taken over by the listing. Invalid/other-project IDs are refusals, never fallback. A named resumed session becomes the bare-resume target only after it completes another turn. When the TUI exits it leaves one plain line in the scrollback for the session that was live — `session <id> · resume: darwin --resume <id>` — only if that session has something to reopen (a session left without a prompt, and every `-p` run, prints nothing); the line is written after the lease is released and touches no file.
 
+### Usage across resume
+
+`/usage` counts the session, including earlier runs restored from its SDK snapshot.
+Each invocation saves parent token/cache totals, the last-turn delta, per-model cost
+attribution, completed-call efficiency, child usage aggregates and cache-miss counts.
+This works with trajectory recording disabled; no transcript or credentials are added
+to the accounting record. New calls add to the saved totals once. `/clear` and `/rewind`
+start new accounting sessions and leave the source session's spend intact.
+
+Legacy snapshots without saved counters, or invalid counters, show `earlier usage
+unavailable` instead of claiming that missing history spent zero. Known new usage still
+persists, but that historical gap remains explicit. Reading `/usage` never saves state;
+the ordinary invocation snapshot does. Cache warmth is re-measured after resume.
+Headless `usage:`, `cost:` and structured output continue to report only the current
+run, so automation does not bill historical spend again.
+
 ### Discover saved sessions without leaving the TUI
 
 `/sessions` takes no arguments and prints one local, read-only transcript notice, even

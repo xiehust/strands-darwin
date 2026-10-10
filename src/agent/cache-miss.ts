@@ -16,8 +16,8 @@
  * Advisory only, on the context-pressure row's terms: the verdict is printed on
  * existing reports (`/usage`, `/status`) and as one transcript notice before a
  * `/model` or `/effort` switch on a warm cache. Nothing is compacted, no second
- * threshold exists, no frame row, tick or channel is added, nothing is persisted or
- * recorded in the trajectory.
+ * threshold exists, no frame row, tick or channel is added. Historical verdicts
+ * are saved with session usage; cache warmth stays process-local, never in the trajectory.
  *
  * Invalidators, and one deliberate non-invalidator. A model switch, an effective
  * effort change and a compaction each change the request prefix (a different model
@@ -188,8 +188,12 @@ export class CacheMissTracker {
   constructor(
     private readonly ttlMs: () => number,
     resumed: boolean,
+    restored?: CacheMissReport,
   ) {
     this.firstCallAfterResume = resumed;
+    // Keep historical verdicts, not a stale cache-warmth claim across processes.
+    this.misses = restored?.misses ?? 0;
+    this.lastMiss = restored?.lastMiss;
   }
 
   /** Records that the session performed one invalidating event since the last call. */

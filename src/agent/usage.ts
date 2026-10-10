@@ -1,7 +1,7 @@
 import type { AppConfig } from '../config.js';
 import type { CallSpendProjector, TurnSpend, TurnSpendMeter } from '../trajectory/record.js';
 
-/** Cumulative token counts reported by the active model during this process. */
+/** Cumulative provider-reported token counts (raw counters, not billable buckets). */
 export interface UsageTotals {
   inputTokens: number;
   outputTokens: number;

@@ -154,7 +154,7 @@ function projectionContracts(): void {
     true,
   );
   assert('Bedrock report retains four numeric labels', /cache read\s+7/u.test(bedrockReport) && /cache write\s+9/u.test(bedrockReport));
-  assert('existing resumed and in-flight notices remain', bedrockReport.includes('earlier runs are not counted') && bedrockReport.includes('not counted yet'));
+  assert('legacy resumed and in-flight notices remain explicit', bedrockReport.includes('earlier usage unavailable') && bedrockReport.includes('not counted yet'));
 }
 
 function effectivenessContracts(): void {

@@ -1134,7 +1134,7 @@ async function composerUndo(): Promise<void> {
     await frameLacks('temp');
     mark = tui.mark();
     tui.submit('/usage');
-    await tui.waitFor('token usage — this run', { timeoutMs: 30_000, from: mark, settleMs: 400 });
+    await tui.waitFor('token usage — this session', { timeoutMs: 30_000, from: mark, settleMs: 400 });
     mark = tui.mark();
     tui.send(undo);
     await tui.waitUntil(() => true, { timeoutMs: 30_000, settleMs: 300 });
@@ -3356,7 +3356,8 @@ async function clearSession(): Promise<void> {
     const beforeMarker = tui.mark();
     tui.submit('/agents');
     await tui.waitFor('subagent dispatches — none in this run', { timeoutMs: 30_000, from: beforeMarker, settleMs: 400 });
-    assert('the transcript has content before the clear', tui.frame.includes('subagent dispatches'));
+    // Local reports are committed Static history, which tui.frame deliberately excludes.
+    assert('the transcript has content before the clear', tui.screen.slice(beforeMarker).includes('subagent dispatches'));
 
     const beforeArgument = tui.mark();
     tui.submit('/clear extra');

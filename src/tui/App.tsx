@@ -1499,7 +1499,7 @@ export function App({
         dispatch({ type: 'userInput', text });
         dispatch({
           type: 'notice',
-          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage, runtime.childUsage, runtime.callStats, runtime.modelShares, runtime.cacheMissReport()),
+          text: formatUsageReport(runtime.usage, runtime.config, runtime.info.resumed, status === 'streaming', runtime.lastTurnUsage, runtime.childUsage, runtime.callStats, runtime.modelShares, runtime.cacheMissReport(), runtime.hasCompleteUsageHistory),
         });
         return;
       }
@@ -3796,6 +3796,7 @@ export function formatUsageReport(
   callStats?: SessionCallStats,
   modelShares?: readonly ModelUsageShare[],
   cacheMisses?: CacheMissReport,
+  historyComplete = !resumed,
 ): string {
   const rows = usageRows(usage, config);
   const derived = cacheEffectivenessRows(usage, config);
@@ -3832,11 +3833,11 @@ export function formatUsageReport(
     }
   }
 
-  // "This run" is the honest scope: the SDK's meter is per-process, so a resumed
-  // session's earlier spend is simply not knowable here.
-  const heading = resumed
-    ? 'token usage — this run (resumed: earlier runs are not counted)'
-    : 'token usage — this run';
+  const heading = !historyComplete
+    ? 'token usage — this session (earlier usage unavailable: no valid saved counters)'
+    : resumed
+      ? 'token usage — this session (including earlier runs)'
+      : 'token usage — this session';
   // Asked mid-turn, the totals are the ones from before it: the meter accumulates
   // a model call when it finishes. Said out loud, because numbers that do not move
   // while the agent is visibly working read as a broken counter.
