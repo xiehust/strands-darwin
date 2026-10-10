@@ -3,5 +3,5 @@ allowBuilds:
   node-pty: true
   sharp: true
 patchedDependencies:
-  '@strands-agents/sdk@1.18.0': patches/@strands-agents__sdk@1.18.0.patch
+  '@strands-agents/sdk@1.20.0': patches/@strands-agents__sdk@1.20.0.patch
   ink@7.1.1: patches/ink@7.1.1.patch

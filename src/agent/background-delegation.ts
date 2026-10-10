@@ -12,7 +12,7 @@
  *   permission gate, plan-mode denial and the retry guard have already run —
  *   `routeToolCall` strips the flag and `submitToolCall` returns an ack tool result
  *   carrying a task id (`executor.js`, the `route === true` branch);
- * - delivers a finished task as one synthetic `strands_background_task_result`
+ * - delivers a finished task as one synthetic `strands_manage_background_task`
  *   tool-use/tool-result pair through `continuations.addInput`, from two hooks: at
  *   every `BeforeModelCallEvent` (`_deliverReady`, so a task that settled since the
  *   last call rides the next request) and at `AfterInvocationEvent` — where, with
@@ -60,7 +60,7 @@ export const BACKGROUND_EXECUTION_FLAG = '_background_execution';
 export const MANAGE_BACKGROUND_TASK_TOOL_NAME = 'strands_manage_background_task';
 
 /** The synthetic tool-use name the SDK uses when it delivers a finished task. */
-export const BACKGROUND_TASK_RESULT_TOOL_NAME = 'strands_background_task_result';
+export const BACKGROUND_TASK_RESULT_TOOL_NAME = MANAGE_BACKGROUND_TASK_TOOL_NAME;
 
 /** First line of the SDK's dispatch acknowledgement (`submitToolCall`). */
 const ACK_FIRST_LINE = 'Background task dispatched.';
@@ -131,7 +131,7 @@ export function backgroundDelegationDescriptionClause(completionWakes = false): 
     'need its result immediately (reads only): you get an acknowledgement at once and the ';
   return completionWakes
     ? lead +
-        'final report arrives as a strands_background_task_result tool result in the next turn ' +
+        'final report arrives as a strands_manage_background_task tool result in the next turn ' +
         'that runs — you may end this turn; once the session is idle, one <task-notification> ' +
         'turn starts with the report attached.'
     : lead + 'final report is delivered before your next model call in this same turn.';

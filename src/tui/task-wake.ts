@@ -165,7 +165,7 @@ export function delegationNotificationFields(
 
 /**
  * The model-facing text of one delegation wake. Deliberately **not** the report: the
- * SDK's own `_deliverReady` attaches the `strands_background_task_result` pair to
+ * SDK's own `_deliverReady` attaches the `strands_manage_background_task` pair to
  * this very turn's request, so the block only says which delegation ended, how, and
  * where to read the result — a second copy would double the report in context and
  * make two sources of one truth.

@@ -39,14 +39,14 @@ import { assert, header, report } from './shared.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SDK = '@strands-agents/sdk';
-const PNPM_PATCH_NAME = `${SDK.replace('/', '__')}@1.18.0.patch`;
-const GENERATED_NAME = `${SDK.replace('/', '+')}+1.18.0.patch`;
+const PNPM_PATCH_NAME = `${SDK.replace('/', '__')}@1.20.0.patch`;
+const GENERATED_NAME = `${SDK.replace('/', '+')}+1.20.0.patch`;
 const PREFIX = `node_modules/${SDK}/`;
 
 header('file names: pnpm dialect in, patch-package dialect out');
 const identity = parsePnpmPatchFileName(PNPM_PATCH_NAME);
 assert('the pinned pnpm file name parses to the scoped package and its exact version',
-  isDeepStrictEqual(identity, { packageName: SDK, version: '1.18.0' }));
+  isDeepStrictEqual(identity, { packageName: SDK, version: '1.20.0' }));
 assert('an unscoped pnpm name parses too',
   isDeepStrictEqual(parsePnpmPatchFileName('left-pad@1.3.0.patch'), { packageName: 'left-pad', version: '1.3.0' }));
 assert('a name outside pnpm\'s shape is refused, not guessed',
@@ -138,7 +138,7 @@ try {
     absent.status === 0 && absent.stdout.includes('No patch files found'));
   const applied = run(path.relative(ROOT, outputDir));
   assert('the generated patch against the SDK pnpm already patched exits 0 (already applied, nothing rewritten)',
-    applied.status === 0 && applied.stdout.includes(`${SDK}@1.18.0`)
+    applied.status === 0 && applied.stdout.includes(`${SDK}@1.20.0`)
     && !`${applied.stdout}${applied.stderr}`.includes('**ERROR**'));
   for (const { file, token } of SDK_PATCH_MARKERS) {
     const text = readFileSync(path.join(ROOT, 'node_modules', SDK, 'dist', 'src', file), 'utf8');
@@ -163,8 +163,17 @@ const sdkManifest = JSON.parse(readFileSync(path.join(ROOT, 'node_modules', SDK,
   optionalDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 };
-assert('the SDK dependency is an exact 1.18.0 pin and the installed package matches',
-  (manifest['dependencies'] as Record<string, string>)[SDK] === '1.18.0' && sdkManifest.version === '1.18.0');
+assert('the SDK dependency is an exact 1.20.0 pin and the installed package matches',
+  (manifest['dependencies'] as Record<string, string>)[SDK] === '1.20.0' && sdkManifest.version === '1.20.0');
+assert('the workspace maps only SDK 1.20.0 to its versioned source patch',
+  readFileSync(path.join(ROOT, 'pnpm-workspace.yaml'), 'utf8').includes(`'${SDK}@1.20.0': patches/${PNPM_PATCH_NAME}`)
+  && !existsSync(path.join(ROOT, 'patches', `${SDK.replace('/', '__')}@1.18.0.patch`)));
+const lock = readFileSync(path.join(ROOT, 'pnpm-lock.yaml'), 'utf8');
+assert('the lock resolves and patches SDK 1.20.0, with no old SDK resolution',
+  lock.includes(`'${SDK}@1.20.0':`) && lock.includes('specifier: 1.20.0')
+  && lock.includes('version: 1.20.0(patch_hash=') && !lock.includes(`${SDK}@1.18.0`));
+assert('the SDK 2.x MCP client is an explicit runtime dependency',
+  (manifest['dependencies'] as Record<string, string>)['@modelcontextprotocol/client'] === '^2.3.1');
 assert('Darwin and the installed SDK declare the same Node floor',
   isDeepStrictEqual(manifest['engines'], sdkManifest.engines));
 assert('QMD is only an optional peer, no longer a dependency that needs ignoring',

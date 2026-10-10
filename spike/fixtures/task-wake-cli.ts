@@ -130,11 +130,16 @@ class TaskWakeModel extends Model<BaseModelConfig> {
     // wording (wake variant with the key on, no-wake variant with `backgroundTaskWake: false`).
     const bashDescription = options?.toolSpecs?.find((spec) => spec.name === 'bash')?.description;
     // A child never sees the delegation tools (SER-064); the parent does. The SDK's
-    // delivered `strands_background_task_result` pairs are logged so the suite can prove
+    // delivered `strands_manage_background_task` pairs are logged so the suite can prove
     // which request carried a delegation's report (SER-070).
     const isParent = options?.toolSpecs?.some((spec) => spec.name === 'subagent') === true;
-    const pairTaskIds = messages.flatMap((message) => message.content.flatMap((block) =>
-      block.type === 'toolUseBlock' && block.name === 'strands_background_task_result' ? [block.toolUseId] : []));
+    const blocks = messages.flatMap((message) => message.content);
+    const pairTaskIds = blocks.flatMap((block) =>
+      block.type === 'toolUseBlock' && block.name === 'strands_manage_background_task'
+      && isRecord(block.input) && block.input.mode === 'get' && block.input.taskId === block.toolUseId
+      && blocks.some((result) => result.type === 'toolResultBlock' && result.toolUseId === block.toolUseId
+        && result.content.some((content) => content.type === 'textBlock' && content.text.startsWith('child counted ')))
+        ? [block.toolUseId] : []);
     appendFileSync(CALLS, `${JSON.stringify({ call: this.calls, userText: prompt.text, bashDescription, role: isParent ? 'parent' : 'child', pairTaskIds })}\n`);
     yield { type: 'modelMessageStartEvent', role: 'assistant' };
 

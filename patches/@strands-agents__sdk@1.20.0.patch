@@ -1,42 +1,20 @@
-diff --git a/dist/src/conversation-manager/compression/context-compression.js b/dist/src/conversation-manager/compression/context-compression.js
-index 84e3d1bb0bcd499d3dd2cd07c08baa79807ca79c..7e1c407bb04714309226c40b5daa00827799f477 100644
---- a/dist/src/conversation-manager/compression/context-compression.js
-+++ b/dist/src/conversation-manager/compression/context-compression.js
-@@ -126,9 +126,16 @@ export async function generateSummary(messagesToSummarize, model, systemPrompt)
-     if (!result?.done || !result.value) {
-         throw new Error('Failed to generate summary: no response from model');
-     }
-+    // Thinking models include reasoning blocks in the summary response; a
-+    // user-role message must never carry reasoning content (providers reject
-+    // the request), so keep only the non-reasoning blocks.
-+    const summaryContent = result.value.message.content.filter((block) => block.type !== 'reasoningBlock');
-+    if (summaryContent.length === 0) {
-+        throw new Error('Failed to generate summary: response contained no non-reasoning content');
-+    }
-     return new Message({
-         role: 'user',
--        content: result.value.message.content,
-+        content: summaryContent,
-     });
- }
- /**
 diff --git a/dist/src/index.d.ts b/dist/src/index.d.ts
-index 416fa4a6d2a29417506588e05f95562bc7f3aa79..62e02b408b78ef5ade04ecd24478031331b6b1e4 100644
+index 7595798e7151f873e43eddd9ccfdba0dd383b28e..23b5c61f9836ae4bb9af2716ad533b3000e18af7 100644
 --- a/dist/src/index.d.ts
 +++ b/dist/src/index.d.ts
-@@ -64,6 +64,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
+@@ -65,6 +65,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
  export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
  export { SlidingWindowConversationManager, type SlidingWindowConversationManagerConfig, } from './conversation-manager/sliding-window-conversation-manager.js';
  export { SummarizingConversationManager, type SummarizingConversationManagerConfig, } from './conversation-manager/summarizing-conversation-manager.js';
 +export { DEFAULT_SUMMARIZATION_PROMPT } from './conversation-manager/compression/context-compression.js';
  export { configureLogging } from './logging/logger.js';
  export type { Logger } from './logging/types.js';
- export { type McpClientOptions, type McpListToolsOptions, type McpToolFilterCallback, type McpToolFilters, type McpToolMatcher, type McpClientConfig, type McpClientCredentials, type McpTransport, type McpCallToolOptions, type TasksConfig, type McpConnectionState, type McpLoadServersOptions, type McpServerConfig, type SerializableMcpToolFilters, McpClient, } from './mcp/index.js';
+ export { type McpClientOptions, type McpListToolsOptions, type McpToolFilterCallback, type McpToolFilters, type McpToolMatcher, type McpClientConfig, type McpClientCredentials, type McpTransport, type McpCallToolOptions, type TasksConfig, type McpConnectionState, type McpLoadServersOptions, type McpServerConfig, type SerializableMcpToolFilters, McpClient, McpTaskCancelledError, McpTaskFailedError, } from './mcp/index.js';
 diff --git a/dist/src/index.js b/dist/src/index.js
-index 1ffe683b6944318f8524c231674eabcf8428f89f..ea8dfa7ae5d5cfb3166a6e23afe3042d59b8973f 100644
+index 29310747d3224a66b2f09607ce8f84122aebda70..05e66c2edd18e8c763d0885538bbfbe705a83be2 100644
 --- a/dist/src/index.js
 +++ b/dist/src/index.js
-@@ -53,6 +53,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
+@@ -55,6 +55,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
  export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
  export { SlidingWindowConversationManager, } from './conversation-manager/sliding-window-conversation-manager.js';
  export { SummarizingConversationManager, } from './conversation-manager/summarizing-conversation-manager.js';
@@ -45,10 +23,10 @@ index 1ffe683b6944318f8524c231674eabcf8428f89f..ea8dfa7ae5d5cfb3166a6e23afe3042d
  export { configureLogging } from './logging/logger.js';
  // MCP Client types and implementations
 diff --git a/dist/src/models/anthropic.js b/dist/src/models/anthropic.js
-index ffbbb3d5d8a29ac0e21ffd2409658e1f69850492..ff1f3cac332a260fef809d318c11062de78ce3d8 100644
+index d3b97dfe1f49f9c8251f4d74a2640b7684691f98..e747a7ac319ba38ce340aec08800dc751f10c4ee 100644
 --- a/dist/src/models/anthropic.js
 +++ b/dist/src/models/anthropic.js
-@@ -560,6 +560,11 @@ export class AnthropicModel extends Model {
+@@ -682,6 +682,11 @@ export class AnthropicModel extends Model {
                  };
              }
              case 'reasoningBlock':
@@ -61,7 +39,7 @@ index ffbbb3d5d8a29ac0e21ffd2409658e1f69850492..ff1f3cac332a260fef809d318c11062d
                      return {
                          type: 'thinking',
 diff --git a/dist/src/models/bedrock.js b/dist/src/models/bedrock.js
-index e9efcc8ba832b878ec4b1ec0350e8ce6bf5b0e5b..0ff2da8f0256a9a6fa0a1153e868cfa53c9104a8 100644
+index a0077cfe424d3d67a90207b52f114162d743d2b5..ca209b98dc687402b4e13b8eef700812b3b7c63a 100644
 --- a/dist/src/models/bedrock.js
 +++ b/dist/src/models/bedrock.js
 @@ -944,6 +944,19 @@ export class BedrockModel extends Model {
@@ -114,10 +92,10 @@ index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279
  /**
   * Error patterns that indicate rate limiting.
 diff --git a/dist/src/models/openai/model.js b/dist/src/models/openai/model.js
-index e7db2ccc3d5d8cff7b27dbb5b5f46cdaf9a4de1b..d9881fb1d81a3cbd9e092591d8757023817ef6c7 100644
+index 37291c025ed65317d80d5fa092621b7b678bafde..ba44c9120133ad75d1307b9684ffa82c0a0ef8cd 100644
 --- a/dist/src/models/openai/model.js
 +++ b/dist/src/models/openai/model.js
-@@ -196,7 +196,7 @@ export class OpenAIModel extends Model {
+@@ -203,7 +203,7 @@ export class OpenAIModel extends Model {
          try {
              const request = formatResponsesRequest(this._config, messages, options, this.stateful);
              const stream = await this._client.responses.create(request, { signal: options?.cancelSignal });
@@ -127,14 +105,11 @@ index e7db2ccc3d5d8cff7b27dbb5b5f46cdaf9a4de1b..d9881fb1d81a3cbd9e092591d8757023
                  for (const sdkEvent of mapResponsesEventToSDK(event, state, this.stateful, options?.modelState)) {
                      yield sdkEvent;
 diff --git a/dist/src/models/openai/responses-adapter.d.ts b/dist/src/models/openai/responses-adapter.d.ts
-index e17f00ac284c1e3357d55205c57b431061141b55..655e065df9823e8897759978a46cac8b2bee9d79 100644
+index a7b4edd12a5ac33277a5ad2c4bcea4c4d8c1ea7d..655e065df9823e8897759978a46cac8b2bee9d79 100644
 --- a/dist/src/models/openai/responses-adapter.d.ts
 +++ b/dist/src/models/openai/responses-adapter.d.ts
-@@ -52,15 +52,35 @@ export interface ResponsesStreamState {
-         outputTokens: number;
-         totalTokens: number;
-         cacheReadInputTokens?: number;
-+        cacheWriteInputTokens?: number;
+@@ -55,13 +55,32 @@ export interface ResponsesStreamState {
+         cacheWriteInputTokens?: number;
      } | null;
      stopReason: StopReason;
 +    /** darwin patch (SER-101): request model id that tags captured reasoning. */
@@ -168,7 +143,7 @@ index e17f00ac284c1e3357d55205c57b431061141b55..655e065df9823e8897759978a46cac8b
   * Maps a single Responses API stream event to zero or more SDK events. Mutates
   * `state` and, when `stateful` is `true`, writes `responseId` into `modelState`.
 diff --git a/dist/src/models/openai/responses-adapter.js b/dist/src/models/openai/responses-adapter.js
-index 9605eb256daa6aebf7dddea2f745d44bdf6f6970..76fb886e50ccbe1faa4bfb5208b82d64cbe84510 100644
+index ddf156fe33b08dfb6a1dc265eb86f2fac31d9c53..c4cd19b5064de07722f88bb71874567061ed74ed 100644
 --- a/dist/src/models/openai/responses-adapter.js
 +++ b/dist/src/models/openai/responses-adapter.js
 @@ -21,6 +21,72 @@ import { formatImageDataUrl, warnManagedParams as warnManagedParamsShared } from
@@ -308,7 +283,7 @@ index 9605eb256daa6aebf7dddea2f745d44bdf6f6970..76fb886e50ccbe1faa4bfb5208b82d64
      };
  }
  /**
-@@ -328,9 +408,13 @@ function mapResponsesUsage(usage) {
+@@ -329,13 +409,13 @@ function mapResponsesUsage(usage) {
          totalTokens: usage.total_tokens,
      };
      const cached = usage.input_tokens_details?.cached_tokens;
@@ -316,14 +291,15 @@ index 9605eb256daa6aebf7dddea2f745d44bdf6f6970..76fb886e50ccbe1faa4bfb5208b82d64
 +    if (typeof cached === 'number' && cached >= 0) {
          mapped.cacheReadInputTokens = cached;
      }
-+    const cacheWrite = usage.input_tokens_details?.cache_write_tokens;
+     // GPT-5.6 reports cache writes here; the openai package's InputTokensDetails
+     // does not type the field yet, so read it through a narrow cast.
+     const cacheWrite = usage.input_tokens_details?.cache_write_tokens;
+-    if (typeof cacheWrite === 'number' && cacheWrite > 0) {
 +    if (typeof cacheWrite === 'number' && cacheWrite >= 0) {
-+        mapped.cacheWriteInputTokens = cacheWrite;
-+    }
+         mapped.cacheWriteInputTokens = cacheWrite;
+     }
      return mapped;
- }
- function createResponsesStreamError(message, code) {
-@@ -359,22 +443,66 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
+@@ -366,22 +446,66 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
          case 'response.output_text.delta': {
              events.push(...switchContent('text', state.dataType));
              state.dataType = 'text';
@@ -390,7 +366,7 @@ index 9605eb256daa6aebf7dddea2f745d44bdf6f6970..76fb886e50ccbe1faa4bfb5208b82d64
          case 'response.output_text.annotation.added': {
              // The SDK types `event.annotation` as `unknown` and doesn't export a
              // named annotation union, so we narrow structurally on the fields we use.
-@@ -388,6 +516,7 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
+@@ -395,6 +519,7 @@ export function mapResponsesEventToSDK(event, state, stateful, modelState) {
                  // a fresh TextBlock.
                  events.push(...switchContent('citations', state.dataType));
                  state.dataType = 'citations';
@@ -433,7 +409,7 @@ index b0223555c1f0410441546be860dbae824ac9857c..92ab47f4c8c1f5225c13dfd8a5e37324
  //# sourceMappingURL=plugin.d.ts.map
 \ No newline at end of file
 diff --git a/dist/src/vended-plugins/context-offloader/plugin.js b/dist/src/vended-plugins/context-offloader/plugin.js
-index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..440965bdc2879f7c2755ace3cda9ab70b17c53e6 100644
+index f1f7304b55d39dafb79b4e0a6796d29b9e795842..3170931a27b37d683e2c4f86c20c135a88df8447 100644
 --- a/dist/src/vended-plugins/context-offloader/plugin.js
 +++ b/dist/src/vended-plugins/context-offloader/plugin.js
 @@ -1,5 +1,5 @@
@@ -597,7 +573,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..440965bdc2879f7c2755ace3cda9ab70
                      const contextLines = input.context_lines ?? 5;
                      const lineRange = input.line_range ?? (!input.pattern ? { start: 1, end: Math.max(1, contextLines) } : undefined);
                      return searchContent(text, { pattern: input.pattern, line_range: lineRange, context_lines: contextLines }, maxChars);
-@@ -339,40 +432,135 @@ export class ContextOffloader {
+@@ -343,40 +436,135 @@ export class ContextOffloader {
              .filter((r) => r.ref)
              .map((r) => `  ${r.ref} (${r.description})`)
              .join('\n');
@@ -614,7 +590,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..440965bdc2879f7c2755ace3cda9ab70
 -            guidance += 'If you need more detail, use your available tools to access specific data.';
 -        }
 +        const guidance = offloadGuidance(this._includeRetrievalTool);
-         return (`[Offloaded: ${content.length} blocks, ~${tokenCount.toLocaleString()} tokens]\n` +
+         return (`[Offloaded: ${content.length} blocks, ~${tokenCount.toLocaleString('en-US')} tokens]\n` +
              `${guidance}\n\n` +
              `${preview}\n\n` +
              `[Stored references:]\n${refLines}`);
@@ -760,7 +736,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..440965bdc2879f7c2755ace3cda9ab70
          // Extract text preview from text/JSON blocks
          const textParts = [];
          for (const block of content) {
-@@ -382,22 +570,28 @@ export class ContextOffloader {
+@@ -386,22 +574,28 @@ export class ContextOffloader {
                  textParts.push(JSON.stringify(block.json, null, 2));
          }
          const fullText = textParts.join('\n');
@@ -801,7 +777,7 @@ index 69b6549df8bf55b39e34aaf2940cac2a7fbf0714..440965bdc2879f7c2755ace3cda9ab70
          }
          logger.debug(`tool_use_id=<${toolUseId}>, blocks=<${references.length}>, tokens=<${tokenCount}> | tool result offloaded`);
          // Build replacement content: preview text + media placeholders
-@@ -422,11 +616,32 @@ export class ContextOffloader {
+@@ -426,11 +620,32 @@ export class ContextOffloader {
                  newContent.push(new TextBlock(`[${label}, ${size} bytes${ref ? ` | ref: ${ref}` : ''}]`));
              }
          }

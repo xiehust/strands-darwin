@@ -363,7 +363,7 @@ Strands SDK 的 `backgroundTasks` 插件只为 `subagent` 与 `workflow` 附加�
 标志；其他工具一律前台执行。带标志的调用与前台调用经过完全相同的权限检查，立即返回带任务 id 的确认。
 报告在哪里交付取决于运行时：在交互式 TUI 中（`backgroundTaskWake` 开启时），发起委派的回合在确认后即结束，
 子代理继续运行，你可以继续提问；报告在下一个实际运行的回合中到达——SDK 会在该回合的模型调用之前把它作为
-`strands_background_task_result` 工具调用/结果对附上，而当会话空闲时，由一条**委派唤醒**（见下文）启动
+`strands_manage_background_task` 工具调用/结果对附上，而当会话空闲时，由一条**委派唤醒**（见下文）启动
 那个回合；在无头模式或 `backgroundTaskWake: false` 下，SDK 在同一次调用内等待，报告在父代理同一回合的下一次
 模型调用之前交付。子代理看不到该标志，也没有下面这个工具。只要还有后台委派在跟踪中，`/clear` 与 `/rewind`
 会被拒绝，并以一条通知点名任务和两条出路（`/agents cancel <id>`，或等待完成唤醒）；`/exit` 仍会取消子代理。
@@ -389,14 +389,14 @@ output tail (last N line(s); `bash output` with taskId "bg-…" reads the full l
 ```
 
 已结束的后台委派使用同一种条目，标记为 `[delegation <id8> state]`，用委派标签（`subagent general#…: <task>`）
-代替任务命令，文本只点名工具、任务 id、状态和耗时，并指向 SDK 附在同一请求里的 `strands_background_task_result`
+代替任务命令，文本只点名工具、任务 id、状态和耗时，并指向 SDK 附在同一请求里的 `strands_manage_background_task`
 结果对——报告本身绝不重复：
 
 ```
 <task-notification task="<uuid>" tool="subagent" state="succeeded" elapsed="1m 2s">
 A background subagent delegation you dispatched with _background_execution: true finished. …
 delegation: subagent general#…: <task>
-Its report is in this turn's strands_background_task_result tool result for task "<uuid>" — read it there; it is not repeated here.
+Its report is in this turn's strands_manage_background_task tool result for task "<uuid>" — read it there; it is not repeated here.
 …
 </task-notification>
 ```

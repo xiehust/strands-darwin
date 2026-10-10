@@ -14,7 +14,7 @@ import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { auth, extractWWWAuthenticateParams } from '@modelcontextprotocol/sdk/client/auth.js';
+import { auth, extractWWWAuthenticateParams } from '@modelcontextprotocol/client';
 
 import { createGuardedFetch, validateOAuthUrl } from './oauth-net.js';
 import { DarwinOAuthProvider, type OAuthServerSettings } from './oauth-provider.js';

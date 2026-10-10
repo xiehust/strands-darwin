@@ -22,13 +22,15 @@
  */
 import { randomBytes } from 'node:crypto';
 
-import type { AddClientAuthentication, OAuthClientProvider, OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.js';
 import type {
-  OAuthClientInformationMixed,
+  AddClientAuthentication,
+  OAuthClientProvider,
+  OAuthDiscoveryState,
   OAuthClientMetadata,
   OAuthProtectedResourceMetadata,
-  OAuthTokens,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
+  StoredOAuthClientInformation as OAuthClientInformationMixed,
+  StoredOAuthTokens as OAuthTokens,
+} from '@modelcontextprotocol/client';
 
 import { ConfigError } from '../config.js';
 import {
@@ -437,6 +439,15 @@ export async function createRuntimeOAuthProvider(settings: OAuthServerSettings):
   if (read.status === 'ok') {
     try {
       validateDiscoveryState(read.record.discovery, settings);
+      // The 2.x client isolates credentials by issuer. Reject a mismatched stored
+      // stamp before transport auth can treat it as absent and attempt registration;
+      // a runtime never registers clients. Legacy unstamped records keep working.
+      const issuer = read.record.discovery.authorizationServerUrl.replace(/\/$/, '');
+      for (const credential of [read.record.clientInformation, read.record.tokens]) {
+        if (credential?.issuer !== undefined && credential.issuer.replace(/\/$/, '') !== issuer) {
+          throw new OAuthPolicyError('stored credentials belong to a different authorization server');
+        }
+      }
       return new DarwinOAuthProvider({ settings, mode: 'runtime', record: read.record });
     } catch {
       return new DarwinOAuthProvider({ settings, mode: 'runtime', recordProblem: 'invalid' });

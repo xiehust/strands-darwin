@@ -334,6 +334,9 @@ header('login: loopback callback → token store → authenticated connect');
     secrets.add(read.record.tokens!.access_token);
     secrets.add(read.record.tokens!.refresh_token!);
     assert('the stored token is the one the server issued', read.record.tokens!.access_token === 'access-1');
+    assert('SER-122: login preserves the 2.x client issuer stamps through the store validators',
+      read.record.tokens?.issuer === new URL(fake.url).origin
+      && read.record.clientInformation?.issuer === new URL(fake.url).origin);
     assert('the record is bound to the exact server URL', read.record.serverUrl === fake.url);
     assert('the registered redirect is a 127.0.0.1 loopback callback', /^http:\/\/127\.0\.0\.1:\d+\/callback$/.test(read.record.redirectUrl));
   }
@@ -386,6 +389,9 @@ header('refresh: an expired access token is refreshed and the store is updated')
   const after = await readOAuthRecord('fake', fake.url);
   assert('the refreshed token was persisted', after.status === 'ok' && after.record.tokens?.access_token === 'access-2');
   assert('the rotated refresh token was persisted', after.status === 'ok' && after.record.tokens?.refresh_token === 'refresh-2');
+  assert('SER-122: refresh preserves both stored issuer stamps', after.status === 'ok'
+    && after.record.tokens?.issuer === new URL(fake.url).origin
+    && after.record.clientInformation?.issuer === new URL(fake.url).origin);
   assert('the login id survives a refresh', before.status === 'ok' && after.status === 'ok' && before.record.loginId === after.record.loginId);
   assert('the file stays private after rewrite', (statSync(oauthRecordPath('fake')).mode & 0o777) === 0o600);
   assert('/mcp still reports logged in', mcpServerStatuses(clients)[0]?.auth === 'logged-in');
@@ -412,6 +418,39 @@ header('refresh failure: a revoked login asks for `darwin mcp login`, without a 
   await disconnectAll(clients);
 }
 // ---------------------------------------------------------------------------------------------
+header('SER-122: issuer stamps are validated without extra discovery or runtime registration');
+{
+  const stored = await readOAuthRecord('fake', fake.url);
+  if (stored.status !== 'ok') throw new Error('issuer test requires the completed login record');
+  const original = stored.record;
+  for (const field of ['tokens', 'clientInformation'] as const) {
+    for (const issuer of ['https://foreign.example.test', 42, '']) {
+      const candidate = {
+        ...original,
+        [field]: { ...(field === 'tokens' ? { access_token: 'expired', token_type: 'Bearer' } : original.clientInformation), issuer },
+      };
+      writeFileSync(oauthRecordPath('issuer-probe'), JSON.stringify({ ...candidate, server: 'issuer-probe' }), { mode: 0o600 });
+      fake.requests.length = 0;
+      fake.authHeaders.length = 0;
+      writeGlobalMcp({ 'issuer-probe': { url: fake.url, oauth: true } });
+      const { clients } = await loadMcpClients(project);
+      const tools = await clients[0]!.listTools();
+      assert(`${field} issuer ${JSON.stringify(issuer)} is refused with login guidance`,
+        tools.length === 0 && mcpServerStatuses(clients)[0]?.auth === 'login-required');
+      assert('no stored bearer, discovery, registration or refresh was sent',
+        fake.authHeaders.length === 0 && !fake.requests.some((entry) => OAUTH_PATHS.test(entry)));
+      await disconnectAll(clients);
+    }
+  }
+  const { issuer: _stamp, ...legacyClient } = original.clientInformation!;
+  await storeWriteRecord({ ...original, server: 'issuer-legacy', clientInformation: legacyClient });
+  const legacy = await readOAuthRecord('issuer-legacy', fake.url);
+  assert('legacy unstamped records stay readable without a fabricated issuer',
+    legacy.status === 'ok' && legacy.record.clientInformation?.issuer === undefined);
+  const provider = await createRuntimeOAuthProvider(settingsFor('issuer-legacy', fake.url));
+  assert('a legacy registration is still available to the runtime', provider.clientInformation()?.client_id === legacyClient.client_id);
+}
+
 header('/mcp projection stays read-only: reading status connects nothing');
 {
   const probe = await startFake();
@@ -602,7 +641,8 @@ async function refusal(name: string, options: FakeOptions): Promise<{ message: s
     ['registration endpoint on another origin', 'r-register', { metadata: () => ({ registration_endpoint: `${evil.base}/register` }) }, /different origin/],
     ['authorization endpoint on another origin', 'r-authorize', { metadata: () => ({ authorization_endpoint: `${evil.base}/authorize` }) }, /different origin/],
     ['authorization endpoint with a javascript: scheme', 'r-js', { metadata: () => ({ authorization_endpoint: 'javascript:alert(1)' }) }, /scheme|valid|different origin/],
-    ['issuer that is not the authorization server', 'r-issuer', { metadata: () => ({ issuer: 'https://evil.example' }) }, /issuer/],
+    // The 2.x auth engine rejects this before Darwin's discovery callback runs.
+    ['issuer that is not the authorization server', 'r-issuer', { metadata: () => ({ issuer: 'https://evil.example' }) }, /^Issuer mismatch in authorization server metadata \(RFC 8414/],
     ['protected resource for another origin', 'r-resource', { resource: () => 'https://other.example/mcp' }, /different origin|does not match/],
     ['resource-metadata pointer to another origin', 'r-pointer', { challengeMetadataUrl: () => `${evil.base}/.well-known/oauth-protected-resource` }, /different origin/],
   ];

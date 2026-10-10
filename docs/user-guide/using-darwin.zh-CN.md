@@ -89,7 +89,7 @@ TUI 忙碌时照常排队，附上的剪贴板图片沿普通发送路径一起�
 
 队列还有第二种行：**后台任务唤醒**。`bash start` 启动的任务结束时，一行 `queued · [task bg-xxxxxxxx succeeded] <command>` 进入队列（忙碌提示以 ` · 1 task wake` 计数），并像提示词一样出队——作为一个普通回合告知模型任务已结束，附带退出状态和输出尾部，模型无需再轮询 `wait`。它不属于你编辑：`Up` 取回和取消退回只把用户输入放回编辑器，唤醒条目留在队列中；`/clear` 会丢弃它们。若模型已在某个已完成回合中通过 `wait`/`status`/`list` 看到任务结束，则不会再发唤醒。在 `~/.darwin/config.json` 中设置 `backgroundTaskWake: false` 可只保留完成通知。
 
-同一种行也承载**委派唤醒**。当模型以 `_background_execution: true` 运行 `subagent` 或 `workflow` 时，回合在收到确认后立即结束，子代理运行期间你可以继续提问（它的行留在工具面板中）。子代理在会话空闲时结束，则一行 `queued · [delegation xxxxxxxx succeeded] subagent general#…: <task>` 作为一个普通回合出队：通知只点名这次委派，Strands SDK 会把子代理的报告作为 `strands_background_task_result` 工具结果附在同一请求里——darwin 从不复制它。若子代理在另一个回合运行期间结束，SDK 直接在那个回合里交付报告，不再发唤醒。只要还有后台委派在跟踪中，`/clear` 与 `/rewind` 会被拒绝，并提示任务 id 和两条出路：`/agents cancel <id>`，或等待完成唤醒。`/exit` 仍会取消子代理。`backgroundTaskWake: false` 也会关闭这一行为：此时委派会阻塞回合直到子代理结束，与无头模式相同。
+同一种行也承载**委派唤醒**。当模型以 `_background_execution: true` 运行 `subagent` 或 `workflow` 时，回合在收到确认后立即结束，子代理运行期间你可以继续提问（它的行留在工具面板中）。子代理在会话空闲时结束，则一行 `queued · [delegation xxxxxxxx succeeded] subagent general#…: <task>` 作为一个普通回合出队：通知只点名这次委派，Strands SDK 会把子代理的报告作为 `strands_manage_background_task` 工具结果附在同一请求里——darwin 从不复制它。若子代理在另一个回合运行期间结束，SDK 直接在那个回合里交付报告，不再发唤醒。只要还有后台委派在跟踪中，`/clear` 与 `/rewind` 会被拒绝，并提示任务 id 和两条出路：`/agents cancel <id>`，或等待完成唤醒。`/exit` 仍会取消子代理。`backgroundTaskWake: false` 也会关闭这一行为：此时委派会阻塞回合直到子代理结束，与无头模式相同。
 
 
 只有精确匹配 `ModelError: Stream ended without completing a message` 的流中断，才会自动创建一次可见的后续继续回合。失败回合仍完整保留；重试走正常编排，不会塞进 SDK 循环内部。

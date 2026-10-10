@@ -11,7 +11,7 @@
  * is `spike/verify-npm-patch-format.ts`, which `pnpm test` does run.
  *
  * What it asserts, in order:
- * - `pnpm build` succeeds and leaves `dist/patches/@strands-agents+sdk+1.18.0.patch`;
+ * - `pnpm build` succeeds and leaves `dist/patches/@strands-agents+sdk+1.20.0.patch`;
  * - `npm pack --ignore-scripts` (the tree is freshly built, so `prepack` need not
  *   rebuild) lists `dist/src/**` incl. every built-in skill's `SKILL.md`, the generated
  *   patch, `README.md` (npm adds every `README*`, so `README.zh-CN.md` too), `package.json`
@@ -46,7 +46,7 @@ import { assert, header, report } from './shared.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const manifest = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { name: string; version: string };
-const GENERATED_PATCH = 'dist/patches/@strands-agents+sdk+1.18.0.patch';
+const GENERATED_PATCH = 'dist/patches/@strands-agents+sdk+1.20.0.patch';
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 
 function run(command: string, args: readonly string[], options: { cwd: string; env?: NodeJS.ProcessEnv; timeout?: number }): SpawnSyncReturns<string> {
@@ -116,8 +116,8 @@ try {
   assert('<prefix>/bin/darwin exists and the package landed under lib/node_modules', existsSync(bin) && existsSync(installedPackageDir(prefix)));
   assert('the shipped generated patch is in the installed package', existsSync(path.join(installedPackageDir(prefix), GENERATED_PATCH)));
   const installedSdk = JSON.parse(readFileSync(path.join(installedPackageDir(prefix), 'node_modules', '@strands-agents', 'sdk', 'package.json'), 'utf8')) as { version: string; engines: { node: string } };
-  assert('npm installed the exact SDK 1.18.0 with its Node >=22.0.0 requirement',
-    installedSdk.version === '1.18.0' && installedSdk.engines.node === '>=22.0.0');
+  assert('npm installed the exact SDK 1.20.0 with its Node >=22.0.0 requirement',
+    installedSdk.version === '1.20.0' && installedSdk.engines.node === '>=22.0.0');
   assert('normal npm installation does not install the optional QMD peer',
     !existsSync(path.join(installedPackageDir(prefix), 'node_modules', '@tobilu', 'qmd')));
   for (const { file, token } of SDK_PATCH_MARKERS) {
@@ -125,9 +125,30 @@ try {
   }
   const patch = readFileSync(path.join(ROOT, GENERATED_PATCH), 'utf8');
   const patchedFiles = [...patch.matchAll(/^\+\+\+ b\/node_modules\/@strands-agents\/sdk\/(.+)$/gm)].map((match) => match[1]!);
-  // 19 since SER-101 added the Converse/Anthropic/Chat reasoning guards and the
-  // Responses stream-state model id (models/{bedrock,anthropic}.js, openai/{chat-adapter,model}.js).
-  assert('the SDK patch still covers all 19 ported files', patchedFiles.length === 19);
+  // SER-122: upstream now owns the summary scrub; the other 18 files remain.
+  // Pin the inventory, not just its size, so a lost hunk cannot hide behind another file.
+  const expectedFiles = [
+    'index.d.ts', 'index.js',
+    'models/anthropic.js', 'models/bedrock.js', 'models/openai/chat-adapter.js',
+    'models/openai/errors.js', 'models/openai/model.js',
+    'models/openai/responses-adapter.d.ts', 'models/openai/responses-adapter.js',
+    'vended-plugins/context-offloader/plugin.d.ts', 'vended-plugins/context-offloader/plugin.js',
+    'vended-tools/bash/bash.d.ts', 'vended-tools/bash/bash.js',
+    'vended-tools/bash/index.d.ts', 'vended-tools/bash/index.js', 'vended-tools/bash/types.d.ts',
+    'vended-tools/file-editor/file-editor.js', 'vended-tools/file-editor/types.d.ts',
+  ].map((file) => `dist/src/${file}`);
+  assert('the SDK patch covers exactly the 18 retained files', patchedFiles.join('\n') === expectedFiles.join('\n'));
+  const summary = run(process.execPath, ['--input-type=module', '-e', `
+    import { asUserSummary } from ${JSON.stringify(sdkFile(prefix, 'conversation-manager/compression/context-compression.js'))};
+    const result = asUserSummary({ content: [
+      { type: 'reasoningBlock', text: 'private' }, { type: 'toolUseBlock', name: 'never' },
+      { type: 'textBlock', text: 'summary' }, { type: 'citationsBlock', content: [{ text: 'cited' }] },
+    ] });
+    if (result.role !== 'user' || result.content.map(b => b.type + ':' + b.text).join('|') !== 'textBlock:summary|textBlock:cited') process.exit(1);
+    try { asUserSummary({ content: [{ type: 'reasoningBlock', text: 'private' }] }); process.exit(1); }
+    catch (error) { if (!error.message.includes('no text')) throw error; }
+  `], { cwd: temp });
+  assert('upstream summary conversion replaces the removed patch: text/citations only, no-text refused', summary.status === 0);
   for (const file of patchedFiles) {
     assert(`npm and pnpm install identical patched SDK bytes: ${file}`,
       readFileSync(path.join(installedPackageDir(prefix), 'node_modules', '@strands-agents', 'sdk', file))

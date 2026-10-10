@@ -16,15 +16,26 @@ import { constants as fsConstants } from 'node:fs';
 import { lstat, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.js';
+import type {
+  OAuthDiscoveryState,
+  StoredOAuthClientInformation as OAuthClientInformationMixed,
+  StoredOAuthTokens as OAuthTokens,
+} from '@modelcontextprotocol/client';
 import { OAuthClientInformationSchema, OAuthTokensSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
-import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { z } from 'zod';
 
 import { userDarwinDir } from '../paths.js';
 
 export const OAUTH_STORE_DIRNAME = 'mcp-auth';
 /** Largest record read or written. Real records are a few KiB. */
 export const MAX_OAUTH_RECORD_BYTES = 64 * 1024;
+
+// Keep the existing wire validators, but retain the 2.x client's SEP-2352 issuer
+// stamp too. Stripping it silently disables upstream authorization-server isolation
+// on the next read. Legacy unstamped records remain readable; never invent a stamp.
+const storedIssuer = { issuer: z.string().min(1).optional() };
+const StoredTokensSchema = OAuthTokensSchema.extend(storedIssuer);
+const StoredClientInformationSchema = OAuthClientInformationSchema.extend(storedIssuer);
 
 export interface OAuthStoredDiscovery extends OAuthDiscoveryState {
   /**
@@ -88,13 +99,13 @@ function parseRecord(value: unknown): OAuthRecord | string {
   }
   let tokens: OAuthTokens | undefined;
   if (value['tokens'] !== undefined) {
-    const parsed = OAuthTokensSchema.safeParse(value['tokens']);
+    const parsed = StoredTokensSchema.safeParse(value['tokens']);
     if (!parsed.success) return 'stored tokens are malformed';
     tokens = parsed.data;
   }
   let clientInformation: OAuthClientInformationMixed | undefined;
   if (value['clientInformation'] !== undefined) {
-    const parsed = OAuthClientInformationSchema.safeParse(value['clientInformation']);
+    const parsed = StoredClientInformationSchema.safeParse(value['clientInformation']);
     if (!parsed.success) return 'stored client information is malformed';
     clientInformation = parsed.data;
   }

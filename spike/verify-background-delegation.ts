@@ -18,7 +18,7 @@
  *         is answered by an ordinary turn with no pair in its request; the child's
  *         settlement while idle publishes exactly one snapshot and `delegationWakeEntries`
  *         yields exactly one wake (and none a second time); the wake turn's first model
- *         request carries the SDK's `strands_background_task_result` pair and the
+ *         request carries the SDK's `strands_manage_background_task` pair and the
  *         `<task-notification>` text; its stream opens with the forwarded after-event,
  *         exactly once across all turns; the live row closes as `· background result`;
  *         the trajectory holds the before-event in the dispatching turn, the after-event in
@@ -139,6 +139,7 @@ class RouterModel extends Model<BaseModelConfig> {
   readonly calls: RecordedCall[] = [];
   scenario: Scenario = 'plain';
   childGate = new Gate();
+  childFailure = false;
   /** The tool-use id the next `background`/`background-only` run issues; per run, so history cannot confuse runs. */
   bgId = 'bg-1';
   /** `slow-plain` runs this when its model call starts and holds the answer until it resolves — the test settles the child inside the call. */
@@ -176,6 +177,7 @@ class RouterModel extends Model<BaseModelConfig> {
         else cancelSignal.addEventListener('abort', () => resolve(), { once: true });
       }),
     ]);
+    if (this.childFailure) throw new Error('fixture child failed');
     yield* text(CHILD_REPORT);
   }
 
@@ -267,18 +269,22 @@ function resultTextFor(messages: readonly Message[], toolUseId: string): string 
   return undefined;
 }
 
-/** Task ids of every SDK-delivered `strands_background_task_result` pair in the request, in order. */
+/** Task ids of every SDK-delivered `strands_manage_background_task` pair in the request, in order. */
 function deliveredPairIds(messages: readonly Message[]): string[] {
   const ids: string[] = [];
   for (const message of messages) {
     for (const block of message.content) {
-      if (block.type === 'toolUseBlock' && block.name === BACKGROUND_TASK_RESULT_TOOL_NAME) ids.push(block.toolUseId);
+      if (block.type === 'toolUseBlock' && block.name === BACKGROUND_TASK_RESULT_TOOL_NAME
+        && JSON.stringify(block.input) === JSON.stringify({ mode: 'get', taskId: block.toolUseId })
+        && messages.some((candidate) => candidate.content.some((result) => result.type === 'toolResultBlock' && result.toolUseId === block.toolUseId))) {
+        ids.push(block.toolUseId);
+      }
     }
   }
   return ids;
 }
 
-/** The text of the SDK's delivered `strands_background_task_result` tool result (the first pair). */
+/** The text of the SDK's delivered `strands_manage_background_task` tool result (the first pair). */
 function backgroundResultText(messages: readonly Message[]): string | undefined {
   const [taskId] = deliveredPairIds(messages);
   return taskId === undefined ? undefined : resultTextFor(messages, taskId);
@@ -563,9 +569,15 @@ async function main(): Promise<void> {
         && message.content.some((block) => block.type === 'textBlock' && block.text === wakeText)));
     const pairToolUse = wakeCalls[0]!.messages.flatMap((message) => message.content)
       .find((block) => block.type === 'toolUseBlock' && block.name === BACKGROUND_TASK_RESULT_TOOL_NAME);
-    assert('the delivered pair names the original tool and uses the task id',
+    assert('the delivered pair is the SDK management get for the exact task id',
       pairToolUse !== undefined && pairToolUse.type === 'toolUseBlock' && pairToolUse.toolUseId === taskId
-      && JSON.stringify(pairToolUse.input) === JSON.stringify({ toolName: 'subagent' }));
+      && JSON.stringify(pairToolUse.input) === JSON.stringify({ mode: 'get', taskId }));
+    const pairResult = wakeCalls[0]!.messages.flatMap((message) => message.content)
+      .find((block) => block.type === 'toolResultBlock' && block.toolUseId === taskId);
+    const metadata = pairResult?.type === 'toolResultBlock' ? pairResult.content[0] : undefined;
+    assert('delivery preserves upstream task metadata alongside the unchanged report',
+      metadata?.type === 'jsonBlock' && JSON.stringify(metadata.json).includes('"toolName":"subagent"')
+      && JSON.stringify(metadata.json).includes('"status":"completed"'));
     assert('the wake turn ends with the answer quoting the delivered report',
       wakeTurn.events.some((event) => event.type === 'agentResultEvent' && event.result.stopReason === 'endTurn'
         && event.result.toString() === `done: ${CHILD_REPORT}`));
@@ -797,6 +809,39 @@ async function main(): Promise<void> {
       && runtime.listBackgroundDelegations().length === 0);
     assert('the cancelled run\'s after-event was forwarded exactly once, in the cancelled turn or at the next stream\'s start',
       afterEvents([...cancelledTurn.events, ...afterCancel.events], 'subagent').length === 1);
+
+    header('background delegation — SER-122 failed task metadata and the never-ran row fallback');
+    model.scenario = 'background-only';
+    model.bgId = 'bg-failure';
+    model.childGate = new Gate();
+    model.childFailure = true;
+    settlements.length = 0;
+    const failedDispatch = await drain(runtime, 'dispatch a failing child');
+    const failedTaskId = runtime.listBackgroundDelegations()[0]?.taskId;
+    assert('the fallback control has one task-id-bound live delegation',
+      failedTaskId !== undefined && failedDispatch.state.activeTools.some((tool) => tool.backgroundDelegation?.taskId === failedTaskId));
+    model.childGate.open();
+    assert('the real child fails and publishes its failed settlement',
+      await waitFor(() => settlements.length === 1) && settlements[0]?.state === 'failed');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    model.scenario = 'plain';
+    const failureTurn = await drain(runtime, 'receive the failure', { state: failedDispatch.state });
+    const failedDelivery = failureTurn.events.find((event) =>
+      event.type === 'messageAddedEvent' && event.message.role === 'user'
+      && event.message.content.some((block) => block.type === 'toolResultBlock' && block.toolUseId === failedTaskId));
+    if (failedDelivery?.type !== 'messageAddedEvent') throw new Error('missing failed task delivery');
+    // Reuse the real SDK delivery but omit its after-event to exercise the fallback.
+    const deliveryBefore = JSON.stringify(failedDelivery.message);
+    const fallbackState = turnReducer(failedDispatch.state, { type: 'streamEvent', event: failedDelivery });
+    assert('failed task metadata closes the fallback row as error despite a successful get',
+      toolRows(fallbackState.history, 'subagent').at(-1)?.status === 'error' && fallbackState.activeTools.length === 0);
+    assert('the projection never rewrites the SDK delivery or model history',
+      JSON.stringify(failedDelivery.message) === deliveryBefore
+      && failedDelivery.message.content.some((block) => block.type === 'toolResultBlock' && block.status === 'success'));
+    assert('the ordinary forwarded failure also remains an error with its original diagnostic',
+      toolRows(failureTurn.history, 'subagent').at(-1)?.status === 'error'
+      && toolRows(failureTurn.history, 'subagent').at(-1)?.preview.includes('fixture child failed') === true);
+    model.childFailure = false;
 
     header('background delegation — (d) /clear succeeds once nothing is tracked, and the successor keeps the option');
     unsubscribeSettlements();

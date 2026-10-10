@@ -22,7 +22,7 @@
  * 7. **delegation** — (fourth session, SER-070) a background `subagent` outlives its
  *                     dispatching turn; `/clear` is refused locally while it is tracked; its
  *                     settlement while idle yields exactly one `delegation wake ·` turn whose
- *                     request carries the SDK's `strands_background_task_result` pair (the
+ *                     request carries the SDK's `strands_manage_background_task` pair (the
  *                     notification never repeats the report); one `taskNotification` record
  *                     with `source: 'delegation'`; `/clear` succeeds once nothing is tracked.
  * 8. **collapsed**  — 19 real completed jobs occupy one summary row, keep typed messages visible
@@ -119,7 +119,7 @@ interface ModelCall {
   bashDescription?: string;
   /** `parent` sees the delegation tools; a background child (SER-070) does not. */
   role: 'parent' | 'child';
-  /** Task ids of the SDK's delivered `strands_background_task_result` pairs in the request. */
+  /** Task ids of the SDK's delivered `strands_manage_background_task` pairs in the request. */
   pairTaskIds: string[];
 }
 
@@ -857,7 +857,7 @@ async function delegationSession(): Promise<void> {
     const taskId = /task="([0-9a-f-]{36})"/.exec(wakeText)?.[1];
     assert('the notification names the delegation, its state and elapsed time, and points at the SDK pair — never the report',
       taskId !== undefined && /<task-notification task="[0-9a-f-]{36}" tool="subagent" state="succeeded" elapsed="\d+s">/.test(wakeText)
-      && wakeText.includes('delegation: subagent general#deleg') && wakeText.includes('strands_background_task_result')
+      && wakeText.includes('delegation: subagent general#deleg') && wakeText.includes('strands_manage_background_task')
       && !wakeText.includes('child counted') && wakeText.endsWith('</task-notification>'));
     assert('the wake turn\'s request carried the SDK\'s result pair for that task — attached by the SDK, not copied by darwin',
       taskId !== undefined && wakeCalls[0]?.pairTaskIds.length === 1 && wakeCalls[0].pairTaskIds[0] === taskId);

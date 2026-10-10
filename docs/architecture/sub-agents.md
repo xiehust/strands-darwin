@@ -216,7 +216,7 @@ only after its child finishes, and the parent model receives the tool results be
 turn. The one exception is a call the model marks `_background_execution: true` (SER-064/SER-070):
 the SDK's `backgroundTasks` plugin returns an acknowledgement at once and, in the interactive TUI,
 the dispatching turn ends with the child still running; the report reaches the model in the next turn
-that runs — the SDK attaches it as a `strands_background_task_result` pair, and a completion wake
+that runs — the SDK attaches it as a `strands_manage_background_task` pair, and a completion wake
 starts that turn when the session is idle. `/clear` and `/rewind` refuse while such a delegation is
 tracked. Headless runs keep the SDK waiting inside the invocation, so their one run still contains the
 report. See `docs/architecture/load-bearing-decisions.md` § "Background delegation …".

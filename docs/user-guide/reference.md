@@ -442,7 +442,7 @@ and `workflow` only; every other tool stays foreground. A flagged call is gated 
 foreground one and returns an acknowledgement with a task id. Where the report lands depends on the
 runtime: in the interactive TUI (with `backgroundTaskWake` on) the dispatching turn ends after the ack,
 the child keeps running while you prompt, and the report arrives in the next turn that runs — the
-SDK attaches it as a `strands_background_task_result` tool-use/tool-result pair before that turn's
+SDK attaches it as a `strands_manage_background_task` tool-use/tool-result pair before that turn's
 model call, and when the session is idle a **delegation wake** (below) starts that turn; in headless
 mode and with `backgroundTaskWake: false` the SDK waits inside the invocation and the report is
 delivered before the parent's next model call in the same turn. Children never see the flag or the tool
@@ -473,14 +473,14 @@ output tail (last N line(s); `bash output` with taskId "bg-…" reads the full l
 
 A settled background delegation uses the same entry kind, tagged `[delegation <id8> state]`, with the
 delegation label (`subagent general#…: <task>`) where a job's command sits and a block that names the
-tool, task id, state and elapsed time and points at the `strands_background_task_result` pair the SDK
+tool, task id, state and elapsed time and points at the `strands_manage_background_task` pair the SDK
 attaches to the same request — the report itself is never repeated:
 
 ```
 <task-notification task="<uuid>" tool="subagent" state="succeeded" elapsed="1m 2s">
 A background subagent delegation you dispatched with _background_execution: true finished. …
 delegation: subagent general#…: <task>
-Its report is in this turn's strands_background_task_result tool result for task "<uuid>" — read it there; it is not repeated here.
+Its report is in this turn's strands_manage_background_task tool result for task "<uuid>" — read it there; it is not repeated here.
 …
 </task-notification>
 ```

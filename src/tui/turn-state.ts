@@ -119,7 +119,7 @@ export interface ActiveTool {
    * Set when the model routed this delegation to the SDK's background executor
    * (SER-064). `baseSummary` is the row's label without the background marker;
    * `taskId` arrives with the SDK's ack and lets the delivered
-   * `strands_background_task_result` pair find this row if no `afterToolCallEvent`
+   * `strands_manage_background_task` pair find this row if no `afterToolCallEvent`
    * ever does.
    */
   backgroundDelegation?: { readonly baseSummary: string; readonly taskId?: string };
@@ -485,7 +485,7 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
 
     case 'messageAddedEvent': {
       // The SDK delivers a finished background task to the model as a synthetic
-      // `strands_background_task_result` tool-use/tool-result pair (SER-064). The
+      // `strands_manage_background_task` tool-use/tool-result pair (SER-064). The
       // run's own `afterToolCallEvent` has normally finished the row already; only a
       // task that never ran its tool body — cancelled while queued, an execution
       // error before the body — still has a live row here, and finishes with the
@@ -497,7 +497,15 @@ function applyStreamEvent(state: TurnState, event: AgentStreamEvent): TurnState 
         if (block.type !== 'toolResultBlock') continue;
         const active = next.activeTools.find((tool) => tool.backgroundDelegation?.taskId === block.toolUseId);
         if (active === undefined) continue;
-        next = finishToolCall(next, { name: active.name, toolUseId: active.id, input: active.input }, block);
+        // SDK 1.20 delivers a successful management `get` even for a failed task.
+        // Only this task-id-matched fallback row projects the task's own outcome;
+        // the SDK result, model history and ordinary management calls stay untouched.
+        const first = block.content[0];
+        const task = first?.type === 'jsonBlock' ? first.json : undefined;
+        const failed = task !== null && typeof task === 'object' && !Array.isArray(task)
+          && task['taskId'] === block.toolUseId && (task['status'] === 'failed' || task['status'] === 'cancelled');
+        const result = failed ? { ...block, status: 'error' as const } : block;
+        next = finishToolCall(next, { name: active.name, toolUseId: active.id, input: active.input }, result);
       }
       return next;
     }

@@ -9,13 +9,14 @@
  * untouched.
  *
  * Everything goes through the public SDK surface: `McpClient.connectionState`,
- * `serverCapabilities` and `client` (the MCP SDK `Client`, whose `listPrompts` /
+ * `serverCapabilities` and `client` (the MCP SDK `Client`, whose `request` /
  * `getPrompt` take `RequestOptions` with a timeout and an `AbortSignal`). Never
  * `listTools()` (it connects lazily) and never `connect(true)`: a server that is not
  * already `connected` gets no prompt request at all, which is also why a server held
  * back by workspace trust (it has no client) and a failed or prompt-less one stay
  * silent.
  */
+import { SdkError, SdkErrorCode } from '@modelcontextprotocol/client';
 import type { McpClient } from '@strands-agents/sdk';
 
 import { MAX_FIELD_CHARS } from '../trajectory/record.js';
@@ -195,14 +196,20 @@ async function listServerPrompts(client: McpClient, timeoutMs: number): Promise<
   try {
     let more = true;
     while (more) {
-      const page = await client.client.listPrompts(cursor === undefined ? undefined : { cursor }, { signal: deadline.signal, timeout: timeoutMs });
+      // MCP 2.x listPrompts() auto-paginates and caches when no cursor is given.
+      // Use its public single-request seam so Darwin's first-page, page-count and
+      // whole-list deadline bounds still govern every request, with no cache reads.
+      const page = await client.client.request(
+        { method: 'prompts/list', ...(cursor === undefined ? {} : { params: { cursor } }) },
+        { signal: deadline.signal, timeout: timeoutMs },
+      );
       pages += 1;
       raw.push(...page.prompts);
       cursor = typeof page.nextCursor === 'string' && page.nextCursor !== '' ? page.nextCursor : undefined;
       more = cursor !== undefined && raw.length <= MAX_MCP_PROMPTS_PER_SERVER && pages < MAX_MCP_PROMPT_LIST_PAGES;
     }
   } catch (error) {
-    const timedOut = deadline.signal.aborted || (typeof error === 'object' && error !== null && (error as { code?: unknown }).code === -32001);
+    const timedOut = deadline.signal.aborted || (SdkError.isInstance(error) && error.code === SdkErrorCode.RequestTimeout);
     const reason = timedOut
       ? `prompts/list timed out after ${timeoutMs / 1000}s`
       : `prompts/list failed — ${errorText(error)}`;
@@ -457,8 +464,7 @@ export async function expandMcpPrompt(
   } catch (error) {
     if (options.signal?.aborted === true) throw new McpPromptError(`/${command.name}: cancelled before mcp server "${command.server}" answered`);
     const text = errorText(error);
-    // -32001 is the MCP SDK's own RequestTimeout code (`ErrorCode.RequestTimeout`).
-    const timedOut = typeof error === 'object' && error !== null && (error as { code?: unknown }).code === -32001;
+    const timedOut = SdkError.isInstance(error) && error.code === SdkErrorCode.RequestTimeout;
     const reason = timedOut ? `timed out after ${timeoutMs / 1000}s` : `failed — ${text}`;
     throw new McpPromptError(`/${command.name}: prompts/get on mcp server "${command.server}" ${reason}`);
   } finally {

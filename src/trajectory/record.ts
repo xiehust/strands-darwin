@@ -368,7 +368,7 @@ export interface ShellCommandRecord extends RecordEnvelope {
  *   delegation label the transcript row shows (`subagent general#bg1: count things`),
  *   `taskId` the SDK task id, `exitCode`/`signal` always `null`, and `state` is
  *   `succeeded`/`failed` from the run's tool result — the report itself is never here,
- *   it reaches the model only as the SDK's own `strands_background_task_result` pair.
+ *   it reaches the model only as the SDK's own `strands_manage_background_task` pair.
  */
 export interface TaskNotificationFields {
   taskId: string;
