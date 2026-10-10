@@ -14,7 +14,7 @@ Implementation design and requirement-to-test checklist. Host owns acceptance an
 | Peer provenance is not user input, recall, rewind, memory quote or cloud consent; slash/shell/at/framing stay literal | `verify-collaboration-drivers.ts`: captured model requests, trajectory/replay/recall/catalogue, memory refusal |
 | Idle-only TUI delivery, busy/permission ownership, cancellation/successor fencing; headless bounded drain and honest structured events | `verify-collaboration-drivers.ts`: real PTY and normal headless driver, lifecycle negatives |
 | Existing leases, `/agents`, task wakes and plain streaming unchanged; canonical help/completion and source/built CLI work | Existing affected suites, free completion, new CLI tests against source and build |
-| Final human/peer failure cannot silently drain another peer; explicit user on restores admission without changing grants; exact interruption still continues once | `verify-collaboration-failures.ts`: original 30-second human hold timeout and throwing peer model in real PTYs, queued marker absent from captured requests, endpoint retired, restart and continuation controls |
+| Final human/peer failure cannot silently drain another peer; the same endpoint stays published and a later message is admitted; explicit user on still mints a new incarnation without changing grants; exact interruption still continues once | `verify-collaboration-failures.ts`: original 30-second human hold timeout and throwing peer model in real PTYs, queued marker absent from captured requests, same UUID admits later work, `/collaborate on` rotates, continuation controls |
 | Stale prefix cannot spend challenge budget; grammar fails before any state/probe/model work | `verify-collaboration-failures.ts`: 40 endpoints in actual directory order, first 32 retired registrations restored, 8 live found by API and CLI; absent/existing state hashes, socket sentinel and offline model-call log |
 | Every begun failed headless peer has bounded outcome/error provenance; initial human result survives; later peers never drain | `verify-collaboration-failures.ts`: throwing offline model in text/json/stream-json, exact request counts, final peer outcome/error and stream event, unstarted peer excluded, successful single-continuation controls |
 
@@ -41,11 +41,13 @@ to publish a fresh endpoint. A generation fence also rejects a startup supersede
 or overlapping user `on` commands, so it cannot publish an orphan endpoint. No pending text is
 reinterpreted as a successor's user input.
 
-Final TUI turn failure closes the local endpoint before publishing idle and visibly drops the peer
-inbox, regardless of whether the failed turn was human or peer. A normal human prompt cannot reopen
-admission; explicit user `on` publishes a new incarnation without changing project-pair grants.
-This is outside `runWithStreamResumption`, so the one exact interruption continuation retains its
-inbox until its final outcome. Cancellation and successor semantics remain unchanged. Headless also
+Final TUI turn failure drops the peer inbox before publishing idle, whether the failed turn was
+human or peer, and does not retire the listening endpoint. Those dropped messages are not replayed,
+but the same UUID stays discoverable and sendable — a long cross-project session must not lose its
+incarnation because one model call failed. Explicit user `on` still publishes a new incarnation
+without changing project-pair grants. This is outside `runWithStreamResumption`, so the one exact
+interruption continuation retains its inbox until its final outcome. Cancellation and successor
+semantics remain unchanged. Headless also
 closes/drops on failure and stops the drain. Begun failed peers gain a bounded structured error and
 failure outcome (plus attributed `turn.failed` in stream-json); unstarted peers are not claimed as
 processed. A completed human reply survives subsequent peer failure in every output format, while

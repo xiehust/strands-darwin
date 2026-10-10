@@ -1269,12 +1269,15 @@ export function App({
         lifecycleOutcome = turnAborted.current ? 'cancelled' : 'failure';
         turnAborted.current = true;
         // Only final failure reaches here: the exact stream continuation above
-        // keeps its inbox. Fence admission before idle can drain another peer.
+        // keeps its inbox. Drop what was already queued before idle can drain
+        // it, but leave the listening incarnation in place — a turn failure is
+        // not a new process, and retiring the UUID is how a long cross-project
+        // session loses every peer it can send to.
         if (lifecycleOutcome === 'failure') {
           const local = runtime.collaboration;
-          const wasAvailable = local?.address !== undefined || (local?.pending ?? 0) > 0;
-          local?.close('turn failed');
-          if (wasAvailable) dispatch({ type: 'notice', severity: 'warn', text: 'Collaboration paused after turn failure; queued peers dropped. User: /collaborate on to publish a fresh endpoint. Project grants unchanged.' });
+          const queued = local?.pending ?? 0;
+          local?.dropQueued('turn failed');
+          if (queued > 0) dispatch({ type: 'notice', severity: 'warn', text: 'Queued peer messages dropped after turn failure; they are not replayed. This endpoint stays published at the same address.' });
         }
         // A throttled turn names how retry ended — the cap (`after N attempts`) or a
         // wait Esc cut short — from the runtime's own outcome, never the message text.

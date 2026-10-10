@@ -88,10 +88,11 @@ after confirmation. Pending requests expire after ten minutes. Revocation cancel
 for that pair and invalidates both queued and future deliveries; off persists for this HOME and
 invalidates every queued message. On publishes a new endpoint in the current TUI. After Esc/cancel,
 use `/collaborate on` to publish a fresh endpoint; old addresses never name its successor.
-A final failed human or peer turn also closes the current endpoint and visibly drops queued peers.
-No automatic peer message resumes that failed conversation, and an ordinary human prompt does not
-reopen admission. Use `/collaborate on` explicitly when ready; durable project grants are unchanged.
-The exact one-time stream-interruption continuation is allowed to finish before this failure fence.
+A final failed human or peer turn drops queued peers and does not run them, but the listening
+endpoint stays at the same address, so discovery and sends keep working. Dropped messages are not
+replayed. Cancellation, off, clear/rewind and shutdown still retire the endpoint; durable project
+grants are unchanged. The exact one-time stream-interruption continuation keeps its inbox until
+that continuation finishes.
 
 The standalone `darwin collaborate` CLI has the same verbs (omit the slash). It can confirm a
 pending request while a TUI is blocked on a tool. Do **not** use `-p "/collaborate confirm …"`:
