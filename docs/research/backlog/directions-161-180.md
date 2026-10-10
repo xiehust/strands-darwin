@@ -50,7 +50,7 @@ User explicitly requested latest SDK. Official [1.20.0 release](https://github.c
 
 ## SER-123 — Adopt the SDK public MCP tool owner accessor in CodeGraph and web-search wrappers
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 163
 - Score: 12
 - Importance: 3
@@ -62,8 +62,8 @@ User explicitly requested latest SDK. Official [1.20.0 release](https://github.c
 
 ### Implementation / acceptance evidence
 
-Not implemented. Acceptance: public typed `McpTool.mcpClient` owner checks replace both private-field casts; real discovered tools and refreshed tools retain exact-client wrapping, foreign and non-MCP tools unchanged, no extra list/connect. Run CodeGraph/web-search suites with negative controls, Host typecheck/full tests/build. Record accepted commit and exact evidence here.
+Accepted `26a947bb5237e0be00c3d642a242373d82db2fc1` after diff review against `38ac3d31a22d30d42723d5fa991ea83c3b27a60a` (only this child commit intervened). First implementation failed Host typecheck because SDK 1.20 does not export the McpTool constructor; one focused same-session correction inferred its type from public `McpClient.listTools`, guarded by existing exact-client registry membership, then read the public getter. No deep import or patch. Host second acceptance `bg-e51233eb-ee7c-4210-a325-b7a74c75fa0d` exited 0: CodeGraph suite 25/0, web-search suite 18/0, typecheck, full 167-suite test gate, build, built-wrapper imports, built CLI, diff check and clean tree. Negative controls prove non-MCP lookalike getters unread, foreign owners unchanged, no extra discovery, repeat/refresh stability, parent/child denial and unchanged bytes/events. Child `session-20261010-155414907`; complete tasks/spend recorded in iteration-log Batch 176.
 
 ### Notes / blockers / abandonment reason
 
-Depends on accepted SER-122. Upstream [PR #4863](https://github.com/strands-agents/harness-sdk/pull/4863) exposes a read-only getter for the original client without connecting. `src/mcp/codegraph-preflight.ts` and `src/mcp/web-search-empty-results.ts` currently use `mcpOwner` with `as unknown as { mcpClient?: unknown }`; this is the exact cast upstream replaced. Preserve existing wrapper behavior, streaming bytes/events, permission gates, parent/child and refresh lifecycle; do not widen server matching or introduce discovery. Follow the two load-bearing architecture sections. No product UX change is intended.
+Depends on accepted SER-122. Upstream [PR #4863](https://github.com/strands-agents/harness-sdk/pull/4863) exposes a read-only getter for the original client without connecting. At research time, `src/mcp/codegraph-preflight.ts` and `src/mcp/web-search-empty-results.ts` used `mcpOwner` with `as unknown as { mcpClient?: unknown }`; this is the exact cast upstream replaced. Preserve existing wrapper behavior, streaming bytes/events, permission gates, parent/child and refresh lifecycle; do not widen server matching or introduce discovery. Follow the two load-bearing architecture sections. No product UX change is intended. Accepted implementation updates those sections only; README and bilingual user guides remain accurate. The pre-existing private server-name map and refresh seam remain version-sensitive, intentionally outside this direction. No blocker remains.

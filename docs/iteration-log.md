@@ -3759,3 +3759,25 @@ Docs wrap-up: both README badges, English/Chinese getting-started, reference and
 Exact spend: `usage: input=216 output=47526 cacheRead=26014646 cacheWrite=366262`; `cost: total=32.9714 input=0.0022 output=2.3763 cacheRead=26.0146 cacheWrite=4.5783 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Exclusive tokens **26428650**, approximate USD **32.9714**, rounded component residual **0.0000**. Host/research excluded.
 
 SER-122 is done. SER-123 remains queued, premise unchanged; the batch continues immediately on the rebuilt accepted revision.
+
+## Batch 176 — SER-123 public MCP owner accessor (2026-10-10)
+
+Same user-directed SDK research run as Batch 175. Fresh child **`session-20261010-155414907`** began at **`38ac3d31a22d30d42723d5fa991ea83c3b27a60a`**: accepted/rebuilt SER-122 plus Host documentation-only closure/status commits. Previous Host full acceptance is the unchanged-source starting gate; `verify-skills.ts` separately checked updated backlog/report metadata. Tree was clean and contained `47eb4bf`.
+
+| Managed child task | Outcome / receipt |
+|---|---|
+| `bg-98d84215-f5cf-4dbe-9c72-795dde0d8dab` | Exit 0, drained, but incomplete/uncommitted. Host acceptance `bg-42a8fe9b-d27a-4b04-805e-7837a09b6929` independently failed typecheck: unavailable root `McpTool` export and consequent narrowing errors. `usage: input=28 output=12953 cacheRead=795830 cacheWrite=91883`; `cost: total=2.5923 input=0.0003 output=0.6477 cacheRead=0.7958 cacheWrite=1.1485 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. |
+| `bg-45c84ad8-6c38-4b0f-a48e-acc87ef123c3` | Source-CLI correction launch exited 1 at module loading before model startup; drained, no usage or cost receipt. It did not execute the correction. No guessed zeros. |
+| `bg-9c9b9f69-20b9-47e6-9a20-2013dd9b1c38` | One focused correction, same explicit session, yolo/context-offload, no compaction/ceiling. Used the prior Host-built accepted `dist` CLI because source startup was broken; Host checked it started and never edited implementation. Exit 0, drained. `usage: input=40 output=10405 cacheRead=2218597 cacheWrite=129282`; `cost: total=4.3553 input=0.0004 output=0.5202 cacheRead=2.2186 cacheWrite=1.6160 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. |
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Typed public getter after exact registry membership | `26a947bb5237e0be00c3d642a242373d82db2fc1` | Reviewed explicit base/result diff (only child commit intervened). Second acceptance `bg-e51233eb-ee7c-4210-a325-b7a74c75fa0d` exited 0: `pnpm tsx spike/verify-codegraph-preflight.ts` 25/0, `pnpm tsx spike/verify-web-search-empty-results.ts` 18/0, `pnpm typecheck`, full `pnpm test` (167 suites), `pnpm build`, both built-wrapper imports, built CLI version, diff check and clean status. |
+
+Only five files changed: the two MCP wrappers, their existing suites, and load-bearing architecture. The SDK exposes the getter but not its constructor; public `McpClient.listTools` return-type inference plus existing tool-object membership provides the narrowing. Tests use real in-memory MCP clients/servers and cover foreign/same-name owners, unread lookalike properties, zero extra discovery, stable repeat/refresh, unchanged bytes/events and parent/child gate denial. Existing private server-name map/refresh seams stay intentionally unchanged.
+
+Docs wrap-up: clarified the two load-bearing sections; README and English/Chinese guides have no altered user surface and need no change. No new dependency/SDK patch, policy/config/cloud mutation, publish or live-provider check.
+
+SER-123 reported receipts total **3259018** exclusive tokens and approximate USD **6.9476**. The unstarted source launch has no spend receipt, stated separately. Correction reported cost is **0.0001** above rounded components; no adjustment. Entire SDK batch reported subtotal: input **284**, output **70884**, cacheRead **29029073**, cacheWrite **587427**, exclusive sum **29687668**; USD **39.9190**. Host/research excluded.
+
+**Halt: batch exhausted.** Both directions are done; no new abandonment. All remaining backlog records are closed. Host pushes the current branch once after this closure commit and verifies the upstream range; no force push or history rewrite.
