@@ -554,7 +554,7 @@ Acceptance is in `spike/verify-permission-modes.ts` plus the existing gate behav
 
 ## SER-120 — `imageViewer` paths use the same sensitive-read predicate as `fileEditor view`
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 160
 - Score: 14
 - Importance: 4
@@ -566,7 +566,7 @@ Acceptance is in `spike/verify-permission-modes.ts` plus the existing gate behav
 
 ### Implementation / acceptance evidence
 
-(none yet)
+Accepted 2026-10-10 at `dc04e2eed8771b4279ef7abbec87fbd8dedd5790`. Child session `session-20261010-070015876`, task `bg-50a8d95e-f35a-4b11-b684-de46e42723d1`, exit 0. The child's own `pnpm test` stopped on a 30s timeout in `spike/verify-search-paste.ts`; that file passed alone, and the Host's later uninterrupted gate did not reproduce it. Host gate `bg-0bec4b48-84a4-4a27-bf87-eefbc33f6aa0`, exit 0: permission-modes 1172/0, image-viewer 47/0, typecheck, full tests, build, no FAIL lines, clean tree. See `docs/iteration-log.md` Batch 173.
 
 ### Notes / blockers / abandonment reason
 

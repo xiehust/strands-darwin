@@ -3697,3 +3697,25 @@ Exact receipt: `usage: input=167479 output=54420 cacheRead=5468544 cacheWrite=0`
 
 SER-120 and SER-121 remain not-started. The batch continues.
 
+
+## Batch 173 — SER-120 sensitive imageViewer paths (2026-10-10)
+
+Same research run as Batch 172. SER-120 extends the sensitive-read predicate to `imageViewer` after SER-119 landed in the same function.
+
+Worker base **`dfb874b1ee0d58aa6d1bc251ec7fba53528ad7a8`**, the SER-120 in-progress docs commit on the accepted SER-119 revision. Code at that base had already passed the Host gate in Batch 172; the two commits after it were documentation and status only.
+
+Fresh child conversation **`session-20261010-070015876`**, managed task **`bg-50a8d95e-f35a-4b11-b684-de46e42723d1`**, exit 0, drained. One invocation, no correction. The worker could change `sensitiveReadPath`, the permission and image-viewer suites, and the permissions guide. It did not change the decoder.
+
+| Accepted milestone | Commit | Independent Host acceptance |
+|---|---|---|
+| `imageViewer` paths use the same non-bash sensitive-read predicate as `fileEditor view`; kind stays read | `dc04e2eed8771b4279ef7abbec87fbd8dedd5790` | Diff of seven files reviewed. Host `bg-0bec4b48-84a4-4a27-bf87-eefbc33f6aa0` exit 0: permission-modes 1172/0, image-viewer 47/0, typecheck, full tests, build, no FAIL lines, clean tree. |
+
+`git log dfb874b..HEAD` named only the child commit. A project screenshot stays safe. Plan prompts a sensitive image. Auto does not call the classifier. Allow-rules do not cover it. Yolo still proceeds. The child's own `pnpm test` exited 1 on a 30s timeout in `spike/verify-search-paste.ts` (`permission retained cursor`). That suite passed alone (26/0) and the Host's uninterrupted full gate did not reproduce the timeout, so it was not treated as a product failure.
+
+Docs wrap-up: the child updated `permissions.md`, `permissions.zh-CN.md`, and the decisions paragraph. README and the command reference do not describe imageViewer as unconditionally safe, so they were left unchanged. AGENTS.md was not edited.
+
+Exact receipt: `usage: input=190319 output=45280 cacheRead=7623424 cacheWrite=0`; `cost: total=4.4640 input=0.3806 output=0.2717 cacheRead=3.8117 cacheWrite=0.0000 model=global.xai.grok-4.7 pricing=global.xai.grok-4.7`. This direction: **7859023 mutually exclusive tokens**, approximate USD **$4.4640**. Rounded component sum equals the reported total, residual **$0.0000**.
+
+SER-121 remains not-started. The batch continues.
+
+
