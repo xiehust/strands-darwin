@@ -4,7 +4,7 @@ This page is routed by [`backlog_index.md`](../backlog_index.md). Direction reco
 
 ## SER-121 — Parent-visible subagent reports omit child reasoning blocks
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 161
 - Score: 14
 - Importance: 4
