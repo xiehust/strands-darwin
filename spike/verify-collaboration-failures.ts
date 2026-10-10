@@ -193,29 +193,34 @@ async function tuiFailures(): Promise<void> {
         assert.deepEqual(readPolicy().pairs, grants);
         console.log('PASS TUI exact interruption: one continuation retains inbox and endpoint; queued peer runs only after recovery');
       } else {
-        await tui.waitFor('Collaboration paused after turn failure', { from: mark, timeoutMs: 40_000, settleMs: 100 });
+        await tui.waitFor('Queued peer messages dropped after turn failure', { from: mark, timeoutMs: 40_000, settleMs: 100 });
         await tui.waitFor('peer messages dropped: 1', { from: mark, settleMs: 100 });
         if (kind === 'human') assert(tui.screen.includes('Peer fixture hold timed out'));
         else assert(tui.screen.includes('Peer fixture deliberate failure'));
         await delay(1000);
         assert.equal(requests(project).length, 1, 'final failure cannot automatically start a second model call');
         assert(!JSON.stringify(requests(project)).includes(marker));
-        assert(!existsSync(path.join(store, `${target.endpoint}.json`)), 'failed endpoint retired');
-        sender.beginHumanTurn(); await assert.rejects(sender.send(target.endpoint, 'new admission must fail'));
+        assert(existsSync(path.join(store, `${target.endpoint}.json`)), 'turn failure keeps the listening endpoint');
+        assert.equal((await targetFor(project, sender)).endpoint, target.endpoint);
+        await deliver(sender, target.endpoint, 'fresh work after turn failure');
+        await waitFor(() => requests(project).length === 2, 'same endpoint admits work after turn failure');
+        await tui.waitUntil(() => !tui.frame.includes('working…'), { settleMs: 200 });
+        assert(!JSON.stringify(requests(project)).includes(marker), 'the dropped message is not replayed');
         assert.deepEqual(readPolicy().pairs, grants, 'failure never changes durable grants');
-        // A normal human turn can proceed, but it cannot silently reopen peer admission.
+        // A later human turn keeps the same incarnation; only explicit on rotates it.
         const human = tui.mark(); tui.submit('explicit human recovery');
         await tui.waitFor('PEER_OFFLINE_REPLY', { from: human, settleMs: 100 });
-        assert.equal(requests(project).length, 2); assert(!existsSync(path.join(store, `${target.endpoint}.json`)));
+        assert.equal(requests(project).length, 3);
+        assert.equal((await targetFor(project, sender)).endpoint, target.endpoint);
         const on = tui.mark(); tui.submit('/collaborate on');
         await tui.waitFor('This endpoint:', { from: on, settleMs: 100 });
         const fresh = await targetFor(project, sender); assert.notEqual(fresh.endpoint, target.endpoint);
         assert.deepEqual(readPolicy().pairs, grants, 'user on preserves project grants');
         await deliver(sender, fresh.endpoint, 'fresh admitted work after user on');
-        await waitFor(() => requests(project).length === 3, 'explicit user on permits fresh peer work');
+        await waitFor(() => requests(project).length === 4, 'explicit user on permits fresh peer work');
         await tui.waitUntil(() => !tui.frame.includes('working…'), { settleMs: 200 });
         assert(!JSON.stringify(requests(project)).includes(marker), 'dropped message is never replayed on restart');
-        console.log(`PASS TUI ${kind} failure: queued peer dropped, admission fenced, no silent model call; human on recovers with grants intact`);
+        console.log(`PASS TUI ${kind} failure: queued peer dropped, endpoint kept, later send admitted; human on rotates with grants intact`);
       }
       tui.submit('/exit'); assert.equal(await tui.exitedWithin(10_000), 0);
     } finally { tui.kill(); sender.close('TUI failure control complete'); }

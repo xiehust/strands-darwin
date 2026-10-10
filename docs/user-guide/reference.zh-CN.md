@@ -53,8 +53,9 @@ hub 身份（`hub-node.json`）以及钉住/屏蔽记录（`hub-state.json`）�
 独立可读的租约；租约通信状态为 `discovery-unavailable`，不冒充一次成功扫描后的空结果。
 
 全局 `enabled: true` 不证明某个会话正在监听。TUI `/collaborate status` 会另外报告
-`This endpoint: {active, address, reason?, userAction?}`。取消或最终失败退役端点后，需要用户在该窗口执行
+`This endpoint: {active, address, reason?, userAction?}`。取消退役端点后，需要用户在该窗口执行
 `/collaborate on` 才能恢复；同项目本机通信不需要 Hub，也不需要新增项目间授权。
+回合失败不会退役端点。
 `peer_send {target:<UUID>,text:<string>}` 经过普通工具权限检查，不接受 chain 或 trust 参数。
 模型不能调用用户控制命令。
 TUI 忙碌时拒绝 send，但状态和信任管理命令仍可使用。`/agents` 与只读 `/list-agents` 保持原意。
@@ -86,9 +87,9 @@ v1 消息 envelope 为
 因果链最多 256 条、五分钟有效、每端点每链接收两次、回复四跳；peer 回合发一条，用户回合发四条。
 模型不能提供新 chain。入队、出队、SDK 调用前都检查授权代次；撤销后重新确认不能恢复旧队列。
 `Queued` 不等于处理完成；没有持久收件箱或确认丢失后的自动重发。
-TUI 中用户或 peer 回合最终失败时，会在返回空闲前退役端点、丢弃排队 peer 并提示；只有用户显式执行
-`/collaborate on` 才重新开放该会话入口，项目间授权不变。精确匹配的流中断仍只续接一次，在续接成功或最终
-失败前保留收件箱。取消、clear、rewind 的原有隔离行为不变。
+TUI 中用户或 peer 回合最终失败时，会在返回空闲前丢弃排队 peer 并提示，监听端点保持原 UUID；
+被丢弃的消息不会重放，之后的发现和发送不用 `/collaborate on`。项目间授权不变。
+精确匹配的流中断仍只续接一次，在续接成功或最终失败前保留收件箱。取消、clear、rewind 的原有隔离行为不变。
 无头主回合结束后关闭入口，最多处理已入队的八条；失败后停止处理后续 peer。stream-json 的 `turn.started`
 新增 `origin:"peer"` 和 `peer`；最终 JSON 新增 `peerTurns`，只包含已开始处理的 peer，最多八项，回复文本
 最多 4000 个码点，截断有标记。失败项明确带有 `outcome:"failure"` 和

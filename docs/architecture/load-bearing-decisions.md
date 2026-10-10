@@ -1178,8 +1178,11 @@ text is a `peerInput` turn, never user authority, command expansion, recall/rewi
 memory/cloud user consent. The drivers drain only at idle through the ordinary SDK stream/gate;
 no scheduler, loop fork or stream transaction. TUI uses existing Static notices and idle queue
 ownership; headless closes admission after normal work and drains a finite admitted inbox.
-Final TUI human/peer failure retires the endpoint and visibly drops the inbox before idle; explicit
-user `on` is required to reopen admission, with project grants unchanged. The one exact interrupted
+Final TUI human/peer failure drops the queued inbox before idle and does not run those messages;
+the listening endpoint stays published at the same UUID, so later discovery and sends keep working
+without `/collaborate on`. Dropped messages are not replayed. Cancellation, `/collaborate off`,
+clear/rewind and shutdown still retire the incarnation; explicit user `on` publishes a new one,
+with project grants unchanged. The one exact interrupted
 stream continuation keeps its inbox until final outcome. Headless stops on peer failure, records a
 bounded per-peer error/outcome and preserves the completed human reply even in a failed final result.
 Discovery rejects invalid metadata and missing/unsafe/non-socket paths within its 256-entry scan

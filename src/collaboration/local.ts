@@ -232,6 +232,28 @@ export class LocalCollaboration implements PeerTransport {
   /** Headless closes admission before draining a finite snapshot; not an idle daemon. */
   stopAdmission(): void { this.accepting = false; }
 
+  /** Empties the inbox. The caller notices, so close() can tear the socket down first. */
+  private takeInbox(): number {
+    const count = this.inbox.length; this.inbox = [];
+    return count;
+  }
+
+  private droppedNotice(count: number, reason: string): void {
+    if (count) this.notice(`peer messages dropped: ${count} (${reason}); not forwarded to a successor`);
+  }
+
+  /**
+   * Final turn failure: drop queued peers so the idle drain cannot run them, and keep this
+   * process incarnation listening on the same UUID. A provider or tool failure is not a new
+   * runtime — retiring the endpoint makes peer discovery report nothing that can send and
+   * forces every collaborator onto a fresh address. Dropped messages are not replayed.
+   * Cancellation, off, clear/rewind and shutdown still use {@link close}.
+   */
+  dropQueued(reason: string): void {
+    this.droppedNotice(this.takeInbox(), reason);
+    this.changed();
+  }
+
   /**
    * Retires the endpoint synchronously (callers may ignore the result). The returned promise
    * settles when the hub transport has flushed its `unregister` and closed (bounded, never
@@ -244,7 +266,7 @@ export class LocalCollaboration implements PeerTransport {
     const hubClosed = this.hub.close();
     for (const timer of this.sweeps) clearTimeout(timer);
     this.sweeps.clear();
-    const count = this.inbox.length; this.inbox = [];
+    const dropped = this.takeInbox();
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
     this.server?.close(); this.server = undefined;
@@ -256,7 +278,7 @@ export class LocalCollaboration implements PeerTransport {
         if (current.secret === record.secret && sameAddress(current.address, record.address)) unlinkSync(path.join(checkStore(), `${record.address.endpoint}.json`));
       } catch { /* stale record is never proof of a live endpoint */ }
     }
-    if (count) this.notice(`peer messages dropped: ${count} (${reason}); not forwarded to a successor`);
+    this.droppedNotice(dropped, reason);
     this.changed();
     return hubClosed;
   }
