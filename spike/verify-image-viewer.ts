@@ -54,6 +54,13 @@ try {
   assert('relative path resolves from project root', relative.format === 'png');
   assert('compliant static PNG preserves exact bytes', bytesOf(relative).equals(sources.get('sample.png')!));
 
+  await writeFile(path.join(root, '.env.png'), sources.get('sample.png')!);
+  const sensitiveName = await loadLocalImage(root, '.env.png');
+  assert(
+    'a sensitive basename still decodes; the tool does not refuse the read',
+    sensitiveName.format === 'png' && bytesOf(sensitiveName).equals(sources.get('sample.png')!),
+  );
+
   const absolute = await loadLocalImage('/some/other/root', path.join(fixtures, 'sample.JPG'));
   assert('absolute path is used as given', absolute.format === 'jpeg');
   assert('uppercase .JPG maps to canonical jpeg', bytesOf(absolute).equals(sources.get('sample.JPG')!));

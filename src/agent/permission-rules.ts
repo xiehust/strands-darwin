@@ -323,18 +323,30 @@ function readsSensitiveGitArgument(argument: string, projectRoot: string): boole
  * The first read target of this call that falls in the sensitive set, as the
  * model wrote it, or undefined when the call reads nothing sensitive (SER-071).
  *
- * Targets are the `path` of `fileEditor view`, every non-option argument of
- * every {@link BASH_PATH_READERS} segment of a bash command — a pattern
- * argument (`rg password ~/.gnupg`) is resolved like a path and simply misses —
- * and a named pathspec of `git diff` / `git show` ({@link sensitiveGitPathspec},
+ * Targets are the `path` of `fileEditor view` and of `imageViewer` (SER-120) —
+ * both resolved with the non-bash spelling, so `~` and `..` match view and
+ * embedded quotes stay literal — every non-option argument of every
+ * {@link BASH_PATH_READERS} segment of a bash command — a pattern argument
+ * (`rg password ~/.gnupg`) is resolved like a path and simply misses — and a
+ * named pathspec of `git diff` / `git show` ({@link sensitiveGitPathspec},
  * SER-119). For the {@link RECURSIVE_CONTENT_READERS} an argument that is an
  * ancestor of a credential location also counts, returned as
  * `<arg> (searches above <location>)`. That ancestor rule is not applied to
- * git. Any other tool or command reads nothing this function can see.
+ * git or to image paths. Any other tool or command reads nothing this
+ * function can see.
  */
 export function sensitiveReadPath(toolName: string, input: unknown, projectRoot: string): string | undefined {
   if (toolName === 'fileEditor') {
     if (readString(input, 'command') !== 'view') return undefined;
+    const filePath = readString(input, 'path');
+    if (filePath === undefined || filePath === '') return undefined;
+    return isSensitiveReadPath(projectRoot, resolveReadTarget(filePath, projectRoot)) ? filePath : undefined;
+  }
+
+  // Same predicate and non-bash resolution as `fileEditor view`. Kind stays
+  // read, so plan prompts; the decoder is not consulted and does not refuse
+  // an approved read.
+  if (toolName === 'imageViewer') {
     const filePath = readString(input, 'path');
     if (filePath === undefined || filePath === '') return undefined;
     return isSensitiveReadPath(projectRoot, resolveReadTarget(filePath, projectRoot)) ? filePath : undefined;

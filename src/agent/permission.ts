@@ -1209,7 +1209,8 @@ export function assessRisk(request: PermissionRequest, projectRoot: string): Ris
   // Before the read short-circuit (SER-071): a read into the sensitive set is
   // `dangerous` whatever its kind, so `cat ~/.ssh/id_rsa` (execute) and
   // `fileEditor view ~/.aws/credentials` (read) both reach the prompt. The kind
-  // itself is untouched, which is what lets plan mode prompt instead of deny.
+  // itself is untouched, which is what lets plan mode prompt a sensitive
+  // view or imageViewer call instead of denying it.
   // `sensitive` is the path as the model wrote it, plus a bounded
   // ` (searches above …)` note when a recursive `grep`/`rg` starts from an
   // ancestor of a credential location.

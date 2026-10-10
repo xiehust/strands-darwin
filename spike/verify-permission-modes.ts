@@ -153,7 +153,11 @@ function staticRules(): void {
   header('static risk rules — other tools');
 
   assert('load_skill is safe', riskOf('load_skill', { name: 'x' }).risk === 'safe');
-  assert('imageViewer is safe', riskOf('imageViewer', { path: 'screenshots/error.png' }).risk === 'safe');
+  const ordinaryImage = riskOf('imageViewer', { path: 'screenshots/error.png' });
+  assert(
+    'imageViewer is safe',
+    ordinaryImage.risk === 'safe' && ordinaryImage.riskReason === 'imageViewer is read-only',
+  );
   const imageRequest = classify('imageViewer', { path: 'screenshots/error.png\nspoofed summary' });
   assert(
     'imageViewer permission summary remains one line',
@@ -1213,10 +1217,190 @@ async function gateGitPathspecs(): Promise<void> {
   assert('no git pathspec consulted the classifier', classifierCalls === 0);
 }
 
+/**
+ * `imageViewer` uses the same sensitive-read predicate as `fileEditor view`
+ * (SER-120). Kind stays read. Resolution is the non-bash spelling, so `~` and
+ * `..` match view and embedded quotes stay literal. These assertions never
+ * open a file.
+ */
+function imageViewerReads(): void {
+  header('static risk rules — imageViewer sensitive paths (SER-120)');
+
+  const home = os.homedir();
+  const absoluteCredentials = path.join(home, '.aws', 'credentials.png');
+  const paths = [
+    '~/.ssh/id_rsa.png',
+    '~/.aws/credentials.png',
+    absoluteCredentials,
+    '~/.ssh/id_rsa',
+    '.env.png',
+  ] as const;
+
+  for (const filePath of paths) {
+    const input = { path: filePath };
+    const request = classify('imageViewer', input);
+    const assessed = assessRisk(request, ROOT);
+    assert(`kind stays read: ${filePath}`, request.kind === 'read');
+    assert(
+      `dangerous and names the written path: ${filePath}`,
+      assessed.risk === 'dangerous' && assessed.sensitiveRead === true
+        && assessed.riskReason === `reads a sensitive path: ${filePath}`,
+    );
+    assert(
+      `predicate returns the written path: ${filePath}`,
+      sensitiveReadPath('imageViewer', input, ROOT) === filePath,
+    );
+    assert(
+      `no allow-rule covers it: ${filePath}`,
+      matchesAnyRule(
+        ['imageViewer', 'imageViewer:**', 'imageViewer:~/**'],
+        { toolName: 'imageViewer', input },
+        ROOT,
+      ) === undefined,
+    );
+    assert(
+      `no suggestion is offered: ${filePath}`,
+      suggestRules({ toolName: 'imageViewer', input }, ROOT).length === 0,
+    );
+  }
+
+  const escaped = `../${path.relative(path.dirname(ROOT), path.join(home, '.ssh', 'id_rsa.png'))}`;
+  const escapedAssessed = assessRisk(classify('imageViewer', { path: escaped }), ROOT);
+  assert(
+    'a ..-escaping relative imageViewer path matches the view spelling',
+    escapedAssessed.risk === 'dangerous' && escapedAssessed.riskReason === `reads a sensitive path: ${escaped}`,
+  );
+
+  const homeVar = '$HOME/.aws/credentials.png';
+  const homeVarAssessed = assessRisk(classify('imageViewer', { path: homeVar }), ROOT);
+  assert(
+    'a leading $HOME imageViewer path matches the view spelling',
+    homeVarAssessed.risk === 'dangerous' && homeVarAssessed.riskReason === `reads a sensitive path: ${homeVar}`,
+  );
+
+  const outerQuoted = '"~/.ssh/id_rsa.png"';
+  const outerAssessed = assessRisk(classify('imageViewer', { path: outerQuoted }), ROOT);
+  assert(
+    'outer quotes follow the fileEditor view shorthand',
+    outerAssessed.risk === 'dangerous' && outerAssessed.riskReason === `reads a sensitive path: ${outerQuoted}`,
+  );
+
+  const embedded = '~/".ssh"/id_rsa.png';
+  const embeddedAssessed = assessRisk(classify('imageViewer', { path: embedded }), ROOT);
+  assert(
+    'embedded quotes stay literal, matching fileEditor view rather than bash',
+    embeddedAssessed.risk === 'safe' && embeddedAssessed.riskReason === 'imageViewer is read-only'
+      && sensitiveReadPath('imageViewer', { path: embedded }, ROOT) === undefined,
+  );
+
+  const ordinary = { path: 'screenshots/error.png' };
+  const ordinaryAssessed = assessRisk(classify('imageViewer', ordinary), ROOT);
+  assert(
+    'a project screenshot stays safe with the read-only reason',
+    ordinaryAssessed.risk === 'safe' && ordinaryAssessed.riskReason === 'imageViewer is read-only'
+      && ordinaryAssessed.sensitiveRead !== true,
+  );
+  assert(
+    'an ordinary imageViewer is still coverable by a whole-tool allow rule',
+    matchesAnyRule(['imageViewer'], { toolName: 'imageViewer', input: ordinary }, ROOT) === 'imageViewer',
+  );
+  assert(
+    'an ordinary imageViewer is still offered its whole-tool suggestion',
+    suggestRules({ toolName: 'imageViewer', input: ordinary }, ROOT).map((suggestion) => suggestion.rule).join(',')
+      === 'imageViewer',
+  );
+}
+
+/**
+ * Gate side of SER-120: a sensitive image prompts in plan (it is still a
+ * read) and in auto, with no classifier call and no rule. yolo proceeds.
+ * `screenshots/error.png` stays unprompted in plan.
+ */
+async function gateImageViewerReads(): Promise<void> {
+  header('gate — sensitive imageViewer paths stay reads (SER-120)');
+
+  const home = os.homedir();
+  const paths = [
+    '~/.ssh/id_rsa.png',
+    '~/.aws/credentials.png',
+    path.join(home, '.aws', 'credentials.png'),
+    '~/.ssh/id_rsa',
+    '.env.png',
+  ];
+  const allowRules = ['imageViewer', 'imageViewer:**'];
+  let classifierCalls = 0;
+  const saysSafe: SafetyClassifier = async () => {
+    classifierCalls += 1;
+    return { safe: true, reason: 'just a picture' };
+  };
+
+  for (const filePath of paths) {
+    const input = { path: filePath };
+
+    const plan = await runGate({ mode: 'plan', allowRules, classifier: saysSafe }, 'imageViewer', input, true);
+    assert(
+      `plan prompts rather than denying: ${filePath}`,
+      plan.action.type === 'proceed' && plan.asked.length === 1
+        && plan.asked[0]?.kind === 'read'
+        && plan.asked[0]?.riskReason === `reads a sensitive path: ${filePath}`
+        && plan.asked[0]?.suggestions.length === 0
+        && !actionReason(plan.action).includes('Plan mode blocked'),
+    );
+
+    const auto = await runGate({ mode: 'auto', allowRules, classifier: saysSafe }, 'imageViewer', input, false);
+    assert(
+      `auto prompts and does not call the classifier: ${filePath}`,
+      auto.asked.length === 1 && auto.action.type === 'deny' && classifierCalls === 0
+        && auto.asked[0]?.sensitiveRead === true
+        && auto.asked[0]?.kind === 'read'
+        && auto.asked[0]?.riskReason === `reads a sensitive path: ${filePath}`
+        && auto.asked[0]?.suggestions.length === 0
+        && auto.asked[0]?.details.every((detail) => detail.label !== 'Classifier'),
+    );
+
+    const yolo = await runGate({ mode: 'yolo', allowRules, classifier: saysSafe }, 'imageViewer', input);
+    assert(`yolo proceeds without asking: ${filePath}`, yolo.action.type === 'proceed' && yolo.asked.length === 0);
+
+    const widened = await runGate({ mode: 'default', allowRules }, 'imageViewer', input, false);
+    assert(
+      `an allow-rule does not silence it: ${filePath}`,
+      widened.action.type === 'deny' && widened.asked.length === 1
+        && widened.asked[0]?.suggestions.length === 0
+        && actionReason(widened.action).includes('The user denied permission'),
+    );
+  }
+  assert('no sensitive image consulted the classifier', classifierCalls === 0);
+
+  const refused = await runGate(
+    { mode: 'plan', allowRules, classifier: saysSafe },
+    'imageViewer',
+    { path: '~/.ssh/id_rsa.png' },
+    false,
+  );
+  assert(
+    'plan refusal is the user denial, not a plan denial',
+    refused.action.type === 'deny' && refused.asked.length === 1
+      && actionReason(refused.action).includes('The user denied permission')
+      && !actionReason(refused.action).includes('Plan mode blocked')
+      && classifierCalls === 0,
+  );
+
+  const ordinary = await runGate(
+    { mode: 'plan', allowRules, classifier: saysSafe },
+    'imageViewer',
+    { path: 'screenshots/error.png' },
+  );
+  assert(
+    'plan still lets a project screenshot proceed without asking',
+    ordinary.action.type === 'proceed' && ordinary.asked.length === 0 && classifierCalls === 0,
+  );
+}
+
 async function main(): Promise<void> {
   staticRules();
   sensitiveReads();
   gitPathspecs();
+  imageViewerReads();
   aliasedReads();
   allowRules();
   await gateModes();
@@ -1224,6 +1408,7 @@ async function main(): Promise<void> {
   await gateProvenance();
   await gateSensitiveReads();
   await gateGitPathspecs();
+  await gateImageViewerReads();
   await gateAliasedReads();
   report();
 }

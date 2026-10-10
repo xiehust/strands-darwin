@@ -347,7 +347,8 @@ matches is `dangerous` with the written argument named, while `git log` (includi
 `git log -- .env`), bare `git diff`/`git show`, and non-sensitive pathspecs stay `read-only
 command`, with no ancestor rule and no filesystem probe.
 **Reads are not exempt from the whitelist** (SER-071, `sensitiveReadPath` in
-`src/agent/permission-rules.ts`): the `path` of `fileEditor view` and every non-option argument of
+`src/agent/permission-rules.ts`): the `path` of `fileEditor view`, the `path` of `imageViewer`
+(SER-120, the same non-bash resolution as view), and every non-option argument of
 a whitelisted bash reader (`cat`, `head`, `tail`, `grep`, `rg`, `find`, `ls`, `wc` — not `echo`,
 which with `<` and `$(` already refused can only print its arguments) are projected as paths (`~`,
 `~/`, `$HOME`, `${HOME}`, relative and absolute forms, `..` normalised), and a target in the fixed
@@ -370,8 +371,9 @@ named file while `find`/`ls -R` reveal names only, never contents. The criterion
 not the peer's "outside the working directory": darwin
 legitimately reads `/tmp`, `/etc/os-release` and the global skill roots, and a set is explainable
 in one prompt line. The check changes the *risk*, never the `kind`, so `plan` mode — whose guard
-runs on kind alone — lets a sensitive `fileEditor view` reach the prompt rather than denying it
-(command-bearing bash is an `execute` and stays plan-denied as before): the honest
+runs on kind alone — lets a sensitive `fileEditor view` or `imageViewer` reach the prompt
+rather than denying it (command-bearing bash is an `execute` and stays plan-denied as
+before): the honest
 cost of a credential path is a prompt every time, not a hard block and not a silent read whose
 bytes then enter the provider request *and* the trajectory record on disk. Headless has nobody to
 answer, so its bridge denies it like every other prompt; children share the gate; the user's `!`
