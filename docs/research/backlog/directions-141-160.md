@@ -524,3 +524,56 @@ Sources R1–R6 in origin report. Requirement: deletion results must return lega
 Architecture: `src/tui/prompt-editor.ts` and existing `App.tsx` edit/cut seam; decisions §§ TUI frame budget, `@` path completion and Prompt recall. No new dependency, SDK loop/patch, permissions/config/provider change, persisted draft, queue/send path, frame row, timer, undo expansion or tiny-terminal projection redesign. Keep scope to demonstrated deletion merge correctness and necessary tests/docs. Sync existing EN/zh-CN editing guide/reference and architecture rationale; READMEs only if their described behavior needs clarification. AGENTS.md is already near cap.
 
 Acceptance: registered pure checks for LF/CRLF and Unicode neighbors (combining marks, regional indicators, joined emoji where applicable), legal returned caret, exact next insertion/movement/deletion, no-op/normal offsets and affinities; audit all deletion primitives and verify cut/yank exact span/overflow/repetition and undo. Registered real CLI offline pty reproduces LF deletion plus exact next input, without an automatic send; local transport only if needed. Independently rerun prompt-editor, input-controls/pty, composer-yank, frame-budget and free TUI wordNav/undo, `pnpm typecheck`, `pnpm test`, `pnpm build`, diff/clean-tree checks. Fresh developer child owns implementation; Host independently accepts before done.
+
+
+## SER-119 — Named pathspecs on `git diff` and `git show` use the sensitive-read predicate
+
+- Status: `not-started`
+- Priority: 159
+- Score: 12
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 3
+- Origin report: [`research_2026-10-10.md`](../research_2026-10-10.md) (run `05:32:26Z`)
+
+### Implementation / acceptance evidence
+
+(none yet)
+
+### Notes / blockers / abandonment reason
+
+`git diff` and `git show` are on the safe-git list and their path arguments never reach `sensitiveReadPath`, so they are auto-approved in `default` and `auto` while printing credential text. A disposable repository showed `git show HEAD:.env` printing `SECRET=example-token` and `git diff -- .env` printing that line in a unified diff; the same checkout's `assessRisk` returned `safe` / `read-only command` for `git show HEAD:.env`, `git show :.env` and `git diff -- .env`. `cat .env` is already `dangerous`.
+
+Extend `sensitiveReadPath` for bash segments whose first word is `git` and whose subcommand is exactly `diff` or `show`. Skip option words (they start with `-`). For every other argument, resolve it with the existing bash-word `resolveReadTarget` / `isSensitiveReadPath`. Also resolve the substring after the last `:` the same way, so `HEAD:.env` and `:./.env` hit. The first hit is returned as the argument the model wrote, and `assessRisk` names it with the existing `reads a sensitive path:` reason. That single predicate is what makes the call un-ruleable, suggestion-free, and classifier-free in `auto`. Do not change kind: bash stays `execute`, so plan keeps denying it before any prompt, and `yolo` keeps approving it.
+
+Leave these byte-for-byte: bare `git diff`, `git show`, `git status` and `git branch`; every `git log`, including the pinned `git log -- ~/.ssh/id_rsa` and `git log -- .env`; `git log -p` even when a patch would contain `.env`. Do not apply the grep/rg ancestor rule to a pathless git command. Do not add a filesystem or symlink probe.
+
+Acceptance is in `spike/verify-permission-modes.ts` plus the existing gate behavior those helpers already assert for `cat`: the three commands above are dangerous and name the written argument; the preserved commands stay `safe` with reason `read-only command`; `matchesAnyRule` / `suggestRules` do not cover a hit; plan denies with no prompt; `auto` prompts and does not call the classifier; `yolo` proceeds. `pnpm typecheck`, `pnpm test`, `pnpm build`. Document the named-pathspec exception in the permissions guide (EN and zh-CN) and, if the safe-git rationale changes, in the decisions doc. Do not grow `AGENTS.md` past its cap. No new dependency, SDK patch, or change to git execution itself.
+
+## SER-120 — `imageViewer` paths use the same sensitive-read predicate as `fileEditor view`
+
+- Status: `not-started`
+- Priority: 160
+- Score: 14
+- Importance: 4
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-10-10.md`](../research_2026-10-10.md) (run `05:32:26Z`)
+
+### Implementation / acceptance evidence
+
+(none yet)
+
+### Notes / blockers / abandonment reason
+
+`imageViewer` is classified kind `read`. `assessRisk` treats every read as safe unless `sensitiveReadPath` matches, and that function only inspects `fileEditor view` and the whitelisted bash readers. A local probe returned `safe` / `imageViewer is read-only` for `~/.ssh/id_rsa.png`, `~/.aws/credentials.png`, the absolute home form of the same png, `~/.ssh/id_rsa` and `.env.png`. `loadLocalImage` then reads any regular file with a png/jpeg/gif/webp extension, up to 50 MiB, with no sensitive check. A project `screenshots/error.png` is safe and the plan-mode suite lets it proceed without asking. That is the case that must stay safe.
+
+Handle `imageViewer` in `sensitiveReadPath` the way `fileEditor view` is handled: the `path` string, resolved with the non-bash `resolveReadTarget` (so `~` and `..` match the view spelling), tested with `isSensitiveReadPath`. Kind stays `read`, so plan prompts instead of denying, matching a sensitive view. `yolo` still approves. Allow-rules and suggestions stay closed through the existing exemption. Do not special-case the decoder, do not refuse the read inside the tool after the user approves, and do not add a symlink or filesystem probe.
+
+Acceptance in `spike/verify-permission-modes.ts`: the sensitive image paths above are `dangerous`, kind `read`, reason `reads a sensitive path:` plus the path as written; `screenshots/error.png` stays safe and unprompted in plan; plan prompts a sensitive image rather than denying it; `auto` prompts and does not call the classifier; no allow-rule and no suggestion covers it. Existing image-viewer decode tests stay green. `pnpm typecheck`, `pnpm test`, `pnpm build`. Mention the shared predicate in the permissions guide (EN and zh-CN). No new dependency or SDK patch.
+
+
