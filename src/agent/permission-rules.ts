@@ -281,16 +281,56 @@ function sensitiveCwdTail(projectRoot: string, tail: string, bashWords: boolean)
 }
 
 /**
+ * `git diff` and `git show` print the contents of a named pathspec (SER-119).
+ * `git log` is absent on purpose: `git log -p -- .env` stays a read-only
+ * command even when a patch would contain that file. `status` and `branch`
+ * do not print file contents either.
+ */
+const GIT_CONTENT_PATHSPEC_SUBCOMMANDS = new Set(['diff', 'show']);
+
+/**
+ * The first named pathspec of a `git diff` or `git show` segment that the
+ * sensitive-read predicate matches, as the model wrote it, or undefined.
+ *
+ * The subcommand word is not a path. Option words (a leading `-`) are skipped.
+ * Every other argument is resolved as a bash word, then so is the text after
+ * its last colon, so `HEAD:.env` and `:./.env` hit without a git revision
+ * parser. The grep/rg ancestor rule is not applied — a pathless `git diff`
+ * does not search above a credential location — and nothing is read from the
+ * filesystem.
+ */
+function sensitiveGitPathspec(word: string, args: readonly string[], projectRoot: string): string | undefined {
+  if (word !== 'git') return undefined;
+  const [subcommand, ...rest] = args;
+  if (subcommand === undefined || !GIT_CONTENT_PATHSPEC_SUBCOMMANDS.has(subcommand)) return undefined;
+  for (const arg of rest) {
+    if (arg.startsWith('-')) continue;
+    if (readsSensitiveGitArgument(arg, projectRoot)) return arg;
+  }
+  return undefined;
+}
+
+function readsSensitiveGitArgument(argument: string, projectRoot: string): boolean {
+  const reads = (target: string): boolean =>
+    isSensitiveReadPath(projectRoot, resolveReadTarget(target, projectRoot, true), true);
+  if (reads(argument)) return true;
+  const colon = argument.lastIndexOf(':');
+  if (colon === -1) return false;
+  return reads(argument.slice(colon + 1));
+}
+
+/**
  * The first read target of this call that falls in the sensitive set, as the
  * model wrote it, or undefined when the call reads nothing sensitive (SER-071).
  *
- * Targets are the `path` of `fileEditor view` and every non-option argument of
+ * Targets are the `path` of `fileEditor view`, every non-option argument of
  * every {@link BASH_PATH_READERS} segment of a bash command — a pattern
- * argument (`rg password ~/.gnupg`) is resolved like a path and simply misses.
- * For the {@link RECURSIVE_CONTENT_READERS} an argument that is an ancestor of a
- * credential location also counts, returned as
- * `<arg> (searches above <location>)`. Any other tool or command reads nothing
- * this function can see.
+ * argument (`rg password ~/.gnupg`) is resolved like a path and simply misses —
+ * and a named pathspec of `git diff` / `git show` ({@link sensitiveGitPathspec},
+ * SER-119). For the {@link RECURSIVE_CONTENT_READERS} an argument that is an
+ * ancestor of a credential location also counts, returned as
+ * `<arg> (searches above <location>)`. That ancestor rule is not applied to
+ * git. Any other tool or command reads nothing this function can see.
  */
 export function sensitiveReadPath(toolName: string, input: unknown, projectRoot: string): string | undefined {
   if (toolName === 'fileEditor') {
@@ -305,6 +345,8 @@ export function sensitiveReadPath(toolName: string, input: unknown, projectRoot:
     if (command === undefined) return undefined;
     for (const segment of splitBashSegments(command)) {
       const [word = '', ...args] = segment.split(/\s+/);
+      const pathspec = sensitiveGitPathspec(word, args, projectRoot);
+      if (pathspec !== undefined) return pathspec;
       if (!BASH_PATH_READERS.has(word)) continue;
       const recursive = RECURSIVE_CONTENT_READERS.has(word);
       for (const arg of args) {

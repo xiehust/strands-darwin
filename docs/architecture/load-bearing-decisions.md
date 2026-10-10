@@ -341,6 +341,11 @@ bash safety is a whitelist on the first word of every segment *and* on its argum
 whitelisted `find`/`git branch`/`git log|diff|show` carrying a known mutating option
 (`-delete`, `-exec…`, `-D`, `--move`, `--output=…`, …) is `dangerous` with the option named
 (spec: `backend/strands-sdk-contracts.md` § Static bash safety).
+Named pathspecs on `git diff` and `git show` are the exception (SER-119): a non-option argument, or
+the text after its last colon (`HEAD:.env`, `:./.env`), that the same sensitive-read predicate
+matches is `dangerous` with the written argument named, while `git log` (including `-p` and
+`git log -- .env`), bare `git diff`/`git show`, and non-sensitive pathspecs stay `read-only
+command`, with no ancestor rule and no filesystem probe.
 **Reads are not exempt from the whitelist** (SER-071, `sensitiveReadPath` in
 `src/agent/permission-rules.ts`): the `path` of `fileEditor view` and every non-option argument of
 a whitelisted bash reader (`cat`, `head`, `tail`, `grep`, `rg`, `find`, `ls`, `wc` — not `echo`,

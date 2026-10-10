@@ -28,6 +28,7 @@
 | 项目内 `fileEditor` 写入，但不包括 `.git/`、`.env*` 和敏感 Darwin 策略/配置 | 普通模式下是；`plan` 中拒绝 |
 | 每个命令段都以只读白名单命令开头（`git status/log/diff/show/branch`、`ls`、`cat`、`grep`、`rg`、`find` 等），且无重定向/替换的 bash | 是 |
 | 白名单命令带有已知的写操作选项——`find` 带 `-delete`/`-exec`/`-execdir`/`-ok`/`-okdir`/`-fprint*`/`-fls`；`git branch` 带 `-d`/`-D`/`-m`/`-M`/`-c`/`-C`/`-u`（包括 `-Df` 这类合并短选项）、`--delete`/`--move`/`--copy`/`--set-upstream-to[=…]`/`--unset-upstream`/`--edit-description`；`git log`/`diff`/`show` 带 `--output[=…]` | 否——权限框会指出该选项 |
+| `git diff` / `git show` 的具名 pathspec 落入敏感路径集合——参数本身，或最后一个冒号之后的文本（`git diff -- .env`、`git show :.env`、`HEAD:.env`、`:./.env`） | 否——权限框会指出模型写下的参数。单独的 `git diff`/`git show`/`git status`/`git branch`、每一条 `git log`（包括 `-p` 和 `git log -- .env`），以及 `git show HEAD:README.md` 仍然安全 |
 | 其他全部调用，包括所有 MCP 工具 | 否 |
 
 白名单按命令段逐段判定：`git status && git branch -D main` 会因为后半段而询问。这是纯白名单：解析不确定时多问一次，不会静默放行。`plan` 允许读文件、加载 skill、查询后台任务和委派；拒绝文件修改、带命令的 bash 以及未知/MCP 工具。它在 `PreToolUse` 之前拒绝，因此被拦截的操作不会触发项目 hook 命令。磁盘上的规则仍保留，但会显示为已忽略。
@@ -55,6 +56,8 @@ Plan 发送者的只读限制沿回复链传递；默认情况下，本地拒绝
 ### 敏感路径读取
 
 读取同样走白名单，但有一组固定路径永远不会被静默读取：`~/.ssh/`、`~/.aws/`、`~/.gnupg/` 之下的任何内容（目录本身也算）、`~/.netrc`、`~/.kube/config`、`~/.docker/config.json`、`/etc/shadow`、任何位置上名为 `.env` 或 `.env.*` 的文件、任何进程的环境变量文件（`/proc/<pid>/environ` 与 `/proc/<pid>/task/<tid>/environ`，无论 pid 写作 `1`、`self`、`thread-self`、`$PPID`、`${PPID}`、`*` 还是 `[0-9]*`），以及 Darwin 自身的配置、hook 和权限规则文件。路径检查支持 `~`、`~/`、开头的 `$HOME`/`${HOME}`、相对与绝对形式和 `..` 归一化（相对路径以项目根目录为基准，而非持久 shell 的实际 cwd），因此 `cat ~/.ssh/id_rsa`、`head $HOME/.aws/credentials` 和 `fileEditor view ../../.netrc` 都会以 `reads a sensitive path: <path>` 询问。`plan` 模式下敏感的 `fileEditor view` 是询问而非拒绝，因为它仍然是读操作（带命令的 bash 仍像以前一样在 `plan` 中被拒绝）；`auto` 绝不会把它交给分类器，而是直接询问；无头运行中该询问表现为 `permission denied`。仅对 `grep` 和 `rg`，从凭据位置的上级目录开始搜索（`grep -r AKIA ~`、`rg -uu secret /`、`grep -r k /etc`）同样视为读取它，并以 `reads a sensitive path: ~ (searches above ~/.ssh)` 询问；`.env*` 文件不在这条上级目录规则之内，因此含有 `.env` 的项目里 `grep -r foo .` 仍然静默。其余读取——`cat README.md`、`ls ~/.ssh/../`、`.envrc`、`/etc/os-release`——和以前一样静默放行。`echo` 不算读取器：重定向和命令替换已被拒绝，它只能打印参数。判定标准是这组固定集合，而不是「项目之外」，因为 Darwin 会合法地读取 `/tmp`、`/etc/os-release` 和全局 skill 目录。
+
+`git diff` 和 `git show` 的具名 pathspec 使用同一判定。以 `-` 开头的词会跳过；其余每个参数都按 bash 读取器的词来解析，最后一个冒号之后的文本也同样解析，因此 `git diff -- .env`、`git show :.env`、`git show HEAD:.env` 和 `git show :./.env` 都会被判为危险，理由是 `reads a sensitive path:` 加上模型写下的参数。该调用仍是 execute，所以 `plan` 在任何询问之前拒绝它，`auto` 直接询问且不调用分类器，`yolo` 仍然放行；没有放行规则能匹配它，也不会提供规则选项。单独的 `git diff`、`git show`、`git status` 和 `git branch` 保持静默，每一条 `git log` 也一样——包括 `git log -- ~/.ssh/id_rsa`、`git log -- .env` 和 `git log -p`，即使补丁内容里会有 `.env`。非敏感 pathspec（例如 `git show HEAD:README.md`）保持静默。没有 pathspec 的 `git diff` 不是上级目录搜索，而且这次检查不读取文件系统、不跟随符号链接。
 
 对于 bash 读取器的参数，检查会先移除整个词中的引号和反斜杠，再展开 home 并归一化：`cat ~/".ssh"/id_rsa`、`cat ~/'.aws'/credentials`、`cat /etc/"shadow"` 和 `cat ".en"v.local` 都和不带引号的形式一样询问。这是保守的词法检查，并不执行 shell 展开；带引号的 `~` 或单引号内的 `$HOME` 因而可能多一次询问。`fileEditor` 保留已有的外层引号和 home 简写约定，但路径内部的引号、变量和通配符仍是字面字符，不是 shell 语法。
 

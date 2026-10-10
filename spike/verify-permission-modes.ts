@@ -307,7 +307,8 @@ function sensitiveReads(): void {
     'wc -l src/cli.ts',
     // `echo` prints its arguments and, with `<`/`$(` refused, can open no file.
     'echo ~/.ssh/id_rsa',
-    // `pwd`/`which` take no paths; `git` reads the repository, not credentials.
+    // `pwd`/`which` take no paths. `git log` names history, not a blob pathspec
+    // (SER-119 keeps this exact command a read-only command).
     'which cat ~/.ssh/id_rsa',
     'git log -- ~/.ssh/id_rsa',
   ];
@@ -1088,15 +1089,141 @@ async function gateAliasedReads(): Promise<void> {
     asked.length === 2 && asked[0]?.source.kind === 'parent' && asked[1]?.source.kind === 'child' && classifierCalls === 0);
 }
 
+/**
+ * Named pathspecs on `git diff` / `git show` use the sensitive-read predicate
+ * (SER-119). Kind stays execute, so plan denies and yolo approves. `git log`
+ * and pathless forms stay `read-only command`, with no ancestor search.
+ */
+function gitPathspecs(): void {
+  header('static risk rules — git diff/show named pathspecs (SER-119)');
+
+  const hits = [
+    ['git diff -- .env', '.env'],
+    ['git show :.env', ':.env'],
+    ['git show HEAD:.env', 'HEAD:.env'],
+    ['git show :./.env', ':./.env'],
+    // First hit is the argument as written; options and earlier misses are skipped.
+    ['git diff -- README.md .env', '.env'],
+    ['git show HEAD:README.md :.env', ':.env'],
+    ['git diff --stat -U3 -- .env', '.env'],
+    ['git show --format=fuller HEAD:.env', 'HEAD:.env'],
+    ['git show "HEAD:.env"', '"HEAD:.env"'],
+    ['git diff -- ".env"', '".env"'],
+    // The colon suffix goes through the same bash-word resolver, not a `.env` string compare.
+    ['git show HEAD:~/.ssh/id_rsa', 'HEAD:~/.ssh/id_rsa'],
+    ['git show HEAD:src/.env', 'HEAD:src/.env'],
+    ['git diff -- ~/.ssh/id_rsa', '~/.ssh/id_rsa'],
+    ['git diff -- $HOME/.aws/credentials', '$HOME/.aws/credentials'],
+    ['git status && git diff -- .env', '.env'],
+    ['git diff -- README.md && git show HEAD:.env', 'HEAD:.env'],
+  ] as const;
+  for (const [command, named] of hits) {
+    const input = { command };
+    const request = classify('bash', input);
+    const assessed = assessRisk(request, ROOT);
+    assert(`kind stays execute: ${command}`, request.kind === 'execute');
+    assert(
+      `dangerous and names the written argument: ${command}`,
+      assessed.risk === 'dangerous' && assessed.sensitiveRead === true && assessed.riskReason === `reads a sensitive path: ${named}`,
+    );
+    assert(`predicate returns the written argument: ${command}`, sensitiveReadPath('bash', input, ROOT) === named);
+  }
+
+  const preserved = [
+    'git diff',
+    'git show',
+    'git status',
+    'git branch',
+    'git log',
+    'git log --oneline -5',
+    'git log -p',
+    'git log -p -- .env',
+    'git log -- ~/.ssh/id_rsa',
+    'git log -- .env',
+    'git status -- .env',
+    'git branch --list',
+    'git show HEAD:README.md',
+    'git show HEAD:.envrc',
+    'git diff --stat',
+    'git show HEAD --stat',
+    // Pathless, and a named ancestor: the grep/rg ancestor rule does not apply.
+    'git diff ~',
+    'git diff /',
+    'git diff .',
+    'git show .',
+    'git show HEAD:',
+    'git show :',
+    'git diff -- README.md',
+  ];
+  for (const command of preserved) {
+    const assessed = assessRisk(classify('bash', { command }), ROOT);
+    assert(
+      `safe, read-only command: ${command}`,
+      assessed.risk === 'safe' && assessed.riskReason === 'read-only command' && assessed.sensitiveRead !== true
+        && sensitiveReadPath('bash', { command }, ROOT) === undefined,
+    );
+  }
+}
+
+async function gateGitPathspecs(): Promise<void> {
+  header('gate — git diff/show named pathspecs stay execute (SER-119)');
+
+  const hits = [
+    ['git diff -- .env', '.env'],
+    ['git show :.env', ':.env'],
+    ['git show HEAD:.env', 'HEAD:.env'],
+    ['git show :./.env', ':./.env'],
+  ] as const;
+  const allowRules = ['bash', 'bash:git *', 'bash:git diff *', 'bash:git show *'];
+  let classifierCalls = 0;
+  const saysSafe: SafetyClassifier = async () => {
+    classifierCalls += 1;
+    return { safe: true, reason: 'read-only git' };
+  };
+
+  for (const [command, named] of hits) {
+    const input = { command };
+    assert(
+      `matchesAnyRule does not cover the hit: ${command}`,
+      matchesAnyRule(allowRules, { toolName: 'bash', input }, ROOT) === undefined,
+    );
+    assert(`suggestRules offers nothing: ${command}`, suggestRules({ toolName: 'bash', input }, ROOT).length === 0);
+
+    const plan = await runGate({ mode: 'plan', allowRules, classifier: saysSafe }, 'bash', input);
+    assert(
+      `plan denies before any prompt: ${command}`,
+      plan.action.type === 'deny' && plan.asked.length === 0
+        && actionReason(plan.action).includes('Plan mode blocked')
+        && actionReason(plan.action).includes('execute call to bash'),
+    );
+
+    const auto = await runGate({ mode: 'auto', allowRules, classifier: saysSafe }, 'bash', input, false);
+    assert(
+      `auto prompts and does not call the classifier: ${command}`,
+      auto.asked.length === 1 && auto.action.type === 'deny' && classifierCalls === 0
+        && auto.asked[0]?.sensitiveRead === true
+        && auto.asked[0]?.riskReason === `reads a sensitive path: ${named}`
+        && auto.asked[0]?.suggestions.length === 0
+        && auto.asked[0]?.kind === 'execute',
+    );
+
+    const yolo = await runGate({ mode: 'yolo', allowRules, classifier: saysSafe }, 'bash', input);
+    assert(`yolo proceeds without asking: ${command}`, yolo.action.type === 'proceed' && yolo.asked.length === 0);
+  }
+  assert('no git pathspec consulted the classifier', classifierCalls === 0);
+}
+
 async function main(): Promise<void> {
   staticRules();
   sensitiveReads();
+  gitPathspecs();
   aliasedReads();
   allowRules();
   await gateModes();
   await gateRules();
   await gateProvenance();
   await gateSensitiveReads();
+  await gateGitPathspecs();
   await gateAliasedReads();
   report();
 }
