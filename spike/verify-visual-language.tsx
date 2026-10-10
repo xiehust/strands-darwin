@@ -18,6 +18,25 @@ const ANSI = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 const plain = (value: string): string => value.replace(ANSI, '');
 const rows = (value: string): number => plain(value).split('\n').length;
 
+function renderComposer(text: string, columns: number, maxRows: number, shellMode: boolean, editable = true): string {
+  return renderToString(
+    <InputBox
+      layout={layoutEditor(text, columns, { offset: text.length, affinity: 'upstream' })}
+      completions={[]}
+      completionKind="command"
+      completionNote={undefined}
+      selectedCompletion={0}
+      editable={editable}
+      shellMode={shellMode}
+      hint={undefined}
+      recallIndicator={undefined}
+      offset={{ top: 0, left: 0 }}
+      maxRows={maxRows}
+    />,
+    { columns },
+  );
+}
+
 const FORCED_COLOR_FIXTURE = 'DARWIN_VISUAL_LANGUAGE_FORCED_COLOR_FIXTURE';
 if (process.env[FORCED_COLOR_FIXTURE] === '1') {
   const history: HistoryItem[] = [
@@ -47,6 +66,7 @@ if (process.env[FORCED_COLOR_FIXTURE] === '1') {
     />,
     { columns: 80 },
   ));
+  process.stdout.write(renderComposer('!', 80, 1, true));
   process.exit(0);
 }
 
@@ -203,6 +223,7 @@ assert('tool outcome stays success green while its identity remains cyan',
   hasSgr('tool ·', 36) && hasSgr('✓ ', 32));
 assert('muted completion metadata uses default foreground intensity, not fixed gray',
   hasSgr('/model', 2) && !coloredTranscript.includes('\u001B[90m'));
+assert('shell composer reinforces its textual mode marker with warning yellow', hasSgr('cmd> ', 33));
 assert('active composer and completion focus do not use reverse-video SGR',
   !coloredTranscript.includes('\u001B[7m') && !coloredTranscript.includes('\u001B[27m'));
 
@@ -225,6 +246,21 @@ const composer = plain(renderToString(
 assert('composer keeps its explicit active prompt marker', composer.includes('you> /m'));
 assert('selected completion has a textual pointer', composer.includes('❯ /mode'));
 assert('unselected completion is textually different', composer.includes('  /model'));
+
+header('visual language — shell composer is a layout-neutral projection');
+assert('a bare ! has a distinct marker even without color', plain(renderComposer('!', 80, 1, true)) === 'cmd> !');
+assert('switching back restores the normal marker', plain(renderComposer('!', 80, 1, false)) === 'you> !');
+assert('disabled shell input keeps its mode marker', plain(renderComposer('!', 80, 1, true, false)) === 'cmd> !');
+for (const columns of [14, 20, 40, 80]) {
+  for (const maxRows of [1, 3, 8]) {
+    for (const text of ['!', '!echo ' + 'x'.repeat(120), '!echo first\necho second\necho third']) {
+      const normal = plain(renderComposer(text, columns, maxRows, false));
+      const shell = plain(renderComposer(text, columns, maxRows, true));
+      assert(`shell mode preserves text, continuation prefixes and row budget at ${columns} columns / ${maxRows} rows`,
+        shell === normal.replace('you> ', 'cmd> ') && rows(shell) === rows(normal) && rows(shell) <= maxRows);
+    }
+  }
+}
 
 header('visual language — information-equivalent permission modal');
 const request = {

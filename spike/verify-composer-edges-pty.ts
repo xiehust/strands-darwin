@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { layoutEditor, moveVertical, moveToRowEdge } from '../src/tui/prompt-editor.js';
+import { parseShellCommand } from '../src/tui/shell-command.js';
 import { REPO_ROOT, startTui } from './tui-driver.js';
 import { assert, header, report } from './shared.js';
 
@@ -31,10 +32,11 @@ const settled = (predicate: () => boolean, label: string) => tui.waitUntil(predi
 // observe the real editor cursor without adding a test-only runtime hook.
 async function draft(expected: string, columns: number): Promise<void> {
   const rows = layoutEditor(expected, columns, { offset: expected.length, affinity: 'upstream' }).rows;
-  const wanted = rows.map((row) => `${row.prefix}${row.text}`.trimEnd());
+  const prefix = parseShellCommand(expected) === undefined ? 'you> ' : 'cmd> ';
+  const wanted = rows.map((row) => `${row.prefix === 'you> ' ? prefix : row.prefix}${row.text}`.trimEnd());
   await settled(() => {
     const lines = tui.frame.replaceAll('\r', '').split('\n');
-    const first = lines.findIndex((line) => line.startsWith('you> '));
+    const first = lines.findIndex((line) => line.startsWith(prefix));
     return first >= 0 && JSON.stringify(lines.slice(first, first + wanted.length).map((line) => line.trimEnd())) === JSON.stringify(wanted);
   }, `whole raw draft ${JSON.stringify(expected)}`);
 }

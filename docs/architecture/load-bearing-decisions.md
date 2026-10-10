@@ -3178,7 +3178,11 @@ always-visible
 tail rows counted through the same `toolDetailsVisible`/`toolInputRows` the panel draws with), so no
 new frame surface exists. The record is **not** `userInput` — prompt recall never offers a `!` back —
 and replay *prints* it through the same `turnReducer` action the live session dispatched, so live
-and replayed transcripts are one projection. Free checks: `spike/verify-shell-command.ts`,
+and replayed transcripts are one projection. While editing, the same `parseShellCommand` prefix
+recognition (including a bare `!` and leading whitespace) switches the composer to a yellow
+`cmd> ` marker; removing the prefix restores `you> `. Both markers occupy five cells: this is
+presentation only, with no new row, editor/cursor change, send path or execution state.
+Free checks: `spike/verify-visual-language.tsx`, `spike/verify-shell-command.ts`,
 `spike/verify-tui.ts bang`.
 
 ## Ctrl+G external editor — a bounded terminal handoff, never a send path

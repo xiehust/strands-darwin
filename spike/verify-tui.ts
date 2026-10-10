@@ -4198,6 +4198,29 @@ async function bangShellCommand(): Promise<void> {
     await tui.waitFor('you>', { timeoutMs: 60_000 });
     await tui.waitFor('mode: plan', { timeoutMs: 60_000 });
 
+    // Mode feedback is immediate while editing, before Enter or any execution.
+    const beforeMode = tui.mark();
+    tui.send('!');
+    await tui.waitFor('cmd> !', { from: beforeMode, settleMs: 100 });
+    assert('typing a bare ! immediately switches the composer, without executing',
+      tui.frame.includes('cmd> !') && !tui.frame.includes('running !') && !tui.frame.includes('you> !'));
+    const beforeBackspace = tui.mark();
+    tui.send('\u007f');
+    await tui.waitFor('you>', { from: beforeBackspace, settleMs: 100 });
+    assert('deleting ! restores the normal composer', !tui.frame.includes('cmd>'));
+    const beforeText = tui.mark();
+    tui.send('hello!');
+    await tui.waitFor('you> hello!', { from: beforeText, settleMs: 100 });
+    assert('an embedded ! stays ordinary prompt text', !tui.frame.includes('cmd>'));
+    tui.send('\u0015');
+    const beforeWhitespace = tui.mark();
+    tui.send('  !');
+    await tui.waitFor('cmd>   !', { from: beforeWhitespace, settleMs: 100 });
+    assert('mode recognition matches the trimmed submit prefix', tui.frame.includes('cmd>   !'));
+    const beforeClear = tui.mark();
+    tui.send('\u0015');
+    await tui.waitFor('you>', { from: beforeClear, settleMs: 100 });
+
     // A command slow enough to catch mid-flight: live tail, header status, hint.
     // Typed with extra whitespace after the `!`, so the normalized user row the
     // transcript commits is provably not just the draft echo.
@@ -4220,7 +4243,7 @@ async function bangShellCommand(): Promise<void> {
     await tui.waitFor('queued · !echo QUEUED_AFTER', { timeoutMs: 30_000, from: beforeQueued, settleMs: 200 });
     assert('a mid-command submission is queued, listed and leaves the editor',
       tui.frame.includes('queued · !echo QUEUED_AFTER') &&
-      !tui.frame.includes('you> !echo QUEUED_AFTER'));
+      !/(?:you|cmd)> !echo QUEUED_AFTER/.test(tui.frame));
     assert('the busy hint counts the queue', tui.frame.includes('· 1 queued'));
 
     await tui.waitFor("$ sh -c 'echo LIVE_TAIL_ROW; sleep 2' (exit 0 in", { timeoutMs: 30_000, from: beforeSlow, settleMs: 300 });

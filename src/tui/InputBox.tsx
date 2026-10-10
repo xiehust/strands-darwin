@@ -95,6 +95,7 @@ export function InputBox({
   commandDescriptions,
   selectedCompletion,
   editable,
+  shellMode = false,
   hint,
   attachment,
   recallIndicator,
@@ -120,6 +121,8 @@ export function InputBox({
   readonly commandDescriptions?: ReadonlyMap<string, string>;
   readonly selectedCompletion: number;
   readonly editable: boolean;
+  /** Presentation only: the draft matches the submit path's `!` shell prefix. */
+  readonly shellMode?: boolean;
   readonly hint: string | undefined;
   /** One bounded live-only fact for a pending clipboard image. */
   readonly attachment?: string | undefined;
@@ -202,11 +205,12 @@ export function InputBox({
       {rows.map((row, index) => (
         <Box key={`${row.start}:${index}`}>
           <Text
-            {...(editable && row.prefix !== '     ' ? { color: visualColor.identity } : {})}
+            {...(editable && row.prefix !== '     ' ? { color: shellMode ? visualColor.warning : visualColor.identity } : {})}
             bold={editable && row.prefix !== '     '}
             dimColor={!editable || row.prefix === '     '}
           >
-            {row.prefix}
+            {/* Both markers occupy five cells; editor wrapping and cursor stay unchanged. */}
+            {shellMode && row.prefix === 'you> ' ? 'cmd> ' : row.prefix}
           </Text>
           <Text dimColor={!editable} wrap="truncate-end">{row.text}</Text>
         </Box>

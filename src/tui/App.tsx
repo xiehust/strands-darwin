@@ -3485,6 +3485,7 @@ export function App({
             commandDescriptions={commandDescriptions}
             selectedCompletion={selectedCompletion}
             editable={effectiveStatus !== 'compacting'}
+            shellMode={parseShellCommand(draft) !== undefined}
             offset={{ top: chrome.top, left: chrome.left }}
             maxRows={grants.prompt}
             hint={streamingHint}
