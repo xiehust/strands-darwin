@@ -528,7 +528,7 @@ Acceptance: registered pure checks for LF/CRLF and Unicode neighbors (combining 
 
 ## SER-119 — Named pathspecs on `git diff` and `git show` use the sensitive-read predicate
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 159
 - Score: 12
 - Importance: 4
