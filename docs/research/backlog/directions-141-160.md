@@ -554,7 +554,7 @@ Acceptance is in `spike/verify-permission-modes.ts` plus the existing gate behav
 
 ## SER-120 — `imageViewer` paths use the same sensitive-read predicate as `fileEditor view`
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 160
 - Score: 14
 - Importance: 4
