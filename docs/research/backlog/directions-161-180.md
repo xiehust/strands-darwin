@@ -30,7 +30,7 @@ Acceptance: a fixture result with a reasoning block and a text block yields only
 
 ## SER-122 — Upgrade the pinned Strands SDK to 1.20.0 while preserving Darwin's patched contracts and MCP compatibility
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 162
 - Score: 12
 - Importance: 5
