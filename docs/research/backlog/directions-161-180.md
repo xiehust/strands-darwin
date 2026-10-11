@@ -96,7 +96,7 @@ Modest ergonomic value, exact primary-source and code evidence, and high fit thr
 
 ## SER-125 — Add a user-only bounded local Git diff viewer without sending changes to the model
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 165
 - Score: 10
 - Importance: 3
