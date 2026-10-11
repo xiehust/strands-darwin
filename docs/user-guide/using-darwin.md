@@ -27,6 +27,18 @@ These rows are calculated only when you request `/context`; `/status` shows the 
 
 If the parent model stops sending events for 120 seconds, the turn fails visibly with `stream idle for 120s`; there is no automatic retry or continuation. Thinking events count as activity, while permission, tool, background and throttle waits do not count as stream silence. User cancellation takes precedence during cleanup. Already streamed output remains visible; inspect completed work before resubmitting. All headless formats add one `stream:` stderr diagnostic and keep their ordinary failure contract. Change the root `streamIdleTimeoutSeconds` setting, or set `0` to disable; [exact scope and limits](configuration.md#stream-idle-watchdog).
 
+## Local Git diff
+
+Use `/diff` in the idle TUI to inspect tracked **unstaged** changes: worktree versus index. Use `/diff --staged` for the index versus HEAD; an unborn repository compares against the empty tree. The command name is case-insensitive and exact; only the literal `--staged` argument is accepted. Paths, revisions, other flags and extra arguments show local usage. The built-in reserves `diff`; rename any same-name custom command or skill slash invocation.
+
+Each result labels its baseline and states that untracked contents and submodule contents are excluded (submodule entries are omitted too). “No changes in this selected scope” does not prove the whole tree is clean. Binary changes are described by Git, not decoded. Output is one Static transcript notice: no model/tool call, prompt history, trajectory/diagnostic record, pending shell report, permission-mode switch, or workspace/session write. This viewer is TUI-only, not a headless or REPL command. `/review` still asks the model to analyze changes; `!git diff` still records a shell report for the next prompt.
+
+Busy invocations refuse locally, never queue. Permission prompts, search modals and the external editor retain keyboard ownership. Another submission waits for the viewer to finish or be cancelled; `Ctrl+C` cancels, and exit reaps the process. Session replacement cannot carry an old result forward.
+
+Git runs without a shell, from the project directory regardless of the persistent shell's cwd, with fixed arguments disabling pager, color, external diff, textconv, executable fsmonitor, index refresh and submodule recursion. A read-only config preflight refuses configured clean/process filters and promisor remotes, even if unused: otherwise Git could run a clean filter or implicitly fetch missing objects. Such repositories are **unsupported**, not clean. Other Git helpers are not enabled. Concurrent external edits are not an atomic snapshot. The child receives the existing credential-scrubbed environment and configured passthroughs, retaining the `DARWIN` marker; inherited `GIT_*` overrides are removed so they cannot redirect the repository or write trace files.
+
+The preflight and diff share a **5-second** deadline and **64 KiB** combined stdout/stderr capture budget. Display keeps at most **200 lines**, each at most **500 code points**, plus fixed labels/status. Control and bidi characters are escaped. Truncation and incomplete capture are explicit. Missing Git, non-repositories, failures, timeout and cancellation are notices, never clean results. Nothing is staged, reset or rolled back.
+
 ## Reviewing changes
 
 After making changes, type `/review` to request a review without restating the checklist. Use `/review focus on authentication` to steer the pass: the command trims surrounding whitespace and includes the remaining text verbatim under `Focus:`. The name is case-insensitive and must match exactly (`/reviews` is not the built-in).

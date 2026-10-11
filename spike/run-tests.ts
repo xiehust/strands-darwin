@@ -19,6 +19,8 @@ const suites = [
   'verify-composer-stash.ts',
   'verify-external-editor.ts',
   'verify-external-editor-pty.ts',
+  'verify-git-diff.ts',
+  'verify-git-diff-pty.ts',
   'verify-prompt-completion.ts',
   'verify-live-text.ts',
   'verify-frame-budget.ts',

@@ -2950,6 +2950,41 @@ read-only/offline guards and concurrent positive preservation; existing fetch co
 `spike/verify-trajectory-cost.ts` (hand-written records, unchanged cache mtime), and the
 `/status`, `/usage`, headless suites (all in `pnpm test`).
 
+## `/diff` — user-only bounded local Git inspection
+
+SER-125 (`src/tui/git-diff.ts`, `App.submit`) is **not** the tool-input diff renderer or
+`/review`: only the human's idle TUI submission can run it. Exact case-insensitive `/diff`
+selects tracked worktree versus index; literal `--staged` selects index versus HEAD, including
+an unborn HEAD. Other arguments are local usage, busy submissions refuse before queueing, and
+permission/search/editor owners still intercept keys first. Scope and untracked/submodule
+exclusions are always stated; an empty selected scope never certifies a clean whole tree.
+
+One Static notice goes through the reducer directly, not even the diagnostic notice mirror:
+no model, SDK tool, trajectory, prompt-history or held `!` report sees its input/output. A
+synchronous run reference fences overlap; a transient boolean only re-arms existing idle drains
+when it settles, never adds a frame surface. Queue/peer/goal drains and external editing wait.
+Ctrl+C cancels only this process, not the runtime; exit/unmount/runtime replacement invalidate
+its report and reap it. Session-replacing submissions refuse until it settles/cancels.
+
+Git is `spawn`ed with fixed argv, no shell, stdin ignored and `runtime.info.projectRoot` cwd.
+Disable pager, color, external diff, textconv, executable fsmonitor, optional locks/index
+refresh, renames and submodule recursion; submodule entries are omitted as well as contents.
+The credential-scrubbed/passthrough environment retains the ordinary DARWIN marker but strips
+inherited `GIT_*` redirections/config injection/tracing. A fixed read-only `git config` preflight
+refuses any configured clean/process filter or promisor remote: `--no-textconv` alone does not
+stop clean filters, and missing objects must not trigger helper-driven fetches. This conservative
+unsupported-repository notice is intentional, even for unused settings. This is an inspection
+of current files/config, not an atomic snapshot against concurrent external changes.
+
+The two processes share 5 s and 64 KiB stdout+stderr storage. Exceeding the byte budget kills
+the process group; projection keeps 200 lines and 500 code points per line, escapes terminal
+and bidi controls, and states truncation/incomplete capture. Missing Git/nonrepo/exit failure,
+spawn failure, cancellation and timeout cannot become clean results. No workspace or Git
+configuration/index write is allowed. Real-Git byte snapshots and hostile-helper sentinels,
+real process failure/bound fixtures, and production CLI pty ownership/privacy/cleanup checks
+live in `verify-git-diff.ts` and `verify-git-diff-pty.ts` (both in `pnpm test`); completion uses
+the canonical inventory and `tui completion`. English/Chinese guides state the same limits.
+
 ## File-edit diffs
 
 **A file edit is presented as the line diff of its own input — computed at presentation time,

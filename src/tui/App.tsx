@@ -243,6 +243,7 @@ import { liveBackgroundDelegationRefusal } from '../agent/background-delegation.
 import { createContextWarnLatch, formatContextReport, formatContextReportWithBreakdown } from './context-format.js';
 import { COPY_COMMAND_USAGE, runCopyCommand } from './copy-command.js';
 import { formatHelpReport } from './help-format.js';
+import { DIFF_USAGE, parseDiffCommand, runGitDiff, type RunningGitDiff } from './git-diff.js';
 import { readSessionsReport } from './sessions-format.js';
 import { formatMcpReport } from './mcp-format.js';
 import {
@@ -426,13 +427,22 @@ export function App({
     draftStashRef.current = next;
     setDraftStashState(next);
   }, []);
+  const diffRun = useRef<RunningGitDiff | undefined>(undefined);
+  const [diffActive, setDiffActive] = useState(false);
+  const discardDiff = useCallback(() => {
+    diffRun.current?.cancel();
+    diffRun.current = undefined;
+  }, []);
+  // A session replacement/unmount invalidates the result before killing its process.
+  useEffect(() => () => discardDiff(), [runtime, discardDiff]);
   const exit = useCallback(() => {
+    discardDiff();
     if (draftStashRef.current === undefined) { inkExit(); return; }
     setDraftStash(undefined);
     dispatch({ type: 'notice', text: DRAFT_STASH_DROP_NOTICE });
     // Let the bounded notice reach Static before Ink unmounts the composer.
     void waitUntilRenderFlush().finally(() => inkExit());
-  }, [dispatch, inkExit, setDraftStash, waitUntilRenderFlush]);
+  }, [discardDiff, dispatch, inkExit, setDraftStash, waitUntilRenderFlush]);
 
   const layout = layoutEditor(draft, columns, editor.cursor);
   const preferredColumn = useRef<number | undefined>(undefined);
@@ -1421,7 +1431,12 @@ export function App({
     async (raw: string, queuedEntry?: QueuedPrompt) => {
       editorPrefix.current = false;
       const text = raw.trim();
-      if (clearing.current) { dispatch({ type: 'notice', text: 'Session management in progress; submit again when it finishes' }); return; }
+      const diff = parseDiffCommand(text);
+      if (clearing.current) {
+        if (diff !== undefined) recordAction({ type: 'notice', text: diff === 'usage' ? DIFF_USAGE : '/diff does not queue — run it after current work finishes' });
+        else dispatch({ type: 'notice', text: 'Session management in progress; submit again when it finishes' });
+        return;
+      }
       // A drained entry owns its optional image, including explicit absence. It
       // must never borrow a newer attachment still sitting beside the editor.
       const image = queuedEntry === undefined ? attachedImageRef.current : queuedEntry.image;
@@ -1453,6 +1468,38 @@ export function App({
         if (!completed) {
           dispatch({ type: 'notice', text: formatTaskWakeUndelivered(fields), severity: 'warn' });
         }
+        return;
+      }
+
+      // Human-only Git inspection, before queueing or any model-bound expansion.
+      if (diff !== undefined && queuedEntry === undefined) {
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        if (diff === 'usage') { recordAction({ type: 'notice', text: DIFF_USAGE }); return; }
+        if (statusRef.current !== 'idle' || diffRun.current !== undefined || draining.current ||
+            permissions.current !== undefined || editorActive.current ||
+            historySearchRef.current !== undefined || rewindSearchRef.current !== undefined) {
+          recordAction({ type: 'notice', text: '/diff does not queue — run it after current work finishes' });
+          return;
+        }
+        const run = runGitDiff({
+          projectRoot: runtime.info.projectRoot, scope: diff,
+          env: scrubShellEnv(process.env, runtime.info.shellEnv.passthrough).env,
+        });
+        diffRun.current = run; // Synchronous fence, before the first await/render.
+        setDiffActive(true);
+        try {
+          const report = await run.result;
+          if (diffRun.current === run) recordAction({ type: 'notice', text: report });
+        } finally {
+          if (diffRun.current === run) diffRun.current = undefined;
+          setDiffActive(false);
+        }
+        return;
+      }
+      if (diffRun.current !== undefined) {
+        if (text === '/exit' || text === '/quit') { exit(); return; }
+        recordAction({ type: 'notice', text: 'local diff in progress — cancel with Ctrl+C before submitting' });
         return;
       }
 
@@ -2377,7 +2424,7 @@ export function App({
   // `wait`/`status`; such a wake is dropped silently — the conversation already
   // holds the fact — and the next entry drains in its place.
   useEffect(() => {
-    if (draining.current || status !== 'idle' || pendingPermission !== undefined || clearing.current) return;
+    if (diffRun.current !== undefined || draining.current || status !== 'idle' || pendingPermission !== undefined || clearing.current) return;
     // A delegation wake (SER-070) is dropped once the SDK no longer tracks its task:
     // an intervening turn already carried the result pair, so the report is known.
     const entries = queuedRef.current.filter(
@@ -2396,7 +2443,7 @@ export function App({
       draining.current = false;
       setDrainCycle((cycle) => cycle + 1);
     });
-  }, [drainCycle, pendingPermission, queued, runtime, setQueued, status, submit]);
+  }, [diffActive, drainCycle, pendingPermission, queued, runtime, setQueued, status, submit]);
 
   // Peer inbox borrows the existing Static notice surface and idle ownership latch,
   // never a new live-frame row, editable user draft or background polling timer.
@@ -2417,7 +2464,7 @@ export function App({
     return unsubscribe;
   }, [runtime, dispatch]);
   useEffect(() => {
-    if (draining.current || status !== 'idle' || pendingPermission !== undefined || clearing.current || queuedRef.current.length) return;
+    if (diffRun.current !== undefined || draining.current || status !== 'idle' || pendingPermission !== undefined || clearing.current || queuedRef.current.length) return;
     const peer = runtime.collaboration?.take();
     if (!peer) return;
     draining.current = true;
@@ -2425,7 +2472,7 @@ export function App({
     void runTurn(peerPrompt(peer), peerPrompt(peer), undefined, peer).then(completed => {
       if (!completed) dispatch({ type: 'notice', severity: 'warn', text: `peer message ${peer.envelope.id} failed/cancelled; not re-sent` });
     }).finally(() => { draining.current = false; setDrainCycle(cycle => cycle + 1); });
-  }, [peerCycle, drainCycle, pendingPermission, queued, runtime, runTurn, status, dispatch]);
+  }, [diffActive, peerCycle, drainCycle, pendingPermission, queued, runtime, runTurn, status, dispatch]);
 
   // The `/goal` loop (SER-108): the lowest-priority owner of an idle session. It is asked
   // in the same commits as the two effects above and declared after them, so anything
@@ -2442,7 +2489,7 @@ export function App({
   useEffect(() => {
     const current = goalRef.current;
     const action = goalAction(current, {
-      idle: status === 'idle',
+      idle: status === 'idle' && diffRun.current === undefined,
       permissionPending: pendingPermission !== undefined,
       clearing: clearing.current,
       draining: draining.current,
@@ -2500,7 +2547,7 @@ export function App({
       draining.current = false;
       setDrainCycle((cycle) => cycle + 1);
     });
-  }, [applyGoalTransition, drainCycle, goal, peerCycle, pendingPermission, queued, returnQueuedToEditor, runtime, setGoal, status, submit]);
+  }, [diffActive, applyGoalTransition, drainCycle, goal, peerCycle, pendingPermission, queued, returnQueuedToEditor, runtime, setGoal, status, submit]);
 
   /**
    * Answers the pending confirmation and, when the user picked an "always allow"
@@ -2848,7 +2895,7 @@ export function App({
     }) !== 'none';
     const refusal = externalEditorRefusal({
       editorActive: editorActive.current,
-      idle: status === 'idle' && pendingPermission === undefined,
+      idle: status === 'idle' && pendingPermission === undefined && diffRun.current === undefined,
       queued: queuedRef.current.length,
       draining: draining.current,
       clearing: clearing.current,
@@ -2965,6 +3012,7 @@ export function App({
     }
 
     interruptedAt.current = now;
+    if (diffRun.current !== undefined) { diffRun.current.cancel(); return; }
     if (status === 'idle' && pendingPermission === undefined) {
       // One stray press never ends the session: it only arms the second one.
       dispatch({ type: 'notice', text: 'press ctrl+c again to exit' });
@@ -3171,7 +3219,7 @@ export function App({
         setSelectedCompletion(0);
       } else if (recallRef.current !== undefined) {
         endRecall();
-      } else if (status === 'idle' && queuedRef.current.length === 0 && editorRef.current.text === '') {
+      } else if (status === 'idle' && diffRun.current === undefined && queuedRef.current.length === 0 && editorRef.current.text === '') {
         // Esc Esc (SER-059): no owner took this Escape and there is nothing to
         // lose — empty draft, no turn or `!` command, no queue (a pending
         // permission returned above). The first press arms a timestamp; a second

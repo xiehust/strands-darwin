@@ -1470,6 +1470,8 @@ async function slashCompletion(): Promise<void> {
     assert('the built-in /context is listed', completed.includes('  /context'));
     // Matched with its description: a custom command could also be named copy.
     assert('the built-in /copy is listed', completed.includes('  /copy — copy the last answer to the clipboard'));
+    assert('the built-in /diff is listed with its local scope',
+      completed.includes('  /diff — local Git diff: unstaged, or /diff --staged (idle TUI only)'));
     assert('the built-in /effort is listed', completed.includes('  /effort'));
     assert('the built-in /exit is listed', completed.includes('  /exit'));
     // Matched with its description: '  /export' is not a prefix of any other row,
