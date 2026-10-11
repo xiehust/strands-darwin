@@ -391,7 +391,7 @@ async function projectInstructionsOptOut(registry: AgentDefinitionRegistry): Pro
   header('subagents — projectInstructions: false drops the project block from that child only');
   const fragment = '<project-instructions source="AGENTS.md">\nAGENTS-BODY-MARKER\n</project-instructions>';
   const projectInstructions: ProjectInstructions = {
-    filename: 'AGENTS.md', path: path.join(ROOT, 'AGENTS.md'), bytes: fragment.length, truncated: false, fragment,
+    filename: 'AGENTS.md', path: path.join(ROOT, 'AGENTS.md'), bytes: fragment.length, maxBytes: fragment.length, truncated: false, fragment,
   };
   const gate = new PermissionGate({ mode: 'default', projectRoot: ROOT, ask: async () => ({ allowed: false }) });
   const build = (name: string) => {

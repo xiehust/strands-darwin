@@ -12,7 +12,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { MAX_INSTRUCTIONS_BYTES } from '../src/agent/instructions.js';
+import { DEFAULT_MAX_INSTRUCTIONS_BYTES } from '../src/agent/instructions.js';
 import {
   BUILTIN_COMMAND_NAMES,
   COMMANDS_DIRNAME,
@@ -35,7 +35,7 @@ const AGENTS_LOADED: InitCommandContext = {
   problemFile: undefined,
 };
 const AGENTS_TRUNCATED: InitCommandContext = {
-  loaded: { filename: 'AGENTS.md', bytes: 40_000, truncated: true },
+  loaded: { filename: 'AGENTS.md', bytes: 80_000, truncated: true },
   problemFile: undefined,
 };
 const CLAUDE_LOADED: InitCommandContext = {
@@ -83,9 +83,9 @@ function template(): void {
   assert('it names every instruction source to consult',
     ['`CLAUDE.md`', '`.cursorrules`', '`.cursor/rules/`', '`.github/copilot-instructions.md`']
       .every((source) => prompt.includes(source)));
-  assert('it states the 32 KiB hard cap from the imported constant',
-    prompt.includes(`${MAX_INSTRUCTIONS_BYTES / 1024} KiB (${MAX_INSTRUCTIONS_BYTES} bytes)`) &&
-    prompt.includes('32 KiB') && prompt.includes('hard cap'));
+  assert('it states the 64 KiB hard cap from the imported constant',
+    prompt.includes(`${DEFAULT_MAX_INSTRUCTIONS_BYTES / 1024} KiB (${DEFAULT_MAX_INSTRUCTIONS_BYTES} bytes)`) &&
+    prompt.includes('64 KiB') && prompt.includes('hard cap'));
   assert('and asks for a target well below it', prompt.includes('aim well below'));
   assert('it says darwin preloads AGENTS.md into every request',
     prompt.includes('preloads `AGENTS.md`') && prompt.includes('every request'));
@@ -137,7 +137,7 @@ function branches(): void {
   const common = [message('/init'), improve, migrate, unreadable];
   assert('every variant states the cap, the preload and the fallback',
     common.every((prompt) =>
-      prompt.includes('32 KiB') &&
+      prompt.includes('64 KiB') &&
       prompt.includes('preloads `AGENTS.md`') &&
       prompt.includes('falls back to `CLAUDE.md` only when there is no `AGENTS.md`') &&
       prompt.includes('ordinary file editor')));
@@ -199,7 +199,7 @@ async function purity(): Promise<void> {
   assert('the module imports nothing from the runtime',
     !source.includes('runtime.js') && !source.includes('AgentRuntime'));
   assert('the cap is the imported constant, not a copied number',
-    source.includes('MAX_INSTRUCTIONS_BYTES') && !/32\s*\*\s*1024|32768/.test(source));
+    source.includes('resolveInstructionsByteLimit') && !/64\s*\*\s*1024|65536/.test(source));
 }
 
 parsing();

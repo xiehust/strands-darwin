@@ -9,7 +9,8 @@ For the native Darwin dialect, `TurnComplete` and `PermissionRequest` are the on
 
 This is the long-form companion to the "Architecture — the load-bearing decisions" index table
 in `AGENTS.md`. AGENTS.md is preloaded into darwin's own system prompt on every request and is
-capped at 32 KiB (`MAX_INSTRUCTIONS_BYTES` in `src/agent/instructions.ts`), so it carries only
+capped by `maxInstructionsBytes` (default 64 KiB, `DEFAULT_MAX_INSTRUCTIONS_BYTES` in
+`src/agent/instructions.ts`), so it carries only
 the index; each table row's "Decision" names the matching `##` heading here, and the complete
 reasoning for each decision lives under it, verbatim. This file is the authoritative narrative;
 the `spike/` suites named in each section are the executable contract.
@@ -20,7 +21,7 @@ SER-099 adds exactly `darwin import --from claude-code [--apply]`, dispatched by
 
 Prompt destinations derive from `extensionRoots`, global scope from `userDarwinDir`, and the manual project permission target from `userProjectDir`. Existing names across all four layers and built-ins are conservatively reserved, even when a source could otherwise take precedence. Skills accept only name/description/body; agents additionally allow an explicit empty tools array. Omitting tools preserves the source's unrestricted inheritance, while nonempty Claude tool names, unsupported frontmatter and dynamic substitution require manual migration. Do not discard restrictions to manufacture a loadable definition. The existing gray-matter YAML parser is used only after verifying the exact plain YAML opener: its executable JavaScript engine must never be selected. Loader discovery is proved with the official installed skill loader and the actual agent loader, not by creating an Agent.
 
-Project root and `.claude/CLAUDE.md` content may append clearly marked sections to `AGENTS.md`; its existing bytes are never rewritten, identical bodies/sections are no-ops, changed sections are manual, and the complete addition must fit `MAX_INSTRUCTIONS_BYTES`. Global CLAUDE instructions have no equivalent global Darwin layer and are reported as manual instead of being silently scoped to the current project. Root CLAUDE fallback remains unchanged and no `@` imports are expanded.
+Project root and `.claude/CLAUDE.md` content may append clearly marked sections to `AGENTS.md`; its existing bytes are never rewritten, identical bodies/sections are no-ops, changed sections are manual, and the complete addition must fit `maxInstructionsBytes` (default 64 KiB). The importer reads only that scalar from the user config through its existing bounded `ImportReader`, never the runtime configuration loader; unrelated runtime fields remain unvalidated. Malformed JSON or an invalid scalar makes instructions a manual item, not a silent default. Config bytes join the apply revalidation snapshot. File/scan/output bounds remain independent and unchanged. Global CLAUDE instructions have no equivalent global Darwin layer and are reported as manual instead of being silently scoped to the current project. Root CLAUDE fallback remains unchanged and no `@` imports are expanded.
 
 The fixed source allowlist excludes credential/history/session stores and `~/.claude.json`, whose MCP declarations share a file with unrelated user/project state. MCP snippets therefore come only from project `.mcp.json`; settings snippets come from global/project settings and project local settings. Only closed non-secret-bearing shapes produce JSON, using the installed Darwin transport and permission grammars; sensitive-bearing/unknown fields omit the whole MCP entry, never substitute a redacted runnable value. Hook command values are not printed. Snippets are candidates, not policy equivalence: global permissions lose global scope if pasted into the named project store, source disabled/ask/deny restrictions still need review, and a new preferred MCP file can hide fallback servers. Neither scan nor apply writes executable config or consent. Workspace trust and root MCP fallback remain owned by their existing startup paths.
 
@@ -1393,6 +1394,18 @@ The instructions block is exactly one file from the run directory, never walked 
 (`CLAUDE_FILENAME`); an unreadable `AGENTS.md` is reported and never falls through, both present
 means `CLAUDE.md` is not opened, the block's `source="…"` attribute names the file actually loaded,
 and the `CLAUDE.md` case carries one fixed line saying `@path` imports are not expanded.
+
+The root session configuration `maxInstructionsBytes` is an optional positive safe integer
+byte limit, defaulting to 65536 (64 KiB). Zero, fractional and nonnumeric values fail configuration
+validation; it is not a per-model field or an unlimited mode. Preloading retains UTF-8/complete-line
+truncation and records the effective `maxBytes` with its summary. The header, model cutoff notice,
+`/init` and doctor use that value, not a copied constant. Doctor states instructions were not
+inspected when config is invalid, rather than presenting a guessed default as effective. Model
+switches and `/clear` keep the startup configuration; changing the file requires restart and a new
+session. Resume/rewind still restore the snapshot's system prompt, without retroactively rewriting
+its instructions. Tests: `verify-instructions-limit.ts`, `verify-agents-md.ts`, `verify-config.ts`,
+`verify-init-command.ts`, `verify-doctor-command.ts`, `verify-import-command.ts`, and free `tui agentsMd`.
+
 Official AgentSkills injects before each invocation; Darwin registers a later hook that moves that
 exact catalogue TextBlock ahead of current working context and cache. Repeated/resumed invocations
 remove the previous official block via persisted appState before reordering, so the catalogue is

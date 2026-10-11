@@ -17,7 +17,7 @@ import {
   AGENTS_FILENAME,
   CLAUDE_FILENAME,
   CLAUDE_IMPORT_NOTICE,
-  MAX_INSTRUCTIONS_BYTES,
+  DEFAULT_MAX_INSTRUCTIONS_BYTES,
   composeSystemPrompt,
   loadProjectInstructions,
   type ProjectInstructions,
@@ -148,22 +148,22 @@ async function claudeFallback(): Promise<void> {
   const empty = await loadProjectInstructions(await withFile(CLAUDE_FILENAME, '\n  \n'));
   assert('a whitespace-only CLAUDE.md yields nothing and no problem', empty.instructions === undefined && empty.problem === undefined);
   const line = `${'y'.repeat(63)}\n`;
-  const over = await load(await withFile(CLAUDE_FILENAME, line.repeat(Math.ceil((MAX_INSTRUCTIONS_BYTES * 2) / line.length))));
+  const over = await load(await withFile(CLAUDE_FILENAME, line.repeat(Math.ceil((DEFAULT_MAX_INSTRUCTIONS_BYTES * 2) / line.length))));
   assert('an oversized CLAUDE.md is flagged as truncated', over?.filename === CLAUDE_FILENAME && over?.truncated === true);
   assert('its fragment declares itself truncated under the CLAUDE.md source',
     over?.fragment.includes(`<project-instructions source="${CLAUDE_FILENAME}" truncated="true">`) === true
       && over.fragment.includes('was cut off here'));
   assert('the kept text stays within the cap',
-    Buffer.byteLength(over?.fragment ?? '', 'utf8') < MAX_INSTRUCTIONS_BYTES + 400 + CLAUDE_IMPORT_NOTICE.length);
+    Buffer.byteLength(over?.fragment ?? '', 'utf8') < DEFAULT_MAX_INSTRUCTIONS_BYTES + 400 + CLAUDE_IMPORT_NOTICE.length);
 
   // The header rows name the file that was loaded or failed — the same helper the
   // TUI header renders, checked here without a pty.
-  const summary = { filename: claude.instructions!.filename, path: claude.instructions!.path, bytes: 1536, truncated: false };
+  const summary = { filename: claude.instructions!.filename, path: claude.instructions!.path, bytes: 1536, maxBytes: DEFAULT_MAX_INSTRUCTIONS_BYTES, truncated: false };
   assert('the header row names CLAUDE.md when it was loaded',
     formatInstructionsLoadedRow(summary) === 'CLAUDE.md: loaded (1.5 KB)');
   assert('the truncated header row names the file and the cap',
-    formatInstructionsLoadedRow({ ...summary, filename: AGENTS_FILENAME, bytes: 40_000, truncated: true })
-      === `AGENTS.md: loaded (39.1 KB, truncated to ${MAX_INSTRUCTIONS_BYTES / 1024} KB)`);
+    formatInstructionsLoadedRow({ ...summary, filename: AGENTS_FILENAME, bytes: 80_000, truncated: true })
+      === `AGENTS.md: loaded (78.1 KB, truncated to ${DEFAULT_MAX_INSTRUCTIONS_BYTES / 1024} KiB)`);
   assert('the problem row names the file the problem is about',
     formatInstructionsProblemRow(CLAUDE_FILENAME, 'EISDIR: illegal operation on a directory, read')
       === 'CLAUDE.md: skipped — EISDIR: illegal operation on a directory, read');
@@ -220,8 +220,8 @@ async function truncation(): Promise<void> {
   // Just under, exactly at, and well over the cap. Line-sized chunks so the cut
   // has newlines to land on.
   const line = `${'x'.repeat(63)}\n`;
-  const underDir = await withAgentsMd(line.repeat(Math.floor(MAX_INSTRUCTIONS_BYTES / line.length) - 1));
-  const overDir = await withAgentsMd(line.repeat(Math.ceil((MAX_INSTRUCTIONS_BYTES * 2) / line.length)));
+  const underDir = await withAgentsMd(line.repeat(Math.floor(DEFAULT_MAX_INSTRUCTIONS_BYTES / line.length) - 1));
+  const overDir = await withAgentsMd(line.repeat(Math.ceil((DEFAULT_MAX_INSTRUCTIONS_BYTES * 2) / line.length)));
 
   const under = await load(underDir);
   const over = await load(overDir);
@@ -233,11 +233,11 @@ async function truncation(): Promise<void> {
   assert('a file over the cap is flagged as truncated', over?.truncated === true);
   assert(
     'the reported size is the size on disk, not the kept size',
-    (over?.bytes ?? 0) > MAX_INSTRUCTIONS_BYTES,
+    (over?.bytes ?? 0) > DEFAULT_MAX_INSTRUCTIONS_BYTES,
   );
   assert(
     'the kept text stays within the cap',
-    Buffer.byteLength(over?.fragment ?? '', 'utf8') < MAX_INSTRUCTIONS_BYTES + 400,
+    Buffer.byteLength(over?.fragment ?? '', 'utf8') < DEFAULT_MAX_INSTRUCTIONS_BYTES + 400,
   );
   // Truncation has to be visible to the model too: silently cutting instructions
   // in half reads to it as a complete but contradictory set of rules.
@@ -246,7 +246,7 @@ async function truncation(): Promise<void> {
 
   // A byte-offset cut can land inside a multi-byte character; ending at the last
   // newline avoids handing the model a broken one.
-  const multibyte = await load(await withAgentsMd(`${'。'.repeat(MAX_INSTRUCTIONS_BYTES)}\n`));
+  const multibyte = await load(await withAgentsMd(`${'。'.repeat(DEFAULT_MAX_INSTRUCTIONS_BYTES)}\n`));
   assert('truncating multi-byte text produces no replacement character', multibyte?.fragment.includes('�') === false);
 }
 

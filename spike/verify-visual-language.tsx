@@ -83,7 +83,7 @@ const info: RuntimeInfo = {
   commandNames: ['release', 'doctor'], commandProblems: [],
   mcpPromptCommands: [], mcpPromptProblems: [],
   agentNames: ['general', 'research'], agentProblems: [],
-  projectInstructions: { filename: 'AGENTS.md', path: '/workspace/AGENTS.md', bytes: 4096, truncated: false },
+  projectInstructions: { filename: 'AGENTS.md', path: '/workspace/AGENTS.md', bytes: 4096, maxBytes: 65536, truncated: false },
   projectInstructionsProblem: undefined, projectInstructionsProblemFile: undefined, systemPromptSource: 'default', systemPromptPath: undefined,
   systemPromptProblem: undefined, promptSections: { base: 'BASE', instructions: undefined }, workingContextProblem: undefined,
   promptCache: {

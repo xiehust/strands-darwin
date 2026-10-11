@@ -93,6 +93,7 @@
 | `trustPeers` | `false` | 本地权限拒绝后不再暂停 `peer_send`。Peer 请求的 shell 操作始终走普通的模式/规则/分类器/确认流程，不受此设置影响。Peer 的记忆保存、策略/config/AGENTS/`.darwin`/`.agents` 写入、协作凭证以及 plan 发送者的只读限制仍受保护。仅适用于只有你自己拥有的机器，见[权限](permissions.zh-CN.md#本地协作不转交权限) |
 | `shellEnv` | — | `{ "passthrough": [...] }`：允许模型启动的 shell 继承的变量名（`NPM_TOKEN`）或带一个结尾 `*` 的前缀（`STRIPE_*`，大小写敏感），即使名字形似凭据——见 [Shell 环境变量](#shell-环境变量)。其他子键、非字符串条目、或 `*` 不在末尾都会导致启动失败，错误信息会指出 `shellEnv`。过滤本身没有关闭开关 |
 | `systemPrompt` | 内置值 | 替换基础 prompt，并优先于项目文件 |
+| `maxInstructionsBytes` | `65536`（64 KiB） | 预加载 `AGENTS.md` 或回退 `CLAUDE.md` 的字节上限，必须是正的安全整数；放在根级，不放进模型条目；拒绝 `0`、小数及非数字 |
 | `hooks` | — | 旧版内嵌后备配置；建议使用分层 `hooks/*.json` |
 
 `memory: true` 与 `trajectory: false` 不能同时使用。权限放行与拒绝规则不属于该配置，它们按项目存于 `~/.darwin/projects/<project-key>/permission-rules.json`。在配置文件中写入 `permissionRules` 会导致启动失败。
@@ -146,7 +147,7 @@ auto 策略是持续授权，不是完成保证：每个候选还须通过持久
 
 ## `AGENTS.md`（或 `CLAUDE.md`）
 
-darwin 只读取启动目录中自己的指令文件，不会向父目录查找，也不会合并多份文件。先读 `AGENTS.md`；只有在 `AGENTS.md` 完全不存在时，才改读 `CLAUDE.md`。`AGENTS.md` 存在但无法读取时会如实报告，绝不会退回到 `CLAUDE.md`；两份文件都存在时，`CLAUDE.md` 根本不会被打开。标题区那一行、`darwin doctor` 以及片段的 `source="…"` 属性都会标明实际加载的文件。Claude Code 的 `@path` 导入行不会被展开——它们保持为字面文本，`CLAUDE.md` 片段也会向模型说明这一点。文件不存在、为空或只有空白时直接忽略；读取失败会显示在标题区。超过 32 KiB 的内容会在上限前最后一个完整行处截断，并同时向用户和模型标明；两份文件遵循同样的规则。`/init` 用于创建或改进它：一条普通 prompt 请模型检查仓库，并通过普通文件编辑器写入 `AGENTS.md`（已加载的 `CLAUDE.md` 会被迁入新的 `AGENTS.md`，自身保持不动），因此这次写入和其他编辑一样经过权限审批。
+darwin 只读取启动目录中自己的指令文件，不会向父目录查找，也不会合并多份文件。先读 `AGENTS.md`；只有在 `AGENTS.md` 完全不存在时，才改读 `CLAUDE.md`。`AGENTS.md` 存在但无法读取时会如实报告，绝不会退回到 `CLAUDE.md`；两份文件都存在时，`CLAUDE.md` 根本不会被打开。标题区那一行、`darwin doctor` 以及片段的 `source="…"` 属性都会标明实际加载的文件。Claude Code 的 `@path` 导入行不会被展开——它们保持为字面文本，`CLAUDE.md` 片段也会向模型说明这一点。文件不存在、为空或只有空白时直接忽略；读取失败会显示在标题区。超过 `maxInstructionsBytes`（默认 64 KiB）的内容会在上限前最后一个完整行处截断，并同时向用户和模型标明；两份文件遵循同样的规则。在 `~/.darwin/config.json` 根级添加 `"maxInstructionsBytes": 131072` 可提高到 128 KiB；省略时使用 65536 字节。它不是 token 上限，也没有无限制模式；实际加载的内容越长，占用的上下文越多。启动时的值在 `/model` 和 `/clear` 后保留；修改后须重新启动并开启新会话。恢复会话或 `/rewind` 仍沿用快照保存的系统提示词，此设置不改写已保存的提示词。`/init`、标题区和 `darwin doctor` 使用配置的预加载上限。`/init` 用于创建或改进它：一条普通 prompt 请模型检查仓库，并通过普通文件编辑器写入 `AGENTS.md`（已加载的 `CLAUDE.md` 会被迁入新的 `AGENTS.md`，自身保持不动），因此这次写入和其他编辑一样经过权限审批。
 
 ## 工作上下文
 

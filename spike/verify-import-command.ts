@@ -69,7 +69,7 @@ put(path.join(ROOT, '.mcp.json'), JSON.stringify({ mcpServers: {
 } }));
 put(path.join(HOME, '.claude.json'), 'NEVER_SCAN_CREDENTIAL_STORE');
 put(path.join(HOME, '.claude/projects/private/history.jsonl'), 'NEVER_SCAN_HISTORY');
-put(path.join(HOME, '.darwin/config.json'), 'deliberately invalid runtime config');
+put(path.join(HOME, '.darwin/config.json'), JSON.stringify({ provider: 'deliberately-invalid-runtime-provider' }));
 for (const args of [[], ['--from'], ['--from', 'other'], [...command, '--apply', '--apply'], [...command, '--yolo'], [...command, 'extra'], ['--from=claude-code'], [...command, '--session', 'x'], ['--from', '--apply', 'claude-code']]) {
   const result = cli(args);
   assert(`strict usage ${JSON.stringify(args)}`, result.status === 2 && result.stdout === '' && result.stderr.includes('usage: darwin import --from claude-code [--apply]'));
@@ -90,7 +90,7 @@ const applied = cli([...command, '--apply']);
 assert('apply copies accepted prompts', applied.status === 0 && applied.stdout.includes('Applied 7 prompt/resource file write(s)'));
 assert('source trees unchanged', sources === digest(path.join(ROOT, '.claude')) + digest(path.join(HOME, '.claude')));
 const installed = readFileSync(path.join(ROOT, 'AGENTS.md'));
-assert('AGENTS existing bytes retained and both marked sections appended within cap', installed.subarray(0, originalAgents.length).equals(originalAgents) && installed.includes('claude-code:CLAUDE.md') && installed.includes('claude-code:.claude/CLAUDE.md') && installed.length <= 32768);
+assert('AGENTS existing bytes retained and both marked sections appended within cap', installed.subarray(0, originalAgents.length).equals(originalAgents) && installed.includes('claude-code:CLAUDE.md') && installed.includes('claude-code:.claude/CLAUDE.md') && installed.length <= 65536);
 assert('scripts copied literally, not run, not executable', readFileSync(path.join(ROOT, '.darwin/skills/review/scripts/check.sh'), 'utf8').includes('MUST_NOT_RUN') && (lstatSync(path.join(ROOT, '.darwin/skills/review/scripts/check.sh')).mode & 0o111) === 0 && !existsSync(path.join(ROOT, 'MUST_NOT_RUN')));
 const agents = await loadAgentDefinitions(ROOT, ['bash', 'fileEditor']);
 assert('actual agent loader discovers global and project imports', ['writer', 'quiet', 'global-agent'].every(name => agents.definitions.some(a => a.name === name)));
@@ -134,10 +134,10 @@ assert('changed source instruction section requires manual merge, no duplicate',
 
 function fixture(name: string): string { const root = path.join(ROOT, 'cases', name); mkdirSync(root, { recursive: true }); return root; }
 const capRoot = fixture('instruction-cap');
-put(path.join(capRoot, 'AGENTS.md'), Buffer.alloc(32760, 'x'));
+put(path.join(capRoot, 'AGENTS.md'), Buffer.alloc(65528, 'x'));
 put(path.join(capRoot, 'CLAUDE.md'), 'large enough');
 const capBefore = digest(capRoot);
-assert('instruction cap refuses append and retains all bytes', cli([...command, '--apply'], capRoot).stdout.includes('32768-byte instruction cap') && digest(capRoot) === capBefore);
+assert('instruction cap refuses append and retains all bytes', cli([...command, '--apply'], capRoot).stdout.includes('65536-byte instruction cap') && digest(capRoot) === capBefore);
 const fallbackRoot = fixture('fallback');
 put(path.join(fallbackRoot, 'CLAUDE.md'), 'fallback literal @missing.md');
 assert('pre-existing CLAUDE fallback unchanged before migration', (await loadProjectInstructions(fallbackRoot)).instructions?.filename === 'CLAUDE.md');

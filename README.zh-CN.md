@@ -108,6 +108,8 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 
 多模型切换、各供应商字段、Bedrock Mantle、缓存、思考强度、上下文限制和全部会话设置，见[入门与模型供应商](docs/user-guide/getting-started.zh-CN.md)和[配置与上下文](docs/user-guide/configuration.zh-CN.md)。
 
+项目指令（`AGENTS.md`，或回退的 `CLAUDE.md`）默认预加载上限为 **64 KiB**。可在同一配置根级设置 `maxInstructionsBytes`，值为正整数字节数，例如 `131072` 表示 128 KiB；省略即可使用默认值。生效时机与历史会话规则见[配置与上下文](docs/user-guide/configuration.zh-CN.md)。
+
 ## 日常使用
 
 用 `/list-agents` 或离线 CLI `darwin list-agents`，可以跨项目查看当前 HOME 中本机仍存活的会话租约持有者；CLI 不需要配置模型供应商。这只是只读查看，**不提供通信能力**；`/agents` 仍然列出本进程的子代理派发。详见[范围与限制](docs/user-guide/sessions-and-state.zh-CN.md#查看本机会话进程)。

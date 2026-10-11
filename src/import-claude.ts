@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import matter from 'gray-matter';
 
-import { MAX_INSTRUCTIONS_BYTES } from './agent/instructions.js';
+import { DEFAULT_MAX_INSTRUCTIONS_BYTES, resolveInstructionsByteLimit } from './agent/instructions.js';
 import { extensionRoots, userDarwinDir, userProjectDir } from './paths.js';
 import { IMPORT_LIMITS, ImportProblem, ImportReader, verifySnapshot, writeImport, type ImportWrite } from './import-claude-files.js';
 import { manualSettings, manualMcp } from './import-claude-snippets.js';
@@ -133,6 +133,19 @@ function extensions(plan: ImportPlan, source: string, destination: string, claim
 function instructions(plan: ImportPlan, projectRoot: string): void {
   const target = path.join(projectRoot, 'AGENTS.md');
   attempt(plan, projectRoot, target, () => {
+    // Only this scalar is needed: keep the importer independent of config/SDK startup.
+    // The existing reader also pins these bytes for apply-time revalidation.
+    const configFile = path.join(userDarwinDir(), 'config.json');
+    const rawConfig = plan.reader.read(configFile);
+    let maxBytes: number;
+    try {
+      const config: unknown = rawConfig === undefined ? {} : JSON.parse(text(rawConfig));
+      if (config === null || typeof config !== 'object' || Array.isArray(config)) throw new Error('object required');
+      maxBytes = resolveInstructionsByteLimit((config as Record<string, unknown>)['maxInstructionsBytes']);
+    } catch {
+      throw new ImportProblem('invalid config.json or maxInstructionsBytes (expected positive safe integer bytes); no instructions appended');
+    }
+    line(plan, configFile, target, `instruction cap ${maxBytes} bytes (maxInstructionsBytes; default ${DEFAULT_MAX_INSTRUCTIONS_BYTES})`);
     const before = plan.reader.read(target);
     let combined = before ?? Buffer.alloc(0);
     const additions: Buffer[] = [];
@@ -149,7 +162,7 @@ function instructions(plan: ImportPlan, projectRoot: string): void {
       if (combined.includes(start)) throw new ImportProblem('existing import section differs; review and merge manually');
       if (body.trim() && combined.includes(raw)) { line(plan, source, target, 'ALREADY PRESENT (literal body; no section added)'); continue; }
       combined = Buffer.concat([combined, section]);
-      if (combined.length > MAX_INSTRUCTIONS_BYTES) throw new ImportProblem('AGENTS.md would exceed 32768-byte instruction cap; nothing appended');
+      if (combined.length > maxBytes) throw new ImportProblem(`AGENTS.md would exceed ${maxBytes}-byte instruction cap; nothing appended`);
       additions.push(section);
       proposed.push({ source, bytes: section.length });
     }

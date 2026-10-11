@@ -119,9 +119,8 @@ section is the only reference; all free (no model call) unless marked *live*.
   `docs/architecture/sub-agents.md`, and the header comments of the `spike/`
   suites — a pty suite's comment explains its waits and assertions. Read the relevant
   one before changing that area.
-- Keep this file under 32 KiB: darwin preloads only the first `MAX_INSTRUCTIONS_BYTES` of it
-  into its own system prompt, so anything past the cap is invisible to the agent. Long-form
-  rationale goes to the decisions doc.
+- Keep this file under the configured `maxInstructionsBytes` preload cap (default 64 KiB).
+  Anything past the cap is invisible to the agent; long-form rationale goes to the decisions doc.
 - Non-trivial work: verify with `pnpm typecheck` + `pnpm test` plus the row's listed checks,
   then commit.
 - The installed `darwin` command runs `dist/`, not `src/`: after any commit that touches

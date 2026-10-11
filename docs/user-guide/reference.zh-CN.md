@@ -200,11 +200,11 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 
 ### `darwin import --from claude-code [--apply]`
 
-离线设置迁移，不是 TUI 命令。默认只读输出有上限的计划；`--apply` 可在 `--from claude-code` 前后出现，只复制支持的提示词层。重复/未知参数或其他来源以 2 退出；help/version 优先级不变。扫描及手动遗漏以 0 退出；应用时复查失败、输出超限或 I/O 失败以 1 退出。不启动模型、网络、hook、工具、配置、信任或会话。仅支持 Linux 的描述符安全访问；其他系统须手动迁移。源文件不改，冲突不覆盖，相同内容重复应用不写。已有 `AGENTS.md` 字节保留，合并内容不能超过 32768 字节。上限：400 条目加一次溢出探测、每文件 256 KiB、每次扫描/复查 4 MiB、skill 深度 6 / 100 文件、100 个 MCP 条目/每数组规则、输出 32 KiB。输出超限拒绝应用；失败会报告已完成或可能部分写入的内容。[准确映射、手动片段与遗漏](extensions.zh-CN.md#迁移-claude-code-设置)。
+离线设置迁移，不是 TUI 命令。默认只读输出有上限的计划；`--apply` 可在 `--from claude-code` 前后出现，只复制支持的提示词层。重复/未知参数或其他来源以 2 退出；help/version 优先级不变。扫描及手动遗漏以 0 退出；应用时复查失败、输出超限或 I/O 失败以 1 退出。不启动模型、网络、hook、工具、配置、信任或会话。仅支持 Linux 的描述符安全访问；其他系统须手动迁移。源文件不改，冲突不覆盖，相同内容重复应用不写。已有 `AGENTS.md` 字节保留，合并内容不能超过配置的 `maxInstructionsBytes` 上限（默认 65536 字节）。导入通过已有的有界只读扫描获取这一配置项，不启动完整配置加载器；JSON 损坏或该项无效时，指令迁移需手动处理，应用前配置发生变化则拒绝旧计划。上限：400 条目加一次溢出探测、每文件 256 KiB、每次扫描/复查 4 MiB、skill 深度 6 / 100 文件、100 个 MCP 条目/每数组规则、输出 32 KiB。输出超限拒绝应用；失败会报告已完成或可能部分写入的内容。[准确映射、手动片段与遗漏](extensions.zh-CN.md#迁移-claude-code-设置)。
 
 ### `darwin doctor`
 
-一份离线、只读的诊断报告，由会话启动时使用的同一批加载器拼成：`~/.darwin/config.json`（provider、模型、region 或 base URL、所指定的 API key 环境变量是否已设置——从不打印它的值——effort、prompt cache、context offload、trajectory / memory / diagnostics、权限模式）、系统提示词来源、项目指令文件（`AGENTS.md`，或回退的 `CLAUDE.md`）及其大小与 32 KiB 预载上限的对比、生效的 MCP 配置文件（哪个被读取、哪个被忽略）及每个已配置的 server——stdio `command` 只在 `PATH` 上查找，`http`/`sse` server 标为 `not connected (doctor never connects)`——各层技能目录的数量与每个被跳过的条目及原因、hook 文件及其方言（native 或 Codex 适配器）、permission-rules 文件、会话存储目录和版本。会让 TUI 拒绝启动的加载器错误（`ConfigError`）在这里变成一行问题：问题行以 `! ` 开头，末尾汇总计数，并决定退出码——没有问题为 0，至少一个为 1。`doctor` 不启动会话、不调用模型、不 spawn 或连接任何 MCP server、不联网、在任何位置都不创建或移动任何东西（连 `~/.darwin` 也不会创建）；它不接受参数（动词之后的任何内容都以用法错误退出 2）。由 `spike/verify-doctor-command.ts` 锁定。
+一份离线、只读的诊断报告，由会话启动时使用的同一批加载器拼成：`~/.darwin/config.json`（provider、模型、region 或 base URL、所指定的 API key 环境变量是否已设置——从不打印它的值——effort、prompt cache、context offload、trajectory / memory / diagnostics、权限模式）、系统提示词来源、项目指令文件（`AGENTS.md`，或回退的 `CLAUDE.md`）及其大小与配置的 `maxInstructionsBytes` 预载上限（默认 64 KiB）的对比、生效的 MCP 配置文件（哪个被读取、哪个被忽略）及每个已配置的 server——stdio `command` 只在 `PATH` 上查找，`http`/`sse` server 标为 `not connected (doctor never connects)`——各层技能目录的数量与每个被跳过的条目及原因、hook 文件及其方言（native 或 Codex 适配器）、permission-rules 文件、会话存储目录和版本。会让 TUI 拒绝启动的加载器错误（`ConfigError`）在这里变成一行问题：问题行以 `! ` 开头，末尾汇总计数，并决定退出码——没有问题为 0，至少一个为 1。`doctor` 不启动会话、不调用模型、不 spawn 或连接任何 MCP server、不联网、在任何位置都不创建或移动任何东西（连 `~/.darwin` 也不会创建）；它不接受参数（动词之后的任何内容都以用法错误退出 2）。由 `spike/verify-doctor-command.ts` 锁定。
 
 ### `-p` 与管道 stdin
 
@@ -243,7 +243,7 @@ trajectory 目录（最多 20 个会话 id，逆字典序）及项目 `permissio
 | `/export <path>` | 精确 replay 投影；不覆盖，也不写会话内部 |
 | `/goal <条件>`、`/goal`、`/goal off` | 带条件检查的自动续跑，仅 TUI：设置（单行，≤ 400 code point，不消耗 token）、查看、清除。每个完成的回合后，一次有界的 classifier 档检查读取目标以及该回合的工具结果和回答尾部；未达成则通过正常提交路径发送恰好一条续跑提示词，连续最多 5 次后停止。头部状态词与忙碌提示显示它；若 `Ctrl+C` 取消的是目标自己的工作则清除目标；权限提示、队列、唤醒和对等消息优先；`/clear` 丢弃它。忙碌时也可回答。无头模式拒绝。见[目标](using-darwin.md#目标持续工作直到条件成立) |
 | `/help` | 有界本地命令、语法和按键；带参数会拒绝 |
-| `/init [focus]` | 展开为一条普通 prompt，请模型检查仓库后创建 `AGENTS.md`（已加载 `AGENTS.md` 时就地改进；已加载 `CLAUDE.md` 时把仍然成立的内容迁入新的 `AGENTS.md`，`CLAUDE.md` 保持不动），控制在 32 KiB 上限内，通过普通文件编辑器写入；不带参数即触发，附加的 focus 原样追加 |
+| `/init [focus]` | 展开为一条普通 prompt，请模型检查仓库后创建 `AGENTS.md`（已加载 `AGENTS.md` 时就地改进；已加载 `CLAUDE.md` 时把仍然成立的内容迁入新的 `AGENTS.md`，`CLAUDE.md` 保持不动），控制在配置的 `maxInstructionsBytes` 上限（默认 64 KiB）内，通过普通文件编辑器写入；不带参数即触发，附加的 focus 原样追加 |
 | `/mcp` | 只读服务器状态/工具/配置路径，以及启动时列表给出的各服务器提示词数量/名称；不重连、不发请求 |
 | `/memory`、`/memory list` | 含来源、证据、校验/过期原因的条目 |
 | `/memory show <id|number>` | 查看一个有界条目 |

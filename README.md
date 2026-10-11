@@ -108,6 +108,8 @@ Bedrock uses the standard AWS credential chain and requires an inference-profile
 
 For multiple switchable models, provider-specific fields, Bedrock Mantle, caching, thinking effort, context limits, and all session settings, read [Getting started and providers](docs/user-guide/getting-started.md) and [Configuration and context](docs/user-guide/configuration.md).
 
+Project instructions (`AGENTS.md`, or fallback `CLAUDE.md`) preload up to **64 KiB** by default. Set the optional root `maxInstructionsBytes` field in the same config to a positive integer byte count, for example `131072` for 128 KiB. See [instruction limits and session behavior](docs/user-guide/configuration.md#agentsmd-or-claudemd).
+
 ## Use it
 
 To see live local session lease holders across this HOME's projects, use `/list-agents`

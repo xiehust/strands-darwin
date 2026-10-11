@@ -32,13 +32,22 @@ export const CLAUDE_IMPORT_NOTICE =
   '`@path` import lines are not expanded by darwin: they are literal text here, not loaded content.)';
 
 /**
- * Instructions past this size are truncated rather than sent whole.
+ * Default preload byte limit; config.maxInstructionsBytes may override it.
+ * Instructions past the effective limit are truncated rather than sent whole.
  *
  * AGENTS.md goes into the system prompt, so it is re-sent with every request of
  * the session; an oversized file would silently spend the context budget the
  * conversation itself needs.
  */
-export const MAX_INSTRUCTIONS_BYTES = 32 * 1024;
+export const DEFAULT_MAX_INSTRUCTIONS_BYTES = 64 * 1024;
+
+/** Shared by preload and the offline importer; omission is the only default form. */
+export function resolveInstructionsByteLimit(value: unknown = DEFAULT_MAX_INSTRUCTIONS_BYTES): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error('maxInstructionsBytes must be a positive safe integer (bytes).');
+  }
+  return value;
+}
 
 export interface ProjectInstructions {
   /** Which of the two names was actually loaded. */
@@ -47,7 +56,9 @@ export interface ProjectInstructions {
   path: string;
   /** Size on disk, in bytes, before any truncation. */
   bytes: number;
-  /** True when only the first {@link MAX_INSTRUCTIONS_BYTES} were kept. */
+  /** Effective byte limit used for this load, including an explicit override. */
+  maxBytes: number;
+  /** True when the file exceeded maxBytes; only the bounded prefix was kept. */
   truncated: boolean;
   /** The system-prompt fragment, delimited and labelled with its source. */
   fragment: string;
@@ -89,7 +100,9 @@ export interface ProjectInstructionsLoad {
  */
 export async function loadProjectInstructions(
   projectRoot: string,
+  maxInstructionsBytes?: number,
 ): Promise<ProjectInstructionsLoad> {
+  const maxBytes = resolveInstructionsByteLimit(maxInstructionsBytes);
   for (const filename of INSTRUCTIONS_FILENAMES) {
     const filePath = path.join(projectRoot, filename);
 
@@ -102,9 +115,9 @@ export async function loadProjectInstructions(
     }
 
     const bytes = raw.byteLength;
-    const truncated = bytes > MAX_INSTRUCTIONS_BYTES;
+    const truncated = bytes > maxBytes;
     const text = truncated
-      ? clipToLastLine(raw.subarray(0, MAX_INSTRUCTIONS_BYTES))
+      ? clipToLastLine(raw.subarray(0, maxBytes))
       : raw.toString('utf8');
 
     if (text.trim() === '') return { instructions: undefined, problem: undefined, problemFile: undefined };
@@ -114,8 +127,9 @@ export async function loadProjectInstructions(
         filename,
         path: filePath,
         bytes,
+        maxBytes,
         truncated,
-        fragment: renderFragment(text.trimEnd(), truncated, filename),
+        fragment: renderFragment(text.trimEnd(), truncated, filename, maxBytes),
       },
       problem: undefined,
       problemFile: undefined,
@@ -181,7 +195,7 @@ function clipToLastLine(slice: Buffer): string {
  * `@path` imports) that darwin does not provide; {@link CLAUDE_IMPORT_NOTICE} says
  * so once, in that case only.
  */
-function renderFragment(text: string, truncated: boolean, filename: InstructionsFilename): string {
+function renderFragment(text: string, truncated: boolean, filename: InstructionsFilename, maxBytes: number): string {
   const attributes = truncated
     ? `source="${filename}" truncated="true"`
     : `source="${filename}"`;
@@ -191,7 +205,7 @@ function renderFragment(text: string, truncated: boolean, filename: Instructions
     ...(filename === CLAUDE_FILENAME ? [CLAUDE_IMPORT_NOTICE] : []),
     text,
     ...(truncated
-      ? [`(This file is larger than ${MAX_INSTRUCTIONS_BYTES / 1024} KB and was cut off here.)`]
+      ? [`(This file is larger than ${maxBytes / 1024} KiB (${maxBytes} bytes) and was cut off here.)`]
       : []),
     '</project-instructions>',
   ].join('\n');

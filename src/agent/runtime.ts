@@ -819,7 +819,7 @@ export class AgentRuntime {
       options.projectRoot,
       skills.skills.map((skill) => skill.name),
     );
-    const loadedInstructions = await loadProjectInstructions(options.projectRoot);
+    const loadedInstructions = await loadProjectInstructions(options.projectRoot, config.maxInstructionsBytes);
     const instructions = loadedInstructions.instructions;
     const basePrompt = await loadSystemPrompt(options.projectRoot, config.systemPrompt);
     const basePromptText = options.systemPromptSuffix === undefined
@@ -1285,6 +1285,7 @@ export class AgentRuntime {
                 filename: instructions.filename,
                 path: instructions.path,
                 bytes: instructions.bytes,
+                maxBytes: instructions.maxBytes,
                 truncated: instructions.truncated,
               },
         projectInstructionsProblem: loadedInstructions.problem,
@@ -2725,6 +2726,7 @@ export class AgentRuntime {
     const init = parseInitCommand(input, {
       loaded: this.info.projectInstructions,
       problemFile: this.info.projectInstructionsProblemFile,
+      maxInstructionsBytes: this.config.maxInstructionsBytes,
     });
     if (init !== null) return { kind: 'init', ...init };
 

@@ -2217,7 +2217,7 @@ async function agentsMdHeader(): Promise<void> {
 
     assert('the header reports the file', shown !== undefined);
     assert('it reports the size on disk', /KB/.test(shown ?? ''));
-    assert('it warns that the file was truncated', /truncated to 32 KB/.test(tui.screen));
+    assert('it warns that the file was truncated', /truncated to 64 KiB/.test(tui.screen));
 
     tui.send('\u0003'); // idle: the first press arms, the second exits
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -2226,6 +2226,21 @@ async function agentsMdHeader(): Promise<void> {
     assert('startup with oversized instructions still exits cleanly', code === 0);
   } finally {
     tui.kill();
+  }
+
+  header('TUI — the header uses the configured instruction cap');
+  const configuredHome = path.join(dir, 'configured-home');
+  await mkdir(path.join(configuredHome, '.darwin'), { recursive: true });
+  await writeFile(path.join(configuredHome, '.darwin/config.json'), JSON.stringify({ maxInstructionsBytes: 131072 }));
+  const configured = startTui({ cwd: dir, env: { HOME: configuredHome } });
+  try {
+    await configured.waitFor('you>', { timeoutMs: 60_000 });
+    assert('a 128 KiB override reaches the real header', configured.screen.includes('truncated to 128 KiB'));
+    assert('the default cap is not advertised for the overridden load', !configured.screen.includes('truncated to 64 KiB'));
+    configured.submit('/exit');
+    assert('the configured-cap TUI exits without a model turn', (await configured.exitedWithin(EXIT_TIMEOUT_MS)) === 0);
+  } finally {
+    configured.kill();
   }
 
   header('TUI — an unreadable AGENTS.md is reported, not passed over in silence');

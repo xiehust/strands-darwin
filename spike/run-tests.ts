@@ -127,6 +127,7 @@ const suites = [
   'verify-workflow-tool.ts',
   'verify-subagent-format.ts',
   'verify-agents-md.ts',
+  'verify-instructions-limit.ts',
   'verify-system-prompt.ts',
   'verify-working-context.ts',
   'verify-prompt-cache.ts',

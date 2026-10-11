@@ -116,7 +116,7 @@ src/paths.ts      all global/project path ownership
 
 Nontrivial changes are understood first (the matching section of `docs/architecture/load-bearing-decisions.md` plus the relevant `spike/` suite), then implemented, verified with `pnpm typecheck`, `pnpm test` and the row's listed checks, and committed. The paper trail matters because darwin develops darwin. Every supervised `/developer` batch also appends child session, accepted commits, and Host-rerun evidence to [the iteration log](../iteration-log.md).
 
-Keep `AGENTS.md` below 32 KiB because darwin preloads only that cap. Do not add `devEngines` to `package.json`; it can break every `npx` MCP server with an opaque closed connection. Do not bypass pnpm's `minimumReleaseAge` for fresh SDK releases. Pinned SDK patches must be revalidated on upgrade.
+Keep `AGENTS.md` below the configured `maxInstructionsBytes` preload cap (64 KiB by default). Do not add `devEngines` to `package.json`; it can break every `npx` MCP server with an opaque closed connection. Do not bypass pnpm's `minimumReleaseAge` for fresh SDK releases. Pinned SDK patches must be revalidated on upgrade.
 
 ## Project and global state during development
 

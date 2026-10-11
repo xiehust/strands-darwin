@@ -1683,6 +1683,7 @@ async function documentedKeys(): Promise<void> {
     projectOverrides: {},
     maxConcurrentSubagents: 4,
     systemPrompt: 'You are terse.',
+    maxInstructionsBytes: 131072,
   };
   const flatKeys = [...MODEL_KEYS, ...SESSION_KEYS].filter((key) => key !== 'openaiApi' && key !== 'baseUrl');
   assert(

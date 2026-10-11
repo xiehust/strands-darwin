@@ -39,7 +39,7 @@ import {
   runDoctorCommand,
 } from '../src/cli-doctor.js';
 import { CLI_HELP_HINT, CLI_USAGE } from '../src/cli-usage.js';
-import { AGENTS_FILENAME, CLAUDE_FILENAME, MAX_INSTRUCTIONS_BYTES } from '../src/agent/instructions.js';
+import { AGENTS_FILENAME, CLAUDE_FILENAME, DEFAULT_MAX_INSTRUCTIONS_BYTES } from '../src/agent/instructions.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 
 // Owned HOME before any path is derived: every in-process run below reads
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
       run.out.includes('effort low') && run.out.includes('prompt cache on') && run.out.includes('context offload on')
         && run.out.includes('trajectory on   memory on   diagnostics off') && run.out.includes('permission mode default'));
     assert('states the project instructions size against the cap',
-      run.out.includes(`${path.join(project, 'AGENTS.md')}   `) && run.out.includes(`(cap ${MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')})`));
+      run.out.includes(`${path.join(project, 'AGENTS.md')}   `) && run.out.includes(`(cap ${DEFAULT_MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')})`));
     assert('states the system prompt source', run.out.includes('source built-in default'));
     assert('states the sessions store is absent', run.out.includes('absent (no sessions yet)'));
     assert('lists the required built-in skills', run.out.includes('required built-ins present: developer, self-evolution-research, self-reflection'));
@@ -292,11 +292,11 @@ async function main(): Promise<void> {
 
   header('doctor — over-cap AGENTS.md and a broken system-prompt override are problems');
   {
-    write(path.join(project, 'AGENTS.md'), `# Big\n${'x'.repeat(MAX_INSTRUCTIONS_BYTES)}\n`);
+    write(path.join(project, 'AGENTS.md'), `# Big\n${'x'.repeat(DEFAULT_MAX_INSTRUCTIONS_BYTES)}\n`);
     mkdirSync(path.join(project, '.darwin', 'system-prompt.md'));
     const run = await doctor(project);
     assert('truncation is a problem naming the cap',
-      problemLines(run.out).some((line) => line.includes('AGENTS.md is over the cap') && line.includes(MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US'))));
+      problemLines(run.out).some((line) => line.includes('AGENTS.md is over the cap') && line.includes(DEFAULT_MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US'))));
     assert('a directory where system-prompt.md should be is a skipped-override problem',
       problemLines(run.out).some((line) => line.includes('system prompt override skipped')));
     rmSync(path.join(project, '.darwin', 'system-prompt.md'), { recursive: true });
@@ -311,11 +311,11 @@ async function main(): Promise<void> {
     write(path.join(claudeOnly, CLAUDE_FILENAME), '# Claude fixture\n\nRules.\n');
     const run = await doctor(claudeOnly);
     assert('a CLAUDE.md-only project reports the CLAUDE.md path against the cap',
-      run.out.includes(`${path.join(claudeOnly, CLAUDE_FILENAME)}   `) && run.out.includes(`(cap ${MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')})`));
+      run.out.includes(`${path.join(claudeOnly, CLAUDE_FILENAME)}   `) && run.out.includes(`(cap ${DEFAULT_MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')})`));
     assert('and never mentions an AGENTS.md path', !run.out.includes(path.join(claudeOnly, AGENTS_FILENAME)));
     assert('a loaded CLAUDE.md is not a problem', run.code === 0 && instructionProblems(run.out).length === 0);
 
-    write(path.join(claudeOnly, CLAUDE_FILENAME), `# Big\n${'x'.repeat(MAX_INSTRUCTIONS_BYTES)}\n`);
+    write(path.join(claudeOnly, CLAUDE_FILENAME), `# Big\n${'x'.repeat(DEFAULT_MAX_INSTRUCTIONS_BYTES)}\n`);
     const big = await doctor(claudeOnly);
     assert('an over-cap CLAUDE.md is a problem naming CLAUDE.md',
       instructionProblems(big.out).some((line) => line.includes(`${CLAUDE_FILENAME} is over the cap`)));

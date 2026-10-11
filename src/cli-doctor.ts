@@ -29,7 +29,7 @@ import process from 'node:process';
 
 import type { McpServerConfig } from '@strands-agents/sdk';
 
-import { AGENTS_FILENAME, CLAUDE_FILENAME, loadProjectInstructions, MAX_INSTRUCTIONS_BYTES } from './agent/instructions.js';
+import { AGENTS_FILENAME, CLAUDE_FILENAME, loadProjectInstructions } from './agent/instructions.js';
 import { planPromptCache } from './agent/prompt-cache.js';
 import { listSessionIds, readLastSessionId, sessionPaths } from './agent/session.js';
 import { loadSystemPrompt } from './agent/system-prompt.js';
@@ -134,7 +134,7 @@ export async function runDoctorCommand(io: DoctorIo): Promise<number> {
 
   const config = await reportConfig(report, projectRoot);
   await reportSystemPrompt(report, projectRoot, config);
-  await reportInstructions(report, projectRoot);
+  await reportInstructions(report, projectRoot, config);
   await reportMcp(report, projectRoot);
   await reportSkills(report, projectRoot);
   const policy = await reportHooks(report, projectRoot);
@@ -248,9 +248,13 @@ async function reportSystemPrompt(report: Report, projectRoot: string, config: A
   if (load.problem !== undefined) report.problem(`system prompt override skipped: ${load.problem}`);
 }
 
-async function reportInstructions(report: Report, projectRoot: string): Promise<void> {
+async function reportInstructions(report: Report, projectRoot: string, config: AppConfig | undefined): Promise<void> {
   report.section('project instructions');
-  const load = await loadProjectInstructions(projectRoot);
+  if (config === undefined) {
+    report.info('not inspected (configuration invalid; see config problem)');
+    return;
+  }
+  const load = await loadProjectInstructions(projectRoot, config.maxInstructionsBytes);
   if (load.problem !== undefined) {
     report.problem(`${load.problemFile ?? AGENTS_FILENAME} could not be used: ${load.problem}`);
     return;
@@ -259,12 +263,12 @@ async function reportInstructions(report: Report, projectRoot: string): Promise<
     report.info(`${path.join(projectRoot, AGENTS_FILENAME)} / ${CLAUDE_FILENAME} — absent or empty (nothing preloaded)`);
     return;
   }
-  const { filename, path: file, bytes, truncated } = load.instructions;
-  report.info(`${file}   ${bytes.toLocaleString('en-US')} bytes (cap ${MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')})`);
+  const { filename, path: file, bytes, maxBytes, truncated } = load.instructions;
+  report.info(`${file}   ${bytes.toLocaleString('en-US')} bytes (cap ${maxBytes.toLocaleString('en-US')})`);
   if (truncated) {
     report.problem(
-      `${filename} is over the cap: only the first ${MAX_INSTRUCTIONS_BYTES.toLocaleString('en-US')} bytes are preloaded, ` +
-        `${(bytes - MAX_INSTRUCTIONS_BYTES).toLocaleString('en-US')} bytes are invisible to the agent`,
+      `${filename} is over the cap: only the first ${maxBytes.toLocaleString('en-US')} bytes are preloaded, ` +
+        `${(bytes - maxBytes).toLocaleString('en-US')} bytes are invisible to the agent`,
     );
   }
 }

@@ -6,7 +6,6 @@
  * name, and so the wording can be checked without rendering the header.
  */
 import {
-  MAX_INSTRUCTIONS_BYTES,
   type InstructionsFilename,
   type ProjectInstructionsSummary,
 } from '../agent/instructions.js';
@@ -20,7 +19,7 @@ export function formatBytes(bytes: number): string {
 export function formatInstructionsLoadedRow(instructions: ProjectInstructionsSummary): string {
   const size = formatBytes(instructions.bytes);
   return instructions.truncated
-    ? `${instructions.filename}: loaded (${size}, truncated to ${MAX_INSTRUCTIONS_BYTES / 1024} KB)`
+    ? `${instructions.filename}: loaded (${size}, truncated to ${instructions.maxBytes / 1024} KiB)`
     : `${instructions.filename}: loaded (${size})`;
 }
 

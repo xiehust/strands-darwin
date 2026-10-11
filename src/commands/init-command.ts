@@ -28,7 +28,7 @@
 import {
   AGENTS_FILENAME,
   CLAUDE_FILENAME,
-  MAX_INSTRUCTIONS_BYTES,
+  resolveInstructionsByteLimit,
   type InstructionsFilename,
   type ProjectInstructionsSummary,
 } from '../agent/instructions.js';
@@ -36,7 +36,7 @@ import {
 export const INIT_COMMAND_NAME = 'init';
 
 /**
- * What the runtime already knows about the project's instructions file. Both
+ * What the runtime already knows about the project's instructions file. The file
  * fields come straight from `RuntimeInfo`: `loaded` is the file darwin preloaded
  * at startup (or undefined when there was none), `problemFile` names a present
  * file that could not be read (undefined when there is no such problem).
@@ -44,6 +44,8 @@ export const INIT_COMMAND_NAME = 'init';
 export interface InitCommandContext {
   loaded: Pick<ProjectInstructionsSummary, 'filename' | 'bytes' | 'truncated'> | undefined;
   problemFile: InstructionsFilename | undefined;
+  /** Startup config, also available when no instructions file exists. */
+  maxInstructionsBytes?: number | undefined;
 }
 
 /** Instruction sources the prompt asks the model to consult before writing. */
@@ -54,13 +56,11 @@ const INSTRUCTION_SOURCES = [
   '`.github/copilot-instructions.md`',
 ];
 
-const CAP_KIB = MAX_INSTRUCTIONS_BYTES / 1024;
-
 /**
  * The one sentence that differs between the variants: what exists now, and
  * therefore whether the pass creates, improves or migrates.
  */
-function situation(context: InitCommandContext): string {
+function situation(context: InitCommandContext, maxBytes: number): string {
   if (context.problemFile !== undefined) {
     return (
       `A \`${context.problemFile}\` is present at the project root, but darwin could not read it at ` +
@@ -90,7 +90,7 @@ function situation(context: InitCommandContext): string {
     'place: keep everything that is still true, correct what is stale, fill the gaps the ' +
     'inspection reveals, and never overwrite it wholesale.' +
     (loaded.truncated
-      ? ` It is currently over the ${CAP_KIB} KiB cap and is being truncated \u2014 bring it back under.`
+      ? ` It is currently over the ${maxBytes / 1024} KiB cap and is being truncated \u2014 bring it back under.`
       : '')
   );
 }
@@ -103,6 +103,7 @@ function situation(context: InitCommandContext): string {
  * hard size cap. It asks for nothing a typed prompt could not ask for.
  */
 function initPrompt(context: InitCommandContext, focus: string): string {
+  const maxBytes = resolveInstructionsByteLimit(context.maxInstructionsBytes);
   return (
     'Set up this repository\u2019s instructions for darwin.\n\n' +
     'First inspect the repository: its build, test and typecheck commands (package manifests, ' +
@@ -110,13 +111,13 @@ function initPrompt(context: InitCommandContext, focus: string): string {
     'actually follows (formatting, naming, test placement, commit style), and any existing ' +
     `instruction sources \u2014 ${INSTRUCTION_SOURCES.join(', ')} \u2014 whose still-true guidance ` +
     'belongs in one place.\n\n' +
-    `Then write \`${AGENTS_FILENAME}\`. ${situation(context)} darwin preloads \`${AGENTS_FILENAME}\` ` +
+    `Then write \`${AGENTS_FILENAME}\`. ${situation(context, maxBytes)} darwin preloads \`${AGENTS_FILENAME}\` ` +
     'into the system prompt of every request in a session; it falls back to ' +
     `\`${CLAUDE_FILENAME}\` only when there is no \`${AGENTS_FILENAME}\` at all. Write the file with ` +
     'the ordinary file editor, so the write is reviewed like any other edit. Keep it concise and ' +
     'factual: what the project is, the exact commands to build, test and typecheck, where things ' +
     'live, the conventions a change must follow, and what to verify before calling work done. ' +
-    `The hard cap is ${CAP_KIB} KiB (${MAX_INSTRUCTIONS_BYTES} bytes) \u2014 darwin truncates anything ` +
+    `The hard cap is ${maxBytes / 1024} KiB (${maxBytes} bytes) \u2014 darwin truncates anything ` +
     'past it \u2014 so aim well below that, a few KiB at most. Do not state commands or facts you did ' +
     'not verify in the repository, and do not include secrets or generated content.' +
     (focus === '' ? '' : `\n\nFocus: ${focus}`)

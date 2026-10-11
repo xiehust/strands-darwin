@@ -9,6 +9,7 @@ import { mkdirSync } from 'node:fs';
 
 import path from 'node:path';
 
+import { DEFAULT_MAX_INSTRUCTIONS_BYTES } from './agent/instructions.js';
 import { DEFAULT_STREAM_IDLE_TIMEOUT_SECONDS, MAX_STREAM_IDLE_TIMEOUT_SECONDS, modelStreamMiddleware } from './agent/stream-idle.js';
 
 import { BedrockModel } from '@strands-agents/sdk';
@@ -393,6 +394,8 @@ export interface SessionFields {
    * either way — see `src/agent/system-prompt.ts`.
    */
   systemPrompt?: string;
+  /** Project instruction preload limit in bytes; positive safe integer, default 64 KiB. */
+  maxInstructionsBytes?: number;
 }
 
 export const CONFIG_FILENAME = 'config.json';
@@ -456,6 +459,7 @@ export const SESSION_KEYS = [
   'projectOverrides',
   'maxConcurrentSubagents',
   'systemPrompt',
+  'maxInstructionsBytes',
 ] as const;
 
 /**
@@ -508,6 +512,7 @@ const DEFAULTS = {
   memory: true,
   memoryHorizonDays: 28,
   maxConcurrentSubagents: DEFAULT_MAX_CONCURRENT_SUBAGENTS,
+  maxInstructionsBytes: DEFAULT_MAX_INSTRUCTIONS_BYTES,
 } as const satisfies Partial<AppConfig>;
 
 /**
@@ -1276,6 +1281,9 @@ function validateSessionFields(
     maxConcurrentSubagents:
       integerField(input, 'maxConcurrentSubagents', configPath, { min: 1 }) ??
       DEFAULTS.maxConcurrentSubagents,
+    maxInstructionsBytes:
+      integerField(input, 'maxInstructionsBytes', configPath, { min: 1 }) ??
+      DEFAULTS.maxInstructionsBytes,
   };
 
   // On unless switched off. Recording changes nothing the model sees. Stored rather
