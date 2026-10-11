@@ -93,3 +93,23 @@ Acceptance: a real production-CLI pty must prove separate and combined Ctrl+X/Ct
 ### Notes / blockers / abandonment reason
 
 Modest ergonomic value, exact primary-source and code evidence, and high fit through a shared callback give `2×2+5+5−2−2 = 10`, above the gate without changing ratings. Depends only on shipped SER-113; no new batch dependency. This is not a second editor implementation, shell launcher, quote injector, auto-submit path, new slash command, generalized keybinding system or SDK patch. Host owns research/backlog/log and final push; implementation remains inside one fresh `developer` child session.
+
+## SER-125 — Add a user-only bounded local Git diff viewer without sending changes to the model
+
+- Status: `not-started`
+- Priority: 165
+- Score: 10
+- Importance: 3
+- Architecture fit: 4
+- Evidence confidence: 5
+- Difficulty: 3
+- Risk: 2
+- Origin report: [`research_2026-10-11.md`](../research_2026-10-11.md) (run `07:36:52Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Acceptance is defined in the origin report's Recommendation: independently inspect the base/result diff; run real-Git/helper-sentinel/byte-preservation and production-CLI pty checks, `pnpm typecheck`, `pnpm test`, free `tui completion`, and `pnpm build`.
+
+### Notes / blockers / abandonment reason
+
+P2 (Codex) and P7 (Aider) document local diff inspection. Darwin's canonical command list has no `diff`; `fileEditorDiff` displays tool input, `/review` makes a model turn, and `!git diff` feeds its output into the next prompt. Add TUI-only idle `/diff` (tracked worktree versus index) and `/diff --staged` (index versus HEAD, unborn supported), exact grammar with local usage for all other arguments. Always label scope and exclude/state untracked and submodule contents. One bounded Static notice, no model/tool/trajectory/prompt-history/shell-report effect or workspace/session mutation. Busy refuses locally; preserve modal ownership and cancel/exit/replacement cleanup. Fixed argv/cwd, no shell/pager/color/external diff/textconv/fsmonitor helper/submodule recursion; cap output/time and sanitize terminal controls. Errors and truncation must be honest. Use the report's complete requirements, tests and authorization boundary; do not alter tool-input diffs or `/review`. Score 10 clears the gate; no new-direction dependency. Host owns research/backlog/log and push; implementation must use a fresh developer child.
