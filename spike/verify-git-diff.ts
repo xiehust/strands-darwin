@@ -20,8 +20,38 @@ import { scrubShellEnv } from '../src/tools/shell-env.js';
 const root = await mkdtemp(path.join(os.tmpdir(), 'darwin-git-diff-'));
 const home = path.join(root, 'home');
 await mkdir(home);
-const env = { ...process.env, HOME: home, GIT_CONFIG_NOSYSTEM: '1' };
-const git = (cwd: string, ...args: string[]): string => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+const systemConfig = path.join(root, 'system.gitconfig');
+const xdg = path.join(root, 'xdg');
+await mkdir(path.join(xdg, 'git'), { recursive: true });
+const ambientConfig = '[filter "runner"]\n\tclean = false\n';
+await writeFile(systemConfig, ambientConfig);
+await writeFile(path.join(home, '.gitconfig'), ambientConfig);
+await writeFile(path.join(xdg, 'git/config'), ambientConfig);
+// Production intentionally strips GIT_* before spawn. Isolate the real Git at the
+// executable boundary instead, without hiding repository-local sentinel settings.
+async function gitWrapper(name: string, isolated: boolean): Promise<string> {
+  const bin = path.join(root, name);
+  await mkdir(bin);
+  const overrides = { GIT_CONFIG_SYSTEM: systemConfig, GIT_CONFIG_GLOBAL: '/dev/null',
+    ...(isolated ? { GIT_CONFIG_NOSYSTEM: '1' } : {}) };
+  const executable = path.join(bin, 'git');
+  await writeFile(executable, `#!${process.execPath}
+const cp = require('node:child_process');
+const result = cp.spawnSync(${JSON.stringify(realGit)}, process.argv.slice(2), {
+  env: { ...process.env, ...${JSON.stringify(overrides)} }, stdio: 'inherit',
+});
+process.exit(result.status ?? 1);
+`);
+  await chmod(executable, 0o755);
+  return bin;
+}
+const isolatedBin = await gitWrapper('isolated-git', true);
+const ambientBin = await gitWrapper('ambient-git', false);
+const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg,
+  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null',
+  PATH: `${isolatedBin}:${process.env['PATH'] ?? ''}` };
+const git = (cwd: string, ...args: string[]): string => execFileSync(realGit, args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const view = (cwd: string, scope: 'staged' | 'unstaged' = 'unstaged') => runGitDiff({ projectRoot: cwd, scope, env }).result;
 async function repo(name: string): Promise<string> {
   const cwd = path.join(root, name);
@@ -60,6 +90,10 @@ try {
   await writeFile(path.join(sub, 'secret'), 'SUBMODULE-SECRET');
   git(cwd, 'update-index', '--add', '--cacheinfo', `160000,${git(cwd, 'rev-parse', 'HEAD').trim()},sub`);
   const before = await snapshot(cwd);
+  const ambient = await runGitDiff({ projectRoot: cwd, scope: 'unstaged',
+    env: { ...env, PATH: `${ambientBin}:${process.env['PATH'] ?? ''}` } }).result;
+  assert.match(ambient, /configured clean\/process filters or promisor remotes are not supported/,
+    'negative control: caller GIT_CONFIG_NOSYSTEM is stripped, exposing the simulated runner system filter');
   const unstaged = await view(cwd);
   const staged = await view(cwd, 'staged');
   assert.match(unstaged, /unstaged: worktree versus index/);
@@ -147,6 +181,8 @@ else { process.stderr.write('fixture failure\\u001b[2J'); process.exit(7); }
   assert.equal(observed.env.AWS_SECRET_ACCESS_KEY, undefined);
   assert.equal(observed.env.GIT_DIR, undefined);
   assert.equal(observed.env.GIT_TRACE, undefined);
+  assert.equal(observed.env.GIT_CONFIG_NOSYSTEM, undefined, 'production still strips caller Git config overrides');
+  assert.equal(observed.env.GIT_CONFIG_GLOBAL, undefined);
   assert(observed.argv.includes('--cached') && observed.argv.includes('--no-ext-diff') && observed.argv.includes('--no-textconv'));
   assert.equal(observed.argv.at(-1), '--');
   assert(!existsSync(path.join(root, 'trace')));

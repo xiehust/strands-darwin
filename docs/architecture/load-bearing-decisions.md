@@ -2997,6 +2997,10 @@ configuration/index write is allowed. Real-Git byte snapshots and hostile-helper
 real process failure/bound fixtures, and production CLI pty ownership/privacy/cleanup checks
 live in `verify-git-diff.ts` and `verify-git-diff-pty.ts` (both in `pnpm test`); completion uses
 the canonical inventory and `tui completion`. English/Chinese guides state the same limits.
+The real-Git fixtures isolate system/global configuration at their executable wrappers, after
+production's deliberate `GIT_*` scrub. Merely setting `GIT_CONFIG_NOSYSTEM` on the caller leaks
+runner configuration (notably Git LFS filters) back in. A simulated system-filter negative control
+and poisoned HOME/XDG configs pin this boundary; repository-local helper sentinels remain active.
 
 ## File-edit diffs
 

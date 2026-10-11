@@ -22,7 +22,16 @@ for (const dir of [home, cwd, bin]) await mkdir(dir);
 await mkdir(path.join(home, '.darwin'));
 await writeFile(path.join(home, '.darwin/config.json'), JSON.stringify({ diagnostics: true }));
 const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
-const git = (...args: string[]) => execFileSync(realGit, args, { cwd, encoding: 'utf8', env: { ...process.env, HOME: home } });
+// Keep runner Git/LFS configuration out of fixture setup and the real executable.
+// The viewer deliberately strips GIT_*, so passing these only to the TUI is insufficient.
+const gitConfig = { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+const xdg = path.join(root, 'xdg');
+await mkdir(path.join(xdg, 'git'), { recursive: true });
+const ambientConfig = '[filter "runner"]\n\tclean = false\n';
+await writeFile(path.join(home, '.gitconfig'), ambientConfig);
+await writeFile(path.join(xdg, 'git/config'), ambientConfig);
+const git = (...args: string[]) => execFileSync(realGit, args, { cwd, encoding: 'utf8',
+  env: { ...process.env, HOME: home, XDG_CONFIG_HOME: xdg, ...gitConfig } });
 git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid');
 await writeFile(path.join(cwd, 'tracked'), 'PTY-HEAD\n'); git('add', '.'); git('commit', '-qm', 'base');
 await writeFile(path.join(cwd, 'tracked'), 'PTY-INDEX\n'); git('add', '.');
@@ -34,7 +43,9 @@ const fs = require('node:fs'); const cp = require('node:child_process');
 const args = process.argv.slice(2);
 const viewer = args.includes('core.fsmonitor=false') && args.includes('diff');
 if (viewer) fs.appendFileSync(${JSON.stringify(launches)}, process.pid + '\\n');
-function run() { const child = cp.spawn(${JSON.stringify(realGit)}, args, {stdio: 'inherit'}); child.on('exit', code => process.exit(code ?? 1)); }
+function run() { const child = cp.spawn(${JSON.stringify(realGit)}, args, {
+  stdio: 'inherit', env: { ...process.env, ...${JSON.stringify(gitConfig)} },
+}); child.on('exit', code => process.exit(code ?? 1)); }
 if (viewer && fs.existsSync(${JSON.stringify(hold)})) setInterval(() => {}, 1000);
 else run();
 `);
@@ -47,7 +58,7 @@ process.stdin.on('data', data => { if (data.toString().includes('\\r')) process.
 await chmod(editor, 0o755);
 const tui = startTui({ cwd, cols: 100, rows: 30,
   entry: path.join(REPO_ROOT, 'spike/fixtures/external-editor-cli.ts'),
-  env: { HOME: home, PATH: `${bin}:${process.env['PATH'] ?? ''}`, VISUAL: editor,
+  env: { HOME: home, XDG_CONFIG_HOME: xdg, PATH: `${bin}:${process.env['PATH'] ?? ''}`, VISUAL: editor,
     AWS_EC2_METADATA_DISABLED: 'true', DARWIN_MODEL_PRICES_FETCH: 'off' },
 });
 const draft = () => [...tui.frame.matchAll(/you> ?([^\r\n]*)/g)].at(-1)?.[1]?.trimEnd();
