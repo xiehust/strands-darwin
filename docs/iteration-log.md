@@ -3781,3 +3781,23 @@ Docs wrap-up: clarified the two load-bearing sections; README and English/Chines
 SER-123 reported receipts total **3259018** exclusive tokens and approximate USD **6.9476**. The unstarted source launch has no spend receipt, stated separately. Correction reported cost is **0.0001** above rounded components; no adjustment. Entire SDK batch reported subtotal: input **284**, output **70884**, cacheRead **29029073**, cacheWrite **587427**, exclusive sum **29687668**; USD **39.9190**. Host/research excluded.
 
 **Halt: batch exhausted.** Both directions are done; no new abandonment. All remaining backlog records are closed. Host pushes the current branch once after this closure commit and verifies the upstream range; no force push or history rewrite.
+
+## Batch 177 — SER-124 readline external-editor alias (2026-10-11)
+
+Fresh peer-path research, rolled (not overridden) at `2026-10-11T06:17:14.883Z`, is recorded in `docs/research/research_2026-10-11.md`. All seven product scopes were reached; only SER-124 passed selection as new work (Score 10, Priority 164). Larger candidates conflicting with documented boundaries stayed gated out in the report. Backlog metadata had no unfinished work at entry.
+
+Starting source `71efa11cc279f45f3b0afe0dab91fec244055416` was clean; Host `pnpm typecheck && pnpm test` passed in `bg-f5ed2fd6-c4c0-4661-a936-8b977e0ec461` (exit 0). Research-only commits `26fa7c1` and `2ea65fc` persisted the proposal and in-progress marker; `verify-skills.ts` passed 163/0 for the new artifacts. Worker base was **`2ea65fc01925dab60c1ab1ea1c1a967e54d2016d`**, with no implementation change since that green starting gate.
+
+Fresh child **`session-20261011-063935064`**, source CLI `pnpm exec tsx src/cli.ts --yolo --context-offload -p …`; managed task **`bg-36a662ff-3953-4fd7-ae47-bea2b70c5b55`**, exit 0 and fully drained. No ceiling, correction or retry. Base/result log contains only the child commit, no other writer. The Host made no implementation edits.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| One-shot Ctrl+X Ctrl+E alias through the existing editor callback | `3f1e9b0016e3eedf6e3a544ae1dc7ce7c9636c86` | Reviewed the explicit 12-file base/result diff. `bg-c5c031ea-b634-4977-9319-1ea9a28d8ca1` exited 0: `pnpm typecheck`, full `pnpm test` (167 registered suites, including editor real-process/pty, prompt/input/help/frame regressions), `pnpm exec tsx spike/verify-tui.ts completion` (82/0), `pnpm build`, diff check and clean tree. `node dist/src/cli.js --version` reported 0.0.49. |
+
+The real-pty checklist proves separate/combined chord input, repeated prefixes, exactly one launch, exact multiline unsent round trip, inert prefix including image/cursor, intervening key/paste behavior, modal and no-key async ownership invalidation, queue/compaction/held-session construction, unchanged/nonzero/SIGINT preservation and existing Ctrl+G/bare Ctrl+E behavior. Process security, caps and cleanup remain unchanged. Child fixture-expectation failures were corrected before its final full gate; Host acceptance passed once. No live-provider acceptance calls, new dependency, SDK patch, policy/config mutation, publish or child push.
+
+Docs wrap-up: `/help`, both README languages, English/Chinese `using-darwin` and `reference` guides, and the existing load-bearing editor decision are synchronized in the accepted commit; no extra sync needed. No new slash command or frame surface.
+
+Exact child spend: `usage: input=82 output=23850 cacheRead=5243814 cacheWrite=169290`; `cost: total=8.5533 input=0.0008 output=1.1925 cacheRead=5.2438 cacheWrite=2.1161 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. One invocation means aggregate buckets are identical: **5,437,036** exclusive tokens, approximate USD **8.5533**. Rounded USD components sum to **8.5532**, residual **0.0001**; computed with Decimal, not adjusted. Host research and verification are excluded. An optional cloud-memory degraded in-flight/interrupted-state notice was emitted; no recovery/upload/configuration was in scope or attempted.
+
+**Halt: batch exhausted.** SER-124 is done; no direction abandoned and no unfinished backlog remains. Host commits these closure records, pushes the current branch once normally, and checks the upstream range; push outcome belongs to the final Host report.

@@ -70,7 +70,7 @@ Depends on accepted SER-122. Upstream [PR #4863](https://github.com/strands-agen
 
 ## SER-124 — Add Ctrl+X Ctrl+E as a composer alias for the existing Ctrl+G external editor
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 164
 - Score: 10
 - Importance: 2
@@ -82,7 +82,9 @@ Depends on accepted SER-122. Upstream [PR #4863](https://github.com/strands-agen
 
 ### Implementation / acceptance evidence
 
-Starting gate: clean source revision `71efa11cc279f45f3b0afe0dab91fec244055416` plus research-only commit `26fa7c166af968d53712d31e7c6ac915cd053521`; Host `pnpm typecheck && pnpm test` passed in `bg-f5ed2fd6-c4c0-4661-a936-8b977e0ec461` (exit 0). Research metadata separately passed `pnpm exec tsx spike/verify-skills.ts` (163/0). No source changed during that gate. Implementation not yet accepted.
+Starting gate: clean source revision `71efa11cc279f45f3b0afe0dab91fec244055416` plus research-only commit `26fa7c166af968d53712d31e7c6ac915cd053521`; Host `pnpm typecheck && pnpm test` passed in `bg-f5ed2fd6-c4c0-4661-a936-8b977e0ec461` (exit 0). Research metadata separately passed `pnpm exec tsx spike/verify-skills.ts` (163/0). No source changed during that gate.
+
+Accepted commit **`3f1e9b0016e3eedf6e3a544ae1dc7ce7c9636c86`** from fresh child **`session-20261011-063935064`**, managed task **`bg-36a662ff-3953-4fd7-ae47-bea2b70c5b55`** (exit 0, fully drained; no correction/retry). The explicit base/result range contains only the child commit. Host independently reviewed all 12 changed files and accepted `bg-c5c031ea-b634-4977-9319-1ea9a28d8ca1` (exit 0): `pnpm typecheck`, full `pnpm test` (167 registered suites, including expanded real-editor pty and input/help/security regressions), `pnpm exec tsx spike/verify-tui.ts completion` (82/0), `pnpm build`, diff check and clean status. Built CLI separately reports 0.0.49. Both README languages, English/Chinese narrative/reference guides, `/help` and existing editor architecture rationale are synchronized. No dependency, SDK patch, permission change or new submission path. Supervision and exact spend are recorded in `docs/iteration-log.md` **Batch 177**. No remaining blocker.
 
 Sources S1 (Claude Code) and S9 (Aider) document the readline editor chord. At `71efa11`, `src/tui/App.tsx` calls `openExternalEditor` only for Ctrl+G; the final key filter ignores Ctrl+X, and bare Ctrl+E moves to row end. Existing behavior and safety contracts are in `docs/architecture/load-bearing-decisions.md` § Ctrl+G external editor and `spike/verify-external-editor{,-pty}.ts`.
 
