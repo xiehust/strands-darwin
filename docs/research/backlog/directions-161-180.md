@@ -70,7 +70,7 @@ Depends on accepted SER-122. Upstream [PR #4863](https://github.com/strands-agen
 
 ## SER-124 — Add Ctrl+X Ctrl+E as a composer alias for the existing Ctrl+G external editor
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 164
 - Score: 10
 - Importance: 2
@@ -82,7 +82,9 @@ Depends on accepted SER-122. Upstream [PR #4863](https://github.com/strands-agen
 
 ### Implementation / acceptance evidence
 
-Not implemented. Sources S1 (Claude Code) and S9 (Aider) document the readline editor chord. At `71efa11`, `src/tui/App.tsx` calls `openExternalEditor` only for Ctrl+G; the final key filter ignores Ctrl+X, and bare Ctrl+E moves to row end. Existing behavior and safety contracts are in `docs/architecture/load-bearing-decisions.md` § Ctrl+G external editor and `spike/verify-external-editor{,-pty}.ts`.
+Starting gate: clean source revision `71efa11cc279f45f3b0afe0dab91fec244055416` plus research-only commit `26fa7c166af968d53712d31e7c6ac915cd053521`; Host `pnpm typecheck && pnpm test` passed in `bg-f5ed2fd6-c4c0-4661-a936-8b977e0ec461` (exit 0). Research metadata separately passed `pnpm exec tsx spike/verify-skills.ts` (163/0). No source changed during that gate. Implementation not yet accepted.
+
+Sources S1 (Claude Code) and S9 (Aider) document the readline editor chord. At `71efa11`, `src/tui/App.tsx` calls `openExternalEditor` only for Ctrl+G; the final key filter ignores Ctrl+X, and bare Ctrl+E moves to row end. Existing behavior and safety contracts are in `docs/architecture/load-bearing-decisions.md` § Ctrl+G external editor and `spike/verify-external-editor{,-pty}.ts`.
 
 Acceptance: a real production-CLI pty must prove separate and combined Ctrl+X/Ctrl+E input invokes exactly the existing callback once, preserves the exact multiline draft, returns edits unsent, and generates no prompt/model request before explicit Enter. Ctrl+X alone is inert; a different intervening key disarms it and behaves normally; repeated Ctrl+X may re-arm. Invalidate on paste, permission/search/compaction ownership, submission/queueing, session replacement and editor handoff; never arm under a higher-priority owner. Retain every Ctrl+G eligibility/failure/privacy bound, including current busy/queue/peer/goal/delegation checks. Bare Ctrl+E remains row-end. No timer or new frame row. Run focused editor/input/help suites, free `tui completion`, `pnpm typecheck`, full `pnpm test`, and Host `pnpm build`; synchronize `/help`, both README/user-guide languages and the existing architecture rationale.
 
