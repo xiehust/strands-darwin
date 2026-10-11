@@ -67,3 +67,25 @@ Accepted `26a947bb5237e0be00c3d642a242373d82db2fc1` after diff review against `3
 ### Notes / blockers / abandonment reason
 
 Depends on accepted SER-122. Upstream [PR #4863](https://github.com/strands-agents/harness-sdk/pull/4863) exposes a read-only getter for the original client without connecting. At research time, `src/mcp/codegraph-preflight.ts` and `src/mcp/web-search-empty-results.ts` used `mcpOwner` with `as unknown as { mcpClient?: unknown }`; this is the exact cast upstream replaced. Preserve existing wrapper behavior, streaming bytes/events, permission gates, parent/child and refresh lifecycle; do not widen server matching or introduce discovery. Follow the two load-bearing architecture sections. No product UX change is intended. Accepted implementation updates those sections only; README and bilingual user guides remain accurate. The pre-existing private server-name map and refresh seam remain version-sensitive, intentionally outside this direction. No blocker remains.
+
+## SER-124 — Add Ctrl+X Ctrl+E as a composer alias for the existing Ctrl+G external editor
+
+- Status: `not-started`
+- Priority: 164
+- Score: 10
+- Importance: 2
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 2
+- Origin report: [`research_2026-10-11.md`](../research_2026-10-11.md) (run `06:17:14Z`)
+
+### Implementation / acceptance evidence
+
+Not implemented. Sources S1 (Claude Code) and S9 (Aider) document the readline editor chord. At `71efa11`, `src/tui/App.tsx` calls `openExternalEditor` only for Ctrl+G; the final key filter ignores Ctrl+X, and bare Ctrl+E moves to row end. Existing behavior and safety contracts are in `docs/architecture/load-bearing-decisions.md` § Ctrl+G external editor and `spike/verify-external-editor{,-pty}.ts`.
+
+Acceptance: a real production-CLI pty must prove separate and combined Ctrl+X/Ctrl+E input invokes exactly the existing callback once, preserves the exact multiline draft, returns edits unsent, and generates no prompt/model request before explicit Enter. Ctrl+X alone is inert; a different intervening key disarms it and behaves normally; repeated Ctrl+X may re-arm. Invalidate on paste, permission/search/compaction ownership, submission/queueing, session replacement and editor handoff; never arm under a higher-priority owner. Retain every Ctrl+G eligibility/failure/privacy bound, including current busy/queue/peer/goal/delegation checks. Bare Ctrl+E remains row-end. No timer or new frame row. Run focused editor/input/help suites, free `tui completion`, `pnpm typecheck`, full `pnpm test`, and Host `pnpm build`; synchronize `/help`, both README/user-guide languages and the existing architecture rationale.
+
+### Notes / blockers / abandonment reason
+
+Modest ergonomic value, exact primary-source and code evidence, and high fit through a shared callback give `2×2+5+5−2−2 = 10`, above the gate without changing ratings. Depends only on shipped SER-113; no new batch dependency. This is not a second editor implementation, shell launcher, quote injector, auto-submit path, new slash command, generalized keybinding system or SDK patch. Host owns research/backlog/log and final push; implementation remains inside one fresh `developer` child session.
