@@ -3239,11 +3239,12 @@ Free checks: `spike/verify-visual-language.tsx`, `spike/verify-shell-command.ts`
 
 ## Ctrl+G external editor — a bounded terminal handoff, never a send path
 
-**`Ctrl+G` edits the exact unsent draft in the user's `VISUAL` (else `EDITOR`) and returns it to
-the composer unsent** (SER-113; `src/tui/external-editor.ts`, `App.openExternalEditor`). Like `!`,
+**`Ctrl+G`, or `Ctrl+X` then `Ctrl+E`, edits the exact unsent draft in the user's `VISUAL`
+(else `EDITOR`) and returns it to the composer unsent** (SER-113/124;
+`src/tui/external-editor.ts`, `App.openExternalEditor`). Like `!`,
 it is user-authorized and outside the permission gate, but it is input editing, not execution
 reported to the model: nothing is recorded, sent or queued, and the result is ordinary draft
-text that becomes a `userInput` only when the user presses Enter. Seven decisions carry it.
+text that becomes a `userInput` only when the user presses Enter. The decisions below carry it.
 
 - **No shell, no guessing.** The variable is parsed into a bounded argv (≤1,024 code points,
   ≤32 words; POSIX-style quotes and backslashes) and spawned with `shell: false`. Unquoted shell
@@ -3271,6 +3272,16 @@ text that becomes a `userInput` only when the user presses Enter. Seven decision
   darwin's own copy of the same signal); holds are counted so back-to-back edits never leak.
   SIGTERM/SIGHUP are untouched: shutdown unmounts the App, whose cleanup TERM→KILLs the editor
   (2 s grace) and removes its storage synchronously, as `!` reaps its group.
+- **One-shot alias, same callback (SER-124).** Ctrl+X arms one ref, never draft/render/persisted
+  state; Ctrl+E consumes it through `openExternalEditor`. Ink leaves adjacent legacy control
+  bytes in one event, so the exact Ctrl+X/Ctrl+E sequence (including repeated prefixes) is also
+  recognized there, not by a general key splitter or SDK patch. Every other key disarms and
+  keeps its ordinary behavior; repeated Ctrl+X re-arms. Paste clears even if empty. Status,
+  permission notifications, search setters, queue/goal/peer/delegation changes, submission,
+  session replacement and editor handoff synchronously clear it, including async transitions
+  with no intervening key or render. Only composer ownership can arm; live mirrors fence
+  changes awaiting React commit. No timer, hint row, slash command, quote injection or submit.
+  Bare Ctrl+E remains row-end and Ctrl+G retains its existing eligibility and handoff.
 - **Eligibility by position and by state.** The chord sits beside Ctrl+S/Ctrl+O, after the
   permission, compaction and search owners, so those never reach it. It then requires idle,
   an empty queue, no `draining`/`/clear`, no owed `/goal` action, no pending peer message and no
@@ -3300,7 +3311,9 @@ shell, env/cwd, failures, modes, caps, symlink/FIFO/UTF-8/growth, round trip, cl
 signal hold) and `spike/verify-external-editor-pty.ts` (production CLI pty with a local model:
 handoff and redraw, unsent until Enter, unchanged/failed/SIGINT recovery, no double launch,
 busy/permission/search ownership, image/stash privacy and clipboard invalidation, a task wake
-held across the edit, shutdown reaping, unset guidance), both in `pnpm test`; plus
+held across the edit, shutdown reaping, unset guidance; SER-124 separate/combined chords,
+exact multiline unsent round trip, inert prefix, intervening keys/paste, modal and async
+ownership invalidation, queue/compaction/session handoffs), both in `pnpm test`; plus
 `verify-help-command.ts` and `verify-frame-budget.ts`.
 
 ## The prompt queue

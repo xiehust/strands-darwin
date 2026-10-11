@@ -345,11 +345,19 @@ export function App({
   // through this mirror rather than closing over `state`.
   const historyRef = useRef(state.history);
   historyRef.current = state.history;
-  const [status, setStatus] = useState<Status>('idle');
+  // SER-124: one composer-owned Ctrl+X prefix, never draft/render/persisted state.
+  // Clear at ownership seams, not just on the next key or render: an async owner
+  // can arrive and leave without either, and must not hand an armed prefix back.
+  const editorPrefix = useRef(false);
+  const [status, setStatusState] = useState<Status>('idle');
   // Mirror for subscription callbacks that must read the live status without being
   // rebuilt per status change (the delegation-settlement listener, SER-070).
   const statusRef = useRef(status);
-  statusRef.current = status;
+  const setStatus = useCallback((next: Status) => {
+    editorPrefix.current = false;
+    statusRef.current = next;
+    setStatusState(next);
+  }, []);
   const [workspacePaths, setWorkspacePaths] = useState<WorkspacePaths>(NO_WORKSPACE_PATHS);
   const commandNames = useMemo(
     () => [...new Set([
@@ -513,6 +521,7 @@ export function App({
   const [queued, setQueuedState] = useState<readonly QueuedPrompt[]>([]);
   const queuedRef = useRef(queued);
   const setQueued = useCallback((next: readonly QueuedPrompt[]) => {
+    editorPrefix.current = false;
     queuedRef.current = next;
     setQueuedState(next);
   }, []);
@@ -524,6 +533,7 @@ export function App({
   const [goal, setGoalState] = useState<GoalState | undefined>(undefined);
   const goalRef = useRef<GoalState | undefined>(undefined);
   const setGoal = useCallback((next: GoalState | undefined) => {
+    editorPrefix.current = false;
     goalRef.current = next;
     setGoalState(next);
   }, []);
@@ -598,7 +608,10 @@ export function App({
 
 
   const pendingPermission = useSyncExternalStore(
-    (onChange) => permissions.subscribe(onChange),
+    (onChange) => permissions.subscribe(() => {
+      editorPrefix.current = false;
+      onChange();
+    }),
     permissions.getSnapshot,
     permissions.getSnapshot,
   );
@@ -675,6 +688,7 @@ export function App({
   const [historySearch, setHistorySearchState] = useState<PromptHistorySearch | undefined>(undefined);
   const historySearchRef = useRef(historySearch);
   const setHistorySearch = useCallback((next: PromptHistorySearch | undefined) => {
+    editorPrefix.current = false;
     historySearchRef.current = next;
     setHistorySearchState(next);
   }, []);
@@ -690,6 +704,7 @@ export function App({
   const [rewindSearch, setRewindSearchState] = useState<RewindSearch | undefined>(undefined);
   const rewindSearchRef = useRef(rewindSearch);
   const setRewindSearch = useCallback((next: RewindSearch | undefined) => {
+    editorPrefix.current = false;
     rewindSearchRef.current = next;
     setRewindSearchState(next);
   }, []);
@@ -769,6 +784,7 @@ export function App({
     const history = await loadRewindHistory(next.info.projectRoot, sourceSessionId, checkpoint);
     writeToTerminal(CLEAR_TERMINAL);
     recordAction({ type: 'clear', history });
+    editorPrefix.current = false;
     setRuntime(next);
     clipboardReadGeneration.current += 1;
     if (draftStashRef.current !== undefined) {
@@ -1110,6 +1126,7 @@ export function App({
   }, [runtime, setQueued]);
   useEffect(
     () => runtime.subscribeToBackgroundDelegations(() => {
+      editorPrefix.current = false;
       if (statusRef.current === 'idle') enqueueDelegationWakes();
     }),
     [enqueueDelegationWakes, runtime],
@@ -1402,6 +1419,7 @@ export function App({
 
   const submit = useCallback(
     async (raw: string, queuedEntry?: QueuedPrompt) => {
+      editorPrefix.current = false;
       const text = raw.trim();
       if (clearing.current) { dispatch({ type: 'notice', text: 'Session management in progress; submit again when it finishes' }); return; }
       // A drained entry owns its optional image, including explicit absence. It
@@ -2143,6 +2161,7 @@ export function App({
         // whole-screen redraw.
         writeToTerminal(CLEAR_TERMINAL);
         dispatch({ type: 'clear' });
+        editorPrefix.current = false;
         setRuntime(next);
         if (draftStashRef.current !== undefined) {
           setDraftStash(undefined);
@@ -2387,6 +2406,7 @@ export function App({
     if (!local) return;
     let previous = 0;
     const changed = () => {
+      editorPrefix.current = false;
       for (const text of local.takeNotices()) dispatch({ type: 'notice', text });
       if (local.pending > previous) dispatch({ type: 'notice', text: `peer queued · ${local.pending}/8; held until idle after user/task queue and permissions. /collaborate off disables collaboration.` });
       previous = local.pending;
@@ -2821,6 +2841,7 @@ export function App({
    * no change — leaves the draft, cursor and image exactly as they were.
    */
   const openExternalEditor = useCallback(() => {
+    editorPrefix.current = false;
     if (historySearchRef.current !== undefined || rewindSearchRef.current !== undefined) return;
     const goalOwed = goalAction(goalRef.current, {
       idle: true, permissionPending: false, clearing: false, draining: false, queued: 0, peerPending: 0,
@@ -2984,6 +3005,8 @@ export function App({
   }, [exit, pendingPermission, permissions, runtime, status]);
 
   useInput((typed, key) => {
+    const armedEditorPrefix = editorPrefix.current;
+    editorPrefix.current = false;
     // Esc Esc chord (SER-059) bookkeeping: every key disarms it, and only the
     // composer's own Escape branch below re-arms — so an Escape consumed by an
     // earlier owner (permission, a search mode, a menu) never counts as a first press.
@@ -3112,6 +3135,20 @@ export function App({
           },
         );
       }
+      return;
+    }
+
+    // SER-124: Ink leaves adjacent legacy control bytes in one input event.
+    // Recognize only this chord (including repeated prefixes), never split paste
+    // or general input. Earlier owners cannot arm it; live mirrors also fence an
+    // ownership change whose React commit has not reached this handler yet.
+    const prefixKey = !key.meta && ((key.ctrl && typed === 'x') || /^\u0018+$/.test(typed));
+    const editorChord = !key.meta && ((armedEditorPrefix && key.ctrl && typed === 'e') || /^\u0018+\u0005$/.test(typed));
+    if (prefixKey || editorChord) {
+      if (permissions.current !== undefined || statusRef.current === 'compacting' ||
+          clearing.current || editorActive.current) return;
+      if (prefixKey) editorPrefix.current = true;
+      else openExternalEditor();
       return;
     }
 
@@ -3411,6 +3448,7 @@ export function App({
   });
 
   usePaste((pasted) => {
+    editorPrefix.current = false;
     // Permission and compaction own all input while visible/busy, including paste.
     if (pendingPermission !== undefined || status === 'compacting') return;
 

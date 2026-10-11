@@ -19,7 +19,21 @@
  *    drains normally, and the Static notice committed meanwhile is printed -> "drains".
  * T8 darwin shutdown reaps the editor and removes its storage; no storage leaks -> "shutdown".
  * T9 neither VISUAL nor EDITOR set -> one guidance notice, draft untouched -> "unset".
- * Each control byte is its own write, separated by a settled current-frame check.
+ * SER-124 requirement -> proving check (same real CLI and editor, no mock layer):
+ * R1 separate/combined chord, repeated prefix, one-shot launch -> "alias round trip".
+ * R2 exact multiline draft/edit, no model/userInput until Enter -> "alias round trip".
+ * R3 Ctrl+X alone keeps text/cursor/image/frame -> "privacy"; no timer or UI row.
+ * R4 intervening printable/movement/control keys and paste keep their behavior and
+ *    disarm; bare Ctrl+E still row-end -> "invalidation".
+ * R5 permission/history/rewind/compaction never arm; async acquisition invalidates
+ *    without a key -> "modal ownership", "async wake", "compaction".
+ * R6 submission/queueing, session replacement, editor handoff reset -> "queue",
+ *    "session replacement", "alias round trip", "invalidation".
+ * R7 same callback eligibility/fence -> "busy", "queue", T4/T5 and process suite P13
+ *    (idle, queue/draining/clear, peer/goal, live delegation, editorActive).
+ * R8 unchanged/nonzero/SIGINT preserve draft/cursor -> T3 via alias; Ctrl+G regression
+ *    -> T1/T4/T6-T9. Existing process suite P1-P12 retains security/caps/cleanup proof.
+ * Controls use separate writes with settled frames unless explicitly testing a batch.
  */
 import { strict as check } from 'node:assert';
 import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -96,6 +110,10 @@ function launch(env: Record<string, string>): TuiSession {
 const tui = launch({ ...baseEnv, VISUAL: `'${editor}' --from-visual`, EDITOR: path.join(root, 'editor-should-not-run') });
 
 const CTRL_G = '\u0007';
+const CTRL_X = '\u0018';
+const CTRL_E = '\u0005';
+const CHORD = CTRL_X + CTRL_E;
+const paste = (text: string) => `\u001b[200~${text}\u001b[201~`;
 const LEFT = '\u001b[D';
 const HOME_KEY = '\u001b[H';
 const KILL = '\u000b';
@@ -129,10 +147,10 @@ async function homeText(dir = home): Promise<string> {
   return all;
 }
 async function setMode(mode: string): Promise<void> { await writeFile(modeFile, mode); }
-/** Ctrl+G, then wait for the fixture editor to own the terminal as launch number `n`. */
-async function openEditor(n: number): Promise<number> {
+/** One handoff, then wait for the real editor to own the terminal as launch number `n`. */
+async function openEditor(n: number, input = CTRL_G): Promise<number> {
   const mark = tui.mark();
-  tui.send(CTRL_G);
+  tui.send(input);
   await tui.waitFor(`EDITOR-READY ${n}`, { from: mark, timeoutMs: 30_000 });
   await delay(150);
   return tui.mark();
@@ -198,7 +216,9 @@ try {
     await keys('abc', 'abc');
     await keys(LEFT, 'abc');
     await keys(LEFT, 'abc');
-    const after = await openEditor(2);
+    await keys(CTRL_X, 'abc');
+    await keys(CTRL_X, 'abc'); // re-arm one prefix, not a second launch
+    const after = await openEditor(2, CTRL_E);
     tui.send('\r');
     await notice('fixture editor closed without changes — draft unchanged', after);
     await keys('X', 'aXbc');
@@ -206,7 +226,7 @@ try {
 
   await step('nonzero exit: draft and cursor restored with a notice (T3)', async () => {
     await setMode('fail');
-    const after = await openEditor(3);
+    const after = await openEditor(3, CHORD);
     tui.send('\r');
     await notice('fixture editor exited with code 3 — draft unchanged', after);
     await keys('Y', 'aXYbc');
@@ -214,7 +234,7 @@ try {
 
   await step('sigint: Ctrl+C ends only the editor; darwin and the draft survive (T3)', async () => {
     await setMode('sigint');
-    const after = await openEditor(4);
+    const after = await openEditor(4, CHORD);
     tui.send('\u0003');
     await notice('fixture editor was ended by SIGINT — draft unchanged', after);
     await keys('W', 'aXYWbc');
@@ -230,6 +250,13 @@ try {
     await keys('with image', 'with image');
     tui.send('\u000f');
     await settled(() => chip(), 'image attached');
+    await keys(LEFT, 'with image');
+    const frameBeforePrefix = tui.frame;
+    await keys(CTRL_X, 'with image');
+    check.equal(tui.frame, frameBeforePrefix, 'Ctrl+X alone changes no frame row or image chip');
+    check.ok(chip(), 'Ctrl+X alone keeps the image');
+    await keys('Z', 'with imagZe'); // proves the cursor did not move
+    await keys('\u007f', 'with image');
     await setMode('unchanged');
     let after = await openEditor(5);
     tui.send('\r');
@@ -265,6 +292,10 @@ try {
     tui.send(CTRL_G);
     await notice('Ctrl+G opens the external editor only while darwin is idle — draft unchanged', mark);
     check.equal((await launched()).length, before, 'no launch while busy');
+    const aliasMark = tui.mark();
+    tui.send(CHORD);
+    await notice('Ctrl+G opens the external editor only while darwin is idle — draft unchanged', aliasMark);
+    check.equal((await launched()).length, before, 'the alias uses the same busy refusal');
     await writeFile(path.join(cwd, 'hold-release'), '');
     await tui.waitFor('held answer', { from: mark, timeoutMs: 30_000 });
     await settled(() => idle() && draft() === '', 'turn finished');
@@ -319,6 +350,219 @@ try {
     check.ok(calls.slice(callsBefore).some((call) => call.text.startsWith('<task-notification')), 'the wake drained after the editor');
     check.ok(tui.screen.slice(after).includes('J1'), 'the job completion committed during the edit is printed after resume');
     await settled(() => idle() && draft() === '', 'wake turn finished');
+  });
+
+  // SER-124 cases below use dynamic launch counts so the original Ctrl+G cases
+  // above keep their independently observable launch numbers.
+
+  await step('alias round trip: separate and combined chords edit exact multiline text once, unsent until Enter (R1, R2, R6)', async () => {
+    for (const combined of [false, true]) {
+      const original = `ALIAS-${combined ? 'combined' : 'separate'} 世界\ne\u0301 🧪\n\tindented\n\nlast`;
+      const expected = original + ' edited';
+      const callsBefore = await modelCalls();
+      const durableBefore = await homeText();
+      const before = (await launched()).length;
+      tui.send(paste(original));
+      await settled(() => draft() === original.split('\n')[0] && tui.frame.includes('last'), 'multiline draft');
+      await setMode('interactive');
+      if (!combined) {
+        await keys(CTRL_X, original.split('\n')[0]!);
+        await keys(CTRL_X, original.split('\n')[0]!);
+      }
+      const after = await openEditor(before + 1, combined ? CHORD : CTRL_E);
+      check.equal((await launched()).at(-1)?.content, original, 'exact multiline draft, including blank line and tab');
+      tui.send(CHORD); // while the real editor owns the tty, never a second handoff
+      await delay(100);
+      tui.send(' edited');
+      await delay(100);
+      tui.send('\r');
+      await notice('draft replaced from fixture editor — not sent', after);
+      check.equal((await launched()).length, before + 1, 'one launch for the chord');
+      check.deepEqual(await modelCalls(), callsBefore, 'no model call from the edit');
+      check.equal(await homeText(), durableBefore, 'no userInput or draft persisted before Enter');
+      check.ok((await readFile(keysLog, 'utf8')).includes(JSON.stringify(CHORD)), 'repeated chord reached the editor');
+
+      // The prefix is consumed even after a successful handoff. Bare E must not
+      // launch; G independently reopens and observes the exact returned bytes.
+      await keys(CTRL_E, original.split('\n')[0]!);
+      await setMode('unchanged');
+      const reopened = await openEditor(before + 2);
+      check.equal((await launched()).at(-1)?.content, expected, 'exact edited draft round trip, no quotes injected');
+      tui.send('\r');
+      await notice('closed without changes', reopened);
+      check.deepEqual(await modelCalls(), callsBefore, 'reopening is still unsent');
+      const mark = tui.mark();
+      tui.send('\r');
+      await tui.waitFor('local answer', { from: mark, timeoutMs: 30_000 });
+      await settled(() => idle() && draft() === '', 'explicit send complete');
+      check.deepEqual((await modelCalls()).slice(callsBefore.length).map((call) => call.text), [expected], 'only Enter sends once');
+      check.ok((await homeText()).includes(JSON.stringify(expected).slice(1, -1)), 'sent multiline prompt is recorded');
+    }
+  });
+
+  await step('invalidation: intervening keys/paste retain behavior; bare E is row-end; G consumes a prefix (R3, R4, R6)', async () => {
+    const before = (await launched()).length;
+    for (const [intervening, expected] of [
+      ['Z', 'Zabc'], [LEFT, 'abc'], ['\u0002', 'abc'], // Ctrl+B keeps its display-only action
+      [paste('P'), 'Pabc'], [paste(CHORD), 'abc'], [paste(''), 'abc'],
+    ]) {
+      await keys('abc', 'abc');
+      await keys(HOME_KEY, 'abc');
+      await keys(CTRL_X, 'abc');
+      await keys(intervening!, expected!);
+      await keys(CTRL_E, expected!);
+      await keys('!', expected! + '!'); // E behaved normally, not as an editor command
+      await keys(HOME_KEY, expected! + '!');
+      await keys(KILL, '');
+    }
+    check.equal((await launched()).length, before, 'no stale or pasted prefix launched');
+    // Bare E moves only to the current row end, never the whole draft end.
+    tui.send(paste('abc\nxyz'));
+    await settled(() => draft() === 'abc' && tui.frame.includes('xyz'), 'two rows');
+    tui.send('\u001b[1;5H'); // Ctrl+Home: whole draft start
+    await keys(CTRL_E, 'abc');
+    await keys('!', 'abc!');
+    await setMode('unchanged');
+    await keys(CTRL_X, 'abc!');
+    const after = await openEditor(before + 1); // another editor handoff consumes X
+    check.equal((await launched()).at(-1)?.content, 'abc!\nxyz', 'bare E stayed on its row');
+    tui.send('\r');
+    await notice('closed without changes', after);
+    await keys(CTRL_E, 'abc!');
+    check.equal((await launched()).length, before + 1, 'G did not return an armed prefix');
+    tui.send('\u001b[1;5F'); // Ctrl+End
+    await keys('\u0015', 'abc!');
+    await keys('\u007f', 'abc!'); // remove the newline
+    await keys(HOME_KEY, 'abc!');
+    await keys(KILL, '');
+  });
+
+  await step('modal ownership: history/rewind/async permission cannot arm or retain the chord (R5)', async () => {
+    const before = (await launched()).length;
+    for (const rewind of [false, true]) {
+      if (rewind) tui.send(ESC + ESC);
+      else { await keys(CTRL_X, ''); tui.send('\u0012'); }
+      await settled(() => tui.frame.includes(rewind ? 'rewind' : 'search'), 'chooser owns keys');
+      const frame = tui.frame;
+      tui.send(CHORD);
+      await delay(250);
+      check.equal(tui.frame, frame, 'combined chord does not edit the query');
+      tui.send(CTRL_X);
+      await delay(100);
+      tui.send(CTRL_E);
+      await delay(100);
+      check.equal(tui.frame, frame, 'separate chord does not edit the query');
+      tui.send(ESC);
+      await settled(() => !tui.frame.includes(rewind ? 'rewind' : 'search') && draft() === '', 'chooser closed');
+      await keys(CTRL_E, '');
+    }
+    const mark = tui.mark();
+    tui.submit('delayed-permission');
+    await settled(() => tui.frame.includes('working…'), 'waiting for tool request');
+    await keys('abc', 'abc');
+    await keys(HOME_KEY, 'abc');
+    await keys(CTRL_X, 'abc');
+    await writeFile(path.join(cwd, 'permission-release'), ''); // no key as permission takes ownership
+    await settled(() => tui.frame.includes('allow?'), 'async permission owns keys');
+    tui.send(CTRL_E);
+    await delay(100);
+    tui.send(CHORD);
+    await delay(300);
+    check.ok(tui.frame.includes('allow?'), 'permission stays intact');
+    tui.send('n');
+    await tui.waitFor('tool step done', { from: mark, timeoutMs: 30_000 });
+    await settled(() => idle() && draft() === 'abc', 'denied turn ended');
+    await keys(CTRL_E, 'abc');
+    await keys('!', 'abc!');
+    check.equal((await launched()).length, before, 'no editor under or after a modal owner');
+    check.ok(!existsSync(path.join(cwd, 'permission-sentinel')), 'no accidental approval');
+    await keys(HOME_KEY, 'abc!');
+    await keys(KILL, '');
+  });
+
+  await step('queue: submission clears the prefix; queued work retains the existing refusal (R6, R7)', async () => {
+    const before = (await launched()).length;
+    await rm(path.join(cwd, 'hold-release'));
+    const mark = tui.mark();
+    tui.submit('hold');
+    await settled(() => tui.frame.includes('working…'), 'held turn');
+    await keys('queued-alias', 'queued-alias');
+    await keys(CTRL_X, 'queued-alias');
+    tui.send('\r');
+    await settled(() => draft() === '' && tui.frame.includes('queued'), 'prompt queued');
+    await keys(CTRL_E, '');
+    const refusalMark = tui.mark();
+    tui.send(CHORD);
+    await notice('draft unchanged', refusalMark);
+    await writeFile(path.join(cwd, 'hold-release'), '');
+    await tui.waitFor('local answer', { from: mark, timeoutMs: 30_000 });
+    await settled(() => idle() && draft() === '', 'queue drained');
+    await keys(CTRL_E, '');
+    check.equal((await launched()).length, before, 'no launch across queueing and drain');
+    check.equal((await modelCalls()).filter((call) => call.text === 'queued-alias').length, 1, 'queued prompt sent once');
+  });
+
+  await step('async wake: an idle prefix cannot survive an entire automatic turn without intervening keys (R5, R6)', async () => {
+    const before = (await launched()).length;
+    await rm(path.join(cwd, 'job-release'));
+    const mark = tui.mark();
+    tui.submit('start-job J2');
+    await settled(() => tui.frame.includes('allow?'), 'background job approval');
+    tui.send('y');
+    await tui.waitFor('tool step done', { from: mark, timeoutMs: 30_000 });
+    await settled(() => idle() && draft() === '', 'background job running, composer idle');
+    await keys('abc', 'abc');
+    await keys(HOME_KEY, 'abc');
+    await keys(CTRL_X, 'abc');
+    const wakeMark = tui.mark();
+    await writeFile(path.join(cwd, 'job-release'), '');
+    await tui.waitFor('wake ack', { from: wakeMark, timeoutMs: 30_000 });
+    await settled(() => idle() && draft() === 'abc', 'automatic turn finished with draft intact');
+    // No key since X: checking eligibility only when E arrives would launch now.
+    await keys(CTRL_E, 'abc');
+    await keys('!', 'abc!');
+    check.equal((await launched()).length, before, 'async ownership invalidated the prefix');
+    await keys(HOME_KEY, 'abc!');
+    await keys(KILL, '');
+  });
+
+  await step('compaction: ignores both chord forms and cannot hand back an armed prefix (R5)', async () => {
+    const before = (await launched()).length;
+    await keys('/compact', '/compact');
+    await keys(ESC, '/compact'); // dismiss completion so Enter submits
+    await keys(CTRL_X, '/compact');
+    tui.send('\r');
+    await settled(() => tui.frame.includes('compacting'), 'compaction owns keys');
+    tui.send(CHORD);
+    await delay(200);
+    tui.send(CTRL_X);
+    await delay(200);
+    await writeFile(path.join(cwd, 'summary-release'), '');
+    await settled(() => idle() && !tui.frame.includes('compacting') && draft() === '', 'compaction ended');
+    await keys(CTRL_E, ''); // no key between X under compaction and this E at idle
+    check.equal((await launched()).length, before, 'no prefix armed under compaction');
+    check.ok((await modelCalls()).some((call) => call.text === 'Please summarize this conversation.'), 'real summarizer call observed');
+  });
+
+  await step('session replacement: clear consumes the old prefix and never arms during the handoff (R6)', async () => {
+    const before = (await launched()).length;
+    const mark = tui.mark();
+    await writeFile(path.join(cwd, 'hold-session'), '');
+    await keys('/clear', '/clear');
+    await keys(ESC, '/clear');
+    await keys(CTRL_X, '/clear');
+    tui.send('\r');
+    const deadline = Date.now() + 10_000;
+    while (!existsSync(path.join(cwd, 'session-waiting')) && Date.now() < deadline) await delay(20);
+    check.ok(existsSync(path.join(cwd, 'session-waiting')), 'successor is held mid-construction');
+    tui.send(CTRL_X);
+    await delay(200);
+    await writeFile(path.join(cwd, 'session-release'), '');
+    await tui.waitFor('new session', { from: mark, timeoutMs: 30_000 });
+    await settled(() => idle() && draft() === '', 'successor ready');
+    await keys(CTRL_E, '');
+    check.equal((await launched()).length, before, 'old prefix absent; no prefix armed during successor construction');
+    await rm(path.join(cwd, 'hold-session'));
   });
 
   await step('shutdown: SIGTERM to darwin reaps the editor and removes its storage (T8)', async () => {

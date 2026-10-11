@@ -4,7 +4,9 @@
  *
  * The model is driven by the newest user text block:
  * - `hold`            → a text answer held open until `hold-release` exists (busy state).
- * - `permission`      → a `bash execute` that asks for approval in `default` mode.
+ * - `permission` / `delayed-permission` → a real gated `bash execute`; the latter
+ *   waits for `permission-release` before asking, to exercise async key ownership.
+ * - compaction        → waits for `summary-release`, then returns a short summary.
  * - `start-job <m>`   → `bash start` of a job that waits for `job-release`, then text.
  * - `<task-notification…` → text acknowledging the wake.
  * - anything else     → `local answer`.
@@ -51,7 +53,8 @@ class EditorModel extends Model<BaseModelConfig> {
       { type: 'modelContentBlockStopEvent' },
       { type: 'modelMessageStopEvent', stopReason: 'toolUse' },
     ];
-    if (!afterTool && text === 'permission') {
+    if (!afterTool && (text === 'permission' || text === 'delayed-permission')) {
+      if (text === 'delayed-permission') await released('permission-release');
       yield* tool('bash', { mode: 'execute', command: 'printf ran > permission-sentinel' }, 'editor-permission');
       return;
     }
@@ -64,6 +67,7 @@ class EditorModel extends Model<BaseModelConfig> {
     }
     let answer = 'local answer';
     if (text === 'hold') { await released('hold-release'); answer = 'held answer'; }
+    else if (text === 'Please summarize this conversation.') { await released('summary-release'); answer = 'local summary'; }
     else if (text.startsWith('<task-notification')) answer = 'wake ack';
     else if (afterTool) answer = 'tool step done';
     yield { type: 'modelContentBlockStartEvent' };
@@ -73,5 +77,13 @@ class EditorModel extends Model<BaseModelConfig> {
   }
 }
 
-setRuntimeModelFactoryForTest(async () => new EditorModel());
+// Hold real successor construction at the existing model-factory seam. The App
+// must not arm a prefix while /clear awaits its new runtime (no model call here).
+setRuntimeModelFactoryForTest(async () => {
+  if (await access('hold-session').then(() => true, () => false)) {
+    await appendFile('session-waiting', '');
+    await released('session-release');
+  }
+  return new EditorModel();
+});
 await import('../../src/cli.js');
