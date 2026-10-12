@@ -1,0 +1,3 @@
+interface:
+  display_name: "Jev Setup"
+  short_description: "Choose real Jev access or explicit model simulation"

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Jev Redteam"
+  short_description: "Review authorized batch and multi-turn safety tests"

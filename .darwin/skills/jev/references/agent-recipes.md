@@ -1,0 +1,81 @@
+# Agent decision recipes
+
+Use these when an agent needs a **bounded semantic judgment**, not a new planner. They are **Adaptations** designed for this skill, informed by the reported/prototype/demo evidence linked in the last column. They are not claims that these exact recipes have been validated. Read [the evidence ledger](community.md) before quoting results.
+
+A recipe does not install a hook, operate a browser or make a background monitor. The host supplies observations, invokes Jev, applies policy, executes permitted actions and checks outcomes. Long-running unattended use needs those host integrations explicitly implemented and tested.
+
+To adapt rather than copy a recipe, use [Customization](customization.md).
+[Implementation patterns](implementation-patterns.md) explain how to build the
+request and connect its outputs to the host workflow.
+
+## Shared contract
+
+Before a call, supply the original goal, relevant acceptance criterion, fresh observations, allowed candidate IDs and only the history needed for this question. Include timestamps or snapshot hashes when state can change. Keep retrieved content and tool output clearly separated from instructions. Redact secrets locally; do not upload a whole private transcript by default.
+
+- **Choice:** one named route from a closed, task-specific set; include an uncertainty/none route when meaningful.
+- **Noul:** one proposition, with criteria saying what would make it true. A low probability is not the same as proven false.
+- **Score:** one anchored ordinal rubric; compute totals, time comparisons and budget arithmetic in code.
+
+Use a held-out, task-specific decision policy. Do not copy a universal `0.9 = safe` threshold. Ambiguity, provider failure, stale state or an out-of-policy selection must have an explicit fallback. Keep original probabilities; a host action can differ from the model's pick and must be logged as such. User absence never creates permission.
+
+## 1. Keep a long task on track
+
+| ID / trigger | Minimal state | Atomic question / concrete choices or rubric | Host action and caveat | Precedent |
+|---|---|---|---|---|
+| **A01 · Goal-drift checkpoint** after a milestone | Goal, active acceptance check, recent observed result, proposed action | **Noul:** “Does this action directly advance acceptance check C3?” Criteria: concrete link to the check, not merely useful adjacent cleanup. | Low/uncertain support triggers a replan note; it does not erase work or redefine the user's goal. Test for false interruptions. | [R02](community.md#r02), [P02](community.md#p02) |
+| **A02 · Stuck-loop recovery** | Last three attempts, commands, exit codes, error excerpts, changed inputs | **Choice:** `inspect_error` (unread evidence), `change_hypothesis` (same approach failed), `verify_fix` (new success evidence), `escalate_unknown`. | The main agent selects a concrete recovery tool within the chosen route. Exact repeated commands can be counted without Jev; never endlessly retry because a score is high. | [R02](community.md#r02), [P03](community.md#p03) |
+| **A03 · Plan versus action** before a consequential call | Agent's stated immediate plan and exact proposed call/arguments | **Noul:** “Is this call consistent with the stated plan?” Compare target, scope and intended effect. | Feed mismatch back for correction; hard permissions still govern execution. Agreement between two texts does not prove either is authorized. | [R02](community.md#r02) |
+| **A04 · User absent, safe work remains** | Pre-approved work queue, dependency status, evidence, host-computed permission flags | **Choice:** `inspect_logs`, `run_local_checks`, `draft_patch`, `checkpoint_and_wait`; offer only currently available, pre-authorized actions. | Execute a selected safe step or save a checkpoint. If only a consequential decision remains, wait; do not invent preferences or approval. | Adapted from [P01](community.md#p01), [P02](community.md#p02) |
+| **A05 · Decide whether to escalate** | Bounded issue description, attempts, missing facts, available safe diagnostic actions | **Choice:** `gather_local_evidence` (an untried relevant read), `request_reasoning_review` (evidence exists), `needs_user_input` (preference/authority missing). | Use a stronger reasoner for analysis, not to bypass permissions. If the user is away, record the exact missing decision and avoid dependent actions. | [R01](community.md#r01), [P01](community.md#p01) |
+| **A06 · Completion evidence check** before saying done | Acceptance checklist plus actual artifact IDs, test receipts and their revision hashes | **Noul per criterion:** “Does the supplied evidence support criterion C2?” Require evidence for that criterion, not a generic success log. | Run missing checks or report partial completion. Code checks freshness and exit status; Jev cannot certify a test ran or a file exists. | [P03](community.md#p03), [N01](community.md#n01) |
+| **A07 · Detect unsupported success language** | Proposed final claim and a minimal, independently captured execution ledger | **Noul:** “Does this message claim a successful outcome not established by the ledger?” Distinguish planned, attempted and observed. | Revise the claim or collect evidence. Never convert the classifier's agreement into a success receipt. Preserve raw contradictory results. | [P03](community.md#p03) |
+
+## 2. Supervision, safety and quality
+
+| ID / trigger | Minimal state | Atomic question / concrete choices or rubric | Host action and caveat | Precedent |
+|---|---|---|---|---|
+| **A08 · Test weakening / reward gaming** | Changed assertions, original task, protected test intent | **Noul:** “Does this edit weaken a required check without implementing the requirement?” Show before/after assertion behavior. | Route to review; deterministic checks separately catch removed/skipped tests. A test change can be legitimate; do not call it deliberate cheating from a score. | [P03](community.md#p03) |
+| **A09 · Project-rule compliance** | One applicable rule, relevant diff and necessary surrounding code | **Noul:** “Does this diff violate this rule?” Criteria quote the rule and its exceptions. | Attach a focused review note; run linters for syntactic rules. One question per rule; broad “is this good code?” questions produce unclear feedback. | [P02](community.md#p02) |
+| **A10 · Action-risk triage** | Proposed command/action, target environment, authorization evidence, rollback facts | **Choice:** `read_only`, `reversible_local_change`, `external_effect`, `potentially_destructive`, `unknown`. | Use the label to decide review priority. Permission, deny lists and confirmation requirements are deterministic and cannot be overruled by the prediction. | [R03](community.md#r03), [P04](community.md#p04) |
+| **A11 · Suspicious tool-output instructions** | Untrusted page/log text and original task, explicitly delimited | **Noul:** “Does this content try to redirect the agent's instructions or request secrets/actions outside the task?” | Flag the source; continue treating all source text as untrusted regardless of score. This is defense in depth, not an injection-proof filter. | Adapted from [P02](community.md#p02), [N02](community.md#n02) |
+| **A12 · Review attention allocation** | Diff hunks, file roles and related tests, not an entire repository dump | **Score per hunk:** 0 = cosmetic; 1 = behavior touched; 2 = plausible defect requires inspection; 3 = plausible security/data-loss issue. | Prioritize expert inspection and tests. A high score is a lead, not proof; a low score must not bypass mandatory security review. | [P07](community.md#p07) |
+| **A13 · Empty or unhelpful tool response** | User request, expected result shape, tool/agent reply and actual tool status | **Choice:** `usable_result`, `empty_or_error`, `missing_required_information`, `policy_refusal`. | Retry legitimate errors or gather missing evidence. Preserve policy refusals and host safety constraints; do not route around them. Syntax/schema failures should be checked in code first. | [R04](community.md#r04) |
+| **A14 · Subagent report admission** | Child objective, compact result, evidence IDs, parent's current decision | **Choice:** `action_required_now`, `useful_next_checkpoint`, `duplicate`, `needs_verification`. | Wake the parent only for relevant urgent material; retain all reports for retrieval. Claims of urgency in the child text are not enough. | [P02](community.md#p02) |
+
+## 3. Routing and selecting information
+
+| ID / trigger | Minimal state | Atomic question / concrete choices or rubric | Host action and caveat | Precedent |
+|---|---|---|---|---|
+| **A15 · Tool routing** | Current subgoal, observation, real tool descriptions and availability | **Choice:** `search_web`, `read_local_file`, `run_test`, `ask_user`, `none`; each ID maps to a real permitted capability. | Call the selected tool using host-validated arguments. Jev neither invents tools nor writes safe shell commands. Re-observe after execution. | [P01](community.md#p01) |
+| **A16 · Model tier routing** | Current request, required modality, latency/cost constraints and model capability cards | **Choice:** `small_text`, `reasoning`, `vision`, `cannot_route`. Define tiers by capabilities, not prestige. | Host invokes an available model; retain a fallback on quality failure. Evaluate routing regret and total task cost, including reload/caching overhead. | [R04](community.md#r04), [R11](community.md#r11), [N04](community.md#n04) |
+| **A17 · Specialist delegation** | Bounded subtask and candidate specialist contracts | **Choice:** `researcher`, `implementer`, `reviewer`, `stay_with_parent`; describe inputs/outputs and exclusions. | Delegate with a concrete handoff, or keep local work. Independent subtasks and available slots are host facts, not model predictions. | [R01](community.md#r01), [P01](community.md#p01) |
+| **A18 · Skill/tool discovery** | User task, short installed-skill descriptions and mandatory-trigger rules | **Score per optional skill:** 0 = unrelated; 1 = possibly relevant; 2 = directly useful. | Load relevant optional instructions; always retain mandatory instructions and manual access. This recipe does not rewrite installed skills or global configuration. | [R06](community.md#r06), [R08](community.md#r08) |
+| **A19 · Retrieval reranking** | Query and observed passage IDs/text | **Noul per passage:** “Does passage D7 contain information relevant to answering this query?” Define relevant versus merely sharing vocabulary. | Sort/filter candidates locally while keeping provenance and a recovery path. Relevance does not establish correctness or adequate citation support. | [P09](community.md#p09), [N03](community.md#n03) |
+| **A20 · Repository navigation** | Concrete bug question, directory/file candidates, observed summaries or symbols | **Choice:** `auth/session.ts`, `api/login.ts`, `tests/session.test.ts`, `none`; candidates must come from actual discovery. | Inspect the selected file, then update the state. Respect any required graph/index search workflow; this is not evidence that a file contains the bug. | Adapted from [R12](community.md#r12) |
+| **A21 · Recoverable output reduction** | Current subgoal plus numbered blocks of one bulky tool result | **Score per block:** 0 = unrelated/redundant; 1 = useful context; 2 = needed evidence; 3 = required diagnostic. | Preserve raw output on disk; retain IDs, errors and dependencies. Start with shadow comparison. Do not silently remove history, user constraints or native reasoning state. | [R06](community.md#r06), [P02](community.md#p02), [N05](community.md#n05) |
+| **A22 · Duplicate observation suppression** | Proposed read, last equivalent read, prior result, explicit mutation epoch | **Noul:** “Would this observation provide no new information for the current subgoal?” | Skip only if code also proves equivalent arguments and unchanged relevant state. Network pages or time-sensitive facts may change without a local mutation. | [R07](community.md#r07) |
+
+## 4. Browser, external workflows and feedback loops
+
+| ID / trigger | Minimal state | Atomic question / concrete choices or rubric | Host action and caveat | Precedent |
+|---|---|---|---|---|
+| **A23 · Next browser action** | Fresh DOM/accessibility snapshot, goal and observed action IDs | **Choice:** `click:17`, `select:8:option2`, `scroll:main`, `wait`, `blocked`; offer only compatible operations. | Existing browser tools execute after rechecking snapshot/target freshness. Never turn generated text into selectors or coordinates. Text entry belongs to a separate validated step. | [P05](community.md#p05) |
+| **A24 · Browser wait versus intervention** | Current page status, observed loading/error states and recent action | **Choice:** `wait_for_results`, `refresh_observation`, `inspect_error`, `needs_login_or_consent`, `blocked`. | Bound waits and retries in code. Do not log in, accept terms, grant permissions or defeat a CAPTCHA because the classifier selects a route. | Adapted from [P05](community.md#p05) |
+| **A25 · Browser outcome verification** | Fresh result readback and an explicit checklist, such as route/date/results visible | **Noul per item:** “Does this observation establish the requested route?” Check other fields separately. | Code validates exact dates/counts; independently inspect the resulting page. A `DONE` choice is only a request to verify, never proof of a booking/payment. | [P05](community.md#p05) |
+| **A26 · Personal-assistant handoff** | Inbound text, current task and specialist data requirements | **Choice:** `scrape_missing_recipe`, `save_complete_recipe`, `calendar_candidate`, `needs_clarification`, `other`. | Build a draft handoff; verify extracted dates/amounts in code and ask before consequential external writes. Routing does not mean extracted facts are correct. | [R01](community.md#r01) |
+| **A27 · Postmortem failure attribution** | Failed trace with numbered steps, observed errors and named agents | Separate **Choice** questions: responsible agent ID; decisive step ID; error class (`missing_evidence`, `wrong_tool`, `stale_state`, `execution_error`, `unknown`). | Create an investigation shortlist, not a blame verdict. A retrospective label must be tested before it becomes an online recovery policy. | [P06](community.md#p06) |
+| **A28 · Simulation / game controller** | Structured visible game state, legal actions and short objective | **Choice:** `move_left`, `move_right`, `interact`, `wait`; restrict choices to current legal actions. | Execute in a sandboxed simulator, observe again and score objective outcomes. This is not vision, strategic reasoning or a physical safety controller. | [R10](community.md#r10), [X01](twitter-workflows.md#x01), [X03](twitter-workflows.md#x03) |
+
+## Worked example: unattended coding checkpoint
+
+**Known task:** fix the failing authentication test without modifying its assertions. The user has already authorized local code edits and test runs, but not pushes or deployment.
+
+**Observed facts:** `test_auth` failed twice with the same stack trace; the source changed once; there is no passing test receipt for that revision. Preserve those facts outside Jev.
+
+1. Use **A02** to choose between reading the failing frame, trying a different local fix, running a new check, or escalating unknown. Give each choice a concrete description.
+2. If the agent proposes skipping the test, run **A08** as advisory feedback, while the host's deterministic protected-test rule prevents unauthorized weakening.
+3. If the chosen action is unavailable, stale, ambiguous or outside authorization, do not substitute a destructive action. Refresh evidence or checkpoint.
+4. After a permitted fix, actually run the test. Record command, exit code, revision and output location.
+5. Use **A06** to compare the receipt with the acceptance criterion. Broader integration checks may still be needed. Report only what ran and passed.
+
+This is a recipe to test, not a measured improvement. A useful before/after experiment counts verified fixes, incorrect completion claims, false interruptions, repeat work, total calls/cost and elapsed time. Merely obtaining a well-formed Jev answer does not establish the skill helped.
