@@ -115,3 +115,24 @@ Safety refinement: a bounded read-only config preflight conservatively refuses c
 ### Notes / blockers / abandonment reason
 
 P2 (Codex) and P7 (Aider) document local diff inspection. At the research baseline, Darwin's canonical command list had no `diff`; `fileEditorDiff` displays tool input, `/review` makes a model turn, and `!git diff` feeds its output into the next prompt. Add TUI-only idle `/diff` (tracked worktree versus index) and `/diff --staged` (index versus HEAD, unborn supported), exact grammar with local usage for all other arguments. Always label scope and exclude/state untracked and submodule contents. One bounded Static notice, no model/tool/trajectory/prompt-history/shell-report effect or workspace/session mutation. Busy refuses locally; preserve modal ownership and cancel/exit/replacement cleanup. Fixed argv/cwd, no shell/pager/color/external diff/textconv/fsmonitor helper/submodule recursion; cap output/time and sanitize terminal controls. Errors and truncation must be honest. Use the report's complete requirements, tests and authorization boundary; do not alter tool-input diffs or `/review`. Score 10 clears the gate; no new-direction dependency. Host owns research/backlog/log and push; implementation must use a fresh developer child.
+
+
+## SER-126 — Add an explicit base-commit merge-base review scope through the existing pure review prompt
+
+- Status: `not-started`
+- Priority: 166
+- Score: 13
+- Importance: 3
+- Architecture fit: 5
+- Evidence confidence: 5
+- Difficulty: 2
+- Risk: 1
+- Origin report: [`research_2026-10-13.md`](../research_2026-10-13.md) (run `14:46:08Z`)
+
+### Implementation / acceptance evidence
+
+Not started. Acceptance requires independent Host diff inspection, review parser/runtime/headless/TUI/dev-repl suites, free TUI completion, typecheck, full tests, build, and documentation parity. See the origin report's complete acceptance contract.
+
+### Notes / blockers / abandonment reason
+
+P3 (Codex official CLI review scopes) documents merge-base branch review. `src/commands/review-command.ts::parseReviewCommand` currently recognizes only full-SHA `--commit`; a leading `--base` becomes literal focus on the working-tree prompt. Add `/review --base <40-hex-SHA>` for the unique merge-base-to-HEAD committed diff, without Git execution during expansion. Preserve existing bare/focus/commit bytes and commit-only usage. Malformed base forms return base-specific local usage in every driver before queue/model work; valid forms retain ordinary queue/image ownership and literal trajectory. Prompt names resolved object identities, excludes dirty/untracked changes, handles missing/unrelated/ambiguous/empty scopes honestly, and asks for no fetch/checkout/edit/commit. It remains guidance, not enforced read-only. No new tools, modes, dependencies, config or loop. Full requirements, test matrix, docs and authorization are in the report. Score 13 clears gate 6; no new-direction dependency. Host owns research/backlog/log and push; use a fresh developer child.
