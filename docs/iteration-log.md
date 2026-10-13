@@ -3821,3 +3821,24 @@ Docs wrap-up in the accepted commit: both READMEs, English/Chinese `using-darwin
 Exact spend for the sole child task: `usage: input=132 output=44407 cacheRead=8731091 cacheWrite=198708`; `cost: total=13.4366 input=0.0013 output=2.2204 cacheRead=8.7311 cacheWrite=2.4839 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Aggregate buckets are identical: **8,974,338** exclusive tokens and approximate USD **13.4366**, excluding Host research/acceptance. Computed rounded cost components sum to **13.4367**, a **−0.0001** residual; reported total retained.
 
 **Halt: batch exhausted.** SER-125 is done, no abandonment or unfinished backlog remains. Host commits these records, pushes the current branch once normally, and verifies the upstream range; the final response records the actual push outcome.
+
+
+## Batch 179 — SER-126 explicit merge-base review scope (2026-10-13)
+
+Fresh research rolled **peer**, not overridden, at `2026-10-13T14:46:08.917Z`; report: `docs/research/research_2026-10-13.md`, run `14:46:08Z`. All seven required product scopes were reached, with Aider additional. Metadata found no unfinished work. Only SER-126 was queued (Score 13, Priority 166); required MCP startup (5), automatic edit/test repair (2), and an RSI plugin platform (-2) stayed report-only below gate 6. The report records the metadata-scan caveat honestly.
+
+Host baseline **`bg-0a21fe9c-4fa2-41c9-a2d6-2ec27e18af9f`** exited 0: `pnpm typecheck && pnpm test` at clean **`5b1ec260bc68fefd32e29bfa5f2509c9f87d76cf`**. The one-line status commit made worker base **`dd3948124bd7b03479508ebff2b51d0804c7f8b9`**, source-identical to the green baseline. The score was recomputed unchanged before selection. Research/backlog validation had passed `verify-skills.ts` (163/0).
+
+Fresh child **`session-20261013-151220347`**, source CLI `pnpm exec tsx src/cli.ts --yolo --context-offload -p …`; managed task **`bg-c51e8699-bc89-459b-a290-b0df7b99f9f4`**, exit 0, fully drained to `hasMore: false`. Session and spend were captured from exact stderr records. No ceiling, compaction, correction or retry. Explicit base/result log contains only the child commit, no foreign writer. Host made no implementation edits.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Pure `/review --base <40-hex-SHA>` prompt and scope-specific local validation | `fc7bb821c5b507166576e66dd627bf63cf051d15` | Reviewed the complete explicit 14-file diff. **`bg-3f3756c3-e709-4aff-bac4-f53c7bdb6f28`**, exit 0: `pnpm typecheck`, full `pnpm test` including `verify-review-command.ts` (283 passed, 0 failed) and `verify-review-drivers.ts` (33 passed, 0 failed), `pnpm exec tsx spike/verify-tui.ts completion` (83 passed, 0 failed), `pnpm build`, diff/clean-tree/exact-HEAD checks. Built CLI reports 0.0.52. |
+
+Parser tests preserve old bare/focus/commit prompt bytes and commit usage, retain mixed-case SHA bytes, reject malformed base forms locally, and keep lookalikes literal. Fixed semantic clauses cover inspection-time HEAD, actual commit identities, unique merge base, committed-only scope, missing/unrelated/multiple-base stops, empty scope, no checkout/fetch/edit/commit, and honest findings/test limits. Real SDK/runtime and text/JSON/JSONL capture prove one expansion and literal trajectory; production TUI pty proves idle/busy rejection with retained draft/image and queued base delivery exactly once with its attachment; dev-repl parity and ordinary gate denial/approval remain covered. These are harness-contract checks, not live model review accuracy. No live-provider acceptance suite was run.
+
+Docs wrap-up in the accepted commit: both READMEs; English/Chinese `using-darwin` and `reference` user-guide pages; existing architecture review paragraphs. No extra sync commit needed. AGENTS is unchanged at 32,727 bytes. No new tool, executor, dependency, SDK patch, mode, configuration, schema, release bump or recursive supervision. Optional cloud-memory emitted a degraded in-flight/interrupted-state notice; no recovery/upload/configuration was attempted.
+
+Exact sole-child spend: `usage: input=46 output=17939 cacheRead=2251133 cacheWrite=135330`; `cost: total=4.8402 input=0.0005 output=0.8970 cacheRead=2.2511 cacheWrite=1.6916 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. One invocation means aggregate buckets are identical: **2,404,448** exclusive tokens and approximate USD **4.8402**, excluding Host research/acceptance. Computed with Decimal, rounded components equal the reported total; residual **0.0000**. No unknown bucket.
+
+**Halt: batch exhausted.** SER-126 is done. No direction abandoned and no unfinished backlog remains. Host commits these closure records, pushes the current branch once normally, and verifies the upstream range; the final response records the actual push outcome.

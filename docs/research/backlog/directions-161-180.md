@@ -119,7 +119,7 @@ P2 (Codex) and P7 (Aider) document local diff inspection. At the research baseli
 
 ## SER-126 — Add an explicit base-commit merge-base review scope through the existing pure review prompt
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 166
 - Score: 13
 - Importance: 3
@@ -131,7 +131,9 @@ P2 (Codex) and P7 (Aider) document local diff inspection. At the research baseli
 
 ### Implementation / acceptance evidence
 
-Not started. Acceptance requires independent Host diff inspection, review parser/runtime/headless/TUI/dev-repl suites, free TUI completion, typecheck, full tests, build, and documentation parity. See the origin report's complete acceptance contract.
+Accepted `fc7bb821c5b507166576e66dd627bf63cf051d15` (`feat(review): add merge-base prompt scope`) after Host inspection of the explicit 14-file diff from `dd3948124bd7b03479508ebff2b51d0804c7f8b9`; no foreign commits. Fresh child `session-20261013-151220347`, task `bg-c51e8699-bc89-459b-a290-b0df7b99f9f4`, exited 0 and was fully drained. No correction/retry.
+
+Host acceptance task `bg-3f3756c3-e709-4aff-bac4-f53c7bdb6f28` exited 0: `pnpm typecheck`; full `pnpm test`, including `verify-review-command.ts` (283 passed, 0 failed) and `verify-review-drivers.ts` (33 passed, 0 failed); `pnpm exec tsx spike/verify-tui.ts completion` (83 passed, 0 failed); `pnpm build`; diff check, clean-tree check and exact-HEAD check. Built CLI reports 0.0.52. Both READMEs, English/Chinese narrative and reference guides, and architecture review paragraphs are synchronized in the accepted commit. Checks prove parser/prompt/transport/gate contracts, not live model review accuracy. Full supervision receipt and spend: `docs/iteration-log.md`, Batch 179.
 
 ### Notes / blockers / abandonment reason
 
