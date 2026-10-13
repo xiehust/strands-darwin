@@ -119,7 +119,7 @@ P2 (Codex) and P7 (Aider) document local diff inspection. At the research baseli
 
 ## SER-126 — Add an explicit base-commit merge-base review scope through the existing pure review prompt
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 166
 - Score: 13
 - Importance: 3
