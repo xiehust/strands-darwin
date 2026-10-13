@@ -55,7 +55,7 @@ import { CONFIG_FILENAME } from '../config.js';
 import type { AppConfig, ModelChoice } from '../config.js';
 import { BUILTIN_COMMAND_NAMES } from '../commands/custom-commands.js';
 import { WORKFLOW_COMMAND_USAGE, parseWorkflowCommand } from '../commands/workflow-command.js';
-import { parseReviewCommand, REVIEW_COMMIT_USAGE } from '../commands/review-command.js';
+import { parseReviewCommand } from '../commands/review-command.js';
 import { MCP_CONFIG_FILENAME, mcpConfigCandidates } from '../mcp/registry.js';
 import { mcpPromptLoadedNotice, mcpPromptOmittedAnything } from '../mcp/prompts.js';
 import { searchPreview } from './search-preview.js';
@@ -1938,10 +1938,11 @@ export function App({
         return;
       }
 
-      // Invalid explicit commit scopes are local usage errors even while busy.
+      // Invalid explicit review scopes are local usage errors even while busy.
       // Retain the draft and any image rather than queueing or consuming either.
-      if (parseReviewCommand(text)?.invalid) {
-        dispatch({ type: 'notice', text: REVIEW_COMMIT_USAGE });
+      const review = parseReviewCommand(text);
+      if (review?.invalid) {
+        dispatch({ type: 'notice', text: review.usage });
         return;
       }
 
@@ -2350,7 +2351,9 @@ export function App({
                     : expanded.kind === 'review'
                       ? expanded.message.startsWith('Review commit ')
                         ? 'reviewing commit with /review'
-                        : 'reviewing current changes with /review'
+                        : expanded.message.startsWith('Review committed changes ')
+                          ? 'reviewing merge-base changes with /review'
+                          : 'reviewing current changes with /review'
                       : expanded.kind === 'mcp-prompt'
                         ? mcpPromptLoadedNotice(expanded)
                         : `loaded command "/${expanded.command.name}"`,

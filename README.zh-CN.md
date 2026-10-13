@@ -132,6 +132,7 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 /init                   请模型为当前项目创建或改进 AGENTS.md
 /review [focus]         审查当前改动中的缺陷和测试缺口
 /review --commit <SHA>  审查指定的 40 位十六进制提交
+/review --base <SHA>    审查唯一合并基点到 HEAD 之间的已提交改动
 /copy                   把最近一条已完成回答复制到剪贴板（OSC 52，SSH 下可用）
 /rewind                 从已完成提示词分支对话（工作区不变）
 /tangent                为一次旁支提问给对话加书签；再输入 /tangent 即返回
@@ -143,6 +144,8 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 想在切到别处时被叫回来，可在 `~/.darwin/config.json` 中设置 `"terminalBell": true`（响一次终端铃）和／或 `"terminalNotify": true`（写一条 OSC 9 桌面通知序列，iTerm2、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端静默忽略）；二者都在权限提示等待时和回合结束时触发，默认均为关闭。iTerm2 需开启 "Send escape sequence-generated alerts"；tmux 需要 `set -g allow-passthrough on`。详见[配置与上下文](docs/user-guide/configuration.zh-CN.md)。
 
 `/review` 请模型检查暂存、未暂存的改动及相关未跟踪文件，按优先级报告有证据的缺陷，并单列测试缺口。可选 focus 保持为字面文本。`/review --commit <40-hex-SHA>` 则要求审查指定提交与父提交的差异（根提交与空树比较）及周围代码／测试；无效参数在本地提示用法，缺失的对象须如实说明。提示要求未经另行请求不要修改文件或提交，但**不会强制只读，也不改变权限模式**。内置命令现在占用 `/review`；原来使用该斜杠名称的自定义命令或 skill 需要改名，例如 `audit`。详见[审查改动](docs/user-guide/using-darwin.zh-CN.md#审查改动)。
+
+要审查多个提交，先将选定的基准解析为完整的 40 位十六进制提交 SHA，再输入 `/review --base <40-hex-SHA>`。模型在检查时解析 HEAD（解析器不会提前固定它），报告两端的实际提交 SHA 和唯一合并基点，只审查该基点到 HEAD 的已提交差异及该范围内的代码／测试，不包含暂存、未暂存或未跟踪的改动。对象缺失、HEAD 尚无提交、历史不相交或存在多个合并基点时，须说明原因并停止；差异为空也须如实说明。提示要求不 checkout、不 fetch、不编辑、不提交。这仍是指引，不是强制只读，也不保证审查正确。以 `--base` 开头但格式不对的输入显示专属本地用法；`--baseish` 仍是字面 focus。
 
 `/diff` 查看已跟踪文件的未暂存改动（工作区与索引比较）；`/diff --staged` 查看索引与 HEAD 的差异，也支持尚无提交的仓库。未跟踪文件和子模块内容不在范围内。此命令仅供空闲 TUI 使用，以一条有界、转义终端控制字符的本地通知展示结果，不发送模型提示或 shell 报告，也不修改文件或索引。其他参数只显示用法，忙碌时拒绝而不排队。所选范围为空不代表整个工作区干净；错误和截断均会注明。它与调用模型的 `/review` 及 `!git diff` 不同，详见[上限与 Git 辅助程序限制](docs/user-guide/using-darwin.zh-CN.md#本地-git-差异)。
 

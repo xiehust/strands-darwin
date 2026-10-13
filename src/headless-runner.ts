@@ -19,7 +19,7 @@ import { dispatchLabel } from './agents/dispatch-registry.js';
 import { routeSdkLogs, type SdkLogEntry } from './agent/sdk-logging.js';
 import type { CliOptions } from './cli-args.js';
 import { CliUsageError } from './cli-args.js';
-import { parseReviewCommand, REVIEW_COMMIT_USAGE } from './commands/review-command.js';
+import { parseReviewCommand } from './commands/review-command.js';
 import { usageErrorText } from './cli-usage.js';
 import { contextOverflowErrorMessage } from './context-overflow-error.js';
 import { StreamIdleError } from './agent/stream-idle.js';
@@ -105,7 +105,8 @@ export async function runHeadlessProcess(
   let prompt: string;
   try {
     prompt = composeHeadlessPrompt(options.prompt, await dependencies.readPipedStdin());
-    if (parseReviewCommand(prompt)?.invalid) throw new CliUsageError(REVIEW_COMMIT_USAGE);
+    const review = parseReviewCommand(prompt);
+    if (review?.invalid) throw new CliUsageError(review.usage);
   } catch (error) {
     if (!(error instanceof CliUsageError)) throw error;
     target.stderr.write(usageErrorText(error.message));

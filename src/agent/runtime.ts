@@ -67,7 +67,7 @@ import {
   type McpPromptDiscovery,
 } from '../mcp/prompts.js';
 import { parseInitCommand } from '../commands/init-command.js';
-import { parseReviewCommand, REVIEW_COMMIT_USAGE } from '../commands/review-command.js';
+import { parseReviewCommand } from '../commands/review-command.js';
 import { GOAL_HEADLESS_REFUSAL, parseGoalCommand } from '../commands/goal-command.js';
 import { parseWorkflowCommand } from '../commands/workflow-command.js';
 import {
@@ -2731,7 +2731,7 @@ export class AgentRuntime {
     if (init !== null) return { kind: 'init', ...init };
 
     const review = parseReviewCommand(input);
-    if (review?.invalid) throw new Error(REVIEW_COMMIT_USAGE);
+    if (review?.invalid) throw new Error(review.usage);
     if (review !== null) return { kind: 'review', ...review };
 
     const skill = await expandSkillCommand(this.skills, input);

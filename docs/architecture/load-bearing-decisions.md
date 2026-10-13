@@ -1445,7 +1445,7 @@ answer; the TUI passes nothing, so the interactive prompt never carries it.
 
 Custom-command expansion changes only the ordinary user message, not this system-prompt order or the instructions/catalogue. The `.agents` extension-layering section defines argument fallback and its literal trajectory boundary.
 
-**`/review [focus]` and `/review --commit <40-hex-SHA>` are prompt guidance, not an enforced read-only mode (SER-087, SER-102).**
+**`/review [focus]`, `/review --commit <40-hex-SHA>` and `/review --base <40-hex-SHA>` are prompt guidance, not an enforced read-only mode (SER-087, SER-102, SER-126).**
 `parseReviewCommand` (`src/commands/review-command.ts`) is pure and import-free, with the
 same exact case-insensitive name grammar as `/init`; bare input is valid and only the
 focus's surrounding whitespace is trimmed before literal insertion under `Focus:`.
@@ -1456,9 +1456,22 @@ and unverified limits, including tests not run. It asks for no edits or commits 
 separately requested. The explicit commit form accepts only one full 40-hex SHA and
 asks for the exact commit diff against its parent (first parent for merges; the empty tree for a root),
 surrounding code/tests and honest limitations for missing or unsupported objects.
-Malformed leading `--commit` yields local bounded usage with no model turn, including
-when submitted while busy; valid input follows the ordinary queue and image path.
-That sentence never changes the gate: `/review` does not switch
+The base form accepts a case-sensitive leading `--base` and exactly one full 40-hex SHA,
+with its bytes preserved. Users resolve their chosen base to a full commit SHA first.
+The fixed prompt asks the model to resolve that exact commit and HEAD at inspection time
+(HEAD is never pinned by the parser), report both actual SHAs and their unique merge base,
+and review only committed merge-base-to-resolved-HEAD changes with code/tests from that
+scope, explicitly excluding staged/unstaged/untracked changes. Missing/uninspectable objects,
+unborn HEAD, unrelated histories or multiple bases must be reported and stop, never guessed
+or fetched; empty scope is stated honestly, not as a clean-tree claim. Findings retain the
+priority/file-line/impact, separate test gaps, no speculative/style-only findings and
+unverified/tests-not-run contract. No checkout, fetch, edits or commits is guidance, not
+an enforcement mechanism or a guarantee of model review correctness.
+Malformed leading `--commit` or `--base` yields its own local bounded usage with no model
+turn: missing/short/nonhex/extra/combined/equals forms refuse before queueing, including
+while busy, retaining draft/image. `--baseish`, differently cased flags and other focus
+stay literal. Bare/focus/commit prompt bytes and commit usage are unchanged. Valid input
+follows the ordinary queue and image path. That guidance never changes the gate: `/review` does not switch
 permission mode, install a tool/executor, interpolate shell/templates, or start a child.
 Only the subsequent ordinary model requests can call tools, through the existing gate.
 

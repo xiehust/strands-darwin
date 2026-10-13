@@ -1,5 +1,5 @@
 /**
- * `/review [focus]` and `/review --commit <SHA>` are ordinary user prompts,
+ * `/review [focus]`, `/review --commit <SHA>` and `/review --base <SHA>` are ordinary user prompts,
  * not a review executor or a read-only mode. Keep expansion pure; the existing
  * permission gate remains authoritative over any tools the model subsequently requests.
  */
@@ -28,8 +28,26 @@ const COMMIT_PROMPT =
   'limits, including tests not run. Do not edit files or make commits. This is review guidance, ' +
   'not an enforced read-only mode; the existing permission gate remains authoritative.';
 
+export const REVIEW_BASE_USAGE = 'Usage: /review --base <40-hex-SHA>';
+
+const BASE_PROMPT =
+  'Review committed changes from the unique merge base of %SHA% and HEAD to HEAD only. ' +
+  'Inspect the repository instructions. Resolve the supplied exact commit and HEAD as commit objects ' +
+  'at inspection time; report their actual SHAs and the unique merge base SHA. HEAD is not pinned by ' +
+  'the slash parser. If either object is missing or cannot be inspected, HEAD is unborn, histories ' +
+  'are unrelated, or multiple merge bases exist, report the limitation and stop. Do not guess or ' +
+  'choose a base, fetch objects, or invent a diff or findings. Review only the committed diff from ' +
+  'that unique merge base to the resolved HEAD, with surrounding code and relevant tests from that ' +
+  'committed scope. Explicitly exclude staged, unstaged and untracked changes. If the diff is empty, ' +
+  'state that the selected scope has no committed changes; do not claim the working tree is clean. ' +
+  'Report actionable bugs in priority order, with file/line evidence and impact. List test gaps ' +
+  'separately; avoid speculative or style-only findings. If no actionable bugs are found, say so. ' +
+  'Honestly state anything not inspected or verified, including tests not run. Do not checkout, ' +
+  'fetch, edit files or make commits. This is review guidance, not an enforced read-only mode or ' +
+  'a guarantee of review correctness; the existing permission gate remains authoritative.';
+
 /** Exact, case-insensitive name grammar shared with the other prompt built-ins. */
-export function parseReviewCommand(input: string): { message: string; invalid?: false } | { message?: undefined; invalid: true } | null {
+export function parseReviewCommand(input: string): { message: string; invalid?: false } | { message?: undefined; invalid: true; usage: string } | null {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) return null;
 
@@ -41,7 +59,11 @@ export function parseReviewCommand(input: string): { message: string; invalid?: 
   const focus = separator === -1 ? '' : withoutSlash.slice(separator).trim();
   if (/^--commit(?:\s|$|=)/.test(focus)) {
     const match = focus.match(/^--commit\s+([0-9a-fA-F]{40})$/);
-    return match === null ? { invalid: true } : { message: COMMIT_PROMPT.replace('%SHA%', match[1]!) };
+    return match === null ? { invalid: true, usage: REVIEW_COMMIT_USAGE } : { message: COMMIT_PROMPT.replace('%SHA%', match[1]!) };
+  }
+  if (/^--base(?:\s|$|=)/.test(focus)) {
+    const match = focus.match(/^--base\s+([0-9a-fA-F]{40})$/);
+    return match === null ? { invalid: true, usage: REVIEW_BASE_USAGE } : { message: BASE_PROMPT.replace('%SHA%', match[1]!) };
   }
   return { message: REVIEW_PROMPT + (focus === '' ? '' : `\n\nFocus: ${focus}`) };
 }

@@ -1,6 +1,6 @@
 /** SER-087 offline driver acceptance (real runtime/SDK, not source assertions).
- * R6 TUI busy queue: no request/record until drain, commit + bare + focused expansion;
- * malformed scopes stay local and retain the draft.
+ * R6 TUI busy queue: no request/record until drain, commit/base + bare + focused expansion;
+ * malformed scopes stay local and retain the draft/image (SER-102/SER-126).
  * R7 clipboard PNG follows the queued review once; literal trajectory excludes it.
  * R8 dev-repl sends the same expansion and records literal input.
  * Isolated HOME, local capture model, bounded pty waits. No external provider.
@@ -10,7 +10,8 @@ import { strict as check } from 'node:assert';
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { parseReviewCommand, REVIEW_COMMIT_USAGE } from '../src/commands/review-command.js';
+import { sessionPaths } from '../src/agent/session.js';
+import { parseReviewCommand, REVIEW_COMMIT_USAGE, REVIEW_BASE_USAGE } from '../src/commands/review-command.js';
 import { assert, header, ownPrivateHome, report } from './shared.js';
 import { REPO_ROOT, startTui } from './tui-driver.js';
 
@@ -23,6 +24,8 @@ const literal = `/ReViEw ${focus}`;
 const sha = 'ABCDEF0123456789abcdef0123456789abcdef01';
 const commit = `/ReViEw --commit ${sha}`;
 const invalid = '/review --commit deadbeef';
+const baseReview = `/ReViEw --base ${sha}`;
+const invalidBase = '/review --base deadbeef';
 
 async function files(dir: string): Promise<string[]> {
   const all: string[] = [];
@@ -33,8 +36,9 @@ async function files(dir: string): Promise<string[]> {
   }
   return all;
 }
-async function records(): Promise<Array<{ type: string; text?: string }>> {
-  const trajectories = (await files(home)).filter(file => file.endsWith('trajectory.jsonl'));
+async function records(cwd: string): Promise<Array<{ type: string; text?: string }>> {
+  const trajectories = (await files(sessionPaths(cwd).sessionsDir)).filter(file => file.endsWith('trajectory.jsonl'));
+  check.equal(trajectories.length, 1); // One session per private project; keep input ordering testable.
   return (await Promise.all(trajectories.map(file => readFile(file, 'utf8'))))
     .flatMap(text => text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line)));
 }
@@ -48,15 +52,18 @@ const config = JSON.stringify({ provider: 'bedrock', model: 'fake.offline-captur
   promptCache: false, contextOffload: false, memory: false, trajectory: true, permissionMode: 'default' });
 await mkdir(path.join(home, '.darwin'), { recursive: true });
 await writeFile(path.join(home, '.darwin/config.json'), config);
-const cwd = path.join(home, 'tui-project');
 const bin = path.join(home, 'bin');
-await mkdir(cwd);
 await mkdir(bin);
-await writeFile(path.join(cwd, 'clipboard.png'), png);
 await writeFile(path.join(bin, 'wl-paste'), `#!${process.execPath}\nprocess.stdout.write(require('node:fs').readFileSync('clipboard.png'));\n`);
 await chmod(path.join(bin, 'wl-paste'), 0o755);
-async function tuiReview(): Promise<void> {
-  header('review R6–R7 — real TUI queue, attachment and literal trajectory');
+async function tuiReview(scope: 'commit' | 'base'): Promise<void> {
+  header(`review R6–R7 — real TUI ${scope} queue, attachment and literal trajectory`);
+  const input = scope === 'commit' ? commit : baseReview;
+  const rejected = scope === 'commit' ? invalid : invalidBase;
+  const usage = scope === 'commit' ? REVIEW_COMMIT_USAGE : REVIEW_BASE_USAGE;
+  const cwd = path.join(home, `tui-${scope}-project`);
+  await mkdir(cwd);
+  await writeFile(path.join(cwd, 'clipboard.png'), png);
   const tui = startTui({ cwd, entry, cols: 120, rows: 40,
     env: { ...env, PATH: `${bin}:${process.env['PATH'] ?? ''}`, WAYLAND_DISPLAY: 'review-test' } });
   try {
@@ -67,10 +74,10 @@ async function tuiReview(): Promise<void> {
     tui.send('\u000f');
     await tui.waitFor('image attached · PNG', { from: held, settleMs: 200 });
     const refused = tui.mark();
-    tui.submit(invalid);
-    await tui.waitFor(REVIEW_COMMIT_USAGE, { from: refused, settleMs: 200 });
+    tui.submit(rejected);
+    await tui.waitFor(usage, { from: refused, settleMs: 200 });
     assert('invalid busy scope keeps the draft/image, sends nothing and never queues',
-      tui.frame.includes(invalid) && tui.frame.includes('image attached · PNG') &&
+      tui.frame.includes(rejected) && tui.frame.includes('image attached · PNG') &&
       !tui.frame.includes('queued ·') && (await requests(cwd)).length === 1);
     tui.send('\u0015'); // Clear the retained malformed draft; the image remains owned by the composer.
     // Separate writes alone do not separate stdin events: a coalesced Ctrl+U/text
@@ -83,15 +90,16 @@ async function tuiReview(): Promise<void> {
       tui.frame.includes('image attached · PNG') && !tui.frame.includes('queued ·') &&
       (await requests(cwd)).length === 1);
     const queued = tui.mark();
-    tui.submit(commit);
-    await tui.waitUntil(() => tui.frame.includes('queued ·') && tui.frame.includes('--commit'), {
+    tui.submit(input);
+    await tui.waitUntil(() => tui.frame.includes('queued ·') && tui.frame.includes(`--${scope}`), {
       from: queued, settleMs: 200, label: 'review with image queued behind held model',
     });
     assert('busy review has not reached the model', (await requests(cwd)).length === 1);
-    check.deepEqual((await records()).filter(record => record.type === 'userInput').map(record => record.text), ['hold review queue']);
+    check.deepEqual((await records(cwd)).filter(record => record.type === 'userInput').map(record => record.text),
+      ['hold review queue']);
     assert('enqueue records nothing and keeps the permission mode', tui.frame.includes('mode: default'));
     await writeFile(path.join(cwd, 'release-review'), 'release');
-    await tui.waitFor('reviewing commit with /review', { from: queued });
+    await tui.waitFor(scope === 'commit' ? 'reviewing commit with /review' : 'reviewing merge-base changes with /review', { from: queued });
     await tui.waitUntil(() => !tui.frame.includes('working…') && !tui.frame.includes('queued ·') &&
       tui.screen.slice(queued).includes('REVIEW_LOCAL_REPLY'), { settleMs: 300, label: 'queued review finished' });
     const calls = await requests(cwd);
@@ -99,7 +107,7 @@ async function tuiReview(): Promise<void> {
     const received = calls[1]!;
     check.equal(received.role, 'user');
     check.equal(received.content.length, 2);
-    check.equal(received.content[0]?.['text'], parseReviewCommand(commit)!.message);
+    check.equal(received.content[0]?.['text'], parseReviewCommand(input)!.message);
     const image = received.content[1]?.['image'];
     check(image);
     check.equal(image.format, 'png');
@@ -118,10 +126,10 @@ async function tuiReview(): Promise<void> {
     check.equal(last.content[0]?.['text'], parseReviewCommand('/review')!.message);
     assert('bare TUI review expands normally without reusing the image', (await requests(cwd)).length === 3);
     const malformed = tui.mark();
-    tui.submit(invalid);
-    await tui.waitFor(REVIEW_COMMIT_USAGE, { from: malformed, settleMs: 200 });
+    tui.submit(rejected);
+    await tui.waitFor(usage, { from: malformed, settleMs: 200 });
     assert('malformed TUI command retains draft, sends nothing and leaves no queue',
-      tui.frame.includes(invalid) && !tui.frame.includes('queued ·') && (await requests(cwd)).length === 3);
+      tui.frame.includes(rejected) && !tui.frame.includes('queued ·') && (await requests(cwd)).length === 3);
     tui.send('\u0015'); // Ctrl+U must settle separately from the next prompt here too.
     await tui.waitUntil(() => tui.frame.split('\n').some(line => line.trimEnd() === 'you>'), {
       timeoutMs: 10_000, settleMs: 200, label: 'invalid idle review draft cleared',
@@ -137,12 +145,13 @@ async function tuiReview(): Promise<void> {
     tui.submit('/exit');
     check.equal(await tui.exitedWithin(10_000), 0);
   } finally { tui.kill(); }
-  const trace = await records();
+  const trace = await records(cwd);
   check.deepEqual(trace.filter(record => record.type === 'userInput').map(record => record.text),
-    ['hold review queue', commit, '/review', literal]);
+    ['hold review queue', input, '/review', literal]);
   assert('TUI trajectory retains only literal submitted input, no tools or image bytes',
     !trace.some(record => record.type === 'beforeToolCallEvent') && !JSON.stringify(trace).includes(png.toString('base64')) &&
-    !JSON.stringify(trace).includes('Review the current repository changes.'));
+    !JSON.stringify(trace).includes('Review the current repository changes.') &&
+    !JSON.stringify(trace).includes('Review committed changes from'));
 }
 async function replReview(): Promise<void> {
   header('review R8 — actual dev-repl with offline SDK capture');
@@ -151,13 +160,19 @@ async function replReview(): Promise<void> {
   const repl = startTui({ cwd, entry, env: { ...env, REVIEW_DRIVER: 'repl' } });
   try {
     await repl.waitFor('you>', { timeoutMs: 60_000 });
-    repl.submit(invalid);
-    await repl.waitFor(REVIEW_COMMIT_USAGE, { settleMs: 200 });
-    assert('invalid REPL command makes no SDK request', (await requests(cwd)).length === 0);
-    for (const input of ['/review', literal, commit]) {
+    for (const [input, usage] of [[invalid, REVIEW_COMMIT_USAGE], [invalidBase, REVIEW_BASE_USAGE],
+      ['/review --base', REVIEW_BASE_USAGE], [`/review --base=${sha}`, REVIEW_BASE_USAGE],
+      [`/review --base ${sha} --commit ${sha}`, REVIEW_BASE_USAGE]]) {
+      const before = repl.mark();
+      repl.submit(input!);
+      await repl.waitFor(usage!, { from: before, settleMs: 200 });
+      assert('invalid REPL command makes no SDK request', (await requests(cwd)).length === 0);
+    }
+    for (const input of ['/review', literal, commit, baseReview]) {
       const before = repl.mark();
       repl.submit(input);
-      await repl.waitFor(input === commit ? 'reviewing commit with /review' : 'reviewing current changes with /review',
+      await repl.waitFor(input === commit ? 'reviewing commit with /review'
+        : input === baseReview ? 'reviewing merge-base changes with /review' : 'reviewing current changes with /review',
         { from: before });
       await repl.waitFor('you>', { from: before, settleMs: 200 });
       assert('dev-repl completes the ordinary review turn', repl.screen.slice(before).includes('REVIEW_LOCAL_REPLY'));
@@ -165,17 +180,18 @@ async function replReview(): Promise<void> {
       check.equal(received.content.length, 1);
       check.equal(received.content[0]?.['text'], parseReviewCommand(input)!.message);
     }
-    assert('dev-repl sends one SDK request per valid input', (await requests(cwd)).length === 3);
+    assert('dev-repl sends one SDK request per valid input', (await requests(cwd)).length === 4);
     repl.submit('/exit');
     check.equal(await repl.exitedWithin(10_000), 0);
   } finally { repl.kill(); }
-  const inputs = (await records()).filter(record => record.type === 'userInput').map(record => record.text);
-  assert('dev-repl also records only its literal inputs', inputs.filter(text => text === literal).length === 2 &&
-    inputs.filter(text => text === '/review').length === 2 &&
-    inputs.filter(text => text === commit).length === 2 && inputs.length === 7 && !inputs.includes(invalid));
+  const inputs = (await records(cwd)).filter(record => record.type === 'userInput').map(record => record.text);
+  check.deepEqual(inputs, ['/review', literal, commit, baseReview]);
+  assert('dev-repl also records only its literal inputs, never malformed scopes',
+    !inputs.includes(invalid) && !inputs.includes(invalidBase));
   assert('dev-repl focus is never shell-interpolated', !existsSync(path.join(cwd, 'executed')));
 }
-await tuiReview();
+await tuiReview('commit');
+await tuiReview('base');
 await replReview();
 assert('all drivers leave isolated configuration unchanged', await readFile(path.join(home, '.darwin/config.json'), 'utf8') === config);
 report();
