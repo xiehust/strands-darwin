@@ -1207,15 +1207,17 @@ no scheduler, loop fork or stream transaction. TUI uses existing Static notices 
 ownership; headless closes admission after normal work and drains a finite admitted inbox.
 Final TUI human/peer failure drops the queued inbox before idle and does not run those messages;
 the listening endpoint stays published at the same UUID, so later discovery and sends keep working
-without `/collaborate on`. Dropped messages are not replayed. Cancellation, `/collaborate off`,
-clear/rewind and shutdown still retire the incarnation; explicit user `on` publishes a new one,
-with project grants unchanged. The one exact interrupted
+without `/collaborate on`. Dropped messages are not replayed. Cancelling a peer-triggered turn,
+`/collaborate off`, clear/rewind and shutdown still retire the incarnation; cancelling the user's own
+turn only drops queued peers and keeps the UUID (local-collaboration.md says why). Explicit user `on`
+publishes a new one, with project grants unchanged. The one exact interrupted
 stream continuation keeps its inbox until final outcome. Headless stops on peer failure, records a
 bounded per-peer error/outcome and preserves the completed human reply even in a failed final result.
 Discovery rejects invalid metadata and missing/unsafe/non-socket paths within its 256-entry scan
 before spending its 32 challenge slots; omitted/uninspected/scan-limited facts remain explicit, never
 cleanup. Shared CLI/TUI grammar preflight rejects malformed arguments before state/probe work.
-Cancellation/retirement/shutdown drop pending messages and fence successors. Causal reply budgets
+Cancellation, retirement and shutdown drop pending messages; retirement fences successors (a
+cancelled user turn keeps its endpoint, a cancelled peer-triggered turn retires it). Causal reply budgets
 and the sender's plan ceiling are runtime-owned, not tool arguments; denied work cannot be sent
 onward. Policy/credential controls remain un-ruleable and user-only. An admitted message stays
 deliverable until its chain expires (admission alone keeps the 60 s send window); one that expires

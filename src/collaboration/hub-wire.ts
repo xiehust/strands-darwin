@@ -10,7 +10,12 @@ export const MAX_TEXT_BYTES = 4096;
 export const MAX_FRAME_BYTES = 16_384;
 export const MAX_QUEUE = 8;
 export const MESSAGE_TTL_MS = 60_000;
-export const CHAIN_TTL_MS = 300_000;
+/**
+ * Causal chain lifetime, checked by receiving darwins only (the hub never reads it). Fifteen
+ * minutes, so a peer can finish a long task (a deploy, a benchmark rerun) and still reply on the
+ * chain that asked; an older five-minute receiver refuses a later reply as an expired chain.
+ */
+export const CHAIN_TTL_MS = 900_000;
 export const MAX_HOPS = 4;
 /** Connect assertion and envelope `sent` clock window (both directions). */
 export const CLOCK_SKEW_MS = 60_000;

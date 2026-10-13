@@ -2452,7 +2452,7 @@ export class AgentRuntime {
    * ends with `stopReason: 'cancelled'` rather than throwing.
    */
   cancel(): void {
-    this.collaboration.close('cancelled; user can re-enable with /collaborate on');
+    this.collaboration.cancelTurn();
     this.cloudMemory?.cancel();
     this.lifecycleHooks?.cancel();
     this.codexHooks?.cancel();

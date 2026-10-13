@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { collaborationDir, projectKey } from '../paths.js';
 import { readLocalAgents } from '../list-agents.js';
 import { authorization, canonicalProject, checkStore, idSchema, readPolicy, readPrivate, requestCooperation, withPolicy, writePrivate } from './storage.js';
-import { addressSchema, authentic, CHAIN_TTL_MS, dropNoticeId, dropNoticeText, IO_TIMEOUT_MS, localEnvelopeSchema, MAX_AUTO_RESENDS, MAX_FRAME_BYTES, MAX_HOPS, MAX_QUEUE, MESSAGE_TTL_MS, queuedText, sign, type LocalEnvelope, type PeerAddress, type PeerChain, type PeerEnvelope, type PeerInput, type PeerTransport } from './protocol.js';
+import { addressSchema, authentic, CHAIN_TTL_MS, dropNoticeId, dropNoticeText, HUMAN_TURN_SENDS, IO_TIMEOUT_MS, localEnvelopeSchema, MAX_AUTO_RESENDS, MAX_CHAIN_ADMISSIONS, MAX_FRAME_BYTES, MAX_HOPS, MAX_QUEUE, MESSAGE_TTL_MS, PEER_TURN_SENDS, queuedText, sign, type LocalEnvelope, type PeerAddress, type PeerChain, type PeerEnvelope, type PeerInput, type PeerTransport } from './protocol.js';
 import { isPublished } from './hub-store.js';
 import { HubTransport } from './hub-transport.js';
 import type { HubEnvelope } from './hub-wire.js';
@@ -247,11 +247,25 @@ export class LocalCollaboration implements PeerTransport {
    * process incarnation listening on the same UUID. A provider or tool failure is not a new
    * runtime — retiring the endpoint makes peer discovery report nothing that can send and
    * forces every collaborator onto a fresh address. Dropped messages are not replayed.
-   * Cancellation, off, clear/rewind and shutdown still use {@link close}.
+   * Cancellation of a peer-triggered turn, off, clear/rewind and shutdown still use {@link close}.
    */
   dropQueued(reason: string): void {
     this.droppedNotice(this.takeInbox(), reason);
     this.changed();
+  }
+
+  /**
+   * User cancel (Esc / Ctrl+C) of the running turn. Cancelling a peer-triggered turn retires the
+   * endpoint, so a peer cannot restart work at the next idle; that is the session's stop for
+   * collaboration. A background-task wake that continues such a chain counts as peer-triggered.
+   * Cancelling the user's own turn only drops queued peers, like a final failure. The endpoint
+   * keeps its UUID: the user stopped their own work, not collaboration.
+   */
+  cancelTurn(): void {
+    if (!this.peerTurn) { this.dropQueued('turn cancelled'); return; }
+    const wasActive = this.accepting;
+    this.close('cancelled a peer-triggered turn; user can re-enable with /collaborate on');
+    if (wasActive) this.notice('Collaboration endpoint retired: a peer-triggered turn was cancelled. User: /collaborate on to publish a new endpoint');
   }
 
   /**
@@ -484,7 +498,7 @@ export class LocalCollaboration implements PeerTransport {
     if (now - this.window >= MESSAGE_TTL_MS) { this.window = now; this.admitted = 0; }
     const chain = this.chainCounts.get(envelope.chain.id);
     if (this.inbox.length >= MAX_QUEUE || this.admitted >= 16 || this.seen.size >= 256 || this.chainCounts.size >= 256) return 'Not queued: inbox/flood capacity (8 queued, 16 admitted/minute); pause until capacity changes';
-    if ((chain?.count ?? 0) >= 2) return 'Not queued: causal chain limit; a human must explicitly resume work';
+    if ((chain?.count ?? 0) >= MAX_CHAIN_ADMISSIONS) return `Not queued: causal chain limit (${MAX_CHAIN_ADMISSIONS} messages already admitted here for this chain); a human must explicitly resume work`;
     this.seen.set(envelope.id, envelope.sent + MESSAGE_TTL_MS);
     this.chainCounts.set(envelope.chain.id, { count: (chain?.count ?? 0) + 1, expires: envelope.chain.started + CHAIN_TTL_MS });
     this.inbox.push({ kind: 'peer', envelope, authorization: auth }); this.admitted++;
@@ -542,7 +556,8 @@ export class LocalCollaboration implements PeerTransport {
     if (this.noSend) throw new Error('peer_send is unavailable in a delivery-failure notice turn: the runtime already resent this message automatically; tell the user instead');
     if (this.denied) throw new Error('Peer send paused after a local permission denial; never route denied work to a peer. A human must explicitly resume.');
     const cause = this.cause;
-    if (!cause || cause.started <= Date.now() - CHAIN_TTL_MS || (this.peerTurn && cause.hop >= MAX_HOPS) || this.outgoing >= (this.peerTurn ? 1 : 4)) throw new Error('Peer causal/outgoing limit; a human must explicitly resume work (no invented new chain)');
+    const refusal = this.causalRefusal(cause);
+    if (refusal !== undefined || !cause) throw new Error(`Peer causal/outgoing limit (${refusal}); a human must explicitly resume work with a new prompt (no invented new chain)`);
     const chain: PeerChain = { ...cause, readOnly: cause.readOnly || this.readOnly(), hop: cause.hop + (this.peerTurn ? 1 : 0) };
     if (this.hub.knows(target)) {
       const prepared = this.hub.prepare(target, chain, text);
@@ -565,6 +580,21 @@ export class LocalCollaboration implements PeerTransport {
       return result;
     }
     catch { throw new Error(`Peer send ${envelope.id}: acknowledgement unavailable; delivery may have queued. Do not replay automatically. Inspect the receiving session before a human retries.`); }
+  }
+
+  /**
+   * Which causal limit, if any, refuses a send now. The checks run in a fixed order and each
+   * reason states its numbers, so the user and the model can tell expiry, hops and the
+   * per-turn send budget apart.
+   */
+  private causalRefusal(cause: PeerChain | undefined): string | undefined {
+    if (!cause) return 'no causal chain: no turn has started in this session';
+    const age = Date.now() - cause.started;
+    if (age >= CHAIN_TTL_MS) return `chain expired: started ${Math.floor(age / 1000)}s ago, lifetime ${CHAIN_TTL_MS / 60_000} min`;
+    if (this.peerTurn && cause.hop >= MAX_HOPS) return `hop limit: this peer-triggered turn is at hop ${cause.hop}/${MAX_HOPS}`;
+    const cap = this.peerTurn ? PEER_TURN_SENDS : HUMAN_TURN_SENDS;
+    if (this.outgoing >= cap) return `send limit: ${this.outgoing}/${cap} sends already used in this ${this.peerTurn ? 'peer-triggered' : 'human'} turn`;
+    return undefined;
   }
 
   /** Bounded record of acknowledged sends, so only a matching drop notice is ever shown or resent. */

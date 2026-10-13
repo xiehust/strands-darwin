@@ -282,8 +282,9 @@ Safeguards that need no confirmation and are kept on purpose:
    `revoke` fencing queued input.
 5. **Peer-turn limits are unchanged and runtime-owned:** `peerInput` is never user authority;
    ordinary gate prompts still apply outside yolo; peer-origin unsafe bash, policy/config/AGENTS
-   writes and memory saves are denied even in yolo; plan ceiling propagates; 4 hops, one send per
-   peer turn, 5-minute chains, inbox 8, 16 admissions/minute, dedupe 256 ids.
+   writes and memory saves are denied even in yolo; plan ceiling propagates; 4 hops, two sends per
+   peer-triggered turn (four per human turn), four admissions per endpoint per chain, 15-minute
+   chains, inbox 8, 16 admissions/minute, dedupe 256 ids.
 
 Item 5 is what bounds a rogue enrolled node: it can make a session *read and answer*, not make it
 act beyond what the local gate allows for peer-origin work.

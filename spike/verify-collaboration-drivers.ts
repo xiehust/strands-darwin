@@ -53,6 +53,13 @@ async function consume(runtime: AgentRuntime, text: string, peer?: PeerInput) {
   for await (const event of runtime.send(text, text, undefined, peer)) events.push(event);
   return events;
 }
+/** Begins a real turn (its causal state is set on the first step), then cancels it like Esc. */
+async function cancelMidTurn(runtime: AgentRuntime, text: string, peer?: PeerInput): Promise<void> {
+  const stream = runtime.send(text, text, undefined, peer)[Symbol.asyncIterator]();
+  await stream.next();
+  runtime.cancel();
+  while (!(await stream.next()).done) { /* drain the cancelled turn */ }
+}
 
 
 try {
@@ -96,8 +103,17 @@ try {
       try {
         assert.equal(successor.collaboration.address, undefined); assert.equal(branch.collaboration.pending, 0);
         await deliver(sender, branch.collaboration.address!.endpoint, 'drop on cancel');
-        branch.cancel(); assert.equal(branch.collaboration.address, undefined); assert.equal(branch.collaboration.pending, 0);
-        assert.match(branch.collaboration.takeNotices().join('\n'), /dropped: 1/);
+        const kept = branch.collaboration.address!.endpoint;
+        await cancelMidTurn(branch, 'human turn to cancel');
+        assert.equal(branch.collaboration.address?.endpoint, kept, 'cancelling a human turn keeps the endpoint'); assert.equal(branch.collaboration.pending, 0);
+        assert.match(branch.collaboration.takeNotices().join('\n'), /dropped: 1 \(turn cancelled\)/);
+        // Cancelling a peer-triggered turn retires it; only the user's /collaborate on republishes.
+        await deliver(sender, kept, 'peer turn to cancel');
+        const cancelledPeer = branch.collaboration.take()!;
+        await cancelMidTurn(branch, peerPrompt(cancelledPeer), cancelledPeer);
+        assert.equal(branch.collaboration.address, undefined); assert.equal(branch.collaboration.pending, 0);
+        assert.match(branch.collaboration.takeNotices().join('\n'), /endpoint retired: a peer-triggered turn was cancelled/);
+        assert.match(String(branch.collaboration.endpointStatus.reason), /cancelled a peer-triggered turn/);
       }
       finally { await branch.shutdown(); }
     } finally { await successor.shutdown(); }

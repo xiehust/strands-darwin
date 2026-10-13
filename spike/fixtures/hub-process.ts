@@ -20,7 +20,7 @@ process.on('message', async (message: { id: number; op: string; target?: string;
       result = await local.send(message.target!, message.text!);
     }
     else if (message.op === 'take') { taken = local.take(); result = taken ? { envelope: taken.envelope, prompt: peerPrompt(taken), deliveryFailure: taken.deliveryFailure ?? null } : null; }
-    // Force the queued message's chain expiry through the real sweep (a resend's chain is five minutes).
+    // Force the queued message's chain expiry through the real sweep (a resend gets a fresh chain).
     else if (message.op === 'expireQueued') {
       const inbox = (local as unknown as { inbox: PeerInput[] }).inbox;
       for (const input of inbox) input.envelope.chain.started = Date.now() - CHAIN_TTL_MS - 1;

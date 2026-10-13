@@ -36,18 +36,28 @@ Trajectory opens `peerInput` (literal model input plus envelope), never `userInp
 same sender/text notice, prompt recall remains userInput-only. Memory/cloud controllers receive an
 empty user quote. Peer memory saves are denied outright. Structured peer starts name their origin;
 final output retains the user answer separately from bounded peer results. Model text still streams
-normally. Clear/rewind create new UUIDs and retire the old inbox. Cancellation requires user `on`
-to publish a fresh endpoint. A generation fence also rejects a startup superseded by cancellation
-or overlapping user `on` commands, so it cannot publish an orphan endpoint. No pending text is
-reinterpreted as a successor's user input.
+normally. Clear/rewind create new UUIDs and retire the old inbox. A user cancel (Esc / Ctrl+C,
+`LocalCollaboration.cancelTurn`) depends on the turn's causal origin:
+
+- Cancelling a **peer-triggered** turn retires the endpoint. This includes a background-task wake
+  that continues a peer chain. Only the user's `on` publishes a fresh endpoint, and a visible notice
+  says so. This is the in-session stop for collaboration: if the endpoint stayed published, a peer
+  could restart work at the very next idle.
+- Cancelling the **user's own** turn drops queued peers, exactly like a final failure, and keeps
+  the same UUID. Esc there usually means "let me rephrase", not "go offline". Before this split,
+  sessions silently disappeared from discovery after any Esc.
+
+A generation fence also rejects a startup superseded by a retirement or by overlapping user `on`
+commands, so it cannot publish an orphan endpoint. No pending text is reinterpreted as a
+successor's user input.
 
 Final TUI turn failure drops the peer inbox before publishing idle, whether the failed turn was
 human or peer, and does not retire the listening endpoint. Those dropped messages are not replayed,
 but the same UUID stays discoverable and sendable — a long cross-project session must not lose its
 incarnation because one model call failed. Explicit user `on` still publishes a new incarnation
 without changing project-pair grants. This is outside `runWithStreamResumption`, so the one exact
-interruption continuation retains its inbox until its final outcome. Cancellation and successor
-semantics remain unchanged. Headless also
+interruption continuation retains its inbox until its final outcome. Successor semantics remain
+unchanged. Headless also
 closes/drops on failure and stops the drain. Begun failed peers gain a bounded structured error and
 failure outcome (plus attributed `turn.failed` in stream-json); unstarted peers are not claimed as
 processed. A completed human reply survives subsequent peer failure in every output format, while
@@ -132,8 +142,18 @@ remain denied; allowed ordinary file edits can still run outside plan. With `tru
 (the default), denials latch peer sends until a genuine human turn, including across synthetic
 wakes; the user-only `trustPeers` setting lifts only that send latch. The same peer ID keeps its
 outgoing budget across the one existing stream-interruption continuation. No classifier decides
-whether an answer deserves another turn. Four reply hops, one outgoing/peer turn, two admissions/endpoint/chain and a five-minute chain
-lifetime stop loops; queue, connection, frame and admission-rate caps bound floods.
+whether an answer deserves another turn. Four reply hops, four sends per human turn, two per
+peer-triggered turn (a follow-up question plus a final report), four admissions/endpoint/chain and
+a fifteen-minute chain lifetime stop loops. The hop limit ends any ping-pong. With two sends per
+peer turn, the per-endpoint admission cap bounds fan-out. Queue, connection, frame and
+admission-rate caps bound floods. These values were relaxed from one send per peer turn, two
+admissions and five minutes, because real collaboration (ask, wait for a deploy or benchmark, follow
+up, report done) exceeded them. `MAX_HOPS` stays 4 because the wire `chainSchema` validates it on
+every receiver and on the hub. The chain lifetime is checked by receiving darwins only, so an
+older five-minute receiver refuses a late reply as an expired chain rather than misreading it.
+Every sender refusal is `Peer causal/outgoing limit (<reason>)`, where the reason is exactly one of
+no chain, `chain expired` (age and lifetime), `hop limit` (`hop/4`) or `send limit` (`used/cap`
+and the turn kind). The receiver's refusal names its admission cap.
 
 Queued lifetime and drop notice. Admission requires `sent` within 60 s (replay window); an admitted
 message then stays deliverable until its chain expires, because a busy receiver otherwise dropped

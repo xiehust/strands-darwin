@@ -174,7 +174,9 @@ try {
     assert.equal(back.envelope.text, 'reply from beta');
     assert.equal(back.envelope.chain.hop, 1);
     assert.equal(back.envelope.chain.id, taken.envelope.chain.id);
-    await assert.rejects(ask(b.child, 'reply', { text: 'second reply' }), /causal\/outgoing limit/, 'one send per peer turn');
+    assert.match(await ask(b.child, 'reply', { text: 'follow-up from beta' }), /^Queued/, 'a peer-triggered turn may send twice');
+    assert.equal((await ask(a.child, 'take')).envelope.text, 'follow-up from beta');
+    await assert.rejects(ask(b.child, 'reply', { text: 'third reply' }), /causal\/outgoing limit \(send limit: 2\/2 sends already used in this peer-triggered turn\)/, 'two sends per peer turn');
   });
 
   await check('pins recorded on both nodes on first sight', async () => {

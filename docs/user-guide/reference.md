@@ -59,9 +59,10 @@ counts as `null`, while preserving `self` and independently readable leases. The
 is `discovery-unavailable`, not a claim that a successful scan found no listener.
 
 Global `enabled: true` is not proof that a session is listening. TUI `/collaborate status` reports
-`This endpoint: {active, address, reason?, userAction?}` separately from global policy. When a session's
-endpoint is retired by cancellation, only the user can restore it with `/collaborate on`
-in that window; same-project local communication needs no Hub or project-pair confirmation.
+`This endpoint: {active, address, reason?, userAction?}` separately from global policy. Cancelling
+your own turn (Esc / Ctrl+C) keeps the endpoint and drops only queued peer messages. Cancelling a
+peer-triggered turn retires it, with a notice; only the user can restore it with `/collaborate on`
+in that window. Same-project local communication needs no Hub or project-pair confirmation.
 `peer_send {target:<UUID>, text:<string>}` is parent-only, ordinary gated and has no chain/trust flag.
 The models cannot invoke user controls. The send TUI command is refused while busy; status and
 trust controls remain local. Neither command changes `/agents` or read-only `/list-agents`.
@@ -93,15 +94,16 @@ slots. The scan remains bounded, so a larger inventory may still be incomplete; 
 entries nor starts model work.
 
 Inbox: eight, 16 admissions/minute, 60 s TTL. Dedup: at most 256 IDs, retained through message expiry.
-Causal ledger: at most 256 five-minute chains, two admissions/endpoint/chain, four reply hops,
-one send/peer turn or four/human turn. No model-supplied fresh chains. Authorization generation is
+Causal ledger: at most 256 fifteen-minute chains, four admissions/endpoint/chain, four reply hops,
+two sends/peer-triggered turn or four/human turn. A refusal names its cause and numbers:
+`Peer causal/outgoing limit (chain expired: …|hop limit: h/4|send limit: n/cap …)`. No model-supplied fresh chains. Authorization generation is
 checked at admission, dequeue and immediately before SDK invocation; revocation/re-grant cannot
 revive previously queued text. `Queued` is not a processing receipt; no durable queue or automatic
 replay on ambiguous acknowledgement. A final failed TUI human/peer turn drops queued peers with a
 notice before idle and leaves the same endpoint published. Those messages are not replayed. Later
-discovery and sends keep working without `/collaborate on`. Cancellation, clear/rewind and shutdown
-still retire the incarnation; project grants are unchanged. The one exact stream-interruption continuation keeps its
-inbox until recovery succeeds or finally fails. Cancellation/clear/rewind retain their existing fences.
+discovery and sends keep working without `/collaborate on`. Cancelling a peer-triggered turn, clear/rewind and shutdown
+still retire the incarnation; cancelling a human turn keeps it. Project grants are unchanged. The one exact stream-interruption continuation keeps its
+inbox until recovery succeeds or finally fails. Clear/rewind retain their existing fences.
 Headless closes admission after its normal turn and drains at most eight admitted messages, stopping
 on failure. Streaming JSON adds `origin:"peer"` and `peer` on `turn.started`; final JSON adds `peerTurns`
 (at most eight begun peers, reply text capped at 4000 code points with `truncated`). A failed begun peer

@@ -33,6 +33,15 @@ export function queuedText(id: string, via = ''): string {
 /** Runtime resends of one message after a verified "expired unprocessed" notice (never after an ambiguous ack). */
 export const MAX_AUTO_RESENDS = 3;
 /**
+ * Sender-side causal budget. A human turn starts a chain and may send this many messages.
+ * A peer-triggered turn may send PEER_TURN_SENDS, enough for a follow-up question and a final
+ * "done" report. MAX_HOPS (wire) still ends every ping-pong.
+ */
+export const HUMAN_TURN_SENDS = 4;
+export const PEER_TURN_SENDS = 2;
+/** Receiver-side admissions per endpoint per chain; with PEER_TURN_SENDS it bounds fan-out. */
+export const MAX_CHAIN_ADMISSIONS = 4;
+/**
  * `deliveryFailure`: a runtime-owned input, not peer work — the recipient's final drop notice
  * envelope (literal, as received) after every automatic resend expired too. Its turn cannot peer_send.
  */

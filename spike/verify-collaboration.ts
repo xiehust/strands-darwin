@@ -154,8 +154,8 @@ try {
   assert.equal(await ask(a2.child, 'take'), null, 'new grant cannot revive an older queued grant');
   assert.equal(cli(['revoke', key]).status, 0);
   assert.match(await ask(b.child, 'send', { target: a2.address.endpoint, text: 'start loop' }), /^Queued/);
-  for (let hop = 0; hop < 3; hop++) assert.match(await ask(hop % 2 === 0 ? a2.child : b.child, 'reply', { text: 'causal reply' }), /^Queued/);
-  assert.match(await ask(b.child, 'reply', { text: 'stop loop' }), /causal chain limit/);
+  for (let hop = 0; hop < 4; hop++) assert.match(await ask(hop % 2 === 0 ? a2.child : b.child, 'reply', { text: 'causal reply' }), /^Queued/);
+  await assert.rejects(ask(a2.child, 'reply', { text: 'stop loop' }), /causal\/outgoing limit \(hop limit: this peer-triggered turn is at hop 4\/4\)/, 'the hop limit ends a ping-pong');
   assert.equal(await ask(a2.child, 'pending'), 0);
   await assert.rejects(ask(b.child, 'send', { target: b.address.endpoint, text: 'self' }), /Self-send/);
   await assert.rejects(ask(b.child, 'send', { target: a.address.endpoint, text: 'stale' }));
@@ -172,6 +172,12 @@ try {
   assert.match(await wire(receiver.address.endpoint, frame(valid, secret)), /Already queued/);
   assert.equal(await ask(receiver.child, 'pending'), 1, 'deduplicated');
   assert.equal((await ask(receiver.child, 'take')).envelope.id, valid.id);
+  // Fan-out on one chain: the receiver admits MAX_CHAIN_ADMISSIONS (4) and names the cap on the next.
+  const fanChain = { id: randomUUID(), started: Date.now() - 1, hop: 1, readOnly: false };
+  for (let n = 0; n < 4; n++) assert.match(await wire(receiver.address.endpoint, frame({ ...message(b.address, receiver.address), chain: fanChain }, secret)), /Queued/);
+  assert.match(await wire(receiver.address.endpoint, frame({ ...message(b.address, receiver.address), chain: fanChain }, secret)), /causal chain limit \(4 messages already admitted here for this chain\)/);
+  for (let n = 0; n < 4; n++) assert.notEqual(await ask(receiver.child, 'take'), null);
+
   const forgedSender = message({ ...b.address, project: other }, receiver.address);
   const forgedTarget = message(b.address, { ...receiver.address, session: 'imposter' });
   for (const bytes of [frame(forgedSender, secret), frame(forgedTarget, secret), frame(message(b.address, receiver.address), '0'.repeat(64)), '{bad}\n', '{}\n{}\n', 'x'.repeat(16_385), '{"partial":']) {
@@ -214,13 +220,24 @@ try {
   assert.equal(await wire(capped.address.endpoint, frame(noForgedChain, secret)), '');
   const localCaps = new LocalCollaboration(root, 'local-send-caps'); await localCaps.start();
   try {
-    await assert.rejects(localCaps.send(capped.address.endpoint, 'unsolicited'), /causal\/outgoing/);
+    await assert.rejects(localCaps.send(capped.address.endpoint, 'unsolicited'), /causal\/outgoing limit \(no causal chain/);
     localCaps.beginHumanTurn();
     await assert.rejects(localCaps.send(capped.address.endpoint, '\u0001'.repeat(4096)), /Encoded peer frame/);
     const sends = await Promise.allSettled(Array.from({ length: 5 }, () => localCaps.send(capped.address.endpoint, 'bounded human send')));
     assert.equal(sends.filter(s => s.status === 'rejected').length, 1, 'parallel calls share outgoing reservation');
+    assert.match(String((sends.find(s => s.status === 'rejected') as PromiseRejectedResult).reason), /send limit: 4\/4 sends already used in this human turn/);
     localCaps.permissionDenied(); await assert.rejects(localCaps.send(capped.address.endpoint, 'route denied'), /permission denial/);
     localCaps.beginHumanTurn(); assert.match(await localCaps.send(capped.address.endpoint, 'human resumes'), /^Queued/);
+    // A peer-triggered turn may send twice (a follow-up plus a final report); the third names its budget.
+    const asked = { ...message(b.address, localCaps.address!), chain: { id: randomUUID(), started: Date.now() - 1, hop: 1, readOnly: false } };
+    assert.match(await wire(localCaps.address!.endpoint, frame(asked, secret)), /Queued/);
+    localCaps.beginPeerTurn(localCaps.take()!);
+    for (const text of ['follow-up question', 'final report']) assert.match(await localCaps.send(capped.address.endpoint, text), /^Queued/);
+    await assert.rejects(localCaps.send(capped.address.endpoint, 'third peer-turn send'), /causal\/outgoing limit \(send limit: 2\/2 sends already used in this peer-triggered turn\)/);
+    // Expiry is its own reason, with the chain's age and the 15-minute lifetime.
+    localCaps.beginHumanTurn();
+    (localCaps as unknown as { cause: { started: number } }).cause.started = Date.now() - CHAIN_TTL_MS - 2000;
+    await assert.rejects(localCaps.send(capped.address.endpoint, 'too late'), /causal\/outgoing limit \(chain expired: started \d+s ago, lifetime 15 min\)/);
   } finally { localCaps.close('cap tests complete'); }
   await ask(capped.child, 'stop');
   const rate = await start(root);

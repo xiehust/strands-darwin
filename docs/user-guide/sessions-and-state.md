@@ -102,11 +102,13 @@ One confirmation persists a symmetric project pair under `~/.darwin/collaboratio
 new processes and session IDs reuse it, including the reverse direction. Send again explicitly
 after confirmation. Pending requests expire after ten minutes. Revocation cancels pending grants
 for that pair and invalidates both queued and future deliveries; off persists for this HOME and
-invalidates every queued message. On publishes a new endpoint in the current TUI. After Esc/cancel,
-use `/collaborate on` to publish a fresh endpoint; old addresses never name its successor.
+invalidates every queued message. On publishes a new endpoint in the current TUI. Esc/cancel of your
+own turn keeps the endpoint (queued peer messages are dropped). Esc/cancel of a turn a peer message
+triggered retires it, with a notice; use `/collaborate on` to publish a fresh endpoint. Old
+addresses never name its successor.
 A final failed human or peer turn drops queued peers and does not run them, but the listening
 endpoint stays at the same address, so discovery and sends keep working. Dropped messages are not
-replayed. Cancellation, off, clear/rewind and shutdown still retire the endpoint; durable project
+replayed. Cancelling a peer-triggered turn, off, clear/rewind and shutdown still retire the endpoint; durable project
 grants are unchanged. The exact one-time stream-interruption continuation keeps its inbox until
 that continuation finishes.
 
@@ -135,16 +137,19 @@ instructions with those limits.
 
 `Queued` means admitted, **not processed**. Text is at most 4096 UTF-8 bytes (the complete encoded
 frame must also fit 16 KiB); a message must arrive within 60 seconds of being sent, and once
-admitted it waits in the inbox (eight messages, 16 admissions per minute) until its five-minute
+admitted it waits in the inbox (eight messages, 16 admissions per minute) until its fifteen-minute
 reply chain expires. If it expires before any turn takes it, the receiver drops it and tells the
 original sender, whose darwin resends the same text automatically (up to three times, each shown as
 `resent k/3`); if every resend expires too, the sender's model gets one notice turn saying the
 message was never handled (it cannot `peer_send` from that turn). Notice-shaped text is refused as
 a `peer_send`. Automatic
-replies carry a five-minute causal chain, at most four reply hops, two
-admissions per endpoint per chain and one outgoing message per peer turn. A human turn permits
-four sends and starts a new chain. Limit refusals require explicit human resumption, not model
-retries. Clear, rewind, cancellation and shutdown drop pending input and retire the old endpoint.
+replies carry a fifteen-minute causal chain, at most four reply hops, four
+admissions per endpoint per chain and two outgoing messages per peer-triggered turn (enough for a
+follow-up question plus a final report). A human turn permits four sends and starts a new chain.
+Limit refusals name the cause and its numbers (expired chain age, hop `h/4`, sends `n/cap`) and
+require explicit human resumption, not model retries: a new prompt in that session starts a new
+chain. Clear, rewind, cancelling a peer-triggered turn and shutdown drop pending input and retire
+the old endpoint; cancelling your own turn drops pending input only.
 There is no durable inbox, processed receipt or exactly-once guarantee across crashes. A lost
 acknowledgement is ambiguous: inspect the receiving session before retrying.
 
