@@ -141,7 +141,7 @@ P3 (Codex official CLI review scopes) documents merge-base branch review. `src/c
 
 ## SER-127 — Upgrade the pinned Strands SDK to 1.21.0 while preserving Darwin's patched contracts and runtime defaults
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 167
 - Score: 12
 - Importance: 5
@@ -153,7 +153,11 @@ P3 (Codex official CLI review scopes) documents merge-base branch review. `src/c
 
 ### Implementation / acceptance evidence
 
-Not started. Independent acceptance is required before closure.
+Accepted commits: `2e99b2a2b99301838bb77b9a44f42ccee35ea014` (SDK 1.21.0, required Zod peer range, patch rebase, regression coverage and current docs) and `f4a849b2b0af40c9d9f2e09ba297397061682e30` (live compaction fixture correction). Fresh child `session-20261019-040627597`; managed initial task `bg-489f8da9-ace3-4264-b3ea-3de989024591` and one focused correction `bg-daf99d4d-90f6-412f-bdff-c597b4080348`, both exit 0 and fully drained. Host reviewed explicit base `e31f527ef10209197f441bf31eff043969507844` to both result commits; no intervening writer. Independent comparison proves all 54 hunks/18 patched files retain the same 1,150 added/removed lines.
+
+Host acceptance: `bg-16839289-595b-4045-a4c2-f423f572a8b6` passed `pnpm typecheck`, all 171 fast suites, real-registry `verify-npm-package.ts` (49/0) and build. `bg-7cd5e3cc-0727-4d8d-a8d6-c769d145eca2` passed live Responses reasoning (99/0), `tui bashExit` (3/0), `tui cancelThenContinue` (5/0), and the cancel-exit probe (exit 0). Initial acceptance withheld because live compaction had failed. Separate complete old/new SDK/provider diagnostics showed identical requests and `content_filtered` on the marker-only fixture, but successful 4-to-2 reduction on ordinary content. The correction changes only seed prompts/waits, not production behavior or the compaction success/input-ownership assertions. Host second acceptance `bg-2ea33632-e046-45e8-b900-03cdebab8229` passed corrected live `tui compacting` (5/0), `tui completion` (83/0), typecheck, all 171 fast suites, build, diff check and clean status. No waiver.
+
+README languages, getting-started/development guide languages and architecture synced; reference behavior unchanged. Spend across both worker invocations: input 154, output 44,194, cacheRead 9,935,892, cacheWrite 348,697; exclusive sum 10,328,937, approximate USD 16.5059. Exact receipts and supervision milestones: `docs/iteration-log.md`, Batch 180; origin report outcome. Batch exhausted; no remaining unfinished direction.
 
 ### Notes / blockers / abandonment reason
 
