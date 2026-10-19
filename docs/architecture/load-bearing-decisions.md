@@ -31,14 +31,29 @@ Primary format references: [Claude Code skills](https://code.claude.com/docs/en/
 
 ## SDK reuse — the agent loop is never forked
 
-**Everything reuses the SDK; the agent loop is never forked.** `src/agent/runtime.ts` is the
-only place that constructs `Agent`, and it stays a thin assembly. All customization goes
+**Everything reuses the SDK; the agent loop is never forked.** `src/agent/runtime.ts`
+constructs the parent `Agent`, and `src/agents/child-recipe.ts` constructs isolated children;
+both stay thin assemblies. All customization goes
 through SDK extension points: interventions (permissions), plugins (skills), conversation
 manager, hooks and `InvokeModelStage` middleware (model retry). If a change seems to require intercepting the loop itself, check the relevant section
 below and its `spike/` script first — every non-obvious SDK behavior this project relies on has
 a runnable script that proves it.
 
-The pinned SDK is `1.20.0`. Darwin continues to pass `conversationManager` with
+The pinned SDK is `1.21.0` (SER-127); Zod's declared range is `^4.5.4` to meet its
+raised peer minimum. The rebase retains all 54 hunks across 18 files: every added/removed
+patch line is identical to the 1.20.0 patch, with only upstream context/offsets and blob
+hashes changing. Pristine upstream changed four of those files (root JS/types exports,
+Bedrock's opt-in strict tools, OpenAI chat usage on the finish-reason chunk); none replaces
+a local hunk. The offloader and reasoning adapters remain unchanged upstream. The
+single-argument `LocalFileStorage` constructor remains supported. No shared stash,
+auxiliary-model selection, vended subagent/REPL, MCP task/progress UI or strict-tools
+default is enabled. Auxiliary calls continue to follow the current main model; children
+receive no parent storage. Bounded MCP prompt discovery still uses raw single-page
+requests, not the new default-aggregating convenience methods. Regression checks include
+`verify-sdk-chat-usage.ts` (real loopback SSE, both usage placements) and
+`verify-context-offload.ts` (parent/recipe-child defaults and isolation).
+
+Darwin continues to pass `conversationManager` with
 `SummarizingConversationManager` and its existing `ContextOffloader` plugin; it does not
 select the experimental `contextManager` or the upstream `web_fetch`. SER-122 rebased the
 19-file 1.18.0 patch to 18 files: upstream's text-only summary conversion replaces the local
@@ -137,7 +152,7 @@ SDK's `DefaultModelRetryStrategy` sleeps inside its `AfterModelCallEvent` callba
 `Agent._streamCore` runs hook callbacks *before* yielding the event. Originally a throttled attempt
 reached the driver only after its whole backoff, cancellation during that sleep was ineffective,
 and a Bedrock pre-stream `ThrottlingException` (a plain `ModelError` with that exception as `cause`)
-was never retried. SDK 1.20.0 includes upstream's cancellation-aware sleep, but still waits inside
+was never retried. SDK 1.21.0 includes upstream's cancellation-aware sleep, but still waits inside
 the hook; it does not replace Darwin's pre-wait publication, cause classification or driver notices.
 `AgentRuntime.create` and
 `buildRecipeChild` therefore pass `retryStrategy: null` (the documented opt-out; the SDK's duplicate
@@ -323,7 +338,7 @@ Trajectory remains optional observation and is never used to reconstruct message
 
 **The `/compact` manager is built per call, and an unfocused call is configured exactly as before the focus existed.** `SummarizingConversationManagerConfig.summarizationSystemPrompt` is constructor-only in the SDK, so `AgentRuntime.compact(focus?)` asks `createCompactionManager(preserveRecentMessages, focus)` (`src/agent/compact.ts`) for a fresh manager every time instead of holding one for the process. Without a focus the config has the two keys it always had — `summaryRatio: 0.8` and `preserveRecentMessages` — and the SDK applies its own `DEFAULT_SUMMARIZATION_PROMPT`; the request is byte-identical to a pre-SER-051 `/compact`, and headless `--compact-before` only ever takes this path. With a focus (trimmed, at most 400 code points; longer is a local notice and nothing runs — no hook, no model call, no `compacting` state), the system prompt is the SDK default verbatim, a blank line, one fixed heading, and the focus as plain text. The focus is never parsed as a sub-command, never added to `PreCompact`/`PostCompact` payloads (`trigger: manual` unchanged), and the upstream text-only conversion inside `generateSummary` covers focused and unfocused summaries alike.
 
-The default prompt is reached only through the package root: the SDK declares it in a module its `exports` map does not expose, so the pinned `patches/@strands-agents__sdk@1.20.0.patch` gains one re-export line in `dist/src/index.js` and one in `dist/src/index.d.ts`. A copied prompt string would drift from what the SDK sends unfocused, and a deep import is unresolvable — both are refused by `spike/verify-compact.ts`, which asserts over the source. The TUI records `/compact <focus>` as it records `/compact` (one `userInput` transcript action, never `AgentRuntime.send`) and the busy refusal still matches on the first word. Spec: `backend/strands-sdk-contracts.md` § `/compact` per-call manager. Checks: `verify-compact.ts`, `verify-help-command.ts`, free `tui completion`, live `tui compacting`; after any patch change, `pnpm install --frozen-lockfile` + `pnpm typecheck`.
+The default prompt is reached only through the package root: the SDK declares it in a module its `exports` map does not expose, so the pinned `patches/@strands-agents__sdk@1.21.0.patch` gains one re-export line in `dist/src/index.js` and one in `dist/src/index.d.ts`. A copied prompt string would drift from what the SDK sends unfocused, and a deep import is unresolvable — both are refused by `spike/verify-compact.ts`, which asserts over the source. The TUI records `/compact <focus>` as it records `/compact` (one `userInput` transcript action, never `AgentRuntime.send`) and the busy refusal still matches on the first word. Spec: `backend/strands-sdk-contracts.md` § `/compact` per-call manager. Checks: `verify-compact.ts`, `verify-help-command.ts`, free `tui completion`, live `tui compacting`; after any patch change, `pnpm install --frozen-lockfile` + `pnpm typecheck`.
 
 **The reduce loop terminates on evidence and treats a swallowed failure as failure (SER-052).** `compactConversation` used to loop `while (messages.length > preserveRecentMessages + 1)` on `reduce()`, assuming every `true` shrank the list; but the SDK summarizes at most 80% of the list (`summaryRatio` clamped to `[0.1, 0.8]`), so a 2-message history can only ever become "a summary of the oldest message plus the newest" — same count, less fidelity, forever (a Host probe made 26 paid, uncancellable summarizer calls). Now every pass keeps a shallow snapshot; a pass that returns `true` without lowering the count is undone (identity kept) and ends the loop, so `compacted` is true only when the count really dropped. The guard is observational rather than a copy of the SDK's split arithmetic, so it stays right if the SDK changes; the recorded consequence is that with `preserveRecentMessages: 0` the floor is two messages and finding it costs one summarizer call, and 2 messages / preserve 0 is an honest `already compact` after exactly one call. Separately, darwin calls `reduce()` without `error`, so the SDK's proactive path swallows any summarization error and returns `false`; inside the loop the SDK has no other `false`, so it is thrown as `SWALLOWED_SUMMARIZATION_FAILURE` and everything is restored — never `compacted: true` from an earlier pass, never a partial result. A sentinel `error` was rejected because it must be a `ContextWindowOverflowError`, the SDK writes it into the thrown error's `.cause`, and `failureFromError` would print that fabricated cause in structured headless output; the real cause already reaches the user through the routed `sdk warn` line. The bug was masked from `780ec93` until `f4e3271` scrubbed reasoning blocks from the summary: the provider rejection that used to fail the second pass had been terminating the loop by accident. Spec: `backend/strands-sdk-contracts.md` § explicit `/compact` scenario, `backend/error-handling.md`. Checks: `verify-compact.ts` (2 messages / preserve 0 → one call, no-op; 16 / preserve 0 → three calls, pass 3 undone; second- and first-pass failure reject and restore; focused manager shares both), live `tui compacting` (seeds two turns, `preserveRecentMessages: 1`, waits for a real `4 → 2`).
 
@@ -2512,7 +2527,7 @@ applies — the SDK patch and, since the terminal-narrowing redraw (see *TUI —
 budget*), `patches/ink@7.1.1.patch`; `pnpm build` ends with `node dist/src/npm-package/generate-patch.js`, which rewrites
 every one of them into patch-package's dialect (`src/npm-package/patch-package-format.ts`: only the
 `diff --git`/`---`/`+++` paths gain `node_modules/<package>/`, the file name becomes
-`@strands-agents+sdk+1.20.0.patch` / `ink+7.1.1.patch`, idempotent) under `dist/patches/` — a gitignored build
+`@strands-agents+sdk+1.21.0.patch` / `ink+7.1.1.patch`, idempotent) under `dist/patches/` — a gitignored build
 artifact, never a second hand-maintained copy. `postinstall` is
 `patch-package --patch-dir dist/patches`, and both edges of the developer path hold by
 patch-package's own behaviour: an absent directory (fresh clone, `postinstall` runs before any
@@ -2576,7 +2591,7 @@ untouched (the lockfile's `patch_hash` changes, as it must). On any SDK upgrade,
 whether upstream shipped a provenance-aware reasoning round-trip — harness-sdk#4598 (filed from
 the origin report: the Bedrock event name plus cross-provider safety) or #3389 (the OpenAI
 round-trip) — and if so delete these hunks instead of porting them; a duplicate would tag or
-replay twice. SDK 1.20.0 was checked during SER-122 and still does not cover it: its Responses formatter drops reasoning, and its mapper has neither provenance nor encrypted-item capture.
+replay twice. SDK 1.21.0 was checked during SER-127 and still does not cover it: its Responses formatter drops reasoning, and its mapper has neither provenance nor encrypted-item capture.
 
 ## Process exit
 

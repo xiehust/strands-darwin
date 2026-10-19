@@ -32,7 +32,8 @@ import { LocalFileStorage } from '@strands-agents/sdk/storage';
 import { z } from 'zod';
 
 import { AgentRuntime, setRuntimeModelFactoryForTest } from '../src/agent/runtime.js';
-import { classify } from '../src/agent/permission.js';
+import { classify, PermissionGate } from '../src/agent/permission.js';
+import { buildRecipeChild } from '../src/agents/child-recipe.js';
 import { sessionPaths } from '../src/agent/session.js';
 import { configPath } from '../src/config.js';
 import { darwinDir } from '../src/paths.js';
@@ -542,9 +543,34 @@ try {
   // Test-only inspection of the SDK's resolved manager: config alone cannot prove
   // a new SDK did not substitute its experimental context pipeline.
   const agent = (defaultRuntime as unknown as { agent: Agent }).agent;
-  assert('SDK 1.18 keeps the explicit SummarizingConversationManager, without experimental contextManager',
+  assert('the pinned SDK keeps the explicit SummarizingConversationManager, without experimental contextManager',
     (agent as unknown as { _conversationManager: unknown })._conversationManager instanceof SummarizingConversationManager
     && agent.contextManager === undefined);
+  assert('offload storage is plugin-local, not an agent-wide shared stash', agent.storage === undefined);
+  const originalModel = agent.model;
+  const replacementModel = new OneToolCallModel();
+  assert('auxiliary calls default to the current main model', agent.auxModel === originalModel);
+  agent.model = replacementModel;
+  assert('auxiliary calls still follow the main model after a switch', agent.auxModel === replacementModel);
+  agent.model = originalModel;
+  assert('strict tools are not enabled by the runtime',
+    (agent.model.getConfig() as { strictTools?: boolean }).strictTools !== true);
+  const child = buildRecipeChild({
+    definition: { name: 'isolated', description: 'SDK isolation probe', systemPrompt: 'probe', tools: [], projectInstructions: false, file: undefined },
+    config: defaultRuntime.config,
+    model: new OneToolCallModel(),
+    tools: [bigOutput],
+    intervention: new PermissionGate({ mode: 'plan', projectRoot: runtimeRoot, ask: async () => ({ allowed: false }) }),
+    projectInstructions: undefined,
+    idPrefix: 'sdk-compatibility',
+    dispatch: undefined,
+  });
+  await child.initialize();
+  assert('recipe children inherit no storage, context manager, tools or messages from the parent',
+    child.storage === undefined && child.contextManager === undefined && child.tools.length === 0 && child.messages.length === 0);
+  assert('recipe children keep summarization and use their own model for auxiliary calls',
+    (child as unknown as { _conversationManager: unknown })._conversationManager instanceof SummarizingConversationManager
+    && child.auxModel === child.model && child.model !== agent.model);
   assert('child definitions cannot request the parent session retrieval capability',
     defaultRuntime.info.agentProblems.some((problem) =>
       problem.file.endsWith('retrieval-child.md') && problem.reason.includes('unknown tool')));

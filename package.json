@@ -43,14 +43,14 @@
     "@aws/bedrock-token-generator": "^1.1.0",
     "@modelcontextprotocol/client": "^2.3.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "@strands-agents/sdk": "1.20.0",
+    "@strands-agents/sdk": "1.21.0",
     "gray-matter": "^4.0.3",
     "ink": "7.1.1",
     "openai": "^6.49.0",
     "patch-package": "^8.0.1",
     "react": "^19.2.8",
     "sharp": "^0.34.5",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

@@ -95,7 +95,7 @@ Use Bedrock inference-profile IDs, never bare `anthropic.*`. The TUI suites requ
 
 ## Architecture map
 
-The agent loop is never forked. Only `src/agent/runtime.ts` constructs `Agent`, as a thin assembly over SDK extension points. Detailed rationale and verification links are indexed in [load-bearing decisions](../architecture/load-bearing-decisions.md). The focused [subagent architecture](../architecture/sub-agents.md) covers discovery, assembly, context isolation, permissions, observability, cancellation, and concurrency.
+The agent loop is never forked. `src/agent/runtime.ts` assembles the parent `Agent`; `src/agents/child-recipe.ts` assembles isolated children through the same SDK extension points. The exact SDK pin is `1.21.0`, with its authoritative pnpm patch under `patches/`. Summarization, session-local offload storage and child permissions keep their existing defaults; the upgrade does not enable shared stash, a separate auxiliary model, new vended tools or strict tool schemas. Detailed rationale and verification links are indexed in [load-bearing decisions](../architecture/load-bearing-decisions.md). The focused [subagent architecture](../architecture/sub-agents.md) covers discovery, assembly, context isolation, permissions, observability, cancellation, and concurrency.
 
 Core source areas:
 

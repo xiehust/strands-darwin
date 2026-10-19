@@ -11,7 +11,7 @@
  * is `spike/verify-npm-patch-format.ts`, which `pnpm test` does run.
  *
  * What it asserts, in order:
- * - `pnpm build` succeeds and leaves `dist/patches/@strands-agents+sdk+1.20.0.patch`;
+ * - `pnpm build` succeeds and leaves `dist/patches/@strands-agents+sdk+1.21.0.patch`;
  * - `npm pack --ignore-scripts` (the tree is freshly built, so `prepack` need not
  *   rebuild) lists `dist/src/**` incl. every built-in skill's `SKILL.md`, the generated
  *   patch, `README.md` (npm adds every `README*`, so `README.zh-CN.md` too), `package.json`
@@ -46,7 +46,7 @@ import { assert, header, report } from './shared.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const manifest = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8')) as { name: string; version: string };
-const GENERATED_PATCH = 'dist/patches/@strands-agents+sdk+1.20.0.patch';
+const GENERATED_PATCH = 'dist/patches/@strands-agents+sdk+1.21.0.patch';
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 
 function run(command: string, args: readonly string[], options: { cwd: string; env?: NodeJS.ProcessEnv; timeout?: number }): SpawnSyncReturns<string> {
@@ -116,8 +116,8 @@ try {
   assert('<prefix>/bin/darwin exists and the package landed under lib/node_modules', existsSync(bin) && existsSync(installedPackageDir(prefix)));
   assert('the shipped generated patch is in the installed package', existsSync(path.join(installedPackageDir(prefix), GENERATED_PATCH)));
   const installedSdk = JSON.parse(readFileSync(path.join(installedPackageDir(prefix), 'node_modules', '@strands-agents', 'sdk', 'package.json'), 'utf8')) as { version: string; engines: { node: string } };
-  assert('npm installed the exact SDK 1.20.0 with its Node >=22.0.0 requirement',
-    installedSdk.version === '1.20.0' && installedSdk.engines.node === '>=22.0.0');
+  assert('npm installed the exact SDK 1.21.0 with its Node >=22.0.0 requirement',
+    installedSdk.version === '1.21.0' && installedSdk.engines.node === '>=22.0.0');
   assert('normal npm installation does not install the optional QMD peer',
     !existsSync(path.join(installedPackageDir(prefix), 'node_modules', '@tobilu', 'qmd')));
   for (const { file, token } of SDK_PATCH_MARKERS) {

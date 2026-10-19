@@ -95,7 +95,7 @@ Bedrock 必须使用 inference-profile ID，不能用裸 `anthropic.*`。Ink 依
 
 ## 架构索引
 
-项目不会另写一套 agent loop。只有 `src/agent/runtime.ts` 构造 `Agent`，而且只是 SDK extension point 之上的轻量组装。详细依据与验证链接集中在[关键架构决策](../architecture/load-bearing-decisions.md)。[子代理架构](../architecture/sub-agents.md)单独说明发现、组装、上下文隔离、权限、可观测性、取消和并发边界。
+项目不会另写一套 agent loop。`src/agent/runtime.ts` 组装父 `Agent`，`src/agents/child-recipe.ts` 通过同一套 SDK extension point 组装隔离的子代理。SDK 精确固定为 `1.21.0`，`patches/` 下的 pnpm 补丁是唯一维护来源。摘要、会话独立的 offload 存储和子代理权限保持原有默认行为；此次升级不启用共享 stash、独立辅助模型、新的内置工具或严格工具 schema。详细依据与验证链接集中在[关键架构决策](../architecture/load-bearing-decisions.md)。[子代理架构](../architecture/sub-agents.md)单独说明发现、组装、上下文隔离、权限、可观测性、取消和并发边界。
 
 主要源码目录：
 

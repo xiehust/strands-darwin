@@ -57,6 +57,7 @@ const suites = [
   'verify-import-command.ts',
   'verify-npm-patch-format.ts',
   'verify-responses-reasoning.ts',
+  'verify-sdk-chat-usage.ts',
   'verify-background-bash.ts',
   'verify-background-activity.ts',
   'verify-shell-env.ts',

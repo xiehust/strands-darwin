@@ -1,20 +1,20 @@
 diff --git a/dist/src/index.d.ts b/dist/src/index.d.ts
-index 7595798e7151f873e43eddd9ccfdba0dd383b28e..23b5c61f9836ae4bb9af2716ad533b3000e18af7 100644
+index 1918f11258bdad49dee3e3552440a48ff0feba80..5f24f38fa0bd7dec9dc8faa471ae727db166d1a7 100644
 --- a/dist/src/index.d.ts
 +++ b/dist/src/index.d.ts
-@@ -65,6 +65,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
+@@ -67,6 +67,7 @@ export { ConversationManager, type ProactiveCompressionConfig, type Conversation
  export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
  export { SlidingWindowConversationManager, type SlidingWindowConversationManagerConfig, } from './conversation-manager/sliding-window-conversation-manager.js';
  export { SummarizingConversationManager, type SummarizingConversationManagerConfig, } from './conversation-manager/summarizing-conversation-manager.js';
 +export { DEFAULT_SUMMARIZATION_PROMPT } from './conversation-manager/compression/context-compression.js';
  export { configureLogging } from './logging/logger.js';
  export type { Logger } from './logging/types.js';
- export { type McpClientOptions, type McpListToolsOptions, type McpToolFilterCallback, type McpToolFilters, type McpToolMatcher, type McpClientConfig, type McpClientCredentials, type McpTransport, type McpCallToolOptions, type TasksConfig, type McpConnectionState, type McpLoadServersOptions, type McpServerConfig, type SerializableMcpToolFilters, McpClient, McpTaskCancelledError, McpTaskFailedError, } from './mcp/index.js';
+ export { type McpClientOptions, type McpListOptions, type McpListToolsOptions, type McpProgress, type McpProgressCallback, type McpToolFilterCallback, type McpToolFilters, type McpToolMatcher, type McpClientConfig, type McpClientCredentials, type McpTransport, type McpCallToolOptions, type TasksConfig, type McpConnectionState, type McpLoadServersOptions, type McpServerConfig, type SerializableMcpToolFilters, McpClient, McpTaskCancelledError, McpTaskFailedError, } from './mcp/index.js';
 diff --git a/dist/src/index.js b/dist/src/index.js
-index 29310747d3224a66b2f09607ce8f84122aebda70..05e66c2edd18e8c763d0885538bbfbe705a83be2 100644
+index aaa869eda7dc0f4b408c9f5085ea96e960a84c50..ca4c9519a51fd5528b27e051e7958e316e634419 100644
 --- a/dist/src/index.js
 +++ b/dist/src/index.js
-@@ -55,6 +55,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
+@@ -57,6 +57,7 @@ export { ConversationManager, } from './conversation-manager/conversation-manage
  export { NullConversationManager } from './conversation-manager/null-conversation-manager.js';
  export { SlidingWindowConversationManager, } from './conversation-manager/sliding-window-conversation-manager.js';
  export { SummarizingConversationManager, } from './conversation-manager/summarizing-conversation-manager.js';
@@ -39,10 +39,10 @@ index d3b97dfe1f49f9c8251f4d74a2640b7684691f98..e747a7ac319ba38ce340aec08800dc75
                      return {
                          type: 'thinking',
 diff --git a/dist/src/models/bedrock.js b/dist/src/models/bedrock.js
-index a0077cfe424d3d67a90207b52f114162d743d2b5..ca209b98dc687402b4e13b8eef700812b3b7c63a 100644
+index 9f3501f3b95ca8fd13e3ab8675b0c0860acb8c35..ead8a030b4096627730ca41a6de68aea9b87b1c2 100644
 --- a/dist/src/models/bedrock.js
 +++ b/dist/src/models/bedrock.js
-@@ -944,6 +944,19 @@ export class BedrockModel extends Model {
+@@ -949,6 +949,19 @@ export class BedrockModel extends Model {
                  };
              }
              case 'reasoningBlock': {
@@ -92,10 +92,10 @@ index 17a473fe3bcdcc02e17cd95283c832d9021634c1..6e5cda23f672684b3926450322459279
  /**
   * Error patterns that indicate rate limiting.
 diff --git a/dist/src/models/openai/model.js b/dist/src/models/openai/model.js
-index 37291c025ed65317d80d5fa092621b7b678bafde..ba44c9120133ad75d1307b9684ffa82c0a0ef8cd 100644
+index 8f4a9b941008730c4e5a042f9e220edf74c2c6bb..820bbd62e6d9197c59370c53e4d8dd6a77d44ff0 100644
 --- a/dist/src/models/openai/model.js
 +++ b/dist/src/models/openai/model.js
-@@ -203,7 +203,7 @@ export class OpenAIModel extends Model {
+@@ -205,7 +205,7 @@ export class OpenAIModel extends Model {
          try {
              const request = formatResponsesRequest(this._config, messages, options, this.stateful);
              const stream = await this._client.responses.create(request, { signal: options?.cancelSignal });
