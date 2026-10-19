@@ -16,6 +16,8 @@ const suites = [
   'verify-prompt-editor.ts',
   'verify-prompt-suggestion.ts',
   'verify-prompt-suggestion-pty.ts',
+  'verify-session-recap.ts',
+  'verify-session-recap-pty.ts',
   'verify-composer-yank.ts',
   'verify-draft-stash.ts',
   'verify-composer-stash.ts',

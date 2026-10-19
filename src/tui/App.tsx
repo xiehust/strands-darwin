@@ -177,6 +177,10 @@ import {
 } from './tangent.js';
 import { clipboardImageFact, readClipboardImage } from './clipboard-image.js';
 import { PromptSuggestionState, suggestionRow, suggestionUnowned } from './prompt-suggestion.js';
+import { SessionRecapState } from './session-recap.js';
+import type { TerminalFocusInput } from './terminal-focus.js';
+import { recapNotice, recapTail, recapUsageNotice } from '../agent/session-recap.js';
+import { parseRecapCommand, RECAP_USAGE, RECAP_UNSUPPORTED } from '../commands/recap-command.js';
 import { suggestionTail, suggestionUsageNotice, SUGGESTION_ANSWER_CODE_POINTS } from '../agent/prompt-suggestion.js';
 import { DRAFT_STASH_DROP_NOTICE, stashHint, toggleDraftStash, type DraftStash } from './draft-stash.js';
 import {
@@ -302,6 +306,7 @@ export function App({
   runtime: initialRuntime,
   permissions,
   initialHistory = [],
+  focusInput,
   startNewSession,
   startRewind,
 }: {
@@ -309,6 +314,7 @@ export function App({
   readonly permissions: PermissionQueue;
   /** Read-only resumed-session context, written once through the existing Static transcript. */
   readonly initialHistory?: readonly HistoryItem[];
+  readonly focusInput?: TerminalFocusInput;
   /**
    * Hands this conversation to a new, empty session and returns the runtime that owns
    * it — `/clear`. Optional so a driver that does not own runtime lifecycle (and so
@@ -328,10 +334,20 @@ export function App({
   // and the old session's numbers cannot leak into the new transcript.
   const [runtime, setRuntime] = useState(initialRuntime);
   const suggestions = useRef(new PromptSuggestionState());
+  const recaps = useRef(new SessionRecapState());
+  const recapTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const recapReady = useRef<() => boolean>(() => false);
+  const [, redrawRecap] = useReducer((n: number) => n + 1, 0);
+  const dismissRecap = useCallback(() => {
+    clearTimeout(recapTimer.current); recapTimer.current = undefined;
+    recaps.current.invalidate();
+  }, []);
+  useEffect(() => () => { dismissRecap(); recaps.current.resetSession(); }, [runtime, dismissRecap]);
   const [, redrawSuggestion] = useReducer((n: number) => n + 1, 0);
   const suggestionReady = useRef<() => boolean>(() => false);
   const shownSuggestion = useRef<string | undefined>(undefined);
   const dismissSuggestion = useCallback(() => {
+    dismissRecap();
     const visible = suggestions.current.candidate !== undefined;
     suggestions.current.invalidate();
     shownSuggestion.current = undefined;
@@ -986,7 +1002,7 @@ export function App({
 
   // Advisory text never competes for ownership or adds a frame row. Read mirrors on
   // acceptance as well as render, so batched keys cannot accept yesterday's draft.
-  suggestionReady.current = () => runtime.config.promptSuggestions !== false && suggestionUnowned({
+  recapReady.current = () => suggestionUnowned({
     idle: statusRef.current === 'idle', draft: editorRef.current.text,
     permission: permissions.current !== undefined,
     search: historySearchRef.current !== undefined || rewindSearchRef.current !== undefined || recallRef.current !== undefined,
@@ -998,6 +1014,38 @@ export function App({
     goal: goalRef.current !== undefined,
     task: runtime.runningBackgroundTaskCount > 0 || runtime.listBackgroundDelegations().length > 0,
     replacing: clearing.current || !presentationMounted.current,
+  });
+  suggestionReady.current = () => runtime.config.promptSuggestions !== false && recapReady.current();
+  const recapModelKey = JSON.stringify([runtime.config.provider, runtime.config.model, runtime.config.openaiApi, runtime.config.baseUrl, runtime.config.region, runtime.config.apiKeyEnv, runtime.config.bedrockMantle, runtime.config.bedrockRuntime, runtime.thinking.effective, runtime.config.sessionRecap]);
+  useLayoutEffect(() => { recaps.current.configure(recapModelKey); }, [recapModelKey]);
+  const generateRecap = useCallback(async (manual: boolean) => {
+    const model = `${runtime.config.provider}/${runtime.config.model}`;
+    await recaps.current.generate(manual, runtime.config.sessionRecap !== false, recapReady.current(),
+      (evidence, signal) => runtime.sessionRecap(evidence, signal),
+      (result, evidence, publish, suspension) => {
+        if (!presentationMounted.current) return;
+        recordAction({ type: 'notice', text: recapUsageNotice(result, model, manual) });
+        if (suspension) recordAction({ type: 'notice', text: suspension });
+        if (publish && result.text !== undefined && recapReady.current()) recordAction({ type: 'notice', text: recapNotice(result, evidence) });
+      });
+  }, [runtime]);
+  useEffect(() => {
+    if (runtime.config.sessionRecap === false || focusInput === undefined) return;
+    return focusInput.watch(focused => {
+      clearTimeout(recapTimer.current); recapTimer.current = undefined;
+      const prepared = recaps.current.focus(focused, recapReady.current());
+      if (prepared) recordAction({ type: 'notice', text: recapNotice(prepared.result, prepared.evidence) });
+      redrawRecap();
+    });
+  }, [runtime, focusInput]);
+  // One eligibility deadline, only after an actual blur. No idle polling or turn scheduler.
+  useEffect(() => {
+    const unowned = recapReady.current();
+    if (!unowned) dismissRecap();
+    const delay = recaps.current.delay(runtime.config.sessionRecap !== false, unowned);
+    if (delay === undefined) return;
+    recapTimer.current = setTimeout(() => { recapTimer.current = undefined; void generateRecap(false); }, delay);
+    return () => { clearTimeout(recapTimer.current); recapTimer.current = undefined; };
   });
   const candidate = suggestionReady.current() ? suggestions.current.candidate : undefined;
   const candidateRow = suggestionRow(candidate, columns, grants.prompt);
@@ -1251,6 +1299,7 @@ export function App({
       image?: ImageBlock,
       origin?: TaskNotificationFields | PeerInput,
     ): Promise<boolean> => {
+      recaps.current.workStarted();
       turnStartedAt.current = Date.now();
       turnAborted.current = false;
       // Who started this turn, decided once at its start (SER-108): the goal's own
@@ -1265,6 +1314,8 @@ export function App({
       const suggestionRevision = suggestions.current.revision;
       let suggestionAnswer = '';
       let suggestionCompleted = false;
+      let recapAnswer = { text: '', truncated: false };
+      let recapCompleted = false;
       try {
         await runWithStreamResumption(
           text,
@@ -1276,6 +1327,10 @@ export function App({
               turnInput === text ? image : undefined,
               origin,
             )) {
+              if (goalKind === 'user') {
+                if (event.type === 'modelMessageEvent') recapAnswer = recapTail(event.message.content.map(block => block.type === 'textBlock' ? block.text : '').join(''), 1600);
+                else if (event.type === 'agentResultEvent') recapCompleted = event.result.stopReason === 'endTurn';
+              }
               if (runtime.config.promptSuggestions !== false && goalKind === 'user') {
                 if (event.type === 'modelMessageEvent') {
                   // Post-redaction, parent text only; no tool results or reasoning.
@@ -1477,6 +1532,10 @@ export function App({
         applyGoalTransition(goalAfterTurn(goalNow, goalKind, !failed ? 'completed' : lifecycleOutcome === 'cancelled' ? 'cancelled' : 'failed'));
       }
 
+      if (!failed && recapCompleted && goalKind === 'user' && image === undefined && !/^[!/]/u.test(userInput.trim()) && recapAnswer.text !== '') {
+        recaps.current.complete(userInput, recapAnswer.text, recapAnswer.truncated);
+        redrawRecap();
+      }
       if (!failed && suggestionCompleted && goalKind === 'user' && image === undefined &&
           !/^[!/]/u.test(userInput.trim()) && suggestionAnswer !== '' && suggestionReady.current()) {
         const config = runtime.config;
@@ -1502,6 +1561,18 @@ export function App({
       editorPrefix.current = false;
       const text = raw.trim();
       const diff = parseDiffCommand(text);
+      const recap = parseRecapCommand(text);
+      if (recap !== undefined) {
+        if (queuedEntry !== undefined) { recordAction({ type: 'notice', text: RECAP_UNSUPPORTED }); return; }
+        setEditor({ text: '', cursor: { offset: 0, affinity: 'downstream' } });
+        setSelectedCompletion(0);
+        if (recap === 'usage') { recordAction({ type: 'notice', text: RECAP_USAGE }); return; }
+        if (!recapReady.current()) { recordAction({ type: 'notice', text: '/recap does not queue — wait for current work and composer owners to finish' }); return; }
+        if (recaps.current.evidence.exchanges.length === 0) { recordAction({ type: 'notice', text: 'No completed human text exchanges in this interactive visit; restored history, tools and images are not recap evidence' }); return; }
+        recordAction({ type: 'notice', text: 'Preparing manual session recap; typing or Escape cancels it' });
+        await generateRecap(true);
+        return;
+      }
       if (clearing.current) {
         if (diff !== undefined) recordAction({ type: 'notice', text: diff === 'usage' ? DIFF_USAGE : '/diff does not queue — run it after current work finishes' });
         else dispatch({ type: 'notice', text: 'Session management in progress; submit again when it finishes' });
@@ -2475,7 +2546,7 @@ export function App({
         });
       }
     },
-    [adoptBranchSuccessor, dispatch, exit, openRewindChooser, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setDraftStash, setEditor, setGoal, setQueued, setTangent, startNewSession, startRewind, status, writeToTerminal],
+    [adoptBranchSuccessor, dispatch, exit, generateRecap, openRewindChooser, recordAction, returnQueuedToEditor, runtime, runTurn, setAttachedImage, setDraftStash, setEditor, setGoal, setQueued, setTangent, startNewSession, startRewind, status, writeToTerminal],
   );
 
   // The drain (SER-027): when the session is idle and nothing owns the keyboard,
@@ -2543,6 +2614,11 @@ export function App({
     if (!peer) return;
     draining.current = true;
     dispatch({ type: 'notice', text: peerNotice(peer) });
+    if (parseRecapCommand(peer.envelope.text) !== undefined) {
+      recordAction({ type: 'notice', text: RECAP_UNSUPPORTED });
+      draining.current = false; setDrainCycle(cycle => cycle + 1);
+      return;
+    }
     void runTurn(peerPrompt(peer), peerPrompt(peer), undefined, peer).then(completed => {
       if (!completed) dispatch({ type: 'notice', severity: 'warn', text: `peer message ${peer.envelope.id} failed/cancelled; not re-sent` });
     }).finally(() => { draining.current = false; setDrainCycle(cycle => cycle + 1); });
@@ -2991,7 +3067,8 @@ export function App({
       dispatch({ type: 'notice', text: `${command.source} not used: it ${command.reason} — draft unchanged`, severity: 'warn' });
       return;
     }
-    if (!stdin.isTTY || !canQuiesceTerminalInput(stdin)) {
+    const terminalInput = focusInput?.source ?? stdin;
+    if (!terminalInput.isTTY || !canQuiesceTerminalInput(terminalInput)) {
       dispatch({ type: 'notice', text: 'Ctrl+G needs an interactive terminal darwin can hand over safely — draft unchanged', severity: 'warn' });
       return;
     }
@@ -3019,7 +3096,7 @@ export function App({
         const terminal = await openFile('/dev/tty', 'r+').catch(() => undefined);
         try {
           await suspendTerminal(async () => {
-            restartInput = await quiesceTerminalInput(stdin);
+            restartInput = await quiesceTerminalInput(terminalInput);
             const run = runExternalEditor(original.text, {
               argv: command.argv,
               cwd,
@@ -3072,7 +3149,7 @@ export function App({
         dispatch({ type: 'notice', text: `external editor storage: ${outcome.cleanupProblem}`, severity: 'warn' });
       }
     })();
-  }, [dispatch, pendingPermission, runtime, setDismissedCompletion, setEditor, setRecall, setSelectedCompletion, status, stdin, suspendTerminal, waitUntilRenderFlush]);
+  }, [dispatch, focusInput, pendingPermission, runtime, setDismissedCompletion, setEditor, setRecall, setSelectedCompletion, status, stdin, suspendTerminal, waitUntilRenderFlush]);
 
   const handleInterrupt = useCallback(() => {
     const now = Date.now();

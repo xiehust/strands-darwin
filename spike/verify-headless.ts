@@ -686,8 +686,9 @@ async function pipedStdinUnitContracts(): Promise<void> {
   );
   countedAssert('invalid UTF-8 and NUL bytes are refused as usage errors', true);
 
-  // Structural: the reader has exactly one caller, the headless runner; interactive code
-  // never names process.stdin.
+  // Structural: the piped reader has exactly one caller, the headless runner.
+  // SER-130's interactive driver only hands the tty to the focus adapter; it must
+  // not become a second pipe reader or expose global stdin inside TUI components.
   const src = path.resolve('src');
   const files: string[] = [];
   const walk = (dir: string): void => {
@@ -706,7 +707,11 @@ async function pipedStdinUnitContracts(): Promise<void> {
     if (/process\.stdin/u.test(text)) stdinUsers.push(path.relative(src, file));
   }
   assert.deepEqual(importers, ['headless-runner.ts']);
-  assert.deepEqual(stdinUsers.sort(), ['dev-repl.ts', 'headless-runner.ts', 'headless-stdin.ts']);
+  assert.deepEqual(stdinUsers.sort(), ['cli-main.ts', 'dev-repl.ts', 'headless-runner.ts', 'headless-stdin.ts']);
+  const interactive = await readFile(path.join(src, 'cli-main.ts'), 'utf8');
+  assert.equal(interactive.match(/process\.stdin/gu)?.length, 1);
+  assert.equal(interactive.includes('new TerminalFocusInput(process.stdin, process.stdout)'), true);
+  assert.equal(interactive.indexOf('process.stdin') > interactive.indexOf('async function runInteractive('), true);
   assert.equal(stdinUsers.some((file) => file === 'cli.ts' || file.startsWith('tui/')), false);
   countedAssert('only the headless runner reaches the reader; cli.ts and the TUI never touch process.stdin', true);
 }

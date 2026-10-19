@@ -27,6 +27,20 @@ These rows are calculated only when you request `/context`; `/status` shows the 
 
 If the parent model stops sending events for 120 seconds, the turn fails visibly with `stream idle for 120s`; there is no automatic retry or continuation. Thinking events count as activity, while permission, tool, background and throttle waits do not count as stream silence. User cancellation takes precedence during cleanup. Already streamed output remains visible; inspect completed work before resubmitting. All headless formats add one `stream:` stderr diagnostic and keep their ordinary failure contract. Change the root `streamIdleTimeoutSeconds` setting, or set `0` to disable; [exact scope and limits](configuration.md#stream-idle-watchdog).
 
+## Away-session recaps
+
+Automatic session recap defaults on, independently of prompt suggestions. It is an **away/return interaction, not a summary after every answer**. During this interactive visit, at least three successful human text exchanges must have completed. Only an actual terminal blur permits preparation, after three minutes since completion. A prepared recap appears as a labelled Static notice on a qualifying focus return, once per completed-state generation. Repeated focus toggles do not regenerate it. Terminals that do not report focus never become “away” merely because they are idle.
+
+Use exact `/recap` (case-insensitive, no arguments) to request a manual recap while idle, even with automatic mode off or before the three-turn/time threshold. Busy sessions refuse rather than queue. Empty evidence gives a local notice. This command belongs to the local human in the interactive TUI: headless/REPL paths refuse it, peers/wakes cannot invoke it and children have no recap command or tool. It never sends an ordinary prompt, runs tools, reads workspace files, compacts or changes the Agent conversation.
+
+Evidence is transient, post-redaction parent text from completed human exchanges in this visit: at most six exchanges, each retaining up to 800 user and 1,600 assistant Unicode code points. Earlier text is omitted explicitly. Restored history, failed/refused exchanges, images, commands, tool results and peer/task/goal/child activity are excluded; even uncapped evidence is not the whole session. Startup resume still replays the **full** recorded transcript without inference. Generated recap claims are labelled as unverified; the recap body is capped at **400 Unicode code points**, with output truncation stated separately.
+
+Each request uses a separate instance of the current model/provider/effective effort, no cache points or tools, at most 512 output tokens, 16 KiB of streamed deltas and a 10-second deadline including model construction. One attempt, no retries. Raw provider input/output/cache counters are reported separately for manual and automatic requests, outside Agent usage, trajectory, recall and memory. Missing counters remain unknown, including spend after transport cancellation; no free-call or warm-cache claim is made.
+
+Typing, attached images, permission/search/rewind/menu/editor ownership, queued work, peers, task/delegation wakes and goals take priority. Typing or Escape cancels pending advice without changing the draft; new work, model/effort changes, clear/rewind and exit invalidate stale results. A return before preparation finishes cancels that attempt, rather than publishing late. Three consecutive same-cause automatic failures pause automatic generation with a reason until meaningful model/transport/effort configuration changes or restart; clearing alone does not reset the pause. Manual requests remain explicit and separately costed. Terminal focus reporting is disabled during external editing and on cleanup.
+
+Set root-level `"sessionRecap": false` in `~/.darwin/config.json` to disable automatic recap requests, timers and focus tracking. Darwin does not write this setting for you. Manual `/recap` remains available; `promptSuggestions` is a separate switch.
+
 ## Local Git diff
 
 Use `/diff` in the idle TUI to inspect tracked **unstaged** changes: worktree versus index. Use `/diff --staged` for the index versus HEAD; an unborn repository compares against the empty tree. The command name is case-insensitive and exact; only the literal `--staged` argument is accepted. Paths, revisions, other flags and extra arguments show local usage. The built-in reserves `diff`; rename any same-name custom command or skill slash invocation.
@@ -87,7 +101,7 @@ Each eligible turn permits at most one tool-free SDK request: at most 2,000 Unic
 
 A live-only notice reports each auxiliary request's raw provider input/output and cache counters separately from `/usage`, `/context` and main Agent cost. Missing fields say `not reported`; cancellation can leave actual spend unknown. Raw cache counters can overlap input on some APIs, so do not sum them as billing buckets. No warm-cache or negligible-cost promise applies. Suggestions and these notices are not recorded in trajectory, replay, recall or memory; accepted text becomes an ordinary human prompt only when sent. The full resume transcript stays unchanged.
 
-To disable this feature independently, set root-level `"promptSuggestions": false` in `~/.darwin/config.json`. Disabled mode creates no suggestion request or timer. No away-recap or terminal-focus behavior is added by this feature.
+To disable this feature independently, set root-level `"promptSuggestions": false` in `~/.darwin/config.json`. Disabled mode creates no suggestion request or timer. Suggestions do not own terminal focus; [away-session recap](#away-session-recaps) has its own independent switch.
 
 ### External editor (`Ctrl+G`)
 

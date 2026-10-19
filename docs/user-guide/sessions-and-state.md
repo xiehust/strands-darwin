@@ -2,6 +2,10 @@
 
 **English** · [简体中文](sessions-and-state.zh-CN.md) · [Guide index](README.md)
 
+## Away-session recap versus startup replay
+
+The generated away-session recap is separate from resume. Automatic `sessionRecap` defaults on with its own off switch; `/recap` is an explicit local-human command even when automatic mode is off. It uses bounded completed text observed **during this interactive visit**, not snapshots, trajectory reads or workspace files. Startup/resume performs no recap inference, seeds no recap evidence and still shows the entire recorded transcript read-only. Until new human exchanges complete, `/recap` honestly reports empty evidence. Recap text/receipts never become Agent messages, snapshots, trajectory, recall or memory and never move the resume pointer. See [trigger, evidence omissions, costs and limits](using-darwin.md#away-session-recaps).
+
 ## Snapshot storage and resume
 
 Every turn snapshots the conversation under `~/.darwin/sessions/<project-key>/`; `last-session.json` points to the latest completed choice for bare resume. State is scoped to the canonical repository, so sessions from another working tree are not candidates.

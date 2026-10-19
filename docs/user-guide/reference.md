@@ -275,6 +275,7 @@ Rules and limits:
 | `/compact [focus]` | summarize older conversation; user controlled. Optional focus text (≤400 code points after trimming, longer is refused with a notice and nothing runs) is appended to the SDK's default summarizer prompt as one fixed section the summary must keep; without it the summarizer request is unchanged |
 | `/context` | known/estimated context size (Bedrock may use heuristic), then a breakdown estimated over the current request shape: system prompt by section (base, project instructions, skills catalogue with bounded `skill · <name>` rows for each registered catalogue entry, not its SKILL.md body; working context), tools by origin (darwin built-ins, each MCP server), conversation by role — `~N tokens · P%` per row when the window is known; a failed count reads `not reported`; long skill and server lists are capped with `… N more`; counted only when you run the command |
 | `/copy` | last *completed* answer's transcript text to the clipboard: OSC 52 to the terminal first (works over SSH), then `wl-copy`/`xclip`/`pbcopy` only when a display is present; one notice states bytes copied (`N of M` when over the cap) and any tool failure; rejects arguments |
+| `/recap` | exact, case-insensitive, no arguments; explicit local-human idle-TUI recap, even when automatic `sessionRecap` is false; busy refuses without queueing, empty evidence gives a notice; no ordinary turn/tools/workspace reads; labelled body at most 400 Unicode code points, auxiliary spend separate ([limits](using-darwin.md#away-session-recaps)) |
 | `/diff`, `/diff --staged` | idle TUI-only local Git viewer: tracked worktree versus index, or index versus HEAD (unborn supported); exact case-insensitive name, other arguments show usage; busy refuses, never queues. Untracked/submodule contents excluded; empty scope is not a whole-tree clean claim. One terminal-safe Static notice, no model/tool/history/trajectory/diagnostic/shell-report or workspace/session mutation. Fixed helper-disabled Git argv/project cwd, scrubbed environment + DARWIN, 5 s / 64 KiB capture / 200 lines / 500 code points per line; failures/truncation explicit, Ctrl+C cancels, exit/replacement cleans up. Clean/process filters and promisor repositories refused ([scope and limits](using-darwin.md#local-git-diff)) |
 | `/effort [level]` | show or set persisted model effort; a warm-cache notice precedes a level change |
 | `/exit`, `/quit` | quit |
@@ -353,6 +354,10 @@ Rules and limits:
 | `Ctrl+D` | quit |
 
 Permission and compaction views own keyboard/paste while active and ignore paste. Otherwise an open rewind/history search receives pasted text as a bounded query, never as draft edits or acceptance keys; only explicit Enter/Tab accepts. The completion menu owns arrows before recall/cursor. Prompt queue take-back wins before recall.
+
+### Session recap
+
+`sessionRecap: true` independently enables away/return recaps: three completed human exchanges in this visit, actual blur and 180 seconds since completion. One prepared generation appears only on return; no repeated recap for unchanged state. False creates no automatic request/timer/focus tracking; manual `/recap` remains explicit. Evidence is the last six post-redaction human/assistant pairs (800/1,600 code points each), never restored transcript/tool results/child reasoning. Output: 400 Unicode code points, 512 tokens, 16 KiB deltas, 10 seconds; one attempt, no retry, pause after three same-cause automatic failures. All higher-priority owners invalidate stale advice. Labelled Static notices report omissions/truncation and separate raw auxiliary counters; absent is unknown. Full resume replay, Agent state and persistent records are unchanged.
 
 ### Prompt suggestions
 

@@ -114,6 +114,8 @@ Project instructions (`AGENTS.md`, or fallback `CLAUDE.md`) preload up to **64 K
 
 After an eligible interactive reply, darwin can generate one contextual next-prompt suggestion (on by default). When the empty composer shows `suggest: … (Right to edit)`, plain **Right arrow** copies it into an editable draft; only a separate **Enter** sends it. Typing or Escape dismisses it. It uses an additional bounded call to the current model/provider, with separately reported auxiliary tokens—not free or assumed cache-warm. Set root-level `"promptSuggestions": false` in `~/.darwin/config.json` to disable it independently. See [eligibility and limits](docs/user-guide/using-darwin.md#next-prompt-suggestions).
 
+Away-session recaps are separately on by default: after three completed human text exchanges, a real terminal blur and three minutes since completion allow one bounded background request to the current model. A prepared, labelled recap appears only on return, at most once for that completed state. `/recap` requests one manually in the idle TUI. Root-level `"sessionRecap": false` disables automatic requests, timers and focus reporting without disabling `/recap` or suggestions. Recap text is capped at 400 Unicode code points; auxiliary spend and evidence omissions are stated. Full startup resume replay is unchanged. See [recap behavior](docs/user-guide/using-darwin.md#away-session-recaps).
+
 To see live local session lease holders across this HOME's projects, use `/list-agents`
 or the offline `darwin list-agents` CLI (no provider configuration needed). This is
 read-only discovery, **not communication**; `/agents` still lists in-process subagent

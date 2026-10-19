@@ -186,13 +186,15 @@ async function runInteractive(options: CliOptions): Promise<void> {
     ]));
   const projectRoot = process.cwd();
   const permissions = new PermissionQueue();
+  const { TerminalFocusInput } = await import('./tui/terminal-focus.js');
+  const focusInput = new TerminalFocusInput(process.stdin, process.stdout);
   // Ink owns the terminal before runtime/config/MCP/session setup begins. This is
   // one renderer, not a splash followed by a second app: rerender below replaces
   // the root atomically and lets React clean up the startup timer on handoff.
   const instance = render(
     React.createElement(StartupScreen, { phase: 'runtime' }),
     // Busy animation must not erase unchanged composer/tool rows every tick.
-    { exitOnCtrlC: false, incrementalRendering: true },
+    { exitOnCtrlC: false, incrementalRendering: true, stdin: focusInput.stdin },
   );
 
   // SER-090: before anything the checkout declares can run. The inventory reads the
@@ -345,6 +347,7 @@ async function runInteractive(options: CliOptions): Promise<void> {
     React.createElement(App, {
       runtime,
       permissions,
+      focusInput,
       ...(initialHistory === undefined ? {} : { initialHistory }),
       // `/clear` starts a new session by handing this conversation to a successor
       // runtime (`AgentRuntime.startNewSession`). Ownership of shutdown stays here,
@@ -391,6 +394,7 @@ async function runInteractive(options: CliOptions): Promise<void> {
   try {
     await instance.waitUntilExit();
   } finally {
+    focusInput.close();
     permissions.close();
     await current.shutdown();
     process.off('SIGHUP', onSignal);

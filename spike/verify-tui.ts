@@ -1442,7 +1442,7 @@ async function slashCompletion(): Promise<void> {
       tui.frame === afterFirstEscape && !tui.screen.slice(beforeDismiss).includes('working…'));
     const beforeRearm = tui.mark();
     tui.send('r');
-    await tui.waitFor('❯ /rename', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
+    await tui.waitFor('❯ /recap', { timeoutMs: 30_000, from: beforeRearm, settleMs: 400 });
     assert('editing a dismissed slash query reopens completion at the unchanged cursor',
       tui.frame.includes('you> /r') && tui.frame.includes('commands ('));
     tui.send('\u007f');
@@ -1479,6 +1479,8 @@ async function slashCompletion(): Promise<void> {
     // disappear behind the "… n more" row.
     assert('the built-in /clear is listed', completed.includes('  /clear'));
     assert('the built-in /compact is listed', completed.includes('  /compact'));
+    assert('the built-in /recap is listed with its local-human scope',
+      completed.includes('  /recap — generate a short session recap (local human, idle TUI only)'));
     assert('the built-in /context is listed', completed.includes('  /context'));
     // Matched with its description: a custom command could also be named copy.
     assert('the built-in /copy is listed', completed.includes('  /copy — copy the last answer to the clipboard'));

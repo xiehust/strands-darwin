@@ -114,6 +114,8 @@ Bedrock 使用标准 AWS 凭证链。模型 ID 必须是 `us.`、`eu.`、`apac.`
 
 符合条件的交互回合结束后，darwin 默认会根据刚才的问答生成一条下一轮输入建议。空输入框显示 `suggest: … (Right to edit)` 时，按普通 **右方向键** 把建议填入可编辑草稿；还需单独按 **Enter** 才会发送。输入文字或按 Escape 可取消建议。它会额外调用当前模型和供应商，辅助 token 单独报告，不承诺免费或命中热缓存。在 `~/.darwin/config.json` 根层设置 `"promptSuggestions": false` 可独立关闭。详见[触发条件和上限](docs/user-guide/using-darwin.zh-CN.md#下一轮输入建议)。
 
+离开会话后的回顾默认独立开启：完成至少三轮用户文本问答、终端确实失焦，且距回合结束已满三分钟，才会使用当前模型进行一次有界后台请求。准备好的回顾只在返回时显示，并明确标注；同一已完成状态不重复显示。空闲 TUI 中可用 `/recap` 手动请求。根层 `"sessionRecap": false` 关闭自动请求、计时器和焦点报告，不关闭手动 `/recap` 或输入建议。回顾正文最多 400 个 Unicode 码点，辅助开销及证据缺失会明确说明；启动恢复时的完整历史回放保持不变。详见[离开后的会话回顾](docs/user-guide/using-darwin.zh-CN.md#离开后的会话回顾)。
+
 用 `/list-agents` 或离线 CLI `darwin list-agents`，可以跨项目查看当前 HOME 中本机仍存活的会话租约持有者；CLI 不需要配置模型供应商。这只是只读查看，**不提供通信能力**；`/agents` 仍然列出本进程的子代理派发。详见[范围与限制](docs/user-guide/sessions-and-state.zh-CN.md#查看本机会话进程)。
 
 需要实际通信时，先用 **`/collaborate list`**，再输入 `/collaborate send <endpoint-uuid> <文本>`。

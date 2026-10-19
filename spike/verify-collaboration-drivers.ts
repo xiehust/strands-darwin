@@ -145,6 +145,15 @@ try {
       await secondTui.waitUntil(() => !secondTui.frame.includes('working…'), { settleMs: 150 });
       secondTui.submit('/exit'); assert.equal(await secondTui.exitedWithin(10_000), 0);
     } finally { secondTui.kill(); }
+    await tui.waitUntil(() => !tui.frame.includes('working…'), { settleMs: 150 });
+    const recapCalls = requests(root).length, recapMark = tui.mark();
+    tui.send('retained draft');
+    await deliver(local, first.endpoint, '/recap');
+    await tui.waitFor('/recap requires an explicit local human request', { from: recapMark, settleMs: 200 });
+    assert.equal(requests(root).length, recapCalls, 'peer /recap is a local provenance refusal, not ordinary or auxiliary inference');
+    assert(tui.frame.includes('you> retained draft'), 'peer recap refusal preserves the human draft');
+    tui.send('\u0015');
+    console.log('PASS SER-130 peer /recap provenance notice, zero model requests and retained draft');
     const busy = tui.mark(); tui.submit('hold peer queue');
     await tui.waitFor('working…', { from: busy, settleMs: 100 });
     await waitFor(() => requests(root).some(call => call.messages.at(-1)?.content.some((b: any) => b.text === 'hold peer queue')), 'held model call');

@@ -88,6 +88,7 @@
 | `terminalBell` | `false` | 在权限提示和回合结束时响一次终端铃（仅交互式 TUI） |
 | `terminalNotify` | `false` | 在同样两个时刻请终端弹出一条桌面通知——一条 OSC 9 序列（`ESC ] 9 ; darwin · <项目目录名> · waiting for approval\|turn complete ESC \`）直接写到 stdout，仅在 stdout 是 TTY 时写入（仅交互式 TUI；`-p` 和子代理从不写）。是否显示由终端决定：iTerm2（需开启 Settings → Profiles → Terminal → "Notification Center Alerts" → Filter Alerts → "Send escape sequence-generated alerts"）、kitty、Ghostty、WezTerm 和 foot 会弹出通知，其他终端会静默吞掉该序列。在 tmux 内，序列会包在 tmux 的 passthrough DCS 中，需要在 `~/.tmux.conf` 里设置 `set -g allow-passthrough on`。SSH 下同样有效——通知出现在运行终端的那台机器上。`false` 完全不写 |
 | `terminalTitle` | `true` | 把终端窗口/标签页标题设为 `darwin · <项目目录名> · <状态>`（状态为 `idle`/`working`/`waiting for approval`，有提示词排队时再加 ` · N queued`），仅在标题变化且 stdout 是 TTY 时写入；退出时恢复为项目目录名（仅交互式 TUI）；`false` 完全不写 |
+| `sessionRecap` | `true` | 独立的离开／返回自动回顾：三轮已完成用户问答、真实失焦、结束后满三分钟，才用当前模型请求一次，返回时显示；`false` 不创建自动请求／计时器／焦点跟踪，手动 `/recap` 仍可用；辅助用量单独报告 |
 | `promptSuggestions` | `true` | 符合条件的交互用户回合后，使用当前模型进行一次有界的下一轮输入预测；普通右方向键仅把完整可见的建议填入草稿；`false` 不创建建议请求或计时器；辅助开销单独报告 |
 | `backgroundTaskWake` | `true` | `bash start` 后台任务结束时，把一条 `<task-notification>` 提示排入队列，作为独立回合唤醒代理（仅交互式 TUI）；`false` 只保留转录通知 |
 | `updateCheck` | `true` | 交互式 TUI 启动时向 npm 查询是否发布了更新的 `strands-darwin`（每 24 小时最多一次，结果缓存在 `~/.darwin/update-check.json`，超时 1.5 秒，失败时不提示）；有新版本时显示一条 info 提示和 `npm install -g strands-darwin@latest`，不会自动安装。`-p`、CLI 只读命令和开发检出目录从不检查。设为 `false` 或在环境中设置 `DARWIN_NO_UPDATE_CHECK=1` 时不发出任何请求 |
@@ -100,6 +101,10 @@
 `memory: true` 与 `trajectory: false` 不能同时使用。权限放行与拒绝规则不属于该配置，它们按项目存于 `~/.darwin/projects/<project-key>/permission-rules.json`。在配置文件中写入 `permissionRules` 会导致启动失败。
 
 上面两张表就是全部字段。其他任何键——无论在顶层还是 `models` 条目内，包括 `$schema` 或注释风格的键——都是未知字段，会导致启动失败，而不会被静默忽略：错误信息会指出文件、每个未知字段及其位置，并在拼写接近时给出最近的已知字段（`"thinkingEfort" at the top level (did you mean "thinkingEffort"?)`）。请修正拼写或删除该字段。`darwin doctor` 会在不启动会话的情况下以 `!` 行报告同样的问题（并以退出码 1 结束），因此改完配置可以先检查再启动。
+
+## 会话回顾
+
+`sessionRecap` 是根层／会话布尔配置，默认 `true`，与 `promptSuggestions` 独立。在 `~/.darwin/config.json` 根层（不是模型条目内）设置 `"sessionRecap": false` 可关闭自动回顾，手动 `/recap` 仍可用。darwin 不会替你修改配置。只有实际焦点事件才能证明离开／返回；不支持焦点的终端仍可手动请求。两条路径都是有界的额外当前模型调用，辅助开销单独报告。详见[证据、取消及上限](using-darwin.zh-CN.md#离开后的会话回顾)。
 
 ## 输入建议
 

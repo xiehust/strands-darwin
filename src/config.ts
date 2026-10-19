@@ -296,6 +296,8 @@ export interface SessionFields {
   backgroundTaskWake?: boolean;
   /** Interactive next-prompt side call; default on, false makes no calls or timers. */
   promptSuggestions?: boolean;
+  /** Away/return recap; independent default-on automatic control. /recap stays manual. */
+  sessionRecap?: boolean;
   /**
    * Check npm for a newer `strands-darwin` when the interactive TUI starts (at most
    * once per 24h, cached in `~/.darwin/update-check.json`, see `update-check.ts`) and
@@ -451,6 +453,7 @@ export const SESSION_KEYS = [
   'terminalTitle',
   'backgroundTaskWake',
   'promptSuggestions',
+  'sessionRecap',
   'updateCheck',
   'trustPeers',
   'shellEnv',
@@ -511,6 +514,7 @@ const DEFAULTS = {
   terminalTitle: true,
   backgroundTaskWake: true,
   promptSuggestions: true,
+  sessionRecap: true,
   updateCheck: true,
   trustPeers: false,
   memory: true,
@@ -1275,6 +1279,8 @@ function validateSessionFields(
       booleanField(input, 'backgroundTaskWake', configPath) ?? DEFAULTS.backgroundTaskWake,
     promptSuggestions:
       booleanField(input, 'promptSuggestions', configPath) ?? DEFAULTS.promptSuggestions,
+    sessionRecap:
+      booleanField(input, 'sessionRecap', configPath) ?? DEFAULTS.sessionRecap,
     updateCheck:
       booleanField(input, 'updateCheck', configPath) ?? DEFAULTS.updateCheck,
     trustPeers:

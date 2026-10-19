@@ -252,6 +252,59 @@ pins exact image object identity and defensive conflicts.
 
 **The shared normalizer caps every image at 2000px on either edge, not the 8000px single-image limit.** Anthropic applies the stricter per-image limit to every image in a request that carries more than 20 image blocks, and tool-result images from earlier turns are resent with each request — so a session that keeps calling `imageViewer` eventually crosses 20 and, with one 8000px-era image in history, fails every later turn (`image dimensions exceed max allowed size for many-image requests: 2000 pixels`). Anything past the cap becomes a ≤2000px WebP; 2000px itself passes through byte-identical. Because snapshots saved under the old cap still hold oversized bytes, `create()` runs `normalizeRestoredImages(agent.messages)` right after the reasoning repair: the same decoder/normalizer, applied in memory to `ImageBlock`s in user content and `toolResultBlock` content, compliant and undecodable blocks left as they are, block order and message identity preserved; the next ordinary save persists it and the trajectory is never rewritten. Required check: `spike/verify-image-viewer.ts` (in `pnpm test`).
 
+## Away-session recap — observed text, actual focus, never a turn
+
+SER-130 is separate from both suggestions and the full startup replay. Root `sessionRecap`
+defaults true; false creates no automatic request, eligibility timer or focus subscription.
+Exact human `/recap` remains available independently. Its local branch precedes queueing and
+slash expansion, rejects arguments/busy/empty evidence, and shares all composer/session owner
+checks with suggestions. Runtime slash expansion refuses non-TUI drivers; peer `/recap` is a
+local provenance notice, not a prompt. No recap tool or child catalogue entry exists.
+
+App observes only completed human text exchanges through the existing post-redaction
+`modelMessageEvent`/successful `agentResultEvent` seam; it does not buffer main streaming.
+The transient evidence ring retains six exchanges, at most 800 user/1600 assistant Unicode
+code points each. Images, commands, refused/failed turns and peer/task/goal/child work are
+excluded. New work disarms automatic eligibility until another qualifying human completion.
+No startup hydration is attempted: resume remains the unchanged read-only **full** trajectory
+projection with no immediate inference, and manual recap honestly reports empty evidence
+until a new exchange completes. Evidence omissions and any truncation are always visible.
+
+`SessionRecapState` takes a clock, never a timer: three qualifying turns, an actual blur and
+180000ms since completion permit one attempt for that completed generation. One App effect
+owns the eligibility deadline; no polling, scheduler or second Agent. A prepared recap can
+only be consumed by blur-to-focus with no higher-priority owner. An early return cancels an
+unfinished attempt; typing, permission/search/menu/editor/image/queue/peer/task/goal activity,
+model/effort/runtime change and exit invalidate work/publication. Cancellation never re-arms
+that generation. Three normalized same-cause automatic failures pause generation with the
+reason until meaningful model/transport/effort config change or restart, not clear/rewind.
+Explicit manual attempts bypass auto eligibility/suspension but never bounds or ownership.
+
+Ink 7.1.1 has no public terminal-focus hook and `useInput` strips the escape prefix. The CLI
+therefore passes `TerminalFocusInput` at the public renderer `stdin` seam. It forwards the
+Readable/raw-mode subset Ink uses; external-editor quiescence still targets the original tty.
+A narrow DECSET 1004 filter consumes focus reports before Ink keyboard parsing, preserves
+bracketed paste, handles split/coalesced bytes and bounds incomplete-prefix retention. Only
+an enabled App subscription plus active tty raw mode enables reporting. Suspension, unmount,
+replacement and shutdown disable reporting and release the source listener/prefix timer;
+no terminal capability or elapsed silence is evidence of absence. Unsupported terminals keep
+manual recap. There is no Ink or SDK patch and no new live-frame row.
+
+The generator follows the accepted suggestion `Model.streamAggregated` and single-attempt
+transport seam: separate current model/provider/effective effort, no tools/cache points,
+512 output tokens, 16 KiB serialized deltas, 10 seconds including construction. No Agent,
+workspace read, main meter/context/cache mutation, hooks or retries. The body is at most
+400 Unicode code points; truncation is a separate notice. Labelled Static output is generated
+advice, never verified tool facts. Per-attempt raw provider counters distinguish automatic
+from manual and remain outside Agent accounting; missing/eventual cancelled spend is unknown.
+Nothing enters snapshots, trajectory, recall, memory or the next model turn.
+
+Checks: registered `verify-session-recap.ts` (controlled clock, real SDK and loopback HTTP,
+all owners, bounded failure/cancellation, full session byte identity) and
+`verify-session-recap-pty.ts` (real CLI, actual 3-minute threshold, focus/keyboard/manual/
+editor/narrow lifecycle). Preserve both suggestion suites, `verify-resume-recap.ts`, free
+TUI `resume` and `completion`, complete config fixture and both config documentation tables.
+
 ## Prompt suggestions — transient human-owned text, never a turn
 
 SER-129 uses the same bounded SDK `Model.streamAggregated` seam as `/goal`, not its
