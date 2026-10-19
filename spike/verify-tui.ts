@@ -1403,7 +1403,15 @@ async function slashCompletion(): Promise<void> {
     });
     assert('busy /help did not send the queued sentinel',
       tui.frame.includes('you> help queue sentinel') && !tui.screen.slice(beforeBusyHelp).includes('working…'));
+    // Clear the returned draft before starting the independent menu checks. Ink
+    // keeps legacy control/text bytes together if the PTY coalesces Ctrl+U and `/`.
+    const beforeHelpDraftClear = tui.mark();
     tui.send('\u0015');
+    await tui.waitUntil((screen) => screen.length > beforeHelpDraftClear && /^you> *$/m.test(tui.frame), {
+      timeoutMs: 30_000,
+      settleMs: 200,
+      label: 'returned help draft cleared before slash completion',
+    });
 
     const beforeSlash = tui.mark();
     tui.send('/');
