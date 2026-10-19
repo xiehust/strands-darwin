@@ -3871,3 +3871,46 @@ Docs wrap-up in `2e99b2a`: both README SDK badges, English/Chinese getting-start
 Exact cost receipts respectively: `cost: total=11.8414 input=0.0010 output=1.5057 cacheRead=7.3871 cacheWrite=2.9476 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`; `cost: total=4.6645 input=0.0006 output=0.7040 cacheRead=2.5488 cacheWrite=1.4111 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`. Computed exclusive token sum **10,328,937**. Rounded cost components reconcile to **16.5059 USD**, residual **0.0000**. All buckets reported. Totals are worker-invocation receipts only; Host research/acceptance and separately executed live-test/diagnostic model calls have no consolidated spend receipt here and are excluded.
 
 **Halt: batch exhausted.** SER-127 is done; no direction abandoned and no unfinished backlog remains. Host commits the closure records, pushes the current branch once without force, and verifies the upstream range before its final report. No publish or history rewrite.
+
+
+## 2026-10-19 — SER-128 batched vertical composer input
+
+Self-evolution batch from `docs/research/research_2026-10-19.md`, run `09:40:46Z`: binding path **tui**, source **roll**. Backlog metadata initially had no unfinished work. Host reproduced lost batched vertical moves in a real offline CLI PTY; SER-128 scored 12 and was the only accepted direction, priority 168. Broad frame redesign (0) and general undo/redo (2) were rejected report-only, not added or re-rated.
+
+Starting gate at clean **`c61596c9d3e06811b0da0b410874bbbfc77f1c3b`** passed `pnpm typecheck && pnpm test` in `bg-1cbb95d0-656f-4f01-a33c-ec26336443ed`. An earlier attempt stopped on Host-authored noncanonical backlog field labels; canonical Difficulty/Risk fixed that metadata error and the focused skills validator passed before the full rerun. Worker base **`85ee628193436af24e2e64b2e65bc8e9ed4ca115`** adds only the selected in-progress marker.
+
+Fresh child **`session-20261019-102344544`**, launched from repository source with `pnpm tsx src/cli.ts --yolo --context-offload -p …`. Initial managed task **`bg-a3b8ce99-e2da-4ae9-b459-57dc3288a417`** exited 0. Host withheld acceptance after a completion test failure and launched one focused correction in the exact same session, with yolo/context-offload and explicit `--compact-before` for the broad prior transcript: **`bg-bafcb22f-b798-4efa-a2c8-a7fbf2c02906`**, exit 0. Both outputs fully drained; exact session and usage/cost records captured. No model-call ceiling, provider retry, recursive supervision, Host implementation edits or other writer in the explicit base/result range.
+
+### Accepted milestones and Host verification
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Read the current editor value for each ordinary vertical movement, retaining all prior key owners and geometry semantics | `07dca68c47b20328195d7d305e0bc5756cb0bbbd` | Explicit base/result review: only `App` handler, new registered vertical PTY regression, test registration, queue-test timing fence and architecture note. Host `bg-b27b4fed-a454-4a0b-8093-8d710a413270` independently passed new regression 36/0 but then failed existing completion; not accepted until the corrected final pass below. |
+| Fence completion-test cleanup before slash input without altering any assertion or production decoder | `75415114c2e415bb243d6dff84be53ca945c651f` | Reviewed exact eight-line `spike/verify-tui.ts` correction. Host `bg-1d623469-62a6-43bd-b0b5-9a21bf855cd8` exited 0: `pnpm tsx spike/verify-tui.ts completion` 83/0, `queue` 17/0, `recall` 22/0, `pnpm typecheck`, full `pnpm test` including the vertical regression, `pnpm build`, `git diff --check` and clean status. TUI scenarios/full suite ran with `DARWIN_MODEL_PRICES_FETCH=off AWS_EC2_METADATA_DISABLED=true`. |
+
+The original Host experiment inserted `!` after `ccc`, not `bbb`, for `aaa\nbbb\nccc\nddd` followed by one write containing Up+Up+`!`; its model-call ledger was absent. The registered test failed before implementation, then Host verified exact witnesses for both directions, mixed edits, multiline/soft-wrapped Unicode at 70/24 columns, preferred-column retention/reset, modal ownership and exact local-only model-call accounting.
+
+First acceptance failure: completion's adjacent Ctrl+U and `/` writes left `help queue sentinel/`. The installed Ink parser probe shows combined bytes produce one non-control event while separate chunks retain Ctrl+U; the original output trace does not prove actual stdin chunk boundaries. Correction waits for a new settled frame with an empty composer. The queue test separately waits beyond the documented two-second double-Ctrl+C window between independent cancellations; no assertions were removed. The initial worker's full gate also hit unrelated Git-diff PTY launch-count `4 !== 5`; that suite passed unchanged in isolation, the worker's full rerun passed, and the Host final full gate passed. A handoff-readiness race remains an unconfirmed explanation, not a claimed fix.
+
+Docs wrap-up: `docs/architecture/load-bearing-decisions.md` gained the immediate-editor rationale in `07dca68c`. Host checked both READMEs and English/Chinese using-darwin narrative and reference guides; the fix restores their existing contract, so no user-facing edits were needed. No new key/command/config/dependency; `AGENTS.md` unchanged. Final Host build refreshed `dist` and generated patches. Live provider suites were not run or needed for this offline input fix.
+
+### Worker invocation spend
+
+| Managed task | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---:|---:|---:|---:|---:|
+| `bg-a3b8ce99-e2da-4ae9-b459-57dc3288a417` | 94 | 18,181 | 4,984,861 | 144,990 | 7.7072 |
+| `bg-bafcb22f-b798-4efa-a2c8-a7fbf2c02906` | 52 | 6,004 | 1,661,836 | 78,401 | 2.9426 |
+| Aggregate | 146 | 24,185 | 6,646,697 | 223,391 | 10.6498 |
+
+Exact receipts:
+
+```text
+usage: input=94 output=18181 cacheRead=4984861 cacheWrite=144990
+cost: total=7.7072 input=0.0009 output=0.9091 cacheRead=4.9849 cacheWrite=1.8124 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra
+usage: input=52 output=6004 cacheRead=1661836 cacheWrite=78401
+cost: total=2.9426 input=0.0005 output=0.3002 cacheRead=1.6618 cacheWrite=0.9800 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra
+```
+
+Python computed the exclusive token sum **6,894,419** and receipt total **10.6498 USD**. The displayed per-bucket cost components sum to the same aggregate (residual **0.0000**); each invocation's separately rounded components differ from its total by 0.0001 in opposite directions. All usage/cost buckets reported. This covers both child invocations, not Host inference spend.
+
+**Halt: batch exhausted.** SER-128 is done; nothing was abandoned from the backlog and no unfinished direction remains. Host records closure, pushes the current branch once without force, and verifies `git log @{u}..` before the final report. No publish or history rewrite.

@@ -170,7 +170,7 @@ Acceptance: explicit base/result diff and patch inventory; `pnpm typecheck` + ev
 
 ## SER-128 — Keep composer Up/Down coherent across batched terminal input by using the current draft and cursor for every move
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 168
 - Score: 12
 - Importance: 3
@@ -182,7 +182,9 @@ Acceptance: explicit base/result diff and patch inventory; `pnpm typecheck` + ev
 
 ### Implementation / acceptance evidence
 
-Not implemented. Host reproduced at `5f3240f4c5a20fdc368786bf5318c9f0ca08590b`: paste `aaa\nbbb\nccc\nddd`, then send Up+Up+`!` in one terminal write; the CLI inserts after `ccc`, not `bbb`. No model call occurs. Research report R2–R6 links source, existing tests and the offline PTY artifacts.
+Accepted on 2026-10-19 after independent Host verification. Fresh developer child `session-20261019-102344544` implemented `07dca68c47b20328195d7d305e0bc5756cb0bbbd`; one focused same-session correction produced `75415114c2e415bb243d6dff84be53ca945c651f`. The production change derives vertical geometry from the immediate editor value. New registered `spike/verify-composer-vertical-pty.ts` covers exact batched movements, mixed edits, Unicode/wrap affinity, preferred columns, modal ownership and no unintended model calls. Architecture documents the existing immediate-state invariant. Queue and completion fixtures gained synchronization only; existing assertions and production contracts remain intact.
+
+Host initial reproduction at `5f3240f4c5a20fdc368786bf5318c9f0ca08590b` placed `!` after `ccc`, not `bbb`, with no model call. Host acceptance task `bg-b27b4fed-a454-4a0b-8093-8d710a413270` passed the new PTY regression (36/0) but failed completion at `help queue sentinel/`; this was not accepted. After the test-only correction, Host task `bg-1d623469-62a6-43bd-b0b5-9a21bf855cd8` exited 0: `pnpm tsx spike/verify-tui.ts completion` (83/0), `queue` (17/0), `recall` (22/0), `pnpm typecheck`, full `pnpm test` including the new regression, `pnpm build`, `git diff --check`, clean status. TUI scenarios/full gate used `DARWIN_MODEL_PRICES_FETCH=off AWS_EC2_METADATA_DISABLED=true`. Explicit base `85ee628193436af24e2e64b2e65bc8e9ed4ca115` to result history contains only the two child commits. No Host implementation edits. Both README languages and both narrative/reference guide languages remain accurate without changes. Supervision and per-invocation spend are recorded in `docs/iteration-log.md`, section `2026-10-19 — SER-128 batched vertical composer input`.
 
 ### Notes / blockers / abandonment reason
 
