@@ -196,7 +196,7 @@ No dependency on another new direction. Selection score remains 12 ≥ 6. Keep t
 
 ## SER-129 — Suggest one next prompt after a completed turn; Right arrow accepts it into the draft without sending
 
-- Status: `not-started`
+- Status: `in-progress`
 - Priority: 169
 - Score: 11
 - Importance: 4
