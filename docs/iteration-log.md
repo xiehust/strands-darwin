@@ -3914,3 +3914,31 @@ cost: total=2.9426 input=0.0005 output=0.3002 cacheRead=1.6618 cacheWrite=0.9800
 Python computed the exclusive token sum **6,894,419** and receipt total **10.6498 USD**. The displayed per-bucket cost components sum to the same aggregate (residual **0.0000**); each invocation's separately rounded components differ from its total by 0.0001 in opposite directions. All usage/cost buckets reported. This covers both child invocations, not Host inference spend.
 
 **Halt: batch exhausted.** SER-128 is done; nothing was abandoned from the backlog and no unfinished direction remains. Host records closure, pushes the current branch once without force, and verifies `git log @{u}..` before the final report. No publish or history rewrite.
+
+## 2026-10-19 — SER-129 contextual next-prompt suggestions
+
+Requirement: after an eligible interactive human turn, generate one bounded contextual next prompt; plain Right copies a fully visible suggestion into the draft, never sends it. User confirmed default-on, an independent off switch and additional background inference. This is direction 1 of the `2026-10-19T13:38:13Z` research batch; away recap remains a separate next iteration.
+
+Fresh worker **`session-20261019-140540374`**, launched from repository source with `pnpm tsx src/cli.ts --yolo --context-offload -p …`. Managed task **`bg-42564cbf-b779-460c-b6f3-dcf2c3ae6ba9`** exited 0 and was fully drained. No correction, model-call ceiling or server retry. Starting docs/selection commits `fa67bc9` and `505f790` follow the green unchanged-source baseline (Host typecheck and full offline gate receipts in the origin report). Explicit child base/result range contains only the worker commit below; no other writer. Host wrote no implementation code.
+
+| Milestone | Accepted commit | Independent Host acceptance |
+|---|---|---|
+| Default-on tool-free contextual suggestions with unsent Right acceptance, independent disable and bounded lifecycle/accounting | `2e2aba8b93381b6ab25d504ad811e4c8437566c4` | Reviewed source, all existing-fixture changes, new SDK/local-HTTP/PTY checks and bilingual docs against base `505f7906959fc0645568e945623038b2403af0ed`. `bg-0d2f0c86-8cb1-4504-a54c-5a2adc2cdbaf` exited 0: `pnpm tsx spike/verify-prompt-suggestion.ts`, `verify-prompt-suggestion-pty.ts`, and `verify-tui.ts completion` (83/0), `queue` (17/0), `goal` (45/0), `resume` (19/0), `recall` (22/0). `bg-afab9ddf-0044-4213-b555-32a0e3804c1b` exited 0: `pnpm typecheck && pnpm test && pnpm build && git diff --check && git status --porcelain`; final status clean. |
+
+The worker corrected fixture/type errors, explicitly opted unrelated bare-composer and ordinary-call-count fixtures out through the supported config flag, and retained their assertions. The real collaboration fixture now records absent tool specs as an empty list, with suggestions still enabled in that suite. A command-shaped-output probe caused a real validator correction and regression additions before the final gate. Config completeness and the existing AGENTS 32 KiB assertion were preserved; no dependency, SDK patch, policy, research record or log was modified by the child. Intermediate worker gates failed or were intentionally stopped during those fixes; the final worker gate and independent Host gate both passed. Host acceptance did not require a correction turn.
+
+Docs wrap-up in the accepted commit: both READMEs; English/Chinese `using-darwin`, `configuration`, `reference`; load-bearing rationale and a compact AGENTS index row. Root `promptSuggestions: false` disables automatic suggestion requests/timers. The provider/model stays current, main Agent state/meter/trajectory stay unchanged, and live-only auxiliary raw counters explicitly preserve unknown values. Candidate input/output/time, unsafe/control rejection, cancellation, suppression, ownership and hidden-row rules are documented. `pnpm build` refreshed installed `dist` after independent acceptance. No separate docs sync was needed.
+
+### Worker invocation spend
+
+| Managed task | input | output | cacheRead | cacheWrite | Approximate USD total |
+|---|---:|---:|---:|---:|---:|
+| `bg-42564cbf-b779-460c-b6f3-dcf2c3ae6ba9` | 246 | 103,976 | 30,362,335 | 396,746 | 40.5229 |
+
+Exact receipt: `usage: input=246 output=103976 cacheRead=30362335 cacheWrite=396746`.
+Exact cost receipt: `cost: total=40.5229 input=0.0025 output=5.1988 cacheRead=30.3623 cacheWrite=4.9593 model=global.openai.gpt-6-astra pricing=global.openai.gpt-6-astra`.
+Computed exclusive-bucket sum: **30,863,303 tokens**. Displayed cost components sum to **40.5229**, matching the reported total (residual **0.0000**). No unknown child bucket. These are worker-invocation receipts, not Host research/acceptance spend.
+
+Additional Host evidence: two real current-model calls in `bg-a41bc919-dffc-48b0-9210-8751c8ebcca2` used `global.openai.gpt-6-astra` at configured `xhigh`, producing a Chinese regression-test follow-up and an English diff-review follow-up. Their provider counters sum to 265 input + 438 output = 703 total tokens, with both cache counters zero; no dollar receipt was collected. This bounded smoke check is not a broad quality or cache-saving claim. Optional generation can still yield no candidate, and long candidates are hidden rather than partially accepted.
+
+Outcome: SER-129 independently accepted and closed. Continue immediately with SER-130 on this accepted rebuilt source; do not stop the batch after this successful direction.

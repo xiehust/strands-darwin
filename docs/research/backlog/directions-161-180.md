@@ -196,7 +196,7 @@ No dependency on another new direction. Selection score remains 12 ≥ 6. Keep t
 
 ## SER-129 — Suggest one next prompt after a completed turn; Right arrow accepts it into the draft without sending
 
-- Status: `in-progress`
+- Status: `done`
 - Priority: 169
 - Score: 11
 - Importance: 4
@@ -208,7 +208,9 @@ No dependency on another new direction. Selection score remains 12 ≥ 6. Keep t
 
 ### Implementation / acceptance evidence
 
-Not implemented. Source: origin report S1 (Claude Code interactive mode, Prompt suggestions), and the user's explicit Right-arrow example. Darwin evidence: `src/tui/App.tsx` plain-arrow branch only moves the current cursor; `src/tui/prompt-completion.ts:promptCompletionState` supplies slash/path candidates, not predicted prompts; `InputBox` has no next-prompt surface.
+Accepted commit `2e2aba8b93381b6ab25d504ad811e4c8437566c4` from fresh child `session-20261019-140540374`, task `bg-42564cbf-b779-460c-b6f3-dcf2c3ae6ba9` (exit 0, fully drained), against explicit base `505f7906959fc0645568e945623038b2403af0ed`. Host reviewed the complete source, documentation and test-fixture diffs; no other writer appeared in that commit range. New root `promptSuggestions` defaults true, has an independent false switch, and ordinary Right accepts only fully visible advisory text without sending.
+
+Independent Host acceptance: `bg-0d2f0c86-8cb1-4504-a54c-5a2adc2cdbaf` passed `verify-prompt-suggestion.ts`, `verify-prompt-suggestion-pty.ts`, and free TUI `completion`, `queue`, `goal`, `resume`, `recall`; `bg-afab9ddf-0044-4213-b555-32a0e3804c1b` passed `pnpm typecheck`, full `pnpm test`, `pnpm build`, diff check and clean status. Two additional real current-model smoke calls produced contextual Chinese/English candidates (`bg-a41bc919-dffc-48b0-9210-8751c8ebcca2`); this is not a general quality guarantee. README languages, using-darwin/configuration/reference guide languages and architecture were reviewed in step. The actual supervision receipt and spend are in `docs/iteration-log.md` § 2026-10-19 — SER-129 contextual next-prompt suggestions.
 
 Requirement: in the interactive parent TUI, optionally generate one short natural-language next-prompt candidate after an eligible completed user turn using a bounded, tool-free SDK model call. Keep generation outside the ordinary Agent conversation/loop and use observed, bounded conversation text, never new workspace reads, raw child reasoning or a new tool path. Show the result as a transient, clearly distinct suggestion only when the current composer is empty and unowned. Unmodified Right arrow accepts the displayed candidate into the editable draft but never sends/queues it; ordinary Enter after acceptance remains the only send path. Typing or Escape dismisses it. Modified arrows and ordinary nonempty-draft cursor movement remain unchanged. No automatic acceptance, no startup git-history feature, no shell/slash-control suggestions, no model-selected permissions or config changes.
 
@@ -218,7 +220,7 @@ Acceptance must cover tool-free bounded generation, cancellation/timeout/error/n
 
 User decision confirmed on 2026-10-19: “默认开启、分别可关闭，并接受额外的后台模型调用. 按 Claude Code 的离开后返回场景触发，而非每轮都总结”. Both features must default on, have independent off switches, and may make additional background model calls. Recap remains away/return-only, not per-response. The prior product-policy blocker is resolved. Use the current session model/provider for the suggestion, not an unrequested provider; verify the exact bounded request design and observable accounting in the worker. Do not substitute canned prompts for context-derived suggestions.
 
-Score 11 ≥ 6 at proposal and selection; no re-rating of an earlier below-gate record. No dependency on an earlier new direction. Establish a clean green starting point, mark only this item in-progress immediately before handoff, and give it a fresh developer child. SER-130 stays not-started until this direction is independently accepted. No source implementation by the Host.
+Score 11 ≥ 6 at proposal and selection; no re-rating. Host accepted on the first independent attempt and made no implementation edits. Existing tests that require a bare composer or ordinary-call count use the supported false switch without weakening their assertions; the dedicated suite covers default-on behavior and collaboration drivers still run enabled. AGENTS remains under its existing 32 KiB test ceiling. Optional output can be absent after validation/budget limits or hidden at narrow widths, as documented. SER-130 may now proceed on this accepted, rebuilt revision in a fresh child.
 
 ## SER-130 — Show a short away-session recap separately from the unchanged full resume transcript
 
